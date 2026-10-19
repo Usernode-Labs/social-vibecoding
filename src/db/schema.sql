@@ -12940,6 +12940,10 @@ CREATE TABLE IF NOT EXISTS platform_limit_alerts (
   measured_at TIMESTAMPTZ,
   notified_at TIMESTAMPTZ
 );
+-- GitHub's caps: the quota window (its reset) the level is about. Each
+-- process knows GitHub's figures from its own last answer; a level holds
+-- within its window and decides afresh in the next (platform-limit-alerts.js).
+ALTER TABLE platform_limit_alerts ADD COLUMN IF NOT EXISTS window_reset_at TIMESTAMPTZ;
 
 -- ── Test accounts ──────────────────────────────────────────────────────
 --

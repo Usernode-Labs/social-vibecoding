@@ -128,7 +128,8 @@ test('a window whose reset has passed reads as the whole budget again', () => {
   assert.equal(c.expired, true);
   assert.equal(c.remaining, 5000);
   assert.equal(c.used, 0);
-  assert.deepEqual(budget.alertFigures('pat', { now: later }), { used: 0, cap: 5000 });
+  // A window this process has not heard of yet: no reset to name.
+  assert.deepEqual(budget.alertFigures('pat', { now: later }), { used: 0, cap: 5000, resetAt: null });
 });
 
 test('the search and graphql budgets are kept apart from core', () => {
@@ -186,12 +187,15 @@ test('without a bot token, background work asks the App installation it would us
 });
 
 test('alertFigures: the bot token, and the most-used App installation', () => {
-  assert.deepEqual(budget.alertFigures('pat', { now: NOW }), { used: 0, cap: 0 });
+  assert.deepEqual(budget.alertFigures('pat', { now: NOW }), { used: 0, cap: 0, resetAt: null });
   budget.record('pat', headers({ remaining: 900, used: 4100 }), { now: NOW });
   budget.record('installation:a', headers({ limit: 12500, remaining: 12000 }), { now: NOW });
   budget.record('installation:b', headers({ limit: 5000, remaining: 1000 }), { now: NOW });
-  assert.deepEqual(budget.alertFigures('pat', { now: NOW }), { used: 4100, cap: 5000 });
-  assert.deepEqual(budget.alertFigures('installation', { now: NOW }), { used: 4000, cap: 5000 });
+  // With the window the figures are about (its reset), which the alert's
+  // level belongs to (platform-limit-alerts.js).
+  const window = Number(inMin(30)) * 1000;
+  assert.deepEqual(budget.alertFigures('pat', { now: NOW }), { used: 4100, cap: 5000, resetAt: window });
+  assert.deepEqual(budget.alertFigures('installation', { now: NOW }), { used: 4000, cap: 5000, resetAt: window });
 });
 
 // ─── 3. Saying what happened ────────────────────────────────────────────

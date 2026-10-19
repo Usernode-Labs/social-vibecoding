@@ -23,8 +23,10 @@ export const clockKey = (job: string) => `clock:${job}`;
 export const runKind = (job: string) => `clock.${job}`;
 export const itemKind = (job: string) => `clock.${job}.item`;
 
-// The most targets one run hands back; the next run finds the rest.
-export const MAX_ITEMS = 50;
+// The most targets one run asks for: the largest sweep's whole list (the
+// Workshop's 200 apps), so no target waits behind the same first ones every
+// run. Only a list longer than this leaves the rest to the next run.
+export const MAX_ITEMS = 200;
 // After a failed run the next is due sooner than its interval: from this,
 // doubling, never later than the interval (a continuous job: 5 minutes).
 const RETRY_FIRST_MS = 30 * 1000;

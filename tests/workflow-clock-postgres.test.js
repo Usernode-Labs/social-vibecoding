@@ -139,6 +139,23 @@ test('the clock machine runs each job once at a time, wherever the workflow runs
     await r.stop();
   });
 
+  await t.test('a run asks for every target it found, not only the first ones', async () => {
+    // The Workshop's sweep hands back up to 200 apps an hour: each gets its
+    // item, every run (a cap below the list starved the rest).
+    const seen = new Set();
+    const job = {
+      name: 'many', everyMs: 60 * 60 * 1000,
+      async run() { return { items: Array.from({ length: 120 }, (_, i) => ({ target: `app:${i + 1}`, input: { i } })) }; },
+      item: { concurrency: 8, async run(ctx) { seen.add(ctx.input.target); return {}; } },
+    };
+    const r = make([job]);
+    await arm(r, 'many', 60 * 60 * 1000);
+    await r.start({ loops: true });
+    await until(async () => seen.size === 120, 'all 120 targets reconciled by one run');
+    assert.equal((await instance('many')).data.last.result.items, 120);
+    await r.stop();
+  });
+
   await t.test('Run now during a run runs once more after it; Retire cancels the run and stops the clock', async () => {
     let runs = 0;
     let stop = null;

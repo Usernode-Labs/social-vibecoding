@@ -252,8 +252,10 @@ async function applyTransition(pool, app, dbName, decision, ctx) {
       // frozen, the same grace): a sweep beside another one, or beside an
       // admin's grace or new cap, freezes nothing they changed. Then the
       // role; if that fails the row is put back and the next sweep tries
-      // again. Then the people: if the notification fails the freeze still
-      // stands, which is the part that protects the volume.
+      // again, and if the process dies between the two, every later sweep
+      // that keeps the app frozen makes the role read-only again (the
+      // `none` case below). Then the people: if the notification fails the
+      // freeze still stands, which is the part that protects the volume.
       const { rowCount } = await pool.query(
         `UPDATE apps
             SET db_storage_frozen_at = $1,
@@ -327,6 +329,16 @@ async function applyTransition(pool, app, dbName, decision, ctx) {
       summary.cleared += 1;
       return;
     }
+    case 'none': {
+      // Frozen and staying so: the role is made read-only again. Idempotent,
+      // and it is what finishes a freeze whose process died between its row
+      // and its role.
+      if (decision.frozen && !staging) {
+        await dbManager.setAppDatabaseWritable(dbName, false, { execute });
+        summary.enforced += 1;
+      }
+      return;
+    }
     default:
   }
 }
@@ -364,6 +376,7 @@ async function sweep(pool, deps = {}) {
     unfrozen: 0,
     warned: 0,
     cleared: 0,
+    enforced: 0,
     errors: [],
   };
   const finish = () => {

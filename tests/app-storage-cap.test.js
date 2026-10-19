@@ -409,6 +409,21 @@ test('two sweeps at once freeze and tell once, and a sweep never undoes the grac
   assert.deepEqual(tell.calls.map((c) => c.detail), ['storage_warn'], 'only warm, which nobody touched');
 });
 
+test('a freeze whose process died between its row and its role is finished by the next sweep', async () => {
+  // big-one's row says frozen, but its role never changed (the run ended
+  // there): the next sweep, keeping it frozen, makes the role read-only.
+  const pool = fixture();
+  pool.apps[1].db_storage_frozen_at = NOW;
+  pool.apps[1].db_storage_warned_at = NOW;
+  const execute = fakeExecute(SIZES);
+  const notify = fakeNotify();
+  const out = await cap.sweep(pool, { execute, now: NOW, staging: false, notify });
+  assert.equal(out.frozen, 0, 'no second freeze');
+  assert.equal(out.enforced, 1);
+  assert.ok(execute.roleCalls().includes('ALTER ROLE "app_big_one_owner" SET default_transaction_read_only = on'));
+  assert.ok(!notify.calls.some((c) => c.detail === 'storage_full'), 'nobody told twice');
+});
+
 test('sweep records a failed measurement and touches nothing', async () => {
   const pool = fixture();
   const execute = fakeExecute(SIZES, { failOn: /pg_database_size/ });

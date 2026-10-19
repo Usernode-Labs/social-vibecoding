@@ -138,8 +138,8 @@ test('the detail token round-trips and fits the 32-character column', () => {
 
 // ─── 2. evaluate() against a recording pool ─────────────────────────────
 
-function fakePool({ apps = 0, sessions = 0, level = 'ok', countError = null, setting = null, thisHour = false } = {}) {
-  const state = { level, thisHour, queries: [], updates: [] };
+function fakePool({ apps = 0, sessions = 0, level = 'ok', countError = null, setting = null, windowMs = null } = {}) {
+  const state = { level, windowMs, queries: [], updates: [] };
   return {
     state,
     async query(rawSql, params = []) {
@@ -156,12 +156,13 @@ function fakePool({ apps = 0, sessions = 0, level = 'ok', countError = null, set
         return { rows: setting == null ? [] : [{ value: String(setting), updated_at: null, updated_by: 'ada' }] };
       }
       if (/^INSERT INTO platform_limit_alerts/.test(sql)) return { rows: [] };
-      if (/^SELECT level, measured_at > NOW\(\) - INTERVAL '1 hour' AS this_hour FROM platform_limit_alerts .* FOR UPDATE$/.test(sql)) {
-        return { rows: [{ level: state.level, this_hour: state.thisHour }] };
+      if (/^SELECT level, \(EXTRACT\(EPOCH FROM window_reset_at\) \* 1000\)::float8 AS window_ms FROM platform_limit_alerts .* FOR UPDATE$/.test(sql)) {
+        return { rows: [{ level: state.level, window_ms: state.windowMs }] };
       }
       if (/^UPDATE platform_limit_alerts/.test(sql)) {
         state.updates.push(params);
         state.level = params[1];
+        if (params[5] != null) state.windowMs = params[5];
         return { rows: [] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -203,7 +204,7 @@ test('a crossing is recorded and announced in one transaction, then published', 
   const commit = sqls.indexOf('COMMIT');
   assert.ok(begin >= 0 && begin < lock && lock < update && update < commit,
     'the level is read under a row lock and written before the commit');
-  assert.deepEqual(pool.state.updates[0], ['apps', 'warn', 40, 50, true]);
+  assert.deepEqual(pool.state.updates[0], ['apps', 'warn', 40, 50, true, null]);
 });
 
 test('the same crossing evaluated again is silent', async () => {
@@ -213,7 +214,7 @@ test('the same crossing evaluated again is silent', async () => {
   assert.equal(out.notified, null);
   assert.deepEqual(calls.create, []);
   assert.deepEqual(calls.publish, []);
-  assert.deepEqual(pool.state.updates[0], ['apps', 'warn', 41, 50, false],
+  assert.deepEqual(pool.state.updates[0], ['apps', 'warn', 41, 50, false, null],
     'the figures are still refreshed');
 });
 
@@ -275,7 +276,7 @@ test('a cap that is off records ok and pages nobody', async () => {
   const out = await limits.evaluate(pool, { maxApps: 0 }, 'apps', deps);
   assert.equal(out.level, 'ok');
   assert.deepEqual(calls.create, []);
-  assert.deepEqual(pool.state.updates[0], ['apps', 'ok', 900, null, false]);
+  assert.deepEqual(pool.state.updates[0], ['apps', 'ok', 900, null, false, null]);
   assert.equal(out.cap, 0);
 });
 
@@ -332,19 +333,38 @@ test('the bot token warns at a fifth left and again when used up, once per windo
   assert.equal(calls.create.length, 3);
 });
 
-test('within the hour a GitHub level only rises: a process with an older answer re-arms nothing', async () => {
+test('a GitHub level is its quota window\'s: it only rises within it, an older window\'s answer is not recorded, a new one decides afresh', async () => {
   // The platform-limits clock runs on whichever process runs the workflow,
-  // and each knows GitHub's figures from its own last answer.
+  // and each knows GitHub's figures from its own last answer, about the
+  // window GitHub named (its reset).
   githubBudget._resetForTests();
-  const pool = fakePool({ level: 'warn', thisHour: true });
+  const pool = fakePool();
   const { calls, deps } = recorder();
-  githubWindow(4000);
-  const out = await limits.evaluate(pool, CONFIG, 'github', deps);
-  assert.equal(out.level, 'warn', 'held, not re-armed');
-  // Then the process that saw the crossing: nobody is told again.
-  githubWindow(900);
-  assert.equal((await limits.evaluate(pool, CONFIG, 'github', deps)).notified, null);
-  assert.deepEqual(calls.create, []);
+  const run = () => limits.evaluate(pool, CONFIG, 'github', deps);
+  githubWindow(900, { resetMin: 30 });
+  assert.equal((await run()).notified, 'warn');
+  const window = pool.state.windowMs;
+  assert.ok(window > Date.now(), 'the level records its window');
+
+  // The same window read lower (another process's older answer in it): held.
+  githubWindow(4000, { resetMin: 30 });
+  githubBudget.record('pat', { 'x-ratelimit-limit': '5000', 'x-ratelimit-remaining': '4000', 'x-ratelimit-reset': String(Math.floor(window / 1000)) });
+  assert.equal((await run()).level, 'warn', 'held within its window');
+
+  // Another process recorded a later window; this one's answer is about the
+  // window before it: nothing recorded.
+  pool.state.windowMs = window + 60 * 60 * 1000;
+  const stale = await run();
+  assert.equal(stale.stale, true);
+  assert.equal(pool.state.level, 'warn');
+  pool.state.windowMs = window;
+
+  // The next window, barely used: re-armed, and its own crossing told.
+  githubWindow(4990, { resetMin: 90 });
+  assert.equal((await run()).level, 'ok');
+  githubWindow(900, { resetMin: 90 });
+  assert.equal((await run()).notified, 'warn');
+  assert.deepEqual(calls.create.map((c) => c.detail), ['github_warn:4100:5000', 'github_warn:4100:5000']);
 });
 
 test('the warning line is GitHub\'s own, not PLATFORM_LIMIT_WARN_PERCENT', async (t) => {

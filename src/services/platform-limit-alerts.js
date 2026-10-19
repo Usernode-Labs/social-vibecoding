@@ -118,6 +118,7 @@ const LIMITS = Object.freeze([
     percent: () => GITHUB_WARN_PERCENT,
     cap: async () => githubBudget.alertFigures('pat').cap,
     count: async () => githubBudget.alertFigures('pat').used,
+    window: () => githubBudget.alertFigures('pat').resetAt,
   }),
   Object.freeze({
     key: 'github_app',
@@ -129,6 +130,7 @@ const LIMITS = Object.freeze([
     percent: () => GITHUB_WARN_PERCENT,
     cap: async () => githubBudget.alertFigures('installation').cap,
     count: async () => githubBudget.alertFigures('installation').used,
+    window: () => githubBudget.alertFigures('installation').resetAt,
   }),
 ]);
 const LIMIT_BY_KEY = new Map(LIMITS.map((limit) => [limit.key, limit]));
@@ -245,25 +247,36 @@ async function evaluate(pool, config, key, deps = {}) {
       [key]
     );
     const { rows } = await db.query(
-      `SELECT level, measured_at > NOW() - INTERVAL '1 hour' AS this_hour
+      `SELECT level, (EXTRACT(EPOCH FROM window_reset_at) * 1000)::float8 AS window_ms
          FROM platform_limit_alerts WHERE limit_key = $1 FOR UPDATE`,
       [key]
     );
     let decision = decide({ used, cap, percent, level: rows[0] && rows[0].level });
-    // GitHub's figures are each process's own last answer, so two processes
-    // read the same hour differently: within the hour a GitHub level only
-    // rises, and it re-arms once a new window has begun.
-    const stored = normalizeLevel(rows[0] && rows[0].level);
-    if (limit.fromAnswers && rows[0] && rows[0].this_hour && RANK[decision.level] < RANK[stored]) {
-      decision = { level: stored, notify: null };
+    // GitHub's figures are each process's own last answer, about the quota
+    // window GitHub named (its reset). The level is that window's: within it
+    // a level only rises (another process's older answer re-arms nothing),
+    // an answer about a window before it is not recorded at all, and a new
+    // window decides afresh, a fall included.
+    let window = null;
+    if (limit.fromAnswers) {
+      window = Number(limit.window()) || null;
+      const storedWindow = rows[0] && rows[0].window_ms != null ? Number(rows[0].window_ms) : null;
+      const stored = normalizeLevel(rows[0] && rows[0].level);
+      if (storedWindow && storedWindow > Date.now() && (!window || window < storedWindow)) {
+        return { decision: null, inserted: [], stale: true };
+      }
+      if (storedWindow && window === storedWindow && RANK[decision.level] < RANK[stored]) {
+        decision = { level: stored, notify: null };
+      }
     }
     await db.query(
       `UPDATE platform_limit_alerts
           SET level = $2, used = $3, cap = $4, measured_at = NOW(),
-              notified_at = CASE WHEN $5::boolean THEN NOW() ELSE notified_at END
+              notified_at = CASE WHEN $5::boolean THEN NOW() ELSE notified_at END,
+              window_reset_at = CASE WHEN $6::float8 IS NULL THEN window_reset_at ELSE to_timestamp($6::float8 / 1000) END
         WHERE limit_key = $1`,
       [key, decision.level, used, Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : null,
-        !!decision.notify]
+        !!decision.notify, window]
     );
     let inserted = [];
     if (decision.notify && !staging) {
@@ -274,6 +287,9 @@ async function evaluate(pool, config, key, deps = {}) {
     return { decision, inserted };
   });
 
+  if (outcome.stale) {
+    return { key, used: null, cap: null, level: null, notified: null, recipients: 0, stale: true };
+  }
   if (outcome.decision.notify) {
     log.info('platform-limits', 'Platform limit crossed', {
       limit: key, level: outcome.decision.notify, used, cap, percent,

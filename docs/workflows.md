@@ -1452,7 +1452,7 @@ intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
 - **Targets.** An effect a sweep finds owed once per target (a title's model call, an app's
   Workshop re-draft) is never made by the sweep: its result lists `items`
   (`{ target, gen, input }`), and each becomes a work item of its own
-  (`clock.<job>.item`, key `item:<target>@<gen>`), at most 50 a run. The generation is the run
+  (`clock.<job>.item`, key `item:<target>@<gen>`), at most 200 a run (the Workshop's whole list). The generation is the run
   unless the job names one, so each run asks again for what is still owed; a target with an
   item still outstanding gets no second one, and a named generation only one.
 - **Safe to run twice.** A lease is weaker than a lock: a run whose process stalls stops
