@@ -1,18 +1,18 @@
 'use strict';
 
 // The platform's own waits around a BuildKit preview build
-// (src/services/kubernetes-buildkit.js, src/services/kubernetes.js):
+// (src/services/kubernetes-buildkit.js):
 //
 //   - the build is done when its container is: the Pod's own status, read
 //     as soon as the log says the script ended, not the Job's, which lagged
 //     it by about three seconds; and the digest still comes only from the
 //     termination message of a container that exited 0, never from the log;
+//   - every success path (the fast one and the Job's own) takes its result
+//     only from this build's Job and that Job's own Pod, never while the Job
+//     has failed or is failing;
 //   - the digest annotation is written without the deploy waiting for it;
-//   - the Job's daemon preflight runs beside its source fetch, and its
-//     verdict still decides first;
-//   - a build started before the caller has the tree (startEarlyBuild) is
-//     waited on only when the tree is what it was started for, and is
-//     cancelled otherwise; only a Job the start made is ever removed.
+//   - the Job's daemon preflight runs beside its source fetch, its verdict
+//     still decides first, and a TERM in any phase stops the fetch.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -322,111 +322,7 @@ test('the script: a fetch that fails on a node that can build is the fetch\'s fa
   assert.doesNotMatch(run.out, /example\.test\/clone/, 'the clone URL is still never printed');
 });
 
-// ── a build started before the tree is in hand ──────────────────────────
-
-const previousJob = (dockerfile, created = '2026-10-19T09:00:00Z') => ({
-  metadata: { name: `bk-12-old-${dockerfile}`, creationTimestamp: created },
-  spec: { template: { spec: { containers: [{ name: 'buildkit', env: [{ name: 'DOCKERFILE', value: dockerfile }] }] } } },
-  status: { succeeded: 1 },
-});
-
-test('previousDockerfile: the newest build\'s Dockerfile, when it is one this platform would pick', async () => {
-  const run = (jobs) => buildkit.previousDockerfile(config(), 12, runtimeWith(timedCluster({ previousJobs: jobs }).clients));
-  assert.equal(await run([]), null, 'no history, no guess');
-  assert.equal(await run([previousJob('Dockerfile', '2026-10-18T00:00:00Z'), previousJob('Dockerfile.kubernetes', '2026-10-19T00:00:00Z')]),
-    'Dockerfile.kubernetes');
-  assert.equal(await run([previousJob('deploy/Dockerfile')]), null, 'not a candidate here any more');
-});
-
-test('startEarlyBuild: nothing under kpack, while the lane is remembered unavailable, without a full SHA or without history', async () => {
-  const cluster = timedCluster({ previousJobs: [previousJob('Dockerfile.kubernetes')] });
-  kubernetes._setClientsForTest(cluster.clients);
-  const params = { app, revision, environment: 'staging', sessionId: 42 };
-  assert.equal(await kubernetes.startEarlyBuild(config({ buildEngine: 'kpack' }), params), null);
-  assert.equal(await kubernetes.startEarlyBuild(config(), { ...params, revision: 'abc' }), null);
-  buildkit.noteUnavailable(new Error('no user namespaces'));
-  assert.equal(await kubernetes.startEarlyBuild(config(), params), null);
-  buildkit._forTest.resetUnavailable();
-  kubernetes._setClientsForTest(timedCluster().clients);
-  assert.equal(await kubernetes.startEarlyBuild(config(), params), null, 'no build to guess the Dockerfile from');
-  assert.equal(cluster.state.jobs.length, 0);
-});
-
-test('an early build that fits the tree is the build: no second Job, and the result says it started early', async () => {
-  const cluster = timedCluster({ previousJobs: [previousJob('Dockerfile.kubernetes')], lines: [{ at: 10, line: '[buildkit] pushed x' }], podExitAt: 20 });
-  kubernetes._setClientsForTest(cluster.clients);
-  const early = await kubernetes.startEarlyBuild(config(), { app, revision: revision.toUpperCase(), environment: 'staging', sessionId: 42 });
-  assert.equal(early.dockerfile, 'Dockerfile.kubernetes');
-  assert.equal(early.revision, revision, 'the commit as git spells it');
-  assert.equal(cluster.state.jobs.length, 1, 'the Job exists before the tree does');
-  const env = Object.fromEntries(cluster.state.jobs[0].spec.template.spec.containers[0].env.map((e) => [e.name, e.value]));
-  assert.equal(env.DOCKERFILE, 'Dockerfile.kubernetes');
-  assert.equal(env.GIT_SHA, revision);
-  const result = await kubernetes.createBuild(config(), {
-    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile.kubernetes', 'Dockerfile']), early,
-  });
-  assert.equal(result.imageRef, `registry.test/apps/demo@${digest('d')}`);
-  assert.equal(result.earlyStart, true);
-  assert.equal(cluster.state.jobs.length, 1, 'no second Job');
-  assert.equal(cluster.state.deleted.length, 0);
-});
-
-test('an early build the tree does not fit is cancelled (its Job and its Secret), and the tree is built as before', async () => {
-  const cases = [
-    { why: 'another Dockerfile', tree: ['Dockerfile'], rev: revision, jobs: 2 },
-    { why: 'another commit', tree: ['Dockerfile.kubernetes'], rev: 'c'.repeat(40), jobs: 2 },
-    { why: 'no Dockerfile at all (kpack)', tree: [], rev: revision, jobs: 1 },
-  ];
-  for (const c of cases) {
-    const cluster = timedCluster({ previousJobs: [previousJob('Dockerfile.kubernetes')], lines: [{ at: 10, line: '[buildkit] pushed x' }], podExitAt: 20 });
-    kubernetes._setClientsForTest({
-      ...cluster.clients,
-      custom: {
-        async listNamespacedCustomObject() { return { items: [] }; },
-        async createNamespacedCustomObject() {},
-        async getNamespacedCustomObject() {
-          return { status: { conditions: [{ type: 'Succeeded', status: 'True' }], latestImage: `registry.test/apps/demo@${digest('c')}` } };
-        },
-      },
-    });
-    const early = await kubernetes.startEarlyBuild(config(), { app, revision, environment: 'staging', sessionId: 42 });
-    const result = await kubernetes.createBuild(config(), {
-      app, revision: c.rev, environment: 'staging', sessionId: 42, sourceDir: sourceTree(c.tree), early,
-    });
-    assert.equal(result.earlyStart, undefined, c.why);
-    const earlyName = cluster.state.jobs[0].metadata.name;
-    assert.ok(cluster.state.deleted.some((d) => d.kind === 'Job' && d.name === earlyName && d.propagationPolicy === 'Background'), `${c.why}: the early Job goes`);
-    assert.ok(cluster.state.deleted.some((d) => d.kind === 'Secret' && d.name === `${earlyName}-input`), `${c.why}: and its clone credential`);
-    assert.equal(cluster.state.jobs.length, c.jobs, `${c.why}: the tree is built by its own builder`);
-  }
-});
-
-test('cancelling removes only a Job the start made: one it found under the same name may be another attempt\'s', async () => {
-  const cluster = timedCluster({ previousJobs: [previousJob('Dockerfile.kubernetes')], createConflict: true, podExitAt: null, jobDoneAt: null });
-  kubernetes._setClientsForTest(cluster.clients);
-  const early = await kubernetes.startEarlyBuild(config(), { app, revision, environment: 'staging', sessionId: 42 });
-  assert.equal(early.createdHere, false);
-  assert.equal(await kubernetes.cancelEarlyBuild(config(), early), false);
-  assert.equal(cluster.state.deleted.length, 0);
-  // A start that made its Job removes it.
-  const own = timedCluster({ previousJobs: [previousJob('Dockerfile.kubernetes')] });
-  kubernetes._setClientsForTest(own.clients);
-  const made = await kubernetes.startEarlyBuild(config(), { app, revision, environment: 'staging', sessionId: 42 });
-  assert.equal(await kubernetes.cancelEarlyBuild(config(), made), true);
-  assert.deepEqual(own.state.deleted.map((d) => d.kind).sort(), ['Job', 'Secret']);
-});
-
-test('an early start the lane refuses is remembered under auto, and the build goes to kpack', async () => {
-  const forbidden = Object.assign(new Error('jobs.batch is forbidden'), { code: 403 });
-  const cluster = timedCluster({ previousJobs: [previousJob('Dockerfile.kubernetes')] });
-  cluster.clients.batch.createNamespacedJob = async () => { throw forbidden; };
-  kubernetes._setClientsForTest(cluster.clients);
-  await assert.rejects(kubernetes.startEarlyBuild(config(), { app, revision, environment: 'staging', sessionId: 42 }), /lane unavailable/);
-  assert.ok(buildkit.unavailableReason(), 'the next build does not try the lane again at once');
-  assert.ok(cluster.state.deleted.some((d) => d.kind === 'Secret'), 'the clone credential does not outlive the refusal');
-});
-
-// ── review round 1: what the fast path, the cancel and the script must not do ──
+// ── review rounds 1 and 2: what the success paths and the script must not do ──
 
 test('the script: a stalled fetch does not hold back exit 75; the fetch is stopped and reaped', async () => {
   const run = await runScript({ preflightMs: 20, preflightExit: 1, fetchMs: 2000 });
@@ -490,110 +386,15 @@ test('a container\'s earlier termination (lastState) is history, not a result', 
   await assert.rejects(build(cluster), /failed: BackoffLimitExceeded/);
 });
 
-test('the fast path waits on the Job this build made: a Job recreated under its name is left to its own verdict', async () => {
-  const cluster = timedCluster({ ...pushedSoon, podExitAt: 0, jobDoneAt: 400, jobFailed: true });
-  const handle = await buildkit.startBuild(config(), {
+test('a Job made again under the same name is another build\'s: its result is not taken, and its cleanup cannot remove it', async () => {
+  const cluster = timedCluster({ ...pushedSoon, podExitAt: 0, jobDoneAt: 0 });
+  const handle = await buildkit._forTest.startBuild(config(), {
     app, revision, environment: 'staging', sessionId: 42, dockerfile: 'Dockerfile.kubernetes',
   }, runtimeWith(cluster.clients));
-  cluster.state.jobUid = 'uid-of-a-newer-job'; // and its Pod with it
-  await assert.rejects(buildkit.finishBuild(handle, {}, runtimeWith(cluster.clients)), /failed: BackoffLimitExceeded/);
+  cluster.state.jobUid = 'uid-of-a-newer-job'; // completed, and its Pod with it
+  await assert.rejects(buildkit._forTest.finishBuild(handle, {}, runtimeWith(cluster.clients)), /no longer the Job this build started/);
   const failDelete = cluster.state.deleted.find((d) => d.kind === 'Job');
-  assert.deepEqual(failDelete.body.preconditions, { uid: 'uid-1' }, 'and its cleanup can only remove the Job it made');
-});
-
-test('an early build of a starter\'s first commit is not adopted (that build writes the starter\'s cache)', async () => {
-  const cluster = timedCluster({ previousJobs: [previousJob('Dockerfile.kubernetes')], ...pushedSoon, podExitAt: 20 });
-  kubernetes._setClientsForTest(cluster.clients);
-  const early = await kubernetes.startEarlyBuild(config(), { app, revision, environment: 'staging', sessionId: 42 });
-  const result = await kubernetes.createBuild(config(), {
-    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile.kubernetes']), early, starterTree: true,
-  });
-  assert.equal(result.earlyStart, undefined);
-  assert.ok(cluster.state.deleted.some((d) => d.kind === 'Job'), 'the early Job is cancelled');
-});
-
-// One Job name, two starts: the Job the first made, found by the second.
-function sharedJobCluster() {
-  let current = null;
-  let serial = 0;
-  let rv = 0;
-  const deletes = [];
-  const c = timedCluster({ withLogs: false });
-  c.clients.batch.listNamespacedJob = async () => ({ items: [] });
-  c.clients.batch.createNamespacedJob = async ({ body }) => {
-    if (current) throw Object.assign(new Error('exists'), { code: 409 });
-    serial += 1;
-    rv += 1;
-    current = { ...body, metadata: { ...body.metadata, uid: `job-uid-${serial}`, resourceVersion: String(rv) }, status: { active: 1 } };
-    return current;
-  };
-  c.clients.batch.readNamespacedJob = async () => {
-    if (!current) throw Object.assign(new Error('not found'), { code: 404 });
-    return JSON.parse(JSON.stringify(current));
-  };
-  c.clients.batch.patchNamespacedJob = async ({ body }) => {
-    rv += 1;
-    current.metadata = { ...current.metadata, resourceVersion: String(rv),
-      annotations: { ...current.metadata.annotations, ...body.metadata.annotations } };
-  };
-  c.clients.batch.deleteNamespacedJob = async (req) => {
-    const pre = req.body?.preconditions || {};
-    if (!current) throw Object.assign(new Error('not found'), { code: 404 });
-    if ((pre.uid && pre.uid !== current.metadata.uid) || (pre.resourceVersion && pre.resourceVersion !== current.metadata.resourceVersion)) {
-      throw Object.assign(new Error('Precondition failed'), { code: 409 });
-    }
-    deletes.push({ kind: 'Job', uid: current.metadata.uid });
-    current = null;
-  };
-  c.clients.core.deleteNamespacedSecret = async (req) => { deletes.push({ kind: 'Secret', preconditions: req.body?.preconditions || null }); };
-  return {
-    rt: runtimeWith(c.clients), deletes, get: () => current,
-    fail: () => { current.status = { failed: 1, conditions: [{ type: 'Failed', status: 'True' }] }; },
-  };
-}
-
-const startParams = { app, revision, environment: 'staging', sessionId: 42, dockerfile: 'Dockerfile.kubernetes' };
-
-test('a start whose Job another start has taken over cannot cancel it', async () => {
-  const shared = sharedJobCluster();
-  const a = await buildkit.startBuild(config(), startParams, shared.rt);
-  const b = await buildkit.startBuild(config(), startParams, shared.rt);
-  assert.equal(a.createdHere, true);
-  assert.equal(b.createdHere, false);
-  assert.equal(await buildkit.cancelBuild(a, shared.rt), false);
-  assert.equal(shared.get()?.metadata?.uid, 'job-uid-1', 'the Job the second start waits on is still there');
-  assert.deepEqual(shared.deletes, []);
-});
-
-test('a start cannot cancel the Job that replaced its own under the same name, nor that Job\'s Secret', async () => {
-  const shared = sharedJobCluster();
-  const a = await buildkit.startBuild(config(), startParams, shared.rt);
-  shared.fail();
-  const b = await buildkit.startBuild(config(), startParams, shared.rt); // deletes the failed job-uid-1, makes job-uid-2
-  assert.equal(b.createdHere, true);
-  assert.equal(shared.get()?.metadata?.uid, 'job-uid-2');
-  const before = shared.deletes.length;
-  assert.equal(await buildkit.cancelBuild(a, shared.rt), false);
-  assert.equal(shared.get()?.metadata?.uid, 'job-uid-2');
-  assert.deepEqual(shared.deletes.slice(before), [], 'neither the new Job nor its input Secret');
-});
-
-test('a start that still holds its Job cancels it, fenced by UID and resourceVersion, then its Secret by UID', async () => {
-  const shared = sharedJobCluster();
-  const a = await buildkit.startBuild(config(), startParams, shared.rt);
-  assert.equal(await buildkit.cancelBuild(a, shared.rt), true);
-  assert.equal(shared.get(), null);
-  assert.deepEqual(shared.deletes, [{ kind: 'Job', uid: 'job-uid-1' }, { kind: 'Secret', preconditions: { uid: 'secret-uid-1' } }]);
-});
-
-test('an early start whose Job list the lane refuses is remembered under auto too', async () => {
-  let reads = 0;
-  kubernetes._setClientsForTest({ batch: { async listNamespacedJob() { reads += 1; throw Object.assign(new Error('forbidden'), { code: 403 }); } } });
-  const params = { app, revision, environment: 'staging', sessionId: 42 };
-  await assert.rejects(kubernetes.startEarlyBuild(config(), params), /forbidden/);
-  assert.equal(await kubernetes.startEarlyBuild(config(), params), null, 'the next start does not ask again');
-  assert.equal(reads, 1);
-  assert.ok(buildkit.unavailableReason());
+  assert.deepEqual(failDelete.body.preconditions, { uid: 'uid-1' }, 'the cleanup is fenced to the Job this build made');
 });
 
 test('finishedPod: a result only from a Pod of this Job that exited 0, never from another Job\'s, a failed or a deleting one', () => {
@@ -613,4 +414,50 @@ test('finishedPod: a result only from a Pod of this Job that exited 0, never fro
   assert.equal(finishedPod(pod({ status: { phase: 'Running', containerStatuses: [{ name: 'buildkit',
     state: { terminated: { exitCode: 1, message: digest('e') } } }] } }), 'job', 'uid-1'), null);
   assert.equal(finishedPod(pod({ metadata: { deletionTimestamp: 'now' } }), 'job', 'uid-1'), null);
+});
+
+test('the Job\'s own success is checked as the fast path is: failure first, its own Pod, a build container that exited 0', async () => {
+  // Succeeded Pods counted while the controller has already decided the Job
+  // fails: failure wins, as the Job controller decides it.
+  const failing = timedCluster({
+    withLogs: false, podExitAt: 0, jobDoneAt: null,
+    job: (j, t) => {
+      j.status = t < 300
+        ? { succeeded: 1, conditions: [{ type: 'FailureTarget', status: 'True', reason: 'DeadlineExceeded' }] }
+        : { succeeded: 1, failed: 0, conditions: [{ type: 'Failed', status: 'True', reason: 'DeadlineExceeded' }] };
+      return j;
+    },
+  });
+  await assert.rejects(build(failing), (err) => /failed: DeadlineExceeded/.test(err.message) && err.killed === true);
+  // A Job that says it succeeded, whose build container did not exit 0.
+  const failedContainer = timedCluster({ withLogs: false, podExitAt: 0, exitCode: 1, message: digest('e'), jobDoneAt: 0 });
+  failedContainer.clients.batch.readNamespacedJob = (orig => async (r) => {
+    const j = await orig(r); j.status = { succeeded: 1, conditions: [{ type: 'Complete', status: 'True' }] }; return j;
+  })(failedContainer.clients.batch.readNamespacedJob);
+  await assert.rejects(build(failedContainer), /finished without an image digest/);
+  // A completed Job whose Pod belongs to another Job.
+  const otherPod = timedCluster({
+    withLogs: false, podExitAt: 0, jobDoneAt: 0,
+    pod: (p) => { p.metadata.ownerReferences[0].uid = 'uid-of-the-old-job'; return p; },
+  });
+  await assert.rejects(build(otherPod), /finished without an image digest/);
+});
+
+test('the fast path leaves a Pod with a container besides the build\'s to the Job\'s verdict', async () => {
+  const cluster = timedCluster({
+    ...pushedSoon, podExitAt: 0, jobDoneAt: 600,
+    pod: (p) => { p.status.containerStatuses.push({ name: 'sidecar', state: { running: {} } }); return p; },
+  });
+  const result = await build(cluster);
+  assert.equal(result.imageRef, `registry.test/apps/demo@${digest('d')}`);
+  assert.ok(cluster.since() >= 600, 'only once the Job itself succeeded');
+});
+
+test('the script: a TERM after the preflight succeeded still stops the fetch and exits 143', async () => {
+  const run = await runScript({ preflightMs: 50, fetchMs: 2000, termAfterMs: 400 });
+  assert.equal(run.code, 143, run.out);
+  assert.ok(run.ms < 1000, `took ${run.ms} ms`);
+  assert.doesNotMatch(run.calls, /git fetch done/);
+  assert.doesNotMatch(run.calls, /checkout-index|read-tree/, 'the checkout never runs');
+  assert.doesNotMatch(run.calls, /buildctl build/);
 });

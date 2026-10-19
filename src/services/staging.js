@@ -221,10 +221,6 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
   // the build as well as the checks (#4696).
   const timings = { startedAt: buildStartedAt };
   reportBuildStep(config, session, 'source_fetch', timings, buildStartedAt);
-  // A build started before the checkout (below), until the image build
-  // takes it over; whatever fails before then cancels it.
-  let earlyBuild = null;
-  let earlyTaken = false;
 
   try {
     // 1. Clone the PR branch
@@ -273,24 +269,6 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
         + 'Send a message in the session first.'
       );
     }
-
-    // A Kubernetes build of a pinned commit starts now, beside the checkout
-    // below: its Job fetches the commit itself and needs nothing from this
-    // clone but the Dockerfile's name, which the runtime guesses and checks
-    // against the clone before it waits (kubernetes.startEarlyBuild). What
-    // the clone is read for still decides the deploy: a manifest or secret
-    // check that fails below fails this build before anything is deployed,
-    // and the catch at the end cancels the early Job. Its failure to start
-    // is no failure: the build then starts after the clone, as before.
-    const earlyRevision = pinnedSha && /^[0-9a-f]{40}$/i.test(pinnedSha) ? pinnedSha.toLowerCase() : null;
-    earlyBuild = earlyRevision
-      ? applicationRuntime.startEarlyBuild(config, {
-        app, revision: earlyRevision, environment: 'staging', sessionId: session.id,
-      }).catch((err) => {
-        log.warn('staging', 'Early image build did not start; building after the checkout', { sessionId: session.id, err: err.message });
-        return null;
-      })
-      : null;
 
     // A Kubernetes build fetches the commit from GitHub itself, so a whole
     // clone here downloads the same source a second time: for the self-app
@@ -482,17 +460,13 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
     let imageFinished = false;
     let cloneFinished = false;
     let cloneStartedAt;
-    const early = earlyBuild ? await earlyBuild : null;
-    earlyTaken = true;
     const buildImage = async () => {
       let result;
       try {
         result = await applicationRuntime.build(config, {
           app, revision: resolvedRevision, environment: 'staging', sessionId: session.id,
-          sourceDir: cloneDir, dockerImage: imageName, onProgress: imageProgress.report, early,
+          sourceDir: cloneDir, dockerImage: imageName, onProgress: imageProgress.report,
         });
-        // How long before the checkout was done the build's Job was made.
-        if (result?.earlyStart && early?.startedAt) timings.imageEarlyLeadMs = imageBuildStartedAt - early.startedAt;
         return result;
       } finally {
         imageProgress.close();
@@ -647,10 +621,6 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
       timings,
     };
   } catch (err) {
-    if (earlyBuild && !earlyTaken) {
-      const early = await earlyBuild;
-      if (early) await applicationRuntime.cancelEarlyBuild(config, early).catch(() => false);
-    }
     log.error('staging', 'Staging build failed', { sessionId: session.id, err: err.message });
     // Cleanup on failure — short grace, this container is being discarded.
     // Best-effort (the build already failed; nothing downstream forgets this

@@ -63,7 +63,7 @@ function fakeCluster({
   let reads = 0;
   const jobStatuses = jobReads || [{ active: 1 }, { succeeded: 1, conditions: [{ type: 'Complete', status: 'True' }] }];
   const pod = () => ({
-    metadata: { name: 'bk-pod', creationTimestamp: '2026-09-14T10:00:00Z' },
+    metadata: { name: 'bk-pod', creationTimestamp: '2026-09-14T10:00:00Z', ownerReferences: [{ kind: 'Job', controller: true, uid: 'uid-1' }] },
     spec: { nodeName: 'worker-3' },
     status: { containerStatuses: [{ name: 'buildkit', state: { terminated: { exitCode: podExitCode, message: podMessage } } }] },
   });
@@ -82,7 +82,7 @@ function fakeCluster({
     async readNamespacedJob({ name }) {
       const status = jobStatuses[Math.min(reads, jobStatuses.length - 1)];
       reads += 1;
-      return { metadata: { name, namespace: 'bk' }, status };
+      return { metadata: { name, namespace: 'bk', uid: 'uid-1' }, status };
     },
     async patchNamespacedJob(request, options) { state.patches.push({ request, options }); },
     async deleteNamespacedJob(request) { state.deleted.push(request); },
@@ -247,7 +247,7 @@ test('the build script: fetches by SHA, exports the tree without .git, never pri
   // tests/kubernetes-buildkit-waits.test.js).
   assert.ok(script.indexOf('git -c protocol.version=2 fetch') < script.indexOf('buildctl-daemonless.sh debug workers'),
     'the fetch is under way before the preflight starts');
-  assert.match(script, /buildctl-daemonless\.sh debug workers[^\n]*&\npreflight=\$!\nif ! wait "\$preflight"; then\n[^\n]*\n[^\n]*\n {2}stop_fetch\n {2}exit 75/,
+  assert.match(script, /buildctl-daemonless\.sh debug workers[^\n]*&\npreflight=\$!\npreflight_ok=yes\nwait "\$preflight" \|\| preflight_ok=no\npreflight=\nif \[ "\$preflight_ok" != yes \]; then\n[^\n]*\n[^\n]*\n {2}stop_fetch\n {2}exit 75/,
     'a daemon that cannot start stops the fetch and exits 75');
   assert.ok(script.indexOf('debug workers') < script.indexOf('wait "$fetch" ||'), 'the preflight verdict is read before the fetch\'s');
   assert.ok(script.indexOf('if [ "$fetched" -ne 0 ]') < script.indexOf('buildctl-daemonless.sh build'), 'nothing is built before both are in');
