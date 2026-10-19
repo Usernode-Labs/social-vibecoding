@@ -3648,6 +3648,21 @@
     {
       "source": "src/routes/auth.js",
       "method": "GET",
+      "path": "/api/auth/waiting",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "profile.get.auth.waiting.bdc95150",
+      "domain": "profile",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "profile",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#profile"
+    },
+    {
+      "source": "src/routes/auth.js",
+      "method": "GET",
       "path": "/api/auth/me",
       "expression": null,
       "status": "mapped",
