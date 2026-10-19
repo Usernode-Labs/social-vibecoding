@@ -71,6 +71,18 @@ poolMod.getPool = () => ({
       a.db_size_measured_at = params[1];
       return { rows: [] };
     }
+    // A transition runs under the app row's lock (a transaction).
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(q)) return { rows: [] };
+    if (/^SELECT db_storage_frozen_at, db_storage_grace_until, db_storage_cap_bytes FROM apps WHERE id = \$1 FOR UPDATE$/.test(q)) {
+      const a = byId(params[0]);
+      return { rows: a ? [{ db_storage_frozen_at: a.db_storage_frozen_at, db_storage_grace_until: a.db_storage_grace_until, db_storage_cap_bytes: a.db_storage_cap_bytes }] : [] };
+    }
+    if (/^UPDATE apps SET db_storage_frozen_at = \$1, db_storage_warned_at = COALESCE\(db_storage_warned_at, \$1\) WHERE id = \$2$/.test(q)) {
+      const a = byId(params[1]);
+      a.db_storage_frozen_at = params[0];
+      if (!a.db_storage_warned_at) a.db_storage_warned_at = params[0];
+      return { rows: [], rowCount: 1 };
+    }
     // The sweep's transitions are compare-and-sets on what it read: each
     // answers how many rows it changed.
     if (/^UPDATE apps SET db_storage_frozen_at = \$1, db_storage_warned_at = COALESCE/.test(q)) {

@@ -243,47 +243,51 @@ function defaultNotify(pool, args) {
   return require('./notifications').createAppHealthNotification(pool, args);
 }
 
+// The app's row, locked for the length of `fn` (which may change its
+// database role): the sweep's freeze, thaw and hold, and an admin's grace,
+// each run whole under it, so a role is never changed against a row another
+// of them has just changed. Resolves what `fn` does.
+function underRowLock(pool, appId, fn) {
+  const { withTransaction } = require('./cli-auth');
+  return withTransaction(pool, async (db) => {
+    const { rows } = await db.query(
+      `SELECT db_storage_frozen_at, db_storage_grace_until, db_storage_cap_bytes
+         FROM apps WHERE id = $1 FOR UPDATE`, [appId]);
+    return fn(db, rows[0] || null);
+  });
+}
+
+const sameTime = (a, b) => (toMs(a) ?? null) === (toMs(b) ?? null);
+
 async function applyTransition(pool, app, dbName, decision, ctx) {
   const { now, staging, execute, notify, bytes, capBytes, summary } = ctx;
   const meta = { slug: app.slug, dbName, bytes, capBytes, staging };
   switch (decision.transition) {
     case 'freeze': {
-      // The row first, as a compare-and-set on what this sweep read (not
-      // frozen, the same grace): a sweep beside another one, or beside an
-      // admin's grace or new cap, freezes nothing they changed. Then the
-      // role; if that fails the row is put back and the next sweep tries
-      // again, and if the process dies between the two, every later sweep
-      // that keeps the app frozen makes the role read-only again (the
-      // `none` case below). Then the people: if the notification fails the
+      // Under the app row's lock, held across the role change: an admin's
+      // grace (grantGrace) and another sweep take the same lock, so none of
+      // them interleaves with this. Read again under it, the app must still
+      // be as this sweep measured it (not frozen, the same grace and cap);
+      // then the role, then the row, so a role that cannot be changed
+      // records nothing and the next sweep tries again. A process that dies
+      // after the role leaves the row unfrozen and over its cap: the next
+      // sweep freezes it. Then the people: if the notification fails the
       // freeze still stands, which is the part that protects the volume.
-      const { rowCount } = await pool.query(
-        `UPDATE apps
-            SET db_storage_frozen_at = $1,
-                db_storage_warned_at = COALESCE(db_storage_warned_at, $1)
-          WHERE id = $2 AND db_storage_frozen_at IS NULL
-            AND db_storage_grace_until IS NOT DISTINCT FROM $3
-            AND db_storage_cap_bytes IS NOT DISTINCT FROM $4`,
-        [now, app.id, app.db_storage_grace_until ?? null, app.db_storage_cap_bytes ?? null]
-      );
-      if (!rowCount) return;
-      if (!staging) {
-        try {
-          await dbManager.setAppDatabaseWritable(dbName, false, { execute });
-        } catch (err) {
-          await pool.query(
-            `UPDATE apps SET db_storage_frozen_at = NULL, db_storage_warned_at = $3
-              WHERE id = $1 AND db_storage_frozen_at = $2`,
-            [app.id, now, app.db_storage_warned_at ?? null]);
-          throw err;
-        }
-        // An admin's grace that thawed the app between the row and the role
-        // (grantGrace thaws on the spot) wins: the role is writable again.
-        const { rows: [after] } = await pool.query('SELECT db_storage_frozen_at FROM apps WHERE id = $1', [app.id]);
-        if (!after || !after.db_storage_frozen_at) {
-          await dbManager.setAppDatabaseWritable(dbName, true, { execute });
-          return;
-        }
-      }
+      const frozen = await underRowLock(pool, app.id, async (db, cur) => {
+        if (!cur || cur.db_storage_frozen_at
+          || !sameTime(cur.db_storage_grace_until, app.db_storage_grace_until)
+          || (cur.db_storage_cap_bytes ?? null) !== (app.db_storage_cap_bytes ?? null)) return false;
+        if (!staging) await dbManager.setAppDatabaseWritable(dbName, false, { execute });
+        await db.query(
+          `UPDATE apps
+              SET db_storage_frozen_at = $1,
+                  db_storage_warned_at = COALESCE(db_storage_warned_at, $1)
+            WHERE id = $2`,
+          [now, app.id]
+        );
+        return true;
+      });
+      if (!frozen) return;
       summary.frozen += 1;
       log.warn('app-storage-cap', 'App database frozen read-only: over its storage cap', meta);
       if (!staging) {
@@ -297,10 +301,13 @@ async function applyTransition(pool, app, dbName, decision, ctx) {
       return;
     }
     case 'unfreeze': {
-      if (!staging) await dbManager.setAppDatabaseWritable(dbName, true, { execute });
-      const { rowCount } = await pool.query(
-        'UPDATE apps SET db_storage_frozen_at = NULL WHERE id = $1 AND db_storage_frozen_at IS NOT NULL', [app.id]);
-      if (!rowCount) return;
+      const thawed = await underRowLock(pool, app.id, async (db, cur) => {
+        if (!cur || !cur.db_storage_frozen_at) return false;
+        if (!staging) await dbManager.setAppDatabaseWritable(dbName, true, { execute });
+        await db.query('UPDATE apps SET db_storage_frozen_at = NULL WHERE id = $1', [app.id]);
+        return true;
+      });
+      if (!thawed) return;
       summary.unfrozen += 1;
       log.info('app-storage-cap', 'App database writable again', { ...meta, grace: decision.graceOpen });
       return;
@@ -330,12 +337,18 @@ async function applyTransition(pool, app, dbName, decision, ctx) {
       return;
     }
     case 'none': {
-      // Frozen and staying so: the role is made read-only again. Idempotent,
-      // and it is what finishes a freeze whose process died between its row
-      // and its role.
+      // Frozen and staying so: the role is made read-only again, under the
+      // row's lock and only if the row still says frozen with no grace open
+      // (an admin's grace granted since this sweep read the app wins).
+      // Idempotent: it holds a freeze whatever happened to the role.
       if (decision.frozen && !staging) {
-        await dbManager.setAppDatabaseWritable(dbName, false, { execute });
-        summary.enforced += 1;
+        const enforced = await underRowLock(pool, app.id, async (_db, cur) => {
+          if (!cur || !cur.db_storage_frozen_at) return false;
+          if (toMs(cur.db_storage_grace_until) > toMs(now)) return false;
+          await dbManager.setAppDatabaseWritable(dbName, false, { execute });
+          return true;
+        });
+        if (enforced) summary.enforced += 1;
       }
       return;
     }
@@ -348,7 +361,7 @@ async function applyTransition(pool, app, dbName, decision, ctx) {
  * `app-storage-cap` clock (src/workflow/clock/services.ts), whose last run is
  * what the admin API shows. Never throws: a failed measurement or a failed
  * app is recorded in the summary and the rest carries on. Every transition
- * is a compare-and-set on the row this sweep read, so two sweeps at once
+ * is checked again against the row under its lock, so two sweeps at once
  * notify once and undo nothing an admin changed meanwhile.
  *
  * deps.execute  the psql runner db-manager uses (tests inject a fake)
@@ -474,23 +487,31 @@ async function grantGrace(pool, slug, minutes, deps = {}) {
   const now = deps.now != null ? new Date(toMs(deps.now)) : new Date();
   const staging = deps.staging != null ? !!deps.staging : isStaging();
   const until = new Date(now.getTime() + mins * 60 * 1000);
-  const { rows } = await pool.query(
-    `UPDATE apps
-        SET db_storage_grace_until = $1
-      WHERE slug = $2 AND NOT self_hosted
-  RETURNING id, slug, db_storage_frozen_at`,
-    [until, slug]
-  );
-  const app = rows[0];
-  if (!app) return null;
-  if (app.db_storage_frozen_at) {
+  // Under the row's lock across the role change, as the sweep's freeze and
+  // hold are: neither can make the role read-only again in between. (A role
+  // change also ends the app's open connections, so a grace on an app that is
+  // not frozen leaves the role alone.)
+  const app = await require('./cli-auth').withTransaction(pool, async (db) => {
+    const { rows } = await db.query(
+      `UPDATE apps
+          SET db_storage_grace_until = $1
+        WHERE slug = $2 AND NOT self_hosted
+    RETURNING id, slug, db_storage_frozen_at`,
+      [until, slug]
+    );
+    const row = rows[0];
+    if (!row) return null;
     // Same split as the sweep: the row is the preview's own to write, the
     // role is production's and is left alone from a staging copy.
-    if (!staging) {
-      await dbManager.setAppDatabaseWritable(dbManager.appDbName(slug), true, { execute: deps.execute });
+    if (row.db_storage_frozen_at) {
+      if (!staging) {
+        await dbManager.setAppDatabaseWritable(dbManager.appDbName(slug), true, { execute: deps.execute });
+      }
+      await db.query('UPDATE apps SET db_storage_frozen_at = NULL WHERE id = $1', [row.id]);
     }
-    await pool.query('UPDATE apps SET db_storage_frozen_at = NULL WHERE id = $1', [app.id]);
-  }
+    return row;
+  });
+  if (!app) return null;
   log.info('app-storage-cap', 'Grace window granted', {
     slug, minutes: mins, until: until.toISOString(), wasFrozen: !!app.db_storage_frozen_at, staging,
   });

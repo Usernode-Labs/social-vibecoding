@@ -251,24 +251,26 @@ async function evaluate(pool, config, key, deps = {}) {
          FROM platform_limit_alerts WHERE limit_key = $1 FOR UPDATE`,
       [key]
     );
-    let decision = decide({ used, cap, percent, level: rows[0] && rows[0].level });
     // GitHub's figures are each process's own last answer, about the quota
     // window GitHub named (its reset). The level is that window's: within it
     // a level only rises (another process's older answer re-arms nothing),
     // an answer about a window before it is not recorded at all, and a new
-    // window decides afresh, a fall included.
+    // window starts from ok, so its own crossings are told.
+    let baseline = rows[0] && rows[0].level;
+    let sameWindow = false;
     let window = null;
     if (limit.fromAnswers) {
       window = Number(limit.window()) || null;
       const storedWindow = rows[0] && rows[0].window_ms != null ? Number(rows[0].window_ms) : null;
-      const stored = normalizeLevel(rows[0] && rows[0].level);
       if (storedWindow && storedWindow > Date.now() && (!window || window < storedWindow)) {
         return { decision: null, inserted: [], stale: true };
       }
-      if (storedWindow && window === storedWindow && RANK[decision.level] < RANK[stored]) {
-        decision = { level: stored, notify: null };
-      }
+      sameWindow = !!storedWindow && window === storedWindow;
+      if (!sameWindow) baseline = 'ok';
     }
+    let decision = decide({ used, cap, percent, level: baseline });
+    const stored = normalizeLevel(rows[0] && rows[0].level);
+    if (sameWindow && RANK[decision.level] < RANK[stored]) decision = { level: stored, notify: null };
     await db.query(
       `UPDATE platform_limit_alerts
           SET level = $2, used = $3, cap = $4, measured_at = NOW(),

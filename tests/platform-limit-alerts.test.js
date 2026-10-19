@@ -365,6 +365,13 @@ test('a GitHub level is its quota window\'s: it only rises within it, an older w
   githubWindow(900, { resetMin: 90 });
   assert.equal((await run()).notified, 'warn');
   assert.deepEqual(calls.create.map((c) => c.detail), ['github_warn:4100:5000', 'github_warn:4100:5000']);
+
+  // A new window whose first reading is already used up: told, though the
+  // last window ended full too.
+  githubWindow(0, { resetMin: 150 });
+  assert.equal((await run()).notified, 'full');
+  githubWindow(0, { resetMin: 210 });
+  assert.equal((await run()).notified, 'full', 'and the next window\'s again');
 });
 
 test('the warning line is GitHub\'s own, not PLATFORM_LIMIT_WARN_PERCENT', async (t) => {

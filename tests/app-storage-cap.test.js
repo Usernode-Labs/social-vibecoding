@@ -73,6 +73,18 @@ function fakePool(apps) {
         a.db_size_measured_at = params[1];
         return { rows: [], rowCount: 1 };
       }
+      // A transition runs under the app row's lock (a transaction).
+      if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(q)) return { rows: [] };
+      if (/^SELECT db_storage_frozen_at, db_storage_grace_until, db_storage_cap_bytes FROM apps WHERE id = \$1 FOR UPDATE$/.test(q)) {
+        const a = byId(params[0]);
+        return { rows: a ? [{ db_storage_frozen_at: a.db_storage_frozen_at, db_storage_grace_until: a.db_storage_grace_until, db_storage_cap_bytes: a.db_storage_cap_bytes }] : [] };
+      }
+      if (/^UPDATE apps SET db_storage_frozen_at = \$1, db_storage_warned_at = COALESCE\(db_storage_warned_at, \$1\) WHERE id = \$2$/.test(q)) {
+        const a = byId(params[1]);
+        a.db_storage_frozen_at = params[0];
+        if (!a.db_storage_warned_at) a.db_storage_warned_at = params[0];
+        return { rows: [], rowCount: 1 };
+      }
       // The sweep's transitions are compare-and-sets on the row it read, and
       // answer how many rows they changed.
       if (/^UPDATE apps SET db_storage_frozen_at = \$1, db_storage_warned_at = COALESCE\(db_storage_warned_at, \$1\) WHERE id = \$2 AND db_storage_frozen_at IS NULL AND db_storage_grace_until IS NOT DISTINCT FROM \$3 AND db_storage_cap_bytes IS NOT DISTINCT FROM \$4$/.test(q)) {
@@ -379,34 +391,62 @@ test('successive sweeps: a grace window thaws a frozen app and the sweep re-free
   assert.deepEqual(notify.calls.map((c) => c.detail), ['storage_full']);
 });
 
-test('two sweeps at once freeze and tell once, and a sweep never undoes the grace an admin gave meanwhile', async () => {
-  // Two runs of the storage clock can overlap (one stalled past its lease):
-  // the second to write finds the row already moved and does nothing.
+test('a sweep acts on the row as it stands under its lock: a stale read freezes and tells nobody twice, and undoes no grace', async () => {
+  // Two runs of the storage clock can overlap (one stalled past its lease),
+  // and an admin's grace can land after a sweep read the apps: each
+  // transition is checked again under the app row's lock.
   const pool = fixture();
   const notify = fakeNotify();
-  const [one, two] = await Promise.all([
-    cap.sweep(pool, { execute: fakeExecute(SIZES), now: NOW, staging: false, notify }),
-    cap.sweep(pool, { execute: fakeExecute(SIZES), now: NOW, staging: false, notify }),
-  ]);
-  assert.equal(one.frozen + two.frozen, 1, 'frozen once');
-  assert.equal(one.warned + two.warned, 1, 'warned once');
-  assert.deepEqual(notify.calls.map((c) => c.detail).sort(), ['storage_full', 'storage_warn']);
+  const first = await cap.sweep(pool, { execute: fakeExecute(SIZES), now: NOW, staging: false, notify });
+  assert.equal(first.frozen, 1);
+  // A second sweep whose read is from before the first one's freeze.
+  const stale = pool.apps.map((a) => ({ ...a, db_storage_frozen_at: null, db_storage_warned_at: null }));
+  const read = pool.query.bind(pool);
+  pool.query = async (sql, params) => (/FROM apps WHERE NOT self_hosted$/.test(norm(sql))
+    ? { rows: stale.filter((a) => !a.self_hosted) } : read(sql, params));
+  const execute = fakeExecute(SIZES);
+  const second = await cap.sweep(pool, { execute, now: NOW, staging: false, notify });
+  assert.equal(second.frozen, 0, 'frozen once');
+  assert.equal(second.warned, 0, 'warned once');
+  assert.equal(notify.calls.filter((c) => c.detail === 'storage_full').length, 1);
 
   // A sweep that read big-one before an admin's grace: no freeze, no role
   // change, nobody told.
   const later = fixture();
-  const execute = fakeExecute(SIZES);
-  const read = later.query.bind(later);
+  const read2 = later.query.bind(later);
   later.query = async (sql, params) => {
-    const out = await read(sql, params);
-    if (/FROM apps WHERE NOT self_hosted/.test(norm(sql))) later.apps[1].db_storage_grace_until = new Date(NOW.getTime() + 3600e3);
+    const out = await read2(sql, params);
+    if (/FROM apps WHERE NOT self_hosted$/.test(norm(sql))) later.apps[1].db_storage_grace_until = new Date(NOW.getTime() + 3600e3);
     return out;
   };
   const tell = fakeNotify();
-  const out = await cap.sweep(later, { execute, now: NOW, staging: false, notify: tell });
+  const execute2 = fakeExecute(SIZES);
+  const out = await cap.sweep(later, { execute: execute2, now: NOW, staging: false, notify: tell });
   assert.equal(out.frozen, 0);
   assert.equal(later.apps[1].db_storage_frozen_at, null);
+  assert.ok(!execute2.roleCalls().some((c) => /app_big_one_owner/.test(c)), 'big-one\'s role untouched');
   assert.deepEqual(tell.calls.map((c) => c.detail), ['storage_warn'], 'only warm, which nobody touched');
+});
+
+test('holding a freeze leaves alone an app an admin gave grace since the sweep read it', async () => {
+  // The review's case: grantGrace thawed big-one after the sweep's read; the
+  // sweep's hold must not make its role read-only again.
+  const pool = fixture();
+  pool.apps[1].db_storage_frozen_at = NOW;
+  pool.apps[1].db_storage_warned_at = NOW;
+  const read = pool.query.bind(pool);
+  pool.query = async (sql, params) => {
+    const out = await read(sql, params);
+    if (/FROM apps WHERE NOT self_hosted$/.test(norm(sql))) {
+      pool.apps[1].db_storage_frozen_at = null;
+      pool.apps[1].db_storage_grace_until = new Date(NOW.getTime() + 3600e3);
+    }
+    return out;
+  };
+  const execute = fakeExecute(SIZES);
+  const out = await cap.sweep(pool, { execute, now: NOW, staging: false, notify: fakeNotify() });
+  assert.equal(out.enforced, 0);
+  assert.ok(!execute.roleCalls().some((c) => /app_big_one_owner/.test(c)), 'no read-only role after the grace');
 });
 
 test('a freeze whose process died between its row and its role is finished by the next sweep', async () => {
