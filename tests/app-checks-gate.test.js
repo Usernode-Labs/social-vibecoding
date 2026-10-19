@@ -16,7 +16,9 @@
 //     semantics (worker/usernode-bench-capture.js runDeclaredChecks), in the
 //     review's captures and, with BENCH_CAPTURE_MODE=checks, on its own;
 //   - a review round turns a failing check into a blocker for its fix turn,
-//     whatever the reviewer said (bot-review.js checkIssues);
+//     whatever the reviewer said (bot-review.js checkIssues), and tap targets
+//     the capture measured under 44px into an issue of their own
+//     (tapTargetIssue);
 //   - the worker writes the check command before each bot build and fix turn
 //     (worker.js writeAppCheck), and gives the stop guard its checks gate
 //     (STOP_GUARD_CHECKS) for a Claude Code build that asks;
@@ -274,6 +276,58 @@ test('a review round makes each failing declared check a blocker for its fix tur
   assert.equal(fixed.issues.length, review.MAX_ISSUES, 'and the reviewer\'s after it, eight in all');
   // A capture carried over a restart keeps them.
   assert.deepEqual(review.reviewForm(failingCapture()).declaredChecks.failed.length, 1);
+});
+
+// App bench run 216 (19 Oct 2026): first versions built on DeepSeek V4.1
+// Flash 1017 kept 0.8 tap targets under 44px a build, GLM's none, and the
+// reviewer passed every one.
+const smallTaps = (small = 2) => ({
+  smallTapTargets: {
+    small, checked: 9,
+    samples: [{ tag: 'button', text: 'Remove', width: 28, height: 28 }, { tag: 'a', text: 'Edit', width: 60, height: 32 }].slice(0, small),
+  },
+});
+
+test('a review round makes tap targets measured under 44px an issue for its fix turn, whatever the reviewer saw', async () => {
+  const issue = review.tapTargetIssue({ booted: true, checks: smallTaps() });
+  assert.equal(issue.id, 'tap-targets-under-44px');
+  assert.equal(issue.severity, 'major');
+  assert.match(issue.problem, /^2 tappable controls are smaller than 44px wide or tall, as the platform measured on the phone screen: "Remove" \(28x28px\), "Edit" \(60x32px\)\./);
+  assert.match(issue.fix, /at least 44px wide and 44px tall[^]*without changing how the screen looks/);
+  assert.match(review.tapTargetIssue({ checks: smallTaps(1) }).problem, /^1 tappable control is smaller/);
+  assert.equal(review.tapTargetIssue({ booted: true }), null, 'nothing measured');
+  assert.equal(review.tapTargetIssue({ checks: smallTaps(0) }), null, 'none small');
+  assert.equal(review.tapTargetIssue({ checks: { smallTapTargets: { small: null, checked: 0, samples: [] } } }), null, 'no phone screen measured');
+  // A capture carried over a restart has them in its signals.
+  const carried = review.reviewForm({ ...failingCapture(), declaredChecks: null, checks: smallTaps() });
+  assert.equal(carried.checks, undefined, 'its checks stay in the private stores');
+  assert.match(review.tapTargetIssue(carried).problem, /^2 tappable controls[^]*"Remove" \(28x28px\)/);
+  assert.match(review.tapTargetIssue({
+    signals: { automaticChecks: { tapTargetsUnder44px: { small: 1, checked: 4, examples: [{ text: '' }] } } },
+  }).problem, /^1 tappable control is smaller[^]*: "a control with no label"\./, 'no size, no label');
+
+  const call = async (capture, verdict) => review.reviewCapture({
+    pool: {}, config: {}, userId: 1, model: OPUS, seed: 's', spec: 'p', capture, round: 1, maxRounds: 2,
+    deps: {
+      readArtifacts: async (_p, ids) => new Map(ids.map((id) => [id, { content_type: 'image/png', data: PNG }])),
+      callReviewer: async () => ({
+        ok: true, costUsd: 0.1, ms: 1,
+        text: JSON.stringify(verdict === 'ship' ? { verdict: 'ship', issues: [] }
+          : { verdict: 'fix', issues: [{ id: 'r1', severity: 'minor', screen: 's', problem: 'p', fix: 'f' }] }),
+      }),
+    },
+  });
+  const tapOnly = { ...failingCapture(), declaredChecks: null, checks: smallTaps(1) };
+  const shipped = await call(tapOnly, 'ship');
+  assert.equal(shipped.verdict, 'fix', 'a ship with a tap target under 44px is a fix');
+  assert.deepEqual(shipped.issues.map((i) => i.id), ['tap-targets-under-44px']);
+  assert.equal(shipped.tapTargetsSmall, 1);
+  assert.equal(shipped.checksFailing, undefined, 'no check failed');
+  const both = await call({ ...failingCapture(), checks: smallTaps() }, 'fix');
+  assert.deepEqual(both.issues.map((i) => i.id), ['check-post-a-decision', 'tap-targets-under-44px', 'r1'], 'checks, then taps, then the reviewer\'s');
+  assert.deepEqual([both.checksFailing, both.tapTargetsSmall], [1, 2]);
+  const clean = await call({ ...failingCapture(), declaredChecks: null, checks: smallTaps(0) }, 'ship');
+  assert.deepEqual([clean.verdict, clean.issues], ['ship', []], 'nothing measured small: the reviewer\'s ship stands');
 });
 
 test('the worker writes the check command for the app, and gives the checks gate only to a Claude Code build that asks', () => {

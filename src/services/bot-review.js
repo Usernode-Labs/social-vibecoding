@@ -336,17 +336,60 @@ function checkCounts(capture) {
   return { total: num(d.total) || 0, ran, passed, failed: Math.max(listed, ran - passed) };
 }
 
+// The tap targets a tap-target issue names, at most.
+const MAX_TAP_SAMPLES = 3;
+
 /**
- * The reviewer's answer with the capture's failing declared checks put first
- * (checkIssues): a `ship` with a failing check is a `fix`, and the reviewer's
- * own issues follow, MAX_ISSUES in all. Pure.
+ * L3 (19 Oct 2026): the issue a capture's measured TAP TARGETS make when any
+ * on the populated phone screen is under 44px across or tall (bench/capture.js
+ * `checks.smallTapTargets`, or a capture carried over a restart's signals:
+ * bench/grading.js tasteSignals), or null when none was. The build prompt
+ * asks for 44px targets and the reviewer is shown the count, yet App bench
+ * run 216's first versions built on DeepSeek V4.1 Flash 1017 kept 0.8 such
+ * controls a build to GLM 5.3 Flash's none, and the reviewer passed every
+ * one. Measured, not judged, so the platform raises it as it raises a
+ * failing check, with no reviewer call. Pure.
+ */
+function measuredTaps(capture) {
+  return capture?.checks?.smallTapTargets || capture?.signals?.automaticChecks?.tapTargetsUnder44px || null;
+}
+
+function tapTargetIssue(capture) {
+  const measured = measuredTaps(capture);
+  const small = num(measured?.small) || 0;
+  if (small <= 0) return null;
+  const listed = Array.isArray(measured.samples) ? measured.samples : (Array.isArray(measured.examples) ? measured.examples : []);
+  const named = listed.slice(0, MAX_TAP_SAMPLES).map((x) => {
+    const size = num(x?.width) != null && num(x?.height) != null ? ` (${num(x.width)}x${num(x.height)}px)` : '';
+    return `"${clip(x?.text, 40) || 'a control with no label'}"${size}`;
+  });
+  return {
+    id: 'tap-targets-under-44px',
+    severity: 'major',
+    screen: 'the phone screen with its data, light look',
+    problem: clip(`${small} tappable control${small === 1 ? ' is' : 's are'} smaller than 44px wide or tall, as the platform measured on the phone screen${named.length ? `: ${named.join(', ')}` : ''}. A target that small is easy to miss with a finger.`, MAX_FIELD_CHARS),
+    fix: clip('Give each one a tappable area at least 44px wide and 44px tall (min-width and min-height, or padding on the control) without changing how the screen looks: an icon button keeps its icon size and grows its box. Then check every control on that screen, not only the ones named here.', MAX_FIELD_CHARS),
+  };
+}
+
+/**
+ * The reviewer's answer with what the platform measured put first: the
+ * capture's failing declared checks (checkIssues), then its tap targets
+ * under 44px (tapTargetIssue). A `ship` with either is a `fix`, and the
+ * reviewer's own issues follow, MAX_ISSUES in all. Pure.
  */
 function withCheckIssues(answer, capture) {
   const checks = checkIssues(capture);
-  if (!checks.length || !answer?.ok) return answer;
-  const ids = new Set(checks.map((c) => c.id));
-  const issues = [...checks, ...(answer.issues || []).filter((it) => !ids.has(it.id))].slice(0, MAX_ISSUES);
-  return { ...answer, verdict: 'fix', issues, checksFailing: checks.length };
+  const tap = tapTargetIssue(capture);
+  const raised = tap ? [...checks, tap] : checks;
+  if (!raised.length || !answer?.ok) return answer;
+  const ids = new Set(raised.map((c) => c.id));
+  const issues = [...raised, ...(answer.issues || []).filter((it) => !ids.has(it.id))].slice(0, MAX_ISSUES);
+  return {
+    ...answer, verdict: 'fix', issues,
+    ...(checks.length ? { checksFailing: checks.length } : {}),
+    ...(tap ? { tapTargetsSmall: num(measuredTaps(capture).small) } : {}),
+  };
 }
 
 // ── The fix turn's prompt ────────────────────────────────────────────────
@@ -1331,6 +1374,7 @@ module.exports = {
   MAX_CHECK_ISSUES,
   checkCounts,
   checkIssues,
+  tapTargetIssue,
   withCheckIssues,
   fixPrompt,
   fixBrowserLines,
