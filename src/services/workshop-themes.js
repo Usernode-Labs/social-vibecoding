@@ -214,9 +214,12 @@ async function buildThemeInput(pool, app) {
     // which is exactly the behaviour this change replaces — degraded, not broken.
     log.warn('workshop-themes', 'in-progress read failed', { app: app.slug, message: err.message });
   }
+  // A request the platform filed about itself is in its signal's topic
+  // unless the group voted it elsewhere (services/platform-signals.js).
+  const signalTopics = await require('./platform-signals').topicsByIssue(pool, appId);
   for (const i of ghIssues.slice(0, MAX_ISSUES)) {
     const a = attrs.get(i.number) || {};
-    const category = top(a.category);
+    const category = top(a.category) || signalTopics.get(Number(i.number)) || null;
     categoryOf.set(i.number, category);
     push({
       key: `issue:${i.number}`,

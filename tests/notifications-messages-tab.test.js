@@ -161,7 +161,7 @@ test('the Messages tab interleaves running sessions with its rows by time', () =
 test('the tab count sums collapsed rows, so it agrees with the bell', () => {
   assert.match(
     SHEET_SRC,
-    /unread\.reduce\(\(sum, view\) => sum \+ \(view\.count \|\| 1\), 0\)/,
+    /unreadNow\.reduce\(\(sum, view\) => sum \+ \(view\.count \|\| 1\), 0\)/,
     'a collapsed row stands for `count` notifications; counting rows would say 1 where the '
     + 'badge says 4',
   );

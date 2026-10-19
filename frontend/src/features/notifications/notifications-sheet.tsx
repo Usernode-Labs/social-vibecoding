@@ -3,7 +3,7 @@
  *
  * Unread | Messages | All tabs, TODAY / EARLIER sections, one row per
  * notification with an avatar-initial chip, the source app + relative time as
- * the subtitle, an unread dot and a trailing chevron.
+ * the subtitle, and an unread dot in the row's left margin (N6).
  *
  * ── UNREAD LEADS, and it is where the sheet opens ──────────────────────
  *
@@ -245,10 +245,12 @@ function SectionHead({ children }: { children: ReactNode }): ReactNode {
  * the controller's markAppRead. The "Other" group (notifications that belong
  * to no app) renders no button: nothing but Mark all read owns those.
  */
-function AppGroupHead({ groupKey, label, appId }: {
+function AppGroupHead({ groupKey, label, appId, onRead }: {
   groupKey: string;
   label: string;
   appId: number | null;
+  /** Before the clear: let the group's rows go, so they leave Unread (useHeldUnread). */
+  onRead?: () => void;
 }): ReactNode {
   const t = useMessages('notifications');
   const [busy, setBusy] = useState(false);
@@ -274,6 +276,7 @@ function AppGroupHead({ groupKey, label, appId }: {
             event.stopPropagation();
             if (busy) return;
             setBusy(true);
+            onRead?.();
             Promise.resolve(controller()?.markAppRead(appId))
               .catch(() => false)
               .then(() => setBusy(false));
@@ -397,12 +400,75 @@ function refocusAfterClear(sheet: Element, id: number, neighbourId: string | nul
   target?.focus();
 }
 
+/**
+ * WHAT UNREAD LISTED STAYS LISTED WHILE THE SHEET IS OPEN (polish board #7,
+ * 19 Oct 2026). Unread is a live filter over the feed, and the feed is
+ * replaced whole by the read the sheet makes as it opens (and by any later
+ * one). On an iPhone the sheet opened on "Unread (1)" from the boot copy,
+ * and about three seconds later, with no touch, the row had gone and the
+ * tab said "You're all caught up": it had been read elsewhere. A list that
+ * empties under the eye reads as the app losing it.
+ *
+ * So every row seen unread while the sheet is open is HELD on Unread until
+ * it closes. One that turns read on its own stays where it was, drawn dim
+ * and without its dot; the tab's count and Mark all read follow what is
+ * still unread. A row the viewer clears (the swipe, the ×, an app's Mark
+ * read, Mark all read) is RELEASED first, so it leaves as it always did:
+ * that is the viewer's own doing, not the list's.
+ */
+type HeldUnread = {
+  /** Listed on Unread: unread now, or held. */
+  listed: (view: ScreenRowView) => boolean;
+  /** Let these rows go, so clearing them takes them off Unread. */
+  release: (ids: Iterable<ScreenRowView['id']>) => void;
+};
+
+type HoldSets = { held: Set<ScreenRowView['id']>; released: Set<ScreenRowView['id']> };
+
+/**
+ * One render of useHeldUnread: closed, nothing is held; open, every row
+ * unread now is held, unless the viewer has let it go. Changes only the two
+ * sets it is handed.
+ */
+export function holdUnread(sets: HoldSets, open: boolean, all: readonly ScreenRowView[]): void {
+  if (!open) {
+    sets.held.clear();
+    sets.released.clear();
+    return;
+  }
+  for (const view of all) if (view.unread && !sets.released.has(view.id)) sets.held.add(view.id);
+}
+
+/** Let rows go (useHeldUnread's `release`). */
+export function releaseHeld(sets: HoldSets, ids: Iterable<ScreenRowView['id']>): void {
+  for (const id of ids) {
+    sets.released.add(id);
+    sets.held.delete(id);
+  }
+}
+
+export function useHeldUnread(open: boolean, all: ScreenRowView[]): HeldUnread {
+  const sets = useRef<HoldSets>({ held: new Set(), released: new Set() });
+  // Kept in step with the render, not in an effect: an effect runs after the
+  // frame that drew the list, and that frame would already be missing the row.
+  holdUnread(sets.current, open, all);
+  const release = useCallback((ids: Iterable<ScreenRowView['id']>) => releaseHeld(sets.current, ids), []);
+  return {
+    listed: (view) => view.unread || sets.current.held.has(view.id),
+    release,
+  };
+}
+
 type ScreenRowProps = {
   view: ScreenRowView;
   /** PlatformUI.isTouch() at render time: the swipe on touch, else the ×. */
   touch: boolean;
   /** True on Unread, the one tab a cleared row leaves. */
   removes: boolean;
+  /** Read while the sheet was open, and still listed on Unread (useHeldUnread): drawn dim. */
+  held?: boolean;
+  /** Let the row go before clearing it, so it leaves Unread (useHeldUnread). */
+  onRelease?: (ids: Iterable<ScreenRowView['id']>) => void;
 };
 
 /**
@@ -456,7 +522,7 @@ type ScreenRowProps = {
  * the kit may still be holding. The hairline between rows follows the
  * slot's place in the list rather than the row's (app.css).
  */
-function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
+function ScreenRow({ view, touch, removes, held = false, onRelease }: ScreenRowProps): ReactNode {
   const t = useMessages('notifications');
   const clearable = view.unread;
   const shape = view.actions && view.actions.length ? 'actions' : 'plain';
@@ -473,17 +539,34 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
         // takes the row out of the document; only Unread wants that.
         destructive: removes,
         color: 'var(--un-action-neutral)',
-        handler: () => { void controller()?.clearNotification(view.id); },
+        handler: () => {
+          onRelease?.([view.id]);
+          void controller()?.clearNotification(view.id);
+        },
       }],
     });
     return () => swipe.detach();
-  }, [clearable, touch, removes, shape, view.id, t]);
+  }, [clearable, touch, removes, shape, view.id, t, onRelease]);
 
-  // Everything between the row's left edge and its chevron: the tile, the
-  // three lines, the count, the dot.
+  // The row's tile, its three lines and the count.
+  //
+  // N6 (polish board, 19 Oct 2026): THE TITLE GETS THE ROW'S WIDTH. A row's
+  // end held an unread dot, a chevron and the bookmark, and on a phone that
+  // left the title about 30 characters. The chevron went (the whole row is
+  // the tap, as a notification is on the lock screen), and the dot moved
+  // into the row's left margin beside the tile, where Mail keeps it.
   const body = (
     <>
-      <AvatarChip view={view} />
+      <span className="relative flex shrink-0">
+        {view.unread ? (
+          <span
+            className="absolute -left-3 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-zinc-900 dark:bg-zinc-100"
+            aria-label={t('notifications:row.unreadDot')}
+          >
+          </span>
+        ) : null}
+        <AvatarChip view={view} />
+      </span>
       <span className="flex-1 min-w-0">
         {/* WHAT KIND. Its own line since the subject stopped sharing one with
             it: the label is the same words on every row of a kind, so it
@@ -580,11 +663,6 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
           {view.count > 99 ? '99+' : view.count}
         </span>
       ) : null}
-      {view.unread ? (
-        <span className="w-2 h-2 shrink-0 rounded-full bg-zinc-900 dark:bg-zinc-100" aria-label={t('notifications:row.unreadDot')}>
-        </span>
-      ) : null}
-      <ChevronRightIcon className="w-5 h-5 shrink-0 text-zinc-300 dark:text-zinc-600" />
     </>
   );
   // #1688: a row with an action of its own ("Still yes" on a re-confirm ask)
@@ -597,12 +675,12 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
       data-notif-id={view.id}
       // #2386: two actions (a friend request's Accept and Decline) stack
       // under the text; see RowActions.
-      // #4769: the row's right padding is pr-12, not the px-4 it was, so the
-      // bookmark button at the slot's right edge never sits under the
-      // chevron or the text.
+      // #4769: the row's right padding is pr-16, not the px-4 it was, so the
+      // bookmark button (16px in from the slot's edge, N6) never sits over
+      // the text.
       className={actions.length > 1
-        ? 'notifications-row w-full pl-4 pr-12 py-3.5 flex flex-col gap-2'
-        : 'notifications-row w-full pl-4 pr-12 py-3.5 flex items-center gap-3'}
+        ? 'notifications-row w-full pl-4 pr-16 py-3.5 flex flex-col gap-2'
+        : 'notifications-row w-full pl-4 pr-16 py-3.5 flex items-center gap-3'}
     >
       <button
         className="min-w-0 flex-1 text-left flex items-center gap-4"
@@ -619,7 +697,7 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
     <button
       ref={touch ? undefined : setRow}
       data-notif-id={view.id}
-      className={'notifications-row w-full text-left pl-4 pr-12 py-3.5 '
+      className={'notifications-row w-full text-left pl-4 pr-16 py-3.5 '
         + 'hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4'}
       onClick={(event) => {
         event.stopPropagation();
@@ -630,8 +708,9 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
     </button>
   );
   // #4769: the row's own save. Outline until saved, filled violet (the
-  // accent) once it is. Absolutely placed at the slot's right edge,
-  // vertically centred, with a 36px target — a second action on a
+  // accent) once it is. Absolutely placed 16px in from the slot's right
+  // edge, in line with the sheet's close disc above it (N6: it sat 2px from
+  // the edge), vertically centred, with a 36px target — a second action on a
   // phone-width row needs a real one. `stopPropagation` first, for the
   // reason every handler in this sheet stops its click: this is not a tap
   // that opens the row.
@@ -641,7 +720,7 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
       data-notification-save={view.id}
       aria-pressed={view.saved ? 'true' : 'false'}
       aria-label={t(view.saved ? 'notifications:row.unsave' : 'notifications:row.save')}
-      className={'absolute right-0.5 top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center '
+      className={'absolute right-4 top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center '
         + 'rounded-full transition-colors hover:bg-black/[.04] dark:hover:bg-white/[.06] '
         + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'}
       onClick={(event) => {
@@ -666,7 +745,11 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
     </div>
   ) : row;
   return (
-    <div key={`${clearable ? 'unread' : 'read'}:${shape}`} className="notifications-row-slot group/notif relative">
+    <div
+      key={`${clearable ? 'unread' : 'read'}:${shape}`}
+      className={held ? 'notifications-row-slot group/notif relative opacity-60' : 'notifications-row-slot group/notif relative'}
+      data-notif-held={held ? '' : undefined}
+    >
       {swipeHost}
       {clearable && !touch ? (
         <button
@@ -694,6 +777,7 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
             // `detail` is 0 for a click the keyboard made (Enter or Space).
             const fromKeyboard = event.detail === 0;
             const neighbourId = sheet ? neighbourRowId(sheet, view.id) : null;
+            onRelease?.([view.id]);
             void controller()?.clearNotification(view.id);
             if (fromKeyboard && sheet) {
               requestAnimationFrame(() => refocusAfterClear(sheet, view.id, neighbourId));
@@ -843,7 +927,11 @@ export function NotificationsSheetView() {
   }, [open, tab, snap.refreshTick, snap.unreadCanLoadMore]);
 
   const all = snap.screenList || [];
-  const unread = all.filter((view) => view.unread);
+  // Unread LISTS what was unread while the sheet has been open (polish #7,
+  // useHeldUnread); its count and Mark all read follow what still is.
+  const held = useHeldUnread(open, all);
+  const unread = all.filter(held.listed);
+  const unreadNow = all.filter((view) => view.unread);
   const messages = all.filter((view) => view.conversation || view.agent);
   // WHAT YOU ARE WORKING ON, from the store that already answers it (#2718
   // review). The Improve panel splits the same list in two — this app's and
@@ -879,7 +967,7 @@ export function NotificationsSheetView() {
   // stands for `count` of them, so summing is what keeps this number equal to
   // the one on the bell — after collapsing, `unread.length` would say 1 where
   // the badge says 4.
-  const unreadCount = unread.reduce((sum, view) => sum + (view.count || 1), 0);
+  const unreadCount = unreadNow.reduce((sum, view) => sum + (view.count || 1), 0);
   const boundary = startOfToday();
   const entries: MessagesEntry[] = tab === 'messages' ? messageEntries
     : shown.map((view) => ({ type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
@@ -909,7 +997,10 @@ export function NotificationsSheetView() {
       <AppGroupHead
         groupKey={group.key}
         label={group.key === 'other' || !group.appLine ? t('notifications:sheet.group.other') : group.appLine}
-        appId={group.appId}
+        // N6 (polish board): with one group on the tab its Mark read is Mark
+        // all read again, a pill's width apart, so the title row's is the one.
+        appId={appGroups.length > 1 ? group.appId : null}
+        onRead={() => held.release(group.entries.flatMap((entry) => (entry.type === 'notif' ? [entry.view.id] : [])))}
       />
       {group.entries.map(renderEntry)}
     </Fragment>
@@ -931,6 +1022,8 @@ export function NotificationsSheetView() {
       view={entry.view}
       touch={!!snap.touch}
       removes={tab === 'unread'}
+      held={tab === 'unread' && !entry.view.unread && !olderShown}
+      onRelease={held.release}
     />
   ));
 
@@ -997,8 +1090,11 @@ export function NotificationsSheetView() {
             className={'inline-flex items-center h-8 px-3 rounded-full text-xs font-semibold '
               + 'bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 '
               + 'disabled:opacity-40 disabled:hover:bg-zinc-100 dark:disabled:hover:bg-zinc-800 un-touch-target'}
-            disabled={!unread.length}
-            onClick={() => controller()?.markAllRead()}
+            disabled={!unreadNow.length}
+            onClick={() => {
+              held.release(unread.map((view) => view.id));
+              void controller()?.markAllRead();
+            }}
           >
             {t('notifications:sheet.markAllRead')}
           </button>

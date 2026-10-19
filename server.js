@@ -246,6 +246,10 @@ app.use(explorerProxyRoutes(config));
 // no secret is configured. src/routes/github-webhook.js carries the rest.
 app.use(githubWebhookRoutes(config));
 app.use(require('./src/routes/mail-webhooks').mailWebhookRoutes(config));
+// Alertmanager's webhook (src/routes/alerts-webhook.js): HERE for the same
+// second reason, a caller with no session, authenticated by its own token.
+// It parses its own JSON body.
+app.use(require('./src/routes/alerts-webhook').alertsWebhookRoutes(config));
 
 // ── Work-order patch uploads (#4264) ───────────────────────────────────────
 // A coding agent's one-time upload of a large patch for a connector work

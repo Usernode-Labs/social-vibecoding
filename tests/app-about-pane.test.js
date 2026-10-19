@@ -357,11 +357,14 @@ test('the restricted row hides through a layout effect, so the prerendered menu 
   // The discussion and invite rows that hid with it left the menu (UI
   // overhaul, #3362); the workshop row is the one left to hide.
   // #4216: a newcomer still offered "Go to Homeroom" has it hidden the same way.
-  assert.match(sheet, /useIsomorphicLayoutEffect\(\(\) => \{\s*const hide = !!restricted \|\| newcomer;\s*for \(const el of \[workshopRowRef\.current\]\)/);
-  assert.match(sheet, /el\.classList\.toggle\('hidden', hide\);[\s\S]{0,40}\}, \[restricted, newcomer, view, open\]\);/,
+  // Sign-up test, 19 Oct 2026: and any newcomer the walk on Home is still
+  // owed to (./about-data.ts owedHomeWalk), who gets "Go to Homeroom" instead.
+  assert.match(sheet, /useIsomorphicLayoutEffect\(\(\) => \{\s*const hide = !!restricted \|\| newcomer \|\| walkOwed;\s*for \(const el of \[workshopRowRef\.current\]\)/);
+  assert.match(sheet, /el\.classList\.toggle\('hidden', hide\);[\s\S]{0,40}\}, \[restricted, newcomer, walkOwed, view, open\]\);/,
     'and re-runs when the menu pane comes back from About, whose rows mount again');
   assert.match(sheet, /const newcomer = mounted && offeringGoToHomeroom\(!!privateMember\);/,
     'after mount only: the visit is remembered in storage the prerender cannot see');
+  assert.match(sheet, /const walkOwed = mounted && owedHomeWalk\(\);/, 'the walk too');
   assert.match(sheet, /id="app-menu-row-workshop"\s+dataContextRow="workshop"\s+elRef=\{workshopRowRef\}/);
   assert.doesNotMatch(sheet, /id="app-menu-row-(discussion|invite)"/);
   const html = read('public/index.html');

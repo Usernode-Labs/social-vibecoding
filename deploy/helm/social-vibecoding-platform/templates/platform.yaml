@@ -223,6 +223,9 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             - {name: FIREBASE_PHONE_AUTH_ENABLED, value: {{ .Values.config.firebasePhoneAuthEnabled | quote }}}
             - {name: WORKER_MEMORY, value: {{ .Values.config.workerMemory | quote }}}
             - {name: WORKER_MEMORY_PLATFORM_REPO, value: {{ .Values.config.workerMemoryPlatformRepo | quote }}}
+            - {name: PLATFORM_SIGNALS, value: {{ .Values.config.platformSignals.mode | default "shadow" | quote }}}
+            - {name: PLATFORM_SIGNALS_KINDS, value: {{ .Values.config.platformSignals.kinds | default "" | quote }}}
+            - {name: PLATFORM_SIGNALS_BOT, value: {{ .Values.config.platformSignals.bot | default "on" | quote }}}
             - {name: WORKER_CPUS, value: {{ .Values.config.workerCpus | quote }}}
             - {name: CAPTURE_MEMORY, value: {{ .Values.config.captureMemory | quote }}}
             - {name: CAPTURE_CPUS, value: {{ .Values.config.captureCpus | quote }}}

@@ -121,10 +121,13 @@ const IDLE = Object.freeze({
 
 // The image build's own account of its time, for the record: which engine
 // built it, whether a finished image was reused, BuildKit's slowest steps
-// or kpack's lifecycle phases, and when BuildKit started solving (its Job
-// before that: scheduled, the daemon checked, the source fetched). Also
-// what happened to the layer cache: whether it was uploaded, and which
-// starter's shared cache the build read and whether it wrote it
+// or kpack's lifecycle phases, when BuildKit started solving (its Job
+// before that: scheduled, the daemon checked, the source fetched), and how
+// long its slowest base image (FROM) took, which is the pull when the node
+// is busy. Also what happened to the layer cache: `done`, `skipped` or
+// `failed`, or `background` when the image was handed over before the Job
+// had uploaded it ("The image before the cache"), and which starter's
+// shared cache the build read and whether it wrote it
 // (services/kubernetes-buildkit.js, "The starter's shared cache").
 const KEPT_BUILD_STEPS = 6;
 function buildNote({ engine, result, solveStartMs = null } = {}) {
@@ -140,9 +143,15 @@ function buildNote({ engine, result, solveStartMs = null } = {}) {
   const phases = steps(result?.phases);
   if (phases.length) note.phases = phases;
   if (Number.isFinite(solveStartMs)) note.solveStartMs = ms(solveStartMs);
+  if (Number.isFinite(result?.baseImageMs)) note.baseImageMs = ms(result.baseImageMs);
   if (typeof result?.cacheUpload === 'string') note.cacheUpload = result.cacheUpload;
   if (result?.starterCache && typeof result.starterCache.starter === 'string') {
-    note.starterCache = { starter: result.starterCache.starter, export: Boolean(result.starterCache.export) };
+    note.starterCache = {
+      starter: result.starterCache.starter,
+      // Which shared cache: one per set of package files, not per starter.
+      ...(typeof result.starterCache.key === 'string' ? { key: result.starterCache.key } : {}),
+      export: Boolean(result.starterCache.export),
+    };
   }
   return note;
 }

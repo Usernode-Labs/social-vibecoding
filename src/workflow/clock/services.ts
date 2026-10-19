@@ -217,6 +217,13 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/platform-limit-alerts').sweep(pool, config),
   },
   {
+    // Problems the platform finds in itself, each filed as one request,
+    // updated, and closed once it stops (shadow mode: rows only). Its own
+    // session advisory lock keeps two passes from filing one problem twice.
+    name: 'platform-signals', everyMs: 5 * MIN,
+    run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/platform-signals').sweep(pool, config),
+  },
+  {
     // The unexpected-events digest and the hourly pile-up alert.
     name: 'incident-alerts', everyMs: 5 * MIN,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/platform-incident-alerts').sweep(pool),

@@ -133,6 +133,32 @@ test('once they have voted in Homeroom, its votes count on the tab', async () =>
   assert.equal(scope.tabVotes(st), 4);
 });
 
+test('#5296: All communities hands its counts to the tab, so a vote that lands moves both at once', async () => {
+  fakeBrowser(44, {
+    '/api/apps': { apps: [HOMEROOM, FLAT] },
+    '/api/workshop/counts': {
+      counts: {
+        homeroom: { working: 0, needs: 5, owed: HOMEROOM_OWED, unchosen: true },
+        'flat-4b': { working: 0, needs: 1, owed: ['proposal:90@0'] },
+      },
+    },
+  });
+  const { scope } = loadScope();
+  await scope.loadCommunities(true);
+  assert.equal(scope.tabVotes(scope.communityScopeStore.get()), 1);
+  scope.takeCounts({
+    homeroom: { working: 0, needs: 5, owed: HOMEROOM_OWED, unchosen: true },
+    'flat-4b': { working: 0, needs: 2, owed: ['proposal:90@0', 'proposal:91@0'] },
+  });
+  const st = scope.communityScopeStore.get();
+  assert.equal(st.badgeNeeds, 2, 'the page\'s read, on the tab without a read of its own');
+  assert.equal(st.totalNeeds, 7);
+  assert.equal(scope.votesWaiting(st.info.homeroom), 0, 'one definition: an unchosen community waits on nobody');
+  assert.equal(scope.votesWaiting(st.info['flat-4b']), 2);
+  scope.takeCounts({});
+  assert.equal(scope.communityScopeStore.get().badgeNeeds, 0, 'a community the counts left out owes nothing');
+});
+
 // ── The tab itself ─────────────────────────────────────────────────────
 
 const ui = loadTsx('tests/fixtures/tab-bar-api.ts');
@@ -175,10 +201,12 @@ test('the tab reads its number from tabVotes, and the counts route carries the f
   const route = read('src/routes/workshop-overview.js');
   assert.match(route, /communities\.unchosenCommunities\(pool, req\.user\.id\)/);
   assert.match(route, /\.\.\.\(unchosen\.has\(row\.slug\) \? \{ unchosen: true \} : \{\}\),/);
-  // Nothing else that counts the votes reads it: they stay on the
-  // Communities list, its Needs you row, the switcher and the app menu.
+  // The switcher and the app menu still count every vote owed. The
+  // Communities list and its Needs you row no longer do (#5296): they say
+  // the tab's number, through the tab's own `votesWaiting`, because the page
+  // saying 14 under a tab that said 13 was the bug.
+  assert.match(read('frontend/src/features/workshop/index.tsx'), /votesWaiting\(/);
   for (const file of [
-    'frontend/src/features/workshop/index.tsx',
     'frontend/src/features/workshop/community-switcher.tsx',
     'frontend/src/features/app-context/app-context-sheet.tsx',
   ]) {
