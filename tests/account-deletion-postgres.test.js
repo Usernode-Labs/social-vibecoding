@@ -396,25 +396,33 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
 
   // #5118: every app the person touched is asked to erase their rows in its
   // own database, through the receipt's durable tasks.
-  await t.test('each app the person touched gets a durable app_data task; the platform app does not', async () => {
+  await t.test('each app that has seen the person gets a durable app_data task; the platform app and member-only apps do not', async () => {
     const target = await user();
     await pool.query("UPDATE users SET usernode_pubkey = 'ut1fixturewallet' WHERE id = $1", [target.id]);
     const mk = async (slug, extra = '') => (await pool.query(
       `INSERT INTO apps (name, slug, created_by${extra ? ', self_hosted' : ''}) VALUES ($1, $1, $2${extra ? ', TRUE' : ''}) RETURNING id`,
       [slug, owner.id])).rows[0].id;
-    const opened = await mk('deletion-opened'), built = await mk('deletion-built'), member = await mk('deletion-member');
+    const opened = await mk('deletion-opened'), built = await mk('deletion-built'), uploaded = await mk('deletion-uploaded');
     const untouched = await mk('deletion-untouched'), platform = await mk('deletion-platform', 'self');
+    const memberOnly = await mk('deletion-member-only'), pinnedOnly = await mk('deletion-pinned-only');
     await pool.query('INSERT INTO app_activity (app_id, user_id, seconds_spent) VALUES ($1, $2, 30)', [opened, target.id]);
     await pool.query('INSERT INTO app_collaborators (app_id, user_id) VALUES ($1, $2), ($3, $2)', [built, target.id, platform]);
+    await pool.query(`INSERT INTO app_files (id, app_id, user_id, filename, content_type, size_bytes, visibility)
+      VALUES ($1, $2, $3, 'a.png', 'image/png', 1, 'public')`, [crypto.randomBytes(16).toString('hex'), uploaded, target.id]);
+    // Joining a project's community or pinning an app never handed it the
+    // person's identity: those apps must not learn it from a deletion.
     const community = (await pool.query("INSERT INTO communities DEFAULT VALUES RETURNING id")).rows[0].id;
-    await pool.query('UPDATE apps SET community_id = $1 WHERE id = $2', [community, member]);
+    await pool.query('UPDATE apps SET community_id = $1 WHERE id = $2', [community, memberOnly]);
     await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [community, target.id]);
+    await pool.query('INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2)', [pinnedOnly, target.id]);
     const { deletionId } = await erase(target);
     const tasks = (await pool.query(
       "SELECT * FROM account_deletion_tasks WHERE deletion_id = $1 AND kind = 'app_data' ORDER BY target", [deletionId])).rows;
     assert.deepEqual(tasks.map(r => r.target).sort(),
-      [opened, built, member].map(id => `${id}:ut1fixturewallet`).sort());
-    assert.ok(!tasks.some(r => r.target.startsWith(`${untouched}:`) || r.target.startsWith(`${platform}:`)));
+      [opened, built, uploaded].map(id => `${id}:ut1fixturewallet`).sort());
+    for (const id of [untouched, platform, memberOnly, pinnedOnly]) {
+      assert.ok(!tasks.some(r => r.target.startsWith(`${id}:`)), `app ${id} is not asked`);
+    }
     assert.equal((await cleanup.list(pool)).find(r => r.id === deletionId).completed_at, null, 'open until the apps confirm');
 
     // An app with no handler is recorded for review, never retried blindly.
@@ -432,9 +440,9 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
     const retried = await state(byApp(built));
     assert.equal(retried.state, 'pending'); assert.equal(retried.error_code, 'cleanup_failed');
     assert.ok(retried.wait.minutes >= 4 || retried.wait.hours >= 1, 'retried later, not at once');
-    const done = await state(byApp(member));
+    const done = await state(byApp(uploaded));
     assert.equal(done.state, 'completed');
-    assert.equal(done.target, `erased:${byApp(member)}`, 'the wallet address goes once the app confirms');
+    assert.equal(done.target, `erased:${byApp(uploaded)}`, 'the wallet address goes once the app confirms');
 
     // A doubling interval: the third failure waits about twenty minutes.
     await pool.query("UPDATE account_deletion_tasks SET attempts = 2, next_attempt_at = NOW() WHERE id = $1", [byApp(built)]);

@@ -56,7 +56,8 @@ test('the request goes to the app\'s own production origin, signed for that app 
   assert.equal(url, 'http://usernode-app-potluck:3000/usernode/user-deletion');
   assert.equal(init.method, 'POST');
   assert.equal(init.redirect, 'error');
-  assert.deepEqual(JSON.parse(init.body), { userId: 7, usernodePubkey: 'ut1walletaddress' });
+  assert.equal(init.body, undefined, 'the person is named only by the signed token');
+  assert.deepEqual(Object.keys(init.headers), ['x-usernode-platform-token']);
   // Its own header, never the sign-in header an older app reads as a person.
   assert.equal(init.headers['x-usernode-token'], undefined);
   const token = init.headers['x-usernode-platform-token'];
@@ -75,7 +76,10 @@ test('the request goes to the app\'s own production origin, signed for that app 
 test('a person with no wallet address is sent by id alone', async () => {
   const f = recordingFetch(204);
   await send('42', f.impl);
-  assert.deepEqual(JSON.parse(f.calls[0].init.body), { userId: 7, usernodePubkey: null });
+  assert.equal(f.calls[0].init.body, undefined);
+  const claims = jwt.decode(f.calls[0].init.headers['x-usernode-platform-token']);
+  assert.equal(claims.id, 7);
+  assert.equal(claims.usernode_pubkey, null);
 });
 
 test('an app with no handler, or one refusing the token, settles for review rather than retrying', async () => {

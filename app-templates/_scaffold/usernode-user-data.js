@@ -130,6 +130,7 @@ async function exportUserData(pool, person) {
 
 // The person a platform request is about, or null when the token is missing,
 // forged, expired, for another app, or for the other purpose.
+// The verified token is the only thing read: the request has no body.
 function verifyPlatformRequest(req, purpose, { publicKey, audience }) {
   const token = req.get(TOKEN_HEADER);
   if (!token || !publicKey || !audience) return null;

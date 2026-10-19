@@ -2315,7 +2315,8 @@ person's sign-in token, so verify it with `USERNODE_JWT_PUBLIC_KEY`,
 `algorithms: ['RS256']`, issuer `usernode` and audience
 `usernode:app:<USERNODE_APP_ID>`, then check `pur` is `'user-deletion'` or
 `'user-export'` for the route. Its claims are the person's `id` and
-`usernode_pubkey` (their wallet address, or null). It names no username: by
+`usernode_pubkey` (their wallet address, or null), and the request has
+no body: read the person only from the verified token. It names no username: by
 then the account is anonymised, so find rows by `id` (or the wallet
 address), which is one more reason to key a person's rows by
 `req.user.id`. Refuse anything else with 403. Mount both routes before the

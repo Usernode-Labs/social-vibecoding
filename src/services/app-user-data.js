@@ -32,26 +32,34 @@ const REQUEST_TIMEOUT_MS = 15_000;
 // With the cleanup's doubling delay (capped at a day) that is about a week.
 const MAX_ATTEMPTS = 12;
 
-// Every app the person has a footprint in, by the platform's own records:
-// membership, building, administering, opening it (engaged-use time), using
-// its AI or files, pinning it, and creating it. The platform's own app
+// Every app that already knows who the person is: a request names them (id
+// and wallet address), so it goes only where their identity already went,
+// never to an app they merely could have opened. Each source, and why it
+// means the app has seen the person:
+//   app_activity, app_usage_intervals  engaged time inside the app's frame,
+//                                      which only runs with their identity token
+//   app_llm_usage, app_llm_grants      the app's AI proxy, called with their token
+//   app_permission_grants              a capability the app asked them for, in-app
+//   app_files                          an upload made through the app as them
+//   app_collaborators, app_admins,     they build or run the app; it has been
+//   apps.created_by                    opened as them in its previews and live
+// Left out on purpose: community membership (joining a project, or being
+// added to the platform's own, never opened the app) and favourites (a pin
+// can be made from Discover without opening it). The platform's own app
 // (self_hosted) is not asked: its data is the platform's, which
 // deleteAccount() already erases. Runs inside deleteAccount()'s transaction,
-// before the purge empties the membership rows it reads.
+// before the purge empties the rows it reads.
 async function touchedAppIds(db, userId) {
   const { rows } = await db.query(
     `SELECT a.id FROM apps a WHERE a.self_hosted IS NOT TRUE AND a.id IN (
-        SELECT app_id FROM app_collaborators WHERE user_id = $1
-        UNION SELECT app_id FROM app_admins WHERE user_id = $1
-        UNION SELECT app_id FROM app_activity WHERE user_id = $1
+        SELECT app_id FROM app_activity WHERE user_id = $1
         UNION SELECT app_id FROM app_usage_intervals WHERE user_id = $1
         UNION SELECT app_id FROM app_llm_usage WHERE user_id = $1
         UNION SELECT app_id FROM app_llm_grants WHERE user_id = $1
         UNION SELECT app_id FROM app_permission_grants WHERE user_id = $1
         UNION SELECT app_id FROM app_files WHERE user_id = $1
-        UNION SELECT app_id FROM app_favorites WHERE user_id = $1
-        UNION SELECT x.id FROM apps x JOIN community_members m ON m.community_id = x.community_id
-               WHERE m.user_id = $1
+        UNION SELECT app_id FROM app_collaborators WHERE user_id = $1
+        UNION SELECT app_id FROM app_admins WHERE user_id = $1
         UNION SELECT id FROM apps WHERE created_by = $1)
       ORDER BY a.id`,
     [userId]
@@ -117,8 +125,9 @@ async function requestDeletion(pool, config, task, { fetchImpl = globalThis.fetc
       method: 'POST',
       redirect: 'error',
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      headers: { 'content-type': 'application/json', [TOKEN_HEADER]: token },
-      body: JSON.stringify({ userId, usernodePubkey: usernodePubkey || null }),
+      // No body: the person is named only by the signed token's claims, so
+      // nothing unverified travels with the request.
+      headers: { [TOKEN_HEADER]: token },
     });
   } catch {
     throw new Error('app_unreachable');
