@@ -94,7 +94,7 @@ test('the invite\'s Join sheet starts with a phone number when the server offers
   assert.match(bare, /data-recaptcha-line=""/);
   // Google's notice, for the badge the sheet hides, is its own quieter line
   // under the terms (#4379).
-  assert.match(phone, /data-terms-notice="recaptcha"[^>]*>By continuing, you agree to Homeroom&#x27;s (<!-- -->)?terms(<!-- -->)?\.<\/p><p data-recaptcha-line=""[^>]*class="[^"]*text-\[12px\][^"]*text-zinc-400[^"]*">Protected by reCAPTCHA · Google (<!-- -->)?<a href="https:\/\/policies\.google\.com\/privacy"[^>]*>Privacy<\/a>(<!-- -->)? · (<!-- -->)?<a href="https:\/\/policies\.google\.com\/terms"[^>]*>Terms<\/a><\/p>/);
+  assert.match(phone, /data-terms-notice="recaptcha"[^>]*>By continuing, you agree to Homeroom&#x27;s (<!-- -->)?terms(<!-- -->)? and acknowledge the (<!-- -->)?privacy notice(<!-- -->)?\.<\/p><p data-recaptcha-line=""[^>]*class="[^"]*text-\[12px\][^"]*text-zinc-400[^"]*">Protected by reCAPTCHA · Google (<!-- -->)?<a href="https:\/\/policies\.google\.com\/privacy"[^>]*>Privacy<\/a>(<!-- -->)? · (<!-- -->)?<a href="https:\/\/policies\.google\.com\/terms"[^>]*>Terms<\/a><\/p>/);
   assert.doesNotMatch(phone, /Privacy Policy|Terms of Service|\(reCAPTCHA\)/);
   assert.doesNotMatch(phone, /Use a password|This makes your account/, 'the password is a step on from the email way');
   assert.ok(phone.indexOf('sign-in-sheet-phone"') < phone.indexOf('Continue with Apple'), 'the phone stays first');

@@ -1755,6 +1755,18 @@
     "text": "unknown",
     "description": "Value on the \"App version\" row in Settings > About when the app's version is not known. Lower case, because it stands where a version number would."
   },
+  "about.legal.title": {
+    "text": "Legal",
+    "description": "Heading over two links in Settings > About, under the version rows: Homeroom's terms and its privacy notice."
+  },
+  "about.legal.terms": {
+    "text": "Terms",
+    "description": "Link in Settings > About, under the Legal heading: opens Homeroom's terms of use, and whether the person accepted them."
+  },
+  "about.legal.privacy": {
+    "text": "Privacy notice",
+    "description": "Link in Settings > About, under the Legal heading: opens Homeroom's privacy notice, which says what personal data Homeroom collects and how it uses it, in a new tab."
+  },
   "about.platformVersion.label": {
     "text": "Platform version",
     "description": "Label of a row in Settings > About; the version of Homeroom itself is shown at the other end of the row."
@@ -2212,7 +2224,7 @@
     "description": "Not shown on screen. Extra search words for \"Homeroom app\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.about": {
-    "text": "version build terms",
+    "text": "version build terms privacy legal",
     "description": "Not shown on screen. Extra search words for \"About\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.adminPreview": {
@@ -3670,6 +3682,10 @@
   "usernode.about.terms": {
     "text": "Terms",
     "description": "Button in the \"about & legal\" block of Settings > Homeroom app: opens the platform's terms of use."
+  },
+  "usernode.about.privacy": {
+    "text": "Privacy notice",
+    "description": "Button in the \"about & legal\" block of Settings > Homeroom app, beside Terms: opens Homeroom's privacy notice, which says what personal data Homeroom collects and how it uses it, in the phone's browser."
   },
   "usernode.about.appVersionBuild": {
     "text": "App {{version}} ({{build}})",

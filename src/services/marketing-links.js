@@ -25,6 +25,12 @@ const DEFAULT_MARKETING_BASE_URL = 'https://onhomeroom.com';
 // it back unchanged (src/routes/public-api.js).
 const MARKETING_WAITLIST_PATH = '/waitlist';
 
+// Homeroom's own privacy notice, on the marketing site beside the rest of
+// its legal pages. The sign-in screens name it next to the terms, and
+// Settings › About links to it (#5094, #5106); both read it from
+// GET /api/public/waitlist/options, so the address is decided here once.
+const PRIVACY_NOTICE_PATH = '/legal/privacy-notice';
+
 // Trim a configured origin down to something safe to concatenate a path
 // onto: no surrounding whitespace, no trailing slash. A value that is empty
 // or not a string falls back rather than producing `undefined/waitlist`.
@@ -73,6 +79,12 @@ function siteUrl(config) {
   return normalizeBaseUrl(config && config.marketingBaseUrl);
 }
 
+// The privacy notice's address. Never null, for waitlistUrl's reason: with
+// MARKETING_BASE_URL unset it is https://onhomeroom.com/legal/privacy-notice.
+function privacyNoticeUrl(config) {
+  return `${siteUrl(config)}${PRIVACY_NOTICE_PATH}`;
+}
+
 // The shareable invite URL for one signup's referral code.
 //
 // Returns null for a signup with no code yet — the caller renders no link at
@@ -91,6 +103,8 @@ module.exports = {
   siteUrl,
   DEFAULT_MARKETING_BASE_URL,
   MARKETING_WAITLIST_PATH,
+  PRIVACY_NOTICE_PATH,
+  privacyNoticeUrl,
   normalizeBaseUrl,
   waitlistUrl,
   inviteUrl,
