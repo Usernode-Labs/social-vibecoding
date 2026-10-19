@@ -65,6 +65,7 @@ const { agentApiFailure } = require('./agent-result-text');
 // Newcomer run five: a first version's stages, as they happen.
 const timeline = require('./first-version-timeline');
 const defaultModelSetting = require('./default-model');
+const helperModelSetting = require('./helper-model');
 
 // The bot-build machine's legacy side (src/workflow/bot-build/): live and
 // shadow builds are durable builds there. Lazy: it reaches back into this
@@ -189,6 +190,10 @@ const MODEL_ID_RE = defaultModelSetting.MODEL_ID_RE;
 // the whole platform's: new agent chats and the catalog's recommended
 // model follow it too.
 const KEY_DEFAULT_MODEL = defaultModelSetting.KEY;
+// The model the platform's helper calls ask first (services/helper-model.js:
+// titles, the plan at Make it, chat reads, the content review, …). Blank is
+// GLM 5.3 Flash; Haiku stays behind whichever it is.
+const KEY_HELPER_MODEL = helperModelSetting.KEY;
 // #3624, stage 2: how much live work runs at once (see "How much at once"
 // below). `homeroom_bot_concurrency` is the background lane's: how many
 // apps' shadow triage runs at once, beside the live work, never in its way.
@@ -239,7 +244,7 @@ const SETTING_KEYS = Object.freeze([
   KEY_USER_WEEKLY_CENTS, KEY_ADMIN_WEEKLY_CENTS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_DM_CHAT,
   KEY_VOICE_SESSION, KEY_VOICE_ISSUE, KEY_VOICE_CHAT,
   KEY_CONTINUE_READS, KEY_EVERYONE_SINCE, KEY_PROPOSAL_CEILING,
-  KEY_LIVE_BUILD_STREAM, KEY_DEFAULT_MODEL,
+  KEY_LIVE_BUILD_STREAM, KEY_DEFAULT_MODEL, KEY_HELPER_MODEL,
   ...Object.values(KEY_MODELS),
 ]);
 const MAX_USER_WEEKLY_CENTS = 10_000_000;
@@ -264,6 +269,8 @@ const DEFAULTS = Object.freeze({
   models: Object.freeze({ triage: '', spec: '', build: '', followup: '' }),
   // Blank is the deploy's default (platformDefaultModel).
   defaultModel: '',
+  // Blank is helper-model.BUILT_IN.
+  helperModel: '',
   // Raised from 6 and 2 when every project went live: the background
   // lane's shadow triage, which took workers beside it, has no app left to
   // read in production.
@@ -631,6 +638,7 @@ function parseSettings(rows) {
     models[stage] = MODEL_ID_RE.test(raw) ? raw : '';
   }
   const defaultModel = defaultModelSetting.parseStored(map.get(KEY_DEFAULT_MODEL)) || '';
+  const helperModel = helperModelSetting.parseStored(map.get(KEY_HELPER_MODEL)) || '';
   const liveAtOnce = clampInt(map.get(KEY_LIVE_AT_ONCE), DEFAULTS.liveAtOnce, 1, MAX_LIVE_AT_ONCE);
   const perPerson = clampInt(map.get(KEY_PER_PERSON), DEFAULTS.perPerson, 1, MAX_PER_PERSON);
   const dmChat = map.get(KEY_DM_CHAT) !== 'off';
@@ -647,7 +655,7 @@ function parseSettings(rows) {
     mode, concurrency, batchSize, pausedApps, turnSeconds, turnInputTokens,
     shadowBuilds, buildConcurrency, shadowBuildPlatform, userWeeklyCents, adminWeeklyCents,
     liveAtOnce, perPerson, dmChat, voiceSession, voiceIssue, voiceChat, continueReads, models,
-    defaultModel, everyoneSince, proposalCeiling, liveBuildStream,
+    defaultModel, helperModel, everyoneSince, proposalCeiling, liveBuildStream,
   };
 }
 
@@ -874,6 +882,13 @@ function validateSettingsPatch(patch) {
     }
     updates.push([KEY_DEFAULT_MODEL, id]);
   }
+  if (body.helperModel !== undefined) {
+    const id = body.helperModel == null ? '' : String(body.helperModel).trim();
+    if (id && !MODEL_ID_RE.test(id)) {
+      return { ok: false, error: 'helperModel must be an OpenRouter model id such as deepseek/deepseek-v4.1-flash-1017, or blank for GLM 5.3 Flash' };
+    }
+    updates.push([KEY_HELPER_MODEL, id]);
+  }
   let weeklyLimitCents;
   if (body.weeklyLimitCents !== undefined) {
     const n = Number(body.weeklyLimitCents);
@@ -894,9 +909,12 @@ function validateSettingsPatch(patch) {
  * catalog, the same copy a current bot configuration is checked against
  * (bot-configs.js checkRecipeModels). Without a catalog to check, it is
  * refused rather than guessed. Blank (the deploy's default) needs no check.
+ * The helper model is checked the same way (`what` 'helper'): every helper
+ * answers through one forced tool call.
  */
-async function checkDefaultModel(pool, id) {
+async function checkDefaultModel(pool, id, what = 'default') {
   if (!id) return null;
+  const helper = what === 'helper';
   let models = null;
   try {
     const { rows } = await pool.query('SELECT models FROM openrouter_model_catalog WHERE id = TRUE');
@@ -904,13 +922,16 @@ async function checkDefaultModel(pool, id) {
   } catch (err) {
     log.warn('homeroom-bot', 'Could not read the OpenRouter catalog', { err: err.message });
   }
+  const name = helper ? 'the helper model' : 'the platform default';
   if (!models) {
-    return 'The OpenRouter model catalog is not available to check the platform default against, so it cannot be changed now. Try again in a minute.';
+    return `The OpenRouter model catalog is not available to check ${name} against, so it cannot be changed now. Try again in a minute.`;
   }
   const model = models.find((m) => m && m.id === id);
-  if (!model) return `Not in the OpenRouter catalog: ${id}. The platform default must be a model OpenRouter lists.`;
+  if (!model) return `Not in the OpenRouter catalog: ${id}. ${helper ? 'The helper model' : 'The platform default'} must be a model OpenRouter lists.`;
   if (!require('./agent-models').hasToolSupport(model)) {
-    return `${id} cannot call tools, so a coding agent cannot run on it. Pick a model that can.`;
+    return helper
+      ? `${id} cannot call tools, and every helper call answers through one. Pick a model that can.`
+      : `${id} cannot call tools, so a coding agent cannot run on it. Pick a model that can.`;
   }
   return null;
 }
@@ -921,6 +942,11 @@ async function writeSettings(pool, patch, actorId, config = {}) {
   const defaultUpdate = valid.updates.find(([key]) => key === KEY_DEFAULT_MODEL);
   if (defaultUpdate) {
     const refused = await checkDefaultModel(pool, defaultUpdate[1]);
+    if (refused) return { ok: false, error: refused };
+  }
+  const helperUpdate = valid.updates.find(([key]) => key === KEY_HELPER_MODEL);
+  if (helperUpdate) {
+    const refused = await checkDefaultModel(pool, helperUpdate[1], 'helper');
     if (refused) return { ok: false, error: refused };
   }
   let modeBefore = null;
@@ -942,6 +968,7 @@ async function writeSettings(pool, patch, actorId, config = {}) {
   // This server follows the new default at once; the others within
   // default-model.CACHE_TTL_MS.
   if (defaultUpdate) defaultModelSetting.invalidate(pool, config);
+  if (helperUpdate) helperModelSetting.invalidate();
   if (valid.weeklyLimitCents !== undefined) {
     // The cap lives on the bot's users row, which the first pass used to be
     // the only thing that created — so a cap saved before that pass updated
@@ -8841,6 +8868,8 @@ async function adminPayload(pool, config, {
     // the deploy's own, which a blank setting goes back to.
     defaultModel: platformDefaultModel(settings, config),
     deploymentDefaultModel: defaultModelSetting.deployDefault(config),
+    // What a blank helper model setting asks (helper-model.js BUILT_IN).
+    helperBuiltInModel: helperModelSetting.BUILT_IN,
     configurations: await currentConfigurations(pool),
     bot,
     loop: memory.loop,
@@ -9526,6 +9555,7 @@ module.exports = {
   MODEL_STAGES,
   KEY_MODELS,
   KEY_DEFAULT_MODEL,
+  KEY_HELPER_MODEL,
   MODEL_ID_RE,
   triagePromptFor,
   signalNote,

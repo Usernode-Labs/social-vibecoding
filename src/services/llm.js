@@ -629,6 +629,11 @@ async function createMessageWithTelemetry({
 // HELPER_MODEL=haiku in the root dapp.json's platform_env sends every helper
 // back to Haiku without a deploy of code.
 //
+// HELPER_MODEL below is the built-in model and the name a caller passes for
+// "the helper model". Which model that is now is an admin setting (Admin →
+// Homeroom bot → Settings → Models, services/helper-model.js), read per call
+// through a 10-second cache; blank keeps GLM.
+//
 // Telemetry: the GLM attempt is recorded as attempt 1 of the call and a Haiku
 // fallback as attempt 2 under the same correlation id, so the admin report
 // counts one logical run and shows how often the fallback served it.
@@ -689,6 +694,13 @@ let helperTestDeps = null;
 /** 'glm' when helpers try GLM first, 'haiku' when HELPER_MODEL says so. */
 function helperRoute() {
   return String(process.env.HELPER_MODEL ?? '').trim().toLowerCase() === 'haiku' ? 'haiku' : 'glm';
+}
+
+// The model a helper call asks first: the admin's helper model, else
+// HELPER_MODEL (services/helper-model.js). Never throws.
+async function helperModelNow() {
+  if (helperTestDeps) return helperTestDeps.model || HELPER_MODEL;
+  return require('./helper-model').current(helperConfig);
 }
 
 // The Homeroom bot's included OpenRouter key, or null (no bot yet, no key,
@@ -847,6 +859,8 @@ async function askHelperModel({
 }) {
   const apiKey = await helperKey();
   if (!apiKey) return { ok: false, reason: 'no_key' };
+  const model = await helperModelNow();
+  const reasoning = require('./helper-model').thinkingFor(model);
   const transport = (helperTestDeps && helperTestDeps.openrouter) || require('./global-chat/openrouter');
   const cfg = (helperTestDeps && helperTestDeps.config) || helperConfig || {};
   const maxOutputTokens = Math.min(
@@ -868,8 +882,8 @@ async function askHelperModel({
       baseUrl: cfg.openrouterApiBase || 'https://openrouter.ai/api/v1',
       origin: cfg.openrouterOrigin,
       signal,
-      model: HELPER_MODEL,
-      reasoning: 'low',
+      model,
+      reasoning,
       temperature: 0,
       maxOutputTokens,
       timeoutMs: HELPER_TIME_LIMIT_MS[helper] || 10000,
@@ -921,7 +935,7 @@ async function askHelperModel({
     routedProvider: (result && result.provider) || (error && error.provider) || null,
     backend: 'helper',
     component,
-    requestedModel: HELPER_MODEL,
+    requestedModel: model,
     servedModel: (result && result.servedModel) || null,
     servedProvider: (result && result.provider) || (error && error.provider) || null,
     billingPath: 'platform',
@@ -941,7 +955,7 @@ async function askHelperModel({
     requestMessageCount: chatMessages.length,
     toolChoiceMode: 'tool',
     outputFormat: 'tool',
-    reasoningEffort: 'low',
+    reasoningEffort: reasoning,
     maxOutputTokens,
   });
   if (error) return { ok: false, reason: String(error.code || 'failed') };
@@ -952,7 +966,7 @@ async function askHelperModel({
   return {
     ok: true,
     answer,
-    model: result.servedModel || HELPER_MODEL,
+    model: result.servedModel || model,
     usage: {
       input_tokens: usage.inputTokens || 0,
       output_tokens: usage.outputTokens || 0,
@@ -1047,8 +1061,9 @@ async function helperMessage({
   };
 }
 
-// Test hook: { openrouter, key, config } stand in for the transport, the
-// bot's key and the server config; null restores them. Returns the previous.
+// Test hook: { openrouter, key, config, model } stand in for the transport,
+// the bot's key, the server config and the helper model setting (unset:
+// HELPER_MODEL); null restores them. Returns the previous.
 function _setHelperDepsForTests(deps) {
   const prev = helperTestDeps;
   helperTestDeps = deps || null;

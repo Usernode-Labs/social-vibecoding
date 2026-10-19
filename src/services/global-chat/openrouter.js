@@ -104,7 +104,10 @@ function buildRequest({
     messages: jsonArray(messages, 'messages', MAX_MESSAGES),
     tools: copiedTools,
     tool_choice: normalizedToolChoice,
-    reasoning: { effort: reasoningEffort(reasoning) },
+    // 'none' turns the model's thinking off (a helper call on a model other
+    // than GLM, services/helper-model.js thinkingFor); a Global Chat profile
+    // never names it, since profile.js does not accept it.
+    reasoning: reasoning === 'none' ? { enabled: false } : { effort: reasoningEffort(reasoning) },
     max_tokens: boundedInteger(
       maxOutputTokens,
       DEFAULT_MAX_OUTPUT_TOKENS,

@@ -292,6 +292,9 @@ test('settings default to off and clamp their numbers', () => {
     // And the platform default itself on the deployment's until an admin
     // picks one (services/default-model.js).
     defaultModel: '',
+    // The helper calls on the built-in GLM until an admin picks one
+    // (services/helper-model.js).
+    helperModel: '',
     // Live work, 12 at once and 3 per person (raised from 6 and 2 when every
     // project went live); a DM is read.
     liveAtOnce: 12, perPerson: 3, dmChat: true,
