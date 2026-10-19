@@ -26126,12 +26126,28 @@ const AppView = {
     // header is repainted beside the board, and the vote is held as pending
     // so a load that was already in flight cannot paint it away.
     const pr = AppView._findItem('proposal', sessionId);
-    const prevRow = pr ? { my_vote: pr.my_vote, yes_count: pr.yes_count, no_count: pr.no_count } : null;
-    const optimistic = !!pr && pr.my_vote !== vote;
+    // #5458: a chat's inline vote card draws from AppView.voteState
+    // (group-chat.js _resolvePr), not from the board lists _findItem
+    // searches. On Messages the lists can be empty or stale (their slug
+    // guard) and _findItem then answers null or a row voteState was never
+    // handed, so the card kept asking for a vote this page had saved.
+    // Apply the vote to the chat's row beside the board's — the same object
+    // counts once, so a tally is never bumped twice — and roll both back
+    // together.
+    const live = AppView.voteState && AppView.voteState.bySession
+      ? AppView.voteState.bySession[String(sessionId)] : null;
+    const targets = [];
+    if (pr && pr.my_vote !== vote) {
+      targets.push({ row: pr, prev: { my_vote: pr.my_vote, yes_count: pr.yes_count, no_count: pr.no_count } });
+    }
+    if (live && live !== pr && live.my_vote !== vote) {
+      targets.push({ row: live, prev: { my_vote: live.my_vote, yes_count: live.yes_count, no_count: live.no_count } });
+    }
+    const optimistic = targets.length > 0;
     const token = {};
     AppView._pendingVotes.set(Number(sessionId), { vote, token });
     if (optimistic) {
-      AppView._applyVoteToRow(pr, vote);
+      targets.forEach((t) => AppView._applyVoteToRow(t.row, vote));
       AppView._repaintAfterVote(sessionId);
     }
     const settle = () => {
@@ -26140,9 +26156,15 @@ const AppView = {
     };
     const rollback = () => {
       settle();
-      if (optimistic && pr.my_vote === vote) {
-        Object.assign(pr, prevRow);
-        AppView._repaintAfterVote(sessionId);
+      if (optimistic) {
+        let restored = false;
+        targets.forEach((t) => {
+          if (t.row.my_vote === vote) {
+            Object.assign(t.row, t.prev);
+            restored = true;
+          }
+        });
+        if (restored) AppView._repaintAfterVote(sessionId);
       }
     };
     try {
@@ -26192,7 +26214,18 @@ const AppView = {
       const refresh = typeof App !== 'undefined' && App._liveRefresh
         ? App._liveRefresh('vote', sessionId, { appSlug: AppView.appData && AppView.appData.slug })
         : AppView.refreshDevData('vote');
-      Promise.resolve(refresh).then(settle, settle);
+      // #5458: refreshDevData returns before doing anything outside the dev
+      // tab, so a chat mounted on Messages never re-read its snapshot and
+      // the settled counts on its card stayed the optimistic ones until
+      // opening the proposal page rewrote the row. When a chat is mounted
+      // (GroupChat.appSlug) outside the board, re-read its snapshot here;
+      // the dev tab's own sub-views are covered by refreshDevData as before.
+      const chatRead = typeof App !== 'undefined' && App.currentTab !== 'dev'
+        && typeof GroupChat !== 'undefined' && GroupChat.appSlug
+        ? AppView.loadVoteState(GroupChat.appSlug) : null;
+      // The pending-vote overlay inside loadVoteState keeps the vote on a
+      // read that started before it landed, so the settle waits for both.
+      Promise.resolve(chatRead ? Promise.all([refresh, chatRead]) : refresh).then(settle, settle);
       // Only refresh notifications once the backend confirms the vote — the
       // server clears this PR's nudge as a side effect, so re-pull to drop it
       // from the unread badge. Never optimistic: skip on a non-ok response.

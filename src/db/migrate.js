@@ -143,6 +143,10 @@ async function migrate(config) {
   await seedStagingAppAdminsPanel(pool);
   await seedStagingReadonlyDevTab(pool);
   await seedStagingQuietDiscussion(pool);
+  // #5458: must run AFTER seedStagingQuietDiscussion — it clears the rows
+  // that seed's first attempt hung in the quiet app, and owns the
+  // vote-card app instead. Needs the capture member (seedCaptureAdminUser).
+  await seedStagingVoteCardChat(pool);
   await seedStagingYourApps(pool, config);
   await require('../services/staging-apps').seedCatalog(pool, config);
   await seedStagingBrowseCardBranches(pool, config);
@@ -6756,9 +6760,94 @@ async function seedStagingQuietDiscussion(pool) {
           NOW() - INTERVAL '30 minutes')
        ON CONFLICT DO NOTHING`
     );
+    // #5458's first shot attempt hung the chat vote card here: a "built
+    // this" line (900119) in this channel plus a usernode-capture
+    // membership. That broke the two checks above — this app is the quiet
+    // card alone, and a line from the bot is exactly what the channel must
+    // not hold — so the card moved to its own app
+    // (seedStagingVoteCardChat, below) and the rows it wrote are removed
+    // here, the way clearAutomatedChannelLines clears platform lines: a
+    // staging copy the earlier commit already ran in self-heals on boot.
+    await pool.query(`DELETE FROM chat_messages WHERE id = 900119`);
+    await pool.query(
+      `DELETE FROM app_collaborators
+        WHERE app_id = 900110
+          AND user_id = (SELECT id FROM users WHERE username = 'usernode-capture')`
+    );
     log.info('db', 'Staging quiet-discussion fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging quiet-discussion seeding failed', { message: err.message });
+  }
+}
+
+// #5458's shots: the vote card a chat hangs under the Homeroom bot's
+// "built this" line — an ordinary message whose metadata names the
+// proposal (features/group-chat/transcript.tsx), with Yes/No buttons and
+// the count beside them, the thing the change lets a member's tap repaint
+// at once. The product writes no such line on a fresh copy any more: its
+// own proposal lines go to the proposal's own thread. And the quiet app
+// above cannot carry it — its channel is the quiet card alone, which the
+// declared checks pin — so the card gets an app of its own: one builder
+// (a fixture person, never a login), one open proposal, the bot's line
+// under it, and nothing else.
+//
+// The line's author is the bot, the voice that really says it, and a
+// sender the channel sweep keeps: clearAutomatedChannelLines removes a
+// channel row only when nobody (user_id IS NULL) wrote it, and the bot's
+// own lines survive it the same way. The capture member
+// (services/visuals.js signs shots as usernode-capture) taps the card,
+// and voting is members-only, so it holds a membership here the way a
+// real invite would have landed it. Idempotent via fixed ids + ON
+// CONFLICT DO NOTHING; a no-op outside staging.
+async function seedStagingVoteCardChat(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES (900111, 'staging-demo-vote-card-builder', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    // The bot's account, in the posture botAccount() reads: the username
+    // with is_synthetic on top, sentinel password, never a login.
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`
+    );
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by)
+       VALUES (900111, 'Staging demo vote card', 'staging-demo-vote-card', 'running',
+               'private', 'public', 900111)
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status, promoted_at, created_at)
+       VALUES (900111, 900111, 900111, 'staging-demo/vote-card-open-proposal', 900111,
+               'Staging demo: a proposal that is still up for a vote', 'promoted',
+               NOW() - INTERVAL '1 hour', NOW() - INTERVAL '2 hours')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO chat_messages (id, app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, created_at)
+       VALUES
+         (900120, 900111, (SELECT id FROM users WHERE username = 'homeroom_bot'),
+          'I built this. It''s up for a vote: Staging demo: a proposal that is still up for a vote',
+          'message', '{"vote": {"sessionId": 900111, "prNumber": 900111}}', NULL, NULL,
+          NOW() - INTERVAL '30 minutes')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, invited_by, accepted_at)
+       SELECT 900111, viewer.id, 'member', 900111, NOW()
+         FROM users viewer
+        WHERE viewer.username = 'usernode-capture'
+       ON CONFLICT (app_id, user_id) DO NOTHING`
+    );
+    log.info('db', 'Staging vote-card chat fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging vote-card chat seeding failed', { message: err.message });
   }
 }
 

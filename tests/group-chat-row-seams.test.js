@@ -213,7 +213,10 @@ test('the transcript fills new vote rows itself', () => {
   assert.match(tsx, /controller\(\)\?\.refreshVoteControls\?\.\(\)/);
   // Keyed on which vote rows are present, not on every render.
   assert.match(tsx, /\}, \[voteRows\]\)/);
-  assert.match(tsx, /\.filter\(\(m\) => m\.kind === 'vote'\)/);
+  // #5458: a vote row, or an ordinary message whose metadata names the
+  // proposal — both carry the controls host, and either can be the row
+  // that arrives after the snapshot landed.
+  assert.match(tsx, /\.filter\(\(m\) => m\.kind === 'vote' \|\| m\.voteRef\)/);
 });
 
 // ── The quoted reply ──────────────────────────────────────────────────
