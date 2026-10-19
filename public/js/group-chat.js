@@ -1258,14 +1258,20 @@ const GroupChat = {
   },
 
   // A message's metadata changed for everybody (`chat_message_updated`): an
-  // offer of Homeroom bot's was decided. Every copy, and its row.
+  // offer of Homeroom bot's was decided, or (papote #3) what became of its
+  // plan on a request (homeroom-bot-live.js notePlanRows). Every copy, and
+  // its row.
   _applyMessageUpdate(frame) {
     if (!frame || frame.id == null || !frame.metadata || typeof frame.metadata !== 'object') return;
     GroupChat._applyLive({ kind: 'metadata', id: frame.id, metadata: frame.metadata });
     let msg = null;
     GroupChat._eachCopy(frame.id, (m) => { if (!msg) msg = m; });
     if (!msg) return;
-    GroupChat._react()?.patchTranscriptMessage(Number(frame.id), { botOffer: GroupChat._messageView(msg).botOffer });
+    const view = GroupChat._messageView(msg);
+    GroupChat._react()?.patchTranscriptMessage(Number(frame.id), {
+      botOffer: view.botOffer,
+      ...(frame.metadata.specShare ? { specShare: view.specShare } : {}),
+    });
   },
 
   _openAppView(meta) {
@@ -4605,8 +4611,9 @@ const GroupChat = {
       sessionId: meta.sessionId || null,
       // Homeroom bot's plan says where it stands in one sentence on a
       // request's page (homeroom-bot-live.js specCard): it is building it,
-      // or it waits for whoever asked for it to say Build it.
-      botNote: meta.botNote === 'building' || meta.botNote === 'waiting' ? meta.botNote : null,
+      // or it waits for whoever asked for it to say Build it. Papote #3:
+      // or a newer plan replaced it, or it stopped waiting (notePlanRows).
+      botNote: ['building', 'waiting', 'replaced', 'stopped'].includes(meta.botNote) ? meta.botNote : null,
       waitingFor: meta.botNote === 'waiting' && typeof meta.waitingFor === 'string' && meta.waitingFor ? meta.waitingFor : null,
       // Markdown, so `dangerouslySetInnerHTML`; null when the share carried
       // no snippet, or when dev-chat.js is not loaded to render one.

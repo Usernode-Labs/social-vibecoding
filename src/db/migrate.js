@@ -257,6 +257,7 @@ async function migrate(config) {
   await migrateWaitlistCountryCodes(pool);
   // After backfillVotesRequired, which reads the merge announcements.
   await clearAutomatedChannelLines(pool);
+  await backfillPlanRows(pool);
   await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);
   await migrateAppDbsToPerRole(pool, config);
@@ -337,6 +338,40 @@ async function backfillUsernameChoiceForEmailHandles(pool) {
 // chat), and a transcript guard (no user/assistant conversation ever backed
 // a manifest PR; dev chats branch as dev/…). Best effort: a failure logs and
 // boot goes on, the rows just stay listed until the next boot.
+// Papote #3 (18 Oct 2026): Homeroom bot's plan rows on requests kept saying
+// "Waiting for @snait to say Build it" after their plans stopped waiting:
+// request #3 on Papote showed four. What became of each plan is written on
+// its row from now on (homeroom-bot-live.js notePlanRows); a row from
+// before is told here, once. Only a row still reading 'waiting' whose plan
+// no longer waits changes, so it is a no-op after its first run.
+async function backfillPlanRows(pool) {
+  const endings = require('../services/homeroom-bot-live').PLAN_ROW_ENDINGS;
+  let result;
+  try {
+    result = await pool.query(
+      `UPDATE chat_messages m
+          SET metadata = jsonb_set(m.metadata, '{specShare,botNote}', to_jsonb(s.note)),
+              content = regexp_replace(m.content, '\\. Waiting for [^\\n]*$',
+                CASE s.note WHEN 'building' THEN $1 WHEN 'replaced' THEN $2 ELSE $3 END)
+         FROM (SELECT p.thread_message_id AS id,
+                      CASE WHEN r.plan->'chosen' IS NOT NULL THEN 'building'
+                           WHEN r.build_error = 'skipped: the request was read again'
+                             OR r.build_error LIKE 'skipped: % asked to change the plan' THEN 'replaced'
+                           ELSE 'stopped' END AS note
+                 FROM homeroom_bot_posts p
+                 JOIN homeroom_bot_runs r ON r.id = p.run_id
+                WHERE p.kind = 'plan' AND p.thread_message_id IS NOT NULL AND r.awaiting_go_at IS NULL) s
+        WHERE m.id = s.id AND m.metadata->'specShare'->>'botNote' = 'waiting'`,
+      [endings.building, endings.replaced, endings.stopped],
+    );
+  } catch (err) {
+    log.warn('db', 'Plan-row backfill skipped (query failed)', { err: err.message });
+    return 0;
+  }
+  if (result.rowCount) log.info('db', 'Said what became of plans still marked waiting on their requests', { count: result.rowCount });
+  return result.rowCount;
+}
+
 async function backfillSettingsProposalSource(pool) {
   let result;
   try {
@@ -14994,6 +15029,7 @@ module.exports = {
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
   clearAutomatedChannelLines,
+  backfillPlanRows,
   backfillProposalIssuerAssignments, backfillVotesRequired,
   backfillSettingsProposalSource,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,

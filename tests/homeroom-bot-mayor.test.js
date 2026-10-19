@@ -554,6 +554,26 @@ test('WP1: request_detail says a build is in progress, and a build that was not 
   assert.equal(mayor.buildWords({ verdict: 'revise', build_ok: true }), 'built');
 });
 
+// Papote #3 (18 Oct 2026): "status?" on a request whose plan had waited
+// three days for its requester's Build it was told "building now".
+test('papote #3: request_detail says a plan waits for Build it, and whom it waits on', () => {
+  const words = (r, opts) => mayor.buildWords({ verdict: 'ready', ...r }, opts);
+  const waiting = { awaiting_go_at: '2026-10-15T11:54:25Z', complicated: true, planned: true };
+  assert.equal(words(waiting, { waitingFor: 'them' }),
+    'not building: its plan is written and waits for them to say Build it, and nothing is built until then');
+  assert.equal(words(waiting, { waitingFor: 'snait' }),
+    'not building: its plan is written and waits for @snait to say Build it, and nothing is built until then');
+  assert.equal(words(waiting),
+    'not building: its plan is written and waits for the person who asked for it to say Build it, and nothing is built until then');
+  assert.equal(words({ ...waiting, build_ok: false, build_error: 'skipped: the request was read again' }),
+    'stopped before it was built: the request was read again', 'a plan a new look replaced');
+  // A complicated change's plan being drafted waits in the build lane too.
+  assert.equal(words({ complicated: true, planned: false, live_build_waiting_at: '2026-10-18T17:09:00Z' }),
+    'writing the plan its requester checks before anything is built');
+  assert.equal(words({ complicated: true, planned: true, live_build_waiting_at: '2026-10-18T17:09:00Z' }),
+    'waiting its turn to be built', 'and once Build it went ahead, its build waits its turn');
+});
+
 test('WP1: the model reads what each activity card shows now, beside the card\'s own words', async () => {
   const rows = [
     { id: 30, sender_id: 77, content: '**Plant Pal**, its first version\n\nI\'m working on the first version now. This card updates as I go.', metadata: { homeroomBot: { kind: 'activity' } } },

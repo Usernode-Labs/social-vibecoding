@@ -198,7 +198,8 @@ test('the tray answers with its tracks; the request page and the slots route rea
   // request's route: the list carries each request's track too (the
   // declared check on #900018 found the card missing without it).
   assert.match(issues, /const tracks = await trackSvc\.tracksForRequests\(pool, \{ appId: app\.id, numbers: \(result\.issues \|\| \[\]\)\.map\(\(i\) => i\.number\) \}\);/);
-  assert.match(issues, /bot: botAsked\(issue\.number\),\s*track: tracks\.get\(issue\.number\) \|\| null,/);
+  // Papote #3: as the viewer reads it (forViewer, below).
+  assert.match(issues, /bot: botAsked\(issue\.number\),\s*track: trackSvc\.forViewer\(tracks\.get\(issue\.number\) \|\| null, askers\.get\(issue\.number\), req\.user\.id\),/);
   assert.match(issues, /if \(issue\.number === 900018 && !issue\.track\) issue\.track = trackSvc\.demoRequestTrack\(app, 900018, issue\.title\);/);
   // A whole list is narrowed first to the requests the bot has touched.
   assert.match(read('src/services/homeroom-bot-track.js'), /\? \(await pool\.query\(TOUCHED_SQL, \[Number\(appId\), asked\]\)\)\.rows\.map/);
@@ -209,4 +210,23 @@ test('the tray answers with its tracks; the request page and the slots route rea
   const slotsRead = api.slice(api.indexOf('export async function getBotSlots'), api.indexOf('export async function getBotSlots') + 400);
   assert.doesNotMatch(slotsRead, /demo=1/);
   assert.match(api, /function demoQuery\(path: string\): string \{[\s\S]*?demo=1`;/);
+});
+
+// Papote #3 (18 Oct 2026): the request's page said "Waiting on you: Its plan
+// is ready for you to say Build it" to every member, beside a button that
+// said the plan waited for somebody else's OK.
+test('papote #3: a track waiting on its requester names them to anybody else', () => {
+  const plan = { state: 'waiting', why: 'plan', waitingOn: 'you' };
+  const snait = { userId: 7, username: 'snait' };
+  assert.deepEqual(track.forViewer(plan, snait, 12), { ...plan, waitingFor: 'snait' });
+  assert.equal(track.forViewer(plan, snait, 7), plan, 'its requester reads it as theirs');
+  assert.equal(track.forViewer(plan, snait, '7'), plan, 'whatever type the id came as');
+  assert.equal(track.forViewer(plan, null, 12), plan, 'nobody to name: as before');
+  const building = { state: 'building', why: null, waitingOn: null };
+  assert.equal(track.forViewer(building, snait, 12), building, 'only a wait on them is named');
+  assert.equal(track.forViewer(null, snait, 12), null);
+  const routes = fs.readFileSync(path.join(__dirname, '..', 'src/routes/issues.js'), 'utf8');
+  assert.match(routes, /track: trackSvc\.forViewer\(tracks\.get\(issue\.number\) \|\| null, askers\.get\(issue\.number\), req\.user\.id\),/,
+    'the board list');
+  assert.match(routes, /track = trackSvc\.forViewer\(track, asker, req\.user\.id\);/, 'and a request opened on its own');
 });

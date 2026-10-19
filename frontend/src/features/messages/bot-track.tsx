@@ -120,6 +120,15 @@ const LINES: Record<string, string> = {
   'closed.default': 'messages:bot.track.line.closed.default',
 };
 
+// Papote #3: the same lines, naming who it waits on, for a page anyone can
+// open (BotTrack.waitingFor).
+const NAMED_WAITING_LINES: Record<string, string> = {
+  question: 'messages:bot.track.line.waiting.questionNamed',
+  plan: 'messages:bot.track.line.waiting.planNamed',
+  detail: 'messages:bot.track.line.waiting.detailNamed',
+  look: 'messages:bot.track.line.waiting.lookNamed',
+};
+
 const FALLBACK_LINES: Partial<Record<BotTrack['state'], string>> = {
   queued: 'messages:bot.track.line.queued.turn',
   planning: 'messages:bot.track.line.planning.planning',
@@ -131,8 +140,11 @@ const FALLBACK_LINES: Partial<Record<BotTrack['state'], string>> = {
 /** The states that are over: what "finished" counts. */
 export const ENDED_STATES: ReadonlySet<BotTrack['state']> = new Set(['live', 'stopped', 'done_elsewhere', 'closed']);
 
-/** Pure: a track's status word ("Building"). */
-export function trackStateWord(track: Pick<BotTrack, 'state'>): string {
+/** Pure: a track's status word ("Building"; "Waiting on @sam" when it waits on somebody else). */
+export function trackStateWord(track: Pick<BotTrack, 'state'> & { waitingFor?: string }): string {
+  if (track.state === 'waiting' && track.waitingFor) {
+    return translate('messages:bot.track.state.waitingNamed', { username: track.waitingFor });
+  }
   return translate(STATE_WORDS[track.state]);
 }
 
@@ -153,6 +165,9 @@ export function trackLine(track: BotTrack): string {
       const when = date.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
       return translate('messages:bot.track.line.held.until', { date: when });
     }
+  }
+  if (track.state === 'waiting' && track.waitingFor) {
+    return translate(NAMED_WAITING_LINES[track.why || ''] || NAMED_WAITING_LINES.question, { username: track.waitingFor });
   }
   const key = (track.why && LINES[`${track.state}.${track.why}`]) || LINES[`${track.state}.default`] || FALLBACK_LINES[track.state];
   return key ? translate(key) : trackStateWord(track);

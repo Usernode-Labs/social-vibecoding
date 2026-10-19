@@ -465,9 +465,10 @@ export interface SpecShareView {
   /**
    * Homeroom bot's plan, in its sentence on a request's page: `building`
    * ("I'm building it now.") or `waiting` (for `waitingFor` to say Build
-   * it). Absent on a person's share and on older rows.
+   * it), and once it stopped waiting (papote #3), `replaced` by a newer
+   * plan or `stopped`. Absent on a person's share and on older rows.
    */
-  botNote?: 'building' | 'waiting' | null;
+  botNote?: 'building' | 'waiting' | 'replaced' | 'stopped' | null;
   waitingFor?: string | null;
   snippetHtml: string | null;
   snippetText: string | null;
