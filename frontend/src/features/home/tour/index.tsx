@@ -435,6 +435,17 @@ function bringIntoView(target: HTMLElement): void {
   }
 }
 
+/**
+ * Open the Communities page, the screen the tour's first card described
+ * (#5528). It is the tab bar's own href, so the Communities tab lights up and
+ * Back returns to Home. Not `goToCommunity(null)`: that would reset the tab's
+ * chosen community and forget the resumable Workshop view, and the tour
+ * changes neither.
+ */
+function goToCommunities(): void {
+  if (window.location.hash !== '#communities') window.location.hash = '#communities';
+}
+
 /** Scroll Home back to its top, where the tour found it. */
 function backToTopOfHome(): void {
   const home = document.getElementById('home-screen');
@@ -943,13 +954,16 @@ export function OnboardingTour() {
   }, [live, index, confirming]);
 
   // `ended` says how (#3369): Next on the last step, or Skip. The account
-  // keeps it with the furthest step reached, the first time only.
+  // keeps it with the furthest step reached, the first time only. Finish ends
+  // on the Communities page, the screen the tour set out to explain (#5528);
+  // Skip stays on Home.
   const finish = useCallback((ended: 'finish' | 'skip' = 'finish') => {
     // The screenshot route writes nothing, here or on the account.
     if (isTourShot()) {
       setConfirming(false);
       setOpen(false);
-      backToTopOfHome();
+      if (ended === 'finish') goToCommunities();
+      else backToTopOfHome();
       return;
     }
     writeDone(userId);
@@ -960,8 +974,15 @@ export function OnboardingTour() {
     clearStep(userId);
     setConfirming(false);
     setOpen(false);
-    // The steps may have scrolled Home; hand the viewer back the top of the
-    // page they started on.
+    // Finish ends the tour where its first card said it would (#5528). The
+    // hash change reports the new screen itself, so Home is not reported
+    // first: that would log a navigation that did not happen.
+    if (ended === 'finish') {
+      goToCommunities();
+      return;
+    }
+    // Skip leaves the viewer where they were. The steps may have scrolled
+    // Home; hand them back the top of the page they started on.
     backToTopOfHome();
     // Back on the screen under the tour: the next step of the path (#3369).
     (window as any).App?._renotifyNavigation?.();

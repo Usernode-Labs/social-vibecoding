@@ -420,10 +420,46 @@ test('a tall target is scrolled to its start, not centred past it', () => {
 
 test('the card keeps clear of the status bar, and the tour hands Home back at its top', () => {
   assert.match(OVERLAY_SRC, /--platform-safe-top/, 'the status bar is measured from the shell token');
-  assert.match(OVERLAY_SRC, /clearStep\(userId\);[\s\S]{0,200}backToTopOfHome\(\);/);
+  // #5528 inserted the Finish branch between the clear and the skip path, so
+  // the window is wider; Finish's own ending is pinned by the test below.
+  assert.match(OVERLAY_SRC, /clearStep\(userId\);[\s\S]{0,600}backToTopOfHome\(\);/);
   // The first-touch wait was for a tour that started by itself under the
   // phone's own post-sign-in dialog. It starts on a press now (#3240).
   assert.doesNotMatch(OVERLAY_SRC, /FIRST_TOUCH_WAIT_MS|whenUserSettled/);
+});
+
+test('Finish ends on the Communities page, Skip stays on Home (#5528)', () => {
+  // The helper lands on the same address the Communities tab carries, so the
+  // tab lights up and Back returns to Home.
+  const helper = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('function goToCommunities(): void {'));
+  const hbody = helper.slice(0, helper.indexOf('\n}'));
+  assert.match(hbody, /window\.location\.hash = '#communities'/);
+  assert.match(read('frontend/src/features/nav/tab-bar.tsx'),
+    /\{ key: 'workshop' as const, label: 'core:tabs\.communities', href: '#communities'/,
+    'the helper goes where the Communities tab goes');
+  // Not goToCommunity(): that resets the tab's chosen scope and its
+  // resumable Workshop view, and the tour changes neither. (The helper's
+  // comment names it, so comments are taken out before the check.)
+  const code = OVERLAY_SRC.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(code, /\bgoToCommunity\(/);
+  // The endings part after the card is closed: Finish goes to Communities and
+  // returns; Skip hands Home back at its top and reports the navigation.
+  const finish = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('const finish = useCallback(('));
+  const fbody = finish.slice(0, finish.indexOf('}, [userId]);'));
+  assert.match(fbody, /if \(ended === 'finish'\) \{\s*goToCommunities\(\);\s*return;\s*\}/);
+  assert.ok(fbody.indexOf('goToCommunities();') < fbody.indexOf('backToTopOfHome();'),
+    'the Communities landing is the finish path, before the skip path');
+  const skipPath = fbody.slice(fbody.lastIndexOf('backToTopOfHome();'));
+  assert.match(skipPath, /_renotifyNavigation/,
+    'Home is only reported on the skip path, where the viewer stayed');
+  // The screenshot route (which records nothing) parts the same way.
+  const shot = fbody.slice(fbody.indexOf('if (isTourShot()) {'));
+  const shotBody = shot.slice(0, shot.indexOf('\n    }'));
+  assert.match(shotBody, /if \(ended === 'finish'\) goToCommunities\(\);\s*else backToTopOfHome\(\);/);
+  // And the last card says so.
+  const body = message('onboarding:tour.step.settings.body');
+  assert.match(body, /replay this tour any time from Settings, on your profile\./);
+  assert.match(body, /Finish takes you to your communities\./);
 });
 
 test('a narrow viewport shrinks the card rather than overflowing', () => {
