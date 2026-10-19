@@ -203,6 +203,52 @@ test('a code field says it is a one-time code, in every way a browser reads (Eva
   assert.doesNotMatch(src, /type="password"[^>]*one-time-code|one-time-code[^>]*type="password"/);
 });
 
+test('the code is six boxes over one real field, and the sixth digit sends it (#5253)', () => {
+  const { codeDigits, CODE_LENGTH } = loadTsx(SHEET);
+  assert.equal(CODE_LENGTH, 6);
+  // A paste or the keyboard's suggestion fills all six, whatever surrounds the digits.
+  assert.equal(codeDigits('583914'), '583914');
+  assert.equal(codeDigits('583 914'), '583914');
+  assert.equal(codeDigits('Code: 583914.'), '583914');
+  assert.equal(codeDigits('58391412'), '583914');
+  assert.equal(codeDigits('ab'), '');
+  const src = read(SHEET);
+  // One real field still carries the one-time-code attributes; the boxes are drawn from it and hidden from readers.
+  assert.match(src, /<div className="grid grid-cols-6 gap-2" aria-hidden="true">/);
+  assert.match(src, /id="sign-in-sheet-code" \{\.\.\.ONE_TIME_CODE_FIELD\} enterKeyHint="go" maxLength=\{6\} onInput=\{\(e\) => onCodeInput\(e\.currentTarget\.value\)\}/);
+  // The sixth digit sends it, once per code.
+  assert.match(src, /if \(digits\.length === CODE_LENGTH && digits !== autoSent\.current && !busy\) \{\s+autoSent\.current = digits;\s+void verify\(\);/);
+  // No Continue to press on the code step any more.
+  const step = src.slice(src.indexOf("{step === 'code' ? ("), src.indexOf("{step === 'password' ? ("));
+  assert.doesNotMatch(step, /type="submit"/);
+  assert.match(step, /<RichMessage id="auth:signInSheet\.code\.sentTo" values=\{\{ email \}\}/);
+  assert.equal(message('auth:signInSheet.code.sentTo', { email: 'ada@example.com' }), 'Sent to <0>ada@example.com</0> · <1>Change</1>');
+  assert.equal(message('auth:signInSheet.code.checkSpam'), 'Nothing? Check spam.');
+  assert.equal(message('auth:signInSheet.code.title'), 'Enter the code we emailed');
+});
+
+test('the code step opens the address\'s own mail, and counts Get started\'s steps (#5253)', () => {
+  const { mailAppFor, storyStep } = loadTsx(SHEET);
+  const gmail = mailAppFor('Ada@Gmail.com');
+  assert.equal(gmail.name, 'Gmail');
+  assert.equal(gmail.url, 'https://mail.google.com/mail/?authuser=Ada%40Gmail.com#search/in%3Aanywhere+newer_than%3A1h');
+  assert.equal(mailAppFor('ada@googlemail.com').name, 'Gmail');
+  assert.equal(mailAppFor('ada@hotmail.com').name, 'Outlook');
+  assert.equal(mailAppFor('ada@yahoo.co.uk').name, 'Yahoo Mail');
+  assert.equal(mailAppFor('ada@icloud.com').name, 'iCloud Mail');
+  assert.equal(mailAppFor('ada@proton.me').name, 'Proton Mail');
+  // A work or school address has no inbox to guess at: no button.
+  assert.equal(mailAppFor('ada@usernodelabs.org'), null);
+  assert.equal(mailAppFor('not an address'), null);
+  assert.equal(message('auth:signInSheet.code.openMail', { app: 'Gmail' }), 'Open Gmail');
+  // Only the story's Get started counts its steps: email, code, username.
+  assert.equal(storyStep('code', 'story'), 2);
+  assert.equal(storyStep('code', 'signin'), null);
+  assert.equal(storyStep('code', 'invite'), null);
+  assert.equal(storyStep('email', 'story'), null);
+  assert.equal(message('auth:signInSheet.progress', { step: 2, total: 3 }), 'Step 2 of 3');
+});
+
 test('the sheet spends the one-time sign-in with a POST, and anything but a spend falls back (#4594)', async () => {
   const sheet = loadTsx(SHEET);
   const key = 'K'.repeat(43);
@@ -241,7 +287,8 @@ test('the sheet spends the one-time sign-in with a POST, and anything but a spen
   assert.match(landing, /const closeSheet = useCallback\(\(\) => \{ setSheet\(null\); setResume\(null\); \}, \[\]\);/);
   assert.doesNotMatch(landing, /setRelease\(null\); \}, \[\]\)/);
   // Refused, the code step says why a code came instead.
-  assert.match(src, /linkRefused \? t\('auth:signInSheet\.code\.leadLinkUsed', \{ email \}\) : t\('auth:signInSheet\.code\.lead', \{ email \}\)/);
+  // Otherwise "Sent to <address> · Change" says it (#5253).
+  assert.match(src, /linkRefused \? t\('auth:signInSheet\.code\.leadLinkUsed', \{ email \}\) : ''/);
   assert.equal(message('auth:signInSheet.code.leadLinkUsed', { email: 'ada@example.com' }),
     'That sign-in link was already used or has expired, so we sent a 6-digit code to ada@example.com instead. It expires in 10 minutes.');
   assert.match(src, /setLinkRefused\(false\); setStep\('email'\);/, 'another address is a plain code again');
