@@ -469,7 +469,8 @@ test('somebody an invite is bringing in is asked to join it once, and not what t
   assert.match(app, /pressed = sessionStorage\.getItem\('usernode:invite-join'\) === `\/invite\/\$\{token\}`;\s+sessionStorage\.removeItem\('usernode:invite-join'\);/);
   assert.match(app, /const ok = pressed \? true : window\.ConfirmModal \? await ConfirmModal\.show\(\{/);
   const sheet = read('frontend/src/features/auth/sign-in-sheet.tsx');
-  assert.match(sheet, /onClick=\{\(\) => \{ if \(followInvite\) rememberInviteJoin\(\); onClose\(\); \}\}/);
+  // The reset stays in the sheet (#5258), so the password sign-in after it is what remembers the Join.
+  assert.match(sheet, /if \(followInvite\) rememberInviteJoin\(\);\s+await finish\('existing'\);/);
   assert.match(sheet, /sessionStorage\.setItem\('usernode:invite-join', location\.pathname\.replace\(\/\\\/\$\/, ''\)\);/);
   // The join step waits for the follow before it asks anything.
   const join = read('frontend/src/features/auth/communities-first-run.js');
