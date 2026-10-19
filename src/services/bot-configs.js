@@ -363,6 +363,22 @@ function derivableFrom(current, side) {
 }
 
 /**
+ * Whether a later change's side version would write the plan its live
+ * build writes: the same spec model, pack and tweaks. Its triage is the
+ * live run's, replayed, whatever its recipe names. Such a side builds from
+ * the live build's own spec (liveSpecState) instead of paying for a second
+ * one, so its pair differs by what builds the plan and nothing else.
+ * Pure.
+ */
+function plansAlike(current, side) {
+  const c = recipeOf(current);
+  const s = recipeOf(side);
+  if (!c || !s) return false;
+  return c.models.spec === s.models.spec && (c.pack || null) === (s.pack || null)
+    && tweaksOf(c).join(',') === tweaksOf(s).join(',');
+}
+
+/**
  * Whether a recipe may be made CURRENT: every model it names is in the
  * stored OpenRouter catalog (openrouter_model_catalog, the list
  * agent-models.js keeps), and its reviewer's model, when it has one, takes
@@ -947,10 +963,63 @@ async function finishLive(pool, {
   }
 }
 
+// How long a later change's side build waits for its live build's spec
+// before it writes its own: twice the live spec turn's limit
+// (homeroom-bot-live.js SPEC_TURN_MAX_MS, 10 minutes), with the live
+// build's worker start besides; and how often it looks.
+const LIVE_SPEC_WAIT_MS = 25 * 60 * 1000;
+const LIVE_SPEC_POLL_MS = 10 * 1000;
+
+/**
+ * Where a later change's side build stands with its live build's plan
+ * (plansAlike; 19 Oct 2026: each side build wrote an Opus spec of its own,
+ * about 93% of what it cost, and its pair then compared two plans as well
+ * as two builds). Resolves { share: false } when the side writes its own
+ * (its recipe plans differently, or the run names no configuration);
+ * otherwise share: true and `spec` ({ sessionId, version }: the live build
+ * session's first spec version) once it is written, `ended` ({ blocked,
+ * error }) when the live build ended without one, or neither while it is
+ * still being written. Throws only on a database error.
+ */
+async function liveSpecState(pool, { botRunId, versionId }) {
+  const { rows: [r] } = await pool.query(
+    `SELECT cv.recipe AS current_recipe, sv.recipe AS side_recipe, r.build_ok, r.build_error,
+            s.session_id, s.version
+       FROM homeroom_bot_runs r
+       JOIN bot_config_versions cv ON cv.id = r.bot_config_version_id
+       JOIN bot_config_versions sv ON sv.id = $2
+       LEFT JOIN LATERAL (
+         SELECT session_id, version FROM chat_session_specs
+          WHERE session_id = r.build_session_id ORDER BY version ASC LIMIT 1
+       ) s ON TRUE
+      WHERE r.id = $1`,
+    [Number(botRunId), Number(versionId)],
+  );
+  if (!r || !plansAlike(r.current_recipe, r.side_recipe)) return { share: false };
+  if (r.session_id != null) return { share: true, spec: { sessionId: Number(r.session_id), version: Number(r.version) } };
+  if (r.build_ok != null) {
+    const error = r.build_error ? String(r.build_error) : null;
+    return { share: true, ended: { blocked: /^blocked: /.test(error || ''), error } };
+  }
+  return { share: true };
+}
+
+/** One spec version's text: { specMd, specHtml }, or null when it is gone. */
+async function liveSpecText(pool, { sessionId, version }) {
+  const { rows: [r] } = await pool.query(
+    'SELECT content, content_html FROM chat_session_specs WHERE session_id = $1 AND version = $2',
+    [Number(sessionId), Number(version)],
+  );
+  return r && r.content ? { specMd: String(r.content), specHtml: r.content_html ? String(r.content_html) : null } : null;
+}
+
 /**
  * A side build's trial is over (services/bench/lane.js recordTrial): its
  * result, with the live run's triage added, and the pairs it completes.
- * Never throws.
+ * A side that built from its live build's spec (`parsed.livePlan`) paid
+ * for none: that spec's cost, read off the live session's ledger, is its
+ * spec stage, so its average stays what its recipe costs and compares
+ * with the current version's. Never throws.
  */
 async function finishSideTrial(pool, trialId) {
   try {
@@ -974,14 +1043,19 @@ async function finishSideTrial(pool, trialId) {
       ? `capped: its run had spent $${(num(t.run_spent) || 0).toFixed(2)} of its $${(num(t.run_cap) || 0).toFixed(2)} cap`
       : null;
     const why = t.error || capped || (t.parsed?.blocked ? `blocked: ${t.parsed.blocked}` : null);
+    const own = t.parsed?.costParts || {};
+    const livePlan = t.parsed?.livePlan?.sessionId && !own.spec
+      ? (await stageCosts.ledgerParts(pool, Number(t.parsed.livePlan.sessionId))).parts.spec || null
+      : null;
     await recordResult(pool, {
       botRunId: t.bot_run_id, configVersionId: t.bot_config_version_id, source: 'trial', trialId: t.id,
-      // Its own stages (bench/runner.js buildStage), and the live run's triage.
-      costParts: { ...triagePart(triage), ...(t.parsed?.costParts || {}) },
+      // Its own stages (bench/runner.js buildStage), the live run's triage,
+      // and the live build's spec when it built from that.
+      costParts: { ...triagePart(triage), ...(livePlan ? { spec: livePlan } : {}), ...own },
       status: ranAtAll ? 'done' : 'skipped',
       built,
       booted: t.capture ? t.capture.booted === true : null,
-      costUsd: add(add(t.cost, t.interrupted), triage.costUsd),
+      costUsd: add(add(add(t.cost, t.interrupted), triage.costUsd), livePlan ? livePlan.usd : null),
       activeMs: add(t.duration_ms, triage.ms),
       sha: t.build_sha || null,
       capture: t.capture || null,
@@ -2021,6 +2095,7 @@ module.exports = {
   tweaksOf,
   recipeLine,
   derivableFrom,
+  plansAlike,
   reviews,
   listVersions,
   versionById,
@@ -2036,6 +2111,10 @@ module.exports = {
   recordResult,
   finishLive,
   finishSideTrial,
+  LIVE_SPEC_WAIT_MS,
+  LIVE_SPEC_POLL_MS,
+  liveSpecState,
+  liveSpecText,
   exclusionOf,
   laterExclusionOf,
   IDENTICAL_REASON,
