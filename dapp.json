@@ -4852,9 +4852,9 @@
       "expectText": "Threads keep the room readable"
     },
     {
-      "name": "#2387: a deleted message leaves a placeholder, a message link lands on it, and Full width, just before ⋯ in the header, can hide the list beside it",
+      "name": "#2387: a deleted message leaves a placeholder and a message link lands on it; #5269: the group's header is its name and then one ⋯, Conversation actions, with no icon-only disc between them",
       "path": "/?demo=1#messages/910002/m/9100202",
-      "expectSelector": ".messages-layout:has(.messages-thread-header > .messages-list-toggle[aria-label=\"Full width\"][aria-pressed=\"false\"] + .relative) .messages-message .messages-deleted",
+      "expectSelector": ".messages-layout:has(.messages-thread-header > .flex-1 + .relative:last-child > button[aria-label=\"Conversation actions\"][aria-haspopup=\"menu\"]) .messages-message .messages-deleted",
       "expectText": "Message deleted"
     },
     {

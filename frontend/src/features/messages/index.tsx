@@ -1356,10 +1356,12 @@ function InvitationBanner() {
  * it) has the whole width, and brings it back. Only the list: the platform's
  * own sidebar is navigation and stays. It is remembered on this device.
  *
- * ONE CONTROL, ONE PLACE, EVERY PANE. It sits at the right of the header,
- * just before ⋯ where a pane has one — where a video player or a document
- * editor puts its full-screen control — on a conversation, #general, an
- * app's channel, an agent chat and both kinds of session alike. The agent
+ * ONE CONTROL, ONE PLACE. It sits at the right of the header, just
+ * before ⋯ where a pane has one (where a video player or a document
+ * editor puts its full-screen control), on an app's channel, an agent chat
+ * and both kinds of session alike. A conversation's own header no longer
+ * carries it (#5269): from 768px the list is in the sidebar, so there it
+ * had nothing to fold, and that header is its name and ⋯. The agent
  * panels are drawn by their own features, so they take it as `headerAction`
  * rather than importing this store.
  *
@@ -1588,8 +1590,12 @@ function ThreadHeader() {
         <div className="messages-thread-sub">{botDm ? t('messages:header.subtitle.homeroomBot') : subtitle}</div>
       </button>
       )}
-      {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label={t('messages:header.groupMembers')} title={t('messages:header.groupMembers')}><UserGroupIcon aria-hidden="true" /></button> : null}
-      <FullWidthToggle />
+      {/* #5269: the name, then ⋯, whose every action is a labelled row.
+          No icon-only discs between them: a group's members are ⋯'s
+          Members row (and a press on the group's name), and there is no
+          Full width disc, because from 768px the list is in the sidebar
+          (messages-list-in-rail), so beside a conversation it had nothing
+          to fold, and below 768px one pane is shown at a time. */}
       <div className="relative" ref={menuWrapRef}>
         <button ref={menuBtnRef} type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label={t('messages:header.actions')} aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>
         {menu ? (

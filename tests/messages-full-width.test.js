@@ -11,9 +11,10 @@
 //
 //   1. ONE CONTROL: its labels, `aria-pressed`, the glyph swap, and the two
 //      classes dapp.json's checks and app.css select it by.
-//   2. EVERY PANE CARRIES IT, AT THE RIGHT: a conversation or #general (before
-//      ⋯), an app's channel, a dev session's bar, and the two agent panels,
-//      which take it as `headerAction` rather than importing this store.
+//   2. EVERY OTHER PANE CARRIES IT, AT THE RIGHT: an app's channel, a dev
+//      session's bar, and the two agent panels, which take it as
+//      `headerAction` rather than importing this store. A conversation's
+//      header does not (#5269): its name, then ⋯.
 //   3. IT DOES SOMETHING ON EVERY PANE: the layout folds the list for an
 //      agent thread too, not only for a conversation or a channel.
 //   4. IT STAYS PUT: hidden on a phone, and the agent chat's toolbar spans the
@@ -64,20 +65,36 @@ test('the toggle: "Full width" with arrows out, "Show the conversation list" wit
   assert.match(ICONS, /export const ArrowsPointingInIcon = stroked\('ArrowsPointingInIcon', 'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7'\);/);
 });
 
-test('a conversation, a group and #general: at the right of the header, just before ⋯', () => {
+// #5269: a conversation's header is its name and one ⋯, every action in it a
+// labelled row. From 768px the list is in the sidebar (messages-list-in-rail
+// hides the list pane and this toggle), and below it one pane is shown at a
+// time, so the disc beside a conversation was an icon-only control with
+// nothing to fold. It is gone from that header; the other panes keep it.
+test('a conversation, a group and #general: no icon-only discs, the name then ⋯', () => {
   const header = fn('ThreadHeader');
-  const at = header.indexOf('<FullWidthToggle />');
-  assert.ok(at > 0, 'the conversation header carries it');
-  assert.equal(header.indexOf('<FullWidthToggle />', at + 1), -1, 'once');
-  assert.ok(at > header.indexOf('className="min-w-0 text-left flex-1"'), 'after the title, which takes the free width');
-  assert.equal(message('messages:header.groupMembers'), 'Group members');
-  assert.ok(at > header.indexOf("aria-label={t('messages:header.groupMembers')}"), 'after a group\'s members disc');
-  // The ⋯ is a keyboard menu button with refs of its own (QA 2026-09-24 Q18).
+  assert.doesNotMatch(header, /<FullWidthToggle \/>/, 'not in a conversation\'s header');
+  assert.doesNotMatch(header, /messages-list-toggle/);
+  assert.match(CSS, /\.messages-layout\.messages-list-in-rail \.messages-list-toggle \{\s*display: none;\s*\}/,
+    'why: from 768px the list beside it is already in the sidebar');
+  assert.ok(header.indexOf('ref={menuWrapRef}') > header.indexOf('className="min-w-0 text-left flex-1"'), 'after the title, which takes the free width');
+  // No icon-only disc for a group's members either: ⋯'s labelled Members
+  // row opens the same dialog, as a press on the group's name does.
+  assert.doesNotMatch(header, /messages:header\.groupMembers|<UserGroupIcon/, 'no members disc in the header');
+  assert.equal(message('messages:header.menu.members'), 'Members & invitations');
+  assert.match(header, /role="menuitem" onClick=\{\(\) => \{ menuBtnRef\.current\?\.focus\(\{ preventScroll: true \}\); setMenu\(false\); openDialog\('messagesMembers'\); \}\}>\{t\('messages:header\.menu\.members'\)\}/);
+  assert.match(header, /onClick=\{\(\) => \{ if \(active\.kind === 'group'\) openDialog\('messagesMembers'\); \}\}/);
+  // The ⋯ is a keyboard menu button with refs of its own (QA 2026-09-24 Q18),
+  // named for a screen reader, straight after the name.
   assert.equal(message('messages:header.actions'), 'Conversation actions');
-  assert.match(header, /<FullWidthToggle \/>\s*<div className="relative" ref=\{menuWrapRef\}>\s*<button ref=\{menuBtnRef\} type="button" onClick=\{\(\) => setMenu\(\(open\) => !open\)\}[^>]*aria-label=\{t\('messages:header\.actions'\)\}/,
-    'immediately before the ⋯ menu');
-  // #3407: #general's way back to its hub leads the row; the toggle does not.
-  assert.match(header, /<header className="messages-thread-header">\s*\{channel \? <PageBackButton /, 'no longer leading the row');
+  assert.match(header, /<\/button>\s*\)\}\s*(\{\/\*[\s\S]*?\*\/\}\s*)?<div className="relative" ref=\{menuWrapRef\}>\s*<button ref=\{menuBtnRef\} type="button" onClick=\{\(\) => setMenu\(\(open\) => !open\)\}[^>]*aria-label=\{t\('messages:header\.actions'\)\} aria-haspopup="menu"/,
+    'the name, then the ⋯ menu, which ends the row');
+  // Every row of the menu says what it does in words.
+  const menu = header.slice(header.indexOf('role="menu"'), header.indexOf('</header>'));
+  for (const item of menu.split('role="menuitem"').slice(1)) {
+    assert.match(item, /\{t\('messages:header\.menu\.|\? t\('messages:header\.menu\./, 'a labelled menu row');
+  }
+  // #3407: #general's way back to its hub leads the row.
+  assert.match(header, /<header className="messages-thread-header">\s*\{channel \? <PageBackButton /, 'the way back leads the row');
 });
 
 test('an app\'s channel: at the end of its header, where it draws nothing — a channel is always full width', () => {
