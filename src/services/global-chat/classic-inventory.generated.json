@@ -120,6 +120,15 @@
       "mobileSupported": true
     },
     {
+      "key": "contact-privacy",
+      "label": "Privacy",
+      "group": "Account",
+      "gate": null,
+      "capabilityId": "settings.open.contact_privacy",
+      "classicPath": "#settings/contact-privacy",
+      "mobileSupported": true
+    },
+    {
       "key": "wallet",
       "label": "Homeroom Wallet",
       "group": "Account",
@@ -3834,6 +3843,36 @@
       "expression": null,
       "status": "mapped",
       "capabilityId": "apps.post.me.session.bridge.33ae9515",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/auth.js",
+      "method": "GET",
+      "path": "/api/me/contact-privacy",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.me.contact.privacy.64241ea7",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/auth.js",
+      "method": "POST",
+      "path": "/api/me/contact-privacy",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.me.contact.privacy.6d2b3e6d",
       "domain": "apps",
       "risk": "external_write",
       "confirmation": "required",

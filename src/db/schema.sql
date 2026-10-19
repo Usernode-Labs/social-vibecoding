@@ -14986,3 +14986,80 @@ CREATE TABLE IF NOT EXISTS server_error_minutes (
 );
 CREATE INDEX IF NOT EXISTS idx_server_error_minutes_minute ON server_error_minutes (minute DESC);
 COMMENT ON COLUMN server_error_minutes.sample IS 'staging:private';
+
+-- ── Who can reach you, and who can find you (#5104) ───────────────────
+--
+-- Teen-safe defaults for everyone, existing accounts included (ADD COLUMN
+-- with a DEFAULT fills every row that is already there). A person loosens
+-- either in Settings › Privacy (sections/privacy.tsx, POST
+-- /api/me/contact-privacy); nothing else writes them.
+--
+--   contact_policy  who may START something with you: a new direct message,
+--                   an invitation to a group chat, a project or its
+--                   approvers, and a friend request. 'shared' (the default)
+--                   is people you are connected to (users_connected below);
+--                   'anyone' is what everybody had before. A conversation
+--                   that already exists keeps working either way: the rule
+--                   is read only when something new is started.
+--   profile_discoverable  whether people you are not connected to find your
+--                   username in a search: the people pickers, the invite
+--                   typeahead, an app's searchUsers, and the @ list of a
+--                   channel everyone reads (#general). Off by default. Your
+--                   profile page is a separate, older opt-in
+--                   (profile_published) and is not changed by this.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS contact_policy VARCHAR(16) NOT NULL DEFAULT 'shared';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_discoverable BOOLEAN NOT NULL DEFAULT FALSE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'users_contact_policy_check' AND conrelid = 'users'::regclass
+  ) THEN
+    ALTER TABLE users ADD CONSTRAINT users_contact_policy_check
+      CHECK (contact_policy IN ('shared', 'anyone'));
+  END IF;
+END $$;
+
+-- Two people are CONNECTED when they are in a project's community together
+-- or are friends. Homeroom's own community does not count: every account
+-- with platform access is in it ('auto', join_platform_community), so
+-- counting it would connect everybody to everybody.
+CREATE OR REPLACE FUNCTION users_connected(a INTEGER, b INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT EXISTS (
+           SELECT 1
+             FROM community_members ma
+             JOIN community_members mb ON mb.community_id = ma.community_id
+            WHERE ma.user_id = a AND mb.user_id = b
+              AND NOT EXISTS (SELECT 1 FROM apps pa
+                               WHERE pa.community_id = ma.community_id AND pa.self_hosted))
+      OR EXISTS (
+           SELECT 1 FROM friendships f
+            WHERE f.status = 'accepted'
+              AND f.user_low_id = LEAST(a, b) AND f.user_high_id = GREATEST(a, b))
+$$;
+
+-- Whether `sender_id` may start something new with `target_id` (see
+-- contact_policy above). A platform account (the Homeroom bot) on either
+-- side is never held to it: it cannot be a stranger, and a person can always
+-- write to it.
+CREATE OR REPLACE FUNCTION user_contactable_by(target_id INTEGER, sender_id INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT target_id = sender_id
+      OR EXISTS (SELECT 1 FROM users t WHERE t.id = target_id
+                    AND (t.contact_policy = 'anyone' OR t.is_synthetic))
+      OR EXISTS (SELECT 1 FROM users s WHERE s.id = sender_id AND s.is_synthetic)
+      OR users_connected(target_id, sender_id)
+$$;
+
+-- Whether `viewer_id` may find `target_id` in a search (profile_discoverable
+-- above). Yourself, and people you are connected to, always.
+CREATE OR REPLACE FUNCTION user_discoverable_by(target_id INTEGER, viewer_id INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT target_id = viewer_id
+      OR EXISTS (SELECT 1 FROM users t WHERE t.id = target_id AND t.profile_discoverable)
+      OR (viewer_id IS NOT NULL AND users_connected(target_id, viewer_id))
+$$;

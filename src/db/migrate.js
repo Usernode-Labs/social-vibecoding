@@ -6773,6 +6773,22 @@ async function seedStagingUserDirectory(pool) {
   } finally {
     client.release();
   }
+
+  // #5104: a search finds nobody who keeps their profile out of it, and that
+  // is now everybody until they choose otherwise. These fake people exist
+  // to be found by a preview's typeahead, so they opt in, and take
+  // messages and invitations from anyone, the way a real person can choose
+  // to. Only the sentinel-password fixtures: never a real account.
+  try {
+    await pool.query(
+      `UPDATE users SET profile_discoverable = TRUE, contact_policy = 'anyone'
+        WHERE username LIKE 'staging-demo-%'
+          AND password = 'staging-demo-not-a-login'
+          AND (NOT profile_discoverable OR contact_policy <> 'anyone')`
+    );
+  } catch (err) {
+    log.warn('db', 'Staging user-directory privacy seeding failed', { message: err.message });
+  }
 }
 
 // Fixtures for the reworked Approvers section in the Members &

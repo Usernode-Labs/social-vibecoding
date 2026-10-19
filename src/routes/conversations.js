@@ -8,6 +8,7 @@ const { adminMiddleware, requireAdminWrite } = require('../middleware/admin');
 const log = require('../services/logger');
 const conversations = require('../services/conversations');
 const communities = require('../services/communities');
+const contactPrivacy = require('../services/contact-privacy');
 const messageBookmarks = require('../services/message-bookmarks');
 const attachments = require('../services/attachments');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
@@ -50,6 +51,13 @@ const MESSAGE_DELETED = Object.freeze({ error: 'message_deleted' });
 // has not accepted yet. The conversation exists and the sender is in it; the
 // send is refused until they accept, so it is a conflict, not a 404.
 const AWAITING_ACCEPTANCE = Object.freeze({ error: 'awaiting_acceptance' });
+
+// #5104: a new direct message or invitation to someone who takes them only
+// from people in projects with them (users.contact_policy). 403 with a code
+// the Messages screen words itself; the body says nothing about the person.
+function sendContactRestricted(res) {
+  return res.status(403).json(contactPrivacy.CONTACT_RESTRICTED);
+}
 
 function sendMessageError(res, error) {
   if (error === 'threads_not_supported') return res.status(400).json(THREADS_NOT_SUPPORTED);
@@ -293,6 +301,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       pushAudience(result.memberIds, { type: 'conversation_membership_changed', conversationId: result.conversationId });
       return res.status(201).json({ conversation: result.conversation });
     } catch (err) {
+      if (err instanceof contactPrivacy.ContactRestrictedError) return sendContactRestricted(res);
       log.error('conversations', 'create failed', { err: err.message, userId: req.user.id });
       return res.status(500).json({ error: 'Internal server error' });
     }
@@ -353,6 +362,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       pushAudience(result.memberIds, { type: 'conversation_membership_changed', conversationId: id });
       return res.json({ conversation: result.conversation });
     } catch (err) {
+      if (err instanceof contactPrivacy.ContactRestrictedError) return sendContactRestricted(res);
       log.error('conversations', 'add members failed', { id, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }

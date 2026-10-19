@@ -98,7 +98,10 @@ async function claimEmailInvites(pool, { userId, email }) {
       try {
         const { rows: apps } = await pool.query('SELECT id, slug, name FROM apps WHERE id = $1', [invite.app_id]);
         if (!apps[0]) continue;
-        const sent = await collabInvites.sendInvite(pool, { app: apps[0], target, inviterId: invite.invited_by });
+        // Their own address, confirmed: not held to contact_policy (#5104).
+        const sent = await collabInvites.sendInvite(pool, {
+          app: apps[0], target, inviterId: invite.invited_by, checkContact: false,
+        });
         if (sent.ok) claimed += 1;
       } catch (err) {
         log.warn('email-invites', 'Claiming an invite failed', { appId: invite.app_id, err: err.message });

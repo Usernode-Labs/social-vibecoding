@@ -1747,6 +1747,10 @@
     "text": "✓ Invited @{{username}}",
     "description": "Shown under the invite field of the \"Members & approvals\" dialog of an app after the invitation was sent. {{username}} is the invited person's username; keep the check mark and the @."
   },
+  "members.invite.contactRestricted": {
+    "text": "This person only takes invitations from people in projects with them. Send them an invite link instead.",
+    "description": "Error under the invite field of the \"Members & approvals\" dialog when the person's Privacy setting allows invitations only from people who share a project with them."
+  },
   "members.collaborators.heading": {
     "text": "Collaborators",
     "description": "Label above the list of people who may build changes for the app, in the \"Members & approvals\" dialog of an app."

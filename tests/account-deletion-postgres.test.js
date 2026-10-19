@@ -39,6 +39,12 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
   const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
   await pool.query(schema);
   await pool.query(schema); // migration is boot-idempotent, including retained FKs
+  // #5104: accounts start out reachable only by people they share a project
+  // with, and out of searches. This file's people are strangers who write
+  // to, invite and find each other, which is what it pins, so here they
+  // start out open; tests/contact-privacy-postgres.test.js pins the defaults.
+  await pool.query(`ALTER TABLE users ALTER COLUMN contact_policy SET DEFAULT 'anyone',
+                                      ALTER COLUMN profile_discoverable SET DEFAULT TRUE`);
   const password = 'disposable-fixture-password';
   const hash = await bcrypt.hash(password, 4);
   let seq = 0;

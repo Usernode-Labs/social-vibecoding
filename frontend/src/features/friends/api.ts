@@ -90,9 +90,14 @@ async function request(path: string, method = 'GET'): Promise<unknown> {
   try { data = await response.json(); } catch { data = null; }
   if (!response.ok) {
     const body = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
+    // #5104: a friend request to someone who takes them only from people in
+    // projects with them is said in the screen's own words.
+    const message = body.code === 'contact_restricted'
+      ? t('messages:api.contactRestricted')
+      : typeof body.error === 'string' ? body.error : t('messages:friends.error.requestFailed', { status: response.status });
     throw new FriendsApiError(
       response.status,
-      typeof body.error === 'string' ? body.error : t('messages:friends.error.requestFailed', { status: response.status }),
+      message,
       typeof body.code === 'string' ? body.code : null,
     );
   }

@@ -1459,6 +1459,10 @@ function chatRoutes(config) {
       // community is every account: its channel is #general now, which
       // answers from GET /api/conversations/:id/mention-candidates by prefix
       // instead of listing everybody here.
+      // #5104: a member who has not spoken, is not active and keeps their
+      // profile out of searches (users.profile_discoverable) is offered only
+      // to people connected to them: a viewer of a public project who is not
+      // in its community does not get its quiet members listed.
       const { rows } = await pool.query(
         `WITH engaged AS (
            SELECT unnest($2::int[]) AS user_id
@@ -1482,7 +1486,7 @@ function chatRoutes(config) {
                    WHERE blocked.blocker_id = $3 AND blocked.blocked_user_id = u.id
                 )
             AND (u.id IN (SELECT user_id FROM engaged)
-             OR u.id IN (SELECT user_id FROM members))
+             OR (u.id IN (SELECT user_id FROM members) AND user_discoverable_by(u.id, $3)))
             AND ($5::text IS NULL OR LOWER(u.username) LIKE LOWER($5::text) || '%' ESCAPE '\\')
           ORDER BY friend DESC, engaged DESC, sort_name
           LIMIT $6`,

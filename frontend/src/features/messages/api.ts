@@ -533,6 +533,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   try { data = await response.json(); } catch { data = null; }
   if (!response.ok) {
     const body = record(data);
+    // #5104: the person takes new conversations and invitations only from
+    // people in projects with them. Said in the screen's own words.
+    if (pick(body, 'code') === 'contact_restricted') {
+      throw new MessagesApiError(response.status, t('messages:api.contactRestricted'));
+    }
     throw new MessagesApiError(response.status, text(pick(body, 'error', 'message'), t('messages:api.requestFailed', { status: response.status })));
   }
   return data as T;

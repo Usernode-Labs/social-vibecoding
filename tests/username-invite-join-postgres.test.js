@@ -49,6 +49,12 @@ test('an invite by username joins a group the way its link does, against the ful
   // that failed the file on its teardown (5 of 6 runs). Expected here.
   pool.on('error', () => {});
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+  // #5104: accounts start out reachable only by people they share a project
+  // with, and out of searches. This file's people are strangers who write
+  // to, invite and find each other, which is what it pins, so here they
+  // start out open; tests/contact-privacy-postgres.test.js pins the defaults.
+  await pool.query(`ALTER TABLE users ALTER COLUMN contact_policy SET DEFAULT 'anyone',
+                                      ALTER COLUMN profile_discoverable SET DEFAULT TRUE`);
   const config = {
     databaseUrl: String(url), selfAppSlug: 'no-such-self-app', selfAppPublicVoting: true,
     challengeScorer: { intervalMinutes: 0 },
