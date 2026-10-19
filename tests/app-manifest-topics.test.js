@@ -45,10 +45,10 @@ const FOUR = [
 
 // The figures each of the four shows above its room (services/topic-figures.js).
 const HOMEROOM_FIGURES = {
-  onboarding: ['onboarding.sign-up', 'onboarding.first-project', 'onboarding.first-change', 'onboarding.found-project'],
+  onboarding: ['onboarding.sign-up', 'onboarding.first-project', 'onboarding.first-change', 'onboarding.found-project', 'onboarding.sign-in-errors'],
   'homeroom-bot': [
     'bot.answered', 'bot.reply-cost', 'bot.reply-time', 'bot.merged', 'bot.merged-cost', 'bot.request-to-proposal',
-    'bot.builds-proposed', 'bot.first-versions', 'bot.failed-spend', 'bot.paused',
+    'bot.builds-proposed', 'bot.first-versions', 'bot.failed-spend', 'bot.paused', 'bot.turns-lost',
   ],
   'proposal-pipeline': [
     'pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged', 'pipeline.main-paused',
@@ -56,7 +56,7 @@ const HOMEROOM_FIGURES = {
   ],
   infra: [
     'infra.merge-to-live', 'infra.deploys-failed', 'infra.apps-up', 'infra.restarts', 'infra.limits-filled', 'infra.turned-away',
-    'infra.homeroom-stalls', 'infra.homeroom-crashes', 'infra.alerts',
+    'infra.homeroom-stalls', 'infra.homeroom-crashes', 'infra.alerts', 'infra.server-errors', 'infra.page-errors',
   ],
 };
 
