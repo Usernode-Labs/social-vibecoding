@@ -10,6 +10,8 @@
     "state src/workflow/platform.ts#runtime": "this process's handle on the workflow runtime (its slots, loops and LISTEN connection, which routes append through and wait on), set once by startWorkflow from the configuration and cleared by stopWorkflow; it decides nothing, and a restart builds the same one",
     "state src/workflow/platform.ts#kernelPool": "the runtime's own connection pool, opened by startWorkflow and ended by stopWorkflow: wiring, never a decision",
     "state src/workflow/platform.ts#log": "the platform's logger, bound by startWorkflow: output only",
+    "state src/workflow/platform.ts#backfill": "whether this process's boot backfill (startWorkflowLoops) is still running, set as it starts and cleared as it ends; only the admin's reads of the machines wait on it, it decides nothing, and a restart runs the backfill again",
+    "timer src/workflow/platform.ts#workflowBackfilled setTimeout": "an admin read's bounded wait for this process's boot backfill to end; it answers with what is there when it runs out",
     "uses src/db/pool.js:getPool": "the process's request pool, handed to the work handlers as their database: wiring, never a decision",
     "uses src/services/logger.js (whole module)": "the platform's logger, handed to the runtime: output only, decides nothing"
   },

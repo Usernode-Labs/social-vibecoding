@@ -75,6 +75,14 @@ function storedTouches(value) {
   return files ? { version: 1, files, areas } : null;
 }
 
+// Whether GitHub can be read at all (services/github.js canRead). A staging
+// preview has no credentials, and every list read there used to start up to
+// four compares that each failed and logged a warning: some 600 a checks run.
+// A client without the question (a test's) is taken as readable.
+function readable(github) {
+  return typeof github.canRead !== 'function' || github.canRead();
+}
+
 // Heads being read right now, so two list reads in a row start one compare.
 const inFlight = new Set();
 const MAX_PER_READ = 4;
@@ -92,6 +100,7 @@ async function refreshOne(pool, { sessionId, repoUrl, headSha, baseRef = 'main' 
   const github = deps.github || require('./github');
   const repo = repoOf(repoUrl);
   if (!repo || !/^[0-9a-f]{40}$/i.test(String(headSha || '')) || typeof github.compareFiles !== 'function') return false;
+  if (!readable(github)) return false;
   const key = `${sessionId}:${headSha}`;
   if (inFlight.has(key)) return false;
   inFlight.add(key);
@@ -120,7 +129,7 @@ async function refreshOne(pool, { sessionId, repoUrl, headSha, baseRef = 'main' 
  * not wait; the next read shows what it stored.
  */
 function scheduleRefresh(pool, rows, deps = {}) {
-  if (!pool) return 0;
+  if (!pool || !readable(deps.github || require('./github'))) return 0;
   let started = 0;
   for (const row of Array.isArray(rows) ? rows : []) {
     if (started >= MAX_PER_READ) break;

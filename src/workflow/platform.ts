@@ -122,7 +122,16 @@ export async function publishPushes(q: Queryable, pushes: Push[], { badges = fal
     [BUS_CHANNEL, pushes.map((p) => workflowBody(p.kind, (p.routing ?? null) as Json, p.data)), owed]);
 }
 
-export async function startWorkflow(config: any, opts: { loops: boolean }): Promise<void> {
+// `loops`: this process runs the timers and services (the leader, or a
+// staging preview, which never stands for election). `backfillLater`: the
+// loops start now, and the boot backfill (startWorkflowLoops) is the
+// caller's to run once the process serves, as the leader's already is: a
+// preview copies 80-odd proposals no machine holds yet, about 1.4 s of a
+// preview's start that every request can do without (each event a route
+// sends adopts its own instance, appendFiled files a governance row first),
+// and the admin's reads of what the machines hold wait for it
+// (workflowBackfilled).
+export async function startWorkflow(config: any, opts: { loops: boolean; backfillLater?: boolean }): Promise<void> {
   log = legacy('services/logger');
   const appPool = legacy('db/pool').getPool(config);
   await syncSettings(appPool);
@@ -184,7 +193,38 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   }
   runtime = started;
   log!.info('workflow', 'Workflow runtime started', { machines: machines.map((m) => m.name) });
-  if (opts.loops) await startWorkflowLoops();
+  if (opts.loops && opts.backfillLater) await runtime.start({ loops: true });
+  else if (opts.loops) await startWorkflowLoops();
+}
+
+// The boot backfill under way in this process, if any (startWorkflowLoops).
+let backfill: Promise<void> | null = null;
+
+// Marks a backfill under way; the returned function marks it ended.
+function backfillStarts(): () => void {
+  let resolve!: () => void;
+  const mine = new Promise<void>((r) => { resolve = r; });
+  backfill = mine;
+  return () => {
+    resolve();
+    if (backfill === mine) backfill = null;
+  };
+}
+
+// Whether this process has no boot backfill left to run: true at once when
+// none runs here (a web process, a runtime that never started), or when the
+// running one ends within `waitMs`; false when it is still going then. A
+// failed backfill counts as ended: its process is already on its way out.
+export async function workflowBackfilled(waitMs: number): Promise<boolean> {
+  const running = backfill;
+  if (!running) return true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), Math.max(0, waitMs)); });
+  try {
+    return await Promise.race([running.then(() => true, () => true), late]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // This process serves people the build it booted with: server.js calls it
@@ -204,28 +244,34 @@ export async function releaseServing(pool: Pool): Promise<void> {
 
 // The leader's part: timers and services, then enrolling every open
 // governance row and every proposal that needs a timer the machines do not
-// hold yet.
+// hold yet. The leader runs it once it serves (server.js becomeLeader), and
+// so does a staging preview (startWorkflow's `backfillLater`).
 export async function startWorkflowLoops(): Promise<void> {
   if (!runtime) return;
-  await runtime.start({ loops: true });
-  const { rows } = await kernelPool!.query(
-    `SELECT i.id, i.app_id FROM issues i
-      WHERE i.status = 'open' AND i.kind = ANY($1::text[])
-        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $2 AND w.key = 'issue:' || i.id)`,
-    [[...GOVERNANCE_KINDS], MACHINE]);
-  for (const r of rows) await file(r.id, r.app_id, { kind: 'system', name: 'backfill' });
-  if (rows.length) log!.info('workflow', 'Enrolled open governance proposals', { count: rows.length });
-  await adoptProposals();
-  await rearmWaitingProposals();
-  await adoptMergeQueues();
-  await adoptDeferredDms();
-  await adoptMainChecks();
-  await adoptBotQueue();
-  await retryPlatformFaults();
-  // The bot's lane starts its clock (its refresh, its grants): idempotent,
-  // the same tick at every boot.
-  await runtime.append(BOT_LANE, LANE_KEY, { type: 'Tick', payload: {} },
-    { requestKey: `boot:${randomUUID()}`, source: { kind: 'system', name: 'boot' } });
+  const ended = backfillStarts();
+  try {
+    await runtime.start({ loops: true });
+    const { rows } = await kernelPool!.query(
+      `SELECT i.id, i.app_id FROM issues i
+        WHERE i.status = 'open' AND i.kind = ANY($1::text[])
+          AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $2 AND w.key = 'issue:' || i.id)`,
+      [[...GOVERNANCE_KINDS], MACHINE]);
+    for (const r of rows) await file(r.id, r.app_id, { kind: 'system', name: 'backfill' });
+    if (rows.length) log!.info('workflow', 'Enrolled open governance proposals', { count: rows.length });
+    await adoptProposals();
+    await rearmWaitingProposals();
+    await adoptMergeQueues();
+    await adoptDeferredDms();
+    await adoptMainChecks();
+    await adoptBotQueue();
+    await retryPlatformFaults();
+    // The bot's lane starts its clock (its refresh, its grants): idempotent,
+    // the same tick at every boot.
+    await runtime.append(BOT_LANE, LANE_KEY, { type: 'Tick', payload: {} },
+      { requestKey: `boot:${randomUUID()}`, source: { kind: 'system', name: 'boot' } });
+  } finally {
+    ended();
+  }
 }
 
 // ── The Homeroom bot's loop (bot-request, bot-lane) ────────────────────

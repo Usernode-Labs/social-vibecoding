@@ -1634,8 +1634,11 @@ async function start() {
   // staging preview, which never stands for election but must still decide.
   // Fatal: the machines are the only paths for what they decide (governance
   // has no other), so a process without them exits and is restarted rather
-  // than serving without them.
-  await require('./src/workflow/platform.ts').startWorkflow(config, { loops: !runsClusterMaintenance() });
+  // than serving without them. A preview's boot backfill (the proposals and
+  // governance rows its copied database holds that no machine does yet)
+  // runs once it listens, as the leader's does: see backfillAfterListen.
+  const backfillLater = !runsClusterMaintenance();
+  await require('./src/workflow/platform.ts').startWorkflow(config, { loops: backfillLater, backfillLater });
   startupDiagnostics = Object.freeze({
     totalMs: Date.now() - startedAt,
     migrationsOnStartup,
@@ -1665,6 +1668,7 @@ async function start() {
     if (processRole.servesRequests(ownRole)) platformRelease.recordRunning(getPool(config));
     platformRelease.recordBoot(getPool(config));
     if (processRole.servesRequests(ownRole)) require('./src/workflow/platform.ts').releaseServing(getPool(config));
+    if (backfillLater) backfillAfterListen();
   });
   // Let Envoy retire idle upstream connections at 60s before Node closes them.
   // Keep a 15s margin for transit and timer scheduling; applies to self-previews too.
@@ -1714,6 +1718,28 @@ async function start() {
   }
 
   return server;
+}
+
+// A staging preview's boot backfill, once it listens. It used to run before
+// the listener, and on a preview it is not small: the copied database holds
+// some 80 proposals and a few governance rows no machine holds yet, 1.2 to
+// 1.5 s of every preview's start. Nothing a request does needs it first:
+// an event a route sends adopts its own instance from the row (the proposal
+// machine's `create` list), a governance route files a row no machine holds
+// before sending its event again (platform.ts appendFiled), and the admin's
+// reads of what the machines hold wait for it (workflowBackfilled). That is
+// the order production already has: the leader backfills in becomeLeader,
+// after its listener is up, and a web process serves without ever doing it.
+// A failure ends the process, as the leader's does, so it is restarted
+// rather than left serving without its timers.
+function backfillAfterListen(platform = require('./src/workflow/platform.ts')) {
+  const startedAt = Date.now();
+  return platform.startWorkflowLoops().then(() => {
+    log.info('server', 'Boot backfill finished', { ms: Date.now() - startedAt });
+  }, (err) => {
+    log.error('server', 'Boot backfill failed; stopping so the preview restarts', { err: err.message });
+    process.kill(process.pid, 'SIGTERM');
+  });
 }
 
 // Boot only when run as the entry point (`node server.js` — the Docker CMD
@@ -1767,6 +1793,8 @@ module.exports = {
   restoreMissingQuickReplies,
   observeMergedOnGithub,
   reconcileStuckChecks,
+  // A staging preview's boot backfill once it listens.
+  backfillAfterListen,
   cleanup,
   // Getters, not values: this module.exports literal is evaluated long
   // before the `const`s down by cleanup(), so a direct reference would hit

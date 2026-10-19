@@ -84,3 +84,30 @@ test('a failed read stores nothing and never throws', async () => {
   assert.equal(ok, false);
   assert.equal(await touches.refreshOne(pool, { sessionId: 9, repoUrl: 'nope', headSha: 'b'.repeat(40) }, { github }), false);
 });
+
+test('with nothing to read GitHub with (a staging preview), no list read starts a compare', async () => {
+  // Every list read on a preview used to start up to four compares, each
+  // failing inside the App's installation lookup with a warning: some 600 a
+  // checks run.
+  const pool = { query: async () => { throw new Error('should not write'); } };
+  let compares = 0;
+  const github = { canRead: () => false, compareFiles: async () => { compares += 1; return { files: [] }; } };
+  const head = 'c'.repeat(40);
+  const rows = [{ id: 4, repo_url: 'https://github.com/Usernode-Labs/social-vibecoding', pr_touches_sha: null, head }];
+  assert.equal(touches.scheduleRefresh(pool, rows, { github }), 0);
+  assert.equal(await touches.refreshOne(pool, { sessionId: 4, repoUrl: rows[0].repo_url, headSha: head }, { github }), false);
+  assert.equal(compares, 0);
+
+  // The real client answers from its credentials: none here.
+  const real = require('../src/services/github');
+  const saved = process.env.GITHUB_BOT_TOKEN;
+  delete process.env.GITHUB_BOT_TOKEN;
+  try {
+    assert.equal(real.isEnabled(), false);
+    assert.equal(real.canRead(), false, 'no App and no bot token');
+    process.env.GITHUB_BOT_TOKEN = 'token';
+    assert.equal(real.canRead(), true, 'the bot token alone reads');
+  } finally {
+    if (saved === undefined) delete process.env.GITHUB_BOT_TOKEN; else process.env.GITHUB_BOT_TOKEN = saved;
+  }
+});

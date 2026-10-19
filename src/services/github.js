@@ -537,6 +537,13 @@ function isEnabled() {
   return !!app;
 }
 
+// Whether getReadOctokit has any credential to read with: the App, or the
+// bot token alone (getOctokit's PAT path). A staging preview has neither,
+// and a read there fails inside the App's installation lookup instead.
+function canRead() {
+  return !!(app || process.env.GITHUB_BOT_TOKEN || _octokitFactoryForTests || _readClientsForTests);
+}
+
 // GitHub logins are case-insensitive, and an owner parsed out of a stored
 // repo URL keeps whatever case the URL was written in, so the installation
 // is matched without regard to case.
@@ -3013,6 +3020,7 @@ module.exports = {
   expireIssuesCachesHere,
   init,
   isEnabled,
+  canRead,
   getBotUsername,
   getOctokit,
   // The client for a read (GITHUB_READS_VIA_APP): the App installation with

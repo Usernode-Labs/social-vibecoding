@@ -22,6 +22,13 @@ function adminWorkflowRoutes(config) {
   const pool = getPool(config);
   router.use('/api/admin/workflow', adminMiddleware);
 
+  // What the machines hold, read while this process still adopts what its
+  // database holds and no machine does yet (a staging preview's first
+  // seconds, platform.ts workflowBackfilled): the read waits for it, so it
+  // lists every instance rather than the ones adopted so far.
+  const BACKFILL_WAIT_MS = 5000;
+  const backfilled = () => platform().workflowBackfilled(BACKFILL_WAIT_MS);
+
   const fail = (res, err, what) => {
     if (err instanceof platform().AdminActionError) return res.status(err.status).json({ error: err.message });
     log.error('admin-workflow', `${what} failed`, { message: err.message });
@@ -31,6 +38,7 @@ function adminWorkflowRoutes(config) {
   // The top of the section: problems first, then counts per state.
   router.get('/api/admin/workflow', async (req, res) => {
     try {
+      await backfilled();
       const { inspect } = kernel();
       const [problems, counts] = await Promise.all([
         inspect.problems(pool, { attention: platform().attentionStates() }), inspect.stateCounts(pool),
@@ -41,6 +49,7 @@ function adminWorkflowRoutes(config) {
 
   router.get('/api/admin/workflow/instances', async (req, res) => {
     try {
+      await backfilled();
       const instances = await kernel().inspect.listInstances(pool, {
         machine: text(req.query.machine) || undefined,
         state: text(req.query.state) || undefined,
@@ -60,6 +69,7 @@ function adminWorkflowRoutes(config) {
     const key = text(req.query.key);
     if (!machine || !key) return res.status(400).json({ error: 'machine and key are required' });
     try {
+      await backfilled();
       const detail = await kernel().inspect.instance(pool, machine, key, {
         beforeId: positiveInt(req.query.beforeId) || undefined,
       });

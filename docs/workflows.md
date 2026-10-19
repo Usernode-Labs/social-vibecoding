@@ -460,7 +460,10 @@ separate workflow Pod.
   statement that ends the event. The timer loop wakes only for a deadline earlier than
   the one it sleeps until, so a vote that re-arms the 10-minute backstop costs it
   nothing. The fallback only covers a lost notification.
-- **A staging preview** never stands for election, so it runs the loops itself. A
+- **A staging preview** never stands for election, so it runs the loops itself. Its
+  timers and services start before it listens; its backfill (some 80 rows its copied
+  database holds) runs once it listens, as the leader's does (`backfillAfterListen` in
+  `server.js`). Admin → Workflows' reads wait for that backfill (`workflowBackfilled`). A
   preview has no GitHub credentials and no app fleet, so its work items fail and show in
   Admin → Workflows, where [main]'s inline calls only failed in the logs.
 

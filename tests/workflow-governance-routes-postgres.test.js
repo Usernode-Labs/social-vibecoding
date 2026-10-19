@@ -338,9 +338,12 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
 // is restarted, rather than serving votes nothing would decide.
 test('a failed workflow runtime start ends the process, and failed leader loops stop it', () => {
   const server = fs.readFileSync(require.resolve('../server.js'), 'utf8');
-  assert.match(server, /await require\('\.\/src\/workflow\/platform\.ts'\)\.startWorkflow\(config, \{ loops: !runsClusterMaintenance\(\) \}\);/);
+  assert.match(server, /const backfillLater = !runsClusterMaintenance\(\);\n {2}await require\('\.\/src\/workflow\/platform\.ts'\)\.startWorkflow\(config, \{ loops: backfillLater, backfillLater \}\);/);
   assert.doesNotMatch(server, /\.startWorkflow\([^;]*\)\s*\.catch\(/, 'nothing swallows the failure');
   // A leader whose loops fail stops through its own drain, so another leads.
   const loops = server.slice(server.indexOf('.startWorkflowLoops()'));
   assert.match(loops.slice(0, 400), /process\.kill\(process\.pid, 'SIGTERM'\)/);
+  // So does a preview whose boot backfill, run once it listens, fails.
+  const after = server.slice(server.indexOf('function backfillAfterListen('));
+  assert.match(after.slice(0, after.indexOf('\n}\n')), /process\.kill\(process\.pid, 'SIGTERM'\)/);
 });
