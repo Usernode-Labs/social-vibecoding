@@ -789,6 +789,19 @@ namespace's CPU-request quota still bounds them wherever they run, so raise it
 with the pool's capacity. To see where checks ran:
 `kubectl -n social-workers get pods -l social.usernode.io/workload=check -o wide`.
 
+`BUILDKIT_NODE_PREFERENCE` (default empty, the foundation chart's
+`social-build-policy` ConfigMap) makes BuildKit build Pods prefer some nodes,
+given as one node label `key=value` or `key=value1,value2`. The build is bound
+by one core's speed, so nodes with faster cores build the same Dockerfile
+sooner (34 s against 47 s from `building` to `pushed` in October 2026).
+`kubernetes.io/hostname=node-a,node-b` names nodes without labelling them; a
+class label survives a node being replaced. It is a preferred node affinity
+with no toleration: with those nodes full, cordoned or gone a build runs
+wherever it fits, as before, and never waits for them. It applies to every
+BuildKit build, previews and production images of every app. A value that is
+not a valid label pair is logged once and ignored. To see where builds ran:
+`kubectl -n social-buildkit get pods -o wide`.
+
 Self-app previews (`USERNODE_ENV=staging`) do not build worker images, inspect
 Docker or Kubernetes workloads, or read the parent's deployment status. Their
 status API reports `runtimeKind: preview` and `runtimeAvailable: false`; fleet

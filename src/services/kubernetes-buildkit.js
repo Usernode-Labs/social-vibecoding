@@ -450,6 +450,57 @@ function securityContexts(cfg) {
   };
 }
 
+// Where a build Pod would rather run. The build is bound by one core's speed
+// (Vite and Tailwind), so nodes with faster cores finish the same Dockerfile
+// sooner: on this cluster 34 s instead of 47 s from `building` to `pushed`
+// (5.2 GHz nodes against 4.2 GHz ones, October 2026), whatever else those
+// nodes were doing.
+//
+// BUILDKIT_NODE_PREFERENCE names those nodes as one node label `key=value`,
+// or `key=value1,value2,...` for any of several values. A label every node
+// carries, `kubernetes.io/hostname=node-a,node-b`, names nodes outright and
+// needs no labelling; a class label (`usernodelabs.org/cpu-class=fast`) keeps
+// working when a node is replaced. Empty, the default, leaves placement to
+// the scheduler as before.
+//
+// It is a preference, never a requirement: with those nodes full, cordoned or
+// gone, the build runs wherever it fits, as it did before, instead of
+// waiting. Among the preferred nodes the scheduler's own resource scoring
+// spreads the builds. No toleration is added, so a tainted node stays out.
+// An invalid value is said once and ignored: a Job the API refuses is a build
+// that cannot start, and the default placement is the better failure. The
+// preference is not part of the recipe: where a build ran does not change
+// the image, so a finished build is still reused.
+const LABEL_PART = '[A-Za-z0-9](?:[-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?';
+const NODE_PREFERENCE = new RegExp(
+  `^((?:[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?/)?${LABEL_PART})=(${LABEL_PART}(?:,${LABEL_PART})*)$`);
+const warnedPreferences = new Set();
+
+function nodePreference(cfg) {
+  const raw = String(cfg.buildkitNodePreference || '').replace(/\s+/g, '');
+  if (!raw) return null;
+  const match = NODE_PREFERENCE.exec(raw);
+  if (!match) {
+    if (!warnedPreferences.has(raw)) {
+      warnedPreferences.add(raw);
+      log.warn('kubernetes', 'BUILDKIT_NODE_PREFERENCE is not a label key=value[,value]; builds keep the default placement', { value: raw });
+    }
+    return null;
+  }
+  return { key: match[1], values: [...new Set(match[2].split(','))] };
+}
+
+function buildPlacement(cfg) {
+  const preference = nodePreference(cfg);
+  if (!preference) return {};
+  return {
+    affinity: { nodeAffinity: { preferredDuringSchedulingIgnoredDuringExecution: [{
+      weight: 100,
+      preference: { matchExpressions: [{ key: preference.key, operator: 'In', values: preference.values }] },
+    }] } },
+  };
+}
+
 function recipeOf(cfg, dockerfile) {
   return crypto.createHash('sha256').update(JSON.stringify({
     engine: ENGINE, image: cfg.buildkitImage, dockerfile, mode: cfg.buildkitMode || 'rootless',
@@ -540,6 +591,7 @@ function jobManifest(cfg, runtime, {
           serviceAccountName: cfg.buildkitServiceAccount,
           automountServiceAccountToken: false,
           securityContext: security.pod,
+          ...buildPlacement(cfg),
           containers: [{
             name: CONTAINER,
             image: cfg.buildkitImage,
@@ -1076,7 +1128,7 @@ module.exports = {
   unavailableReason,
   noteUnavailable,
   _forTest: {
-    BUILD_SCRIPT, PREFLIGHT_EXIT, UNAVAILABLE_MEMO_MS, jobManifest, recipeOf, progressFromLine, stepClock, digestFromPod, exitCodeFromPod,
+    BUILD_SCRIPT, PREFLIGHT_EXIT, UNAVAILABLE_MEMO_MS, jobManifest, buildPlacement, recipeOf, progressFromLine, stepClock, digestFromPod, exitCodeFromPod,
     repoOwnerAndName, requireConfig,
     STEPS_AWK, CACHE_STEPS_ANNOTATION, CACHE_CHANCES, CACHE_CHANCE_WINDOW_MS, CACHE_MAX_STEPS,
     cacheReport, cacheReportText, settledCacheSteps, starterCache,

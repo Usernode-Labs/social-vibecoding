@@ -728,6 +728,11 @@ function load() {
       // has its own cache only, as before.
       buildkitStarterCache: !['off', '0', 'false'].includes(
         String(process.env.BUILDKIT_STARTER_CACHE || 'on').trim().toLowerCase()),
+      // The nodes build Pods prefer, as a node label `key=value[,value...]`
+      // (for example `kubernetes.io/hostname=node-a,node-b`). A preference:
+      // builds run elsewhere when those are full. Empty leaves placement to
+      // the scheduler (services/kubernetes-buildkit.js buildPlacement).
+      buildkitNodePreference: (process.env.BUILDKIT_NODE_PREFERENCE || '').trim(),
     },
     // Postgres connection pool size (pg `Pool.max`). pg's built-in default
     // is 10, which can bottleneck under many concurrent SSE turns + staging

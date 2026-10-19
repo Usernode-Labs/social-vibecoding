@@ -178,7 +178,60 @@ test('the Job manifest: rootless daemon, per-app cache repository, source and id
   assert.ok(container.volumeMounts.some((m) => m.mountPath === '/home/user/.local/share/buildkit'),
     'the daemon store is a real emptyDir, not the image VOLUME');
   assert.equal(container.resources.limits.cpu, '4');
+  assert.equal(pod.affinity, undefined, 'no BUILDKIT_NODE_PREFERENCE: the scheduler places the build as before');
+  assert.equal(pod.nodeSelector, undefined);
+  assert.equal(pod.tolerations, undefined);
 });
+
+// BUILDKIT_NODE_PREFERENCE (buildPlacement): the build Pod's spec with a
+// preference, through createBuild as the platform makes it.
+async function buildPodWith(buildkitNodePreference) {
+  const { clients, state } = fakeCluster({});
+  await buildkit.createBuild(config({ buildkitNodePreference }), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile.kubernetes']),
+  }, runtimeWith(clients));
+  assert.equal(state.jobs.length, 1);
+  return state.jobs[0].spec.template.spec;
+}
+
+test('BUILDKIT_NODE_PREFERENCE: build Pods prefer the named nodes and never require them', async () => {
+  const pod = await buildPodWith('kubernetes.io/hostname=talos-2cc-re6,talos-kth-nbr');
+  assert.deepEqual(pod.affinity, { nodeAffinity: { preferredDuringSchedulingIgnoredDuringExecution: [{
+    weight: 100,
+    preference: { matchExpressions: [{ key: 'kubernetes.io/hostname', operator: 'In', values: ['talos-2cc-re6', 'talos-kth-nbr'] }] },
+  }] } });
+  assert.equal(pod.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution, undefined,
+    'a preference: with those nodes full, cordoned or gone the build runs elsewhere instead of waiting');
+  assert.equal(pod.nodeSelector, undefined);
+  assert.equal(pod.tolerations, undefined, 'a tainted node stays out');
+  assert.equal(pod.topologySpreadConstraints, undefined);
+
+  // Everything else is the Pod it was without a preference.
+  const plain = await buildPodWith('');
+  const { affinity, ...rest } = pod;
+  assert.deepEqual(rest, plain);
+});
+
+test('BUILDKIT_NODE_PREFERENCE: one label value, a prefix-less key, spaces and repeats', () => {
+  const placement = (value) => buildkit._forTest.buildPlacement(config({ buildkitNodePreference: value }).kubernetes);
+  const expressions = (value) => placement(value).affinity.nodeAffinity
+    .preferredDuringSchedulingIgnoredDuringExecution[0].preference.matchExpressions;
+  assert.deepEqual(expressions('usernodelabs.org/cpu-class=fast'),
+    [{ key: 'usernodelabs.org/cpu-class', operator: 'In', values: ['fast'] }]);
+  assert.deepEqual(expressions(' cpu=fast_1.a '), [{ key: 'cpu', operator: 'In', values: ['fast_1.a'] }]);
+  assert.deepEqual(expressions('kubernetes.io/hostname = a, b ,a'),
+    [{ key: 'kubernetes.io/hostname', operator: 'In', values: ['a', 'b'] }]);
+});
+
+test('BUILDKIT_NODE_PREFERENCE: empty or malformed leaves the default placement', () => {
+  for (const value of [undefined, '', '   ', 'talos-2cc-re6', 'kubernetes.io/hostname=', '=fast',
+    'kubernetes.io/hostname=a,,b', 'kubernetes.io/hostname=a,', 'a=b=c', 'Bad_Prefix/pool=x',
+    `pool=${'x'.repeat(64)}`, 'kubernetes.io/hostname=-a']) {
+    assert.deepEqual(buildkit._forTest.buildPlacement(config({ buildkitNodePreference: value }).kubernetes), {},
+      JSON.stringify(value));
+  }
+});
+
 
 test('the Job manifest: privileged mode, registry credentials and a plain-HTTP registry are opt-in switches', () => {
   const cfg = config({ buildkitMode: 'privileged', buildkitRegistrySecret: 'push-creds', buildkitInsecureRegistry: true }).kubernetes;
@@ -502,6 +555,37 @@ test('BUILDKIT_STARTER_CACHE: on unless it is set to off', () => {
   };
   for (const value of [undefined, '', 'on', '1', 'true', 'yes']) assert.equal(loadWith(value), true, String(value));
   for (const value of ['off', 'OFF', ' off ', '0', 'false']) assert.equal(loadWith(value), false, value);
+});
+
+test('BUILDKIT_NODE_PREFERENCE: read from the environment, empty by default', () => {
+  const runtimeConfig = require('../src/config');
+  const { setPlatformKeys } = require('./platform-keys');
+  setPlatformKeys();
+  const loadWith = (value) => {
+    const env = {
+      DATABASE_URL: 'postgres://localhost/test', SESSION_SECRET: 'test-session-secret',
+      ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'admin-pass', BUILDKIT_NODE_PREFERENCE: value,
+    };
+    const saved = {};
+    for (const [k, v] of Object.entries(env)) {
+      saved[k] = process.env[k];
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    const realLog = console.log;
+    console.log = () => {};
+    try {
+      return runtimeConfig.load().kubernetes.buildkitNodePreference;
+    } finally {
+      console.log = realLog;
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  };
+  assert.equal(loadWith(undefined), '');
+  assert.equal(loadWith(' kubernetes.io/hostname=a,b '), 'kubernetes.io/hostname=a,b');
 });
 
 test('createBuild: a finished build says where its time went, without a progress listener', async () => {
