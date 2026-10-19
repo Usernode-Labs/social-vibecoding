@@ -246,7 +246,12 @@ test('the code step opens the address\'s own mail, and counts Get started\'s ste
   assert.equal(storyStep('code', 'signin'), null);
   assert.equal(storyStep('code', 'invite'), null);
   assert.equal(storyStep('account', 'story'), 3);
-  assert.equal(storyStep('email', 'story'), null);
+  // From the first step (#5252): the email, or Apple and Google above it.
+  assert.equal(storyStep('email', 'story'), 1);
+  assert.equal(storyStep('choose', 'story'), 1);
+  assert.equal(storyStep('email', 'signin'), null);
+  assert.equal(storyStep('password', 'story'), null);
+  assert.equal(storyStep('phone', 'invite'), null);
   assert.equal(message('auth:signInSheet.progress', { step: 2, total: 3 }), 'Step 2 of 3');
 });
 

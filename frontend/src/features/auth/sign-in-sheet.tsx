@@ -490,10 +490,15 @@ export function mailAppFor(address: string): MailApp | null {
   return app ? { name: app.name, url: app.url(address.trim()) } : null;
 }
 
-/** Where a step is in Get started (#5253, #5255): email, code, username. Only the story's sheet counts its steps. */
+/**
+ * Where a step is in Get started (#5253, #5255): email, code, username. Only
+ * the story's sheet counts its steps, and from the first one (#5252), so
+ * the three are in view before an address is typed. The first step is the
+ * email, with Apple and Google above it when they are set up.
+ */
 export function storyStep(step: string, from: 'invite' | 'story' | 'signin'): number | null {
   if (from !== 'story') return null;
-  return step === 'code' ? 2 : step === 'account' ? 3 : null;
+  return step === 'choose' || step === 'email' ? 1 : step === 'code' ? 2 : step === 'account' ? 3 : null;
 }
 
 /** What the account step's live check says of a handle (#5255). */
