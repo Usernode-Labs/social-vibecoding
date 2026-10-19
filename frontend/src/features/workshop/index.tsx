@@ -117,7 +117,10 @@ import { channelUnread, useMessagesSnapshot } from '../messages/store';
 import { openPinMenu } from '../nav/pin-actions';
 import { useSidebarRows } from '../nav/sidebar-rows';
 import { communitiesSearchStore } from './communities-search';
-import { communityScopeStore, takeCounts, votesWaiting } from './community-scope';
+import { takeCounts, votesWaiting } from './community-scope';
+// What the last read of your communities knew, for the list's skeleton
+// (expectNeedsDoor): its own line, beside the tab's one definition above.
+import { communityScopeStore } from './community-scope';
 import { NeedsReel, type NeedsFeedItem } from './needs-reel';
 import { unseenNeeds, useNeedsSeen } from './needs-seen';
 import {
