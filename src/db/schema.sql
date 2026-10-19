@@ -14986,3 +14986,36 @@ CREATE TABLE IF NOT EXISTS server_error_minutes (
 );
 CREATE INDEX IF NOT EXISTS idx_server_error_minutes_minute ON server_error_minutes (minute DESC);
 COMMENT ON COLUMN server_error_minutes.sample IS 'staging:private';
+
+-- ── Deleted apps' data, purged (#5121) ──────────────────────────────────
+--
+-- One receipt per deleted app, written by the teardown
+-- (services/app-teardown.js) once the app is marked as being removed, and
+-- kept after the apps row is gone (no foreign key on purpose). It names what
+-- the app left in storage: its database (`db_name`, whose owner role is
+-- `<db_name>_owner`), the redacted staging template made from it
+-- (`<db_name>_stgtmpl`), and its stored files (`storage_prefix` in the
+-- object store). Each step's column is stamped once that step is done; a
+-- step that failed keeps its message in `errors` under the step's key, and
+-- the reap sweep retries it (services/app-data-retention.js) unless a live
+-- app now holds the same database name. Backups are physical, so a deleted
+-- app stays in them until they expire: this table is also the list an
+-- operator replays after a restore (docs/app-data-retention.md).
+-- Holds no personal data: an app id, its slug and storage names.
+CREATE TABLE IF NOT EXISTS deleted_app_purges (
+  app_id               INTEGER PRIMARY KEY,
+  slug                 VARCHAR(255) NOT NULL,
+  db_name              VARCHAR(63) NOT NULL,
+  storage_prefix       VARCHAR(255) NOT NULL,
+  deleted_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  runtime_removed_at   TIMESTAMPTZ,
+  database_dropped_at  TIMESTAMPTZ,
+  template_dropped_at  TIMESTAMPTZ,
+  files_removed_at     TIMESTAMPTZ,
+  errors               JSONB NOT NULL DEFAULT '{}',
+  attempts             INTEGER NOT NULL DEFAULT 0,
+  last_attempt_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_deleted_app_purges_pending
+  ON deleted_app_purges (last_attempt_at)
+  WHERE database_dropped_at IS NULL OR template_dropped_at IS NULL OR files_removed_at IS NULL;

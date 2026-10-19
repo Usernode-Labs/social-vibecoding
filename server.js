@@ -5521,6 +5521,10 @@ function startSessionAutoPauseSweeper(config) {
     try {
       if (stagingReap.orphanDbSweepDue()) {
         await stagingReap.sweepOrphanDbs(config);
+        // On the same throttle: a deleted app's database, staging template
+        // or files that its teardown could not remove, retried from the
+        // receipt it left (#5121). Never throws; a no-op in a preview.
+        await require('./src/services/app-data-retention').retryPendingPurges(getPool(config), config);
       }
     } catch (err) {
       log.warn('server', 'Orphan staging-DB sweep failed', { err: err.message });

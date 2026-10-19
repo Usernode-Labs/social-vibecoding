@@ -733,3 +733,24 @@ test('a preview\'s template clone is not retried: it falls back to the direct co
     assert.deepEqual(waits, []);
   } finally { restore(); }
 });
+
+test('a deleted app\'s staging template, its _next build and its role are dropped (#5121)', async () => {
+  const { dbManager, calls, restore } = loadDbManager();
+  try {
+    await dbManager.dropStagingTemplates('app_demo');
+    const s = sqls(calls);
+    const at = (re) => s.findIndex((x) => re.test(x));
+    const next = at(/^DROP DATABASE IF EXISTS app_demo_stgtmpl_next WITH \(FORCE\)$/);
+    const template = at(/^DROP DATABASE IF EXISTS app_demo_stgtmpl WITH \(FORCE\)$/);
+    const role = at(/^DROP ROLE IF EXISTS app_demo_stgtmpl_owner$/);
+    assert.ok(next >= 0 && template > next && role > template, s.join('\n'));
+    assert.ok(!s.some((x) => /DROP DATABASE IF EXISTS app_demo(\s|$)/.test(x)), 'never the app database itself');
+  } finally { restore(); }
+});
+
+test('a failed template drop is reported, so the purge receipt keeps it (#5121)', async () => {
+  const { dbManager, restore } = loadDbManager({ failOn: /^DROP DATABASE IF EXISTS app_demo_stgtmpl WITH/ });
+  try {
+    await assert.rejects(dbManager.dropStagingTemplates('app_demo'), /boom/);
+  } finally { restore(); }
+});

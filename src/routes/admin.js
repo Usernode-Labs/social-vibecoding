@@ -12,6 +12,7 @@ const limits = require('../services/limits');
 const anthropicCredits = require('../services/anthropic-credits');
 const dbExport = require('../services/db-export');
 const adminAppsUsage = require('../services/admin-apps-usage');
+const appDataRetention = require('../services/app-data-retention');
 const events = require('../services/events');
 const llmTelemetry = require('../services/llm-telemetry');
 const appRollover = require('../services/app-rollover');
@@ -1113,6 +1114,19 @@ function adminRoutes(config) {
     } catch (err) {
       log.error('admin', 'Read apps & usage failed', { message: err.message });
       res.status(500).json({ error: 'Could not read apps & usage' });
+    }
+  });
+
+  // Data retention (#5121): apps idle past the inactivity window, with the
+  // stage the policy puts them at, and every deleted app's purge receipt
+  // (services/app-data-retention.js, docs/app-data-retention.md).
+  // Read-only, so view-only admins see it too. No screen draws it yet.
+  router.get('/api/admin/app-retention', async (req, res) => {
+    try {
+      res.json(await appDataRetention.adminReport(pool, { days: (req.query || {}).days }));
+    } catch (err) {
+      log.error('admin', 'Read app retention failed', { message: err.message });
+      res.status(500).json({ error: 'Could not read app retention' });
     }
   });
 
