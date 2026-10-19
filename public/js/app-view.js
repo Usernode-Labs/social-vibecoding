@@ -16595,6 +16595,8 @@ const AppView = {
       return viewer && viewer.isAuthor ? conflict(IDS.mergeFork) : conflict(IDS.authorFork);
     }
     if (served.includes('awaiting_approval')) return conflict(IDS.afterVote);
+    if (served.includes('checks_failing')) return conflict(IDS.checksFirst);
+    if (served.includes('checks_error')) return conflict(IDS.checksRerun);
     if (served.includes('budget')) return conflict(IDS.budget);
     if (n || fresh.mergeability === 'conflict' || /conflict/.test(String((g.detail && g.detail.note) || ''))) {
       return conflict(IDS.queued);
@@ -16615,6 +16617,8 @@ const AppView = {
     authorFork: { files: 'changes:step.integration.authorForkFiles', main: 'changes:step.integration.authorForkMain' },
     afterVote: { files: 'changes:step.integration.afterVoteFiles', main: 'changes:step.integration.afterVoteMain' },
     budget: { files: 'changes:step.integration.budgetFiles', main: 'changes:step.integration.budgetMain' },
+    checksFirst: { files: 'changes:step.integration.checksFirstFiles', main: 'changes:step.integration.checksFirstMain' },
+    checksRerun: { files: 'changes:step.integration.checksRerunFiles', main: 'changes:step.integration.checksRerunMain' },
     queued: { files: 'changes:step.integration.queuedFiles', main: 'changes:step.integration.queuedMain' },
   },
 

@@ -487,6 +487,13 @@ test('a conflict names who resolves it, from what the conflict lane wrote on the
   assert.deepEqual([step(['fork_head']).state, step(['fork_head']).actor], ['waiting', 'author']);
   // Out of budget: a clock's, not an admin's, who has nothing to press.
   assert.deepEqual([step(['budget']).state, step(['budget']).actor], ['active', 'auto']);
+  // Its checks fail or could not run: the lane spends nothing on it, so it is
+  // the author's (19 Oct 2026: 33 of 35 such cards said the platform would).
+  assert.deepEqual([step(['checks_failing']).state, step(['checks_failing']).actor], ['blocked', 'author']);
+  assert.match(step(['checks_failing']).note, /checks are failing; the author fixes them first, then the platform resolves the conflict/);
+  assert.deepEqual([step(['checks_error']).state, step(['checks_error']).actor], ['blocked', 'author']);
+  assert.match(step(['checks_error']).note, /checks could not run; once they are re-run and pass, the platform resolves the conflict/);
+  assert.doesNotMatch(step(['checks_failing']).note, /will resolve/);
 });
 
 test('the provisional list reads a deferred verdict as waiting on the conflict, not on a runner', () => {

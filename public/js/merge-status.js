@@ -360,7 +360,11 @@
           ? t('session:merge.title.conflictForkHead')
           : served.indexOf('awaiting_approval') !== -1
             ? t('session:merge.title.conflictAwaitingApproval')
-            : t('session:merge.title.conflictAutomatic');
+            : served.indexOf('checks_failing') !== -1
+              ? t('session:merge.title.conflictChecksFailing')
+              : served.indexOf('checks_error') !== -1
+                ? t('session:merge.title.conflictChecksError')
+                : t('session:merge.title.conflictAutomatic');
       return descriptor('mergeability_conflict',
         nf ? t('session:merge.status.conflictsWithMainFiles', { count: nf }) : t('session:merge.status.conflictsWithMain'), 'red', false, {
           glyph: '⚠', votes: votes,
