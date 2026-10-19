@@ -4213,6 +4213,22 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       }
       const pendingWhoDecides = canManage
         ? await require('../services/who-decides-pr').findWhoDecidesPr(pool, app.id) : null;
+      // The invited approvers by name, so the Workshop's rule line ("evan
+      // or snait says yes") is drawn once rather than said as a count first
+      // and rewritten when GET /approvers answered (polish board #13). Only
+      // for a reader that route would answer: it is collab-read.
+      let approverNames = null;
+      if (gov.approverPolicy === 'invited' && canChat) {
+        const { rows: approverRows } = await pool.query(
+          `SELECT u.username
+             FROM app_approvers ap
+             JOIN users u ON u.id = ap.user_id
+            WHERE ap.app_id = $1 AND ap.status = 'member'
+            ORDER BY LOWER(u.username)`,
+          [app.id]
+        );
+        approverNames = approverRows.map((r) => r.username).filter(Boolean);
+      }
       // WHAT IT IS. dapp.json's one line when it has one. A project made
       // from "What should it do?" without a one-liner (the first session's
       // own words, not an example's) has none until somebody writes one, so
@@ -4340,6 +4356,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           rules: described ? described.rules : null,
           groups: described ? described.groups : [],
           creator,
+          approvers: approverNames,
         },
         // #4666: who can see it, as the two columns say, for the sheet.
         visibility: { build: app.collab_visibility, view: app.view_visibility },

@@ -62,6 +62,14 @@ async function recordRunning(pool, { sha = process.env.GIT_SHA, env = process.en
   }
 }
 
+// The role a process was told to run (services/process-role.js), when it
+// was told one: web or conductor once the split is on, all before it. An
+// unset or unreadable PROCESS_ROLE is not guessed at here.
+function toldRole(env = process.env) {
+  if (!String(env.PROCESS_ROLE ?? '').trim()) return null;
+  try { return require('./process-role').processRole(env); } catch { return null; }
+}
+
 /**
  * Say that a production process came up on Kubernetes, and in which pod
  * (events 'platform_booted'). A pod keeps its name when Kubernetes starts its
@@ -72,18 +80,106 @@ async function recordRunning(pool, { sha = process.env.GIT_SHA, env = process.en
  * nothing: a release that never comes up is release-watch's to report.
  * Staging's previews and anything off Kubernetes record nothing. Never
  * throws.
+ *
+ * It also says why the last one died, when one did (recordPodExit), and the
+ * role it runs when it was told one, so the platform signals can group the
+ * crashes (signal-observers/homeroom-crashes.js).
  */
 function recordBoot(pool, {
   sha = process.env.GIT_SHA, env = process.env.USERNODE_ENV,
   onKubernetes = !!process.env.KUBERNETES_SERVICE_HOST, pod = os.hostname(),
+  role = toldRole(), namespace = process.env.PLATFORM_NAMESPACE, readPod,
 } = {}) {
   if (env === 'staging' || !onKubernetes || !pod) return Promise.resolve();
   const events = require('./events');
   const commit = String(sha || '').toLowerCase();
-  return events.record(pool, {
-    type: events.EVENT_TYPES.PLATFORM_BOOTED,
-    metadata: { sha: /^[0-9a-f]{40}$/.test(commit) ? commit : null, pod: String(pod) },
-  });
+  const metadata = { sha: /^[0-9a-f]{40}$/.test(commit) ? commit : null, pod: String(pod) };
+  if (role) metadata.role = role;
+  return Promise.all([
+    events.record(pool, { type: events.EVENT_TYPES.PLATFORM_BOOTED, metadata }),
+    recordPodExit(pool, { env, onKubernetes, pod, namespace, role, readPod }),
+  ]).then(() => {});
 }
 
-module.exports = { recordRunning, recordBoot, STAMP_SQL };
+// The pod label the chart gives each platform Pod its role by
+// (deploy/helm/social-vibecoding-platform/templates/platform.yaml).
+const ROLE_LABEL = 'social.usernode.io/process-role';
+// The chart's name for the platform's container.
+const CONTAINER = 'platform';
+
+const isoOf = (v) => {
+  if (!v) return null;
+  const t = new Date(v);
+  return Number.isNaN(t.getTime()) ? null : t.toISOString();
+};
+// Kubernetes' own words (OOMKilled, Error, Completed, ContainerCannotRun):
+// kept to what such a word is made of.
+const wordOf = (v, max = 60) => {
+  const s = String(v ?? '').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, max);
+  return s || null;
+};
+const intOf = (v) => (Number.isInteger(v) ? v : null);
+
+/**
+ * Pure: what ended the platform container's last run in `pod` (a V1Pod), or
+ * null when it has not ended one (a Pod's first container). Kubernetes keeps
+ * the previous container's end in `lastState.terminated` once it has started
+ * the next, which is the moment a process booting reads it.
+ */
+function podExitOf(pod, { role = null, name = null } = {}) {
+  const statuses = Array.isArray(pod?.status?.containerStatuses) ? pod.status.containerStatuses : [];
+  const status = statuses.find((c) => c?.name === CONTAINER) || (statuses.length === 1 ? statuses[0] : null);
+  const ended = status?.lastState?.terminated;
+  if (!ended) return null;
+  const spec = (Array.isArray(pod?.spec?.containers) ? pod.spec.containers : []).find((c) => c?.name === status.name);
+  const limit = spec?.resources?.limits?.memory;
+  return {
+    pod: wordOf(pod?.metadata?.name, 253) || wordOf(name, 253),
+    role: wordOf(pod?.metadata?.labels?.[ROLE_LABEL], 20) || role || null,
+    container: wordOf(status.name, 63),
+    reason: wordOf(ended.reason),
+    exitCode: intOf(ended.exitCode),
+    signal: intOf(ended.signal),
+    startedAt: isoOf(ended.startedAt),
+    finishedAt: isoOf(ended.finishedAt),
+    restartCount: intOf(status.restartCount),
+    memoryLimit: limit == null ? null : wordOf(limit, 20),
+  };
+}
+
+/**
+ * Say what ended this pod's last process (events 'platform_pod_exit'):
+ * { pod, role, container, reason, exitCode, signal, startedAt, finishedAt,
+ * restartCount, memoryLimit }. A second boot in one pod says only THAT the
+ * process died; this says why: the memory limit (OOMKilled, exit code 137)
+ * or the process's own exit (Error, its code). Read from this process's own
+ * Pod (HOSTNAME in PLATFORM_NAMESPACE), which the chart's Role lets the
+ * platform `get`. Skipped where recordBoot is (staging, off Kubernetes), and
+ * on a Pod's first container, which ended nothing. Never throws.
+ * @returns {Promise<object|null>} what it recorded
+ */
+async function recordPodExit(pool, {
+  env = process.env.USERNODE_ENV, onKubernetes = !!process.env.KUBERNETES_SERVICE_HOST,
+  pod = process.env.HOSTNAME || os.hostname(), namespace = process.env.PLATFORM_NAMESPACE,
+  role = toldRole(), readPod = (args) => require('./kubernetes').readPlatformPod(args),
+} = {}) {
+  if (env === 'staging' || !onKubernetes || !pod || !namespace) return null;
+  try {
+    const read = await readPod({ name: String(pod), namespace: String(namespace) });
+    const exit = podExitOf(read, { role, name: pod });
+    if (!exit) return null;
+    const events = require('./events');
+    await events.record(pool, { type: events.EVENT_TYPES.PLATFORM_POD_EXIT, metadata: exit });
+    log.warn('platform-release', 'The last process in this pod died', {
+      pod: exit.pod, reason: exit.reason, exitCode: exit.exitCode, restartCount: exit.restartCount,
+    });
+    return exit;
+  } catch (err) {
+    log.warn('platform-release', 'Could not read this pod for what ended its last process', {
+      pod: String(pod), err: err?.message || String(err),
+    });
+    return null;
+  }
+}
+
+module.exports = { recordRunning, recordBoot, recordPodExit, podExitOf, STAMP_SQL };

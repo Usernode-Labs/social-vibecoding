@@ -114,6 +114,16 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/upload-retention').sweep(pool, config),
   },
   {
+    // The per-route request and server-error counts past their 14 days (the
+    // Server errors figure and the server_errors signal read them).
+    name: 'server-error-prune', everyMs: 24 * HOUR, leaderSweep: 'server-error-prune',
+    run: async (_ctx: WorkContext, { pool }: JobDeps) => {
+      const n = await legacy('services/server-error-counts').prune(pool);
+      if (n && (n.requests || n.errors)) legacy('services/logger').info('server-errors', 'Pruned old server error counts', n);
+      return n;
+    },
+  },
+  {
     // Before & after shots: media and audit windows, and runtimes no run owns.
     name: 'shots-gc', everyMs: 6 * HOUR, leaderSweep: 'shots-gc', leaseMs: 5 * MIN,
     run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/shots-gc').sweep(config, pool),

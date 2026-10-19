@@ -12,7 +12,7 @@
       "name": "Onboarding",
       "icon": "🚪",
       "about": "Signing up and the first week",
-      "figures": ["onboarding.sign-up", "onboarding.first-project", "onboarding.first-change", "onboarding.found-project"]
+      "figures": ["onboarding.sign-up", "onboarding.first-project", "onboarding.first-change", "onboarding.found-project", "onboarding.sign-in-errors"]
     },
     {
       "id": "homeroom-bot",
@@ -20,7 +20,7 @@
       "name": "Homeroom bot",
       "icon": "🤖",
       "about": "How it plans, builds and answers",
-      "figures": ["bot.answered", "bot.reply-cost", "bot.reply-time", "bot.merged", "bot.merged-cost", "bot.request-to-proposal", "bot.builds-proposed", "bot.first-versions", "bot.failed-spend", "bot.paused"]
+      "figures": ["bot.answered", "bot.reply-cost", "bot.reply-time", "bot.merged", "bot.merged-cost", "bot.request-to-proposal", "bot.builds-proposed", "bot.first-versions", "bot.failed-spend", "bot.paused", "bot.turns-lost"]
     },
     {
       "id": "proposal-pipeline",
@@ -36,7 +36,7 @@
       "name": "Infra",
       "icon": "🛠️",
       "about": "Builds, staging, deploys and the servers the apps run on",
-      "figures": ["infra.merge-to-live", "infra.deploys-failed", "infra.apps-up", "infra.restarts", "infra.limits-filled", "infra.turned-away", "infra.homeroom-stalls", "infra.homeroom-crashes", "infra.alerts"]
+      "figures": ["infra.merge-to-live", "infra.deploys-failed", "infra.apps-up", "infra.restarts", "infra.limits-filled", "infra.turned-away", "infra.homeroom-stalls", "infra.homeroom-crashes", "infra.alerts", "infra.server-errors", "infra.page-errors"]
     },
     {
       "id": "project-workflows",
@@ -3008,13 +3008,13 @@
       "expectSelector": "#platform-tabs:has(> .platform-tabs-marker[data-marker-at][aria-hidden=\"true\"] + #platform-tab-home) #platform-tab-home[aria-current=\"page\"]"
     },
     {
-      "name": "#2760: the fifth tab is named after the signed-in user instead of \"Me\", on the phone bar and the desktop rail alike",
+      "name": "#2760, N7: the fifth tab says You, and its accessible name says whose account it is, on the phone bar and the desktop rail alike",
       "path": "/?demo=1",
-      "expectSelector": "#platform-tabs a#platform-tab-me[href=\"#profile\"][aria-label$=\", your profile\"]"
+      "expectSelector": "#platform-tabs a#platform-tab-me[href=\"#profile\"][aria-label^=\"You, \"]:has(> .platform-tab-label)"
     },
     {
-      "name": "A message notification is listed in the notifications sheet",
-      "path": "/?shot=notifications&demo=1",
+      "name": "A message notification is listed in the notifications sheet, on its Messages tab (#18: the bell's Unread leaves plain messages to Messages)",
+      "path": "/?shot=notifications-messages&demo=1",
       "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990207\"]",
       "expectText": "[Mock] Did the notifications change land yet?"
     },

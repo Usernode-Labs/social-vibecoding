@@ -90,4 +90,9 @@ test('desktop only: hidden on the phone bar, drawn above Me at the strip\'s foot
   assert.doesNotMatch(CSS, /#platform-tab-me \{\s*margin-right: 48px;/, 'Me gives up no room to it any more');
   assert.match(CSS, /\.platform-rail-settings\[aria-current="page"\] \{\s*background: var\(--lit-tint\);/,
     'lit like a rail row');
+  // 19 Oct polish #4: a flex item paints in `order`, so Me (order 3) drew
+  // over the cog (order 2) at the same z-index, and every click on the cog
+  // opened Profile. The cog sits one step above the tabs' z-index 1.
+  assert.match(CSS.slice(desk, desk + 80), /position: relative;\s*z-index: 2;/,
+    'the cog paints above Me, so it can be pressed and its fill is not covered');
 });

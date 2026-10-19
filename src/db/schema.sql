@@ -14966,3 +14966,37 @@ CREATE TABLE IF NOT EXISTS platform_signal_sources (
   source        VARCHAR(48) PRIMARY KEY,
   last_heard_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ── Server errors, counted (platform signals, wave 2) ──────────────────
+--
+-- A 5xx was a log line and one process's 200-line buffer, so a route that
+-- failed one request in ten for a day was seen only by somebody reading
+-- logs. Each process counts what it answered, per minute, and flushes the
+-- counts here (services/server-error-counts.js): every /api/ response in
+-- server_request_minutes, and each 5xx by its route TEMPLATE (never the raw
+-- path), error type and first frame in this repository in
+-- server_error_minutes. The `infra.server-errors` figure reads the first;
+-- the `server_errors` signal (services/signal-observers/server-errors.js)
+-- reads the second. `sample` is one scrubbed message, for full admins only.
+-- Rows older than 14 days are pruned by the flusher.
+CREATE TABLE IF NOT EXISTS server_request_minutes (
+  minute    TIMESTAMPTZ NOT NULL,
+  pod       VARCHAR(64) NOT NULL,
+  requests  INTEGER NOT NULL DEFAULT 0,
+  errors    INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (minute, pod)
+);
+CREATE TABLE IF NOT EXISTS server_error_minutes (
+  minute    TIMESTAMPTZ NOT NULL,
+  pod       VARCHAR(64) NOT NULL,
+  method    VARCHAR(8) NOT NULL,
+  route     VARCHAR(160) NOT NULL,
+  status    SMALLINT NOT NULL,
+  err_type  VARCHAR(64) NOT NULL DEFAULT '',
+  frame     VARCHAR(160) NOT NULL DEFAULT '',
+  count     INTEGER NOT NULL DEFAULT 0,
+  sample    TEXT,
+  PRIMARY KEY (minute, pod, method, route, status, err_type, frame)
+);
+CREATE INDEX IF NOT EXISTS idx_server_error_minutes_minute ON server_error_minutes (minute DESC);
+COMMENT ON COLUMN server_error_minutes.sample IS 'staging:private';

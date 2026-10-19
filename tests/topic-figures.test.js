@@ -42,10 +42,10 @@ const DSN = process.env.TEST_DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
 const TOPIC_IDS = {
-  onboarding: ['onboarding.sign-up', 'onboarding.first-project', 'onboarding.first-change', 'onboarding.found-project'],
+  onboarding: ['onboarding.sign-up', 'onboarding.first-project', 'onboarding.first-change', 'onboarding.found-project', 'onboarding.sign-in-errors'],
   'homeroom-bot': [
     'bot.answered', 'bot.reply-cost', 'bot.reply-time', 'bot.merged', 'bot.merged-cost', 'bot.request-to-proposal',
-    'bot.builds-proposed', 'bot.first-versions', 'bot.failed-spend', 'bot.paused',
+    'bot.builds-proposed', 'bot.first-versions', 'bot.failed-spend', 'bot.paused', 'bot.turns-lost',
   ],
   'proposal-pipeline': [
     'pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged', 'pipeline.main-paused',
@@ -53,7 +53,7 @@ const TOPIC_IDS = {
   ],
   infra: [
     'infra.merge-to-live', 'infra.deploys-failed', 'infra.apps-up', 'infra.restarts', 'infra.limits-filled', 'infra.turned-away',
-    'infra.homeroom-stalls', 'infra.homeroom-crashes', 'infra.alerts',
+    'infra.homeroom-stalls', 'infra.homeroom-crashes', 'infra.alerts', 'infra.server-errors', 'infra.page-errors',
   ],
 };
 
@@ -316,7 +316,7 @@ test('an unknown figure is an error for the topics PR and costs the topic nothin
   assert.deepEqual(topics.map((t) => [t.id, t.figures]), [
     ['infra', ['infra.apps-up']],
     ['other', undefined],
-    ['many', [...TOPIC_IDS['homeroom-bot'], 'infra.apps-up', 'infra.restarts']],
+    ['many', [...TOPIC_IDS['homeroom-bot'], 'infra.apps-up']],
   ]);
 });
 
@@ -394,7 +394,7 @@ test('the Homeroom bot\'s strip is a grid: a row each for Answers, Builds and Ru
     'bot.merged', 'bot.merged-cost', 'bot.request-to-proposal',
     'bot.builds-proposed', 'bot.failed-spend',
     'bot.first-versions',
-    'bot.paused',
+    'bot.turns-lost', 'bot.paused',
   ]);
   assert.deepEqual([...html.matchAll(/class="dev-ws-figs-row" data-fig-group="([^"]+)"/g)].map((m) => m[1]),
     ['answers', 'builds', 'builds', 'builds', 'running']);

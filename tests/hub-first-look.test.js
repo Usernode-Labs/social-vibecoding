@@ -132,5 +132,5 @@ test('on the hub after For you, before Recently live', () => {
   assert.ok(at('<ShareItCard slug={slug}') < at('<ForYouCard'));
   assert.ok(at('<ForYouCard') < at('<FirstLookCard slug={slug} data={community} />'));
   assert.ok(at('<FirstLookCard slug={slug} data={community} />') < at('<RecentlyLive slug={slug}'));
-  assert.match(lander, /import \{ FirstLookCard, FirstVersionCard, ForYouCard, RecentlyLive, hubAlone, owesVote \} from '\.\/hub-cards';/);
+  assert.match(lander, /import \{ FirstLookCard, FirstVersionCard, ForYouCard, HubSkeleton, RecentlyLive, hubAlone, owesVote \} from '\.\/hub-cards';/);
 });

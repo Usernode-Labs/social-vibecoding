@@ -183,6 +183,12 @@ let startupDiagnostics = null;
 // src/middleware/inflight-requests.js).
 app.use(inflightRequests.inflightRequests());
 
+// Then count every /api/ response by the route template it matched and its
+// status, and each 5xx by what was thrown, for the Server errors figure and
+// the server_errors signal (src/middleware/request-counts.js,
+// src/services/server-error-counts.js). It only listens for `finish`.
+app.use(require('./src/middleware/request-counts').requestCounts());
+
 // Express never trusts forwarding headers globally. Docker mode resolves one
 // configured proxy peer; Kubernetes mode lets Cilium/Envoy supply the client
 // address without a proxy hostname. Direct child/worker calls carry no
@@ -1501,6 +1507,10 @@ async function start() {
     // cache via stale-while-revalidate (see services/status.js).
     statusService.start(config);
   }
+  // Every process writes its own server-error counts to the database once a
+  // minute (services/server-error-counts.js), on an unref'd timer; a minute
+  // with nothing answered sends nothing.
+  require('./src/services/server-error-counts').start({ pool: getPool(config) });
 
   // ── The workflow's loops ─────────────────────────────────────────────
   // A conductor (any number of replicas) or an 'all' runs every machine's
@@ -5584,6 +5594,15 @@ async function cleanup() {
   // (services/processes.js). Bounded like the marks above.
   await boundedStep(processes.stop(), BUILD_SHUTDOWN_MARK_TIMEOUT_MS)
     .catch((err) => log.warn('server', 'Could not remove this process\'s row', { err: err.message }));
+
+  // The minute of server responses still counting (services/server-error-
+  // counts.js) is written before the pool closes, or it is lost with the
+  // process. Bounded like the marks above; flush never throws.
+  if (shutdownPool) {
+    const serverErrorCounts = require('./src/services/server-error-counts');
+    serverErrorCounts.stop();
+    await boundedStep(serverErrorCounts.flush(shutdownPool, { all: true }), BUILD_SHUTDOWN_MARK_TIMEOUT_MS).catch(() => {});
+  }
 
   // Close the pg pool so in-flight queries settle instead of being severed
   // by process.exit(). Bounded: a pool that won't drain must not hold the

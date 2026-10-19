@@ -537,6 +537,43 @@ const NOT_THE_CHANGE_SQL = `
       WHERE r.read_reason = 'checks_failing'
         AND r.created_at >= $1::timestamptz AND r.created_at < $2::timestamptz) AS total`;
 
+// Wave 2 of the platform signals. Every response a process answered and
+// each 5xx among them, per minute (services/server-error-counts.js).
+const SERVER_ERRORS_SQL = `
+  SELECT COALESCE(SUM(errors), 0)::bigint AS hits, COALESCE(SUM(requests), 0)::bigint AS total
+    FROM server_request_minutes
+   WHERE minute >= $1::timestamptz AND minute < $2::timestamptz`;
+
+// Page visits that hit a script error after the page had loaded (ui_experience
+// `client_error`, public/js/ui-telemetry.js), over the visits that loaded.
+const PAGE_ERRORS_SQL = `
+  SELECT COUNT(DISTINCT e.metadata->>'visitId') FILTER (WHERE e.metadata->>'kind' = 'client_error')::int AS hits,
+         COUNT(DISTINCT e.metadata->>'visitId') FILTER (WHERE e.metadata->>'kind' = 'page_load')::int AS total
+    FROM events e
+   WHERE e.event_type = 'ui_experience'
+     AND e.created_at >= $1::timestamptz AND e.created_at < $2::timestamptz`;
+
+// The same, on the screens of a first session: the sheets a newcomer meets
+// (username, terms, join) and the tour.
+const SIGN_IN_SCREENS = Object.freeze(['username_sheet', 'terms_sheet', 'join_sheet', 'tour', 'ping_ask']);
+const SIGN_IN_ERRORS_SQL = `
+  SELECT COUNT(DISTINCT e.metadata->>'visitId') FILTER (WHERE e.metadata->>'kind' = 'client_error')::int AS hits,
+         COUNT(DISTINCT e.metadata->>'visitId') FILTER (WHERE e.metadata->>'kind' IN ('screen_visit', 'page_load'))::int AS total
+    FROM events e
+   WHERE e.event_type = 'ui_experience'
+     AND e.metadata->>'screen' = ANY($3::text[])
+     AND e.created_at >= $1::timestamptz AND e.created_at < $2::timestamptz`;
+
+// The Homeroom bot's turns, and those whose worker died under them (out of
+// memory, container gone: agent_turns.error_code 'worker_lost').
+const TURNS_LOST_SQL = `
+  SELECT COUNT(*) FILTER (WHERE t.error_code = 'worker_lost')::int AS hits, COUNT(*)::int AS total
+    FROM agent_turns t
+    JOIN chat_sessions cs ON cs.id = t.session_id
+    JOIN users u ON u.id = cs.user_id
+   WHERE u.username = 'homeroom_bot'
+     AND t.started_at >= $1::timestamptz AND t.started_at < $2::timestamptz`;
+
 const PLATFORM_APPS_SQL = 'SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id';
 
 // ── Sources: one query each, shared by the figures that read it ─────────
@@ -579,6 +616,10 @@ const SOURCES = Object.freeze({
   stuckWork: { days: 7, read: (pool, w) => pool.query(SIGNAL_EPISODES_SQL, [w.from, w.until, 'workflow', null]) },
   botPaused: { days: 7, read: (pool, w) => pool.query(SIGNAL_EPISODES_SQL, [w.from, w.until, 'bot_paused', null]) },
   infraAlerts: { days: 7, read: (pool, w) => pool.query(SIGNAL_EPISODES_SQL, [w.from, w.until, 'alert', 'critical']) },
+  serverErrors: { days: 7, read: (pool, w) => pool.query(SERVER_ERRORS_SQL, [w.from, w.until]) },
+  pageErrors: { days: 7, read: (pool, w) => pool.query(PAGE_ERRORS_SQL, [w.from, w.until]) },
+  signInErrors: { days: 30, daily: true, read: (pool, w) => pool.query(SIGN_IN_ERRORS_SQL, [w.from, w.until, SIGN_IN_SCREENS]) },
+  botTurnsLost: { days: 7, read: (pool, w) => pool.query(TURNS_LOST_SQL, [w.from, w.until]) },
 });
 
 // ── Formatting ───────────────────────────────────────────────────────────
@@ -614,6 +655,9 @@ function formatPercent(rate) {
   const r = num(rate);
   if (r == null) return null;
   const pct = r * 100;
+  // Near the bottom, a share that is not none never reads as none: 12 server
+  // errors in 48,210 requests is 0.02%, not 0%.
+  if (pct > 0 && pct < 0.05) return `${Number(pct.toPrecision(1)).toString()}%`;
   if (pct > 0 && pct < 10) return `${(Math.round(pct * 10) / 10).toString()}%`;
   // Near the top a whole percent hides what matters: 99.4% is not 100%.
   if (pct >= 99 && pct < 100) return `${(Math.floor(pct * 10) / 10).toString()}%`;
@@ -774,6 +818,12 @@ const FIGURES = Object.freeze({
     target: { atMost: 0.1 },
     measure: (r) => ({ hits: r.failed_spent, total: r.spent }),
   },
+  'bot.turns-lost': {
+    source: 'botTurnsLost', kind: 'rate', group: 'running', column: 'quality', label: 'Build turns lost', noun: 'turns',
+    tip: 'Of the bot’s turns, the share whose worker died under them: it ran out of memory or its container went away. A lost turn costs a build its progress, and until 17 Oct they were labelled “no change”.',
+    target: { atMost: 0.02 },
+    measure: (r) => ({ hits: Number(r.hits), total: Number(r.total) }),
+  },
   'bot.paused': {
     source: 'botPaused', kind: 'count', group: 'running', column: 'speed', label: 'Time the bot was paused',
     tip: 'How many times the bot stopped starting work for long enough to be a problem (the platform failing under it, its weekly budget, or GitHub’s hourly budget), and for how long in all. While it is paused, nobody’s request moves.',
@@ -839,6 +889,24 @@ const FIGURES = Object.freeze({
     tip: 'How many times work in Homeroom’s workflows got stuck: an instance that faulted or stalled, a deadline that did not fire, or work that ran out of attempts. Each one is filed as a request for the bot to fix.',
     target: { atMost: 0 },
     measure: (r) => ({ n: r.n }),
+  },
+  'infra.server-errors': {
+    source: 'serverErrors', kind: 'rate', label: 'Server errors', noun: 'requests',
+    tip: 'Of the requests Homeroom answered, the share it answered with a server error (5xx). Each route that keeps failing is filed as a request for the bot to fix.',
+    target: { atMost: 0.001 },
+    measure: (r) => ({ hits: Number(r.hits), total: Number(r.total) }),
+  },
+  'infra.page-errors': {
+    source: 'pageErrors', kind: 'rate', label: 'Page errors', noun: 'visits',
+    tip: 'Of the visits to Homeroom that loaded, the share where a script error happened afterwards. Each error that keeps happening is filed as a request for the bot to fix.',
+    target: { atMost: 0.01 },
+    measure: (r) => ({ hits: Number(r.hits), total: Number(r.total) }),
+  },
+  'onboarding.sign-in-errors': {
+    source: 'signInErrors', kind: 'rate', label: 'Errors in a first session', noun: 'visits',
+    tip: 'Of the visits to the screens a newcomer meets first (choosing a username, the terms, joining, the tour), the share where a script error happened. A newcomer who hits one often does not come back.',
+    target: { atMost: 0.01 },
+    measure: (r) => ({ hits: Number(r.hits), total: Number(r.total) }),
   },
   'infra.alerts': {
     source: 'infraAlerts', kind: 'count', label: 'Critical infra alerts',
@@ -1279,6 +1347,10 @@ const DEMO_MEASURES = Object.freeze({
   'pipeline.stuck-work': { n: 1 },
   'bot.paused': { n: 1, secs: 2400 },
   'infra.alerts': { n: 0 },
+  'bot.turns-lost': { hits: 1, total: 140 },
+  'infra.server-errors': { hits: 12, total: 48210 },
+  'infra.page-errors': { hits: 9, total: 1630 },
+  'onboarding.sign-in-errors': { hits: 1, total: 212 },
 });
 
 /** The demo strip for `ids`. Pure. */

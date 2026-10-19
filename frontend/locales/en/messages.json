@@ -2743,6 +2743,14 @@
     "text": "Agent",
     "description": "Small tag on a row of the conversation list: the conversation is with an AI agent."
   },
+  "inbox.newCount_one": {
+    "text": "{{count}} new",
+    "description": "At the end of a conversation's row in the Messages list, in grey: how many messages in it the person has not read yet. {{count}} is that number."
+  },
+  "inbox.newCount_other": {
+    "text": "{{count}} new",
+    "description": "At the end of a conversation's row in the Messages list, in grey: how many messages in it the person has not read yet. {{count}} is that number."
+  },
   "inbox.previewBy": {
     "text": "@{{username}}: {{message}}",
     "description": "Second line of a channel's row in the conversation list: who wrote the latest message and its text. {{username}} is the author (keep the @) and {{message}} the message."
@@ -3046,6 +3054,14 @@
   "header.subtitle.groupOwner_other": {
     "text": "{{count}} members · you own this group",
     "description": "Line under a group chat's name in its header, shown to its owner: how many people are in it. {{count}} is that number."
+  },
+  "header.subtitle.invitedCount_one": {
+    "text": "{{count}} invited",
+    "description": "Added after the member count under a group chat's name in its header (\"2 members · 1 invited\"): how many people were asked to join and have not answered yet. {{count}} is that number."
+  },
+  "header.subtitle.invitedCount_other": {
+    "text": "{{count}} invited",
+    "description": "Added after the member count under a group chat's name in its header (\"2 members · 3 invited\"): how many people were asked to join and have not answered yet. {{count}} is that number."
   },
   "header.subtitle.requestPending": {
     "text": "Request pending",
