@@ -652,6 +652,7 @@ release (`docs/kubernetes-operations.md`).
 | `tests/workflow-processes-postgres.test.js` | Each machine's flows with every decision and work item in a child process, the test process being the web side (no pipeline slot, as a web Pod); the same flows with the child killed (SIGKILL) mid-item, restarted, and compared with an uninterrupted run; and two children at once. The child is server.js itself, booted as a conductor (`tests/lib/workflow-child.js`; the test holds the leader lock), so its bus, its process row and its listener are production's. Only outside services are faked (`tests/fixtures/workflow-outside-fakes.js`); the harness is `tests/lib/workflow-processes.js`. |
 | `tests/workflow-release-postgres.test.js` | The release machine: a release's adoptions run once between its processes, a failed step is tried again without the done ones, adoptions that keep failing are shown. |
 | `tests/workflow-dead-peer-postgres.test.js` | The runtime's sessions reap a dead peer and an abandoned transaction. |
+| `tests/workflow-metrics.test.js` | The metrics a conductor serves, and that every metric an alert rule names is served. |
 
 The kernel guarantees cover:
 - replay;
