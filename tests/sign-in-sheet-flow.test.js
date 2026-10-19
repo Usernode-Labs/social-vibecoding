@@ -522,8 +522,24 @@ test('the reset step asks the sign-in screen\'s reset, and says the same whether
   // The sheet's step: its field, its button, the same wording as the screen's, and the way back.
   const src = read(SHEET);
   assert.match(src, /<input ref=\{resetField\} id="sign-in-sheet-reset-email" type="email" autoComplete="email"/);
-  assert.match(src, /data-sign-in-sheet-forgot-back="" className=\{`\$\{QUIET\} self-start`\} onClick=\{\(\) => \{ identifierPrefill\.current = typedIdentifier\.current; toStep\('password'\); \}\}>/);
   assert.equal(message('auth:signInSheet.forgot.sent'), message('auth:login.emailReset.sent'));
+});
+
+test('the reset has one way back, a way in with a code, and the support note only once a link went (#5259)', () => {
+  const src = read(SHEET);
+  // One "‹ Sign in", above the title, carrying the typed username back.
+  assert.match(src, /\{step === 'forgot' \? \(\s+<button type="button" data-sign-in-sheet-forgot-back="" className=\{`\$\{QUIET\} mt-2 -ml-1 flex items-center gap-0\.5`\} onClick=\{\(\) => \{ identifierPrefill\.current = typedIdentifier\.current; toStep\('password'\); \}\}>\s+<ChevronLeftIcon/);
+  assert.equal(src.match(/data-sign-in-sheet-forgot-back=""/g).length, 1, 'one way back, not two');
+  assert.equal(message('auth:signInSheet.forgot.back'), 'Sign in');
+  const step = src.slice(src.indexOf("{step === 'forgot' ? (\n          <form"), src.indexOf("{step === 'account' ? ("));
+  // Beside the reset button: the email code, with the address carried over.
+  assert.match(step, /data-sign-in-sheet-forgot-code="" className=\{MAIL_BUTTON\} onClick=\{\(\) => \{ const typed = \(resetField\.current\?\.value \|\| ''\)\.trim\(\); if \(typed\.includes\('@'\)\) setEmail\(typed\.toLowerCase\(\)\); toStep\('email'\); \}\}/);
+  assert.ok(step.indexOf('data-sign-in-sheet-forgot-code') > step.indexOf('<button type="submit"'), 'right under the reset button');
+  assert.equal(message('auth:signInSheet.forgot.withCode'), 'Sign in with a code instead');
+  // The support note waits for a sent link: nobody has a problem before then.
+  assert.match(step, /\{resetSent \? \(\s+<p data-sign-in-sheet-reset-support=""/);
+  assert.match(message('auth:signInSheet.forgot.support'), /^Nothing arrived\? Check spam\./);
+  assert.match(message('auth:signInSheet.forgot.lead'), /sign in with a code/);
 });
 
 // ─── the way out to the make screen ─────────────────────────────────────
