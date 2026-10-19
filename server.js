@@ -1335,11 +1335,17 @@ async function becomeLeader() {
   // any repo that's currently private. The worker bootstrap guard
   // refuses to spawn against private repos, so these apps will fail
   // to start a dev session until the user makes the repo public —
-  // surfacing them at boot lets operators see the impact ahead of
-  // first user contact. Non-blocking.
-  auditExistingRepoPrivacy(getPool(config)).catch((err) => {
-    log.warn('server', 'private-repo audit failed', { err: err.message });
-  });
+  // the log lets operators see the impact ahead of first user contact.
+  // Daily on the durable clock, not at every election: on 19 Oct 2026 the
+  // leader changed some twenty times (eight in one hour), and each one
+  // spent a GitHub read per app (~150) on a result that is only logged.
+  // Every worker start checks the repo itself (services/worker.js,
+  // routes/internal.js), so nothing waits on this.
+  const runRepoPrivacyAudit = () => auditExistingRepoPrivacy(getPool(config))
+    .catch((err) => log.warn('server', 'private-repo audit failed', { err: err.message }))
+    // An audit the drain cut short is not recorded: the next leader runs it.
+    .then(() => (lifecycle.isShuttingDown() ? leaderTimers.SKIPPED : undefined));
+  leaderTimers.every('repo-privacy-audit', runRepoPrivacyAudit, 24 * 60 * 60 * 1000, { durable: getPool(config) });
 
   // The push SENDER claims queued jobs — a singleton. Enqueueing (HTTP
   // side) works on every color; only the leader drains the queue.
@@ -1542,20 +1548,29 @@ async function becomeLeader() {
   // leader's boot adopted above. (A checks run a rollout interrupted is the
   // preview machine's work: claimed again once its lease lapses, and its
   // Jobs are collected rather than started over.)
-  observeMergedOnGithub(config)
-    // #447: after reconciling merge state, hand the preview machine any
-    // proposal whose checks were never recorded or were left 'pending' from
-    // before it held the row. Off the critical path. (The machine retries
-    // the platform's own faults at a release itself: platform.ts.)
-    .then(() => reconcileStuckChecks(config))
-    // (The whole-tree check under direct merges is the main-check machine's:
-    // a run a restart interrupted is its work item's, carried on by the next
-    // process, and a paused red's rechecks are its deadline.)
-    .catch((err) => {
-      log.warn('server', 'Boot merge observation / stuck-check reconcile failed', {
-        err: err.message,
-      });
-    });
+  // Every six hours on the durable clock, not at every election: on 19 Oct
+  // 2026 the leader changed some twenty times, and each one read every
+  // proposal up for a vote from GitHub again. Nothing else notices such a
+  // merge (the webhook only moves an imported head; merge.observe asks only
+  // about a merge the platform attempted), so one is now recorded within
+  // six hours rather than at the next election.
+  const runMergedByHandLookup = () => observeMergedOnGithub(config)
+    .catch((err) => log.warn('server', 'Merged-by-hand lookup failed', { err: err.message }))
+    // A lookup the drain cut short is not recorded: the next leader runs it.
+    .then(() => (lifecycle.isShuttingDown() ? leaderTimers.SKIPPED : undefined));
+  leaderTimers.every('merged-by-hand-lookup', runMergedByHandLookup, 6 * 60 * 60 * 1000, { durable: getPool(config) });
+
+  // #447: hand the preview machine any proposal whose checks were never
+  // recorded or were left 'pending' from before it held the row, now rather
+  // than at the first pass of a sweep (the session sweeper's Pass 4 after a
+  // minute, the stuck-checks sweep's after four). Off the critical path.
+  // (The machine retries the platform's own faults at a release itself:
+  // platform.ts. The whole-tree check under direct merges is the main-check
+  // machine's: a run a restart interrupted is its work item's, carried on by
+  // the next process, and a paused red's rechecks are its deadline.)
+  reconcileStuckChecks(config).catch((err) => {
+    log.warn('server', 'Boot stuck-check reconcile failed', { err: err.message });
+  });
 
   // Fallback recovery: for sessions whose container is already gone but
   // whose branch is ahead of main (i.e. CC pushed commits during an old
@@ -1735,7 +1750,7 @@ if (require.main === module) {
 
 // Test-only surface (#183): the orphan-adoption + recovered-turn finalize
 // internals, so the headless-recovery guards stay covered by node --test.
-// `observeMergedOnGithub` rides along so the boot's merged-by-hand lookup
+// `observeMergedOnGithub` rides along so the leader's merged-by-hand lookup
 // stays covered too. `cleanup` + `__setShutdownTargets`
 // (#767) let tests drive the graceful-shutdown sequence against a stubbed
 // listener and pool without booting a server. Not used by any runtime caller.
@@ -1791,13 +1806,15 @@ module.exports = {
 // Scan existing imported apps for privacy violations. Homeroom workers
 // run with zero GitHub credentials and rely on unauthenticated public
 // HTTPS clones; a private repo can't be cloned by the worker, so dev
-// sessions against it will fail at bootstrap. Surface those rows at
-// boot so the operator can decide whether to ask the user to make
-// the repo public or delete the import.
+// sessions against it will fail at bootstrap. Surface those rows once
+// a day (the leader's `repo-privacy-audit` timer) so the operator can
+// decide whether to ask the user to make the repo public or delete the
+// import.
 //
 // Bounded concurrency (a small pool) keeps the scan from spending
-// minutes on a large `apps` table during startup. The check is purely
-// read-only — we log and move on.
+// minutes on a large `apps` table. The check is purely read-only — we
+// log and move on — and stops at its next row once shutdown begins, so
+// it never holds a drain.
 async function auditExistingRepoPrivacy(pool) {
   const github = require('./src/services/github');
   let rows;
@@ -1821,14 +1838,14 @@ async function auditExistingRepoPrivacy(pool) {
   let privateCount = 0;
   let errorCount = 0;
 
-  // One read per app on every boot, and only a log line comes of it, so it
-  // is the first thing to give way when GitHub's hourly budget is nearly
-  // used up (services/github-budget.js): a rollout right after the budget
-  // ran out must not spend what is left on an audit.
+  // One read per app, and only a log line comes of it, so it is the first
+  // thing to give way when GitHub's hourly budget is nearly used up
+  // (services/github-budget.js): a run right after the budget ran out must
+  // not spend what is left on an audit.
   const githubBudget = require('./src/services/github-budget');
   let held = false;
   async function worker() {
-    while (queue.length) {
+    while (queue.length && !lifecycle.isShuttingDown()) {
       if (!githubBudget.budgetAllows('background')) { held = true; return; }
       const row = queue.shift();
       const m = (row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
@@ -1863,12 +1880,13 @@ async function auditExistingRepoPrivacy(pool) {
   });
 }
 
-// A pull request merged on GitHub by hand while it was up for a vote: the
-// leader's boot asks GitHub about every proposal in review and reports a
-// merge it finds (merge-followups records it and runs every follow-up). It
-// decides nothing else: a merge the platform attempted is the proposal
-// machine's, which asks GitHub itself about an answer it lost
-// (`unconfirmed`, observe-first), so nothing is ever demoted from here.
+// A pull request merged on GitHub by hand while it was up for a vote: every
+// six hours (its `merged-by-hand-lookup` timer) the leader asks GitHub about
+// every proposal in review and reports a merge it finds (merge-followups
+// records it and runs every follow-up). It decides nothing else: a merge
+// the platform attempted is the proposal machine's, which asks GitHub
+// itself about an answer it lost (`unconfirmed`, observe-first), so nothing
+// is ever demoted from here.
 //
 // Every lookup spends GitHub's hourly budget (9 Oct 2026: this sweep was
 // one of the callers refused when the bot token ran out), so it is

@@ -811,7 +811,8 @@ export async function adminApplyProposal(
 const count = (n: unknown) => (Number.isInteger(n) && (n as number) >= 0 ? n as number : null);
 
 // A merge found on GitHub that no attempt here reported (somebody merged the
-// pull request by hand while it was up for a vote: the leader's boot looks).
+// pull request by hand while it was up for a vote: the leader looks every
+// six hours, server.js observeMergedOnGithub).
 // The tally is read again: the counted Yes votes on the version that merged,
 // and the app's active members.
 export async function mergeObserved(m: { sessionId: number; appId: number; mergeSha: string | null; mergedAt: string | null }): Promise<number> {
