@@ -3606,18 +3606,14 @@ test('#5236: the Communities feed\'s answered card adds your vote to its counts'
 // holding the row — `AppView._publishWorkshop` publishes only while
 // #dev-workshop is up and `refreshDevData` no-ops outside the dev tab — so
 // the hub's "For you" card, the places list's Needs you count and the deck
-// itself kept asking for a vote the server had saved. Two pins: the deck
-// hands its own saved vote to the store (#4794, as the Communities feed
-// does), and the publish strips saved votes at the door through the same
-// pure rule the store listener runs, so a later publish built from a
-// pre-vote list cannot bring the row back.
+// itself kept asking for a vote the server had saved. Two pins: the kept
+// queue hears a saved vote cast anywhere (every vote funnels through
+// AppView.castVote, whose ok path publishes into voteSavedStore, so the
+// store listener covers the deck's own vote too — the project page passes
+// no `onAnswered` hook, as #4794 pins), and the publish strips saved votes
+// at the door through the same pure rule the listener runs, so a later
+// publish built from a pre-vote list cannot bring the row back.
 test('#5466: the project deck and its publish drop a saved vote\'s row', () => {
-  // The project's deck is the only <NeedsFeed this file draws; the slice up
-  // to the next section is the whole call.
-  const call = WORKSHOP.slice(WORKSHOP.indexOf('<NeedsFeed'), WORKSHOP.indexOf('WHENEVER THE TAB IS UP'));
-  assert.match(call, /onAnswered=\{\(row\) => \{/, 'the #4794 hook is passed');
-  assert.match(call, /devWorkshopStore\.get\(\)/, 'it reads the kept store');
-  assert.match(call, /queue\.filter\(\(r\) => r\.key !== row\.key\)/, 'and drops the row by key');
   // The strip is one shared rule, used by the listener over the kept queue
   // (which fires whichever tab the viewer is on) and by the publish.
   assert.match(WORKSHOP, /export function withoutSavedVotes\(/);

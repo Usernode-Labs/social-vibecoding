@@ -5424,17 +5424,11 @@ export function DevWorkshop(): ReactNode {
           canPost={canPost}
           onDone={() => openTab('workshop')}
           onHub={() => openTab('status')}
-          // #4794, the project deck's own hook (#5466): a vote this feed has
-          // SAVED drops its row from the kept queue at once, the same hand-off
-          // the Communities feed makes. The store listener above covers a vote
-          // cast anywhere; this covers the deck's own vote even where that
-          // listener's publish raced a fresh pre-vote read into the store.
-          // Idempotent, and only on the ok === true path.
-          onAnswered={(row) => {
-            const cur = devWorkshopStore.get();
-            if (!cur.queue || !cur.queue.some((r) => r.key === row.key)) return;
-            devWorkshopStore.set({ queue: cur.queue.filter((r) => r.key !== row.key) });
-          }}
+          // No `onAnswered` here (#4794): a project page passes nothing. The
+          // vote's own route already drops the row — the deck casts through
+          // AppView.castVote, whose ok path publishes the saved vote into
+          // voteSavedStore, and the store listener above strips it from the
+          // kept queue before the feed's own `setAnswered` even lands.
           // #4680: the end card's quiet way into the Suggest an improvement
           // form, the same open the hub's ⋯ row makes. No `intent: 'issue'`,
           // so the heading reads "Suggest an improvement".
