@@ -1551,16 +1551,22 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
   // the bell marks these rows read; they are not in DECIDED_ASK_SETTLED_SQL,
   // so there is no derived read state for them. cs.status = 'merged' also
   // covers a change still going live ('merging' is only derived in
-  // LIVE_ROW_COLUMNS_SQL). Unread rows are listed and still count, so the
-  // voter is still told; saved rows stay in the Saved section; the exact
-  // lookup (a push opened) is not filtered.
+  // LIVE_ROW_COLUMNS_SQL). #5471: an unread one leaves too once the change
+  // went live more than MERGED_NEWS_LISTED_FOR ago, so a note nobody opened
+  // does not linger for days; a change the release never stamped live
+  // (live_at NULL) counts from its merge instead. The NOW() fallback keeps
+  // the OR from evaluating to NULL when both timestamps are NULL, which
+  // NOT would turn into a dropped row. Saved rows stay in the Saved section;
+  // the exact lookup (a push opened) is not filtered.
   let mergedHiddenClause = '';
   if (!savedOnly) {
     params.push(MERGED_HIDDEN_KINDS);
     mergedHiddenClause = `AND NOT (n.kind = ANY($${params.length}::text[]) AND cs.status IS NOT DISTINCT FROM 'merged')`;
     params.push(MERGED_READ_HIDDEN_KINDS);
-    mergedHiddenClause += ` AND NOT (n.kind = ANY($${params.length}::text[]) AND n.read_at IS NOT NULL
-              AND cs.status IS NOT DISTINCT FROM 'merged')`;
+    mergedHiddenClause += ` AND NOT (n.kind = ANY($${params.length}::text[])
+              AND cs.status IS NOT DISTINCT FROM 'merged'
+              AND (n.read_at IS NOT NULL
+                   OR COALESCE(cs.live_at, cs.merged_at, NOW()) < NOW() - INTERVAL '${MERGED_NEWS_LISTED_FOR}'))`;
   }
   params.push(limit);
   const limitIdx = params.length; // last param is the limit
@@ -1711,8 +1717,12 @@ async function countUnread(pool, userId) {
         AND ${PARKED_KINDS_SQL}
         AND NOT (n.kind = ANY($2::text[]) AND EXISTS (
               SELECT 1 FROM chat_sessions s
-               WHERE s.id = n.session_id AND s.status = 'merged'))`,
-    [userId, MERGED_HIDDEN_KINDS]
+               WHERE s.id = n.session_id AND s.status = 'merged'))
+        AND NOT (n.kind = ANY($3::text[]) AND EXISTS (
+              SELECT 1 FROM chat_sessions s
+               WHERE s.id = n.session_id AND s.status = 'merged'
+                 AND COALESCE(s.live_at, s.merged_at, NOW()) < NOW() - INTERVAL '${MERGED_NEWS_LISTED_FOR}'))`,
+    [userId, MERGED_HIDDEN_KINDS, MERGED_READ_HIDDEN_KINDS]
   );
   return rows[0]?.c || 0;
 }
@@ -1833,7 +1843,8 @@ const { settleVoteDigests } = changeNotifications;
 // It is every ask the decision settles plus "ready to try" itself: a merged
 // change is decided, so the vote it asked for is already in. The rows that
 // say the change went live (pr_merged to its author, voted_change_merged to
-// its voters) are not asks; they stay until read (MERGED_READ_HIDDEN_KINDS
+// its voters) are not asks; they stay until read or for
+// MERGED_NEWS_LISTED_FOR after it went live (MERGED_READ_HIDDEN_KINDS
 // below). A closed change keeps its rows in the
 // list, where "ready to try" reads Closed.
 // "One story": the requester's own "ready to try" from Homeroom bot
@@ -1842,11 +1853,17 @@ const MERGED_HIDDEN_KINDS = Object.freeze([...DECIDED_ASK_KINDS, 'change_ready',
 
 // #5461: the news that a change went live is listed until it is read, then
 // leaves the bell's list like the asks above did — a read note somebody
-// taps hours later only opens a merged page again. Unread rows are listed
-// and counted, so the voter is still told it went live; the Saved section
+// taps hours later only opens a merged page again. #5471: an unread one
+// leaves a day after the change went live too, so a note nobody opened does
+// not linger in the inbox (Maztrilover's two merges stayed all day). The
+// voter is still told, since the fresh note is listed; the Saved section
 // and the exact lookup skip the filter, so a saved row and a push-opened
 // one still resolve.
 const MERGED_READ_HIDDEN_KINDS = Object.freeze(['pr_merged', 'voted_change_merged']);
+// #5471: how long an unread went-live note stays in the bell's list. A SQL
+// interval literal (never request input), so the value lives beside the
+// clause that reads it.
+const MERGED_NEWS_LISTED_FOR = '1 day';
 
 async function settleDecidedChange(pool, sessionId, { status = null, push = true } = {}) {
   const touched = await changeNotifications.settleDecidedChange(pool, sessionId, { status });

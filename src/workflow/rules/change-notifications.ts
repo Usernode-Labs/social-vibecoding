@@ -1,6 +1,7 @@
 // What the bell says about a change once it is decided: the author's "your
 // change is live" (pr_merged) and its voters' (voted_change_merged), and the
-// asks it settles. The went-live rows are listed until read (#5461); the
+// asks it settles. The went-live rows are listed until read or for a day
+// after the change went live (#5461, #5471); the
 // merge-followups machine writes them inside its
 // transaction; services/notifications.js re-exports them for [main]'s merge,
 // its included changes and every close.
@@ -84,7 +85,8 @@ export async function createPrMergedNotification(
 }
 
 // #4787: the change a person voted on went live. Until this, only its author
-// heard a merge; everybody who had a say had to stumble on the news.
+// heard a merge; everybody who had a say had to stumble on the news. The row
+// is listed until it is read or a day passes (#5461, #5471).
 //
 // System-generated like pr_merged (source_user_id stays null: the group's
 // decision arriving, not a person doing something to you), one row per voter

@@ -250,6 +250,98 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     assert.ok(saved.some((r) => r.id === priyaRead), 'a saved read row stays in Saved');
   });
 
+  // #5471: a went-live note nobody opened used to stay in the bell forever
+  // (Maztrilover's two merges were still in the inbox that night). It now
+  // leaves the list — and stops counting — a day after the change went live,
+  // with the merge time standing in when the release never stamped live_at.
+  // Inside the day it is still listed and counted; saved it stays in Saved;
+  // the exact lookup is not filtered.
+  await t.test('#5471: an unopened went-live note leaves the list a day after the change went live', async () => {
+    const rosa = await user('rosa');
+    const theo = await user('theo');
+    for (const person of [rosa, theo]) {
+      await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [app.community_id, person.id]);
+      await pool.query('INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [app.id, person.id]);
+    }
+    const baseRosa = await notifications.countUnread(pool, rosa.id);
+    const baseTheo = await notifications.countUnread(pool, theo.id);
+    assert.equal(baseRosa, 0);
+    assert.equal(baseTheo, 0);
+
+    // Went live 25 hours ago, unread: off the list and not counted.
+    const stale = await change('Went live yesterday morning');
+    await pool.query(
+      `UPDATE chat_sessions SET status = 'merged', merged_at = NOW() - INTERVAL '25 hours',
+              live_at = NOW() - INTERVAL '25 hours' WHERE id = $1`, [stale]);
+    const rosaStale = await notify(rosa.id, 'voted_change_merged', { sessionId: stale, source: null });
+    const theoStale = await notify(theo.id, 'pr_merged', { sessionId: stale, source: null });
+    assert.equal(await listed(rosa.id, rosaStale), null, 'the voter\'s stale note is off the list');
+    assert.equal(await listed(theo.id, theoStale), null, 'the author\'s stale note is off the list');
+    assert.equal(await notifications.countUnread(pool, rosa.id), baseRosa, 'and stops counting');
+    assert.equal(await notifications.countUnread(pool, theo.id), baseTheo);
+
+    // Went live 23 hours ago, unread: still listed and counted.
+    const fresh = await change('Went live an hour ago');
+    await pool.query(
+      `UPDATE chat_sessions SET status = 'merged', merged_at = NOW() - INTERVAL '23 hours',
+              live_at = NOW() - INTERVAL '23 hours' WHERE id = $1`, [fresh]);
+    const rosaFresh = await notify(rosa.id, 'voted_change_merged', { sessionId: fresh, source: null });
+    const theoFresh = await notify(theo.id, 'pr_merged', { sessionId: fresh, source: null });
+    assert.ok(await listed(rosa.id, rosaFresh), 'inside the day the voter is still told');
+    assert.ok(await listed(theo.id, theoFresh), 'and so is the author');
+    assert.equal(await notifications.countUnread(pool, rosa.id), baseRosa + 1);
+    assert.equal(await notifications.countUnread(pool, theo.id), baseTheo + 1);
+
+    // Still going live (live_at NULL), merged 25 hours ago: the merge time
+    // stands in, so the note leaves a day after the merge rather than
+    // lingering on a release that never stamped it.
+    // Only the merge-followups machine makes a merged row that is not live
+    // yet, so the insert names it (schema.sql's chat_sessions_inserted_merged_live).
+    let stuck;
+    {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SET LOCAL app.wf_writer = 'transition'");
+        stuck = (await client.query(
+          `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, pr_title, merged_at)
+           VALUES ($1, $2, $3, 'merged', 'Stuck going live', NOW() - INTERVAL '25 hours') RETURNING id, live_at`,
+          [app.id, bot.id, `b-${crypto.randomBytes(4).toString('hex')}`],
+        )).rows[0];
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    }
+    assert.equal(stuck.live_at, null, 'the release never stamped it live');
+    const rosaStuck = await notify(rosa.id, 'voted_change_merged', { sessionId: stuck.id, source: null });
+    assert.equal(await listed(rosa.id, rosaStuck), null, 'the stuck note is off the list a day after the merge');
+    assert.equal(await notifications.countUnread(pool, rosa.id), baseRosa + 1, 'and is not counted');
+
+    // Merged 23 hours ago and still going live: inside the day, listed.
+    const goingLive = (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, pr_title, merged_at)
+       VALUES ($1, $2, $3, 'merged', 'Still going live', NOW() - INTERVAL '23 hours') RETURNING id`,
+      [app.id, bot.id, `b-${crypto.randomBytes(4).toString('hex')}`],
+    )).rows[0].id;
+    const goingLiveRow = await notify(rosa.id, 'voted_change_merged', { sessionId: goingLive, source: null });
+    assert.ok(await listed(rosa.id, goingLiveRow), 'inside the day a going-live note is still listed');
+    assert.equal(await notifications.countUnread(pool, rosa.id), baseRosa + 2);
+
+    // A stale note the reader saved stays in Saved, which skips the filter.
+    await pool.query(`INSERT INTO notification_bookmarks (user_id, notification_id) VALUES ($1, $2)`, [rosa.id, rosaStale]);
+    const saved = await notifications.listSavedForUser(pool, rosa.id);
+    assert.ok(saved.some((r) => r.id === rosaStale), 'a saved stale note stays in Saved');
+
+    // A push opened still resolves it: the exact lookup is not filtered.
+    const exact = notifications.serialize(await notifications.getForUser(pool, rosa.id, rosaStale));
+    assert.equal(exact.sessionStatus, 'merged');
+    assert.equal(exact.readAt, null, 'the exact lookup still resolves the unopened stale note');
+  });
+
   // #4778: settleDecidedChange runs best-effort at every call site, so the
   // bell also settles a decided change's asks live off the change's status.
   // Seeded WITHOUT calling it, the way a missed settle leaves the rows.
