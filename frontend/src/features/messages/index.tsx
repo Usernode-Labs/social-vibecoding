@@ -48,6 +48,7 @@ import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
 import { fullTime, UserAvatar, senderName } from './format';
 import { DiscussionRow, MessageRow } from './message-row';
+import { OPEN_HOLD_MS, openHoldDone } from './open-hold';
 import { plainText } from './plain-text';
 import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
@@ -2104,7 +2105,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // #2884: the runs of cards the viewer has opened, by their first message.
   const [expandedRuns, setExpandedRuns] = useState<ReadonlySet<string>>(() => new Set());
   // One request, one story: where each request stands, for folding the settled ones.
-  const { work: botWork } = useBotWork();
+  const { work: botWork, failed: botWorkFailed } = useBotWork();
   // #2387: the message a link pointed at, flashed once it is drawn.
   const focusId = snap.route.focusMessageId;
   const [flashId, setFlashId] = useState<number | null>(null);
@@ -2126,6 +2127,26 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // and #4564 its rows draw as change blocks (see the memo below).
   const botDm = !!snap.active && snap.active.id === conversationId && snap.active.kind === 'direct'
     && snap.active.membershipStatus === 'member' && snap.active.homeroomBot === true;
+  // THE BOT'S CHAT OPENS AT ITS FINAL SHAPE (./open-hold.ts): its rows are
+  // laid out but hidden, under the spinner, until its tray has answered and
+  // the screen is full or nothing older is left. `shownFor` is the
+  // conversation shown since it was opened, and `holdOverFor` the one whose
+  // OPEN_HOLD_MS ran out; closing it (a phone's Back) or opening another
+  // starts the next open over.
+  const [shownFor, setShownFor] = useState<number | null>(null);
+  const [holdOverFor, setHoldOverFor] = useState<number | null>(null);
+  const holding = botDm && !!conversationId && shownFor !== conversationId && snap.messages.length > 0;
+  useIsomorphicLayoutEffect(() => {
+    if (conversationId) return;
+    setShownFor(null);
+    setHoldOverFor(null);
+  }, [conversationId]);
+  useEffect(() => {
+    if (!holding || !conversationId) return undefined;
+    const id = conversationId;
+    const timer = window.setTimeout(() => setHoldOverFor(id), OPEN_HOLD_MS);
+    return () => window.clearTimeout(timer);
+  }, [holding, conversationId]);
   // #4046 and #4564, decided once per drawn transcript so a row's layout and
   // its block stay the same object between publishes and its memo() holds:
   // the plans (a first version's plan carries its request's step,
@@ -2262,13 +2283,29 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId]);
   // A short thread keeps reading pages in until the screen fills or the
-  // conversation's older end is reached.
+  // conversation's older end is reached. In the bot's chat the tray landing
+  // folds its settled rows into "N finished", which can leave it short too.
   useIsomorphicLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
     if (needsMoreHistory(el)) maybeLoadOlder();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snap.messages, snap.nextBefore, snap.loadingOlder]);
+  }, [snap.messages, snap.nextBefore, snap.loadingOlder, botWork]);
+  // ./open-hold.ts: the bot's chat is shown once it can draw what it will
+  // stay as. After the effect above, so it measures what that one read, and
+  // a layout effect, so the rows appear in the frame they settle in.
+  useIsomorphicLayoutEffect(() => {
+    const el = scroller.current;
+    if (!holding || !el) return;
+    if (openHoldDone({
+      trayRead: !!botWork || botWorkFailed,
+      hasOlder: !!snap.nextBefore,
+      loadingOlder: snap.loadingOlder,
+      olderFailed,
+      short: needsMoreHistory(el),
+      expired: holdOverFor === conversationId,
+    })) setShownFor(conversationId);
+  });
 
   // #3494: the room is up in its community's page, so this screen (hidden)
   // draws no second copy of it; and the page's copy draws nothing once
@@ -2448,7 +2485,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   }
   flushRun();
   return (
-    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || t('messages:thread.paneName')}>
+    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || t('messages:thread.paneName')} data-opening={holding ? '' : undefined}>
       {embedded ? null : <ThreadHeader />}
       {/* One request, one story: "Your requests", pinned under the bot's header. */}
       {botDm && !embedded ? <BotStrip /> : null}
@@ -2476,6 +2513,9 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
             is one — re-reads it silently: this row drawn above the messages
             pushed the whole transcript down on each message sent. */}
         {snap.loadingThread && !snap.messages.length ? <div className="messages-state"><span className="messages-spinner" />{t('messages:thread.loading')}</div> : null}
+        {/* The bot's chat keeps saying it while it opens (./open-hold.ts),
+            over its rows, which app.css hides until then. */}
+        {holding ? <div className="messages-state" data-opening-state=""><span className="messages-spinner" />{t('messages:thread.loading')}</div> : null}
         {/* QA 2026-09-24 Q16: a conversation that cannot come back offers the
             way out, not a Try again that reads the same answer. Leaving it
             here is said plainly, in the ordinary state colour: it is what

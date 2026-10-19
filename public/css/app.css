@@ -584,6 +584,33 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-list-scroll {
   padding-bottom: var(--platform-tabs-h, 0px);
 }
+/* THE HISTORY ABOVE A COMPOSER RESERVES NOTHING AT ITS FOOT (iPhone app,
+   19 October 2026). The note above is the rule, but the scroller carries
+   `.platform-safe-scroll` too, and that class won: on a phone the history
+   kept a band of the tab bar's full height (56px in a browser, about 90 in
+   the app, with the home-indicator strip) empty above the composer, which
+   clears the bar again itself. So the band goes wherever a composer
+   (`.platform-safe-bar`: Send, the request awaiting acceptance, "you can't
+   send here") follows the history in its pane, the reply thread's
+   included. Where none does (an invitation before it is accepted), the
+   history reaches the foot of the screen and keeps the band. 0 rather
+   than the 6px below: `.platform-safe-scroll` already made it 0 wherever
+   the bar is down, so a desktop is exactly as it was. */
+.messages-thread-scroll.platform-safe-scroll:has(~ .platform-safe-bar) {
+  padding-bottom: 0 !important;
+}
+/* THE BOT'S CHAT, OPENING (features/messages/open-hold.ts). Its rows are
+   laid out, so the transcript can tell whether they fill the screen, and
+   not seen until they are what it will stay as; the spinner stays at the
+   top of the scroller over them, however far down it is scrolled. */
+.messages-thread-pane[data-opening] > .messages-thread-scroll > :not(.messages-state),
+.messages-thread-pane[data-opening] > [data-transcript-overlay] {
+  visibility: hidden;
+}
+.messages-thread-pane[data-opening] > .messages-thread-scroll > .messages-state {
+  position: sticky;
+  top: 0;
+}
 
 /* A conversation row, drawn straight on the strip: the square swatch
    avatar, then two lines — the name with the time on its trailing edge, the
