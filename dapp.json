@@ -527,8 +527,8 @@
       "key": "OPENROUTER_DEFAULT_CODEX_MODEL",
       "group": "AI & coding agents",
       "required": false,
-      "default": "z-ai/glm-5.3-flash",
-      "description": "Preferred OpenRouter model for new coding-agent sessions. The complete OpenRouter catalog remains selectable; if this slug is absent, Homeroom safely recommends another compatible model."
+      "default": "deepseek/deepseek-v4.1-flash-1017",
+      "description": "Preferred OpenRouter model for new coding-agent sessions, and the model the Homeroom bot's chat replies use. The complete OpenRouter catalog remains selectable; if this slug is absent, Homeroom safely recommends another compatible model. The deploy workflow's own fallback is still z-ai/glm-5.3-flash, so set this variable for production to use the default above."
     },
     {
       "key": "OPENROUTER_MODEL_HARNESSES",
@@ -541,7 +541,7 @@
       "key": "OPENROUTER_RECOMMENDED_MODELS",
       "group": "AI & coding agents",
       "required": false,
-      "default": "z-ai/glm-5.3-flash,deepseek/deepseek-v4.1-flash",
+      "default": "deepseek/deepseek-v4.1-flash-1017,z-ai/glm-5.3-flash",
       "description": "Comma-separated exact OpenRouter model ids that receive a Recommended tag, begin starred in model pickers, and are the OpenRouter models the composer's flat picker starts with, in this order. Each user's explicit star or unstar wins. Set none to remove all platform recommendations."
     },
     {

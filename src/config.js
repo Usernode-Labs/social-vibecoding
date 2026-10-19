@@ -420,10 +420,12 @@ function load() {
     // one emergency switch. The deploy workflow still writes the verified-
     // identity variable; nothing reads it, exactly as with
     // OPENROUTER_MANAGED_DAILY_LIMIT_USD.
-    // #2819 reviewed MiMo-V2.6-Pro as a replacement on 2026-09-23 and kept
-    // GLM 5.3 Flash; docs/coding-agent-defaults.md has the evidence and
-    // what would change the answer.
-    openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3-flash',
+    // DeepSeek V4.1 Flash 1017 replaced GLM 5.3 Flash on 2026-10-19 (Homeroom
+    // bot bench runs 210-217 and App bench run 216);
+    // docs/coding-agent-defaults.md has the evidence. Production takes its
+    // value from the deploy (the Platform variables panel, else the
+    // workflow's repository variable), not from this fallback.
+    openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'deepseek/deepseek-v4.1-flash-1017',
     // #3296: which CLI runs each OpenRouter model — `claude` (Claude Code
     // against OpenRouter's Anthropic-compatible endpoint) or `codex`. GLM 5.3
     // Flash does better in Claude Code and DeepSeek v4.1 Flash in Codex;
@@ -456,13 +458,14 @@ function load() {
     // #2569 cut this from five to two. The picker is one flat list of five
     // starting models now, and the other three are Anthropic's, so five
     // curated OpenRouter ids made a list of eight that nobody asked for.
-    // GLM leads because openrouterDefaultCodexModel above is GLM; the list
-    // order is what the picker shows after it.
+    // DeepSeek V4.1 Flash 1017 leads because openrouterDefaultCodexModel
+    // above is 1017, and GLM 5.3 Flash, the default before it, follows; the
+    // list order is what the picker shows after it.
     openrouterRecommendedModels: (() => {
       const configured = process.env.OPENROUTER_RECOMMENDED_MODELS === undefined
         ? [
+          'deepseek/deepseek-v4.1-flash-1017',
           'z-ai/glm-5.3-flash',
-          'deepseek/deepseek-v4.1-flash',
         ].join(',')
         : String(process.env.OPENROUTER_RECOMMENDED_MODELS);
       if (configured.trim().toLowerCase() === 'none') return [];
