@@ -470,6 +470,13 @@ async function campaignStatus(pool, campaignId) {
   }));
   const counts = new Map();
   for (const r of rows) counts.set(r.state, (counts.get(r.state) || 0) + 1);
+  // Waiting for room to change its next app (campaign/machine.ts holdFor):
+  // the instance's own record, null when it is not.
+  const { rows: inst } = await pool.query(
+    `SELECT data->'held' AS held FROM wf_instances WHERE machine = 'campaign' AND key = $1`,
+    [`campaign:${campaignId}`]
+  );
+  const held = inst[0] && inst[0].held && typeof inst[0].held === 'object' ? inst[0].held : null;
   return {
     id: campaign.id,
     issueId: campaign.issue_id,
@@ -480,6 +487,7 @@ async function campaignStatus(pool, campaignId) {
     completedAt: campaign.completed_at,
     counts: Object.fromEntries(counts),
     apps: rows,
+    held,
   };
 }
 

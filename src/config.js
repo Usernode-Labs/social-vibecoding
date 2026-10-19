@@ -566,7 +566,9 @@ function load() {
     // without a code deploy. See the scaling notes in README / SPEC.
     //   - maxGlobalSessions: platform-wide active+promoted coding-worker
     //     ceiling. Externally produced imported PRs own no worker and are
-    //     excluded from it.
+    //     excluded from it. The DEFAULT only: a full admin can override it
+    //     in Admin → Limits, so every reader resolves the cap through
+    //     services/session-limit.js, never this value directly.
     //   - maxUserSessions:   per-user ceiling on 'active'-status sessions
     //     only (#193). Promoted sessions are exempt: they're un-pausable
     //     while their PR is up for a merge vote, so counting them would
@@ -585,6 +587,9 @@ function load() {
     //     per-requester by services/session-caps.js — never read these
     //     directly at a call site.
     maxGlobalSessions: parseInt(process.env.MAX_GLOBAL_SESSIONS || '25', 10),
+    // How many of one maintenance campaign's proposals may be up for a vote
+    // at once (src/workflow/campaign/machine.ts CampaignDeps.maxOpen).
+    campaignMaxOpen: parseInt(process.env.CAMPAIGN_MAX_OPEN || '10', 10),
     maxUserSessions: parseInt(process.env.MAX_USER_SESSIONS || '3', 10),
     maxUserPromotedSessions: parseInt(process.env.MAX_USER_PROMOTED_SESSIONS || '5', 10),
     maxAdminUserSessions: parseInt(process.env.MAX_ADMIN_USER_SESSIONS || '5', 10),

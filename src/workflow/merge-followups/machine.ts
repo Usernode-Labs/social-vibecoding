@@ -270,10 +270,12 @@ function deliveryRequest(d: Data, reuse: Json): NonNullable<Outcome['messages']>
 
 // Its preview goes: the preview machine retires it for good, asked by a
 // message in this transaction (it cannot be lost, and the preview's own
-// timeline shows it). For a merge that is delivered, only once app-delivery
-// has answered: in demo mode the deploy uses the preview's own build, and
-// the retirement drops the preview's reference to it. Recorded as a
-// follow-up done, so it is asked once.
+// timeline shows it). At the merge, unless its deploy reuses the preview's
+// own build (demo mode, reuseOf): that one waits for app-delivery's answer,
+// since the retirement drops the preview's reference to the build. Waiting
+// for every deploy held a full namespace quota shut on 19 Oct 2026: 65
+// merged previews waited for 65 deploys, which waited for pods the previews
+// held. Recorded as a follow-up done, so it is asked once.
 const TEARDOWN = 'teardown';
 function andTeardown(out: Outcome<MFState>): Outcome<MFState> {
   if (out.next.name === NONE) return out;
@@ -396,10 +398,11 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
     if (exact) return andTeardown(toLive(e, d, exact.sha, ctx, x));
     if (d.repo) for (const b of after) work.push(verifyWork(d, b.sha));
   }
-  // The platform's own app has no deploy here to wait for: its preview goes
+  // The platform's own app has no deploy here to wait for, and a deploy
+  // that builds its own image does not need the preview: either way it goes
   // at once.
   const out = outcome('delivering', d, x);
-  return app.selfHosted ? andTeardown(out) : out;
+  return app.selfHosted || !reuseOf(f) ? andTeardown(out) : out;
 }
 
 // Why a carried change can no longer be included: INCLUDED_CANDIDATES_SQL's
