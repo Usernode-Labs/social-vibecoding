@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const events = require('./events');
 const usernames = require('./usernames');
 const leftOut = require('./journey-left-out');
+const usageAnalytics = require('./usage-analytics');
 
 const MAX_BATCH_EVENTS = 25;
 const MAX_BODY_BYTES = 32 * 1024;
@@ -118,11 +119,14 @@ function isEligibleUser(user) {
   return !!user?.id && !usernames.isServiceIdentity(user.username);
 }
 
-// Eligible, and has not objected to being recorded (#3369: an admin adds
-// them to the Journey page's left-out list as "objected"). This is the answer
-// /api/auth/me sends as uiTelemetryEligible and the collector enforces.
+// Eligible, switched "Share usage analytics" on in Settings (#5097: off
+// unless they did, services/usage-analytics.js), and has not objected to
+// being recorded (#3369: an admin adds them to the Journey page's left-out
+// list as "objected"). This is the answer /api/auth/me sends as
+// uiTelemetryEligible and the collector enforces.
 async function isRecordable(pool, user) {
   if (!isEligibleUser(user)) return false;
+  if (!(await usageAnalytics.sharesUsageAnalytics(pool, user.id))) return false;
   return !(await leftOut.hasObjected(pool, user.id));
 }
 

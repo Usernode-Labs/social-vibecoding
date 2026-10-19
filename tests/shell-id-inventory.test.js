@@ -360,6 +360,9 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #5097: Settings > Privacy, "Share usage analytics" ──────────────
+  'settings-usage-analytics': '#5097: the Share usage analytics switch (features/settings/sections/privacy.tsx). Off, and disabled until the saved choice is read.',
+  'settings-usage-analytics-description': '#5097: the line under that switch saying what is collected; the switch\'s aria-describedby.',
   // ── #5405: search over the loaded notifications ───────────────────
   'notifications-search': '#5405: the search field\'s block between the notifications sheet\'s title and the Unread | Messages | All tabs.',
   'notifications-search-input': '#5405: the field itself (type="search"). Filters the tab that is open, over the rows already loaded, by project, kind and subject; Escape with text empties it.',

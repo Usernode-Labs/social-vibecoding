@@ -458,7 +458,11 @@ test('collector is same-origin-only and the admin report is protected', async (t
       release() {},
       });
     },
-    async query() { throw new Error('admin aggregate must stay behind its gate'); },
+    async query(sql) {
+      // These people switched "Share usage analytics" on (#5097).
+      if (/SELECT usage_analytics FROM users/.test(sql)) return { rows: [{ usage_analytics: true }] };
+      throw new Error('admin aggregate must stay behind its gate');
+    },
   };
   const { uiTelemetryRoutes } = require('../src/routes/ui-telemetry');
   const app = express();
@@ -618,8 +622,10 @@ test('real PostgreSQL insert is idempotent and aggregates matched lifecycle iden
     // remain deterministic.
     await pool.query("DELETE FROM events WHERE event_type IN ('ui_experience','ui_telemetry_delivery')");
     const suffix = `${process.pid}-${Date.now()}`;
+    // Switched "Share usage analytics" on (#5097): the server-side failure
+    // note below is recorded only for somebody who did.
     const user = (await pool.query(
-      'INSERT INTO users (username, password) VALUES ($1, $2) RETURNING id',
+      'INSERT INTO users (username, password, usage_analytics) VALUES ($1, $2, TRUE) RETURNING id',
       [`ui-telemetry-${suffix}`, 'test']
     )).rows[0];
     const app = (await pool.query(
@@ -992,7 +998,11 @@ test('the collector notes the browser language on a shell start and nowhere else
       },
       release() {},
     }),
-    async query() { throw new Error('the language count must stay behind its gate'); },
+    async query(sql) {
+      // These people switched "Share usage analytics" on (#5097).
+      if (/SELECT usage_analytics FROM users/.test(sql)) return { rows: [{ usage_analytics: true }] };
+      throw new Error('the language count must stay behind its gate');
+    },
   };
   const { uiTelemetryRoutes } = require('../src/routes/ui-telemetry');
   const app = express();

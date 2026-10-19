@@ -1519,6 +1519,26 @@
     "text": "Darker text and clearer lines, in light and dark.",
     "description": "Explanation under the High contrast switch in Settings > Accessibility."
   },
+  "privacy.title": {
+    "text": "Usage analytics",
+    "description": "Heading of the Privacy page in Settings, above the Share usage analytics switch."
+  },
+  "privacy.intro": {
+    "text": "Whether Homeroom may record how you use it.",
+    "description": "One line under the Usage analytics heading in Settings > Privacy."
+  },
+  "privacy.usageAnalytics.label": {
+    "text": "Share usage analytics",
+    "description": "Label of the switch in Settings > Privacy that lets Homeroom record how the person uses it. Off unless they turn it on."
+  },
+  "privacy.usageAnalytics.description": {
+    "text": "Off unless you turn it on. When it is on, Homeroom keeps a record linked to your account of the screens you open and in what order, which apps you open, how long pages take to load and whether a few actions worked, to see where people get stuck or lost. It never records what you type or what is on screen. Turning it off stops this from then on.",
+    "description": "Explanation under the Share usage analytics switch in Settings > Privacy: what is recorded when it is on. \"Lost\" means unable to find their way around."
+  },
+  "privacy.usageAnalytics.saveFailed": {
+    "text": "Could not save that. Try again.",
+    "description": "Error under the Share usage analytics switch in Settings > Privacy when saving the choice failed; the switch goes back to how it was."
+  },
   "devConsole.title": {
     "text": "Developer console",
     "description": "Heading of the section in Settings about the log panel that shows an app's console output and errors."
@@ -2091,6 +2111,10 @@
     "text": "Notifications",
     "description": "Name of a part of Settings: the Notifications page (sound, alerts and phone push). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
   },
+  "nav.part.privacy": {
+    "text": "Privacy",
+    "description": "Name of a part of Settings: the Privacy page (the Share usage analytics switch). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
+  },
   "nav.part.appPermissions": {
     "text": "App device permissions",
     "description": "Name of a part of Settings: the part listing which apps may use the camera, microphone, location and so on. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
@@ -2238,6 +2262,10 @@
   "nav.keywords.alerts": {
     "text": "notifications sound push phone mute bell chime",
     "description": "Not shown on screen. Extra search words for \"Notifications\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
+  },
+  "nav.keywords.privacy": {
+    "text": "privacy analytics usage data tracking telemetry statistics",
+    "description": "Not shown on screen. Extra search words for \"Privacy\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.appPermissions": {
     "text": "camera microphone location screen device",

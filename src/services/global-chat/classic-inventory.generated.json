@@ -237,6 +237,15 @@
       "mobileSupported": true
     },
     {
+      "key": "privacy",
+      "label": "Privacy",
+      "group": "Preferences",
+      "gate": null,
+      "capabilityId": "settings.open.privacy",
+      "classicPath": "#settings/privacy",
+      "mobileSupported": true
+    },
+    {
       "key": "app-permissions",
       "label": "App device permissions",
       "group": "Preferences",
@@ -3841,6 +3850,36 @@
       "expression": null,
       "status": "mapped",
       "capabilityId": "profile.post.me.locale.35a4a2b1",
+      "domain": "profile",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "profile",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#profile"
+    },
+    {
+      "source": "src/routes/auth.js",
+      "method": "GET",
+      "path": "/api/me/usage-analytics",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "profile.get.me.usage.analytics.1e6e53d2",
+      "domain": "profile",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "profile",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#profile"
+    },
+    {
+      "source": "src/routes/auth.js",
+      "method": "PUT",
+      "path": "/api/me/usage-analytics",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "profile.put.me.usage.analytics.a33db814",
       "domain": "profile",
       "risk": "external_write",
       "confirmation": "required",

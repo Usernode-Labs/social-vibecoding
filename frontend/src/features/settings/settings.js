@@ -362,6 +362,9 @@
       // locale while the row could not say what it did.
       { key: 'language', label: 'settings:nav.part.language', group: 'settings:nav.group.preferences' },
       { key: 'alerts', label: 'settings:nav.part.alerts', group: 'settings:nav.group.preferences' },
+      // #5097: whether Homeroom may record how you use it. Off until you
+      // switch it on; a stateful pane (sections/privacy.tsx).
+      { key: 'privacy', label: 'settings:nav.part.privacy', group: 'settings:nav.group.preferences' },
       // What each app may do: the device access and AI spending you granted,
       // and the apps you blocked. They were split between Preferences and the
       // collapsed Advanced group, which hid two privacy controls from the
@@ -425,6 +428,7 @@
       accessibility: 'settings:nav.keywords.accessibility',
       language: 'settings:nav.keywords.language',
       alerts: 'settings:nav.keywords.alerts',
+      privacy: 'settings:nav.keywords.privacy',
       'app-permissions': 'settings:nav.keywords.appPermissions',
       'app-ai': 'settings:nav.keywords.appAi',
       'blocked-apps': 'settings:nav.keywords.blockedApps',

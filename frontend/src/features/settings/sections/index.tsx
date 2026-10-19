@@ -55,6 +55,7 @@ import { GlobalChatSettingsSection } from './global-chat';
 import { LanguageSection } from './language';
 import { OpenRouterSection } from './openrouter';
 import { PasswordSection } from './password';
+import { PrivacySection } from './privacy';
 import { ProfileSection } from './profile';
 import { DeleteAccountSection } from './delete-account';
 import { ThemeSection } from './theme';
@@ -107,6 +108,9 @@ export function SettingsSections() {
       <AccessibilitySection />
       <LanguageSection />
       <AlertsSection />
+      {/* ── #5097: Share usage analytics, off until switched on. Stateful
+          like Accessibility; see ./privacy.tsx. */}
+      <PrivacySection />
       <AppPermissionsSection />
       <AppAiSection />
       <BlockedAppsSection />

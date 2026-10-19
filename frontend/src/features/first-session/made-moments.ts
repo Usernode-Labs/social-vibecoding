@@ -12,6 +12,8 @@
  * anybody typed goes: a kind, small counts and short codes.
  */
 
+import { sharesUsageAnalytics } from '../../lib/usage-analytics';
+
 export type MadeMoment =
   | 'made_shown' | 'planning_shown' | 'questions_shown' | 'submit_tapped' | 'invite_shown'
   | 'share_invite_tapped' | 'invite_sent' | 'invite_later_tapped' | 'continue_tapped'
@@ -46,6 +48,8 @@ export function momentBody(kind: MadeMoment, detail: MomentDetail = {}, now: Dat
  */
 export function noteMoment(slug: string | null | undefined, kind: MadeMoment, detail: MomentDetail = {}, { once = false }: { once?: boolean } = {}): boolean {
   if (!slug) return false;
+  // #5097: only for somebody who shares usage analytics.
+  if (!sharesUsageAnalytics()) return false;
   if (once) {
     const key = `${slug}\u0000${kind}\u0000${JSON.stringify(detail)}`;
     if (sentOnce.has(key)) return false;
