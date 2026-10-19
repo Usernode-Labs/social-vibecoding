@@ -487,6 +487,84 @@ async function ensureAccountSignup(pool, { userId }) {
   }
 }
 
+// The two optional questions the in-app join form used to ask (#5261),
+// asked now of the account itself, in the waiting room right after it is
+// made: where you are (`answers.country`) and how you found us
+// (`answers.discovery.source`). The same keys, in the same JSONB, on the same
+// row the form wrote, so the admin Waitlist, its export and
+// waitlist-signals.js read them as before. The row is the account's own,
+// picked the way the member card picks it (member-waitlist.js stateFor).
+const ACCOUNT_ROW_SQL = `SELECT id, answers FROM waitlist_signups
+   WHERE linked_user_id = $1
+   ORDER BY (confirmed_at IS NULL), submitted_at
+   LIMIT 1`;
+
+/** How fresh a row must be to take a referral after it was made: one hour. */
+const LATE_REFERRAL_SECONDS = 60 * 60;
+
+function answersOf(row) {
+  const a = row && row.answers && typeof row.answers === 'object' ? row.answers : {};
+  return {
+    country: typeof a.country === 'string' && a.country ? a.country : null,
+    discovery: a.discovery && typeof a.discovery.source === 'string' && a.discovery.source
+      ? a.discovery.source : null,
+  };
+}
+
+/** `{ country, discovery }` on the account's row, or null when it has none. */
+async function accountAnswers(pool, userId) {
+  const { rows } = await pool.query(ACCOUNT_ROW_SQL, [userId]);
+  return rows[0] ? answersOf(rows[0]) : null;
+}
+
+// Save them. `answers` is validateStage1's value (waitlist-questions.js), so
+// only a known country and a known source ever reach the row; a key left out
+// keeps what the row holds. One UPDATE that merges in SQL, so two saves never
+// lose each other's half.
+//
+// `inviteCode` is an old `/#waitlist?ref=<code>` link's code, which the
+// retired form sent with its join: the shell keeps it across the sign-up and
+// the waiting room sends it here. It is honoured only the way the join
+// honoured it, as part of the FIRST join: on a row with no inviter yet, made
+// within the last hour (ensureAccountSignup made it as the account was made),
+// never released, and never pointing at itself. An unknown code is ignored,
+// as the join ignores one. Returns the row's answers after, or null when the
+// account has no row.
+async function saveAccountAnswers(pool, { userId, answers = {}, inviteCode = null }) {
+  const { rows } = await pool.query(ACCOUNT_ROW_SQL, [userId]);
+  const row = rows[0];
+  if (!row) return null;
+  const patch = {};
+  if (answers.country) patch.country = answers.country;
+  if (answers.discovery && answers.discovery.source) patch.discovery = { source: answers.discovery.source };
+  let after = answersOf(row);
+  if (Object.keys(patch).length) {
+    const { rows: saved } = await pool.query(
+      `UPDATE waitlist_signups
+          SET answers = COALESCE(answers, '{}'::jsonb) || $2::jsonb
+        WHERE id = $1
+        RETURNING answers`,
+      [row.id, JSON.stringify({ ...patch, _version: ANSWERS_VERSION })]
+    );
+    if (saved[0]) after = answersOf(saved[0]);
+  }
+  if (typeof inviteCode === 'string' && /^[a-z0-9]{10}$/.test(inviteCode)) {
+    await pool.query(
+      `UPDATE waitlist_signups w
+          SET invited_by = s.id
+         FROM waitlist_signups s
+        WHERE w.id = $1
+          AND w.invited_by IS NULL
+          AND w.released_at IS NULL
+          AND w.submitted_at > NOW() - make_interval(secs => $3)
+          AND s.invite_code = $2
+          AND s.id <> w.id`,
+      [row.id, inviteCode, LATE_REFERRAL_SECONDS]
+    );
+  }
+  return after;
+}
+
 // A direct grant (POST /api/v4/admin/users/:id/grant-access) lets an account
 // in without Admit. Its waitlist rows are marked released with it, so the
 // queue shows it let in and a later Admit is a re-release that mails nothing.
@@ -633,6 +711,8 @@ module.exports = {
   grantPlatformAccess,
   linkUserByEmail,
   ensureAccountSignup,
+  accountAnswers,
+  saveAccountAnswers,
   releaseRowsForGrant,
   releaseWaitlistSignup,
   WaitlistReleaseError,

@@ -790,10 +790,10 @@ const App = {
   },
 
   // True for the anonymous-shell screenshot-state links (see init). Also
-  // normalises the fragment for `?shot=waitlist-joined`, which names one
-  // specific screen — so the path needs no hash of its own and the shot
-  // stays deterministic. AuthScreens._waitlistOnShow reads the same param
-  // to paint the post-join state.
+  // normalises the fragment for the `?shot=waitlist-*` states, which name one
+  // specific screen (check your status, `#waitlist?confirm=1`), so the path
+  // needs no hash of its own and the shot stays deterministic.
+  // AuthScreens._waitlistOnShow reads the same param to paint the state.
   _anonShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
@@ -813,20 +813,17 @@ const App = {
     // `email-code-password-account` (#1586) is the login screen carrying the
     // explanation an email code hands back when the account it matches can
     // only be signed in with its password. Same anonymous boot, same reason.
-    // `waitlist-confirmed` is the state AFTER the six-digit code lands:
-    // confirming is what puts somebody on the list now, so the list place
-    // and the stage-2 offer live there rather than on `waitlist-joined`,
-    // which stops at the confirm step.
     // `waitlist-more` opens the stage-2 survey for the token in the
     // fragment (`/?shot=waitlist-more#more/<48 hex>`). The survey is an
     // auth screen, and restoreFromHash drops an auth route outright for a
     // signed-in user who has platform access — which every capture and
     // proposal-check session is — so without this the screen is reachable
     // by a real recipient and by nothing that photographs or checks it.
-    // `waitlist-step1` and `waitlist-code-entry` are the two halves of the
-    // returning-user path: the join form carrying the "Already joined?"
-    // link, and the confirm step reached through it, which is the only
-    // state that asks which address the code belongs to. Both need the
+    // `waitlist-code-entry` is check-your-status's first step, the only
+    // state that asks which address the code belongs to (the join form and
+    // its `waitlist-step1`, `waitlist-joined`, `waitlist-confirmed` and
+    // `waitlist-rejoined` states are retired, #5261: Continue joins now).
+    // It needs the
     // anonymous boot for the same reason waitlist-more does: restoreFromHash
     // drops an auth route outright for the signed-in session every capture
     // and proposal check runs as.
@@ -841,23 +838,12 @@ const App = {
     // the one settled state no other route can paint, because reaching it
     // for real needs a row with a released_at behind it.
     // `waitlist-status` is the same panel one state earlier: still waiting,
-    // read back through check-my-status rather than confirmed just now. It
-    // is a separate shot from `waitlist-confirmed` because the difference
-    // between them is the whole point of the panel — the celebration is the
-    // join's and the state pill is the status read's — and one shot cannot
-    // photograph both.
+    // read back through check-my-status, with the stage-2 offer still made.
     // `waitlist-not-found` (#2201) is the third answer that address step can
     // get: the address is not on the list at all. It carries the note saying
     // so and the control that turns the dead end into a join, and like the
     // two above it needs the anonymous boot. Nothing is sent to paint it —
     // waitlist.tsx sets the note from a literal.
-    // `waitlist-rejoined` (#2201) is that same settled panel reached a
-    // fourth way: an address already on the list AND already confirmed
-    // submits the join form again, and the server answers with its status
-    // instead of a code, so the client skips the code step entirely. No URL
-    // reaches it without the POST behind it, so a capture cannot get there
-    // on its own — and it is the state this change exists to produce, so a
-    // before/after that photographed the home screen would show none of it.
     // `signup-code-sent` (#1548) is the signup screen a second after a
     // waitlist-release link opens it: the code step, the confirmation, and
     // the resend held for its cooldown. The address rides in the fragment
@@ -865,11 +851,9 @@ const App = {
     // `waitlist-more` it needs the anonymous boot, because restoreFromHash
     // drops an auth route for the signed-in session every capture and
     // proposal check runs as. login.tsx paints it and sends nothing.
-    if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'waitlist-confirmed' &&
-        shot !== 'waitlist-step1' && shot !== 'waitlist-code-entry' &&
+    if (shot !== 'anon' && shot !== 'waitlist-code-entry' &&
         shot !== 'waitlist-code-step' && shot !== 'waitlist-not-found' &&
         shot !== 'waitlist-admitted' && shot !== 'waitlist-status' &&
-        shot !== 'waitlist-rejoined' &&
         shot !== 'waitlist-more' &&
         shot !== 'anon-back' &&
         shot !== 'signup-code-sent' &&
@@ -878,13 +862,11 @@ const App = {
         shot !== 'email-code-password-account') {
       return false;
     }
-    if ((shot === 'waitlist-joined' || shot === 'waitlist-confirmed'
-         || shot === 'waitlist-step1' || shot === 'waitlist-code-entry'
+    if ((shot === 'waitlist-code-entry'
          || shot === 'waitlist-code-step' || shot === 'waitlist-not-found'
-         || shot === 'waitlist-admitted' || shot === 'waitlist-status'
-         || shot === 'waitlist-rejoined') &&
+         || shot === 'waitlist-admitted' || shot === 'waitlist-status') &&
         (!location.hash || location.hash === '#')) {
-      try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
+      try { history.replaceState(null, '', location.search + '#waitlist?confirm=1'); } catch (err) { /* ignore */ }
     }
     return true;
   },
@@ -4916,6 +4898,14 @@ const App = {
           if (publicProfileRoute) {
             AuthScreens.hideAll();
           } else {
+            // A bare #waitlist named the join form, which is retired
+            // (#5261): it opens Continue on the landing instead, keeping an
+            // old link's ?ref= code. `#waitlist?confirm=1` is check your
+            // status, which stays.
+            if (authRoute === 'waitlist' && !/(?:^|&)confirm=1(?:&|$)/.test(fragQuery)) {
+              AuthScreens.retireWaitlistLink(fragQuery);
+              return;
+            }
             if (authRoute && authRoute !== 'waiting') {
               AuthScreens.show(authRoute, authSeg);
               return;
@@ -4924,8 +4914,9 @@ const App = {
               AuthScreens.show('landing');
               return;
             }
-            AuthScreens.rememberDeepLink(App._deepLinkTarget());
-            AuthScreens.show('login');
+            // Remembered for after the sign-in, and answered with the
+            // landing's sign-in sheet titled for where it leads (#5264).
+            AuthScreens.showSignInFor(App._deepLinkTarget());
             return;
           }
         }
@@ -4938,13 +4929,12 @@ const App = {
                 AuthScreens.show('landing');
                 return;
               }
-              // #waitlist stays reachable from the waiting room (a bookmark,
-              // the back button) — the screen shows them the "already on the
-              // list" note instead of the join form, which beats bouncing them.
-              if (authRoute === 'waitlist') {
-                AuthScreens.show('waitlist');
-                return;
-              }
+              // #waitlist is for a visitor with no account: its join form is
+              // retired (#5261) and check your status reads an address's
+              // signup, while this account's spot is the waiting room's to
+              // show. So it goes there, keeping an old link's ?ref= code for
+              // the room to send on (features/auth/waiting-about.tsx).
+              if (authRoute === 'waitlist') AuthScreens.keepWaitlistRef(fragQuery);
               // The stage-2 waitlist survey stays reachable from the waiting
               // room — a gated account is exactly who "Want in sooner?" is
               // for (the link arrives in the join email).
@@ -9351,19 +9341,22 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
 
   // The anonymous shell owns the whole document when there is no session, so
   // it outranks the route — and the four cases below are restoreFromHash's
-  // own, in its order. The last one is the easy one to get wrong: a signed-out
-  // DEEP LINK does not land on the marketing page, it lands on LOGIN, with the
-  // address remembered for after ("'/' → landing, deeper paths → login", which
-  // is the parity with the old static documents the router notes).
+  // own, in its order. A signed-out DEEP LINK lands on the landing screen,
+  // which opens its sign-in sheet over it, titled for the place the link
+  // names, with the address remembered for after (AuthScreens.showSignInFor,
+  // #5264). It used to land on the full-page sign-in form.
   if (!signedIn) {
-    if (head === 'login' || head === 'signup') return 'auth-login-screen';
+    if (head === 'login' || head === 'signup' || head === 'reset-password') return 'auth-login-screen';
     if (head === 'register') return 'auth-register-screen';
-    if (head === 'waitlist') return 'auth-waitlist-screen';
-    // No route at all, and 'waiting' — which the router redirects to landing
-    // for a viewer with no session to be waiting on. `appPath` is why this
-    // asks about the ROUTE and not the fragment.
-    if ((head === '' && !appPath) || head === 'waiting') return 'auth-landing-screen';
-    return 'auth-login-screen';
+    // Check your status (`#waitlist?confirm=1`) is the waitlist screen; a
+    // bare #waitlist opens Continue on the landing (#5261).
+    if (head === 'waitlist' || head.startsWith('waitlist?')) {
+      return /[?&]confirm=1(?:&|$)/.test(head) ? 'auth-waitlist-screen' : 'auth-landing-screen';
+    }
+    // Everything else is the landing: no route at all, 'waiting' (which the
+    // router redirects to landing for a viewer with no session to be waiting
+    // on), and a deep link, an app path included, under its sign-in sheet.
+    return 'auth-landing-screen';
   }
 
   if (head === 'app' || appPath) return 'app-view';

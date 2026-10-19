@@ -122,25 +122,27 @@ test('the digest names its change when there is exactly one, and nothing when th
   prefs.filterUsersByCategory = async (_pool, { userIds }) => userIds;
   notifications.hydrateAndPush = async () => {};
   const inserted = [];
+  // Each digest is written in a transaction of its own, under its person's
+  // lock, by an INSERT that checks again that none went out lately.
   const client = {
-    async query(text) {
-      if (/pg_try_advisory_lock/.test(text)) return { rows: [{ acquired: true }] };
-      if (/pg_advisory_unlock/.test(text)) return { rows: [] };
+    async query(text, params) {
+      if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(text) || /pg_advisory_xact_lock/.test(text)) return { rows: [] };
+      assert.match(text, /INSERT INTO notifications \(user_id, app_id, session_id, source_user_id, kind, detail\)/);
+      assert.match(text, /NOT EXISTS/);
+      inserted.push(params.slice(0, 4));
+      return { rows: [{ id: inserted.length, user_id: params[0] }] };
+    },
+    release() {},
+  };
+  const pool = {
+    connect: async () => client,
+    async query() {
       return {
         rows: [
           { user_id: 1, pending: '1', only_session_id: 40, only_app_id: 5 },
           { user_id: 2, pending: '3', only_session_id: null, only_app_id: null },
         ],
       };
-    },
-    release() {},
-  };
-  const pool = {
-    connect: async () => client,
-    async query(text, params) {
-      assert.match(text, /INSERT INTO notifications \(user_id, app_id, session_id, source_user_id, kind, detail\)/);
-      inserted.push(params);
-      return { rows: [{ id: inserted.length, user_id: params[0] }] };
     },
   };
   try {

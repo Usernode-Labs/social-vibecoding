@@ -671,8 +671,8 @@ test('#5296: a row has one pill, its votes, and the channel count steps aside fo
   const line = renderToHtml(createElement(mod.StatusLine, { working: 2, needs: 3, needsInPill: true }));
   assert.match(line, /data-workshop-working="2" class="[^"]*">2 in progress<\/span><span data-workshop-needs="3" class="hidden">/);
   const src = read('frontend/src/features/workshop/index.tsx');
-  assert.match(src, /trailing=\{row\.needs > 0 \? <VotePill count=\{row\.needs\} \/> : unread > 0 \? \(/,
-    'the votes, else the unread count: never both');
+  assert.match(src, /trailing=\{row\.needs > 0 \? <VotePill count=\{row\.needs\} \/> : null\}/,
+    'the votes and nothing else: the unread is said in grey words on the second line (#18)');
   assert.match(src, /<StatusLine working=\{row\.working\} needs=\{row\.needs\} needsInPill \/>/);
   mod.workshopStore.set({
     open: true, error: false, tab: 'status',

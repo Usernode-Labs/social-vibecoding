@@ -55,6 +55,14 @@
  * skip it), so there is no honest place in line to show, nothing a waiting
  * account can open lists apps, and a text when they are let in needs a
  * sender the platform does not have.
+ *
+ * ── Two quick questions (#5261) ────────────────────────────────────────
+ *
+ * The in-app join form is retired: Continue makes the account and puts it
+ * in line, and the two optional questions that form asked besides the
+ * address (where you are, how you found us) are asked here, under the
+ * account line, by ./waiting-about.tsx. They save to the account's own
+ * waitlist row, and Skip puts them away.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -69,6 +77,7 @@ import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { AddPhoneCard, type JoinedGroup } from './add-phone';
 import { inviteTokenFrom } from './invite-card';
 import { AUTH_SCREEN_IDS, fx, legacy, useAuthScreensPatch } from './shared';
+import { WaitingAbout } from './waiting-about';
 import { waitlistOptions } from './waitlist-shared';
 
 /** How often to re-check for release. */
@@ -393,6 +402,11 @@ export function WaitingScreen() {
               {t('auth:waiting.account', { username: account.username })}
             </p>
           ) : null}
+          {/*
+              The two optional questions the retired #waitlist form asked
+              (#5261), right after the account is made: ./waiting-about.tsx.
+          */}
+          <WaitingAbout />
           {queued.length ? (
             <p data-waiting-queued="" className="mt-7 text-balance rounded-[20px] bg-white px-4 py-3.5 text-[15px] leading-5 text-zinc-600 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-300">
               {t('auth:waiting.youJoin', { communities: namesLine(queued.map((q) => q.name)) })}

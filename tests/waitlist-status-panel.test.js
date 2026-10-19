@@ -59,7 +59,7 @@ test('the pill drops its note where the panel already says it', () => {
   // The note is the survey screen's only guidance, so it stays on there. On
   // check-my-status it would restate the body copy a line later, and for an
   // admitted reader it would point at a mail instead of the button beside it.
-  assert.match(WAITLIST, /id="waitlist-status-pill"\s*\n\s*status=\{statusRead \? status : null\}\s*\n\s*note=\{false\}/);
+  assert.match(WAITLIST, /id="waitlist-status-pill"\s*\n\s*status=\{status\}\s*\n\s*note=\{false\}/);
   assert.doesNotMatch(MORE, /note=\{false\}/, 'the survey screen lost its guidance');
   assert.match(SHARED, /note: showNote = true,/, 'the note is opt-out, not opt-in');
 });
@@ -81,9 +81,10 @@ test('every pill tint is a whole class literal', () => {
 test('the confirmed panel branches on the response, not on a constant', () => {
   const panel = WAITLIST.slice(WAITLIST.indexOf('id="waitlist-confirmed"'));
   const body = panel.slice(0, panel.indexOf('id="waitlist-more-offer"'));
-  // Headline, body copy and the action all move with the row.
-  assert.match(body, /admitted \? t\('auth:waitlist\.status\.titleIn'\) : t\('auth:waitlist\.status\.titleListed'\)/);
-  assert.match(message('auth:waitlist.status.titleIn'), /^You\u2019re in/);
+  // Body copy and the action move with the row. (The celebrating headline
+  // went with the join form, #5261: every arrival here is a read-back.)
+  assert.match(body, /admitted\s*\n\s*\? \(status\?\.has_account/);
+  assert.doesNotMatch(body, /id="waitlist-confirmed-headline"/);
   assert.match(body, /status\?\.has_account/);
   assert.match(body, /id="waitlist-status-pill"/);
   assert.match(body, /id="waitlist-status-since"/);
@@ -161,11 +162,12 @@ test('the landing card offers the way in, and only to a visitor', () => {
 });
 
 test('the confirm step is reachable without a join, on any device', () => {
-  // No new screen and no new route: `#waitlist?confirm=1` is the existing
-  // confirm step with the address field shown, which is exactly what someone
-  // arriving from a mail on a second device needs.
-  assert.match(WAITLIST, /hashQuery\.get\('confirm'\) === '1'/);
-  assert.match(WAITLIST, /setCodeOnly\(true\)/);
+  // `#waitlist?confirm=1` opens the address step, which is exactly what
+  // someone arriving from a mail on a second device needs; since #5261 the
+  // screen is only this errand, and the router sends a bare #waitlist to
+  // Continue instead.
+  assert.match(APP, /authRoute === 'waitlist' && !\/\(\?:\^\|&\)confirm=1/);
+  assert.match(WAITLIST, /id="waitlist-confirm-email"/);
 });
 
 test('the admitted state is reachable by URL for a screenshot', () => {
@@ -176,7 +178,7 @@ test('the admitted state is reachable by URL for a screenshot', () => {
   assert.match(APP, /shot !== 'waitlist-admitted'/, 'the shot is not allowlisted in app.js');
   assert.match(APP, /shot === 'waitlist-admitted'/, 'the hash is not normalised to #waitlist');
   // Deterministic: a fixed joined_at, so two shots of the same path compare.
-  const block = WAITLIST.slice(WAITLIST.indexOf('if (shotAdmitted) {'));
+  const block = WAITLIST.slice(WAITLIST.indexOf("if (shot === 'waitlist-admitted') {"));
   assert.match(block.slice(0, 500), /joined_at: '2026-03-14T10:00:00\.000Z'/);
 });
 
@@ -200,44 +202,9 @@ test('the declared checks cover the states the panel can be in', () => {
   assert.ok(DAPP.tests.some((t) => (t.expectSelector || '').includes('data-landing-story-start')),
     'the landing entry point is unchecked');
 
-  // #2201's settled arrival. Plain navigation cannot reach it — it needs a
-  // POST whose response says the address is already confirmed — so without
-  // a shot the before/after images of this change would both photograph the
-  // home screen, and the panel it lands on would be covered by nothing.
-  assert.ok(paths.has('/?shot=waitlist-rejoined'), 'the confirmed re-join is unchecked');
-  const rejoined = DAPP.tests.filter((t) => t.path === '/?shot=waitlist-rejoined');
-  const settled = rejoined.map((t) => t.expectSelector).join(' ');
-  // The three facts that make it case 3 rather than any other arrival: the
-  // panel is up with its pill, the celebration is held out of it (this is
-  // weeks-old news), and the code step was never entered.
-  assert.match(settled, /#waitlist-confirmed:not\(\.hidden\)[\s\S]*#waitlist-status-pill:not\(\.hidden\)/);
-  assert.match(settled, /#waitlist-confirmed-headline\.hidden/);
-  assert.match(settled, /#waitlist-confirm\.hidden/);
-  assert.ok(rejoined.some((t) => /on the waitlist/i.test(t.expectText || '')),
-    'nothing pins the words the pill actually prints');
-});
-
-test('the confirmed re-join shot paints the state it claims to', () => {
-  // Deterministic and settled, like the other two: a fixed joined_at so two
-  // shots of the same path compare, confirmed true so the pill reads "On the
-  // waitlist", admitted false so this is the waiting state most returning
-  // readers are in, and the offer off because case 3 hands back no token to
-  // stand behind it.
-  assert.match(WAITLIST, /shot === 'waitlist-rejoined'/);
-  assert.match(APP, /shot !== 'waitlist-rejoined'/, 'the shot is not allowlisted in app.js');
-  assert.match(APP, /shot === 'waitlist-rejoined'/, 'the hash is not normalised to #waitlist');
-
-  const block = WAITLIST.slice(WAITLIST.indexOf('if (shotRejoined) {'));
-  const body = block.slice(0, block.indexOf('\n    }'));
-  assert.match(body, /setAlreadyConfirmed\(true\)/, 'without this the celebration shows');
-  assert.match(body, /setConfirmed\(true\)/);
-  assert.match(body, /setOffer\(false\)/);
-  assert.match(body, /confirmed: true/);
-  assert.match(body, /admitted: false/);
-  assert.match(body, /joined_at: '2026-03-14T10:00:00\.000Z'/);
-  // And it must NOT set codeOnly: that flag drives the returning-code-entry
-  // section label and step copy, and this arrival never saw a code field.
-  assert.doesNotMatch(body, /setCodeOnly\(true\)/);
+  // #2201's confirmed re-join came through the join form, retired by #5261;
+  // its shot went with it, and its checks were rewritten in place.
+  assert.ok(!paths.has('/?shot=waitlist-rejoined'));
 });
 
 // ─── Staging has something to show ───────────────────────────────────
@@ -314,59 +281,19 @@ test('the seed cannot run outside staging and cannot break a boot', () => {
   assert.match(seed.slice(0, 200), /if \(process\.env\.USERNODE_ENV !== 'staging'\) return;/);
 });
 
-test('the state is stated once: the celebration is the join\u2019s, the pill is the read\u2019s', () => {
-  // THREE arrivals land on #waitlist-confirmed now, and they want different
-  // sentences. Somebody who just typed the code from a joining mail is being
-  // congratulated; somebody who typed their address to READ their state
-  // joined weeks ago, so "You\u2019re on the list \ud83c\udf89" above a pill that says
-  // "On the waitlist" is the same fact twice and the wrong tone once.
-  //
-  // #2201 added the third: a confirmed address re-joining is sent straight
-  // here with no code step in between, and it wants the reader's treatment
-  // for the same reason — weeks-old news, stated by the pill. So the gate is
-  // `statusRead`, the union of the two reads, and NOT `codeOnly`: that flag
-  // still means "arrived via the code step", which case 3 never touches.
-  assert.match(WAITLIST, /const statusRead = codeOnly \|\| alreadyConfirmed;/);
-  assert.match(WAITLIST, /id="waitlist-confirmed-headline"\s*\n\s*className=\{hiddenFirst\(\s*statusRead,/);
-  assert.match(WAITLIST, /status=\{statusRead \? status : null\}/);
-  // Exactly those two gates move. The section label and the step copy stay
-  // on `codeOnly`, because a case-3 arrival is not a returning code entry.
-  const code = WAITLIST.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*\/\/.*$/gm, ' ');
-  assert.equal((code.match(/statusRead/g) || []).length, 3,
-    'statusRead is declared once and read at exactly the two gates');
-});
-
-test('the headline is visible in the prerender, so hydration matches', () => {
-  // hiddenFirst on a flag that is false at first render is the document the
-  // hand-written shell shipped: the line was always visible. A gate that
-  // started hidden would console.error on hydration and fail every
-  // proposal check — so BOTH halves of statusRead start false.
-  assert.match(WAITLIST, /const \[codeOnly, setCodeOnly\] = useState\(false\)/);
-  assert.match(WAITLIST, /const \[alreadyConfirmed, setAlreadyConfirmed\] = useState\(false\)/);
-});
-
 test('both halves of the split are photographable, and declared', () => {
-  // One shot cannot photograph both, so there are two, and each is pinned
-  // by a check that fails if the other one\u2019s copy leaks into it.
-  assert.match(WAITLIST, /shot === 'waitlist-status'/);
-  assert.match(APP, /shot !== 'waitlist-status'/);
   // The status shot is a WAITING signup read back, not a released one: that
   // is the state most people checking their status are in, and no other
   // route paints it.
-  const block = WAITLIST.slice(WAITLIST.indexOf('if (shotStatus) {'));
+  assert.match(APP, /shot !== 'waitlist-status'/);
+  const block = WAITLIST.slice(WAITLIST.indexOf("if (shot === 'waitlist-status') {"));
   const body = block.slice(0, block.indexOf('\n    }'));
-  assert.match(body, /setCodeOnly\(true\)/);
+  assert.match(body, /setConfirmed\(true\)/);
   assert.match(body, /setOffer\(true\)/);
   assert.match(body, /state: 'confirmed'/);
   assert.match(body, /joined_at: '/, 'a fixed date, so the two shots are comparable');
 
   const paths = DAPP.tests.filter((t) => t.path === '/?shot=waitlist-status');
   assert.ok(paths.length >= 2, 'the status shot carries checks of its own');
-  assert.ok(
-    paths.some((t) => /#waitlist-confirmed-headline\.hidden/.test(t.expectSelector || '')),
-    'one of them holds the congratulations out of the status read');
-  assert.ok(
-    DAPP.tests.some((t) => t.path === '/?shot=waitlist-confirmed'
-      && /#waitlist-confirmed-headline:not\(\.hidden\)/.test(t.expectSelector || '')),
-    'and one holds it IN for a fresh confirmation');
+  assert.ok(DAPP.tests.some((t) => t.path === '/?shot=waitlist-admitted'));
 });

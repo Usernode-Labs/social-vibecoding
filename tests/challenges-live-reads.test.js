@@ -65,11 +65,10 @@ const json = (body, ok = true) => ({
   json: async () => body,
 });
 
-function loadPane() {
+function loadPane({ context = { eventId: 10, onChange: () => () => {} } } = {}) {
   const live = fakeLiveReads();
   const server = { credits: 1, fail: false, holdMine: null };
   const reads = [];
-  const context = { eventId: 10, onChange: () => () => {} };
   const sandbox = {
     console, setTimeout, clearTimeout,
     location: { hash: '', search: '' },
@@ -112,6 +111,26 @@ function loadPane() {
   const settle = async () => { for (let i = 0; i < 10; i += 1) await new Promise((r) => setImmediate(r)); };
   return { pane, live, server, reads, state, grids, settle };
 }
+
+// Polish N11: on a cold visit the event list has not answered, so there is
+// no event id yet. That is a wait: "No challenges right now." flashed for a
+// frame before the skeleton. Once the list answers with no event at all,
+// the same null is the real empty state.
+test('before the event list answers the grid waits; a list with no event is the empty state', async () => {
+  let notify = () => {};
+  const context = { eventId: null, _resolved: false, onChange: (fn) => { notify = fn; return () => {}; } };
+  const { pane, state, grids, settle } = loadPane({ context });
+  pane.open();
+  await settle();
+  assert.ok(grids.length > 0, 'the grid was drawn');
+  assert.ok(grids.every((g) => g.kind === 'loading'), 'no "No challenges right now." while the list is out');
+  // The list answers, with no public event: its notification ends the wait.
+  context._resolved = true;
+  notify();
+  await settle();
+  assert.equal(state.grid.kind, 'empty');
+  pane.close();
+});
 
 test('the Challenges tab watches live reads while open, and stops when it closes', async () => {
   const { pane, live, settle } = loadPane();

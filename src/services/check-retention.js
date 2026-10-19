@@ -165,31 +165,7 @@ async function sweep(config, { dryRun = false, now = Date.now(), runtime = kuber
   return result;
 }
 
-let timer = null;
-let inFlight = null;
-function start(config) {
-  if (timer || !enabled(config)) return;
-  const run = () => {
-    if (inFlight) return inFlight;
-    inFlight = sweep(config, { shouldStop: () => timer === null })
-      .then((result) => {
-        if (result.candidates.length) log.info('check-retention', 'Check leftover sweep', result);
-      })
-      .catch((err) => log.warn('check-retention', 'Check leftover sweep stopped', { err: err.message }))
-      .finally(() => { inFlight = null; });
-    return inFlight;
-  };
-  timer = setInterval(run, INTERVAL_MS);
-  timer.unref();
-  // Releases often replace the leader before its first tick, so the first
-  // pass runs now rather than a quarter of an hour into the term.
-  run();
-}
-
-async function stop() {
-  clearInterval(timer);
-  timer = null;
-  await inFlight;
-}
-
-module.exports = { sweep, select, start, stop, MAX_DELETIONS, SECRET_MIN_AGE_MS, INTERVAL_MS };
+// The `check-retention` clock (src/workflow/clock/services.ts) runs it every
+// quarter hour on any process that runs the workflow, one pass at a time;
+// each delete is preconditioned on the object's uid and resourceVersion.
+module.exports = { sweep, select, enabled, MAX_DELETIONS, SECRET_MIN_AGE_MS, INTERVAL_MS };

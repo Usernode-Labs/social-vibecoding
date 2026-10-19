@@ -18,6 +18,15 @@
 // per-conversation — still exists on the conversation rows inside Messages,
 // where it reads as a count rather than as an alert.
 //
+// 19 OCT 2026 (#18 of the polish board): the bell keeps the alerts and
+// leaves PLAIN MESSAGES to the Messages tab. With one meaning per badge (red
+// the bell, grey new to read, the accent waiting on you) one unread direct
+// message lit the bell's red 1, the tab's grey 1 and a count on its row. The
+// rows are still written and still listed in the bell's sheet; the server
+// says how many of `unread` are `conversation_message` / `channel_message`
+// (`messageUnread`, countUnreadSplit) and the bell's figure leaves them out.
+// A mention, a reply to you and a thread you are in still ring it.
+//
 // Frontend logic is extracted from the shipped source (so these can't drift
 // from what runs) and exercised against stubs, in the style of
 // tests/notifications-mark-all.test.js.
@@ -49,16 +58,19 @@ function methodBody(name) {
 
 // ── 1. the count is back on the bell ────────────────────────────────────
 
-test('the bell counts every unread kind, plus pending invites', () => {
+test('the bell counts every unread kind but plain messages, plus pending invites', () => {
   // The body is a single `return`, so it is the function body as extracted.
   const badgeTotal = new Function('Notifications', methodBody('_badgeTotal'));
+  // #18: nine unread, four of them plain messages: the bell says six.
+  assert.equal(badgeTotal({ unread: 9, messageUnread: 4, invites: [{ appId: 1 }] }), 6);
+  assert.equal(badgeTotal({ unread: 2, messageUnread: 5, invites: [] }), 0, 'never below zero');
 
   // Nine unread on the account: four of them messages, two of them the
   // session kinds #improve-btn used to carry. Nothing is subtracted now
   // (#1610) — the bell is the only badge, so a split would only lose a count
   // on a surface that could not clear it.
   const count = badgeTotal({ unread: 9, invites: [{ appId: 1 }] });
-  assert.equal(count, 10, 'every unread kind is counted on the bell, plus invites');
+  assert.equal(count, 10, 'with no plain messages, every unread kind is counted, plus invites');
 
   assert.doesNotMatch(FE_SRC, /_bellUnread/,
     'the session subtraction is gone, not merely unused');
@@ -136,6 +148,7 @@ test('markConversationRead clears that conversation and walks the total down', (
     { id: 5, kind: 'kudos', appId: 3, conversationId: null, readAt: null },
   ];
   const N = stubNotifications(items, 4);
+  N.messageUnread = 1;
 
   markConversationRead(N, 5);
 
@@ -145,6 +158,7 @@ test('markConversationRead clears that conversation and walks the total down', (
   assert.equal(items[3].readAt, null, 'another conversation keeps its unread row');
   assert.equal(items[4].readAt, null, 'a non-conversation notification is untouched');
   assert.equal(N.unread, 2, 'the total falls by exactly what cleared');
+  assert.equal(N.messageUnread, 0, '#18: and the plain messages among it, from what they were');
   assert.equal(N.calls.badge, 1);
   assert.equal(N.calls.list, 1);
 });
@@ -228,4 +242,33 @@ test('the Messages store tells the bell on a local read, and on its own cross-ta
 
   assert.doesNotMatch(STORE_SRC, /drawer-messages-badge/,
     'syncDrawerBadge and its listener are gone with the element they wrote to');
+});
+
+// ── 5. the server says how many are plain messages (#18) ────────────────
+
+test('countUnreadSplit reads the total and the plain messages in one query', async () => {
+  const notifications = require('../src/services/notifications');
+  assert.deepEqual(notifications.MESSAGE_KINDS, ['conversation_message', 'channel_message']);
+  const calls = [];
+  const pool = { async query(sql, params) { calls.push({ sql, params }); return { rows: [{ c: 7, m: 3 }] }; } };
+  assert.deepEqual(await notifications.countUnreadSplit(pool, 5), { unread: 7, messageUnread: 3 });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].sql, /COUNT\(\*\) FILTER \(WHERE n\.kind = ANY\(\$3::text\[\]\)\)/);
+  assert.match(calls[0].sql, /COUNT\(\*\)::int AS c FROM notifications AS n/, 'the total keeps countUnread\'s shape');
+  assert.deepEqual(calls[0].params[2], ['conversation_message', 'channel_message']);
+  // The same rows as countUnread, which the phone's icon keeps counting.
+  const total = notifications.countUnread.toString();
+  for (const piece of ['DECIDED_ASK_SETTLED_SQL', 'CONVERSATION_ACCESS_SQL', 'CHAT_SENDER_ACCESS_SQL', 'PARKED_KINDS_SQL']) {
+    assert.ok(total.includes(piece) && notifications.countUnreadSplit.toString().includes(piece), piece);
+  }
+  // Every response that hands the bell its count hands it both.
+  const route = read('src/routes/notifications.js');
+  assert.match(route, /Object\.assign\(payload, await notifications\.countUnreadSplit\(pool, req\.user\.id\)\);/);
+  assert.equal((route.match(/res\.json\(\{ unread, messageUnread, cleared \}\)/g) || []).length, 5);
+  assert.doesNotMatch(route, /notifications\.countUnread\(/, 'no response carries the total alone');
+  // …and the client keeps both, wherever it takes the server's word.
+  const takes = FE_SRC.match(/Notifications\.unread = data\.unread \|\| 0;/g) || [];
+  const both = FE_SRC.match(/Notifications\.unread = data\.unread \|\| 0;\n\s*Notifications\.messageUnread = Number\(data\.messageUnread\) \|\| 0;/g) || [];
+  assert.ok(takes.length >= 5);
+  assert.equal(both.length, takes.length);
 });

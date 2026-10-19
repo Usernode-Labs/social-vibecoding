@@ -99,8 +99,6 @@ test('the leader publishes the admin statuses it keeps in memory, and stops as i
   for (const key of [
     "'bench-lane'",
     "'staging-reap.automatic'",
-    "'app-domains.sweep'",
-    "require('./src/services/app-storage-cap').LAST_SWEEP_STATUS_KEY",
   ]) {
     assert.ok(body.includes(`leaderStatus.provide(${key}`), `becomeLeader publishes ${key}`);
   }
@@ -113,7 +111,11 @@ test('the leader publishes the admin statuses it keeps in memory, and stops as i
   // And the routes read them wherever they are served.
   const admin = fs.readFileSync(path.join(__dirname, '..', 'src/routes/admin.js'), 'utf8');
   assert.match(admin, /automatic: await leaderStatus\.readOr\('staging-reap\.automatic', pool, stagingReap\.readAutomatic\)/);
-  assert.match(admin, /sweep: await leaderStatus\.readOr\('app-domains\.sweep', pool, appDomains\.getStatus\)/);
+  // The custom-domain sweep and the storage cap's are scheduled jobs of the
+  // workflow: their status is the clock's last run, read wherever they ran.
+  assert.match(admin, /sweep: await clocks\.status\(pool, 'app-domains'\)/);
+  assert.match(admin, /await clocks\.status\(pool, 'app-storage-cap'\)/);
+  assert.ok(!body.includes("'app-domains.sweep'") && !body.includes('LAST_SWEEP_STATUS_KEY'), 'no leader publishes them');
   const bench = fs.readFileSync(path.join(__dirname, '..', 'src/routes/homeroom-bench.js'), 'utf8');
   assert.equal(bench.match(/lane: await leaderStatus\.readOr\('bench-lane', pool, lane\.laneStatus\)/g).length, 2);
 });

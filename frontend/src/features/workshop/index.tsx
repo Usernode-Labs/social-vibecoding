@@ -137,7 +137,7 @@ workshopStore.setFlush(flushSync);
 // the "Which project?" panel (#3363); exported from here too, where the
 // screen's tests have always found them.
 export {
-  groupRows, orderRows, SECTION_LIMIT, SECTION_STEP, SECTIONS, sectionFold,
+  groupRows, orderRows, SECTION_LIMIT, SECTION_STEP, SECTIONS, sectionCount, sectionFold,
 } from './sections';
 
 export type WorkshopRow = {
@@ -510,13 +510,11 @@ export function AppRow({ row, onOpen, current = false }: {
         </AppIconLink>
       )}
       title={row.name || row.slug}
-      // ONE PILL A ROW (#5296): the votes when any wait on you, else the
-      // channel's unread count.
-      trailing={row.needs > 0 ? <VotePill count={row.needs} /> : unread > 0 ? (
-        <span className="messages-unread" data-workshop-unread={String(unread)} aria-label={t('communities:row.unread', { count: unread })}>
-          {unread > 99 ? '99+' : unread}
-        </span>
-      ) : null}
+      // ONE PILL A ROW (#5296): the votes, when any wait on you. The
+      // channel's unread is not a second number at the row's end: it is
+      // said on the second line, in grey (#18 of the 19 Oct polish board:
+      // the accent is waiting on you, grey is new to read).
+      trailing={row.needs > 0 ? <VotePill count={row.needs} /> : null}
       // THE STATUS LEADS THE SECOND LINE, then the quiet fact after it, so a
       // narrow screen truncates the fact and never the part that changes.
       // The status spans are always here (see StatusLine) so the checks'
@@ -524,8 +522,13 @@ export function AppRow({ row, onOpen, current = false }: {
       subtitle={(
         <>
           <StatusLine working={row.working} needs={row.needs} needsInPill />
+          {unread > 0 ? (
+            <span data-workshop-unread={String(unread)} className="text-zinc-500 dark:text-zinc-400">
+              {busy ? <span aria-hidden="true"> · </span> : null}{t('communities:row.newMessages', { count: unread })}
+            </span>
+          ) : null}
           {fact ? (
-            <span>{busy ? <span aria-hidden="true"> · </span> : null}{fact}</span>
+            <span>{busy || unread > 0 ? <span aria-hidden="true"> · </span> : null}{fact}</span>
           ) : null}
         </>
       )}

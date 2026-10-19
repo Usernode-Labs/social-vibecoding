@@ -29721,7 +29721,7 @@ function relStamp(iso, now) {
   if (Number.isNaN(date.getTime())) return { text: '', title: '' };
   const ref = now || new Date();
   const title = date.toLocaleString(undefined, {
-    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
   });
   const elapsed = ref.getTime() - date.getTime();
   if (elapsed >= REL_FLOOR_MS) {

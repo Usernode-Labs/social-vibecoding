@@ -111,12 +111,13 @@ test('register.html stub forwards an incoming fragment into the SPA', () => {
 test('the anonymous SPA boot remembers either clean or legacy app deep links', () => {
   const src = read('public/js/app.js');
   // restoreFromHash's anonymous branch: a non-auth route (e.g.
-  // /app/<slug>/full) is stored for after login, then the login screen
-  // shows — parity with the old server redirect to login.html.
-  assert.ok(src.includes('AuthScreens.rememberDeepLink(App._deepLinkTarget());'),
-    'anonymous branch stores the deep link');
-  assert.ok(src.includes("AuthScreens.show('login');"),
-    'anonymous branch then shows the login screen');
+  // /app/<slug>/full) is stored for after login, then the landing's
+  // sign-in sheet opens, titled for it (#5264).
+  assert.ok(src.includes('AuthScreens.showSignInFor(App._deepLinkTarget());'),
+    'anonymous branch hands the deep link to the sign-in sheet');
+  const screens = read('public/js/auth-screens.js');
+  assert.match(screens, /showSignInFor\(fullHash\) \{\s*AuthScreens\.rememberDeepLink\(fullHash\);/,
+    'which stores it for after login');
 });
 
 test('finishLogin restores the pending deep link before the authed boot', () => {

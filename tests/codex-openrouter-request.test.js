@@ -107,6 +107,7 @@ test('the wire cap is enforced on every GLM request, independently of history si
     assert.deepEqual(provider, {
       preferred_max_latency: { p90: 15 }, preferred_min_throughput: { p50: 30 },
       only: ['relace', 'fireworks', 'parasail', 'together', 'baseten'], sort: 'throughput', allow_fallbacks: true,
+      data_collection: 'deny',
     }, 'and asks OpenRouter for GLM\'s fast hosts, fastest first, that answer promptly');
   }
   assert.equal(diagnostics[0].maxOutputTokens, 32000);
@@ -561,23 +562,24 @@ test('a GLM request refused on its shortlist is sent once more to every host; an
   const response = await request(instance, { model: MODEL, input: [] });
   assert.equal(response.status, 200, 'the refusal is not what Codex sees');
   assert.deepEqual(calls.map(p => p.only || null), [['relace', 'fireworks', 'parasail', 'together', 'baseten'], null]);
-  assert.deepEqual(calls[1], { preferred_max_latency: { p90: 15 }, preferred_min_throughput: { p50: 30 } }, 'every host, as before');
+  assert.deepEqual(calls[1], { preferred_max_latency: { p90: 15 }, preferred_min_throughput: { p50: 30 }, data_collection: 'deny' },
+    'every host, as before, and still none that trains on the prompt (#5123)');
   assert.equal(diagnostics.at(-1).shortlistFallback, true);
 
   // A request bringing routing of its own is never narrowed by the shortlist.
   calls.length = 0;
   await request(instance, { model: MODEL, input: [], provider: { require_parameters: true } });
-  assert.deepEqual(calls, [{ preferred_max_latency: { p90: 15 }, preferred_min_throughput: { p50: 30 }, require_parameters: true }]);
+  assert.deepEqual(calls, [{ preferred_max_latency: { p90: 15 }, preferred_min_throughput: { p50: 30 }, require_parameters: true, data_collection: 'deny' }]);
 
   // Another model, or the platform turning the shortlist off: as before.
   const other = await adapter(t, base, { model: 'deepseek/deepseek-v4.1-flash' });
   calls.length = 0;
   await request(other, { model: 'deepseek/deepseek-v4.1-flash', input: [] });
-  assert.deepEqual(calls, [{ preferred_max_latency: { p90: 15 }, preferred_min_throughput: { p50: 30 } }]);
+  assert.deepEqual(calls, [{ preferred_max_latency: { p90: 15 }, preferred_min_throughput: { p50: 30 }, data_collection: 'deny' }]);
   const off = await adapter(t, base, { providerShortlist: [] });
   calls.length = 0;
   await request(off, { model: MODEL, input: [] });
-  assert.deepEqual(calls, [{ preferred_max_latency: { p90: 15 }, preferred_min_throughput: { p50: 30 } }]);
+  assert.deepEqual(calls, [{ preferred_max_latency: { p90: 15 }, preferred_min_throughput: { p50: 30 }, data_collection: 'deny' }]);
   const mine = await adapter(t, base, { providerShortlist: ['fireworks', 'together'] });
   calls.length = 0;
   await request(mine, { model: MODEL, input: [] });

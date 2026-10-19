@@ -318,10 +318,13 @@ test('private spec recipients cannot mint transitive conversation grants', () =>
 });
 
 test('orphan conversation attachment GC is independent of session auto-pause', () => {
-  const startIndex = serverSource.indexOf('startConversationAttachmentSweeper(config);');
-  const autoPauseIndex = serverSource.indexOf('startSessionAutoPauseSweeper(config);');
-  assert.ok(startIndex > 0 && startIndex < autoPauseIndex);
-  assert.match(serverSource, /function startConversationAttachmentSweeper\(config\)/);
+  // The upload-gc clock (src/workflow/clock/services.ts), hourly wherever the
+  // workflow runs, whatever SESSION_AUTOPAUSE_IDLE_MS says.
+  const clocks = fs.readFileSync(path.join(ROOT, 'src/workflow/clock/services.ts'), 'utf8');
+  assert.match(clocks, /name: 'upload-gc', everyMs: HOUR, leaderSweep: 'conversation-attachment-gc',/);
+  const { ORPHANS } = require('../src/services/upload-retention');
+  assert.ok(ORPHANS.some(([, table, owner]) => table === 'conversation_message_attachments' && owner === 'message_id'));
+  assert.ok(!serverSource.includes('startConversationAttachmentSweeper'));
 });
 
 test('messages-scoped user search hides self and either-direction blocks only in that scope', () => {

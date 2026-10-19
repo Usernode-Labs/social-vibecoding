@@ -60,12 +60,12 @@ function callback(src, name) {
 
 test('the two halves are wrapped, and exactly one of them is up', () => {
   // Wrappers rather than per-element class expressions: the whole half comes
-  // and goes together. The conditions are each other's negation ON the
-  // codeOnly path, and both fall back to today's markup off it.
+  // and goes together, and the conditions are each other's negation. The
+  // screen is only this errand since #5261 retired the join form.
   assert.match(WAITLIST,
-    /id="waitlist-confirm-address"\s*\n\s*className=\{codeOnly && flowStep === 'address' \? '' : 'hidden'\}/);
+    /id="waitlist-confirm-address"\s*\n\s*className=\{flowStep === 'address' \? '' : 'hidden'\}/);
   assert.match(WAITLIST,
-    /id="waitlist-confirm-code"\s*\n\s*className=\{codeOnly && flowStep === 'address' \? 'hidden' : ''\}/);
+    /id="waitlist-confirm-code"\s*\n\s*className=\{flowStep === 'address' \? 'hidden' : ''\}/);
 });
 
 test('the address step owns the send, and the code step owns the code', () => {
@@ -133,7 +133,7 @@ test('a code step reached with no address goes back instead of posting', () => {
   // deliberately says nothing, which is not an answer worth showing.
   const body = callback(WAITLIST, 'onConfirmCode');
   const guard = body.slice(0, body.indexOf('/^[0-9]{6}$/'));
-  assert.match(guard, /if \(codeOnly && !confirmAddress\(\)\) \{/);
+  assert.match(guard, /if \(!confirmAddress\(\)\) \{/);
   assert.match(guard, /backToAddress\(\)/);
   assert.ok(!guard.includes('fetch('), 'and it does so before any POST');
 });
@@ -154,7 +154,7 @@ test('the lede stops instructing the reader to use a field they cannot see', () 
   // still says "email you a code" on purpose.
   // Two things branch on the step; the eyebrow's arm is a "Step N of 2" label.
   const arms = Array.from(
-    WAITLIST.matchAll(/\? flowStep === 'code'\s*\n\s*\? t\('([^']*)'\)/g), (m) => message(m[1]));
+    WAITLIST.matchAll(/[?:{]\s*flowStep === 'code'\s*\n\s*\? t\('([^']*)'\)/g), (m) => message(m[1]));
   assert.equal(arms.length, 2, 'the eyebrow and the lede both branch on the step');
   const lede = arms.filter((text) => !text.startsWith('Step '));
   assert.equal(lede.length, 1, 'exactly one step-2 sentence, not a label');
@@ -171,7 +171,7 @@ test('both steps are photographable, and declared', () => {
   // A capture can only navigate, so the second step needs a shot of its own.
   assert.match(APP, /shot !== 'waitlist-code-step'/, 'the anonymous-boot gate');
   assert.match(APP, /shot === 'waitlist-code-step'/, 'and the fragment normaliser');
-  assert.match(WAITLIST, /const shotCodeStep = shot === 'waitlist-code-step';/);
+  assert.match(WAITLIST, /if \(shot === 'waitlist-code-step'\) \{/);
 
   const at = (p) => DAPP.tests.filter((t) => t.path === p);
   const step1 = at('/?shot=waitlist-code-entry');
@@ -285,7 +285,7 @@ test('pending is untouched: the send and the advance are still there', () => {
   assert.match(body, /fetch\('\/api\/public\/waitlist\/resend'/);
 });
 
-test('the join-instead control carries the typed address over', () => {
+test('the join-instead control opens Continue (#5261)', () => {
   const address = WAITLIST.slice(
     WAITLIST.indexOf('id="waitlist-confirm-address"'),
     WAITLIST.indexOf('id="waitlist-confirm-code"'));
@@ -295,13 +295,11 @@ test('the join-instead control carries the typed address over', () => {
   assert.match(address, /onClick=\{onJoinInstead\}/);
 
   const body = callback(WAITLIST, 'onJoinInstead');
-  // The address they typed is the whole point: retyping it into the join
-  // form is the errand this button exists to save.
-  assert.match(body, /email\.current\.value = /);
-  assert.match(body, /location\.hash = '#waitlist'/,
-    'the join form, not the check-my-status one');
+  // Joining is Continue now: the landing, with its sheet asked for.
+  assert.match(body, /host\._startSheet = true;/);
+  assert.match(body, /location\.hash = '#landing'/);
   assert.match(body, /setNotFound\(false\)/, 'and the note comes down with it');
-  assert.ok(!body.includes('fetch('), 'it navigates; the join form does the posting');
+  assert.ok(!body.includes('fetch('), 'it navigates; Continue does the rest');
 });
 
 test('the not-found state is photographable, and declared', () => {
@@ -309,9 +307,9 @@ test('the not-found state is photographable, and declared', () => {
   // (open the check, type an address, submit), so it needs a URL of its own.
   assert.match(APP, /shot !== 'waitlist-not-found'/, 'the anonymous-boot gate');
   assert.match(APP, /shot === 'waitlist-not-found'/, 'and the fragment normaliser');
-  assert.match(WAITLIST, /const shotNotFound = shot === 'waitlist-not-found';/);
+  assert.match(WAITLIST, /if \(shot === 'waitlist-not-found'\) \{/);
 
-  // Two checks, not three. The manifest keeps 20 slots clear of
+  // Two checks when it shipped, not three. The manifest keeps 20 slots clear of
   // MAX_DECLARED_TESTS and sits on that floor, so the third property this
   // state has — the code half still down, which IS the dead end being
   // removed — is carried by the step-1 selector prefix on the first check,
@@ -320,7 +318,10 @@ test('the not-found state is photographable, and declared', () => {
   // arm above. Spending a browser check to say it a fourth time would push
   // the reader into silently dropping somebody else's.
   const declared = DAPP.tests.filter((t) => t.path === '/?shot=waitlist-not-found');
-  assert.equal(declared.length, 2, 'the two things the screen must show');
+  // A third since #5261: the code half stays down (one of the join form's
+  // retired checks, rewritten in place).
+  assert.equal(declared.length, 3, 'the three things the screen must show');
+  assert.ok(declared.some((t) => t.expectSelector === '#waitlist-confirm-code.hidden'));
   assert.ok(declared.some((t) => /#waitlist-confirm-address:not\(\.hidden\) #waitlist-request-note:not\(\.hidden\)/
     .test(t.expectSelector)
     && /find that address on the waitlist/.test(t.expectText || '')),
@@ -331,44 +332,4 @@ test('the not-found state is photographable, and declared', () => {
   // way its neighbours do: the shot paints anonymous state, so the shell's
   // own boot logs on an unauthenticated route are expected here.
   assert.ok(declared.every((t) => t.allowConsoleErrors === true));
-});
-
-test('a confirmed re-join skips the code step, cooldown and all (#2201)', () => {
-  // The join form's three answers, and the one asymmetry between them. Cases
-  // 1 and 2 mailed a code, so they go where the code is typed and arm the gap
-  // the mail throttle will enforce anyway. Case 3 minted nothing, mailed
-  // nothing and deleted nothing, so both of those would be lies: a code step
-  // with no code on its way, and a countdown on a resend that would be
-  // refused.
-  const body = callback(WAITLIST, 'onSubmit');
-  const at = body.indexOf('if (joinStatus && joinStatus.confirmed) {');
-  assert.ok(at > 0, 'onSubmit branches on the status block, not on the message');
-  // The inner else, nested one level deeper than `if (res.ok)`'s own.
-  const split = body.indexOf('\n          } else {', at);
-  assert.ok(split > at, 'and the other two cases share the else arm');
-  const confirmedArm = body.slice(at, split);
-  const otherArm = body.slice(split);
-
-  // The confirmed arm sets the settled panel up and stops.
-  assert.match(confirmedArm, /setAlreadyConfirmed\(true\);/);
-  assert.match(confirmedArm, /setConfirmed\(true\);/);
-  assert.match(confirmedArm, /setStatus\(joinStatus\);/);
-  assert.match(confirmedArm, /setOffer\(false\);/,
-    'a re-join carries no token, so the survey link has nowhere to go');
-  assert.doesNotMatch(confirmedArm, /setFlowStep\(/, 'no step to move to');
-  assert.doesNotMatch(confirmedArm, /goToCodeStep\(/);
-  assert.doesNotMatch(confirmedArm, /startCooldown\(/, 'and no gap to arm');
-  assert.doesNotMatch(confirmedArm, /code\.current\?\.focus/,
-    'nothing to focus: the code field is hidden on this panel');
-  assert.doesNotMatch(confirmedArm, /setMoreToken\(/);
-
-  // The other arm still does both, for both of the cases that reach it.
-  assert.match(otherArm, /startCooldown\(\);/);
-  assert.match(otherArm, /code\.current\?\.focus\(\{ preventScroll: true \}\)/);
-  assert.equal((body.match(/startCooldown\(\)/g) || []).length, 1,
-    'the cooldown is armed in exactly one arm');
-
-  // And the flag that separates case 2 from case 1 is the absent token, not a
-  // sentence: `more_token` is issued on a first join and never on a re-join.
-  assert.match(otherArm, /if \(joinStatus && !token\) setRejoined\(true\);/);
 });

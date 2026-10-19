@@ -901,9 +901,9 @@
     {
       "source": "src/services/app-domains.js",
       "kind": "structural-template",
-      "fingerprint": "4d8364d2457874f40f71",
+      "fingerprint": "28c15da6ec75bb1c98cc",
       "count": 1,
-      "preview": "`UPDATE app_domains SET ${sets.join(', ')} WHERE id = $1 RETURNING ${ROW_COLUMNS}`"
+      "preview": "`UPDATE app_domains SET ${sets.join(', ')} WHERE ${where} RETURNING ${ROW_COLUMNS}`"
     },
     {
       "source": "src/services/check-history.js",
@@ -1307,6 +1307,13 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
+      "fingerprint": "c7f6a44be60767ec3f89",
+      "count": 1,
+      "preview": "`SELECT (COUNT(*) FILTER (WHERE n.kind = ANY($3::text[])))::int AS m, COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND "
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
       "fingerprint": "cf837b937e37a4415dce",
       "count": 1,
       "preview": "`INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind) SELECT v.user_id, v.app_id, v.chat_message_id, v.source_user_id, v.kind FROM"
@@ -1632,6 +1639,13 @@
       "fingerprint": "fc1a26462b083453e1f5",
       "count": 1,
       "preview": "`WITH coded AS ( SELECT e.id, e.user_id, e.metadata, e.created_at, CASE WHEN e.metadata->>'kind' IN ('action_outcome','server_failure') AND e.metadata ? 'attemp"
+    },
+    {
+      "source": "src/services/upload-retention.js",
+      "kind": "structural-template",
+      "fingerprint": "340ad7979fcdfa1d7a05",
+      "count": 1,
+      "preview": "`DELETE FROM ${table} WHERE ${owner} IS NULL AND created_at < NOW() - INTERVAL '24 hours'`"
     },
     {
       "source": "src/services/user-merge.js",

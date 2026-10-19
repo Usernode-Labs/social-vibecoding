@@ -271,7 +271,11 @@ test('a signal hold reads as the platform\'s, and a mention can move past it', (
 
 test('the sweep, the route and the bot are wired where the platform runs them', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  assert.match(server, /leaderTimers\.every\('platform-signals'/);
+  // The sweep is a scheduled job of the workflow (src/workflow/clock/), every
+  // five minutes wherever the workflow runs.
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src/workflow/clock/services.ts'), 'utf8'),
+    /name: 'platform-signals', everyMs: 5 \* MIN,/);
+  assert.ok(!server.includes("'platform-signals'"), 'no leader runs it');
   assert.match(server, /require\('\.\/src\/routes\/alerts-webhook'\)\.alertsWebhookRoutes\(config\)/);
   const authAt = server.indexOf('app.use(authMiddleware(config))');
   assert.ok(server.indexOf('alertsWebhookRoutes') < authAt, 'the webhook is mounted before session auth');

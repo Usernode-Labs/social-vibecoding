@@ -128,7 +128,8 @@ test('a window whose reset has passed reads as the whole budget again', () => {
   assert.equal(c.expired, true);
   assert.equal(c.remaining, 5000);
   assert.equal(c.used, 0);
-  assert.deepEqual(budget.alertFigures('pat', { now: later }), { used: 0, cap: 5000 });
+  // A window this process has not heard of yet: no reset to name.
+  assert.deepEqual(budget.alertFigures('pat', { now: later }), { used: 0, cap: 5000, resetAt: null });
 });
 
 test('the search and graphql budgets are kept apart from core', () => {
@@ -186,12 +187,15 @@ test('without a bot token, background work asks the App installation it would us
 });
 
 test('alertFigures: the bot token, and the most-used App installation', () => {
-  assert.deepEqual(budget.alertFigures('pat', { now: NOW }), { used: 0, cap: 0 });
+  assert.deepEqual(budget.alertFigures('pat', { now: NOW }), { used: 0, cap: 0, resetAt: null });
   budget.record('pat', headers({ remaining: 900, used: 4100 }), { now: NOW });
   budget.record('installation:a', headers({ limit: 12500, remaining: 12000 }), { now: NOW });
   budget.record('installation:b', headers({ limit: 5000, remaining: 1000 }), { now: NOW });
-  assert.deepEqual(budget.alertFigures('pat', { now: NOW }), { used: 4100, cap: 5000 });
-  assert.deepEqual(budget.alertFigures('installation', { now: NOW }), { used: 4000, cap: 5000 });
+  // With the window the figures are about (its reset), which the alert's
+  // level belongs to (platform-limit-alerts.js).
+  const window = Number(inMin(30)) * 1000;
+  assert.deepEqual(budget.alertFigures('pat', { now: NOW }), { used: 4100, cap: 5000, resetAt: window });
+  assert.deepEqual(budget.alertFigures('installation', { now: NOW }), { used: 4000, cap: 5000, resetAt: window });
 });
 
 // ─── 3. Saying what happened ────────────────────────────────────────────
@@ -378,9 +382,8 @@ test('the timer-driven GitHub callers ask before they spend', () => {
   ]) {
     assert.match(read(rel), asks, `${rel} asks services/github-budget.js`);
   }
+  assert.match(read('src/services/repo-privacy-audit.js'), /githubBudget\.budgetAllows\('background'\)/, 'the daily privacy audit');
   const server = read('server.js');
-  const audit = server.slice(server.indexOf('async function auditExistingRepoPrivacy'));
-  assert.match(audit.slice(0, audit.indexOf('\n}\n')), /githubBudget\.budgetAllows\('background'\)/, 'the daily privacy audit');
   const headSync = server.slice(server.indexOf('// Pass 6: imported-PR head sync'));
   assert.match(headSync.slice(0, 1800), /if \(!githubBudget\.budgetAllows\('background'\)\) break;/, 'the imported-PR head sync');
   const observe = server.slice(server.indexOf('async function observeMergedOnGithub'));
@@ -392,37 +395,38 @@ test('the timer-driven GitHub callers ask before they spend', () => {
 // election read every app's repository (~150) and every proposal up for a
 // vote from GitHub again: an audit whose result is only logged, while every
 // worker start checks privacy itself, and a look for merges made by hand.
-// Both keep a durable clock now (services/leader-timers.js): a new leader
-// runs one only when leader_sweeps says it is due.
+// Neither runs at an election now. The audit is a daily clock of the
+// workflow (src/workflow/clock/services.ts), first due when its leader timer
+// would have run; the lookup keeps its durable leader timer.
 test('an election does not re-run the privacy audit or the merged-by-hand lookup', () => {
   const server = read('server.js');
   const becomeLeader = server.slice(server.indexOf('async function becomeLeader()'), server.indexOf('async function start()'));
   assert.ok(becomeLeader.length > 0, 'becomeLeader() exists');
 
-  assert.match(becomeLeader, /const runRepoPrivacyAudit = \(\) => auditExistingRepoPrivacy\(getPool\(config\)\)\n/);
-  assert.match(becomeLeader,
-    /leaderTimers\.every\('repo-privacy-audit', runRepoPrivacyAudit, 24 \* 60 \* 60 \* 1000, \{ durable: getPool\(config\) \}\);/,
-    'the privacy audit: daily, on the durable clock');
+  const clocks = read('src/workflow/clock/services.ts');
+  assert.match(clocks, /name: 'repo-privacy-audit', everyMs: 24 \* HOUR, leaderSweep: 'repo-privacy-audit'/,
+    'the privacy audit: a daily clock, first due when its leader timer would have run');
+  assert.ok(!/auditExistingRepoPrivacy|repo-privacy/.test(server), 'and no leader runs it');
   assert.match(becomeLeader, /const runMergedByHandLookup = \(\) => observeMergedOnGithub\(config\)\n/);
   assert.match(becomeLeader,
     /leaderTimers\.every\('merged-by-hand-lookup', runMergedByHandLookup, 6 \* 60 \* 60 \* 1000, \{ durable: getPool\(config\) \}\);/,
     'the merged-by-hand lookup: every six hours, on the durable clock');
 
-  // Each is called from its timer and nowhere else: a bare call at election
-  // is the spend this removed.
+  // Called from its timer and nowhere else: a bare call at election is the
+  // spend this removed.
   const calls = (name) => becomeLeader.split(`${name}(`).length - 1;
-  assert.equal(calls('auditExistingRepoPrivacy'), 1, 'the audit runs only from its timer');
   assert.equal(calls('observeMergedOnGithub'), 1, 'the lookup runs only from its timer');
 
   // A run the drain cut short records nothing, so the next leader runs it.
-  for (const name of ['runRepoPrivacyAudit', 'runMergedByHandLookup']) {
-    const def = becomeLeader.slice(becomeLeader.indexOf(`const ${name} =`));
-    assert.match(def.slice(0, def.indexOf(';\n')),
-      /\.then\(\(\) => \(lifecycle\.isShuttingDown\(\) \? leaderTimers\.SKIPPED : undefined\)\)$/, name);
-  }
-  const audit = server.slice(server.indexOf('async function auditExistingRepoPrivacy'));
-  assert.match(audit.slice(0, audit.indexOf('\n}\n')), /while \(queue\.length && !lifecycle\.isShuttingDown\(\)\) \{/,
-    'the audit stops at its next row once shutdown begins, so it never holds a drain');
+  const def = becomeLeader.slice(becomeLeader.indexOf('const runMergedByHandLookup ='));
+  assert.match(def.slice(0, def.indexOf(';\n')),
+    /\.then\(\(\) => \(lifecycle\.isShuttingDown\(\) \? leaderTimers\.SKIPPED : undefined\)\)$/, 'runMergedByHandLookup');
+  // The audit stops at its next row once its run is stopped, so it never
+  // holds a drain; a run stopped before the end fails, and the clock tries
+  // again sooner.
+  const audit = read('src/services/repo-privacy-audit.js');
+  assert.match(audit, /while \(queue\.length && !shouldStop\(\)\) \{/);
+  assert.match(audit, /if \(queue\.length && !held\) throw new Error/);
 
   // The stuck-check reconcile still runs at once on election, no longer
   // behind the lookup: its sweeps' first passes come a minute or more later.

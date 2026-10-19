@@ -6,6 +6,8 @@
 // assistant message plus content-free usage facts.
 
 const { platformHeaders } = require('../openrouter-client');
+// #5123: every OpenRouter request denies data collection (worker/openrouter-privacy.js).
+const { noTrainingProvider, withNoTraining } = require('../../../worker/openrouter-privacy');
 const { modelId, reasoningEffort } = require('./profile');
 
 // A Global Chat turn may make more than one short tool-planning call. Letting
@@ -120,13 +122,14 @@ function buildRequest({
     // Sending response_format at the same time is redundant and excludes or
     // destabilizes providers that reliably implement tools but not the two
     // output modes together.
-    provider: {
+    // No fallback may reach a host that trains on or keeps the prompt (#5123).
+    provider: noTrainingProvider({
       require_parameters: true,
       allow_fallbacks: true,
       // These are short interactive planning calls, so time to first output is
       // more important than sustained token throughput.
       sort: 'latency',
-    },
+    }),
   };
   // Sent only when a caller asks for it by name (true). With
   // require_parameters above, any parallel_tool_calls OpenRouter sees, false
@@ -336,7 +339,7 @@ async function streamChat({
         'Content-Type': 'application/json',
         ...platformHeaders(origin),
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(withNoTraining(body)),
       signal: combinedSignal,
     });
     timingState.headersMs = Math.max(0, Date.now() - startedAt);
