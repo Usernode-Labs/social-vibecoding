@@ -1792,16 +1792,12 @@
     "description": "Placeholder in the message box of a thread."
   },
   "composer.placeholderBotThread": {
-    "text": "Reply about {{request}}…",
-    "description": "Placeholder in the message box of a request's thread in the chat with Homeroom bot. {{request}} is the request's title."
+    "text": "Reply about this request…",
+    "description": "Placeholder in the message box of a request's thread in the chat with Homeroom bot. The thread's header above names the request, so the placeholder does not; keep it short enough for one line on a phone."
   },
   "composer.placeholderBotThreadFirstVersion": {
-    "text": "Reply about {{project}}’s first version…",
-    "description": "Placeholder in the message box of the thread about a project's first version in the chat with Homeroom bot. {{project}} is the project's name."
-  },
-  "composer.placeholderBotThreadNumbered": {
-    "text": "Reply about request #{{number}}…",
-    "description": "Placeholder in the message box of a request's thread in the chat with Homeroom bot, when the request has no title. {{number}} is its number on the project's board, keep the #."
+    "text": "Reply about this first version…",
+    "description": "Placeholder in the message box of the thread about a project's first version in the chat with Homeroom bot. The thread's header above names the project; keep it short enough for one line on a phone."
   },
   "composer.placeholder": {
     "text": "Message…",
@@ -3114,6 +3110,10 @@
   "header.menu.report": {
     "text": "Report user",
     "description": "Item in a direct conversation's \"…\" menu: reports the other person to Homeroom's moderators. \"Report\" is a verb."
+  },
+  "header.menu.botFeedback": {
+    "text": "Send feedback about the bot",
+    "description": "Item in the \"…\" menu of the conversation with Homeroom bot, where a person's conversation offers Block and Report: opens the dialog for sending feedback to Homeroom about the bot."
   },
   "header.menu.refresh": {
     "text": "Refresh conversation",

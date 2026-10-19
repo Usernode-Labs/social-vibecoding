@@ -493,16 +493,17 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   }
   if (!active.canSend) return <div className="messages-composer-disabled platform-safe-bar">{t('messages:composer.cannotSend')}</div>;
   // One request, one story: inside a request's thread in the chat with
-  // Homeroom bot the box says which request a reply is about.
+  // Homeroom bot the box says a reply is about the request. The pane's
+  // header names it; the full title here wrapped the box to three lines on
+  // a phone (polish N16).
   const botRoot = inThread && active.kind === 'direct' && threadsAllowed(active)
     ? (snap.thread?.rootId === threadRootId ? snap.thread.root : null) || snap.messages.find((item) => item.id === threadRootId) || null
     : null;
   const botRequest = botRoot?.sender.bot && botRoot.metadata?.homeroomBot ? botRequestNames(botRoot.metadata.homeroomBot) : null;
   const threadPlaceholder = !botRequest ? t('messages:composer.placeholderThread')
-    : botRequest.firstVersion ? t('messages:composer.placeholderBotThreadFirstVersion', { project: botRequest.project })
-      : botRequest.title ? t('messages:composer.placeholderBotThread', { request: botRequest.title })
-        : botRequest.number ? t('messages:composer.placeholderBotThreadNumbered', { number: String(botRequest.number) })
-          : t('messages:composer.placeholderThread');
+    : botRequest.firstVersion ? t('messages:composer.placeholderBotThreadFirstVersion')
+      : botRequest.title || botRequest.number ? t('messages:composer.placeholderBotThread')
+        : t('messages:composer.placeholderThread');
   // A plan's reply: a first version's is read by the bot alone (its next
   // look), a request's plan's is posted on the request (#4488).
   const planReply = reply?.sender.bot && reply.metadata?.homeroomBot?.kind === 'plan' ? reply.metadata.homeroomBot : null;
