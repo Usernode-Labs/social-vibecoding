@@ -289,6 +289,99 @@ test('the controller reads the view it was opened on, and drops an answer for an
   }
 });
 
+// ── #5452: a vote shows in Your votes as soon as it is saved ───────────
+
+test('#5452: voted() re-reads the open votes view and publishes what it answered', async () => {
+  const mod = loadTsx(SCREEN);
+  const { profileProposalsController: ctl, profileProposalsStore: store } = mod;
+  const prior = { fetch: globalThis.fetch, location: globalThis.location };
+  const asked = [];
+  const pending = [];
+  globalThis.location = { search: '' };
+  globalThis.fetch = (url) => {
+    asked.push(url);
+    return new Promise((resolve) => { pending.push(resolve); });
+  };
+  try {
+    const first = ctl.open('votes');
+    assert.equal(pending.length, 1);
+    pending[0]({ ok: true, json: async () => ({ items: [] }) });
+    await first;
+    assert.deepEqual(store.get().data.votes, { items: [] });
+
+    // A vote is cast while the view is up: the list reads again in place.
+    const again = ctl.voted();
+    assert.equal(asked.length, 2, 'voted() fetched again');
+    assert.equal(asked[1], '/api/me/history?type=votes&limit=50');
+    pending[1]({ ok: true, json: async () => ({ items: [
+      { type: 'pr_vote', vote: 'yes', status: 'promoted', app: { slug: 'run-club', name: 'Run Club' },
+        pr: { sessionId: 31, number: 40, title: 'Weekly distance leaderboard' } },
+    ] }) });
+    await again;
+    assert.equal(store.get().data.votes.items.length, 1, 'the new vote is listed, without a reload');
+    assert.equal(store.get().error, false);
+    ctl.close();
+  } finally {
+    globalThis.fetch = prior.fetch;
+    if (prior.location === undefined) delete globalThis.location; else globalThis.location = prior.location;
+    store.set({ open: false, kind: 'changes', data: {}, error: false });
+  }
+});
+
+test('#5452: voted() with the votes view closed drops the cached list and fetches nothing', () => {
+  const mod = loadTsx(SCREEN);
+  const { profileProposalsController: ctl, profileProposalsStore: store } = mod;
+  const prior = { fetch: globalThis.fetch, location: globalThis.location };
+  const asked = [];
+  globalThis.location = { search: '' };
+  // A read that never settles: if voted() fetched here, the ask count says so.
+  globalThis.fetch = (url) => { asked.push(url); return new Promise(() => {}); };
+  try {
+    // Your changes is up, with a votes list left over from an earlier look.
+    store.set({ open: true, kind: 'changes', error: false, data: { votes: { items: [] } } });
+    ctl.voted();
+    assert.equal(store.get().data.votes, undefined, 'the next open loads, it does not paint the old list');
+    assert.deepEqual(asked, [], 'nothing fetched: the view is not up');
+    // And with no cached list to drop, it stays quiet all the same.
+    store.set({ data: {} });
+    ctl.voted();
+    assert.deepEqual(asked, []);
+    assert.deepEqual(store.get().data, {});
+  } finally {
+    globalThis.fetch = prior.fetch;
+    if (prior.location === undefined) delete globalThis.location; else globalThis.location = prior.location;
+    store.set({ open: false, kind: 'changes', data: {}, error: false });
+  }
+});
+
+test('#5452: a read started before the vote cannot put the stale list back over the new one', async () => {
+  const mod = loadTsx(SCREEN);
+  const { profileProposalsController: ctl, profileProposalsStore: store } = mod;
+  const prior = { fetch: globalThis.fetch, location: globalThis.location };
+  const pending = [];
+  globalThis.location = { search: '' };
+  globalThis.fetch = () => new Promise((resolve) => { pending.push(resolve); });
+  try {
+    // The read open() started before the vote was saved…
+    const stale = ctl.open('votes');
+    // …then the vote is saved and voted() reads again.
+    const fresh = ctl.voted();
+    assert.equal(pending.length, 2);
+    pending[1]({ ok: true, json: async () => ({ items: [{ pr: { sessionId: 31 } }] }) });
+    await fresh;
+    assert.equal(store.get().data.votes.items.length, 1);
+    // …and only now lands. It is the older read, so it publishes nothing.
+    pending[0]({ ok: true, json: async () => ({ items: [] }) });
+    await stale;
+    assert.equal(store.get().data.votes.items.length, 1, 'the stale answer did not overwrite the fresh one');
+    ctl.close();
+  } finally {
+    globalThis.fetch = prior.fetch;
+    if (prior.location === undefined) delete globalThis.location; else globalThis.location = prior.location;
+    store.set({ open: false, kind: 'changes', data: {}, error: false });
+  }
+});
+
 test('the router: three addresses no username can have, one screen, the bar named for the view', () => {
   const app = read('public/js/app.js');
   assert.match(app, /PROFILE_WORK: \{\s*proposals: 'changes',\s*'your-changes': 'changes',\s*'your-requests': 'requests',\s*'your-votes': 'votes',\s*\},/);
