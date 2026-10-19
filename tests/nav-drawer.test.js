@@ -212,6 +212,55 @@ test('level 0 searches your communities by name, in the list\'s order, an exact 
   assert.match(screen, /return matchRows\(inAudience, query\);/);
 });
 
+test('level 0 is one list under the page\'s audience chips', async () => {
+  const realFetch = globalThis.fetch;
+  const hadWindow = 'window' in globalThis;
+  // The modules the level bundles subscribe at load: a bare window is enough
+  // for readCommunities, listeners keep the i18n runtime's own quiet.
+  if (!hadWindow) globalThis.window = { addEventListener() {}, removeEventListener() {} };
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('/api/apps?scope=joined')) {
+      return {
+        ok: true,
+        json: async () => ({
+          apps: [
+            { slug: 'open-a', name: 'Open A', audience: 'open', is_member: true, last_active_at: '2026-09-25T09:00:00Z' },
+            { slug: 'invited-a', name: 'Private A', audience: 'invited', is_member: true, last_active_at: '2026-09-25T10:00:00Z' },
+            { slug: 'solo-a', name: 'Just A', audience: 'solo', is_member: true, last_active_at: '2026-09-25T11:00:00Z' },
+          ],
+        }),
+      };
+    }
+    if (u.includes('/api/workshop/counts')) return { ok: true, json: async () => ({ counts: {} }) };
+    return { ok: false, status: 404, json: async () => null };
+  };
+  try {
+    const { readCommunities, OuterLevel } = loadTsx(`${DIR}/outer-level.tsx`);
+    await readCommunities();
+    const out = renderToHtml(createElement(OuterLevel, {
+      current: null, searching: false, wanted: false, onPick() {}, listRef: null,
+    }));
+    assert.doesNotMatch(out, /data-nav-drawer-section=|data-workshop-section=/, 'no section headings');
+    assert.doesNotMatch(out, /data-workshop-more=/, 'and no "Show N more"');
+    // The page's chips, in the page's order, with All pressed.
+    assert.deepEqual([...out.matchAll(/data-nav-drawer-chip="([^"]+)"/g)].map((m) => m[1]),
+      ['all', 'open', 'invited', 'solo']);
+    assert.match(out, /aria-pressed="true"[^>]*data-nav-drawer-chip="all"|data-nav-drawer-chip="all"[^>]*aria-pressed="true"/);
+    assert.doesNotMatch(out, /data-workshop-chip=/, 'the drawer\'s chips are its own, not the page\'s');
+    // One card of every row, most recent first, as the page lists them.
+    const cards = [...out.matchAll(/data-nav-drawer-rows="([^"]+)"/g)].map((m) => m[1]);
+    assert.deepEqual(cards, ['all'], 'exactly one card, under All');
+    assert.deepEqual([...out.matchAll(/data-workshop-app="([^"]+)"/g)].map((m) => m[1]),
+      ['solo-a', 'invited-a', 'open-a'], 'every community, most recent first');
+    // The source no longer draws the sections at all.
+    assert.doesNotMatch(read(`${DIR}/outer-level.tsx`), /groupRows|<Section\b/);
+  } finally {
+    globalThis.fetch = realFetch;
+    if (!hadWindow) delete globalThis.window;
+  }
+});
+
 test('the header takes the drawer\'s arrow and titles only while it applies', () => {
   const header = read('frontend/src/features/header/platform-header.tsx');
   assert.match(header, /<HeaderPlace slug=\{backSlug\} name=\{appName \|\| ''\} \/>[\s\S]*?<DrawerBack \/>\s*<\/div>/,

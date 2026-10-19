@@ -3,10 +3,10 @@
  *
  * The Communities screen's own list (../workshop/index.tsx), drawn at 85% of
  * the screen with the places peeking beside it: Needs you when a vote waits,
- * then Public communities, Private communities and Just you, three at a time
- * with Show more, then Join and Start. The rows and sections are that
- * screen's components, so the two lists cannot drift; what is the drawer's
- * own is the search at the top and what a row does when pressed. A row
+ * then one list of every community under the same All, Public, Private and
+ * Just you chips the page draws, then Join and Start. The rows and chips are
+ * that screen's components, so the two lists cannot drift; what is the
+ * drawer's own is the search at the top and what a row does when pressed. A row
  * switches community IN PLACE (`onPick`), keeping the place you were on when
  * the new community has it, rather than opening its hub as a door.
  *
@@ -30,7 +30,8 @@ import { PlusIcon, SearchIcon, SpeechCheckIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
 import { AppsLoadError } from '../apps/load-error';
 import {
-  AppRow, groupRows, joinCounts, needsApps, orderRows, RowSkeletons, Section, unseenRow, type WorkshopRow,
+  AppRow, audienceTallies, AudienceChips, filterRows, joinCounts, needsApps, orderRows, RowSkeletons, unseenRow,
+  type AudienceFilter, type WorkshopRow,
 } from '../workshop/index';
 import { useNeedsSeen } from '../workshop/needs-seen';
 import { matchRows } from '../workshop/sections';
@@ -129,7 +130,13 @@ export function OuterLevel({ current, searching, wanted, onPick, listRef }: {
   useNeedsSeen();
   const { rows: raw, error } = useCommunities(wanted);
   const [query, setQuery] = useState('');
+  // The chip pressed above the list; All each time the level slides in, as
+  // the page does each time it opens.
+  const [audience, setAudience] = useState<AudienceFilter>('all');
   const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (wanted) setAudience('all');
+  }, [wanted]);
   // Narrowed (Cancel, a pick, the tab, the arrow): the search is over.
   useEffect(() => {
     if (searching) return;
@@ -143,6 +150,11 @@ export function OuterLevel({ current, searching, wanted, onPick, listRef }: {
     ? rows.reduce((acc, row) => ({ needs: acc.needs + (row.needs || 0), owed: acc.owed + (row.owedCount || 0) }), { needs: 0, owed: 0 })
     : null;
   const empty = !!rows && rows.length === 0 && !error;
+  // #5296: ONE LIST, every row out, narrowed by the chip. A chip whose
+  // audience has nothing left in it falls back to All, as on the page.
+  const tallies = rows ? audienceTallies(rows) : null;
+  const pressed: AudienceFilter = audience !== 'all' && tallies && tallies[audience] > 0 ? audience : 'all';
+  const shown = rows ? filterRows(rows, pressed, '') : null;
 
   let body: ReactNode;
   if (error) {
@@ -198,18 +210,18 @@ export function OuterLevel({ current, searching, wanted, onPick, listRef }: {
               subtitleClassName="whitespace-normal"
             />
           </GroupedList>
-        ) : groupRows(rows).map((section) => (
-          <Section
-            key={section.key}
-            audience={section.key}
-            label={section.label}
-            count={section.count}
-            rows={section.rows}
-            idPrefix="nav-drawer-section"
-            onOpen={onPick}
-            current={current}
-          />
-        ))}
+        ) : (
+          <>
+            {tallies ? (
+              <AudienceChips scope="nav-drawer" tallies={tallies} pressed={pressed} onPress={setAudience} />
+            ) : null}
+            <GroupedList tone="plane" data-nav-drawer-rows={pressed}>
+              {(shown || []).map((row) => (
+                <AppRow key={row.slug} row={row} onOpen={onPick} current={row.slug === current} />
+              ))}
+            </GroupedList>
+          </>
+        )}
         <GroupedList tone="plane" className="mt-6">
           {empty ? null : (
             <ListRow
