@@ -216,6 +216,10 @@ test('each kind renders its own title and body from send-time context', () => {
     ['stale_pr', CONTEXT,
       '"Fix login redirect loop" is waiting for approval · MyPage',
       'Share the preview or ask a friend to try it'],
+    // Its votes are met and its merge stands still (a conflict, red checks).
+    ['stale_pr', { ...CONTEXT, detail: 'blocked' },
+      '"Fix login redirect loop" is approved but can\'t go live · MyPage',
+      'It needs a fix before it can go live, or it will be set aside'],
   ];
   for (const [kind, context, title, body] of cases) {
     const message = buildMessage({ ...INPUT, kind, context });

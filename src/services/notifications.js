@@ -901,8 +901,8 @@ async function createReactionNotification(pool, { appId, messageId, senderId, re
 // the session so the dropdown can render the PR title + a deep link.
 // One copy, written by the proposal machine's review check
 // (src/workflow/rules/proposal-notifications.ts); preferences fail open.
-function createStalePrNotification(pool, { userId, appId, sessionId }) {
-  return proposalNotifications.createStalePrNotification(pool, { userId, appId, sessionId },
+function createStalePrNotification(pool, { userId, appId, sessionId, detail = null }) {
+  return proposalNotifications.createStalePrNotification(pool, { userId, appId, sessionId, detail },
     notificationPreferences.allowsKind);
 }
 

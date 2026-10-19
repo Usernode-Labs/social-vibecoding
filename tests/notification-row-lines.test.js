@@ -134,6 +134,8 @@ test('every kind names itself the same way for every row of that kind', async ()
       'Session stopped before finishing', 'Kanban filters'],
     [{ kind: 'stale_pr', sourceUsername: null, prTitle: 'Add a dark mode toggle' },
       'Needs votes', 'Add a dark mode toggle'],
+    [{ kind: 'stale_pr', sourceUsername: null, prTitle: 'Add a dark mode toggle', detail: 'blocked' },
+      'Approved, can\'t go live yet', 'Add a dark mode toggle'],
     [{ kind: 'check_failed', sourceUsername: null, prTitle: 'Rework the board' },
       'Testing couldn\'t run', 'Rework the board'],
     [{ kind: 'kudos', prTitle: 'Fix the bell badge' }, 'Kudos', 'Fix the bell badge'],
