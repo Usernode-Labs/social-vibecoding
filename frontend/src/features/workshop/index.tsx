@@ -98,6 +98,10 @@ import { listText, t as translate } from '../../lib/i18n/runtime';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import {
+  publishVoteSaved,
+  voteSavedStore,
+} from '../dev-board/card/cards-store';
 import { landKeepingPlace } from '../dev-board/workshop/place-store';
 import { channelUnread, useMessagesSnapshot } from '../messages/store';
 import { useSidebarRows } from '../nav/sidebar-rows';
@@ -838,6 +842,38 @@ function stripAnswered(items: NeedsFeedItem[]): NeedsFeedItem[] {
   return answeredVotes.size ? items.filter((item) => !voteAnswered(item)) : items;
 }
 
+/**
+ * Whether a counts row's `owed` key names a vote in the answered set (#5463),
+ * matched the way `voteAnswered` matches its feed items — either epoch null
+ * decides by id alone, and a different epoch is a different vote.
+ */
+function countKeyAnswered(key: string): boolean {
+  if (!key.startsWith('proposal:')) return false;
+  const at = key.indexOf('@');
+  const id = Number(key.slice('proposal:'.length, at < 0 ? key.length : at));
+  if (!Number.isFinite(id)) return false;
+  const raw = at < 0 ? '' : key.slice(at + 1);
+  const epoch = raw === '' ? null : Number(raw);
+  return voteAnswered({ kind: 'proposal', id, epoch } as unknown as NeedsFeedItem);
+}
+
+/**
+ * The rows, with every counts fact a saved vote has already answered taken
+ * off (#5463): the `owed` key goes and `needs` drops one, so the "1 to vote"
+ * line and the Needs you row leave the vote out the moment it lands instead
+ * of waiting for the next quiet read. A row without `owed` keeps its number:
+ * a count this cannot check is never lowered on a guess, as in `unseenNeeds`.
+ */
+function stripAnsweredCounts(rows: WorkshopRow[]): WorkshopRow[] {
+  if (!answeredVotes.size) return rows;
+  return rows.map((row) => {
+    if (!row.owed || !row.owed.length) return row;
+    const owed = row.owed.filter((key) => !countKeyAnswered(String(key)));
+    if (owed.length === row.owed.length) return row;
+    return { ...row, owed, needs: Math.max(0, row.needs - (row.owed.length - owed.length)) };
+  });
+}
+
 /** How often the open screen quietly re-reads what waits on you (#5164). */
 export const WORKSHOP_REFRESH_MS = 30_000;
 
@@ -927,11 +963,17 @@ export const workshopController = {
    * A vote cast in the Needs you feed, taken down at once (#4794): the item
    * leaves the store's feed, so leaving the feed and coming back cannot draw
    * it as still owed, and every read until the screen closes skips it too.
+   * #5463: the counts leave it out the same breath — the row's `owed` loses
+   * the key and `needs` drops one, so the "1 to vote" line goes with the card
+   * instead of waiting for the next read to correct it.
    */
   answered(id: number, epoch: number | null) {
     answeredVotes.add(answeredVoteKey(id, epoch));
-    const feed = workshopStore.get().feed;
-    if (feed) workshopStore.set({ feed: stripAnswered(feed) });
+    const state = workshopStore.get();
+    const patch: { feed?: NeedsFeedItem[]; rows?: WorkshopRow[] } = {};
+    if (state.feed) patch.feed = stripAnswered(state.feed);
+    if (state.rows) patch.rows = stripAnsweredCounts(state.rows);
+    if (patch.feed || patch.rows) workshopStore.set(patch);
   },
   /**
    * The quiet reload behind a tab switch: the counts and the Needs you feed
@@ -963,11 +1005,13 @@ export const workshopController = {
         const data = await countsRes.json().catch(() => null);
         if (data && data.counts && typeof data.counts === 'object') {
           // The rows' app halves stand; the counts answer them again, so the
-          // owed lists of the read they came from go with them.
-          patch.rows = joinCounts(
+          // owed lists of the read they came from go with them. A read issued
+          // before a saved vote and landing after it keeps the vote out
+          // (#5463), as the feed's read does through stripAnswered.
+          patch.rows = stripAnsweredCounts(joinCounts(
             state.rows.map(({ owed, ...rest }) => rest),
             data.counts,
-          );
+          ));
         }
       }
       if (feedRes && feedRes.ok) {
@@ -1039,7 +1083,9 @@ export const workshopController = {
       return;
     }
     workshopStore.set({
-      rows: joinCounts(apps, counts),
+      // #5463: a vote saved this visit leaves the counts out of the fresh
+      // rows too, the way the feed's own read is stripped below.
+      rows: stripAnsweredCounts(joinCounts(apps, counts)),
       error: false,
       feed: feed || [],
       feedError: !feed,
@@ -1054,4 +1100,29 @@ if (typeof window !== 'undefined') {
   bridge.workshop = workshopController;
 }
 
-export { workshopStore };
+/**
+ * #5463: a vote the server saved ANYWHERE — in a feed, on the change's own
+ * page, from a notification's "Still yes" — reaches the screen through the
+ * dev board's voteSavedStore, shown or not: `open()` paints the kept store
+ * copy, so it has to be right before that paint, not corrected by the read
+ * that lands after it. Each new entry takes the card out of the feed and out
+ * of the counts, exactly as `answered()` does for a vote cast in the feed.
+ * `close()` still clears the answered set, as today: a fresh visit starts
+ * from what the server says. The seq (cards-store.ts) marks what is new, so a
+ * re-vote of the same side is seen too; re-running `answered()` is harmless.
+ */
+let savedVoteSeqSeen = 0;
+voteSavedStore.subscribe(() => {
+  const saved = voteSavedStore.get();
+  let seen = savedVoteSeqSeen;
+  for (const [id, entry] of Object.entries(saved)) {
+    if (!entry || entry.seq <= seen) continue;
+    seen = entry.seq;
+    workshopController.answered(Number(id), entry.epoch);
+  }
+  savedVoteSeqSeen = seen;
+});
+
+// `publishVoteSaved` and `voteSavedStore` are re-exported so the saved-vote
+// tests can drive the real publish path against this screen's own store.
+export { workshopStore, publishVoteSaved, voteSavedStore };
