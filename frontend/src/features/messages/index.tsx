@@ -124,7 +124,7 @@ import {
 import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { SessionRow, type SessionRowView } from '../improve/session-row';
-import { INBOX_SECTIONS, buildInbox, shownInSection, type AgentChat, type AppDiscussion, type InboxSection } from './inbox';
+import { INBOX_QUERY_MAX, INBOX_SECTIONS, buildInbox, savedInboxQuery, shownInSection, type AgentChat, type AppDiscussion, type InboxSection } from './inbox';
 import { publishRailInbox, railConversations, type RailConversation } from './rail-inbox';
 import { useSidebarRows } from '../nav/sidebar-rows';
 import type { ConversationDetail, ConversationMessage, ConversationSummary, DiscussionMessage, MessagesAgentThread } from './types';
@@ -849,12 +849,40 @@ function ConversationList({ drawer = false, litId = null }: {
   // and a second copy in this store is a copy that drifts. Gated on the same
   // two flags the Improve panel's list is, so a shell where the feature is
   // off sees no Agents rows and no Agents filter doing nothing.
-  // EPHEMERAL, AND DELIBERATELY NOT IN THE STORE. Nothing else reads what
-  // was typed here, and a query that survived leaving the screen would greet
-  // the next visit with a list that is missing rows for a reason no longer on
-  // screen. The filter IS in the store, because the thread pane and the
-  // deep-link router both read it.
+  // REMEMBERED PER DEVICE SINCE #5459, AND STILL NOT IN THE STORE. A daily
+  // voter narrows the list to the changes waiting on them, leaves to vote,
+  // and comes back: the query now survives that, kept in localStorage
+  // (`usernode:messages-query`, ./inbox.ts) the way the folded sections are,
+  // so the visit starts narrowed the way the last one ended. It is kept out
+  // of the store because nothing else reads what was typed here — and the
+  // field itself is where the reason rows are missing shows, so a restored
+  // query never hides rows with nothing on screen saying why. The value is
+  // read after mount, so the first render and the prerendered shell both
+  // show an empty field and hydration matches. (The filter the old comment
+  // was written for IS in the store, because the thread pane and the
+  // deep-link router both read it.)
   const [query, setQuery] = useState('');
+  // Restore the last search one commit after mount. An unusable or absent
+  // saved value leaves the field empty, and storage that throws (private
+  // mode, blocked) is the same as never having typed.
+  useEffect(() => {
+    try {
+      const saved = savedInboxQuery(localStorage.getItem('usernode:messages-query'));
+      if (saved) setQuery(saved);
+    } catch { /* storage unavailable */ }
+  }, []);
+  // Save the search on each keystroke, before the field updates. A write
+  // that throws is skipped and the list still narrows exactly as it did
+  // before the remembering; clearing the field removes the key, so the next
+  // visit starts empty; a search past the cap is not kept at all, rather
+  // than stored cut.
+  const changeQuery = useCallback((value: string) => {
+    try {
+      if (value && value.length <= INBOX_QUERY_MAX) localStorage.setItem('usernode:messages-query', value);
+      else localStorage.removeItem('usernode:messages-query');
+    } catch { /* storage unavailable */ }
+    setQuery(value);
+  }, []);
   // The list filters on the DEFERRED query: the field takes the keystroke at
   // once, and the rows follow in a render React can interrupt with the next
   // one, so typing a word into a long inbox does not wait on it per letter.
@@ -1085,7 +1113,7 @@ function ConversationList({ drawer = false, litId = null }: {
             placeholder={t('messages:inbox.searchPlaceholder')}
             aria-label={t('messages:inbox.searchLabel')}
             value={query}
-            onChange={(e) => setQuery(e.currentTarget.value)}
+            onChange={(e) => changeQuery(e.currentTarget.value)}
           />
         </div>
         <NewMessageButton />
