@@ -504,7 +504,7 @@ test('each way into the sheet says only what is true for it', () => {
     assert.doesNotMatch(html, /New to Homeroom|This makes your account|Already have an account|Welcome back/);
   }
   // Join: the button, then the terms, and nothing after.
-  assert.match(join, new RegExp(`${BUTTON.source}<p[^>]*>By continuing, you agree to Homeroom&#x27;s terms\\.</p></form></div></div>`));
+  assert.match(join, new RegExp(`${BUTTON.source}<p[^>]*>By continuing, you agree to Homeroom&#x27;s terms and acknowledge the privacy notice\\.</p></form></div></div>`));
   assert.doesNotMatch(join, /Use a password|data-sign-in-sheet-method|New to Homeroom|This makes your account|Already have an account|Welcome back/);
   // Nothing the story's two sheets say is a dash.
   for (const html of [signin, start, join]) assert.doesNotMatch(html, /—/);
@@ -534,7 +534,7 @@ test('the first step with Apple and Google: the terms under them, then the email
     const at = (re) => html.search(re);
     const order = [
       at(/data-sign-in-provider="google"/), at(/data-sign-in-provider="apple"/),
-      at(/By continuing, you agree to Homeroom&#x27;s terms\./), at(/data-sign-in-sheet-or=""/),
+      at(/By continuing, you agree to Homeroom&#x27;s terms and acknowledge the privacy notice\./), at(/data-sign-in-sheet-or=""/),
       at(/id="sign-in-sheet-email"/), at(/data-sign-in-provider="email"/), at(/data-sign-in-sheet-password=""/),
     ];
     for (const i of order) assert.ok(i > 0, `${from}: every part is there`);
