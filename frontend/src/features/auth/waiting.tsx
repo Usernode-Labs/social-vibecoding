@@ -41,13 +41,28 @@
  * and a status line said when the page last checked; both are gone. The
  * page still checks every 30 seconds, quietly, and a check that fails is
  * tried again on the next one.
+ *
+ * ── Who it is, and a link that comes later (#5256) ─────────────────────
+ *
+ * The room was a dead end: no word of which account was made or where the
+ * mail goes, and nothing to do. It now names the account (@username, and
+ * the email in the lead when it has one, from GET /api/auth/waiting) and
+ * offers a box for an invite link somebody sends later. The box follows
+ * the link the way opening it would: it queues its community, which then
+ * shows in the list above, and the check right after lets the account in
+ * if the link did. The navigation review's other asks are not here: the
+ * waitlist is not first come, first served (invites and releases by hand
+ * skip it), so there is no honest place in line to show, nothing a waiting
+ * account can open lists apps, and a text when they are let in needs a
+ * sender the platform does not have.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { buttonVariants } from '@/components/ui/button';
 import { Wordmark } from '@/components/ui/wordmark';
 
-import { useMessages } from '../../lib/i18n/react';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -59,9 +74,39 @@ import { waitlistOptions } from './waitlist-shared';
 /** How often to re-check for release. */
 const POLL_MS = 30000;
 
+/** The invite box's Join: the 40px pill that sits beside a field. */
+const JOIN = `${buttonVariants({
+  layout: 'shrink',
+  variant: 'pillAccent',
+  size: 'pill',
+  ink: 'solidLate',
+})} disabled:opacity-60`;
+
 interface MeUser {
   username?: string;
   hasPlatformAccess?: boolean;
+}
+
+interface WaitingAccount {
+  username: string | null;
+  email: string | null;
+}
+
+/** The account the shots' room shows: obviously made up. */
+const SHOT_ACCOUNT: WaitingAccount = { username: 'ada', email: 'ada@example.com' };
+
+/**
+ * The token in what was pasted into the invite box: a whole link
+ * (`https://…/invite/<token>`, any host, a query or fragment ignored), its
+ * path, or the bare token. Null for anything else.
+ */
+export function inviteTokenFromText(text: string): string | null {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  if (/^[A-Za-z0-9_-]{22}$/.test(raw)) return raw;
+  let pathname = raw;
+  try { pathname = new URL(raw, 'https://invite.invalid').pathname; } catch { /* not a link */ }
+  return inviteTokenFrom(pathname.replace(/\/+$/, ''));
 }
 
 /**
@@ -106,6 +151,14 @@ export function WaitingScreen() {
   // Phone sign-in is set up (the waitlist options' phone_sign_in): a queued
   // group can be joined now by adding a phone (./add-phone.tsx).
   const [phoneOffered, setPhoneOffered] = useState(false);
+  // Who is waiting (GET /api/auth/waiting). Null until read; the room reads
+  // as it did before without it.
+  const [account, setAccount] = useState<WaitingAccount | null>(null);
+  // The invite box: what was pasted, whether it is being followed, and why
+  // it was not.
+  const [link, setLink] = useState('');
+  const [joining, setJoining] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
 
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -170,17 +223,8 @@ export function WaitingScreen() {
   // this (GATE_OPEN_PATHS). Following it twice spends nothing, so a sign-up
   // that already followed it server-side is not counted again. Then the
   // list.
-  const followAndList = useCallback(async () => {
+  const listQueued = useCallback(async () => {
     try {
-      const host = legacy().AuthScreens as { _waitingInvite?: string } | undefined;
-      const token = (host && host._waitingInvite) || inviteTokenFrom(location.pathname);
-      if (host) host._waitingInvite = '';
-      if (token) {
-        await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
-          method: 'POST',
-          credentials: 'same-origin',
-        });
-      }
       const [res, options] = await Promise.all([
         fetch('/api/invite-links/queued', { credentials: 'same-origin' }),
         waitlistOptions(),
@@ -193,6 +237,71 @@ export function WaitingScreen() {
       /* the waiting room works without it */
     }
   }, []);
+
+  const followAndList = useCallback(async () => {
+    try {
+      const host = legacy().AuthScreens as { _waitingInvite?: string } | undefined;
+      const token = (host && host._waitingInvite) || inviteTokenFrom(location.pathname);
+      if (host) host._waitingInvite = '';
+      if (token) {
+        await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
+          method: 'POST',
+          credentials: 'same-origin',
+        });
+      }
+    } catch {
+      /* the waiting room works without it */
+    }
+    await listQueued();
+  }, [listQueued]);
+
+  const loadAccount = useCallback(async () => {
+    try {
+      const res = await fetch('/api/auth/waiting', { credentials: 'same-origin' });
+      if (!res.ok) return;
+      const body = await res.json();
+      setAccount({
+        username: typeof body?.username === 'string' ? body.username : null,
+        email: typeof body?.email === 'string' ? body.email : null,
+      });
+    } catch {
+      /* the room reads as it did without it */
+    }
+  }, []);
+
+  // A link pasted into the box, followed from this side as opening it
+  // would be: it queues its community (listed above once it is), and a
+  // link that lets the account in is caught by the check right after.
+  const joinWithLink = useCallback(async () => {
+    if (joining) return;
+    const token = inviteTokenFromText(link);
+    if (!token) {
+      setLinkError(t('auth:waiting.invite.notLink'));
+      return;
+    }
+    if (waitingShot(location.search)) return;
+    setJoining(true);
+    setLinkError(null);
+    try {
+      const res = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      if (res.ok) {
+        setLink('');
+        await listQueued();
+        await check();
+      } else if (res.status === 404 || res.status === 410) {
+        setLinkError(t('auth:waiting.invite.dead'));
+      } else {
+        setLinkError(t('auth:waiting.invite.failed'));
+      }
+    } catch {
+      setLinkError(t('auth:waiting.invite.failed'));
+    } finally {
+      setJoining(false);
+    }
+  }, [joining, link, listQueued, check, t]);
 
   // A phone added from here joined its queued groups as a private member,
   // which /api/auth/me reports as access: check now, and land in the first
@@ -208,11 +317,13 @@ export function WaitingScreen() {
     const shot = waitingShot(location.search);
     if (shot) {
       setQueued(shot === 'invite' ? [{ name: 'Sunday Run Club', inviter: null }] : []);
+      setAccount(SHOT_ACCOUNT);
       return;
     }
     startWaitingPoll();
     void followAndList();
-  }, [startWaitingPoll, followAndList]);
+    void loadAccount();
+  }, [startWaitingPoll, followAndList, loadAccount]);
 
   const onLogout = useCallback(async () => {
     const w = legacy();
@@ -269,8 +380,19 @@ export function WaitingScreen() {
             {t('auth:waiting.title')}
           </h1>
           <p className="mt-3 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">
-            {t('auth:waiting.lead')}
+            {account?.email ? (
+              <RichMessage
+                id="auth:waiting.leadEmail"
+                values={{ email: account.email }}
+                components={[<strong className="break-all font-semibold text-zinc-900 dark:text-zinc-100" />]}
+              />
+            ) : t('auth:waiting.lead')}
           </p>
+          {account?.username ? (
+            <p data-waiting-account="" className="mt-2 text-[13px] text-zinc-500 dark:text-zinc-400">
+              {t('auth:waiting.account', { username: account.username })}
+            </p>
+          ) : null}
           {queued.length ? (
             <p data-waiting-queued="" className="mt-7 text-balance rounded-[20px] bg-white px-4 py-3.5 text-[15px] leading-5 text-zinc-600 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-300">
               {t('auth:waiting.youJoin', { communities: namesLine(queued.map((q) => q.name)) })}
@@ -279,6 +401,31 @@ export function WaitingScreen() {
           {phoneOffered && queued.length ? (
             <AddPhoneCard groups={queued.map((q) => q.name)} onJoined={onJoined} />
           ) : null}
+          <form
+            data-waiting-invite=""
+            className="mt-7 rounded-[20px] bg-white p-4 text-left shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900"
+            onSubmit={(e) => { e.preventDefault(); void joinWithLink(); }}
+          >
+            <h2 className="text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{t('auth:waiting.invite.title')}</h2>
+            <p className="mt-0.5 text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:waiting.invite.lead')}</p>
+            <div className="mt-3 flex items-center gap-2">
+              <input
+                type="url"
+                inputMode="url"
+                autoComplete="off"
+                enterKeyHint="go"
+                aria-label={t('auth:waiting.invite.label')}
+                placeholder={t('auth:waiting.invite.placeholder')}
+                value={link}
+                onChange={(e) => { setLink(e.target.value); if (linkError) setLinkError(null); }}
+                className="h-10 min-w-0 flex-1 rounded-full border-0 bg-zinc-50 px-4 text-[15px] text-zinc-900 placeholder-zinc-500 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] focus:outline-none dark:bg-zinc-800 dark:text-zinc-100"
+              />
+              <button type="submit" disabled={joining || !link.trim()} className={JOIN}>
+                {joining ? t('auth:waiting.invite.joining') : t('auth:waiting.invite.join')}
+              </button>
+            </div>
+            {linkError ? <p role="alert" className="mt-2 text-[13px] text-red-600 dark:text-red-400">{linkError}</p> : null}
+          </form>
           {/*
               The room's one picture, in the space between the lines and
               Sign out (C1b-waiting on the onboarding canvas): the same
