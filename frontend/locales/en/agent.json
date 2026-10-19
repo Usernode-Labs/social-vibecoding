@@ -2067,6 +2067,10 @@
     "text": "Report app",
     "description": "Small link at the foot of the app menu, beside a flag: a verb, reports this app to Homeroom's moderators."
   },
+  "appContext.privacy": {
+    "text": "Privacy",
+    "description": "Small link at the foot of the app menu (the sheet opened from the app's name in the header), before \"Report app\": opens Homeroom's privacy notice in a new tab."
+  },
   "sidePanel.expandLabel": {
     "text": "Open full width, leaving the app",
     "description": "Accessible name of the expand button in the header of the side panel (the pane docked beside an app on a wide screen, showing a conversation or a Workshop page): shows the panel's page on the whole screen instead of beside the app. \"Open\" is a verb."
