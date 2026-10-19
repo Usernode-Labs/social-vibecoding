@@ -59,15 +59,17 @@ export interface Facts {
   campaign: CampaignRow | null;
   // Start: the rows it already has, else its targets.
   apps: AppRow[];
-  // MergeGreen: its proposals in review whose checks passed or were skipped.
+  // MergeGreen, AutoMerge, and Check while auto-merge is on: its proposals
+  // in review whose checks passed or were skipped.
   green: { sessionId: number; appId: number }[];
   // Check: its proposals still being put up for a vote.
   asked: Asked[];
   // A change's result: whether its app still exists (locked, so it is not
   // deleted under the proposal row the result writes).
   appAlive: boolean | null;
-  // The room it has to change its next app (see Room); null for a drain or
-  // a stop.
+  // The room it has to change its next app (see Room), and how many of its
+  // proposals are open (auto-merge's check runs while any are); null for a
+  // drain.
   room: Room | null;
 }
 
@@ -162,15 +164,20 @@ async function readRoom(tx: Tx, campaignId: number, deployLimit: number): Promis
 }
 
 export async function readFacts(tx: Tx, campaignId: number, event: Event<any>, proposing: number[],
-  o: { deployLimit: number } = { deployLimit: 100 }): Promise<Facts> {
+  o: { deployLimit: number; autoMerge?: boolean } = { deployLimit: 100 }): Promise<Facts> {
   const campaign = await readCampaign(tx, campaignId);
   if (!campaign) return NO_FACTS;
   const out: Facts = { ...NO_FACTS, campaign };
   // Every event that may change the next app (a retry of a finished
-  // campaign's app included) reads it; an admin's drain and stop do not.
-  if (event.type !== 'MergeGreen' && event.type !== 'Stop') out.room = await readRoom(tx, campaignId, o.deployLimit);
+  // campaign's app included), or that sets the check (a stop keeps it for
+  // auto-merge), reads it; an admin's drain does not.
+  if (event.type !== 'MergeGreen') out.room = await readRoom(tx, campaignId, o.deployLimit);
   if (event.type === 'Start') out.apps = await readApps(tx, campaign);
-  if (event.type === 'MergeGreen') out.green = await readGreen(tx, campaignId);
+  // The green ones: for a drain, for auto-merge being turned on, and for
+  // each check while it is on.
+  if (event.type === 'MergeGreen' || event.type === 'AutoMerge' || (event.type === 'Check' && o.autoMerge)) {
+    out.green = await readGreen(tx, campaignId);
+  }
   if (event.type === 'Check') out.asked = await readAsked(tx, campaignId, proposing);
   const p = event.payload as any;
   if ((event.type === 'WorkSucceeded' || event.type === 'WorkFailed' || event.type === 'WorkExhausted') && typeof p?.workKey === 'string') {

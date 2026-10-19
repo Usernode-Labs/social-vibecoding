@@ -587,7 +587,7 @@ export async function adoptDeferredDms(): Promise<number> {
 
 // An admin's moves on a campaign (routes/campaigns.js): retry one app, force
 // its green proposals, stop it. Each answers with the machine's outcome.
-export async function campaignEvent(campaignId: number, type: 'RetryApp' | 'MergeGreen' | 'Stop' | 'Resume',
+export async function campaignEvent(campaignId: number, type: 'RetryApp' | 'MergeGreen' | 'Stop' | 'Resume' | 'AutoMerge',
   payload: Record<string, unknown>, user: { id?: number | null; username?: string | null }): Promise<EventOutcome> {
   if (!runtime) throw new Error('The workflow runtime is not running in this process');
   return runtime.appendAndWait(CAMPAIGN, campaignKey(campaignId),

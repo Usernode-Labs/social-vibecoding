@@ -174,8 +174,9 @@ test('the room is the admin\'s session limit when one is set, else the deploy\'s
   assert.deepEqual((await readFacts(tx('180'), 3, check, [], { deployLimit: 140 })).room, { used: 131, limit: 180, open: 4 });
   assert.deepEqual((await readFacts(tx(null), 3, check, [], { deployLimit: 140 })).room, { used: 131, limit: 140, open: 4 });
   assert.deepEqual((await readFacts(tx('0'), 3, check, [], { deployLimit: 140 })).room.limit, 140, 'an unusable setting is ignored');
-  const stop = { id: 10, type: 'Stop', payload: {}, source: { kind: 'route' } };
-  assert.equal((await readFacts(tx('180'), 3, stop, [], { deployLimit: 140 })).room, null);
+  // A drain reads no room; a stop does (auto-merge's check is kept by it).
+  const drain = { id: 10, type: 'MergeGreen', payload: {}, source: { kind: 'route' } };
+  assert.equal((await readFacts(tx('180'), 3, drain, [], { deployLimit: 140 })).room, null);
 });
 
 test('the platform builds the campaign from the deploy\'s limit, the warning line and CAMPAIGN_MAX_OPEN', () => {
@@ -270,4 +271,112 @@ test('an admin resumes from the campaign page, through its own route', () => {
   assert.match(page, /write && detail\.status === 'cancelled' && notReached > 0 \?/);
   assert.match(page, /fetch\(`\/api\/campaigns\/\$\{c\.id\}\/resume`, \{ method: 'POST' \}\)/);
   assert.match(page, /Resume campaign \(\$\{notReached\} not reached\)/);
+});
+
+// ─── 5. Auto-merge ──────────────────────────────────────────────────────
+
+const greenFacts = (room, green) => ({ ...facts(room), green });
+const forced = (out) => (out.messages || []).filter((m) => m.event?.type === 'ForceMerge');
+
+test('turned on, auto-merge merges what is green at once, in the admin\'s name, and keeps the check', () => {
+  const m = campaign(DEPS);
+  const s = running([app(1, 'proposed', { sessionId: 501 }), app(2, 'proposed', { sessionId: 502 }), app(3, 'changing')]);
+  const e = { id: 7, type: 'AutoMerge', payload: { on: true, userId: 1, username: 'evan' }, source: { kind: 'route' } };
+  assert.equal(m.check(e, facts(null), s), true, 'an admin\'s move');
+  const out = m.entryFor('running', 'AutoMerge').to(s, e, greenFacts({ used: 100, limit: 140, open: 2 }, [{ sessionId: 501, appId: 1 }]), ctxAt(0));
+  assert.deepEqual(forced(out).map((x) => [x.to.key, x.event.payload.userId, x.event.payload.username]), [['session:501', 1, 'evan']]);
+  assert.equal(out.next.data.autoMerge.by, 'evan');
+  assert.deepEqual(out.next.data.autoAsked, [501]);
+  assert.match(lines(out)[0].content, /Auto-merge for maintenance campaign ".*" was turned on by evan: each of its proposals is merged as soon as its checks pass/);
+  assert.deepEqual(out.timer, { at: new Date(T0 + CHECK_MS), event: { type: 'Check' } }, 'looked at again while any are open');
+  // Turned on again: nothing said twice, nothing asked twice.
+  const again = m.entryFor('running', 'AutoMerge').to(out.next, e, greenFacts({ used: 100, limit: 140, open: 2 }, [{ sessionId: 501, appId: 1 }]), ctxAt(60_000));
+  assert.equal(lines(again).length, 0);
+  assert.equal(forced(again).length, 0);
+});
+
+test('each check merges the proposals that turned green since, once each, in any state, while any are open', () => {
+  const m = campaign(DEPS);
+  const on = { at: ctxAt(0).now.toISOString(), by: 'evan', userId: 1, username: 'evan' };
+  const e = { id: 8, type: 'Check', payload: {}, source: { kind: 'timer' } };
+  for (const name of ['running', 'done', 'stopped']) {
+    const s = { name, data: { ...running([app(1, 'proposed', { sessionId: 501 }), app(2, 'proposed', { sessionId: 502 })]).data,
+      autoMerge: on, autoAsked: [501] } };
+    const out = m.entryFor(name, 'Check').to(s, e, greenFacts({ used: 100, limit: 140, open: 2 }, [{ sessionId: 501, appId: 1 }, { sessionId: 502, appId: 2 }]), ctxAt(CHECK_MS));
+    assert.deepEqual(forced(out).map((x) => x.to.key), ['session:502'], `${name}: only the one not asked yet`);
+    assert.deepEqual(out.next.data.autoAsked, [501, 502]);
+    assert.deepEqual(out.timer, { at: new Date(T0 + 2 * CHECK_MS), event: { type: 'Check' } }, `${name}: and again`);
+  }
+  // Nothing open any more: the check ends.
+  const s = { name: 'done', data: { ...running([app(1, 'proposed', { sessionId: 501 })]).data, autoMerge: on, autoAsked: [501] } };
+  const last = m.entryFor('done', 'Check').to(s, e, greenFacts({ used: 100, limit: 140, open: 0 }, []), ctxAt(CHECK_MS));
+  assert.equal(last.timer, null);
+});
+
+test('turned off, it asks nothing more; a stop keeps it running; a drain while it is on is not asked again', () => {
+  const m = campaign(DEPS);
+  const on = { at: ctxAt(0).now.toISOString(), by: 'evan', userId: 1, username: 'evan' };
+  const s = running([app(1, 'proposed', { sessionId: 501 })], { autoMerge: on, autoAsked: [] });
+  const off = m.entryFor('running', 'AutoMerge').to(s, { id: 9, type: 'AutoMerge', payload: { on: false, userId: 1, username: 'evan' }, source: { kind: 'route' } },
+    greenFacts({ used: 100, limit: 140, open: 1 }, [{ sessionId: 501, appId: 1 }]), ctxAt(0));
+  assert.equal(off.next.data.autoMerge, null);
+  assert.equal(forced(off).length, 0);
+  assert.match(lines(off)[0].content, /was turned off by evan/);
+  assert.equal(off.timer, null, 'nothing else needs the check');
+  const check = m.entryFor('running', 'Check').to(off.next, { id: 10, type: 'Check', payload: {}, source: { kind: 'timer' } },
+    greenFacts({ used: 100, limit: 140, open: 1 }, [{ sessionId: 501, appId: 1 }]), ctxAt(CHECK_MS));
+  assert.equal(forced(check).length, 0);
+
+  const stopped = m.entryFor('running', 'Stop').to({ ...s, data: { ...s.data, apps: [...s.data.apps, app(2, 'waiting')] } },
+    { id: 11, type: 'Stop', payload: { userId: 1, username: 'evan' }, source: { kind: 'route' } }, facts({ used: 100, limit: 140, open: 1 }), ctxAt(0));
+  assert.equal(stopped.next.name, 'stopped');
+  assert.equal(stopped.next.data.autoMerge.by, 'evan', 'a stop opens nothing more, and merges what turns green');
+  assert.equal(stopped.timer, undefined, 'the check armed for auto-merge is kept, not cleared');
+
+  const drained = m.entryFor('running', 'MergeGreen').to(s, { id: 12, type: 'MergeGreen', payload: { userId: 1, username: 'evan' }, source: { kind: 'route' } },
+    greenFacts(null, [{ sessionId: 501, appId: 1 }]), ctxAt(0));
+  assert.deepEqual(drained.next.data.autoAsked, [501]);
+});
+
+test('the facts read the green ones for auto-merge: when it is turned on, and at each check while it is on', async () => {
+  const { readFacts } = require('../src/workflow/campaign/facts.ts');
+  const asked = [];
+  const tx = {
+    async query(sql) {
+      asked.push(sql);
+      if (/FROM maintenance_campaigns mc WHERE mc\.id = \$1 FOR UPDATE/.test(sql)) {
+        return { rows: [{ id: 3, issue_id: 1769, title: 'T', status: 'running', target_filter: null, thread_app_id: 1 }] };
+      }
+      if (/cs\.check_state IN \('passing', 'skipped'\)/.test(sql)) return { rows: [{ id: 501, app_id: 1 }] };
+      return { rows: [] };
+    },
+  };
+  const ev = (type) => ({ id: 1, type, payload: {}, source: { kind: 'route' } });
+  assert.deepEqual((await readFacts(tx, 3, ev('AutoMerge'), [], { deployLimit: 140 })).green, [{ sessionId: 501, appId: 1 }]);
+  assert.deepEqual((await readFacts(tx, 3, ev('Check'), [], { deployLimit: 140, autoMerge: true })).green, [{ sessionId: 501, appId: 1 }]);
+  assert.deepEqual((await readFacts(tx, 3, ev('Check'), [], { deployLimit: 140 })).green, [], 'not while it is off');
+});
+
+test('an admin turns it on and off from the campaign page, and the page says it is on', async () => {
+  const routes = read('src/routes/campaigns.js');
+  assert.match(routes, /router\.post\('\/api\/campaigns\/:id\/auto-merge', sameOriginBrowserOnly, async \(req, res\) => \{\n\s+try \{\n\s+if \(!req\.user\?\.canAdminWrite\)/);
+  assert.match(routes, /if \(typeof on !== 'boolean'\) return res\.status\(400\)/);
+  assert.match(routes, /platform\(\)\.campaignEvent\(id, 'AutoMerge', \{ on \}, req\.user\)/);
+  const page = read('frontend/src/features/admin/admin-campaigns.tsx');
+  assert.match(page, /fetch\(`\/api\/campaigns\/\$\{c\.id\}\/auto-merge`/);
+  assert.match(page, /autoOn \? 'Turn off auto-merge' : 'Auto-merge green'/);
+  assert.match(page, /Auto-merge is on/);
+  const fleet = require('../src/services/fleet-maintenance');
+  const pool = {
+    async query(sql) {
+      if (/SELECT \* FROM maintenance_campaigns WHERE id = \$1/.test(sql)) {
+        return { rows: [{ id: 3, issue_id: 1769, title: 'T', instructions: 'i', status: 'running', created_at: 'x', completed_at: null }] };
+      }
+      if (/FROM wf_instances WHERE machine = 'campaign' AND key = \$1/.test(sql)) {
+        return { rows: [{ held: null, auto_merge: { at: '2026-10-19T12:50:00.000Z', by: 'evan', userId: 1, username: 'evan' } }] };
+      }
+      return { rows: [] };
+    },
+  };
+  assert.deepEqual((await fleet.campaignStatus(pool, 3)).autoMerge, { at: '2026-10-19T12:50:00.000Z', by: 'evan' });
 });
