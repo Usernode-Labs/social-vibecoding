@@ -66,8 +66,6 @@ const IDS = Object.freeze({
   // Request numbers on the platform app, as botRequest is: the three the
   // bot's rings in the member's bell are about.
   botRingRequests: Object.freeze([990877, 990878, 990879]),
-  // #5471: the change whose went-live note is over a day old.
-  votedLiveStaleProposal: 990880,
 });
 const RESERVED_RANGE = Object.freeze([990840, 990895]);
 
@@ -1688,63 +1686,6 @@ const STATES = [
         shows: [
           { state: 'The change itself, live, with your Yes on it.',
             path: `/#app/${ctx.selfAppSlug}/dev/proposals/${IDS.votedLiveProposal}` },
-        ],
-      };
-    },
-  },
-  {
-    // #5471: the same went-live note as the state above, but the change went
-    // live over a day ago: since this change the bell stops listing it while
-    // it is unread, so the row shows on a before copy and is gone on an
-    // after one. By the read-only admin, merged and live 26 hours ago, with
-    // the member's Yes; the row as notifications.js
-    // createVotedChangeMergedNotifications writes it, unread.
-    id: 'shots-demo-member-voted-change-live-stale-v1',
-    persona: 'member',
-    needs: {
-      chat_sessions: ['id', 'app_id', 'user_id', 'branch_name', 'pr_number', 'pr_title', 'pr_summary_md',
-        'status', 'promoted_at', 'merged_at', 'live_at', 'check_state', 'created_at', 'last_activity_at'],
-      pr_votes: ['session_id', 'user_id', 'vote', 'created_at'],
-      notifications: ['user_id', 'app_id', 'session_id', 'source_user_id', 'kind', 'detail', 'read_at', 'created_at'],
-      mobile_push_kind_categories: ['kind'],
-    },
-    free: async (client, ctx) => {
-      const known = await client.query(
-        `SELECT 1 FROM mobile_push_kind_categories WHERE kind = 'voted_change_merged'`);
-      const pr = await client.query('SELECT 1 FROM chat_sessions WHERE app_id = $1 AND pr_number = $2',
-        [ctx.appId, IDS.votedLiveStaleProposal]);
-      return known.rowCount === 1 && pr.rowCount === 0
-        && idsFree(client, 'chat_sessions', [IDS.votedLiveStaleProposal]);
-    },
-    async install(client, ctx) {
-      const title = '[shots fixture] Wider checkboxes on the vote list';
-      await client.query(
-        `INSERT INTO chat_sessions
-           (id, app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, status,
-            promoted_at, merged_at, live_at, check_state, created_at, last_activity_at)
-         VALUES ($1, $2, $3, 'shots-fixture/voted-live-stale', $1, $4,
-                 'A demo change the group voted in: it went live 26 hours ago.',
-                 'merged', NOW() - INTERVAL '2 days', NOW() - INTERVAL '26 hours', NOW() - INTERVAL '26 hours',
-                 'passing', NOW() - INTERVAL '3 days', NOW() - INTERVAL '26 hours')`,
-        [IDS.votedLiveStaleProposal, ctx.appId, ctx.admin.id, title]
-      );
-      // The epoch is stamped by the table's trigger.
-      await client.query(
-        `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
-         VALUES ($1, $2, 'yes', NOW() - INTERVAL '40 hours')`,
-        [IDS.votedLiveStaleProposal, ctx.member.id]
-      );
-      await client.query(
-        `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail, read_at, created_at)
-         VALUES ($1, $2, $3, NULL, 'voted_change_merged', NULL, NULL, NOW() - INTERVAL '26 hours')`,
-        [ctx.member.id, ctx.appId, IDS.votedLiveStaleProposal]
-      );
-      return {
-        shows: [
-          { state: `Your bell's All tab: no row for a change you voted on that went live 26 hours ago. On a copy built before #5471 the row "A change you voted on is live" over ${title} is still listed there, unread.`,
-            path: '/' },
-          { state: 'The change itself, live and merged, with your Yes on it.',
-            path: `/#app/${ctx.selfAppSlug}/dev/proposals/${IDS.votedLiveStaleProposal}` },
         ],
       };
     },

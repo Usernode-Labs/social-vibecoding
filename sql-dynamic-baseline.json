@@ -1265,6 +1265,13 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
+      "fingerprint": "2d0d87933561ba11fb65",
+      "count": 1,
+      "preview": "`SELECT COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND NOT ${DECIDED_ASK_SETTLED_SQL} AND ${CONVERSATION_ACCESS_SQL} "
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
       "fingerprint": "85f7f82a1c2c7b3bf08d",
       "count": 1,
       "preview": "`SELECT n.id, n.kind, n.user_id, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.rea"
@@ -1282,13 +1289,6 @@
       "fingerprint": "b83117b670d097e6e2dc",
       "count": 1,
       "preview": "`UPDATE notifications SET read_at = NOW() WHERE user_id = $1 AND ${def.scope} = $2 AND kind = ANY($3) AND read_at IS NULL`"
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
-      "fingerprint": "c875c9bf741f599648d1",
-      "count": 1,
-      "preview": "`SELECT COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND NOT ${DECIDED_ASK_SETTLED_SQL} AND ${CONVERSATION_ACCESS_SQL} "
     },
     {
       "source": "src/services/notifications.js",
