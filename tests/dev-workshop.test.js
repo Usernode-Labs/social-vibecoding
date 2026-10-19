@@ -3602,6 +3602,34 @@ test('#5236: the Communities feed\'s answered card adds your vote to its counts'
   } finally { global.window = prev; }
 });
 
+// #5466: a vote cast OFF the project page used to leave the kept queue
+// holding the row — `AppView._publishWorkshop` publishes only while
+// #dev-workshop is up and `refreshDevData` no-ops outside the dev tab — so
+// the hub's "For you" card, the places list's Needs you count and the deck
+// itself kept asking for a vote the server had saved. Two pins: the deck
+// hands its own saved vote to the store (#4794, as the Communities feed
+// does), and the publish strips saved votes at the door through the same
+// pure rule the store listener runs, so a later publish built from a
+// pre-vote list cannot bring the row back.
+test('#5466: the project deck and its publish drop a saved vote\'s row', () => {
+  // The project's deck is the only <NeedsFeed this file draws; the slice up
+  // to the next section is the whole call.
+  const call = WORKSHOP.slice(WORKSHOP.indexOf('<NeedsFeed'), WORKSHOP.indexOf('WHENEVER THE TAB IS UP'));
+  assert.match(call, /onAnswered=\{\(row\) => \{/, 'the #4794 hook is passed');
+  assert.match(call, /devWorkshopStore\.get\(\)/, 'it reads the kept store');
+  assert.match(call, /queue\.filter\(\(r\) => r\.key !== row\.key\)/, 'and drops the row by key');
+  // The strip is one shared rule, used by the listener over the kept queue
+  // (which fires whichever tab the viewer is on) and by the publish.
+  assert.match(WORKSHOP, /export function withoutSavedVotes\(/);
+  assert.match(WORKSHOP,
+    /voteSavedStore\.subscribe\(\(\) => \{[\s\S]*?withoutSavedVotes\(cur\.queue, voteSavedStore\.get\(\)\)/,
+    'the kept queue hears a vote cast anywhere, through the same rule');
+  const MOUNT = read('frontend/src/features/dev-board/mount.ts');
+  assert.match(MOUNT, /import \{ DevWorkshop, withoutSavedVotes \} from '\.\/workshop\/workshop';/);
+  assert.match(MOUNT, /withoutSavedVotes\(view\.queue, voteSavedStore\.get\(\)\)/,
+    'a publish runs the queue through the strip at the door');
+});
+
 test('the footnote says what is actually happening to the grouping', () => {
   // The first cut said "once an AI model is available" while the model was
   // mid-draft — on exactly the first visit after a deploy. Four states now.
