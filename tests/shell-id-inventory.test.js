@@ -1129,7 +1129,7 @@ const ADDED_IDS = {
   'platform-rail-pinned': 'The sidebar\'s Pinned section (role=group), between #platform-rail-conversations and #platform-rail-communities, hidden while nothing is pinned. Home\'s drag recognizer drops a My apps tile on it; dapp.json pins the bar order through it.',
   'platform-rail-pinned-label': 'The section\'s "Pinned" heading, which names the group.',
   'platform-rail-search': 'D: the search beside that heading, shown on hover or focus: All communities with its search box focused and lit (features/workshop/communities-search.ts). dapp.json selects on it.',
-  'workshop-search': 'D: the search at the head of All communities\' column (features/workshop/index.tsx), drawn by app.css from 1024px only: your communities by name, as one list. Prerendered empty.',
+  'workshop-search': 'D: the search at the head of All communities (features/workshop/index.tsx), at every width since #5296: your communities by name, in the one list. Prerendered empty.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

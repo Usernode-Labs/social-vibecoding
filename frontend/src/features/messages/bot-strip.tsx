@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import {
   ArrowPathIcon, ChatIcon, CheckIcon, ChevronDownIcon, ClockIcon, EllipsisHorizontalIcon, EyeIcon, InfoCircleIcon,
@@ -8,6 +8,7 @@ import {
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useResolvedCommunityColor } from '../../lib/community-color';
+import { useDismiss } from '../message-actions/use-dismiss';
 import * as api from './api';
 import { noteApprovedHere, useApprovedHere } from './bot-activity-store';
 import { tryChange } from './bot-ready';
@@ -740,15 +741,36 @@ export function BotStripView({ work, remembered = null, onRemember, now }: BotSt
   // Done today is folded each time the drawer opens: what is settled waits behind its count.
   const [doneOpen, setDoneOpen] = useState(false);
   const parts = summaryParts(model);
-  if (!parts.length) return null;
   const choose = (next: boolean) => { setOpen(next); setDoneOpen(false); onRemember?.(next); };
   const onOpen = (row: StripRow) => { choose(false); openRow(row); };
+  // THE ••• MENU'S RULES (polish board #22, 19 Oct 2026): a press anywhere
+  // outside the bar and its drawer closes it, and so does Escape, which
+  // hands focus back to the bar. It used to close only from the bar or the
+  // dimmed chat under it, so a press on the sidebar or the header left it
+  // open, and Escape did nothing but draw the browser's own focus ring.
+  // Above the early return below: the bar draws nothing until the tray has
+  // something to say, and a hook after that return would change the count.
+  const sectionRef = useRef<HTMLElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  useDismiss(open, [sectionRef], () => choose(false));
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && sectionRef.current?.contains(document.activeElement)) {
+        toggleRef.current?.focus({ preventScroll: true });
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
+  if (!parts.length) return null;
   const needTags = model.needs.slice(0, NEEDS_LIMIT).map((row) => row.job.issueNumber).filter((n): n is number => !!n && n > 0);
   return (
-    <section className="relative z-20 shrink-0" aria-label={t('messages:bot.strip.name')} data-bot-strip={open ? 'open' : 'closed'}>
+    <section ref={sectionRef} className="relative z-20 shrink-0" aria-label={t('messages:bot.strip.name')} data-bot-strip={open ? 'open' : 'closed'}>
       <button
+        ref={toggleRef}
         type="button"
-        className="flex w-full items-center gap-2.5 bg-[color:var(--dc-sheet-solid)] px-4 py-2.5 text-left shadow-[inset_0_-1px_0_var(--app-sheet-line)] hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+        className="flex w-full items-center gap-2.5 bg-[color:var(--dc-sheet-solid)] px-4 py-2.5 text-left shadow-[inset_0_-1px_0_var(--app-sheet-line)] hover:bg-zinc-50 dark:hover:bg-zinc-800/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500"
         aria-expanded={open}
         data-bot-strip-toggle=""
         onClick={() => choose(!open)}

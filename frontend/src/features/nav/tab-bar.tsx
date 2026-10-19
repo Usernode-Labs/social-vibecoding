@@ -89,8 +89,7 @@ import {
 import { CommunitySwitcher } from '../workshop/community-switcher';
 import { pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
-import { pinnedAppsStore } from './pinned-apps-store.js';
-import { RailCommunities, useRailCommunities, votesElsewhere } from './rail-communities';
+import { RailCommunities, useRailCommunities } from './rail-communities';
 import { RailConversations } from './rail-conversations';
 import { RailPinned } from './rail-pinned';
 import { useSidebarRows } from './sidebar-rows';
@@ -140,8 +139,8 @@ const TABS = [
   { key: 'discover' as const, label: 'core:tabs.discover', href: '#apps', Icon: CompassIcon },
   { key: 'messages' as const, label: 'core:tabs.messages', href: '#messages', Icon: ChatIcon },
   { key: 'workshop' as const, label: 'core:tabs.communities', href: '#communities', Icon: UserGroupIcon },
-  // "Me" is the label only until somebody is signed in: from then on this tab
-  // is named after them (#2760) — see tabLabel below.
+  // "You", signed in or not (N7 of the 19 Oct polish board); the accessible
+  // name adds whose account it is — see tabLabel below.
   { key: 'me' as const, label: 'core:tabs.me', href: '#profile', Icon: UserIcon },
 ];
 
@@ -163,16 +162,21 @@ const TABS = [
  * THE ACCESSIBLE NAME KEEPS SAYING WHAT THE TAB IS. A bare username among
  * Home, Discover, Communities and Messages would be read out as a person rather
  * than a place, so the label names both, and it starts with the visible text
- * so a voice command that says what is on screen still finds it. Long names
- * are cut by app.css with an ellipsis; usernames are at most 32 characters
- * and never contain a space, so a clipped one is still recognisably yours.
+ * so a voice command that says what is on screen still finds it.
+ *
+ * …AND THE TAB SAYS "You" NOW (N7 of the 19 Oct 2026 polish board; the owner
+ * agreed). A username is up to 32 characters, and in a fifth of a phone's
+ * width a long one was cut to "newbie_t1…", the only label on the bar that
+ * did not fit. "You" is the account's place, as Home and Messages are
+ * places; it is the prerender too, so the name arriving changes no text on
+ * screen, and the accessible name still says whose it is.
  */
 export function tabLabel(
   key: string,
   label: string,
   viewer: string | null,
 ): { text: string; ariaLabel: string | undefined } {
-  if (key === 'me' && viewer) return { text: viewer, ariaLabel: translate('core:tabs.meNamed', { username: viewer }) };
+  if (key === 'me' && viewer) return { text: label, ariaLabel: translate('core:tabs.meNamed', { username: viewer }) };
   return { text: label, ariaLabel: undefined };
 }
 
@@ -245,9 +249,10 @@ function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
  * the drawer replaced on a phone. The desktop rail draws no ring (app.css):
  * the header's name is the switcher there.
  *
- * All communities is THE PRERENDER: the scope arrives from localStorage and
- * app.js after the first paint, so the shipped markup and the first client
- * render are both this branch.
+ * All communities is THE PRERENDER: the scope arrives from localStorage in
+ * an effect flushed with the hydration (before the first paint) and from
+ * app.js, so the shipped markup and the first client render are both this
+ * branch.
  */
 function CommunityTabFace({ info }: { info: CommunityInfo | null }) {
   const color = useCommunityColor(info
@@ -493,8 +498,8 @@ export function tabContentRect(tab: HTMLElement): ContentRect | null {
  * to 150ms while the new screen lays out and its data lands), so a slide
  * started two frames out still began inside one of them and showed from its
  * middle. So a press moves the pill FIRST, in the press's own task, and it is
- * the NAVIGATION that waits, until the slide is running on the compositor
- * where the swap cannot hold it (useTabMarker's `press`, schedulePress). This
+ * the NAVIGATION that waits, for the frame that lights the tab and no longer
+ * (useTabMarker's `press`, ./tab-press.ts schedulePress says why). This
  * path is still what a tab change the bar did not start takes (Back, a link,
  * a deep link).
  *
@@ -607,10 +612,8 @@ function useTabMarker(
 } {
   const [box, setBox] = useState<TabMarkerBox | null>(null);
   const markerRef = useRef<HTMLSpanElement | null>(null);
-  // The box the marker was last laid out at, which the next slide leaves,
-  // and the slide playing now, whose start a press waits for.
+  // The box the marker was last laid out at, which the next slide leaves.
   const laidOut = useRef<TabMarkerBox | null>(null);
-  const slide = useRef<Animation | null>(null);
   // THE TAB A PRESS LIT, until the router has answered it (#3259). The bar
   // answers a press at once, pill and label together, and the router's tab
   // takes over when it lands; `lit` is what the bar draws. Null at first,
@@ -697,10 +700,9 @@ function useTabMarker(
     const running = typeof el.getAnimations === 'function' ? el.getAnimations() : [];
     const from = prev && running.length ? shownBox(prev, getComputedStyle(el).transform) : prev;
     for (const animation of running) animation.cancel();
-    slide.current = null;
     if (!box || !from || !box.slide || !motionWelcome()) return;
     const [start, end] = slideKeyframes(from, box);
-    slide.current = el.animate([{ transform: start }, { transform: end }], {
+    el.animate([{ transform: start }, { transform: end }], {
       duration: MARKER_SLIDE.duration,
       easing: MARKER_SLIDE.easing,
     });
@@ -714,10 +716,10 @@ function useTabMarker(
 
   /**
    * A press on another tab (#3259): light it and slide to it NOW, and
-   * navigate once the slide is running (schedulePress). The slide is made in
-   * the press's own task, and the swap's long frames begin only after it is
-   * on the compositor, where they cannot hold it. `go` is the tab's own
-   * navigation, run a few frames late.
+   * navigate once that frame is painted (schedulePress). The slide is made in
+   * the press's own task; the swap no longer waits for it to be running
+   * (polish board #2: that wait held the old screen up for 120 to 205ms).
+   * `go` is the tab's own navigation, run a frame late.
    *
    * False when the pill cannot slide (the desktop rail, reduced motion,
    * nothing lit yet): the caller navigates as it always did, at once.
@@ -731,7 +733,7 @@ function useTabMarker(
     place(el, true);
     setPressed(key);
     // A second press before the first has navigated replaces it.
-    schedulePress(pending, key, go, () => setPressed(null), () => slide.current?.ready ?? null);
+    schedulePress(pending, key, go, () => setPressed(null));
     return true;
   };
 
@@ -765,7 +767,10 @@ export function PlatformTabs() {
   const visible = useVisibility('platform-tabs', true);
   const { tab, messages, communities, screen, peek, peekOut, railOpen, viewer } = useStoreState(navStore);
   // THE COMMUNITY THE FOURTH TAB IS ON (../workshop/community-scope.ts). Read
-  // from storage after the first paint, and every community's votes owed a
+  // from storage by this effect, which is flushed with the hydration itself
+  // (main.tsx hydrates in flushSync), so before the first paint; the viewer's
+  // list of communities follows in the same task (lib/shell-snapshot-apply.ts),
+  // and every community's votes owed a
   // moment after sign-in, so the badge can say so before anybody opens the
   // switcher.
   const scope = useStoreState(communityScopeStore);
@@ -779,12 +784,13 @@ export function PlatformTabs() {
   // until you have taken part there (tabVotes says why).
   const votes = tabVotes(scope);
   // THE SIDEBAR OF ROWS (./sidebar-rows.ts, from 768px): the five
-  // communities it lists (./rail-communities.tsx), and on its All row the
-  // votes in the ones it does not, so no vote is counted twice.
-  // The pinned ones have their own rows above them, with their own counts.
+  // communities it lists (./rail-communities.tsx), and on its All row every
+  // vote waiting on you, the tab's own figure (#18 of the 19 Oct polish
+  // board). It was the votes in the communities the rows above did not
+  // list, which read as a total and was not one: 67 there while Needs you
+  // said 93.
   const railShown = useRailCommunities();
-  const { apps: pins } = useStoreState(pinnedAppsStore);
-  const elsewhere = votesElsewhere([...pins.map((app: { slug: string }) => app.slug), ...railShown], scope.list, scope.info);
+  const allVotes = Number(scope.badgeNeeds) || 0;
   const allCount = scope.list ? scope.list.length : 0;
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
@@ -995,10 +1001,12 @@ export function PlatformTabs() {
                 Rendered only above zero, so the prerender (INITIAL is 0)
                 and the first client render agree with no badge at all.
 
-                AND IT IS THE QUIET ONE (#2912). Unread messages are counted
-                in the bell too, so this one is grey rather than the bell's
-                red: on the phone's bar a grey disc on the glyph's corner, on
-                the desktop rail a grey pill at the row's far end. It stays
+                AND IT IS THE QUIET ONE (#2912). Grey is "new to read"
+                everywhere (#18, 19 Oct 2026): the bell's red counts what
+                happened to you and leaves plain messages to this count, so
+                one message lights one number. On the phone's bar a grey disc
+                on the glyph's corner, on the desktop rail a grey pill at the
+                row's far end. It stays
                 HERE in the markup for both; app.css moves it on the rail by
                 dissolving this wrapper, so the phone keeps its anchor and a
                 declared check keeps finding it inside the Messages tab.
@@ -1020,7 +1028,9 @@ export function PlatformTabs() {
           {/*
               THE ALL ROW'S WORDS AND COUNT, in the sidebar of rows (D): how
               many communities you are in, so the row says there are more than
-              the five above it, and the votes in the ones it does not list.
+              the five above it, and every vote waiting on you (#18). Blue
+              wins its seat: the grey count of unread channels gives way
+              while a vote is owed (app.css), one number per row.
               app.css shows these instead of the label and the tab's own
               badge there; a hidden element is not in the accessible name, so
               each width's name is what it shows.
@@ -1030,9 +1040,9 @@ export function PlatformTabs() {
               {allCount > 0 ? t('core:rail.all', { count: allCount }) : t('core:rail.allPlain')}
             </span>
           ) : null}
-          {key === 'workshop' && elsewhere > 0 ? (
-            <span className="platform-tab-all-votes" aria-label={t('core:tabs.votesWaiting', { count: elsewhere })}>
-              {elsewhere > 99 ? '99+' : String(elsewhere)}
+          {key === 'workshop' && allVotes > 0 ? (
+            <span className="platform-tab-all-votes" aria-label={t('core:tabs.votesWaiting', { count: allVotes })}>
+              {allVotes > 99 ? '99+' : String(allVotes)}
             </span>
           ) : null}
         </a>,

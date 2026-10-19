@@ -12,11 +12,14 @@
  *         frame up and uncovered, not the build's screen.
  *   walk  The first time Home shows after that first visit to the app, the
  *         walk on Home (./tour-steps.ts homeWalkSteps). The visit to the
- *         app arms it (`armed`); Home after it, by ✕, the mark menu's "Go to
- *         Homeroom" or a community first, runs it. A maker whose app is
- *         still being built goes to Home first, so theirs runs then
- *         (claimWalk), and somebody who had an account before an invite
- *         gets the tip alone.
+ *         app arms it (`armed`); Home after it, by ✕ or the mark menu's "Go
+ *         to Homeroom", runs it. While it is owed, that menu offers "Go to
+ *         Homeroom" in place of "Go to community" (../app-context/
+ *         about-data.ts owedHomeWalk): the community's hub is inside the
+ *         app, and the walk waits for Home (Evan, sign-up test, 19 Oct
+ *         2026). A maker whose app is still being built goes to Home first,
+ *         so theirs runs then (claimWalk), and somebody who had an account
+ *         before an invite gets the tip alone.
  *
  * Each is shown once per person, recorded the way the first session records
  * itself: in this device's localStorage under the account's id (the "seen"

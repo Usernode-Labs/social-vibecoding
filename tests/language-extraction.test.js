@@ -393,7 +393,7 @@ test('a stand-in for a missing name never reaches a sentence as the name, wherev
   assert.match(read('public/js/app-view.js'), /appUnnamed: !realAppName,/);
   assert.match(read('frontend/src/features/dev-board/modals/llm-consent-modal.tsx'), /view\.appUnnamed \? t\('project:modals\.aiConsent\.titleUnnamed'\)/);
   assert.match(read('frontend/src/features/messages/bot-activity.tsx'), /appUnnamed: !\(meta\.appName \|\| meta\.appSlug\),/);
-  assert.match(read('frontend/src/features/leaderboard/topochain-leaderboard.js'), /anonymous: !str\(r\.display_name\),/);
+  assert.match(read('frontend/src/features/leaderboard/topochain-leaderboard.js'), /anonymous: !name,/);
   assert.match(read('frontend/src/features/leaderboard/topochain-standings.tsx'), /row\.anonymous \? t\('leaderboard:standings\.openDetailsAnonymous'\)/);
   assert.match(read('frontend/src/features/leaderboard/leaderboard.js'), /authorUnknown: !row\.author_username,/);
   assert.match(read('frontend/src/features/leaderboard/kudos-pane.tsx'), /row\.authorUnknown \? t\('leaderboard:kudos\.row\.byUnknown'\)/);

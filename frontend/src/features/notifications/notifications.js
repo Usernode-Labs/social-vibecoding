@@ -101,6 +101,13 @@ const Notifications = {
   // pagination.
   savedNotifications: [],
   unread: 0,
+  // #18 (19 Oct 2026 polish board): how many of `unread` are a plain message
+  // in a conversation or a channel (`conversation_message`,
+  // `channel_message`), which the bell leaves to the Messages tab. The
+  // server's figure (countUnreadSplit), walked with `unread` wherever that
+  // is. The kinds are spelled out at each use: the harnesses rebuild single
+  // methods with `new Function`, which can close over nothing.
+  messageUnread: 0,
 
   // #5249: whether a notification is drawn at all. While kudos is parked
   // (features/leaderboard/kudos-parked.ts; the bundle then publishes no
@@ -174,9 +181,17 @@ const Notifications = {
     // Anonymous SPA boot (fold-auth-pages-into-SPA): the initial fetch
     // waits for the authed boot stage instead of firing a guaranteed 401
     // on a sessionless document. `sv:authed` fires at most once.
-    if (window.App && App.user) Notifications.refresh();
+    //
+    // FROM THE NETWORK (polish board #7, 19 Oct 2026). A boot read is in a
+    // crowd of requests, and past the service worker's API deadline it was
+    // answered from the worker's copy: the bell opened on "Unread (1)", and
+    // the read on open replaced it a few seconds later with "You're all
+    // caught up". `fresh` asks the worker for the current answer, which it
+    // falls back from only when the network fails (public/sw.js
+    // wantsFreshAnswer).
+    if (window.App && App.user) Notifications.refresh({ fresh: true });
     else document.addEventListener('sv:authed',
-      () => Notifications.refresh(), { once: true });
+      () => Notifications.refresh({ fresh: true }), { once: true });
   },
 
   // --- fetching --------------------------------------------------------
@@ -207,6 +222,8 @@ const Notifications = {
       const invalidation = networkOnly
         ? `&native_invalidation=1&native_invalidation_nonce=${encodeURIComponent(invalidationNonce)}`
         : '';
+      // The boot read's: the network's answer rather than the worker's copy.
+      const fresh = !networkOnly && !!(options && options.fresh === true);
       let timeout = null;
       let controller = null;
       if (networkOnly && typeof AbortController === 'function') {
@@ -225,7 +242,7 @@ const Notifications = {
             credentials: 'same-origin',
             cache: 'no-store',
             ...(controller ? { signal: controller.signal } : {}),
-          } : undefined
+          } : fresh ? { cache: 'no-cache' } : undefined
         );
         if (!res.ok) return false;
         data = await res.json();
@@ -245,6 +262,7 @@ const Notifications = {
       Notifications.savedNotifications = Array.isArray(data.savedNotifications)
         ? data.savedNotifications.filter(Notifications._shown) : [];
       Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
       Notifications.hasMore = !!data.hasMore;
       Notifications.nextBefore = data.nextBefore || null;
       // #5527: the Unread tab's cursor is seeded from the first page too.
@@ -358,9 +376,13 @@ const Notifications = {
   // so far. The comparison is the same one the badge makes: a settled
   // decided-ask row serializes read (the server stamps read_at live off the
   // change's status), and a parked kind never reaches either side.
+  //
+  // #18: plain messages on both sides. The bell leaves them to the Messages
+  // tab (_badgeTotal), and `?unread=1` no longer pages them.
   _unreadShort() {
-    const loaded = Notifications.items.filter((n) => n && !n.readAt).length;
-    return loaded < Notifications.unread;
+    const loaded = Notifications.items
+      .filter((n) => n && !n.readAt && !/^(conversation|channel)_message$/.test(n.kind)).length;
+    return loaded < Notifications.unread - (Notifications.messageUnread || 0);
   },
 
   /**
@@ -458,7 +480,12 @@ const Notifications = {
     } else {
       Notifications.items.unshift(notif);
     }
-    if (!notif.readAt && !wasUnread) Notifications.unread += 1;
+    if (!notif.readAt && !wasUnread) {
+      Notifications.unread += 1;
+      if (/^(conversation|channel)_message$/.test(notif.kind)) {
+        Notifications.messageUnread = (Notifications.messageUnread || 0) + 1;
+      }
+    }
     // #161: a completion arriving while the user is away from the
     // browser tab sets the dedicated tab-title marker (the replacement
     // for the old streaming-driven "✅ Done"). If they're actively
@@ -611,6 +638,7 @@ const Notifications = {
       if (!res.ok) { failed(); return; }
       const data = await res.json();
       Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
       const now = new Date().toISOString();
       Notifications.items = Notifications.items.map((n) => (
         { ...n, readAt: n.readAt || now }
@@ -658,6 +686,7 @@ const Notifications = {
       if (!res.ok) { failed(); return false; }
       const data = await res.json();
       Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
       // Flip only what is still unread: a refresh that landed while the
       // request was running replaced `items` with the server's own rows,
       // which already say what is true.
@@ -714,6 +743,7 @@ const Notifications = {
       const data = await res.json();
       // Reconcile with the server's authoritative unread count.
       Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
       Notifications._renderBadge();
       return true;
     } catch (err) {
@@ -773,6 +803,8 @@ const Notifications = {
     const stamp = new Date().toISOString();
     for (const n of members) n.readAt = stamp;
     Notifications.unread = Math.max(0, Notifications.unread - members.length);
+    Notifications.messageUnread = Math.max(0, (Notifications.messageUnread || 0)
+      - members.filter((n) => /^(conversation|channel)_message$/.test(n.kind)).length);
     Notifications._reconcileCompletionTitle();
     Notifications._renderBadge();
     Notifications._renderList();
@@ -846,6 +878,7 @@ const Notifications = {
     if (!Number.isSafeInteger(id) || id <= 0) return;
     const now = new Date().toISOString();
     let cleared = 0;
+    let messages = 0;
     for (const n of Notifications.items) {
       if (!n || n.readAt || Number(n.conversationId) !== id) continue;
       // #2387: an alert about a message inside a reply thread waits for that
@@ -853,11 +886,13 @@ const Notifications = {
       if (n.conversationThreadRootId) continue;
       n.readAt = now;
       cleared += 1;
+      if (/^(conversation|channel)_message$/.test(n.kind)) messages += 1;
     }
     if (!cleared) return;
     // `unread` is the server's account-wide total; only ever walk it down by
     // what was actually cleared here, and never below zero.
     Notifications.unread = Math.max(0, Notifications.unread - cleared);
+    Notifications.messageUnread = Math.max(0, (Notifications.messageUnread || 0) - messages);
     Notifications._renderBadge();
     Notifications._renderList();
   },
@@ -870,14 +905,17 @@ const Notifications = {
     if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(root) || root <= 0) return;
     const now = new Date().toISOString();
     let cleared = 0;
+    let messages = 0;
     for (const n of Notifications.items) {
       if (!n || n.readAt || Number(n.conversationId) !== id) continue;
       if (Number(n.conversationThreadRootId) !== root) continue;
       n.readAt = now;
       cleared += 1;
+      if (/^(conversation|channel)_message$/.test(n.kind)) messages += 1;
     }
     if (!cleared) return;
     Notifications.unread = Math.max(0, Notifications.unread - cleared);
+    Notifications.messageUnread = Math.max(0, (Notifications.messageUnread || 0) - messages);
     Notifications._renderBadge();
     Notifications._renderList();
   },
@@ -906,6 +944,7 @@ const Notifications = {
       const data = await res.json();
       if (!data.cleared) return;
       Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
       Notifications._renderBadge();
       Notifications._renderList();
     } catch (err) {
@@ -1086,6 +1125,18 @@ const Notifications = {
       return;
     }
     // #4296: an unexpected events alert opens the section that lists them.
+    // A platform signal opens its request on Homeroom's own board.
+    const signal = item.kind === 'platform_incident' ? parsePlatformIncidentDetail(item.detail) : null;
+    const platformSlug = signal && signal.type === 'signal' ? window.PlatformTarget?.slug?.() : null;
+    if (platformSlug) {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.openAppTab) {
+        App.openAppTab(platformSlug, 'dev', { subTab: 'issues', ref: signal.issueNumber });
+      } else {
+        window.location.hash = `#app/${platformSlug}/dev/issues/${signal.issueNumber}`;
+      }
+      return;
+    }
     if (item.kind === 'platform_incident') {
       Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
@@ -1362,9 +1413,11 @@ const Notifications = {
 
   // Badge total folds in pending invites so an invite is as loud as an
   // unread notification (its underlying collab_invite row may already
-  // be read while the invite is still actionable).
+  // be read while the invite is still actionable). Less the plain messages
+  // (#18, `messageUnread`): the Messages tab counts those, in grey, and one
+  // message lit three numbers while the bell counted it too.
   _badgeTotal() {
-    return Notifications.unread + Notifications.invites.length;
+    return Math.max(0, Notifications.unread - (Notifications.messageUnread || 0)) + Notifications.invites.length;
   },
 
   // #5289: ONE COUNT, SHOWN ONE WAY. The bell said 99+, the sheet's Unread
@@ -1391,9 +1444,9 @@ const Notifications = {
   _renderBadge() {
     // ONE EVENT, ONE BADGE, ON THE SURFACE THAT OWNS IT — and one count.
     //
-    // The bell's number is now every unread notification plus pending
-    // invites, session kinds included. There is no second badge and no
-    // split.
+    // The bell's number is every unread notification plus pending invites,
+    // session kinds included, less the plain messages the Messages tab
+    // counts (#18, _badgeTotal). There is no second badge for the bell.
     //
     // The split it replaces put unread session kinds on #improve-btn — the
     // header pill #2718 has since retired altogether — on the grounds that
@@ -1405,10 +1458,10 @@ const Notifications = {
     // Opening the Improve panel marks nothing, so a finished session left a
     // number pointing at the one surface with no way to dismiss it, and the
     // viewer never found the notification that was waiting for them. Folding
-    // it back in also re-aligns the bell with the two counts that never
-    // learned about the split: the tab title (_updateTitle, which reads
-    // _badgeTotal) and the home-screen icon badge (_publishAppBadge, which
-    // reads `unread`).
+    // it back in also re-aligned the bell with the two counts that never
+    // learned about the split: the tab title (_updateTitle) and the
+    // home-screen icon badge (_publishAppBadge, which reads `unread`). Both
+    // still count the plain messages the bell leaves out since #18.
     //
     // The pulse dot survived both moves and is the reason the distinction
     // matters: "a session is running right now" is a live fact, true only
@@ -1474,6 +1527,8 @@ const Notifications = {
     // so it re-renders on its own.
   },
 
+  // The tab's title keeps counting everything, messages too (#18): it is the
+  // one number a tab in the background shows, and it never lit a badge.
   _updateTitle() {
     // "(99+)" as well as "(12)": the prefix is the bell's own text (#5289).
     const base = document.title.replace(/^\(\d+\+?\)\s*/, '');
@@ -2042,9 +2097,14 @@ function parsePlatformLimitDetail(detail) {
 // hourly line).
 const PLATFORM_INCIDENT_DIGEST_RE = /^digest:(\d{1,5}):((?:[a-z][a-z0-9_]{0,23}=\d{1,5})(?:,[a-z][a-z0-9_]{0,23}=\d{1,5})*)?$/;
 const PLATFORM_INCIDENT_HOUR_RE = /^hour:([a-z][a-z0-9_]{0,23}):(\d{1,5})$/;
+// services/platform-signals.js: "signal:<n>", a problem the platform found in
+// itself and filed as request #n on its own board, for a person to fix.
+const PLATFORM_INCIDENT_SIGNAL_RE = /^signal:(\d{1,9})$/;
 
 function parsePlatformIncidentDetail(detail) {
   const s = String(detail || '');
+  const sig = PLATFORM_INCIDENT_SIGNAL_RE.exec(s);
+  if (sig) return { type: 'signal', issueNumber: Number(sig[1]) };
   const h = PLATFORM_INCIDENT_HOUR_RE.exec(s);
   if (h) return { type: 'hour', kind: h[1], n: Number(h[2]) };
   const d = PLATFORM_INCIDENT_DIGEST_RE.exec(s);
@@ -2631,6 +2691,10 @@ function rowView(n) {
     // the label it printed (a kind can print more than one label).
     kind: n.kind,
     unread: !n.readAt,
+    // #18 (19 Oct 2026 polish board): a plain message in a conversation or a
+    // channel, which the bell leaves to the Messages tab: the sheet's Unread
+    // tab neither lists nor counts it, so it says what the badge says.
+    plainMessage: n.kind === 'conversation_message' || n.kind === 'channel_message',
     // #4769: whether the user has bookmarked this row — the feed row's
     // bookmark button and the pinned section both read it. A save is not a
     // read state; the two flags never derive from each other.
@@ -2905,6 +2969,16 @@ function rowView(n) {
   if (n.kind === 'platform_incident') {
     const alert = parsePlatformIncidentDetail(n.detail);
     const words = (kind) => String(kind).replace(/_/g, ' ');
+    if (alert && alert.type === 'signal') {
+      return {
+        ...base,
+        appLine: t('notifications:row.source.admin'),
+        wrap: true,
+        icon: '\u{1F6E0}\uFE0F',
+        label: t('notifications:row.incident.signal.label'),
+        segments: [{ t: 'text', v: t('notifications:row.incident.signal.body', { number: alert.issueNumber }) }],
+      };
+    }
     if (alert && alert.type === 'hour') {
       return {
         ...base,

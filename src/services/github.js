@@ -2061,12 +2061,27 @@ async function patchIssueContent(owner, repo, issueNumber, { title, body }) {
   await octokit.rest.issues.update({ owner, repo, issue_number: issueNumber, ...content });
 }
 
-async function closeIssue(owner, repo, issueNumber) {
+// `reason`: GitHub's state_reason, 'completed' or 'not_planned' (a problem
+// that stopped by itself, services/platform-signals.js). Left out, GitHub
+// records 'completed', as every caller before it did.
+async function closeIssue(owner, repo, issueNumber, { reason = null } = {}) {
   const octokit = await getOctokit(owner);
   const { data } = await octokit.rest.issues.update({
     owner, repo, issue_number: issueNumber, state: 'closed',
+    ...(reason === 'completed' || reason === 'not_planned' ? { state_reason: reason } : {}),
   });
-  log.info('github', 'Issue closed', { repo: `${owner}/${repo}`, issue: issueNumber });
+  log.info('github', 'Issue closed', { repo: `${owner}/${repo}`, issue: issueNumber, reason });
+  return data;
+}
+
+// Open a closed issue again: a problem the platform closed came back within
+// a week (services/platform-signals.js).
+async function reopenIssue(owner, repo, issueNumber) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.issues.update({
+    owner, repo, issue_number: issueNumber, state: 'open',
+  });
+  log.info('github', 'Issue reopened', { repo: `${owner}/${repo}`, issue: issueNumber });
   return data;
 }
 
@@ -3102,6 +3117,7 @@ module.exports = {
   patchIssueBody,
   patchIssueContent,
   closeIssue,
+  reopenIssue,
   getCloneUrl,
   safeMention,
   parseGithubUrl,

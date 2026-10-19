@@ -1615,6 +1615,14 @@
     "text": "{{inviter}} invited you. Tap <0></0> to suggest a change, or to go to the community and Homeroom.",
     "description": "Line of the same tip for an invited person, when who sent the invite is known. {{inviter}} is that person's name. <0></0> is where the Homeroom mark is drawn, as a small picture the size of the text."
   },
+  "firstSession.tip.lineHomeroom": {
+    "text": "Tap <0></0> to suggest a change, or to go to Homeroom.",
+    "description": "Line of the small tip under the Homeroom mark, for a newcomer who has not been to Homeroom yet: the mark opens a menu with Suggest an improvement and Go to Homeroom, which takes them to Homeroom for the first time. <0></0> is where the mark itself is drawn, as a small picture the size of the text: keep it where the thing to tap belongs in the sentence."
+  },
+  "firstSession.tip.lineInvitedHomeroom": {
+    "text": "{{inviter}} invited you. Tap <0></0> to suggest a change, or to go to Homeroom.",
+    "description": "Line of the same tip for an invited person new to Homeroom, when who sent the invite is known. {{inviter}} is that person's name. <0></0> is where the Homeroom mark is drawn, as a small picture the size of the text."
+  },
   "firstSession.walk.steps": {
     "text": "Step {{step}} of {{total}}",
     "description": "Spoken label of the numbered circles at the top of each card of the short walk on Home (1, 2, 3), for screen readers. {{step}} is the card shown, {{total}} how many there are."

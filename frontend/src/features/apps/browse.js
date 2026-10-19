@@ -107,6 +107,11 @@ const Browse = {
   // True between an open({ chrome: false }) and the syncChrome() app.js
   // runs inside the screen transition (#979).
   _chromeSuspended: false,
+  // Apps joined from a row during this visit (#5267). They keep their place
+  // in "Recommended for you" and under Not joined, now saying Open, so a
+  // tap on Join never makes the row it was on jump away. Cleared on a new
+  // visit and on a chip change, when the list is rebuilt anyway.
+  _keptJoins: new Set(),
 
   isOpen() { return Browse._open; },
 
@@ -134,6 +139,7 @@ const Browse = {
     if (!Browse._open) {
       // Pure disclosure state for review captures; no requests or writes.
       Browse._moreExpanded = new URLSearchParams(location.search).get('shot') === 'browse-more';
+      Browse._keptJoins.clear();
     }
     Browse._open = true;
     Browse._chromeSuspended = !!(opts && opts.chrome === false);
@@ -432,7 +438,8 @@ const Browse = {
 
   // ── Filter chips (the prototype's scrDiscover) ────────────────────
   //
-  // All · Featured · Joined · New, in a row above the list. A chip
+  // All · Featured · Not joined · Joined · New, in a row above the list,
+  // and Not yet reviewed after them for an admin (ADMIN_FILTERS). A chip
   // FILTERS where Sort only reorders, and the three controls compose in one
   // fixed order: the chip picks the set, Sort orders it, the search narrows
   // it. So "Featured, by Most users" is the featured apps ranked by users,
@@ -445,12 +452,32 @@ const Browse = {
   FILTERS: [
     { key: 'all', label: 'discover:filter.all' },
     { key: 'featured', label: 'discover:filter.featured' },
+    // What you could still join (#5267): Discover is for finding new
+    // things, and this chip is the list without the ones you are in.
+    { key: 'notjoined', label: 'discover:filter.notJoined' },
     // The key stays `yours` — ?filter=yours links and the declared checks
     // select on it — while the label says what the chip now holds: the
     // communities you are in, not the shortcuts on your Home screen.
     { key: 'yours', label: 'discover:filter.joined' },
     { key: 'new', label: 'discover:filter.new' },
   ],
+
+  // The chips only an admin gets, after the rest (#5267). "Not yet
+  // reviewed" is moderation state: it used to be a heading in everybody's
+  // default list, and it is now a filter for the people who review. The
+  // apps under it are NOT hidden from anyone: they still sit in the default
+  // list, after the reviewed ones, as they always have (directoryTier), with
+  // no heading or label naming the review. browse-screen.tsx keeps a copy,
+  // for the reason it keeps one of FILTERS.
+  ADMIN_FILTERS: [
+    { key: 'unreviewed', label: 'discover:filter.unreviewed' },
+  ],
+
+  // An admin, as the shell sees one: `App.user.isAdmin`, which "View as
+  // non-admin" masks, so that view loses the chip too.
+  isAdminViewer() {
+    try { return !!(typeof App !== 'undefined' && App.user && App.user.isAdmin); } catch (err) { return false; }
+  },
 
   // "New" is the apps CREATED in the last NEW_WINDOW_DAYS days (by
   // `created_at`). A directory where nothing is that young would give the
@@ -470,11 +497,14 @@ const Browse = {
   // without overriding a choice made by hand later in the same visit.
   _urlFilterTaken: false,
 
-  // Anything unrecognised falls back to All rather than emptying the screen.
-  // Pure — unit-tested.
+  // Anything unrecognised falls back to All rather than emptying the screen,
+  // and so does an admin chip asked for by anyone else.
+  // Pure but for the admin read; unit-tested.
   resolveFilter(raw) {
     const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
-    return Browse.FILTERS.some((f) => f.key === key) ? key : 'all';
+    if (Browse.FILTERS.some((f) => f.key === key)) return key;
+    if (Browse.ADMIN_FILTERS.some((f) => f.key === key) && Browse.isAdminViewer()) return key;
+    return 'all';
   },
 
   // Runs on screen ENTRY, never during render — the same reason
@@ -488,13 +518,14 @@ const Browse = {
       try { raw = new URLSearchParams(location.search).get('filter'); } catch (err) { raw = null; }
       if (raw) Browse._filter = Browse.resolveFilter(raw);
     }
-    if (Browse._store) Browse._store.set({ filter: Browse._filter });
+    if (Browse._store) Browse._store.set({ filter: Browse._filter, adminFilters: Browse.isAdminViewer() });
   },
 
   // A chip's onClick.
   setFilter(key) {
     const next = Browse.resolveFilter(key);
     Browse._filter = next;
+    Browse._keptJoins.clear();
     if (Browse._store) Browse._store.set({ filter: next });
     Browse.render();
   },
@@ -530,14 +561,21 @@ const Browse = {
   //              rows' Join pill reads, so the chip and the pill can never
   //              disagree. Not Home.isYours — taking an app off Home is not
   //              leaving it, and Discover is where you join and leave.
+  //   notjoined: the rest, not Home.isJoined, plus the apps joined from a
+  //              row during this visit (_keptJoins), which stay until the
+  //              list is rebuilt.
   //   new      — newApps above.
+  //   unreviewed: admins only, directoryTier 'unreviewed', exactly the
+  //              apps the "Not yet reviewed" heading used to hold.
   // Pure — unit-tested.
   filterApps(apps, key, now) {
     const filter = Browse.resolveFilter(key == null ? Browse._filter : key);
     const list = (apps || []).filter(Boolean);
     if (filter === 'featured') return list.filter((a) => !!a.featured);
+    if (filter === 'notjoined') return list.filter((a) => !Home.isJoined(a) || Browse._keptJoins.has(a.slug));
     if (filter === 'yours') return list.filter((a) => Home.isJoined(a));
     if (filter === 'new') return Browse.newApps(list, now);
+    if (filter === 'unreviewed') return list.filter((a) => Browse.directoryTier(a) === 'unreviewed');
     return list;
   },
 
@@ -547,22 +585,51 @@ const Browse = {
     const q = String(query || '').trim();
     if (q) {
       if (filter === 'featured') return PlatformI18n.t('discover:empty.search.featured', { query: q });
+      if (filter === 'notjoined') return PlatformI18n.t('discover:empty.search.notJoined', { query: q });
       if (filter === 'yours') return PlatformI18n.t('discover:empty.search.joined', { query: q });
+      if (filter === 'unreviewed') return PlatformI18n.t('discover:empty.search.unreviewed', { query: q });
       if (filter === 'new') return PlatformI18n.t('discover:empty.search.new', { query: q });
       return PlatformI18n.t('discover:empty.search.all', { query: q });
     }
     if (filter === 'featured') return PlatformI18n.t('discover:empty.featured');
+    if (filter === 'notjoined') return PlatformI18n.t('discover:empty.notJoined');
     if (filter === 'yours') return PlatformI18n.t('discover:empty.joined');
+    if (filter === 'unreviewed') return PlatformI18n.t('discover:empty.unreviewed');
     return PlatformI18n.t('discover:empty.all');
   },
 
   // Unreviewed is not the same as broken. Apps with icons that have not yet
-  // been reviewed remain visible below the reviewed group; explicit demos,
+  // been reviewed remain visible after the reviewed ones (#5267: in the same
+  // list, under no heading of their own); explicit demos,
   // failures, and apps still needing setup/icon work go under Show more.
   directoryTier(app) {
     if (Home.isDiscoveryReady(app)) return 'ready';
     if (app?.directory?.tier === 'more' || app?.status === 'error') return 'more';
     return 'unreviewed';
+  },
+
+  // Where an app sits in the admin's featured order: its featured_order, an
+  // unordered featured app after the ordered ones, everything else last.
+  featuredRank(a) {
+    return a && a.featured
+      ? (a.featured_order == null ? Number.MAX_SAFE_INTEGER - 1 : a.featured_order)
+      : Number.MAX_SAFE_INTEGER;
+  },
+
+  // "Recommended for you" (#5267), the default list's first section. There
+  // is no recommender behind it, on purpose: it is the admin's featured set
+  // (the same `featured` flag the Featured chip and Home's featured lane
+  // read), less the apps you are already in, in the featured order. An app
+  // you join from it stays for the visit (_keptJoins). The `more` tier
+  // (demos, apps needing fixes) never leads the page, featured or not.
+  // Pure; unit-tested.
+  recommendedApps(apps) {
+    return (apps || [])
+      .filter((a) => a && a.featured
+        && (!Home.isJoined(a) || Browse._keptJoins.has(a.slug))
+        && Browse.directoryTier(a) !== 'more')
+      .slice()
+      .sort((x, y) => Browse.featuredRank(x) - Browse.featuredRank(y));
   },
 
   toggleMore() {
@@ -601,9 +668,7 @@ const Browse = {
       if (b == null) return -1;
       return b - a;
     };
-    const featuredRank = (a) => (a && a.featured
-      ? (a.featured_order == null ? Number.MAX_SAFE_INTEGER - 1 : a.featured_order)
-      : Number.MAX_SAFE_INTEGER);
+    const featuredRank = Browse.featuredRank;
     // The later of "last change merged" and "last deploy" — an app can ship
     // without a community proposal and vice versa, and either is a sign of
     // life.
@@ -749,10 +814,14 @@ const Browse = {
   // Pure — unit-tested in tests/browse-screen.test.js.
   rowView(app) {
     const isDemo = !!app.demo;
-    // The pill is membership now (Join / Joined), not the Home shortcut it
+    // The pill is membership now (Join, or Open once joined), not the Home shortcut it
     // used to be: see Home.setMembership. `added` keeps its name because the
     // row's data-added attribute is what the declared checks select on.
     const isAdded = Home.isJoined(app);
+    // A joined row offers Open (#5267), the app itself, where it used to
+    // say "✓ Joined"; only an app that can run gets one (the detail page's
+    // canOpen rule), and an inert staging fixture never does.
+    const canOpen = !isDemo && (app.status === 'running' || app.status === 'awaiting_secrets');
     return {
       app,
       directoryTier: Browse.directoryTier(app),
@@ -767,8 +836,9 @@ const Browse = {
       demo: isDemo,
       openable: !isDemo,
       added: isAdded,
+      canOpen,
       addTitle: isAdded
-        ? PlatformI18n.t('discover:row.join.joinedTip', { app: app.name || app.slug })
+        ? PlatformI18n.t('discover:row.open.tip', { app: app.name || app.slug })
         : PlatformI18n.t('discover:row.join.tip', { app: app.name || app.slug }),
     };
   },
@@ -784,7 +854,15 @@ const Browse = {
     if (!Browse._store) return;
     const apps = Browse.visibleApps();
     const query = (Browse._query || '').trim();
-    const rows = apps.map((a) => Browse.rowView(a));
+    // The DEFAULT list (#5267): Recommended order, the All chip, no search.
+    // Only it is grouped, and it leads with "Recommended for you"; every
+    // other chip and sort is one list in its own order.
+    const grouped = Browse._sort === 'recommended' && !query && Browse._filter === 'all';
+    const picked = grouped ? Browse.recommendedApps(apps) : [];
+    const pickedSlugs = new Set(picked.map((a) => a.slug));
+    const rest = picked.length ? apps.filter((a) => !pickedSlugs.has(a.slug)) : apps;
+    const rows = rest.map((a) => Browse.rowView(a));
+    rows.unshift(...picked.map((a) => ({ ...Browse.rowView(a), recommended: true })));
     // The "Open site" row, when the query is a web address (#5364). It rides
     // the list descriptor; browse-list.tsx draws it above the app rows.
     const site = Browse.siteFor(query);
@@ -805,8 +883,9 @@ const Browse = {
       // promises). A search still shows every match, expanded.
       // Returning from a detail page keeps the user's disclosure choice.
       curated: !query,
-      grouped: Browse._sort === 'recommended' && !query,
+      grouped,
       moreExpanded: Browse._moreExpanded,
+      adminFilters: Browse.isAdminViewer(),
       error: false,
       // The site row IS a result, so the "No apps match" line never shows
       // right under it.
@@ -857,9 +936,18 @@ const Browse = {
     try { App.prewarmApp(view.slug); } catch (err) { /* ignore */ }
   },
 
+  // The row's Join (#5267: a joined row says Open instead, so this only
+  // ever joins now; leaving is on the project's own page).
   toggleRowAdded(view) {
     if (!view || !view.slug) return;
+    if (!view.added) Browse._keptJoins.add(view.slug);
     Home.setMembership(view.slug, !view.added, () => Browse.render());
+  },
+
+  // The row's Open: the app itself, as the detail page's Open does.
+  openRowApp(view) {
+    if (!view || !view.slug || !view.canOpen) return;
+    App.navigateToApp(view.slug);
   },
 
   // Screenshot-state deep link (?shot=browse-detail): the detail page is

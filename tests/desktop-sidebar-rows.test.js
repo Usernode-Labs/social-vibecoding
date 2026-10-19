@@ -32,7 +32,7 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 const RAIL = 'frontend/src/features/nav/rail-communities.tsx';
 
 test('which five: this device\'s order, then the most recently active of yours', () => {
-  const { railCommunities, noteOpened, votesElsewhere, RAIL_COMMUNITIES } = loadTsx(RAIL);
+  const { railCommunities, noteOpened, RAIL_COMMUNITIES } = loadTsx(RAIL);
   assert.equal(RAIL_COMMUNITIES, 5);
   const list = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
   assert.deepEqual(railCommunities([], null), [], 'nothing before the list is read');
@@ -50,10 +50,6 @@ test('which five: this device\'s order, then the most recently active of yours',
   // A page you are only visiting is not one of yours.
   assert.equal(noteOpened(['a', 'b'], 'stranger', list), null);
   assert.equal(noteOpened(['a', 'b'], null, list), null);
-  // The All row counts the votes in the ones not listed, less the unchosen.
-  const info = { a: { needs: 2 }, f: { needs: 3 }, g: { needs: 4, unchosen: true } };
-  assert.equal(votesElsewhere(['a', 'b'], list, info), 3);
-  assert.equal(votesElsewhere(['a'], null, info), 0);
 });
 
 test('the markup: the section sits between Messages and the Communities tab, its heading and search prerendered', () => {
@@ -131,7 +127,7 @@ test('the width: one block on every desktop window, from 768px; the phone\'s bar
   // where the sidebar holding the same things is 212px.
   assert.equal(SIDEBAR_ROWS_QUERY, '(min-width: 768px)');
   const css = read('public/css/app.css');
-  assert.match(css, /\.platform-rail-communities,\n\.platform-rail-conversations,\n\.platform-tab-all-glyph,\n\.platform-tab-all-label,\n\.platform-tab-all-votes,\n\.platform-rail-pinned,\n\.workshop-search \{\n  display: none;\n\}/,
+  assert.match(css, /\.platform-rail-communities,\n\.platform-rail-conversations,\n\.platform-tab-all-glyph,\n\.platform-tab-all-label,\n\.platform-tab-all-votes,\n\.platform-rail-pinned \{\n  display: none;\n\}/,
     'nothing of it is drawn outside the block');
   const at = css.indexOf('@media (min-width: 768px) {\n  /* THE ONE NUMBER THE REST FOLLOWS.');
   assert.ok(at > 0, 'the block');

@@ -318,8 +318,10 @@ test('the swipe is the kit\'s, neutral, and a full swipe only where the row leav
   assert.match(SHEET_SRC, /removes=\{tab === 'unread'\}/);
   // Grey, not the kit's destructive red: clearing deletes nothing.
   assert.match(effect, /color: 'var\(--un-action-neutral\)'/);
-  assert.match(effect, /handler: \(\) => \{ void controller\(\)\?\.clearNotification\(view\.id\); \}/);
-  assert.match(SHEET_SRC, /return \(\) => swipe\.detach\(\);\n {2}\}, \[clearable, touch, removes, shape, view\.id, t\]\);/,
+  // Polish #7: the row is let go of first (useHeldUnread), so a cleared row
+  // still leaves Unread while the rows read elsewhere stay listed.
+  assert.match(effect, /handler: \(\) => \{\s*onRelease\?\.\(\[view\.id\]\);\s*void controller\(\)\?\.clearNotification\(view\.id\);\s*\}/);
+  assert.match(SHEET_SRC, /return \(\) => swipe\.detach\(\);\n {2}\}, \[clearable, touch, removes, shape, view\.id, t, onRelease\]\);/,
     'detached when the row stops being clearable, changes tab or changes shape');
 });
 
@@ -329,7 +331,8 @@ test('the slot is what React places, and it is keyed on what the kit holds', () 
   // slot React places; a row whose read state or shape changes is a new slot,
   // dropped whole rather than having its row swapped out from under the kit.
   assert.match(SHEET_SRC,
-    /<div key=\{`\$\{clearable \? 'unread' : 'read'\}:\$\{shape\}`\} className="notifications-row-slot group\/notif relative">/);
+    /<div\s+key=\{`\$\{clearable \? 'unread' : 'read'\}:\$\{shape\}`\}\s+className=\{held \? 'notifications-row-slot group\/notif relative opacity-60' : 'notifications-row-slot group\/notif relative'\}/,
+    'polish #7: a row read while the sheet is open stays on Unread, dim');
   // #4769: the kit must hold whichever node translates — the row itself on
   // desktop, the swipe host (row + bookmark) on touch — so the rows hand it
   // over only off touch, and the host hands itself over on touch.

@@ -76,6 +76,7 @@
 'use strict';
 
 import { t as message } from '../../lib/i18n/runtime';
+import { warmIllustrations } from '../../lib/challenge-illustrations';
 import { panelsStore } from './panels-store';
 
 const HomePanels = {
@@ -83,6 +84,9 @@ const HomePanels = {
   _data: null,
   _fetchedAt: 0,
   _inflight: null,
+  // The first read has answered, well or not: a failed read keeps no copy,
+  // and the sections then hide rather than wait (render's first-paint rule).
+  _answered: false,
   TTL_MS: 60 * 1000,
 
   // ── The pick ───────────────────────────────────────────────────────
@@ -297,8 +301,10 @@ const HomePanels = {
       // console) because the challenge read hiccuped. The block just stays
       // absent until the next mount.
       .catch(() => {})
+      .then(() => HomePanels._warmArt())
       .then(() => {
         HomePanels._inflight = null;
+        HomePanels._answered = true;
         HomePanels.render();
       });
     return HomePanels._inflight;
@@ -373,6 +379,20 @@ const HomePanels = {
     // challenge progress, the apps you don't have yet), and
     // the guard used to live in renderAll(), the one entry point there was.
     const signedIn = !!(window.App && App.user);
+    // THE FIRST PAINT WAITS FOR BOTH READS (#10, the polish board of 19 Oct
+    // 2026). Two paths call this: /api/home-panels answering, and Home.render
+    // when /api/apps does. Painting on whichever came first drew a page that
+    // the second one rearranged: with only the apps in, both sections hid
+    // (no panels yet) and then reappeared; with only the panels in, Discover
+    // drew "Nothing to discover" from an empty app list and then grew into a
+    // rail of cards, while the grid's rows arrived above it and pushed both
+    // sections down. Until both have answered (a failure counts: a failed
+    // read hides its section, and a failed apps read still lets the panels
+    // draw), the sections keep their skeletons at the height this device
+    // last drew them at (lib/first-paint-reserve.ts), and the paint after that is the
+    // page's final shape. Only the FIRST paint waits; every later call is a
+    // repaint of a page already drawn.
+    if (signedIn && !panelsStore.get().painted && !HomePanels.readyToPaint()) return;
     const viewFor = (key, build) => {
       if (!signedIn) return null;
       const panel = HomePanels.panelFor(key);
@@ -383,6 +403,39 @@ const HomePanels = {
       discover: viewFor('discover', HomePanels.discoverView),
       challenges: viewFor('challenges', HomePanels.challengesView),
     });
+  },
+
+  // THE CARDS' ART, DECODED BEFORE THE CARDS DRAW (#1, #10). The challenge
+  // cards drew with an empty tone where the picture goes and the picture a
+  // frame later; the rows this read is about to draw are decoded first
+  // (lib/challenge-illustrations.ts warmIllustrations, at most ART_WAIT_MS),
+  // so they paint with their art. Imported, unlike the slug shape below,
+  // because nothing a test runs reaches it: the vm strips the import, and
+  // `typeof` of the missing binding is what lets it pass.
+  ART_WAIT_MS: 400,
+  _warmArt() {
+    try {
+      if (typeof warmIllustrations !== 'function') return Promise.resolve();
+      const panel = HomePanels.panelFor('challenges');
+      const view = panel ? HomePanels.challengesView(panel) : null;
+      const rows = view && Array.isArray(view.rows) ? view.rows : [];
+      return warmIllustrations(
+        rows.map((row) => ({ slug: row.illustration, tone: row.illustrationTone })),
+        HomePanels.ART_WAIT_MS,
+      ).catch(() => {});
+    } catch (err) {
+      return Promise.resolve();
+    }
+  },
+
+  // Both reads have answered: the panels (or this copy came from a test that
+  // set `_data`), and the apps, when there is a launcher to wait for. A Home
+  // module without `_appsLoaded` (a test's stand-in) waits for nothing.
+  readyToPaint() {
+    if (!HomePanels._answered && !HomePanels._data) return false;
+    const home = window.Home;
+    if (!home || home._appsLoaded !== false) return true;
+    return home._appsSettled === true;
   },
 
   // A NEW ACCOUNT SEES CHALLENGES (first-session run-through, 2026-10-05).

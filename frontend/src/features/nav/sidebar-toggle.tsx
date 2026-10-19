@@ -71,6 +71,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { navStore } from './nav-store.js';
 import { clearPeekTimer, enterPeekByMouse, leavePeekByMouse } from './rail-peek';
+import { slideRail } from './rail-slide';
 
 // THE SAME DISC the back slot beside it wears — ../header/platform-header.tsx
 // hoists its own for the same reason: a class string that spans lines ships
@@ -119,10 +120,11 @@ export function SidebarToggle() {
       // A PRESS ENDS ANY PEEK. Docking the rail makes the peek moot, and
       // left standing it would come straight back as an overlay the moment
       // the next press folded the rail under the same pointer.
-      onClick={() => {
+      // It slides rather than jumping (N21, ./rail-slide.ts).
+      onClick={() => slideRail(() => {
         clearPeekTimer();
         navStore.set({ railOpen: !navStore.get().railOpen, peek: false, peekOut: false });
-      }}
+      })}
       onPointerEnter={railOpen ? undefined : enterPeekByMouse}
       onPointerLeave={peek ? leavePeekByMouse : undefined}
     >

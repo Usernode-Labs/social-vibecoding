@@ -54,9 +54,11 @@ function liftAppMethod(name) {
  * App.handleAppRedeployStatus and App.handleAppVersionChanged, lifted out of
  * app.js and run against fakes. `evicts` adds an AppView whose evictKeptApp
  * answers it: true when a frame was let go, false when there was none or the
- * app is on screen (WP2). Without it there is no AppView at all.
+ * app is on screen (WP2). `showing` is its frameShowing's answer: the build
+ * before this one is on screen (sign-up test, 19 Oct 2026). Without either
+ * there is no AppView at all.
  */
-function redeployHarness({ currentApp = 'demo', homeVisible = false, evicts } = {}) {
+function redeployHarness({ currentApp = 'demo', homeVisible = false, evicts, showing } = {}) {
   const methods = ['handleAppRedeployStatus', 'handleAppVersionChanged'].map(liftAppMethod);
   const calls = [];
   const sandbox = {
@@ -66,10 +68,11 @@ function redeployHarness({ currentApp = 'demo', homeVisible = false, evicts } = 
     // so a strict deepEqual compares values.
     Improve: { update: (patch) => calls.push(['improve', JSON.parse(JSON.stringify(patch))]) },
   };
-  if (evicts !== undefined) {
+  if (evicts !== undefined || showing !== undefined) {
     sandbox.AppView = {
-      evictKeptApp: (slug) => { calls.push(['evict', slug]); return evicts; },
+      ...(evicts !== undefined ? { evictKeptApp: (slug) => { calls.push(['evict', slug]); return evicts; } } : {}),
       noteBuild: (slug, sha) => { calls.push(['note-build', slug, sha]); return true; },
+      frameShowing: (slug) => slug === currentApp && !!showing,
     };
   }
   sandbox.window = sandbox;
@@ -85,7 +88,7 @@ test('a build starting for the app in view spins the button and withdraws any ol
 });
 
 test('a build landing offers the reload; a build failing only stops the spinner', () => {
-  const { calls, App } = redeployHarness();
+  const { calls, App } = redeployHarness({ showing: true });
   App.handleAppRedeployStatus({ appSlug: 'demo', deploying: false, toSha: 'abc' });
   App.handleAppRedeployStatus({ appSlug: 'demo', deploying: false, failed: true });
   assert.deepEqual(calls, [
@@ -123,12 +126,49 @@ test('a build landing lets the app in view\'s kept frame go, and offers no reloa
 test('a build landing under the app on screen keeps the offer (the frame is not let go)', () => {
   // AppView.evictKeptApp refuses a frame that is on screen (and marks it
   // stale): the viewer keeps their document, and reloads it when they choose.
-  const { calls, App } = redeployHarness({ currentApp: 'demo', evicts: false });
+  const { calls, App } = redeployHarness({ currentApp: 'demo', evicts: false, showing: true });
   App.handleAppRedeployStatus({ appSlug: 'demo', deploying: false, toSha: 'abc' });
   assert.deepEqual(calls, [
     ['evict', 'demo'],
     ['improve', { deploying: false, appUpdateReady: true }],
   ]);
+});
+
+test('no build on screen, no reload offered: the first version going live is the one they are about to see', () => {
+  // Sign-up test, 19 Oct 2026: Homeroom bot's first version of a project
+  // went live while its build's screen was up, and the menu said "This app
+  // has a new version". No frame was ever shown, so none was let go either
+  // (evictKeptApp answers false for both), and the offer rested on that.
+  const { calls, App } = redeployHarness({ currentApp: 'demo', evicts: false, showing: false });
+  App.handleAppRedeployStatus({ appSlug: 'demo', deploying: false, toSha: 'abc' });
+  assert.deepEqual(calls, [
+    ['evict', 'demo'],
+    ['improve', { deploying: false, appUpdateReady: false }],
+  ]);
+  // And with no AppView to ask, nothing is offered.
+  const none = redeployHarness({ currentApp: 'demo' });
+  none.App.handleAppRedeployStatus({ appSlug: 'demo', deploying: false, toSha: 'abc' });
+  assert.deepEqual(none.calls, [['improve', { deploying: false, appUpdateReady: false }]]);
+  // Asked only of a build that landed, after the frames were let go.
+  const handler = liftAppMethod('handleAppRedeployStatus');
+  assert.match(handler, /const showing = !data\.failed && !evicted\n\s+&& typeof AppView !== 'undefined' && !!AppView\.frameShowing\?\.\(slug\);\n\s+window\.Improve\.update\(\{ deploying: false, appUpdateReady: showing \}\);/);
+});
+
+test('the build on screen: the app\'s frame shown and loaded, never while its first version is on its way', () => {
+  const VIEW = read('public/js/app-view.js');
+  const at = VIEW.indexOf('  frameShowing(slug) {');
+  assert.ok(at > 0, 'AppView.frameShowing exists');
+  const body = VIEW.slice(at, VIEW.indexOf('\n  },\n', at));
+  assert.match(body, /if \(appData && appData\.slug === slug && AppView\._firstVersionPending\(appData\)\) return false;/);
+  assert.match(body, /return !!\(frame\.showing && frame\.showing\(slug\)\);/);
+  // The bridge: mounted for this app, shown, and navigated at least once.
+  const BRIDGE = read('frontend/src/features/app-frame/app-frame-bridge.js');
+  assert.match(BRIDGE, /showing\(slug\) \{\n\s+const current = appFrameStore\.get\(\);\n\s+return !!slug && current\.slug === slug && !!current\.active && current\.navigatedAt > 0 && !!appFrameRefs\.iframe;/);
+  // A fresh load of the app is of the build that is live: the offer is spent.
+  const render = VIEW.slice(VIEW.indexOf('  renderAppTab() {'), VIEW.indexOf('  renderAppVersionPillHTML(opts) {'));
+  assert.match(render, /frame\.setSrc\(iframeSrc, \{ granted: AppView\._grantedNow\(\), build: AppView\.buildFor\(appData\.slug\) \}\);\n(?:\s+\/\/.*\n)+\s+if \(!App\._appUpdateShot\) window\.Improve\?\.update\?\.\(\{ appUpdateReady: false \}\);\n  \},/);
+  // …except under the screenshot state, which pins its offer.
+  assert.match(APP_JS, /const ready = shot === 'app-update-ready';\n(?:\s+\/\/.*\n)+\s+App\._appUpdateShot = true;/);
 });
 
 test('no frame is let go while a build is still rolling out, or when it failed', () => {
@@ -408,4 +448,76 @@ test('the landed state has a declared check on the staging fork fixture', () => 
   assert.match(shot, /window\.Improve\.update\(\{ deploying: !ready, appUpdateReady: ready \}\)/);
   assert.doesNotMatch(shot, /fetch\(|reloadAppFrame/);
   assert.match(APP_JS, /App\._applyPlatformUpdateShot\(\);\n    App\._applyAppUpdateShot\(\);/, 'applied with the other state-painting shots');
+});
+
+// ── What the rows say, and to whom (sign-up test, 19 Oct 2026) ─────────
+//
+// "There is a new version available. Click here to get the new version.",
+// right under the new app's name a minute after signing up, read as the app
+// having changed: it was Homeroom's own release. Each line now names what has
+// the update, and somebody who has not reached Homeroom yet hears nothing of
+// Homeroom's: their next launch lands on the new build anyway.
+
+test('the rows name what has the update, Homeroom or the app, and a newcomer hears nothing of Homeroom\'s', (t) => {
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+  const { message } = require('./lib/platform-i18n');
+  const store = loadTsx('frontend/src/features/improve/improve-store.js');
+  const wired = loadTsx('frontend/src/features/improve/actions.tsx', { stubs: { './improve-store.js': store } });
+  const initial = { ...store.improveStore.get() };
+  const draw = (patch) => {
+    store.improveStore.set({ ...initial, ...patch });
+    return renderToHtml(createElement(wired.UpdateStatus));
+  };
+  t.after(() => store.improveStore.set(initial));
+
+  assert.equal(message('agent:menu.update.platformReady'), 'Homeroom has an update. Reload to get it.');
+  assert.equal(message('agent:menu.update.platformDownloading'), 'Homeroom is downloading an update. You can reload once it’s ready.');
+  assert.equal(message('agent:menu.update.platformBuilding'), 'Homeroom is being updated.');
+  for (const id of ['platformReady', 'appReady', 'appReadyUnnamed', 'platformDownloading', 'platformBuilding', 'appBuilding', 'appBuildingUnnamed']) {
+    assert.doesNotMatch(message(`agent:menu.update.${id}`, { app: 'X' }), /\b(?:Click|Tap|new version)\b|—/, id);
+  }
+
+  // Homeroom's own: ready (or a prefetch that failed, which a reload still
+  // beats), downloading, being deployed.
+  assert.match(draw({ versionState: 'ready' }), /<button id="improve-update-ready"[^>]*>.*Homeroom has an update\. Reload to get it\./);
+  assert.match(draw({ versionState: 'failed' }), /id="improve-update-ready"[^]*Homeroom has an update\. Reload to get it\./);
+  assert.match(draw({ versionState: 'deploying' }), /id="improve-update-note"[^]*Homeroom is being updated\./);
+  // The app's, by its name; "this app" before the name is known.
+  assert.match(draw({ name: 'City Tier List', appUpdateReady: true }), /id="improve-app-update-ready"[^]*City Tier List has an update\. Reload to see it\./);
+  assert.match(draw({ name: '', appUpdateReady: true }), /This app has an update\. Reload to see it\./);
+  assert.match(draw({ name: 'City Tier List', deploying: true }), /An update to City Tier List is on its way\./);
+  assert.match(draw({ name: '  ', deploying: true }), /An update to this app is on its way\./);
+
+  // A NEWCOMER: the first session's walk on Home still owed to them on this
+  // device (../first-session/first-visit.ts), so they have not reached
+  // Homeroom yet. Nothing of Homeroom's update; their app's lines stay.
+  const data = new Map([['usernode:first-session:walk:42', JSON.stringify({ slug: 'city-tier-list', name: 'City Tier List', maker: true, armed: true })]]);
+  const memory = { getItem: (k) => (data.has(k) ? data.get(k) : null), setItem: (k, v) => { data.set(k, String(v)); } };
+  const had = { window: Object.getOwnPropertyDescriptor(globalThis, 'window'), localStorage: Object.getOwnPropertyDescriptor(globalThis, 'localStorage') };
+  Object.defineProperty(globalThis, 'window', { value: { App: { user: { id: 42 } } }, configurable: true, writable: true });
+  Object.defineProperty(globalThis, 'localStorage', { value: memory, configurable: true, writable: true });
+  try {
+    for (const versionState of ['ready', 'failed', 'downloading', 'deploying']) {
+      assert.equal(draw({ versionState }), '', versionState);
+    }
+    assert.match(draw({ versionState: 'ready', name: 'City Tier List', appUpdateReady: true }), /^<button id="improve-app-update-ready"/, 'their app\'s reload, not Homeroom\'s');
+    assert.match(draw({ versionState: 'downloading', name: 'City Tier List', deploying: true }), /An update to City Tier List is on its way\./);
+    // Somebody else on this device is owed nothing.
+    globalThis.window.App.user.id = 7;
+    assert.match(draw({ versionState: 'ready' }), /Homeroom has an update/);
+    // Once the walk has run, they have reached Homeroom: the row is back.
+    globalThis.window.App.user.id = 42;
+    data.set('usernode:first-session:walk:42', 'done');
+    assert.match(draw({ versionState: 'ready' }), /Homeroom has an update/);
+  } finally {
+    for (const [k, d] of Object.entries(had)) {
+      if (d) Object.defineProperty(globalThis, k, d); else delete globalThis[k];
+    }
+  }
+  // And while a first-session visit is under way (a flag the tab keeps),
+  // as the source says: the prerender has no such visit.
+  assert.match(PANEL, /const firstVisit = useFirstSessionVisit\(\);\n\s+const newcomer = firstVisit \|\| owedHomeWalk\(\);\n\s+const platformBusy = !newcomer && \(versionState === 'deploying' \|\| versionState === 'downloading'\);\n\s+const ready = !newcomer && \(versionState === 'ready' \|\| versionState === 'failed'\);/);
+  // The new build is still fetched for them: nothing here touches the
+  // version poll or the worker, only what the menu says.
+  assert.doesNotMatch(PANEL, /setVersionState|serviceWorker|skipWaiting/);
 });

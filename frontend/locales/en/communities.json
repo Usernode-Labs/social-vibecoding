@@ -59,8 +59,36 @@
     "text": "Show {{count}} more",
     "description": "Last row of a section in the list of the person's communities: reveals the next communities in that section. {{count}} is how many this press reveals."
   },
+  "filter.label": {
+    "text": "Show communities",
+    "description": "Accessible name of the row of filter chips above the list of every community the person is in (All, Public, Private, Just you) on the All communities page."
+  },
+  "filter.all": {
+    "text": "All",
+    "description": "Filter chip above the list of the person's communities: shows every community they are in, whoever it is for."
+  },
+  "filter.open": {
+    "text": "Public",
+    "description": "Filter chip above the list of the person's communities: shows only the public communities (anyone can see and join them)."
+  },
+  "filter.invited": {
+    "text": "Private",
+    "description": "Filter chip above the list of the person's communities: shows only the private communities (people are invited in)."
+  },
+  "filter.solo": {
+    "text": "Just you",
+    "description": "Filter chip above the list of the person's communities: shows only the projects nobody else is in yet."
+  },
+  "filter.allCount_one": {
+    "text": "All, {{count}} community",
+    "description": "Accessible name of the All filter chip above the list of the person's communities, with how many communities they are in. {{count}} is that number."
+  },
+  "filter.allCount_other": {
+    "text": "All, {{count}} communities",
+    "description": "Accessible name of the All filter chip above the list of the person's communities, with how many communities they are in. {{count}} is that number."
+  },
   "list.loading": {
-    "text": "Loading your apps",
+    "text": "Loading your communities",
     "description": "Accessible name of the placeholder rows on the Communities screen while the person's list of communities is loading."
   },
   "list.loadError": {
@@ -147,13 +175,13 @@
     "text": "{{count}} to vote",
     "description": "Status on a community's row on the Communities screen: how many proposals and group decisions in it are waiting for this person's vote. \"To vote\" means still to be voted on by you."
   },
-  "row.unread_one": {
-    "text": "{{count}} unread in the channel",
-    "description": "Accessible name of the number badge on a community's row on the Communities screen: how many unread messages its chat channel has."
+  "row.newMessages_one": {
+    "text": "{{count}} new message",
+    "description": "Status on a community's row on the Communities screen, after how many proposals wait for the person's vote (\"1 to vote · 1 new message\"): how many messages in its chat channel the person has not read yet."
   },
-  "row.unread_other": {
-    "text": "{{count}} unread in the channel",
-    "description": "Accessible name of the number badge on a community's row on the Communities screen: how many unread messages its chat channel has."
+  "row.newMessages_other": {
+    "text": "{{count}} new messages",
+    "description": "Status on a community's row on the Communities screen, after how many proposals wait for the person's vote (\"1 to vote · 5 new messages\"): how many messages in its chat channel the person has not read yet."
   },
   "needsYou.heading": {
     "text": "Needs you",
