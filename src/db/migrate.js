@@ -2255,6 +2255,33 @@ async function seedStagingModerationCase(pool) {
           WHERE c.target_type = 'user' AND c.target_id = 900320`
       );
     }
+    // #5102: a second fake case, reported for child safety, so the queue
+    // shows a case sorted to the top with its marks. Inserted after the first
+    // so the first keeps case id 1 (the deep-link check opens it).
+    await pool.query(
+      `INSERT INTO users (id, username, password, profile_published)
+       VALUES (900322, 'staging-demo-flagged', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO moderation_cases (target_type, target_id, target_label, target_user_id, status, preserve_evidence)
+       VALUES ('user', 900322, '@staging-demo-flagged', 900322, 'new', TRUE)
+       ON CONFLICT (target_type, target_id) DO NOTHING`
+    );
+    const hasChildSafety = await pool.query(
+      `SELECT 1 FROM moderation_reports r JOIN moderation_cases c ON c.id = r.case_id
+        WHERE c.target_type = 'user' AND c.target_id = 900322 LIMIT 1`
+    );
+    if (!hasChildSafety.rowCount) {
+      await pool.query(
+        `INSERT INTO moderation_reports (case_id, cycle, reporter_user_id, reason, detail, evidence)
+         SELECT c.id, c.cycle, 900321, 'child_safety',
+                'Staging fixture: a fake child-safety report so the Moderation queue shows a priority case.',
+                NULL
+           FROM moderation_cases c
+          WHERE c.target_type = 'user' AND c.target_id = 900322`
+      );
+    }
     log.info('db', 'Staging moderation case seeded');
   } catch (err) {
     log.warn('db', 'Staging moderation case seeding failed', { message: err.message });

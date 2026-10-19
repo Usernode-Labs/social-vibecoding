@@ -4550,6 +4550,21 @@
     },
     {
       "source": "src/routes/bench-studio.js",
+      "method": "POST",
+      "path": "/api/bot-studio/bot/settings",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.bot.studio.bot.settings.1df77545",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/bench-studio.js",
       "method": "GET",
       "path": "/api/bot-studio/shots",
       "expression": null,

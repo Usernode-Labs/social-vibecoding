@@ -11671,6 +11671,11 @@ COMMENT ON TABLE moderation_actions IS 'staging:private';
 COMMENT ON TABLE moderation_message_originals IS 'staging:private';
 
 CREATE UNIQUE INDEX IF NOT EXISTS moderation_reports_unique_open ON moderation_reports(case_id,cycle,reporter_user_id) WHERE legacy_type IS NULL;
+-- #5102: a child-safety report sets this on its case, and the retention
+-- purge (services/moderation.js purgeExpired) skips a preserved case: its
+-- reports, evidence, files and audit outlive the 180-day clock. Only a full
+-- administrator's audited release_evidence action clears it.
+ALTER TABLE moderation_cases ADD COLUMN IF NOT EXISTS preserve_evidence BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Retired: cross-Pod ownership of a preview build under the old preview
 -- lifecycle (the preview machine owns every build since #5212).
