@@ -786,7 +786,8 @@ export async function workflowHealth() {
   const r = running();
   const client = await kernelPool!.connect();
   try {
-    await client.query("BEGIN READ ONLY; SET LOCAL statement_timeout = '5s'");
+    await client.query('BEGIN READ ONLY');
+    await client.query("SET LOCAL statement_timeout = '5s'");
     const health = await inspect.health(client, r.workLimits());
     await client.query('COMMIT');
     return health;
