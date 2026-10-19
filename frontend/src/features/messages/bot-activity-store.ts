@@ -3,7 +3,7 @@ import { useEffect, useRef, useSyncExternalStore } from 'react';
 import * as api from './api';
 import { SPINNING_OUTCOMES, WORK_CHANGED_EVENT } from './bot-shared';
 import { handleEvent } from './store';
-import type { HomeroomBotActivity, HomeroomBotReadyNow } from './types';
+import type { HomeroomBotActivity, HomeroomBotGoesLive, HomeroomBotReadyNow } from './types';
 
 /*
  * #3736: the state of the activity cards in the Homeroom bot's DM
@@ -109,6 +109,52 @@ export function loadBotActivity({ fresh = true }: { fresh?: boolean } = {}): Pro
 /** A card drawn before anything was read (or anywhere the sync is not): read once. */
 export function ensureBotActivity(): void {
   if (!snapshot.loaded && !snapshot.failed && !inFlight) void loadBotActivity({ fresh: false });
+}
+
+/**
+ * #5483: the Yes votes this page cast in the chat with Homeroom bot, keyed
+ * by session id. The vote is saved by api.approveChange as before; what the
+ * card kept of it was its own component state, which leaving the chat
+ * unmounts, so a card reopened read the transcript's copy from before the
+ * vote and offered Try it / Approve / Change something again. `epoch` is the
+ * one the vote was cast at, so a card sent for a newer version is not
+ * matched. Gone on reload, by when the server's own message update and a
+ * fresh read hold the vote.
+ */
+const approvalsCastHere = new Map<number, { epoch: number | null; goesLive: HomeroomBotGoesLive | null }>();
+
+/** The Yes this page cast on the change `sessionId` holds, at the same version (`epoch`), else null. */
+export function approvedHere(sessionId: number, epoch: number | null): { epoch: number | null; goesLive: HomeroomBotGoesLive | null } | null {
+  const kept = approvalsCastHere.get(Number(sessionId));
+  if (!kept) return null;
+  if (kept.epoch != null && epoch != null && kept.epoch !== epoch) return null;
+  return kept;
+}
+
+/**
+ * The same record for a React reader that does not subscribe to the cards'
+ * snapshot (bot-strip.tsx's row): redraws the row the moment a Yes lands
+ * here, from the row's own tap or the card's.
+ */
+export function useApprovedHere(sessionId: number, epoch: number | null): { epoch: number | null; goesLive: HomeroomBotGoesLive | null } | null {
+  return useSyncExternalStore(subscribe, () => approvedHere(sessionId, epoch), () => null);
+}
+
+/**
+ * A Yes just cast here (bot-ready.tsx's card, bot-strip.tsx's row), once the
+ * server has said yes: keep it for the page's lifetime, redraw every card
+ * subscriber, and read the change's state again fresh. The rest of the page
+ * hears it the way castVote announces a vote, through the window bridge,
+ * never an import, each call in its own try — none of them is needed for the
+ * vote itself, which is already saved.
+ */
+export function noteApprovedHere(sessionId: number, epoch: number | null, goesLive: HomeroomBotGoesLive | null): void {
+  approvalsCastHere.set(Number(sessionId), { epoch: epoch == null ? null : Number(epoch), goesLive: goesLive || null });
+  publish({ ...snapshot });
+  void loadBotActivity();
+  try { (window as any).AppView?._noteOwnVote?.(sessionId, 'yes'); } catch { /* paint only */ }
+  try { (window as any).AppView?._publishVoteSaved?.(sessionId, 'yes', epoch); } catch { /* paint only */ }
+  try { (window as any).Notifications?.refresh?.(); } catch { /* paint only */ }
 }
 
 /**
