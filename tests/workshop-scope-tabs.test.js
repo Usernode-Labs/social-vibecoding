@@ -180,10 +180,12 @@ test('All items, the plus and now the tabs are gone; Needs you is a row (#3051)'
     assert.ok(!SCREEN.includes(`id="${id}"`), `#${id} is not on the screen either`);
     assert.ok(!HTML.includes(`id="${id}"`), `#${id} is not in the shipped shell`);
   }
-  // NOTHING FILTERS THE LIST OF APPS, which is the argument that retired the
-  // old strip: the Needs you feed is a page of its own over the list, and
-  // nothing narrows `rows` by it.
-  assert.ok(!SCREEN.includes('filterRows'), 'the screen does not filter the app list');
+  // NOTHING NARROWS THE LIST BY WHAT WAITS, which is the argument that
+  // retired the old strip: the Needs you feed is a page of its own over the
+  // list. The one list's chips and search (#5296) narrow it by audience and
+  // by name only.
+  const filter = SCREEN.slice(SCREEN.indexOf('export function filterRows'), SCREEN.indexOf('/** Each chip\'s words'));
+  assert.ok(filter.length > 0 && !/needs|owed|working/.test(filter), 'the list is never filtered by its counts');
   const store = read('frontend/src/features/workshop/workshop-store.js');
   assert.match(store, /^\s*tab: 'status',/m, 'the list is the default, and the prerender');
   assert.doesNotMatch(store, /scopeOpen/, 'Your communities keeps its own open flag (#852)');

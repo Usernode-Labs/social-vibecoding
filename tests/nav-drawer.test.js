@@ -205,11 +205,11 @@ test('level 0 searches your communities by name, in the list\'s order, an exact 
   assert.deepEqual(matchCommunities(gardens, 'garden').map((r) => r.slug), ['garden', 'garden-swap'], 'the exact name leads');
   assert.deepEqual(matchCommunities(gardens, 'arden').map((r) => r.slug), ['garden-swap', 'garden'], 'a partial-only query keeps the list order');
   // The Communities screen's search (frontend/src/features/workshop/index.tsx)
-  // shares the one rule: it computes `found` with matchRows too, from
-  // ./sections, where the drawer also reads it (importing the screen back
-  // would be a cycle).
+  // shares the one rule: its one list (#5296) is narrowed with matchRows
+  // too, from ./sections, where the drawer also reads it (importing the
+  // screen back would be a cycle).
   const screen = read('frontend/src/features/workshop/index.tsx');
-  assert.match(screen, /const found = rows && q \? matchRows\(rows, q\) : null;/);
+  assert.match(screen, /return matchRows\(inAudience, query\);/);
 });
 
 test('the header takes the drawer\'s arrow and titles only while it applies', () => {

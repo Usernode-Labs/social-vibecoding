@@ -3218,8 +3218,8 @@
       "id": "workshop.all-apps",
       "name": "Workshop links joined communities to their actual app Workshop",
       "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden) #workshop-list [data-workshop-section=\"open\"] a[data-workshop-app][href$=\"/workshop\"]",
-      "expectText": "Public communities",
+      "expectSelector": "#workshop-screen:not(.hidden) #workshop-list [data-workshop-rows=\"all\"] a[data-workshop-app][data-workshop-audience=\"open\"][href$=\"/workshop\"]",
+      "expectText": "Public",
       "visual": true,
       "impact": [
         "frontend/src/features/workshop/**",
@@ -3235,13 +3235,13 @@
       "expectSelector": "#workshop-screen:not(.hidden) #workshop-list a[data-workshop-app]:has([data-workshop-working] + [data-workshop-needs])"
     },
     {
-      "name": "The Workshop keeps joined community sections in audience order",
+      "name": "All communities is one list under audience chips, All pressed, then Public, Private and Just you in that order, with every community out and no Show more (#5296)",
       "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-list:has([data-workshop-section=\"open\"]):not(:has([data-workshop-section=\"solo\"] ~ [data-workshop-section])):not(:has([data-workshop-section=\"invited\"] ~ [data-workshop-section=\"open\"]))",
-      "expectText": "Public communities"
+      "expectSelector": "#workshop-screen:not(.hidden):not(:has([data-workshop-more])) [data-workshop-chips] [data-workshop-chip=\"all\"][aria-pressed=\"true\"] ~ [data-workshop-chip=\"open\"][aria-pressed=\"false\"] ~ [data-workshop-chip=\"invited\"] ~ [data-workshop-chip=\"solo\"]",
+      "expectText": "Just you"
     },
     {
-      "name": "The Communities screen draws no empty-state line while it has rows; beside the sidebar, whose Communities heading holds its search, it is one page of your communities under a search, nothing beside it; no chip on the page, and the page bounces (#3051, #852, #3566, D, v3)",
+      "name": "The Communities screen draws no empty-state line while it has rows; beside the sidebar, whose Communities heading holds its search, it is one page of your communities under a search, nothing beside it; no scope chip on the page, and the page bounces (#3051, #852, #3566, D, v3)",
       "path": "/?demo=1#workshop",
       "expectSelector": "body:has(#platform-rail-search) #workshop-screen[data-page-bounce]:not(.hidden):has(#workshop-search):not(:has([data-workshop-pane=\"needs\"])):has(#workshop-list [data-workshop-app]) [data-workshop-pane=\"status\"]:not(.hidden) #workshop-empty.hidden",
       "expectText": "Join a community"

@@ -1049,7 +1049,7 @@ test('the sidebar: the sections as rows, the pinned communities above yours, the
   assert.doesNotMatch(css, /\.platform-recents?\b/, 'and its styles with it');
   assert.doesNotMatch(css, /\.platform-strip-/, 'and the strip apps\' with theirs');
   // The phone's bar is unchanged: five equal cells, no pins.
-  assert.match(css, /\.platform-tab-all-votes,\n\.platform-rail-pinned,\n\.workshop-search \{\n {2}display: none;\n\}/);
+  assert.match(css, /\.platform-tab-all-votes,\n\.platform-rail-pinned \{\n {2}display: none;\n\}/);
 });
 
 // #5323: the "Pin here" slot is the one row the Pinned section draws while a
