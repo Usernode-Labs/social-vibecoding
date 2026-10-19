@@ -4826,6 +4826,12 @@ export function DevWorkshop(): ReactNode {
         // Its app first, as in the sidebar; Homeroom's own has none.
         app={!actions.selfHosted}
         onPlace={choosePlace}
+        // #5553: New topic opens its dialog at body level, so the tray puts
+        // itself away first, as a place press does.
+        onAddTopic={() => {
+          trayNav.current = true;
+          setTrayOpen(false);
+        }}
         onSwitch={(el) => {
           trayNav.current = true;
           setTrayOpen(false);

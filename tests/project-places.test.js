@@ -416,3 +416,59 @@ test('a switch opens another community on the place you were on, else its hub', 
     if (had) globalThis.window = was; else delete globalThis.window;
   }
 });
+
+// ── #5553: the New topic row ──────────────────────────────────────────
+// People who can build the project (and have joined it) get a New topic row
+// in the list of places, under the channels: the server's flag is the same
+// gate its topics-pr route applies, so nobody is offered a row that would
+// refuse them. It is a button, not a place, so `data-place` order and
+// `aria-current` are untouched.
+
+test('a builder who has joined gets New topic under the channels; nobody else does', () => {
+  const none = { owed: 0, channels: [channel({ kind: 'general', handle: 'general' })] };
+  // No topics yet: the row sits in the channels group, after #general.
+  const html = list({ places: { ...none, can_add_topic: true } });
+  assert.match(html, /data-place="discussion"[\s\S]*?<button type="button" class="dev-ws-place dev-ws-places-add" data-places-add=""><svg[\s\S]*?dev-ws-place-glyph[\s\S]*?<\/svg><span class="dev-ws-place-label">New topic<\/span><\/button><\/div><\/nav>/,
+    'after #general, the channels group\'s last child');
+  // It is not a place: no address, nothing lit by it.
+  assert.doesNotMatch(html.slice(html.indexOf('data-places-add') - 60, html.indexOf('data-places-add')), /<a |data-place=/);
+  // With topics, the row is the topics group's last child instead.
+  const withTopics = list({ places: { ...PLACES_PAYLOAD, can_add_topic: true } });
+  assert.match(withTopics, /data-place="c:infra"[\s\S]*?<button type="button" class="dev-ws-place dev-ws-places-add"/);
+  // The places themselves are exactly as before, with the row after them.
+  assert.deepEqual([...withTopics.matchAll(/data-place="([^"]+)"/g)].map((m) => m[1]),
+    ['status', 'needs', 'workshop', 'discussion', 'c:onboarding', 'c:homeroom-bot', 'c:infra']);
+  // Flag absent, false, or no record yet: no row, and the initial render is
+  // unchanged (no hydration difference).
+  assert.doesNotMatch(list({}), /data-places-add/);
+  assert.doesNotMatch(list({ places: { ...none, can_add_topic: false } }), /data-places-add/);
+  assert.doesNotMatch(list({ places: null }), /data-places-add/);
+  // The words and the behaviour: the same words as the form it opens, the
+  // Topics dialog at its New-topic form; the muted label, in the app.css the
+  // sidebar's fold shares.
+  assert.equal(message('project:places.list.newTopic'), 'New topic');
+  const SRC = read(LIST);
+  assert.match(SRC, /window\.UsernodeReact\?\.dialogs\?\.topics\?\.open\(\{ slug \}\)/);
+  assert.match(read('public/css/app.css'), /\.dev-ws-places-add \.dev-ws-place-label \{ color: var\(--text-muted\); \}/);
+  assert.match(read('public/css/app.css'), /\.platform-rail-nest :is\(\.dev-ws-places-more, \.dev-ws-places-add\) \{/);
+});
+
+test('New topic survives the sidebar\'s fold, after "Show N more", and opens with the caller\'s leave-taking', () => {
+  const folded = list({ fold: 1, places: { ...PLACES_PAYLOAD, can_add_topic: true } });
+  assert.match(folded, /data-places-more=""><span class="dev-ws-place-label">Show 2 more<\/span><\/button><button type="button" class="dev-ws-place dev-ws-places-add"/,
+    'the row is never folded away');
+  // The callers that hold the list under a layer close it first: the tray
+  // and the phone's drawer pass onAddTopic, the sidebar needs none.
+  assert.match(read(`${DIR}/workshop.tsx`), /onAddTopic=\{\(\) => \{\s*trayNav\.current = true;\s*setTrayOpen\(false\);\s*\}\}/);
+  assert.match(read('frontend/src/features/nav-drawer/nav-drawer.tsx'), /onAddTopic=\{closeForDialog\}/);
+  assert.match(read(`${DIR}/project-places.tsx`), /onAddTopic\?\.\(\);/);
+});
+
+// The flag the list reads is the route's own gate, computed on the community
+// read: a signed-in viewer with collab access who has joined (or a platform
+// admin) — the same people POST /api/apps/:slug/topics-pr lets propose.
+test('the community read computes can_add_topic beside its places, as topics-pr gates', () => {
+  const route = read('src/routes/apps.js');
+  assert.match(route, /placesPayload\.can_add_topic = !!\(req\.user\?\.id && canChat\s*&& \(membership\?\.is_member \|\| req\.user\?\.isAdmin\)\)/,
+    'next to placesFor, from collab access and membership');
+});

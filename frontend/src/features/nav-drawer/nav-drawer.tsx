@@ -427,6 +427,12 @@ function DrawerSurface({ slug, name, place, owed, selfHosted = false }: { slug: 
     openPlace(slug, key);
     go(2, { navigating: true });
   };
+  // #5553: a New topic press opens the Topics dialog at body level, so the
+  // drawer puts itself away first, as a place press does.
+  const closeForDialog = () => {
+    letGoBack(true);
+    go(2, { navigating: true });
+  };
   const pick = (row: WorkshopRow) => {
     const s = drawerStore.get();
     if (s.searching) setSearching(false);
@@ -507,6 +513,7 @@ function DrawerSurface({ slug, name, place, owed, selfHosted = false }: { slug: 
               // Its app first, as in the desktop sidebar; Homeroom's own has none.
               app={!selfHosted}
               onPlace={choosePlace}
+              onAddTopic={closeForDialog}
             />
           </div>
         </section>

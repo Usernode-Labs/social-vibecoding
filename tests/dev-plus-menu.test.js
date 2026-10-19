@@ -403,4 +403,9 @@ test('Settings & rules has a Topics row that opens the Topics dialog', () => {
   const dialog = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dialogs', 'topics.tsx'), 'utf8');
   assert.match(dialog, /useDialog<\{ slug\?: string \}>\('topics'/, 'the dialog answers to that name');
   assert.match(dialog, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/topics-pr`/, 'and each change it makes is a topics PR');
+  // #5553: for people who can build here only. The topics-pr route answers
+  // 403 to a viewer without collab access, so the row no longer offers
+  // itself to one: it sits inside the same gate the import-pr row is in.
+  assert.match(FRAME_SRC, /\{canCollaborate \? \(\s*<PlusRow\s+data-plus="topics"/,
+    'the Topics row is inside the canCollaborate gate');
 });

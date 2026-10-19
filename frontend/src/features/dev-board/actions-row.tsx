@@ -487,17 +487,23 @@ export function DevPlusMenu({
             {/* #4417: the project's topics, its lasting conversations: each
                 is a channel and a category. A change to them is a proposal
                 against dapp.json's `topics` (features/dialogs/topics.tsx).
-                Its own onClick, so it works however the menu was wired. */}
-            <PlusRow
-              data-plus="topics"
-              icon={<HashIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title={t('project:menu.topics.title')}
-              sub={t('project:menu.topics.sub')}
-              onClick={() => {
-                callAppView('_closePlusMenu');
-                window.UsernodeReact?.dialogs?.topics?.open({ slug: window.AppView?.appData?.slug });
-              }}
-            />
+                Its own onClick, so it works however the menu was wired.
+                For people who can build here only (#5553): the topics-pr
+                route answers 403 to a viewer without collab access, and
+                from 18 Oct the list's New topic row is the way in for
+                those who can. */}
+            {canCollaborate ? (
+              <PlusRow
+                data-plus="topics"
+                icon={<HashIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                title={t('project:menu.topics.title')}
+                sub={t('project:menu.topics.sub')}
+                onClick={() => {
+                  callAppView('_closePlusMenu');
+                  window.UsernodeReact?.dialogs?.topics?.open({ slug: window.AppView?.appData?.slug });
+                }}
+              />
+            ) : null}
             <PlusRow
               data-plus="secrets"
               icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}

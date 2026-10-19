@@ -4615,6 +4615,10 @@
     "text": "Channels",
     "description": "Small upper-case heading in a project's list of places, over the project's own chat channel (#general)."
   },
+  "places.list.newTopic": {
+    "text": "New topic",
+    "description": "Last row under the channels in a project's list of places (the phone's drawer, the tray behind the place bar, the desktop sidebar), shown to people who can build the project: opens the form to propose a new topic, which is a chat channel and a category of requests at once. The name of what the row starts a proposal for; the row is not a channel to open."
+  },
   "places.list.topics": {
     "text": "Topics",
     "description": "Small upper-case heading in a project's list of places, over its topics: the categories its members set up, each a chat channel of its own."

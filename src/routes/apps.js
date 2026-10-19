@@ -4290,6 +4290,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           showSelfHosted,
         });
         placesPayload.proposals = membership?.is_member ? await topicsPr.openTopicsPrs(pool, app.id) : [];
+        // WHO MAY ADD A TOPIC FROM THE LIST: the same people the
+        // topics-pr route lets propose one (requireAppMembership +
+        // collab access) — a signed-in member who can build here, or a
+        // platform admin. The list's New topic row shows for exactly
+        // these, so nobody is offered a row the server would refuse.
+        placesPayload.can_add_topic = !!(req.user?.id && canChat
+          && (membership?.is_member || req.user?.isAdmin));
       } catch (err) {
         log.warn('apps', 'Could not read the places for the hub', { slug: app.slug, message: err.message });
       }
