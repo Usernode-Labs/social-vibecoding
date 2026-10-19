@@ -149,7 +149,10 @@ export function BrowseScreen() {
           home ground" in app.css), not white: a sticky bar needs an opaque
           fill for the rows to scroll under, and a white one read as a slab
           across a cream page. Dark mode reads the same variable, which the
-          body's dark rule points at the inverted ground.
+          body's dark rule points at the inverted ground. app.css paints it
+          with the wallpaper's own fixed grain and washes, with a hairline at
+          its foot (polish N12: a flat band of ground did not match them);
+          the utility stays as the fill before that sheet applies.
 
           ON A PHONE it sits ON THE GROUND, above the list's card, not as
           the card's head. #1919 drew the search, the sort and the list as
@@ -252,12 +255,18 @@ export function BrowseScreen() {
             the field can never disagree with the rows below it. `w-auto`
             overrides the cva's `w-full` through cn's twMerge (the control
             should be as wide as its longest label, not as wide as the bar).
+
+            DRAWN AS THE CHIPS ARE (polish N12): the `plain` field's white,
+            in the chips' own box (a full radius, no border, 36px, their
+            15px medium type), so it reads as one more control of the row
+            above rather than a grey form field beside it.
         */}
         <div id="browse-sort-bar" className="mt-2 flex items-center gap-2 max-w-xl">
           <Label htmlFor="browse-sort-select" className="shrink-0">{t('discover:sort.label')}</Label>
           <Select
             id="browse-sort-select"
-            className="w-auto py-1.5"
+            variant="plain"
+            className="w-auto h-9 rounded-full border-0 bg-white dark:bg-zinc-900 px-4 py-0 text-[0.9375rem] font-medium text-zinc-900 dark:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
             aria-label={t('discover:sort.selectLabel')}
             value={state.sort}
             onChange={(e) => browse()?.setSort(e.currentTarget.value)}

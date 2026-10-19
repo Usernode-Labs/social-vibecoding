@@ -103,7 +103,10 @@ export function appPillsFor(app) {
       tip: PlatformI18n.t('discover:pill.missingSecretsTip', { count: n }),
     });
   }
-  if (openPrs > 0) {
+  // "N to vote" asks the viewer to vote, which only a member may (polish
+  // N12: Discover drew it on communities you have not joined). A record
+  // that does not say (`is_member` absent) keeps it.
+  if (openPrs > 0 && app.is_member !== false) {
     chipDefs.push({
       cls: 'bg-amber-500/10 text-amber-800 dark:text-amber-400',
       label: PlatformI18n.t('discover:pill.toVote', { count: openPrs }),

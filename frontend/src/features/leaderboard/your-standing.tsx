@@ -1,6 +1,6 @@
 /**
  * `#lb-your-standing` — the viewer's own standing, the first card of the
- * Challenges tab: "#22 of 161 people".
+ * Challenges tab: "#22 of 161 ranked".
  *
  * It is where the Me screen's rank and token allocation went when Me became
  * the prototype's compact page: the Me row that leads here is "Challenges &

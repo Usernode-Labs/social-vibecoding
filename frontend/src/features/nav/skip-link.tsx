@@ -20,9 +20,10 @@
  * app running full width, the chromeless and signed-out shells.
  */
 
-import type { MouseEvent } from 'react';
+import { useState, type MouseEvent } from 'react';
 
 import { useMessages } from '../../lib/i18n/react';
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useVisibility } from '../../lib/visibility-store';
 
 const CLS = 'sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-2 focus:z-[100] '
@@ -43,9 +44,18 @@ function skipToNavigation(event: MouseEvent<HTMLAnchorElement>): void {
 
 export function SkipToNavigation() {
   const railOnRoute = useVisibility('platform-tabs', true);
+  // POLISH N10: THE SIGNED-OUT LANDING KEPT IT. app.js publishes the rail
+  // away BEFORE hydration on a signed-out boot (_applyBootScreen), so the
+  // hydrating render asked for `hidden` over a prerender without it, and
+  // React does not patch an attribute while hydrating: the link stayed,
+  // pointing at a rail the landing does not have. So the first client
+  // render is the prerender's, and the published answer lands in a layout
+  // effect, before the first paint.
+  const [hydrated, setHydrated] = useState(false);
+  useIsomorphicLayoutEffect(() => { setHydrated(true); }, []);
   const t = useMessages();
   return (
-    <a href="#platform-tabs" className={CLS} hidden={!railOnRoute} onClick={skipToNavigation}>
+    <a href="#platform-tabs" className={CLS} hidden={hydrated && !railOnRoute} onClick={skipToNavigation}>
       {t('core:rail.skipToNavigation')}
     </a>
   );

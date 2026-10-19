@@ -614,8 +614,12 @@ export function SettledLine({ name, slug, iconUrl, emoji, number, title, outcome
       <span className="flex min-w-0 flex-1 items-center gap-1.5">
         <FinalState outcome={outcome} fallback={fallback} />
         <RequestTag number={number} size="line" />
-        <span className="truncate text-[14px] font-medium leading-5 text-zinc-700 dark:text-zinc-300">{title}</span>
-        {words ? <span className="shrink-0 max-w-[50%] truncate text-[13px] leading-5 text-zinc-500 dark:text-zinc-400" data-bot-settled-words="">{words}</span> : null}
+        {/* Polish N15: the title is the flexible part, so it has the room
+            ("Fix scr…" had 58px beside a 149px status) and a short one
+            still puts its status at the row's end, as the others are; the
+            status takes at most 40% and gives way first. */}
+        <span className="min-w-0 flex-1 truncate text-[14px] font-medium leading-5 text-zinc-700 dark:text-zinc-300">{title}</span>
+        {words ? <span className="min-w-0 max-w-[40%] truncate text-right text-[13px] leading-5 text-zinc-500 dark:text-zinc-400" data-bot-settled-words="">{words}</span> : null}
       </span>
     </>
   );

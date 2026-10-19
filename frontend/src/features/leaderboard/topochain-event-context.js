@@ -45,6 +45,13 @@ const TopochainEventContext = {
   // themselves: from then on the selection is theirs, not a fallback.
   _endedFallback: false,
 
+  // True once the events list has answered at least once (polish N11).
+  // Until then a null `eventId` means "not known yet", not "no public
+  // events", and the Challenges pane shows its skeleton rather than "No
+  // challenges right now." for the moment before the list lands. Kept
+  // across close()/open() with the rest of the resolved state.
+  _resolved: false,
+
   // True when the server gave the signed-in viewer the season history
   // (`viewer.history` on the events list, issue #2495): an admin, or a
   // member with a trace in a season other than the default event's. Only
@@ -219,6 +226,7 @@ const TopochainEventContext = {
     // Even with no event resolved, tell the panes: their own empty states are
     // the right answer to "there are no public events", and the standings pane
     // additionally falls back to the server's own "current event" default.
+    TopochainEventContext._resolved = true;
     TopochainEventContext._notify();
   },
 

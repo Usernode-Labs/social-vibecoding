@@ -476,7 +476,7 @@ test('First challenges: every one of them while any is unfinished, done ones in 
   }
 });
 
-test('Next challenges: at most three open ones, furthest along first', () => {
+test('Next challenges: at most three open ones, in the Challenges tab\'s order whatever the progress (polish N11)', () => {
   const { HP } = makeHomePanels({ slots: [] });
   assert.equal(HP.NEXT_SLOTS, 3);
   const counted = (id, current, target, over = {}) => challenge({
@@ -500,9 +500,23 @@ test('Next challenges: at most three open ones, furthest along first', () => {
   assert.equal(view.mode, 'next');
   assert.equal(view.heading, 'Next challenges');
   assert.equal(view.seeAll, true);
-  assert.deepEqual(ids(view), ['5', '3', '4'],
-    '2/3 before 1/4, then Started (points, no count) before every Not started; '
+  assert.deepEqual(ids(view), ['2', '6', '3'],
+    'This week first, then Always open, in the tab\'s order; '
     + 'never a finished, a First or a not-open challenge');
+  // Progress moving (the boot copy, then the fresh read) moves nothing.
+  const later = HP.challengesView(panel({
+    challenges: [
+      challenge({ id: 1, label: 'ONBOARDING', display_order: 0, progress: DONE }),
+      challenge({ id: 2, label: 'WEEKLY', display_order: 2 }),
+      counted(3, 3, 4, { label: 'PERSISTENT' }),
+      challenge({ id: 4, label: 'PERSISTENT', display_order: 4, earned_points: 50 }),
+      counted(5, 2, 3, { label: 'COMMUNITY' }),
+      counted(6, 4, 5, { label: 'WEEKLY' }),
+      challenge({ id: 7, label: 'WEEKLY', display_order: 7, progress: DONE }),
+      challenge({ id: 8, label: 'PERSISTENT', display_order: 8, open: false, earned_points: 10 }),
+    ],
+  }));
+  assert.deepEqual(ids(later), ids(view), 'the same three, in the same places, after a step on two of them');
 
   // Ties keep the Challenges tab's order (orderRows): This week first.
   const fresh = HP.challengesView(panel({
@@ -1257,7 +1271,7 @@ test('the heading and its link are single-line too', () => {
   assert.match(heading, /min-w-0 flex-1 truncate whitespace-nowrap">Next challenges<\/span>/);
   assert.doesNotMatch(heading, /24,300|2 of 9| · /, 'no counter appended to the label');
   assert.match(heading, /home-panel-see-all shrink-0[^"]*whitespace-nowrap/, 'the link never shrinks or wraps');
-  assert.match(heading, /<span class="whitespace-nowrap">See all<\/span><\/a>/, 'and has no chevron, as Browse all apps has none');
+  assert.match(heading, /<span class="whitespace-nowrap">See all<\/span><\/a>/, 'and has no chevron, as Discover\'s See all has none');
 });
 
 test('the row declares nowrap and clips, so a wrap cannot ship unnoticed', () => {
@@ -1903,13 +1917,13 @@ test('the Discover widget renders the curated cards when Home is reachable', () 
   // name the next reader has to disbelieve.
   assert.match(html, /class="app-card home-discover-card [^"]*" data-slug="alpha"/);
   assert.doesNotMatch(html, /home-discover-tile\b/, 'the grid tile is retired, not renamed in place');
-  assert.match(html, /Browse all apps/, 'and the browse control is always there');
-  assert.doesNotMatch(html, /Nothing to discover/);
+  assert.match(html, /id="home-browse-btn"[\s\S]*?>See all<\/span>/, 'and the browse control is always there');
+  assert.doesNotMatch(html, /No communities to suggest/);
 
   // With Home genuinely absent it still renders — the note, not a crash.
   const bare = renderBlock('discover').html;
-  assert.match(bare, /Nothing to discover right now/);
-  assert.match(bare, /Browse all apps/);
+  assert.match(bare, /No communities to suggest right now/);
+  assert.match(bare, /id="home-browse-btn"[\s\S]*?>See all<\/span>/);
 });
 
 // ── #1567: the badge ticks from the CACHE, in the same paint ─────────
@@ -2077,7 +2091,9 @@ test('the Discover section is headed Discover Communities; the tab and the link 
   const heading = renderDiscover().match(/<h2 class="home-area-label[\s\S]*?<\/h2>/)[0];
   assert.match(heading, /<span class="min-w-0 flex-1 truncate[^"]*">Discover Communities<\/span>/,
     'the label truncates rather than wraps at 320px, beside the link');
-  assert.match(heading, />Browse all apps<\/span>/);
+  // Polish N3: the link is "See all", as Challenges' is, not an "apps"
+  // beside a heading that says communities.
+  assert.match(heading, /aria-label="See all communities"[^>]*><span class="whitespace-nowrap">See all<\/span>/);
   const bar = fs.readFileSync(path.join(__dirname, '../frontend/src/features/nav/tab-bar.tsx'), 'utf8');
   assert.match(bar, /key: 'discover' as const, label: 'core:tabs\.discover', href: '#apps'/);
   assert.equal(message('core:tabs.discover'), 'Discover');
@@ -2088,19 +2104,19 @@ test('Discover’s degenerate states: cards, or the note — never both', () => 
   const featuredOnly = renderDiscover({ popularApps: () => [] });
   assert.match(featuredOnly, /data-slug="alpha"/);
   assert.doesNotMatch(featuredOnly, /home-discover-divider/);
-  assert.doesNotMatch(featuredOnly, /Nothing to discover/);
+  assert.doesNotMatch(featuredOnly, /No communities to suggest/);
 
   // Popular only — the reporter's case: everything curated is already theirs.
   // With two rails this drew the note ON TOP of six perfectly good cards.
   // One lane makes that a contradiction, so the cards are the whole answer.
   const popularOnly = renderDiscover({ featuredApps: () => [] });
-  assert.doesNotMatch(popularOnly, /Nothing to discover/);
+  assert.doesNotMatch(popularOnly, /No communities to suggest/);
   assert.match(popularOnly, /data-slug="pop"/);
   assert.match(popularOnly, /home-discover-rail/);
 
   // Neither: the note, and nothing else.
   const neither = renderDiscover({ featuredApps: () => [], popularApps: () => [] });
-  assert.match(neither, /Nothing to discover right now/);
+  assert.match(neither, /No communities to suggest right now/);
   assert.doesNotMatch(neither, /home-discover-rail/);
   assert.doesNotMatch(neither, /home-discover-tiles/);
   assert.doesNotMatch(neither, /home-discover-divider/);
@@ -2189,7 +2205,7 @@ test('dapp.json’s home-widget checks describe markup this module emits', () =>
   for (const cls of ['home-panel', 'home-discover-rail', 'app-card']) {
     assert.ok(discover.expectSelector.includes(cls), cls);
   }
-  assert.equal(discover.expectText, 'Browse all apps');
+  assert.equal(discover.expectText, 'See all');
   const desktop = renderDiscover();
   assert.ok(desktop.includes('home-discover-rail') && desktop.includes('app-card'),
     'and this module emits both classes that selector chains');

@@ -364,9 +364,9 @@ const Home = {
   // "Updated —".
   discoverMetaLine(app) {
     if (!app) return null;
-    const users = message('discover:row.meta.users', {
-      count: parseInt(app.active_users || 0, 10) || 0,
-    });
+    // A zero says nothing, as on the Discover rows (polish N12).
+    const count = parseInt(app.active_users || 0, 10) || 0;
+    const users = count > 0 ? message('discover:row.meta.users', { count }) : null;
     const when = formatRelativeTime(app.last_deploy_at || app.created_at);
     const facts = [users, when ? message('discover:row.meta.updated', { when }) : null]
       .filter(Boolean);
@@ -477,8 +477,9 @@ const Home = {
   // explicit admin review of the current deployment, not from active-user
   // counts or the staging-only `demo` fixture flag. That review is pinned to
   // the deployment it was made on and expires on every merge
-  // (src/services/discovery-curation.js), which is why the popular lane and
-  // the Browse grouping read it and the featured lane does not.
+  // (src/services/discovery-curation.js), which is why the Browse grouping
+  // reads it, the popular lane only ranks by it, and the featured lane does
+  // not read it at all.
   isDiscoveryReady(app) {
     return Home.isDiscoverable(app) && app.directory?.tier === 'ready';
   },
@@ -545,8 +546,14 @@ const Home = {
   // parseInt because a count arrives as a STRING when it comes straight off
   // a Postgres bigint.
   //
-  // Only public communities (`audience === 'open'`) qualify, and only
-  // currently reviewed working ones with icons. Also exclude:
+  // Only public communities (`audience === 'open'`) qualify, running and
+  // with an icon, REVIEWED WORKING ONES FIRST. A review is not required
+  // (polish N3): it is pinned to one deployment and expires on every merge
+  // (#2565 is the same finding for the curated half), so on production on
+  // 19 Oct 2026 no app had a current one and this lane was always empty,
+  // while Discover listed 67 communities to join. One an admin reviewed as
+  // a demo or broken (`directory.tier === 'more'`) is still never offered.
+  // Also exclude:
   //   * `featured` — the curated half of the same lane already offers those.
   //     The renderer dedupes by slug anyway, since one lane is where a
   //     double-listing would show as the same card twice.
@@ -560,11 +567,12 @@ const Home = {
     if (Home._shotDiscoverEmpty()) return [];
     const users = (a) => (parseInt(a && a.active_users, 10) || 0);
     const members = (a) => (parseInt(a && a.member_count, 10) || 0);
+    const reviewed = (a) => (Home.isDiscoveryReady(a) ? 1 : 0);
     return (apps || [])
       .filter((a) => a && !a.featured && a.audience === 'open'
-        && Home.isDiscoveryReady(a)
+        && Home.isDiscoverable(a) && a.directory?.tier !== 'more'
         && ((!Home.isJoined(a) && !Home.isYours(a)) || Home._discoverKeep.has(a.slug)))
-      .sort((x, y) => (members(y) - members(x)) || (users(y) - users(x)))
+      .sort((x, y) => (reviewed(y) - reviewed(x)) || (members(y) - members(x)) || (users(y) - users(x)))
       .slice(0, Home.POPULAR_LIMIT);
   },
 

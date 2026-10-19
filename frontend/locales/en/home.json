@@ -579,21 +579,25 @@
     "text": "Discover",
     "description": "Title of Home's Discover block when the server sent none. Not shown as a heading today; kept with the block's data."
   },
+  "discover.browseAll.text": {
+    "text": "See all",
+    "description": "Link at the right end of the \"Discover Communities\" heading on Home: opens the Discover screen, which lists every community the person can join. The Challenges heading's link says the same."
+  },
   "discover.browseAll.label": {
-    "text": "Browse all apps",
-    "description": "Link at the right end of the \"Discover Communities\" heading on Home, and its accessible name: opens the Discover screen with every app."
+    "text": "See all communities",
+    "description": "Accessible name of the \"See all\" link beside the \"Discover Communities\" heading on Home: opens the Discover screen, which lists every community the person can join."
   },
   "discover.browseAll.tip": {
-    "text": "Browse every app in the directory",
-    "description": "Tooltip of the \"Browse all apps\" link on Home."
+    "text": "See every community you can join in Discover",
+    "description": "Tooltip of the \"See all\" link beside the \"Discover Communities\" heading on Home. Discover is the name of the screen it opens."
   },
   "discover.empty.title": {
-    "text": "Nothing to discover right now",
-    "description": "First line of the card shown in Home's Discover Communities section when there are no apps to suggest. The whole card links to the Discover screen."
+    "text": "No communities to suggest right now",
+    "description": "First line of the card shown in Home's Discover Communities section when there is no community to suggest: none the person can join that they have not. The whole card links to the Discover screen."
   },
   "discover.empty.detail": {
-    "text": "Browse the directory to find an app to try.",
-    "description": "Second line of the card shown in Home's Discover Communities section when there are no apps to suggest."
+    "text": "Discover lists every community you can join.",
+    "description": "Second line of the card shown in Home's Discover Communities section when there is no community to suggest. Discover is the name of the screen the card opens."
   },
   "discover.card.addTip": {
     "text": "Add to My apps",

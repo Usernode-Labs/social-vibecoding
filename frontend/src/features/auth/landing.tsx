@@ -1457,13 +1457,17 @@ export function LandingScreen() {
             its own aspect ratio, and is inked black (white in dark mode) like
             the logotype everywhere (#4382); `title` gives it the accessible name the
             text branch has for free, so the bar still answers "Homeroom".
+
+            Not a heading (polish N10): the page under it has its own <h1>
+            (the story's or the pitch's headline), and a second one in the
+            bar made two top-level headings for one screen.
         */}
-        <h1
+        <div
           id="landing-header-title"
           className="flex-1 min-w-0 text-lg font-bold pointer-events-none truncate text-center"
         >
           {openApp ? headerTitle : <Wordmark className="h-7 w-auto inline-block align-middle text-zinc-950 dark:text-white" title={LANDING_TITLE} />}
-        </h1>
+        </div>
         {/*
             The trailing 28px, mirroring the lead box so the label sits on the
             bar's true centre rather than 40px right of it. It is what makes
@@ -1909,7 +1913,7 @@ export function LandingScreen() {
             </div>
           </div>
           {storyOn ? (
-            <Story primaryClass={PRIMARY_PILL} welcomeEmail={releaseEmail} onStart={() => setSheet('start')} />
+            <Story primaryClass={PRIMARY_PILL} welcomeEmail={releaseEmail} onStart={() => setSheet('start')} onSignIn={() => setSheet('signin')} />
           ) : null}
         </div>
       </div>

@@ -375,8 +375,8 @@ test('the panel offers the reload of the app on its own row, through Improve.rel
   assert.match(PANEL, /const \{ versionState, deploying, appUpdateReady \} = useStoreState\(improveStore\);/);
   const rowAt = PANEL.indexOf('id="improve-app-update-ready"');
   assert.ok(rowAt > 0, 'the row exists');
-  const row = PANEL.slice(rowAt, PANEL.indexOf('</button>', rowAt));
-  assert.match(row, /onClick=\{\(\) => Improve\.reloadApp\(\)\}/, 'it reloads the frame, not the tab');
+  const row = PANEL.slice(rowAt, PANEL.indexOf('</UpdateReadyRow>', rowAt));
+  assert.match(row, /onUpdate=\{\(\) => Improve\.reloadApp\(\)\}/, 'it reloads the frame, not the tab');
   assert.doesNotMatch(row, /location\.reload/);
   // Ordered after the platform's own reload (which reloads the whole tab and
   // so subsumes this) and before the building note.

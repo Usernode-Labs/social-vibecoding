@@ -1504,12 +1504,16 @@
     "description": "The one button at the top of the Homeroom menu (the sheet opened from the Homeroom mark): opens the dialog for sending a suggestion or bug report about the app on screen."
   },
   "menu.update.platformReady": {
-    "text": "There is a new version available. Click here to get the new version.",
-    "description": "Row in the Homeroom menu (the sheet opened from the Homeroom mark) when a new version of Homeroom itself is ready; pressing it reloads the page."
+    "text": "A new version is ready",
+    "description": "Row in the Homeroom menu (the sheet opened from the Homeroom mark) when a new version of Homeroom itself is ready. An \"Update\" button ends the row; pressing the row reloads the page onto the new version."
   },
   "menu.update.appReady": {
-    "text": "This app has a new version. Click here to reload it.",
-    "description": "Row in the Homeroom menu (the sheet opened from the Homeroom mark) when the app on screen has a new released version; pressing it reloads the app."
+    "text": "This app has a new version",
+    "description": "Row in the Homeroom menu (the sheet opened from the Homeroom mark) when the app on screen has a new released version. An \"Update\" button ends the row; pressing the row reloads the app."
+  },
+  "menu.update.action": {
+    "text": "Update",
+    "description": "Button at the end of the Homeroom menu's \"A new version is ready\" or \"This app has a new version\" row: reloads onto the new version."
   },
   "menu.update.platformDownloading": {
     "text": "A new version of the platform is downloading. The reload appears once it is ready.",

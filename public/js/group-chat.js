@@ -3333,9 +3333,10 @@ const GroupChat = {
     const d = new Date(ts == null ? NaN : ts);
     if (isNaN(d.getTime())) return { text: '', title: '' };
     const today = now || new Date();
-    const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    // No zero-padded hour (polish N5): "4:14 AM", as lib/timestamp.ts.
+    const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     const title = d.toLocaleString([], {
-      year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+      year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
     });
     const sameDay = d.getFullYear() === today.getFullYear()
       && d.getMonth() === today.getMonth()

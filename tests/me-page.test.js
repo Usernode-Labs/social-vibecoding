@@ -186,7 +186,7 @@ test('every part of the older Profile has a home', () => {
   // on that tab's summary line
   const standing = read('frontend/src/features/leaderboard/your-standing.tsx');
   assert.match(standing, /id="leaderboard:standing\.rankOf"/);
-  assert.equal(message('leaderboard:standing.rankOf', { rank: 3, count: 12, number: '12' }), '<0>#3</0> of 12 people');
+  assert.equal(message('leaderboard:standing.rankOf', { rank: 3, count: 12, number: '12' }), '<0>#3</0> of 12 ranked');
   assert.match(standing, /\{t\('leaderboard:standing\.token\.label'\)\}/);
   assert.equal(message('leaderboard:standing.token.label'), 'Token allocation');
   assert.match(read('frontend/src/features/leaderboard/challenges-pane.tsx'), /<YourStanding \/>/);

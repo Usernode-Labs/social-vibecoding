@@ -1551,6 +1551,10 @@ function ThreadHeader() {
   // opens the activity panel (./bot-work.tsx), working or not. #3770: the
   // disc, not the name block, which nobody read as a control.
   const botDm = active.kind === 'direct' && !!active.homeroomBot && active.membershipStatus === 'member';
+  // Polish N15: the Homeroom bot is the platform, not a person, so its ⋯
+  // offers no "Block Homeroom bot" or "Report user". What there is to say
+  // about a bot goes to Homeroom as feedback, which its menu offers instead.
+  const withBot = active.kind === 'direct' && !!active.homeroomBot;
   // QA 2026-09-24 Q33a: an unanswered request names its requester.
   const person = directPerson(active);
   // QA 2026-09-24 Q14: "1 member", not "1 members". An invitee is not shown
@@ -1599,12 +1603,14 @@ function ThreadHeader() {
               : null}
             {active.kind === 'group'
               ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openDialog('messagesMembers'); }}>{t('messages:header.menu.members')}</button>
-              : active.kind === 'direct'
-                ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">{!peer ? t('messages:header.menu.blockUnknown')
-                  : peer.unnamed ? (peer.id ? t('messages:header.menu.blockUnnamedHandle') : t('messages:header.menu.blockUnnamed'))
-                    : t('messages:header.menu.block', { name: senderName(peer, { bare: active.kind === 'direct' }) })}</button>
-                : null}
-            {peer ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openReport({ targetType: 'user', target: peer.username, label: senderName(peer, { bare: active.kind === 'direct' }), userId: peer.id }); }}>{t('messages:header.menu.report')}</button> : null}
+              : withBot
+                ? <button type="button" role="menuitem" data-bot-feedback="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); (window as unknown as { App?: { openFeedbackModal?: () => void } }).App?.openFeedbackModal?.(); }}>{t('messages:header.menu.botFeedback')}</button>
+                : active.kind === 'direct'
+                  ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">{!peer ? t('messages:header.menu.blockUnknown')
+                    : peer.unnamed ? (peer.id ? t('messages:header.menu.blockUnnamedHandle') : t('messages:header.menu.blockUnnamed'))
+                      : t('messages:header.menu.block', { name: senderName(peer, { bare: active.kind === 'direct' }) })}</button>
+                  : null}
+            {peer && !withBot ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openReport({ targetType: 'user', target: peer.username, label: senderName(peer, { bare: active.kind === 'direct' }), userId: peer.id }); }}>{t('messages:header.menu.report')}</button> : null}
             <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); void loadConversations(true); }}>{t('messages:header.menu.refresh')}</button>
           </div>
         ) : null}
@@ -2048,6 +2054,7 @@ function ConversationPeek({ peek }: { peek: Peek }) {
   }, [peek]);
   const { conversation, messages } = peek;
   const kind = conversation.kind || 'direct';
+  const person = directPerson(conversation);
   const rows: ReactNode[] = [];
   let previous: ConversationMessage | null = null;
   let previousDay: string | null = null;
@@ -2070,6 +2077,13 @@ function ConversationPeek({ peek }: { peek: Peek }) {
   return (
     <section className={`flex messages-thread-pane messages-thread-peek dc-lift dc-lift-session messages-thread-${kind}`} data-messages-peek={conversation.id}>
       <div className="messages-peek-body" inert aria-hidden="true">
+        {/* Polish N8: what shows of it is its left edge, so it leads with
+            its own face, where a conversation's header has it, and its rows
+            draw no faces (app.css): a sender's face only starts a run of
+            their lines, so one sat alone mid-screen like a stray badge. */}
+        <div className="messages-peek-head">
+          <UserAvatar user={person} title={person?.username || conversation.title} shape="square" />
+        </div>
         <div ref={scroller} className="messages-thread-scroll">{rows}</div>
       </div>
       <button
@@ -2764,7 +2778,9 @@ function ReplyThreadPanel() {
           </div>
           {where ? <div className="messages-thread-sub">{where}</div> : null}
         </div>
-        <button type="button" className="messages-thread-action" aria-label={t('messages:replies.close')} title={t('messages:replies.close')} onClick={() => closeThread()}>
+        {/* On a phone the Messages screen's header bar has the way back
+            (app.css hides this one there, polish N16). */}
+        <button type="button" className="messages-thread-action" data-reply-close="" aria-label={t('messages:replies.close')} title={t('messages:replies.close')} onClick={() => closeThread()}>
           <XIcon aria-hidden="true" />
         </button>
       </header>

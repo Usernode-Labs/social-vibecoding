@@ -557,7 +557,12 @@ test('a section shows its three most recent and folds the rest under "Show N mor
   assert.match(html, /<button[^>]*data-workshop-more="open"[^>]*aria-expanded="false"/,
     'the fold is a button row of the same card, never an anchor');
   assert.match(html, />Show 2 more</);
-  assert.match(html, /aria-label="5 in Public communities"/, 'the header counts the whole section');
+  // Polish N2: the number says what the card lists, "3 of 5", not a bare
+  // total sitting over three rows and "Show 2 more".
+  assert.match(html, /aria-label="Showing 3 of 5">3 of 5</, 'the header counts what is listed, out of the whole section');
+  const { sectionCount } = mod;
+  assert.deepEqual(sectionCount(5, 5, 'communities:sections.open.count'), { text: '5', label: '5 in Public communities' },
+    'every row out: the total alone');
 });
 
 test('"Show N more" reveals five at a time, then folds back (#3269)', () => {

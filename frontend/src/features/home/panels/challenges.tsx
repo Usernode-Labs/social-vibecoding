@@ -9,7 +9,8 @@
  *                      admin's order, the done ones in place with their Done
  *                      rail.
  *   Next challenges  — once those are done: up to three open challenges,
- *                      furthest along first.
+ *                      in the Challenges tab's order (polish N11: not by
+ *                      progress, which reshuffled them on screen).
  *   Challenges       — over ONE LINE when nothing is open: "All done for
  *                      this week" when this week's are all done, otherwise
  *                      "No challenges right now".

@@ -97,9 +97,11 @@ export function DiscoverSectionView({ painted, discover }: HomePanelsState) {
     <Section
       id="home-discover-section"
       slot="discover"
-      // #4184: the section names what its cards are. Only this heading: the
-      // tab bar's "Discover", "Browse all apps" and the panel registry's
-      // title keep their words. At 320px it ellipsises beside the link.
+      // #4184: the section names what its cards are. The tab bar's
+      // "Discover" and the panel registry's title keep their words; the
+      // link is "See all" (polish N3), as Challenges' is, rather than an
+      // "apps" beside a heading that says communities. At 320px the heading
+      // ellipsises beside the link.
       label={t('home:discover.heading')}
       // CONSTANT, like the label: both are rendered in the prerender and by
       // the first client render, so neither can disagree with the document

@@ -47,7 +47,8 @@ type RowView = {
   /** No display name: `user` is the "Anonymous" stand-in. */
   anonymous?: boolean;
   points: string;
-  extra: string;
+  /** The part of the points activities earned, when it is a part (TopochainLeaderboard.extraPart). */
+  extra: string | null;
   blocks: string;
   success: string;
 };
@@ -246,7 +247,7 @@ function Cell({ column, row }: { column: ColumnKey; row: RowView }): ReactNode {
     return (
       <td className={`${FIGURE}${ink}`}>
         {row.points}
-        <span className="text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{` +${row.extra}`}</span>
+        {row.extra ? <span className="text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{` +${row.extra}`}</span> : null}
       </td>
     );
   }

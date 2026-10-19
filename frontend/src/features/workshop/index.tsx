@@ -110,7 +110,7 @@ import { communitiesSearchStore } from './communities-search';
 import { NeedsReel, type NeedsFeedItem } from './needs-reel';
 import { unseenNeeds, useNeedsSeen } from './needs-seen';
 import {
-  groupRows, matchRows, orderRows, SECTION_LIMIT, sectionFold, type Audience,
+  groupRows, matchRows, orderRows, SECTION_LIMIT, sectionCount, sectionFold, type Audience,
 } from './sections';
 import { workshopStore } from './workshop-store.js';
 
@@ -124,7 +124,7 @@ workshopStore.setFlush(flushSync);
 // the "Which project?" panel (#3363); exported from here too, where the
 // screen's tests have always found them.
 export {
-  groupRows, orderRows, SECTION_LIMIT, SECTION_STEP, SECTIONS, sectionFold,
+  groupRows, orderRows, SECTION_LIMIT, SECTION_STEP, SECTIONS, sectionCount, sectionFold,
 } from './sections';
 
 export type WorkshopRow = {
@@ -465,13 +465,14 @@ export function Section({ audience, label, count, rows, idPrefix = 'workshop-sec
   const fold = sectionFold(rows.length, limit);
   const shown = rows.slice(0, fold.shown);
   const expanded = fold.shown === rows.length;
+  const tally = sectionCount(rows.length, fold.shown, count);
   const headingId = `${idPrefix}-${audience}`;
   return (
     <section data-workshop-section={audience} aria-labelledby={headingId}>
       <SectionHeader id={headingId} className="flex items-center gap-1.5">
         <SectionGlyph audience={audience} />
         <span>{t(label)}</span>
-        <span className="ml-auto tabular-nums" aria-label={t(count, { count: rows.length })}>{rows.length}</span>
+        <span className="ml-auto tabular-nums" aria-label={tally.label}>{tally.text}</span>
       </SectionHeader>
       <GroupedList tone="plane">
         {shown.map((row) => <AppRow key={row.slug} row={row} onOpen={onOpen} current={!!current && current === row.slug} />)}

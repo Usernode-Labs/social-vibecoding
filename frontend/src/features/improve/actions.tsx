@@ -133,37 +133,17 @@ function UpdateStatus(): ReactNode {
 
   if (ready) {
     return (
-      <button
-        id="improve-update-ready"
-        type="button"
-        className={'flex w-full items-center gap-3 px-4 py-3 text-left '
-          + 'text-sm font-medium text-violet-600 dark:text-violet-400 '
-          + 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60 un-touch-target'}
-        onClick={() => window.location.reload()}
-      >
-        <ArrowPathIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
-        <span className="min-w-0 flex-1">
-          {t('agent:menu.update.platformReady')}
-        </span>
-      </button>
+      <UpdateReadyRow id="improve-update-ready" onUpdate={() => window.location.reload()}>
+        {t('agent:menu.update.platformReady')}
+      </UpdateReadyRow>
     );
   }
 
   if (appUpdateReady) {
     return (
-      <button
-        id="improve-app-update-ready"
-        type="button"
-        className={'flex w-full items-center gap-3 px-4 py-3 text-left '
-          + 'text-sm font-medium text-violet-600 dark:text-violet-400 '
-          + 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60 un-touch-target'}
-        onClick={() => Improve.reloadApp()}
-      >
-        <ArrowPathIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
-        <span className="min-w-0 flex-1">
-          {t('agent:menu.update.appReady')}
-        </span>
-      </button>
+      <UpdateReadyRow id="improve-app-update-ready" onUpdate={() => Improve.reloadApp()}>
+        {t('agent:menu.update.appReady')}
+      </UpdateReadyRow>
     );
   }
 
@@ -187,6 +167,33 @@ function UpdateStatus(): ReactNode {
   }
 
   return null;
+}
+
+/**
+ * A new build is ready: a short line, then "Update" at the row's end (polish
+ * N4). It read "There is a new version available. Click here to get the new
+ * version." in link blue, a run of text with nothing on a phone to tap but
+ * the words. The whole row is still the one button, so the target is the
+ * row's full height, and the pill is what says it does something.
+ */
+function UpdateReadyRow({ id, onUpdate, children }: { id: string; onUpdate: () => void; children: ReactNode }): ReactNode {
+  const t = useMessages('agent');
+  return (
+    <button
+      id={id}
+      type="button"
+      className={'flex w-full items-center gap-3 px-4 py-3 text-left '
+        + 'text-sm font-medium text-zinc-900 dark:text-zinc-100 '
+        + 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60 un-touch-target'}
+      onClick={onUpdate}
+    >
+      <ArrowPathIcon className="w-5 h-5 shrink-0 text-violet-600 dark:text-violet-400" aria-hidden="true" />
+      <span className="min-w-0 flex-1">{children}</span>
+      <span className="shrink-0 rounded-full bg-violet-600 px-3 py-1 text-[13px] font-semibold text-white">
+        {t('agent:menu.update.action')}
+      </span>
+    </button>
+  );
 }
 
 export { UpdateStatus };

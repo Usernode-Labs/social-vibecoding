@@ -50,7 +50,7 @@ import { useCommunityColor } from '../../lib/community-color';
 import {
   closeSwitcher, communityScopeStore, goToCommunity, type CommunityInfo,
 } from './community-scope';
-import { SECTIONS, sectionFloor, sectionFoldFrom, type Audience } from './sections';
+import { SECTIONS, sectionCount, sectionFloor, sectionFoldFrom, type Audience } from './sections';
 
 const WIDE = '(min-width: 768px)';
 
@@ -136,6 +136,7 @@ function SwitcherSection({ audience, label, count, rows, current }: {
   const [limit, setLimit] = useState(floor);
   const fold = sectionFoldFrom(rows.length, limit, floor);
   const shown = rows.slice(0, fold.shown);
+  const tally = sectionCount(rows.length, fold.shown, count);
   const groupRef = useRef<HTMLDivElement>(null);
   // The index of the first row a press revealed, focused once it renders.
   const revealFrom = useRef<number | null>(null);
@@ -150,7 +151,7 @@ function SwitcherSection({ audience, label, count, rows, current }: {
     <div ref={groupRef} role="group" aria-labelledby={labelId} data-switcher-section={audience}>
       <h3 className="community-switcher-section" id={labelId}>
         <span>{t(label)}</span>
-        <span className="community-switcher-section-n" aria-label={t(count, { count: rows.length })}>{rows.length}</span>
+        <span className="community-switcher-section-n" aria-label={tally.label}>{tally.text}</span>
       </h3>
       {shown.map((info) => (
         <Row key={info.slug} info={info} current={current === info.slug} />

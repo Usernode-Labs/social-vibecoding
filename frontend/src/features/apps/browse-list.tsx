@@ -292,7 +292,14 @@ export function BrowseRows({ rows, site = null, curated = false, grouped = true,
   const t = useMessages('discover');
   if (!rows) return null;
   const siteRow = site ? <SiteRow site={site} /> : null;
-  const renderRows = (items: RowView[], headingSays?: string) => items.map((view) => (
+  // "NOT YET REVIEWED" SAYS SOMETHING ONLY BESIDE A REVIEWED APP (polish
+  // N12). A review expires on every merge, and on 19 Oct 2026 no app on
+  // production had a current one, so the heading sat under every filter,
+  // Featured too, and in a search it was every row's subtitle. With nothing
+  // reviewed in the list, no row says it and no heading groups by it.
+  const anyReviewed = rows.some((view) => view.directoryTier === 'ready');
+  const plainSays = anyReviewed ? undefined : 'Not yet reviewed';
+  const renderRows = (items: RowView[], headingSays: string | undefined = plainSays) => items.map((view) => (
     <Row key={view.slug} view={view} headingSays={headingSays} />
   ));
   if (!curated) return <>{siteRow}{renderRows(rows)}</>;
@@ -315,7 +322,7 @@ export function BrowseRows({ rows, site = null, curated = false, grouped = true,
   return (
     <>
       {siteRow}
-      {grouped ? (
+      {grouped && anyReviewed ? (
         <>
           {ready.length ? <SectionHeader className={headingClass}>{t('discover:list.heading.reviewedWorking')}</SectionHeader> : null}
           {renderRows(ready, 'Reviewed working')}

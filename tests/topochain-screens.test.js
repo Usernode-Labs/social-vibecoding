@@ -452,9 +452,12 @@ test('the standings module builds descriptors, not HTML — so there is nothing 
   assert.match(leaderboardJs, /str\(s\) \{\s*\n\s*return String\(s == null \? '' : s\)/,
     'str() keeps esc()\'s null→empty coercion');
   for (const field of ['r.display_name', 'r.total_points', 'row.wallet_address']) {
-    assert.ok(new RegExp(`str\\(${field.replace('.', '\\.')}`).test(leaderboardJs),
+    // Polish N11: the points go through pts(), which formats a number and
+    // hands anything else to str(), so a null still lands as ''.
+    assert.ok(new RegExp(`(?:str|pts)\\(${field.replace('.', '\\.')}`).test(leaderboardJs),
       `${field} passes through str() in topochain-leaderboard.js`);
   }
+  assert.match(leaderboardJs, /: TopochainLeaderboard\.str\(v\);/, 'pts() falls back to str()');
   // And the renderer must not reintroduce raw HTML by the back door.
   assert.ok(!standingsTsx.includes('dangerouslySetInnerHTML'),
     'the pane component renders text nodes, never raw HTML');

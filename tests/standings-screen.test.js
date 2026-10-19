@@ -943,10 +943,25 @@ test('the standings table drops the Success rate column on a season board', () =
     + 'column does not exist — it cannot print the hard-coded 0 as if measured');
   // The points and blocks columns are real on both paths and must survive.
   assert.deepEqual(view.columns, ['rank', 'user', 'points', 'blocks']);
-  assert.equal(view.rows[0].points, '67973.66', 'the season total is the headline number');
+  assert.equal(view.rows[0].points, '67,973.66', 'the season total is the headline number, with thousands separators (polish N11)');
+  assert.equal(view.rows[0].extra, null, 'no "+0"');
   assert.equal(view.headers.blocks, 'Blocks produced', 'blocks IS a real season-wide sum');
   assert.equal(view.headers.points, 'Season points', 'the column says which total it is');
   assert.equal(view.isSeason, true);
+});
+
+test('polish N11: points carry separators, and "+N" is shown only when it is part of the total', () => {
+  const view = renderStandings({
+    event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
+    leaderboard: [
+      { ...SEASON_ROW, rank: 1, total_points: 13252, extra_points: 13252 },
+      { ...SEASON_ROW, rank: 2, total_points: 12000, extra_points: 1500 },
+    ],
+  });
+  assert.equal(view.rows[0].points, '13,252');
+  assert.equal(view.rows[0].extra, null, 'all of it from activities: "+13,252" read as a gain the size of the score');
+  assert.equal(view.rows[1].points, '12,000');
+  assert.equal(view.rows[1].extra, '1,500', 'a part of it: still said');
 });
 
 test('the standings table keeps the Success rate column on a per-event board', () => {

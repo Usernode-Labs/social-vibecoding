@@ -105,6 +105,20 @@ test('search renders all supplied results without disclosure', () => {
   assert.match(render({ rows: [rows[2]] }), /Show more \(1\)/, 'even an all-demo directory remains reachable');
 });
 
+// Polish N12: with no reviewed app in the list (every review expired, as on
+// production on 19 Oct 2026), "Not yet reviewed" is every app. It heads no
+// group and labels no row, in Recommended, a metric sort or a search.
+test('nothing reviewed: no "Not yet reviewed" heading and no row saying it', () => {
+  const unreviewedOnly = [row('a', { directory_review_status: 'unreviewed' }), row('b', { directory_review_status: 'unreviewed' }),
+    row('demo-only', { directory_review_status: 'demo' })];
+  for (const html of [render({ rows: unreviewedOnly }), render({ rows: unreviewedOnly, grouped: false }), render({ rows: unreviewedOnly, curated: false })]) {
+    assert.ok(html.includes('data-slug="a"') && html.includes('data-slug="b"'), 'every app still listed');
+    assert.doesNotMatch(html, /Not yet reviewed/);
+    assert.doesNotMatch(html, /<h2/, 'no tier heading');
+  }
+  assert.match(render({ rows: unreviewedOnly, curated: false }), /Demo/, 'a label that does say something stays');
+});
+
 test('staging preview fixtures exercise real curation logic without certifying real apps', () => {
   const { catalogFixtures: fixture } = require('../src/services/staging-apps');
   assert.ok(fixture().filter((a) => a.featured).every((a) => a.directory.tier === 'ready'));

@@ -149,7 +149,8 @@ test('#3075: the menu no longer says it in words; the mark\'s own spinner stays'
   store.improveStore.set({ ...store.improveStore.get(), deploying: false, versionState: 'downloading' });
   assert.match(renderToHtml(createElement(wired.UpdateStatus)), /A new version of the platform is downloading\./);
   store.improveStore.set({ ...store.improveStore.get(), versionState: 'ready' });
-  assert.match(renderToHtml(createElement(wired.UpdateStatus)), /There is a new version available\./);
+  // Polish N4: a short line and an Update button, not "Click here".
+  assert.match(renderToHtml(createElement(wired.UpdateStatus)), /A new version is ready<\/span><span[^>]*>Update<\/span>/);
 });
 
 // #3559: "can overscroll horizontally on mobile on agent chats". The

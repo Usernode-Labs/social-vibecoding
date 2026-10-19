@@ -763,7 +763,7 @@ test('the site row renders first and Enter opens it', () => {
     'the site row carries no data-slug');
   assert.match(listSrc, /const siteRow = site \? <SiteRow site=\{site\} \/> : null;/);
   assert.match(listSrc, /<>\{siteRow\}\{renderRows\(rows\)\}<\/>/);
-  assert.match(listSrc, /\{siteRow\}\n\s+\{grouped \?/);
+  assert.match(listSrc, /\{siteRow\}\n\s+\{grouped && anyReviewed \?/);
   assert.match(listSrc, /t\('discover:site\.subtitle'\)/);
   const screenSrc = read('frontend/src/features/apps/browse-screen.tsx');
   assert.match(screenSrc, /site=\{state\.site\}/);
@@ -1010,19 +1010,25 @@ test('rowView: status pills and the status word ride the row', () => {
   assert.deepEqual(Array.from(pills.chips, (c) => c.label),
     ['Missing secrets', '2 to vote', '1 issue']);
   assert.equal(pills.vis.label, 'Private');
+  // Polish N12: a vote is a member's, so a community you have not joined
+  // asks you for none.
+  assert.deepEqual(Array.from(AppCard.appPillsFor({ ...row.app, is_member: false }).chips, (c) => c.label),
+    ['Missing secrets', '1 issue']);
+  assert.deepEqual(Array.from(AppCard.appPillsFor({ ...row.app, is_member: true }).chips, (c) => c.label),
+    ['Missing secrets', '2 to vote', '1 issue']);
 });
 
 test('metaLine: users · updated · status, pluralised, missing bits skipped', () => {
   const { Browse } = makeBrowse();
   assert.match(Browse.metaLine(app({ active_users: 1 })), /^1 user\b/);
-  assert.match(Browse.metaLine(app({ active_users: 0 })), /^0 users\b/);
+  assert.doesNotMatch(Browse.metaLine(app({ active_users: 0 })), /0 users/, 'a zero says nothing (polish N12)');
   const running = Browse.metaLine(app({ active_users: 4, status: 'running' }));
   assert.doesNotMatch(running, /running/, 'a healthy app needs no status word');
   assert.match(Browse.metaLine(app({ status: 'error' })), /Error/);
   assert.match(Browse.metaLine(app({ status: 'creating' })), /Spinning up/);
-  // No timestamps at all still yields a usable line, and null is safe.
+  // No timestamps and nobody using it: no line at all, and null is safe.
   assert.equal(Browse.metaLine(null), '');
-  assert.match(Browse.metaLine({ status: 'running' }), /^0 users$/);
+  assert.equal(Browse.metaLine({ status: 'running' }), '', 'nothing to say: no line');
 });
 
 test('metaLine: the line answers the question the active sort asked (#1383)', () => {

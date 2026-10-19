@@ -118,6 +118,27 @@ const TopochainLeaderboard = {
     return String(s == null ? '' : s);
   },
 
+  // A points figure as the Challenges tab writes one, "13,252" (polish
+  // N11: the table printed "13252"). Up to two decimals survive, since the
+  // offchain part is kept to two; anything that is not a number is shown
+  // as it came.
+  pts(v) {
+    const n = Number(v);
+    return v != null && v !== '' && Number.isFinite(n)
+      ? n.toLocaleString('en-US', { maximumFractionDigits: 2 })
+      : TopochainLeaderboard.str(v);
+  },
+
+  // The "+N" after a row's points: the part of the total its activities
+  // earned (extra_points). Only where it is a part: on a points-only event
+  // it IS the total, and "13,252 +13,252" read as a gain as large as the
+  // score (polish N11); a zero says nothing.
+  extraPart(total, extra) {
+    const t = Number(total);
+    const e = Number(extra);
+    return Number.isFinite(e) && e > 0 && Number.isFinite(t) && e < t ? TopochainLeaderboard.pts(e) : null;
+  },
+
   // Safe fetch+parse, ported from admin-console.js's fetchJson: never
   // throws, returns { status, ok, data } with data === null on anything
   // that isn't a clean JSON 2xx.
@@ -407,8 +428,8 @@ const TopochainLeaderboard = {
       user: str(r.display_name) || PlatformI18n.t('leaderboard:standings.anonymous'),
       // Nobody to name: the row's sentence has an unnamed wording.
       anonymous: !str(r.display_name),
-      points: str(r.total_points),
-      extra: str(r.extra_points),
+      points: TopochainLeaderboard.pts(r.total_points),
+      extra: TopochainLeaderboard.extraPart(r.total_points, r.extra_points),
       blocks: str(r.event_total_produced_blocks),
       success: str(r.event_success_rate),
     }));
@@ -597,7 +618,7 @@ const TopochainLeaderboard = {
       items: (!act.loading && !act.error && Array.isArray(act.data))
         ? act.data.map((a) => ({
           label: str(a.description || a.activity_type),
-          points: str(a.points),
+          points: TopochainLeaderboard.pts(a.points),
           // Raw; ./activity-row.tsx formats it in the renderer (#3648).
           at: a.activity_at || null,
           precision: a.activity_time_precision || null,
