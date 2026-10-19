@@ -3973,9 +3973,9 @@
       "expectSelector": ".un-action-sheet .un-action-btn.un-destructive"
     },
     {
-      "name": "AI credit reads like the dev chat: limit $spent/$limit, no pill",
+      "name": "AI credit reads as one sentence, what is left of the week's allowance, no pill (#5284)",
       "path": "/?demo=1#settings/api-key",
-      "expectText": "limit $"
+      "expectText": "of $50 left this week"
     },
     {
       "name": "AI credit value is right-aligned to the row edge, wrapped or not",
