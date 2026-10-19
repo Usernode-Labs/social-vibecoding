@@ -317,7 +317,11 @@ export function SpecCard({ card }: { card: RequestSpecCard }): ReactNode {
     <div className="messages-object-card dev-request-spec" data-request-spec={card.key}>
       <span className="messages-object-icon" aria-hidden="true">📋</span>
       <div className="min-w-0 flex-1">
-        <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-semibold">{card.version ? t('project:topic.request.spec.kickerVersion', { version: card.version }) : t('project:topic.request.spec.kicker')}</div>
+        <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-semibold">{card.version
+          ? t(card.ended === 'replaced' ? 'project:topic.request.spec.kickerReplaced'
+            : card.ended === 'stopped' ? 'project:topic.request.spec.kickerStopped'
+            : 'project:topic.request.spec.kickerVersion', { version: card.version })
+          : t('project:topic.request.spec.kicker')}</div>
         <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2">{card.title}</div>
         <div className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
           {card.time ? (

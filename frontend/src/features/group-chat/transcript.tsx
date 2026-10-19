@@ -1074,6 +1074,8 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
     glyph = '📋';
     const values = { version: spec.version, title: spec.title };
     text = spec.botNote === 'building' ? t('project:topic.request.stream.botPlanBuilding', values)
+      : spec.botNote === 'replaced' ? t('project:topic.request.stream.botPlanReplaced', values)
+      : spec.botNote === 'stopped' ? t('project:topic.request.stream.botPlanStopped', values)
       : spec.botNote === 'waiting'
         ? (spec.waitingFor
           ? t('project:topic.request.stream.botPlanWaiting', { ...values, requester: spec.waitingFor })

@@ -109,11 +109,16 @@ test('Homeroom bot\'s plan row says what it is doing with the plan, with its Rea
     row({ id: 2, kind: 'spec_share', specShare: bot({ version: 2, botNote: 'waiting', waitingFor: 'sam' }) }),
     row({ id: 3, kind: 'spec_share', specShare: bot({ version: 3, botNote: 'waiting' }) }),
     row({ id: 4, kind: 'spec_share', specShare: bot({ version: 4 }) }),
+    row({ id: 5, kind: 'spec_share', specShare: bot({ version: 5, botNote: 'replaced' }) }),
+    row({ id: 6, kind: 'spec_share', specShare: bot({ version: 6, botNote: 'stopped' }) }),
   ] } });
   assert.match(html, /Plan v1: Dark mode\. I(?:'|&#x27;|&#39;)m building it now\.[\s\S]*?>Read</);
   assert.match(html, /Plan v2: Dark mode\. Waiting for @sam to say Build it\.[\s\S]*?>Read</);
   assert.match(html, /Plan v3: Dark mode\. Waiting for the person who asked for it to say Build it\./);
   assert.match(html, /Plan v4: Dark mode · /, 'an older row of the bot\'s reads as the plan');
+  // Papote #3: once it stopped waiting, it says so (homeroom-bot-live.js notePlanRows).
+  assert.match(html, /Plan v5: Dark mode\. A newer plan replaced it\.[\s\S]*?>Read</);
+  assert.match(html, /Plan v6: Dark mode\. It stopped waiting for Build it\./);
   assert.doesNotMatch(html, /posted plan/);
 });
 

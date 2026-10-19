@@ -348,6 +348,11 @@ export interface BotTrack {
   /** Why it is where it is, as a code (bot.track.why.*), or null. */
   why: string | null;
   waitingOn: 'you' | 'group' | null;
+  /**
+   * Who a track waiting on "you" waits on, by username, where it is drawn
+   * for somebody else (a request's page: homeroom-bot-track.js forViewer).
+   */
+  waitingFor?: string;
   /** The bot is working on it this minute. */
   busy: boolean;
   /** Which try it is on: 2 after its checks failed once and it built again. */

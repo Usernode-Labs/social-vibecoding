@@ -2157,7 +2157,10 @@ function issueRoutes(config) {
       // the bot builds here for this viewer (the page's "Ask Homeroom bot to
       // build this").
       const botDm = require('../services/homeroom-bot-dm');
-      const askers = await botDm.askersOf(pool, app.id, [...botByNumber.keys()]);
+      // Papote #3: and of each track waiting on its requester, which names
+      // them to everybody else (homeroom-bot-track.js forViewer).
+      const waitingTracks = [...tracks].filter(([, track]) => track?.waitingOn === 'you').map(([n]) => n);
+      const askers = await botDm.askersOf(pool, app.id, [...botByNumber.keys(), ...waitingTracks]);
       const botAsked = (n) => {
         const work = botByNumber.get(n);
         if (!work) return null;
@@ -2201,7 +2204,7 @@ function issueRoutes(config) {
           // ({ what, since }), or null. Its own field, like `headless`: the
           // bot is never `in_progress`.
           bot: botAsked(issue.number),
-          track: tracks.get(issue.number) || null,
+          track: trackSvc.forViewer(tracks.get(issue.number) || null, askers.get(issue.number), req.user.id),
           // #4530: the bot's note there that nobody has answered yet
           // ({ kind: 'question' | 'person' | 'empty', messageId }), or null.
           botAwaits: botWaiting.get(issue.number) || null,
@@ -2652,6 +2655,11 @@ function issueRoutes(config) {
       const trackSvc = require('../services/homeroom-bot-track');
       let track = (await trackSvc.tracksForRequests(pool, { appId: app.id, numbers: [number] })).get(number) || null;
       if (!track && mock && number === 900018) track = trackSvc.demoRequestTrack(app, number, issue.title);
+      // Papote #3: a track waiting on its requester names them to anybody else.
+      if (track?.waitingOn === 'you') {
+        const asker = (await require('../services/homeroom-bot-dm').askersOf(pool, app.id, [number])).get(number);
+        track = trackSvc.forViewer(track, asker, req.user.id);
+      }
       // #4530: and its unanswered note there, as the list says it.
       const botAwaits = issue.state !== 'closed' && !bot && issue !== mock
         ? (await require('../services/homeroom-bot-dm').botWaitingByIssue(pool, app.id, [issue])).get(number) || null
