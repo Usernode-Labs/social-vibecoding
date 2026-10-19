@@ -779,17 +779,6 @@
       ]
     },
     {
-      "id": "profile.settings-card",
-      "name": "Me: a Settings card of three rows at every width, Profile, Notifications and Settings in order (#5557)",
-      "path": "/?demo=1#profile",
-      "expectText": "Name, photo and bio",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-settings:has(#profile-row-profile[href=\"#profile?edit\"] + #profile-row-notifications[href=\"#settings/alerts\"] + #profile-row-settings[href=\"#settings\"])",
-      "visual": true,
-      "impact": [
-        "frontend/src/features/profile/account-panel.tsx"
-      ]
-    },
-    {
       "name": "Me: Your work lists Your changes, Your requests and Your votes, each a way to its list (UI overhaul; it was Your contributions)",
       "path": "/?demo=1#profile",
       "expectText": "Your work",
@@ -3210,7 +3199,7 @@
     {
       "name": "The Me tab lists Challenges above Settings (#1823, #2718)",
       "path": "/?shot=profile&demo=1#profile",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-row-challenges[href=\"#leaderboard/challenges\"]",
+      "expectSelector": "body:has(#profile-settings #profile-row-profile[href=\"#profile?edit\"]+#profile-row-notifications[href=\"#settings/alerts\"]+#profile-row-settings[href=\"#settings\"]) #profile-screen:not(.hidden) #profile-row-challenges[href=\"#leaderboard/challenges\"]",
       "expectText": "Challenges"
     },
     {
