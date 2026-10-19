@@ -487,17 +487,23 @@ export function DevPlusMenu({
             {/* #4417: the project's topics, its lasting conversations: each
                 is a channel and a category. A change to them is a proposal
                 against dapp.json's `topics` (features/dialogs/topics.tsx).
-                Its own onClick, so it works however the menu was wired. */}
-            <PlusRow
-              data-plus="topics"
-              icon={<HashIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title={t('project:menu.topics.title')}
-              sub={t('project:menu.topics.sub')}
-              onClick={() => {
-                callAppView('_closePlusMenu');
-                window.UsernodeReact?.dialogs?.topics?.open({ slug: window.AppView?.appData?.slug });
-              }}
-            />
+                Its own onClick, so it works however the menu was wired.
+
+                #5553: only for people who can build here, the people
+                POST /topics-pr lets propose one. Offered to anyone else it
+                only ever answered 403. */}
+            {canCollaborate ? (
+              <PlusRow
+                data-plus="topics"
+                icon={<HashIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                title={t('project:menu.topics.title')}
+                sub={t('project:menu.topics.sub')}
+                onClick={() => {
+                  callAppView('_closePlusMenu');
+                  window.UsernodeReact?.dialogs?.topics?.open({ slug: window.AppView?.appData?.slug });
+                }}
+              />
+            ) : null}
             <PlusRow
               data-plus="secrets"
               icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}

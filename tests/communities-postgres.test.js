@@ -250,6 +250,10 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       assert.deepEqual(activePeople, [], 'and nobody to name');
       assert.equal(got.body.can_manage, false, 'a viewer cannot propose who it is for');
       assert.equal(got.body.audience_change, null);
+      // #5553: "New topic" in the list follows the same two gates as
+      // POST /topics-pr, membership and collab access. This viewer could
+      // build here (a collab-public app) but has not joined.
+      assert.equal(got.body.places.can_add_topic, false, 'a viewer who has not joined is not offered a topic');
 
       got = await call('POST', `/api/apps/${a.slug}/membership`, { joined: 'yes' });
       assert.equal(got.status, 400, 'joined must be a boolean');
@@ -257,6 +261,9 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       assert.equal(got.status, 200);
       assert.equal(got.body.is_member, true);
       assert.equal(got.body.member_count, 2);
+      got = await call('GET', `/api/apps/${a.slug}/community`);
+      assert.equal(got.body.places.can_add_topic, true,
+        'a member who can build here is offered it, as POST /topics-pr lets them propose one');
 
       const listed = (await call('GET', '/api/apps')).body.apps.find((x) => x.slug === a.slug);
       assert.equal(listed.is_member, true);
@@ -267,6 +274,8 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
 
       got = await call('POST', `/api/apps/${a.slug}/membership`, { joined: false });
       assert.equal(got.body.is_member, false);
+      got = await call('GET', `/api/apps/${a.slug}/community`);
+      assert.equal(got.body.places.can_add_topic, false, 'leaving takes the offer away again');
       as = owner;
       got = await call('POST', `/api/apps/${a.slug}/membership`, { joined: false });
       assert.equal(got.status, 409, 'the creator cannot leave');

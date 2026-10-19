@@ -4290,6 +4290,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           showSelfHosted,
         });
         placesPayload.proposals = membership?.is_member ? await topicsPr.openTopicsPrs(pool, app.id) : [];
+        // #5553: the list offers "New topic" to the people POST /topics-pr
+        // lets propose one — the same two gates it runs: Homeroom membership
+        // (admins pass) and collab access (every project's creator has it).
+        placesPayload.can_add_topic = !!(req.user?.id && canChat
+          && (membership?.is_member || req.user?.isAdmin));
       } catch (err) {
         log.warn('apps', 'Could not read the places for the hub', { slug: app.slug, message: err.message });
       }

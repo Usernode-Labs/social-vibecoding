@@ -81,6 +81,47 @@ test('a project with no topics has no Topics heading: Hub, Needs you, Workshop a
     ['status', 'needs', 'workshop', 'discussion']);
 });
 
+// #5553: a topic is a channel and a category at once, so the list offers one
+// "New topic" row where the channels are, to the people POST /topics-pr lets
+// propose one (the server sends `can_add_topic`).
+test('#5553: "New topic" sits under the channels, for someone who can build here', () => {
+  const label = message('project:places.list.newTopic');
+  assert.equal(label, 'New topic');
+
+  // No topics yet: the last row of the Channels group, under #general.
+  const bare = list({ places: { owed: 0, channels: [channel({ kind: 'general', handle: 'general' })], can_add_topic: true } });
+  assert.match(bare, /data-place="discussion"[\s\S]*?<button type="button" class="dev-ws-place dev-ws-places-add" data-places-add=""><svg[^>]*dev-ws-place-glyph[\s\S]*?<span class="dev-ws-place-label">New topic<\/span><\/button><\/div>/,
+    'a button, with a plus glyph, after #general');
+  assert.ok(bare.indexOf('data-places-group="channels"') < bare.indexOf('data-places-add=""'), 'inside Channels');
+
+  // With topics: the last row of Topics, after "Show N more" when folded.
+  const withTopics = list({ places: { ...PLACES_PAYLOAD, can_add_topic: true }, fold: 1 });
+  assert.match(withTopics, /data-places-more=""[\s\S]*?data-places-add=""[\s\S]*?>New topic<\/span><\/button><\/div><\/nav>/,
+    'after Show N more, and never folded away');
+  assert.ok(withTopics.indexOf('data-places-group="topics"') < withTopics.indexOf('data-places-add=""'));
+  assert.ok(withTopics.indexOf('data-places-add=""') > withTopics.indexOf('data-place="c:onboarding"'));
+  // It is a button, so the places themselves are unchanged and in order.
+  assert.deepEqual([...withTopics.matchAll(/data-place="([^"]+)"/g)].map((m) => m[1]),
+    ['status', 'needs', 'workshop', 'discussion', 'c:onboarding']);
+
+  // Absent or false when the viewer may not propose one, or before the read.
+  for (const places of [
+    { ...PLACES_PAYLOAD, can_add_topic: false },
+    { ...PLACES_PAYLOAD },
+    null,
+  ]) {
+    assert.doesNotMatch(list({ places }), /data-places-add/);
+  }
+
+  // Pressing it opens the Topics dialog on its New topic form.
+  assert.match(read(LIST), /window\.UsernodeReact\?\.dialogs\?\.topics\?\.open\(\{ slug \}\)/);
+  const CSS = read('public/css/app.css');
+  assert.match(CSS, /\.dev-ws-places-add \.dev-ws-place-label \{ color: var\(--text-muted\); \}/,
+    'muted, like Show N more, so it does not read as a channel to open');
+  assert.match(CSS, /\.platform-rail-nest :is\(\.dev-ws-places-more, \.dev-ws-places-add\) \{/,
+    'and the sidebar indents it as it does Show N more');
+});
+
 test('the open place is the current page, lit as the rail lights a row; a page under a place lights it', () => {
   const lit = (place) => [...list({ place }).matchAll(/data-place="([^"]+)" aria-current="page"/g)].map((m) => m[1]);
   assert.deepEqual(lit('status'), ['status']);

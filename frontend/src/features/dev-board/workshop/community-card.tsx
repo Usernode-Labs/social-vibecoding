@@ -176,6 +176,9 @@ export interface PlacesPayload {
   channels: PlaceChannel[];
   /** Topic proposals waiting for a vote (the Topics dialog lists them). */
   proposals?: Array<{ session_id: number; pr_number: number | null; pr_url: string | null; title: string | null }>;
+  /** #5553: the viewer may propose a topic (joined, and can build here):
+      the list draws "New topic" under the channels. */
+  can_add_topic?: boolean;
 }
 
 export type CommunityPayload = {

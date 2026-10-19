@@ -14,9 +14,17 @@
  *   TOPICS
  *   # onboarding            3
  *   # homeroom-bot
+ *   ＋ New topic
  *
  * A project with no topics has no Topics heading: Hub, Needs you, Workshop
- * and #general.
+ * and #general, with "New topic" under #general (`can_add_topic`, #5553).
+ *
+ * NEW TOPIC (#5553): the same claim the Settings & rules row makes, put where
+ * the channels are, since a topic is one object — a channel and a category at
+ * once. A button, not a link: it opens the Topics dialog
+ * (features/dialogs/topics.tsx) on its New topic form, which proposes the
+ * topic through the project's approval rule. Only for a member who can build
+ * here, which is who the POST route lets propose one.
  *
  * ITS APP LEADS (18 Oct 2026, `app`): App, above Hub, with the green "still
  * open" dot while it runs in a kept frame, in the tray and the phone's
@@ -47,7 +55,7 @@
 
 import { useId, useState, type MouseEvent, type ReactNode } from 'react';
 
-import { AppWindowIcon, BallotIcon, BoardIcon, HashIcon, Squares2X2Icon, UserGroupIcon } from '@/components/ui/icons';
+import { AppWindowIcon, BallotIcon, BoardIcon, HashIcon, PlusIcon, Squares2X2Icon, UserGroupIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
 import { listText, t as translate } from '../../../lib/i18n/runtime';
@@ -147,6 +155,24 @@ function PlaceLink({ slug, k, label, count, lit, title, extra, onPlace }: {
   );
 }
 
+/** #5553: propose a topic from where the channels are. Opens the Topics
+ *  dialog on its New topic form; the project's approval rule decides when the
+ *  topic applies. */
+function NewTopic({ slug }: { slug: string }) {
+  const t = useMessages('project');
+  return (
+    <button
+      type="button"
+      className="dev-ws-place dev-ws-places-add"
+      data-places-add=""
+      onClick={() => window.UsernodeReact?.dialogs?.topics?.open({ slug })}
+    >
+      <PlusIcon className="dev-ws-place-glyph" aria-hidden="true" />
+      <span className="dev-ws-place-label">{t('project:places.list.newTopic')}</span>
+    </button>
+  );
+}
+
 /** The project's app, the list's first row: it opens the app, and a running one resumes. */
 function AppPlace({ slug, name }: { slug: string; name: string }) {
   const t = useMessages('project');
@@ -240,6 +266,8 @@ export function ProjectPlaces({ slug, name, place, owed, places, filtered = fals
             lit={lit === 'discussion'}
             onPlace={onPlace}
           />
+          {/* #5553: under #general while the project has no topics yet. */}
+          {places?.can_add_topic && !rows.topics.length ? <NewTopic slug={slug} /> : null}
         </div>
         {rows.topics.length ? (
           <div className="dev-ws-places-group" role="group" aria-labelledby={topicsId} data-places-group="topics">
@@ -261,6 +289,8 @@ export function ProjectPlaces({ slug, name, place, owed, places, filtered = fals
                 <span className="dev-ws-place-label">{t('project:places.list.showMore', { count: more })}</span>
               </button>
             ) : null}
+            {/* #5553: the last row of the topics group, never folded away. */}
+            {places?.can_add_topic ? <NewTopic slug={slug} /> : null}
           </div>
         ) : null}
       </nav>

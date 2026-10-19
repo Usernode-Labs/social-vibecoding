@@ -400,6 +400,13 @@ test('Settings & rules has a Topics row that opens the Topics dialog', () => {
   // wired before it rendered would otherwise be dead), and it closes the menu
   // before the dialog goes up.
   assert.match(row, /callAppView\('_closePlusMenu'\);\s*window\.UsernodeReact\?\.dialogs\?\.topics\?\.open\(\{ slug: window\.AppView\?\.appData\?\.slug \}\)/);
+  // #5553: only for people who can build here, as POST /topics-pr only lets
+  // them propose one; it rendered for every non-read-only viewer before.
+  const guarded = FRAME_SRC.lastIndexOf('{canCollaborate ? (', at);
+  assert.ok(guarded > -1, 'a canCollaborate guard opens before the row');
+  assert.doesNotMatch(FRAME_SRC.slice(guarded, at), /\) : null\}/,
+    'and is still open at the Topics row: it sits inside that guard');
+  assert.ok(FRAME_SRC.indexOf(') : null}', at) > at, 'and closes after it');
   const dialog = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dialogs', 'topics.tsx'), 'utf8');
   assert.match(dialog, /useDialog<\{ slug\?: string \}>\('topics'/, 'the dialog answers to that name');
   assert.match(dialog, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/topics-pr`/, 'and each change it makes is a topics PR');
