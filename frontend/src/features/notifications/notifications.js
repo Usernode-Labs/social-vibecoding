@@ -168,9 +168,17 @@ const Notifications = {
     // Anonymous SPA boot (fold-auth-pages-into-SPA): the initial fetch
     // waits for the authed boot stage instead of firing a guaranteed 401
     // on a sessionless document. `sv:authed` fires at most once.
-    if (window.App && App.user) Notifications.refresh();
+    //
+    // FROM THE NETWORK (polish board #7, 19 Oct 2026). A boot read is in a
+    // crowd of requests, and past the service worker's API deadline it was
+    // answered from the worker's copy: the bell opened on "Unread (1)", and
+    // the read on open replaced it a few seconds later with "You're all
+    // caught up". `fresh` asks the worker for the current answer, which it
+    // falls back from only when the network fails (public/sw.js
+    // wantsFreshAnswer).
+    if (window.App && App.user) Notifications.refresh({ fresh: true });
     else document.addEventListener('sv:authed',
-      () => Notifications.refresh(), { once: true });
+      () => Notifications.refresh({ fresh: true }), { once: true });
   },
 
   // --- fetching --------------------------------------------------------
@@ -201,6 +209,8 @@ const Notifications = {
       const invalidation = networkOnly
         ? `&native_invalidation=1&native_invalidation_nonce=${encodeURIComponent(invalidationNonce)}`
         : '';
+      // The boot read's: the network's answer rather than the worker's copy.
+      const fresh = !networkOnly && !!(options && options.fresh === true);
       let timeout = null;
       let controller = null;
       if (networkOnly && typeof AbortController === 'function') {
@@ -219,7 +229,7 @@ const Notifications = {
             credentials: 'same-origin',
             cache: 'no-store',
             ...(controller ? { signal: controller.signal } : {}),
-          } : undefined
+          } : fresh ? { cache: 'no-cache' } : undefined
         );
         if (!res.ok) return false;
         data = await res.json();
