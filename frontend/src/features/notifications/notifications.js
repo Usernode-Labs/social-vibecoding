@@ -1015,15 +1015,13 @@ const Notifications = {
       }
       return;
     }
-    // A platform limit opens where it is raised. The app limit is set in
-    // Admin → Limits (services/app-limit.js), which works on every deploy;
-    // the session cap opens Health & status, whose capacity meter shows the
-    // load behind it (MAX_GLOBAL_SESSIONS itself is deploy configuration).
-    // GitHub's budget opens Limits too, where its GitHub requests card is.
+    // A platform limit opens where it is raised: the app limit and the
+    // session limit are both set in Admin → Limits (services/app-limit.js,
+    // services/session-limit.js), which works on every deploy, and GitHub's
+    // budget has its GitHub requests card there too.
     if (item.kind === 'platform_limit') {
       Notifications._dismissSheetForNav();
-      const limit = parsePlatformLimitDetail(item.detail);
-      const section = limit?.limit === 'sessions' ? 'status' : 'limits';
+      const section = 'limits';
       if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
         App.navigateToAdminConsole(section);
       } else {

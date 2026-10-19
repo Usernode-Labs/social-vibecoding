@@ -235,14 +235,18 @@ test('only a demo-mode merge with a preview of a known image and commit offers o
   const helper = machine.slice(machine.indexOf('function reuseOf('));
   assert.match(helper.slice(0, 200), /return f\?\.app\?\.demoMode && s && f\.app\.repo \? \{ \.\.\.s, \.\.\.f\.app\.repo \} : null;/,
     'demo mode, a preview and a repository, or nothing');
-  // One call site, and it is the merge's own deploy request.
+  // One call site, in the merge: its answer is what the deploy is offered,
+  // and whether the preview waits for the deploy (only a reused preview
+  // does; any other goes at the merge).
   const calls = machine.match(/reuseOf\(/g) || [];
   assert.equal(calls.length, 2, 'the definition and exactly one call');
+  assert.match(machine, /const reuse = reuseOf\(f\);\n\s+const messages = \[toProposal\(d\), \.\.\.\(d\.delivery \? \[deliveryRequest\(d, reuse\)\] : \[\]\), toQueue\(d, 'merged'\)\];/,
+    'what it answers is what the deploy is offered, and nothing else is');
+  assert.match(machine, /return app\.selfHosted \|\| !reuse \? andTeardown\(out\) : out;/,
+    'the same answer decides whether the preview waits for the deploy');
   // (The merge's other messages, beside the deploy request, tell the
   // proposal machine the proposal merged and the app's merge queue to go
   // on; they carry no preview.)
-  assert.match(machine, /const messages = \[toProposal\(d\), \.\.\.\(d\.delivery \? \[deliveryRequest\(d, reuseOf\(f\)\)\] : \[\]\), toQueue\(d, 'merged'\)\];/,
-    'what it answers is what the deploy is offered, and nothing else is');
   const toProposal = machine.slice(machine.indexOf('function toProposal('), machine.indexOf('function merged('));
   assert.doesNotMatch(toProposal, /reuse|staging|image/i);
 });

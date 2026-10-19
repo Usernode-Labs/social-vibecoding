@@ -209,7 +209,7 @@ function platformLimitCopy(detail) {
   }
   return level === 'full'
     ? { title: 'Session limit reached',
-      body: `${used} of ${cap} coding sessions are running. New ones pause idle sessions or wait until MAX_GLOBAL_SESSIONS is raised` }
+      body: `${used} of ${cap} coding sessions are running. New ones pause idle sessions or wait until the limit is raised in Admin \u2192 Limits` }
     : { title: 'Nearing the session limit',
       body: `${used} of ${cap} coding sessions are running. At the limit, idle sessions are paused to make room` };
 }

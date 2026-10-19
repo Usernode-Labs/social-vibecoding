@@ -34,7 +34,9 @@
  * an app you have not joined shows its App row alone, and nothing reads a
  * community record for it). App carries
  * the green "still open" dot while the app runs in a kept frame
- * (../app-frame/live-apps.tsx), and THAT ROW STAYS: in another community,
+ * (../app-frame/live-apps.tsx) — on the desktop that dot is the app's close
+ * control too (#5525): on hover or keyboard focus an X takes its place, and
+ * pressing it closes the app and folds the row — and THAT ROW STAYS: in another community,
  * one whose app is still running keeps its App row alone under its own row,
  * the rest folded away, until the frame goes. So App sits in an outer part
  * and the places in one inside it, and leaving shuts only the inner one.
@@ -76,14 +78,16 @@
  * document and the first client render agree on a heading and no rows.
  */
 
-import { Fragment, useEffect, useState, type MouseEvent, type PointerEvent } from 'react';
+import { Fragment, useEffect, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
 
-import { AppWindowIcon, SearchIcon } from '@/components/ui/icons';
+import { AppWindowIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
-import { currentAppOnScreen, liveAppLabel, LiveAppDot, useCurrentAppSlug, useLiveAppSlugs } from '../app-frame/live-apps';
+import {
+  closeLiveApp, currentAppOnScreen, liveAppLabel, LiveAppDot, useCurrentAppSlug, useLiveAppSlugs,
+} from '../app-frame/live-apps';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { devWorkshopStore } from '../dev-board/card/cards-store';
 import { useCommunity } from '../dev-board/workshop/community-card';
@@ -343,6 +347,8 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
   const votes = c && !c.unchosen && !open ? Number(c.needs) || 0 : 0;
   const appName = t('core:rail.appOf', { name });
   const href = `#app/${encodeURIComponent(slug)}/workshop`;
+  // The App row, which the close control hands the focus to before it goes.
+  const appRef = useRef<HTMLAnchorElement | null>(null);
   return (
     <Fragment>
       <a
@@ -390,32 +396,60 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
       </a>
       <NestSlot open={part} className="platform-rail-nest" rows=".platform-rail-app, .dev-ws-place, .dev-ws-places-head">
         {app ? (
-          <a
-            className="platform-rail-sub platform-rail-app"
-            href={`/app/${encodeURIComponent(slug)}`}
-            data-rail-app={slug}
-            {...(running ? { 'data-live': 'true' } : null)}
-            title={appName}
-            // "Game Corner app", and that it is still open: the row's words
-            // are only "App", under the community's name.
-            aria-label={running ? listText([appName, liveAppLabel()]) : appName}
-            aria-current={onApp === slug ? 'page' : undefined}
-            onClick={(event) => {
-              if (isNativeClick(event)) return;
-              event.preventDefault();
-              // #3618: a running app grows back out of the row that was pressed.
-              if (running && onApp !== slug) {
-                noteResumeOrigin(slug, event.currentTarget.querySelector('.platform-rail-sub-glyph') || event.currentTarget);
-              }
-              // The router's "this app, this tab" entry point: it switches to
-              // an app that is still open and navigates to any other.
-              (window as unknown as { App?: { openAppTab?: (slug: string, tab: string) => void } }).App?.openAppTab?.(slug, 'app');
-            }}
-          >
-            <AppWindowIcon className="platform-rail-sub-glyph" aria-hidden="true" />
-            <span className="platform-rail-sub-name">{t('core:rail.app')}</span>
-            {running ? <LiveAppDot className="platform-rail-live" /> : null}
-          </a>
+          // A row wrapper, because the close control cannot live inside the
+          // anchor: a button in a link is not allowed. The dot stays in the
+          // anchor where dapp.json's kept-apps check finds it.
+          <div className="platform-rail-app-row">
+            <a
+              ref={appRef}
+              className="platform-rail-sub platform-rail-app"
+              href={`/app/${encodeURIComponent(slug)}`}
+              data-rail-app={slug}
+              {...(running ? { 'data-live': 'true' } : null)}
+              title={appName}
+              // "Game Corner app", and that it is still open: the row's words
+              // are only "App", under the community's name.
+              aria-label={running ? listText([appName, liveAppLabel()]) : appName}
+              aria-current={onApp === slug ? 'page' : undefined}
+              onClick={(event) => {
+                if (isNativeClick(event)) return;
+                event.preventDefault();
+                // #3618: a running app grows back out of the row that was pressed.
+                if (running && onApp !== slug) {
+                  noteResumeOrigin(slug, event.currentTarget.querySelector('.platform-rail-sub-glyph') || event.currentTarget);
+                }
+                // The router's "this app, this tab" entry point: it switches to
+                // an app that is still open and navigates to any other.
+                (window as unknown as { App?: { openAppTab?: (slug: string, tab: string) => void } }).App?.openAppTab?.(slug, 'app');
+              }}
+            >
+              <AppWindowIcon className="platform-rail-sub-glyph" aria-hidden="true" />
+              <span className="platform-rail-sub-name">{t('core:rail.app')}</span>
+              {running ? <LiveAppDot className="platform-rail-live" /> : null}
+            </a>
+            {/* Close the app (#5525): an X where the dot sits, shown on hover
+                or keyboard focus (app.css). Not offered for the app on
+                screen — there is nothing to close it away from. Pressing it
+                must not press the row's own open. */}
+            {running && onApp !== slug ? (
+              <button
+                type="button"
+                className="platform-rail-live-stop"
+                title={t('core:liveApp.closeTitle')}
+                aria-label={t('core:liveApp.close', { app: appName })}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  // The row folds away with the app, so the focus it had
+                  // would fall to the body: it lands on the App row.
+                  appRef.current?.focus();
+                  closeLiveApp(slug);
+                }}
+              >
+                <XIcon className="platform-rail-live-stop-glyph" aria-hidden="true" />
+              </button>
+            ) : null}
+          </div>
         ) : null}
         <NestSlot open={open} className="platform-rail-nest platform-rail-places" rows=".dev-ws-place, .dev-ws-places-head">
           <RailPlaces slug={slug} onPage={onPage === slug} />

@@ -444,6 +444,19 @@ function backToTopOfHome(): void {
 }
 
 /**
+ * #5528: Finish ends the tour ON the Communities page, the one its first card
+ * pointed at. The same address the Communities tab opens (`tab-bar.tsx`, and
+ * `outer-level.tsx` navigates the same way): a plain hash assignment, which
+ * pushes a history entry, so Back returns to Home. Not the community-scope
+ * setter (`goToCommunity` with null), which would reset the tab's chosen
+ * community scope and forget the resumable Workshop view; the tour changes
+ * neither.
+ */
+function goToCommunities(): void {
+  if (window.location.hash !== '#communities') window.location.hash = '#communities';
+}
+
+/**
  * Is a CSS transition or animation still moving the target, or a box it sits
  * in (#3240)? The desktop menu scales in over 140ms with an ease-out, whose
  * last frames move less than a pixel each, so two frames that measure the
@@ -944,12 +957,15 @@ export function OnboardingTour() {
 
   // `ended` says how (#3369): Next on the last step, or Skip. The account
   // keeps it with the furthest step reached, the first time only.
+  // #5528: Finish ends the tour ON the Communities page, the one its first
+  // card pointed at; Skip stays where the tour found you, Home.
   const finish = useCallback((ended: 'finish' | 'skip' = 'finish') => {
     // The screenshot route writes nothing, here or on the account.
     if (isTourShot()) {
       setConfirming(false);
       setOpen(false);
-      backToTopOfHome();
+      if (ended === 'finish') goToCommunities();
+      else backToTopOfHome();
       return;
     }
     writeDone(userId);
@@ -960,6 +976,13 @@ export function OnboardingTour() {
     clearStep(userId);
     setConfirming(false);
     setOpen(false);
+    // #5528: Finish's landing is the Communities page, and the hash change
+    // reports that screen itself; reporting Home first would log a
+    // navigation that did not happen.
+    if (ended === 'finish') {
+      goToCommunities();
+      return;
+    }
     // The steps may have scrolled Home; hand the viewer back the top of the
     // page they started on.
     backToTopOfHome();

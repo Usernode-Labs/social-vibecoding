@@ -177,8 +177,9 @@ function recordCapacityRefusal(pool, { cap, path, userId = null, appId = null } 
 }
 
 /**
- * The platform-wide gate every start, resume and reopen passes: under
- * config.maxGlobalSessions (session-caps.countGlobalSessions), or at it with
+ * The platform-wide gate every start, resume and reopen passes: under the
+ * session limit (services/session-limit.js: the admin's setting, else
+ * MAX_GLOBAL_SESSIONS; counted by session-caps.countGlobalSessions), or at it with
  * an idle session paused to make room (freeGlobalSlot). `discount` is a slot
  * the request gives back (a replaced session). Answers { ok } and, when not,
  * records the refusal; the caller answers 429 with PLATFORM_AT_CAPACITY.
@@ -187,7 +188,7 @@ async function claimGlobalSlot({
   pool, config, path, userId = null, appId = null, excludeSessionId = null, discount = 0,
 }) {
   const { countGlobalSessions } = require('./session-caps');
-  const cap = config && config.maxGlobalSessions != null ? Number(config.maxGlobalSessions) : 100;
+  const cap = await require('./session-limit').effective(pool, config);
   if ((await countGlobalSessions(pool)) - discount < cap) return { ok: true };
   // Through the exports, as the routes called it before this gate existed,
   // so a test's stand-in applies here too.

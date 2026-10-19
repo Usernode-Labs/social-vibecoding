@@ -4,11 +4,13 @@
 // message its write sends with the row it inserts).
 //
 //   running ── every app proposed, skipped or failed ─▶ done ── RetryApp ─▶ running
-//      └── Stop ─▶ stopped
+//      └── Stop ─▶ stopped ── Resume ─▶ running
 //
 // The apps it reaches are fixed when it starts (Q2). One app is changed at a
 // time (campaign.change: the AI's edit, the push, the pull request, as
-// work), and each change goes up for a vote through the proposal machine's
+// work), and only while there is room for it (holdFor): the platform under
+// the session limit's warning line, and fewer of its own proposals up for a
+// vote than it keeps open at once. Each change goes up for a vote through the proposal machine's
 // own promote (Q1): the campaign writes the proposal's row and asks it, in
 // the same transaction, and hears back whether it went up (ProposalOpened,
 // ProposalRefused). From then on the proposal is the proposal machine's. An
@@ -23,7 +25,7 @@ import type { Check, DomainWrite, Event, Json, Machine, MessageRequest, Outcome,
   WorkResultPayload, WriteContext } from '../kernel/index.ts';
 import { chatLine } from '../pushes.ts';
 import { NO_FACTS, readFacts } from './facts.ts';
-import type { AppRow, Facts } from './facts.ts';
+import type { AppRow, Facts, Room } from './facts.ts';
 
 export const MACHINE = 'campaign';
 export const campaignKey = (campaignId: number) => `campaign:${campaignId}`;
@@ -40,6 +42,58 @@ export const NO_CAP = 1_000_000;
 // is looked at again this often (a promote the proposal machine refused
 // outright sends no answer).
 export const CHECK_MS = 5 * 60 * 1000;
+// A hold says so in the campaign's thread when it begins, and again only
+// after this long (a window that fills each time one of its proposals
+// merges would otherwise say it with every app).
+export const SAY_AGAIN_MS = 6 * 60 * 60 * 1000;
+
+// What bounds a campaign's fan-out. Its proposals skip the promoted caps
+// (NO_CAP) and the start gate, which is right for one proposal and was not
+// for 129: on 19 Oct 2026 the MIT LICENSE campaign opened one every 20
+// seconds, took the platform from 131 to past 175 of its 140 sessions (every
+// start and resume refused) and the apps namespace to the edge of its pod
+// quota with their previews.
+export interface CampaignDeps {
+  // The deploy's session limit (MAX_GLOBAL_SESSIONS); an admin's setting,
+  // read in the facts, wins.
+  sessionLimit: number;
+  // It changes its next app only while the platform is under this share of
+  // the session limit: PLATFORM_LIMIT_WARN_PERCENT, the line the admins'
+  // alert warns at, so a campaign never sets the alert off and people keep
+  // the rest.
+  roomPercent: number;
+  // How many of its proposals may be up for a vote at once
+  // (CAMPAIGN_MAX_OPEN): merging or closing them makes room for the next.
+  maxOpen: number;
+}
+export const DEFAULT_DEPS: CampaignDeps = Object.freeze({ sessionLimit: 100, roomPercent: 80, maxOpen: 10 });
+
+// Why the next app waits.
+export interface Held {
+  reason: 'platform' | 'window';
+  since: string;
+  used: number;
+  limit: number;
+  ceiling: number;
+  open: number;
+  maxOpen: number;
+}
+
+/** Why the campaign may not change its next app now, or null. */
+export function holdFor(room: Room | null, deps: CampaignDeps): Omit<Held, 'since'> | null {
+  if (!room) return null;
+  const ceiling = Math.max(1, Math.floor((room.limit * deps.roomPercent) / 100));
+  const base = { used: room.used, limit: room.limit, ceiling, open: room.open, maxOpen: deps.maxOpen };
+  if (room.used >= ceiling) return { reason: 'platform', ...base };
+  if (room.open >= deps.maxOpen) return { reason: 'window', ...base };
+  return null;
+}
+
+const holdLine = (d: Data, h: Omit<Held, 'since'>) => (h.reason === 'platform'
+  ? `Maintenance campaign "${d.title}" is waiting for room: ${h.used} of ${h.limit} sessions are in use, `
+    + `and it changes its next app only below ${h.ceiling}. It looks again every few minutes.`
+  : `Maintenance campaign "${d.title}" is waiting: ${h.open} of its proposals are up for a vote, `
+    + `the most it keeps open at once. Merging or closing them lets it go on.`);
 // ── State ───────────────────────────────────────────────────────────────
 
 export type AppState = 'waiting' | 'changing' | 'proposing' | 'proposed' | 'skipped' | 'failed' | 'not_reached';
@@ -71,6 +125,10 @@ export interface Data {
   // The last "merge all green": who, when, which proposals.
   drained: { at: string; by: string | null; asked: number[] } | null;
   stopped: { at: string; by: string | null } | null;
+  // Waiting for room to change its next app (holdFor), and the last hold
+  // its thread was told about. Absent on an instance an older release made.
+  held?: Held | null;
+  said?: { reason: string; at: string } | null;
 }
 type Name = 'running' | 'done' | 'stopped';
 export type CState = { name: Name; data: Data } | { name: typeof NONE; data: null };
@@ -103,6 +161,7 @@ const EVENTS = {
   RetryApp: (p: any) => ({ appId: int(p?.appId, 'appId'), ...by(p) }),
   MergeGreen: (p: any) => ({ ...by(p) }),
   Stop: (p: any) => ({ ...by(p) }),
+  Resume: (p: any) => ({ ...by(p) }),
   Check: () => ({}),
 };
 
@@ -120,16 +179,26 @@ const who = (p: any) => p.username || (p.userId ? `admin #${p.userId}` : 'an adm
 const threadLine = (d: Data, content: string): DomainWrite =>
   ({ type: 'line', appId: d.threadAppId, issueId: d.issueId, content });
 
-// The next thing the campaign does: change the next waiting app, or, with
+// The next thing the campaign does: change the next waiting app when there
+// is room for it (else wait, and look again with the check), or, with
 // nothing waiting, changing or being put up for a vote, finish.
-function next(s: Live, extra: { writes?: DomainWrite[]; messages?: MessageRequest[]; work?: WorkRequest[] } = {}): Outcome<CState> {
+function next(s: Live, f: Facts, ctx: TransitionContext, deps: CampaignDeps,
+  extra: { writes?: DomainWrite[]; messages?: MessageRequest[]; work?: WorkRequest[] } = {}): Outcome<CState> {
   let d = s.data;
   const writes = [...(extra.writes || [])];
   const work = [...(extra.work || [])];
   let name: Name = s.name;
   if (name === 'running' && !d.apps.some((a) => a.state === 'changing')) {
     const a = d.apps.find((x) => x.state === 'waiting');
-    if (a) {
+    const hold = a ? holdFor(f.room, deps) : null;
+    if (a && hold) {
+      const now = ctx.now.toISOString();
+      const since = d.held && d.held.reason === hold.reason ? d.held.since : now;
+      const say = !d.said || d.said.reason !== hold.reason || ctx.now.getTime() - Date.parse(d.said.at) >= SAY_AGAIN_MS;
+      d = { ...d, held: { ...hold, since }, ...(say ? { said: { reason: hold.reason, at: now } } : {}) };
+      if (say) writes.push(threadLine(d, holdLine(d, hold)));
+    } else if (a) {
+      if (d.held) d = { ...d, held: null };
       const n = a.n + 1;
       const prev = a.n ? `app:${a.appId}:${a.n}` : null;
       d = withApp(d, a.appId, { state: 'changing', n, error: null, resumable: false });
@@ -140,6 +209,7 @@ function next(s: Live, extra: { writes?: DomainWrite[]; messages?: MessageReques
       });
     } else if (!count(d, 'proposing')) {
       name = 'done';
+      if (d.held) d = { ...d, held: null };
       writes.push(threadLine(d, `Maintenance campaign "${d.title}" finished fanning out: `
         + `${count(d, 'proposed')} PRs opened, ${count(d, 'skipped')} skipped, ${count(d, 'failed')} failed. `
         + 'Each PR now runs its own checks and merge vote.'));
@@ -148,11 +218,13 @@ function next(s: Live, extra: { writes?: DomainWrite[]; messages?: MessageReques
   return { next: { name, data: d }, writes, work, messages: extra.messages };
 }
 
-// The timer is set once an app is being put up for a vote, kept while one
-// still is (not pushed back by every event), and cleared otherwise; the
-// check sets it again (the transitions call this on their outcome).
+// The timer is set once an app is being put up for a vote or the campaign
+// waits for room, kept while either lasts (not pushed back by every event),
+// and cleared otherwise; the check sets it again (the transitions call this
+// on their outcome).
 function clocked(out: Outcome<CState>, ctx: TransitionContext, before: CState | null, rearm = false): Outcome<CState> {
-  const proposing = (st: CState | null) => !!st && st.name !== NONE && (st as Live).data.apps.some((a) => a.state === 'proposing');
+  const proposing = (st: CState | null) => !!st && st.name !== NONE
+    && ((st as Live).data.apps.some((a) => a.state === 'proposing') || !!(st as Live).data.held);
   const waiting = proposing(out.next);
   if (waiting && proposing(before) && !rearm) return { ...out, timer: undefined };
   return { ...out, timer: waiting ? { at: new Date(ctx.now.getTime() + CHECK_MS), event: { type: 'Check' } } : null };
@@ -171,39 +243,43 @@ function adopted(r: AppRow): AppRec {
   }
 }
 
-function start(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<CState> {
+function start(e: Event<any>, f: Facts, ctx: TransitionContext, deps: CampaignDeps): Outcome<CState> {
   const c = f.campaign!;
   const data: Data = {
     campaignId: c.id, issueId: c.issueId, threadAppId: c.threadAppId, title: c.title, proposerId: null,
-    apps: f.apps.map(adopted), exemplar: null, drained: null, stopped: null,
+    apps: f.apps.map(adopted), exemplar: null, drained: null, stopped: null, held: null, said: null,
   };
   const name: Name = c.status === 'done' ? 'done' : c.status === 'cancelled' ? 'stopped' : 'running';
   const s: Live = { name, data };
   // Its app rows (the targets, fixed now).
   const writes: DomainWrite[] = [{ type: 'adopt', campaignId: c.id, appIds: data.apps.map((a) => a.appId) }];
-  return clocked(next(s, { writes }), ctx, null);
+  return clocked(next(s, f, ctx, deps, { writes }), ctx, null);
 }
 
 // The AI's change for the app it was working on.
-function changed(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext): Outcome<CState> {
+function changed(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext, deps: CampaignDeps): Outcome<CState> {
   const p = e.payload;
   const a = s.data.apps.find((x) => x.state === 'changing' && workKey(x) === p.workKey)!;
   if (e.type !== 'WorkSucceeded') {
     // A permanent failure is the app's (a budget, no change made, no
     // repository); exhausted retries name GitHub's or the model's error.
     const message = p.error?.message || 'the change failed';
-    return clocked(next({ ...s, data: withApp(s.data, a.appId, { state: 'failed', error: message.slice(0, 2000), resumable: true }) }), ctx, s);
+    return clocked(next({ ...s, data: withApp(s.data, a.appId, { state: 'failed', error: message.slice(0, 2000), resumable: true }) }, f, ctx, deps), ctx, s);
   }
   const r = (p.result || {}) as any;
-  // Stopped before it reached the repository.
-  if (r.stopped) return clocked(next({ ...s, data: withApp(s.data, a.appId, { state: 'not_reached' }) }), ctx, s);
+  // Stopped before it reached the repository: not reached, or, when the
+  // campaign was resumed meanwhile, waiting again.
+  if (r.stopped) {
+    return clocked(next({ ...s, data: withApp(s.data, a.appId, { state: s.name === 'running' ? 'waiting' : 'not_reached' }) },
+      f, ctx, deps), ctx, s);
+  }
   if (r.skipped) {
-    return clocked(next({ ...s, data: withApp(s.data, a.appId, { state: 'skipped', error: String(r.reason || 'not applicable').slice(0, 2000) }) }), ctx, s);
+    return clocked(next({ ...s, data: withApp(s.data, a.appId, { state: 'skipped', error: String(r.reason || 'not applicable').slice(0, 2000) }) }, f, ctx, deps), ctx, s);
   }
   // Deleted while it was being changed: there is no app to propose to.
   if (f.appAlive === false) {
     const error = `The app was deleted while it was being changed${r.prNumber ? ` (its pull request #${r.prNumber} is left on GitHub)` : ''}`;
-    return clocked(next({ ...s, data: withApp(s.data, a.appId, { state: 'failed', error }) }), ctx, s);
+    return clocked(next({ ...s, data: withApp(s.data, a.appId, { state: 'failed', error }) }, f, ctx, deps), ctx, s);
   }
   let d = { ...withApp(s.data, a.appId, { state: 'proposing' as const, prNumber: r.prNumber ?? null }), proposerId: Number(r.userId) };
   if (!d.exemplar && typeof r.summary === 'string' && r.summary.trim()) d = { ...d, exemplar: r.summary.slice(0, 4000) };
@@ -213,20 +289,20 @@ function changed(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: Transition
     type: 'propose', campaignId: d.campaignId, appId: a.appId, userId: r.userId, branch: r.branch,
     prNumber: r.prNumber, prUrl: r.prUrl, prTitle: r.prTitle, head: r.head, key: campaignKey(d.campaignId),
   }];
-  return clocked(next({ ...s, data: d }, { writes }), ctx, s);
+  return clocked(next({ ...s, data: d }, f, ctx, deps, { writes }), ctx, s);
 }
 
-function opened(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<CState> {
+function opened(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: CampaignDeps): Outcome<CState> {
   const p = e.payload;
   const d = withApp(s.data, p.appId, { state: 'proposed', sessionId: p.sessionId, prNumber: p.prNumber ?? null, error: null });
-  return clocked(next({ ...s, data: d }), ctx, s);
+  return clocked(next({ ...s, data: d }, f, ctx, deps), ctx, s);
 }
 
-function refused(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<CState> {
+function refused(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: CampaignDeps): Outcome<CState> {
   const p = e.payload;
   const error = `Could not put it up for a vote: ${p.message || p.code || 'refused'}`.slice(0, 2000);
   const d = withApp(s.data, p.appId, { state: 'failed', sessionId: p.sessionId, error });
-  return clocked(next({ ...s, data: d }, { messages: [closeMessage(p.sessionId, p.appId)] }), ctx, s);
+  return clocked(next({ ...s, data: d }, f, ctx, deps, { messages: [closeMessage(p.sessionId, p.appId)] }), ctx, s);
 }
 
 // A proposal the campaign could not put up for a vote is closed (with its
@@ -249,7 +325,7 @@ export const promoteMessage = (o: { sessionId: number; appId: number; userId: nu
   appId: o.appId,
 });
 
-function retry(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<CState> {
+function retry(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: CampaignDeps): Outcome<CState> {
   const p = e.payload;
   const a = s.data.apps.find((x) => x.appId === p.appId)!;
   // A proposal it could not put up for a vote was closed with its pull
@@ -262,7 +338,7 @@ function retry(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcom
     resumable: a.state === 'failed' && a.resumable && !proposed,
     ...(proposed ? { gen: (a.gen || 0) + 1 } : {}),
   });
-  return clocked(next({ name: 'running', data: d }), ctx, s);
+  return clocked(next({ name: 'running', data: d }, f, ctx, deps), ctx, s);
 }
 
 function mergeGreen(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<CState> {
@@ -283,7 +359,7 @@ function mergeGreen(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): O
 // vote like the others (Q3: the opened ones stay).
 function stop(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<CState> {
   const apps = s.data.apps.map((a) => (a.state === 'waiting' ? { ...a, state: 'not_reached' as const } : a));
-  const d: Data = { ...s.data, apps, stopped: { at: ctx.now.toISOString(), by: who(e.payload) } };
+  const d: Data = { ...s.data, apps, held: null, stopped: { at: ctx.now.toISOString(), by: who(e.payload) } };
   const finishing = count(d, 'changing');
   const out = step({ name: 'stopped', data: d }, {
     writes: [threadLine(d, `Maintenance campaign "${d.title}" was stopped by ${who(e.payload)}: `
@@ -293,10 +369,24 @@ function stop(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome
   return clocked(out, ctx, s);
 }
 
+// Resume: a stopped campaign goes on with the apps the stop never reached,
+// under the same room as ever (holdFor), from where it stopped. What it
+// already opened, skipped or failed stays as it is.
+function resume(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: CampaignDeps): Outcome<CState> {
+  const apps = s.data.apps.map((a) => (a.state === 'not_reached' ? { ...a, state: 'waiting' as const, error: null, resumable: false } : a));
+  const d: Data = { ...s.data, apps, stopped: null, held: null };
+  const left = count(d, 'waiting');
+  const writes: DomainWrite[] = [threadLine(d, `Maintenance campaign "${d.title}" was resumed by ${who(e.payload)}: `
+    + `${left} app${left === 1 ? '' : 's'} left to reach. It changes one at a time, while there is room.`)];
+  return clocked(next({ name: 'running', data: d }, f, ctx, deps, { writes }), ctx, s);
+}
+
+const resumable = (s: Live): Check => (s.data.apps.some((a) => a.state === 'not_reached') ? ok() : reject('nothing_to_resume'));
+
 // The proposals it asked to go up for a vote and has not heard about: what
 // their rows say now. A promote the proposal's guard refused outright sends
 // no answer; one not applied yet is waited for (a backlog, a rollout).
-function checked(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<CState> {
+function checked(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: CampaignDeps): Outcome<CState> {
   let d = s.data;
   const messages: MessageRequest[] = [];
   for (const q of f.asked) {
@@ -314,7 +404,7 @@ function checked(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outc
       if (q.sessionId) messages.push(closeMessage(q.sessionId, a.appId));
     }
   }
-  return clocked(next({ ...s, data: d }, { messages }), ctx, s, true);
+  return clocked(next({ ...s, data: d }, f, ctx, deps, { messages }), ctx, s, true);
 }
 
 // ── The machine ─────────────────────────────────────────────────────────
@@ -340,9 +430,9 @@ const retryable = (s: Live, e: Event<any>): Check => {
   return a.state === 'failed' || a.state === 'skipped' ? ok() : reject('not_retryable');
 };
 
-export function campaign(): Machine<CState, Facts> {
-  const live = (to: (s: Live, e: Event<any>, f: Facts, ctx: TransitionContext) => Outcome<CState>) =>
-    (s: CState, e: Event<any>, f: Facts, ctx: TransitionContext) => to(s as Live, e, f, ctx);
+export function campaign(deps: CampaignDeps = DEFAULT_DEPS): Machine<CState, Facts> {
+  const live = (to: (s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: CampaignDeps) => Outcome<CState>) =>
+    (s: CState, e: Event<any>, f: Facts, ctx: TransitionContext) => to(s as Live, e, f, ctx, deps);
   const g = (check: (s: Live, e: Event<any>) => Check) => (s: CState, e: Event<any>) => check(s as Live, e);
   const work = { guard: g(changingWork), to: live(changed) };
   const answers = {
@@ -358,7 +448,7 @@ export function campaign(): Machine<CState, Facts> {
         if (!f.campaign) return reject('not_found');
         return ok();
       },
-      to: (_s: CState, e: Event<any>, f: Facts, ctx: TransitionContext) => start(e, f, ctx),
+      to: (_s: CState, e: Event<any>, f: Facts, ctx: TransitionContext) => start(e, f, ctx, deps),
     },
   };
   return defineMachine<CState, Facts>({
@@ -372,11 +462,11 @@ export function campaign(): Machine<CState, Facts> {
       const id = state.name === NONE ? Number((event.payload as any)?.campaignId) : (state.data as Data).campaignId;
       if (!Number.isInteger(id) || id <= 0) return Promise.resolve(NO_FACTS);
       const proposing = state.name === NONE ? [] : (state.data as Data).apps.filter((a) => a.state === 'proposing').map((a) => a.appId);
-      return readFacts(tx, id, event, proposing);
+      return readFacts(tx, id, event, proposing, { deployLimit: deps.sessionLimit });
     },
     authorize: {
       Start: starter, ProposalOpened: fromProposal, ProposalRefused: fromProposal,
-      RetryApp: admin, MergeGreen: admin, Stop: admin, Check: timer,
+      RetryApp: admin, MergeGreen: admin, Stop: admin, Resume: admin, Check: timer,
     },
     transitions: {
       [NONE]: create,
@@ -385,18 +475,21 @@ export function campaign(): Machine<CState, Facts> {
         Start: { ignore: 'already_started' },
         RetryApp: { guard: g(retryable), to: live(retry) },
         Stop: { to: live(stop) },
+        Resume: { ignore: 'running' },
       },
       done: {
         ...answers, WorkSucceeded: work, WorkFailed: work, WorkExhausted: work,
         Start: { ignore: 'already_started' },
         RetryApp: { guard: g(retryable), to: live(retry) },
         Stop: { ignore: 'done' },
+        Resume: { ignore: 'done' },
       },
       stopped: {
         ...answers, WorkSucceeded: work, WorkFailed: work, WorkExhausted: work,
         Start: { ignore: 'already_started' },
         RetryApp: { ignore: 'stopped' },
         Stop: { ignore: 'stopped' },
+        Resume: { guard: g(resumable), to: live(resume) },
       },
     } as any,
     writes: {

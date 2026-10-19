@@ -171,7 +171,13 @@
       "key": "MAX_GLOBAL_SESSIONS",
       "group": "Scaling",
       "default": "75",
-      "description": "Ceiling on concurrent worker containers across the whole platform. The committed default targets ~50 concurrent users on a 20-core/62GB box; raise it only alongside WORKER_MEMORY headroom."
+      "description": "Default ceiling on coding sessions across the whole platform, active and in review. The committed default targets ~50 concurrent users on a 20-core/62GB box; raise it only alongside WORKER_MEMORY headroom. Full admins can override it without a deploy in Admin → Limits."
+    },
+    {
+      "key": "CAMPAIGN_MAX_OPEN",
+      "group": "Scaling",
+      "default": "10",
+      "description": "How many of one maintenance campaign's proposals may be up for a vote at once. A campaign also changes its next app only while the platform's sessions are under PLATFORM_LIMIT_WARN_PERCENT of the session limit."
     },
     {
       "key": "MAX_USER_SESSIONS",
@@ -527,8 +533,8 @@
       "key": "OPENROUTER_DEFAULT_CODEX_MODEL",
       "group": "AI & coding agents",
       "required": false,
-      "default": "z-ai/glm-5.3-flash",
-      "description": "Preferred OpenRouter model for new coding-agent sessions. The complete OpenRouter catalog remains selectable; if this slug is absent, Homeroom safely recommends another compatible model."
+      "default": "deepseek/deepseek-v4.1-flash-1017",
+      "description": "Preferred OpenRouter model for new coding-agent sessions, and the model the Homeroom bot's chat replies use. The complete OpenRouter catalog remains selectable; if this slug is absent, Homeroom safely recommends another compatible model. The deploy workflow's own fallback is still z-ai/glm-5.3-flash, so set this variable for production to use the default above."
     },
     {
       "key": "OPENROUTER_MODEL_HARNESSES",
@@ -541,7 +547,7 @@
       "key": "OPENROUTER_RECOMMENDED_MODELS",
       "group": "AI & coding agents",
       "required": false,
-      "default": "z-ai/glm-5.3-flash,deepseek/deepseek-v4.1-flash",
+      "default": "deepseek/deepseek-v4.1-flash-1017,z-ai/glm-5.3-flash",
       "description": "Comma-separated exact OpenRouter model ids that receive a Recommended tag, begin starred in model pickers, and are the OpenRouter models the composer's flat picker starts with, in this order. Each user's explicit star or unstar wins. Set none to remove all platform recommendations."
     },
     {
@@ -707,6 +713,12 @@
       "expectText": "Email & recovery",
       "expectSelector": "[data-settings-section=\"email\"]:not(.hidden) [data-account-email-form]",
       "allowConsoleErrors": false
+    },
+    {
+      "name": "Accessibility settings ship text size and contrast controls (#3969)",
+      "path": "/?demo=1#settings/accessibility",
+      "expectText": "High contrast",
+      "expectSelector": "#settings-accessibility-section #settings-text-size-track[role=\"radiogroup\"] [data-text-size-option=\"larger\"]"
     },
     {
       "name": "Guest back arrow returns to the app directory (#1028)",

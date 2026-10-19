@@ -30,6 +30,7 @@ const managedOpenRouter = require('../services/openrouter-managed-keys');
 const discoveryCuration = require('../services/discovery-curation');
 const appStorageCap = require('../services/app-storage-cap');
 const appLimit = require('../services/app-limit');
+const sessionLimit = require('../services/session-limit');
 const platformLimits = require('../services/platform-limit-alerts');
 const githubBudget = require('../services/github-budget');
 const modelCosts = require('../services/model-costs');
@@ -1284,6 +1285,43 @@ function adminRoutes(config) {
       res.json(await appLimit.adminPayload(pool, config));
     } catch (err) {
       log.error('admin', 'Update app limit failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Session limit ───────────────────────────────────────────
+  //
+  // The platform-wide cap on coding sessions, active and in review
+  // (services/session-limit.js): MAX_GLOBAL_SESSIONS is the deploy's
+  // default, and a full admin can override it here without an infra commit
+  // or a rollout. Read open to view-only admins, like /app-limit; the write
+  // is requireAdminWrite. `limit` is a whole number, or null to clear the
+  // setting and fall back to MAX_GLOBAL_SESSIONS.
+  router.get('/api/admin/session-limit', async (_req, res) => {
+    try {
+      res.json(await sessionLimit.adminPayload(pool, config));
+    } catch (err) {
+      log.error('admin', 'Read session limit failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/session-limit', requireAdminWrite, async (req, res) => {
+    const body = req.body || {};
+    if (!Object.prototype.hasOwnProperty.call(body, 'limit')) {
+      return res.status(400).json({ error: 'Provide limit: a whole number, or null to use MAX_GLOBAL_SESSIONS.' });
+    }
+    const invalid = sessionLimit.validate(body.limit);
+    if (invalid) return res.status(400).json({ error: invalid });
+    try {
+      await sessionLimit.set(pool, { value: body.limit, actorId: req.user.id });
+      log.info('admin', 'Session limit updated', { by: req.user.username, limit: body.limit });
+      // Re-measure now: a raise clears a standing warning, and a cut below
+      // the live count tells the other admins at once.
+      platformLimits.nudge(pool, config, 'sessions');
+      res.json(await sessionLimit.adminPayload(pool, config));
+    } catch (err) {
+      log.error('admin', 'Update session limit failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

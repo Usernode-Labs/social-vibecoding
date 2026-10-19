@@ -53,20 +53,24 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
       `INSERT INTO users (username, password) VALUES ($1, 'x') RETURNING id, username`, [`mf_${++seq}`]);
     return u;
   }
-  async function app({ selfHosted = false } = {}) {
+  async function app({ selfHosted = false, demoMode = false } = {}) {
     const owner = await user();
     const { rows: [a] } = await pool.query(
-      `INSERT INTO apps (name, slug, created_by, self_hosted, repo_url)
-       VALUES ($1::text, $1::text, $2, $3, 'https://github.com/acme/' || $1::text) RETURNING *`,
-      [`mf-app-${++seq}`, owner.id, selfHosted]);
+      `INSERT INTO apps (name, slug, created_by, self_hosted, repo_url, demo_mode)
+       VALUES ($1::text, $1::text, $2, $3, 'https://github.com/acme/' || $1::text, $4) RETURNING *`,
+      [`mf-app-${++seq}`, owner.id, selfHosted, demoMode]);
     return a;
   }
+  // `extra.preview`: the proposal has a built preview (its image and the
+  // commit it ran), which a demo-mode deploy reuses.
   async function proposal(a, { author, status = 'merging', pr = ++seq, linked = [], title = `Change ${seq}`, extra = {} } = {}) {
     const by = author || await user();
     const { rows: [s] } = await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title, linked_issues, reviewed_head_sha)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [a.id, by.id, status, pr, title, linked, extra.head || null]);
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title, linked_issues, reviewed_head_sha,
+                                  staging_image_ref, staging_commit_sha)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [a.id, by.id, status, pr, title, linked, extra.head || null,
+        extra.preview ? `registry.example/preview:${seq}` : null, extra.preview ? SHA('a') : null]);
     return { ...s, author: by };
   }
   const row = async (id) => (await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [id])).rows[0];
@@ -410,8 +414,9 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
   });
 
   await t.test('a preview.teardown item an older release queued asks the preview machine when it reports', async () => {
-    const a = await app();
-    const s = await proposal(a);
+    // Demo mode: the merge waits for the deploy, as an older release's did.
+    const a = await app({ demoMode: true });
+    const s = await proposal(a, { extra: { preview: true } });
     await merge(s);
     assert.equal((await retireAsked(s)).length, 0, 'the deploy has not answered');
     const c = await pool.connect();
@@ -559,8 +564,8 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
   // ── Fixed in the steps 1-2 fix (workflow-foundation design-fix-steps-1-2.md) ──
 
   await t.test('the preview goes once its deploy is answered: demo mode deploys the preview\'s build', async () => {
-    const a = await app();
-    const s = await proposal(a);
+    const a = await app({ demoMode: true });
+    const s = await proposal(a, { extra: { preview: true } });
     await merge(s);
     await settle();
     assert.equal((await retireAsked(s)).length, 0, 'not while the deploy may still reuse it');
@@ -568,7 +573,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     await settle();
     assert.equal((await retireAsked(s)).length, 1, 'its answer lets it go');
     // A deploy that failed lets it go too.
-    const failed = await proposal(a);
+    const failed = await proposal(a, { extra: { preview: true } });
     await merge(failed);
     await failedDelivery(failed);
     assert.equal((await instance(failed)).state, 'deploy_failed');
@@ -582,6 +587,15 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     await settle();
     assert.equal((await instance(own)).state, 'live');
     assert.equal((await retireAsked(own)).length, 1, 'asked once');
+    // Any other deploy builds its own image: the preview goes at the merge.
+    // Waiting for every deploy held a full quota shut on 19 Oct 2026 (the
+    // previews waited for the deploys, the deploys for the previews' pods).
+    const plain = await proposal(await app(), { extra: { preview: true } });
+    await merge(plain);
+    assert.equal((await retireAsked(plain)).length, 1, 'asked in the merge');
+    await deliveryAnswer(plain, 'Delivered', { sha: SHA('a') });
+    await settle();
+    assert.equal((await retireAsked(plain)).length, 1, 'and not again on the answer');
   });
 
   await t.test('a shots run still in the worker: its retire is asked again later, never used up', async () => {
@@ -806,7 +820,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
       const s = await proposal(a);
       await merge(s);
       assert.ok(!(await workOf(s)).some((w) => w.kind === OLD.deliver), 'no deploy of its own');
-      assert.equal((await retireAsked(s)).length, 0, 'the preview waits for the answer');
+      assert.equal((await retireAsked(s)).length, 1, 'its preview goes at the merge: this deploy builds its own image');
       const [req] = await asked(a);
       assert.deepEqual(req.payload, { appId: a.id, reason: 'merge', prNumber: s.pr_number, revision: SHA('a'), reuse: null });
       assert.equal(req.source.from.key, sessionKey(s.id), 'from this merge, which the answer comes back to');
@@ -814,7 +828,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
       await deliveryAnswer(s, 'Delivered', { sha: SHA('a') });
       await settle();
       assert.equal((await instance(s)).state, 'live');
-      assert.equal((await retireAsked(s)).length, 1, 'its first answer lets the preview go');
+      assert.equal((await retireAsked(s)).length, 1, 'the answer does not ask again');
     }
   });
 
