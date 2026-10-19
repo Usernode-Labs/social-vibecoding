@@ -132,6 +132,8 @@ interface LegacyWindow {
     // stale-session recovery in fetchSessionMint.
     _dropCachedSession?(): void;
     restoreFromHash?(): void;
+    // The address for a fragment, keeping the page's query (a demo link's ?demo=1).
+    _rootUrl?(hash: string): string;
     // A sign-in has begun here, so a stale build is no longer swapped in
     // under the signed-out screens (see noteSignInBegun below).
     noteSignInBegun?(): void;
