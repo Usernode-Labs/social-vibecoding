@@ -171,9 +171,10 @@ function settingsOf(p = {}) {
     everyoneSince: s.everyoneSince || null,
     models: p.bot?.models || null,
     defaultModel: p.defaultModel || null,
-    // What a build's plan and build (and a first version's triage) run on
-    // while a bot configuration is current, over `models` (homeroom-bot.js
-    // currentConfigurations).
+    // What each stage runs on while a bot configuration is current (a
+    // first version's triage, plan and build; a later change's triage,
+    // plan, build and follow-ups), with the effort and clock it names, over
+    // `models` (homeroom-bot.js currentConfigurations).
     configurations: p.configurations || null,
     // What the helper calls ask first (titles, the plan at Make it, chat
     // reads, the content review; services/helper-model.js): the admin's
