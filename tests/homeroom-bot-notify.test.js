@@ -364,6 +364,58 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
     const { rows: quiet } = await pool.query('SELECT 1 FROM notifications WHERE conversation_message_id = $1', [stuck.messageId]);
     assert.equal(quiet.length, 0, 'a retry is quiet: only a give-up rings');
   });
+
+  await t.test('#5582: a plan names its request by title, not only its number', async () => {
+    const { rows: [app] } = await pool.query(
+      'SELECT id, slug, name, repo_url FROM apps WHERE slug = $1', [plantPal.slug],
+    );
+    // The requester's row kept no title (only the number was known), and
+    // Homeroom's own row of the request has it.
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
+       VALUES ($1, 5580, $2, NULL)
+       ON CONFLICT (app_id, issue_number) DO UPDATE SET issue_title = NULL`,
+      [app.id, maya.id],
+    );
+    await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, created_by) VALUES ($1, 5580, $2, $3)`,
+      [app.id, 'Show who was active this week on the hub', maya.id],
+    );
+    const { rows: [botRow] } = await pool.query('SELECT * FROM users WHERE id = $1', [bot.id]);
+    const sent = await dm.sendPlanCard(pool, {
+      app, issueNumber: 5580, runId: 995580, bot: botRow,
+      plan: { bullets: ['Show activity this week'], complicated: true },
+    });
+    assert.ok(sent?.messageId, 'the plan was sent');
+    const { rows: [msg] } = await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [sent.messageId]);
+    assert.equal(msg.metadata.homeroomBot.requestTitle, 'Show who was active this week on the hub',
+      'the stored story carries the request\'s title');
+    const { rows: [rang] } = await pool.query(
+      'SELECT kind, detail FROM notifications WHERE user_id = $1 ORDER BY id DESC LIMIT 1', [maya.id],
+    );
+    assert.equal(rang.kind, 'build_needs_you');
+    assert.equal(notifyCopy.parseBotDetail(rang.detail).requestTitle, 'Show who was active this week on the hub');
+    const N = loadBell();
+    const view = N._rowView({
+      id: 1, createdAt: AT, readAt: null, kind: rang.kind, detail: rang.detail, conversationId: 7, conversationKind: 'direct',
+    });
+    assert.deepEqual([view.label, view.segments[0].v, view.appLine],
+      ['Plan to approve', 'Show who was active this week on the hub', 'Plant Pal · #5580 · Homeroom bot']);
+
+    // With no title anywhere, a plan about a request still reads "Request #N".
+    const plain = await dm.sendDm(pool, {
+      bot: botRow, userId: maya.id, content: 'My plan is ready.', idempotencyKey: 'plan-no-title',
+      metadata: { kind: 'plan', appSlug: app.slug, appName: app.name, issueNumber: 5599 },
+    });
+    const { rows: [untitled] } = await pool.query(
+      'SELECT kind, detail FROM notifications WHERE conversation_message_id = $1', [plain.messageId],
+    );
+    assert.ok(!notifyCopy.parseBotDetail(untitled.detail).requestTitle, 'no title found: none made up');
+    const bare = N._rowView({
+      id: 2, createdAt: AT, readAt: null, kind: untitled.kind, detail: untitled.detail, conversationId: 7, conversationKind: 'direct',
+    });
+    assert.deepEqual([bare.label, bare.segments[0].v, bare.appLine], ['Plan to approve', 'Request #5599', 'Plant Pal · Homeroom bot']);
+  });
 });
 
 test('WP-F: a merged change is "live" when the machine says it is, and a stop says which one', async () => {

@@ -570,11 +570,18 @@ async function sendDm(pool, {
   }
   const cards = Array.isArray(objects) ? objects.filter(Boolean).slice(0, MAX_CARDS) : [];
   const story = moment === undefined ? storyMomentOf(metadata) : (moment || null);
+  // #5582: a ringing message about a request whose sender named no title is
+  // named by the request's title, not "Request #N". A first version keeps
+  // naming the project, and what the sender set itself wins.
+  const aboutRequest = Number.isInteger(Number(metadata?.issueNumber)) && Number(metadata.issueNumber) > 0 && !!metadata.appSlug;
+  const foundTitle = story && aboutRequest && !metadata.firstVersion && !metadata.issueTitle && !('requestTitle' in metadata)
+    ? await titleForStory(pool, metadata) : null;
+  const meta = foundTitle ? { ...metadata, issueTitle: foundTitle } : metadata;
   // A "ready to try" says whether others approve it (contract 2.2's ready_group).
   const group = story === 'ready' && metadata && !metadata.said && !metadata.firstVersion && metadata.appSlug
     && !metadata.ready ? await hasOthers(pool, null, metadata.appSlug) : false;
   const stored = metadata
-    ? storyMetadata(group ? { ...metadata, group: true } : metadata, { moment: story, threadRootId: root })
+    ? storyMetadata(group ? { ...meta, group: true } : meta, { moment: story, threadRootId: root })
     : null;
   // The notification's detail: homeroom-bot-notify-copy.js words the push,
   // the bell and the email from the story's fields (contract 2.1).
@@ -592,8 +599,12 @@ async function sendDm(pool, {
   // without them the message is the hello alone, and is not sent at all when
   // the person has had theirs.
   let greeted = false;
-  const helloStored = hello?.metadata
-    ? storyMetadata(hello.metadata, { moment: story, threadRootId: root }) : null;
+  // The hello names the same request the message does: same title.
+  const helloMeta = hello?.metadata && foundTitle
+    && Number(hello.metadata.issueNumber) === Number(metadata.issueNumber) && hello.metadata.appSlug === metadata.appSlug
+    ? { ...hello.metadata, issueTitle: foundTitle } : hello?.metadata;
+  const helloStored = helloMeta
+    ? storyMetadata(helloMeta, { moment: story, threadRootId: root }) : null;
   const helloHooks = hello?.kind ? {
     prepare: async (db) => {
       const { rows: claimed } = await db.query(CLAIM_HELLO_SQL, [Number(userId), Number(bot.id), String(hello.kind)]);
@@ -897,6 +908,34 @@ async function requestTitleFor(pool, app, issueNumber, deps = {}) {
     return title;
   } catch (err) {
     log.warn('homeroom-bot-dm', 'Could not look up a request\'s title', { app: app?.slug, issueNumber: n, err: err.message });
+    return null;
+  }
+}
+
+/**
+ * 19 Oct 2026 (#5582): a request's title for a message about it whose sender
+ * named none (a plan on an existing project read "Request #5580" in the bell
+ * and the push): the requester's saved title, else Homeroom's own row or
+ * GitHub's (requestTitleFor). Null when there is none. Never throws.
+ */
+async function titleForStory(pool, metadata) {
+  const n = Number(metadata?.issueNumber);
+  if (!metadata?.appSlug || !Number.isInteger(n) || n <= 0) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT a.id, a.repo_url, q.issue_title FROM apps a
+         LEFT JOIN homeroom_bot_requesters q ON q.app_id = a.id AND q.issue_number = $2
+        WHERE a.slug = $1`,
+      [metadata.appSlug, n],
+    );
+    if (!rows[0]) return null;
+    const saved = rows[0].issue_title ? String(rows[0].issue_title).trim() : '';
+    if (saved) return clip(saved, 300);
+    return await requestTitleFor(pool, { id: rows[0].id, repo_url: rows[0].repo_url }, n);
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not find a request\'s title for its story', {
+      app: metadata?.appSlug, issueNumber: n, err: err.message,
+    });
     return null;
   }
 }
@@ -2013,6 +2052,9 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
     idempotencyKey: `hrbot-plan-${runId}`,
     metadata: {
       kind: PLAN_KIND, appSlug: app.slug, appName: name, issueNumber: Number(issueNumber), firstVersion: !complicated,
+      // #5582: a plan on an existing project names its request, when the
+      // requester's row has its title (sendDm looks it up when it has none).
+      ...(complicated && requester.issueTitle ? { issueTitle: requester.issueTitle } : {}),
       plan: {
         bullets: plan.bullets, questions,
         ...(complicated ? { complicated: true, ...(plan.spec ? { spec: plan.spec } : {}) } : {}),

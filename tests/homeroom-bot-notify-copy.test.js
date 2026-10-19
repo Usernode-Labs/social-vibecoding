@@ -115,6 +115,23 @@ test('a request whose title is not known is named by its number, never by its pr
   assert.deepEqual([first.bellLabel, first.bellSubject, first.bellMeta], ['Plan to approve', 'Plant Pal first version', 'Plant Pal · Homeroom bot']);
 });
 
+test('#5582: a plan for an existing project names its request once its story has the title', () => {
+  const dm = require('../src/services/homeroom-bot-dm');
+  const detail = (meta) => copy.botNotificationDetail(dm.storyMetadata({
+    kind: 'plan', appSlug: 'plant-pal', appName: 'Plant Pal', issueNumber: 5580, firstVersion: false, ...meta,
+  }, { moment: 'needs_you' }));
+  const titled = copy.botMomentCopy(detail({ issueTitle: 'Show who was active this week on the hub' }));
+  assert.deepEqual([titled.bellLabel, titled.bellSubject, titled.bellMeta],
+    ['Plan to approve', 'Show who was active this week on the hub', 'Plant Pal · #5580 · Homeroom bot']);
+  assert.equal(titled.title, 'Show who was active this week on the hub · Plant Pal');
+  // No title anywhere: the number, as before.
+  const untitled = copy.botMomentCopy(detail({}));
+  assert.deepEqual([untitled.bellSubject, untitled.bellMeta], ['Request #5580', 'Plant Pal · Homeroom bot']);
+  // A first version keeps naming the project, even handed a title.
+  const first = copy.botMomentCopy(detail({ issueTitle: 'Show who was active this week on the hub', firstVersion: true }));
+  assert.deepEqual([first.bellSubject, first.bellMeta], ['Plant Pal first version', 'Plant Pal · Homeroom bot']);
+});
+
 test('nothing it says names a proposal, a PR, an issue, or the bot\'s handle', () => {
   for (const [moment, said, extra] of BODIES) {
     const got = words({ moment, said, ...extra });
