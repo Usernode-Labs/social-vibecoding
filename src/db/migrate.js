@@ -5922,6 +5922,33 @@ async function seedStagingDemoAppCard(pool) {
                900001, 'open')
        ON CONFLICT DO NOTHING`
     );
+    // #5483's shots: the bot-DM fixture's "ready to try" card (staging-
+    // messages.js) is voted with its Approve, which posts to session 990901.
+    // Without a row there the Approve answers 404 and the after build can
+    // never show the card saying the vote. A private demo app keeps the vote
+    // off the public-app identity gate, votes_required 2 keeps one Yes from
+    // deciding anything, and the session's app takes its viewers as
+    // collaborators so the session collab guard (app-access.js) lets the
+    // shot personas' Approve through. Obviously fake, in the same
+    // 900xxx/99xxxx staging ranges, idempotent like its siblings.
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by)
+       VALUES (900002, 'Staging demo bot change', 'staging-demo-bot-change', 'running', 'members', 'private', 900001)
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status)
+       SELECT 900002, u.id, 'member' FROM users u
+       WHERE u.username IN ('usernode-capture', 'staging-code-signin@usernode.test')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status, promoted_at, votes_required, approval_epoch)
+       VALUES (990901, 900002, 900001, 'staging-demo/bot-change-pr', 900002,
+               'Staging demo change — grey out finished items', 'promoted', NOW(), 2, 0)
+       ON CONFLICT DO NOTHING`
+    );
     log.info('db', 'Staging demo app-card fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging demo app-card seeding failed', { message: err.message });
