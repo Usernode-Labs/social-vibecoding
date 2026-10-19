@@ -1136,6 +1136,18 @@ const Notifications = {
       return;
     }
     // #4296: an unexpected events alert opens the section that lists them.
+    // A platform signal opens its request on Homeroom's own board.
+    const signal = item.kind === 'platform_incident' ? parsePlatformIncidentDetail(item.detail) : null;
+    const platformSlug = signal && signal.type === 'signal' ? window.PlatformTarget?.slug?.() : null;
+    if (platformSlug) {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.openAppTab) {
+        App.openAppTab(platformSlug, 'dev', { subTab: 'issues', ref: signal.issueNumber });
+      } else {
+        window.location.hash = `#app/${platformSlug}/dev/issues/${signal.issueNumber}`;
+      }
+      return;
+    }
     if (item.kind === 'platform_incident') {
       Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
@@ -2081,9 +2093,14 @@ function parsePlatformLimitDetail(detail) {
 // hourly line).
 const PLATFORM_INCIDENT_DIGEST_RE = /^digest:(\d{1,5}):((?:[a-z][a-z0-9_]{0,23}=\d{1,5})(?:,[a-z][a-z0-9_]{0,23}=\d{1,5})*)?$/;
 const PLATFORM_INCIDENT_HOUR_RE = /^hour:([a-z][a-z0-9_]{0,23}):(\d{1,5})$/;
+// services/platform-signals.js: "signal:<n>", a problem the platform found in
+// itself and filed as request #n on its own board, for a person to fix.
+const PLATFORM_INCIDENT_SIGNAL_RE = /^signal:(\d{1,9})$/;
 
 function parsePlatformIncidentDetail(detail) {
   const s = String(detail || '');
+  const sig = PLATFORM_INCIDENT_SIGNAL_RE.exec(s);
+  if (sig) return { type: 'signal', issueNumber: Number(sig[1]) };
   const h = PLATFORM_INCIDENT_HOUR_RE.exec(s);
   if (h) return { type: 'hour', kind: h[1], n: Number(h[2]) };
   const d = PLATFORM_INCIDENT_DIGEST_RE.exec(s);
@@ -2955,6 +2972,16 @@ function rowView(n) {
   if (n.kind === 'platform_incident') {
     const alert = parsePlatformIncidentDetail(n.detail);
     const words = (kind) => String(kind).replace(/_/g, ' ');
+    if (alert && alert.type === 'signal') {
+      return {
+        ...base,
+        appLine: t('notifications:row.source.admin'),
+        wrap: true,
+        icon: '\u{1F6E0}\uFE0F',
+        label: t('notifications:row.incident.signal.label'),
+        segments: [{ t: 'text', v: t('notifications:row.incident.signal.body', { number: alert.issueNumber }) }],
+      };
+    }
     if (alert && alert.type === 'hour') {
       return {
         ...base,

@@ -20,7 +20,7 @@
       "name": "Homeroom bot",
       "icon": "🤖",
       "about": "How it plans, builds and answers",
-      "figures": ["bot.answered", "bot.reply-cost", "bot.reply-time", "bot.merged", "bot.merged-cost", "bot.request-to-proposal", "bot.builds-proposed", "bot.first-versions", "bot.failed-spend"]
+      "figures": ["bot.answered", "bot.reply-cost", "bot.reply-time", "bot.merged", "bot.merged-cost", "bot.request-to-proposal", "bot.builds-proposed", "bot.first-versions", "bot.failed-spend", "bot.paused"]
     },
     {
       "id": "proposal-pipeline",
@@ -28,7 +28,7 @@
       "name": "Proposal pipeline",
       "icon": "🚦",
       "about": "From request to merge: proposals, checks, votes and merging",
-      "figures": ["pipeline.checks-time", "pipeline.checks-couldnt-run", "pipeline.shots", "pipeline.vote-to-merged", "pipeline.main-paused", "pipeline.reds-rerun"]
+      "figures": ["pipeline.checks-time", "pipeline.checks-couldnt-run", "pipeline.shots", "pipeline.vote-to-merged", "pipeline.main-paused", "pipeline.reds-rerun", "pipeline.not-the-change", "pipeline.stuck-work"]
     },
     {
       "id": "infra",
@@ -36,7 +36,7 @@
       "name": "Infra",
       "icon": "🛠️",
       "about": "Builds, staging, deploys and the servers the apps run on",
-      "figures": ["infra.merge-to-live", "infra.deploys-failed", "infra.apps-up", "infra.restarts", "infra.limits-filled", "infra.turned-away", "infra.homeroom-stalls", "infra.homeroom-crashes"]
+      "figures": ["infra.merge-to-live", "infra.deploys-failed", "infra.apps-up", "infra.restarts", "infra.limits-filled", "infra.turned-away", "infra.homeroom-stalls", "infra.homeroom-crashes", "infra.alerts"]
     },
     {
       "id": "project-workflows",

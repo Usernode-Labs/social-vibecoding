@@ -156,6 +156,12 @@ const DENIED_COLUMNS = {
     'input_hash',
     'normalized_input',
   ],
+  platform_signals: [
+    // Raw evidence behind a problem the platform found in itself (log
+    // lines, ids, a project's own build output): full admins read it on the
+    // request's page; services/platform-signals.js never publishes it.
+    'evidence_private',
+  ],
   phone_sign_in_tokens: [
     // SHA-256 digest of a spent Firebase ID token (replay detection) —
     // derived from auth material, so it is denied rather than reviewed.
