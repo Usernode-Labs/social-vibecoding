@@ -64,7 +64,7 @@ test('in its app: the community open, App first and lit with its dot, no place l
   const app = html.indexOf('data-rail-app="chess"');
   const places = html.indexOf('data-places="chess"');
   assert.ok(app > 0 && places > app, 'App, then its places');
-  assert.match(html, /<div class="platform-rail-nest" data-nest="open"><div class="platform-rail-nest-in"><a class="platform-rail-sub platform-rail-app" href="\/app\/chess" data-rail-app="chess" data-live="true" title="Chess app" aria-label="Chess app, still open" aria-current="page">/);
+  assert.match(html, /<div class="platform-rail-nest" data-nest="open"><div class="platform-rail-nest-in"><div class="platform-rail-app-row"><a class="platform-rail-sub platform-rail-app" href="\/app\/chess" data-rail-app="chess" data-live="true" title="Chess app" aria-label="Chess app, still open" aria-current="page">/);
   assert.match(html, /class="platform-rail-sub-glyph"/);
   assert.match(html, new RegExp(`<span class="platform-rail-sub-name">${message('core:rail.app')}</span><span class="app-live-dot platform-rail-live"`));
   assert.match(html, /<div class="platform-rail-nest platform-rail-places" data-nest="open">/, 'the places in a part inside it');
@@ -101,6 +101,36 @@ test('a pin is drawn as any community is, named by its own record when the list 
   const html = drawRow({ onPage: 'x' }, { slug: 'gym', info: {}, list: ['chess'], record: { name: 'Gym', iconUrl: null, iconEmoji: '🏋️' } });
   assert.match(html, /data-rail-community="gym" title="Gym"/);
   assert.match(html, /<span class="platform-rail-name">Gym<\/span>/);
+});
+
+test('a still-open app off screen offers its close X; the one on screen does not', () => {
+  // The app is running but the viewer is elsewhere: the dot has the X beside
+  // it, named for the app, and the dot itself stays in the anchor where the
+  // kept-apps declared check finds it.
+  const html = drawRow({ live: ['chess'] }, { info: CHESS });
+  assert.match(html, new RegExp([
+    '<button type="button" class="platform-rail-live-stop"',
+    `title="${message('core:liveApp.closeTitle')}"`,
+    'aria-label="Close Chess app">',
+  ].join(' ')));
+  assert.ok(html.indexOf('platform-rail-live-stop') > html.indexOf('data-rail-app="chess"'), 'after the App row');
+  assert.match(html, /<span class="app-live-dot platform-rail-live"/);
+  assert.ok(html.indexOf('app-live-dot') < html.indexOf('platform-rail-live-stop'), 'dot still in the anchor');
+  // The app on screen: no X, nothing to close it away from.
+  const onScreen = drawRow({ onApp: 'chess', live: ['chess'] }, { info: CHESS });
+  assert.doesNotMatch(onScreen, /platform-rail-live-stop/);
+  // A row whose app is not running has nothing to close.
+  assert.doesNotMatch(drawRow({ onPage: 'chess' }, { info: CHESS }), /platform-rail-live-stop/);
+  // Pressing the X closes the app, not the row's own open, and the focus it
+  // would drop lands on the App row.
+  const src = read(RAIL);
+  assert.match(src, /event\.preventDefault\(\);\n {18}event\.stopPropagation\(\);/);
+  assert.match(src, /appRef\.current\?\.focus\(\);\n {18}closeLiveApp\(slug\);/);
+  // The reveal: hover and keyboard focus show the X, and the dot is hidden
+  // while it is up.
+  const css = read('public/css/app.css');
+  assert.match(css, /\.platform-rail-nest \.platform-rail-live-stop:hover,\n {2}\.platform-rail-nest \.platform-rail-live-stop:focus-visible \{\n {4}opacity: 1;\n {2}\}/);
+  assert.match(css, /\.platform-rail-nest \.platform-rail-app-row:has\(\.platform-rail-live-stop:is\(:hover, :focus-visible\)\) \.platform-rail-live \{\n {4}visibility: hidden;\n {2}\}/);
 });
 
 test('the source: the part holds App, then the places; the five leave the pins out and keep a running app', () => {
@@ -143,7 +173,7 @@ test('a part inside a part: the inner one opens with the outer, not after it', (
   // The outer part draws the one line and the padding round both.
   const css = read('public/css/app.css');
   assert.match(css, /\.platform-rail-nest \.platform-rail-places > \.platform-rail-nest-in \{\n {4}padding: 0;\n {2}\}/);
-  assert.match(css, /\.platform-rail-nest \.platform-rail-app \+ \.platform-rail-places > \.platform-rail-nest-in \{\n {4}padding-top: 1px;\n {2}\}/);
+  assert.match(css, /\.platform-rail-nest \.platform-rail-app-row \+ \.platform-rail-places > \.platform-rail-nest-in \{\n {4}padding-top: 1px;\n {2}\}/);
   assert.match(css, /\.platform-rail-nest \.platform-rail-places > \.platform-rail-nest-in::before \{\n {4}display: none;\n {2}\}/);
   assert.match(css, /\.platform-rail-nest \.platform-rail-live \{\n {4}width: 8px;\n {4}height: 8px;/, 'the dot at a row\'s size');
 });
