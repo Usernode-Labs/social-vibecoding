@@ -348,6 +348,11 @@ export interface BotTrack {
   /** Why it is where it is, as a code (bot.track.why.*), or null. */
   why: string | null;
   waitingOn: 'you' | 'group' | null;
+  /**
+   * Who a track waiting on "you" waits on, by username, where it is drawn
+   * for somebody else (a request's page: homeroom-bot-track.js forViewer).
+   */
+  waitingFor?: string;
   /** The bot is working on it this minute. */
   busy: boolean;
   /** Which try it is on: 2 after its checks failed once and it built again. */
@@ -723,10 +728,10 @@ export interface MessagesRoute {
    * #2813: an AGENT thread open beside the list on a desktop — a global
    * agent chat (`#messages/agent/<id>`) or an app's dev session
    * (`#messages/session/<slug>/<id>`). Both used to navigate away to a
-   * screen of their own (`#chat/<id>`, `#app/<slug>/dev/sessions/<id>`),
-   * which is still where a PHONE goes: the router swaps these addresses for
-   * those there, so the full-screen behaviour on a narrow viewport is the
-   * one it always was.
+   * screen of their own (`#chat/<id>`, `#app/<slug>/dev/sessions/<id>`).
+   * On a PHONE a dev session still goes to its own: the router swaps that
+   * address there. An agent chat and an agent session open here on a phone
+   * too, as the second level of the inbox's drawer (Evan, 18 Oct 2026).
    *
    * Mutually exclusive with the other two, for the same reason they are
    * with each other: one thread is open.
@@ -839,12 +844,6 @@ export interface MessagesSnapshot {
   nextAfter: number | null;
   /** #2387: the list pane folded away on a desktop — single-panel mode. */
   listCollapsed: boolean;
-  /**
-   * #4229: the strip is wider than a phone but too narrow for an open
-   * conversation to keep a readable measure beside the list, so the list
-   * steps aside while one is open and the bar's back arrow returns to it.
-   */
-  listCrowded: boolean;
   /** #2967: the channels outside Your apps shown, under "Show more". */
   showMoreChannels: boolean;
   /**

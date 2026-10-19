@@ -289,6 +289,9 @@ test('settings default to off and clamp their numbers', () => {
     userWeeklyCents: 5000, adminWeeklyCents: 10000,
     // #3654: every stage on the platform default until an admin names one.
     models: { triage: '', spec: '', build: '', followup: '' },
+    // And the platform default itself on the deployment's until an admin
+    // picks one (services/default-model.js).
+    defaultModel: '',
     // Live work, 12 at once and 3 per person (raised from 6 and 2 when every
     // project went live); a DM is read.
     liveAtOnce: 12, perPerson: 3, dmChat: true,
@@ -1217,6 +1220,64 @@ test('#3624: on a live import, the issues it came with wait until something happ
   await bot.refreshApp(pool, app, { github });
   assert.deepEqual(reads, []);
   assert.deepEqual(owedOf(events).map((e) => e.payload.issueNumber), [1, 2, 3, 4]);
+});
+
+// Papote #3 (18 Oct 2026): "@Homeroom bot status" under a plan waiting for
+// Build it read as a change to the request, and the look it started retired
+// the plan and wrote it again. What is said to the bot there is its voice's
+// to answer (start_request, change_plan); anything else still counts.
+test('papote #3: under a plan waiting for Build it, what people said to the bot does not read the request again', async () => {
+  const SEEN = '2026-10-18T17:22:08Z';
+  const run = (n, planWaiting) => ({
+    id: n, issue_number: n, thread_seen_at: SEEN, verdict: 'ready', cap_suppressed: null, created_at: SEEN, mode: 'live',
+    live_building: false, plan_waiting: planWaiting, failed_tries: 0,
+  });
+  const refresh = async ({ settings, unaddressed = 'reads' }) => {
+    const events = [];
+    const asked = [];
+    const pool = {
+      async query(sql, params) {
+        const s = String(sql);
+        const appended = botEvents(events, s, params);
+        if (appended) return appended;
+        if (QUEUED_BEFORE_RE.test(s) || /FROM wf_instances|FROM homeroom_bot_dm_projects/.test(s)) return { rows: [] };
+        if (/AS plan_waiting/.test(s)) return { rows: [run(3, true), run(4, false)] };
+        if (/FROM issue_claims|UNNEST\(cs\.linked_issues\)|headless_issue_number AS n|created_from_issue_number AS n|FROM homeroom_bot_runs/.test(s)) return { rows: [] };
+        if (/!~\*/.test(s)) {
+          asked.push(params);
+          if (unaddressed === 'fails') throw new Error('boom');
+          // What people said there apart from to the bot is older than the plan.
+          return { rows: [{ n: 3, last_at: '2026-10-18T17:00:00Z' }] };
+        }
+        // "@Homeroom bot status" on #3 and plain words on #4, both after it.
+        if (/FROM chat_messages/.test(s)) return { rows: [{ n: 3, last_at: '2026-10-18T17:30:00Z' }, { n: 4, last_at: '2026-10-18T17:30:00Z' }] };
+        throw new Error(`unexpected query: ${s.slice(0, 60)}`);
+      },
+    };
+    const github = {
+      async fetchPublicIssues() {
+        return {
+          // A partial list: the closed-request sweep leaves it alone.
+          truncatedList: true,
+          issues: [3, 4].map((number) => ({ number, state: 'open', createdAt: '2026-10-15T00:00:00Z', updatedAt: '2026-10-15T00:00:00Z' })),
+        };
+      },
+    };
+    await bot.refreshApp(pool, { id: 9, slug: 'papote', repo_url: 'https://github.com/usernode-bot/papote' }, {
+      github, settings, bot: { id: 77 }, capRoom: { proposals_per_app: 5, proposals_total: 5, question_tripwire: 3 },
+    });
+    return { owed: owedOf(events).map((e) => [e.payload.issueNumber, e.payload.reason]), asked };
+  };
+  const on = await refresh({ settings: { mode: 'live' } });
+  assert.deepEqual(on.owed, [[4, 'changed']], 'the request with a plan waiting is not read again; the other is');
+  assert.equal(on.asked.length, 1);
+  assert.deepEqual(on.asked[0][1], [3], 'only the requests with a plan waiting are read that way');
+  assert.equal(on.asked[0][2], require('../src/services/homeroom-bot-holds').mentionPattern());
+  assert.equal(on.asked[0][3], 77, 'a Reply to the bot is left out too');
+  // With the voice off in requests' discussions nobody answers it there, so it is read as before.
+  assert.deepEqual((await refresh({ settings: { mode: 'live', voiceIssue: false } })).owed, [[3, 'changed'], [4, 'changed']]);
+  // And so is a refresh that could not tell what was said to whom.
+  assert.deepEqual((await refresh({ settings: { mode: 'live' }, unaddressed: 'fails' })).owed, [[3, 'changed'], [4, 'changed']]);
 });
 
 test('capRoomFor counts the same two things the live check does', async () => {

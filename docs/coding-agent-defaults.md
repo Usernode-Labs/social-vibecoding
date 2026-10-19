@@ -5,7 +5,67 @@ so the next person who wants to change one starts from what was already
 checked: the default OpenRouter model (#2819), and the design guidance every
 coding agent builds with (#2817).
 
-## Default coding model: GLM 5.3 Flash stays (reviewed 2026-09-23)
+## Default coding model: DeepSeek V4.1 Flash 1017 (decided 2026-10-19)
+
+`deepseek/deepseek-v4.1-flash-1017` replaces GLM 5.3 Flash as the default
+OpenRouter coding model. It is the model a new agent chat session starts
+with, and the one the Homeroom bot's chat replies use, which read the same
+default. It runs in Claude Code (`OPENROUTER_MODEL_HARNESSES`) on its
+Parasail and InferenceNet host shortlist
+(`worker/claude-openrouter-request.js` `PROVIDER_ROUTING_BY_MODEL`). Since
+#5507, agent chat's conversation is routed to the same hosts.
+
+What decided it, on the Homeroom bot bench (blind judge, both models in
+Claude Code):
+
+| | DeepSeek V4.1 Flash 1017 | GLM 5.3 Flash |
+|---|---|---|
+| Core build tasks, runs 210 to 212 (54 trials each) | 33 passed | 26 passed |
+| Of those, on the Homeroom repository (30 each) | 17 | 12 |
+| Core triage accuracy, run 217 (129 trials each) | 65.1% | 62.8% |
+| Triage tasks right all three times (of 43) | 26 | 17 |
+| Triage answers with no readable verdict | 0 | 11 |
+| Triage latency, median / 95th percentile | 23 s / 77 s | 34 s / 108 s |
+| First versions passing the taste judge, App bench run 216 (of 10) | 9 | 6 |
+
+The triage difference, paired, is +2.3 points with a 95% interval of -12.7 to
++10.3: no worse, not shown to be better. What it costs: about 3.4 times GLM
+per triage call ($0.011 against $0.0034), and a first version's build and
+review fixes about $0.17 more ($0.41 against $0.24, the Opus plan aside).
+Where it is weaker: it asks a clarifying question less often (29% against 42%
+on the triage tasks whose right answer is a question), and its first
+versions kept 0.8 tap targets under 44px a build to GLM's none, which the
+first-version review now raises as an issue to fix (#5529).
+
+Not covered by this default: the build model of later changes (the `later`
+configuration in `services/bot-configs.js`, still GLM while a 1017 version
+is compared blind beside it), and the Homeroom bot's per-stage models
+(triage, follow-up), which an admin sets in the bot's console settings.
+
+Changing the default is an admin setting: Admin → Homeroom bot → Settings
+→ Models → Platform default (`services/default-model.js`, stored in
+`platform_settings`). Every server follows a save within 10 seconds, with no
+deploy. Blank goes back to the deployment's default, which is
+`OPENROUTER_DEFAULT_CODEX_MODEL` where the deploy sets it, else the fallback
+in `src/config.js`. On the Kubernetes deploy nothing sets it: the platform
+chart does not carry it and the Platform variables panel is not applied
+there, so the deployment's default is `src/config.js`'s. The VPS deploy
+workflow (`.github/workflows/deploy.yml`, run by hand only) writes its own
+fallback, still `z-ai/glm-5.3-flash`; the admin setting wins over it too.
+`OPENROUTER_RECOMMENDED_MODELS` has no admin setting and comes from the same
+places.
+
+What follows the default: a new agent chat for an account whose coding
+agent preference names no model, the model catalog's recommended model, and
+the Homeroom bot's stages left on the platform default and its answers in
+DMs and chats. A key set up for an account stores no model, so the account
+follows the default until its person picks one. Before this, setting up a
+key stored the default of the day, so a one-time migration
+(`followPlatformDefaultModel` in `src/db/migrate.js`) moved the GLM 5.3
+Flash preferences nobody had touched since their key was set up back to
+following the default. A model a person picked stays theirs.
+
+## Before 2026-10-19: GLM 5.3 Flash stays (reviewed 2026-09-23)
 
 #2819 asked whether `xiaomi/mimo-v2.6-pro` should replace the default. It
 should not yet. GLM 5.3 Flash (`z-ai/glm-5.3-flash`) remains the default at
@@ -48,11 +108,6 @@ Look again when it has an independent Coding Index and a WebDev Arena rank,
 has more than one OpenRouter provider, and the tool-loop issues are closed.
 Until then it stays selectable like any other model in the user's catalog;
 it is just not what a new session starts with.
-
-Changing the default is an operations change, not only a code change:
-production reads `OPENROUTER_DEFAULT_CODEX_MODEL` from the deploy workflow's
-repository variable, and the value in `src/config.js` is only the fallback
-for deployments that set nothing.
 
 One discrepancy seen during the review and not acted on: an Artificial
 Analysis snapshot lists GLM 5.3 Flash at $0.15 / $0.50, above the $0.10 /

@@ -1633,9 +1633,11 @@ async function resolveDefaultAgentPreference(client, userId, config) {
   }
 
   let modelId = pref?.model_id
-    || (config && config.openrouterDefaultCodexModel)
-    || null;
+    || await require('../services/default-model').effective(client, config);
 
+  // A preference with no model follows the platform default
+  // (services/default-model.js; provisioning stores it that way), which an
+  // admin's save has already checked against the catalog.
   // Accounts with a usable key but no preference predate the
   // OpenRouter-default migration. Resolve their first new session against
   // the live key-visible catalog so a configured future model can fall back
@@ -1943,10 +1945,11 @@ async function resumePausedSession({ pool, config, user, sessionId }) {
   // session to pause for it is asked to, once per cap, before it asks again.
   // The per-user cap counts only 'active' sessions (#193); its ceiling is
   // per-requester (full admins get a raised cap: services/session-caps.js).
+  // The global one is the session limit (services/session-limit.js).
   const caps = effectiveSessionCaps(config, user);
   const cap = {
     user: caps.activeSessions,
-    global: config && config.maxGlobalSessions != null ? Number(config.maxGlobalSessions) : 100,
+    global: await require('../services/session-limit').effective(pool, config),
   };
   const platform = require('../workflow/platform.ts');
   const tried = new Set();

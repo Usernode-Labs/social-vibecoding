@@ -3,18 +3,19 @@
 const crypto = require('crypto');
 const { ALLOWED_KINDS } = require('./mobile-push-preferences');
 const notifyCopy = require('./homeroom-bot-notify-copy');
+const { PARKED_NOTIFICATION_KINDS } = require('./kudos-parked');
 
 const MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const RECIPIENT_CONTEXT = 'usernode-social-push-recipient-v1';
 const PUSH_ENV_RE = /^[a-z][a-z0-9_-]{0,31}$/;
 
-// #5249: kinds whose feature is parked. Their notification rows are still
-// written (nothing is deleted or rewired server-side), but no phone is
-// woken for one: the worker settles such a delivery as kind_not_allowed and
-// buildMessage refuses it. Kudos is parked on the client by
-// frontend/src/features/leaderboard/kudos-parked.ts; take its kind out of
-// this set when that switch goes back to false.
-const PARKED_PUSH_KINDS = new Set(['kudos']);
+// #5249: kinds whose feature is parked. No phone is woken for one: the
+// worker settles such a delivery as kind_not_allowed and buildMessage
+// refuses it. The set is services/kudos-parked.js's PARKED_NOTIFICATION_KINDS,
+// the same one the bell's list and its unread count skip, so it empties when
+// that switch (and the client's, frontend/src/features/leaderboard/
+// kudos-parked.ts) goes back to false.
+const PARKED_PUSH_KINDS = new Set(PARKED_NOTIFICATION_KINDS);
 
 function isPushParked(kind) {
   return PARKED_PUSH_KINDS.has(kind);
@@ -208,7 +209,7 @@ function platformLimitCopy(detail) {
   }
   return level === 'full'
     ? { title: 'Session limit reached',
-      body: `${used} of ${cap} coding sessions are running. New ones pause idle sessions or wait until MAX_GLOBAL_SESSIONS is raised` }
+      body: `${used} of ${cap} coding sessions are running. New ones pause idle sessions or wait until the limit is raised in Admin \u2192 Limits` }
     : { title: 'Nearing the session limit',
       body: `${used} of ${cap} coding sessions are running. At the limit, idle sessions are paused to make room` };
 }
@@ -580,6 +581,14 @@ function buildCopy(kind, context, now) {
         body: 'It needs a fix before it can go live',
       };
     case 'stale_pr': {
+      // Its votes are met and its merge is what stands still: asking for
+      // votes would send the author after the wrong thing.
+      if (detail === 'blocked') {
+        return {
+          title: withApp(quotedTitle ? `${quotedTitle} is approved but can't go live` : "Your approved change can't go live"),
+          body: 'It needs a fix before it can go live, or it will be set aside',
+        };
+      }
       const days = daysSince(context.promotedAt, now);
       return {
         title: withApp(quotedTitle

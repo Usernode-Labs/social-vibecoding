@@ -48,6 +48,7 @@ import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
 import { fullTime, UserAvatar, senderName } from './format';
 import { DiscussionRow, MessageRow } from './message-row';
+import { OPEN_HOLD_MS, openHoldDone } from './open-hold';
 import { plainText } from './plain-text';
 import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
@@ -71,7 +72,6 @@ import {
   loadOlder,
   loadOlderReplies,
   loadReplyThread,
-  measureLayout,
   messagesController,
   open as openConversation,
   openAgentThread,
@@ -125,7 +125,9 @@ import {
 import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { SessionRow, type SessionRowView } from '../improve/session-row';
-import { INBOX_SECTIONS, buildInbox, shownInSection, type AgentChat, type AppDiscussion, type InboxSection } from './inbox';
+import { INBOX_QUERY_MAX, INBOX_SECTIONS, buildInbox, savedInboxQuery, shownInSection, type AgentChat, type AppDiscussion, type InboxSection } from './inbox';
+import { publishRailInbox, railConversations, type RailConversation } from './rail-inbox';
+import { useSidebarRows } from '../nav/sidebar-rows';
 import type { ConversationDetail, ConversationMessage, ConversationSummary, DiscussionMessage, MessagesAgentThread } from './types';
 
 /*
@@ -485,8 +487,8 @@ const AgentChatRow = memo(function AgentChatRow({ chat, active }: { chat: AgentC
     );
   }
   // #2813: the inbox's own address, so on a desktop the chat opens in the
-  // pane beside this list. On a phone the router swaps it for `#chat/<id>`,
-  // the full-screen chat this row always led to there.
+  // pane beside this list, and on a phone as the second level of its drawer
+  // (../nav-drawer/messages-drawer.ts), where it used to be a screen of its own.
   const thread: MessagesAgentThread = { kind: 'chat', id: chat.id };
   const href = agentThreadAddress(thread);
   return (
@@ -848,12 +850,40 @@ function ConversationList({ drawer = false, litId = null }: {
   // and a second copy in this store is a copy that drifts. Gated on the same
   // two flags the Improve panel's list is, so a shell where the feature is
   // off sees no Agents rows and no Agents filter doing nothing.
-  // EPHEMERAL, AND DELIBERATELY NOT IN THE STORE. Nothing else reads what
-  // was typed here, and a query that survived leaving the screen would greet
-  // the next visit with a list that is missing rows for a reason no longer on
-  // screen. The filter IS in the store, because the thread pane and the
-  // deep-link router both read it.
+  // REMEMBERED PER DEVICE SINCE #5459, AND STILL NOT IN THE STORE. A daily
+  // voter narrows the list to the changes waiting on them, leaves to vote,
+  // and comes back: the query now survives that, kept in localStorage
+  // (`usernode:messages-query`, ./inbox.ts) the way the folded sections are,
+  // so the visit starts narrowed the way the last one ended. It is kept out
+  // of the store because nothing else reads what was typed here — and the
+  // field itself is where the reason rows are missing shows, so a restored
+  // query never hides rows with nothing on screen saying why. The value is
+  // read after mount, so the first render and the prerendered shell both
+  // show an empty field and hydration matches. (The filter the old comment
+  // was written for IS in the store, because the thread pane and the
+  // deep-link router both read it.)
   const [query, setQuery] = useState('');
+  // Restore the last search one commit after mount. An unusable or absent
+  // saved value leaves the field empty, and storage that throws (private
+  // mode, blocked) is the same as never having typed.
+  useEffect(() => {
+    try {
+      const saved = savedInboxQuery(localStorage.getItem('usernode:messages-query'));
+      if (saved) setQuery(saved);
+    } catch { /* storage unavailable */ }
+  }, []);
+  // Save the search on each keystroke, before the field updates. A write
+  // that throws is skipped and the list still narrows exactly as it did
+  // before the remembering; clearing the field removes the key, so the next
+  // visit starts empty; a search past the cap is not kept at all, rather
+  // than stored cut.
+  const changeQuery = useCallback((value: string) => {
+    try {
+      if (value && value.length <= INBOX_QUERY_MAX) localStorage.setItem('usernode:messages-query', value);
+      else localStorage.removeItem('usernode:messages-query');
+    } catch { /* storage unavailable */ }
+    setQuery(value);
+  }, []);
   // The list filters on the DEFERRED query: the field takes the keystroke at
   // once, and the rows follow in a render React can interrupt with the next
   // one, so typing a word into a long inbox does not wait on it per letter.
@@ -975,6 +1005,15 @@ function ConversationList({ drawer = false, litId = null }: {
     return open?.kind === 'chat' && open.id === entry.key.slice('agent:'.length);
   };
   const openKey = found.find(isOpen)?.key || null;
+  // v3 (18 Oct 2026): what the desktop's sidebar nests under Messages
+  // (./rail-inbox.ts), from the whole inbox, whatever the search box holds.
+  const railOpenKey = inbox.find(isOpen)?.key || null;
+  useEffect(() => {
+    const rows = railConversations(inbox, railOpenKey)
+      .map(railRow)
+      .filter((row): row is RailConversation => !!row);
+    publishRailInbox({ rows, openKey: railOpenKey, page: !(snap.route.conversationId || snap.route.appSlug || snap.route.agent) });
+  });
   // An agent row that asks for you is never behind "Show N more": a change
   // waiting on you ("Needs you") or an agent at work.
   const asksForYou = (entry: { kind: string; key: string }) => {
@@ -1075,7 +1114,7 @@ function ConversationList({ drawer = false, litId = null }: {
             placeholder={t('messages:inbox.searchPlaceholder')}
             aria-label={t('messages:inbox.searchLabel')}
             value={query}
-            onChange={(e) => setQuery(e.currentTarget.value)}
+            onChange={(e) => changeQuery(e.currentTarget.value)}
           />
         </div>
         <NewMessageButton />
@@ -1179,6 +1218,63 @@ function ConversationList({ drawer = false, litId = null }: {
       </div>
     </section>
   );
+
+  /** A row of the sidebar's nested conversations: the list row's address, name, count and face, small. */
+  function railRow(entry: { kind: string; key: string; section: InboxSection }): RailConversation | null {
+    const base = { key: entry.key, section: entry.section, unread: 0 };
+    if (entry.kind === 'person') {
+      const conversation = byConversation.get(entry.key.slice('person:'.length));
+      if (!conversation) return null;
+      const peer = directPerson(conversation);
+      const viewerId = Number(window.App?.user?.id);
+      const face = conversation.kind === 'group' && conversation.membershipStatus !== 'invited'
+        ? conversation.members.find((member) => member.status === 'member' && Number(member.id) !== viewerId) || null
+        : null;
+      return {
+        ...base,
+        href: `#messages/${conversation.id}`,
+        name: conversation.kind === 'direct' && peer ? senderName(peer, { bare: true }) : conversation.title,
+        unread: Math.max(0, Number(conversation.unreadCount) || 0),
+        lead: face
+          ? <UserAvatar user={face} size="sm" shape="square" />
+          : <UserAvatar user={conversation.kind === 'direct' ? peer : null} title={peer?.username || conversation.title} size="sm" shape="square" />,
+        reselect: () => selectConversation(conversation.id),
+      };
+    }
+    if (entry.kind === 'session') {
+      const session = bySession.get(entry.key.slice('session:'.length));
+      return session
+        ? { ...base, href: session.href, name: session.title || session.appName || '', lead: <ChangeTile session={session} /> }
+        : null;
+    }
+    const agentTile = (
+      <span className="messages-inbox-tile messages-inbox-agent-tile" aria-hidden="true">
+        <SparklesIcon className="w-5 h-5" />
+      </span>
+    );
+    if (entry.kind === 'mayor') {
+      const session = byMayor.get(entry.key.slice('mayor:'.length));
+      if (!session) return null;
+      const thread: MessagesAgentThread = { kind: 'agent', id: session.id };
+      return {
+        ...base,
+        href: agentThreadAddress(thread),
+        name: session.title || t('messages:agent.row.newSession'),
+        lead: agentTile,
+        reselect: () => openAgentThread(thread),
+      };
+    }
+    const chat = byAgent.get(entry.key.slice('agent:'.length));
+    if (!chat) return null;
+    const thread: MessagesAgentThread = { kind: 'chat', id: chat.id };
+    return {
+      ...base,
+      href: agentThreadAddress(thread),
+      name: chat.title || t('messages:inbox.agentChat.untitled'),
+      lead: agentTile,
+      reselect: () => openAgentThread(thread),
+    };
+  }
 
   function inboxRow(entry: { kind: string; key: string }) {
     if (entry.kind === 'person') {
@@ -1344,6 +1440,42 @@ export function threadWords(active: ConversationDetail): { title: string; sub: s
     title: active.kind === 'direct' && person ? senderName(person, { bare: true }) : channel ? `#${active.channelKey || active.title}` : active.title,
     sub: botDm ? translate('messages:header.subtitle.homeroomBot') : subtitle,
   };
+}
+
+/**
+ * What an open agent thread is called and what it is, for the phone's header
+ * to say (./phone-drawer.tsx; Evan, 18 Oct 2026), in the words its own pane
+ * uses: an agent session's title and kind line, as its bar names it in the
+ * pane (agent-session/index.tsx SessionBar, whose copy app.css leaves out on
+ * the drawer), and an agent chat's title, as its row in the list names it,
+ * with what it is. Read in the language on show by whoever renders it.
+ */
+export function agentThreadWords(agent: MessagesAgentThread, seen: { title: string; app: string }): { title: string; sub: string } {
+  if (agent.kind === 'chat') {
+    return { title: seen.title || translate('messages:inbox.agentChat.untitled'), sub: translate('messages:drawer.chat.line') };
+  }
+  return {
+    title: seen.title || translate('agent:session.bar.newSession'),
+    sub: seen.app ? translate('agent:session.bar.kindStartedFrom', { app: seen.app }) : translate('agent:session.bar.kind'),
+  };
+}
+
+/** `agentThreadWords` for the open agent chat or agent session, from the stores their panes draw from; null for anything else. */
+function useAgentThreadWords(agent: MessagesAgentThread | null): { title: string; sub: string } | null {
+  // Subscribed, so the words re-read in the language on show.
+  useMessages('messages');
+  useMessages('agent');
+  const chatId = agent?.kind === 'chat' ? agent.id : null;
+  const chatTitle = useGlobalChatSelector((current) => (chatId
+    ? (current.threads.find((thread) => thread.id === chatId)
+      || (current.bootstrap?.thread?.id === chatId ? current.bootstrap.thread : null))?.title || ''
+    : ''));
+  const sessionId = agent?.kind === 'agent' ? agent.id : null;
+  const mine = (current: { id: number | null }) => sessionId != null && (sessionId === 'new' ? current.id === null : current.id === sessionId);
+  const sessionTitle = useAgentSessionSelector((current) => (mine(current) ? current.session?.title || '' : ''));
+  const sessionApp = useAgentSessionSelector((current) => (mine(current) ? (current.session || current.draft)?.focusApp?.name || '' : ''));
+  if (!agent || agent.kind === 'session') return null;
+  return agentThreadWords(agent, agent.kind === 'chat' ? { title: chatTitle, app: '' } : { title: sessionTitle, app: sessionApp });
 }
 
 function ThreadHeader() {
@@ -1973,7 +2105,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // #2884: the runs of cards the viewer has opened, by their first message.
   const [expandedRuns, setExpandedRuns] = useState<ReadonlySet<string>>(() => new Set());
   // One request, one story: where each request stands, for folding the settled ones.
-  const { work: botWork } = useBotWork();
+  const { work: botWork, failed: botWorkFailed } = useBotWork();
   // #2387: the message a link pointed at, flashed once it is drawn.
   const focusId = snap.route.focusMessageId;
   const [flashId, setFlashId] = useState<number | null>(null);
@@ -1995,6 +2127,26 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // and #4564 its rows draw as change blocks (see the memo below).
   const botDm = !!snap.active && snap.active.id === conversationId && snap.active.kind === 'direct'
     && snap.active.membershipStatus === 'member' && snap.active.homeroomBot === true;
+  // THE BOT'S CHAT OPENS AT ITS FINAL SHAPE (./open-hold.ts): its rows are
+  // laid out but hidden, under the spinner, until its tray has answered and
+  // the screen is full or nothing older is left. `shownFor` is the
+  // conversation shown since it was opened, and `holdOverFor` the one whose
+  // OPEN_HOLD_MS ran out; closing it (a phone's Back) or opening another
+  // starts the next open over.
+  const [shownFor, setShownFor] = useState<number | null>(null);
+  const [holdOverFor, setHoldOverFor] = useState<number | null>(null);
+  const holding = botDm && !!conversationId && shownFor !== conversationId && snap.messages.length > 0;
+  useIsomorphicLayoutEffect(() => {
+    if (conversationId) return;
+    setShownFor(null);
+    setHoldOverFor(null);
+  }, [conversationId]);
+  useEffect(() => {
+    if (!holding || !conversationId) return undefined;
+    const id = conversationId;
+    const timer = window.setTimeout(() => setHoldOverFor(id), OPEN_HOLD_MS);
+    return () => window.clearTimeout(timer);
+  }, [holding, conversationId]);
   // #4046 and #4564, decided once per drawn transcript so a row's layout and
   // its block stay the same object between publishes and its memo() holds:
   // the plans (a first version's plan carries its request's step,
@@ -2131,13 +2283,29 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId]);
   // A short thread keeps reading pages in until the screen fills or the
-  // conversation's older end is reached.
+  // conversation's older end is reached. In the bot's chat the tray landing
+  // folds its settled rows into "N finished", which can leave it short too.
   useIsomorphicLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
     if (needsMoreHistory(el)) maybeLoadOlder();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snap.messages, snap.nextBefore, snap.loadingOlder]);
+  }, [snap.messages, snap.nextBefore, snap.loadingOlder, botWork]);
+  // ./open-hold.ts: the bot's chat is shown once it can draw what it will
+  // stay as. After the effect above, so it measures what that one read, and
+  // a layout effect, so the rows appear in the frame they settle in.
+  useIsomorphicLayoutEffect(() => {
+    const el = scroller.current;
+    if (!holding || !el) return;
+    if (openHoldDone({
+      trayRead: !!botWork || botWorkFailed,
+      hasOlder: !!snap.nextBefore,
+      loadingOlder: snap.loadingOlder,
+      olderFailed,
+      short: needsMoreHistory(el),
+      expired: holdOverFor === conversationId,
+    })) setShownFor(conversationId);
+  });
 
   // #3494: the room is up in its community's page, so this screen (hidden)
   // draws no second copy of it; and the page's copy draws nothing once
@@ -2317,7 +2485,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   }
   flushRun();
   return (
-    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || t('messages:thread.paneName')}>
+    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || t('messages:thread.paneName')} data-opening={holding ? '' : undefined}>
       {embedded ? null : <ThreadHeader />}
       {/* One request, one story: "Your requests", pinned under the bot's header. */}
       {botDm && !embedded ? <BotStrip /> : null}
@@ -2345,6 +2513,9 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
             is one — re-reads it silently: this row drawn above the messages
             pushed the whole transcript down on each message sent. */}
         {snap.loadingThread && !snap.messages.length ? <div className="messages-state"><span className="messages-spinner" />{t('messages:thread.loading')}</div> : null}
+        {/* The bot's chat keeps saying it while it opens (./open-hold.ts),
+            over its rows, which app.css hides until then. */}
+        {holding ? <div className="messages-state" data-opening-state=""><span className="messages-spinner" />{t('messages:thread.loading')}</div> : null}
         {/* QA 2026-09-24 Q16: a conversation that cannot come back offers the
             way out, not a Try again that reads the same answer. Leaving it
             here is said plainly, in the ordinary state colour: it is what
@@ -2803,15 +2974,6 @@ export function MessagesScreen() {
   const snap = useMessagesSnapshot();
   useVisibilityHiddenClass(screenRef, 'messages-screen', false);
   useEffect(() => initializeMessagesStore(), []);
-  // #4229: the strip's width decides whether the list fits beside an open
-  // conversation. Its own width, so the platform rail folding counts too.
-  useEffect(() => {
-    const el = layoutRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return undefined;
-    const sizes = new ResizeObserver(() => measureLayout(el.clientWidth));
-    sizes.observe(el);
-    return () => sizes.disconnect();
-  }, []);
   // THE AGENT HALF OF THIS INBOX HAS TO ASK FOR ITSELF (#2718 review).
   //
   // The list's `useGlobalChatSelector` reads a store that nothing on this screen
@@ -2865,14 +3027,20 @@ export function MessagesScreen() {
   // for it to sit beside, whatever the full-width preference says.
   const channelOpen = !!snap.route.appSlug
     || (!!snap.route.conversationId && snap.active?.id === snap.route.conversationId && snap.active?.kind === 'channel');
-  // #4229: on a strip too narrow for a readable conversation beside the
-  // list, an open discussion takes the strip and the bar's back arrow returns
-  // to the list, as on a phone (store.ts measureLayout).
   // THE PHONE'S DRAWER (./phone-drawer.tsx): the list and a conversation
-  // with people side by side, panned between, the last conversation peeking.
-  const drawer = useMessagesDrawer(layoutRef, snap.route, snap.active, snap.messages, threadWords);
+  // with people side by side, panned between, the last conversation peeking;
+  // an agent chat or an agent session takes the conversation's place.
+  const agentWords = useAgentThreadWords(snap.route.agent);
+  const drawer = useMessagesDrawer(layoutRef, snap.route, snap.active, snap.messages, threadWords, agentWords);
   const drawerClass = drawer.on ? ` messages-drawer${drawer.level === 0 && !drawer.peek ? ' messages-drawer-alone' : ''}` : '';
-  const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && discussionOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}${discussionOpen && snap.listCrowded ? ' messages-list-crowded' : ''}${drawerClass}`;
+  // v3 (18 Oct 2026): ON A DESKTOP THE LIST IS IN THE SIDEBAR, nested under
+  // Messages (./rail-inbox.ts), so one pane is drawn at a time: the open
+  // conversation alone, or with nothing open the whole list as the page
+  // (All messages), with its search and previews. No back arrow between
+  // them: the sidebar's rows are the way.
+  const sidebarRows = useSidebarRows();
+  const railClass = sidebarRows && !drawer.on ? (discussionOpen ? ' messages-list-in-rail' : ' messages-list-page') : '';
+  const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && discussionOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}${railClass}${drawerClass}`;
   // No background of its own: the route paints the wallpaper (the
   // body:has(#messages-screen) rules in app.css), and the two frosted planes
   // need a transparent ancestor chain to have anything to blur.

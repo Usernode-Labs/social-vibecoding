@@ -1159,6 +1159,10 @@
     "text": "Change · Waiting for your approval",
     "description": "Small label at the top of an item in the Needs you feed: the item is a proposed change to the app and this person has not voted on it yet. Change is a noun."
   },
+  "needsYou.eyebrow.changeAdvisory": {
+    "text": "Change · Your vote is advisory",
+    "description": "Small label at the top of an item in the Needs you feed: the item is a proposed change whose outcome this person's vote does not decide — they are not an approver where only approvers decide, or outside every group the project's rules name. Their vote is recorded but does not affect the result. Change is a noun."
+  },
   "needsYou.previousItem": {
     "text": "Previous item",
     "description": "Accessible name of the small up arrow at the top of an item in the Needs you feed on a phone: goes back to the item before."
@@ -2855,6 +2859,14 @@
     "text": "Plan · v{{version}}",
     "description": "Small upper-case label over the title on a plan's card (under a request, or on the page of a change built from the plan). \"Plan\" is a noun: the written description the change is built from. {{version}} is its version number; \"v\" abbreviates version."
   },
+  "topic.request.spec.kickerReplaced": {
+    "text": "Plan · v{{version}} · Replaced",
+    "description": "Small heading over a plan's card on a request's page, for a plan Homeroom bot (the platform's assistant) showed that a newer plan replaced. {{version}} is the plan's version number. \"Replaced\" is an adjective: a newer plan took its place."
+  },
+  "topic.request.spec.kickerStopped": {
+    "text": "Plan · v{{version}} · No longer waiting",
+    "description": "Small heading over a plan's card on a request's page, for a plan Homeroom bot (the platform's assistant) showed that no longer waits for the person who asked for it to say Build it. {{version}} is the plan's version number."
+  },
   "topic.request.spec.by": {
     "text": "by {{author}}",
     "description": "Line under the title on a plan's card (under a request, or on the page of a change built from the plan), when the time is not known: who posted the plan. {{author}} is a username, or the assistant's name, Homeroom bot."
@@ -2958,6 +2970,14 @@
   "topic.request.stream.botPlanWaitingUnnamed": {
     "text": "Plan v{{version}}: {{title}}. Waiting for the person who asked for it to say Build it.",
     "description": "One line among the replies on a request's page: Homeroom bot posted its plan (the written description of the change) and builds nothing until the person who asked for the request approves it; used when that person cannot be named. {{version}} is the plan's version number; {{title}} is the plan's title. \"Build it\" is the name of the button they tap. A \"Read\" link follows the line."
+  },
+  "topic.request.stream.botPlanReplaced": {
+    "text": "Plan v{{version}}: {{title}}. A newer plan replaced it.",
+    "description": "One line among the replies on a request's page: a plan Homeroom bot (the platform's assistant) showed for the change, which stopped waiting because the bot planned the request again; the newer plan is further down. {{version}} is the plan's version number and {{title}} its title."
+  },
+  "topic.request.stream.botPlanStopped": {
+    "text": "Plan v{{version}}: {{title}}. It stopped waiting for Build it.",
+    "description": "One line among the replies on a request's page: a plan Homeroom bot (the platform's assistant) showed for the change, which no longer waits for the person who asked for it (nobody said Build it within a week, or the request was settled another way). {{version}} is the plan's version number and {{title}} its title. \"Build it\" is the name of the button that person taps: keep it as the button reads."
   },
   "topic.request.stream.botPlan": {
     "text": "Plan v{{version}}: {{title}}",
@@ -3650,6 +3670,18 @@
   "menu.leave.plain": {
     "text": "Leave",
     "description": "Row among a project's settings for a member who did not start it, when the project's name is not known: the person stops being a member of this community. A verb."
+  },
+  "menu.pin.add": {
+    "text": "Pin to sidebar",
+    "description": "Row in a project's ⋯ menu on its hub, on a computer: keeps the project's community in the desktop sidebar's Pinned section."
+  },
+  "menu.pin.sub": {
+    "text": "Keep it at the top of your sidebar",
+    "description": "Second line under Pin to sidebar in the project's ⋯ menu, saying what pinning does."
+  },
+  "menu.pin.remove": {
+    "text": "Unpin from sidebar",
+    "description": "The same row once the community is pinned: takes it off the desktop sidebar's Pinned section. It stays one of the person's communities."
   },
   "menu.appSettings.title": {
     "text": "App settings",
@@ -4607,6 +4639,22 @@
     "text": "({{phrase}})",
     "description": "Read only by screen readers after an entry in a project's list of places that shows a number: says what the number counts. {{phrase}} is that, already worded, for example \"29 to vote\" or \"3 unread\". Keep the parentheses."
   },
+  "places.list.app": {
+    "text": "App",
+    "description": "First row of a project's places list (the tray behind the place bar, the phone's drawer): opens the project's app, the thing its members build and use. Shown under the project's name, so it says only App."
+  },
+  "places.list.appOf": {
+    "text": "{{project}} app",
+    "description": "Accessible name of that App row, which opens the project's app. {{project}} is the project's name."
+  },
+  "places.list.showMore_one": {
+    "text": "Show {{count}} more",
+    "description": "Last row under Topics in a project's places, nested under the community in the desktop sidebar (a window 1024px or wider), when the sidebar shows only the first topics: shows the rest. {{count}} is how many more topics there are (here 1)."
+  },
+  "places.list.showMore_other": {
+    "text": "Show {{count}} more",
+    "description": "Last row under Topics in a project's places, nested under the community in the desktop sidebar (a window 1024px or wider), when the sidebar shows only the first topics: shows the rest. {{count}} is how many more topics there are."
+  },
   "places.count.toVote_one": {
     "text": "{{count}} to vote",
     "description": "What the number beside Needs you in a project's list of places counts, read by screen readers: changes waiting for this person's vote. {{count}} is that number."
@@ -4616,12 +4664,12 @@
     "description": "What the number beside Needs you in a project's list of places counts, read by screen readers: changes waiting for this person's vote. {{count}} is that number."
   },
   "places.count.unread_one": {
-    "text": "{{count}} unread",
-    "description": "What the number beside a channel in a project's list of places counts, read by screen readers: messages there this person has not read. {{count}} is that number."
+    "text": "{{shown}} unread",
+    "description": "The count beside a channel in a project's list of places, shown in its pill, its hover text and to screen readers: messages there this person has not read. {{shown}} is that number as displayed (capped as 99+ on screen); the plural form follows the real count."
   },
   "places.count.unread_other": {
-    "text": "{{count}} unread",
-    "description": "What the number beside a channel in a project's list of places counts, read by screen readers: messages there this person has not read. {{count}} is that number."
+    "text": "{{shown}} unread",
+    "description": "The count beside a channel in a project's list of places, shown in its pill, its hover text and to screen readers: messages there this person has not read. {{shown}} is that number as displayed (capped as 99+ on screen); the plural form follows the real count."
   },
   "places.bar.hub": {
     "text": "Hub",

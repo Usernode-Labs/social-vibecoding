@@ -74,8 +74,11 @@ import { Improve } from '../../improve/improve-controller.js';
 import { improveStore } from '../../improve/improve-store.js';
 import { swatchFor } from '../../messages/format';
 import { openBot } from '../../messages/store';
+import { togglePin } from '../../nav/pin-actions';
+import { pinnedAppsStore } from '../../nav/pinned-apps-store.js';
+import { useSidebarRows } from '../../nav/sidebar-rows';
 import type { StagedObject } from '../../messages/types';
-import { devWorkshopStore } from '../card/cards-store';
+import { devWorkshopStore, voteSavedStore } from '../card/cards-store';
 import { DevKanban, StageStrip, syncStrip } from '../card/dev-kanban';
 import { DevActionsRow, DevPlusMenu } from '../actions-row';
 import { useDevActions } from '../actions-store';
@@ -102,7 +105,7 @@ import { PlaceBar } from './place-bar';
 import { PlacesTray, useEdgeSwipe } from './places-tray';
 import { drawerStore } from '../../nav-drawer/drawer-store';
 import { ProjectPlaces } from './project-places';
-import { clearPlace, publishPlace, publishSide, registerPlaceOpener, registerTrayToggle, trayButton } from './place-store';
+import { clearPlace, publishPlace, registerPlaceOpener, registerTrayToggle, trayButton } from './place-store';
 import { PlanPage } from './plan-page';
 import { PrivateRequests } from './private-requests';
 import { Diagram, decisionDiagram, readDiagram, type DecisionFacts, type DiagramRecord, type DiagramSource } from '../../../lib/diagram/diagram';
@@ -849,13 +852,21 @@ function pace(d: Dash): string {
  * "Live this week" wears a `+` when the merged history is paged, because the
  * number is then a floor and not a total.
  *
- * ── AND THE VOTES FIGURE OPENS THE VOTE (#4745) ──
+ * ── AND A FIGURE WITH SOMETHING TO SHOW OPENS IT (#4745, #5369) ──
  * With a change or a group decision up for a vote, "waiting on a vote" is a
  * button: one waiting opens that item's page, several open All items, where
- * every one of them is listed. The other three figures stay spans, and a
- * zero stays a plain number — there is nothing to open.
+ * every one of them is listed. #5369: the other three figures open All
+ * items narrowed to exactly what they count (open items, open requests
+ * nobody has taken, changes live this week), through
+ * AppView.openWorkshopStage — revised in the change's discussion: they stay
+ * the spans they always were, as unstyled clickable wrappers (the pointer
+ * cursor and a keyboard focus ring are the whole affordance), not buttons
+ * and not link text. A zero stays a plain number — there is nothing to
+ * open.
  */
-function DashTiles({ d, owed, onVotes }: { d: Dash; owed: number; onVotes?: () => void }): ReactNode {
+type DashStage = 'open' | 'unclaimed' | 'shipped';
+
+function DashTiles({ d, owed, onVotes, onStage }: { d: Dash; owed: number; onVotes?: () => void; onStage?: (stage: DashStage) => void }): ReactNode {
   const t = useMessages('project');
   const rate = !d.partial && d.shippedPrevWeek > 0 ? (d.shippedWeek > d.shippedPrevWeek ? 'up' : d.shippedWeek < d.shippedPrevWeek ? 'down' : 'same') : null;
   const cells: { key: string; n: number; label: string; tone?: string; title?: string; sub?: ReactNode }[] = [
@@ -889,10 +900,17 @@ function DashTiles({ d, owed, onVotes }: { d: Dash; owed: number; onVotes?: () =
   return (
     <div className="dev-ws-dash" data-ws-dash="">
       {cells.map((c) => {
-        // #4745: only the votes figure, only while something actually waits,
-        // and only when the caller can route the tap. The markup is otherwise
-        // like-for-like with the span — the same class, the same attribute.
-        const tappable = c.key === 'votes' && c.n > 0 && !!onVotes;
+        // #4745, #5369: a figure with something to show and a handler to
+        // route the tap opens it. Votes routes to its own handler (one
+        // waiting item's page, or All items) and keeps the button #4745
+        // made it. #5369, revised in the change's discussion: the other
+        // three stay the spans they always were — unstyled clickable
+        // wrappers (`role="button"`, focusable, Enter and Space) whose only
+        // affordances are the pointer cursor and a keyboard focus ring, so
+        // nothing on the strip looks like a button or a link. The markup is
+        // otherwise like-for-like: the same class, the same attribute.
+        const tappable = c.n > 0 && (c.key === 'votes' ? !!onVotes : !!onStage);
+        const onTap = c.key === 'votes' ? onVotes : () => onStage && onStage(c.key as DashStage);
         const cls = c.tone ? `dev-ws-dash-cell dev-ws-dash-cell-${c.tone}` : 'dev-ws-dash-cell';
         const content = (
           <>
@@ -907,20 +925,42 @@ function DashTiles({ d, owed, onVotes }: { d: Dash; owed: number; onVotes?: () =
             {c.sub}
           </>
         );
-        return tappable ? (
-          <button
+        if (tappable && c.key === 'votes') {
+          return (
+            <button
+              key={c.key}
+              type="button"
+              className={cls}
+              data-ws-dash-cell={c.key}
+              data-ws-dash-open=""
+              onClick={onTap}
+              title={c.title}
+            >
+              {content}
+            </button>
+          );
+        }
+        return (
+          <span
             key={c.key}
-            type="button"
             className={cls}
             data-ws-dash-cell={c.key}
-            data-ws-dash-open=""
-            onClick={onVotes}
+            data-ws-dash-open={tappable ? '' : undefined}
+            role={tappable ? 'button' : undefined}
+            tabIndex={tappable ? 0 : undefined}
+            onClick={tappable ? onTap : undefined}
+            onKeyDown={
+              tappable
+                ? (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onTap();
+                    }
+                  }
+                : undefined
+            }
             title={c.title}
           >
-            {content}
-          </button>
-        ) : (
-          <span key={c.key} className={cls} data-ws-dash-cell={c.key} title={c.title}>
             {content}
           </span>
         );
@@ -1379,6 +1419,11 @@ export function NeedsVoteForm({ row, slug, side, line, boxRef, onSide, onLine, o
         withLine
         solo={solo}
         approve={approves(row)}
+        // #5365: the same line the change's own card shows when the viewer's
+        // vote does not decide it — advisory (#4747), or a test account's
+        // uncounted one.
+        advisory={!!(row.yes && row.yes.advisory)}
+        uncounted={!!(row.yes && row.yes.uncounted)}
         onSide={onSide}
         onLine={onLine}
         onBoxKey={onBoxKey}
@@ -1922,8 +1967,15 @@ const FeedItem = memo(function FeedItem({ row, index, tint, near, voted, wide, s
           // approval" on the same change's page. The item says what the page
           // says: what it is, and that it waits on you
           // (AppView._summarizeRequirements' group headline).
+          // #5365: on a change whose outcome the viewer's vote does not
+          // decide (an advisory vote, or a test account's uncounted one),
+          // it says that instead — the words the change's own card uses.
           <span className="dev-ws-eyebrow">
-            {row.card.attrs && row.card.attrs['data-gov-row'] ? t('project:needsYou.eyebrow.groupDecision') : t('project:needsYou.eyebrow.change')}
+            {row.card.attrs && row.card.attrs['data-gov-row']
+              ? t('project:needsYou.eyebrow.groupDecision')
+              : row.yes && (row.yes.advisory || row.yes.uncounted)
+                ? t('project:needsYou.eyebrow.changeAdvisory')
+                : t('project:needsYou.eyebrow.change')}
           </span>
         )}
         {/* #3517: THE WAY BACK, WHERE A PHONE CAN SEE IT. Swiping down was
@@ -2445,6 +2497,84 @@ function useSwipeVote(
 /* ── The feed ────────────────────────────────────────────────────────── */
 
 /**
+ * The side a saved vote (#5463, cards-store.ts voteSavedStore) gives this
+ * row, or null when none of them is the same vote. It matches the way
+ * `needsRowKey` names a row: a vote addressed to a change (`askAbout.kind`
+ * `'proposal'`, the session id in `ref`) at the epoch its Yes act carries
+ * (castVote's third argument). A governance row — a group decision — never
+ * matches, and neither does a change at a NEWER epoch than the vote: the
+ * card moved under the vote and asks again. Where either side has no epoch
+ * the id alone decides, as the seen record does (needs-seen.ts).
+ */
+export function savedVoteFor(
+  row: {
+    kind?: string;
+    askAbout?: { kind: string; ref: number | string } | null;
+    yes?: { act?: { args?: unknown[] } | null } | null;
+  } | null | undefined,
+  saved: Record<string, { vote: 'yes' | 'no'; epoch: number | null }> | null | undefined,
+): 'yes' | 'no' | null {
+  if (!row || row.kind !== 'vote' || !row.askAbout || row.askAbout.kind !== 'proposal') return null;
+  if (row.askAbout.ref == null || !saved) return null;
+  const entry = saved[String(row.askAbout.ref)];
+  if (!entry || (entry.vote !== 'yes' && entry.vote !== 'no')) return null;
+  const args = row.yes && row.yes.act && Array.isArray(row.yes.act.args) ? row.yes.act.args : [];
+  const rowEpoch = typeof args[2] === 'number' ? args[2] : null;
+  const savedEpoch = entry.epoch == null ? null : Number(entry.epoch);
+  if (rowEpoch != null && savedEpoch != null && rowEpoch !== savedEpoch) return null;
+  return entry.vote;
+}
+
+/**
+ * #5466: a queue with the rows a saved vote (cards-store.ts voteSavedStore)
+ * already answers taken out — the one pure rule both places that strip it
+ * use, the module-level listener over `devWorkshopStore` below and mount.ts
+ * `publishWorkshop` at the door. The match is `savedVoteFor`'s own: a row at
+ * a newer epoch than the vote stays and asks again, and a governance row — a
+ * group decision — always stays. Pure and cheap: the SAME array comes back
+ * when nothing matches, so a store with no saved vote to strip republishes
+ * nothing.
+ */
+export function withoutSavedVotes(
+  queue: DevWorkshopView['queue'] | null | undefined,
+  saved: Record<string, { vote: 'yes' | 'no'; epoch: number | null }> | null | undefined,
+): DevWorkshopView['queue'] {
+  const rows = queue || [];
+  if (!saved || Object.keys(saved).length === 0) return rows;
+  let out: DevWorkshopView['queue'] | null = null;
+  for (let idx = 0; idx < rows.length; idx++) {
+    if (!savedVoteFor(rows[idx], saved)) {
+      if (out) out.push(rows[idx]);
+      continue;
+    }
+    if (!out) out = rows.slice(0, idx);
+  }
+  return out || rows;
+}
+
+// #5466: the project page's own copy of the queue hears a saved vote the way
+// the Communities feed does (workshop/index.tsx's subscribe, the #4794
+// pattern). Three surfaces read `devWorkshopStore.get().queue` — the hub's
+// "For you" card and its "1 to vote" (hub-cards.tsx `owesVote`), the places
+// list's Needs you count, and the Needs you deck itself — and the only thing
+// that used to rewrite it was `publishWorkshop`, which publishes only while
+// `#dev-workshop` is up and whose read (`refreshDevData`) no-ops outside the
+// dev tab. So a vote cast off the project page left the kept queue holding
+// the row until a page reload. Strip it here, whichever tab the viewer is on,
+// through the same pure rule `publishWorkshop` uses, so a later publish built
+// from a pre-vote list cannot bring the row back either (mount.ts guards the
+// same way at the door). A mounted deck keeps its place as today: a row it
+// voted on is held by `pinsRef`, and a row voted elsewhere is held by the
+// `drawnRef` plus `savedAll` pin.
+voteSavedStore.subscribe(() => {
+  const cur = devWorkshopStore.get();
+  if (!cur.queue) return; // nothing published yet: nothing kept to strip
+  const queue = withoutSavedVotes(cur.queue, voteSavedStore.get());
+  if (queue === cur.queue) return;
+  devWorkshopStore.set({ queue });
+});
+
+/**
  * A project's Needs you, and the Communities screen's (#3488): ONE feed, so
  * the two cannot drift apart again. There the rows mix every project's, each
  * carrying its own (`row.app`), and every address the feed builds (the card's
@@ -2576,6 +2706,14 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
   // see `_workshopModels`.
   const [model, setModel] = useState<string>(() => models.selected || '');
 
+  // #5463: a vote the server saved, read straight off the store — a vote cast
+  // anywhere (the change's page, a notification's "Still yes", another feed)
+  // marks this feed's row the same way its own vote does, without waiting for
+  // a fresh read to repaint it.
+  const savedAll = useStoreState(voteSavedStore);
+  // The rows the previous render drew, for the pin below: a row voted
+  // elsewhere holds the slot it had, the way a row answered here does.
+  const drawnRef = useRef<QueueRow[]>([]);
   const items = useMemo<QueueRow[]>(() => {
     const live = rows.filter((r): r is QueueRow => r.t === 'card');
     const have = new Set(live.map((r) => r.key));
@@ -2583,8 +2721,23 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
     for (const [key, pin] of pinsRef.current) {
       if (!have.has(key)) out.splice(Math.min(pin.index, out.length), 0, pin.row);
     }
+    // A row voted elsewhere holds its slot the same way: it left `rows` with
+    // the publish that noticed the saved vote, and the pin keeps the
+    // confirmation in front of the viewer instead of the list jumping under
+    // them. A row no saved vote explains — answered on the server by someone
+    // else's read, no longer owed — just leaves. Walked from the end, so each
+    // splice at an old index leaves the earlier ones where they were.
+    const prev = drawnRef.current;
+    for (let idx = prev.length - 1; idx >= 0; idx--) {
+      const prior = prev[idx];
+      if (have.has(prior.key) || pinsRef.current.has(prior.key)) continue;
+      if (out.some((r) => r.key === prior.key)) continue;
+      if (!savedVoteFor(prior, savedAll)) continue;
+      out.splice(Math.min(idx, out.length), 0, prior);
+    }
     return out;
-  }, [rows, pinsVersion]);
+  }, [rows, pinsVersion, savedAll]);
+  drawnRef.current = items;
   const n = items.length;
   // `n + 1` slots: the items, then the end card (#2172). `i === n` is the
   // end card, and `row` is null there.
@@ -2955,6 +3108,22 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
     if (curKeyRef.current !== key || sheetRef.current !== null) return;
     goRef.current(1);
   }, [answered]);
+  // #5463: a saved vote that reaches this feed from the store reads here as
+  // answered — the same confirmation words its own vote draws ("Voted yes" /
+  // "Voted no"), with the row holding its slot. It sets neither the advance
+  // (the feed does not move on a vote it did not cast) nor the screen's
+  // answered hook (the store's own listener already stripped the copy, and a
+  // second telling would run the same strip twice). A row mid-send keeps its
+  // own answer's word.
+  useLayoutEffect(() => {
+    const add: Record<string, string> = {};
+    for (const r of items) {
+      if (answered[r.key] || sendingRef.current.has(r.key)) continue;
+      const side = savedVoteFor(r, savedAll);
+      if (side) add[r.key] = side;
+    }
+    if (Object.keys(add).length) setAnswered((cur) => ({ ...cur, ...add }));
+  });
   /**
    * The vote sheet's send (#3613): the switch's side with the line written
    * under it. A No needs its line, as on a card; a Yes may go without one,
@@ -3746,10 +3915,10 @@ const WIDE_QUERY = '(min-width: 700px)';
 /**
  * #4457: where a Workshop row opens its page in a panel beside the list
  * rather than as the page: room for the list and a 560px panel beside it.
- * #4417: the chrome beside the page is the 76px strip and the 264px places
- * column now, 116px more than the 224px rail. So under 1296px the column
- * steps aside while the panel is open (`placeStore.side`,
- * ../../nav/section-column.tsx) and the list keeps its room.
+ * #4417: the chrome beside the page was the strip and the 264px places
+ * column, which stepped aside while the panel was open so the list kept its
+ * room. On every desktop window now the sidebar of rows nests the places and
+ * there is no column (v3).
  */
 const SIDE_QUERY = '(min-width: 1180px)';
 
@@ -3761,8 +3930,8 @@ const SIDE_QUERY = '(min-width: 1180px)';
  */
 export const HUB_REFRESH_MS = 30_000;
 /**
- * #4417: from here the project's places are the section column beside the
- * strip (../../nav/section-column.tsx); under it, the tray behind the bar.
+ * #4417: from here the project's places are nested in the sidebar of rows
+ * (v3, ../../nav/rail-communities.tsx); under it, the tray behind the bar.
  */
 export const PLACES_COLUMN_QUERY = '(min-width: 768px)';
 
@@ -4469,6 +4638,9 @@ export function DevWorkshop(): ReactNode {
   // The project's community record — the hero, the hub's cards and the hub
   // tab's own label all read it. Before the loading return: it is a hook.
   const community = useCommunity(v.slug || '');
+  // The ⋯'s Pin to sidebar, beside the sidebar that draws the pins.
+  const sidebarRows = useSidebarRows();
+  const { apps: pins } = useStoreState(pinnedAppsStore);
   // The improve store is the header's own record of the app, read only once
   // it is about this project, not the one the page was last pointed at.
   // THE COMMUNITY'S COLOUR is the header's (../../header/community-tint.ts):
@@ -4523,7 +4695,7 @@ export function DevWorkshop(): ReactNode {
     setTrayOpen(true);
   });
   // THE PLACE ON SHOW, for what draws or moves it from outside this page
-  // (./place-store.ts): the section column's list, a merged topic's card.
+  // (./place-store.ts): the sidebar's nested list, a merged topic's card.
   const openTabRef = useRef(openTab);
   openTabRef.current = openTab;
   useEffect(() => {
@@ -4556,9 +4728,6 @@ export function DevWorkshop(): ReactNode {
   }, [v.slug]);
   // The bot's slots page (?ws=bot) opens its rows beside it too.
   const sideOpen = !!sideItem && (tab === 'workshop' || tab === 'all' || tab === 'bot');
-  useEffect(() => {
-    if (v.slug) publishSide(v.slug, sideOpen);
-  }, [v.slug, sideOpen]);
 
   // The hub is drawn once, with its community record (ONE DRAW, NOT TWO,
   // ./community-card.tsx communityPending).
@@ -4599,9 +4768,9 @@ export function DevWorkshop(): ReactNode {
      #4417: the four tabs are gone; the project's places are one list (Hub,
      Needs you, Workshop, then its channels: ./project-places.tsx). On a
      phone it is a tray behind the place bar's button, the bar naming where
-     you are (./place-bar.tsx); on a wide window it is the section column
-     beside the strip (../../nav/section-column.tsx) and the bar is the
-     page's title row. Under the bar, All items leads with its way back to
+     you are (./place-bar.tsx); on a wide window it is nested under the
+     community's row in the sidebar (../../nav/rail-communities.tsx) and the
+     bar is the page's title row. Under the bar, All items leads with its way back to
      the Workshop it is a page of.
 
      THE BAR IS THE BAND'S BOX, ON EVERY PAGE (#3651). It is what pins, and
@@ -4654,6 +4823,8 @@ export function DevWorkshop(): ReactNode {
         places={community?.places}
         // #2915: not while All items is up, where the search box says so.
         filtered={!!v.meta.filtered && tab !== 'all'}
+        // Its app first, as in the sidebar; Homeroom's own has none.
+        app={!actions.selfHosted}
         onPlace={choosePlace}
         onSwitch={(el) => {
           trayNav.current = true;
@@ -4813,6 +4984,16 @@ export function DevWorkshop(): ReactNode {
                 : null}
               onLeave={canLeave(community) ? () => { void leaveCommunity(slug); } : null}
               appName={community?.name || app.name || slug}
+              // A member's, and only beside the sidebar (../../nav/pin-actions.ts).
+              pin={sidebarRows && community?.is_member ? {
+                pinned: pins.some((p: { slug: string }) => p.slug === slug),
+                onToggle: () => togglePin({
+                  slug,
+                  name: community?.name || app.name || slug,
+                  iconUrl: own ? app.iconUrl : null,
+                  iconEmoji: own ? app.iconEmoji : null,
+                }),
+              } : null}
             />
           )}
         />
@@ -4971,8 +5152,10 @@ export function DevWorkshop(): ReactNode {
           </div>
           {/* #4745: the votes figure routes its tap — the one waiting item's
               page when exactly one waits, All items otherwise, where every
-              waiting change is listed. With nothing waiting the figure is
-              not a button and the handler is never called. */}
+              waiting change is listed. #5369: the other three figures set
+              All items' stage filter to what they count, as unstyled
+              clickable wrappers. With nothing to show a figure is not
+              clickable and the handlers are never called. */}
           <DashTiles
             d={v.dashboard}
             owed={owed}
@@ -4981,6 +5164,7 @@ export function DevWorkshop(): ReactNode {
               if (refs.length === 1) callAppView('openTopic', refs[0].kind, refs[0].id);
               else openTab('all');
             }}
+            onStage={(s) => { callAppView('openWorkshopStage', s); openTab('all'); }}
           />
           {/* 16 Oct 2026 (V2): Homeroom bot's slots on this project, and the
               requests waiting for one, a page under the Workshop
@@ -5240,6 +5424,11 @@ export function DevWorkshop(): ReactNode {
           canPost={canPost}
           onDone={() => openTab('workshop')}
           onHub={() => openTab('status')}
+          // No `onAnswered` here (#4794): a project page passes nothing. The
+          // vote's own route already drops the row — the deck casts through
+          // AppView.castVote, whose ok path publishes the saved vote into
+          // voteSavedStore, and the store listener above strips it from the
+          // kept queue before the feed's own `setAnswered` even lands.
           // #4680: the end card's quiet way into the Suggest an improvement
           // form, the same open the hub's ⋯ row makes. No `intent: 'issue'`,
           // so the heading reads "Suggest an improvement".

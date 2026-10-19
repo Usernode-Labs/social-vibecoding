@@ -74,17 +74,29 @@ export function offersAppGroups(apps: readonly AppChoice[]): boolean {
 /**
  * Pure: the rows the list shows, in orderAppChoices' order. A row is in the
  * chosen group, and its name (or its short name) holds every word of the
- * search, in any case and any order.
+ * search, in any case and any order. One exception: a row whose name or
+ * short name IS what was typed leads the whole matched list, even ahead of
+ * the own-projects grouping (#4793, as Home.filterApps ranks Your apps) —
+ * typing an app's full name should find it first, not below own projects
+ * that merely share a word with it. The split is stable, so several exact
+ * matches keep their order among themselves and the rest keep theirs.
  */
 export function filterAppChoices(apps: readonly AppChoice[], { query = '', group = 'all' }: { query?: string; group?: AppGroup } = {}): AppChoice[] {
   const { mine, others } = orderAppChoices(apps);
   const pool = group === 'mine' ? mine : group === 'others' ? others : [...mine, ...others];
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return pool;
-  return pool.filter((app) => {
+  // The exact key is the words joined back with one space, and the same
+  // collapsing is applied to the name, so extra spaces around or between
+  // words break neither exact match.
+  const key = words.join(' ');
+  const exactKey = (value: string) => String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const exact = (app: AppChoice) => exactKey(app.name) === key || exactKey(app.slug) === key;
+  const matches = pool.filter((app) => {
     const haystack = `${app.name} ${app.slug}`.toLowerCase();
     return words.every((word) => haystack.includes(word));
   });
+  return [...matches.filter(exact), ...matches.filter((app) => !exact(app))];
 }
 
 /**

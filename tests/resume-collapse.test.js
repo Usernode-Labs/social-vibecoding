@@ -1,9 +1,10 @@
 'use strict';
 
 // #3618: an app you close collapses into its Resume control, and grows back
-// out of it when you resume — the app's tile among the desktop strip's
-// recent apps (#4417; it was the rail's Active row and its Resume pill), the
-// strip above the tab bar on the phone (#platform-parked).
+// out of it when you resume — its App row under its community in the desktop
+// sidebar (it was the strip's recent apps, #4417, and before that the rail's
+// Active row and its Resume pill), the strip above the tab bar on the phone
+// (#platform-parked).
 // frontend/src/features/nav/resume-motion.ts has the argument; these pin the
 // pieces: the tile, the target, the stand-in, the router's wiring and the
 // kit's duration option.
@@ -20,16 +21,14 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const motion = loadTsx('frontend/src/features/nav/resume-motion.ts');
 
-// ── The tile ──────────────────────────────────────────────────────────
+// ── The row ───────────────────────────────────────────────────────────
 
-test('a running app you left is on the strip with the still-open dot; pressing its tile notes it as the origin', () => {
-  const src = read('frontend/src/features/nav/strip-apps.tsx');
-  // #5323: the call now sits inside a wrapper that swallows the click a
-    // drag-out leaves behind, so the literal is the call, not the handler.
-    assert.match(src, /onAppClick\(event, app\.slug, running && !lit\)/,
-    'a running app you are not in grows back out of its tile; the app you are in has nothing to resume');
-  assert.match(src, /if \(live\) noteResumeOrigin\(slug, event\.currentTarget\.querySelector\('\.platform-strip-tile'\) \|\| event\.currentTarget\);/);
-  assert.match(src, /\{running \? <LiveAppDot className="platform-strip-live" \/> : null\}/);
+test('a running app you left keeps its App row with the still-open dot; pressing it notes its glyph as the origin', () => {
+  const src = read('frontend/src/features/nav/rail-communities.tsx');
+  // A running app you are not in grows back out of its row; the app you are
+  // in has nothing to resume.
+  assert.match(src, /if \(running && onApp !== slug\) \{\s*noteResumeOrigin\(slug, event\.currentTarget\.querySelector\('\.platform-rail-sub-glyph'\) \|\| event\.currentTarget\);\s*\}/);
+  assert.match(src, /\{running \? <LiveAppDot className="platform-rail-live" \/> : null\}/);
 });
 
 test('Resume is an action: the accent, filled, on the phone strip', () => {
@@ -69,7 +68,7 @@ function fakeDoc({ rows = [], byId = {}, vt = false, reduced = false } = {}) {
     defaultView: win,
     appended,
     documentElement: { hasAttribute: (k) => vt && k === 'data-un-vt' },
-    querySelectorAll: (sel) => (/platform-strip-apps/.test(sel) ? rows : []),
+    querySelectorAll: (sel) => (/platform-rail-app/.test(sel) ? rows : []),
     getElementById: (id) => byId[id] || null,
     body: { appendChild: (el) => { appended.push(el); el.isConnected = true; } },
     createElement: (tag) => {
@@ -95,16 +94,16 @@ function fakeDoc({ rows = [], byId = {}, vt = false, reduced = false } = {}) {
 const PILL = { left: 150, top: 120, width: 60, height: 22, bottom: 142 };
 const ROW = { left: 8, top: 116, width: 208, height: 34, bottom: 150 };
 
-test('the target is the app\'s tile on the strip, then its row, then the phone strip', () => {
+test('the target is the App row\'s glyph in the sidebar, then the row, then the phone strip', () => {
   const pill = fakeEl({ rect: PILL });
-  const row = fakeEl({ rect: ROW, attrs: { 'data-strip-app': 'chess' }, children: { '.platform-strip-tile': pill } });
-  const other = fakeEl({ rect: ROW, attrs: { 'data-strip-app': 'notes' } });
+  const row = fakeEl({ rect: ROW, attrs: { 'data-rail-app': 'chess' }, children: { '.platform-rail-sub-glyph': pill } });
+  const other = fakeEl({ rect: ROW, attrs: { 'data-rail-app': 'notes' } });
   assert.equal(motion.resumeHandleFor('chess', fakeDoc({ rows: [other, row] })), pill);
-  assert.equal(motion.resumeHandleFor('notes', fakeDoc({ rows: [other, row] })), other, 'no tile drawn: the row');
+  assert.equal(motion.resumeHandleFor('notes', fakeDoc({ rows: [other, row] })), other, 'no glyph drawn: the row');
   assert.equal(motion.resumeHandleFor('dice', fakeDoc({ rows: [other, row] })), null);
 
-  // A folded strip draws no apps: nothing to land on.
-  const hiddenRow = fakeEl({ attrs: { 'data-strip-app': 'chess' }, children: { '.platform-strip-tile': fakeEl() } });
+  // A folded sidebar draws no rows: nothing to land on.
+  const hiddenRow = fakeEl({ attrs: { 'data-rail-app': 'chess' }, children: { '.platform-rail-sub-glyph': fakeEl() } });
   assert.equal(motion.resumeHandleFor('chess', fakeDoc({ rows: [hiddenRow] })), null);
 
   // The phone: the whole strip, when it offers THIS app and is showing.
@@ -141,11 +140,11 @@ test('a pressed Resume is the zoom\'s origin once, for that app, while fresh', (
 
 // ── The stand-in ──────────────────────────────────────────────────────
 
-test('closing shrinks a stand-in from where the app was into its tile on the strip, 250ms ease-out, then it goes', () => {
+test('closing shrinks a stand-in from where the app was into its App row in the sidebar, 250ms ease-out, then it goes', () => {
   assert.equal(motion.RESUME_MOTION_MS, 250);
   assert.match(motion.RESUME_EASE, /^cubic-bezier\(0\.2, 0\.8, 0\.2, 1\)$/, 'ease-out');
   const pill = fakeEl({ rect: PILL });
-  const row = fakeEl({ rect: ROW, attrs: { 'data-strip-app': 'chess' }, children: { '.platform-strip-tile': pill } });
+  const row = fakeEl({ rect: ROW, attrs: { 'data-rail-app': 'chess' }, children: { '.platform-rail-sub-glyph': pill } });
   const doc = fakeDoc({ rows: [row] });
   const from = { left: 0, top: 56, width: 1280, height: 744 };
   const moved = motion.collapseIntoResume({ slug: 'chess', name: 'Chess', iconEmoji: '♟️' }, from, doc);
@@ -175,7 +174,7 @@ test('closing shrinks a stand-in from where the app was into its tile on the str
 
 test('the stand-in removes itself even when no animation event ever comes', () => {
   const pill = fakeEl({ rect: PILL });
-  const row = fakeEl({ rect: ROW, attrs: { 'data-strip-app': 'chess' }, children: { '.platform-strip-tile': pill } });
+  const row = fakeEl({ rect: ROW, attrs: { 'data-rail-app': 'chess' }, children: { '.platform-rail-sub-glyph': pill } });
   const doc = fakeDoc({ rows: [row] });
   assert.equal(motion.collapseIntoResume({ slug: 'chess' }, null, doc), true, 'no measured rect: under the header, edge to edge');
   const ghost = doc.appended[0];
@@ -186,7 +185,7 @@ test('the stand-in removes itself even when no animation event ever comes', () =
 
 test('nothing moves for reduced motion, a missing button, or a page transition in flight', () => {
   const pill = fakeEl({ rect: PILL });
-  const row = () => fakeEl({ rect: ROW, attrs: { 'data-strip-app': 'chess' }, children: { '.platform-strip-tile': pill } });
+  const row = () => fakeEl({ rect: ROW, attrs: { 'data-rail-app': 'chess' }, children: { '.platform-rail-sub-glyph': pill } });
   const from = { left: 0, top: 56, width: 1280, height: 744 };
   for (const [why, doc] of [
     ['reduced motion', fakeDoc({ rows: [row()], reduced: true })],
@@ -215,8 +214,8 @@ test('the bridge offers the motion to the router', () => {
 test('pressing Resume notes the control before the router opens the app', () => {
   const strip = read('frontend/src/features/nav/parked-strip.tsx');
   assert.match(strip, /noteResumeOrigin\(app\.slug, ref\.current\);\s*window\.App\?\.openAppTab\?\.\(app\.slug, 'app'\);/);
-  const apps = read('frontend/src/features/nav/strip-apps.tsx');
-  assert.match(apps, /if \(live\) noteResumeOrigin\([^;]*\);\s*\/\/[^\n]*\n[\s\S]{0,300}\.App\?\.openAppTab\?\.\(slug, 'app'\);/);
+  const rail = read('frontend/src/features/nav/rail-communities.tsx');
+  assert.match(rail, /noteResumeOrigin\([^;]*\);\s*\}\s*(?:\/\/[^\n]*\n\s*)*\(window as unknown as \{ App\?: \{ openAppTab\?: \(slug: string, tab: string\) => void \} \}\)\.App\?\.openAppTab\?\.\(slug, 'app'\);/);
 });
 
 test('the router measures the app before hiding it and parks it into the button', () => {
@@ -292,11 +291,11 @@ test('the kit zooms keep the homescreen timing unless a duration is asked for', 
   assert.deepEqual(plain.timers, [480]);
 });
 
-test('a declared check pins a kept app\'s still-open tile on the strip (folded into the kept-apps check)', () => {
+test('a declared check pins a kept app\'s still-open App row in the sidebar (folded into the kept-apps check)', () => {
   const manifest = JSON.parse(read('dapp.json'));
   const check = manifest.tests.find((t) => t.id === 'kept-apps.home-dot');
   assert.equal(check.path, '/?demo=1&shot=apps-kept');
   assert.match(check.expectSelector,
-    /^body:has\(#platform-strip-apps > a\.platform-strip-app\[data-live\]:not\(\[aria-current\]\) \.platform-strip-live\) /);
+    /^body:has\(#platform-rail-communities a\.platform-rail-app\[data-live\]:not\(\[aria-current\]\) \.platform-rail-live\) /);
   assert.ok(check.impact.includes('frontend/src/features/nav/**'));
 });

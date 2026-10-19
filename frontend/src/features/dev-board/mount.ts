@@ -54,13 +54,15 @@ import { publishInviteOffer, type InviteOffer } from './workshop/invite-offer';
 import {
   aiEnabledStore,
   cardNowStore,
+  publishVoteSaved,
   publishVoteSending,
   devKanbanStore,
   devWorkshopStore,
+  voteSavedStore,
 } from './card/cards-store';
 import { DevKanban } from './card/dev-kanban';
 import type { DevKanbanView, DevWorkshopView } from './card/model';
-import { DevWorkshop } from './workshop/workshop';
+import { DevWorkshop, withoutSavedVotes } from './workshop/workshop';
 import { TopicHead } from './topic/topic-head';
 import { topicHeadStore, type TopicHeadState } from './topic/topic-store';
 import { publishRequestThread } from './topic/request-model';
@@ -125,6 +127,8 @@ export interface DevBoardBridge {
   publishAiEnabled(enabled: boolean): void;
   /** #3984: a vote on its way, by `<fn>:<id>`; null clears it (cards-store.ts). */
   publishVoteSending(key: string, side: 'yes' | 'no' | null): void;
+  /** #5463: a vote the server saved, by session id and epoch (cards-store.ts). */
+  publishVoteSaved(sessionId: number, vote: 'yes' | 'no', epoch: number | null): void;
   /** Run four (13 Oct 2026): the next page of change `sessionId` opens at its Votes card (topic/votes-in-view.ts). */
   showVotes(sessionId: number): void;
   publishViewMode(mode: string): void;
@@ -307,7 +311,13 @@ export const devBoardBridge: DevBoardBridge = {
   },
 
   publishWorkshop(view) {
-    devWorkshopStore.set(view);
+    // #5466: the queue goes through the saved-vote strip at the door, the
+    // same rule the store listener in workshop.tsx applies after a vote
+    // lands (voteSavedStore). `_overlayPendingVote` already fills a read
+    // that started before the vote; this keeps the store honest whatever
+    // list the publish came from, so a later publish built from a pre-vote
+    // list cannot bring the row back.
+    devWorkshopStore.set({ ...view, queue: withoutSavedVotes(view.queue, voteSavedStore.get()) });
   },
 
   mountKanban(host) {
@@ -374,6 +384,11 @@ export const devBoardBridge: DevBoardBridge = {
 
   // #3984: a vote on its way (castVote / castIssueVote), for the Vote button.
   publishVoteSending,
+
+  // #5463: a vote the server took, for every Needs you surface that did not
+  // cast it — the Communities feed's kept copy and its counts, and a board
+  // read from before the vote (cards-store.ts voteSavedStore).
+  publishVoteSaved,
 
   // A door that sends someone to vote: the change's page opens at its Votes card.
   showVotes: (sessionId: number) => askVotesInView(sessionId),

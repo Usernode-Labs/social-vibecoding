@@ -2621,6 +2621,14 @@ const App = {
       const messages = window.UsernodeReact?.messages;
       if (messages?.showing?.()) messages.resync?.();
 
+      // Your work (#5453): a vote cast on a slow link is missing from the
+      // saved copy of Your votes the screen opened with. Re-read whichever
+      // view is up through its own loader, the same way the Communities
+      // screen corrects itself. `return`: this screen holds no app view to
+      // fall through to, like the Workshop branch below.
+      const work = window.UsernodeReact?.profileProposals;
+      if (visible('profile-proposals-screen') && work?.isOpen?.()) { work.reload?.(); return; }
+
       // The Communities screen (#5164): its counts and Needs you feed are
       // the workshop controller's own quiet reads. When the worker corrected
       // one of them after a slow first answer, re-run it here — the same
@@ -2629,6 +2637,18 @@ const App = {
       // to fall through to.
       const workshop = window.UsernodeReact?.workshop;
       if (workshop?.isOpen?.()) { workshop.refreshNeeds?.(); return; }
+
+      // Your work (#5456): Your changes, Your requests and Your votes read
+      // once per open, on the ordinary deadline. When the worker corrected
+      // that read after serving its saved copy (a vote cast a moment before,
+      // still missing), re-run the controller's own reload, the same loader
+      // Try again uses. `return`: the screen holds no app view to fall
+      // through to.
+      const profileProposals = window.UsernodeReact?.profileProposals;
+      if (visible('profile-proposals-screen') && profileProposals?.isOpen?.()) {
+        profileProposals.reload?.();
+        return;
+      }
 
       // The app record itself is in the service worker's zero-deadline boot
       // lane. If its cached `creating` snapshot is corrected after first
@@ -4947,13 +4967,13 @@ const App = {
         }
       }
 
-      // THE SIDE PANEL'S DOCUMENT shows only the panel's own pages — an app's
-      // Workshop, a proposal, an issue, a change, a discussion, a
-      // conversation, an agent chat, and the inbox a thread climbs back to.
-      // Anything else a link inside it names belongs to the TOP window: an
-      // app's App tab goes to the running app beside the panel, and a tab, a
-      // profile or Settings is somewhere the top window goes, leaving the app
-      // exactly as the same link would from the app's own menu. The runtime
+      // THE SIDE PANEL'S DOCUMENT shows only the panel's own pages — a
+      // proposal, an issue, a change, a conversation, an agent chat, and the
+      // inbox a thread climbs back to. Anything else a link inside it names
+      // belongs to the TOP window: an app's App tab goes to the running app
+      // beside the panel, and a tab, a profile, Settings or a community's
+      // page is somewhere the top window goes, leaving the app exactly as the
+      // same link would from the app's own menu. The runtime
       // (frontend/src/features/side-panel/embedded.ts) puts this document's
       // address back on the page it is still showing.
       if (App.embeddedPanel
@@ -5208,27 +5228,25 @@ const App = {
         }
         // #2813: AN AGENT THREAD OPENS BESIDE THE LIST TOO, on a desktop —
         // a global agent chat at `#messages/agent/<id>`, an app's dev
-        // session at `#messages/session/<slug>/<id>`. A PHONE has one pane,
-        // and there these have always been screens of their own, so the
-        // address is swapped in place for that screen's (`#chat/<id>`,
-        // `#app/<slug>/dev/sessions/<id>`): no history entry of its own, so
-        // Back from the chat still lands on the inbox it was opened from.
+        // session at `#messages/session/<slug>/<id>`. On a PHONE an agent
+        // chat and an agent session open here as well, as the second level
+        // of the inbox's drawer (features/nav-drawer/messages-drawer.ts;
+        // Evan, 18 Oct 2026), so a swipe goes back to the list. A dev session
+        // is still a screen of its own there, so its address is swapped in
+        // place for that screen's (`#app/<slug>/dev/sessions/<id>`): no
+        // history entry of its own, so Back from it still lands on the inbox
+        // it was opened from.
         const agent = App._messagesAgentThread(parts);
         if (agent && agent.kind === 'agent') App._takeAgentFlow(hash, fragQuery);
         if (agent) {
-          if (!window.matchMedia('(min-width: 768px)').matches) {
-            if (agent.kind === 'session' && typeof Improve !== 'undefined') {
-              Improve.enterSessionFrom?.('#messages');
-            }
+          if (agent.kind === 'session' && !window.matchMedia('(min-width: 768px)').matches) {
+            if (typeof Improve !== 'undefined') Improve.enterSessionFrom?.('#messages');
             // replaceState and route the new address in this same pass, the
             // way the #topochain aliases heal: a `location.replace` from
             // inside the router lost the app route to the pass it raced.
             try {
-              history.replaceState(null, '', App._rootUrl(agent.kind === 'chat'
-                ? `#chat/${encodeURIComponent(agent.id)}`
-                : agent.kind === 'agent'
-                  ? `#agent/${agent.id}`
-                  : `#app/${encodeURIComponent(agent.slug)}/dev/sessions/${agent.id}`));
+              history.replaceState(null, '', App._rootUrl(
+                `#app/${encodeURIComponent(agent.slug)}/dev/sessions/${agent.id}`));
             } catch (_) { return; }
             App.restoreFromHash();
             return;
@@ -5274,6 +5292,14 @@ const App = {
         );
         return;
       }
+      // On a phone an agent chat and an agent session open in Messages, as
+      // the second level of its drawer, and their screens' addresses come
+      // with them (_agentToInbox): a chat with its id, an agent session or a
+      // new one, a ?flow= kept for that route to hand over. A bare #chat and
+      // #agent/<id>/changes keep their screens.
+      if (parts.length === 2 && ((parts[0] === 'chat' && parts[1])
+        || (parts[0] === 'agent' && (parts[1] === 'new' || App._numericSegment(parts[1]) != null)))
+        && App._agentToInbox(`#messages/agent/${parts[1]}`, fragQuery)) return;
       if (parts[0] === 'chat') {
         // #2543: Global Chat is an ordinary, resumable platform screen. Its
         // UUID names the exact session selected from Improve; a bare #chat
@@ -5284,8 +5310,9 @@ const App = {
       }
       if (parts[0] === 'agent') {
         // #2779: an agent session, one conversation with the Mayor that works
-        // on any app. Its own screen at #agent/<id> (a phone's surface; a
-        // desktop can also draw it beside the inbox at #messages/agent/<id>).
+        // on any app. Its own screen at #agent/<id> on a wide window (a
+        // desktop can also draw it beside the inbox at #messages/agent/<id>,
+        // and a phone opens it there, _agentToInbox).
         // A serial id, so the same signed-int32 bound as a conversation's;
         // `#agent/new` is one not sent yet, created by its first message.
         App.setChromeless(false);
@@ -5452,6 +5479,7 @@ const App = {
         if (App._inProfile) App._exitProfile();
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
+        if (App._inProfileProposals) App._exitProfileProposals();
             App.setChromeless(chromeless);
         // Stash the validated inner path where renderAppTab / the token
         // refresh read it. Set on EVERY pass (null when absent) so
@@ -7111,7 +7139,12 @@ const App = {
 
   navigateToProfileProposals(kind = 'changes') {
     const view = App.PROFILE_WORK_TITLES[kind] ? kind : 'changes';
-    if (App._inProfileProposals && window.UsernodeReact?.profileProposals?.isOpen?.(view)) {
+    // The guard stops only the duplicate dispatch (popstate + hashchange in
+    // one tick, #979): the same view re-entered while it is on screen with
+    // no app open. Opening an app from a row leaves both flags set, so a
+    // return trip must take the full entry below and read the list again
+    // (#5454) — navigateToWorkshop documents the same trap.
+    if (App._inProfileProposals && !App.currentApp && window.UsernodeReact?.profileProposals?.isOpen?.(view)) {
       return;
     }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
@@ -7706,6 +7739,25 @@ const App = {
   // The value is taken out of the address once handed over, so a reload,
   // Back, or the first message giving an unsent conversation its own address
   // does not open the sheet again. Any other value is ignored.
+  // ON A PHONE AN AGENT CHAT AND AN AGENT SESSION ARE MESSAGES' (the inbox's
+  // drawer, features/nav-drawer/messages-drawer.ts; Evan, 18 Oct 2026): the
+  // list sits beside them and a swipe goes back to it. So their own screens'
+  // addresses, `#chat/<id>`, `#agent/<id>` and `#agent/new`, are swapped in
+  // place for the inbox's (`#messages/agent/…`), the fragment's query (a
+  // `?flow=`) kept, and routed in this same pass, as the inbox's own
+  // addresses were swapped the other way before. A bare `#chat` (resume the
+  // latest), `#agent/<id>/changes` (the changes drawer, which the inbox does
+  // not carry), a wide window and the side panel's own document keep the
+  // screens. Returns whether it took the address.
+  _agentToInbox(address, fragQuery) {
+    if (App.embeddedPanel || window.matchMedia('(min-width: 768px)').matches) return false;
+    try {
+      history.replaceState(null, '', App._rootUrl(`${address}${fragQuery ? `?${fragQuery}` : ''}`));
+    } catch (_) { return false; }
+    App.restoreFromHash();
+    return true;
+  },
+
   _takeAgentFlow(hash, fragQuery) {
     const read = (query) => {
       try { return new URLSearchParams(query || '').get('flow'); } catch (_) { return null; }
@@ -9069,20 +9121,26 @@ const App = {
   // THE SIDE PANEL, asked by openAppTab before it navigates
   // (frontend/src/features/side-panel/). Undefined lets openAppTab go on
   // exactly as before; anything else is what openAppTab returns.
-  //   - In the TOP document, while an app runs on its App tab, a Workshop
-  //     page — a proposal, an issue, a change, the discussion — that a
+  //   - In the TOP document, while an app runs on its App tab, a piece of
+  //     an app's work — a proposal, an issue, a change — that a
   //     notification, a desktop alert or any other caller opens goes to a
   //     panel BESIDE the app instead of replacing it (true). `take` says no
   //     whenever that is not the moment: a phone-width window, no app on
-  //     screen, chromeless.
-  //   - In the panel's OWN document a Workshop page opens right here, and an
-  //     App tab is the running app's, beside the panel (false).
+  //     screen, chromeless — and to a community's page at any moment
+  //     (side-panel/routes.ts): it replaces the app, full screen.
+  //   - In the panel's OWN document a piece of work opens right here, a
+  //     community's page goes to the top window (full screen, leaving the
+  //     app), and an App tab is the running app's, beside the panel (false).
   _openAppTabInPanel(slug, tab, opts) {
     const ref = opts && opts.sessionId != null ? opts.sessionId
       : (opts && opts.ref != null ? opts.ref : null);
     const subTab = (opts && opts.subTab) || null;
     if (App.embeddedPanel) {
-      if (App._normalizeTab(tab, ref, subTab).tab !== 'app') return undefined;
+      if (App._normalizeTab(tab, ref, subTab).tab !== 'app') {
+        const route = App._panelRouteFor(slug, tab, ref, subTab);
+        if (route && window.UsernodeReact?.sidePanelEmbed?.forward?.(route)) return false;
+        return undefined;
+      }
       App._forwardAppTab(slug, 'app');
       return false;
     }

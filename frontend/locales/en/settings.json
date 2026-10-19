@@ -1455,6 +1455,38 @@
     "text": "On, the sidebar stays beside an app you open, and the sidebar button at the top left hides it. Off, an app takes the whole window and has a close button instead.",
     "description": "Explanation under the \"Keep sidebar open in apps\" switch in Settings. \"Off\" and \"On\" are the two positions of that switch."
   },
+  "accessibility.textSize.title": {
+    "text": "Text size",
+    "description": "Heading of the Text size part of Settings > Accessibility."
+  },
+  "accessibility.textSize.intro": {
+    "text": "Makes text bigger everywhere on this browser.",
+    "description": "Line under the Text size heading in Settings > Accessibility, saying what the control does."
+  },
+  "accessibility.textSize.controlName": {
+    "text": "Text size",
+    "description": "Name of the Text size choice in Settings > Accessibility, announced to a screen reader for the three-way control."
+  },
+  "accessibility.textSize.normal": {
+    "text": "Normal",
+    "description": "Choice in the Text size control in Settings > Accessibility: today's text size."
+  },
+  "accessibility.textSize.large": {
+    "text": "Large",
+    "description": "Choice in the Text size control in Settings > Accessibility: about one eighth bigger than Normal."
+  },
+  "accessibility.textSize.larger": {
+    "text": "Larger",
+    "description": "Choice in the Text size control in Settings > Accessibility: about a quarter bigger than Normal."
+  },
+  "accessibility.contrast.label": {
+    "text": "High contrast",
+    "description": "Label of the High contrast switch in Settings > Accessibility."
+  },
+  "accessibility.contrast.description": {
+    "text": "Darker text and clearer lines, in light and dark.",
+    "description": "Explanation under the High contrast switch in Settings > Accessibility."
+  },
   "devConsole.title": {
     "text": "Developer console",
     "description": "Heading of the section in Settings about the log panel that shows an app's console output and errors."
@@ -1722,6 +1754,18 @@
   "about.appVersion.unknown": {
     "text": "unknown",
     "description": "Value on the \"App version\" row in Settings > About when the app's version is not known. Lower case, because it stands where a version number would."
+  },
+  "about.legal.title": {
+    "text": "Legal",
+    "description": "Heading over two links in Settings > About, under the version rows: Homeroom's terms and its privacy notice."
+  },
+  "about.legal.terms": {
+    "text": "Terms",
+    "description": "Link in Settings > About, under the Legal heading: opens Homeroom's terms of use, and whether the person accepted them."
+  },
+  "about.legal.privacy": {
+    "text": "Privacy notice",
+    "description": "Link in Settings > About, under the Legal heading: opens Homeroom's privacy notice, which says what personal data Homeroom collects and how it uses it, in a new tab."
   },
   "about.platformVersion.label": {
     "text": "Platform version",
@@ -2003,6 +2047,10 @@
     "text": "Admin preview",
     "description": "Name of a part of Settings: the Admin preview part, shown to platform administrators only (view Homeroom as a non-admin). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
   },
+  "nav.part.accessibility": {
+    "text": "Accessibility",
+    "description": "Name of a part of Settings: the Accessibility page (text size and high contrast). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
+  },
   "nav.part.language": {
     "text": "Language",
     "description": "Name of a part of Settings: the Language page. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
@@ -2143,6 +2191,10 @@
     "text": "bug icon logs errors debug developer",
     "description": "Not shown on screen. Extra search words for \"Developer console\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
+  "nav.keywords.accessibility": {
+    "text": "text size font bigger larger zoom read contrast",
+    "description": "Not shown on screen. Extra search words for \"Accessibility\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
+  },
   "nav.keywords.language": {
     "text": "locale translate",
     "description": "Not shown on screen. Extra search words for \"Language\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
@@ -2172,7 +2224,7 @@
     "description": "Not shown on screen. Extra search words for \"Homeroom app\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.about": {
-    "text": "version build terms",
+    "text": "version build terms privacy legal",
     "description": "Not shown on screen. Extra search words for \"About\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.adminPreview": {
@@ -3630,6 +3682,10 @@
   "usernode.about.terms": {
     "text": "Terms",
     "description": "Button in the \"about & legal\" block of Settings > Homeroom app: opens the platform's terms of use."
+  },
+  "usernode.about.privacy": {
+    "text": "Privacy notice",
+    "description": "Button in the \"about & legal\" block of Settings > Homeroom app, beside Terms: opens Homeroom's privacy notice, which says what personal data Homeroom collects and how it uses it, in the phone's browser."
   },
   "usernode.about.appVersionBuild": {
     "text": "App {{version}} ({{build}})",

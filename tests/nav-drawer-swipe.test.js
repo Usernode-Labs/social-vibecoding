@@ -90,5 +90,37 @@ test('the lists and the page hand the sideways drag on while the drawer holds th
   assert.match(css, /\.nav-drawer-outer-list \{[^}]*touch-action: pan-y;/);
   const island = read('frontend/src/features/nav-drawer/nav-drawer.tsx');
   assert.match(island, /const sideways = touch\.clientX > EDGE_PX && startsOnSideways\(target, page, window\);/);
-  assert.match(island, /if \(!e\.cancelable\) \{\s*stop\(\);\s*return;\s*\}/, 'a scroll the browser has begun keeps the touch');
+  // In the iPhone app a swipe's moves come uncancelable (WebKit decided at
+  // touchstart, before the drawer's listener was there), so standing down on
+  // them left the swipe dead on most of a page and every plain message. The
+  // pan follows them, and holds the browser off only when it can.
+  const conversation = read('frontend/src/features/messages/phone-drawer.tsx');
+  for (const [name, source] of [['the page', island], ['a conversation', conversation]]) {
+    assert.doesNotMatch(source, /if \(!e\.cancelable\)/, `${name}: an uncancelable move does not end the pan`);
+    assert.match(source, /if \(e\.cancelable\) e\.preventDefault\(\);/, `${name}: a cancelable one is still held`);
+  }
+});
+
+// Evan, 18 Oct 2026: on a page and in a conversation a swipe a little off
+// level still panned, on the lists it caught the vertical unless it was very
+// precise. The lists panned from pointer events, and a pointer is cancelled
+// the moment the browser starts scrolling under it; the pages from touch
+// events, which keep coming. So a finger is the touch handlers' everywhere,
+// and the pointer handlers are a mouse's.
+test('a finger pans the sidebars from touch events, as it does a page; the pointer handlers are a mouse\'s', () => {
+  const island = read('frontend/src/features/nav-drawer/nav-drawer.tsx');
+  assert.match(island, /if \(e\.pointerType !== 'mouse' \|\| !e\.isPrimary \|\| e\.button !== 0 \|\| s\.searching \|\| s\.level === 2\) return;/);
+  assert.match(island, /if \(isPan\(dx, dy\) && \(p\.from !== 2 \|\| dx > 0\)\) \{/, 'either way on the drawer\'s own levels, right on the page');
+  assert.match(island, /if \(s\.searching \|\| !surface \|\| !surface\.contains\(target\) \|\| startsOnSideways\(target, surface, window\)\) return;/,
+    'anywhere on the communities and the places but a field');
+  assert.match(island, /p = \{ x0: touch\.clientX, y0: touch\.clientY, w: screenWidth\(\), from: s\.level, on: false, dx: 0 \};/);
+  assert.match(island, /go\(landing\(was\.from, offsetOf\(was\.from, was\.dx, was\.w\), was\.dx\)\);/);
+  const conversation = read('frontend/src/features/messages/phone-drawer.tsx');
+  assert.match(conversation, /if \(e\.pointerType !== 'mouse' \|\| !on \|\| level !== 0 \|\| !peekId \|\| !e\.isPrimary \|\| e\.button !== 0\) return;/);
+  assert.match(conversation, /if \(isPan\(dx, dy\) && \(from === 0 \|\| dx > 0\)\) \{/, 'either way on the list, right in a conversation');
+  assert.match(conversation, /landRef\.current\(from, offsetOf\(was\.dx, was\.w\), was\.dx\);/);
+  for (const [name, source] of [['the drawer', island], ['Messages', conversation]]) {
+    assert.match(source, /document\.addEventListener\('touchmove', move, \{ passive: false \}\);/, `${name}: the moves are followed from touch events`);
+    assert.match(source, /swallow(?:Click)?\.current = true;/, `${name}: a row the pan started on is not pressed`);
+  }
 });

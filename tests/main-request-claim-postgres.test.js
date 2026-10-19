@@ -86,6 +86,20 @@ const count = async (pool, table) => (await pool.query(`SELECT count(*)::int AS 
 
 async function database(t) {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+  // pool.end() resolves once its idle connections are handed their end, not
+  // once their sockets close, so the teardown's DROP DATABASE ... WITH
+  // (FORCE) can reach one still closing, and the server terminates it
+  // (57P01). src/db/pool.js listens for that in production; these pools did
+  // not, and the error surfaced as an uncaughtException pinned on a test
+  // whose checks had all passed. Expected once cleanup has started; a
+  // connection dropped while the checks are running still fails the test.
+  // (Same timing, written up in username-invite-join-postgres.test.js.)
+  // The crashed attempts are left pending on purpose: they hold no client —
+  // their queries go through pool.query, which hands it back — and settling
+  // them here would run them against an ended pool.
+  let closing = false;
+  const onPoolError = (err) => { if (!closing) throw err; };
+  admin.on('error', onPoolError);
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
     if (process.env.TEST_DATABASE_URL) throw err;
@@ -95,7 +109,9 @@ async function database(t) {
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 4 });
+  pool.on('error', onPoolError);
   t.after(async () => {
+    closing = true;
     await pool.end();
     await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
     await admin.end();

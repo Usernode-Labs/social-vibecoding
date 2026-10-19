@@ -76,7 +76,6 @@ let state: InternalState = {
   thread: null,
   nextAfter: null,
   listCollapsed: false,
-  listCrowded: false,
   showMoreChannels: false,
   unreadMark: null,
   threadFocusId: null,
@@ -528,6 +527,17 @@ function browserOffline(): boolean {
 }
 
 /**
+ * How many messages a page of a conversation reads. The Homeroom bot's chat
+ * folds most of its news into a few "N finished" lines (./bot-news-line.tsx),
+ * so a page of 50 fills little of the screen and opening it read page after
+ * page to fill it, behind its spinner (./open-hold.ts). There it reads the
+ * server's most (services/conversations.js caps a page at 100).
+ */
+function pageSize(conversation: Pick<ConversationDetail, 'homeroomBot'> | null): number {
+  return conversation?.homeroomBot === true ? 100 : 50;
+}
+
+/**
  * `offlineCopy` is the retry of an open whose read from the server failed
  * (#4243): the one read that takes the service worker's offline copy while
  * the browser says it is online.
@@ -607,8 +617,8 @@ export async function loadThread(conversationId: number, force = false, offlineC
         ? await api.listMessagesAround(conversationId, anchor, read).then((around) => ({
           messages: around.messages, nextBefore: around.nextBefore, nextAfter: around.nextAfter,
           threadRootId: around.focus.threadRootId, focusMessageId: around.focus.messageId,
-        })).catch(() => api.listMessages(conversationId, null, read).then((latest) => ({ ...latest, nextAfter: null })))
-        : { ...(await api.listMessages(conversationId, null, read)), nextAfter: null };
+        })).catch(() => api.listMessages(conversationId, null, read, pageSize(active)).then((latest) => ({ ...latest, nextAfter: null })))
+        : { ...(await api.listMessages(conversationId, null, read, pageSize(active))), nextAfter: null };
     if (request !== threadRequest || state.route.conversationId !== conversationId) return;
     if (focus && page.focusMessageId && page.focusMessageId !== focus) {
       // In its community's page the room has no address of its own (#3653):
@@ -772,7 +782,7 @@ export async function loadOlder(): Promise<boolean> {
   if (!conversationId || !state.nextBefore || state.loadingOlder) return true;
   publish({ loadingOlder: true });
   try {
-    const page = await api.listMessages(conversationId, state.nextBefore);
+    const page = await api.listMessages(conversationId, state.nextBefore, undefined, pageSize(state.active));
     if (state.route.conversationId !== conversationId) return true;
     const known = new Set(state.messages.map((message) => message.id));
     const older = page.messages.filter((message) => !known.has(message.id));
@@ -1100,28 +1110,12 @@ export function isMobile(): boolean {
 }
 
 /**
- * #4229: the narrowest strip an open conversation still reads well beside the
- * list in: the list column (22rem and its 8px) plus the sheet's margins
- * (8px and 12px) plus a 480px sheet, the width its cards are drawn at.
+ * One pane at a time: a phone. (#4229's strip too narrow for both is gone:
+ * on a desktop the list is in the sidebar, never beside the conversation,
+ * ./index.tsx `messages-list-in-rail`.)
  */
-export const LIST_BESIDE_MIN_WIDTH = 860;
-
-/**
- * The strip's width, from the screen's ResizeObserver (#4229). It is the
- * strip's own width rather than the window's, so folding the platform rail
- * counts. A hidden screen measures 0 and changes nothing.
- */
-export function measureLayout(width: number): void {
-  if (!(width > 0)) return;
-  const crowded = !isMobile() && width < LIST_BESIDE_MIN_WIDTH;
-  if (crowded === state.listCrowded) return;
-  publish({ listCrowded: crowded });
-  if (state.route.open) syncChrome();
-}
-
-/** One pane at a time: a phone, or a strip too narrow for both (#4229). */
 function listAside(): boolean {
-  return isMobile() || state.listCrowded;
+  return isMobile();
 }
 
 /**
@@ -1185,10 +1179,11 @@ export function syncChrome(): void {
   // #4229: and on a strip too narrow for the list beside it, where the list
   // has stepped aside just as it does on a phone.
   // THE PHONE'S DRAWER (../nav-drawer/messages-drawer.ts): a conversation
-  // with people is its second level, and the header draws the drawer's own
-  // arrow (a button, not this href'd one, so WebKit's history swipe stays
-  // off while a finger pans the drawer) and names the conversation.
-  if (state.route.conversationId && messagesDrawerApplies({
+  // with people, an agent chat or an agent session is its second level, and
+  // the header draws the drawer's own arrow (a button, not this href'd one,
+  // so WebKit's history swipe stays off while a finger pans the drawer) and
+  // names it.
+  if ((state.route.conversationId || state.route.agent) && messagesDrawerApplies({
     phone: isMobile(),
     open: state.route.open,
     conversationId: state.route.conversationId,
@@ -2564,7 +2559,6 @@ export const messagesController = {
   isOpen,
   handleBack,
   syncChrome,
-  measureLayout,
   handleEvent,
   refreshBlockedView: (userId: number, blocked: boolean) => { void refreshBlockedView(userId, blocked); },
   share,

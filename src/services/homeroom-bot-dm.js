@@ -1937,9 +1937,18 @@ const PLAN_GO_WORDS = new Set([
   'sounds good', 'build it please',
 ]);
 
+// Papote #3 (18 Oct 2026): "@Homeroom bot build it" on the request is the
+// same go word as "build it": the bot's mentions in front of it come off
+// first, its handle or its display name (with the zero-width character the
+// composer writes after the @: homeroom-bot-holds.js mentionPattern).
+const LEADING_MENTIONS_RE = new RegExp(
+  `^\\s*(?:@[\\u200b\\u200c\\u200d\\u2060]?(?:${BOT_USERNAME}|homeroom bot)(?![a-z0-9_-])[\\s,:;.!-]*)+`, 'i',
+);
+
 /** Pure (#4488): whether words written under a plan say to go ahead (PLAN_GO_WORDS). */
 function isPlanGoWord(text) {
-  return PLAN_GO_WORDS.has(String(text || '').trim().toLowerCase().replace(/[.!\s]+$/, '').replace(/\s+/g, ' '));
+  const words = String(text || '').replace(LEADING_MENTIONS_RE, '');
+  return PLAN_GO_WORDS.has(words.trim().toLowerCase().replace(/[.!\s]+$/, '').replace(/\s+/g, ' '));
 }
 
 /** Pure (B6): a plan card's words, for the inbox, the push and anything that does not draw the card. */
@@ -2280,7 +2289,7 @@ async function changePlan(pool, { bot, user, target, message, deps = {} }) {
   });
   if (!text) return reply(`Write what you'd like changed in the plan as a message, and I'll plan ${name} again.`);
   // "Build it" (or "yes") written under the plan is its button.
-  if (PLAN_GO_WORDS.has(text.toLowerCase().replace(/[.!\s]+$/, '').replace(/\s+/g, ' '))) {
+  if (isPlanGoWord(text)) {
     const { rows: [action] } = await pool.query(
       'SELECT * FROM homeroom_bot_dm_actions WHERE message_id = $1 AND user_id = $2 AND kind = \'build_plan\'',
       [target.message_id, user.id],
@@ -2374,6 +2383,8 @@ async function changeOnRequest(pool, { user, target, text, app, issueNumber, rep
     'UPDATE homeroom_bot_dm_actions SET status = \'declined\', decided_at = NOW(), error = \'changed\' WHERE message_id = $1 AND status = \'open\'',
     [target.message_id],
   );
+  // Papote #3: its row on the request says a new plan follows.
+  await require('./homeroom-bot-live').notePlanRows(pool, [target.run_id], 'replaced', { ws: deps.ws || null });
   await setQuestionState(pool, Number(target.message_id), { status: 'closed', changing: true }, {
     ws: deps.ws || null, conversationId: target.conversation_id, userId: user.id,
   });
@@ -2408,6 +2419,54 @@ async function markPlanBuilt(pool, runId, { chosen = [], ws = null } = {}) {
     log.warn('homeroom-bot-dm', 'Could not mark a plan as built', { runId, err: err.message });
     return 0;
   }
+}
+
+/**
+ * Papote #3 (18 Oct 2026): the newest plan on a request still waiting for
+ * Build it, as goAhead finds one (homeroom-bot.js): { id, complicated }, or
+ * null.
+ */
+async function waitingPlanRun(pool, appId, issueNumber) {
+  const { rows: [run] = [] } = await pool.query(
+    `SELECT id, (plan->>'complicated')::boolean IS TRUE AS complicated FROM homeroom_bot_runs
+      WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND awaiting_go_at IS NOT NULL
+        AND build_ok IS NULL AND build_session_id IS NULL
+      ORDER BY id DESC LIMIT 1`,
+    [appId, issueNumber],
+  );
+  return run ? { id: Number(run.id), complicated: run.complicated === true } : null;
+}
+
+/**
+ * Papote #3 (18 Oct 2026): Build it, said to the bot by a complicated
+ * change's requester (start_request, in their chat or on the request) under
+ * the plan waiting for it. Through the plan's card in their chat when it is
+ * still open (decidePlanTap: it reads "Building it" and the request's card
+ * moves under it), else straight on (goAhead) with every card of it marked
+ * built, as "build it" written on the request is (homeroom-bot.js
+ * buildItOnRequest). Resolves { ok: true, runId } or { ok: false, why }.
+ */
+async function buildWaitingPlan(pool, { user, appId, issueNumber, deps = {} }) {
+  const run = await waitingPlanRun(pool, appId, issueNumber);
+  if (!run?.complicated) return { ok: false, why: 'gone' };
+  const { rows: [action] = [] } = await pool.query(
+    `SELECT a.* FROM homeroom_bot_dm_messages d
+       JOIN homeroom_bot_dm_actions a ON a.message_id = d.message_id
+      WHERE d.run_id = $1 AND d.kind = $2 AND d.user_id = $3 AND a.kind = 'build_plan' AND a.status = 'open'
+      ORDER BY d.message_id DESC LIMIT 1`,
+    [run.id, PLAN_KIND, user.id],
+  );
+  if (action) {
+    const tapped = await decidePlanTap(pool, { user, action, choice: 'build', answers: [], deps });
+    return tapped.ok ? { ok: true, runId: run.id } : { ok: false, why: tapped.error };
+  }
+  const went = await (deps.botSvc || settingsModule()).goAhead(pool, { runId: run.id });
+  if (!went.ok) return { ok: false, why: went.why };
+  await markPlanBuilt(pool, run.id, { chosen: went.chosen, ws: deps.ws || null });
+  log.info('homeroom-bot-dm', 'Build it, said to the bot under a complicated change\'s plan', {
+    appId, issueNumber, runId: run.id, userId: user.id,
+  });
+  return { ok: true, runId: run.id };
 }
 
 /**
@@ -5438,6 +5497,9 @@ module.exports = {
   markPlanBuilt,
   isPlanGoWord,
   waitingPlan,
+  // Papote #3: Build it said to the bot (start_request).
+  waitingPlanRun,
+  buildWaitingPlan,
   // 13 Oct 2026: a first version's plan answered on the made screen.
   buildFromAnswers,
   answerFirstVersion,

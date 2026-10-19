@@ -675,6 +675,16 @@ test('Save changes sends only what changed, in the route\'s own shape, or says w
   assert.match(buildPatch({ ...form, adminCap: '-1' }, saved, ['adminCap']).error, /^The budget per admin: .*0 for no limit/);
   assert.deepEqual(buildPatch({ ...form, models: { ...saved.models, build: '' } }, saved, ['models']).patch, { models: { build: '' } },
     'back to the platform default is a blank');
+  // The platform default itself (services/default-model.js): an id, or a
+  // blank for the deployment's.
+  assert.equal(saved.defaultModel, '', 'unset is the deployment default');
+  assert.equal(savedForm({ settings: { mode: 'shadow', defaultModel: 'z-ai/glm-5.3-flash' }, bot: null }).defaultModel, 'z-ai/glm-5.3-flash');
+  assert.deepEqual(dirtyFields({ defaultModel: 'z-ai/glm-5.3-flash' }, saved), ['defaultModel']);
+  assert.deepEqual(buildPatch({ ...saved, defaultModel: 'z-ai/glm-5.3-flash' }, saved, ['defaultModel']),
+    { patch: { defaultModel: 'z-ai/glm-5.3-flash' }, error: null });
+  assert.deepEqual(buildPatch({ ...saved, defaultModel: '' }, { ...saved, defaultModel: 'z-ai/glm-5.3-flash' }, ['defaultModel']).patch,
+    { defaultModel: '' }, 'back to the deployment default is a blank');
+  assert.match(buildPatch({ ...saved, defaultModel: 'not a model' }, saved, ['defaultModel']).error, /^Platform default: a model is an OpenRouter id/);
 
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
   assert.match(tsx, /id="admin-homeroom-bot-savebar"/);

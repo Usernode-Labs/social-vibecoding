@@ -203,6 +203,11 @@ export interface WaitlistOptions {
    *  for the sign-in screens' "By continuing, you agree to Homeroom's
    *  terms". Absent or null, the notice names the terms without a link. */
   terms_link?: string | null;
+  /** Homeroom's privacy notice, absolute (src/services/marketing-links.js
+   *  privacyNoticeUrl): the same notice names it beside the terms, and
+   *  Settings › About links to it (#5094, #5106). Always served; absent only
+   *  before the options arrive, when the notice names it without a link. */
+  privacy_link?: string | null;
   /** The same, from the Homeroom app's own sheets: those whose app client
    *  IDs are saved too. The app offers one only when its build can. */
   native_sign_in_providers?: string[];
@@ -426,13 +431,15 @@ export function RecaptchaLine({ notice, className = '', data = {} }: {
 }
 
 /**
- * "By continuing, you agree to Homeroom's terms." under the sign-in screens'
- * main button (./sign-in-sheet.tsx, ./login.tsx). Continuing past it is the
- * acceptance the first-run terms gate records
- * (../settings/terms-first-run.js), so nothing asks again after sign-in.
- * The link arrives with the options; until then, and when there is none,
- * the line names the terms without one, which is also what the prerender
- * draws. Where a step runs reCAPTCHA with its badge hidden (./recaptcha.ts,
+ * "By continuing, you agree to Homeroom's terms and acknowledge the privacy
+ * notice." under the sign-in screens' main button (./sign-in-sheet.tsx,
+ * ./login.tsx). Continuing past it is the acceptance the first-run terms gate
+ * records (../settings/terms-first-run.js), so nothing asks again after
+ * sign-in. The privacy notice is named so it can be read before signing up,
+ * at first sight (#5094, #5106); it is acknowledged, not agreed to. Both
+ * links arrive with the options; until then, and for the terms when none
+ * are published, the line names each without one, which is also what the
+ * prerender draws. Where a step runs reCAPTCHA with its badge hidden (./recaptcha.ts,
  * the sign-in sheet's phone and code steps), `recaptcha` (the sheet hands
  * its RECAPTCHA_LINE) adds Google's notice as a second, quieter line under
  * it: "Protected by reCAPTCHA · Google Privacy · Terms" (#4207, #4379).
@@ -442,13 +449,18 @@ export function TermsNotice({ verb = 'continuing', className = '', recaptcha = n
   className?: string;
   recaptcha?: RecaptchaLinks | null;
 }) {
-  const link = useWaitlistOptions()?.terms_link || null;
+  const options = useWaitlistOptions();
+  const link = options?.terms_link || null;
+  const privacy = options?.privacy_link || null;
   const linkClass = 'underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-200';
   const terms = (
     <p data-terms-notice={recaptcha ? 'recaptcha' : undefined} className={`text-center text-[13px] text-zinc-500 dark:text-zinc-400 ${className}`}>
       <RichMessage id={verb === 'signing in' ? 'auth:terms.signingIn' : 'auth:terms.continuing'} components={[
       link ? (
         <a href={link} target="_blank" rel="noopener noreferrer" className={linkClass} />
+      ) : <></>,
+      privacy ? (
+        <a href={privacy} target="_blank" rel="noopener noreferrer" className={linkClass} />
       ) : <></>,
       ]} />
     </p>

@@ -5,6 +5,7 @@ const credentialStore = require('./credential-store');
 const managementClient = require('./openrouter-management-client');
 const agentModels = require('./agent-models');
 const agentPreferences = require('./agent-preferences');
+const defaultModelSetting = require('./default-model');
 const notifications = require('./notifications');
 const limits = require('./limits');
 
@@ -176,12 +177,12 @@ async function chooseDefaultModel({ pool, userId, apiKey, config }) {
       config,
       forceRefresh: false,
     });
-    return catalog.recommendedModelId || config.openrouterDefaultCodexModel || null;
+    return catalog.recommendedModelId || await defaultModelSetting.effective(pool, config);
   } catch (err) {
     log.warn('openrouter-managed', 'model catalog unavailable during provisioning', {
       userId, err: err.message,
     });
-    return config.openrouterDefaultCodexModel || null;
+    return defaultModelSetting.effective(pool, config);
   }
 }
 
@@ -290,8 +291,13 @@ async function provision({ pool, userId, config }) {
           WHERE id = $1`,
         [reservation.id, credential.id],
       );
+      // No model: the account follows the platform default
+      // (services/default-model.js) until its person picks one. Storing the
+      // default of the day pinned every account to it, and a later change
+      // of default reached none of them. The first session still runs on
+      // the model chosen above (defaultModel below).
       await agentPreferences.setDefaultBackend(client, userId, {
-        backend: 'codex_openrouter', model: modelId, reasoningEffort: null,
+        backend: 'codex_openrouter', model: null, reasoningEffort: null,
       });
       return { credential, modelId };
     });

@@ -154,18 +154,23 @@ test('the trigger accepts by continuing, and never presents the sheet', () => {
   assert.match(triggerJs, /console\.warn\('\[terms-first-run\] terms acceptance not recorded:', err\);\s*\n\s*\}\s*\n\s*TermsFirstRun\._resolve\(\);/);
 });
 
-test('the sign-in screens say continuing is agreeing, linking the current terms', () => {
+test('the sign-in screens say continuing is agreeing, linking the current terms and the privacy notice', () => {
   const shared = read('frontend', 'src', 'features', 'auth', 'waitlist-shared.tsx');
   assert.match(shared, /export function TermsNotice\(/);
   assert.match(shared, /<RichMessage id=\{verb === 'signing in' \? 'auth:terms\.signingIn' : 'auth:terms\.continuing'\}/);
-  assert.equal(message('auth:terms.continuing'), "By continuing, you agree to Homeroom's <0>terms</0>.");
-  assert.equal(message('auth:terms.signingIn'), "By signing in, you agree to Homeroom's <0>terms</0>.");
-  assert.match(shared, /const link = useWaitlistOptions\(\)\?\.terms_link \|\| null;/);
+  assert.equal(message('auth:terms.continuing'), "By continuing, you agree to Homeroom's <0>terms</0> and acknowledge the <1>privacy notice</1>.");
+  assert.equal(message('auth:terms.signingIn'), "By signing in, you agree to Homeroom's <0>terms</0> and acknowledge the <1>privacy notice</1>.");
+  assert.match(shared, /const link = options\?\.terms_link \|\| null;/);
+  // The privacy notice (#5094, #5106): its own link, opened in a new tab like
+  // the terms, from the one address the server serves.
+  assert.match(shared, /const privacy = options\?\.privacy_link \|\| null;/);
+  assert.match(shared, /<a href=\{privacy\} target="_blank" rel="noopener noreferrer" className=\{linkClass\} \/>/);
   assert.match(read('frontend', 'src', 'features', 'auth', 'sign-in-sheet.tsx'), /<TermsNotice className="mt-3" recaptcha=\{step === 'phone' \|\| step === 'phone-code' \? RECAPTCHA_LINE : null\} \/>/);
   assert.match(read('frontend', 'src', 'features', 'auth', 'login.tsx'),
     /\{t\('auth:login\.submit'\)\}\s*\n\s*<\/Button>\s*\n\s*<TermsNotice verb="signing in" \/>/);
   assert.equal(message('auth:login.submit'), 'Sign in');
   assert.match(read('src', 'routes', 'public-api.js'), /terms_link: await currentTermsLink\(\),/);
+  assert.match(read('src', 'routes', 'public-api.js'), /privacy_link: privacyNoticeUrl\(config\),/);
 });
 
 test('the consent route takes an acceptance by continuing, and never lets it replace an answer', () => {

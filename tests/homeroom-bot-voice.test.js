@@ -167,6 +167,13 @@ test('each place gets the tools that fit it, and nothing that acts without a tap
     ['reply', 'stay_quiet', 'request_detail', 'list_source', 'read_source'], 'somebody else\'s change: answer only');
   assert.deepEqual(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })),
     ['reply', 'stay_quiet', 'start_request', 'offer_close_request', 'request_detail', 'list_source', 'read_source']);
+  // Papote #3: under its plan waiting for Build it, a change to the plan is asked for here.
+  const planned = voice.toolsFor({ type: 'issue', ref: 1 }, { planWaiting: true });
+  assert.deepEqual(names(planned),
+    ['reply', 'stay_quiet', 'start_request', 'change_plan', 'offer_close_request', 'request_detail', 'list_source', 'read_source']);
+  const prompt = voice.systemPrompt({ app: { slug: 'papote', name: 'Papote' }, place: { type: 'issue', ref: 3 }, tools: planned });
+  assert.match(prompt, /Them saying to build it or go ahead is start_request, which builds the plan as they saw it\. Somebody asking for something in the plan to change is change_plan/);
+  assert.doesNotMatch(voice.systemPrompt({ app: { slug: 'papote' }, place: { type: 'issue', ref: 3 }, tools: voice.toolsFor({ type: 'issue', ref: 3 }) }), /change_plan/);
   const chat = voice.toolsFor({ type: 'chat', ref: null }, { openChangeCount: 2, platform: true });
   assert.deepEqual(names(chat), ['reply', 'stay_quiet', 'update_change', 'offer_request', 'offer_close_request', 'request_detail', 'list_source', 'read_source', 'get_change', 'get_discussion', 'list_requests']);
   assert.ok(chat[2].function.parameters.properties.change, 'in a chat it names which change');

@@ -143,6 +143,10 @@ async function migrate(config) {
   await seedStagingAppAdminsPanel(pool);
   await seedStagingReadonlyDevTab(pool);
   await seedStagingQuietDiscussion(pool);
+  // #5458: must run AFTER seedStagingQuietDiscussion — it clears the rows
+  // that seed's first attempt hung in the quiet app, and owns the
+  // vote-card app instead. Needs the capture member (seedCaptureAdminUser).
+  await seedStagingVoteCardChat(pool);
   await seedStagingYourApps(pool, config);
   await require('../services/staging-apps').seedCatalog(pool, config);
   await seedStagingBrowseCardBranches(pool, config);
@@ -175,6 +179,12 @@ async function migrate(config) {
   await seedStagingCloneSpecPills(pool, config);
   await seedStagingRestartRecoveredPills(pool, config);
   await seedStagingGeneralChannel(pool);
+  // After it: the fake speaker who cast the vote below is that seed's person.
+  // #5482's before/after shots follow a proposal_vote row about a change
+  // that has merged, and its leaving the bell's list: a fresh clone has no
+  // such row for the shots' member fixture, so one is seeded, with the news
+  // that the same change went live beside it (that row stays after).
+  await seedStagingMergedVoteRow(pool, config);
   // After it: this thread's second speaker is that seed's fake person.
   await seedStagingScrollTestThread(pool);
   // Must run AFTER seedStagingScrollTestThread — it invites the same member fixture.
@@ -251,8 +261,10 @@ async function migrate(config) {
   await backfillUsernameChoiceForEmailHandles(pool);
   await backfillSettingsProposalSource(pool);
   await migrateWaitlistCountryCodes(pool);
+  await followPlatformDefaultModel(pool);
   // After backfillVotesRequired, which reads the merge announcements.
   await clearAutomatedChannelLines(pool);
+  await backfillPlanRows(pool);
   await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);
   await migrateAppDbsToPerRole(pool, config);
@@ -333,6 +345,40 @@ async function backfillUsernameChoiceForEmailHandles(pool) {
 // chat), and a transcript guard (no user/assistant conversation ever backed
 // a manifest PR; dev chats branch as dev/…). Best effort: a failure logs and
 // boot goes on, the rows just stay listed until the next boot.
+// Papote #3 (18 Oct 2026): Homeroom bot's plan rows on requests kept saying
+// "Waiting for @snait to say Build it" after their plans stopped waiting:
+// request #3 on Papote showed four. What became of each plan is written on
+// its row from now on (homeroom-bot-live.js notePlanRows); a row from
+// before is told here, once. Only a row still reading 'waiting' whose plan
+// no longer waits changes, so it is a no-op after its first run.
+async function backfillPlanRows(pool) {
+  const endings = require('../services/homeroom-bot-live').PLAN_ROW_ENDINGS;
+  let result;
+  try {
+    result = await pool.query(
+      `UPDATE chat_messages m
+          SET metadata = jsonb_set(m.metadata, '{specShare,botNote}', to_jsonb(s.note)),
+              content = regexp_replace(m.content, '\\. Waiting for [^\\n]*$',
+                CASE s.note WHEN 'building' THEN $1 WHEN 'replaced' THEN $2 ELSE $3 END)
+         FROM (SELECT p.thread_message_id AS id,
+                      CASE WHEN r.plan->'chosen' IS NOT NULL THEN 'building'
+                           WHEN r.build_error = 'skipped: the request was read again'
+                             OR r.build_error LIKE 'skipped: % asked to change the plan' THEN 'replaced'
+                           ELSE 'stopped' END AS note
+                 FROM homeroom_bot_posts p
+                 JOIN homeroom_bot_runs r ON r.id = p.run_id
+                WHERE p.kind = 'plan' AND p.thread_message_id IS NOT NULL AND r.awaiting_go_at IS NULL) s
+        WHERE m.id = s.id AND m.metadata->'specShare'->>'botNote' = 'waiting'`,
+      [endings.building, endings.replaced, endings.stopped],
+    );
+  } catch (err) {
+    log.warn('db', 'Plan-row backfill skipped (query failed)', { err: err.message });
+    return 0;
+  }
+  if (result.rowCount) log.info('db', 'Said what became of plans still marked waiting on their requests', { count: result.rowCount });
+  return result.rowCount;
+}
+
 async function backfillSettingsProposalSource(pool) {
   let result;
   try {
@@ -660,6 +706,54 @@ async function revokeLegacyGithubGrants(pool, config) {
 // Best-effort throughout: every fetch/update is individually guarded and a
 // failure never aborts boot. Sessions that already have linked_issues are
 // excluded by the query (cheap, no network) and need no flag.
+
+// ── One-time: untouched coding-agent preferences follow the default ───
+//
+// The platform default model became an admin setting
+// (services/default-model.js), and a coding-agent preference with no model
+// follows it. Provisioning used to store the default of the day instead, so
+// every account with an included key was pinned to GLM 5.3 Flash and a
+// change of default reached none of them. This moves, once, the preferences
+// nobody touched since the key was set up (the row's updated_at within a
+// minute of its created_at; any save through Settings or the model picker
+// moves updated_at) back to following the default. A model someone picked,
+// GLM included, stays theirs.
+//
+// Marker-guarded like migrateWaitlistCountryCodes below: after it has run,
+// a GLM preference saved by hand is a choice and must never be moved.
+const FORMER_DEFAULT_MODEL = 'z-ai/glm-5.3-flash';
+
+async function followPlatformDefaultModel(pool) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM platform_settings WHERE key = 'agent_preferences_follow_default_migrated'`
+    );
+    if (rows.length) return;
+
+    const res = await pool.query(
+      `UPDATE user_agent_preferences
+          SET model_id = NULL
+        WHERE backend = 'codex_openrouter'
+          AND model_id = $1
+          AND updated_at <= created_at + INTERVAL '1 minute'`,
+      [FORMER_DEFAULT_MODEL]
+    );
+
+    await pool.query(
+      `INSERT INTO platform_settings (key, value, description) VALUES
+         ('agent_preferences_follow_default_migrated', 'true',
+          'Marker: the one-time move of untouched GLM 5.3 Flash coding-agent preferences to following the platform default has run. Do not delete: deleting re-runs it, and after it a GLM preference is somebody''s choice.')
+       ON CONFLICT (key) DO NOTHING`
+    );
+
+    if (res.rowCount) {
+      log.info('db', 'Coding-agent preferences now follow the platform default', { rows: res.rowCount });
+    }
+  } catch (err) {
+    log.warn('db', 'coding-agent default-model migration skipped', { err: err.message });
+  }
+}
+
 // ── One-time: namespace the retired waitlist region pseudo-codes ───────
 //
 // The waitlist country picker was ~50 curated codes in six region buckets,
@@ -3414,6 +3508,93 @@ async function seedStagingMergedPrs(pool, config) {
   });
 }
 
+// #5482's before/after shots follow a bell row that names a change which has
+// already merged: before, its "Voted yes" row is in the list, with the unread
+// news that the change went live beside it; after (#5487, like #5482), the
+// news row is gone from the list too — it is seeded unread exactly so the
+// before side shows it and the after side does not. A fresh clone has no
+// such pair for the shots' member fixture (usernode-capture), so one is
+// seeded: a fake merged change with an unread "Voted yes" row from one of
+// the fake speakers, and the unread merge news beside it. Idempotent through
+// the branch name and the (user, kind, session) lookup; strictly a no-op
+// outside staging.
+async function seedStagingMergedVoteRow(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = await pool.query(
+      `SELECT id, username FROM users
+        WHERE username IN ('usernode-capture', 'staging-demo-general-ada')`
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const voter = people.rows.find((row) => row.username === 'staging-demo-general-ada');
+    if (!member || !voter || member.id === voter.id) {
+      log.warn('db', 'Staging merged-vote row skipped: fixture users missing');
+      return;
+    }
+    const { rows: appRows } = await pool.query(
+      'SELECT id FROM apps WHERE slug = $1', [config.selfAppSlug]
+    );
+    const appId = appRows[0]?.id;
+    if (!appId) {
+      log.warn('db', 'Staging merged-vote row skipped: self-app row missing', {
+        slug: config.selfAppSlug,
+      });
+      return;
+    }
+
+    const branch = 'staging-fixture/merged-vote-row';
+    let sessionId;
+    const { rows: sessionRows } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, branch]
+    );
+    if (sessionRows.length) {
+      sessionId = sessionRows[0].id;
+    } else {
+      const { rows } = await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, pr_number, pr_title, session_title, status,
+            merged_at, live_at, created_at)
+         VALUES
+           ($1, $2, $3, 9042, '[staging fixture] Books read list',
+            '[staging fixture] Books read list', 'merged',
+            NOW() - INTERVAL '3 hours', NOW() - INTERVAL '3 hours',
+            NOW() - INTERVAL '1 day')
+         RETURNING id`,
+        [appId, voter.id, branch]
+      );
+      sessionId = rows[0].id;
+    }
+
+    const fixtures = [
+      { kind: 'proposal_vote', sourceUserId: voter.id, detail: 'yes', minutesAgo: 200 },
+      // The news that it went live: listed before #5487 (this proposal's
+      // before side), gone from the list after, stored all the same.
+      { kind: 'voted_change_merged', sourceUserId: null, detail: null, minutesAgo: 170 },
+    ];
+    let inserted = 0;
+    for (const f of fixtures) {
+      const { rowCount } = await pool.query(
+        `INSERT INTO notifications
+           (user_id, app_id, session_id, source_user_id, kind, detail, read_at, created_at)
+         SELECT $1::int, $2::int, $3::int, $4::int, $5::varchar, $6::varchar,
+                NULL, NOW() - ($7::int * INTERVAL '1 minute')
+          WHERE NOT EXISTS (
+            SELECT 1 FROM notifications n
+             WHERE n.user_id = $1 AND n.session_id = $3 AND n.kind = $5)
+           RETURNING id`,
+        [member.id, appId, sessionId, f.sourceUserId, f.kind, f.detail, f.minutesAgo]
+      );
+      inserted += rowCount;
+    }
+    if (inserted > 0) {
+      log.info('db', 'Staging merged-vote row seeded', { sessionId, inserted });
+    }
+  } catch (err) {
+    log.warn('db', 'Staging merged-vote row seeding failed', { message: err.message });
+  }
+}
+
 // Small changes (#admin/small-changes): the watch-only small-change tag only
 // writes rows when a checks run settles, and nothing settles in a staging
 // preview, so the section would only ever show its empty state there. Tag
@@ -5918,6 +6099,33 @@ async function seedStagingDemoAppCard(pool) {
                900001, 'open')
        ON CONFLICT DO NOTHING`
     );
+    // #5483's shots: the bot-DM fixture's "ready to try" card (staging-
+    // messages.js) is voted with its Approve, which posts to session 990901.
+    // Without a row there the Approve answers 404 and the after build can
+    // never show the card saying the vote. A private demo app keeps the vote
+    // off the public-app identity gate, votes_required 2 keeps one Yes from
+    // deciding anything, and the session's app takes its viewers as
+    // collaborators so the session collab guard (app-access.js) lets the
+    // shot personas' Approve through. Obviously fake, in the same
+    // 900xxx/99xxxx staging ranges, idempotent like its siblings.
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by)
+       VALUES (900002, 'Staging demo bot change', 'staging-demo-bot-change', 'running', 'members', 'private', 900001)
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status)
+       SELECT 900002, u.id, 'member' FROM users u
+       WHERE u.username IN ('usernode-capture', 'staging-code-signin@usernode.test')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status, promoted_at, votes_required, approval_epoch)
+       VALUES (990901, 900002, 900001, 'staging-demo/bot-change-pr', 900002,
+               'Staging demo change — grey out finished items', 'promoted', NOW(), 2, 0)
+       ON CONFLICT DO NOTHING`
+    );
     log.info('db', 'Staging demo app-card fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging demo app-card seeding failed', { message: err.message });
@@ -6756,9 +6964,94 @@ async function seedStagingQuietDiscussion(pool) {
           NOW() - INTERVAL '30 minutes')
        ON CONFLICT DO NOTHING`
     );
+    // #5458's first shot attempt hung the chat vote card here: a "built
+    // this" line (900119) in this channel plus a usernode-capture
+    // membership. That broke the two checks above — this app is the quiet
+    // card alone, and a line from the bot is exactly what the channel must
+    // not hold — so the card moved to its own app
+    // (seedStagingVoteCardChat, below) and the rows it wrote are removed
+    // here, the way clearAutomatedChannelLines clears platform lines: a
+    // staging copy the earlier commit already ran in self-heals on boot.
+    await pool.query(`DELETE FROM chat_messages WHERE id = 900119`);
+    await pool.query(
+      `DELETE FROM app_collaborators
+        WHERE app_id = 900110
+          AND user_id = (SELECT id FROM users WHERE username = 'usernode-capture')`
+    );
     log.info('db', 'Staging quiet-discussion fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging quiet-discussion seeding failed', { message: err.message });
+  }
+}
+
+// #5458's shots: the vote card a chat hangs under the Homeroom bot's
+// "built this" line — an ordinary message whose metadata names the
+// proposal (features/group-chat/transcript.tsx), with Yes/No buttons and
+// the count beside them, the thing the change lets a member's tap repaint
+// at once. The product writes no such line on a fresh copy any more: its
+// own proposal lines go to the proposal's own thread. And the quiet app
+// above cannot carry it — its channel is the quiet card alone, which the
+// declared checks pin — so the card gets an app of its own: one builder
+// (a fixture person, never a login), one open proposal, the bot's line
+// under it, and nothing else.
+//
+// The line's author is the bot, the voice that really says it, and a
+// sender the channel sweep keeps: clearAutomatedChannelLines removes a
+// channel row only when nobody (user_id IS NULL) wrote it, and the bot's
+// own lines survive it the same way. The capture member
+// (services/visuals.js signs shots as usernode-capture) taps the card,
+// and voting is members-only, so it holds a membership here the way a
+// real invite would have landed it. Idempotent via fixed ids + ON
+// CONFLICT DO NOTHING; a no-op outside staging.
+async function seedStagingVoteCardChat(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES (900111, 'staging-demo-vote-card-builder', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    // The bot's account, in the posture botAccount() reads: the username
+    // with is_synthetic on top, sentinel password, never a login.
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`
+    );
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by)
+       VALUES (900111, 'Staging demo vote card', 'staging-demo-vote-card', 'running',
+               'private', 'public', 900111)
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status, promoted_at, created_at)
+       VALUES (900111, 900111, 900111, 'staging-demo/vote-card-open-proposal', 900111,
+               'Staging demo: a proposal that is still up for a vote', 'promoted',
+               NOW() - INTERVAL '1 hour', NOW() - INTERVAL '2 hours')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO chat_messages (id, app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, created_at)
+       VALUES
+         (900120, 900111, (SELECT id FROM users WHERE username = 'homeroom_bot'),
+          'I built this. It''s up for a vote: Staging demo: a proposal that is still up for a vote',
+          'message', '{"vote": {"sessionId": 900111, "prNumber": 900111}}', NULL, NULL,
+          NOW() - INTERVAL '30 minutes')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, invited_by, accepted_at)
+       SELECT 900111, viewer.id, 'member', 900111, NOW()
+         FROM users viewer
+        WHERE viewer.username = 'usernode-capture'
+       ON CONFLICT (app_id, user_id) DO NOTHING`
+    );
+    log.info('db', 'Staging vote-card chat fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging vote-card chat seeding failed', { message: err.message });
   }
 }
 
@@ -14904,7 +15197,9 @@ module.exports = {
   seedStagingBotChatRequest,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
+  followPlatformDefaultModel,
   clearAutomatedChannelLines,
+  backfillPlanRows,
   backfillProposalIssuerAssignments, backfillVotesRequired,
   backfillSettingsProposalSource,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,

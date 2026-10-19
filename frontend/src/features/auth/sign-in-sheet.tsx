@@ -11,14 +11,28 @@
  *   code     POST /api/auth/otp/verify. An account that has a password, or
  *            has chosen its username, is signed straight in; a new one (or
  *            one that never chose a username) moves on to
+ *            The code is six boxes over one real one-time-code field (#5253),
+ *            so the keyboard's suggestion from the mail and a paste fill all
+ *            six, and the sixth digit sends it with no Continue to press.
+ *            "Sent to <address> · Change" says where it went, a button opens
+ *            the address's own mail (Gmail, Outlook, …) when it is one of
+ *            theirs, "Nothing? Check spam." sits beside the resend, and the
+ *            story's Get started says it is step 2 of 3.
  *   account  POST /api/auth/otp/set-password: the username when the account
  *            has none, which mints the session. No password (#4891): the
  *            account signs in with an emailed code, and adds a password in
- *            Settings if it wants one.
+ *            Settings if it wants one. The handle field (#5255) wears an @,
+ *            says live whether the name is free (GET
+ *            /api/auth/username-available, `checkUsername`) beside its
+ *            rules, shows how others will see it, and its button says
+ *            "Create my account", with the code note under it.
  *
  * Continue with Apple and Continue with Google come first when an admin has
- * set them up (`providers`, from the waitlist options). Either leaves
- * the page for the provider (GET /api/auth/oauth/:provider/start) and comes
+ * set them up (`providers`, from the waitlist options), then the terms line
+ * (either makes an account in one tap), an "or", the email field with
+ * Continue with email, which sends the code from there, and "Use a password"
+ * (#5257: one "Continue to Homeroom" sheet for new and returning people).
+ * Either provider leaves the page for the provider (GET /api/auth/oauth/:provider/start) and comes
  * back to it signed in, or (`resume`) to this sheet: at
  *
  *   username POST /api/auth/oauth/finish, when the provider's sign-in made
@@ -53,13 +67,28 @@
  * Google when an admin has set them up (the same buttons as the first step's
  * otherwise), then "Already on Homeroom? Sign in with email", for an account
  * made before; one made by email from here is not a private member and
- * waits in the queue. That step still leads on to "Sign in with a password".
+ * waits in the queue. That step still leads on to "Use a password".
  *
- * "Sign in with a password" is a step of its own here too:
+ * "Use a password" is a step of its own here too:
  *
  *   password POST /api/auth/login with a username or an email, the sign-in
- *            screen's own exchange (passwordSignIn in ./shared.ts). "Forgot
- *            password?" still goes to that screen's reset (#login/forgot).
+ *            screen's own exchange (passwordSignIn in ./shared.ts).
+ *   forgot   "Forgot password?", inside the sheet (#5258): POST
+ *            /api/auth/password-reset/request emails a link for choosing a
+ *            new password, the sign-in screen's own reset (#login/forgot),
+ *            without leaving for that screen and its own Back. One "‹ Sign
+ *            in" above its title goes back (#5259); "Sign in with a code
+ *            instead" beside the button skips the password altogether; and
+ *            the note about mail that never comes shows once a link went.
+ *
+ * Where the sheet may be for an account somebody has (`firstStepLine`
+ * 'password'), the email and password steps carry a switch at the top,
+ * Email code | Password (#5258), in place of the small links that used to
+ * lead from one to the other. The password and reset steps say nothing of
+ * the terms: neither can make an account, and the account agreed to them
+ * when it was made. Nor does the email step there, since sending a code
+ * makes nothing (#5257): the code step, whose right code can, says it.
+ * Every step that can make one still says it.
  *
  * A waitlist "you're in" link opens the sheet already at work
  * (`releaseToken`): the address its token names filled in and the code
@@ -146,7 +175,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 
 import { PLANE_FILL } from '@/components/ui/grouped-list';
-import { AppleIcon, GoogleIcon, SpinnerArcIcon, XIcon } from '@/components/ui/icons';
+import { AppleIcon, ChevronLeftIcon, GoogleIcon, SpinnerArcIcon, XIcon } from '@/components/ui/icons';
 import { PasswordInput } from '@/components/ui/password-input';
 
 import { KB_OPEN_CLASS } from '../../lib/keyboard-open';
@@ -171,7 +200,7 @@ import {
 } from './shared';
 import { RecaptchaLine, TermsNotice } from './waitlist-shared';
 
-type Step = 'choose' | 'email' | 'code' | 'account' | 'username' | 'password' | 'phone' | 'phone-code' | 'link';
+type Step = 'choose' | 'email' | 'code' | 'account' | 'username' | 'password' | 'forgot' | 'phone' | 'phone-code' | 'link';
 
 export type SignInProvider = 'apple' | 'google';
 
@@ -377,14 +406,125 @@ export { phoneE164 } from './phone-input';
  * 7 October). Where the sheet only makes an account (an invite's Join) it is
  * the terms line alone, since continuing is agreeing
  * (tests/terms-first-run.test.js). Where it may be for an account somebody
- * has, it is "Sign in with a password" right under the button, then the
- * terms line: Sign in, the story's Continue (#5251: one button for new and
- * returning people, so the password way in is here now that the story has
- * no Sign in of its own), and the other ways after an invite's phone step.
+ * has, it is "Use a password", and no terms under the email, since sending a
+ * code makes nothing (#5257; the code step says them): Sign in, the story's
+ * Continue (#5251: one button for new and returning people, so the password
+ * way in is here now that the story has no Sign in of its own), and the
+ * other ways after an invite's phone step.
  */
 export function firstStepLine(from: 'invite' | 'story' | 'signin', phone = false): 'terms' | 'password' {
   return from === 'invite' && !phone ? 'terms' : 'password';
 }
+
+/**
+ * Whether a step carries the Email code | Password switch (#5258): the email
+ * and password steps, wherever the sheet may be for an account somebody has.
+ * An invite's Join only makes an account, so it has no switch; a right code
+ * for a password account still takes it to the password step, with the old
+ * link back.
+ */
+export function hasMethodSwitch(step: string, from: 'invite' | 'story' | 'signin', phone = false): boolean {
+  return (step === 'email' || step === 'password') && firstStepLine(from, phone) === 'password';
+}
+
+/** Whether a step's foot says the terms: not the password or reset steps, which make no account (#5258). */
+export function stepSaysTerms(step: string): boolean {
+  return step !== 'password' && step !== 'forgot';
+}
+
+/**
+ * The reset link, as the sign-in screen asks for it (./login.tsx
+ * onEmailReset). The server answers the same whether or not the address
+ * matched (anti-enumeration), and so does the sheet: 'sent', or what went
+ * wrong in words.
+ */
+export async function requestPasswordReset(address: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const email = address.trim();
+  if (!email || !email.includes('@')) return { ok: false, error: translate('auth:signInSheet.forgot.emailMissing') };
+  try {
+    const res = await fetch('/api/auth/password-reset/request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return { ok: false, error: data.error || translate('auth:signInSheet.forgot.sendFailed') };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: translate('auth:signInSheet.networkError') };
+  }
+}
+
+/** The code's length (routes/auth.js sends six digits). */
+export const CODE_LENGTH = 6;
+
+/** What is typed or pasted into the code, as the six digits it can be: a pasted "583 914" or "Code: 583914" fills all six. */
+export function codeDigits(value: string): string {
+  return value.replace(/\D/g, '').slice(0, CODE_LENGTH);
+}
+
+/** A mail service whose own inbox a button can open, for the code step (#5253). */
+export type MailApp = { name: string; url: string };
+
+const MAIL_APPS: Array<{ name: string; domains: readonly string[]; url: (address: string) => string }> = [
+  {
+    name: 'Gmail',
+    domains: ['gmail.com', 'googlemail.com'],
+    // The account the code went to, and the last hour's mail in every folder, spam included.
+    url: (address) => `https://mail.google.com/mail/?authuser=${encodeURIComponent(address)}#search/in%3Aanywhere+newer_than%3A1h`,
+  },
+  { name: 'Outlook', domains: ['outlook.com', 'hotmail.com', 'live.com', 'msn.com'], url: () => 'https://outlook.live.com/mail/' },
+  { name: 'Yahoo Mail', domains: ['yahoo.com', 'ymail.com'], url: () => 'https://mail.yahoo.com/' },
+  { name: 'iCloud Mail', domains: ['icloud.com', 'me.com', 'mac.com'], url: () => 'https://www.icloud.com/mail/' },
+  { name: 'Proton Mail', domains: ['proton.me', 'protonmail.com', 'pm.me'], url: () => 'https://mail.proton.me/' },
+];
+
+/** The mail service an address belongs to, by its domain; null for any other (a work or school address). */
+export function mailAppFor(address: string): MailApp | null {
+  const at = address.lastIndexOf('@');
+  if (at < 1) return null;
+  const domain = address.slice(at + 1).trim().toLowerCase();
+  const app = MAIL_APPS.find((a) => a.domains.includes(domain) || (a.name === 'Yahoo Mail' && domain.startsWith('yahoo.')));
+  return app ? { name: app.name, url: app.url(address.trim()) } : null;
+}
+
+/**
+ * Where a step is in Get started (#5253, #5255): email, code, username. Only
+ * the story's sheet counts its steps, and from the first one (#5252), so
+ * the three are in view before an address is typed. The first step is the
+ * email, with Apple and Google above it when they are set up.
+ */
+export function storyStep(step: string, from: 'invite' | 'story' | 'signin'): number | null {
+  if (from !== 'story') return null;
+  return step === 'choose' || step === 'email' ? 1 : step === 'code' ? 2 : step === 'account' ? 3 : null;
+}
+
+/** What the account step's live check says of a handle (#5255). */
+export type UsernameCheck = { state: 'idle' } | { state: 'checking' } | { state: 'available' } | { state: 'taken'; error: string };
+
+/**
+ * Whether anybody holds `handle`, by the server's own rules and ledger
+ * (GET /api/auth/username-available). 'idle' for an empty field and for a
+ * check that could not be made (offline, throttled): the field then says
+ * nothing, and Create my account still answers with the server's refusal.
+ */
+export async function checkUsername(handle: string, signal?: AbortSignal): Promise<UsernameCheck> {
+  const value = handle.trim();
+  if (!value) return { state: 'idle' };
+  try {
+    const res = await fetch(`/api/auth/username-available?username=${encodeURIComponent(value)}`, { credentials: 'same-origin', signal });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok !== true) return { state: 'idle' };
+    return data.available === true ? { state: 'available' } : { state: 'taken', error: String(data.error || '') };
+  } catch {
+    return { state: 'idle' };
+  }
+}
+
+// How long the field waits after the last keystroke before it asks.
+export const USERNAME_CHECK_MS = 350;
 
 /** The line Google asks for where its reCAPTCHA badge is not shown (./recaptcha.ts). */
 export function RecaptchaNotice() {
@@ -530,6 +670,16 @@ const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]
 const LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
 const INPUT = 'w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
 const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400 hover:underline';
+// The Email code | Password switch (#5258): a grey track, the chosen one a
+// white segment on it, as Settings' Light / Dark / System.
+const SWITCH_TRACK = 'mt-4 grid grid-cols-2 gap-1 rounded-full bg-zinc-200 p-1 dark:bg-zinc-800';
+const SWITCH_ON = 'h-9 rounded-full bg-white text-[15px] font-semibold text-zinc-900 shadow-sm dark:bg-zinc-600 dark:text-zinc-100';
+// The code's six boxes (#5253): white cards with the sheets' hairline, the
+// one the next digit goes into ringed in the accent while the field has focus.
+const CODE_BOX = 'flex h-14 items-center justify-center rounded-xl bg-white text-[24px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-100';
+const CODE_BOX_NEXT = 'flex h-14 items-center justify-center rounded-xl bg-white text-[24px] font-semibold text-zinc-900 ring-2 ring-violet-600 dark:bg-zinc-900 dark:ring-violet-400 dark:text-zinc-100';
+const MAIL_BUTTON = 'flex h-[50px] w-full items-center justify-center rounded-full bg-violet-50 text-[17px] font-[650] text-violet-700 dark:bg-violet-950/50 dark:text-violet-300';
+const SWITCH_OFF = 'h-9 rounded-full text-[15px] font-medium text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100';
 
 export type SignInSheetProps = {
   open: boolean;
@@ -691,6 +841,19 @@ export function SignInSheet({
   const releaseSeen = useRef<string | null>(null);
   // The address an email code carried to the password step, for its first field.
   const identifierPrefill = useRef('');
+  // The reset step's field, and whether its link went (#5258). What was typed
+  // as the username goes to the reset with it and comes back on Back.
+  const resetField = useRef<HTMLInputElement>(null);
+  const typedIdentifier = useRef('');
+  const [resetSent, setResetSent] = useState(false);
+  // The code as typed, for its six boxes, whether its field has the caret,
+  // and the last code the sixth digit sent, so one code is sent once.
+  const [code, setCode] = useState('');
+  const [codeFocused, setCodeFocused] = useState(false);
+  const autoSent = useRef('');
+  // The account step's handle as typed, and what the live check says of it (#5255).
+  const [handleDraft, setHandleDraft] = useState('');
+  const [handleCheck, setHandleCheck] = useState<UsernameCheck>({ state: 'idle' });
 
   useEffect(() => {
     // Closed, the link is not "seen" any more: opened again (Get started
@@ -743,7 +906,12 @@ export function SignInSheet({
       if (focus) currentPasswordField.current?.focus({ preventScroll: true });
       return;
     }
+    // The address typed as the username, when it is one.
+    if (step === 'forgot' && resetField.current && typedIdentifier.current.includes('@')) {
+      resetField.current.value = typedIdentifier.current;
+    }
     const field = step === 'email' ? firstField : step === 'code' ? codeField
+      : step === 'forgot' ? resetField
       : step === 'username' ? providerUsernameField
         : step === 'password' ? identifierField
           : step === 'phone' ? (askName ? nameField : phoneField)
@@ -751,6 +919,24 @@ export function SignInSheet({
               : usernameField;
     if (focus) field.current?.focus({ preventScroll: true });
   }, [open, step, needsUsername]);
+
+  // The account step starts from the handle its field arrives holding.
+  useEffect(() => {
+    if (open && step === 'account' && needsUsername) setHandleDraft(suggestedUsername);
+  }, [open, step, needsUsername, suggestedUsername]);
+
+  // The live "✓ Available" (#5255): asked once typing pauses, and the answer
+  // to an older draft is dropped.
+  useEffect(() => {
+    if (!open || step !== 'account' || !needsUsername) return undefined;
+    if (!handleDraft.trim()) { setHandleCheck({ state: 'idle' }); return undefined; }
+    setHandleCheck({ state: 'checking' });
+    const abort = new AbortController();
+    const timer = window.setTimeout(() => {
+      void checkUsername(handleDraft, abort.signal).then((answer) => { if (!abort.signal.aborted) setHandleCheck(answer); });
+    }, USERNAME_CHECK_MS);
+    return () => { window.clearTimeout(timer); abort.abort(); };
+  }, [open, step, needsUsername, handleDraft]);
 
   // Back from the provider's page by the browser's Back button, the page can
   // come out of the back-forward cache as it was left: busy. Undo that.
@@ -808,6 +994,8 @@ export function SignInSheet({
         return;
       }
       if (codeField.current) codeField.current.value = '';
+      setCode('');
+      autoSent.current = '';
       setStep('code');
       setCooldownUntil(Date.now() + RESEND_COOLDOWN_MS);
       setNow(Date.now());
@@ -982,6 +1170,19 @@ export function SignInSheet({
     }
   }, [email, followInvite, finish]);
 
+  // Each keystroke or paste: the digits it can be, in the field and the
+  // boxes, and the sixth sends it (#5253). Not again for the same six, so
+  // a refused code waits for a change rather than going round.
+  const onCodeInput = useCallback((value: string) => {
+    const digits = codeDigits(value);
+    if (codeField.current && codeField.current.value !== digits) codeField.current.value = digits;
+    setCode(digits);
+    if (digits.length === CODE_LENGTH && digits !== autoSent.current && !busy) {
+      autoSent.current = digits;
+      void verify();
+    }
+  }, [busy, verify]);
+
   // The phone's code (`phone`): a reCAPTCHA token first, then the text.
   // `value` is the E.164 number the field built (./phone-input.tsx), or one
   // sent before, for the code step's resend.
@@ -1135,6 +1336,22 @@ export function SignInSheet({
     }
   }, [followInvite, finish]);
 
+  // The reset step: the link that chooses a new password, emailed (#5258).
+  const sendResetLink = useCallback(async () => {
+    setError(null);
+    setDetails(null);
+    setResetSent(false);
+    if (blockedOffline(setError)) return;
+    setBusy(true);
+    try {
+      const result = await requestPasswordReset(resetField.current?.value || '');
+      if (!result.ok) { setError(result.error); return; }
+      setResetSent(true);
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
   // Off to the provider. The page leaves, so busy stays on until it does.
   // Inside the app it stays: the app's own sheet answers in place.
   const continueWith = useCallback(async (provider: SignInProvider) => {
@@ -1201,21 +1418,27 @@ export function SignInSheet({
 
   if (!open) return null;
 
-  const oneLine = firstStepLine(from, phone) === 'password' ? (
-    <>
-      <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
-        <a
-          href="#login"
-          data-sign-in-sheet-password=""
-          onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('password'); }}
-          className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
-        >
-          {t('auth:signInSheet.withPassword')}
-        </a>
-      </p>
-      <TermsNotice />
-    </>
-  ) : <TermsNotice />;
+  const methodSwitch = hasMethodSwitch(step, from, phone);
+  const toStep = (next: Step) => { setError(null); setDetails(null); setResetSent(false); setStep(next); };
+
+  // The way to a password, where the sheet may be for an account somebody
+  // has: under the first step's email, and nothing else under it (#5257).
+  const passwordLink = firstStepLine(from, phone) === 'password' ? (
+    <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
+      <a
+        href="#login"
+        data-sign-in-sheet-password=""
+        onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('password'); }}
+        className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
+      >
+        {t('auth:signInSheet.withPassword')}
+      </a>
+    </p>
+  ) : null;
+  // Under the email step's button: the terms only where the sheet only makes
+  // an account (an invite's Join). Elsewhere sending a code makes nothing;
+  // the code step, whose right code can, says them (#5257).
+  const emailFoot = firstStepLine(from, phone) === 'terms' ? <TermsNotice /> : null;
 
   // Apple and Google, in the order the server lists them: the first step's
   // own, or under the invite's phone step past an "or".
@@ -1240,9 +1463,11 @@ export function SignInSheet({
     : step === 'link' ? t('auth:signInSheet.link.title')
     : step === 'code' ? t('auth:signInSheet.code.title')
       : step === 'phone-code' ? t('auth:signInSheet.phoneCode.title')
-        : step === 'password' ? t('auth:signInSheet.password.title')
+        : step === 'password' ? (methodSwitch ? title : t('auth:signInSheet.password.title'))
+          : step === 'forgot' ? t('auth:signInSheet.forgot.title')
           : step === 'username' ? t('auth:signInSheet.username.title')
-            : welcome ? t('auth:signInSheet.account.welcome', { email: welcome }) : t('auth:signInSheet.account.title');
+            : needsUsername && !welcome ? t('auth:signInSheet.account.titleUsername')
+              : welcome ? t('auth:signInSheet.account.welcome', { email: welcome }) : t('auth:signInSheet.account.title');
   // The first step says nothing under its title unless it is given a line:
   // "Make your account", "Join Sunday Run Club" and "Sign in" already say
   // it, and the field or the providers come next (#4037). With the phone
@@ -1258,12 +1483,14 @@ export function SignInSheet({
       : step === 'link'
         ? ''
       : step === 'code'
-        ? (linkRefused ? t('auth:signInSheet.code.leadLinkUsed', { email }) : t('auth:signInSheet.code.lead', { email }))
+        ? (linkRefused ? t('auth:signInSheet.code.leadLinkUsed', { email }) : '')
         : step === 'password'
-          ? t('auth:signInSheet.password.lead')
+          ? (methodSwitch ? '' : t('auth:signInSheet.password.lead'))
+          : step === 'forgot'
+          ? (resetSent ? '' : t('auth:signInSheet.forgot.lead'))
           : step === 'username'
             ? t('auth:signInSheet.username.lead')
-            : (needsUsername ? t('auth:signInSheet.account.leadWithUsername') : '');
+            : (needsUsername ? t('auth:signInSheet.account.leadPublic') : '');
   // Up, on its way up, or leaving for the make screen: whole literals, for
   // the extractor. On a phone it slides; from md, where it is a centred
   // card, it fades. `held`, it stays down under the screen that covers it.
@@ -1272,6 +1499,8 @@ export function SignInSheet({
     ? 'pointer-events-none translate-y-full md:-translate-x-1/2 md:-translate-y-1/2 md:opacity-0'
     : up ? 'translate-y-0 md:-translate-x-1/2 md:-translate-y-1/2' : 'translate-y-full md:-translate-x-1/2 md:-translate-y-1/2';
   const close = leaving ? undefined : requestClose;
+  const stepNumber = storyStep(step, from);
+  const mailApp = step === 'code' ? mailAppFor(email) : null;
 
   return (
     <div data-sign-in-sheet={step} data-sign-in-sheet-leaving={leaving ? '' : undefined} data-sign-in-sheet-closing={closing ? '' : undefined} className="fixed inset-0 z-50">
@@ -1305,6 +1534,21 @@ export function SignInSheet({
         className={`platform-kb-sheet absolute inset-x-0 bottom-0 max-h-[92%] overflow-y-auto overscroll-contain rounded-t-[20px] ${PLANE_FILL} shadow-[inset_0_0_0_1px_var(--app-sheet-line)] px-4 pt-2 pb-[max(2rem,env(safe-area-inset-bottom))] transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none md:inset-x-auto md:left-1/2 md:bottom-auto md:top-1/2 md:w-full md:max-w-md md:rounded-[20px] md:pb-6 ${panelState}`}
       >
         <div className="mx-auto h-1 w-9 rounded-full bg-[color:var(--border)] md:hidden" aria-hidden="true" />
+        {step === 'forgot' ? (
+          <button type="button" data-sign-in-sheet-forgot-back="" className={`${QUIET} mt-2 -ml-1 flex items-center gap-0.5`} onClick={() => { identifierPrefill.current = typedIdentifier.current; toStep('password'); }}>
+            <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />{t('auth:signInSheet.forgot.back')}
+          </button>
+        ) : null}
+        {stepNumber ? (
+          <div data-sign-in-sheet-progress={stepNumber} className="mt-3 flex items-center gap-3">
+            <div className="flex flex-1 gap-1.5" aria-hidden="true">
+              {[1, 2, 3].map((n) => (
+                <span key={n} className={n <= stepNumber ? 'h-1 w-7 rounded-full bg-violet-600' : 'h-1 w-7 rounded-full bg-zinc-300 dark:bg-zinc-700'} />
+              ))}
+            </div>
+            <span className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.progress', { step: stepNumber, total: 3 })}</span>
+          </div>
+        ) : null}
         <div className="mt-3 flex items-center gap-3">
           <h2 id="sign-in-sheet-title" className="min-w-0 flex-1 break-words text-[17px] font-semibold text-zinc-900 dark:text-zinc-100">{heading}</h2>
           <button
@@ -1317,17 +1561,42 @@ export function SignInSheet({
           </button>
         </div>
         {sub ? <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">{sub}</p> : null}
+        {methodSwitch ? (
+          <div role="radiogroup" aria-label={t('auth:signInSheet.method.label')} data-sign-in-sheet-method="" className={SWITCH_TRACK}>
+            <button type="button" role="radio" aria-checked={step === 'email'} data-sign-in-sheet-method-email="" className={step === 'email' ? SWITCH_ON : SWITCH_OFF} onClick={() => { if (step !== 'email') toStep('email'); }}>
+              {t('auth:signInSheet.method.emailCode')}
+            </button>
+            <button type="button" role="radio" aria-checked={step === 'password'} data-sign-in-sheet-method-password="" className={step === 'password' ? SWITCH_ON : SWITCH_OFF} onClick={() => { if (step !== 'password') toStep('password'); }}>
+              {t('auth:signInSheet.method.password')}
+            </button>
+          </div>
+        ) : null}
 
         {step === 'choose' ? (
           <div className="mt-5 flex flex-col gap-2.5">
             {providerButtons}
-            <button type="button" data-sign-in-provider="email" disabled={busy} className={EMAIL_BUTTON} onClick={() => { setError(null); setStep('email'); }}>
-              {t('auth:signInSheet.continueWithEmail')}
-            </button>
+            {/* Apple and Google make an account in one tap, so their terms sit under them (#5257). */}
+            <TermsNotice />
+            <div data-sign-in-sheet-or="" className="flex items-center gap-3 text-[13px] text-zinc-500 dark:text-zinc-400">
+              <span aria-hidden="true" className="h-px flex-1 bg-[color:var(--app-sheet-line)]" />
+              {t('auth:signInSheet.or')}
+              <span aria-hidden="true" className="h-px flex-1 bg-[color:var(--app-sheet-line)]" />
+            </div>
+            <form className="flex flex-col gap-2.5" onSubmit={(e) => { e.preventDefault(); void requestCode(firstField.current?.value || ''); }}>
+              <div className={FIELD_GROUP}>
+                <div className={FIELD}>
+                  <label htmlFor="sign-in-sheet-email" className={LABEL}>{t('auth:signInSheet.email.label')}</label>
+                  <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="go" defaultValue={email} className={INPUT} {...HANDLE_FIELD} />
+                </div>
+              </div>
+              <button type="submit" data-sign-in-provider="email" disabled={busy} className={EMAIL_BUTTON} {...HOLD_FIELD_FOCUS}>
+                {busy ? t('auth:signInSheet.email.sending') : t('auth:signInSheet.continueWithEmail')}
+              </button>
+            </form>
             {phone ? (
               <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>{t('auth:signInSheet.toPhone')}</button>
             ) : null}
-            {oneLine}
+            {passwordLink}
           </div>
         ) : null}
 
@@ -1340,7 +1609,7 @@ export function SignInSheet({
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.email.sending') : t('auth:signInSheet.email.send')}</button>
-            {oneLine}
+            {emailFoot}
             {providers.length ? (
               <button type="button" className={QUIET} onClick={() => { setError(null); setStep('choose'); }}>{t('auth:signInSheet.email.otherWays')}</button>
             ) : null}
@@ -1400,16 +1669,30 @@ export function SignInSheet({
         ) : null}
 
         {step === 'code' ? (
-          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void verify(); }}>
-            <div className={FIELD_GROUP}>
-              <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-code" className={LABEL}>{t('auth:signInSheet.code.label')}</label>
-                <input ref={codeField} id="sign-in-sheet-code" {...ONE_TIME_CODE_FIELD} enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
+          <form className="mt-1 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void verify(); }}>
+            {/* Where it went, and the way to fix a typo in it, on one line. */}
+            <p data-sign-in-sheet-sent-to="" className="break-words text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">
+              <RichMessage id="auth:signInSheet.code.sentTo" values={{ email }} components={[
+              <strong className="font-semibold text-zinc-900 dark:text-zinc-100" />,
+              <button type="button" className="font-medium text-violet-700 dark:text-violet-400 hover:underline" onClick={() => { setError(null); setLinkRefused(false); setStep('email'); }} />,
+              ]} />
+            </p>
+            {/* Six boxes drawn under one real field: the keyboard's code from the mail, and a paste, fill all six. */}
+            <div className="relative mt-2">
+              <div className="grid grid-cols-6 gap-2" aria-hidden="true">
+                {Array.from({ length: CODE_LENGTH }, (_, i) => (
+                  <span key={i} data-sign-in-sheet-code-box={i} className={codeFocused && i === Math.min(code.length, CODE_LENGTH - 1) ? CODE_BOX_NEXT : CODE_BOX}>{code[i] || ''}</span>
+                ))}
               </div>
+              <label htmlFor="sign-in-sheet-code" className="sr-only">{t('auth:signInSheet.code.label')}</label>
+              <input ref={codeField} id="sign-in-sheet-code" {...ONE_TIME_CODE_FIELD} enterKeyHint="go" maxLength={6} onInput={(e) => onCodeInput(e.currentTarget.value)} onFocus={() => setCodeFocused(true)} onBlur={() => setCodeFocused(false)} className="absolute inset-0 h-full w-full border-0 bg-transparent text-transparent caret-transparent outline-none selection:bg-transparent" />
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.code.checking') : t('auth:signInSheet.code.submit')}</button>
+            <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{busy ? t('auth:signInSheet.code.checking') : t('auth:signInSheet.code.continuesItself')}</p>
+            {mailApp ? (
+              <a href={mailApp.url} target="_blank" rel="noopener noreferrer" data-sign-in-sheet-open-mail="" className={MAIL_BUTTON}>{t('auth:signInSheet.code.openMail', { app: mailApp.name })}</a>
+            ) : null}
             <div className="flex items-center justify-between">
-              <button type="button" className={QUIET} onClick={() => { setError(null); setLinkRefused(false); setStep('email'); }}>{t('auth:signInSheet.code.changeEmail')}</button>
+              <span className="text-[15px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.code.checkSpam')}</span>
               <button type="button" className={`${QUIET} disabled:text-zinc-500 disabled:dark:text-zinc-400 disabled:no-underline`} disabled={busy || waitLeft > 0} onClick={() => { void requestCode(email); }}>
                 {waitLeft > 0 ? t('auth:signInSheet.code.resendIn', { count: waitLeft }) : t('auth:signInSheet.code.resend')}
               </button>
@@ -1431,28 +1714,82 @@ export function SignInSheet({
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.password.signingIn') : t('auth:signInSheet.password.submit')}</button>
             <div className="flex items-center justify-between">
-              <button type="button" className={QUIET} onClick={() => { setError(null); setDetails(null); setStep(otherWays); }}>
-                {providers.length ? t('auth:signInSheet.password.otherWays') : t('auth:signInSheet.password.useEmailCode')}
-              </button>
-              {/* The reset is the sign-in screen's (./login.tsx), reached by its own address. */}
-              <a href="#login/forgot" onClick={() => { if (followInvite) rememberInviteJoin(); onClose(); }} className={QUIET}>{t('auth:signInSheet.password.forgot')}</a>
+              {/* With the switch, the email code is its other half; Apple and Google are still a step away. */}
+              {providers.length || !methodSwitch ? (
+                <button type="button" className={QUIET} onClick={() => toStep(otherWays)}>
+                  {providers.length ? t('auth:signInSheet.password.otherWays') : t('auth:signInSheet.password.useEmailCode')}
+                </button>
+              ) : <span aria-hidden="true" />}
+              {/* The reset opens here, in the sheet (#5258), not on the sign-in screen's own page. */}
+              <button type="button" data-sign-in-sheet-forgot="" className={QUIET} onClick={() => { typedIdentifier.current = (identifierField.current?.value || '').trim(); toStep('forgot'); }}>{t('auth:signInSheet.password.forgot')}</button>
             </div>
+          </form>
+        ) : null}
+
+        {step === 'forgot' ? (
+          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void sendResetLink(); }}>
+            <div className={FIELD_GROUP}>
+              <div className={FIELD}>
+                <label htmlFor="sign-in-sheet-reset-email" className={LABEL}>{t('auth:signInSheet.forgot.label')}</label>
+                <input ref={resetField} id="sign-in-sheet-reset-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="send" className={INPUT} {...HANDLE_FIELD} />
+              </div>
+            </div>
+            {resetSent ? (
+              <p role="status" data-sign-in-sheet-reset-sent="" className="text-[14px] font-medium text-green-700 dark:text-green-400">{t('auth:signInSheet.forgot.sent')}</p>
+            ) : null}
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.forgot.sending') : t('auth:signInSheet.forgot.submit')}</button>
+            {/* The way out that needs no password at all (#5259): the email step, with the address carried over. */}
+            <button type="button" data-sign-in-sheet-forgot-code="" className={MAIL_BUTTON} onClick={() => { const typed = (resetField.current?.value || '').trim(); if (typed.includes('@')) setEmail(typed.toLowerCase()); toStep('email'); }}>{t('auth:signInSheet.forgot.withCode')}</button>
+            {/* Only once a link went: before then nobody has a problem to read about (#5259). */}
+            {resetSent ? (
+              <p data-sign-in-sheet-reset-support="" className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.forgot.support')}</p>
+            ) : null}
           </form>
         ) : null}
 
         {step === 'account' ? (
           <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void finishAccount(); }}>
             {needsUsername ? (
-              <div className={FIELD_GROUP}>
-                <div className={FIELD}>
-                  <label htmlFor="sign-in-sheet-username" className={LABEL}>{t('auth:signInSheet.account.usernameLabel')}</label>
-                  <input ref={usernameField} id="sign-in-sheet-username" defaultValue={suggestedUsername} autoComplete="username" enterKeyHint="go" className={INPUT} placeholder={t('auth:signInSheet.usernamePlaceholder')} {...HANDLE_FIELD} />
+              <>
+                <div className={FIELD_GROUP}>
+                  <div className={FIELD}>
+                    <label htmlFor="sign-in-sheet-username" className={LABEL}>{t('auth:signInSheet.account.usernameLabel')}</label>
+                    {/* The @ the name wears everywhere else (#5255), outside the field so it is never sent. */}
+                    <div className="flex items-baseline">
+                      <span aria-hidden="true" className="text-[17px] text-zinc-500 dark:text-zinc-400">@</span>
+                      <input ref={usernameField} id="sign-in-sheet-username" defaultValue={suggestedUsername} autoComplete="username" enterKeyHint="go" className={INPUT} onInput={(e) => setHandleDraft(e.currentTarget.value)} aria-describedby="sign-in-sheet-username-check" placeholder={t('auth:signInSheet.usernamePlaceholder')} {...HANDLE_FIELD} />
+                    </div>
+                  </div>
                 </div>
-              </div>
+                {/* Whether it is free, live, and the rules, on one line under the field. */}
+                <div id="sign-in-sheet-username-check" aria-live="polite" className="flex items-baseline justify-between gap-3 text-[13px]">
+                  {handleCheck.state === 'available' ? (
+                    <span data-sign-in-sheet-username-check="available" className="font-semibold text-green-700 dark:text-green-400">{t('auth:signInSheet.account.available')}</span>
+                  ) : handleCheck.state === 'taken' ? (
+                    <span data-sign-in-sheet-username-check="taken" className="text-red-600 dark:text-red-400">{handleCheck.error || t('auth:signInSheet.account.taken')}</span>
+                  ) : handleCheck.state === 'checking' ? (
+                    <span data-sign-in-sheet-username-check="checking" className="text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.account.checking')}</span>
+                  ) : <span />}
+                  <span className="shrink-0 text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.account.rules')}</span>
+                </div>
+                {/* How the name will look beside what they suggest and vote on. */}
+                {handleDraft.trim() ? (
+                  <div data-sign-in-sheet-username-preview="" className="rounded-2xl bg-white px-4 py-3 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+                    <p className="text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.account.previewLabel')}</p>
+                    <div className="mt-2 flex items-center gap-3">
+                      <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-100 text-[15px] font-semibold text-violet-700 dark:bg-violet-950 dark:text-violet-300">{handleDraft.trim().charAt(0).toUpperCase()}</span>
+                      <div className="min-w-0">
+                        <p className="truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">@{handleDraft.trim()}</p>
+                        <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.account.previewLine')}</p>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </>
             ) : null}
-            {/* No password here (#4891): how they sign in, and where a password is added. */}
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? <><FinishingSpinner />{t('auth:signInSheet.account.finishing')}</> : needsUsername ? t('auth:signInSheet.account.create') : t('auth:signInSheet.account.submit')}</button>
+            {/* No password here (#4891): how they sign in, and where a password is added, under the button (#5255) so the field's own line is free for what is wrong with it. */}
             <p data-sign-in-sheet-code-note="" className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.account.codeNote')}</p>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? <><FinishingSpinner />{t('auth:signInSheet.account.finishing')}</> : t('auth:signInSheet.account.submit')}</button>
           </form>
         ) : null}
 
@@ -1486,8 +1823,8 @@ export function SignInSheet({
               ]} />
           </p>
         ) : null}
-        {/* The first step's terms sit in its group (above); every later step keeps them here. */}
-        {step === 'choose' || step === 'email' ? null : (
+        {/* The first step's terms sit in its group (above); every later step that can make an account keeps them here. */}
+        {step === 'choose' || step === 'email' || !stepSaysTerms(step) ? null : (
           <TermsNotice className="mt-3" recaptcha={step === 'phone' || step === 'phone-code' ? RECAPTCHA_LINE : null} />
         )}
       </div>

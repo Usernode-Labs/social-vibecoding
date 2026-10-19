@@ -73,6 +73,9 @@ interface Settings {
   adminWeeklyCents: number;
   // #3654: the model each stage runs on; blank is the platform default.
   models?: Record<ModelStage, string>;
+  // The platform default itself (services/default-model.js); blank is the
+  // deployment's OPENROUTER_DEFAULT_CODEX_MODEL.
+  defaultModel?: string;
   // #3624 stage 2: live work at once across the platform and per person,
   // and whether a DM to the bot is read by its model.
   liveAtOnce: number;
@@ -299,7 +302,10 @@ function retryAt(loop: LastPass): string {
 interface Payload {
   settings: Settings;
   modes: string[];
+  // The platform default in force, and the deployment's own, which a blank
+  // setting goes back to.
   defaultModel?: string | null;
+  deploymentDefaultModel?: string | null;
   bot: Bot | null;
   loop: LastPass | null;
   totals: Totals;
@@ -1108,10 +1114,12 @@ export function benchHint(best: Best | null, stage: ModelStage, modelId: string 
 
 /**
  * One stage's model: the platform default, a model from the benchmark's
- * catalog (with its price), or any other OpenRouter id typed in.
+ * catalog (with its price), or any other OpenRouter id typed in. The
+ * platform default's own picker (`stage` "default") offers the
+ * deployment's default in that first place, and has no benchmark line.
  */
-function ModelPicker({ stage, label, value, defaultModel, models, best, canWrite, onChange }: {
-  stage: ModelStage; label: string; value: string; defaultModel: string | null;
+function ModelPicker({ stage, label, value, defaultModel, blankLabel = 'Platform default', models, best, canWrite, onChange }: {
+  stage: ModelStage | 'default'; label: string; value: string; defaultModel: string | null; blankLabel?: string;
   models: BenchModel[] | null; best: Best | null; canWrite: boolean; onChange: (id: string) => void;
 }) {
   const listed = !value || (models || []).some((m) => m.id === value);
@@ -1134,7 +1142,7 @@ function ModelPicker({ stage, label, value, defaultModel, models, best, canWrite
           onChange(e.target.value);
         }}
       >
-        <option value="">{`Platform default${defaultModel ? ` (${nameOf(defaultModel)})` : ''}`}</option>
+        <option value="">{`${blankLabel}${defaultModel ? ` (${nameOf(defaultModel)})` : ''}`}</option>
         {(models || []).map((m) => <option key={m.id} value={m.id}>{`${m.label}${price(m)}`}</option>)}
         <option value="__other">Another OpenRouter model…</option>
       </select>
@@ -1150,7 +1158,9 @@ function ModelPicker({ stage, label, value, defaultModel, models, best, canWrite
           onChange={(e) => onChange(e.target.value.trim())}
         />
       ) : null}
-      <p className={`${AdminUI.muted} mt-1`} data-model-hint={stage}>{benchHint(best, stage, value || defaultModel)}</p>
+      {stage === 'default' ? null : (
+        <p className={`${AdminUI.muted} mt-1`} data-model-hint={stage}>{benchHint(best, stage, value || defaultModel)}</p>
+      )}
     </div>
   );
 }
@@ -1162,6 +1172,7 @@ interface Form {
   mode: 'off' | 'shadow';
   pausedApps: string[];
   models: Record<ModelStage, string>;
+  defaultModel: string;
   botCap: string;
   userCap: string;
   adminCap: string;
@@ -1186,6 +1197,7 @@ const FIELD_LABEL: Record<FormKey, string> = {
   mode: 'on or off',
   pausedApps: 'where it works',
   models: 'models',
+  defaultModel: 'the platform default model',
   botCap: "the bot's weekly budget",
   userCap: 'the budget per person',
   adminCap: 'the budget per admin',
@@ -1214,6 +1226,7 @@ export function savedForm(p: Pick<Payload, 'settings' | 'bot'>): Form {
     models: {
       triage: s.models?.triage || '', spec: s.models?.spec || '', build: s.models?.build || '', followup: s.models?.followup || '',
     },
+    defaultModel: s.defaultModel || '',
     botCap: p.bot ? (p.bot.weeklyLimitCents / 100).toFixed(2) : '',
     userCap: ((s.userWeeklyCents ?? 5000) / 100).toFixed(2),
     adminCap: ((s.adminWeeklyCents ?? 10000) / 100).toFixed(2),
@@ -1281,6 +1294,10 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
         changed[m.key] = id;
       }
       if (Object.keys(changed).length) patch.models = changed;
+    } else if (key === 'defaultModel') {
+      const id = String(form.defaultModel || '').trim();
+      if (id && !MODEL_ID_RE.test(id)) errors.push('Platform default: a model is an OpenRouter id such as deepseek/deepseek-v4.1-flash-1017, or the deployment default.');
+      patch.defaultModel = id;
     } else if (key === 'botCap') patch.weeklyLimitCents = dollars('botCap', "The bot's weekly budget", '');
     else if (key === 'userCap') patch.userWeeklyCents = dollars('userCap', 'The budget per person', ' (0 for no limit)');
     else if (key === 'adminCap') patch.adminWeeklyCents = dollars('adminCap', 'The budget per admin', ' (0 for no limit)');
@@ -1991,12 +2008,29 @@ function HomeroomBotSection() {
                 <button type="button" className={`${AdminUI.btn.link} text-sm`} onClick={() => showTab('benchmark')}>Compare them on the benchmark</button>
               </div>
               <div className="grid gap-4 md:grid-cols-2">
+                <ModelPicker
+                  key={`default-${formRound}`}
+                  stage="default" label="Platform default"
+                  value={form.defaultModel}
+                  defaultModel={payload?.deploymentDefaultModel || null}
+                  blankLabel="Deployment default"
+                  models={bench ? bench.models : null}
+                  best={null}
+                  canWrite={canWrite}
+                  onChange={(id) => setField('defaultModel', id)}
+                />
+              </div>
+              <p className={`${AdminUI.muted} mt-1 mb-4`} id="admin-homeroom-bot-default-model-note">
+                What every stage below left on the platform default runs on, the bot&apos;s answers in DMs and chats, and a new
+                agent chat for anyone who has not picked a model. Every server follows a change within 10 seconds, with no deploy.
+              </p>
+              <div className="grid gap-4 md:grid-cols-2">
                 {MODEL_STAGES.map((m) => (
                   <ModelPicker
                     key={`${m.key}-${formRound}`}
                     stage={m.key} label={m.label}
                     value={form.models[m.key] || ''}
-                    defaultModel={payload?.defaultModel || bench?.defaultModel || null}
+                    defaultModel={form.defaultModel || payload?.deploymentDefaultModel || payload?.defaultModel || bench?.defaultModel || null}
                     models={bench ? bench.models : null}
                     best={bench?.best || null}
                     canWrite={canWrite}
@@ -2005,7 +2039,7 @@ function HomeroomBotSection() {
                 ))}
               </div>
               <p className={`${AdminUI.muted} mt-3`} id="admin-homeroom-bot-models-note">
-                {`The platform default${payload?.defaultModel ? ` is ${payload.defaultModel}` : ' is the deployment\'s OpenRouter default'}. A change applies from the next turn, and each run records the model it ran on.`}
+                {`A stage on the platform default runs on ${payload?.defaultModel || 'the deployment\'s OpenRouter default'} now. A change applies from the next turn, and each run records the model it ran on.`}
               </p>
             </div>
 

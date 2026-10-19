@@ -87,6 +87,14 @@
     "text": "See older notifications",
     "description": "Button at the foot of the notifications sheet's All filter: fetches the next page of older notifications."
   },
+  "sheet.search.placeholder": {
+    "text": "Search notifications…",
+    "description": "Placeholder and accessible name of the search field between the title and the Unread, Messages and All filters in the notifications sheet. It narrows the notifications already loaded to those whose project, kind or subject matches."
+  },
+  "sheet.search.noMatches": {
+    "text": "No notifications match “{{query}}”.",
+    "description": "Shown in the notifications sheet when a search over the loaded notifications finds nothing. {{query}} is the text typed into the search field."
+  },
   "row.clear": {
     "text": "Clear",
     "description": "Action revealed by swiping an unread notification on a phone: marks that notification as read without opening it. A verb."
@@ -464,12 +472,12 @@
     "description": "Second line of the \"Nearing the app limit\" notification to an administrator. {{used}} is how many apps exist and {{count}} the limit. The part in <0> is shown bold. \"Admin → Limits\" is the path to a section of the admin console."
   },
   "row.limit.sessions.full.body_one": {
-    "text": "<0>{{used}} of {{count}} coding sessions in use.</0> New sessions pause idle ones, or wait, until MAX_GLOBAL_SESSIONS is raised.",
-    "description": "Second line of the \"Session limit reached\" notification to an administrator. {{used}} is how many coding sessions are running and {{count}} the limit. The part in <0> is shown bold. Keep MAX_GLOBAL_SESSIONS as written: it is a setting's name."
+    "text": "<0>{{used}} of {{count}} coding sessions in use.</0> New sessions pause idle ones, or wait, until the session limit is raised in Admin → Limits.",
+    "description": "Second line of the \"Session limit reached\" notification to an administrator. {{used}} is how many coding sessions are running and {{count}} the limit. The part in <0> is shown bold. \"Admin → Limits\" is the path to a section of the admin console."
   },
   "row.limit.sessions.full.body_other": {
-    "text": "<0>{{used}} of {{count}} coding sessions in use.</0> New sessions pause idle ones, or wait, until MAX_GLOBAL_SESSIONS is raised.",
-    "description": "Second line of the \"Session limit reached\" notification to an administrator. {{used}} is how many coding sessions are running and {{count}} the limit. The part in <0> is shown bold. Keep MAX_GLOBAL_SESSIONS as written: it is a setting's name."
+    "text": "<0>{{used}} of {{count}} coding sessions in use.</0> New sessions pause idle ones, or wait, until the session limit is raised in Admin → Limits.",
+    "description": "Second line of the \"Session limit reached\" notification to an administrator. {{used}} is how many coding sessions are running and {{count}} the limit. The part in <0> is shown bold. \"Admin → Limits\" is the path to a section of the admin console."
   },
   "row.limit.sessions.warn.body_one": {
     "text": "<0>{{used}} of {{count}} coding sessions in use.</0> At the limit, idle sessions are paused to make room.",
@@ -546,6 +554,10 @@
   "row.stale.label": {
     "text": "Needs votes",
     "description": "First line of a notification: the viewer's proposed change has too few votes and will be archived if none come. The change's title is on the line below."
+  },
+  "row.stale.blocked": {
+    "text": "Approved, can't go live yet",
+    "description": "First line of a notification: the viewer's proposed change has enough votes but cannot be merged (a conflict or failing checks), and will be archived if nothing changes. The change's title is on the line below."
   },
   "row.stale.yourChange": {
     "text": "your change",

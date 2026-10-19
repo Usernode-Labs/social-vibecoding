@@ -68,8 +68,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ChatIcon,
   CogIcon,
+  CompassIcon,
   HomeIcon,
-  SearchIcon,
+  Squares2X2Icon,
   UserGroupIcon,
   UserIcon,
 } from '@/components/ui/icons';
@@ -82,14 +83,18 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import {
-  communityScopeStore, hydrateCommunityScope, tabVotes, warmCommunities,
+  communityScopeStore, goToCommunity, hydrateCommunityScope, tabVotes, warmCommunities,
   type CommunityInfo,
 } from '../workshop/community-scope';
 import { CommunitySwitcher } from '../workshop/community-switcher';
-import { createSwitcherHold, pressLitTab } from '../workshop/tab-ladder';
+import { pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
+import { pinnedAppsStore } from './pinned-apps-store.js';
+import { RailCommunities, useRailCommunities, votesElsewhere } from './rail-communities';
+import { RailConversations } from './rail-conversations';
+import { RailPinned } from './rail-pinned';
+import { useSidebarRows } from './sidebar-rows';
 import { clearPeekTimer, clearPeekTimerByMouse, enterPeekByMouse, leavePeekByMouse } from './rail-peek';
-import { StripApps } from './strip-apps';
 import { schedulePress, type PendingPress } from './tab-press';
 
 /**
@@ -112,9 +117,11 @@ import { schedulePress, type PendingPress } from './tab-press';
  * own projects"). Inside a project, "Workshop" is the build tab beside its
  * hub — the one place that word is shown now.
  *
- * Discover keeps the magnifier rather than taking a grid glyph: it is the
- * same row the app menu spelled `#switcher-row-discover` with a
- * <SearchIcon/>, and moving a destination should not also rename its glyph.
+ * Discover is a compass (v3, 18 Oct 2026), on every bar alike, where it
+ * kept the magnifier the app menu's `#switcher-row-discover` drew: it is
+ * where you go to find something new, and a magnifier says "search", which
+ * the sidebar's Communities heading and the inbox already offer. One glyph
+ * a destination, whatever bar it is on.
  */
 // `label` is a message id (frontend/locales/en/core.json), read when the bar
 // renders so the words follow the language on screen.
@@ -130,7 +137,7 @@ const TABS = [
     href: '/',
     Icon: HomeIcon,
   },
-  { key: 'discover' as const, label: 'core:tabs.discover', href: '#apps', Icon: SearchIcon },
+  { key: 'discover' as const, label: 'core:tabs.discover', href: '#apps', Icon: CompassIcon },
   { key: 'messages' as const, label: 'core:tabs.messages', href: '#messages', Icon: ChatIcon },
   { key: 'workshop' as const, label: 'core:tabs.communities', href: '#communities', Icon: UserGroupIcon },
   // "Me" is the label only until somebody is signed in: from then on this tab
@@ -232,10 +239,11 @@ function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
  * On the phone's bar, a square ring, the shape of an app's own tile, around
  * either that community's tile, in its colour (features/workshop/
  * community-scope.ts says which; lib/community-color.ts what colour), or, on
- * All communities, the tab's own people glyph. The ring is what says the tab
- * can be switched: hold it and "Your communities" opens (#3701,
- * ../workshop/tab-ladder.ts). The desktop rail draws no ring (app.css): the
- * header's name is the switcher there, as it is on a phone.
+ * All communities, the tab's own people glyph. The ring says which community
+ * the tab is on; switching is the drawer's list. Holding the tab no longer
+ * opens "Your communities" (18 Oct 2026): that was the old switcher, which
+ * the drawer replaced on a phone. The desktop rail draws no ring (app.css):
+ * the header's name is the switcher there.
  *
  * All communities is THE PRERENDER: the scope arrives from localStorage and
  * app.js after the first paint, so the shipped markup and the first client
@@ -762,11 +770,22 @@ export function PlatformTabs() {
   // switcher.
   const scope = useStoreState(communityScopeStore);
   useEffect(() => { hydrateCommunityScope(); }, []);
-  useEffect(() => (viewer ? warmCommunities() : undefined), [viewer]);
+  // On a desktop the sidebar's own rows are your communities (D), so they are
+  // read at once rather than a moment after sign-in.
+  const sidebarRows = useSidebarRows();
+  useEffect(() => (viewer ? warmCommunities(sidebarRows ? 0 : undefined) : undefined), [viewer, sidebarRows]);
   const scoped = scope.slug ? scope.info[scope.slug] || null : null;
   // Less an unchosen community's votes: the one every account is put in,
   // until you have taken part there (tabVotes says why).
   const votes = tabVotes(scope);
+  // THE SIDEBAR OF ROWS (./sidebar-rows.ts, from 768px): the five
+  // communities it lists (./rail-communities.tsx), and on its All row the
+  // votes in the ones it does not, so no vote is counted twice.
+  // The pinned ones have their own rows above them, with their own counts.
+  const railShown = useRailCommunities();
+  const { apps: pins } = useStoreState(pinnedAppsStore);
+  const elsewhere = votesElsewhere([...pins.map((app: { slug: string }) => app.slug), ...railShown], scope.list, scope.info);
+  const allCount = scope.list ? scope.list.length : 0;
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
   // fold the one there is (../header/../nav/sidebar-toggle.tsx). The peek
@@ -802,19 +821,6 @@ export function PlatformTabs() {
   // beside a running app on the desktop.
   const runningApp = screen === 'app-view' && !tab;
   const { box: marker, lit, markerRef, press } = useTabMarker(barRef, tab);
-  // THE COMMUNITIES TAB, HELD on the phone's bar, opens "Your communities"
-  // (#3701, ../workshop/tab-ladder.ts createHold); a short press is the
-  // ladder below. One per bar, its timer and click guard let go on unmount.
-  // Only handlers ride on the tab, so the markup is the prerender's.
-  const [hold] = useState(createSwitcherHold);
-  useEffect(() => () => hold.dispose(), [hold]);
-  const holdProps = {
-    onPointerDown: hold.onPointerDown,
-    onPointerMove: hold.onPointerMove,
-    onPointerUp: hold.onPointerUp,
-    onPointerCancel: hold.onPointerCancel,
-    onContextMenu: hold.onContextMenu,
-  };
   // A plain press on another tab lights it and slides the pill first, and
   // navigates a frame later (useTabMarker's `press`, #3259). A modified click
   // stays the browser's, a second press on a tab still waiting for its route
@@ -832,7 +838,19 @@ export function PlatformTabs() {
     // back to the community, then to the top, then to All communities, whose
     // own press only scrolls (../workshop/tab-ladder.ts). It used to open
     // "Your communities" on a phone and go to All communities on the rail.
-    // The switcher is the header's name, and the phone's tab held (`hold`).
+    // On a wide window the switcher is the header's name; a phone has the
+    // drawer's list, and holding the tab opens nothing (18 Oct 2026).
+    // v3: IN THE SIDEBAR OF ROWS THE TAB IS "All 13 communities", and goes
+    // there, from a community's page too: a community's own row is the way
+    // up its page, and resuming the last one (App.resumeWorkshopView) is the
+    // strip's tab, whose face is that community. On the list itself it only
+    // scrolls, as before.
+    if (key === 'workshop' && sidebarRows) {
+      event.preventDefault();
+      if (screen === 'workshop-screen') pressLitTab(screen);
+      else goToCommunity(null);
+      return;
+    }
     if (key === 'workshop' && lit === 'workshop' && tab === 'workshop') {
       event.preventDefault();
       pressLitTab(screen);
@@ -919,12 +937,17 @@ export function PlatformTabs() {
         } : undefined}
       />
       {TABS.flatMap(({ key, label, href, Icon }) => [
-        // #4417: THE FIVE RECENT APPS SIT BETWEEN THE SECTIONS AND YOU, on
-        // the desktop strip: after the last section (Communities), before Me
-        // at its foot, where Recents (#2802) sat. The conversations it listed
-        // are Messages' own list. Desktop only; app.css keeps it off the
-        // phone's bar.
-        key === 'me' ? <StripApps key="apps" /> : null,
+        // 18 Oct 2026: THE COMMUNITIES YOU PINNED, under their heading,
+        // above your communities (./rail-pinned.tsx). Each community's app
+        // is the first row under it now, so the apps the strip listed apart
+        // from them (#4417, Pinned and Recent apps) have no section of their
+        // own. From 768px only; app.css keeps it off the phone's bar.
+        key === 'workshop' ? <RailPinned key="pinned" /> : null,
+        // D (18 Oct 2026): YOUR COMMUNITIES, under their heading, just above
+        // the Communities tab, which the sidebar of rows draws as their
+        // "All 13 communities" row. From 768px only; app.css keeps it off
+        // the strip and the phone's bar.
+        key === 'workshop' ? <RailCommunities key="communities" shown={railShown} /> : null,
         <a
           key={key}
           id={`platform-tab-${key}`}
@@ -938,14 +961,23 @@ export function PlatformTabs() {
           // router's tab, except for the moment between a press and its route
           // landing, when it is the tab pressed (useTabMarker, #3259).
           aria-current={lit === key ? 'page' : undefined}
-          aria-label={key === 'workshop' ? communitiesAriaLabel(scoped) : tabLabel(key, t(label), viewer).ariaLabel}
+          // Beside the sidebar's list the tab is its All row, and named by
+          // the words it shows ("All 13 communities"), not the community.
+          aria-label={key === 'workshop'
+            ? (sidebarRows ? undefined : communitiesAriaLabel(scoped))
+            : tabLabel(key, t(label), viewer).ariaLabel}
           onClick={(event) => onTabClick(event, key, href)}
-          {...(key === 'workshop' ? holdProps : {})}
         >
           <span className="platform-tab-mark">
             {key === 'workshop'
               ? <CommunityTabFace info={scoped} />
               : <Icon className="platform-tab-glyph" aria-hidden="true" />}
+            {/*
+                THE ALL ROW'S GLYPH, in the sidebar of rows (D): the grid,
+                drawn in the ring's place there, as the screen it opens is
+                every community at once. app.css shows one of the two.
+            */}
+            {key === 'workshop' ? <Squares2X2Icon className="platform-tab-glyph platform-tab-all-glyph" aria-hidden="true" /> : null}
             {/*
                 THE SECOND BADGE IN THE SHELL, and the first one that is not
                 the bell's. #1443 argued the platform should carry exactly
@@ -985,7 +1017,30 @@ export function PlatformTabs() {
             {key === 'workshop' ? <VotesBadge count={votes} /> : null}
           </span>
           <span className="platform-tab-label">{tabLabel(key, t(label), viewer).text}</span>
+          {/*
+              THE ALL ROW'S WORDS AND COUNT, in the sidebar of rows (D): how
+              many communities you are in, so the row says there are more than
+              the five above it, and the votes in the ones it does not list.
+              app.css shows these instead of the label and the tab's own
+              badge there; a hidden element is not in the accessible name, so
+              each width's name is what it shows.
+          */}
+          {key === 'workshop' ? (
+            <span className="platform-tab-all-label">
+              {allCount > 0 ? t('core:rail.all', { count: allCount }) : t('core:rail.allPlain')}
+            </span>
+          ) : null}
+          {key === 'workshop' && elsewhere > 0 ? (
+            <span className="platform-tab-all-votes" aria-label={t('core:tabs.votesWaiting', { count: elsewhere })}>
+              {elsewhere > 99 ? '99+' : String(elsewhere)}
+            </span>
+          ) : null}
         </a>,
+        // v3 (18 Oct 2026): THE CONVERSATIONS, nested under Messages while
+        // its screen is up in the sidebar of rows (./rail-conversations.tsx).
+        // The element is there at every width and on every screen, empty
+        // when shut, so the bar's sibling order is one order.
+        key === 'messages' ? <RailConversations key="conversations" /> : null,
       ])}
       {/*
           SETTINGS, ONE CLICK FROM THE RAIL'S FOOT (#3120). A cog beside the

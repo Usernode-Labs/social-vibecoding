@@ -43,20 +43,37 @@ export interface Asked {
   gone: boolean;
 }
 
+// Whether there is room for the campaign to change its next app: the
+// sessions spending the platform-wide budget (session-caps.js
+// GLOBAL_SESSIONS_SQL) against the session limit, and how many of its own
+// proposals are still being put up or up for a vote.
+export interface Room {
+  used: number;
+  // The session limit: the admin's setting (services/session-limit.js,
+  // platform_settings max_global_sessions), else the deploy's.
+  limit: number;
+  open: number;
+}
+
 export interface Facts {
   campaign: CampaignRow | null;
   // Start: the rows it already has, else its targets.
   apps: AppRow[];
-  // MergeGreen: its proposals in review whose checks passed or were skipped.
+  // MergeGreen, AutoMerge, and Check while auto-merge is on: its proposals
+  // in review whose checks passed or were skipped.
   green: { sessionId: number; appId: number }[];
   // Check: its proposals still being put up for a vote.
   asked: Asked[];
   // A change's result: whether its app still exists (locked, so it is not
   // deleted under the proposal row the result writes).
   appAlive: boolean | null;
+  // The room it has to change its next app (see Room), and how many of its
+  // proposals are open (auto-merge's check runs while any are); null for a
+  // drain.
+  room: Room | null;
 }
 
-export const NO_FACTS: Facts = { campaign: null, apps: [], green: [], asked: [], appAlive: null };
+export const NO_FACTS: Facts = { campaign: null, apps: [], green: [], asked: [], appAlive: null, room: null };
 
 async function readCampaign(tx: Tx, id: number): Promise<CampaignRow | null> {
   const { rows: [r] } = await tx.query(
@@ -130,12 +147,37 @@ async function readAsked(tx: Tx, campaignId: number, appIds: number[]): Promise<
   }));
 }
 
-export async function readFacts(tx: Tx, campaignId: number, event: Event<any>, proposing: number[]): Promise<Facts> {
+// The session limit as services/session-limit.js resolves it (its setting,
+// read here without that module's cache, else the deploy's value), and the
+// counts it is held against.
+const SETTING_MAX = 2000;
+async function readRoom(tx: Tx, campaignId: number, deployLimit: number): Promise<Room> {
+  const { rows: [r] } = await tx.query(
+    `SELECT (SELECT value FROM platform_settings WHERE key = 'max_global_sessions') AS setting,
+            (SELECT COUNT(*)::int FROM chat_sessions
+              WHERE status IN ('active', 'promoted') AND source IS DISTINCT FROM 'imported') AS used,
+            (SELECT COUNT(*)::int FROM maintenance_campaign_apps mca JOIN chat_sessions cs ON cs.id = mca.session_id
+              WHERE mca.campaign_id = $1 AND cs.status IN ('active', 'promoted', 'merging')) AS open`, [campaignId]);
+  const n = parseInt(r?.setting == null ? '' : String(r.setting), 10);
+  const limit = Number.isInteger(n) && n >= 1 && n <= SETTING_MAX ? n : deployLimit;
+  return { used: Number(r?.used) || 0, limit, open: Number(r?.open) || 0 };
+}
+
+export async function readFacts(tx: Tx, campaignId: number, event: Event<any>, proposing: number[],
+  o: { deployLimit: number; autoMerge?: boolean } = { deployLimit: 100 }): Promise<Facts> {
   const campaign = await readCampaign(tx, campaignId);
   if (!campaign) return NO_FACTS;
   const out: Facts = { ...NO_FACTS, campaign };
+  // Every event that may change the next app (a retry of a finished
+  // campaign's app included), or that sets the check (a stop keeps it for
+  // auto-merge), reads it; an admin's drain does not.
+  if (event.type !== 'MergeGreen') out.room = await readRoom(tx, campaignId, o.deployLimit);
   if (event.type === 'Start') out.apps = await readApps(tx, campaign);
-  if (event.type === 'MergeGreen') out.green = await readGreen(tx, campaignId);
+  // The green ones: for a drain, for auto-merge being turned on, and for
+  // each check while it is on.
+  if (event.type === 'MergeGreen' || event.type === 'AutoMerge' || (event.type === 'Check' && o.autoMerge)) {
+    out.green = await readGreen(tx, campaignId);
+  }
   if (event.type === 'Check') out.asked = await readAsked(tx, campaignId, proposing);
   const p = event.payload as any;
   if ((event.type === 'WorkSucceeded' || event.type === 'WorkFailed' || event.type === 'WorkExhausted') && typeof p?.workKey === 'string') {

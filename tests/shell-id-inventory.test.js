@@ -360,6 +360,13 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #5405: search over the loaded notifications ───────────────────
+  'notifications-search': '#5405: the search field\'s block between the notifications sheet\'s title and the Unread | Messages | All tabs.',
+  'notifications-search-input': '#5405: the field itself (type="search"). Filters the tab that is open, over the rows already loaded, by project, kind and subject; Escape with text empties it.',
+  // #notifications-search-empty (the "No notifications match “…”" line) is
+  // NOT here: it renders only while a query is active and nothing matches,
+  // so it is not in the prerendered document — the same treatment the maps
+  // give ids behind an open dialog.
   // ── #5048: private requests ──────────────────────────────────────────────
   'feedback-private-row': '#5048: the Suggest an improvement dialog\'s "Private request" box, which files the request in Homeroom only (POST /api/private-requests) where only platform admins can see it, never as a GitHub issue. Ships hidden; feedback-controller.js shows it to full admins on each open.',
   'feedback-private-checkbox': '#5048: the box itself, unticked on every open.',
@@ -399,6 +406,13 @@ const ADDED_IDS = {
   // #3319: Settings → Theme's "Keep sidebar open in apps" switch, React-wired
   // (features/settings/sections/theme.tsx) and desktop only.
   'settings-rail-pinned': '#3319 keep-sidebar-open-in-apps switch',
+  // ── #3969: Settings → Accessibility, the reading controls ──────────
+  // A page of one part in Preferences, right after Appearance. Stateful like
+  // Theme (features/settings/sections/accessibility.tsx); nothing in
+  // settings.js binds inside it.
+  'settings-accessibility-section': '#3969: the Accessibility page root, inside its [data-settings-section="accessibility"] wrapper.',
+  'settings-text-size-track': '#3969: the Normal / Large / Larger segmented control. Reuses the .theme-seg classes app.css keys the recessed track off; deliberately no caret — --theme-caret-index belongs to the theme control.',
+  'settings-high-contrast': '#3969: the High contrast switch (the RailPinnedRow pattern, at every width).',
   // ── #2718: the platform's destinations leave the app's menu ──────
   //
   // Eleven ids leave THIS map rather than entering RETIRED_IDS, because the
@@ -452,9 +466,12 @@ const ADDED_IDS = {
   // #4417: the rail's Recents (#platform-recents, #platform-recents-head,
   // both ADDED here by #2802 and never in the frozen baseline) is retired:
   // the desktop strip's five recent apps and the section column beside it
-  // take its place, and the conversations it listed are Messages' own list.
-  'platform-strip-apps': '#4417: the desktop strip\'s five recent apps, between the last section (Communities) and you: each app\'s tile over its name, the still-open dot on the apps kept alive (features/nav/strip-apps.tsx). Ships `hidden` and EMPTY; the apps arrive from localStorage one commit after mount, so the prerender and the first client render agree. Never drawn on the phone\'s bar. Its rows carry no ids, only data-strip-app.',
-  'platform-section-column': '#4417: the column beside the desktop strip that belongs to the section on screen: a project\'s places (Hub, Needs you, Workshop, #general and its topics) while its page is up under Communities (features/nav/section-column.tsx). Ships `hidden` and EMPTY; never drawn on a phone, where the places are the tray behind the page\'s place bar.',
+  // took its place, and the conversations it listed are Messages' own list.
+  // The strip's apps (#platform-strip-apps) went in turn on 18 Oct 2026, for
+  // an App row under each community: see #platform-rail-pinned below. So did
+  // #platform-section-column (also ADDED here, by #4417): the sidebar of rows
+  // nests a project's places under its row from 768px, the drawer holds
+  // them on a phone, and with the strip gone no width drew the column.
   // #app-menu-row-discussion ("Go to app discussion", #2718) left the menu in
   // the UI overhaul: the project's channel is on its hub, one row above it.
   // ── Three ids from #2718's second pass that are NOT in this map ──
@@ -610,6 +627,10 @@ const ADDED_IDS = {
   'settings-about-section': 'Settings → About: the three version rows. They have moved twice before (#1431 built an About block, #1443 took them to the Improve panel\'s footer). They are back because the question they were being read for — "is something happening, and is there a new version yet" — is answered directly by that footer now, as a note and a reload button. What is left over is reference material, and this is the reference screen.',
   'about-row-app-version': 'The open app\'s latest merged main, in that pane. Gated on `slug && !selfHosted`, exactly as the Improve panel\'s copy was: on the platform\'s own app this row IS the platform, so it and "Platform version" under it printed the same seven characters twice.',
   'about-app-version-slot': 'Its value. A store-fed island rather than a legacy innerHTML target — the pane around it is static, and a version arriving when an app opens should repaint one row, not the settings screen.',
+  // ── #5094, #5106: the terms and the privacy notice in Settings → About ──
+  'settings-about-legal': 'Settings → About\'s Legal block, under the version rows: where a signed-in person finds the terms and Homeroom\'s privacy notice again after the sign-in screens named them (#5094, #5106). The Homeroom app shows this same screen, which is what puts them in the app\'s Settings too.',
+  'settings-about-terms': 'Its Terms row: opens the terms sheet settings.js owns (Settings.showTermsSheet), the same one the Homeroom app\'s "about & legal" block opens.',
+  'settings-about-privacy': 'Its Privacy notice row: a new-tab link to the address GET /api/public/waitlist/options serves as privacy_link (src/services/marketing-links.js). Inside the Homeroom app public/js/nav-link.js hands it to the bridge\'s openExternal. No href in the prerender; it arrives with the options.',
   // ── Andrea's 27 Aug 2026 waitlist review: "Follow along" ────────
   'more-follow-row': 'Holds the "Follow on X / LinkedIn / Instagram" links on the stage-2 form. Empty in this document by design: each link renders only when WAITLIST_FOLLOW_<NETWORK>_URL is set, so an unconfigured network shows nothing rather than a dead profile link.',
   'more-followed': 'The "I followed along" checkbox, stored as `answers.followed_claim`. It is a SELF-REPORT and is deliberately kept out of `answers.verified`: LinkedIn returns aggregate follower statistics with no identity, Instagram exposes a count and no relationship lookup, and X retired its boolean friendship endpoint, so no network will confirm a follow for us. Hidden here because its label is shown only once at least one follow URL is configured.',
@@ -1068,6 +1089,24 @@ const ADDED_IDS = {
   'cp-title-add': '#4891: its "Add a password" title, shown instead to an account that has none and signs in with an emailed code.',
   'cp-save-change': '#4891: #cp-save\'s "Change password" label, beside its "Add password" one.',
   'cp-save-add': '#4891: #cp-save\'s "Add password" label, for an account with no password yet.',
+  // ── D (18 Oct 2026): the desktop's sidebar of rows ──────────────────
+  // From 1024px the rail lists your communities itself (features/nav/
+  // rail-communities.tsx), between Messages and the Communities tab, which is
+  // their All row there; app.css draws none of it on the strip or the
+  // phone's bar. The heading and its search ship in the document; the five
+  // rows arrive with the community list, so they carry no ids.
+  'platform-rail-communities': 'D: the sidebar\'s Communities section (role=group), between #platform-tab-messages and #platform-tab-workshop. dapp.json pins the bar order through it.',
+  'platform-rail-communities-label': 'D: the section\'s "Communities" heading, which names the group.',
+  'platform-rail-conversations': 'v3: the conversations nested under Messages in the sidebar of rows, right after #platform-tab-messages; an empty element while shut, so the bar\'s order is one order. dapp.json pins it there.',
+  // 18 Oct 2026: the communities you pinned, under their own heading above
+  // yours (features/nav/rail-pinned.tsx). Each community's app is a row
+  // under it now, so #platform-strip-apps, the strip's Pinned and Recent
+  // apps (#4417), went: a pin is a community's. It ships hidden with its
+  // heading and no rows; the pins arrive from localStorage after mount.
+  'platform-rail-pinned': 'The sidebar\'s Pinned section (role=group), between #platform-rail-conversations and #platform-rail-communities, hidden while nothing is pinned. Home\'s drag recognizer drops a My apps tile on it; dapp.json pins the bar order through it.',
+  'platform-rail-pinned-label': 'The section\'s "Pinned" heading, which names the group.',
+  'platform-rail-search': 'D: the search beside that heading, shown on hover or focus: All communities with its search box focused and lit (features/workshop/communities-search.ts). dapp.json selects on it.',
+  'workshop-search': 'D: the search at the head of All communities\' column (features/workshop/index.tsx), drawn by app.css from 1024px only: your communities by name, as one list. Prerendered empty.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

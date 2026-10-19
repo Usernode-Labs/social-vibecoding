@@ -14,6 +14,7 @@ import type {
 } from '../kernel/index.ts';
 import { changeClosed } from '../rules/agent-notes.ts';
 import { resolveIssueBounty } from '../rules/bounties.ts';
+import { KUDOS_PARKED } from '../rules/kudos-parked.ts';
 import { createPrMergedNotification, settleDecidedChange } from '../rules/change-notifications.ts';
 import { authorLine, closingComment, liveLine, threadLine } from '../rules/included-lines.ts';
 import { creditsSentence, mergeCredits } from '../rules/merge-credits.ts';
@@ -269,10 +270,12 @@ function deliveryRequest(d: Data, reuse: Json): NonNullable<Outcome['messages']>
 
 // Its preview goes: the preview machine retires it for good, asked by a
 // message in this transaction (it cannot be lost, and the preview's own
-// timeline shows it). For a merge that is delivered, only once app-delivery
-// has answered: in demo mode the deploy uses the preview's own build, and
-// the retirement drops the preview's reference to it. Recorded as a
-// follow-up done, so it is asked once.
+// timeline shows it). At the merge, unless its deploy reuses the preview's
+// own build (demo mode, reuseOf): that one waits for app-delivery's answer,
+// since the retirement drops the preview's reference to the build. Waiting
+// for every deploy held a full namespace quota shut on 19 Oct 2026: 65
+// merged previews waited for 65 deploys, which waited for pods the previews
+// held. Recorded as a follow-up done, so it is asked once.
 const TEARDOWN = 'teardown';
 function andTeardown(out: Outcome<MFState>): Outcome<MFState> {
   if (out.next.name === NONE) return out;
@@ -361,7 +364,10 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
   const work: WorkRequest[] = app.selfHosted ? [{ kind: WORK.nudge, key: 'nudge', input: { sha: d.mergeSha, prNumber: d.prNumber } }] : [];
   // The app's merge queue: the next merge (a message, not a kick: it cannot
   // be lost).
-  const messages = [toProposal(d), ...(d.delivery ? [deliveryRequest(d, reuseOf(f))] : []), toQueue(d, 'merged')];
+  // What the deploy is offered of the preview, which also decides whether
+  // the preview waits for its answer (andTeardown, below).
+  const reuse = reuseOf(f);
+  const messages = [toProposal(d), ...(d.delivery ? [deliveryRequest(d, reuse)] : []), toQueue(d, 'merged')];
   work.push(...settleWork(d, s.linkedIssues, false));
   if (d.repo && d.prNumber) {
     work.push({ kind: WORK.find, key: 'included', input: { sessionId: d.sessionId, appId: d.appId, prNumber: d.prNumber, ...d.repo } });
@@ -395,10 +401,11 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
     if (exact) return andTeardown(toLive(e, d, exact.sha, ctx, x));
     if (d.repo) for (const b of after) work.push(verifyWork(d, b.sha));
   }
-  // The platform's own app has no deploy here to wait for: its preview goes
+  // The platform's own app has no deploy here to wait for, and a deploy
+  // that builds its own image does not need the preview: either way it goes
   // at once.
   const out = outcome('delivering', d, x);
-  return app.selfHosted ? andTeardown(out) : out;
+  return app.selfHosted || !reuse ? andTeardown(out) : out;
 }
 
 // Why a carried change can no longer be included: INCLUDED_CANDIDATES_SQL's
@@ -833,7 +840,9 @@ async function writeSecrets(tx: Tx, w: any, dataKey: string, ctx: WriteContext) 
 }
 
 // Bounties on the requests it closes go to its author, with their events
-// and lines in the same transaction.
+// and lines in the same transaction. #5249: while kudos is parked
+// (rules/kudos-parked.ts) a bounty pledged before parking is still paid,
+// and its event recorded, but quietly: no line in the proposal's thread.
 async function writeBounties(tx: Tx, w: any, ctx: WriteContext) {
   for (const n of w.numbers as number[]) {
     const { awarded } = await resolveIssueBounty(tx, { appId: w.appId, sessionId: w.sessionId, awardeeUserId: w.userId, issueNumber: n });
@@ -841,6 +850,7 @@ async function writeBounties(tx: Tx, w: any, ctx: WriteContext) {
     await tx.query(
       `INSERT INTO events (user_id, app_id, session_id, event_type, metadata) VALUES ($1, $2, $3, 'bounty_awarded', $4::jsonb)`,
       [w.userId ?? null, w.appId, w.sessionId, JSON.stringify({ issueNumber: n, prNumber: w.prNumber, count: awarded.length })]);
+    if (KUDOS_PARKED) continue;
     const recipient = w.userId ? `<@${w.userId}>` : 'the author';
     await line(tx, ctx, w.eventId, w.appId, w.sessionId,
       `Bounty on issue #${n} (${awarded.length} kudos) awarded to ${recipient} for PR #${w.prNumber || w.sessionId}`);
@@ -879,14 +889,14 @@ async function writeMergedNotification(tx: Tx, w: any, ctx: WriteContext) {
     const c = await mergeCredits(tx, { id: w.sessionId, app_id: w.appId, user_id: w.userId }, { before: w.mergedAt });
     credits = creditsSentence(c, { withAuthor: false }) || null;
   }
-  const created = await createPrMergedNotification(tx, {
+  await createPrMergedNotification(tx, {
     userId: w.userId ?? null, appId: w.appId, sessionId: w.sessionId, forced: !!w.force, credits,
     alsoVoters: true,
   });
-  // Named, not carried: the relaying web process reads the row for the
-  // author's tabs (ws.js relayNotification), so the bell's query never runs
-  // in, or holds up, the transition that makes the change live.
-  for (const row of created || []) {
-    ctx.push(toUser(Number(row.user_id), { type: 'notification_new', notificationId: Number(row.id) }));
-  }
+  // The write triggers the phone push from the database. Nothing is pushed
+  // to open tabs (#5487): a row about a change that has just merged is
+  // hidden from the bell's list the moment its next fetch runs, so
+  // prepending it live would flash a row that never lists and bump the
+  // badge for it. The settle step sends `notifications_changed` to those
+  // whose bell changed, which re-badges their phone.
 }

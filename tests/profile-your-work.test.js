@@ -289,6 +289,239 @@ test('the controller reads the view it was opened on, and drops an answer for an
   }
 });
 
+// ── #5452: a vote shows in Your votes as soon as it is saved ───────────
+
+test('#5452: voted() re-reads the open votes view and publishes what it answered', async () => {
+  const mod = loadTsx(SCREEN);
+  const { profileProposalsController: ctl, profileProposalsStore: store } = mod;
+  const prior = { fetch: globalThis.fetch, location: globalThis.location };
+  const asked = [];
+  const pending = [];
+  globalThis.location = { search: '' };
+  globalThis.fetch = (url) => {
+    asked.push(url);
+    return new Promise((resolve) => { pending.push(resolve); });
+  };
+  try {
+    const first = ctl.open('votes');
+    assert.equal(pending.length, 1);
+    pending[0]({ ok: true, json: async () => ({ items: [] }) });
+    await first;
+    assert.deepEqual(store.get().data.votes, { items: [] });
+
+    // A vote is cast while the view is up: the list reads again in place.
+    const again = ctl.voted();
+    assert.equal(asked.length, 2, 'voted() fetched again');
+    assert.equal(asked[1], '/api/me/history?type=votes&limit=50');
+    pending[1]({ ok: true, json: async () => ({ items: [
+      { type: 'pr_vote', vote: 'yes', status: 'promoted', app: { slug: 'run-club', name: 'Run Club' },
+        pr: { sessionId: 31, number: 40, title: 'Weekly distance leaderboard' } },
+    ] }) });
+    await again;
+    assert.equal(store.get().data.votes.items.length, 1, 'the new vote is listed, without a reload');
+    assert.equal(store.get().error, false);
+    ctl.close();
+  } finally {
+    globalThis.fetch = prior.fetch;
+    if (prior.location === undefined) delete globalThis.location; else globalThis.location = prior.location;
+    store.set({ open: false, kind: 'changes', data: {}, error: false });
+  }
+});
+
+test('#5452: voted() with the votes view closed drops the cached list and fetches nothing', () => {
+  const mod = loadTsx(SCREEN);
+  const { profileProposalsController: ctl, profileProposalsStore: store } = mod;
+  const prior = { fetch: globalThis.fetch, location: globalThis.location };
+  const asked = [];
+  globalThis.location = { search: '' };
+  // A read that never settles: if voted() fetched here, the ask count says so.
+  globalThis.fetch = (url) => { asked.push(url); return new Promise(() => {}); };
+  try {
+    // Your changes is up, with a votes list left over from an earlier look.
+    store.set({ open: true, kind: 'changes', error: false, data: { votes: { items: [] } } });
+    ctl.voted();
+    assert.equal(store.get().data.votes, undefined, 'the next open loads, it does not paint the old list');
+    assert.deepEqual(asked, [], 'nothing fetched: the view is not up');
+    // And with no cached list to drop, it stays quiet all the same.
+    store.set({ data: {} });
+    ctl.voted();
+    assert.deepEqual(asked, []);
+    assert.deepEqual(store.get().data, {});
+  } finally {
+    globalThis.fetch = prior.fetch;
+    if (prior.location === undefined) delete globalThis.location; else globalThis.location = prior.location;
+    store.set({ open: false, kind: 'changes', data: {}, error: false });
+  }
+});
+
+test('#5452: a read started before the vote cannot put the stale list back over the new one', async () => {
+  const mod = loadTsx(SCREEN);
+  const { profileProposalsController: ctl, profileProposalsStore: store } = mod;
+  const prior = { fetch: globalThis.fetch, location: globalThis.location };
+  const pending = [];
+  globalThis.location = { search: '' };
+  globalThis.fetch = () => new Promise((resolve) => { pending.push(resolve); });
+  try {
+    // The read open() started before the vote was saved…
+    const stale = ctl.open('votes');
+    // …then the vote is saved and voted() reads again.
+    const fresh = ctl.voted();
+    assert.equal(pending.length, 2);
+    pending[1]({ ok: true, json: async () => ({ items: [{ pr: { sessionId: 31 } }] }) });
+    await fresh;
+    assert.equal(store.get().data.votes.items.length, 1);
+    // …and only now lands. It is the older read, so it publishes nothing.
+    pending[0]({ ok: true, json: async () => ({ items: [] }) });
+    await stale;
+    assert.equal(store.get().data.votes.items.length, 1, 'the stale answer did not overwrite the fresh one');
+    ctl.close();
+  } finally {
+    globalThis.fetch = prior.fetch;
+    if (prior.location === undefined) delete globalThis.location; else globalThis.location = prior.location;
+    store.set({ open: false, kind: 'changes', data: {}, error: false });
+  }
+});
+
+// ── #5457: the read waits for the network, and the open view catches up ─
+//
+// On a slow connection the service worker answered the read from its saved
+// copy (taken before the vote) and later posted the correction; this screen
+// heard neither, so the vote stayed missing until a refresh. The cases below
+// run the controller against the real live-reads module, handed in through
+// the loader's stub seam so the test holds the very watch/resync/flush the
+// controller binds to; _resetLiveReads between cases, and every case loads a
+// fresh controller module, so nothing carries over.
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test('#5457: reload() asks for a fresh answer on each of the three views', async () => {
+  const mod = loadTsx(SCREEN);
+  const { profileProposalsController: ctl } = mod;
+  const prior = { fetch: globalThis.fetch, location: globalThis.location };
+  const asked = [];
+  globalThis.location = { search: '' };
+  globalThis.fetch = (url, init) => {
+    asked.push([url, init]);
+    return Promise.resolve({ ok: true, json: async () => ({}) });
+  };
+  try {
+    await ctl.open('changes');
+    await ctl.open('requests');
+    await ctl.open('votes');
+    assert.deepEqual(asked.map(([url]) => url), [
+      '/api/me/proposal-history',
+      '/api/me/requests',
+      '/api/me/history?type=votes&limit=50',
+    ]);
+    for (const [, init] of asked) {
+      assert.equal(init.cache, 'no-cache', 'the worker waits for the network, not its saved copy');
+      assert.equal(init.credentials, 'same-origin');
+    }
+    ctl.close();
+  } finally {
+    globalThis.fetch = prior.fetch;
+    if (prior.location === undefined) delete globalThis.location; else globalThis.location = prior.location;
+  }
+});
+
+test('#5457: a correction to the open view\'s read re-reads it; another view\'s does not', async () => {
+  const live = loadTsx('frontend/src/lib/live-reads.ts');
+  live._resetLiveReads();
+  const mod = loadTsx(SCREEN, { stubs: { '../../lib/live-reads': live } });
+  const { profileProposalsController: ctl, profileProposalsStore: store } = mod;
+  const prior = { fetch: globalThis.fetch, location: globalThis.location };
+  const asked = [];
+  const pending = [];
+  globalThis.location = { search: '' };
+  globalThis.fetch = (url) => {
+    asked.push(url);
+    return new Promise((resolve) => { pending.push(resolve); });
+  };
+  try {
+    const first = ctl.open('votes');
+    pending[0]({ ok: true, json: async () => ({ items: [] }) });
+    await first;
+    assert.deepEqual(asked, ['/api/me/history?type=votes&limit=50']);
+
+    // The service worker corrects the read the open view owns: it is read
+    // again, and what comes back is published.
+    live.resync('correction', '/api/me/history?type=votes&limit=50');
+    live.flush();
+    assert.equal(asked.length, 2, 'the open view re-read its own URL');
+    pending[1]({ ok: true, json: async () => ({ items: [{ pr: { sessionId: 31 } }] }) });
+    await settle();
+    assert.equal(store.get().data.votes.items.length, 1, 'the corrected list is what shows');
+
+    // A correction to another view's URL — or to another kind of history —
+    // is not the open view's read, and wakes nothing.
+    live.resync('correction', '/api/me/requests');
+    live.flush();
+    live.resync('correction', '/api/me/history?type=kudos');
+    live.flush();
+    assert.equal(asked.length, 2, 'only the view that is up is re-read');
+    ctl.close();
+  } finally {
+    live._resetLiveReads();
+    globalThis.fetch = prior.fetch;
+    if (prior.location === undefined) delete globalThis.location; else globalThis.location = prior.location;
+    store.set({ open: false, kind: 'changes', data: {}, error: false });
+  }
+});
+
+test('#5457: a reconnect re-reads the open view; close() stops it; open() stacks nothing', async () => {
+  const live = loadTsx('frontend/src/lib/live-reads.ts');
+  live._resetLiveReads();
+  const mod = loadTsx(SCREEN, { stubs: { '../../lib/live-reads': live } });
+  const { profileProposalsController: ctl, profileProposalsStore: store } = mod;
+  const prior = { fetch: globalThis.fetch, location: globalThis.location };
+  const asked = [];
+  const pending = [];
+  globalThis.location = { search: '' };
+  globalThis.fetch = (url) => {
+    asked.push(url);
+    return new Promise((resolve) => { pending.push(resolve); });
+  };
+  try {
+    const first = ctl.open('votes');
+    pending[0]({ ok: true, json: async () => ({ items: [] }) });
+    await first;
+
+    // A socket reconnect (or the tab coming back) re-reads the view that is up.
+    live.resync('reconnect');
+    live.flush();
+    assert.deepEqual(asked, [
+      '/api/me/history?type=votes&limit=50',
+      '/api/me/history?type=votes&limit=50',
+    ], 'one re-read for the pass, of the view that is up');
+    pending[1]({ ok: true, json: async () => ({ items: [] }) });
+    await settle();
+
+    // Entry then a switch of views: two open() calls left one watcher.
+    const second = ctl.open('requests');
+    pending[2]({ ok: true, json: async () => ({ requests: [] }) });
+    await second;
+    asked.length = 0;
+    live.resync('reconnect');
+    live.flush();
+    assert.deepEqual(asked, ['/api/me/requests'], 'still one re-read per pass, now of Your requests');
+    pending[3]({ ok: true, json: async () => ({ requests: [] }) });
+    await settle();
+
+    ctl.close();
+    asked.length = 0;
+    live.resync('reconnect');
+    live.flush();
+    live.resync('correction', '/api/me/requests');
+    live.flush();
+    assert.deepEqual(asked, [], 'close() stopped the watcher: a closed screen re-reads nothing');
+  } finally {
+    live._resetLiveReads();
+    globalThis.fetch = prior.fetch;
+    if (prior.location === undefined) delete globalThis.location; else globalThis.location = prior.location;
+    store.set({ open: false, kind: 'changes', data: {}, error: false });
+  }
+});
+
 test('the router: three addresses no username can have, one screen, the bar named for the view', () => {
   const app = read('public/js/app.js');
   assert.match(app, /PROFILE_WORK: \{\s*proposals: 'changes',\s*'your-changes': 'changes',\s*'your-requests': 'requests',\s*'your-votes': 'votes',\s*\},/);
@@ -301,6 +534,56 @@ test('the router: three addresses no username can have, one screen, the bar name
   assert.match(app, /window\.UsernodeReact\?\.profileProposals\?\.open\?\.\(view\);/);
   // The dialog's "See your requests" lands on the view.
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'), /const SEE_MINE_ROUTE = '#profile\/your-requests';/);
+});
+
+// ── #5454: coming back to the screen from an app reads the list again ──
+
+test('#5454: the already-open guard stops only the duplicate dispatch, not a return from an app', () => {
+  const app = read('public/js/app.js');
+  const start = app.indexOf('  navigateToProfileProposals(');
+  assert.ok(start > 0, 'navigateToProfileProposals is defined in app.js');
+  const body = app.slice(start, app.indexOf('\n  },', start));
+  // With an app open the entry must run on to open(view) (which reloads),
+  // AppView.close() and the reveal; only the same view re-entered with no
+  // app open bails out, so one tick's popstate + hashchange still paints
+  // once (#979).
+  assert.match(body, /if \(App\._inProfileProposals && !App\.currentApp && window\.UsernodeReact\?\.profileProposals\?\.isOpen\?\.\(view\)\) \{\s*return;\s*\}/,
+    'the guard includes !App.currentApp');
+  assert.ok(body.indexOf('!App.currentApp') < body.indexOf('PlatformUI.transition('),
+    'the guard runs before the transition, so a replay never starts one');
+});
+
+test('#5454: entering an app exits the screen, like Leaderboard, Profile, Admin and Settings', () => {
+  const app = read('public/js/app.js');
+  // App.setChromeless(chromeless) runs only in restoreFromHash's
+  // #app/<slug> branch. The Workshop deliberately stays open behind an app,
+  // so it is the one exit this branch must not gain.
+  const at = app.indexOf('App.setChromeless(chromeless);');
+  assert.ok(at > 0, 'the #app/<slug> branch sets chromeless');
+  const exits = app.slice(Math.max(0, at - 700), at + 'App.setChromeless(chromeless);'.length);
+  assert.match(exits, /if \(App\._inSettings\) App\._exitSettings\(\);\s*if \(App\._inProfileProposals\) App\._exitProfileProposals\(\);\s*App\.setChromeless\(chromeless\);/,
+    'the #app/<slug> branch exits the screen before App.setChromeless(chromeless)');
+});
+
+// ── #5453: a late correction re-reads the screen in place ─────────────
+
+test('#5453: the late-arrival correction re-reads the Your work screen', () => {
+  const app = read('public/js/app.js');
+  const start = app.indexOf('  refreshActiveScreen() {');
+  assert.ok(start >= 0, 'App.refreshActiveScreen is defined');
+  const body = app.slice(start, app.indexOf('\n  },', start));
+  assert.match(body, /UsernodeReact\?\.profileProposals/,
+    'the correction names the Your work controller');
+  assert.match(body, /visible\('profile-proposals-screen'\)/,
+    'only while the screen is the one showing');
+  assert.match(body, /work\?\.isOpen\?\.\(\)/,
+    'and while the controller is open, the flag reload() itself checks');
+  assert.match(body, /work\.reload\?\.\(\); return; \}/,
+    'through its own reload, with no app view to fall through to');
+  const workAt = body.indexOf('UsernodeReact?.profileProposals');
+  const workshopAt = body.indexOf('UsernodeReact?.workshop');
+  assert.ok(workAt >= 0 && workshopAt > workAt,
+    'the branch sits before the Workshop branch, so a Workshop store still marked open cannot take the correction while Your work is the visible screen');
 });
 
 // ── The layout (#3498) ─────────────────────────────────────────────────

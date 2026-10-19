@@ -49,7 +49,7 @@ const waitlist = require('../services/waitlist');
 const releaseLinks = require('../services/release-links');
 const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail, sendWaitlistCodeMail } = require('../services/topochain/mailer');
-const { inviteUrl, siteUrl, waitlistUrl } = require('../services/marketing-links');
+const { inviteUrl, privacyNoticeUrl, siteUrl, waitlistUrl } = require('../services/marketing-links');
 const { loadContributors, shapeContributor } = require('../services/contributors');
 const { listPublicApps, isPublicDirectoryApp, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
 const { loadMobileAppUrls } = require('../services/mobile-store-links');
@@ -220,6 +220,10 @@ function publicApiRoutes(config) {
   // is the terms gate's rule (routes/topochain/mobile.js): the latest
   // published version. null when none is published, it has no link, or the
   // read fails; the notice then names the terms without a link.
+  //
+  // `privacy_link` is Homeroom's privacy notice on the marketing site
+  // (services/marketing-links.js), which the same notice names beside the
+  // terms and Settings › About links to (#5094, #5106). Never null.
   async function currentTermsLink() {
     try {
       const { rows } = await pool.query(
@@ -245,6 +249,7 @@ function publicApiRoutes(config) {
       // Sync on purpose — the gate reads config, not the database.
       phone_sign_in: phoneAuth.offered(config),
       terms_link: await currentTermsLink(),
+      privacy_link: privacyNoticeUrl(config),
       // The same, from the Homeroom app's own sheets (the bridge's
       // signInWithProvider), once the app's client IDs are saved.
       native_sign_in_providers: await signInProviders.offeredNativeProviders(pool, config),

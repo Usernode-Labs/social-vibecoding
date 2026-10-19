@@ -142,11 +142,17 @@ const { WEEKLY_KUDOS_LIMIT } = require('../src/services/bounties');
 const { weekStartUtc } = require('../src/services/leaderboard-users');
 const express = require('express');
 
-function startServer() {
+// These suites exercise the bounty as it works when kudos is not parked, so
+// the route is mounted with the switch off (services/kudos-parked.js);
+// `startServer({ parked: true })` is the shipped default (#5249).
+function startServer({ parked = false } = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, res, next) => { req.user = { id: 7, username: 'tester' }; next(); });
-  app.use(feedbackRoutes({ platformRepoUrl: 'https://github.com/plat/repo' }));
+  app.use(feedbackRoutes({
+    platformRepoUrl: 'https://github.com/plat/repo',
+    ...(parked ? {} : { kudosParked: false }),
+  }));
   return new Promise((resolve) => {
     const server = app.listen(0, () => resolve(server));
   });
@@ -439,5 +445,27 @@ test('bounty:false is accepted and behaves exactly like omitting it', async () =
     assert.equal(json.bounty, undefined);
   } finally {
     server.close();
+  }
+});
+
+// ── Kudos parked (#5249) ─────────────────────────────────────────────
+
+test('parked, bounty:true still files the feedback, without a bounty or a bounty line', async () => {
+  for (const body of [
+    { description: 'queued before kudos was parked', target: 'app', appSlug: 'demo-app', bounty: true },
+    { description: 'platform feedback queued before parking', target: 'platform', bounty: true },
+  ]) {
+    reset();
+    const server = await startServer({ parked: true });
+    try {
+      const { res, json } = await post(server, body);
+      assert.equal(res.status, 200, 'the feedback is filed');
+      assert.ok(json.url, 'with its issue');
+      assert.equal(bountyRows.length, 0, 'no pledge is written');
+      assert.equal(json.bounty, undefined, 'and the answer says nothing of one');
+      assert.equal(systemMessages.length, 0, 'no "placed a bounty" line');
+    } finally {
+      server.close();
+    }
   }
 });

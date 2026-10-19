@@ -49,7 +49,7 @@ test('the pending value is applied in the transition that asks for the deploy', 
   assert.match(merged, /writes: \[\{ type: 'secrets', eventId: e\.id, sessionId: d\.sessionId, appId: d\.appId \}/);
   // The proposal machine hears it merged, and the app's merge queue goes
   // on, in the same outcome.
-  assert.match(merged, /const messages = \[toProposal\(d\), \.\.\.\(d\.delivery \? \[deliveryRequest\(d, reuseOf\(f\)\)\] : \[\]\), toQueue\(d, 'merged'\)\]/);
+  assert.match(merged, /const messages = \[toProposal\(d\), \.\.\.\(d\.delivery \? \[deliveryRequest\(d, reuse\)\] : \[\]\), toQueue\(d, 'merged'\)\]/);
   assert.match(merged, /work, messages, push,/, 'the same outcome carries both');
 });
 

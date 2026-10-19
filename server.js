@@ -632,6 +632,7 @@ app.use(['/api/admin', '/api/v4/admin'], require('./src/middleware/same-site-bro
 app.use(require('./src/middleware/moderation').moderationGuard(config));
 app.use(require('./src/routes/moderation').moderationRoutes(config));
 app.use(require('./src/routes/app-blocks').appBlockRoutes(config));
+app.use(require('./src/routes/community-pins').communityPinRoutes(config));
 app.use(require('./src/services/account-deletion-runtime').trackResponse);
 app.use(require('./src/routes/account-deletion').accountDeletionRoutes(config));
 app.use(cliBrowserRoutes(config));

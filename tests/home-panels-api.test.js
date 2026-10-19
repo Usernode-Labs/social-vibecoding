@@ -728,7 +728,7 @@ test('GET ?demo=1 in staging draws three Next challenges, furthest along first',
   // never drawn under Next (#2490).
   assert.deepEqual([...view.rows].map((r) => r.id), ['900512', '900510', '900513']);
   assert.deepEqual([...view.rows].map((r) => r.stateLabel),
-    ['4/8 Apps tested this week', 'Not started', '0/5 Kudos'],
+    ['4/8 Apps tested this week', 'Not started', '0/5 Replies'],
     'part-filled, a yes-or-no not started, and the empty counted track, in one shot');
 });
 

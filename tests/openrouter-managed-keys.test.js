@@ -234,7 +234,11 @@ test('default-open managed provisioning stores the key internally and returns on
   assert.equal(stored.apiKey, 'sk-or-v1-issued-once');
   assert.equal(stored.metadata.source, 'usernode_managed');
   assert.equal(stored.metadata.managedKeyId, 17);
-  assert.equal(defaultModel, 'z-ai/glm-5.3-flash');
+  // The preference stores no model: the account follows the platform
+  // default (services/default-model.js) until its person picks one. The
+  // first session still runs on the model chosen now.
+  assert.equal(defaultModel, null, 'provisioning stores "follow the platform default", not the default of the day');
+  assert.equal(result.defaultModel, 'z-ai/glm-5.3-flash');
   assert.equal(result.apiKey, undefined, 'the provisioning result must not expose the credential');
   assert.equal(result.last4, undefined, 'the claim response does not need credential-shaped data');
   assert.equal(JSON.stringify(result).includes('sk-or-v1-issued-once'), false);
@@ -601,12 +605,13 @@ test('the retired eligibility gates are gone from config, and setting them chang
   const configSource = fs.readFileSync(path.join(root, 'src/config.js'), 'utf8');
   assert.doesNotMatch(configSource, /process\.env\.CODEX_OPENROUTER_BETA_USER_IDS/);
   assert.doesNotMatch(configSource, /process\.env\.OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY/);
-  assert.equal(defaults.openrouterDefaultCodexModel, 'z-ai/glm-5.3-flash');
+  assert.equal(defaults.openrouterDefaultCodexModel, 'deepseek/deepseek-v4.1-flash-1017');
   // #2569 cut the curated list to the two OpenRouter models the flat
-  // picker starts with, GLM first because it is the platform default.
+  // picker starts with, the platform default first (DeepSeek V4.1 Flash
+  // 1017 since 2026-10-19), then GLM 5.3 Flash, the default before it.
   assert.deepEqual(defaults.openrouterRecommendedModels, [
+    'deepseek/deepseek-v4.1-flash-1017',
     'z-ai/glm-5.3-flash',
-    'deepseek/deepseek-v4.1-flash',
   ]);
   assert.deepEqual(loadManagedVerificationConfig(undefined, 'none').openrouterRecommendedModels, []);
   assert.deepEqual(
@@ -785,10 +790,12 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   assert.match(deploy, /OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=\$\{\{ vars\.OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY \|\| 'false' \}\}/);
   assert.doesNotMatch(envExample, /OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY/);
   assert.doesNotMatch(envExample, /CODEX_OPENROUTER_BETA_USER_IDS/);
+  // The workflow's own fallback is still GLM (workflow files are not a
+  // proposal's to edit): production takes 1017 from the variable it sets.
   assert.match(deploy, /OPENROUTER_DEFAULT_CODEX_MODEL=\$\{\{ vars\.OPENROUTER_DEFAULT_CODEX_MODEL \|\| 'z-ai\/glm-5\.3-flash' \}\}/);
-  assert.match(envExample, /OPENROUTER_DEFAULT_CODEX_MODEL=z-ai\/glm-5\.3-flash/);
+  assert.match(envExample, /OPENROUTER_DEFAULT_CODEX_MODEL=deepseek\/deepseek-v4\.1-flash-1017$/m);
   assert.match(deploy, /OPENROUTER_RECOMMENDED_MODELS=/);
-  assert.match(envExample, /OPENROUTER_RECOMMENDED_MODELS=z-ai\/glm-5\.3-flash,deepseek\/deepseek-v4\.1-flash$/m);
+  assert.match(envExample, /OPENROUTER_RECOMMENDED_MODELS=deepseek\/deepseek-v4\.1-flash-1017,z-ai\/glm-5\.3-flash$/m);
   assert.ok(appManifest.PLATFORM_ENV_UNWRITABLE.has('OPENROUTER_MANAGEMENT_API_KEY'));
   const declaration = manifest.platform_env.find((item) => item.key === 'OPENROUTER_MANAGEMENT_API_KEY');
   assert.equal(declaration.private, true);
@@ -808,11 +815,15 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   const modelDeclaration = manifest.platform_env.find(
     (item) => item.key === 'OPENROUTER_DEFAULT_CODEX_MODEL',
   );
-  assert.equal(modelDeclaration.default, 'z-ai/glm-5.3-flash');
+  assert.equal(modelDeclaration.default, 'deepseek/deepseek-v4.1-flash-1017');
+  // The admin setting (services/default-model.js) wins, and the Kubernetes
+  // deploy does not apply the panel's value: the description says both.
+  assert.match(modelDeclaration.description, /Admin → Homeroom bot → Settings → Models, which wins over this variable/);
+  assert.match(modelDeclaration.description, /Kubernetes deploy does not apply this panel's value/);
   const recommendedDeclaration = manifest.platform_env.find(
     (item) => item.key === 'OPENROUTER_RECOMMENDED_MODELS',
   );
-  assert.equal(recommendedDeclaration.default, 'z-ai/glm-5.3-flash,deepseek/deepseek-v4.1-flash');
+  assert.equal(recommendedDeclaration.default, 'deepseek/deepseek-v4.1-flash-1017,z-ai/glm-5.3-flash');
   assert.doesNotMatch(routes, /verificationRequired/);
   assert.doesNotMatch(settings, /provisioning\.verificationRequired/);
 
@@ -884,6 +895,19 @@ test('configured GLM 5.3 Flash is preferred without filtering the remaining mode
   assert.deepEqual(catalog.models.map((model) => model.id), [
     'vendor/cheap', 'z-ai/glm-5.3-flash', 'vendor/other',
   ]);
+
+  // The admin's platform default wins over the deploy's, read at each call
+  // rather than baked into the held catalog; one the catalog does not list
+  // leaves the deploy's.
+  const withSetting = (value) => ({
+    query: async (sql) => (/FROM platform_settings/.test(String(sql)) ? { rows: [{ value }] } : { rows: [] }),
+  });
+  const ask = (pool) => agentModels.listOpenRouterModels({
+    pool, userId: 'managed-default-test', credentialRevision: 1, apiKey: 'sk-or-v1-test',
+    config: { openrouterDefaultCodexModel: 'z-ai/glm-5.3-flash' },
+  });
+  assert.equal((await ask(withSetting('vendor/other'))).recommendedModelId, 'vendor/other');
+  assert.equal((await ask(withSetting('vendor/not-listed'))).recommendedModelId, 'z-ai/glm-5.3-flash');
 });
 
 // QA 2026-09-24: "Start work" toasted "Ask an administrator to check

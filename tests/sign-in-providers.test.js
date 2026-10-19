@@ -485,7 +485,7 @@ test('the sheet: Apple and Google first when offered, then email; the trip carri
   assert.match(src, /const otherWays: Step = providers\.length \? 'choose' : 'email';\s+const firstStep: Step = phone \? 'phone' : otherWays;/);
   assert.match(src, /\{t\('auth:signInSheet\.continueWith', \{ provider: PROVIDER_LABEL\[provider\] \}\)\}/);
   assert.equal(message('auth:signInSheet.continueWith', { provider: 'Apple' }), 'Continue with Apple');
-  assert.match(src, /\{t\('auth:signInSheet\.continueWithEmail'\)\}/);
+  assert.match(src, /: t\('auth:signInSheet\.continueWithEmail'\)\}/);
   assert.equal(message('auth:signInSheet.continueWithEmail'), 'Continue with email');
   assert.match(src, /fetchSessionMint\(usernameVia === 'phone' \? '\/api\/auth\/phone\/finish' : '\/api\/auth\/oauth\/finish',/);
   const icons = read('frontend/@/components/ui/icons.tsx');

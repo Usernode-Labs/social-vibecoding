@@ -14,7 +14,7 @@ import { flushSync } from 'react-dom';
 
 import { navStore, tabForScreen } from './nav-store.js';
 import { parkedStore, setParked } from './parked-store.js';
-import { pinApp, pinDropStore, pinStatus, pinnedAppsStore, readPinnedApps } from './pinned-apps-store.js';
+import { forgetPin, loadPins, pinApp, pinDropStore, pinStatus, pinnedAppsStore, readPinnedApps } from './pinned-apps-store.js';
 import { forgetRecentApp, readRecentApps, recentAppsStore, rememberRecentApp } from './recent-apps-store.js';
 import {
   collapseIntoResume, RESUME_MOTION_MS, resumeHandleFor, takeResumeOrigin,
@@ -35,6 +35,14 @@ pinDropStore.setFlush(flushSync);
 export { navStore, parkedStore };
 
 if (typeof window !== 'undefined') {
+  // A community left drops its pin on the account, so it goes from the
+  // sidebar too (Home.MEMBERSHIP_EVENT, dispatched once the leave landed).
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('sv:membership-changed', (event) => {
+      const detail = (event as CustomEvent<{ slug?: string; joined?: boolean }>).detail;
+      if (detail && detail.slug && !detail.joined) forgetPin(detail.slug, navStore.get().viewer);
+    });
+  }
   const host = window as unknown as { UsernodeReact?: Record<string, unknown> };
   const bridge = (host.UsernodeReact ||= {});
   bridge.nav = {
@@ -113,12 +121,15 @@ if (typeof window !== 'undefined') {
       // is empty. Nothing to do while the name has not changed.
       if ((viewer || null) !== navStore.get().viewer) {
         recentAppsStore.set({ apps: readRecentApps(viewer || null) });
-        // Same rule for the strip's pinned part (#5323): the pins are the
-        // account's own choices, read fresh for whoever is signed in now —
-        // and any drag half-way to the "Pin here" slot belongs to the
-        // gesture nobody is making any more.
+        // Same rule for the sidebar's pinned communities (#5323): the pins are the
+        // account's own choices, drawn at once from this device's copy and
+        // then read from the account for whoever is signed in now (a
+        // device's own pins from before are sent up once on the way) — and
+        // any drag half-way to the "Pin here" slot belongs to the gesture
+        // nobody is making any more.
         pinnedAppsStore.set({ apps: readPinnedApps(viewer || null) });
         pinDropStore.set({ drop: null });
+        void loadPins(viewer || null);
       }
       navStore.set({ viewer: viewer || null });
     },
@@ -194,8 +205,8 @@ if (typeof window !== 'undefined') {
       forgetRecentApp(slug, navStore.get().viewer);
     },
     /**
-     * What a drop of `slug` on the strip's "Pin here" slot would do (#5323):
-     * the strip's own list answers, so the slot can say "Already pinned" or
+     * What a drop of `slug` on the sidebar's "Pin here" slot would do (#5323):
+     * the pinned list answers, so the slot can say "Already pinned" or
      * "Unpin one first" before the drop is refused. Caller: Home's drag
      * recognizer (features/home/home.js).
      */
@@ -203,8 +214,8 @@ if (typeof window !== 'undefined') {
       return pinStatus(slug);
     },
     /**
-     * Pin `app` to the strip (#5323), as the account signed in now. Takes
-     * the app's display data, so the strip draws the new pin without
+     * Pin `app`'s community to the sidebar (#5323), as the account signed in
+     * now. Takes the app's display data, so the sidebar draws the new pin without
      * fetching anything. Returns whether it pinned (an app already pinned,
      * or a full list, is refused).
      */
@@ -212,7 +223,7 @@ if (typeof window !== 'undefined') {
       return pinApp(app, navStore.get().viewer);
     },
     /**
-     * The strip's drag state while a My apps tile is in the air (#5323):
+     * The sidebar's drag state while a My apps tile is in the air (#5323):
      * 'idle' on lift, 'ok' / 'already' / 'full' while over the slot, null
      * when the gesture is over. Caller: Home's drag recognizer.
      */

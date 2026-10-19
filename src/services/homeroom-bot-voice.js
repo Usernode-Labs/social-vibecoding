@@ -696,6 +696,7 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     has('update_change') ? '- Change one of your own changes that is up for a vote when somebody clearly asks for a change to it (update_change): describe the change in your own words, precisely enough for a coding agent. It is queued for the change\'s next update, behind any update running now, and the result says which. Say so; never say it is done, since it is not made yet. A question about it is not a change: answer it.' : null,
     has('offer_withdraw') ? '- Offer to withdraw your change when the person who asked for its request, or the project\'s owner, wants it dropped (offer_withdraw). Nothing happens until they tap Withdraw it under your reply: say so.' : null,
     has('start_request') ? '- Start this request now, or read it again, when somebody asks you to build it (start_request). The result says what happens; say exactly that.' : null,
+    has('change_plan') ? '- Your plan for this request waits for its requester to say Build it. Them saying to build it or go ahead is start_request, which builds the plan as they saw it. Somebody asking for something in the plan to change is change_plan, which plans it again with their words. A question about the plan or where it stands is answered from the facts, and changes nothing.' : null,
     has('offer_close_request') ? (place.type === 'issue'
       ? '- Offer a vote on closing this request when somebody says it is done, a duplicate or not wanted (offer_close_request). It opens only when they tap Propose to close, and closes only if the group votes for it. Never start a request somebody asked you to close.'
       : '- Offer a vote on closing one of this project\'s requests, by its number, when somebody says it is done, a duplicate or not wanted (offer_close_request). It opens only when they tap Propose to close, and closes only if the group votes for it.') : null,
@@ -761,7 +762,9 @@ const QUIET_TOOL = fn('stay_quiet', 'Say nothing: the newest messages are people
  * what is in it: its own change (`ownChange`), a change it built for the
  * request (`requestChange`), its changes on the project (`openChanges`).
  */
-function toolsFor(place, { ownChange = false, requestChange = false, openChangeCount = 0, platform = false } = {}) {
+function toolsFor(place, {
+  ownChange = false, requestChange = false, openChangeCount = 0, platform = false, planWaiting = false,
+} = {}) {
   const tools = [REPLY_TOOL, QUIET_TOOL];
   const change = place.type === 'session' ? ownChange : place.type === 'issue' ? requestChange : openChangeCount > 0;
   if (change) {
@@ -777,7 +780,11 @@ function toolsFor(place, { ownChange = false, requestChange = false, openChangeC
     }
   }
   if (place.type === 'issue') {
-    tools.push(fn('start_request', 'Start this request now, or read it again.', {}, []));
+    tools.push(fn('start_request', 'Start this request now, or read it again. Under a plan waiting for its requester\'s Build it, their asking is Build it.', {}, []));
+    // Papote #3: what is said to it under a plan waiting for Build it no
+    // longer reads the request again by itself (homeroom-bot.js
+    // unaddressedActivityByIssue): a change to the plan is asked for here.
+    if (planWaiting) tools.push(fn('change_plan', 'Plan this request again with what they asked to change in your plan.', {}, []));
     tools.push(fn('offer_close_request', 'Offer a vote on closing this request.', {
       why: { type: 'string', description: 'Why it should close, in their words.' },
     }, ['why']));
@@ -1022,8 +1029,13 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     ? await liveModule(deps).openBotProposal(pool, bot.id, app.id, place.ref).catch(() => null) : null;
   const open = ['chat', 'category', 'message'].includes(place.type) ? await openChanges(pool, { appId: app.id, botId: bot.id }) : [];
   const platform = deps.noPlatform ? null : await openPlatform(pool, cfg, { app, speaker, deps });
+  // Papote #3: a request's plan waiting for Build it (not a first version's, changed from its own card).
+  const planWaiting = place.type === 'issue'
+    ? (await Promise.resolve().then(() => dmModule(deps).waitingPlanRun(pool, app.id, place.ref)).catch(() => null))?.complicated === true
+    : false;
   const tools = toolsFor(place, {
     ownChange, requestChange: requestChange?.status === 'promoted', openChangeCount: open.length, platform: !!platform,
+    planWaiting,
   });
   const ctx = {
     user: speaker, bot, settings, config: cfg, deps, app, place, change, requestChange, open,
@@ -1033,7 +1045,7 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   };
   const t = {
     config: cfg, user: speaker, settings, message: { id: last.message.id }, ctx,
-    model: cfg.openrouterDefaultCodexModel || mayor.DEFAULT_MODEL,
+    model: require('./default-model').fromSettings(settings, cfg) || mayor.DEFAULT_MODEL,
     chat: deps.chat || require('./global-chat/openrouter').streamChat,
     sleep: deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
     apiKey: deps.apiKey,
@@ -1188,6 +1200,9 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
         const out = await mayor.startRequest(pool, ctx, { project: app.slug, number: place.ref });
         return out;
       }
+      case 'change_plan':
+        if (place.type !== 'issue') return { error: 'Not here.' };
+        return await mayor.replanRequest(pool, ctx, { project: app.slug, number: place.ref });
       case 'offer_close_request': {
         if (!['issue', 'chat', 'category', 'message'].includes(place.type)) return { error: 'Not here.' };
         if (ctx.offer) return { error: 'One offer per reply.' };
@@ -1737,7 +1752,7 @@ async function composeReport(pool, cfg, { app, session, bot, asks, outcome, deps
   ].filter(Boolean).join('\n');
   const t = {
     config: cfg, user: { id: bot.id }, message: { id: Number(asks[asks.length - 1]?.message_id) || 0 },
-    model: cfg.openrouterDefaultCodexModel || mayor.DEFAULT_MODEL,
+    model: (await require('./default-model').effective(pool, cfg)) || mayor.DEFAULT_MODEL,
     chat: deps.chat || require('./global-chat/openrouter').streamChat,
     sleep: deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
     apiKey, route: 1, startedMs: Date.now(), usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 }, failures: [],

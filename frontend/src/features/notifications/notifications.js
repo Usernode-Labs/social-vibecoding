@@ -233,8 +233,11 @@ const Notifications = {
       Notifications.saved = Array.isArray(data.savedMessages) ? data.savedMessages : [];
       // #4769: the pinned section's other half, saved NOTIFICATIONS. Same
       // contract as `saved`: whatever the server sent, else an empty list.
+      // #5249: through _shown like the feed, so a kudos row saved before
+      // kudos was parked is not drawn here either (the server skips the kind
+      // too; this holds for an older server or a staging demo row).
       Notifications.savedNotifications = Array.isArray(data.savedNotifications)
-        ? data.savedNotifications : [];
+        ? data.savedNotifications.filter(Notifications._shown) : [];
       Notifications.unread = data.unread || 0;
       Notifications.hasMore = !!data.hasMore;
       Notifications.nextBefore = data.nextBefore || null;
@@ -1012,15 +1015,13 @@ const Notifications = {
       }
       return;
     }
-    // A platform limit opens where it is raised. The app limit is set in
-    // Admin → Limits (services/app-limit.js), which works on every deploy;
-    // the session cap opens Health & status, whose capacity meter shows the
-    // load behind it (MAX_GLOBAL_SESSIONS itself is deploy configuration).
-    // GitHub's budget opens Limits too, where its GitHub requests card is.
+    // A platform limit opens where it is raised: the app limit and the
+    // session limit are both set in Admin → Limits (services/app-limit.js,
+    // services/session-limit.js), which works on every deploy, and GitHub's
+    // budget has its GitHub requests card there too.
     if (item.kind === 'platform_limit') {
       Notifications._dismissSheetForNav();
-      const limit = parsePlatformLimitDetail(item.detail);
-      const section = limit?.limit === 'sessions' ? 'status' : 'limits';
+      const section = 'limits';
       if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
         App.navigateToAdminConsole(section);
       } else {
@@ -2898,11 +2899,14 @@ function rowView(n) {
   // heading for auto-archive. The old copy spelled the whole mechanism out
   // ("is going stale, it'll auto-archive soon without votes"); what the row
   // has to say is that it needs votes, and the rest is on the proposal.
+  // `detail` 'blocked': its votes are met and its merge is what stands
+  // still, so the row says that rather than asking for votes.
   if (n.kind === 'stale_pr') {
     return {
       ...base,
       icon: '⏳',
-      ...headline(t('notifications:row.stale.label'), prLabel || n.sessionTitle || t('notifications:row.stale.yourChange')),
+      ...headline(t(n.detail === 'blocked' ? 'notifications:row.stale.blocked' : 'notifications:row.stale.label'),
+        prLabel || n.sessionTitle || t('notifications:row.stale.yourChange')),
     };
   }
 

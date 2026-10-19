@@ -1,6 +1,6 @@
 /**
  * The Communities tab pressed while it is lit: up a level, at every width
- * (#3701). Held on a phone's bar: "Your communities".
+ * (#3701). Held, it does nothing more than a press (18 Oct 2026).
  *
  * ── One gesture had two meanings ───────────────────────────────────────
  *
@@ -41,12 +41,12 @@
  *
  * ── Switching sideways ────────────────────────────────────────────────
  *
- * The switcher is no harder to reach. The header's name and ⌄ open it as
- * they did (../header/header-title.tsx), and on a phone's bar a press HELD
- * for HOLD_MS without moving opens it too (`createHold`), the way Instagram
- * and Threads switch accounts from their profile tab. A short press never
- * does. No haptic goes with it: the native bridge has no haptic call
- * (NATIVE-BRIDGE.md), and the kit's tick is private to the kit.
+ * On a wide window the header's name and ⌄ open "Your communities"
+ * (../header/header-title.tsx). On a phone the drawer's outermost level is
+ * the list of your communities, and nothing on the bar opens the old
+ * switcher: holding the tab used to (#3701), which put the sheet the drawer
+ * replaced back over it, so the hold was removed (18 Oct 2026). A held tab
+ * is an ordinary press.
  *
  * ── Who knows where you are ───────────────────────────────────────────
  *
@@ -60,7 +60,7 @@
  */
 
 import { drawerStore, pressTab as pressDrawerTab } from '../nav-drawer/drawer-store';
-import { goToCommunity, openSwitcher } from './community-scope';
+import { goToCommunity } from './community-scope';
 
 /** The pages under a place (../dev-board/workshop/places.ts): a step above them is the place. */
 const PAGES_UNDER_A_PLACE = ['all', 'bot', 'plan'];
@@ -196,8 +196,13 @@ export function upToCommunity(slug: string): void {
 /**
  * A press of the lit Communities tab. `screen` is the nav store's: the
  * screen root the router last revealed. Returns the rung it took.
+ *
+ * `stopAtCommunity`: the press of the community's own row in the desktop's
+ * sidebar (../nav/rail-communities.tsx, D, 18 Oct 2026), which goes up the
+ * community's page the same way and stops at its Hub's top rather than
+ * taking the root step to All communities: the sidebar's All row is that.
  */
-export function pressLitTab(screen: string | null): Rung {
+export function pressLitTab(screen: string | null, { stopAtCommunity = false }: { stopAtCommunity?: boolean } = {}): Rung {
   if (screen === 'workshop-screen') {
     const el = scrollerOf(document.getElementById('workshop-screen'));
     const rung = rungFor('root', isScrolled(el));
@@ -250,147 +255,8 @@ export function pressLitTab(screen: string | null): Rung {
   } else if (rung === 'top') {
     toTop(el);
   } else if (rung === 'root') {
+    if (stopAtCommunity) return 'none';
     goToCommunity(null);
   }
   return rung;
-}
-
-/** How long a press is held before it opens "Your communities". */
-export const HOLD_MS = 500;
-/** A finger that moves further than this is scrolling or swiping, not holding. */
-export const HOLD_SLOP_PX = 10;
-/** How long after the finger lifts the click that lift may leave is still the hold's. */
-export const HOLD_CLICK_MS = 700;
-
-/** The parts of a pointer event a hold reads: React's and the DOM's both fit. */
-interface HoldPointer {
-  pointerType: string;
-  isPrimary?: boolean;
-  clientX: number;
-  clientY: number;
-  currentTarget: EventTarget | null;
-}
-
-export interface HoldOptions {
-  /** Whether a hold may start now: the phone's bar, not the desktop rail. */
-  enabled: () => boolean;
-  /** The hold landed, on `el`. */
-  onHold: (el: Element | null) => void;
-  ms?: number;
-  /** For the tests: the document and the clock. */
-  doc?: Pick<Document, 'addEventListener' | 'removeEventListener'>;
-  setTimer?: (fn: () => void, ms: number) => number;
-  clearTimer?: (id: number) => void;
-}
-
-/**
- * A held press, for touch: HOLD_MS still (within HOLD_SLOP_PX) runs
- * `onHold`. Lifting early, moving, or the browser taking the touch for a
- * scroll (pointercancel) cancels it, and the press is an ordinary tap.
- *
- * TWO THINGS THE BROWSER WOULD DO WITH THE SAME HOLD are stood down:
- *
- *   - its own long-press menu on a link (Android's, as `contextmenu`; iOS's
- *     preview is app.css's `-webkit-touch-callout: none`). A `contextmenu`
- *     while the finger is down is the browser deciding the press was held,
- *     so it lands the hold at once rather than racing the timer;
- *   - the click the lift may still send. "Your communities" is over the bar
- *     by then, so that click can be hit-tested onto the sheet's scrim (which
- *     would shut it again) or reach the tab (which would take a ladder step).
- *     The first click after a landed hold is swallowed, at the document, in
- *     the capture phase, before either sees it, unless a new press starts
- *     first or HOLD_CLICK_MS passes.
- *
- * A plain object, not a hook, so the tests can drive it without React.
- */
-export function createHold(opts: HoldOptions) {
-  const ms = opts.ms ?? HOLD_MS;
-  const doc = opts.doc ?? (typeof document !== 'undefined' ? document : null);
-  const setTimer = opts.setTimer ?? ((fn: () => void, wait: number) => window.setTimeout(fn, wait));
-  const clearTimer = opts.clearTimer ?? ((id: number) => window.clearTimeout(id));
-  let timer = 0;
-  let origin: { x: number; y: number } | null = null;
-  let target: Element | null = null;
-  let down = false;
-  let fired = false;
-  let unguard: (() => void) | null = null;
-
-  const stop = () => {
-    if (timer) clearTimer(timer);
-    timer = 0;
-    origin = null;
-  };
-  const land = () => {
-    stop();
-    fired = true;
-    opts.onHold(target);
-  };
-  const guard = () => {
-    if (!doc || unguard) return;
-    let wait = 0;
-    const off = () => {
-      if (!unguard) return;
-      unguard = null;
-      doc.removeEventListener('click', onClick, true);
-      doc.removeEventListener('pointerdown', off, true);
-      if (wait) clearTimer(wait);
-    };
-    const onClick = (event: Event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      off();
-    };
-    unguard = off;
-    doc.addEventListener('click', onClick, true);
-    doc.addEventListener('pointerdown', off, true);
-    wait = setTimer(off, HOLD_CLICK_MS);
-  };
-  const lift = () => {
-    down = false;
-    stop();
-    if (fired) guard();
-    fired = false;
-  };
-
-  return {
-    onPointerDown(event: HoldPointer) {
-      if (event.pointerType !== 'touch' || event.isPrimary === false) return;
-      stop();
-      fired = false;
-      if (!opts.enabled()) return;
-      down = true;
-      target = (event.currentTarget as Element | null) || null;
-      origin = { x: event.clientX, y: event.clientY };
-      timer = setTimer(land, ms);
-    },
-    onPointerMove(event: HoldPointer) {
-      const start = origin;
-      if (!start) return;
-      if (Math.abs(event.clientX - start.x) > HOLD_SLOP_PX || Math.abs(event.clientY - start.y) > HOLD_SLOP_PX) stop();
-    },
-    onPointerUp() { lift(); },
-    onPointerCancel() { lift(); },
-    onContextMenu(event: { preventDefault: () => void }) {
-      if (!down) return;
-      event.preventDefault();
-      if (timer) land();
-    },
-    /** Unmounting: no timer left to land, no guard left on the document. */
-    dispose() {
-      stop();
-      down = false;
-      fired = false;
-      unguard?.();
-    },
-  };
-}
-
-/** The phone's bar: below the 768px breakpoint, where the bar is not the rail. */
-function onPhoneBar(): boolean {
-  try { return !window.matchMedia('(min-width: 768px)').matches; } catch { return false; }
-}
-
-/** The Communities tab's hold: "Your communities", on the phone's bar only. */
-export function createSwitcherHold() {
-  return createHold({ enabled: onPhoneBar, onHold: (el) => openSwitcher('tab', el) });
 }

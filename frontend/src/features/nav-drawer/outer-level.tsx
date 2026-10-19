@@ -33,6 +33,7 @@ import {
   AppRow, groupRows, joinCounts, needsApps, orderRows, RowSkeletons, Section, unseenRow, type WorkshopRow,
 } from '../workshop/index';
 import { useNeedsSeen } from '../workshop/needs-seen';
+import { matchRows } from '../workshop/sections';
 import { workshopStore } from '../workshop/workshop-store.js';
 import { setSearching } from './drawer-store';
 
@@ -98,11 +99,14 @@ function useCommunities(wanted: boolean): { rows: Rows; error: boolean } {
   return { rows: seed, error: failed && !seed };
 }
 
-/** The rows whose name has `query` in it, in the list's own order. Pure. */
+/**
+ * The rows whose name has `query` in it, in the list's own order, an exact
+ * name first (#5472). The rule itself is the screen's: ./sections.ts holds
+ * it, where the drawer can read it without importing the screen back.
+ * Pure.
+ */
 export function matchCommunities(rows: readonly WorkshopRow[], query: string): WorkshopRow[] {
-  const q = query.trim().toLocaleLowerCase();
-  if (!q) return [...rows];
-  return rows.filter((row) => String(row.name || row.slug).toLocaleLowerCase().includes(q));
+  return matchRows(rows, query);
 }
 
 /** The cross-community Needs you feed: the Communities screen's page. */

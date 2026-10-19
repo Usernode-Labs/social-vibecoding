@@ -1,16 +1,20 @@
 'use strict';
 
-// The desktop strip's pinned part (#5323): the store behind
-// frontend/src/features/nav/strip-apps.tsx that holds the apps the viewer
-// pinned there, written only by a drop on the "Pin here" slot (Home's drag
-// recognizer, through pinApp) and by the strip itself (a drag back out, or
-// its Unpin menu, through unpinApp).
+// The desktop sidebar's pins (#5323): the store behind
+// frontend/src/features/nav/rail-pinned.tsx that holds what the viewer
+// pinned there (the strip's apps until 18 Oct 2026, their communities since:
+// the same slugs), written only by a drop on the "Pin here" slot (Home's
+// drag recognizer, through pinApp) and by the section itself (a drag back
+// out, or its Unpin menu, through unpinApp).
 //
-// The contract mirrors the recents store (tests/nav-tab-bar.test.js holds
-// that one): entries carry the display data the strip draws, the stored
-// list names the account it was written for, unreadable storage is an
-// empty list, and NOTHING here may run during an initial render — the
-// store starts empty, which is what the prerender shows.
+// The list is the account's (src/services/community-pins.js,
+// tests/community-pins-postgres.test.js): this store is its copy on the
+// page. Entries carry the display data the sidebar draws, the device's copy
+// names the account it was written for, unreadable storage is an empty
+// list, a change lands here at once and the account's answer stands after
+// it, a device's pins from before are sent up once, and NOTHING here may run
+// during an initial render — the store starts empty, which is what the
+// prerender shows.
 //
 // Run with: node --test tests/pinned-apps-store.test.js
 
@@ -38,14 +42,16 @@ function makeStorage() {
 
 const pin = (slug, over = {}) => ({ slug, name: slug[0].toUpperCase() + slug.slice(1), ...over });
 
-test('the storage key is the one literal, exported so it cannot drift', () => {
+test('the storage keys are the one literals, exported so they cannot drift', () => {
   const storage = makeStorage();
   try {
     const mod = loadTsx(STORE);
     assert.ok(mod.pinApp(pin('a'), 'ana'), 'a pin of a fresh app writes');
-    assert.ok(storage.storage.has('usernode_pinned_apps_v2'), 'written under the pinned key');
-    assert.equal(mod.PINNED_APPS_KEY, 'usernode_pinned_apps_v2');
+    assert.ok(storage.storage.has('usernode_community_pins_v1'), 'the account\'s copy, on this device');
+    assert.equal(mod.PINNED_APPS_KEY, 'usernode_community_pins_v1');
+    assert.equal(mod.PINNED_APPS_DEVICE_KEY, 'usernode_pinned_apps_v2', 'the device\'s own pins from before, sent up once');
     assert.equal(mod.PINNED_APPS_MAX, 4, 'four is still the most there is room for');
+    assert.equal(require('../src/services/community-pins').PINS_MAX, mod.PINNED_APPS_MAX, 'the account keeps the same four');
   } finally {
     delete global.window;
   }
@@ -118,7 +124,7 @@ test('a pin is owner-scoped: written for one, read by another, empty', () => {
     const mod = loadTsx(STORE);
     mod.pinApp(pin('a'), 'ana');
     mod.pinApp(pin('b'), 'ana');
-    assert.equal(storage.raw('usernode_pinned_apps_v2').owner, 'ana');
+    assert.equal(storage.raw('usernode_community_pins_v1').owner, 'ana');
     assert.deepEqual(mod.readPinnedApps('ana').map((a) => a.slug), ['a', 'b']);
     assert.deepEqual(mod.readPinnedApps('bo'), [], 'another account sees none of it');
     assert.deepEqual(mod.readPinnedApps(null), [], 'signed out reads nothing');
@@ -127,7 +133,7 @@ test('a pin is owner-scoped: written for one, read by another, empty', () => {
   }
 });
 
-test('no owner: the strip still shows the pin, but nothing is written', () => {
+test('no owner: the sidebar still shows the pin, but nothing is written', () => {
   const storage = makeStorage();
   try {
     const mod = loadTsx(STORE);
@@ -164,11 +170,11 @@ test('unreadable or foreign storage reads as an empty list, never a throw', () =
   const storage = makeStorage();
   try {
     const mod = loadTsx(STORE);
-    storage.storage.set('usernode_pinned_apps_v2', '{not json');
+    storage.storage.set('usernode_community_pins_v1', '{not json');
     assert.deepEqual(mod.readPinnedApps('ana'), [], 'corrupt JSON');
-    storage.storage.set('usernode_pinned_apps_v2', JSON.stringify({ owner: 'bo', apps: [pin('a')] }));
+    storage.storage.set('usernode_community_pins_v1', JSON.stringify({ owner: 'bo', apps: [pin('a')] }));
     assert.deepEqual(mod.readPinnedApps('ana'), [], 'another account\'s list');
-    storage.storage.set('usernode_pinned_apps_v2', JSON.stringify({ owner: 'ana', apps: 'nope' }));
+    storage.storage.set('usernode_community_pins_v1', JSON.stringify({ owner: 'ana', apps: 'nope' }));
     assert.deepEqual(mod.readPinnedApps('ana'), [], 'a non-array apps field');
     assert.deepEqual(mod.readPinnedApps('ana'), [], 'and reading twice is as safe as once');
   } finally {
@@ -205,4 +211,122 @@ test('the store starts empty, which is what the prerender shows', () => {
     if (previousWindow === undefined) delete global.window;
     else global.window = previousWindow;
   }
+});
+// ── The account's list ──────────────────────────────────────────────────
+
+// A fetch on the window, as the page has it: each call recorded, each answer
+// what the test says the account says.
+function withFetch(answer) {
+  const calls = [];
+  window.fetch = async (url, opts = {}) => {
+    calls.push({ url, method: opts.method || 'GET', body: opts.body ? JSON.parse(opts.body) : undefined });
+    const { status = 200, body } = await answer(url, opts, calls.length);
+    return { ok: status >= 200 && status < 300, status, json: async () => body };
+  };
+  return calls;
+}
+const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test('the account\'s pins are read when someone signs in, and kept as this device\'s copy', async () => {
+  const storage = makeStorage();
+  try {
+    const mod = loadTsx(STORE);
+    const calls = withFetch(() => ({ body: { pins: [pin('chess'), pin('gym')] } }));
+    await mod.loadPins('ana');
+    assert.deepEqual(calls.map((c) => [c.method, c.url]), [['GET', '/api/me/community-pins']]);
+    assert.deepEqual(mod.pinnedAppsStore.get().apps.map((a) => a.slug), ['chess', 'gym']);
+    assert.deepEqual(storage.raw('usernode_community_pins_v1').apps.map((a) => a.slug), ['chess', 'gym']);
+    assert.deepEqual(mod.readPinnedApps('ana').map((a) => a.slug), ['chess', 'gym'], 'drawn at once next time');
+    // Signed out: nothing is read.
+    await mod.loadPins(null);
+    assert.equal(calls.length, 1);
+  } finally {
+    delete global.window;
+  }
+});
+
+test('a device\'s own pins from before are sent up once, then forgotten', async () => {
+  const storage = makeStorage();
+  try {
+    const mod = loadTsx(STORE);
+    storage.storage.set('usernode_pinned_apps_v2', JSON.stringify({ owner: 'ana', apps: [pin('run'), pin('dice')] }));
+    const calls = withFetch(() => ({ body: { pins: [pin('chess'), pin('run')] } }));
+    await mod.loadPins('ana');
+    assert.deepEqual(calls.map((c) => [c.method, c.url, c.body]), [['POST', '/api/me/community-pins/import', { slugs: ['run', 'dice'] }]]);
+    assert.deepEqual(mod.pinnedAppsStore.get().apps.map((a) => a.slug), ['chess', 'run'], 'the account\'s answer stands');
+    assert.equal(storage.storage.has('usernode_pinned_apps_v2'), false, 'sent once');
+    await mod.loadPins('ana');
+    assert.deepEqual(calls.map((c) => c.method), ['POST', 'GET'], 'and never again');
+    // Another account's old pins on this device are not this one's to send.
+    storage.storage.set('usernode_pinned_apps_v2', JSON.stringify({ owner: 'bo', apps: [pin('run')] }));
+    await mod.loadPins('ana');
+    assert.deepEqual(calls.map((c) => c.method), ['POST', 'GET', 'GET']);
+  } finally {
+    delete global.window;
+  }
+});
+
+test('an answer for someone no longer signed in is dropped; a failed read keeps the copy', async () => {
+  const storage = makeStorage();
+  try {
+    const mod = loadTsx(STORE);
+    let release;
+    const late = new Promise((resolve) => { release = resolve; });
+    withFetch(async (url, opts, n) => (n === 1 ? (await late, { body: { pins: [pin('anas')] } }) : { body: { pins: [pin('bos')] } }));
+    const first = mod.loadPins('ana');
+    await mod.loadPins('bo');
+    release();
+    await first;
+    assert.deepEqual(mod.pinnedAppsStore.get().apps.map((a) => a.slug), ['bos'], 'ana\'s late answer does not land on bo');
+    withFetch(() => ({ status: 500, body: { error: 'down' } }));
+    await mod.loadPins('bo');
+    assert.deepEqual(mod.pinnedAppsStore.get().apps.map((a) => a.slug), ['bos']);
+    assert.deepEqual(storage.raw('usernode_community_pins_v1').apps.map((a) => a.slug), ['bos']);
+  } finally {
+    delete global.window;
+  }
+});
+
+test('a pin lands at once and the account\'s answer stands; a refusal reads the account again', async () => {
+  makeStorage();
+  try {
+    const mod = loadTsx(STORE);
+    let calls = withFetch((url, opts) => ({ body: { pins: opts.method === 'PUT' ? [pin('chess'), pin('gym')] : [] } }));
+    assert.equal(mod.pinApp(pin('gym'), 'ana'), true);
+    assert.deepEqual(mod.pinnedAppsStore.get().apps.map((a) => a.slug), ['gym'], 'under the press');
+    await settled();
+    assert.deepEqual(calls.map((c) => [c.method, c.url]), [['PUT', '/api/me/community-pins/gym']]);
+    assert.deepEqual(mod.pinnedAppsStore.get().apps.map((a) => a.slug), ['chess', 'gym'], 'the account\'s list');
+    // Refused (four already, or a Join said no to): back to what the account holds.
+    calls = withFetch((url, opts) => (opts.method === 'PUT'
+      ? { status: 409, body: { error: 'Unpin one first: four is the most.', code: 'pins_full' } }
+      : { body: { pins: [pin('chess'), pin('gym')] } }));
+    assert.equal(mod.pinApp(pin('run'), 'ana'), true);
+    await settled(); await settled();
+    assert.deepEqual(calls.map((c) => c.method), ['PUT', 'GET']);
+    assert.deepEqual(mod.pinnedAppsStore.get().apps.map((a) => a.slug), ['chess', 'gym']);
+    // Unpin sends DELETE.
+    calls = withFetch(() => ({ body: { pins: [pin('chess')] } }));
+    assert.equal(mod.unpinApp('gym', 'ana'), true);
+    await settled();
+    assert.deepEqual(calls.map((c) => [c.method, c.url]), [['DELETE', '/api/me/community-pins/gym']]);
+    // Leaving a community: its pin goes here too, and nothing is sent.
+    calls = withFetch(() => ({ body: { pins: [] } }));
+    mod.forgetPin('chess', 'ana');
+    assert.deepEqual(mod.pinnedAppsStore.get().apps, []);
+    await settled();
+    assert.equal(calls.length, 0);
+  } finally {
+    delete global.window;
+  }
+});
+
+test('sign-in reads the account\'s pins, and a community left loses its pin', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const mount = fs.readFileSync(path.join(__dirname, '../frontend/src/features/nav/mount.ts'), 'utf8');
+  assert.match(mount, /pinnedAppsStore\.set\(\{ apps: readPinnedApps\(viewer \|\| null\) \}\);\s*pinDropStore\.set\(\{ drop: null \}\);\s*void loadPins\(viewer \|\| null\);/);
+  assert.match(mount, /document\.addEventListener\('sv:membership-changed', \(event\) => \{[\s\S]*?if \(detail && detail\.slug && !detail\.joined\) forgetPin\(detail\.slug, navStore\.get\(\)\.viewer\);/);
+  const home = fs.readFileSync(path.join(__dirname, '../frontend/src/features/home/home.js'), 'utf8');
+  assert.match(home, /MEMBERSHIP_EVENT: 'sv:membership-changed',/, 'the event Home dispatches once a leave lands');
 });

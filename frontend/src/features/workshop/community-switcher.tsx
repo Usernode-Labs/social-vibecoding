@@ -16,11 +16,12 @@
  * never folded away.
  *
  * It replaced the in-place "Which project?" panel under the header, and it
- * opens from three places, all through the same store: the community's name
- * and ⌄ in the coloured header, the header's "Communities ⌄" on the
- * Communities list, and the phone's tab HELD (#3701). The tab PRESSED while
- * it is lit no longer opens it, at any width: it goes up a level, to the
- * community, its top, then All communities (./tab-ladder.ts).
+ * opens from two places, both through the same store: the community's name
+ * and ⌄ in the coloured header, and the header's "Communities ⌄" on the
+ * Communities list. The phone's tab held opened it too (#3701) until the
+ * drawer's list replaced it there (18 Oct 2026). The tab PRESSED while it is
+ * lit does not open it, at any width: it goes up a level, to the community,
+ * its top, then All communities (./tab-ladder.ts).
  *
  * ── Two presentations ──────────────────────────────────────────────────
  *

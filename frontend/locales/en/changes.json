@@ -475,6 +475,18 @@
     "text": "Search: {{query}}",
     "description": "Chip above the Workshop board showing that the cards are filtered by a search. {{query}} is what the person typed. Pressing the chip removes the filter."
   },
+  "board.filterChip.stageOpen": {
+    "text": "Open items",
+    "description": "Chip above All items showing that only the work still open (requests, work underway and changes up for a vote) is shown, set by tapping the open items figure on the Workshop. Pressing the chip removes the filter."
+  },
+  "board.filterChip.stageUnclaimed": {
+    "text": "Nobody on them",
+    "description": "Chip above All items showing that only the open requests nobody has picked up yet are shown, set by tapping that figure on the Workshop. Pressing the chip removes the filter."
+  },
+  "board.filterChip.stageShipped": {
+    "text": "Live this week",
+    "description": "Chip above All items showing that only the changes that went live this week are shown, set by tapping that figure on the Workshop. Pressing the chip removes the filter."
+  },
   "board.filterChip.priorityLow": {
     "text": "Low priority",
     "description": "Chip above the Workshop board showing that only cards the group marked as low priority are shown. Pressing it removes the filter."

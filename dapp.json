@@ -171,7 +171,13 @@
       "key": "MAX_GLOBAL_SESSIONS",
       "group": "Scaling",
       "default": "75",
-      "description": "Ceiling on concurrent worker containers across the whole platform. The committed default targets ~50 concurrent users on a 20-core/62GB box; raise it only alongside WORKER_MEMORY headroom."
+      "description": "Default ceiling on coding sessions across the whole platform, active and in review. The committed default targets ~50 concurrent users on a 20-core/62GB box; raise it only alongside WORKER_MEMORY headroom. Full admins can override it without a deploy in Admin → Limits."
+    },
+    {
+      "key": "CAMPAIGN_MAX_OPEN",
+      "group": "Scaling",
+      "default": "10",
+      "description": "How many of one maintenance campaign's proposals may be up for a vote at once. A campaign also changes its next app only while the platform's sessions are under PLATFORM_LIMIT_WARN_PERCENT of the session limit."
     },
     {
       "key": "MAX_USER_SESSIONS",
@@ -532,8 +538,8 @@
       "key": "OPENROUTER_DEFAULT_CODEX_MODEL",
       "group": "AI & coding agents",
       "required": false,
-      "default": "z-ai/glm-5.3-flash",
-      "description": "Preferred OpenRouter model for new coding-agent sessions. The complete OpenRouter catalog remains selectable; if this slug is absent, Homeroom safely recommends another compatible model."
+      "default": "deepseek/deepseek-v4.1-flash-1017",
+      "description": "The deployment's default OpenRouter model for new coding-agent sessions and the Homeroom bot's chat replies. An admin's choice in Admin → Homeroom bot → Settings → Models, which wins over this variable, changes it with no deploy. The Kubernetes deploy does not apply this panel's value, so there the default is src/config.js's unless the admin setting is stored."
     },
     {
       "key": "OPENROUTER_MODEL_HARNESSES",
@@ -546,7 +552,7 @@
       "key": "OPENROUTER_RECOMMENDED_MODELS",
       "group": "AI & coding agents",
       "required": false,
-      "default": "z-ai/glm-5.3-flash,deepseek/deepseek-v4.1-flash",
+      "default": "deepseek/deepseek-v4.1-flash-1017,z-ai/glm-5.3-flash",
       "description": "Comma-separated exact OpenRouter model ids that receive a Recommended tag, begin starred in model pickers, and are the OpenRouter models the composer's flat picker starts with, in this order. Each user's explicit star or unstar wins. Set none to remove all platform recommendations."
     },
     {
@@ -712,6 +718,12 @@
       "expectText": "Email & recovery",
       "expectSelector": "[data-settings-section=\"email\"]:not(.hidden) [data-account-email-form]",
       "allowConsoleErrors": false
+    },
+    {
+      "name": "Accessibility settings ship text size and contrast controls (#3969)",
+      "path": "/?demo=1#settings/accessibility",
+      "expectText": "High contrast",
+      "expectSelector": "#settings-accessibility-section #settings-text-size-track[role=\"radiogroup\"] [data-text-size-option=\"larger\"]"
     },
     {
       "name": "Guest back arrow returns to the app directory (#1028)",
@@ -1331,9 +1343,9 @@
     },
     {
       "id": "kept-apps.home-dot",
-      "name": "An app still loaded in the background carries a green dot on its Home tile, and says so to a screen reader (#2902); on the desktop strip it is one of the recent apps, with the same dot, the tile a closed app collapses into (#3618, #4417)",
+      "name": "An app still loaded in the background carries a green dot on its Home tile, and says so to a screen reader (#2902); in the desktop sidebar it is its community's App row, with the same dot, the row a closed app collapses into (#3618)",
       "path": "/?demo=1&shot=apps-kept",
-      "expectSelector": "body:has(#platform-strip-apps > a.platform-strip-app[data-live]:not([aria-current]) .platform-strip-live) #app-list .app-card[data-live=\"true\"][aria-label$=\", still open\"] .app-card-live-dot.app-live-dot",
+      "expectSelector": "body:has(#platform-rail-communities a.platform-rail-app[data-live]:not([aria-current]) .platform-rail-live) #app-list .app-card[data-live=\"true\"][aria-label$=\", still open\"] .app-card-live-dot.app-live-dot",
       "visual": true,
       "impact": [
         "public/css/app.css",
@@ -2597,9 +2609,9 @@
       "expectText": "general"
     },
     {
-      "name": "The Communities tab wears the community you are in: its tile (in a ring on a phone's bar), but keeps the word (#3709)",
+      "name": "On a wide window the sidebar lists your communities with the one you are on lit, above the Communities tab, which is their All row there and named by its own words; on a phone's bar the tab still wears the community's tile (#3709, D)",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#platform-tabs #platform-tab-workshop[aria-current=\"page\"][aria-label^=\"Communities, on \"] .platform-tab-ring:not(.platform-tab-ring-all) > .platform-tab-tile",
+      "expectSelector": "#platform-tabs > #platform-rail-communities:has(> a.platform-rail-community[data-rail-community=\"usernode-2d5619\"][aria-current=\"page\"]) + #platform-tab-workshop[aria-current=\"page\"]:not([aria-label]) > .platform-tab-all-label",
       "expectText": "Homeroom"
     },
     {
@@ -2976,9 +2988,9 @@
       "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#platform-mark-btn) #notifications-btn"
     },
     {
-      "name": "The bar's destination order: Home, Discover, Messages in the middle, Communities, then you (#1443)",
+      "name": "The bar's destination order: Home, Discover, Messages in the middle, Communities, then you (#1443); on a wide window Messages' nested conversations follow it, and the communities you pinned, then your others, sit just above the Communities tab (D, v3)",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-tab-workshop[href=\"#communities\"] + #platform-strip-apps + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-rail-conversations + #platform-rail-pinned + #platform-rail-communities + #platform-tab-workshop[href=\"#communities\"] + #platform-tab-me"
     },
     {
       "name": "Messages is a tab on the bar, with a seat for its count (#2718)",
@@ -3007,9 +3019,9 @@
       "expectText": "[Mock] Did the notifications change land yet?"
     },
     {
-      "name": "The Messages strip leads with a search box, not a second copy of the screen's name (#2718 review)",
+      "name": "The Messages strip leads with a search box, not a second copy of the screen's name (#2718 review); on a desktop the list is the page, All messages, lit under Messages in the sidebar (v3)",
       "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-layout.dc-lift.dc-lift-strip .messages-list-pane:not(:has(.messages-list-toolbar)) .messages-search input"
+      "expectSelector": "body:has(#platform-rail-conversations a[data-rail-all-messages][aria-current=\"page\"]) #messages-screen:not(.hidden) .messages-layout.dc-lift-strip.messages-list-page .messages-list-pane:not(:has(.messages-list-toolbar)) .messages-search input"
     },
     {
       "name": "...and a styled empty pane where the conversation goes",
@@ -3229,9 +3241,10 @@
       "expectText": "Public communities"
     },
     {
-      "name": "The Communities screen draws no empty-state line while it has rows, and the header's Communities opens Your communities, no chip on the page, and the page bounces (#3051, #852, #3566)",
+      "name": "The Communities screen draws no empty-state line while it has rows; beside the sidebar, whose Communities heading holds its search, it is one page of your communities under a search, nothing beside it; no chip on the page, and the page bounces (#3051, #852, #3566, D, v3)",
       "path": "/?demo=1#workshop",
-      "expectSelector": "body:has(#header-scope-switch[aria-controls=\"community-switcher\"]) #workshop-screen[data-page-bounce]:not(.hidden):has(#workshop-list [data-workshop-app]) [data-workshop-pane=\"status\"]:not(.hidden) #workshop-empty.hidden"
+      "expectSelector": "body:has(#platform-rail-search) #workshop-screen[data-page-bounce]:not(.hidden):has(#workshop-search):not(:has([data-workshop-pane=\"needs\"])):has(#workshop-list [data-workshop-app]) [data-workshop-pane=\"status\"]:not(.hidden) #workshop-empty.hidden",
+      "expectText": "Join a community"
     },
     {
       "name": "Communities: Needs you is a project’s own feed, every project mixed, each item naming its project, with the rail from Vote to More (#3270, #3488); a Just-you change's vote sheet asks for your approval (#4313)",
@@ -4091,7 +4104,7 @@
     {
       "name": "With kudos parked, the notifications sheet shows no kudos row (#3227, #5249)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-sheet[data-open]:has([data-notif-id=\"990210\"]):not(:has([data-notif-id=\"990213\"]))"
+      "expectSelector": "#notifications-sheet[data-open]:has([data-notif-id=\"990210\"]):not(:has([data-notif-action=\"kudos_board\"]))"
     },
     {
       "name": "With kudos parked, the bounty note says nothing, even with the allowance spent (#964, #5249)",
@@ -4762,19 +4775,19 @@
       "expectSelector": "html:not(.in-side-panel) body:has(#platform-side-panel.hidden):has(#platform-header:not(.hidden)):has(#platform-tabs:not(.hidden)) #messages-screen:not(.hidden)"
     },
     {
-      "name": "#4417, #5323: the desktop strip's apps sit between the last section, Communities, and you, named for a screen reader (pins you chose first, then recents; they replace the rail's Recents, #2802)",
+      "name": "#5323: the communities you pin have a section of their own in the desktop sidebar, above your others and named by its heading, which shows only once something is pinned; each community's app is a row under it, so the sidebar lists no apps apart (#4417)",
       "path": "/?demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-workshop + #platform-strip-apps[role=\"group\"][aria-label=\"Pinned apps and recent apps\"] + #platform-tab-me"
+      "expectSelector": "#platform-tabs > #platform-rail-pinned.hidden[role=\"group\"][aria-labelledby=\"platform-rail-pinned-label\"] + #platform-rail-communities"
     },
     {
-      "name": "#2800, #4417: you are the strip's foot, straight after its recent apps, with your Settings beside you",
+      "name": "#2800: you are the sidebar's foot, straight after the Communities tab (its All row), with your Settings beside you",
       "path": "/?demo=1",
-      "expectSelector": "#platform-tabs > #platform-strip-apps + a#platform-tab-me + a#platform-rail-settings:last-child"
+      "expectSelector": "#platform-tabs > #platform-tab-workshop + a#platform-tab-me + a#platform-rail-settings:last-child"
     },
     {
-      "name": "#4417: on a wide window a project's places are the column beside the strip, and the place on show is lit there (Needs you)",
+      "name": "#4417, v3: on a desktop a project's places are nested under its row in the sidebar, the place on show lit there (Needs you), with no column beside it",
       "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
-      "expectSelector": "#platform-section-column:not(.hidden) > [data-places=\"usernode-2d5619\"] [data-place=\"needs\"][aria-current=\"page\"]",
+      "expectSelector": "body:not(:has(#platform-section-column)) #platform-rail-communities > a[data-rail-community=\"usernode-2d5619\"][aria-current=\"page\"][data-rail-open] + .platform-rail-nest [data-places=\"usernode-2d5619\"] [data-place=\"needs\"][aria-current=\"page\"]",
       "expectText": "Needs you"
     },
     {
@@ -4793,9 +4806,9 @@
       "expectSelector": "a#back-btn:not(.hidden)[aria-label=\"Back\"][href=\"#messages\"]"
     },
     {
-      "name": "On a desktop a running app keeps the sidebar beside it, its Communities tab names the app's community, and the header's corner is the sidebar toggle rather than a ✕; no left-edge hover strip over the app (#3138)",
+      "name": "On a desktop a running app keeps the sidebar beside it, and the header's corner is the sidebar toggle rather than a ✕; no left-edge hover strip over the app (#3138; the sidebar's All row names no community, D)",
       "path": "/#app/staging-demo-forkable",
-      "expectSelector": "body.rail-pinned:has(#app-view:not(.hidden)):has(#platform-tab-workshop[aria-label$=\"forkable app\"]):not(:has(#platform-rail-peek)) #platform-header .platform-header-left:has(> a#back-btn.hidden) > #sidebar-toggle[aria-pressed=\"true\"]"
+      "expectSelector": "body.rail-pinned:has(#app-view:not(.hidden)):has(#platform-tabs:not(.hidden) #platform-tab-workshop:not([aria-label])):not(:has(#platform-rail-peek)) #platform-header .platform-header-left:has(> a#back-btn.hidden) > #sidebar-toggle[aria-pressed=\"true\"]"
     },
     {
       "id": "agent-session.card",

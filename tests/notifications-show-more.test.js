@@ -221,8 +221,12 @@ test('Hide older notifications collapses the expanded Unread list', () => {
 test('the expanded Unread view is a per-visit state, forgotten on close or tab change', () => {
   // Starts collapsed, so the prerendered markup is unchanged.
   assert.match(LIST_CODE, /\[olderShown, setOlderShown\] = useState\(false\)/);
-  assert.match(LIST_CODE, /if \(!open \|\| tab !== 'unread'\) setOlderShown\(false\)/,
-    'an effect collapses it when the sheet closes or the tab changes');
+  // #5460: the close branch no longer clears the search query — the query is
+  // remembered for the tab session now — but it still collapses the reveal.
+  assert.match(LIST_CODE, /if \(!open\) setOlderShown\(false\)/,
+    'an effect collapses it when the sheet closes, without touching the query');
+  assert.match(LIST_CODE, /else if \(tab !== 'unread'\) setOlderShown\(false\)/,
+    'and collapses it when the tab changes, without touching the query');
 });
 
 test('the Unread footer reads its words from the catalog', () => {

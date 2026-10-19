@@ -15,6 +15,7 @@ const {
   otpRequestLimiter,
   otpRequestEmailLimiter,
   otpVerifyLimiter,
+  usernameCheckLimiter,
   releaseLinkLimiter,
   passwordResetRequestLimiter,
   passwordResetRequestEmailLimiter,
@@ -515,6 +516,27 @@ function authRoutes(config) {
     }
   });
 
+  // The sign-in sheet's account step asks this as the person types (#5255):
+  // the handle's rules, then whether anybody holds it, live or retired, in
+  // the same words a refusal would use. Read-only, and answered only to a
+  // person mid-sign-up: the signup cookie set-password spends, unexpired,
+  // for an account that still has to choose its handle. Anyone else gets
+  // 401, so it is no oracle for handles a public profile would not show.
+  router.get('/api/auth/username-available', usernameCheckLimiter, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      const userId = await emailSignup.pendingUsernameChoice(pool, req.cookies?.[SIGNUP_COOKIE]);
+      if (!userId) return res.status(401).json({ error: 'Your signup session expired. Request a new code.', code: 'invalid_signup_session' });
+      const check = usernames.validateUsername(typeof req.query.username === 'string' ? req.query.username : '');
+      if (!check.ok) return res.json({ ok: true, available: false, error: check.error });
+      const free = await usernames.checkAvailability(pool, check.value, userId);
+      return res.json({ ok: true, available: free.available === true, ...(free.available ? {} : { error: free.error }) });
+    } catch (error) {
+      log.error('auth', 'Username availability check failed', { message: error.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.post('/api/auth/otp/set-password', otpVerifyLimiter, async (req, res) => {
     // #4595: the password is optional ("Skip for now"). Absent or empty
     // means none; the service holds a password that IS sent to the usual
@@ -737,6 +759,23 @@ function authRoutes(config) {
     }
     res.clearCookie('session');
     res.json({ ok: true });
+  });
+
+  // The waiting room's account line (#5256): which account was just made
+  // and where the "you're in" mail goes. Under /api/auth/ so an account
+  // without platform access can read it (middleware/auth.js
+  // GATE_OPEN_PATHS); /api/me/email stays behind the gate, since its
+  // prefix also covers changing the address. Only the caller's own row.
+  router.get('/api/auth/waiting', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const { rows } = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
+      res.set('Cache-Control', 'no-store');
+      return res.json({ username: req.user.username || null, email: rows[0]?.email || null });
+    } catch (err) {
+      log.warn('auth', 'Waiting room account lookup failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
   });
 
   router.get('/api/auth/me', async (req, res) => {

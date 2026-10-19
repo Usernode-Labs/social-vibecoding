@@ -216,6 +216,10 @@ test('each kind renders its own title and body from send-time context', () => {
     ['stale_pr', CONTEXT,
       '"Fix login redirect loop" is waiting for approval · MyPage',
       'Share the preview or ask a friend to try it'],
+    // Its votes are met and its merge stands still (a conflict, red checks).
+    ['stale_pr', { ...CONTEXT, detail: 'blocked' },
+      '"Fix login redirect loop" is approved but can\'t go live · MyPage',
+      'It needs a fix before it can go live, or it will be set aside'],
   ];
   for (const [kind, context, title, body] of cases) {
     const message = buildMessage({ ...INPUT, kind, context });
@@ -472,7 +476,7 @@ test('platform limit alerts name the cap, how full it is, and the lever', () => 
     body: '60 of 75 coding sessions are running. At the limit, idle sessions are paused to make room',
   });
   assert.equal(copy('sessions_full:75:75').title, 'Session limit reached');
-  assert.match(copy('sessions_full:75:75').body, /MAX_GLOBAL_SESSIONS/);
+  assert.match(copy('sessions_full:75:75').body, /raised in Admin → Limits/);
   // GitHub's hourly budget (services/github-budget.js).
   assert.deepEqual(copy('github_warn:4000:5000'), {
     title: 'GitHub requests running low',

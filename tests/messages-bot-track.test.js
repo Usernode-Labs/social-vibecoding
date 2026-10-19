@@ -59,6 +59,15 @@ test('each state has its word, and each why its line; a loop says which try', ()
   assert.equal(trackEyebrow(track({ state: 'live', step: 'live', try: 2 })), t('bot.track.state.live'), 'an ended track says only how it ended');
   assert.equal(trackLine(track({ state: 'vote', step: 'vote' })), t('bot.track.line.vote.default'));
   assert.equal(trackLine(track({ state: 'waiting', step: 'plan', why: 'no_such_why' })), t('bot.track.line.waiting.question'), 'an unknown why falls back to the state\'s own line');
+  // Papote #3: on a page anyone can open, a wait on its requester names them.
+  const plan = track({ state: 'waiting', step: 'plan', why: 'plan', waitingOn: 'you' });
+  assert.equal(trackStateWord(plan), 'Waiting on you');
+  assert.equal(trackLine(plan), 'Its plan is ready for you to say Build it');
+  assert.equal(trackStateWord({ ...plan, waitingFor: 'snait' }), 'Waiting on @snait');
+  assert.equal(trackLine({ ...plan, waitingFor: 'snait' }), 'Its plan is ready for @snait to say Build it');
+  assert.equal(trackEyebrow({ ...plan, waitingFor: 'snait' }), 'Waiting on @snait');
+  assert.equal(trackLine({ ...plan, why: 'question', waitingFor: 'snait' }), 'It has a question for @snait');
+  assert.equal(trackLine({ ...plan, why: 'no_such_why', waitingFor: 'snait' }), 'It has a question for @snait');
 
   const held = track({ state: 'held', step: null, why: 'slots', held: { limit: 'slots', position: 3, until: null } });
   assert.equal(trackStateWord(held), 'On hold', 'the same word a held row says under In progress');

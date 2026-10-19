@@ -4,9 +4,11 @@
 //
 // The four tabs (Hub · Discussion · Needs you · Workshop) became one list:
 // Hub, Needs you and Workshop, a line, then Channels (#general) and Topics,
-// each a group under its heading. On a phone it is a tray behind the place
-// bar's button; on a wide window it is the section column beside the strip
-// (tests/section-column.test.js). These pin the list, the bar and the tray,
+// each a group under its heading. On a phone it is the drawer's middle
+// level, or a tray behind the place bar's button; from 768px it is nested
+// under the community's row in the sidebar (tests/desktop-sidebar-nested.test.js),
+// with the project's App row first (tests/desktop-sidebar-apps.test.js).
+// These pin the list, the bar and the tray,
 // the ladder that walks places, and the addresses that open one.
 
 const test = require('node:test');
@@ -97,14 +99,32 @@ test('counts say what they count aloud, and a zero says nothing', () => {
   assert.equal(countPhrase('c:onboarding', 3), '3 unread');
   assert.equal(countPhrase('needs', 0), null);
   assert.equal(countText(120), '99+');
+  // A channel's pill and its hover text say unread, the number capped; the
+  // sr-only phrase keeps the real count.
+  assert.equal(countPhrase('c:x', 150, countText(150)), '99+ unread');
+  assert.equal(countPhrase('c:x', 150), '150 unread');
   const html = list({ owed: 29 });
   assert.match(html, /data-place="needs"[\s\S]*?<span class="dev-ws-place-count" data-place-count="" aria-hidden="true">29<\/span><span class="sr-only"> \(29 to vote\)<\/span><\/a>/);
-  assert.match(html, /data-place="c:onboarding"[\s\S]*?>3<\/span><span class="sr-only"> \(3 unread\)<\/span><\/a>/);
-  assert.match(html, /data-place="c:infra"[\s\S]*?>1<\/span><span class="sr-only"> \(1 unread\)<\/span><\/a>/);
+  assert.match(html, /data-place="c:onboarding"[\s\S]*?title="3 unread">3 unread<\/span><span class="sr-only"> \(3 unread\)<\/span><\/a>/);
+  assert.match(html, /data-place="c:infra"[\s\S]*?title="1 unread">1 unread<\/span><span class="sr-only"> \(1 unread\)<\/span><\/a>/);
   // #general has nothing unread here, and the Hub never counts: no number.
   const general = html.slice(html.indexOf('data-place="discussion"'), html.indexOf('</a>', html.indexOf('data-place="discussion"')));
   assert.doesNotMatch(general, /data-place-count/);
   assert.doesNotMatch(list({ owed: 0 }).slice(0, list({ owed: 0 }).indexOf('data-place="workshop"')), /data-place-count/);
+});
+
+// #5447: the channel on screen draws no count of its own — you are reading
+// it — as the place bar already leaves it out of its unread. The count of
+// Needs you stays while you are there: the rule is for channels.
+test('the channel on screen draws no count; Needs you keeps its own while lit', () => {
+  const reading = list({ place: 'c:onboarding' });
+  const onboarding = reading.slice(reading.indexOf('data-place="c:onboarding"'), reading.indexOf('</a>', reading.indexOf('data-place="c:onboarding"')));
+  assert.doesNotMatch(onboarding, /data-place-count/, 'no pill while you read there');
+  assert.doesNotMatch(onboarding, /sr-only/, 'and no phrase for a screen reader');
+  assert.match(reading, /data-place="c:infra"[\s\S]*?title="1 unread">1 unread<\/span>/, 'another channel keeps its pill');
+  const needs = list({ place: 'needs', owed: 29 });
+  assert.match(needs, /data-place="needs" aria-current="page"[\s\S]*?<span class="dev-ws-place-count" data-place-count="" aria-hidden="true">29<\/span><span class="sr-only"> \(29 to vote\)<\/span>/,
+    'Needs you still counts while you are on it');
 });
 
 test('the tray\'s list ends with Switch community; the column\'s does not', () => {

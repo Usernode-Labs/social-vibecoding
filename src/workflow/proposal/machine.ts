@@ -1140,24 +1140,35 @@ const reviewCheck: Handler = (s, e, f, ctx, deps) => {
   if (f.gate?.rejectable) return close(s, e, f, 'auto-rejected');
   // Its gate is met (a window elapsed, the electorate shrank, a vote whose
   // own ask was lost): the app's merge queue is asked.
-  const ask = f.gate?.mergeable && !s.data.attempt && !s.data.sync
+  const met = !!f.gate?.mergeable;
+  const messages = met && !s.data.attempt && !s.data.sync
     ? [toQueue(s.data, 'MergeWanted', { reason: 'review-check' })] : [];
-  if (ask.length) return step(s, { messages: ask, timer: again });
-  if (deps.staleNotifyMs <= 0) return step(s, { timer: again });
-  const interest = f.interestAt ? Date.parse(f.interestAt) : 0;
+  // A met gate is no shield from going quiet. One whose merge is refused
+  // every hour (a conflict nobody resolves, checks nobody fixes) used to be
+  // asked again and never looked at: 5796 was warned on 13 Oct, its last
+  // vote a week before that, and stayed up, one of 25 such proposals holding
+  // review slots on 19 Oct. Its clock runs from when it became mergeable, so
+  // the queue has its week first. A red main pauses every merge on the app,
+  // which nothing about the proposal clears: while it lasts, none goes quiet.
+  if (deps.staleNotifyMs <= 0 || (met && f.mergesPaused)) return step(s, { messages, timer: again });
+  const metAt = met && f.gate!.windowEndsAt ? Math.min(Date.parse(f.gate!.windowEndsAt), ctx.now.getTime()) : 0;
+  const interest = Math.max(f.interestAt ? Date.parse(f.interestAt) : 0, metAt || 0);
   const warned = row.staleNotifiedAt ? Date.parse(row.staleNotifiedAt) : null;
   if (warned != null && interest > warned) {
     // Somebody showed interest after the warning: it stands again.
-    return step(s, { writes: [{ type: 'staleCleared', sessionId: s.data.sessionId }], timer: again });
+    return step(s, { writes: [{ type: 'staleCleared', sessionId: s.data.sessionId }], messages, timer: again });
   }
   if (warned != null) {
     if (ctx.now.getTime() - warned >= deps.staleGraceMs) return close(s, e, f, 'stale-pr');
-    return step(s, { timer: again });
+    return step(s, { messages, timer: again });
   }
   if (ctx.now.getTime() - interest >= deps.staleNotifyMs) {
-    return step(s, { writes: [{ type: 'staleWarned', sessionId: s.data.sessionId, appId: s.data.appId, userId: row.userId }], timer: again });
+    return step(s, {
+      writes: [{ type: 'staleWarned', sessionId: s.data.sessionId, appId: s.data.appId, userId: row.userId, blocked: met }],
+      messages, timer: again,
+    });
   }
-  return step(s, { timer: again });
+  return step(s, { messages, timer: again });
 };
 
 // A work result: the GitHub move under way reports (and the next starts);
@@ -1582,10 +1593,13 @@ const WRITES = {
       WHERE id = $2`, [w.to, w.sessionId, w.column, !!w.keepVotes, !!w.fixOnly]),
   approvalsCleared: async (tx: Tx, w: any) => tx.query(
     'UPDATE chat_sessions SET approval_epoch = approval_epoch + 1 WHERE id = $1', [w.sessionId]),
-  // Gone quiet: its author is warned once.
+  // Gone quiet: its author is warned once (its votes met and its merge
+  // stuck, in those words).
   staleWarned: async (tx: Tx, w: any, ctx: WriteContext) => {
     await tx.query('UPDATE chat_sessions SET stale_notified_at = NOW() WHERE id = $1', [w.sessionId]);
-    named(ctx, await createStalePrNotification(tx, { userId: w.userId ?? null, appId: w.appId, sessionId: w.sessionId }));
+    named(ctx, await createStalePrNotification(tx, {
+      userId: w.userId ?? null, appId: w.appId, sessionId: w.sessionId, detail: w.blocked ? 'blocked' : null,
+    }));
   },
   staleCleared: async (tx: Tx, w: any) => tx.query('UPDATE chat_sessions SET stale_notified_at = NULL WHERE id = $1', [w.sessionId]),
   prCleared: async (tx: Tx, w: any) => tx.query(

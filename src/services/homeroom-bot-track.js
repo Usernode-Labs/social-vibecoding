@@ -624,6 +624,20 @@ async function tracksForRequests(pool, { appId, numbers, now = new Date(), deps 
   return out;
 }
 
+/**
+ * Papote #3 (18 Oct 2026): a track as `viewerId` reads it on a page anyone
+ * can open (the request's page). A track waiting on "you" waits on the
+ * person who asked for it (`asker`: { userId, username }), so for anybody
+ * else it names them (`waitingFor`): the page said "Waiting on you: Its plan
+ * is ready for you to say Build it" to every member, beside a button that
+ * said it waited for somebody else. Pure.
+ */
+function forViewer(track, asker, viewerId) {
+  if (!track || track.waitingOn !== 'you' || !asker?.username) return track;
+  if (Number(asker.userId) === Number(viewerId)) return track;
+  return { ...track, waitingFor: asker.username };
+}
+
 // Who asked for each of `$2` on project `$1`, and the title the bot kept
 // when it was filed (a request with no row of ours has no other).
 const ASKERS_SQL = `
@@ -893,7 +907,7 @@ function demoSlots(app, now = Date.now(), mocks = []) {
       }),
       slot('proposal', 900006, 'Staging demo: a name for the bot', 'staging-demo-ana', { stage: 'vote', since: ago(300) }),
       slot('proposal', 900002, 'Staging demo: smaller app names', 'staging-demo-cy', { stage: 'checks', since: ago(20) }),
-      slot('proposal', 900015, 'Staging demo: keep kudos history', 'staging-demo-ben', { stage: 'question', since: ago(10) }),
+      slot('proposal', 900015, 'Staging demo: keep the vote history', 'staging-demo-ben', { stage: 'question', since: ago(10) }),
     ],
     waiting: [
       wait(900009, 'Staging demo: rethink challenges', 'staging-demo-cy', 1, 200),
@@ -965,6 +979,7 @@ module.exports = {
   QUEUE_SQL,
   jobOfRow,
   tracksForRequests,
+  forViewer,
   slotsView,
   demoSlots,
   requestExcerpt,

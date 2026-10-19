@@ -3,9 +3,9 @@
 // The waiting screen says the waitlist in its own words (#4073, #4037):
 // waitlist, your spot, a few at a time and access, never queue, batches or
 // your turn. frontend/src/features/auth/waiting.tsx draws the onboarding
-// canvas's screen: the wordmark, "You're on the waitlist", one line, the
-// invite box when a link queued a community, one picture, and Sign out as a
-// small link. The landing's
+// canvas's screen: the wordmark, "You're on the waitlist", one line and the
+// account it names (#5256), the invite box when a link queued a community,
+// a box for a link sent later, one picture, and Sign out as a small link. The landing's
 // way back to it, for a waiting account, says the same.
 //
 // Run with: node --test tests/waiting-screen-words.test.js
@@ -41,8 +41,9 @@ test('the waiting screen: the title, one line, the invite box, Sign out', () => 
   const src = code(read(WAITING));
   assert.match(src, />\s*\{t\('auth:waiting\.title'\)\}\s*</);
   assert.equal(message('auth:waiting.title'), "You're on the waitlist");
-  // The email promise is back now every newcomer gets a spot and the mail (#4083).
-  assert.match(src, />\s*\{t\('auth:waiting\.lead'\)\}\s*</);
+  // The email promise is back now every newcomer gets a spot and the mail
+  // (#4083); it names the address once the room has read it (#5256).
+  assert.match(src, /\) : t\('auth:waiting\.lead'\)\}\s*<\/p>/);
   assert.equal(message('auth:waiting.lead'), "We let people in a few at a time, and we'll email you when your spot is ready.");
   assert.match(src, /\{t\('auth:waiting\.youJoin', \{ communities: namesLine\(queued\.map\(\(q\) => q\.name\)\) \}\)\}/);
   assert.equal(message('auth:waiting.youJoin', { communities: 'A, B and C' }), 'When you get access, you join A, B and C.');
@@ -106,7 +107,7 @@ test('?shot=waiting shows the room for the shots, without the poll', () => {
   assert.equal(waitingShot('?shot=anon'), null);
   assert.equal(waitingShot(''), null);
   const src = code(read(WAITING));
-  assert.match(src, /const shot = waitingShot\(location\.search\);\s+if \(shot\) \{\s+setQueued\(shot === 'invite' \? \[\{ name: 'Sunday Run Club', inviter: null \}\] : \[\]\);\s+return;\s+\}\s+startWaitingPoll\(\);/,
+  assert.match(src, /const shot = waitingShot\(location\.search\);\s+if \(shot\) \{\s+setQueued\(shot === 'invite' \? \[\{ name: 'Sunday Run Club', inviter: null \}\] : \[\]\);\s+setAccount\(SHOT_ACCOUNT\);\s+return;\s+\}\s+startWaitingPoll\(\);/,
     'a shot returns before the poll and the invite follow');
   const app = read('public/js/app.js');
   assert.match(app, /_waitingShot\(\) \{\s+let shot = null;\s+try \{ shot = new URLSearchParams\(location\.search\)\.get\('shot'\); \} catch \(err\) \{ \/\* ignore \*\/ \}\s+return shot === 'waiting' \|\| shot === 'waiting-invite';\s+\},/);
@@ -148,4 +149,60 @@ test('the waitlist pitch and form keep the email promise, without batches or gro
   assert.match(message('auth:waitlist.status.leadWaiting'), /We\u2019re letting people in a few at a time\. We\u2019ll email you when yours comes up\./);
   assert.doesNotMatch(form, /small groups|next group/);
   for (const text of catalogTexts('waitlist.')) assert.doesNotMatch(text, /small groups|next group/);
+});
+
+// #5256: the room names the account it made and where the mail goes, and
+// takes an invite link sent later. GET /api/auth/waiting is under
+// /api/auth/, which a waiting account may call; /api/me/email is not.
+test('the room names the account: @username, and the email the mail goes to', () => {
+  const src = code(read(WAITING));
+  assert.match(src, /fetch\('\/api\/auth\/waiting', \{ credentials: 'same-origin' \}\)/);
+  assert.match(src, /account\?\.email \? \(\s+<RichMessage\s+id="auth:waiting\.leadEmail"/);
+  assert.equal(
+    message('auth:waiting.leadEmail', { email: 'ada@example.com' }).replace(/<\/?0>/g, ''),
+    "We let people in a few at a time, and we'll email ada@example.com when your spot is ready.",
+  );
+  assert.match(src, /data-waiting-account=""[\s\S]{0,200}?\{t\('auth:waiting\.account', \{ username: account\.username \}\)\}/);
+  assert.equal(message('auth:waiting.account', { username: 'ada' }), 'Signed in as @ada');
+  // The shots' room shows a made-up account and asks the server nothing.
+  assert.match(src, /const SHOT_ACCOUNT: WaitingAccount = \{ username: 'ada', email: 'ada@example\.com' \};/);
+  assert.match(src, /setAccount\(SHOT_ACCOUNT\);\s+return;/);
+
+  const routes = read('src/routes/auth.js');
+  const route = routes.match(/router\.get\('\/api\/auth\/waiting'[\s\S]*?\n  \}\);/)[0];
+  assert.match(route, /if \(!req\.user\) return res\.status\(401\)/);
+  assert.match(route, /SELECT email FROM users WHERE id = \$1', \[req\.user\.id\]/);
+  assert.match(route, /res\.json\(\{ username: req\.user\.username \|\| null, email: rows\[0\]\?\.email \|\| null \}\)/);
+  const gate = read('src/middleware/auth.js');
+  assert.match(gate, /const GATE_OPEN_PATHS = \[[\s\S]*?'\/api\/auth\/',/);
+  assert.doesNotMatch(gate.match(/const GATE_OPEN_PATHS = \[[\s\S]*?\];/)[0], /'\/api\/me\/email/);
+});
+
+test('the invite box follows a pasted link, and says why one did not work', () => {
+  const { inviteTokenFromText } = loadTsx(WAITING);
+  const token = 'AbCdEfGhIjKlMnOpQrStUv';
+  assert.equal(inviteTokenFromText(`https://app.onhomeroom.com/invite/${token}`), token);
+  assert.equal(inviteTokenFromText(`  https://app.onhomeroom.com/invite/${token}/?ref=x#y  `), token);
+  assert.equal(inviteTokenFromText(`/invite/${token}`), token);
+  assert.equal(inviteTokenFromText(token), token);
+  assert.equal(inviteTokenFromText('https://app.onhomeroom.com/app/foo'), null);
+  assert.equal(inviteTokenFromText('hello'), null);
+  assert.equal(inviteTokenFromText(''), null);
+
+  const src = code(read(WAITING));
+  assert.match(src, /<form\s+data-waiting-invite=""/);
+  assert.match(src, /fetch\(`\/api\/invite-links\/by-token\/\$\{encodeURIComponent\(token\)\}\/redeem`, \{\s+method: 'POST',/);
+  // Followed: the list above shows its community, and a link that let the
+  // account in boots the shell at once.
+  assert.match(src, /if \(res\.ok\) \{\s+setLink\(''\);\s+await listQueued\(\);\s+await check\(\);/);
+  assert.match(src, /res\.status === 404 \|\| res\.status === 410\) \{\s+setLinkError\(t\('auth:waiting\.invite\.dead'\)\)/);
+  for (const [id, said] of [
+    ['auth:waiting.invite.title', 'Have an invite link?'],
+    ['auth:waiting.invite.join', 'Join'],
+    ['auth:waiting.invite.notLink', "That isn't an invite link. Paste the whole link you were sent."],
+    ['auth:waiting.invite.dead', "That invite link isn't working any more. Ask for a new one."],
+  ]) {
+    assert.ok(src.includes(`t('${id}')`), `the box reads ${id}`);
+    assert.equal(message(id), said);
+  }
 });

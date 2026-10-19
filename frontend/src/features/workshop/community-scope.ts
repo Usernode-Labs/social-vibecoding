@@ -25,7 +25,12 @@
  * describers hand in every vote owed (`owedCount`) and which ones (`owed`),
  * and `needs`, the number the tab's badge and the switcher draw, is worked
  * out here from those and ./needs-seen.ts: again whenever a vote is swiped
- * past anywhere on the page, so the badge drops as you go.
+ * past anywhere on the page, so the badge drops as you go. A vote the server
+ * SAVED anywhere (../dev-board/card/cards-store.ts voteSavedStore) leaves
+ * them too, the moment it lands (#5468): the feed's card says "Voted yes"
+ * at once, so the tab, the switcher and the sidebar's counts agree with it
+ * instead of waiting for the next read, which is throttled to thirty seconds
+ * and can be served from the service worker's cache.
  *
  * AND ONLY A COMMUNITY THAT IS YOURS PUTS THEM ON THE TAB (5 Oct 2026). One
  * you are in only because every account is, Homeroom, and have not taken
@@ -37,9 +42,9 @@
  *
  * "Your communities": All communities first, then each community you are in,
  * then "Join a community" and "Start a community". It opens from the community's name and ⌄
- * in the coloured header, from the header's "Communities ⌄" on the
- * Communities list, and from the phone's tab held down (#3701; pressed while
- * it is lit, the tab goes up a level instead, ./tab-ladder.ts).
+ * in the coloured header and from the header's "Communities ⌄" on the
+ * Communities list (the tab pressed while it is lit goes up a level instead,
+ * ./tab-ladder.ts; held, it opens nothing since 18 Oct 2026).
  * `openSwitcher(from)` says where, so a wide window can hang the menu off
  * whatever opened it.
  *
@@ -51,6 +56,7 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
+import { voteSavedStore } from '../dev-board/card/cards-store';
 import { landKeepingPlace } from '../dev-board/workshop/place-store';
 import { hydrateNeedsSeen, needsSeenStore, unseenNeeds } from './needs-seen';
 import { orderRows } from './sections';
@@ -85,8 +91,8 @@ export interface CommunityInfo {
   lastActiveAt?: string | null;
 }
 
-/** Where the switcher was opened from: the phone's tab (held), or the header. */
-export type SwitcherFrom = 'tab' | 'header';
+/** Where the switcher was opened from: the header (the phone's held tab no longer opens it). */
+export type SwitcherFrom = 'header';
 
 export interface CommunityScopeState {
   /** The community the tab is on, or null for All communities. */
@@ -195,12 +201,51 @@ export function setScope(slug: string | null): void {
 }
 
 /**
+ * The keys of `owed` a vote the server SAVED (cards-store.ts voteSavedStore)
+ * has already answered (#5468), matched the way `savedVoteFor` matches a
+ * card: a `proposal:<id>` or `proposal:<id>@<epoch>` key is answered when a
+ * saved vote names its session id, and where either side has no epoch the id
+ * alone decides — a different epoch is the change moved under the vote,
+ * asking again. A `governance:` key is a group decision, which no saved vote
+ * here answers.
+ */
+export function owedLessSaved(
+  owed: readonly string[],
+  saved: Record<string, { epoch: number | null }>,
+): string[] {
+  return owed.filter((key) => {
+    if (!key.startsWith('proposal:')) return true;
+    const at = key.indexOf('@');
+    const id = key.slice('proposal:'.length, at < 0 ? key.length : at);
+    const entry = saved[id];
+    if (!entry) return true;
+    const raw = at < 0 ? '' : key.slice(at + 1);
+    const keyEpoch = raw === '' ? null : Number(raw);
+    const savedEpoch = entry.epoch == null ? null : Number(entry.epoch);
+    return !(keyEpoch == null || savedEpoch == null || keyEpoch === savedEpoch);
+  });
+}
+
+/**
  * `needs` from what was handed in: every vote owed, less the ones passed
- * over (#3526). An entry nobody has counted keeps whatever it had.
+ * over (#3526) and the ones a saved vote has answered (#5468). An entry
+ * nobody has counted keeps whatever it had, and one with a count but no list
+ * of which votes keeps its number too: a count this cannot check is never
+ * lowered on a guess, as in `unseenNeeds` and `stripAnsweredCounts`. The
+ * stored `owedCount` / `owed` stay what the describer handed in, so
+ * re-deriving after either store moves lands on the same number.
  */
 function derive(info: CommunityInfo): CommunityInfo {
   if (info.owedCount == null) return info;
-  const needs = unseenNeeds(info.slug, info.owedCount, info.owed);
+  let count = info.owedCount;
+  let owed = info.owed;
+  if (Array.isArray(owed) && owed.length) {
+    const left = owedLessSaved(owed, voteSavedStore.get());
+    const answered = owed.length - left.length;
+    if (answered > 0) count = Math.max(0, count - answered);
+    owed = left;
+  }
+  const needs = unseenNeeds(info.slug, count, owed);
   return needs === info.needs ? info : { ...info, needs };
 }
 
@@ -370,11 +415,11 @@ export function goToCommunity(slug: string | null): void {
 }
 
 /**
- * A vote passed over anywhere on the page (./needs-seen.ts) lowers every
- * count it was in, here and now: the tab's badge and the switcher's lines
- * drop as the feed is swiped through, not at the next read.
+ * Re-derive every entry and publish the result when any number moved: the
+ * tab's badge and the switcher's and sidebar's lines drop here and now, not
+ * at the next read. Both subscriptions below share this body.
  */
-needsSeenStore.subscribe(() => {
+function rederiveAll(): void {
   const cur = communityScopeStore.get();
   let changed = false;
   const info: Record<string, CommunityInfo> = {};
@@ -385,7 +430,23 @@ needsSeenStore.subscribe(() => {
   if (!changed) return;
   communityScopeStore.set({ info, ...(cur.list ? sums(cur.list, info) : {}) });
   if (cur.slug && info[cur.slug]) saveInfo(info[cur.slug]);
-});
+}
+
+/**
+ * A vote passed over anywhere on the page (./needs-seen.ts) lowers every
+ * count it was in, here and now: the tab's badge and the switcher's lines
+ * drop as the feed is swiped through, not at the next read.
+ */
+needsSeenStore.subscribe(rederiveAll);
+
+/**
+ * A vote the server SAVED anywhere (#5468, cards-store.ts voteSavedStore —
+ * the change's page, a notification's "Still yes", a chat's proposal card, a
+ * Needs you feed) lowers every count it was in the moment it lands, the same
+ * way: the card says "Voted yes" at once, so the tab, the switcher and the
+ * sidebar agree with it instead of waiting for the next read.
+ */
+voteSavedStore.subscribe(rederiveAll);
 
 if (typeof window !== 'undefined') {
   const host = window as unknown as { UsernodeReact?: Record<string, unknown> };

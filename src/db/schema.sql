@@ -1292,6 +1292,12 @@ CREATE TABLE IF NOT EXISTS unit_suite_passes (
 );
 CREATE INDEX IF NOT EXISTS idx_unit_suite_passes_commit
   ON unit_suite_passes (app_id, commit_sha, passed_at DESC);
+-- The commit's tree, when GitHub said it (NULL otherwise): main-watch copies
+-- a pass of the same tree for a merge that lands it under a new commit
+-- (services/unit-suite-reuse.js findTreePass).
+ALTER TABLE unit_suite_passes ADD COLUMN IF NOT EXISTS tree_sha VARCHAR(40);
+CREATE INDEX IF NOT EXISTS idx_unit_suite_passes_tree
+  ON unit_suite_passes (app_id, tree_sha, passed_at DESC) WHERE tree_sha IS NOT NULL;
 COMMENT ON TABLE unit_suite_passes IS 'staging:private';
 -- #11: vote-to-undo a merged PR. When the undo majority is reached we
 -- open a `git revert <merge_commit_sha>` PR and insert a new
@@ -14828,3 +14834,28 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_offer_reads (
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_offer_reads_user ON homeroom_bot_offer_reads(user_id, read_at DESC);
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_offer_reads_at ON homeroom_bot_offer_reads(read_at DESC);
 COMMENT ON TABLE homeroom_bot_offer_reads IS 'staging:private';
+
+-- ── Pinned communities: the desktop sidebar's Pinned section ──────────
+--
+-- The communities a person pinned to the desktop sidebar
+-- (frontend/src/features/nav/rail-pinned.tsx), above the five they opened
+-- last, in the order they pinned them. A pin is the account's, so it
+-- follows them to another computer. Until 18 Oct 2026 the sidebar's pins
+-- were apps kept on each device; a device moves the ones it kept up once
+-- (services/community-pins.js importPins).
+--
+-- ONLY A MEMBER'S. The key is the membership row's, so a pin exists only
+-- for a community you are in, and leaving it (communities.leave, or any
+-- other path that deletes the membership) takes the pin with it. Four at
+-- most, which the service enforces.
+--
+-- Not staging:private: it says only which of their own communities a
+-- person keeps at hand, and community_members already says they are in it.
+CREATE TABLE IF NOT EXISTS community_pins (
+  community_id INTEGER NOT NULL,
+  user_id      INTEGER NOT NULL,
+  position     INTEGER NOT NULL DEFAULT 0,
+  pinned_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, community_id),
+  FOREIGN KEY (community_id, user_id) REFERENCES community_members (community_id, user_id) ON DELETE CASCADE
+);

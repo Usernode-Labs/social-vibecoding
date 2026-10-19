@@ -258,8 +258,10 @@ test('#4270: ⋯ no longer offers a separate "Don\'t approve"', () => {
 
 test('#3977: the Needs you tab\'s vote sheet is the same picker, as an approval', () => {
   // Its row's Yes carries `approve` from `_cardVoteButtonSpecs` (app-view.js
-  // builds the queue; tests/dev-workshop.test.js renders the tab).
-  assert.match(SRC, /yes: yes \? \{ label: yes\.label, tally: yes\.tally, act: yes\.act, \.\.\.\(yes\.approve \? \{ approve: true \} : \{\}\) \} : null,/);
+  // builds the queue; tests/dev-workshop.test.js renders the tab). #5365:
+  // the Yes spec also carries the advisory/uncounted flags the card puts
+  // there, so the feed's item can label a vote that does not decide.
+  assert.match(SRC, /yes: yes \? \{[\s\S]*?\.\.\.\(yes\.approve \? \{ approve: true \} : \{\}\),[\s\S]*?\.\.\.\(yes\.uncounted \? \{ uncounted: true \} : \{\}\),[\s\S]*?\.\.\.\(yes\.advisory \? \{ advisory: true \} : \{\}\),[\s\S]*?\} : null,/);
   const { NeedsVoteForm } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
   const noop = () => {};
   const row = (approve) => ({
@@ -356,9 +358,12 @@ test('#4270: the needs feed marks a change approve by AppView._approveSolo\'s th
   assert.ok(!('approve' in shaped({ solo: true, votes_required: 2 })), 'a rule asking for two Yes votes keeps the vote');
   assert.ok(!('approve' in shaped({ solo: false, votes_required: 1 })), 'a group, or a vote that does not count, keeps the vote');
   assert.ok(!('approve' in shaped({})));
-  // And the route works the count out before it shapes.
+  // And the route works the count out before it shapes. #5365: it also
+  // marks the rows advisory/uncounted first, and puts the deciding rows
+  // first after shaping.
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/workshop-overview.js'), 'utf8');
-  assert.match(src, /const items = shapeNeedsFeed\(await withVotesRequired\(pool, rows\)\);/);
+  assert.match(src, /await withViewerDecides\(pool, rows, req\.user\.id\);/);
+  assert.match(src, /const items = decidingFirst\(shapeNeedsFeed\(await withVotesRequired\(pool, rows\)\)\);/);
   assert.match(src, /row\.votes_required = governance\.computeGate\(gov, electorate\.active, row\.yes, row\.no, row\.at, null\)\.required;/);
 });
 

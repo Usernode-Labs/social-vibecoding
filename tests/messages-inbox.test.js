@@ -394,35 +394,30 @@ test('#5393: a group row shows its members\' faces and names the person who spok
   assert.match(row, /t\('messages:inbox\.previewBy', \{ username: groupSender\.username, message: conversation\.latestSummary \}\)/, 'anyone else reads "@name: …"');
   assert.equal(message('messages:inbox.previewYou', { message: 'hi' }), 'You: hi');
   assert.equal(message('messages:inbox.previewBy', { username: 'ada', message: 'hi' }), '@ada: hi');
-  // The pair keeps the row's own geometry: a 44px box on the 74px inset,
-  // and one face at 22px in the compact desktop list.
+  // The pair keeps the row's own geometry: a 44px box on the 74px inset.
   const css = read('public/css/app.css');
   assert.match(css, /\.messages-group-faces \{ position: relative; flex: 0 0 44px; width: 44px; height: 44px; \}/);
   assert.match(css, /\.messages-conversation-row::after \{[^}]*left: 74px;/);
   assert.match(css, /\.messages-group-faces > :last-child \{ right: 0; bottom: 0; box-shadow: 0 0 0 2px var\(--dc-sheet-solid, var\(--app-bg\)\); \}/);
-  const compact = css.indexOf('.messages-conversation-row .messages-group-faces > :first-child');
-  assert.ok(compact > -1, 'the compact list sizes the first face');
-  assert.match(css.slice(compact, compact + 400), /position: static;\s*width: 22px;\s*height: 22px;/);
+  // v3: the desktop's sidebar nests the latest conversations, with room for
+  // one face: the first member who is not the viewer, at 18px.
+  const rail = SCREEN.slice(SCREEN.indexOf('function railRow('), SCREEN.indexOf('function inboxRow('));
+  assert.match(rail, /conversation\.members\.find\(\(member\) => member\.status === 'member' && Number\(member\.id\) !== viewerId\)/);
+  assert.match(rail, /<UserAvatar user=\{face\} size="sm" shape="square" \/>/);
+  assert.match(css, /\.platform-rail-nest \.platform-rail-face > \* \{\n    width: 18px;\n    height: 18px;/);
 });
 
-test('on a desktop the column draws its rows as the Communities column does', () => {
+test('on a desktop the list is the page, and the sidebar nests the latest conversations (v3)', () => {
   const css = read('public/css/app.css');
+  // The list stood beside the strip as a 264px column of compact rows; the
+  // sidebar of rows is on every desktop window now, and the list is a page.
   const P = 'html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane';
-  const rule = (sel) => {
-    const at = css.indexOf(`${P} ${sel} {`);
-    assert.ok(at >= 0, sel);
-    return css.slice(at, css.indexOf('}', at));
-  };
-  assert.match(rule('.messages-conversation-row').replace(/\s+/g, ' '), /min-height: 40px; gap: 10px; padding: 0 10px; border-radius: 10px;/,
-    'the places list\'s 40px rows');
-  assert.match(rule('.messages-inbox-older'), /padding: 6px 10px 6px 42px;/, 'the older chats link in the titles\' column');
+  assert.ok(!css.includes(`${P} .messages-conversation-row {`), 'no compact column rows');
+  assert.ok(!css.includes(`${P} {`), 'no column');
+  assert.match(css, /\.messages-layout\.messages-list-page > \.messages-list-pane \{\n    flex: 1 1 auto;/);
   assert.doesNotMatch(css, /messages-more-channels/, 'the chevron row is gone');
-  assert.match(rule('.messages-conversation-row > :first-child'), /width: 22px;\s*height: 22px;/, 'a small avatar');
-  assert.match(rule('.messages-conversation-active'), /background: var\(--lit-tint\); color: var\(--lit-ink\);/, 'the open one lit like a place');
-  assert.match(css, new RegExp(`${P.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\.messages-bot-row \\.messages-row-preview \\{ display: block;`),
-    'the bot keeps its second line');
-  assert.match(css, /\.messages-inbox-session > a > \.min-w-0 > :first-child ~ \* \{ display: none; \}/,
-    'a change in flight is one line: its title and its pill');
+  // The open one is lit in the sidebar like a place.
+  assert.match(css, /\.platform-rail-nest :is\(\.dev-ws-place, \.platform-rail-sub\)\[aria-current="page"\] \{\n    background: var\(--lit-tint\);\n    color: var\(--lit-ink\);/);
 });
 
 test('a change in flight in Agents wears a pencil in its project\'s colour, not the project\'s icon', () => {

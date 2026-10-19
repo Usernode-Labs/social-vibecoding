@@ -154,8 +154,9 @@ test('the router hands the link\'s flow over and takes it out of the address', (
   assert.deepEqual(takeAgentFlow({ hash: 'agent/12', fragQuery: 'flow=bogus', search: '', prepared }), [], 'an unknown value is ignored and left alone');
   assert.deepEqual(prepared, []);
 
-  // Both agent routes ask, before they navigate; the phone's rewrite of a
-  // Messages address to #agent/<id> drops the query after it was handed over.
+  // Both agent routes ask, before they navigate. On a phone #agent/<id> is
+  // rewritten to the Messages address with its query kept, and that route
+  // hands it over (app.js _agentToInbox).
   assert.match(appJs, /const agent = App\._messagesAgentThread\(parts\);\n\s+if \(agent && agent\.kind === 'agent'\) App\._takeAgentFlow\(hash, fragQuery\);\n\s+if \(agent\) \{/);
   assert.match(appJs, /if \(parts\[0\] === 'agent'\) \{[\s\S]{0,600}App\.setChromeless\(false\);\n\s+App\._takeAgentFlow\(hash, fragQuery\);\n\s+if \(parts\[1\] === 'new'\)/);
 });

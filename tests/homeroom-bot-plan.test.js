@@ -811,7 +811,8 @@ test('B6: where the waiting state is read, and where it ends', () => {
   const sweep = src.slice(src.indexOf('async function sweep('), src.indexOf('\n}\n', src.indexOf('async function sweep(')));
   assert.match(sweep, /const r = await retryUnsentPlans\(pool, bot, \{ dm: deps\.dm, ws: deps\.ws \|\| null \}\);/);
   assert.match(sweep, /await each\('plansStopped', \(\) => settleStalePlans\(pool, \{ dm: deps\.dm \}\)\);/);
-  assert.match(src, /await retireWaitingPlans\(pool, \{ appId: app\.id, issueNumber, why: 'the request was read again', deps: \{ dm: deps\.dm \} \}\);/);
+  // Papote #3: and its row on the request says a newer plan replaced it.
+  assert.match(src, /await retireWaitingPlans\(pool, \{\s*appId: app\.id, issueNumber, why: 'the request was read again', note: 'replaced', deps: \{ dm: deps\.dm, ws: liveD\.ws \},\s*\}\);/);
   assert.match(src, /out\.skipped \+= \(await retireWaitingPlans\(pool, \{ appId, issues, why: why\.replace/);
   assert.match(src, /\.\.\.\(planChange \? \{ planChange: \{ \.\.\.planChange, requester: requester\.username \} \} : \{\}\),/);
   const progressSrc = read('src/services/homeroom-bot-progress.js');

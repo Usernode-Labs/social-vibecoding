@@ -578,9 +578,13 @@ export interface DevWorkshopView {
     /**
      * `approve` (#3977): a change on a project that is just yours whose Yes
      * is the one it needs (ActionSpec.approve, B7): the item reads Approve
-     * and Don't approve instead of a vote.
+     * and Don't approve instead of a vote. `advisory`/`uncounted` (#4747,
+     * #5365): the viewer's vote does not decide the change, as on the card's
+     * own ActionSpec — the item is labelled and the vote sheet's picker
+     * carries the same line, and the feed puts the rows whose vote decides
+     * first.
      */
-    yes: { label: string; tally?: string; act: { fn: string; args: unknown[] } | null; approve?: boolean } | null;
+    yes: { label: string; tally?: string; act: { fn: string; args: unknown[] } | null; approve?: boolean; advisory?: boolean; uncounted?: boolean } | null;
     no: { label: string; tally?: string; act: { fn: string; args: unknown[] } | null } | null;
     /** The caption's facts, lifted off the card's meta line. */
     who?: string | null;

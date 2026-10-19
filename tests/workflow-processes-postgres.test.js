@@ -790,7 +790,10 @@ test('workflow machines in a process of their own, and through its crash', { tim
     await reportMerge({ sessionId: s.id, appId: a.id, mergeSha: SHA('d') });
     try {
       await procs.reached(pool, 'github.clone');
-      assert.equal(await deploying(a), true, 'the web side reads the deploy under way from the row');
+      // reached() says only that some deploy's work item hit the pause
+      // (a retry or a preview build shares the point); this app's row is
+      // committed by its own machine's transition. Wait for the row.
+      await procs.until(async () => deploying(a), 'the row to say the deploy is under way');
       await procs.until(() => heard.some((e) => e.k === 'global' && e.d?.type === 'app_redeploy_status' && e.d.appSlug === a.slug
         && e.d.deploying === true), 'browsers to hear it started');
     } finally {

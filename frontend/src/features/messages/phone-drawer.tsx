@@ -16,9 +16,13 @@
  * through `open()` like a row or the arrow does: the levels are addresses,
  * and the panes slide on from wherever the finger left them.
  *
- * Nothing changes at 768px and up, nor on a phone for an agent, a channel or
- * a reply thread: the drawer does not hold those routes, and the panes keep
- * the classes and the layout they had.
+ * An agent chat and an agent session are the second level too, named in the
+ * header by the screen (`agentWords`); the list shows nothing peeking after
+ * one, since it has no picture of an agent's pane to show.
+ *
+ * Nothing changes at 768px and up, nor on a phone for a dev session, a
+ * channel or a reply thread: the drawer does not hold those routes, and the
+ * panes keep the classes and the layout they had.
  */
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
@@ -90,6 +94,8 @@ export function useMessagesDrawer(
   active: ConversationDetail | null,
   messages: ConversationMessage[],
   names: (conversation: ConversationDetail) => { title: string; sub: string },
+  /** The header's words for the open agent chat or agent session, if one is open. */
+  agentWords: { title: string; sub: string } | null = null,
 ): MessagesDrawer {
   const phone = usePhone();
   const on = messagesDrawerApplies({
@@ -102,7 +108,8 @@ export function useMessagesDrawer(
     embedded: route.embedded,
     activeKind: active && active.id === route.conversationId ? active.kind : null,
   });
-  const level: 0 | 1 = route.conversationId ? 1 : 0;
+  const level: 0 | 1 = route.conversationId || route.agent ? 1 : 0;
+  const agentOpen = on && level === 1 && !!route.agent;
   // The conversation on show, kept for the list to show peeking once you go
   // back to it: a conversation with people, as the server last drew it.
   const [peek, setPeek] = useState<Peek | null>(null);
@@ -117,12 +124,16 @@ export function useMessagesDrawer(
       return { conversation: showing, messages: kept };
     });
   }, [showing, messages]);
+  // After an agent, nothing peeks: the last thing open is not one it can draw.
+  useEffect(() => {
+    if (agentOpen) setPeek(null);
+  }, [agentOpen]);
   const peekShown = on && level === 0 ? peek : null;
 
   // The header's words: the conversation on show, or the one peeking, which
   // a pan brings in.
   const named = showing || peek?.conversation || null;
-  const words = named ? names(named) : { title: '', sub: '' };
+  const words = agentOpen ? (agentWords || { title: '', sub: '' }) : named ? names(named) : { title: '', sub: '' };
   useIsomorphicLayoutEffect(() => {
     publishMessagesDrawer({ on, level, title: words.title, sub: words.sub });
   }, [on, level, words.title, words.sub]);
@@ -196,11 +207,27 @@ export function useMessagesDrawer(
     else messagesDepth.slide(level);
     placed.current = level;
   }, [on, level, peekId]);
+  // Again whenever the layout's width changes. Not only a window's resize:
+  // a route that lands straight on a conversation or an agent (a link, a
+  // reload, `#agent/new`) is placed before the screen is shown, at no width,
+  // and the list stayed in view behind the pane.
   useEffect(() => {
     if (!on) return undefined;
-    const again = () => put(MESSAGES_AT[placed.current ?? level], false);
+    let width = layoutRef.current?.clientWidth || 0;
+    const again = () => {
+      const now = layoutRef.current?.clientWidth || 0;
+      if (now === width) return;
+      width = now;
+      if (!pan.current?.on && !fingerOn.current) put(MESSAGES_AT[placed.current ?? level], false);
+    };
     window.addEventListener('resize', again);
-    return () => window.removeEventListener('resize', again);
+    const layout = layoutRef.current;
+    const watch = layout && typeof ResizeObserver === 'function' ? new ResizeObserver(again) : null;
+    if (layout) watch?.observe(layout);
+    return () => {
+      window.removeEventListener('resize', again);
+      watch?.disconnect();
+    };
   }, [on, level]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Letting go: the level a pan lands on, and its address ──
@@ -216,11 +243,15 @@ export function useMessagesDrawer(
     openConversation(to === 1 ? peekId : null);
   };
 
-  // ── A finger on the list ──
+  // ── A mouse on the list ──
+  // A finger is the touch handlers' (below): a pointer is cancelled the
+  // moment the browser starts scrolling the list under it, so a drag had to
+  // be exactly sideways to pan at all.
   const pan = useRef<null | { id: number; x0: number; y0: number; w: number; on: boolean; dx: number }>(null);
   const swallow = useRef(false);
+  const fingerOn = useRef(false);
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!on || level !== 0 || !peekId || !e.isPrimary || e.button !== 0) return;
+    if (e.pointerType !== 'mouse' || !on || level !== 0 || !peekId || !e.isPrimary || e.button !== 0) return;
     pan.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, w: Math.max(1, layoutRef.current?.clientWidth || 1), on: false, dx: 0 };
   };
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -252,30 +283,41 @@ export function useMessagesDrawer(
     landAt(0, Math.max(0, Math.min(MESSAGES_AT[1], -p.dx / p.w)), p.dx);
   };
 
-  // ── A finger on a conversation ──
+  // ── A finger ──
+  // From touch events, which keep coming while the browser scrolls the list
+  // or the conversation under the same finger, so a swipe a little off level
+  // still pans, as a community's page does. On the list a sideways drag
+  // anywhere brings the peek in; in a conversation a swipe right goes back,
+  // from anywhere but sideways UI or from the left edge where that is the
+  // page's (../nav-drawer/sideways.ts).
   const landRef = useRef(landAt);
   landRef.current = landAt;
   const putRef = useRef(put);
   putRef.current = put;
   useEffect(() => {
-    if (!on || level !== 1) return undefined;
+    if (!on || (level === 0 && !peekId)) return undefined;
+    const from = level;
     const takesEdge = pageTakesEdge();
     let p: null | { x0: number; y0: number; w: number; on: boolean; dx: number } = null;
+    const offsetOf = (dx: number, w: number) => Math.max(0, Math.min(MESSAGES_AT[1], MESSAGES_AT[from] - dx / w));
     const move = (e: TouchEvent) => {
       const touch = e.touches[0];
       if (!p || !touch) return;
       const dx = touch.clientX - p.x0;
       const dy = touch.clientY - p.y0;
       if (!p.on) {
-        if (isPan(dx, dy) && dx > 0) {
-          // A scroll the browser has already begun keeps the touch.
-          if (!e.cancelable) { stop(); return; }
+        if (isPan(dx, dy) && (from === 0 || dx > 0)) {
+          // Its moves may not be cancelable, and the pan follows them all the
+          // same, as the Communities drawer's does (../nav-drawer/nav-drawer.tsx
+          // says why): in the iPhone app they were uncancelable over plain
+          // messages, and standing down on them left the swipe dead there.
           p.on = true;
-        } else if (Math.abs(dy) > PAN_SLOP_PX || dx < -PAN_SLOP_PX) { stop(); return; } else return;
+          fingerOn.current = true;
+        } else if (Math.abs(dy) > PAN_SLOP_PX || (from === 1 && dx < -PAN_SLOP_PX)) { stop(); return; } else return;
       }
       if (e.cancelable) e.preventDefault();
       p.dx = dx;
-      const offset = Math.max(0, Math.min(MESSAGES_AT[1], MESSAGES_AT[1] - dx / p.w));
+      const offset = offsetOf(dx, p.w);
       putRef.current(offset, false);
       messagesDepth.set(depthIn(MESSAGES_AT, offset));
     };
@@ -290,16 +332,25 @@ export function useMessagesDrawer(
       const target = e.target as Element | null;
       const layout = layoutRef.current;
       if (!target || !layout || !layout.contains(target)) return;
-      const sideways = touch.clientX > EDGE_PX && startsOnSideways(target, layout, window);
-      if (!swipeBackMayStart({ x: touch.clientX, takesEdge, sideways })) return;
+      if (from === 1) {
+        const sideways = touch.clientX > EDGE_PX && startsOnSideways(target, layout, window);
+        if (!swipeBackMayStart({ x: touch.clientX, takesEdge, sideways })) return;
+      } else if (startsOnSideways(target, layout, window)) {
+        // The list: anywhere on it but a field (the search).
+        return;
+      }
       p = { x0: touch.clientX, y0: touch.clientY, w: Math.max(1, layout.clientWidth || 1), on: false, dx: 0 };
       document.addEventListener('touchmove', move, { passive: false });
     };
     const up = () => {
       const was = p;
       stop();
+      fingerOn.current = false;
       if (!was || !was.on) return;
-      landRef.current(1, Math.max(0, Math.min(MESSAGES_AT[1], MESSAGES_AT[1] - was.dx / was.w)), was.dx);
+      // A row the finger started on is not pressed by the pan.
+      swallow.current = true;
+      window.setTimeout(() => { swallow.current = false; }, 0);
+      landRef.current(from, offsetOf(was.dx, was.w), was.dx);
     };
     document.addEventListener('touchstart', down, { passive: true });
     document.addEventListener('touchend', up, { passive: true });
@@ -310,7 +361,7 @@ export function useMessagesDrawer(
       document.removeEventListener('touchend', up);
       document.removeEventListener('touchcancel', up);
     };
-  }, [on, level]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [on, level, peekId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     on,

@@ -70,7 +70,11 @@ const BENCH_USERNAME = 'homeroom_bench';
 // through a run (14 Oct 2026); src/db/schema.sql raised the existing account.
 const DEFAULT_BENCH_WEEKLY_CENTS = 50000;
 const RAW_OUTPUT_CHARS = 20000;
-const DIFF_CHARS = 60000;
+// A trial's diff as stored, which a judge reads a part at a time (grading.js
+// diffParts): ten parts. At 60,000 compareFiles dropped every file after the
+// one that would not fit, and run 208's largest builds lost the very tests
+// they had edited (testEdits found no hunk for them).
+const DIFF_CHARS = 400000;
 const TELEMETRY = 'homeroom_bench';
 // Said on every build trial with hidden checks, until they can run (see
 // hiddenChecksUnavailable).
@@ -857,14 +861,69 @@ function replayBuildStage(ctx) {
 }
 
 /**
+ * The live build's own spec, for a later change's side build whose recipe
+ * plans as the live one does (bot-configs.js plansAlike): waited for while
+ * it is written, as a durable step, so a restart builds from the same one.
+ * Resolves { spec: { sessionId, version, specMd, specHtml } } to build
+ * from; { outcome } when there is nothing to build: the live plan found the
+ * request impossible or already done (`not_applicable`, which its result
+ * records skipped, never as a build that failed: its pair is left out
+ * either way, since the live side did not build), or an admin cancelled
+ * the trial; or {} for a side that writes its own spec, as every side did
+ * before: its recipe plans differently, the live build ended without a
+ * spec for any other reason, none came in time, or it could not be read.
+ */
+async function livePlanFor(ctx) {
+  const { pool, sideBuild } = ctx;
+  if (!sideBuild?.botRunId || !sideBuild?.versionId) return {};
+  const configs = require('../bot-configs');
+  const wait = ctx.deps?.livePlanWait || {};
+  const waitMs = wait.waitMs ?? configs.LIVE_SPEC_WAIT_MS;
+  const pollMs = wait.pollMs ?? configs.LIVE_SPEC_POLL_MS;
+  const sleep = wait.sleep || ((ms) => new Promise((resolve) => { const t = setTimeout(resolve, ms); if (typeof t.unref === 'function') t.unref(); }));
+  const found = await stepsOf(ctx).once('live_plan', async () => {
+    const until = Date.now() + waitMs;
+    try {
+      for (;;) {
+        // eslint-disable-next-line no-await-in-loop
+        const state = await configs.liveSpecState(pool, sideBuild);
+        if (!state.share) return { own: 'its recipe plans differently' };
+        if (state.spec) return { spec: state.spec };
+        if (state.ended?.blocked) return { blocked: state.ended.error };
+        if (state.ended) return { own: 'the live build ended without a spec' };
+        // eslint-disable-next-line no-await-in-loop
+        const stop = ctx.skipCheck ? await ctx.skipCheck() : null;
+        if (stop) return { stopped: stop };
+        if (Date.now() + pollMs > until) return { own: 'the live build\'s spec was not written in time' };
+        // eslint-disable-next-line no-await-in-loop
+        await sleep(pollMs);
+      }
+    } catch (err) {
+      durableSteps.rethrowStop(err, 'live plan');
+      log.warn('bench', 'Could not read the live build\'s plan; the side build writes its own', { trialId: ctx.trial?.id, err: err.message });
+      return { own: 'the live build\'s plan could not be read' };
+    }
+  });
+  if (found.stopped) return { outcome: { status: 'cancelled', error: found.stopped } };
+  if (found.blocked) {
+    return { outcome: { status: 'not_applicable', error: `the live build stopped at its plan: ${String(found.blocked).slice(0, 400)}` } };
+  }
+  if (!found.spec) return {};
+  const text = await require('../bot-configs').liveSpecText(pool, found.spec).catch(() => null);
+  return text ? { spec: { ...found.spec, ...text } } : {};
+}
+
+/**
  * A SIDE BUILD of a LATER change (services/bot-configs.js spawnSideBuilds,
- * scope `later`): one configuration's spec and build of the request the
- * bot's own build (live or shadow) is building, on the project's own
- * repository from the commit that build started at, replaying its request
- * and its triage's plan (the build snapshot's seed and build note) as they
- * are. The spec is a later change's (no first-version design brief), on the
- * build's own clocks; no review and no screenshot step. Never proposed,
- * never posted: buildStage's propose:false on the trial's guarded GitHub.
+ * scope `later`): one configuration's build of the request the bot's own
+ * build (live or shadow) is building, on the project's own repository from
+ * the commit that build started at, replaying its request and its triage's
+ * plan (the build snapshot's seed and build note) as they are. A recipe
+ * that plans as the live one does builds from the live build's own spec
+ * (livePlanFor), so only the build differs; any other writes its own, a
+ * later change's (no first-version design brief), on the build's own
+ * clocks. No review and no screenshot step. Never proposed, never posted:
+ * buildStage's propose:false on the trial's guarded GitHub.
  */
 async function laterSideBuildStage(ctx) {
   const { snapshot } = ctx;
@@ -872,7 +931,11 @@ async function laterSideBuildStage(ctx) {
     return { status: 'infra_fail', error: 'the run recorded no build snapshot to replay' };
   }
   const models = firstVersionModels(ctx);
-  try { ctx.onStep?.('spec'); } catch { /* a watcher never stops a trial */ }
+  const side = { botRunId: ctx.sideBuild?.botRunId || null };
+  const plan = await livePlanFor(ctx);
+  if (plan.outcome) return { ...plan.outcome, parsed: { models, side, built: false } };
+  const shared = plan.spec || null;
+  try { ctx.onStep?.(shared ? 'build' : 'spec'); } catch { /* a watcher never stops a trial */ }
   const built = await buildStage({
     ...ctx,
     model: models.build,
@@ -880,11 +943,16 @@ async function laterSideBuildStage(ctx) {
     snapshot: { ...snapshot, extra: { ...(snapshot.extra || {}), firstVersion: false } },
     budgets: ctx.budgets,
     reviewer: null,
+    ...(shared ? { presetSpec: shared.specMd, presetSpecHtml: shared.specHtml } : {}),
   });
   return {
     ...built,
     session_ids: [built.session_id].filter(Boolean).map(Number),
-    parsed: { ...(built.parsed || {}), models, side: { botRunId: ctx.sideBuild?.botRunId || null } },
+    parsed: {
+      ...(built.parsed || {}), models, side,
+      // Which spec it built from, for its result's cost (bot-configs.js finishSideTrial).
+      ...(shared ? { livePlan: { sessionId: shared.sessionId, version: shared.version } } : {}),
+    },
   };
 }
 

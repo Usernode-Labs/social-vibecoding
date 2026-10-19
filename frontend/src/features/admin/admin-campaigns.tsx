@@ -78,9 +78,25 @@ interface Campaign {
   failed_apps?: number;
 }
 
+// Waiting for room to change its next app (src/workflow/campaign/machine.ts
+// holdFor): the platform at the session limit's warning line, or the most
+// of its own proposals it keeps up for a vote at once.
+interface CampaignHold {
+  reason: 'platform' | 'window';
+  since: string;
+  used: number;
+  limit: number;
+  ceiling: number;
+  open: number;
+  maxOpen: number;
+}
+
 interface CampaignDetail extends Campaign {
   instructions?: string;
   apps?: CampaignApp[];
+  held?: CampaignHold | null;
+  // Merging each of its proposals as soon as its checks pass: since when, by whom.
+  autoMerge?: { at: string | null; by: string | null } | null;
 }
 
 const canWrite = () => !!(typeof window !== 'undefined'
@@ -243,6 +259,8 @@ function CampaignRow({
   const [failed, setFailed] = useState(false);
   const [merging, setMerging] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [resuming, setResuming] = useState(false);
+  const [autoSaving, setAutoSaving] = useState(false);
   const [recheckingAll, setRecheckingAll] = useState(false);
   const [status, setStatus] = useState('');
   const alive = useRef(true);
@@ -334,6 +352,61 @@ function CampaignRow({
     onReloadList();
   };
 
+  // A stopped campaign goes on with the apps the stop never reached, at the
+  // pace its room allows (src/workflow/campaign/machine.ts holdFor).
+  const notReached = apps.filter((a) => a.state === 'stopped').length;
+  const resume = async () => {
+    const ok = await confirmMsg({
+      title: 'Resume this campaign?',
+      message: `It goes on with the ${notReached} app${notReached === 1 ? '' : 's'} the stop never reached, one at a time, `
+        + 'and waits whenever the platform is near its session limit or 10 of its proposals are up for a vote.',
+      confirmLabel: 'Resume campaign',
+    });
+    if (!ok) return;
+    setResuming(true);
+    try {
+      const res = await fetch(`/api/campaigns/${c.id}/resume`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    } catch (err: any) {
+      alertMsg(`Resume failed: ${err.message}`);
+    }
+    if (!alive.current) return;
+    setResuming(false);
+    refresh();
+    onReloadList();
+  };
+
+  // Auto-merge: the campaign merges each of its proposals as soon as its
+  // checks pass (src/workflow/campaign/machine.ts autoMerged), so a long one
+  // runs through without anyone pressing "Merge all green" again.
+  const openCount = apps.filter((a) => a.state === 'pr_open').length;
+  const autoOn = !!detail?.autoMerge;
+  const setAutoMerge = async (on: boolean) => {
+    if (on) {
+      const ok = await confirmMsg({
+        title: 'Auto-merge green proposals?',
+        message: 'Each of this campaign\'s proposals is merged as soon as its checks pass, without waiting for its vote, '
+          + 'until you turn this off. It is the same merge as "Merge all green", in your name.',
+        confirmLabel: 'Turn on auto-merge',
+      });
+      if (!ok) return;
+    }
+    setAutoSaving(true);
+    try {
+      const res = await fetch(`/api/campaigns/${c.id}/auto-merge`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    } catch (err: any) {
+      alertMsg(`Auto-merge failed: ${err.message}`);
+    }
+    if (!alive.current) return;
+    setAutoSaving(false);
+    refresh();
+  };
+
   const statusCls = c.status === 'running' ? 'text-violet-700 dark:text-violet-400'
     : c.status === 'done' ? 'text-green-800 dark:text-green-400' : 'text-zinc-500 dark:text-zinc-400';
 
@@ -370,6 +443,18 @@ function CampaignRow({
                 {detail.instructions || ''}
               </pre>
             </details>
+            {autoOn ? (
+              <p className="campaign-auto-merge-on text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+                {`Auto-merge is on${detail.autoMerge?.by ? ` (turned on by ${detail.autoMerge.by})` : ''}: each proposal merges as soon as its checks pass.`}
+              </p>
+            ) : null}
+            {detail.status === 'running' && detail.held ? (
+              <p className="campaign-held text-xs text-amber-800 dark:text-amber-400 mb-2">
+                {detail.held.reason === 'platform'
+                  ? `Waiting for room: ${detail.held.used} of ${detail.held.limit} sessions are in use, and it changes its next app only below ${detail.held.ceiling}.`
+                  : `Waiting: ${detail.held.open} of its proposals are up for a vote, the most it keeps open at once (${detail.held.maxOpen}). Merging or closing them lets it go on.`}
+              </p>
+            ) : null}
             <ul className="space-y-1">
               {apps.length
                 ? apps.map((a) => (
@@ -389,6 +474,18 @@ function CampaignRow({
                 <button type="button" className={`campaign-stop-btn ${AdminUI.btn.destructiveSm}`}
                   disabled={stopping} onClick={stop}>
                   {stopping ? 'Stopping…' : 'Stop campaign'}
+                </button>
+              ) : null}
+              {write && detail.status === 'cancelled' && notReached > 0 ? (
+                <button type="button" className={`campaign-resume-btn ${AdminUI.btn.primarySm}`}
+                  disabled={resuming} onClick={resume}>
+                  {resuming ? 'Resuming…' : `Resume campaign (${notReached} not reached)`}
+                </button>
+              ) : null}
+              {write && (autoOn || openCount > 0 || detail.status === 'running') ? (
+                <button type="button" className={`campaign-auto-merge-btn ${autoOn ? AdminUI.btn.outlineSm : AdminUI.btn.primarySm}`}
+                  disabled={autoSaving} onClick={() => setAutoMerge(!autoOn)}>
+                  {autoSaving ? 'Saving…' : autoOn ? 'Turn off auto-merge' : 'Auto-merge green'}
                 </button>
               ) : null}
               {write && green > 0 ? (

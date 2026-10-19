@@ -40,6 +40,8 @@ export interface RequestSpecCard {
   byUnknown?: boolean;
   /** `by` is the chat's "System" stand-in: the row came with no author. */
   bySystem?: boolean;
+  /** Papote #3: Homeroom bot's plan that stopped waiting for Build it, replaced by a newer one or not. */
+  ended?: 'replaced' | 'stopped';
   at: string | null;
   time: string;
   timeTitle: string;
@@ -74,6 +76,7 @@ export function requestStream(rows: TranscriptMessage[]): { rows: TranscriptMess
         version: s.version,
         by: s.sharedBy,
         byUnknown: !!s.sharedByUnknown,
+        ...(s.botNote === 'replaced' || s.botNote === 'stopped' ? { ended: s.botNote } : {}),
         at: m.at || null,
         time: m.time,
         timeTitle: m.timeTitle,
@@ -163,6 +166,7 @@ export function publishRequestThread(number: number, rows: TranscriptMessage[]):
   // The transcript republishes on every reaction and typing tick; keep the
   // head's store still unless the specs themselves moved.
   const same = prev.number === number && prev.specs.length === specs.length
-    && prev.specs.every((s, i) => s.key === specs[i].key && s.version === specs[i].version && s.title === specs[i].title && s.time === specs[i].time);
+    && prev.specs.every((s, i) => s.key === specs[i].key && s.version === specs[i].version && s.title === specs[i].title && s.time === specs[i].time
+      && s.ended === specs[i].ended);
   if (!same) requestThreadStore.set({ number, specs });
 }

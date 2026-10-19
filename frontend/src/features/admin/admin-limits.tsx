@@ -5,14 +5,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
-// Limits (#admin/limits): the server's app limit, GitHub's hourly request
-// budget (read-only), the platform's LLM budget dials, and the Anthropic
-// credit balance the remaining-credit figure is derived from.
+// Limits (#admin/limits): the server's app limit and session limit, GitHub's
+// hourly request budget (read-only), the platform's LLM budget dials, and
+// the Anthropic credit balance the remaining-credit figure is derived from.
 //
 // PERMISSIONS: visible to any admin; every field and every Save button is
 // gated on AdminConsole.canWrite() (canAdminWrite). The server enforces the
-// same on PUT /api/admin/app-limit, PUT /api/admin/limits and
-// PUT /api/admin/anthropic-credits.
+// same on PUT /api/admin/app-limit, PUT /api/admin/session-limit,
+// PUT /api/admin/limits and PUT /api/admin/anthropic-credits.
 //
 // ── Sixth section out of the chassis (#1120 slice 21) ─────────────────
 //
@@ -187,6 +187,139 @@ function AppLimitCard({ canWrite }: { canWrite: boolean }) {
         ) : null}
       </div>
       <StatusLine id="admin-app-limit-status" status={status} okClass="text-green-800 dark:text-green-400" />
+    </div>
+  );
+}
+
+// The platform-wide session limit (services/session-limit.js), the app
+// limit's twin: the admin's setting, else the deploy's MAX_GLOBAL_SESSIONS,
+// which on the Kubernetes deploy lives in the infra repository's chart. The
+// cluster quota is drawn under the field because it is the real ceiling:
+// every proposal in review keeps a preview running, and a limit past what
+// the quota holds only moves the refusal to Kubernetes.
+function SessionLimitCard({ canWrite }: { canWrite: boolean }) {
+  const console_ = () => (window as any).AdminConsole;
+  const [data, setData] = useState<any>(null);
+  const [value, setValue] = useState('');
+  const [status, setStatus] = useState<Status | null>(null);
+  const [saving, setSaving] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  const fill = useCallback((next: any) => {
+    setData(next);
+    setValue(next && next.setting ? String(next.setting.value) : '');
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const { data: next } = await console_().fetchJson('/api/admin/session-limit');
+      if (alive.current && next && typeof next === 'object') fill(next);
+    })();
+  }, [fill]);
+
+  const put = async (limit: number | null) => {
+    setStatus(null);
+    setSaving(true);
+    try {
+      const res = await fetch('/api/admin/session-limit', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit }),
+      });
+      const next = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(next.error || `Save failed (${res.status})`);
+      if (!alive.current) return;
+      fill(next);
+      setStatus({ text: limit === null ? 'Using MAX_GLOBAL_SESSIONS again.' : 'Saved. It applies within ten seconds.', tone: 'ok' });
+    } catch (err: any) {
+      if (alive.current) setStatus({ text: err.message, tone: 'err' });
+    } finally {
+      if (alive.current) setSaving(false);
+    }
+  };
+
+  const save = () => {
+    const raw = value.trim();
+    if (!raw) { put(null); return; }
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1) {
+      setStatus({ text: 'Enter a whole number of sessions, 1 or more.', tone: 'err' });
+      return;
+    }
+    put(n);
+  };
+
+  const usage = !data ? 'Loading…' : `${data.used} of ${data.limit} sessions`;
+  let source = '';
+  if (data && data.source === 'admin') {
+    const who = data.setting.updatedBy ? ` by @${data.setting.updatedBy}` : '';
+    const when = data.setting.updatedAt ? ` on ${String(data.setting.updatedAt).slice(0, 10)}` : '';
+    source = `Set here${who}${when}. Without it, the deploy's MAX_GLOBAL_SESSIONS (${data.defaultLimit}) applies.`;
+  } else if (data) {
+    source = `Using the deploy's MAX_GLOBAL_SESSIONS (${data.defaultLimit}). Enter a number to change it here.`;
+  }
+  const figure = (m: any) => (m ? `${m.used} of ${m.hard}` : null);
+  const quota = data && Array.isArray(data.quota) ? data.quota : [];
+
+  return (
+    <div id="admin-session-limit" className={`${AdminUI.card} p-4 mt-4`}>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className={AdminUI.cardTitle}>Session limit</h2>
+        <span id="admin-session-limit-usage" className="text-xs text-zinc-500 dark:text-zinc-400">{usage}</span>
+      </div>
+      <p className={`${AdminUI.muted} mb-3`}>
+        How many coding sessions the whole platform runs at once: sessions being worked on and
+        proposals in review. At the limit, starting or reopening a session pauses somebody's idle
+        one, and is refused when none is idle. Proposals in review are never paused, and each
+        keeps a preview running. Full admins are notified at {data ? data.warnPercent : 80}% of
+        the limit and again when it is reached. A change applies to every server within ten
+        seconds, with no deploy.
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+        <label className="block">
+          <span className={LABEL}>Sessions allowed</span>
+          <input id="admin-session-limit-input" type="number" min="1" step="1" inputMode="numeric"
+            disabled={!canWrite || !data}
+            className={`${AdminUI.input} mt-1 font-mono disabled:opacity-60`}
+            placeholder={data ? String(data.defaultLimit) : ''}
+            value={value} onChange={(e) => setValue(e.target.value)} />
+        </label>
+      </div>
+      {quota.length ? (
+        <div id="admin-session-limit-quota" className="mb-3">
+          <p className={LABEL}>Cluster quota (the real ceiling)</p>
+          <ul className="mt-1 space-y-1">
+            {quota.map((q: any) => (
+              <li key={q.namespace} className="text-xs font-mono text-zinc-600 dark:text-zinc-300">
+                {[q.namespace,
+                  figure(q.pods) && `pods ${figure(q.pods)}`,
+                  figure(q.requestsCpu) && `CPU ${figure(q.requestsCpu)}`,
+                  figure(q.requestsMemory) && `memory ${figure(q.requestsMemory)}`,
+                ].filter(Boolean).join(' · ')}
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+            Raising the limit past what these hold moves the refusal to Kubernetes. The quotas
+            are set in the infra repository.
+          </p>
+        </div>
+      ) : null}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p id="admin-session-limit-source" className="text-xs text-zinc-500 dark:text-zinc-400">{source}</p>
+        {canWrite ? (
+          <div className="flex items-center gap-2">
+            {data && data.source === 'admin' ? (
+              <button id="admin-session-limit-reset-btn" type="button" className={AdminUI.btn.outline}
+                disabled={saving} onClick={() => put(null)}>Use MAX_GLOBAL_SESSIONS</button>
+            ) : null}
+            <button id="admin-save-session-limit-btn" type="button" className={AdminUI.btn.primary}
+              disabled={saving || !data} onClick={save}>Save</button>
+          </div>
+        ) : null}
+      </div>
+      <StatusLine id="admin-session-limit-status" status={status} okClass="text-green-800 dark:text-green-400" />
     </div>
   );
 }
@@ -603,6 +736,8 @@ function LimitsSection() {
     <>
       <AppLimitCard canWrite={canWrite} />
 
+      <SessionLimitCard canWrite={canWrite} />
+
       <GithubBudgetCard />
 
       <div className={`${AdminUI.card} p-4 mt-4`}>
@@ -726,6 +861,7 @@ const AdminLimits = {
 if (typeof window !== 'undefined') (window as any).AdminLimits = AdminLimits;
 
 // AppLimitCard is exported for tests/app-limit.test.js, which renders it,
-// GithubBudgetCard for tests/github-budget.test.js, and GithubBudgetFigures
-// for tests/github-spend.test.js, which renders it from a payload.
-export { AdminLimits, AppLimitCard, GithubBudgetCard, GithubBudgetFigures };
+// SessionLimitCard for tests/session-limit.test.js, GithubBudgetCard for
+// tests/github-budget.test.js, and GithubBudgetFigures for
+// tests/github-spend.test.js, which renders it from a payload.
+export { AdminLimits, AppLimitCard, SessionLimitCard, GithubBudgetCard, GithubBudgetFigures };

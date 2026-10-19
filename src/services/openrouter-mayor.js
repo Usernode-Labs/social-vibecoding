@@ -35,6 +35,10 @@ const managedOpenRouter = require('./openrouter-managed-keys');
 const { platformHeaders } = require('./openrouter-client');
 const llmTelemetry = require('./llm-telemetry');
 const { withoutDocuments } = require('./attachments');
+// The coding turns' host routing (PROVIDER_ROUTING_BY_MODEL and its fallback),
+// read from the Claude Code listener itself so the chat and both listeners
+// route a model alike.
+const listenerRouting = require('../../worker/claude-openrouter-request');
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 // Reasoning models spend part of this on thinking before the visible reply
@@ -289,9 +293,26 @@ function hasParts(request, type) {
 // `messages`: for a caller that has to place each part itself (the first
 // version's reviewer puts every screenshot right after its caption,
 // services/bot-review.js), which toChatMessages does not keep.
+// What a request asks of OpenRouter's routing. A model the coding turns
+// route to a host shortlist (GLM 5.3 Flash's fast hosts, DeepSeek V4.1 Flash
+// 1017's Parasail and InferenceNet), or one the platform's
+// OPENROUTER_PROVIDER_SHORTLISTS names (`shortlist`, parseShortlist's
+// answer), goes to the same hosts in the same order with the listeners'
+// latency and throughput preferences. Left to the price-weighted default, a
+// 1017 chat reached the hosts that list leaves out on purpose: Cloudflare,
+// rate-limited in bursts and keeping 1017's thinking 2 times of 3, and
+// DeepInfra's slow flex tier. Any other model lets OpenRouter choose, as it
+// always has. Pure.
+function providerFor(model, shortlist = null) {
+  const id = bareModelId(model);
+  const listed = Object.prototype.hasOwnProperty.call(listenerRouting.PROVIDER_ROUTING_BY_MODEL, id);
+  if (!listed && !(Array.isArray(shortlist) && shortlist.length)) return { allow_fallbacks: true };
+  return listenerRouting.providerRoutingFor(id, { allow_fallbacks: true }, { shortlist });
+}
+
 function buildRequest({
   model, reasoningEffort, systemPrompt, messages, chatMessages: given = null, tools, toolChoice, maxTokens, sessionId,
-  fileInput = false, imageInput = false, imagePlaceholder = IMAGE_PLACEHOLDER,
+  fileInput = false, imageInput = false, imagePlaceholder = IMAGE_PLACEHOLDER, providerShortlist = null,
 }) {
   const chatTools = toChatTools(tools);
   const chatMessages = Array.isArray(given)
@@ -307,7 +328,7 @@ function buildRequest({
       : DEFAULT_MAX_OUTPUT_TOKENS,
     stream: false,
     usage: { include: true },
-    provider: { allow_fallbacks: true },
+    provider: providerFor(model, providerShortlist),
   };
   if (chatTools.length) {
     request.tools = chatTools;
@@ -466,6 +487,10 @@ function createClient({
   // caller for whom the pictures ARE the question (the first version's
   // reviewer) passes false, and the refusal is an error instead.
   imageFallback = true,
+  // The platform's host shortlist for this model
+  // (config.openrouterProviderShortlists): provider slugs joined by commas,
+  // or 'none'. Absent, the model's own shortlist applies (providerFor).
+  providerShortlist = null,
 }) {
   if (typeof apiKey !== 'string' || !apiKey.trim()) {
     throw new OpenRouterMayorError('authentication', 'OpenRouter key is unavailable');
@@ -478,6 +503,7 @@ function createClient({
   const fileInput = catalogModel?.supportsFiles === true;
   // Pictures likewise, for a model it lists as taking images.
   const imageInput = catalogModel?.supportsImages === true;
+  const shortlist = listenerRouting.parseShortlist(providerShortlist);
 
   async function streamChat({
     messages, chatMessages = null, systemPrompt, tools, toolChoice, onToken, onDone, onError, signal, maxTokens, telemetryContext,
@@ -488,17 +514,16 @@ function createClient({
     const request = (history, { images = imageInput } = {}) => buildRequest({
       model: boundModel, reasoningEffort, systemPrompt, messages: history, chatMessages, tools, toolChoice, maxTokens, sessionId, fileInput,
       imageInput: images, imagePlaceholder: images === imageInput ? IMAGE_PLACEHOLDER : IMAGE_REFUSED_PLACEHOLDER,
+      providerShortlist: shortlist,
     });
     const body = request(messages);
     const startedAt = Date.now();
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(), timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal;
-    // One request, from send to parsed completion.
-    const send = async (payload) => {
-      let response;
+    const post = async (payload) => {
       try {
-        response = await fetchImpl(`${base}/chat/completions`, {
+        return await fetchImpl(`${base}/chat/completions`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${apiKey.trim()}`,
@@ -514,6 +539,18 @@ function createClient({
           timeout.signal.aborted ? 'timeout' : 'network',
           timeout.signal.aborted ? 'The Mayor model timed out' : 'Could not reach the Mayor model',
         );
+      }
+    };
+    // One request, from send to parsed completion. A request its host
+    // shortlist refuses (no host left on it: 404, or every one busy or
+    // failing: 429, 502, 503) is sent once more to every host, as the coding
+    // turns' listeners send it (sendRouted).
+    const send = async (payload) => {
+      let response = await post(payload);
+      const plain = listenerRouting.withoutShortlist(payload.provider, { allow_fallbacks: true });
+      if (plain && listenerRouting.SHORTLIST_FALLBACK_STATUSES.has(response.status)) {
+        try { await response.body?.cancel?.(); } catch { /* the refusal is not read */ }
+        response = await post({ ...payload, provider: plain });
       }
       if (!response.ok) {
         throw new OpenRouterMayorError(
@@ -605,7 +642,7 @@ function createClient({
 async function resolveForSession({ pool, config = {}, session, userId, fetchImpl, sessionKey = null }) {
   if (!config.openrouterSessionMayorEnabled) return { error: 'disabled' };
   if (!config.codexOpenrouterEnabled) return { error: 'backend_disabled' };
-  const model = bareModelId(session?.agent_model || config.openrouterDefaultCodexModel);
+  const model = bareModelId(session?.agent_model || await require('./default-model').effective(pool, config));
   if (!model) return { error: 'model_required' };
   const meta = await credentialStore.readMetadata({
     pool, userId, provider: 'openrouter', purpose: 'coding_agent',
@@ -636,6 +673,7 @@ async function resolveForSession({ pool, config = {}, session, userId, fetchImpl
     catalogModel,
     sessionId: sessionKey || (session?.id != null ? `homeroom-session-${session.id}` : null),
     billingPath: usesIncludedKey ? 'platform' : 'openrouter_byok',
+    providerShortlist: config.openrouterProviderShortlists?.[model] || null,
     fetchImpl,
   });
   return {
@@ -657,6 +695,7 @@ module.exports = {
   toChatTools,
   toChatToolChoice,
   reasoningEffortFor,
+  providerFor,
   buildRequest,
   fromChatCompletion,
   estimateCostCents,

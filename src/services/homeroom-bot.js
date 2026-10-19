@@ -64,6 +64,7 @@ const { withoutEmDashes } = require('./em-dashes');
 const { agentApiFailure } = require('./agent-result-text');
 // Newcomer run five: a first version's stages, as they happen.
 const timeline = require('./first-version-timeline');
+const defaultModelSetting = require('./default-model');
 
 // The bot-build machine's legacy side (src/workflow/bot-build/): live and
 // shadow builds are durable builds there. Lazy: it reaches back into this
@@ -169,7 +170,7 @@ const KEY_USER_WEEKLY_CENTS = 'homeroom_bot_user_weekly_cents';
 // weeklyCapCents). Admins build the platform itself, so theirs starts higher.
 const KEY_ADMIN_WEEKLY_CENTS = 'homeroom_bot_admin_weekly_cents';
 // #3654: the OpenRouter model each stage runs on. Blank means the platform
-// default (OPENROUTER_DEFAULT_CODEX_MODEL), which every stage used before.
+// default (platformDefaultModel), which every stage used before.
 // `followup` covers both kinds of follow-up turn: an answer to people's
 // replies and a fix for the proposal's own failing checks.
 const MODEL_STAGES = Object.freeze(['triage', 'spec', 'build', 'followup']);
@@ -180,7 +181,14 @@ const KEY_MODELS = Object.freeze({
   followup: 'homeroom_bot_model_followup',
 });
 // An OpenRouter model id: `vendor/model`, as the catalog spells them.
-const MODEL_ID_RE = /^[a-z0-9][a-z0-9._-]{0,60}\/[a-z0-9][a-z0-9._:-]{0,100}$/i;
+const MODEL_ID_RE = defaultModelSetting.MODEL_ID_RE;
+// The platform's default model itself (services/default-model.js, which
+// every other reader goes through): blank is the deploy's
+// OPENROUTER_DEFAULT_CODEX_MODEL, else src/config.js's fallback. It sits
+// on the Models card because the stages above fall back to it, but it is
+// the whole platform's: new agent chats and the catalog's recommended
+// model follow it too.
+const KEY_DEFAULT_MODEL = defaultModelSetting.KEY;
 // #3624, stage 2: how much live work runs at once (see "How much at once"
 // below). `homeroom_bot_concurrency` is the background lane's: how many
 // apps' shadow triage runs at once, beside the live work, never in its way.
@@ -231,7 +239,7 @@ const SETTING_KEYS = Object.freeze([
   KEY_USER_WEEKLY_CENTS, KEY_ADMIN_WEEKLY_CENTS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_DM_CHAT,
   KEY_VOICE_SESSION, KEY_VOICE_ISSUE, KEY_VOICE_CHAT,
   KEY_CONTINUE_READS, KEY_EVERYONE_SINCE, KEY_PROPOSAL_CEILING,
-  KEY_LIVE_BUILD_STREAM,
+  KEY_LIVE_BUILD_STREAM, KEY_DEFAULT_MODEL,
   ...Object.values(KEY_MODELS),
 ]);
 const MAX_USER_WEEKLY_CENTS = 10_000_000;
@@ -254,6 +262,8 @@ const DEFAULTS = Object.freeze({
   adminWeeklyCents: 10000,
   // #3654: per-stage models; blank is the platform default (stageModel).
   models: Object.freeze({ triage: '', spec: '', build: '', followup: '' }),
+  // Blank is the deploy's default (platformDefaultModel).
+  defaultModel: '',
   // Raised from 6 and 2 when every project went live: the background
   // lane's shadow triage, which took workers beside it, has no app left to
   // read in production.
@@ -620,6 +630,7 @@ function parseSettings(rows) {
     const raw = String(map.get(KEY_MODELS[stage]) || '').trim();
     models[stage] = MODEL_ID_RE.test(raw) ? raw : '';
   }
+  const defaultModel = defaultModelSetting.parseStored(map.get(KEY_DEFAULT_MODEL)) || '';
   const liveAtOnce = clampInt(map.get(KEY_LIVE_AT_ONCE), DEFAULTS.liveAtOnce, 1, MAX_LIVE_AT_ONCE);
   const perPerson = clampInt(map.get(KEY_PER_PERSON), DEFAULTS.perPerson, 1, MAX_PER_PERSON);
   const dmChat = map.get(KEY_DM_CHAT) !== 'off';
@@ -636,7 +647,7 @@ function parseSettings(rows) {
     mode, concurrency, batchSize, pausedApps, turnSeconds, turnInputTokens,
     shadowBuilds, buildConcurrency, shadowBuildPlatform, userWeeklyCents, adminWeeklyCents,
     liveAtOnce, perPerson, dmChat, voiceSession, voiceIssue, voiceChat, continueReads, models,
-    everyoneSince, proposalCeiling, liveBuildStream,
+    defaultModel, everyoneSince, proposalCeiling, liveBuildStream,
   };
 }
 
@@ -674,6 +685,15 @@ async function platformAppSlugs(pool) {
 }
 
 /**
+ * The platform's default model as read with the bot's settings: the
+ * admin's choice (KEY_DEFAULT_MODEL), else the deploy's. The same answer
+ * default-model.effective gives, without a second read.
+ */
+function platformDefaultModel(settings, config) {
+  return defaultModelSetting.fromSettings(settings, config);
+}
+
+/**
  * #3654: the model a stage runs on: the admin's choice for it, else the
  * platform default. One answer for the run that is recorded and the turn
  * that runs (stampSessionModel makes the session agree with it).
@@ -681,7 +701,7 @@ async function platformAppSlugs(pool) {
 function stageModel(settings, config, stage) {
   const chosen = settings?.models?.[stage];
   if (typeof chosen === 'string' && MODEL_ID_RE.test(chosen)) return chosen;
-  return (config && config.openrouterDefaultCodexModel) || null;
+  return platformDefaultModel(settings, config);
 }
 
 function clampInt(raw, fallback, min, max) {
@@ -847,6 +867,13 @@ function validateSettingsPatch(patch) {
       updates.push([KEY_MODELS[stage], id]);
     }
   }
+  if (body.defaultModel !== undefined) {
+    const id = body.defaultModel == null ? '' : String(body.defaultModel).trim();
+    if (id && !MODEL_ID_RE.test(id)) {
+      return { ok: false, error: 'defaultModel must be an OpenRouter model id such as deepseek/deepseek-v4.1-flash-1017, or blank for the deploy\'s default' };
+    }
+    updates.push([KEY_DEFAULT_MODEL, id]);
+  }
   let weeklyLimitCents;
   if (body.weeklyLimitCents !== undefined) {
     const n = Number(body.weeklyLimitCents);
@@ -861,9 +888,41 @@ function validateSettingsPatch(patch) {
   return { ok: true, updates, weeklyLimitCents };
 }
 
+/**
+ * The platform default is every new agent chat's model, so it must be one
+ * OpenRouter lists and that can call tools: checked against the stored
+ * catalog, the same copy a current bot configuration is checked against
+ * (bot-configs.js checkRecipeModels). Without a catalog to check, it is
+ * refused rather than guessed. Blank (the deploy's default) needs no check.
+ */
+async function checkDefaultModel(pool, id) {
+  if (!id) return null;
+  let models = null;
+  try {
+    const { rows } = await pool.query('SELECT models FROM openrouter_model_catalog WHERE id = TRUE');
+    models = Array.isArray(rows[0]?.models) && rows[0].models.length ? rows[0].models : null;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read the OpenRouter catalog', { err: err.message });
+  }
+  if (!models) {
+    return 'The OpenRouter model catalog is not available to check the platform default against, so it cannot be changed now. Try again in a minute.';
+  }
+  const model = models.find((m) => m && m.id === id);
+  if (!model) return `Not in the OpenRouter catalog: ${id}. The platform default must be a model OpenRouter lists.`;
+  if (!require('./agent-models').hasToolSupport(model)) {
+    return `${id} cannot call tools, so a coding agent cannot run on it. Pick a model that can.`;
+  }
+  return null;
+}
+
 async function writeSettings(pool, patch, actorId, config = {}) {
   const valid = validateSettingsPatch(patch);
   if (!valid.ok) return valid;
+  const defaultUpdate = valid.updates.find(([key]) => key === KEY_DEFAULT_MODEL);
+  if (defaultUpdate) {
+    const refused = await checkDefaultModel(pool, defaultUpdate[1]);
+    if (refused) return { ok: false, error: refused };
+  }
   let modeBefore = null;
   if (valid.updates.some(([key]) => key === KEY_MODE)) {
     try {
@@ -880,6 +939,9 @@ async function writeSettings(pool, patch, actorId, config = {}) {
     );
   }
   if (valid.updates.some(([key]) => key === KEY_LIVE_BUILD_STREAM)) firstVersionLive().forgetSetting(pool);
+  // This server follows the new default at once; the others within
+  // default-model.CACHE_TTL_MS.
+  if (defaultUpdate) defaultModelSetting.invalidate(pool, config);
   if (valid.weeklyLimitCents !== undefined) {
     // The cap lives on the bot's users row, which the first pass used to be
     // the only thing that created — so a cap saved before that pass updated
@@ -1524,6 +1586,35 @@ async function threadActivityByIssue(pool, appId) {
 }
 
 /**
+ * Papote #3 (18 Oct 2026): threadActivityByIssue for `numbers`, without
+ * what people said to the bot: a mention of it (homeroom-bot-holds.js
+ * mentionPattern) or a Reply to one of its messages. The refresh reads it
+ * for a request whose plan waits for Build it, with the bot's voice on in
+ * requests' discussions: what is said to the bot there is the voice's to
+ * answer ("status?", Build it through start_request, a change to the plan
+ * through change_plan). Read as a change to the request, "@Homeroom bot
+ * status" started a new look that retired the plan and wrote it again.
+ */
+async function unaddressedActivityByIssue(pool, appId, numbers, botId) {
+  if (!numbers.length) return new Map();
+  const { rows } = await pool.query(
+    `SELECT m.thread_ref AS n, MAX(m.created_at) AS last_at
+       FROM chat_messages m
+       LEFT JOIN users u ON u.id = m.user_id
+       LEFT JOIN chat_messages q
+         ON (m.metadata->'quote'->>'refMsgId') ~ '^[0-9]+$'
+        AND q.id = (m.metadata->'quote'->>'refMsgId')::int
+      WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = ANY($2::int[])
+        AND m.msg_type = 'message' AND u.is_synthetic IS NOT TRUE
+        AND COALESCE(m.content, '') !~* $3
+        AND q.user_id IS DISTINCT FROM $4
+      GROUP BY m.thread_ref`,
+    [appId, numbers.map(Number), require('./homeroom-bot-holds').mentionPattern(), botId],
+  );
+  return new Map(rows.map((r) => [Number(r.n), r.last_at]));
+}
+
+/**
  * #3264: the newest person's message in the discussion of each of the bot's
  * open proposals on this app, by the issue it answers. Messages only
  * (`msg_type = 'message'`), so the promote and vote-reset notices never
@@ -1570,6 +1661,9 @@ function latestOf(a, b) {
  * (classifyIssue), as rules/bot-loop.ts READ_CANDIDATES_SQL reads it. One older than the window a
  * build from before builds were durable is asked for again in
  * (requeueLegacyBuilds) holds nothing.
+ *
+ * `plan_waiting`: that run's plan waits for its Build it (goAhead), which
+ * the refresh reads what was said to the bot past (papote #3).
  */
 async function lastRunsByIssue(pool, appId) {
   const { rows } = await pool.query(
@@ -1577,6 +1671,8 @@ async function lastRunsByIssue(pool, appId) {
             (mode = 'live' AND verdict = 'ready' AND build_ok IS NULL AND proposal_session_id IS NULL
              AND (live_build_waiting_at IS NOT NULL OR build_session_id IS NOT NULL)
              AND created_at > NOW() - make_interval(days => $2)) AS live_building,
+            (mode = 'live' AND awaiting_go_at IS NOT NULL AND build_ok IS NULL
+             AND build_session_id IS NULL) AS plan_waiting,
             -- Failed runs that read this same thread (RETRY_FAILED_REASON).
             (SELECT count(*)::int FROM homeroom_bot_runs f
               WHERE f.app_id = r.app_id AND f.issue_number = r.issue_number AND f.verdict = 'failed'
@@ -1736,6 +1832,20 @@ async function refreshApp(pool, app, {
     capRoom ? require('./homeroom-bot-dm').importedAt(pool, app.id).catch(() => null) : null,
   ]);
   const backlogUntil = toMs(importedAt);
+  // Papote #3: under a plan waiting for Build it, what people said to the
+  // bot is the voice's to answer, not a change that reads the request again
+  // (unaddressedActivityByIssue). With the voice off nobody answers it, so
+  // it is read as before. Unreadable: read as before.
+  const planWaiting = new Set(capRoom && bot && voiceModule(null).voiceOn(settings, { type: 'issue' })
+    ? [...lastRuns.values()].filter((r) => r.plan_waiting === true).map((r) => Number(r.issue_number))
+    : []);
+  const unaddressed = planWaiting.size
+    ? await unaddressedActivityByIssue(pool, app.id, [...planWaiting], bot.id).catch((err) => {
+      log.warn('homeroom-bot', 'Could not read what people said apart from to the bot', { app: app.slug, err: err.message });
+      return null;
+    })
+    : null;
+  const personAt = (n) => (unaddressed && planWaiting.has(n) ? unaddressed.get(n) || null : threads.get(n));
   // A failed read's retry that found nothing to answer is not offered again
   // for that run (its request's instance keeps it: bot-request spentRetry).
   const spentRetries = new Map((await pool.query(
@@ -1778,7 +1888,7 @@ async function refreshApp(pool, app, {
     const { lastRun, imported, atGoLive } = lastRunAsSeen(issue, lastRuns.get(n), { everyoneMs, backlogUntil, importedAt });
     const verdict = classifyIssue({
       issue,
-      threadLastAt: latestOf(threads.get(n), proposalThreads.get(n)),
+      threadLastAt: latestOf(personAt(n), proposalThreads.get(n)),
       busy: busy.has(n),
       lastRun,
     });
@@ -2304,7 +2414,7 @@ async function ensureBotSession(pool, config, bot, app) {
        VALUES ($1, $2, 'main', 'paused', FALSE, '{}', $3, 'codex_openrouter', 'openrouter', $4, $5)
        RETURNING *`,
       [app.id, bot.id, 'Homeroom bot triage',
-        config.openrouterDefaultCodexModel || null,
+        await defaultModelSetting.effective(pool, config),
         config.openrouterDefaultCodexReasoning || 'low'],
     );
     session = rows[0];
@@ -3431,7 +3541,9 @@ async function runTriage(pool, config, {
     // B6: a plan still waiting for Build it is not what the bot thinks once
     // it reads the request again. Its buttons go now, so a tap while this
     // look runs builds nothing; this look sends a plan of its own.
-    await retireWaitingPlans(pool, { appId: app.id, issueNumber, why: 'the request was read again', deps: { dm: deps.dm } });
+    await retireWaitingPlans(pool, {
+      appId: app.id, issueNumber, why: 'the request was read again', note: 'replaced', deps: { dm: deps.dm, ws: liveD.ws },
+    });
     return looked?.githubCreatedAt || null;
     });
     if (announcedAt) postedAt.push(announcedAt);
@@ -6823,14 +6935,21 @@ async function buildItOnRequest(pool, { appId, issueNumber, requester, deps = {}
     );
     if (!run) return false;
     const { rows: said } = await pool.query(
-      `SELECT m.user_id, m.content FROM chat_messages m
+      `SELECT m.user_id, m.content, (qu.username = $4) AS quotes_bot FROM chat_messages m
          JOIN users u ON u.id = m.user_id
+         LEFT JOIN chat_messages q
+           ON (m.metadata->'quote'->>'refMsgId') ~ '^[0-9]+$'
+          AND q.id = (m.metadata->'quote'->>'refMsgId')::int
+         LEFT JOIN users qu ON qu.id = q.user_id
         WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = $2
           AND m.created_at > $3 AND m.deleted_at IS NULL AND u.is_synthetic IS NOT TRUE
         ORDER BY m.id`,
-      [appId, issueNumber, run.awaiting_go_at],
+      [appId, issueNumber, run.awaiting_go_at, live.BOT_USERNAME],
     );
-    const people = said.filter((m) => m.user_id != null);
+    // Papote #3: what was said to the bot that is not a go word ("status?")
+    // was the voice's to answer, and says nothing about the plan.
+    const toBot = (m) => m.quotes_bot === true || voiceModule(deps).mentionsBot(m.content);
+    const people = said.filter((m) => m.user_id != null && (isGoWord(m.content) || !toBot(m)));
     if (!people.length || !people.every((m) => Number(m.user_id) === Number(requester.userId) && isGoWord(m.content))) return false;
     const went = await goAhead(pool, { runId: Number(run.id) });
     if (!went.ok) return false;
@@ -6886,6 +7005,8 @@ async function goAhead(pool, { runId, answers = [], planShown = true }) {
   );
   if (!went) return { ok: false, why: 'gone' };
   void timeline.record(pool, { runId, stage: 'go_ahead', detail: { answers: chosen.length } });
+  // Papote #3: its row on the request says it is being built now.
+  await live.notePlanRows(pool, [runId], 'building');
   // The tap is served by whichever Pod the person reached, and only the
   // leader runs the loop that starts the build: the local wake does nothing
   // anywhere else, and the build waited for the leader's next idle pass (up
@@ -6908,10 +7029,14 @@ async function goAhead(pool, { runId, answers = [], planShown = true }) {
  * B6: end the wait of any plan on a request that still waits for Build it,
  * as `why` (a new look at the request, a merge): recorded as not built,
  * and its card's buttons go. Resolves the runs ended. Never throws.
+ * Papote #3: and its row on the request says so (live.notePlanRows): `note`
+ * 'replaced' when a new plan follows, else 'stopped'.
  */
 // `before` leaves alone the plans made after it (a merge's bookkeeping run
 // late by the merge-followups workflow machine: noteRequestMerged).
-async function retireWaitingPlans(pool, { appId, issueNumber = null, issues = null, why, before = null, deps = {} }) {
+async function retireWaitingPlans(pool, {
+  appId, issueNumber = null, issues = null, why, before = null, note = 'stopped', deps = {},
+}) {
   const numbers = issues || [issueNumber];
   let rows = [];
   try {
@@ -6924,6 +7049,7 @@ async function retireWaitingPlans(pool, { appId, issueNumber = null, issues = nu
       [appId, numbers.map(Number), `skipped: ${why}`, before],
     ));
     if (rows.length) await (deps.dm || require('./homeroom-bot-dm')).closePlanCards(pool, rows.map((r) => Number(r.id)));
+    if (rows.length) await live.notePlanRows(pool, rows.map((r) => Number(r.id)), note, { ws: deps.ws || null });
   } catch (err) {
     if (deps.strict) throw err;
     log.warn('homeroom-bot', 'Could not end a waiting plan', { appId, issueNumber, err: err.message });
@@ -6949,6 +7075,7 @@ async function settleStalePlans(pool, deps = {}) {
     );
     if (rows.length) {
       await (deps.dm || require('./homeroom-bot-dm')).closePlanCards(pool, rows.map((r) => Number(r.id)), { stopped: true });
+      await live.notePlanRows(pool, rows.map((r) => Number(r.id)), 'stopped', { ws: deps.ws || null });
       log.info('homeroom-bot', 'Plans nobody tapped Build it under stopped waiting', { runs: rows.map((r) => Number(r.id)) });
     }
     return rows.length;
@@ -8586,7 +8713,7 @@ async function adminPayload(pool, config, {
       weeklyLimitCents: botRow.weekly_limit_cents ?? DEFAULT_WEEKLY_LIMIT_CENTS,
       weeklySpentCents,
       hasIncludedKey,
-      model: config.openrouterDefaultCodexModel || null,
+      model: platformDefaultModel(settings, config),
       // #3654: what each stage runs on now, the default filled in.
       models: Object.fromEntries(MODEL_STAGES.map((stage) => [stage, stageModel(settings, config, stage)])),
     };
@@ -8654,7 +8781,10 @@ async function adminPayload(pool, config, {
   return {
     settings,
     modes: MODES,
-    defaultModel: config.openrouterDefaultCodexModel || null,
+    // The platform default in force (the admin's, else the deploy's), and
+    // the deploy's own, which a blank setting goes back to.
+    defaultModel: platformDefaultModel(settings, config),
+    deploymentDefaultModel: defaultModelSetting.deployDefault(config),
     bot,
     loop: memory.loop,
     totals,
@@ -9333,8 +9463,11 @@ module.exports = {
   enqueueNow,
   // #3654: per-stage models and the pieces the benchmark replays with.
   stageModel,
+  platformDefaultModel,
+  checkDefaultModel,
   MODEL_STAGES,
   KEY_MODELS,
+  KEY_DEFAULT_MODEL,
   MODEL_ID_RE,
   triagePromptFor,
   firstVersionNote,
@@ -9480,6 +9613,7 @@ module.exports = {
   // Pure, exported for tests.
   classifyIssue,
   lastRunsByIssue,
+  unaddressedActivityByIssue,
   BLOCKERS,
   capRoomFor,
   slotHolders,
