@@ -7,8 +7,10 @@
 // its Screenshot gallery (routes/gallery.js) show, curated field by field so
 // a field added to either screen later does not reach a connector by
 // accident. Writes stay the console's, except a run's rating, which is how a
-// run is labelled for the benchmark.
+// run is labelled for the benchmark, and the bot's settings, saved through
+// the console's own writeSettings (saveSettings).
 
+const log = require('../logger');
 const { RESULT_STATUSES } = require('../shots-files');
 
 const clipText = (value, max) => {
@@ -154,6 +156,54 @@ function botFilters(q = {}) {
 }
 
 /**
+ * The settings as a connector reads them, off homeroom-bot.js adminPayload:
+ * get_homeroom_bot's `settings`, and what saveSettings answers. Pure.
+ */
+function settingsOf(p = {}) {
+  const s = p.settings || {};
+  return {
+    mode: s.mode || null,
+    // What the console calls it: the stored "shadow" is On, acting for real
+    // on every app but the paused ones (live is refused: homeroom-bot.js
+    // validateSettingsPatch). The stored value stays in `mode`.
+    modeLabel: modeLabelOf(s.mode),
+    pausedApps: Array.isArray(s.pausedApps) ? s.pausedApps : [],
+    everyoneSince: s.everyoneSince || null,
+    models: p.bot?.models || null,
+    defaultModel: p.defaultModel || null,
+    // What a build's plan and build (and a first version's triage) run on
+    // while a bot configuration is current, over `models` (homeroom-bot.js
+    // currentConfigurations).
+    configurations: p.configurations || null,
+    // What the helper calls ask first (titles, the plan at Make it, chat
+    // reads, the content review; services/helper-model.js): the admin's
+    // choice, else the built-in GLM.
+    helperModel: s.helperModel || p.helperBuiltInModel || null,
+    turnSeconds: num(s.turnSeconds),
+    concurrency: num(s.concurrency),
+    buildConcurrency: num(s.buildConcurrency),
+    liveAtOnce: num(s.liveAtOnce),
+    perPerson: num(s.perPerson),
+    shadowBuilds: !!s.shadowBuilds,
+    dmChat: !!s.dmChat,
+    // Its voice outside the DM, one switch per place (homeroom-bot-voice.js).
+    voiceSession: s.voiceSession !== false,
+    voiceIssue: s.voiceIssue !== false,
+    voiceChat: s.voiceChat !== false,
+    continueReads: s.continueReads !== false,
+    proposalCeiling: num(s.proposalCeiling),
+    userWeeklyCents: num(s.userWeeklyCents),
+    adminWeeklyCents: num(s.adminWeeklyCents),
+    // The rest of the console's Settings, so a save through saveSettings
+    // reads back every field it can change.
+    batchSize: num(s.batchSize),
+    turnInputTokens: num(s.turnInputTokens),
+    shadowBuildPlatform: !!s.shadowBuildPlatform,
+    liveBuildStream: s.liveBuildStream !== false,
+  };
+}
+
+/**
  * The Homeroom bot as its console section shows it: its settings (models per
  * stage, mode, the paused apps, clocks and caps), its spend this week, the last
  * seven days' verdicts, the queue, and a page of its runs (the verdict
@@ -231,40 +281,7 @@ async function botOverview(pool, config, query = {}, deps = {}) {
   const person = personFilter(query);
   return {
     ok: true,
-    settings: {
-      mode: s.mode || null,
-      // What the console calls it: the stored "shadow" is On, acting for real
-      // on every app but the paused ones (live is refused: homeroom-bot.js
-      // validateSettingsPatch). The stored value stays in `mode`.
-      modeLabel: modeLabelOf(s.mode),
-      pausedApps: Array.isArray(s.pausedApps) ? s.pausedApps : [],
-      everyoneSince: s.everyoneSince || null,
-      models: p.bot?.models || null,
-      defaultModel: p.defaultModel || null,
-      // What a build's plan and build (and a first version's triage) run on
-      // while a bot configuration is current, over `models` (homeroom-bot.js
-      // currentConfigurations).
-      configurations: p.configurations || null,
-      // What the helper calls ask first (titles, the plan at Make it, chat
-      // reads, the content review; services/helper-model.js): the admin's
-      // choice, else the built-in GLM.
-      helperModel: s.helperModel || p.helperBuiltInModel || null,
-      turnSeconds: num(s.turnSeconds),
-      concurrency: num(s.concurrency),
-      buildConcurrency: num(s.buildConcurrency),
-      liveAtOnce: num(s.liveAtOnce),
-      perPerson: num(s.perPerson),
-      shadowBuilds: !!s.shadowBuilds,
-      dmChat: !!s.dmChat,
-      // Its voice outside the DM, one switch per place (homeroom-bot-voice.js).
-      voiceSession: s.voiceSession !== false,
-      voiceIssue: s.voiceIssue !== false,
-      voiceChat: s.voiceChat !== false,
-      continueReads: s.continueReads !== false,
-      proposalCeiling: num(s.proposalCeiling),
-      userWeeklyCents: num(s.userWeeklyCents),
-      adminWeeklyCents: num(s.adminWeeklyCents),
-    },
+    settings: settingsOf(p),
     spend: p.bot ? {
       weeklyLimitCents: num(p.bot.weeklyLimitCents), weeklySpentCents: num(p.bot.weeklySpentCents), hasIncludedKey: !!p.bot.hasIncludedKey,
     } : null,
@@ -495,6 +512,42 @@ async function rateRun(pool, { runId, rating, note, labelVerdict, actorId }, dep
   return { ok: true, run: { id: Number(r.id), rating: r.rating || null, ratingNote: r.rating_note || null, labelVerdict: r.label_verdict || null } };
 }
 
+// Every field the console's Save may send (homeroom-bot.js
+// validateSettingsPatch); a connector's save sends only these.
+const SETTINGS_FIELDS = Object.freeze([
+  'mode', 'pausedApps', 'models', 'defaultModel', 'helperModel',
+  'weeklyLimitCents', 'userWeeklyCents', 'adminWeeklyCents',
+  'turnSeconds', 'turnInputTokens', 'concurrency', 'batchSize', 'buildConcurrency',
+  'liveAtOnce', 'perPerson', 'proposalCeiling',
+  'shadowBuilds', 'shadowBuildPlatform', 'dmChat', 'voiceSession', 'voiceIssue', 'voiceChat',
+  'continueReads', 'liveBuildStream',
+]);
+
+/**
+ * A connector's save of the bot's settings, as the console's Save is
+ * (routes/admin.js PUT /api/admin/homeroom-bot/settings): the patch through
+ * homeroom-bot.js writeSettings, so the same validation, catalog checks and
+ * cache invalidation, recorded under `actorId`. A field outside
+ * SETTINGS_FIELDS is refused rather than ignored. Answers the fields saved
+ * and the settings as get_homeroom_bot reads them.
+ */
+async function saveSettings(pool, config, { patch, actorId, username = null }, deps = {}) {
+  const bot = deps.bot || require('../homeroom-bot');
+  const body = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
+  const unknown = Object.keys(body).filter((k) => !SETTINGS_FIELDS.includes(k));
+  if (unknown.length) return { ok: false, status: 400, error: `Not a setting: ${unknown.slice(0, 5).join(', ')}` };
+  const out = await bot.writeSettings(pool, body, actorId, config);
+  if (!out.ok) return { ok: false, status: 400, error: out.error };
+  log.info('bench', 'Homeroom bot settings updated (connector)', { by: username, patch: Object.keys(body) });
+  const p = await bot.adminPayload(pool, config, {});
+  return {
+    ok: true,
+    changed: Object.keys(body),
+    settings: settingsOf(p),
+    weeklyLimitCents: num(p.bot?.weeklyLimitCents),
+  };
+}
+
 // Fixed-shape words only: codes and causes from the platform's own sets.
 const CODE_RE = /^[a-z][a-z0-9_]{0,63}$/;
 
@@ -680,6 +733,9 @@ module.exports = {
   personWeek,
   rateRun,
   recentShots,
+  saveSettings,
+  settingsOf,
+  SETTINGS_FIELDS,
   shotStats,
   shotImages,
 };
