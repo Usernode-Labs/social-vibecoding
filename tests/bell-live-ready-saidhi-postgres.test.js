@@ -261,6 +261,52 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     assert.ok(saved.some((r) => r.id === priyaRead), 'a saved row stays in Saved');
   });
 
+  // #5471: the note about a change you voted on that went live leaves the
+  // bell's list however old it is and however long it sat unread (#5487
+  // made the row leave on the merge, unread or read: it only ever opened
+  // the merged page, and the phone push announced the merge) —
+  // Maztrilover's two merged proposals still sat in the inbox that night.
+  // The exact lookup a push opens still resolves one, saved the row stays
+  // in Saved, and a closed change keeps its unread news.
+  await t.test('#5471: an unread went-live note is off the list however old the merge is', async () => {
+    const basePriya = await notifications.countUnread(pool, priya.id);
+    const baseMo = await notifications.countUnread(pool, mo.id);
+
+    // Unread, live over a day ago: off the list, and not counted.
+    const staleLive = await change('Gone live two days ago');
+    await pool.query(
+      `UPDATE chat_sessions SET status = 'merged',
+         merged_at = NOW() - INTERVAL '25 hours', live_at = NOW() - INTERVAL '25 hours' WHERE id = $1`,
+      [staleLive],
+    );
+    const priyaStale = await notify(priya.id, 'voted_change_merged', { sessionId: staleLive, source: null });
+    const moStale = await notify(mo.id, 'pr_merged', { sessionId: staleLive, source: null });
+    assert.equal(await listed(priya.id, priyaStale), null, 'the stale unread news is off the list');
+    assert.equal(await listed(mo.id, moStale), null, 'for the author too');
+    assert.equal(await notifications.countUnread(pool, priya.id), basePriya, 'and it does not count');
+    assert.equal(await notifications.countUnread(pool, mo.id), baseMo);
+
+    // The exact lookup (a push opened) still resolves the unread row.
+    const exact = notifications.serialize(await notifications.getForUser(pool, priya.id, priyaStale));
+    assert.equal(exact.sessionStatus, 'merged');
+    assert.equal(exact.readAt, null, 'the exact lookup still resolves the unread row');
+
+    // Saved, the stale row stays in Saved.
+    await pool.query(`INSERT INTO notification_bookmarks (user_id, notification_id) VALUES ($1, $2)`, [priya.id, priyaStale]);
+    const saved = await notifications.listSavedForUser(pool, priya.id);
+    assert.ok(saved.some((r) => r.id === priyaStale), 'a saved stale unread row stays in Saved');
+
+    // A closed change keeps its unread news in the list, however old.
+    const closedOld = await change('A change that was closed a day ago');
+    await pool.query(
+      `UPDATE chat_sessions SET status = 'archived', archived_at = NOW() - INTERVAL '25 hours' WHERE id = $1`,
+      [closedOld],
+    );
+    const closedOldNews = await notify(priya.id, 'voted_change_merged', { sessionId: closedOld, source: null });
+    assert.ok(await listed(priya.id, closedOldNews), 'a closed change keeps its unread news listed');
+    assert.equal(await notifications.countUnread(pool, priya.id), basePriya + 1);
+  });
+
   // #4778: settleDecidedChange runs best-effort at every call site, so the
   // bell also settles a decided change's asks live off the change's status.
   // Seeded WITHOUT calling it, the way a missed settle leaves the rows.
