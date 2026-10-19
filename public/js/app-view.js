@@ -2151,7 +2151,13 @@ const AppView = {
       : { kind: 'letter', html: escapeHtml(((record && record.name) || '?').charAt(0).toUpperCase()) };
     return {
       iconKind: tile.kind,
-      iconHtml: tile.html,
+      // Not lazy (polish board #9): the cover is on screen from its first
+      // frame, scaled inside the zooming card, and a lazy <img> there was
+      // drawn blank until the browser got round to it. It is the image the
+      // tile just showed, so it is in hand; decode it with the frame.
+      iconHtml: tile.kind === 'image'
+        ? tile.html.replace(' loading="lazy"', ' decoding="sync"')
+        : tile.html,
       name: (record && record.name) || '',
       note: PlatformI18n.t('changes:launch.cover.opening'),
       spinner: false,

@@ -30,7 +30,7 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, ty
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { pageTakesEdge } from '../dev-board/workshop/places-tray';
 import {
-  depthIn, EDGE_PX, isPan, landingIn, MESSAGES_AT, PAN_SLOP_PX, SLIDE_EASE, SLIDE_MS,
+  afterSlideStarts, depthIn, EDGE_PX, isPan, landingIn, MESSAGES_AT, PAN_SLOP_PX, SLIDE_EASE, SLIDE_MS,
 } from '../nav-drawer/drawer-math';
 import { reducedMotion } from '../nav-drawer/drawer-store';
 import {
@@ -157,9 +157,23 @@ export function useMessagesDrawer(
   // pane the route swaps in (the peek and the conversation are two, and the
   // list's empty pane is not drawn) starts from there.
   const lastOffset = useRef<number>(MESSAGES_AT[level]);
-  const slides = useRef(new Map<HTMLElement, Animation>());
+  // The slide each pane is on: its node, the animation, and where it runs
+  // from and to. By PANE, not by node: a release starts the slide before the
+  // route that lands it swaps the conversation's pane for the peek's
+  // (`landAt`), and the new node carries on the slide the old one was on.
+  type Slide = { el: HTMLElement; anim: Animation; start: string; end: string; t0: number };
+  const slides = useRef(new Map<'list' | 'thread', Slide>());
   const at = (pane: 'list' | 'thread', offset: number, w: number) =>
     `translate3d(${(pane === 'list' ? -offset : MESSAGES_AT[1] - offset) * w}px, 0, 0)`;
+  const run = (pane: 'list' | 'thread', el: HTMLElement, start: string, end: string, t0: number, elapsed = 0) => {
+    const anim = el.animate([{ transform: start }, { transform: end }], { duration: SLIDE_MS, easing: SLIDE_EASE });
+    if (elapsed > 0) anim.currentTime = Math.min(SLIDE_MS, elapsed);
+    const slide: Slide = { el, anim, start, end, t0 };
+    slides.current.set(pane, slide);
+    const done = () => { if (slides.current.get(pane) === slide) slides.current.delete(pane); };
+    anim.onfinish = done;
+    anim.oncancel = done;
+  };
   const put = (offset: number, animate: boolean) => {
     const { layout, list, thread } = panes();
     const w = Math.max(1, layout?.clientWidth || 1);
@@ -167,29 +181,39 @@ export function useMessagesDrawer(
     lastOffset.current = offset;
     for (const [pane, el] of [['list', list], ['thread', thread]] as const) {
       if (!el) continue;
-      // From where it is on screen: mid-slide, where the slide has it.
-      const running = slides.current.get(el);
-      const shown = running ? getComputedStyle(el).transform : 'none';
-      const start = running && shown !== 'none' ? shown : at(pane, from, w);
-      running?.cancel();
+      const running = slides.current.get(pane);
       const end = at(pane, offset, w);
+      if (animate && running && running.end === end) {
+        // Already on its way there: the route confirming a release's slide.
+        if (running.el === el) continue;
+        // A node the route swapped in mid-slide joins the slide where it is.
+        const elapsed = typeof running.anim.currentTime === 'number'
+          ? running.anim.currentTime : performance.now() - running.t0;
+        running.anim.cancel();
+        el.style.transform = end;
+        if (!reducedMotion() && typeof el.animate === 'function') run(pane, el, running.start, end, running.t0, elapsed);
+        continue;
+      }
+      // From where it is on screen: mid-slide, where the slide has it.
+      const own = running && running.el === el ? running : null;
+      const shown = own ? getComputedStyle(el).transform : 'none';
+      const start = own && shown !== 'none' ? shown : at(pane, from, w);
+      running?.anim.cancel();
       el.style.transform = end;
       if (!animate || reducedMotion() || typeof el.animate !== 'function' || start === end) continue;
-      const slide = el.animate([{ transform: start }, { transform: end }], { duration: SLIDE_MS, easing: SLIDE_EASE });
-      slides.current.set(el, slide);
-      const done = () => { if (slides.current.get(el) === slide) slides.current.delete(el); };
-      slide.onfinish = done;
-      slide.oncancel = done;
+      run(pane, el, start, end, performance.now());
     }
   };
   const clear = () => {
+    for (const slide of [...slides.current.values()]) slide.anim.cancel();
     const { list, thread } = panes();
     for (const el of [list, thread]) {
-      if (!el) continue;
-      slides.current.get(el)?.cancel();
-      el.style.transform = '';
+      if (el) el.style.transform = '';
     }
   };
+  // A release's level, from the moment it set the panes sliding until the
+  // route lands on it (`landAt`).
+  const landing = useRef<null | 0 | 1>(null);
   // Where the route says, sliding there from where it was; at once the
   // first time.
   const placed = useRef<null | 0 | 1>(null);
@@ -202,6 +226,14 @@ export function useMessagesDrawer(
       return;
     }
     const first = placed.current === null;
+    if (!first && landing.current === level) {
+      // The release started this slide already, and the header's with it.
+      landing.current = null;
+      put(MESSAGES_AT[level], true);
+      placed.current = level;
+      return;
+    }
+    landing.current = null;
     put(MESSAGES_AT[level], !first);
     if (first) messagesDepth.cut(level);
     else messagesDepth.slide(level);
@@ -233,14 +265,24 @@ export function useMessagesDrawer(
   // ── Letting go: the level a pan lands on, and its address ──
   // Short of a quarter, back where it was; past it, the other address, and
   // the slide runs on from where the finger left the panes as it lands.
+  //
+  // THE SLIDE FIRST, THE ROUTE AFTER (polish board #16, 19 Oct 2026). The
+  // address used to change on release and the slide to start from the
+  // route's render: on an iPhone the panes stood still for 85ms under the
+  // lifted finger, and 163ms under a 6x CPU throttle in Chrome, then jumped
+  // on. Now the panes and the header start sliding in the release's own
+  // task, and the address changes once the slide is running
+  // (afterSlideStarts), in a task of its own so its render runs between
+  // frames rather than inside one; the route's placement then finds them
+  // already on their way (`put`, `landing`).
   const landAt = (from: 0 | 1, offset: number, dx: number) => {
     const to = landingIn(MESSAGES_AT, from, offset, dx) as 0 | 1;
-    if (to === from) {
-      put(MESSAGES_AT[to], true);
-      messagesDepth.slide(to);
-      return;
-    }
-    openConversation(to === 1 ? peekId : null);
+    put(MESSAGES_AT[to], true);
+    messagesDepth.slide(to);
+    if (to === from) return;
+    landing.current = to;
+    const id = to === 1 ? peekId : null;
+    afterSlideStarts(() => { window.setTimeout(() => openConversation(id), 0); });
   };
 
   // ── A mouse on the list ──

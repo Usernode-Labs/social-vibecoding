@@ -513,6 +513,9 @@ boot and whenever the answer changes, and only with a changed value:
 - `"dark"` while the fullscreen staging preview (`#staging-overlay`, not
   docked and not under a session's chrome) or the before/after compare
   overlay (`#visual-compare-overlay`) is open;
+- otherwise `"dark"` on a project's pages, whose header wears its
+  community's colour (`data-community-tint` on `<html>`); every such colour
+  is fitted for white text, and the attribute is off inside a running app;
 - otherwise the running app's tone (`data-app-tone` on `<html>`), when an
   app is on screen;
 - otherwise `null`. The boot publish is `null` too, which also clears an

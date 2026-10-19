@@ -1980,9 +1980,13 @@
     //
     // So the app is told the tone of the GROUND under the status bar
     // whenever it changes: 'dark' while the fullscreen preview or the
-    // compare overlay is open, else the running app's tone, else null,
-    // which hands the bar back to the app's theme. A 'dark' ground wants
-    // light glyphs. Unprivileged and not persisted (NATIVE-BRIDGE.md,
+    // compare overlay is open, 'dark' on a project's pages, whose header
+    // wears its community's colour (`data-community-tint`,
+    // frontend/src/features/header/community-tint.ts; every such colour is
+    // fitted for white text, lib/community-color.ts), else the running app's
+    // tone, else null, which hands the bar back to the app's theme. A 'dark'
+    // ground wants light glyphs. The tint is taken off inside a running app,
+    // so there the app's own tone still decides. Unprivileged and not persisted (NATIVE-BRIDGE.md,
     // `setStatusBarTone`), and capability-gated like setAppearance, so an
     // older build never sees the call.
     //
@@ -2004,16 +2008,18 @@
     statusBarToneFor(state) {
       const s = state || {};
       if (s.previewFullscreen === true || s.compareOpen === true) return 'dark';
+      // Polish board #6: black clock and battery on the navy community bar.
+      if (s.communityTint === true) return 'dark';
       return s.appTone === 'dark' || s.appTone === 'light' ? s.appTone : null;
     },
 
     // Read off the document: the overlays' classes (React toggles them
-    // through refs, frontend/src/features/staging/) and the app-tone
-    // attribute. The preview counts only when FULLSCREEN: docked it sits
+    // through refs, frontend/src/features/staging/), the community tint and
+    // the app-tone attribute. The preview counts only when FULLSCREEN: docked it sits
     // mid-page, and under a session's chrome the platform header is what
     // the status bar is over.
     _statusBarToneState() {
-      const state = { previewFullscreen: false, compareOpen: false, appTone: null };
+      const state = { previewFullscreen: false, compareOpen: false, communityTint: false, appTone: null };
       try {
         const shown = (el) => !!el && !el.classList.contains('hidden');
         const preview = document.getElementById('staging-overlay');
@@ -2021,6 +2027,7 @@
           !preview.classList.contains('staging-overlay-docked') &&
           !preview.classList.contains('staging-overlay-under-chrome');
         state.compareOpen = shown(document.getElementById('visual-compare-overlay'));
+        state.communityTint = document.documentElement.getAttribute('data-community-tint') !== null;
         state.appTone = document.documentElement.getAttribute('data-app-tone');
       } catch (_) { /* no document to read: the theme's bar */ }
       return state;
@@ -2112,7 +2119,7 @@
           NativeChrome.publishStatusBarTone();
         });
         observer.observe(document.documentElement,
-          { attributes: true, attributeFilter: ['data-app-tone'] });
+          { attributes: true, attributeFilter: ['data-app-tone', 'data-community-tint'] });
         // Both overlays are in the shell's static markup ahead of this
         // script, and their islands never unmount (the staging one holds
         // the preview iframe, whose identity is pinned).
