@@ -278,11 +278,13 @@ const PROPOSALS_PER_BUCKET = 50;
 const MY_PROPOSALS_SQL = `
   WITH items AS (
     SELECT 'inProgress' AS section, cs.id AS session_id, cs.session_title AS title,
+           cs.pr_title, cs.pr_number, cs.check_state,
            cs.app_id, cs.status, cs.last_activity_at AS at
       FROM chat_sessions cs
      WHERE ${MY_SESSIONS_WHERE}
      UNION ALL
     SELECT 'openForVote' AS section, cs.id AS session_id, cs.session_title AS title,
+           cs.pr_title, cs.pr_number, cs.check_state,
            cs.app_id, cs.status, COALESCE(cs.promoted_at, cs.last_activity_at) AS at
       FROM chat_sessions cs
      WHERE ${MY_PROPOSALS_WHERE} AND cs.is_headless = FALSE
@@ -290,11 +292,13 @@ const MY_PROPOSALS_SQL = `
     -- Live once production runs it (live_at); going live, it is still in progress.
     SELECT CASE WHEN cs.live_at IS NULL THEN 'openForVote' ELSE 'merged' END AS section,
            cs.id AS session_id, cs.session_title AS title,
+           cs.pr_title, cs.pr_number, cs.check_state,
            cs.app_id, cs.status, COALESCE(cs.live_at, cs.merged_at, cs.last_activity_at) AS at
       FROM chat_sessions cs
      WHERE cs.user_id = $1 AND cs.is_headless = FALSE AND cs.status = 'merged'
      UNION ALL
     SELECT 'closed' AS section, cs.id AS session_id, cs.session_title AS title,
+           cs.pr_title, cs.pr_number, cs.check_state,
            cs.app_id, cs.status, COALESCE(cs.archived_at, cs.last_activity_at) AS at
       FROM chat_sessions cs
      WHERE cs.user_id = $1 AND cs.is_headless = FALSE AND cs.status = 'archived'
@@ -305,7 +309,7 @@ const MY_PROPOSALS_SQL = `
            ) AS rn
       FROM items it
   )
-  SELECT r.section, r.session_id, r.title, r.status, r.at,
+  SELECT r.section, r.session_id, r.title, r.pr_title, r.pr_number, r.check_state, r.status, r.at,
          a.slug AS app_slug, a.name AS app_name, a.icon_emoji, a.icon_image_id
     FROM ranked r
     JOIN apps a ON a.id = r.app_id
@@ -314,10 +318,17 @@ const MY_PROPOSALS_SQL = `
 `;
 
 // Pure (exported for tests): raw rows → the response body's four buckets.
+// #5272: `prTitle` and `prNumber` name a change nobody titled, and
+// `checkState` is the latest checks verdict (chat_sessions.check_state), so
+// Your changes can say a change's checks failed.
 function shapeProposalRow(r) {
+  const prNumber = Number(r.pr_number);
   return {
     sessionId: Number(r.session_id),
     title: r.title,
+    prTitle: r.pr_title || null,
+    prNumber: Number.isSafeInteger(prNumber) && prNumber > 0 ? prNumber : null,
+    checkState: r.check_state || null,
     appSlug: r.app_slug,
     appName: r.app_name,
     appIconEmoji: r.icon_emoji || null,
@@ -338,15 +349,20 @@ function shapeProposals(rows) {
 
 // Staging-only ?demo=1 rows, one per bucket. Ids follow src/routes/profile.js
 // and src/routes/votes.js's occupied 91000xx ranges (see their own comments);
-// 9100035-9100040 were unused before this. The merged bucket reuses
+// 9100035-9100040 were unused before this (9100037 is the untitled row,
+// #5272). The merged bucket reuses
 // DEMO_CONTRIBUTIONS' own ids/titles so the same mock row opens the same
 // proposal page from either screen.
 const DEMO_PROPOSALS = {
   inProgress: [
     { sessionId: 9100035, title: '[Mock] Rework the onboarding checklist', status: 'active' },
+    // #5272: nobody titled it yet, so Your changes names it by its PR.
+    { sessionId: 9100037, title: null, prNumber: 9999, status: 'paused' },
   ],
   openForVote: [
-    { sessionId: 9100036, title: '[Mock] Ship the notification digest', status: 'promoted' },
+    // #5272: its checks failed, so Your changes offers "Fix checks".
+    { sessionId: 9100036, title: '[Mock] Ship the notification digest', status: 'promoted',
+      checkState: 'failing' },
   ],
   merged: [
     { sessionId: 9100030, title: '[Mock] Completed: rework the onboarding checklist',
@@ -373,6 +389,9 @@ function withDemoProposals(proposals, selfApp, now = Date.now()) {
     result[key] = (DEMO_PROPOSALS[key] || []).map((d) => ({
       sessionId: d.sessionId,
       title: d.title,
+      prTitle: d.prTitle || null,
+      prNumber: d.prNumber || null,
+      checkState: d.checkState || null,
       appSlug: selfApp.slug,
       appName: selfApp.name || selfApp.slug,
       appIconEmoji: selfApp.icon_emoji || null,
