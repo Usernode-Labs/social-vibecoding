@@ -8,6 +8,9 @@
  *
  *   How it plans, builds and answers · 14 requests ›
  *
+ * #5304: a live topic's channel lists its requests in a tab of their own
+ * (./topic-requests.tsx), so there the line is what the topic is for, alone.
+ *
  * A retired topic says what became of it instead, and has no count: its
  * requests are the survivor's (a merge) or are being sorted again (an
  * archive).
@@ -47,14 +50,18 @@ export function TopicHead({ slug, topic, survivor = null, onRequests, onSurvivor
   topic: PlaceChannel;
   /** A merged topic: the handle of the topic it joined. */
   survivor?: string | null;
-  /** Open All items narrowed to this topic. */
-  onRequests: () => void;
+  /**
+   * Open All items narrowed to this topic. #5304: absent where the channel's
+   * own Requests tab lists them, and the line is then what the topic is for.
+   */
+  onRequests?: () => void;
   /** A merged topic: open the topic it joined. */
   onSurvivor?: () => void;
 }): ReactNode {
   // The line is worded by topicLine, read as it renders; subscribe it.
   useMessages('project');
-  const line = topicLine(topic, survivor);
+  const worded = topicLine(topic, survivor);
+  const line = onRequests ? worded : { ...worded, link: null };
   const press = (event: MouseEvent<HTMLAnchorElement>, run?: () => void) => {
     const nav = (window as unknown as { NavLink?: { isNativeClick?: (e: unknown) => boolean } }).NavLink;
     if (nav?.isNativeClick?.(event)) return;

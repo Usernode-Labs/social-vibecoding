@@ -12166,7 +12166,7 @@ const AppView = {
     const ctx = { slug, canPost: !!AppView.appData?.can_collaborate, viewerId: (App.user && App.user.id) || null };
     const empty = {
       votes: { count: 0, total: 0, shown: 0, rows: [] }, mine: { count: 0, shown: 0, rows: [] },
-      since: null, week: null, dashboard: null, nextUp: null, nextMore: [], discussion: null, themes: [], recentLive: [],
+      since: null, week: null, dashboard: null, nextUp: null, nextMore: [], discussion: null, themes: [], topics: [], recentLive: [],
       meta: {
         source: null, generatedAt: null, discoveredAt: null, stale: false, pending: false, pendingStage: null,
         lastError: null, digestError: null, coverage: null, placing: 0, filtered: false,
@@ -12943,6 +12943,10 @@ const AppView = {
       nextMore,
       discussion,
       themes: drawn,
+      // #5304: a topic's channel opens on its requests, every one of them
+      // whatever All items' search is narrowing (project-discussion.tsx
+      // TopicRequests): the topics of the whole grouping.
+      topics: wholeThemes.filter((t) => t.topic),
       meta: {
         source: tData ? tData.source : null,
         generatedAt: tData ? tData.generatedAt : null,

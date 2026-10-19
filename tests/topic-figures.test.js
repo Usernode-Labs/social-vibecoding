@@ -317,18 +317,19 @@ test('an unknown figure is an error for the topics PR and costs the topic nothin
   ]);
 });
 
-test('the channel mounts the strip between the topic\'s line and its room, and the room\'s check still finds it', () => {
+test('the channel draws the strip on its Numbers tab, after its line and its tabs, and the channel\'s check reads the tab (#5304)', () => {
   const src = read('frontend/src/features/dev-board/workshop/project-discussion.tsx');
   const head = src.indexOf('<TopicHead');
-  const strip = src.indexOf('<TopicFigures slug={slug} topic={topic} />');
+  const tabs = src.indexOf('data-topic-tabs={topic.handle}');
+  const strip = src.indexOf("{view === 'numbers' ? (\n        <div className=\"dev-ws-topic-pane\"><TopicFigures slug={slug} topic={topic} /></div>");
   const host = src.indexOf('className="dev-ws-discussion-host dev-ws-topic-host"');
-  assert.ok(head > 0 && head < strip && strip < host);
-  // The channel's declared check reads the strip too (folded into it rather
-  // than a check of its own: the count is pinned).
+  assert.ok(head > 0 && head < tabs && tabs < strip && strip < host);
+  // The channel's declared check reads the tab strip, Numbers included
+  // (folded into it rather than a check of its own: the count is pinned).
   const manifest = JSON.parse(read('dapp.json'));
   const channel = manifest.tests.find((t) => t.path === '/?demo=1#app/usernode-2d5619/dev/c/onboarding');
-  // The strip draws only on a live topic, so it stands for the topic's state.
-  assert.match(channel.expectSelector, /\[data-ws-topic="onboarding"\]:has\(> \.dev-ws-topic-head \+ \[data-topic-figures\] \.dev-ws-fig-info\) > \.dev-ws-discussion-host \.gc-msg-more-action$/);
+  // The Numbers tab is there only on a live topic that names figures.
+  assert.match(channel.expectSelector, /\[data-ws-topic-tab=requests\] > \.dev-ws-topic-head \+ \[data-topic-tabs=onboarding\] > \[aria-current=page\]\[data-topic-tab=requests\] \+ \[data-topic-tab=chat\] \+ \[data-topic-tab=numbers\]$/);
   assert.ok(channel.expectSelector.length <= 256, 'the runner clips a selector at 256 characters');
 });
 

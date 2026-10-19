@@ -4767,6 +4767,26 @@
     "text": "Staging demo figures, not real numbers.",
     "description": "Small line under the card of numbers at the top of a topic's chat channel, shown only on a test copy of Homeroom: says the numbers are made up for testing."
   },
+  "places.topicTabs.requests": {
+    "text": "Requests",
+    "description": "Tab on a topic's page (a topic is a part of a project with its own channel): lists the requests filed under the topic. The tab the page opens on."
+  },
+  "places.topicTabs.chat": {
+    "text": "Chat",
+    "description": "Tab on a topic's page: the topic's chat channel, where members talk about it."
+  },
+  "places.topicTabs.numbers": {
+    "text": "Numbers",
+    "description": "Tab on a topic's page: the statistics the topic tracks (for example how long a change takes to go live), shown only when the topic names some."
+  },
+  "places.topicRequests.none": {
+    "text": "No requests in this topic yet.",
+    "description": "Shown on a topic's Requests tab when nothing is filed under the topic."
+  },
+  "places.topicRequests.loading": {
+    "text": "Loading this topic's requests",
+    "description": "Read aloud by screen readers while a topic's Requests tab waits for its list of requests."
+  },
   "topic.request.shots.hideComment": {
     "text": "Hide comment",
     "description": "Small button on the corner of a screenshot in a request, while the comment pinned to the picture is drawn over it: hides the comment."

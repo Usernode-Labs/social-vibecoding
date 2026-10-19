@@ -888,6 +888,12 @@ export interface DevWorkshopView {
   /** The app's general discussion, as a row — see AppView._discussionCardModel. */
   discussion: ListRow | null;
   themes: WorkshopTheme[];
+  /**
+   * #5304: the project's topics as the whole grouping has them, whatever
+   * All items' search narrows `themes` to: a topic's channel opens on its
+   * requests (../workshop/topic-requests.tsx).
+   */
+  topics?: WorkshopTheme[];
   meta: {
     /**
      * 'ai' from the model, 'category' from the voted category, 'demo' for

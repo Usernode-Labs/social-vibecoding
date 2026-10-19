@@ -2508,9 +2508,9 @@
       "expectText": "All items"
     },
     {
-      "name": "#4417: a topic's channel has an address of its own, which opens its project's page on that place: what the topic is for and its requests above the room, then the figures its dapp.json entry names, each with an info button saying what it means; the room is #general's pane: each message's ⋯ offers Reply in thread",
+      "name": "#4417, #5304: a topic's channel has an address of its own, which opens its project's page on that place: what the topic is for, then its tabs, Requests (open first), Chat and Numbers (the figures its dapp.json entry names)",
       "path": "/?demo=1#app/usernode-2d5619/dev/c/onboarding",
-      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"c:onboarding\"]:has(> [data-place-bar=\"c:onboarding\"]) [data-ws-topic=\"onboarding\"]:has(> .dev-ws-topic-head + [data-topic-figures] .dev-ws-fig-info) > .dev-ws-discussion-host .gc-msg-more-action",
+      "expectSelector": "#app-view:not(.hidden) [data-ws-tab=\"c:onboarding\"]:has(> [data-place-bar]) [data-ws-topic-tab=requests] > .dev-ws-topic-head + [data-topic-tabs=onboarding] > [aria-current=page][data-topic-tab=requests] + [data-topic-tab=chat] + [data-topic-tab=numbers]",
       "expectText": "requests"
     },
     {

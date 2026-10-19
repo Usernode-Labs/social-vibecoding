@@ -19934,6 +19934,32 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   .dev-ws-topic-channel.dev-ws-discussion-threaded:has(> .dev-ws-figs) { grid-template-rows: auto auto minmax(0, 1fr); }
   .dev-ws-topic-channel.dev-ws-discussion-threaded > .dev-ws-figs { grid-column: 1 / -1; }
 }
+/* #5304: A TOPIC OPENS ON ITS REQUESTS (project-discussion.tsx TopicChannel).
+   Under its line, the shell's Tabs strip: Requests, Chat, Numbers. The room
+   is the Chat tab, and its host stays in the document, hidden and empty,
+   while another tab is up (its own `display: flex` would show it). Requests
+   and Numbers scroll inside the fitted pane the room fills. The requests'
+   card is the plane colour, 20px, one hairline (AGENTS.md, "Type and
+   colour"), its lanes as By category draws an opened topic's. */
+.dev-ws-topic-tabs { align-self: flex-start; flex: none; margin: 0 0 10px; }
+.dev-ws-topic-host[hidden] { display: none; }
+.dev-ws-topic-requests,
+.dev-ws-topic-pane { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.dev-ws-topic-requests-card {
+  background-color: var(--dc-sheet-solid);
+  border-radius: 20px;
+  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+  padding: 10px 10px 12px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.dev-ws-topic-requests > .dev-ws-week-note { margin: 24px 0 0; font-size: 13px; }
+@media (max-width: 767.98px) {
+  .dev-ws-topic-channel.dev-ws-discussion-threaded > .dev-ws-topic-tabs { display: none; }
+}
+@media (min-width: 768px) {
+  .dev-ws-topic-channel.dev-ws-discussion-threaded:has(> .dev-ws-topic-tabs) { grid-template-rows: auto auto minmax(0, 1fr); }
+  .dev-ws-topic-channel.dev-ws-discussion-threaded > .dev-ws-topic-tabs { grid-column: 1 / -1; }
+}
 /* "Discuss in #name ›" at the foot of a topic's card in By category. */
 .dev-ws-topic-link { display: inline-block; margin-top: 6px; font-size: 13px; font-weight: 600; }
 /* AFTER A MERGE, A CARD MARKS IT (merged-topic-card.tsx): a row in the

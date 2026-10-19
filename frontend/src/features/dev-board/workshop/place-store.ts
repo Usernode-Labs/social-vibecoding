@@ -78,10 +78,26 @@ export function trayButton(): HTMLElement | null {
   return trayReturn;
 }
 
+/**
+ * #5304: THE PLAN READER GOES WITH THE PLACE. A plan opened from a chat
+ * (the group chat's reader, `#gc-spec-side-panel`) is remembered per project
+ * so a reload brings it back, and every mount of the project's chat restored
+ * it: one opened in #general stayed open over the next channel, full screen
+ * on a phone. A move to another place, or to another project's page, closes
+ * it and forgets it (GroupChat._closeSpecPanel). A first publish (the page
+ * arriving, a reload) closes nothing, so a reload still brings it back.
+ */
+function closePlanReader(): void {
+  const chat = (window as unknown as { GroupChat?: { _closeSpecPanel?: () => void } }).GroupChat;
+  try { chat?._closeSpecPanel?.(); } catch { /* no reader to close */ }
+}
+
 /** The page says where it is. */
 export function publishPlace(
   slug: string | null, place: PlaceKey, owed: number, unread = 0, tray = false,
 ): void {
+  const was = placeStore.get();
+  if (typeof window !== 'undefined' && was.slug && (was.slug !== slug || was.place !== place)) closePlanReader();
   placeStore.set({
     slug, place, owed: Math.max(0, Number(owed) || 0),
     unread: Math.max(0, Number(unread) || 0), tray,

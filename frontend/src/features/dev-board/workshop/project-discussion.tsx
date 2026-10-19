@@ -67,15 +67,27 @@
  * names a place in it (a notification's `m/<id>` or `thread/<root>`) is
  * taken here as #general's door is there, by its topic (`topicRef`).
  *
+ * #5304: A TOPIC OPENS ON ITS REQUESTS. A live topic's channel is three
+ * tabs under its line (the shell's Tabs strip): Requests, the default and
+ * first (./topic-requests.tsx), then Chat, the room above, then Numbers, its
+ * figures (./topic-figures.tsx), when its dapp.json entry names any. The
+ * room is mounted only while Chat is up, so a channel is read only when its
+ * chat is seen; a door that names a message or a reply thread in it turns to
+ * Chat first.
+ *
  * A retired topic (archived, or merged into another) is read-only, with its
- * whole history. A topic that others were merged into draws one card in its
- * history for each, where the merge happened (./merged-topic-card.tsx),
- * handed to the history as markers: nothing was posted for them.
+ * whole history, and has its chat alone: no strip. A topic that others were
+ * merged into draws one card in its history for each, where the merge
+ * happened (./merged-topic-card.tsx), handed to the history as markers:
+ * nothing was posted for them.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { XIcon } from '@/components/ui/icons';
+import {
+  SECTION_TAB_ACTIVE, SECTION_TAB_BASE, SECTION_TAB_INACTIVE, SECTION_TABS_LIST_BASE, Tabs, TabsList, TabsTrigger,
+} from '@/components/ui/tabs';
 import { type CommunityPayload, type PlaceChannel } from './community-card';
 import { AppReplyThreadPane, EmbeddedConversation } from '../../messages';
 import { closeThread, embeddedThreadOpen } from '../../messages/store';
@@ -87,7 +99,8 @@ import { devWorkshopStore } from '../card/cards-store';
 import type { TranscriptMarker } from '../../group-chat/transcript-store';
 import { channelPlace, channelsOf, findChannel, mergedInto, type PlaceKey } from './places';
 import { TopicHead } from './topic-head';
-import { TopicFigures } from './topic-figures';
+import { TopicFigures, topicHasFigures } from './topic-figures';
+import { TopicRequests } from './topic-requests';
 
 type Channel = NonNullable<CommunityPayload['channel']>;
 
@@ -323,6 +336,25 @@ function GeneralChannel({ slug, name, data }: {
   );
 }
 
+/** #5304: a topic channel's tabs. */
+export type TopicTab = 'requests' | 'chat' | 'numbers';
+
+const TOPIC_TAB_LABEL: Record<TopicTab, string> = {
+  requests: 'project:places.topicTabs.requests',
+  chat: 'project:places.topicTabs.chat',
+  numbers: 'project:places.topicTabs.numbers',
+};
+
+/**
+ * The tabs a topic's channel has, the one it opens on first: a live topic's
+ * requests, its chat, and its numbers when it names figures; a retired
+ * topic's chat alone. Pure.
+ */
+export function topicTabs(topic: Pick<PlaceChannel, 'state'> & { figures?: string[] | null }): TopicTab[] {
+  if (topic.state !== 'live') return ['chat'];
+  return topicHasFigures(topic) ? ['requests', 'chat', 'numbers'] : ['requests', 'chat'];
+}
+
 /**
  * #4417: the place of a topic's channel. Waits for the community record
  * (which says what the handle is), then mounts the channel; a handle the
@@ -387,6 +419,20 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
   // makes the same thread asked for again (a second notification) a fresh
   // mount.
   const [thread, setThread] = useState<{ rootId: number; key: number } | null>(null);
+  // #5304: the tab up. A live topic opens on its requests; a retired one has
+  // its chat alone.
+  const tabs = topicTabs(topic);
+  const [picked, setView] = useState<TopicTab>(tabs[0]);
+  // A tab the topic no longer has (it was retired, or its figures went)
+  // falls back to its first.
+  const view = tabs.includes(picked) ? picked : tabs[0];
+  const chatUp = view === 'chat';
+  const pick = useCallback((next: string) => {
+    if (next !== 'requests' && next !== 'chat' && next !== 'numbers') return;
+    setView(next);
+    // A reply thread is beside the room: it goes with it.
+    if (next !== 'chat') setThread(null);
+  }, []);
 
   // THE ROOM: #general's pane, scoped to the topic's stream. Mounted out of
   // React's commit, as #general's is (#2783), into a host whose subtree is
@@ -403,7 +449,7 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
   const onShow = screen === 'app-view' && !!tab;
   useEffect(() => {
     const el = host.current;
-    if (!el || !onShow) return undefined;
+    if (!el || !onShow || !chatUp) return undefined;
     const view = (window as any).AppView;
     const chat = (window as any).UsernodeReact?.groupChat;
     let live = true;
@@ -428,7 +474,7 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
       chat?.unmountGeneralChat?.(el);
       (window as any).GroupChat?.releaseUnreadHold?.(slug);
     };
-  }, [slug, name, ref, readOnly, closed, topic.handle, notice, onShow]);
+  }, [slug, name, ref, readOnly, closed, topic.handle, notice, onShow, chatUp]);
 
   // A merge that lands while the channel is open draws its card at once.
   useEffect(() => {
@@ -454,6 +500,8 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
     const apply = () => {
       const target = takeDiscussionTarget(slug, ref);
       if (!target) return;
+      // #5304: what a door names is in the chat, so the chat comes up.
+      if (target.focusMessageId || target.threadRootId) setView('chat');
       if (target.focusMessageId) {
         (window as any).GroupChat?.revealMessage?.(slug, target.focusMessageId, ref);
       }
@@ -498,6 +546,7 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
       data-ws-discussion=""
       data-ws-topic={topic.handle}
       data-ws-topic-state={topic.state}
+      data-ws-topic-tab={view}
       data-discussion-app={slug}
       aria-label={`#${topic.handle}`}
     >
@@ -505,16 +554,38 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
         slug={slug}
         topic={topic}
         survivor={survivor ? survivor.handle : null}
-        onRequests={openRequests}
         onSurvivor={survivor && onPlace ? () => onPlace(channelPlace(survivor.handle)) : undefined}
       />
-      {/* The numbers this topic names in dapp.json, between its line and
-          its room (topic-figures.tsx); nothing for a topic with none. */}
-      <TopicFigures slug={slug} topic={topic} />
+      {/* #5304: Requests, Chat and Numbers, on the shell's Tabs strip. */}
+      {tabs.length > 1 ? (
+        <Tabs value={view} onValueChange={pick}>
+          <TabsList className={`${SECTION_TABS_LIST_BASE} dev-ws-topic-tabs`} data-topic-tabs={topic.handle}>
+            {tabs.map((key) => (
+              <TabsTrigger
+                key={key}
+                type="button"
+                value={key}
+                data-topic-tab={key}
+                className={SECTION_TAB_BASE}
+                activeClassName={SECTION_TAB_ACTIVE}
+                inactiveClassName={SECTION_TAB_INACTIVE}
+              >
+                {t(TOPIC_TAB_LABEL[key])}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      ) : null}
+      {view === 'requests' ? <TopicRequests slug={slug} topic={topic} onAll={openRequests} /> : null}
+      {/* The numbers this topic names in dapp.json (topic-figures.tsx). */}
+      {view === 'numbers' ? (
+        <div className="dev-ws-topic-pane"><TopicFigures slug={slug} topic={topic} /></div>
+      ) : null}
       {/* The host's class string is constant and its subtree is the group
-          chat's: the one-owner rule, satisfied at this boundary. */}
-      <div ref={host} className="dev-ws-discussion-host dev-ws-topic-host" data-topic-channel={topic.id} />
-      {thread ? (
+          chat's: the one-owner rule, satisfied at this boundary. It stays in
+          the document, hidden and empty, while another tab is up. */}
+      <div ref={host} className="dev-ws-discussion-host dev-ws-topic-host" data-topic-channel={topic.id} hidden={!chatUp} />
+      {thread && chatUp ? (
         <AppReplyThreadPane
           key={`${thread.rootId}:${thread.key}`}
           slug={slug}

@@ -348,7 +348,8 @@ test('the topic\'s place mounts #general\'s pane, scoped to the topic, with its 
   assert.doesNotMatch(channel, /mountThread/, 'no longer a thread mount: the one thread slot is its reply thread\'s');
   // Held only while the page is the screen on show (one general pane).
   assert.match(channel, /const onShow = screen === 'app-view' && !!tab;/);
-  assert.match(channel, /if \(!el \|\| !onShow\) return undefined;/);
+  // #5304: and only while its Chat tab is up (tests/topic-channel-tabs.test.js).
+  assert.match(channel, /if \(!el \|\| !onShow \|\| !chatUp\) return undefined;/);
   // Its reply thread is #general's pane beside it, closed in place.
   assert.match(channel, /<AppReplyThreadPane[\s\S]*?readOnly=\{readOnly \|\| closed\}[\s\S]*?where=\{`#\$\{topic\.handle\}`\}[\s\S]*?onClick=\{\(\) => setThread\(null\)\}/);
   assert.match(channel, /className=\{`dev-ws-discussion dev-ws-topic-channel\$\{thread \? ' dev-ws-discussion-threaded' : ''\}`\}/);
