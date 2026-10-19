@@ -53,8 +53,10 @@ test('a board-change reconcile under way is held for the drain; none starts once
 test('the session sweeper holds the drain only for a measurement, and its long loops stop at their next row on shutdown', () => {
   assert.match(SERVER, /sessionSweeperHandle = setInterval\(singleFlight\('session-sweeper', async \(\) => \{\s+if \(lifecycle\.isShuttingDown\(\)\) return;/);
   assert.doesNotMatch(SERVER, /inflightWork\.track\('timer:session-sweeper'/, 'a staging rebuild in a pass is not waited for');
-  assert.match(SERVER, /await inflightWork\.track\('session-sweeper:measure', async \(\) => \{\s+for \(const session of rows\) \{\s+if \(lifecycle\.isShuttingDown\(\)\) break;/,
-    'the proposal measurement is held, and stops before its next write');
+  assert.match(SERVER, /await inflightWork\.track\('proposal-measure', async \(\) => \{\s+for \(const sessions of byApp\.values\(\)\) \{\s+if \(lifecycle\.isShuttingDown\(\)\) break;/,
+    'the proposal measurement is held, and stops before its next app');
+  assert.match(SERVER, /for \(const session of ready\) \{\s+if \(lifecycle\.isShuttingDown\(\)\) break;/,
+    'and before its next write');
   assert.match(SERVER, /if \(healed >= MAX_HEALS_PER_SWEEP \|\| lifecycle\.isShuttingDown\(\)\) break;/, 'the staging heal starts no rebuild during shutdown');
 });
 
