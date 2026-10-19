@@ -1547,14 +1547,28 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         } catch (err) {
           log.warn('apps', 'Homeroom bot project not recorded', { appId: appRow.id, err: err.message });
         }
+        // A ready-made app works as it is, so nothing is built and, until
+        // the sign-up test of 19 Oct 2026, nothing was said in the DM: its
+        // maker met an empty Messages. Their one hello is owed now, as a
+        // maker's, with the project's card (homeroom-bot-dm.js
+        // greetReadyMadeMaker, through their DM machine). Never a reason the
+        // create fails.
+        if (readyMade) {
+          await require('../workflow/platform.ts').greet(pool, { userId: req.user.id, kind: 'maker', appId: appRow.id })
+            .catch((err) => log.warn('apps', 'Homeroom bot hello not owed', { appId: appRow.id, err: err.message }));
+        }
       }
 
       // Made from the first session's "What do you want to make?"
       // (frontend/src/features/first-session): making something answers it,
       // and the join screen it stood in for, so neither is asked again
-      // (services/first-session.js). Until this, every boot asks it.
+      // (services/first-session.js). Until this, every boot asks it. It
+      // also owes the newcomer the bot's hello, unless making this project
+      // already greets them as its maker: a ready-made app (owed above,
+      // which the tour's would otherwise race) or a description the bot
+      // builds from (said in startFirstVersion's own message).
       if (req.body.from === 'first-session') {
-        await require('../services/first-session').answerJoinScreenByMaking(pool, req.user.id)
+        await require('../services/first-session').answerJoinScreenByMaking(pool, req.user.id, { greet: !readyMade && !homeroomBot })
           .catch((err) => log.warn('apps', 'Join screen not answered', { userId: req.user.id, err: err.message }));
       }
 
@@ -4199,6 +4213,22 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       }
       const pendingWhoDecides = canManage
         ? await require('../services/who-decides-pr').findWhoDecidesPr(pool, app.id) : null;
+      // The invited approvers by name, so the Workshop's rule line ("evan
+      // or snait says yes") is drawn once rather than said as a count first
+      // and rewritten when GET /approvers answered (polish board #13). Only
+      // for a reader that route would answer: it is collab-read.
+      let approverNames = null;
+      if (gov.approverPolicy === 'invited' && canChat) {
+        const { rows: approverRows } = await pool.query(
+          `SELECT u.username
+             FROM app_approvers ap
+             JOIN users u ON u.id = ap.user_id
+            WHERE ap.app_id = $1 AND ap.status = 'member'
+            ORDER BY LOWER(u.username)`,
+          [app.id]
+        );
+        approverNames = approverRows.map((r) => r.username).filter(Boolean);
+      }
       // WHAT IT IS. dapp.json's one line when it has one. A project made
       // from "What should it do?" without a one-liner (the first session's
       // own words, not an example's) has none until somebody writes one, so
@@ -4326,6 +4356,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           rules: described ? described.rules : null,
           groups: described ? described.groups : [],
           creator,
+          approvers: approverNames,
         },
         // #4666: who can see it, as the two columns say, for the sheet.
         visibility: { build: app.collab_visibility, view: app.view_visibility },

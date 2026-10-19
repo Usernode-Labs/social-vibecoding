@@ -1,7 +1,7 @@
 /**
  * Profile's lists of rows (UI overhaul, regrouped by the navigation review):
  * "Your work", then "Rewards" and "Account" side by side with it on a wide
- * window, and a Settings card of its own at the foot on a phone.
+ * window, and a Settings card of its own at the foot.
  *
  * ── Your work ──────────────────────────────────────────────────────────
  *
@@ -38,15 +38,19 @@
  * its own address, `#profile?friends`. "Your contributions", the newest
  * merged changes under everything, is gone: Your changes lists them all.
  *
- * ── Settings (a phone's entrance) ──────────────────────────────────────
+ * ── Settings ───────────────────────────────────────────────────────────
  *
- * Wherever the sidebar shows its gear (from 768px, features/nav/tab-bar.tsx
- * with app.css's media query), Profile does not repeat it: the gear opens
- * Settings. A phone has neither, so its Settings row is the only entrance,
- * and it stays — its own one-row card at the foot, because GroupedList's
- * separators are `:not(:last-child)` and a row hidden inside the Account card
- * would leave a stray hairline behind. The native node / wallet / staking
- * rows and Log out are in Settings (features/settings/account-rows.tsx).
+ * The card at the foot gets you from your own page to the settings about
+ * you, at every width (#5557): Profile opens the Edit profile sheet right
+ * here (the same sheet the card at the top opens, by `#profile?edit`), and
+ * Notifications opens Settings' Notifications page, where the account-wide
+ * defaults and the per-app choices live. Wherever the sidebar shows its
+ * gear (from 768px, features/nav/tab-bar.tsx with app.css's media query),
+ * both entrances sit side by side; on a phone the card is the only one.
+ * Its own card at the foot, because GroupedList's separators are
+ * `:not(:last-child)` and a row hidden inside the Account card would leave
+ * a stray hairline behind. The native node / wallet / staking rows and Log
+ * out are in Settings (features/settings/account-rows.tsx).
  *
  * ── Admin (admins only) ────────────────────────────────────────────────
  *
@@ -86,7 +90,8 @@ import { type ReactNode } from 'react';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
-import { AppWindowIcon, BallotIcon, ChatIcon, CogIcon, HandRaisedIcon, ShieldCheckIcon, ThumbsUpIcon, TrophyIcon, UserGroupIcon } from '@/components/ui/icons';
+import { Skeleton } from '@/components/ui/skeleton';
+import { AppWindowIcon, BallotIcon, BellIcon, ChatIcon, CogIcon, HandRaisedIcon, ShieldCheckIcon, ThumbsUpIcon, TrophyIcon, UserGroupIcon, UserPenIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
@@ -104,9 +109,26 @@ type ProfileRows = {
   kudos: string | null;
   changes?: string | null;
   requests?: string | null;
+  requestsPending?: boolean;
   votes?: string | null;
   friends?: string | null;
 };
+
+/**
+ * A row's second line whose words are still on their way: a muted bar at
+ * the line's own height (ListRow's subtitle is 1.125rem leading), so the row
+ * is already the height it will be and nothing under it moves when they
+ * land. Your requests' counts come after the rest of Profile (profile.js
+ * _load).
+ */
+function PendingLine({ label }: { label: string }): ReactNode {
+  return (
+    <div className="flex h-[1.125rem] items-center">
+      <span className="sr-only">{label}</span>
+      <Skeleton shape="muted" className="w-32 animate-pulse" aria-hidden="true" />
+    </div>
+  );
+}
 
 /** A plain click that the row takes for itself; anything modified is the browser's. */
 function plainClick(event: { defaultPrevented: boolean; button: number; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }): boolean {
@@ -139,7 +161,10 @@ export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
           leading={<IconTile size="sm"><ChatIcon /></IconTile>}
           title={t('profile:work.requests.title')}
           titleClassName={TITLE}
-          subtitle={rows.requests || t('profile:work.requests.hint')}
+          subtitle={rows.requests
+            || (rows.requestsPending
+              ? <PendingLine label={t('profile:work.requests.counting')} />
+              : t('profile:work.requests.hint'))}
           subtitleClassName={SUBTITLE}
         />
         <ListRow
@@ -248,10 +273,37 @@ export function SettingsPanel(): ReactNode {
   const t = useMessages('profile');
   const settingsLine = wallet ? t('profile:more.settings.hintWallet') : t('profile:more.settings.hint');
   return (
-    // The sidebar's gear is Settings' entrance from 768px (tab-bar.tsx with
-    // app.css's media query); a phone has neither, so the row hides with it.
-    <section id="profile-settings" className="mt-6 md:hidden">
+    // Shown at every width (#5557): the sidebar's gear is a second entrance
+    // from 768px (tab-bar.tsx with app.css's media query), not a reason to
+    // hide the rows that say what is in there.
+    <section id="profile-settings" className="mt-2">
+      <SectionHeader>{t('profile:settings.heading')}</SectionHeader>
       <GroupedList className="mx-0" tone="plane">
+        <ListRow
+          as="a"
+          id="profile-row-profile"
+          href="#profile?edit"
+          onClick={(event) => {
+            if (!plainClick(event)) return;
+            event.preventDefault();
+            Profile.showEditSheet();
+          }}
+          leading={<IconTile size="sm"><UserPenIcon /></IconTile>}
+          title={t('profile:settings.profile.title')}
+          titleClassName={TITLE}
+          subtitle={t('profile:settings.profile.hint')}
+          subtitleClassName={SUBTITLE}
+        />
+        <ListRow
+          as="a"
+          id="profile-row-notifications"
+          href="#settings/alerts"
+          leading={<IconTile size="sm"><BellIcon /></IconTile>}
+          title={t('profile:settings.notifications.title')}
+          titleClassName={TITLE}
+          subtitle={t('profile:settings.notifications.hint')}
+          subtitleClassName={SUBTITLE}
+        />
         <ListRow
           as="a"
           id="profile-row-settings"

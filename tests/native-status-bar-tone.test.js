@@ -135,6 +135,10 @@ function boot(opts = {}) {
     setAppTone(tone) {
       if (tone) attrs.set('data-app-tone', tone); else attrs.delete('data-app-tone');
     },
+    // community-tint.ts sets it empty while a project's pages are up.
+    setCommunityTint(on) {
+      if (on) attrs.set('data-community-tint', ''); else attrs.delete('data-community-tint');
+    },
     // What React's useHiddenClass / useClassToggle do, then the observer.
     async mutate(fn) {
       fn(overlays);
@@ -159,12 +163,18 @@ test('statusBarToneFor: an open dark overlay wins, then the app, then nothing', 
   assert.equal(tone({ appTone: 'light', previewFullscreen: true }), 'dark',
     'the preview covers the app, and its bar is near-black whatever is under it');
   assert.equal(tone({ appTone: 'sepia' }), null, 'nothing but the two tones');
+  // Polish board #6: a project's pages wear the community's colour on the
+  // header, always fitted for white text, so the glyphs are light there.
+  assert.equal(tone({ communityTint: true }), 'dark');
+  assert.equal(tone({ communityTint: true, appTone: 'light' }), 'dark',
+    'the tint is only ever on the project\'s pages; in a running app it is taken off');
+  assert.equal(tone({ communityTint: false, appTone: 'light' }), 'light');
 });
 
 test('only the FULLSCREEN preview counts', async () => {
   const h = boot();
   const read = () => h.NativeChrome._statusBarToneState();
-  assert.deepEqual(plain(read()), { previewFullscreen: false, compareOpen: false, appTone: null });
+  assert.deepEqual(plain(read()), { previewFullscreen: false, compareOpen: false, communityTint: false, appTone: null });
 
   h.overlays['staging-overlay'].classes.delete('hidden');
   assert.equal(read().previewFullscreen, true);
@@ -210,6 +220,24 @@ test('it publishes on boot, then each CHANGE, and nothing else', async () => {
   assert.deepEqual(plain(h.calls.tones[1]), { tone: 'dark' }, 'the wire shape');
 });
 
+test('a project\'s pages publish light glyphs over the community\'s colour (polish #6)', async () => {
+  const h = boot();
+  await settle();
+  assert.deepEqual(h.tones(), [null]);
+  h.setCommunityTint(true);
+  await h.mutate(() => {});
+  assert.deepEqual(h.tones(), [null, 'dark'], 'the Hub, the Workshop or a request: the navy bar');
+  assert.equal(h.NativeChrome._statusBarToneState().communityTint, true);
+  // Opening the running app takes the tint off and puts its own tone on.
+  h.setCommunityTint(false);
+  h.setAppTone('light');
+  await h.mutate(() => {});
+  assert.deepEqual(h.tones(), [null, 'dark', 'light'], 'the app\'s own tone wins inside it');
+  h.setAppTone(null);
+  await h.mutate(() => {});
+  assert.deepEqual(h.tones(), [null, 'dark', 'light', null], 'off a project: the theme again');
+});
+
 test('it watches exactly what decides the tone', () => {
   const h = boot();
   const targets = h.observed.map(({ target, options }) => ({
@@ -218,7 +246,7 @@ test('it watches exactly what decides the tone', () => {
     filter: options.attributeFilter,
   }));
   assert.deepEqual(plain(targets), [
-    { target: 'html', filter: ['data-app-tone'] },
+    { target: 'html', filter: ['data-app-tone', 'data-community-tint'] },
     { target: 'staging-overlay', filter: ['class'] },
     { target: 'visual-compare-overlay', filter: ['class'] },
   ]);

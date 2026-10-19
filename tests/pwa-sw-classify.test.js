@@ -14,7 +14,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-const { classifyRequest, NO_FALLBACK_PAGES, NO_FALLBACK_PREFIXES } = require('../public/sw.js');
+const { classifyRequest, NO_FALLBACK_PAGES, NO_FALLBACK_PREFIXES, SHELL_ASSETS } = require('../public/sw.js');
 
 const ORIGIN = 'https://social-vibecoding.example';
 const classify = (method, path, accept = null, mode = 'no-cors') =>
@@ -284,11 +284,10 @@ test('shell assets classify as shell', () => {
   assert.equal(classify('GET', '/usernode-bridge/v1/bridge.js'), 'shell');
   assert.equal(classify('GET', '/manifest.webmanifest'), 'shell');
   assert.equal(classify('GET', '/icons/icon-192.png'), 'shell');
-  // The signed-out landing's illustration. It goes the OTHER way from the
-  // challenge artwork below, and the difference is the fallback: a challenge
-  // card draws its kind icon when the picture fails, so caching buys nothing,
-  // while the landing has nothing to put in its place and is the first screen
-  // a visitor who has never signed in reaches — on a precached document.
+  // The signed-out landing's illustration: it has nothing to put in its
+  // place, and it is the first screen a visitor who has never signed in
+  // reaches — on a precached document. (The challenge artwork below is
+  // precached too now, for a different reason.)
   assert.equal(classify('GET', '/brand/people.png'), 'shell');
 });
 
@@ -302,19 +301,23 @@ test('content-addressed images are cache-first', () => {
   assert.equal(classify('GET', `/visuals/${'b'.repeat(32)}`), 'immutable');
 });
 
-// Challenge artwork is deliberately left to the network. It is decoration: an
-// offline card whose picture fails to load draws its kind icon instead, so
-// caching nine SVGs would buy nothing a reader can tell apart. Pinned so a
-// later broadening of the `shell` rules does not start caching them silently.
-test('challenge illustrations bypass the worker, with no offline copy', () => {
-  assert.equal(classify('GET', '/illustrations/challenges/block-production.svg'), 'bypass');
+// Challenge artwork used to be left to the network, as decoration with a
+// fallback (a card whose picture fails draws its kind icon). That cost Home a
+// visible step on every cold load: the cards drew, and their pictures a frame
+// or more later (the polish board's #1 and #10, 19 Oct 2026). So the built-ins
+// are precached and served from the release cache like the brand assets, and
+// an upload, whose id is minted per upload and served immutable, is
+// cache-first like the app icons.
+test('challenge illustrations: the built-ins from the release, an upload cache-first', () => {
+  assert.equal(classify('GET', '/illustrations/challenges/block-production.svg'), 'shell');
   assert.equal(classify('GET', '/illustrations/challenges/block-production.svg', 'image/svg+xml', 'no-cors'),
-    'bypass');
-  // Uploaded artwork too. Its id is immutable, which would suit cache-first, but
-  // it is the same decoration with the same fallback, so it stays on the
-  // network rather than joining the `immutable` app-icon rule.
-  assert.equal(classify('GET', `/challenge-illustrations/${'c'.repeat(32)}`), 'bypass');
-  assert.equal(classify('GET', `/challenge-illustrations/${'c'.repeat(32)}`, 'image/png', 'no-cors'), 'bypass');
+    'shell');
+  assert.ok(SHELL_ASSETS.includes('/illustrations/challenges/block-production.svg'), 'precached');
+  assert.equal(classify('GET', `/challenge-illustrations/${'c'.repeat(32)}`), 'immutable');
+  assert.equal(classify('GET', `/challenge-illustrations/${'c'.repeat(32)}`, 'image/png', 'no-cors'), 'immutable');
+  // Only the id's own shape: anything else under the prefix is not an upload.
+  assert.equal(classify('GET', '/challenge-illustrations/not-an-id'), 'bypass');
+  assert.equal(classify('GET', '/illustrations/other/thing.svg'), 'bypass', 'only the challenge art directory');
 });
 
 // ALL cross-origin traffic is bypassed now: the shell compiles Tailwind into

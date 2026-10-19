@@ -39,6 +39,7 @@
 
 import { memo, useEffect, useRef, type ReactNode } from 'react';
 
+import { useInnerHtml } from '../../lib/html';
 import { useMessages } from '../../lib/i18n/react';
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
@@ -74,6 +75,12 @@ function LaunchCover({
   out: boolean;
 }): ReactNode {
   const t = useMessages('agent');
+  // ONE OBJECT FOR AS LONG AS THE MARKUP IS THE SAME (polish board #9). React
+  // compares `dangerouslySetInnerHTML` by the wrapper's identity, so a fresh
+  // `{ __html }` on every render rebuilt the tile's <img> on each store write
+  // the launch makes (the src, the spinner at LAUNCH_SPINNER_MS), and the
+  // zooming card showed a blank white tile each time (../../lib/html.tsx).
+  const icon = useInnerHtml(iconHtml);
   return (
     <div
       id="app-launch-cover"
@@ -89,7 +96,7 @@ function LaunchCover({
       <div
         className="app-icon-tile app-launch-cover-icon"
         data-icon={iconKind}
-        dangerouslySetInnerHTML={{ __html: iconHtml }}
+        dangerouslySetInnerHTML={icon}
       >
       </div>
       <p className="app-launch-cover-name">{name}</p>

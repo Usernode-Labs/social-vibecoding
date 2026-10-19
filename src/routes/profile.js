@@ -431,9 +431,20 @@ function withDemoProposals(proposals, selfApp, now = Date.now()) {
 // So "Done" is shipped or closed, and a request somebody closed on GitHub
 // by hand stays under Open until one of those is true. Bounded by
 // MY_REQUESTS_LIMIT, newest first; the two counts are over the whole set.
+// Profile's row needs only the counts, and asks for them alone
+// (?counts=1, MY_REQUEST_COUNTS_SQL).
+//
+// WHERE EACH ONE STANDS IS READ ONCE PER APP, NOT ONCE PER REQUEST. The
+// numbers the apps' changes name (`linked`, unnested from linked_issues)
+// and the numbers their voted-through close requests applied
+// (`applied_closes`) are each read in one pass and joined to the requests by
+// app and number. It was three EXISTS probes per request, each walking the
+// app's changes for `number = ANY(linked_issues)`, which no index serves:
+// 3.7 s for someone with about 800 requests on Homeroom (19 Oct 2026), and
+// the profile waited for it.
 const MY_REQUESTS_LIMIT = 50;
 
-const MY_REQUESTS_SQL = `
+const MY_REQUESTS_STANDING = `
   WITH self_app AS (
     SELECT id, repo_url FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1
   ),
@@ -458,29 +469,49 @@ const MY_REQUESTS_SQL = `
      WHERE f.app_id IS NOT NULL
      ORDER BY f.app_id, f.number, f.created_at ASC
   ),
+  linked AS (
+    SELECT cs.app_id, n.number,
+           bool_or(cs.status = 'merged' AND cs.live_at IS NOT NULL) AS shipped,
+           bool_or(cs.status IN ('active', 'paused', 'promoted', 'merging')) AS underway
+      FROM chat_sessions cs
+     CROSS JOIN LATERAL unnest(cs.linked_issues) AS n(number)
+     WHERE cs.app_id IN (SELECT app_id FROM mine)
+       AND cs.status IN ('merged', 'active', 'paused', 'promoted', 'merging')
+     GROUP BY cs.app_id, n.number
+  ),
+  applied_closes AS (
+    SELECT DISTINCT c.app_id, c.payload->>'issueNumber' AS number
+      FROM issues c
+     WHERE c.app_id IN (SELECT app_id FROM mine)
+       AND c.kind = 'close_issue' AND c.status = 'closed'
+       AND c.payload ? 'appliedAt'
+  ),
   standing AS (
     SELECT m.number, m.title, m.created_at,
            a.slug AS app_slug, a.name AS app_name, a.self_hosted,
-           EXISTS (SELECT 1 FROM chat_sessions cs
-                    WHERE cs.app_id = m.app_id AND cs.status = 'merged' AND cs.live_at IS NOT NULL
-                      AND m.number = ANY(cs.linked_issues)) AS shipped,
-           EXISTS (SELECT 1 FROM issues c
-                    WHERE c.app_id = m.app_id AND c.kind = 'close_issue' AND c.status = 'closed'
-                      AND c.payload ? 'appliedAt'
-                      AND c.payload->>'issueNumber' = m.number::text) AS closed,
-           EXISTS (SELECT 1 FROM chat_sessions cs
-                    WHERE cs.app_id = m.app_id
-                      AND cs.status IN ('active', 'paused', 'promoted', 'merging')
-                      AND m.number = ANY(cs.linked_issues)) AS underway
+           COALESCE(l.shipped, FALSE) AS shipped,
+           (ac.number IS NOT NULL) AS closed,
+           COALESCE(l.underway, FALSE) AS underway
       FROM mine m
       JOIN apps a ON a.id = m.app_id
+      LEFT JOIN linked l ON l.app_id = m.app_id AND l.number = m.number
+      LEFT JOIN applied_closes ac ON ac.app_id = m.app_id AND ac.number = m.number::text
   )
+`;
+
+const MY_REQUESTS_SQL = `${MY_REQUESTS_STANDING}
   SELECT s.*,
          COUNT(*) OVER () AS total,
          COUNT(*) FILTER (WHERE s.shipped OR s.closed) OVER () AS done
     FROM standing s
    ORDER BY s.created_at DESC NULLS LAST, s.number DESC
    LIMIT $2
+`;
+
+const MY_REQUEST_COUNTS_SQL = `${MY_REQUESTS_STANDING}
+  SELECT COUNT(*)::int AS total,
+         COUNT(*) FILTER (WHERE s.shipped OR s.closed)::int AS done
+    FROM standing s
 `;
 
 // Pure (exported for tests): the rows → the response body.
@@ -509,6 +540,14 @@ function shapeRequests(rows) {
   };
 }
 
+// Pure (exported for tests): MY_REQUEST_COUNTS_SQL's one row → { open, done }.
+function shapeRequestCounts(row) {
+  const r = row || {};
+  const total = Number(r.total) || 0;
+  const done = Number(r.done) || 0;
+  return { open: Math.max(0, total - done), done };
+}
+
 // Staging-only ?demo=1 rows, the same mock requests GET /api/feedback/mine
 // shows (routes/feedback.js DEMO_FEEDBACK), one in each standing so every
 // kind of line is on screen. REAL DATA WINS: rows of the viewer's own are
@@ -531,6 +570,14 @@ function withDemoRequests(body, selfApp, now = Date.now()) {
   }));
   const done = requests.filter((r) => r.state === 'shipped' || r.state === 'closed').length;
   return { requests, open: requests.length - done, done };
+}
+
+// The counts the demo rows above would give, on the same rule: a viewer with
+// requests of their own keeps their counts.
+function withDemoRequestCounts(counts, selfApp) {
+  if (!selfApp || counts.open || counts.done) return counts;
+  const { open, done } = withDemoRequests({ requests: [], open: 0, done: 0 }, selfApp);
+  return { open, done };
 }
 
 // Pure (exported for tests): validate an uploaded avatar body.
@@ -1291,9 +1338,20 @@ function profileRoutes(config) {
   // ── GET /api/me/requests ─────────────────────────────────────────────
   //
   // "Your requests" on Me. See MY_REQUESTS_SQL above for the two ways a
-  // request is recorded and where each one stands.
+  // request is recorded and where each one stands. `?counts=1` answers only
+  // { open, done }, all Profile's row draws.
   router.get('/api/me/requests', requireUser, async (req, res) => {
     try {
+      if (req.query.counts === '1') {
+        const { rows } = await pool.query(MY_REQUEST_COUNTS_SQL, [req.user.id]);
+        let counts = shapeRequestCounts(rows[0]);
+        if (IS_STAGING && req.query.demo === '1') {
+          const { rows: selfRows } = await pool.query(SELF_APP_SQL);
+          counts = withDemoRequestCounts(counts, selfRows[0] || null);
+        }
+        res.set('Cache-Control', 'no-store');
+        return res.json(counts);
+      }
       const { rows } = await pool.query(MY_REQUESTS_SQL, [req.user.id, MY_REQUESTS_LIMIT]);
       let body = shapeRequests(rows);
       if (IS_STAGING && req.query.demo === '1') {
@@ -1352,9 +1410,12 @@ module.exports = {
   withDemoProposals,
   DEMO_PROPOSALS,
   MY_REQUESTS_SQL,
+  MY_REQUEST_COUNTS_SQL,
   MY_REQUESTS_LIMIT,
   shapeRequests,
+  shapeRequestCounts,
   withDemoRequests,
+  withDemoRequestCounts,
   DEMO_REQUESTS,
   MY_PROPOSALS_SQL,
   PROPOSALS_PER_BUCKET,

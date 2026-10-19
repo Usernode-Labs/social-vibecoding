@@ -385,6 +385,9 @@ test('the panel sections publish through a store, on one paint', () => {
     hidden: [],
     panels: [],
   };
+  // What Home.load() sets before it renders: the panels' first paint waits
+  // for the apps as well as their own read (#10, tests/home-first-paint.test.js).
+  Home._appsLoaded = true;
   Home.render();
 
   const state = JSON.parse(JSON.stringify(store.get()));

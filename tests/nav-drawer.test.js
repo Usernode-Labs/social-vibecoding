@@ -180,7 +180,13 @@ test('it applies on a phone, on a community\'s own page, and through a switch', 
   assert.equal(drawerApplies({ ...page, phone: false }), false, 'never at 768px and up');
   assert.equal(drawerApplies({ ...page, screen: 'messages-screen' }), false, 'another tab');
   assert.equal(drawerApplies({ ...page, tab: 'app' }), false, 'the running app');
-  assert.equal(drawerApplies({ ...page, subTab: 'topic' }), false, 'a card opened from the page');
+  // Polish #23: an item opened from the community's pages keeps the drawer's
+  // header and its swipe back; one opened from a conversation does not.
+  assert.equal(drawerApplies({ ...page, subTab: 'topic' }), true, 'a card opened from the page (a deep link too)');
+  assert.equal(drawerApplies({ ...page, subTab: 'topic', topicOrigin: '#app/notes/workshop' }), true);
+  assert.equal(drawerApplies({ ...page, subTab: 'topic', topicOrigin: '#messages/12' }), false, 'a card opened from Messages');
+  assert.equal(drawerApplies({ ...page, subTab: 'topic', viewMode: 'kanban' }), false, 'a card under the Kanban board');
+  assert.equal(drawerApplies({ ...page, subTab: 'sessions' }), false, 'a change\'s own session');
   assert.equal(drawerApplies({ ...page, viewMode: 'kanban' }), false, 'the Kanban board');
   assert.equal(drawerApplies({ ...page, slug: null, tab: 'app', subTab: null, pending: true }), true,
     'a community picked on level 0, while the header\'s record is cleared for its load');
@@ -400,9 +406,22 @@ test('the Messages screen: the panes are the levels, the page drops its name, th
   assert.match(store, /if \(\(state\.route\.conversationId \|\| state\.route\.agent\) && messagesDrawerApplies\(\{[\s\S]*?\}\)\) \{\s*app\.setBackIcon\?\.\('none'\);/,
     'no href\'d arrow, so WebKit\'s history swipe stays off');
   const drawer = read('frontend/src/features/messages/phone-drawer.tsx');
-  assert.match(drawer, /openConversation\(to === 1 \? peekId : null\);/, 'a pan lands by opening the address');
-  assert.match(drawer, /const start = running && shown !== 'none' \? shown : at\(pane, from, w\);/,
-    'the pane the route swaps in slides on from where the old one was');
+  // Polish #16: the panes start sliding in the release's own task, and the
+  // address changes once the slide is running, in a task of its own; the
+  // route's placement then finds them on their way, and a pane it swaps in
+  // joins the slide where it is.
+  const land = drawer.slice(drawer.indexOf('const landAt = '), drawer.indexOf('// ── A mouse on the list ──'));
+  assert.match(land, /put\(MESSAGES_AT\[to\], true\);\s*messagesDepth\.slide\(to\);\s*if \(to === from\) return;\s*landing\.current = to;/,
+    'the slide first, whichever way the pan lands');
+  assert.match(land, /afterSlideStarts\(\(\) => \{ window\.setTimeout\(\(\) => openConversation\(id\), 0\); \}\);/,
+    'a pan lands by opening the address, after the slide is running');
+  assert.match(drawer, /if \(!first && landing\.current === level\) \{\s*\/\/[^\n]*\n\s*landing\.current = null;\s*put\(MESSAGES_AT\[level\], true\);\s*placed\.current = level;\s*return;\s*\}/,
+    'the route confirms the slide rather than starting it again');
+  assert.match(drawer, /if \(animate && running && running\.end === end\) \{\s*\/\/[^\n]*\n\s*if \(running\.el === el\) continue;/);
+  assert.match(drawer, /run\(pane, el, running\.start, end, running\.t0, elapsed\)/,
+    'the pane the route swaps in joins the slide the old one was on');
+  assert.match(drawer, /const start = own && shown !== 'none' \? shown : at\(pane, from, w\);/,
+    'otherwise a pane slides on from where it was');
   assert.match(drawer, /el\.animate\(\[\{ transform: start \}, \{ transform: end \}\], \{ duration: SLIDE_MS, easing: SLIDE_EASE \}\)/);
   assert.doesNotMatch(drawer, /\.style\.transition/, 'the conversation\'s pane is the kit\'s keyboard column, whose transition the kit owns');
   assert.match(drawer, /if \(!on \|\| \(level === 0 && !peekId\)\) return undefined;\s*const from = level;\s*const takesEdge = pageTakesEdge\(\);/);

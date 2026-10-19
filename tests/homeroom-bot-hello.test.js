@@ -125,6 +125,27 @@ test('B5: the hellos say what the bot does, in plain words', () => {
   assert.deepEqual(dm.TOUR_PROMPTS, ['What can I ask for?', 'How does the group decide?', 'How do I start a project?']);
 });
 
+test('sign-up test, 19 Oct 2026: a ready-made app\'s maker hears the maker\'s hello, with the project and a change to ask for', () => {
+  const dm = require('../src/services/homeroom-bot-dm');
+  const appTemplates = require('../src/services/app-templates');
+  // The maker's hello, the project's name as its own line (Messages draws
+  // its card), and that it works as it is, with the starter's own example.
+  assert.equal(dm.readyMadeHello('City Tier List', appTemplates.exampleChangeOf('tier-list-cities')),
+    `${dm.MAKER_HELLO}\n\n**City Tier List**\n\nIt works as it is. Ask me here for changes, like “add a photo of each city”.`);
+  assert.equal(dm.readyMadeHello('Chores', null),
+    `${dm.MAKER_HELLO}\n\n**Chores**\n\nIt works as it is. Ask me here for any change you'd like.`);
+  assert.deepEqual(dm.READY_MADE_PROMPTS, ['What can I ask for?', 'How do I invite friends?', 'How does the group decide?']);
+  for (const text of [dm.readyMadeHello('X', 'add a y'), ...dm.READY_MADE_PROMPTS]) {
+    assert.doesNotMatch(text, /—|homeroom_bot/);
+  }
+  // Every ready-made app has a change to offer.
+  for (const id of appTemplates.READY_IDS) assert.ok(appTemplates.exampleChangeOf(id), id);
+  // Owed through the person's DM machine, as a maker's, with the project.
+  assert.match(read('src/workflow/rules/bot-replies.ts'), /HELLO_KINDS: ReadonlySet<string> = new Set\(\['maker', 'member', 'joiner', 'tour'\]\);/);
+  const greet = read('src/services/homeroom-bot-dm.js');
+  assert.match(greet, /if \(kind === 'maker'\) \{\n\s+const \{ rows: \[app\] \} = await pool\.query\('SELECT id, slug, name, template, created_by FROM apps WHERE id = \$1', \[Number\(appId\)\]\);\n\s+if \(!app\) return null;\n\s+return greetReadyMadeMaker\(pool, \{ userId: Number\(userId\), app, strict: true \}\);/);
+});
+
 test('#4897: no hello is kept from a test account; the welcome DM keeps its own opt-in', () => {
   // The tour's, a maker's and a joiner's hello (homeroom-bot-dm.js) and a
   // member's (homeroom-bot-activity.js startCard) read nothing that marks a
@@ -344,6 +365,40 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     assert.match(source, /if \(marked && marked\.rowCount > 0 && ended !== 'backfill'\) \{\n {6}await require\('\.\.\/workflow\/platform\.ts'\)\.greet\(client, \{ userId, kind: 'tour' \}\);\n {4}\}\n {4}await client\.query\('COMMIT'\);/,
       'owed in the transaction that ends the tour');
     assert.equal(typeof onboarding.markTourDone, 'function');
+  });
+
+  await t.test('sign-up test, 19 Oct 2026: a ready-made app\'s maker hears hello once, as its maker, over its card', async () => {
+    const mode = (value) => pool.query(
+      `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_mode', $1)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [value]);
+    const ria = await user('ria');
+    const made = async (slug, label, owner, template) => (await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by, template) VALUES ($1, $2, 'running', $3, $4) RETURNING id`,
+      [label, slug, owner.id, template],
+    )).rows[0].id;
+    const cities = await made('city-tier-list', 'City Tier List', ria, 'tier-list-cities');
+    const blank = await made('ria-blank', 'Ria Blank', ria, null);
+    const notHers = await made('maya-cities', 'Maya Cities', maya, 'tier-list-cities');
+    await mode('off');
+    assert.equal(await dm.greet(pool, { userId: ria.id, kind: 'maker', appId: cities }), null, 'switched off: no hello it cannot keep');
+    await mode('live');
+    assert.equal(await dm.greet(pool, { userId: ria.id, kind: 'maker', appId: blank }), null, 'not a ready-made app');
+    assert.equal(await dm.greet(pool, { userId: ria.id, kind: 'maker', appId: notHers }), null, 'not her project');
+    assert.equal(await dm.greet(pool, { userId: ria.id, kind: 'maker', appId: 2147483000 }), null, 'no such project');
+    assert.equal((await pool.query('SELECT 1 FROM homeroom_bot_hellos WHERE user_id = $1', [ria.id])).rowCount, 0, 'none claimed');
+    const sent = await dm.greet(pool, { userId: ria.id, kind: 'maker', appId: cities });
+    assert.ok(sent?.messageId);
+    const { rows: [msg] } = await pool.query('SELECT content, metadata FROM conversation_messages WHERE id = $1', [sent.messageId]);
+    assert.equal(msg.content, dm.readyMadeHello('City Tier List', 'add a photo of each city'));
+    const meta = msg.metadata.homeroomBot;
+    assert.deepEqual([meta.kind, meta.appSlug, meta.appName, meta.hello, meta.status], ['hello_maker', 'city-tier-list', 'City Tier List', dm.MAKER_HELLO, 'open']);
+    assert.deepEqual(meta.actions.map((a) => a.label), dm.READY_MADE_PROMPTS);
+    assert.equal(dm.momentOf(meta), null, 'a hello rings nothing');
+    const { rows: [hello] } = await pool.query('SELECT kind, message_id FROM homeroom_bot_hellos WHERE user_id = $1', [ria.id]);
+    assert.deepEqual(hello, { kind: 'maker', message_id: sent.messageId });
+    assert.equal(await dm.greet(pool, { userId: ria.id, kind: 'maker', appId: cities }), null, 'once, ever');
+    assert.equal(await dm.greetTourFinisher(pool, { userId: ria.id }), null, 'and no tour\'s hello after it');
+    await mode('off');
   });
 
   await t.test('#4897: a test account hears every hello a newcomer hears, with the welcome DM still off', async () => {

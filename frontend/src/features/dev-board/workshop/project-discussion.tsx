@@ -77,7 +77,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { XIcon } from '@/components/ui/icons';
 import { type CommunityPayload, type PlaceChannel } from './community-card';
-import { AppReplyThreadPane, EmbeddedConversation } from '../../messages';
+import { AppReplyThreadPane, ChannelLoading, EmbeddedConversation } from '../../messages';
 import { closeThread, embeddedThreadOpen } from '../../messages/store';
 import { navStore } from '../../nav/nav-store.js';
 import { registerLevel } from '../../workshop/tab-ladder';
@@ -88,6 +88,7 @@ import type { TranscriptMarker } from '../../group-chat/transcript-store';
 import { channelPlace, channelsOf, findChannel, mergedInto, type PlaceKey } from './places';
 import { TopicHead } from './topic-head';
 import { TopicFigures } from './topic-figures';
+import { TopicSignals } from './topic-signals';
 
 type Channel = NonNullable<CommunityPayload['channel']>;
 
@@ -269,7 +270,9 @@ function GeneralChannel({ slug, name, data }: {
     };
   }, [slug, known, room, mountable]);
 
-  if (!data) return null;
+  // Until the record says which room it is, the room's own loading row: the
+  // channel opens in the one state it then keeps until its messages are in.
+  if (!data) return <ChannelLoading />;
   if (room) {
     return (
       <section
@@ -336,7 +339,7 @@ function TopicChannelPlace({ slug, name, data, handle, onPlace }: {
   onPlace?: (key: PlaceKey) => void;
 }): ReactNode {
   const t = useMessages('project');
-  if (!data) return null;
+  if (!data) return <ChannelLoading />;
   const topic = findChannel(data.places, handle);
   if (!topic || topic.kind !== 'topic' || topic.id == null) {
     return (
@@ -511,6 +514,9 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
       {/* The numbers this topic names in dapp.json, between its line and
           its room (topic-figures.tsx); nothing for a topic with none. */}
       <TopicFigures slug={slug} topic={topic} />
+      {/* What the platform found wrong in this topic and filed as requests,
+          under its figures (topic-signals.tsx); nothing when there is none. */}
+      <TopicSignals slug={slug} topic={topic} />
       {/* The host's class string is constant and its subtree is the group
           chat's: the one-owner rule, satisfied at this boundary. */}
       <div ref={host} className="dev-ws-discussion-host dev-ws-topic-host" data-topic-channel={topic.id} />

@@ -5760,6 +5760,24 @@
     );
   };
 
+  // shellPainted() → tells the native shell that this document's first
+  // screen is drawn, so it can fade out the cover it keeps over the web view
+  // on a cold launch. It takes no arguments and is sent at most once per
+  // document (NativeChrome._initShellPainted decides when).
+  //
+  // UNPRIVILEGED, like setStatusBarTone: presentation state with no account
+  // in it, and the launch it is for is often the one before sign-in. Same
+  // short timeout: nothing waits on the answer.
+  //
+  // Additive capability: feature-detect `shellPainted` via
+  // getBridgeInfo().capabilities before calling (NativeChrome does). Older
+  // builds drop the unknown method, the call rejects after the timeout, and
+  // they keep the launch they had; producer requirements live in
+  // NATIVE-BRIDGE.md.
+  window.usernode.shellPainted = function () {
+    return callNativeChromeAction("shellPainted", {}, _APPEARANCE_TIMEOUT_MS);
+  };
+
   // =====================================================================
   //  Public API: LLM access (usernode.requestLlmAccess / getLlmAccess /
   //  getLlmUsage)

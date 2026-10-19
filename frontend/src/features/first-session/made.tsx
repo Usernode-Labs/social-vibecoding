@@ -1343,8 +1343,10 @@ export function CheckingLine() {
  * One picture at a time: while the App side shows the first look, the first
  * look card under it keeps its words and progress and leaves its phone out
  * (FirstLookCard `phone`). The switch never meets the icon: with it, the
- * Invite side's icon starts below it (PLAIN_CARD_SWITCH, FeaturedCard
- * `cornerRoom`), and the App side's phone stands below it too.
+ * Invite side's icon starts below it (PLAIN_INVITE_TOP, FeaturedCard
+ * `cornerRoom`), and the App side's phone stands below it too. Switching
+ * moves nothing under the card: both sides are the same height (the
+ * band's, APP_BAND, for the card's top).
  */
 
 /** Which side of the project's card shows. */
@@ -1474,15 +1476,22 @@ function PlainAppBand({ emoji, colorKey, children, corner }: { emoji: string | n
 }
 
 /**
- * The plain card (no sketch): on its Invite side, padded round its icon; on
- * its App side, the band to its edges. With the switch, the Invite side's
- * icon starts below it (PLAIN_CARD_SWITCH: 48px, the switch ends at 40px),
- * so the two never meet, however narrow the phone or long the switch's
- * words: at 320px wide they did.
+ * The plain card (no sketch): with no switch, padded round its icon, the
+ * card it always was (PLAIN_CARD). With the switch, both sides are one card
+ * (PLAIN_CARD_APP) whose top is the band's height (APP_BAND): on App the
+ * band to its edges, on Invite the icon, the name and the description in a
+ * box of the same height (PLAIN_INVITE_TOP). So the note under them starts
+ * 264px down on either side and the card keeps one height: on a 390 x 844
+ * phone the screen overflows, and a shorter Invite side moved the note, the
+ * setup card and both buttons by the difference (Evan, sign-up test, 19 Oct
+ * 2026). The Invite side's icon starts below the switch (pt-10: the switch
+ * ends at 40px), so the two never meet, however narrow the phone or long
+ * the switch's words: at 320px wide they did. The name and the description
+ * take two lines each at most, so a long one cannot spill out of the box.
  */
 export const PLAIN_CARD = 'relative flex flex-col items-center rounded-[20px] bg-white px-6 py-7 text-center shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
-export const PLAIN_CARD_SWITCH = 'relative flex flex-col items-center rounded-[20px] bg-white px-6 pb-7 pt-12 text-center shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
 export const PLAIN_CARD_APP = 'relative flex flex-col items-center overflow-hidden rounded-[20px] bg-white px-6 pb-6 text-center shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
+export const PLAIN_INVITE_TOP = `relative -mx-6 flex flex-col items-center justify-center self-stretch px-6 pt-10 ${APP_BAND}`;
 
 /**
  * The project's card when it has no sketch (a ready-made app, an import, a
@@ -1504,18 +1513,23 @@ export function PlainCard({ made, tile, emoji, band = null, corner = null, child
   corner?: ReactNode;
   children?: ReactNode;
 }) {
+  const face = (
+    <>
+      <span className="app-icon-tile flex h-20 w-20 items-center justify-center rounded-[22px] text-5xl" aria-hidden="true">{tile}</span>
+      <p className={corner ? 'mt-3 line-clamp-2 text-[22px] font-extrabold leading-tight' : 'mt-3 text-[22px] font-extrabold leading-tight'}>{made.name}</p>
+      {made.description ? <p className={corner ? 'mt-1 line-clamp-2 text-[15px] text-zinc-500 dark:text-zinc-400' : 'mt-1 text-[15px] text-zinc-500 dark:text-zinc-400'}>{made.description}</p> : null}
+    </>
+  );
   return (
-    <div data-first-session-card={corner ? (band ? 'app' : 'invite') : undefined} className={band ? PLAIN_CARD_APP : corner ? PLAIN_CARD_SWITCH : PLAIN_CARD}>
+    <div data-first-session-card={corner ? (band ? 'app' : 'invite') : undefined} className={band || corner ? PLAIN_CARD_APP : PLAIN_CARD}>
       {band ? (
         <PlainAppBand emoji={emoji} colorKey={made.slug} corner={corner}>{band}</PlainAppBand>
-      ) : (
-        <>
-          {corner ? <div className={CARD_CORNER}>{corner}</div> : null}
-          <span className="app-icon-tile flex h-20 w-20 items-center justify-center rounded-[22px] text-5xl" aria-hidden="true">{tile}</span>
-          <p className="mt-3 text-[22px] font-extrabold leading-tight">{made.name}</p>
-          {made.description ? <p className="mt-1 text-[15px] text-zinc-500 dark:text-zinc-400">{made.description}</p> : null}
-        </>
-      )}
+      ) : corner ? (
+        <div data-first-session-card-top="" className={PLAIN_INVITE_TOP}>
+          <div className={CARD_CORNER}>{corner}</div>
+          {face}
+        </div>
+      ) : face}
       {children}
     </div>
   );
