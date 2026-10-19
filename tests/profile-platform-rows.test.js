@@ -144,9 +144,13 @@ test('App slots says the allowance in words, and opens the create dialog in plac
 });
 
 test('the rows that moved to Settings are not on Me any more', () => {
-  for (const gone of ['profile-row-admin', '<NodePillRow', '<WalletRow', '<StakingRow', 'Log out']) {
+  for (const gone of ['<NodePillRow', '<WalletRow', '<StakingRow', 'Log out']) {
     assert.ok(!CODE.includes(gone), `${gone} lives in Settings now`);
   }
+  // Admin & moderation went to Settings and came back (#5281): a place an
+  // admin goes, not one of their settings. Only for admins; the whole
+  // contract is pinned in tests/admin-console-entry-row.test.js.
+  assert.match(CODE, /id="profile-row-admin"/);
 });
 
 test('it renders the data\'s lines, and quiet fallbacks without them', () => {

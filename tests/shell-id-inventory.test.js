@@ -1089,6 +1089,27 @@ const ADDED_IDS = {
   'cp-title-add': '#4891: its "Add a password" title, shown instead to an account that has none and signs in with an emailed code.',
   'cp-save-change': '#4891: #cp-save\'s "Change password" label, beside its "Add password" one.',
   'cp-save-add': '#4891: #cp-save\'s "Add password" label, for an account with no password yet.',
+  // ── #5281: the Account page's sign-in rows read first ────────────────
+  // Username and Password each became a row (what it is, what it holds) with
+  // a Change link, and their forms open under the row only when asked
+  // (features/settings/sections/username.tsx, password.tsx). settings.js
+  // binds the links and Cancels by id and opens one form at a time
+  // (_openAccountEditor). An account with no password confirms a rename with
+  // an emailed code instead of the password it does not have.
+  'cu-edit': '#5281: the Username row\'s Change link, which opens #cu-form.',
+  'cu-form': '#5281: the change-username form under its row, shipped hidden.',
+  'cu-cancel': '#5281: closes #cu-form.',
+  'cu-password-row': '#5281: wraps #cu-password, shown to an account that has a password.',
+  'cu-code-row': '#5281: the emailed-code confirmation, shown instead to an account with no password.',
+  'cu-code': '#5281: the six-digit code POST /api/me/username takes from an account with no password.',
+  'cu-send-code': '#5281: emails that code (POST /api/me/username/code).',
+  'cp-edit': '#5281: the Password row\'s Change (or Add) link, which opens #cp-form.',
+  'cp-edit-change': '#5281: #cp-edit\'s "Change" label, for an account with a password.',
+  'cp-edit-add': '#5281: #cp-edit\'s "Add" label, for an account with none.',
+  'cp-state-set': '#5281: the Password row\'s "Set" line.',
+  'cp-state-unset': '#5281: its "Not set" line, for an account that signs in with an emailed code.',
+  'cp-form': '#5281: the change-password form under its row, shipped hidden.',
+  'cp-cancel': '#5281: closes #cp-form.',
   // ── D (18 Oct 2026): the desktop's sidebar of rows ──────────────────
   // From 1024px the rail lists your communities itself (features/nav/
   // rail-communities.tsx), between Messages and the Communities tab, which is

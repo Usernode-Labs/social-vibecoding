@@ -875,14 +875,6 @@
     "text": "Sign out",
     "description": "Search result in the Settings search box, in red, shown when the person typed something like \"sign out\" or \"log out\": choosing it signs them out of Homeroom."
   },
-  "accountRows.admin.heading": {
-    "text": "Admin",
-    "description": "Small heading and accessible name of a group at the foot of the Settings menu, shown only to platform administrators. Short for administration."
-  },
-  "accountRows.admin.console": {
-    "text": "Admin & moderation",
-    "description": "Row under the Admin heading at the foot of the Settings menu: opens the administration and moderation console."
-  },
   "accountRows.native.name": {
     "text": "Wallet and node",
     "description": "Accessible name of the group at the foot of the Settings menu that holds the wallet, node and staking rows of the Homeroom mobile app. Node means the blockchain node running on the phone."
@@ -903,17 +895,25 @@
     "text": "Edit profile",
     "description": "Link text at the right of the card showing the person's name and photo in Settings > Profile: opens the profile editor."
   },
+  "signIn.title": {
+    "text": "Sign-in",
+    "description": "Heading on the Account page of Settings over three rows: Username, Email & recovery and Password, the things a person signs in with."
+  },
+  "account.change": {
+    "text": "Change",
+    "description": "Link at the right of the Username, Email & recovery and Password rows in Settings: opens a small form under that row to change it."
+  },
+  "account.add": {
+    "text": "Add",
+    "description": "Link at the right of the Email & recovery or Password row in Settings, in place of \"Change\", when the account has no email address or no password yet: opens a small form to add one."
+  },
   "username.title": {
     "text": "Username",
-    "description": "Heading of the section in Settings where the person changes their username."
+    "description": "Title of the Username row on the Account page of Settings, the first of the three sign-in rows; the person's current username is shown under it."
   },
   "username.intro": {
     "text": "Your @handle is how you sign in and the address of your public builder page.",
     "description": "Explanation under the Username heading in Settings. \"@handle\" is the username written with an at sign; keep the @."
-  },
-  "username.current": {
-    "text": "Current",
-    "description": "Label of the first row in Settings > Username; the person's current username is shown at the other end of the row."
   },
   "username.newPlaceholder": {
     "text": "New username",
@@ -921,27 +921,39 @@
   },
   "username.passwordPlaceholder": {
     "text": "Current password",
-    "description": "Placeholder of the password field in Settings > Username: the person confirms the change with the password they have now."
+    "description": "Placeholder of the password field in the change-username form in Settings: the person confirms the change with the password they have now."
+  },
+  "username.codePrompt": {
+    "text": "Your account has no password, so confirm the change with a code we email to your verified address.",
+    "description": "Note in the change-username form in Settings for an account that signs in with emailed codes and has no password."
+  },
+  "username.codePlaceholder": {
+    "text": "Six-digit code",
+    "description": "Placeholder of the field in the change-username form in Settings where the person types the code emailed to them."
+  },
+  "username.sendCode": {
+    "text": "Email me a code",
+    "description": "Button beside the code field in the change-username form in Settings: emails a six-digit code that confirms the change."
   },
   "username.submit": {
     "text": "Change username",
-    "description": "Button in Settings > Username: saves the new username."
+    "description": "Button in the change-username form that opens under the Username row in Settings: saves the new username."
   },
   "username.rules": {
     "text": "Letters, numbers and underscores, 3–32 characters, so people can still @mention you. Your old handle is kept reserved for you rather than released, so links and mentions that used it keep pointing at you and nobody else can take it. You can change your username again after 30 days.",
-    "description": "Small print under the Change username button in Settings: the rules for a username and what happens to the old one. \"Handle\" means username; \"@mention\" is naming someone with an at sign in a message."
+    "description": "Small print in the change-username form that opens under the Username row in Settings: the rules for a username and what happens to the old one. \"Handle\" means username; \"@mention\" is naming someone with an at sign in a message."
   },
   "email.title": {
     "text": "Email & recovery",
-    "description": "Heading of the section in Settings where the person links an email address used to recover their account."
+    "description": "Title of the Email & recovery row on the Account page of Settings, under which the linked email address is shown. The address is used to recover the account."
   },
   "email.intro": {
     "text": "Link a private email address to help you get back into your account. It does not appear on your public profile.",
-    "description": "Explanation under the Email & recovery heading in Settings."
+    "description": "Explanation at the top of the form that opens under the Email & recovery row in Settings."
   },
   "email.loading": {
     "text": "Loading account email…",
-    "description": "Shown in Settings > Email & recovery while the linked email address is being fetched."
+    "description": "Shown under the Email & recovery row in Settings while the linked email address is being fetched."
   },
   "email.requestFailed": {
     "text": "Could not update account email.",
@@ -949,15 +961,15 @@
   },
   "email.none": {
     "text": "No email linked",
-    "description": "Shown in the card at the top of Settings > Email & recovery, in place of an address, when the account has no email address."
+    "description": "Shown under the Email & recovery row in Settings, in place of an address, when the account has no email address."
   },
-  "email.verified": {
-    "text": "Verified",
-    "description": "Status under the linked email address in Settings > Email & recovery: the person has confirmed that the address is theirs."
+  "email.rowUnverified": {
+    "text": "{{email}}, not verified",
+    "description": "Shown under the Email & recovery row in Settings when the linked address has not been confirmed yet. {{email}} is the address."
   },
-  "email.notVerified": {
-    "text": "Not verified. Verify it below.",
-    "description": "Status under the linked email address in Settings > Email & recovery: the address has not been confirmed yet, and the form underneath does that."
+  "email.rowFailed": {
+    "text": "Could not load your email",
+    "description": "Shown under the Email & recovery row in Settings when the linked email address could not be fetched; a Try again link sits beside it."
   },
   "email.recoveryAllowed": {
     "text": "Once verified, use this email to sign in or choose “Forgot password?” on the sign-in screen.",
@@ -1009,15 +1021,27 @@
   },
   "password.title": {
     "text": "Change password",
-    "description": "Heading of the section in Settings where the person changes their password."
+    "description": "Title of the change-password form that opens under the Password row in Settings."
   },
   "password.titleAdd": {
     "text": "Add a password",
-    "description": "Heading of the same section in Settings, in place of \"Change password\", for an account that has no password yet and signs in with a code sent by email."
+    "description": "Title of the same form in Settings, in place of \"Change password\", for an account that has no password yet and signs in with a code sent by email."
+  },
+  "password.rowTitle": {
+    "text": "Password",
+    "description": "Title of the Password row on the Account page of Settings, the last of the three sign-in rows."
+  },
+  "password.stateSet": {
+    "text": "Set",
+    "description": "Shown under the Password row in Settings when the account has a password."
+  },
+  "password.stateNotSet": {
+    "text": "Not set. You sign in with an emailed code.",
+    "description": "Shown under the Password row in Settings when the account has no password and signs in with a code sent by email."
   },
   "password.intro": {
     "text": "Set a new password for web login. If an admin gave you a temporary password, enter it as your current password here. No password yet? Choose one here; until then you sign in with an emailed code.",
-    "description": "Explanation under the Change password heading in Settings. The last sentence is for an account that has no password yet and signs in with a code sent by email."
+    "description": "Explanation at the top of the change-password form in Settings. The last sentence is for an account that has no password yet and signs in with a code sent by email."
   },
   "password.currentPlaceholder": {
     "text": "Current password",
@@ -3182,6 +3206,22 @@
   "username.status.enterPassword": {
     "text": "Enter your current password.",
     "description": "Status under the change-username form in Settings > Username when the password field, which confirms the change, is empty."
+  },
+  "username.status.enterCode": {
+    "text": "Enter the six-digit code from the email.",
+    "description": "Status under the change-username form in Settings when the code field, which confirms the change for an account with no password, is empty."
+  },
+  "username.status.sendingCode": {
+    "text": "Sending a code…",
+    "description": "Status under the change-username form in Settings while the code that confirms the change is being emailed."
+  },
+  "username.status.codeSent": {
+    "text": "We sent a code to {{email}}. It expires in 10 minutes.",
+    "description": "Status under the change-username form in Settings after the confirmation code was emailed. {{email}} is the account's own verified address."
+  },
+  "username.status.codeFailed": {
+    "text": "Could not send a code.",
+    "description": "Status under the change-username form in Settings when emailing the confirmation code failed and the server gave no reason."
   },
   "username.status.saving": {
     "text": "Saving…",

@@ -1,17 +1,27 @@
 import { Button } from '@/components/ui/button';
 import { SectionHeading, StatusLine } from '@/components/ui/field';
+import { GroupedList } from '@/components/ui/grouped-list';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 import { useMessages } from '../../../lib/i18n/react';
+import {
+  EDITOR_ACTIONS, EDITOR_NOTE, ROW_ACTION, ROW_EDITOR, SignInRow,
+} from './sign-in-row';
 
 /**
- * Change username — POST /api/me/username.
+ * Username, the first of the Account page's sign-in rows (#5281,
+ * ./sign-in-row.tsx). It reads "Username, @handle" with a Change link, and
+ * the change form (POST /api/me/username) opens under it.
  *
- * It lives HERE and not in the profile edit sheet, next to Change password,
- * because it is a credential-gated account action: the endpoint requires the
- * current password (the handle is the sign-in identifier, so moving it on a
- * borrowed session must not be free). The profile sheet's read-only handle
- * row now links here instead of saying the name can never change.
+ * It lives HERE and not in the profile edit sheet, next to Password,
+ * because it is a credential-gated account action: the handle is the
+ * sign-in identifier, so moving it on a borrowed session must not be free.
+ * An account with a password confirms with it (#cu-password-row). An account
+ * with none, which signs in with an emailed code, confirms with a code sent
+ * to its verified address instead (#cu-code-row, POST
+ * /api/me/username/code). settings.js shows the one that fits from
+ * /api/auth/me's hasPassword; the server decides which it accepts, from the
+ * account and never from the request.
  *
  * Static like every other section under ./sections — no state, no props, no
  * effects. ../settings.js binds these controls by id ONCE in init(); a
@@ -29,17 +39,20 @@ export function UsernameSection() {
   return (
     <div data-settings-section="username" className="hidden">
       <div id="change-username-section">
-        <SectionHeading title={t('settings:username.title')}>
-          {t('settings:username.intro')}
-        </SectionHeading>
-
-        <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
-          {/* Filled by Settings._syncUsername() from the session user. */}
-          <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 flex items-center gap-2 text-[17px]">
-            <span className="text-zinc-500 dark:text-zinc-400">{t('settings:username.current')}</span>
-            <span id="cu-current" className="ml-auto font-medium text-zinc-900 dark:text-zinc-100">—</span>
-          </div>
-          <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
+        <SectionHeading title={t('settings:signIn.title')} />
+        <GroupedList className="mx-0">
+          <SignInRow
+            title={t('settings:username.title')}
+            // Filled by Settings._renderChangeUsernameSection() from the
+            // session user.
+            value={<span id="cu-current">—</span>}
+            action={(
+              <button id="cu-edit" type="button" className={ROW_ACTION} aria-expanded="false" aria-controls="cu-form">
+                {t('settings:account.change')}
+              </button>
+            )}
+          />
+          <div id="cu-form" className={`${ROW_EDITOR} hidden`}>
             <Input
               id="cu-new"
               type="text"
@@ -47,32 +60,46 @@ export function UsernameSection() {
               autoCapitalize="off"
               spellCheck={false}
               placeholder={t('settings:username.newPlaceholder')}
-              box="card"
-              ring="bare"
-              hint="dim"
             />
+            <div id="cu-password-row">
+              <PasswordInput
+                id="cu-password"
+                autoComplete="current-password"
+                placeholder={t('settings:username.passwordPlaceholder')}
+              />
+            </div>
+            {/* An account with no password: a code to its verified email. */}
+            <div id="cu-code-row" className="hidden space-y-2">
+              <p className={EDITOR_NOTE}>{t('settings:username.codePrompt')}</p>
+              <div className="flex gap-2">
+                <Input
+                  id="cu-code"
+                  width="flex"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  placeholder={t('settings:username.codePlaceholder')}
+                />
+                <Button id="cu-send-code" type="button" variant="pillNeutral" size="pill" ink="neutral" className="shrink-0">
+                  {t('settings:username.sendCode')}
+                </Button>
+              </div>
+            </div>
+            <div className={EDITOR_ACTIONS}>
+              <Button id="cu-save" type="button" variant="pillAccent" size="pill">
+                {t('settings:username.submit')}
+              </Button>
+              <Button id="cu-cancel" type="button" variant="pillNeutral" size="pill" ink="neutral">
+                {t('core:common.cancel')}
+              </Button>
+            </div>
+            <p className={EDITOR_NOTE}>
+              {t('settings:username.rules')}
+            </p>
+            <StatusLine id="cu-status" />
           </div>
-          <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
-            <PasswordInput
-              id="cu-password"
-              autoComplete="current-password"
-              placeholder={t('settings:username.passwordPlaceholder')}
-              box="card"
-              ring="bare"
-              hint="dim"
-            />
-          </div>
-        </div>
-
-        <Button id="cu-save" layout="stacked" variant="pillAccent" size="pillLg" className="mt-3">
-          {t('settings:username.submit')}
-        </Button>
-
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3">
-          {t('settings:username.rules')}
-        </p>
-
-        <StatusLine id="cu-status" />
+        </GroupedList>
       </div>
     </div>
   );

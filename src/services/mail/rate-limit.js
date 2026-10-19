@@ -23,6 +23,9 @@ const DAY_MS = 24 * HOUR_MS;
 // bounds a determined one.
 const RULES = {
   account_email: { minGapMs: 60 * 1000, perWindow: 5, windowMs: HOUR_MS },
+  // #5281: the username-change code, which only ever goes to the account's
+  // own confirmed address. The same bounds as the address proof above.
+  username_change: { minGapMs: 60 * 1000, perWindow: 5, windowMs: HOUR_MS },
   // A user may legitimately re-request a code (typo'd address, mail
   // delayed), so the gap is short and the hourly ceiling is what actually
   // bounds abuse.
