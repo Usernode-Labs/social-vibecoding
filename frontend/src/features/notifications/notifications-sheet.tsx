@@ -726,6 +726,11 @@ export function NotificationsSheetView() {
     loadingMore: boolean;
     messagesCanLoadMore?: boolean;
     loadingOlderMessages?: boolean;
+    /** #5527: the Unread tab's own pager — see loadMoreUnread(). */
+    unreadCanLoadMore?: boolean;
+    loadingUnread?: boolean;
+    /** #5527: bumped when a refresh lands — the auto-fill's trigger. */
+    refreshTick?: number;
     /** #3538: the rows' clear is a swipe on touch and a × everywhere else. */
     touch?: boolean;
   };
@@ -801,6 +806,41 @@ export function NotificationsSheetView() {
     if (!open) setOlderShown(false);
     else if (tab !== 'unread') setOlderShown(false);
   }, [open, tab]);
+
+  // #5527: the Unread tab fills itself up to the bell's number. The badge
+  // counts every unread row on the account; the sheet opens with only the
+  // unread among the newest 100 fetched, so a backlog reads as "Unread (46)"
+  // over a list of 1. While the pager says there are more unread to bring
+  // up, opening the sheet walks it automatically — up to the controller's
+  // five batches — so a big catch-up list is already complete when the
+  // viewer arrives, and anything still deeper waits behind the foot button
+  // rather than hanging the opening.
+  //
+  // The trigger is a refresh LANDING while the sheet is open (refreshTick),
+  // not the open itself: opening the sheet always refreshes first
+  // (notifications-sheet-controller's onOpen), and a fill that starts before
+  // that refresh lands is thrown away by it — refresh replaces the whole
+  // feed. Arming on open and firing when the tick changes is the one order
+  // that cannot race. It re-fires on every later refresh too, which is what
+  // keeps the tab topped up while it sits open: loadMoreUnread no-ops
+  // without a fetch once the list has caught up with the badge, so a
+  // refresh on a caught-up tab costs nothing. A reset when the sheet closes
+  // makes each opening re-arm.
+  const unreadFillTickRef = useRef(null);
+  useEffect(() => {
+    if (!open) { unreadFillTickRef.current = null; return; }
+    if (tab !== 'unread') return;
+    if (unreadFillTickRef.current == null) {
+      // Armed: remember the tick this opening starts from and fill nothing
+      // yet — the refresh that opening triggers has not landed.
+      unreadFillTickRef.current = snap.refreshTick;
+      return;
+    }
+    if (unreadFillTickRef.current === snap.refreshTick) return;
+    unreadFillTickRef.current = snap.refreshTick;
+    if (!snap.unreadCanLoadMore) return;
+    controller()?.loadMoreUnread();
+  }, [open, tab, snap.refreshTick, snap.unreadCanLoadMore]);
 
   const all = snap.screenList || [];
   const unread = all.filter((view) => view.unread);
@@ -1205,21 +1245,45 @@ export function NotificationsSheetView() {
             {t('notifications:sheet.older.showAll')}
           </button>
         </div>
-      ) : tab === 'unread' && !olderShown && (all.length > unread.length || snap.screenCanLoadMore) ? (
-        <div className="px-4 py-3">
-          <button
-            id="notifications-see-older"
-            type="button"
-            className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-40"
-            disabled={snap.loadingMore}
-            onClick={() => {
-              setOlderShown(true);
-              controller()?.loadOlder();
-            }}
-          >
-            {snap.loadingMore ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.reveal')}
-          </button>
-        </div>
+      ) : tab === 'unread' && !olderShown ? (
+        <>
+          {/* #5527: the bell's number, completed. The badge counts every
+              unread row on the account; the sheet's first page holds only the
+              unread among the newest 100 fetched, so a backlog read as
+              "Unread (46)" over a list of 1. Opening auto-fills up to five
+              batches (the effect above); this is what anything still deeper
+              waits behind — it pages `?unread=1`, the exact set the badge
+              counts, until the tab is as long as the bell. */}
+          {snap.unreadCanLoadMore ? (
+            <div className="px-4 py-3">
+              <button
+                id="notifications-load-unread"
+                type="button"
+                className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-40"
+                disabled={snap.loadingUnread}
+                onClick={() => controller()?.loadMoreUnread()}
+              >
+                {snap.loadingUnread ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.unread')}
+              </button>
+            </div>
+          ) : null}
+          {(all.length > unread.length || snap.screenCanLoadMore) ? (
+            <div className="px-4 py-3">
+              <button
+                id="notifications-see-older"
+                type="button"
+                className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-40"
+                disabled={snap.loadingMore}
+                onClick={() => {
+                  setOlderShown(true);
+                  controller()?.loadOlder();
+                }}
+              >
+                {snap.loadingMore ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.reveal')}
+              </button>
+            </div>
+          ) : null}
+        </>
       ) : tab === 'unread' && olderShown && (all.length > unread.length || snap.screenCanLoadMore) ? (
         <>
           {snap.screenCanLoadMore ? (

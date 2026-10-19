@@ -228,14 +228,16 @@ function handlerBody(src, marker) {
 
 test('loading the bell re-badges the iPhone to the total it just counted', () => {
   const body = handlerBody(routeSource('notifications.js'), "router.get('/api/notifications',");
-  const firstPage = body.slice(body.indexOf('if (!before) {'));
+  // #5527: the first page is also read as `?unread=1` for the Unread tab's
+  // pager, which returns no totals at all — the gate skips that call too.
+  const firstPage = body.slice(body.indexOf('if (!before && !unreadOnly) {'));
   const count = firstPage.indexOf('payload.unread = await notifications.countUnread(pool, req.user.id);');
   const sync = firstPage.indexOf("require('../services/mobile-push').scheduleBadgeSync(req.user.id)");
   assert.ok(count >= 0, 'first page counts unread');
   assert.ok(sync > count, 'the first page schedules a badge sync after counting');
   // Only the first page: a cursor follow-up carries no total and must not
   // re-badge on every scroll.
-  assert.ok(body.indexOf('scheduleBadgeSync') > body.indexOf('if (!before) {'));
+  assert.ok(body.indexOf('scheduleBadgeSync') > body.indexOf('if (!before && !unreadOnly) {'));
 });
 
 test('retracting kudos refreshes the recipient bell and badge', () => {

@@ -2990,11 +2990,60 @@ async function seedStagingNotifications(pool, config) {
     [target.id, appId, source.id, backlogLike]
   );
 
+  // #5527: the capture account's unread backlog — the exact shape the bell
+  // could not show before this change. 120 obviously-fake READ rows newer
+  // than everything, so the sheet's first page is full of read rows, and 5
+  // UNREAD rows older than all of them, so the badge counts rows the first
+  // page never reaches and the Unread tab has to fill itself up to the
+  // bell. Fixture rows only: a person can spot every one of them as fake,
+  // and nothing in the code reads their presence to decide anything.
+  const { rows: captureRows } = await pool.query(
+    `SELECT id FROM users WHERE username = $1 LIMIT 1`,
+    ['usernode-capture']
+  );
+  let unreadBacklogInserted = 0;
+  if (captureRows.length) {
+    const captureId = captureRows[0].id;
+    for (const [prefix, unread, count, ageFloor] of [
+      ['[staging fixture] unread-backlog read notification', false, 120, 1],
+      ['[staging fixture] unread-backlog UNREAD notification', true, 5, 230],
+    ]) {
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, created_at)
+         SELECT $1, $2, $3 || ' #' || g, 'message',
+                NOW() - (($4::int + g) * INTERVAL '1 minute')
+           FROM generate_series(1, $5) AS g
+          WHERE NOT EXISTS (
+            SELECT 1 FROM chat_messages m
+             WHERE m.app_id = $1 AND m.content = $3 || ' #' || g
+          )`,
+        [appId, source.id, prefix, ageFloor, count]
+      );
+      const { rowCount } = await pool.query(
+        `INSERT INTO notifications
+           (user_id, app_id, chat_message_id, source_user_id, kind, read_at, created_at)
+         SELECT $1, $2, m.id, $3, 'mention',
+                CASE WHEN $4 THEN NULL ELSE NOW() - INTERVAL '1 minute' END,
+                m.created_at
+           FROM chat_messages m
+          WHERE m.app_id = $2
+            AND m.content LIKE $5 || ' #%'
+            AND NOT EXISTS (
+              SELECT 1 FROM notifications n
+               WHERE n.user_id = $1 AND n.chat_message_id = m.id
+            )`,
+        [captureId, appId, source.id, unread, prefix]
+      );
+      if (unread) unreadBacklogInserted = rowCount || 0;
+    }
+  }
+
   log.info('db', 'Staging notification fixtures seeded', {
     targetUser: target.username,
     inserted,
     multiAppInserted,
     backlogInserted,
+    unreadBacklogInserted,
     otherApps: otherApps.length,
   });
 }
