@@ -386,6 +386,7 @@ const OWNED = [
   { sel: '#admin-section-content', when: '#admin/support' }, // features/admin/admin-support.tsx
   { sel: '#admin-section-content', when: '#admin/reports' }, // features/admin/admin-reports.tsx
   { sel: '#admin-section-content', when: '#admin/test-accounts' }, // features/admin/admin-test-accounts.tsx
+  { sel: '#admin-section-content', when: '#admin/access-review' }, // features/admin/admin-access-review.tsx (#5133)
 ];
 
 const ROUTES = [
@@ -416,7 +417,7 @@ const ROUTES = [
   // on the demo proposal whose testing is part way through.
   '?demo=1#app/usernode-2d5619/dev/proposals/9000026',
   '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/sms', '#admin/estimator', '#admin/analytics', '#admin/journey', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/users/900301', '#admin/support', '#admin/support/900302', '#admin/status', '#admin/incidents', '#admin/apps', '#admin/rollover', '#admin/staging-reap', '#admin/workflows',
-  '#admin/model-costs', '#admin/reports', '#admin/welcome-dm', '#admin/sign-in', '#admin/test-accounts', '#admin/homeroom-bot', '#admin/homeroom-bot/settings', '#admin/homeroom-bot/benchmark', '#admin/small-changes',
+  '#admin/model-costs', '#admin/reports', '#admin/welcome-dm', '#admin/sign-in', '#admin/test-accounts', '#admin/access-review', '#admin/homeroom-bot', '#admin/homeroom-bot/settings', '#admin/homeroom-bot/benchmark', '#admin/small-changes',
   // The Benchmark's own places, in the same host (`when: '#admin/homeroom-bot'`
   // covers them): runs, one run of each kind on the staging demo, and suites.
   '#admin/homeroom-bot/benchmark/runs', '#admin/homeroom-bot/benchmark/runs/936551', '#admin/homeroom-bot/benchmark/runs/936550',
