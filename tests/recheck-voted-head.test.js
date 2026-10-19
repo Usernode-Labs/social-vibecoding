@@ -58,8 +58,12 @@ function harness(t, { held, row, answer = 'accepted' }) {
 const promotedOnNew = { status: 'promoted', source: 'cli_handoff', reviewed_head_sha: NEW, checks_commit_sha: OLD,
   handoff_head_sha: OLD, imported_pr_head_sha: null };
 
-for (const [reason, trigger] of [['manual-recheck', 'manual-recheck'], ['stuck-checks-sweep', 'stuck-sweep'],
-  ['stuck-checks-boot', 'boot-reconcile']]) {
+// A person's recheck, a testing update, and the vote's stale-pending kick
+// (routes/votes.js), whose trigger the machine's own map names. (The stuck
+// sweep and boot reconcile are gone: what a row owes is the machine's own
+// ChecksDue, on the head it holds.)
+for (const [reason, trigger] of [['manual-recheck', 'manual-recheck'], ['testing-update', 'manual-recheck'],
+  ['stale-pending-vote-kick', null]]) {
   test(`${reason}: the machine on the old head is handed the reviewed head, and nothing re-checks the old one`, async (t) => {
     const { rec, pool, session, calls } = harness(t, { held: OLD, row: promotedOnNew });
     assert.equal(await rec.recheckSessionChecks({ pool, session, reason }), 'handed_off');

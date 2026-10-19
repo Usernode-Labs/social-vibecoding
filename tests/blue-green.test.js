@@ -129,12 +129,7 @@ test('singleton background work lives in becomeLeader(), not start()', () => {
   for (const singleton of [
     'recoverActiveWorkers(config)',
     'resumeHeadlessRuns',
-    'observeMergedOnGithub(config)',
-    'reconcileStuckChecks(config)',
-    'recoverSessions(config)',
-    'startSessionAutoPauseSweeper(config)',
-    'startStalePrSweeper(config)',
-    'startStuckChecksSweeper(config)',
+    'startTurnWatchdog(config)',
     "require('./src/services/main-drift-poller').start(config)",
     "require('./src/services/app-heal').start(config)",
   ]) {
@@ -144,8 +139,13 @@ test('singleton background work lives in becomeLeader(), not start()', () => {
 
   // The platform's scheduled jobs are no leader work at all: each is a clock
   // of the workflow (src/workflow/clock/), one run at a time wherever it runs.
+  // So are the session sweeper's and the stale-PR sweeper's passes, the
+  // merged-by-hand lookup and the stuck-check reconcile: what they looked at
+  // is a clock's or a machine's (src/workflow/proposal/, preview/).
   for (const gone of ['mobilePush.start()', 'check-retention', 'startTitleHealSweeper', 'auditExistingRepoPrivacy',
-    'vote-digest', 'welcome-dm', 'challenge-scorer']) {
+    'vote-digest', 'welcome-dm', 'challenge-scorer',
+    'observeMergedOnGithub(', 'reconcileStuckChecks(', 'recoverSessions(', 'startSessionAutoPauseSweeper(',
+    'startStalePrSweeper(', 'startStuckChecksSweeper(', "require('./src/services/fixed-check-sync').start"]) {
     assert.ok(!serverJs.includes(gone), `no leader runs ${gone}`);
   }
 

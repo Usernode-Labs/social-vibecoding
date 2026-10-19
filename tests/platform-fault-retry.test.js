@@ -91,12 +91,24 @@ test('storeChecks writes the flag with every error and clears it with every verd
 });
 
 test('the error lane keeps a platform fault past the cap for a day from its first failure', async () => {
-  const pool = recordingPool();
-  await stagingRecovery.findStuckCheckSessions({ pool, staleMs: 600000, maxAutoRetries: 6 });
-  const { sql, params } = pool.calls[0];
-  assert.match(sql, /AND \(cs\.consecutive_check_failures < \$2\s+OR \(cs\.check_error_platform\s+AND cs\.first_check_failure_at > NOW\(\) - make_interval\(secs => \$4::double precision \/ 1000\.0\)\)\)\s+AND cs\.check_next_retry_at IS NOT NULL\s+AND cs\.check_next_retry_at < NOW\(\)/);
-  assert.equal(params[3], stagingRecovery.PLATFORM_FAULT_RETRY_MS);
+  // The preview machine's own retry timer (preview/machine.ts errorTimer):
+  // under the cap, or a platform fault inside its day. The leader's
+  // stuck-checks sweep that ran the same rule in SQL is gone.
+  const machine = fs.readFileSync(path.join(ROOT, 'src/workflow/preview/machine.ts'), 'utf8');
+  assert.match(machine, /const PLATFORM_FAULT_RETRY_MS = 24 \* 60 \* 60 \* 1000;/);
+  const timer = machine.slice(machine.indexOf('function errorTimer('));
+  const body = timer.slice(0, timer.indexOf('\n}\n'));
+  assert.match(body, /if \(!f\.session\?\.retryScope\) return null;/);
+  assert.match(body, /const underCap = d\.streak < deps\.maxRetries;/);
+  assert.match(body, /const platformDay = d\.platformFault && d\.firstFailureAt\s+&& ctx\.now\.getTime\(\) - Date\.parse\(d\.firstFailureAt\) < PLATFORM_FAULT_RETRY_MS;/);
+  assert.match(body, /if \(!underCap && !platformDay\) return null;/);
   assert.equal(stagingRecovery.PLATFORM_FAULT_RETRY_MS, 24 * HOUR);
+  assert.equal(stagingRecovery.findStuckCheckSessions, undefined);
+  // An error from before the session was in the lane's scope (it went up
+  // for a vote since) had no timer set: the promote's RevisionSubmitted of
+  // that head arms it, where the sweep's SQL used to take such a row.
+  assert.match(machine, /const rearms = \(s: any, e: Event<any>\) => e\.payload\.trigger === 'promote-kick'\s+&& \(s\.name === 'failed' \|\| \(s\.name === 'settled' && s\.data\.verdict === 'error'\)\);/);
+  assert.match(machine, /if \(!restarts\(s\) && sameHead\(s, e\.payload\.head\)\) \{\s+return step\(\{ name: s\.name, data: s\.data, timer: errorTimer\(s\.data, f, deps, ctx, Math\.max\(0, s\.data\.streak - 1\)\) \}\);/);
 
   // The same rule in code, which the connector reads.
   const capped = { consecutive_check_failures: 6, check_error_platform: true, first_check_failure_at: new Date(NOW - 3 * HOUR) };

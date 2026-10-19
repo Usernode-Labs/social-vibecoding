@@ -136,13 +136,10 @@ const stopRegistry = require('./src/services/stop-registry');
 const sessionBus = require('./src/services/session-bus');
 const turnEffects = require('./src/services/turn-effects');
 const recoveryPills = require('./src/services/recovery-pills');
-const sessionLifecycle = require('./src/services/session-lifecycle');
 const stagingRecovery = require('./src/services/staging-recovery');
-const stagingReap = require('./src/services/staging-reap');
 // Named stagingSvc because recoverActiveWorkers() already binds a local
 // `staging`.
 const stagingSvc = require('./src/services/staging');
-const { hasInFlightHandoffPipeline } = require('./src/services/handoff-pipeline');
 const limits = require('./src/services/limits');
 const events = require('./src/services/events');
 const ws = require('./src/services/ws');
@@ -1189,7 +1186,6 @@ async function becomeLeader() {
   // reads the same copy.
   const leaderStatus = require('./src/services/leader-status');
   leaderStatus.provide('bench-lane', () => require('./src/services/bench/lane').laneStatus());
-  leaderStatus.provide('staging-reap.automatic', () => stagingReap.readAutomatic());
   leaderStatus.start({ pool: getPool(config) });
 
   // #2045: reconcile the shared hosted-asset backend once per rollout.
@@ -1229,11 +1225,6 @@ async function becomeLeader() {
   // (services/app-sketch.js sweepUncommitted): every quarter hour.
   require('./src/services/app-sketch').startCommitSweep(config);
 
-  // A promoted proposal failing only checks that main failed too, and has
-  // since fixed, is brought up to date with main: its preview builds its own
-  // copy of the broken fixture until it is. Every five minutes, at most
-  // four syncs a pass. See services/fixed-check-sync.js.
-  require('./src/services/fixed-check-sync').start(config, getPool(config));
   // Interface text merged in English and not yet in Homeroom's other
   // languages is translated and put to the community as one proposal. Every
   // three hours; a whole language goes as a Message Batch. See
@@ -1340,17 +1331,10 @@ async function becomeLeader() {
     .catch((err) => log.warn('apps', 'First-request sweep failed', { err: err.message }));
   leaderTimers.every('first-request-sweep', runFirstRequestSweep, 5 * 60 * 1000);
 
-  // Session auto-pause sweeper (separate, longer timer than worker
-  // eviction above). Flips long-idle 'active' sessions to 'paused' so
-  // they stop counting against the per-user / global session caps. The
-  // CC volume + branch + PR are preserved; reopening auto-resumes.
-  startSessionAutoPauseSweeper(config);
-
-  // Stale-promoted-PR policy + reversible-archive GC. Warns authors of
-  // promoted PRs that have gone quiet, auto-archives them after a grace
-  // period, and hard-purges archived CC volumes once their retention
-  // window elapses. Day-scale, so it polls on its own slow interval.
-  startStalePrSweeper(config);
+  // A turn whose process died, reaped (the auto-pause, the stale-PR policy
+  // and the archived volume GC are the proposal machine's: src/workflow/
+  // proposal/).
+  startTurnWatchdog(config);
 
   // #907: release local coding-agent leases whose machine stopped
   // heartbeating, and fail the turn they were holding.
@@ -1363,66 +1347,12 @@ async function becomeLeader() {
     pool: require('./src/db/pool').getPool(config),
   });
 
-  // A pull request merged by hand on GitHub while it was up for a vote is
-  // recorded (merge-followups runs every follow-up). The merge itself, its
-  // recovery after a crash and the app's merge queue are the workflow
-  // machines' (src/workflow/proposal/, src/workflow/merge-queue/), which the
-  // leader's boot adopted above. (A checks run a rollout interrupted is the
-  // preview machine's work: claimed again once its lease lapses, and its
-  // Jobs are collected rather than started over.)
-  // Every six hours on the durable clock, not at every election: on 19 Oct
-  // 2026 the leader changed some twenty times, and each one read every
-  // proposal up for a vote from GitHub again. Nothing else notices such a
-  // merge (the webhook only moves an imported head; merge.observe asks only
-  // about a merge the platform attempted), so one is now recorded within
-  // six hours rather than at the next election.
-  const runMergedByHandLookup = () => observeMergedOnGithub(config)
-    .catch((err) => log.warn('server', 'Merged-by-hand lookup failed', { err: err.message }))
-    // A lookup the drain cut short is not recorded: the next leader runs it.
-    .then(() => (lifecycle.isShuttingDown() ? leaderTimers.SKIPPED : undefined));
-  leaderTimers.every('merged-by-hand-lookup', runMergedByHandLookup, 6 * 60 * 60 * 1000, { durable: getPool(config) });
-
-  // #447: hand the preview machine any proposal whose checks were never
-  // recorded or were left 'pending' from before it held the row, now rather
-  // than at the first pass of a sweep (the session sweeper's Pass 4 after a
-  // minute, the stuck-checks sweep's after four). Off the critical path.
-  // (The machine retries the platform's own faults at a release itself:
-  // platform.ts. The whole-tree check under direct merges is the main-check
-  // machine's: a run a restart interrupted is its work item's, carried on by
-  // the next process, and a paused red's rechecks are its deadline.)
-  reconcileStuckChecks(config).catch((err) => {
-    log.warn('server', 'Boot stuck-check reconcile failed', { err: err.message });
-  });
-
-  // Fallback recovery: for sessions whose container is already gone but
-  // whose branch is ahead of main (i.e. CC pushed commits during an old
-  // pre-autonomous-worker run), complete the PR + staging tail.
-  recoverSessions(config).catch((err) => {
-    log.warn('server', 'Session recovery failed', { err: err.message });
-  });
-
-  // #851: one stale-env preview pass at boot, then on the sweeper's long
-  // interval (Pass 7). A restart is exactly when a platform env change has
-  // just landed, which is when the fleet is most likely to be holding stale
-  // env — the same "a restart is when to look" reasoning the quick-reply
-  // backfill documents. This also means the pass still happens at least once
-  // per deploy on a host that has the session sweeper disabled
-  // (SESSION_AUTOPAUSE_IDLE_MS=0), where Pass 7 never ticks.
-  //
-  // Ordered after recoverSessions so the vote-backed previews it REBUILDS are
-  // already current by the time this looks for ones to tear down. Detached
-  // and self-swallowing: sweepStale never throws, and boot must not wait on
-  // docker.
-  if (stagingReap.staleSweepDue()) {
-    stagingReap.sweepStale(config, { isInFlight: (id) => activeWorkersSvc.isSessionBusy(id) })
-      .catch((err) => log.warn('server', 'Boot stale-preview sweep failed', { err: err.message }));
-  }
-
-  // #451: stuck checks handed to the preview machine again on a slow
-  // interval (a merge needs no sweep: every ask is a message to the app's
-  // merge queue, and the review check asks hourly).
-  startStuckChecksSweeper(config);
-
+  // (A merge by hand on GitHub, an imported PR's head, the measurement
+  // against main and a fixed check on main are the proposal machine's; a
+  // preview's checks it owes, its idle give-back and its lost runtime the
+  // preview machine's; the leftover previews, orphan databases and
+  // connection pressure clocks; a stale environment the release's. None is
+  // run at an election.)
 }
 
 async function start() {
@@ -1589,8 +1519,7 @@ if (require.main === module) {
 
 // Test-only surface (#183): the orphan-adoption + recovered-turn finalize
 // internals, so the headless-recovery guards stay covered by node --test.
-// `observeMergedOnGithub` rides along so the leader's merged-by-hand lookup
-// stays covered too. `cleanup` + `__setShutdownTargets`
+// `cleanup` + `__setShutdownTargets`
 // (#767) let tests drive the graceful-shutdown sequence against a stubbed
 // listener and pool without booting a server. Not used by any runtime caller.
 module.exports = {
@@ -1622,8 +1551,6 @@ module.exports = {
   buildRecoveryStopHandle,
   finalizeRecoveredTurn,
   restoreMissingQuickReplies,
-  observeMergedOnGithub,
-  reconcileStuckChecks,
   cleanup,
   // Getters, not values: this module.exports literal is evaluated long
   // before the `const`s down by cleanup(), so a direct reference would hit
@@ -1644,171 +1571,6 @@ module.exports = {
     if (lead !== undefined) leadership = lead;
   },
 };
-
-// A pull request merged on GitHub by hand while it was up for a vote: every
-// six hours (its `merged-by-hand-lookup` timer) the leader asks GitHub about
-// every proposal in review and reports a merge it finds (merge-followups
-// records it and runs every follow-up). It decides nothing else: a merge
-// the platform attempted is the proposal machine's, which asks GitHub
-// itself about an answer it lost (`unconfirmed`, observe-first), so nothing
-// is ever demoted from here.
-//
-// Every lookup spends GitHub's hourly budget (9 Oct 2026: this sweep was
-// one of the callers refused when the bot token ran out), so it is
-// background work: it asks services/github-budget.js before each lookup,
-// and a refusal for the hourly limit ends it.
-async function observeMergedOnGithub(config) {
-  const { getPool } = require('./src/db/pool');
-  const github = require('./src/services/github');
-  const githubBudget = require('./src/services/github-budget');
-  if (!github.isEnabled()) return;
-  const pool = getPool(config);
-  const workflow = require('./src/workflow/platform.ts');
-  let rows;
-  try {
-    ({ rows } = await pool.query(
-      `SELECT cs.id, cs.app_id, cs.pr_number, a.repo_url
-         FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
-        WHERE cs.status = 'promoted' AND cs.pr_number IS NOT NULL`
-    ));
-  } catch (err) {
-    log.warn('server', 'Merged-by-hand lookup failed', { err: err.message });
-    return;
-  }
-  const queue = rows.slice();
-  let found = 0;
-  let held = 0;
-  async function worker() {
-    while (queue.length && !lifecycle.isShuttingDown()) {
-      if (!githubBudget.budgetAllows('background')) { held += queue.length; queue.length = 0; break; }
-      const row = queue.shift();
-      const m = (row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-      if (!m) continue;
-      try {
-        const pr = await github.getPR(m[1], m[2], row.pr_number);
-        if (pr && pr.merged) {
-          await workflow.mergeObserved({
-            sessionId: row.id, appId: row.app_id, mergeSha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null,
-          });
-          found++;
-        }
-      } catch (err) {
-        if (githubBudget.isRateLimitError(err)) { held += queue.length; queue.length = 0; break; }
-        log.warn('server', 'Merged-by-hand lookup: GitHub lookup failed', { sessionId: row.id, err: err.message });
-      }
-    }
-  }
-  await Promise.all(Array.from({ length: 4 }, () => worker())).catch((err) => {
-    log.warn('server', 'Merged-by-hand lookup stopped', { err: err.message });
-  });
-  if (rows.length) log.info('server', 'Merged-by-hand lookup complete', { scanned: rows.length, found, ...(held ? { held } : {}) });
-}
-
-// #447: how long a 'pending' check may sit before it's treated as stuck.
-// The headless capture run is capped at RUN_TIMEOUT_MS (240s in
-// services/visuals.js) plus the staging build, so 10 minutes is comfortably
-// beyond any legitimately in-flight run. Tunable via CHECKS_STALE_MS.
-const CHECKS_STALE_MS = stagingRecovery.checksStaleMs();
-
-// #237: crash-loop short-circuit. A staging build that crashes deterministically
-// (e.g. an app whose staging-only seed hits a missing constraint) used to be
-// retried by the sweeper every sweep forever — a silent, churning deadlock.
-// Build/boot failures now land a terminal 'error' verdict (services/visuals
-// storeChecks) with an exponential backoff retry schedule (check_next_retry_at:
-// 2m → 4m → … → 30m). The sweeper only re-picks an errored row once its backoff
-// has elapsed AND it's still under this cap; past the cap we stop auto-retrying
-// and leave it 'error' (the owner is already notified, and a NEW commit resets
-// the streak via setChecksPending so a fix re-enables checks). Tunable via
-// CHECK_MAX_AUTO_RETRIES; read in staging-recovery.
-const CHECK_MAX_AUTO_RETRIES = stagingRecovery.checkMaxAutoRetries();
-
-// A turn or a hand-off tail still working on the session submits its own
-// revision when it finishes; the stuck sweep leaves the session to it.
-function checkRecoveryInFlight(sessionId) {
-  return activeWorkersSvc.isSessionBusy(sessionId) || hasInFlightHandoffPipeline(sessionId);
-}
-
-// #447: reconcile stuck proposal checks. A submitted CLI handoff or a
-// promoted PR whose checks were never recorded (NULL), were left 'pending'
-// from before the preview machine held the row, or errored before it did,
-// is handed to the machine (findStuckCheckSessions leaves out every session
-// the machine is building, checking or retrying). Drafts and unsubmitted
-// uploads stay out. Bounded per run like the staging-heal sweep; runs at
-// boot and from the session sweeper (Pass 4). Safe + idempotent on every
-// boot.
-async function reconcileStuckChecks(config) {
-  const github = require('./src/services/github');
-  // Without GitHub auth a rebuild/capture is a no-op (rebuildSessionStaging
-  // returns 'skipped' with no bot token), so skip the work entirely.
-  if (!github.isEnabled()) return;
-
-  const { getPool } = require('./src/db/pool');
-  const pool = getPool(config);
-
-  let rows;
-  try {
-    ({ rows } = await stagingRecovery.findStuckCheckSessions({
-      pool,
-      staleMs: CHECKS_STALE_MS,
-      maxAutoRetries: CHECK_MAX_AUTO_RETRIES,
-      limit: 50,
-    }));
-  } catch (err) {
-    log.warn('server', 'reconcileStuckChecks query failed', { err: err.message });
-    return;
-  }
-  if (!rows.length) return;
-
-  log.info('server', 'Reconciling stuck proposal checks on startup', { count: rows.length });
-
-  const MAX_RECHECKS = 5;
-  let rechecked = 0;
-  for (const session of rows) {
-    if (rechecked >= MAX_RECHECKS) break;
-    if (checkRecoveryInFlight(session.id)) continue;
-    rechecked++;
-    try {
-      await stagingRecovery.recheckSessionChecks({
-        config, pool, session, reason: 'stuck-checks-boot',
-      });
-    } catch (err) {
-      log.warn('server', 'reconcileStuckChecks recheck failed', {
-        sessionId: session.id, err: err.message,
-      });
-    }
-  }
-  log.info('server', 'Stuck-check reconciliation complete', {
-    scanned: rows.length, rechecked,
-  });
-}
-
-// #451: how often stuck checks are handed to the preview machine again. A
-// few minutes is well below the cost of a check left pending; floored so a
-// mis-set tiny value cannot busy-loop it. (Merges are the merge queue's:
-// src/workflow/merge-queue/.) Tunable via ELIGIBLE_MERGE_SWEEP_MS.
-const ELIGIBLE_MERGE_SWEEP_MS = Math.max(
-  parseInt(process.env.ELIGIBLE_MERGE_SWEEP_MS || String(4 * 60 * 1000), 10) || (4 * 60 * 1000),
-  30 * 1000
-);
-
-// Re-drive reconcileStuckChecks (re-run checks left 'pending'/NULL by a
-// mid-capture restart) on a leader timer: idempotent and bounded, skipped
-// when GitHub is not enabled, never overlapping, never throwing.
-function startStuckChecksSweeper(config) {
-  const github = require('./src/services/github');
-  let running = false;
-  leaderTimers.every('stuck-checks-sweep', () => {
-    if (running) return undefined;
-    if (!github.isEnabled()) return undefined;
-    running = true;
-    return Promise.resolve()
-      .then(() => reconcileStuckChecks(config))
-      .catch((err) => {
-        log.warn('server', 'Stuck-checks sweep tick failed', { err: err.message });
-      })
-      .finally(() => { running = false; });
-  }, ELIGIBLE_MERGE_SWEEP_MS);
-}
 
 // #907: how often expired local-agent leases are swept. A lease is a 120s
 // TTL refreshed by a 30s heartbeat, so a machine that goes to sleep is
@@ -1867,53 +1629,6 @@ async function recoverLocalAgentTurns(config) {
     return 0;
   } finally {
     localAgentRecoveryRunning = false;
-  }
-}
-
-// stagingNeedsRebuild + rebuildSessionStaging moved to
-// src/services/staging-recovery.js so the startup recovery, the heal
-// sweep (Pass 3), and the on-demand ensure-staging route share one
-// implementation. Imported as stagingRecovery at the top of this file.
-
-// Recover sessions where CC finished but post-processing didn't complete,
-// AND promoted/merging PRs whose staging preview is missing or dead.
-//
-// The staging gap: GC (sweeper Pass 2 → teardownStagingForSession) retires
-// the preview of an idle session, and a container can also be lost
-// independently (host restart that didn't bring it back, manual cleanup,
-// crash). Either way a promoted PR's group-chat vote card loses its
-// working preview. recoverSessions hands these to the preview machine on
-// startup; the sweeper's Pass 3 does it live without a restart. The
-// liveness check (stagingNeedsRebuild) means healthy, still-running
-// previews are left untouched — only genuinely broken ones are rebuilt.
-async function recoverSessions(config) {
-  const { getPool } = require('./src/db/pool');
-  const pool = getPool(config);
-
-  const { rows } = await pool.query(
-    `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
-     FROM chat_sessions cs
-     JOIN apps a ON cs.app_id = a.id
-     WHERE cs.status IN ('active', 'promoted', 'merging')
-       AND cs.branch_name IS NOT NULL
-       -- #3654: a benchmark trial's session never gets a staging preview.
-       AND cs.user_id NOT IN (SELECT id FROM users WHERE username = 'homeroom_bench' AND is_synthetic = TRUE)`
-  );
-
-  for (const session of rows) {
-    try {
-      // A live process still working on the session (the Pod a release
-      // replaced, finishing a turn: docs/plans/draining-releases.md) submits
-      // its revision itself.
-      if ((await processes.holders(['session'], session.id, pool)).length) continue;
-      if (!(await stagingRecovery.stagingNeedsRebuild(session, { config }))) continue;
-      // The machine rebuilds what it served (PreviewLost) or builds the head
-      // it is handed; a preview it is still building or retrying is left to
-      // it (staging-recovery.rebuildSessionStaging).
-      await stagingRecovery.rebuildSessionStaging({ config, pool, session, reason: 'startup' });
-    } catch (err) {
-      log.warn('server', 'Failed to recover session', { sessionId: session.id, err: err.message });
-    }
   }
 }
 
@@ -2884,7 +2599,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     // A detached turn was recorded but its container is gone (evicted /
     // host reboot). The journal lives in the unreachable volume, so the
     // turn itself can't be replayed — but if it pushed before dying,
-    // recoverSessions' staging heal picks the branch up. Clear the
+    // the branch is rebuilt below when its code landed. Clear the
     // record and let the user know.
     const goneTurn = session.active_turn;
     const goneTail = (goneTurn && typeof goneTurn.tail === 'object' && goneTurn.tail) || {};
@@ -2939,7 +2654,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
       // The preview is the only missing artefact, and rebuildSessionStaging
       // is the shared path that also re-runs the proposal checks. Awaited
       // (not fire-and-forget) so boot recovery's per-session try/catch owns
-      // the failure, same as recoverSessions' own heal call.
+      // the failure.
       try {
         await stagingRecovery.rebuildSessionStaging({
           config, pool, session, reason: 'tail_worker_gone',
@@ -3125,9 +2840,8 @@ async function narrateDanglingTail({ config, pool, session, sessionId, broadcast
   // #3181: the resend breadcrumb is a turn that stopped before finishing.
   if (!landed) await notifyTurnStalled(pool, sessionId);
   if (!landed) return;
-  // recoverSessions' own sweep would eventually heal the preview, but it
-  // runs before adoption on a cold boot — so heal it here too rather than
-  // leaving the row promising a rebuild that nothing started.
+  // Heal the preview here rather than leave the row promising a rebuild
+  // that nothing started.
   try {
     if (await stagingRecovery.stagingNeedsRebuild(session, { config })) {
       await stagingRecovery.rebuildSessionStaging({
@@ -4537,724 +4251,217 @@ async function sweepIdleWarmWorkers({ now = Date.now(), held = heldByDurableBuil
   }
 }
 
-// Session auto-pause sweeper. Distinct from the worker idle-eviction
-// sweeper above: that one reclaims container RAM on a short timer; this
-// one frees the cap *slot* on a long timer by transitioning idle
-// 'active' sessions to 'paused' (worker + staging torn down, CC volume +
-// branch + PR preserved). Reopening a paused session auto-resumes it.
-//
-// Tunables: SESSION_AUTOPAUSE_IDLE_MS (default 2h; 0 disables) and
-// SESSION_SWEEP_INTERVAL_MS (default 60s). We only ever pause status=
-// 'active' here — never 'promoted' (those are awaiting merge votes and
-// should stay live, and pausing+resuming would currently lose the
-// promoted distinction).
-let sessionSweeperHandle = null;
-// The proposal measurement's own timer (measurePromotedProposals).
-let proposalMeasureHandle = null;
-
-// Per-session throttle for the sweeper's staging-heal pass (Pass 3). Maps
-// sessionId -> last rebuild-attempt epoch ms so a promoted PR whose build
-// keeps failing (missing secret, broken manifest) isn't rebuilt on every
-// 60s tick. Entries are dropped once a build succeeds; the set is bounded
-// by the (small) number of promoted sessions currently missing staging.
-const stagingHealAttempts = new Map();
-const STAGING_HEAL_COOLDOWN_MS = parseInt(
-  process.env.STAGING_HEAL_COOLDOWN_MS || String(10 * 60 * 1000),
-  10
-);
-
-// #447: per-session throttle for the sweeper's stuck-check pass (Pass 4),
-// mirroring stagingHealAttempts above. Maps sessionId -> last recheck-attempt
-// epoch ms so a check that keeps failing to record (broken build, missing
-// secret) isn't re-run on every tick. Same cooldown as the staging heal.
-const checkRecheckAttempts = new Map();
-
-// #687 Slice 3: per-session throttle for the sweeper's imported-PR head-sync
-// pass (Pass 6), mirroring the two maps above. Maps sessionId -> last
-// getPR-check epoch ms so an open imported proposal is polled at most once
-// per cooldown (one GitHub getPR per open imported proposal per interval),
-// not on every 60s tick — bounding the API cost the spec calls out. Entries
-// are naturally evicted when the proposal leaves the open set.
-// #851: the stale-env preview pass (Pass 7) needs no throttle map here — it is
-// fleet-wide rather than per-session, and its cadence lives in
-// services/staging-reap.js (staleSweepDue / STAGING_STALE_SWEEP_INTERVAL_MS) so
-// the boot run and this sweeper's tick cannot disagree about when it is due.
-
-const importedHeadSyncAttempts = new Map();
-const IMPORTED_HEAD_SYNC_COOLDOWN_MS = Math.max(
-  parseInt(process.env.IMPORTED_HEAD_SYNC_COOLDOWN_MS || String(3 * 60 * 1000), 10) || (3 * 60 * 1000),
-  30 * 1000
-);
-
-// #1442: the same shape again for the proposal-freshness pass (Pass 9). A
-// promoted proposal waiting on votes has no event that re-measures how far
-// behind main it is, whether it still merges cleanly, or whether the base its
-// checks passed against is still on main — so the numbers voters read were
-// whatever they had been at submission. This sweeper is the trigger that
-// keeps them true; the read-path refresh in services/proposal-freshness.js
-// only covers proposals somebody is actually looking at.
-//
-// Two GitHub calls per refreshed proposal (plus two more only when a conflict
-// needs locating), bounded by MAX_FRESHNESS_REFRESH_PER_SWEEP and this
-// cooldown rather than by the tick.
-const freshnessRefreshAttempts = new Map();
-const FRESHNESS_REFRESH_COOLDOWN_MS = Math.max(
-  parseInt(process.env.PROPOSAL_FRESHNESS_REFRESH_MS || String(5 * 60 * 1000), 10) || (5 * 60 * 1000),
-  60 * 1000
-);
-
-// Every session the proposal machine does not hold yet is adopted (one
-// created since the leader started): its idle check and its hourly review
-// check are the machine's timers, armed on adoption.
-const adoptProposals = async () => {
-  const platform = require('./src/workflow/platform.ts');
-  await platform.adoptProposals()
-    .catch((err) => log.warn('server', 'Adopting sessions for the proposal machine failed', { err: err.message }));
-  // And the bot's queue rows an older release wrote during a rollout (its
-  // insert is let through while no instance holds the row): adopted by
-  // bot-request on the same sweep.
-  await platform.adoptBotQueue()
-    .catch((err) => log.warn('server', 'Adopting the bot\'s queue rows failed', { err: err.message }));
-};
-
-// Measure every promoted proposal against its app's main (#2038), on its own
-// single-flight timer beside the session sweeper.
-//
-// This replaced a freshness pass that was capped at ten rows a sweep with
-// a five-minute per-row cooldown, because each row cost two to six GitHub
-// reads against a rate limit. A proposal nobody had opened could therefore
-// carry numbers that were hours old, and the merge gate read them. A
-// measurement is local plumbing against the app's mirror, so every promoted
-// proposal is measured every pass: the fix for the whole class of failures
-// where a proposal was described confidently and wrongly, including a
-// drifted proposal below the vote threshold that nothing else re-measured.
-//
-// One fetch of an app's mirror serves every open proposal on it
-// (integration.fetchAppMirror). The pass used to fetch the whole repository
-// once per proposal, inside the session sweeper: on 19 Oct 2026 that was
-// about 126 full fetches every two minutes, and it held idle pausing,
-// preview cleanup and the staging heal for two to ten minutes a pass.
-async function measurePromotedProposals(pool) {
-  const integrationSvc = require('./src/services/integration');
-  const { rows } = await pool.query(
-    `SELECT cs.*, a.slug AS app_slug, a.repo_url
-       FROM chat_sessions cs
-       JOIN apps a ON cs.app_id = a.id
-      WHERE cs.status = 'promoted'
-        AND a.repo_url IS NOT NULL
-        AND cs.branch_name IS NOT NULL
-      ORDER BY cs.app_id, cs.integration_measured_at NULLS FIRST`
-  );
-  const byApp = new Map();
-  for (const row of rows) {
-    if (!byApp.has(row.app_id)) byApp.set(row.app_id, []);
-    byApp.get(row.app_id).push(row);
-  }
-  let measured = 0;
-  // Held for the shutdown drain, which therefore waits for one measurement
-  // at most: the loop stops at its next row once shutdown begins, rather
-  // than writing into the closed pool.
-  await inflightWork.track('proposal-measure', async () => {
-    for (const sessions of byApp.values()) {
-      if (lifecycle.isShuttingDown()) break;
-      // A session mid-turn is about to move its own head; measuring it now
-      // records an answer that is wrong before it is written. Mid-turn on
-      // any process, not only this one.
-      const ready = sessions.filter((session) => !(worker.isInFlight(session.id) || activeWorkersSvc.isSessionBusy(session.id)));
-      if (!ready.length) continue;
-      // A fetch that fails leaves each measurement to fetch for itself, as
-      // before, so each records the failure as its own.
-      const mirrorDir = await integrationSvc.fetchAppMirror(ready).catch((err) => {
-        log.warn('server', 'Could not fetch an app\'s mirror for its proposals', { appId: ready[0].app_id, err: err.message });
-        return null;
-      });
-      for (const session of ready) {
-        if (lifecycle.isShuttingDown()) break;
-        const written = await integrationSvc.measure({ pool, session }, { force: true, ...(mirrorDir ? { mirrorDir } : {}) });
-        if (written && !written.skipped) measured++;
-      }
-    }
-  });
-  if (measured) log.info('server', 'Measured proposals against main', { count: measured, apps: byApp.size });
-}
-
-function startSessionAutoPauseSweeper(config) {
-  if (sessionSweeperHandle) return;
-  if (!config.sessionAutopauseIdleMs || config.sessionAutopauseIdleMs <= 0) {
-    log.info('server', 'Session auto-pause sweeper disabled', { reason: 'SESSION_AUTOPAUSE_IDLE_MS<=0' });
-    // A proposal's review check (the stale warning and close) still needs
-    // the machine to hold it, so adoption runs without the sweeper.
-    sessionSweeperHandle = setInterval(singleFlight('proposal-adopt', async () => {
-      if (!lifecycle.isShuttingDown()) await adoptProposals();
-    }), config.sessionSweepIntervalMs).unref();
-    return;
-  }
+// The stale active_turn watchdog, on its own leader timer
+// (config.sessionSweepIntervalMs). A person's turn is the leader's until it
+// is a workflow machine's (roadmap item 2); everything else the session
+// sweeper did is a machine's rule or a clock now: the idle pause and the
+// review check are the proposal machine's, a preview's idle give-back and
+// the checks it owes the preview machine's, the heal, the leftover previews,
+// the orphan databases and the connection pressure the clocks'
+// (src/workflow/clock/services.ts), and a stale environment the release's.
+function startTurnWatchdog(config) {
   const pool = getPool(config);
-  log.info('server', 'Session auto-pause sweeper started', {
-    idleMs: config.sessionAutopauseIdleMs,
-    stagingIdleMs: config.stagingIdleTeardownMs,
-    sweepIntervalMs: config.sessionSweepIntervalMs,
-  });
-  // Not held for the shutdown drain as a whole: a pass can be minutes into a
-  // staging rebuild, which a shutdown leaves to be re-driven (cleanup marks
-  // it), and waiting for one held a release's drain to its 60s deadline on
-  // 14 Oct 2026. Its long loops stop at their next row once shutdown begins,
-  // and the proposal measurement, whose write the closing pool cut, is held
-  // on its own (measurePromotedProposals, its own timer). One pass at a time (services/single-flight.js): a pass
-  // minutes into a staging heal had later ticks start beside it.
-  sessionSweeperHandle = setInterval(singleFlight('session-sweeper', async () => {
+  leaderTimers.every('turn-watchdog', singleFlight('turn-watchdog', async () => {
     if (lifecycle.isShuttingDown()) return;
-
-    // Pass 1: every session holding a slot that the proposal machine does
-    // not hold yet (one created since the leader started) is adopted: its
-    // idle check gives the slot back once nobody has used it for
-    // SESSION_AUTOPAUSE_IDLE_MS (src/workflow/proposal/, IdleCheck: never
-    // mid-turn, never under a durable build, never a staging fixture). The
-    // pause itself is the machine's, decided under the session's lock.
-    await adoptProposals();
-
-    // Pass 2: staging GC. Reclaim the staging container + cloned DB from
-    // sessions cold past the (much longer) staging-idle window. Skips
-    // promoted/merging (their preview backs the group vote) and anything
-    // mid-turn. Status is untouched — only the preview is reclaimed.
-    //
-    // #866: 'archived' is now IN scope. A withdrawn proposal keeps no vote
-    // to back, so its container is pure waste — and imported proposals made
-    // that leak routine: the build takes minutes, the author can withdraw
-    // mid-build, and the post-build status re-check (pr-import-sync) only
-    // tears down the container it built itself. Anything already running
-    // when the withdrawal landed (or built by a process that then died)
-    // stayed up forever, since the old filter excluded archived rows. The
-    // preview machine is what keeps this from racing a live build.
-    if (config.stagingIdleTeardownMs && config.stagingIdleTeardownMs > 0) {
-      try {
-        const { rows } = await pool.query(
-          `SELECT id FROM chat_sessions
-           WHERE (staging_runtime_name IS NOT NULL OR staging_container_id IS NOT NULL)
-             AND status NOT IN ('promoted', 'merging', 'merged')
-             AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
-           ORDER BY last_activity_at ASC
-           LIMIT 20`,
-          [config.stagingIdleTeardownMs]
-        );
-        for (const row of rows) {
-          if (activeWorkersSvc.isSessionBusy(row.id)) continue;
-          // The preview machine refuses to retire a preview it is building
-          // or checking (teardownStagingForSession reports it as busy).
-          try {
-            await sessionLifecycle.teardownStagingForSession({ pool, sessionId: row.id, reason: 'idle-gc' });
-          } catch (err) {
-            log.warn('server', 'Staging GC failed', { sessionId: row.id, err: err.message });
-          }
-        }
-      } catch (err) {
-        log.warn('server', 'Staging GC sweep failed', { err: err.message });
-      }
-    }
-
-    // Stale active_turn watchdog: an active_turn row whose session is
-    // not busy in-process is orphaned — in healthy operation dispatch
-    // holds the warm-registry inFlight flag and the recovery flows hold
-    // activeWorkers for their full duration, so no live consumer means
-    // the process that owned the turn died (e.g. a crash between boot
-    // adoption and finalize). Left alone it looks "working" forever and
-    // (with Pass 1's active_turn guard) blocks auto-pause. Reap it:
-    // clear the record, stamp the progress card [interrupted], tell the
-    // user to retry, and notify like any other finished turn. The pure
-    // reap/skip policy lives in services/turn-watchdog.js.
-    try {
-      const { rows } = await pool.query(
-        // pr_number: a reaped TAIL row names the PR its work landed on.
-        // username / user_is_synthetic: a reaped turn of the Homeroom bot's
-        // or of a benchmark trial goes back to its owner, not to a person.
-        // A durable build's turn is its build's (services/durable-turn.js),
-        // which follows it wherever the build runs next: never reaped here.
-        `SELECT cs.id, cs.user_id, cs.app_id, cs.status, cs.pr_number, cs.active_turn, cs.workflow_owner,
-                u.username, u.is_synthetic AS user_is_synthetic
-           FROM chat_sessions cs
-           LEFT JOIN users u ON u.id = cs.user_id
-         WHERE cs.active_turn IS NOT NULL
-           AND NOT (cs.workflow_owner IS NOT NULL AND EXISTS (
-             SELECT 1 FROM wf_instances w
-              WHERE w.machine = split_part(cs.workflow_owner, '/', 1)
-                AND w.key = substr(cs.workflow_owner, length(split_part(cs.workflow_owner, '/', 1)) + 2)
-                AND w.state = 'building'))
-           AND NOT ${workflowTurnHeldSql('cs.active_turn')}
-         ORDER BY (cs.active_turn->>'startedAt') ASC NULLS FIRST
-         LIMIT 20`
-      );
-      const nowMs = Date.now();
-      const { broadcastGlobal } = require('./src/services/ws');
-      for (const row of rows) {
-        // cleanup_pending means all user-visible/economic work committed and
-        // only the identity-safe clear remains. Complete it silently; never
-        // narrate a false interruption or replay the tail.
-        if (turnLifecycle.recoveryAction(row.active_turn) === 'cleanup') {
-          const args = turnCleanupArgs(row.active_turn);
-          const cleared = await worker.finishTurn(row.id, args);
-          if (!cleared) {
-            log.warn('server', 'Watchdog could not finish pending turn cleanup', {
-              sessionId: row.id,
-            });
-          }
-          continue;
-        }
-        const busy = activeWorkersSvc.isSessionBusy(row.id);
-        // Cheap pre-filter (no docker probe): fresh or busy rows skip.
-        if (turnWatchdog.classifyStaleTurn({
-          activeTurn: row.active_turn, nowMs, busy, executing: false,
-        }) !== 'reap') continue;
-        // Only now pay for the container probe. A live (or unobservable)
-        // detached exec is left strictly alone — boot recovery or the
-        // next dispatch will consume its journal.
-        const executing = await worker.isWorkerExecuting(worker.workerContainerName(row.id));
-        const verdict = turnWatchdog.classifyStaleTurn({
-          activeTurn: row.active_turn, nowMs, busy, executing,
-        });
-        if (verdict !== 'reap') {
-          log.warn('server', 'Stale active_turn has a live/unobservable exec — leaving for recovery', {
-            sessionId: row.id, executing, startedAt: row.active_turn?.startedAt || null,
-          });
-          continue;
-        }
-        try {
-          const reapTail = (row.active_turn && typeof row.active_turn.tail === 'object'
-            && row.active_turn.tail) || {};
-          // A reaped TAIL row is a different animal from a reaped exec: the
-          // agent's work is done and (usually) pushed, so the breadcrumb
-          // must not ask for a resend. `phase` in the log tells an operator
-          // which one they're looking at.
-          const reapCodeLanded = !!reapTail.sha && reapTail.pushOk === true;
-          const closedSession = ['archived', 'merged'].includes(row.status);
-          if (!closedSession) log.warn('server', 'Reaping orphaned active_turn', {
-            sessionId: row.id, startedAt: row.active_turn?.startedAt || null,
-            phase: row.active_turn?.phase || 'exec', codeLanded: reapCodeLanded,
-          });
-          if (row.active_turn?.backend === 'codex_openrouter'
-              && row.active_turn?.turnUuid) {
-            const agentTurn = require('./src/services/agent-turn');
-            try {
-              await agentTurn.completeCodexAttempt({
-                pool,
-                turnUuid: row.active_turn.turnUuid,
-                status: 'failed',
-                errorCode: 'recovery_abandoned',
-                errorDetail: 'Durable turn was abandoned after its worker became stale.',
-                telemetryComponent: turnLifecycle.phaseOf(row.active_turn) === turnLifecycle.PHASE_DISPATCH_PENDING
-                  ? null
-                  : row.active_turn.telemetryComponent || null,
-              });
-            } catch (ledgerErr) {
-              const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
-                pool,
-                sessionId: row.id,
-                activeTurn: row.active_turn,
-                error: ledgerErr,
-              });
-              log.error('server', disposition.action === 'retry'
-                ? 'Stale Codex turn retained because ledger terminalization failed'
-                : 'Stale Codex turn quarantined because its ledger attempt is missing', {
-                sessionId: row.id, err: ledgerErr.message,
-              });
-              continue;
-            }
-          }
-          if (closedSession) {
-            const cleared = await turnLifecycle.clearClosedSessionTurn(pool, {
-              sessionId: row.id, activeTurn: row.active_turn,
-            });
-            if (cleared) log.info('server', 'Cleared obsolete turn from closed session', {
-              sessionId: row.id, status: row.status,
-            });
-            // Housekeeping is not a new interruption. Leave finished-session
-            // transcripts and notifications alone, including after a CAS miss.
-            continue;
-          }
-          const reaped = await worker.clearActiveTurn(row.id, turnCleanupArgs(row.active_turn));
-          if (!reaped) {
-            log.warn('server', 'Stale turn changed while watchdog was reaping it', {
-              sessionId: row.id,
-            });
-            continue;
-          }
-          // #1006: the bot's turns and a benchmark trial's have an owner that
-          // is not a person. The breadcrumb, retry pills and stalled
-          // notification below are for a person; these go back to the bot's
-          // queue (attempt unspent) or the bench lane instead.
-          if (require('./src/services/bench/runner').isBenchSession(row)) {
-            // A trial's turn no durable trial owns (one started before trials
-            // were durable): nothing is waiting on it.
-            log.warn('server', 'Watchdog reaped a benchmark turn no trial owns', { sessionId: row.id });
-            continue;
-          }
-          if (homeroomBotRecovery().isRecoveredBotSession(row)) {
-            const outcome = await homeroomBotRecovery().settleReapedTurn({ pool, config, session: row });
-            log.warn('server', 'Watchdog handed a reaped Homeroom bot turn back', {
-              sessionId: row.id, status: row.status, outcome,
-            });
-            continue;
-          }
-          await appendTerminalProgressLine(pool, row.id, '[interrupted]');
-          const msg = reapCodeLanded
-            ? recoveryPills.buildCodeLandedBreadcrumb({
-              prNumber: reapTail.prNumber || row.pr_number || null,
-              // Nothing is rebuilding it here — the staging heal sweep owns
-              // that, on its own schedule. Don't promise what this path
-              // isn't doing.
-              rebuildingPreview: false,
-            })
-            : recoveryPills.TURN_UNFINISHED_BREADCRUMB;
-          // #786: retry pills on the breadcrumb — no wrap-up will run for
-          // a reaped turn, so this row is the pill bar's only source.
-          const reapPills = recoveryPills.buildRecoveryQuickReplies(
-            reapCodeLanded ? 'code_done' : 'unrecoverable'
-          );
-          await pool.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-             VALUES ($1, 'system', $2, $3)`,
-            [row.id, msg, JSON.stringify({
-              ...(reapPills ? { quickReplies: reapPills } : {}),
-              recovered: true,
-              recoveredReason: reapCodeLanded ? 'watchdog_reap_tail' : 'watchdog_reap',
-              ...(reapCodeLanded ? { sha: reapTail.sha } : {}),
-            })]
-          ).catch(() => {});
-          broadcastGlobal({
-            type: 'session_event', sessionId: row.id, event: 'status', text: msg,
-            quickReplies: reapPills || undefined,
-          });
-          // Same "the owner cannot have watched this finish" rationale as
-          // the recovered-turn notify block in resumeDetachedTurn. #3181: a
-          // reaped exec never finished, so it says so; a reaped tail whose
-          // commit landed is the work done, and stays session_done.
-          try {
-            const notifications = require('./src/services/notifications');
-            await pool.query(
-              `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
-              [row.id]
-            ).catch(() => {});
-            const create = reapCodeLanded
-              ? notifications.createSessionDoneNotification
-              : notifications.createSessionStalledNotification;
-            const created = await create(pool, {
-              userId: row.user_id, appId: row.app_id, sessionId: row.id,
-            });
-            if (created.length) await notifications.hydrateAndPush(pool, created[0]);
-          } catch (err) {
-            log.warn('server', 'stale-turn reap notify failed', { sessionId: row.id, err: err.message });
-          }
-        } catch (err) {
-          log.warn('server', 'Stale active_turn reap failed', { sessionId: row.id, err: err.message });
-        }
-      }
-    } catch (err) {
-      log.warn('server', 'Stale active_turn watchdog sweep failed', { err: err.message });
-    }
-
-    // Pass 3: staging heal. The flip side of Pass 2 — rebuild the staging
-    // preview for promoted/merging sessions whose preview is missing or
-    // dead. Two shapes (see stagingNeedsRebuild): staging_url IS NULL
-    // (GC'd before/after promotion → no Preview button, gated on
-    // staging_url in app-view.js), OR staging_url set but the container
-    // is gone (Preview renders but the iframe can't connect). Their
-    // preview backs the group's PR vote, so either way it must come back.
-    // recoverSessions() heals these on startup; this keeps them healed
-    // live without a restart. We over-fetch candidates and gate each on a
-    // cheap liveness check, handing at most a few to the preview machine per
-    // sweep, so healthy previews are never rebuilt. A preview the machine is
-    // building or retrying is left to it (rebuildSessionStaging); the
-    // per-session cooldown only spaces out the look at one it has refused.
-    try {
-      const { rows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
+  // Stale active_turn watchdog: an active_turn row whose session is
+  // not busy in-process is orphaned — in healthy operation dispatch
+  // holds the warm-registry inFlight flag and the recovery flows hold
+  // activeWorkers for their full duration, so no live consumer means
+  // the process that owned the turn died (e.g. a crash between boot
+  // adoption and finalize). Left alone it looks "working" forever and
+  // (with Pass 1's active_turn guard) blocks auto-pause. Reap it:
+  // clear the record, stamp the progress card [interrupted], tell the
+  // user to retry, and notify like any other finished turn. The pure
+  // reap/skip policy lives in services/turn-watchdog.js.
+  try {
+    const { rows } = await pool.query(
+      // pr_number: a reaped TAIL row names the PR its work landed on.
+      // username / user_is_synthetic: a reaped turn of the Homeroom bot's
+      // or of a benchmark trial goes back to its owner, not to a person.
+      // A durable build's turn is its build's (services/durable-turn.js),
+      // which follows it wherever the build runs next: never reaped here.
+      `SELECT cs.id, cs.user_id, cs.app_id, cs.status, cs.pr_number, cs.active_turn, cs.workflow_owner,
+              u.username, u.is_synthetic AS user_is_synthetic
          FROM chat_sessions cs
-         JOIN apps a ON cs.app_id = a.id
-         WHERE cs.status IN ('promoted', 'merging')
-           AND cs.branch_name IS NOT NULL
-         ORDER BY cs.promoted_at ASC NULLS FIRST
-         LIMIT 50`
-      );
-      const MAX_HEALS_PER_SWEEP = 5;
-      let healed = 0;
-      for (const session of rows) {
-        if (healed >= MAX_HEALS_PER_SWEEP || lifecycle.isShuttingDown()) break;
-        if (activeWorkersSvc.isSessionBusy(session.id)) continue;
-        if (!(await stagingRecovery.stagingNeedsRebuild(session, { config }))) continue;
-        const last = stagingHealAttempts.get(session.id) || 0;
-        if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;
-        stagingHealAttempts.set(session.id, Date.now());
-        healed++;
-        try {
-          await stagingRecovery.rebuildSessionStaging({ config, pool, session, reason: 'heal' });
-        } catch (err) {
-          log.warn('server', 'Staging heal failed', { sessionId: session.id, err: err.message });
+         LEFT JOIN users u ON u.id = cs.user_id
+       WHERE cs.active_turn IS NOT NULL
+         AND NOT (cs.workflow_owner IS NOT NULL AND EXISTS (
+           SELECT 1 FROM wf_instances w
+            WHERE w.machine = split_part(cs.workflow_owner, '/', 1)
+              AND w.key = substr(cs.workflow_owner, length(split_part(cs.workflow_owner, '/', 1)) + 2)
+              AND w.state = 'building'))
+         AND NOT ${workflowTurnHeldSql('cs.active_turn')}
+       ORDER BY (cs.active_turn->>'startedAt') ASC NULLS FIRST
+       LIMIT 20`
+    );
+    const nowMs = Date.now();
+    const { broadcastGlobal } = require('./src/services/ws');
+    for (const row of rows) {
+      // cleanup_pending means all user-visible/economic work committed and
+      // only the identity-safe clear remains. Complete it silently; never
+      // narrate a false interruption or replay the tail.
+      if (turnLifecycle.recoveryAction(row.active_turn) === 'cleanup') {
+        const args = turnCleanupArgs(row.active_turn);
+        const cleared = await worker.finishTurn(row.id, args);
+        if (!cleared) {
+          log.warn('server', 'Watchdog could not finish pending turn cleanup', {
+            sessionId: row.id,
+          });
         }
+        continue;
       }
-    } catch (err) {
-      log.warn('server', 'Staging heal sweep failed', { err: err.message });
-    }
-
-    // Pass 4: stuck-check reconcile (#447). The flip side of the merge gate
-    // — a submitted CLI handoff or promoted PR whose checks are NULL, or
-    // 'pending' past CHECKS_STALE_MS from before the preview machine held the
-    // row, is handed to the machine so the same proposal can continue.
-    // Bounded per sweep with a per-session cooldown, exactly like the
-    // staging-heal pass above; the boot-time reconcileStuckChecks handles the
-    // restart case, this keeps them healed live without a restart.
-    try {
-      const { rows } = await stagingRecovery.findStuckCheckSessions({
-        pool,
-        staleMs: CHECKS_STALE_MS,
-        maxAutoRetries: CHECK_MAX_AUTO_RETRIES,
-        limit: 50,
+      const busy = activeWorkersSvc.isSessionBusy(row.id);
+      // Cheap pre-filter (no docker probe): fresh or busy rows skip.
+      if (turnWatchdog.classifyStaleTurn({
+        activeTurn: row.active_turn, nowMs, busy, executing: false,
+      }) !== 'reap') continue;
+      // Only now pay for the container probe. A live (or unobservable)
+      // detached exec is left strictly alone — boot recovery or the
+      // next dispatch will consume its journal.
+      const executing = await worker.isWorkerExecuting(worker.workerContainerName(row.id));
+      const verdict = turnWatchdog.classifyStaleTurn({
+        activeTurn: row.active_turn, nowMs, busy, executing,
       });
-      const MAX_RECHECKS_PER_SWEEP = 5;
-      let rechecked = 0;
-      for (const session of rows) {
-        if (rechecked >= MAX_RECHECKS_PER_SWEEP) break;
-        if (checkRecoveryInFlight(session.id)) continue;
-        const last = checkRecheckAttempts.get(session.id) || 0;
-        if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;
-        checkRecheckAttempts.set(session.id, Date.now());
-        rechecked++;
-        try {
-          await stagingRecovery.recheckSessionChecks({ config, pool, session, reason: 'stuck-checks-sweep' });
-        } catch (err) {
-          log.warn('server', 'Stuck-check recheck failed', { sessionId: session.id, err: err.message });
-        }
+      if (verdict !== 'reap') {
+        log.warn('server', 'Stale active_turn has a live/unobservable exec — leaving for recovery', {
+          sessionId: row.id, executing, startedAt: row.active_turn?.startedAt || null,
+        });
+        continue;
       }
-    } catch (err) {
-      log.warn('server', 'Stuck-check reconcile sweep failed', { err: err.message });
-    }
-
-    // (Uploads nothing took are the upload-gc clock's: src/workflow/clock/services.ts.)
-
-    // Pass 6: imported-PR head sync (#687, Slice 3). For each live imported
-    // row, fetch the PR's current head.sha and no-op on an unchanged head;
-    // on a head change refresh its preview/checks (and, once promoted, reset
-    // the vote tally). Reuses this sweeper's cadence
-    // + a per-session cooldown (importedHeadSyncAttempts) so the added
-    // getPR-per-open-imported-proposal cost stays bounded.
-    try {
-      const prImportSync = require('./src/services/pr-import-sync');
-      const { rows } = await pool.query(
-        `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
-           FROM chat_sessions cs
-           JOIN apps a ON cs.app_id = a.id
-          WHERE cs.source = 'imported'
-            AND cs.status IN ('active', 'promoted', 'merging')
-            AND cs.pr_number IS NOT NULL
-          ORDER BY cs.promoted_at ASC NULLS FIRST
-          LIMIT 50`
-      );
-      const MAX_HEAD_SYNCS_PER_SWEEP = 10;
-      let synced = 0;
-      const githubBudget = require('./src/services/github-budget');
-      for (const session of rows) {
-        if (synced >= MAX_HEAD_SYNCS_PER_SWEEP) break;
-        // A getPR per imported proposal: background work, held while
-        // GitHub's hourly budget is nearly used up (services/github-budget.js).
-        if (!githubBudget.budgetAllows('background')) break;
-        // A turn on any process (a web process runs the turns its routes
-        // start, docs/plans/web-and-conductor.md), not only this one's.
-        if (worker.isInFlight(session.id) || activeWorkersSvc.isSessionBusy(session.id)) continue;
-        const last = importedHeadSyncAttempts.get(session.id) || 0;
-        if (Date.now() - last < IMPORTED_HEAD_SYNC_COOLDOWN_MS) continue;
-        // Stamp BEFORE the getPR (+ possible minutes-long rebuild) so a
-        // later tick won't kick off a duplicate concurrent sync.
-        importedHeadSyncAttempts.set(session.id, Date.now());
-        synced++;
-        try {
-          await prImportSync.syncImportedProposal({ config, pool, session });
-        } catch (err) {
-          log.warn('server', 'Imported-PR head sync failed', { sessionId: session.id, err: err.message });
-        }
-      }
-    } catch (err) {
-      log.warn('server', 'Imported-PR head-sync sweep failed', { err: err.message });
-    }
-
-    // Pass 9, measuring every promoted proposal against main, has its own
-    // timer now (measurePromotedProposals, below): on 19 Oct 2026 it held
-    // every pass here for two to ten minutes.
-
-    // Pass 7: stale-env preview teardown (#851). The counterpart to Pass 3:
-    // Pass 3 REBUILDS a stale preview that backs a live vote, this tears down
-    // the stale rest (merged / abandoned / paused / session-gone), so the next
-    // Preview click rebuilds with current env behind the existing loader.
-    // Together they replace #850's one-off admin sweep. It also takes any
-    // preview whose session merged, was archived or is gone, current env or
-    // not: a failed merge-time teardown has no other retry.
-    //
-    // Throttled to its own long interval rather than given a timer of its
-    // own — this sweeper already ticks, and listing the previews (Docker
-    // containers or Kubernetes Deployments) + tearing down a few every 15
-    // minutes has no business running every 60 seconds.
-    // STAGING_STALE_SWEEP_INTERVAL_MS=0 disables it (the admin sweep stays).
-    try {
-      // The interval + "is it due" bookkeeping lives in the service, so this
-      // tick and the boot run share one throttle. sweepStale never throws and
-      // bounds its own work per pass.
-      if (stagingReap.staleSweepDue()) {
-        await stagingReap.sweepStale(config, { isInFlight: (id) => activeWorkersSvc.isSessionBusy(id) });
-      }
-    } catch (err) {
-      log.warn('server', 'Stale-preview sweep failed', { err: err.message });
-    }
-
-    // Pass 8: orphaned staging-DATABASE reconciliation. Pass 7 (and every
-    // other teardown path) only drops a staging DB alongside a matching
-    // container; clones whose container is already gone used to accumulate
-    // forever (3,479 DBs / 198 GB by 2026-07-30). This drops the ones no
-    // session, build, or connection can reach anymore. Long interval (6h),
-    // bounded batch, own throttle in the service; never throws.
-    // STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS=0 disables it.
-    try {
-      if (stagingReap.orphanDbSweepDue()) {
-        await stagingReap.sweepOrphanDbs(config);
-      }
-    } catch (err) {
-      log.warn('server', 'Orphan staging-DB sweep failed', { err: err.message });
-    }
-
-    // Pass 9: connection-pressure preview reclaim (#1771). Passes 7 and 8
-    // reclaim previews for what is true about the PREVIEW (stale, orphaned).
-    // This one reclaims healthy previews for what is true about the SERVER:
-    // one Postgres backs the platform, every production app and every
-    // preview, and when its connection budget runs out the failure lands on
-    // whichever proposal's checks run next, recorded as a broken diff.
-    // Does nothing at all until a census says the server is saturated; then
-    // tears down the idle-longest previews, re-censusing after each one and
-    // stopping the moment the pressure is off. Own throttle in the service;
-    // never throws. STAGING_PRESSURE_SWEEP_INTERVAL_MS=0 disables it.
-    try {
-      if (stagingReap.pressureSweepDue()) {
-        await stagingReap.sweepConnectionPressure(config);
-        // The preview database server has its own budget
-        // (STAGING_DB_ADMIN_URL). A no-op without one.
-        await stagingReap.sweepConnectionPressure(config, { server: 'preview' });
-      }
-      // While a preview database server is being drained: what still depends
-      // on it, logged every ten minutes. A no-op otherwise.
-      await stagingReap.previewServerDrainStatus(config);
-    } catch (err) {
-      log.warn('server', 'Connection-pressure sweep failed', { err: err.message });
-    }
-  }), config.sessionSweepIntervalMs).unref();
-
-  // The measurement pass, on its own clock so a slow one holds up only itself.
-  proposalMeasureHandle = setInterval(singleFlight('proposal-measure', async () => {
-    if (lifecycle.isShuttingDown()) return;
-    try {
-      await measurePromotedProposals(pool);
-    } catch (err) {
-      log.warn('server', 'Proposal measurement sweep failed', { err: err.message });
-    }
-  }), config.sessionSweepIntervalMs).unref();
-}
-
-// Revisions refreshed + reversible-archive hard GC.
-//   Pass 0 (revisions): a promoted PR's reviewed head and protected-settings
-//     flag read again (a merge is the merge queue's: src/workflow/merge-queue/).
-//   Pass 3 (GC): archived sessions past ARCHIVED_RETENTION_MS get their
-//     CC volume purged so memory stops occupying disk, and a merged
-//     change's Kubernetes worker volume that outlived its merge is freed.
-// Warning the author of a quiet proposal (PR_STALE_NOTIFY_MS), closing it
-// once it stays quiet (PR_STALE_GRACE_MS) and closing one voted down are the
-// proposal machine's hourly review check (src/workflow/proposal/).
-//
-// Hourly (staleSweepIntervalMs) on the durable clock leader_sweeps keeps
-// (services/leader-timers.js). As a bare setInterval its clock restarted at
-// every election, and with a release every twenty minutes or so it almost
-// never fired: warnings, auto-archive, archived volume GC and merged worker-volume reclaim (a disk
-// leak) all waited for a quiet night.
-function startStalePrSweeper(config) {
-  if (leaderTimers.has('stale-pr-sweep')) return;
-  const notifyEnabled = config.prStaleNotifyMs > 0;
-  const gcEnabled = config.archivedRetentionMs > 0;
-  if (!notifyEnabled && !gcEnabled) {
-    log.info('server', 'Stale-PR / archived-GC sweeper disabled');
-    return;
-  }
-  const pool = getPool(config);
-  log.info('server', 'Stale-PR / archived-GC sweeper started', {
-    notifyMs: config.prStaleNotifyMs, graceMs: config.prStaleGraceMs,
-    retentionMs: config.archivedRetentionMs, intervalMs: config.staleSweepIntervalMs,
-  });
-  const { reconcilePromotedSweepHead } = require('./src/routes/votes');
-  const appAdmins = require('./src/services/app-admins');
-  leaderTimers.every('stale-pr-sweep', async () => {
-    if (lifecycle.isShuttingDown()) return;
-
-    // Pass 0: the revisions of proposals in review, refreshed. A native PR
-    // branch can be updated outside Homeroom (a push nobody announced), and
-    // a protected-settings flag can go stale once main moves. (A proposal
-    // that becomes mergeable with time, its window elapsing, is the
-    // proposal machine's hourly review check's: it asks the app's merge
-    // queue. A merge is never started from here.)
-    try {
-      const { rows } = await pool.query(
-        `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.self_hosted AS app_self_hosted
-           FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
-          WHERE cs.status = 'promoted' AND cs.is_headless = FALSE
-          LIMIT 100`
-      );
-      for (const session of rows) {
-        if (activeWorkersSvc.isSessionBusy(session.id)) continue;
-        try {
-          const sweepRevision = await reconcilePromotedSweepHead({ config, pool, session });
-          if (sweepRevision.blocked) {
-            log.warn('server', 'Revision sweep skipped: native revision unavailable', {
-              sessionId: session.id, transient: !!sweepRevision.transient, reason: sweepRevision.reason,
+      try {
+        const reapTail = (row.active_turn && typeof row.active_turn.tail === 'object'
+          && row.active_turn.tail) || {};
+        // A reaped TAIL row is a different animal from a reaped exec: the
+        // agent's work is done and (usually) pushed, so the breadcrumb
+        // must not ask for a resend. `phase` in the log tells an operator
+        // which one they're looking at.
+        const reapCodeLanded = !!reapTail.sha && reapTail.pushOk === true;
+        const closedSession = ['archived', 'merged'].includes(row.status);
+        if (!closedSession) log.warn('server', 'Reaping orphaned active_turn', {
+          sessionId: row.id, startedAt: row.active_turn?.startedAt || null,
+          phase: row.active_turn?.phase || 'exec', codeLanded: reapCodeLanded,
+        });
+        if (row.active_turn?.backend === 'codex_openrouter'
+            && row.active_turn?.turnUuid) {
+          const agentTurn = require('./src/services/agent-turn');
+          try {
+            await agentTurn.completeCodexAttempt({
+              pool,
+              turnUuid: row.active_turn.turnUuid,
+              status: 'failed',
+              errorCode: 'recovery_abandoned',
+              errorDetail: 'Durable turn was abandoned after its worker became stale.',
+              telemetryComponent: turnLifecycle.phaseOf(row.active_turn) === turnLifecycle.PHASE_DISPATCH_PENDING
+                ? null
+                : row.active_turn.telemetryComponent || null,
+            });
+          } catch (ledgerErr) {
+            const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
+              pool,
+              sessionId: row.id,
+              activeTurn: row.active_turn,
+              error: ledgerErr,
+            });
+            log.error('server', disposition.action === 'retry'
+              ? 'Stale Codex turn retained because ledger terminalization failed'
+              : 'Stale Codex turn quarantined because its ledger attempt is missing', {
+              sessionId: row.id, err: ledgerErr.message,
             });
             continue;
           }
-          // #788: backfill the explicit-approval flag for never-classified
-          // rows AND re-verify rows stored TRUE (services/app-admins.js
-          // sweepExplicitApproval).
-          await appAdmins.sweepExplicitApproval(pool, session);
-        } catch (err) {
-          log.warn('server', 'Revision sweep failed for a proposal', { sessionId: session.id, err: err.message });
         }
-      }
-    } catch (err) {
-      log.warn('server', 'Revision sweep failed', { err: err.message });
-    }
-
-    // Pass 1 and Pass 2 (warn the author of a proposal nobody has looked at
-    // for a while, close it once it stays quiet) are the proposal machine's
-    // hourly review check, each read under the proposal's lock: a vote since
-    // the warning clears it rather than closing the proposal (bug 4).
-
-    if (gcEnabled) {
-      // Pass 3: hard-GC archived CC volumes past the retention window.
-      try {
-        const { rows } = await pool.query(
-          `SELECT id FROM chat_sessions
-           WHERE status = 'archived' AND cc_purged = FALSE AND archived_at IS NOT NULL
-             AND archived_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
-           LIMIT 50`,
-          [config.archivedRetentionMs]
+        if (closedSession) {
+          const cleared = await turnLifecycle.clearClosedSessionTurn(pool, {
+            sessionId: row.id, activeTurn: row.active_turn,
+          });
+          if (cleared) log.info('server', 'Cleared obsolete turn from closed session', {
+            sessionId: row.id, status: row.status,
+          });
+          // Housekeeping is not a new interruption. Leave finished-session
+          // transcripts and notifications alone, including after a CAS miss.
+          continue;
+        }
+        const reaped = await worker.clearActiveTurn(row.id, turnCleanupArgs(row.active_turn));
+        if (!reaped) {
+          log.warn('server', 'Stale turn changed while watchdog was reaping it', {
+            sessionId: row.id,
+          });
+          continue;
+        }
+        // #1006: the bot's turns and a benchmark trial's have an owner that
+        // is not a person. The breadcrumb, retry pills and stalled
+        // notification below are for a person; these go back to the bot's
+        // queue (attempt unspent) or the bench lane instead.
+        if (require('./src/services/bench/runner').isBenchSession(row)) {
+          // A trial's turn no durable trial owns (one started before trials
+          // were durable): nothing is waiting on it.
+          log.warn('server', 'Watchdog reaped a benchmark turn no trial owns', { sessionId: row.id });
+          continue;
+        }
+        if (homeroomBotRecovery().isRecoveredBotSession(row)) {
+          const outcome = await homeroomBotRecovery().settleReapedTurn({ pool, config, session: row });
+          log.warn('server', 'Watchdog handed a reaped Homeroom bot turn back', {
+            sessionId: row.id, status: row.status, outcome,
+          });
+          continue;
+        }
+        await appendTerminalProgressLine(pool, row.id, '[interrupted]');
+        const msg = reapCodeLanded
+          ? recoveryPills.buildCodeLandedBreadcrumb({
+            prNumber: reapTail.prNumber || row.pr_number || null,
+            // Nothing is rebuilding it here — the staging heal sweep owns
+            // that, on its own schedule. Don't promise what this path
+            // isn't doing.
+            rebuildingPreview: false,
+          })
+          : recoveryPills.TURN_UNFINISHED_BREADCRUMB;
+        // #786: retry pills on the breadcrumb — no wrap-up will run for
+        // a reaped turn, so this row is the pill bar's only source.
+        const reapPills = recoveryPills.buildRecoveryQuickReplies(
+          reapCodeLanded ? 'code_done' : 'unrecoverable'
         );
-        for (const row of rows) {
-          try {
-            await sessionLifecycle.purgeArchivedCc({ pool, sessionId: row.id });
-          } catch (err) {
-            log.warn('server', 'Archived CC GC failed', { sessionId: row.id, err: err.message });
-          }
+        await pool.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', $2, $3)`,
+          [row.id, msg, JSON.stringify({
+            ...(reapPills ? { quickReplies: reapPills } : {}),
+            recovered: true,
+            recoveredReason: reapCodeLanded ? 'watchdog_reap_tail' : 'watchdog_reap',
+            ...(reapCodeLanded ? { sha: reapTail.sha } : {}),
+          })]
+        ).catch(() => {});
+        broadcastGlobal({
+          type: 'session_event', sessionId: row.id, event: 'status', text: msg,
+          quickReplies: reapPills || undefined,
+        });
+        // Same "the owner cannot have watched this finish" rationale as
+        // the recovered-turn notify block in resumeDetachedTurn. #3181: a
+        // reaped exec never finished, so it says so; a reaped tail whose
+        // commit landed is the work done, and stays session_done.
+        try {
+          const notifications = require('./src/services/notifications');
+          await pool.query(
+            `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
+            [row.id]
+          ).catch(() => {});
+          const create = reapCodeLanded
+            ? notifications.createSessionDoneNotification
+            : notifications.createSessionStalledNotification;
+          const created = await create(pool, {
+            userId: row.user_id, appId: row.app_id, sessionId: row.id,
+          });
+          if (created.length) await notifications.hydrateAndPush(pool, created[0]);
+        } catch (err) {
+          log.warn('server', 'stale-turn reap notify failed', { sessionId: row.id, err: err.message });
         }
       } catch (err) {
-        log.warn('server', 'Archived CC GC sweep failed', { err: err.message });
-      }
-      try {
-        await require('./src/services/worker-volume-reclaim').reclaimWorkerVolumes({
-          pool, mode: 'closed', limit: 50,
-        });
-      } catch (err) {
-        log.warn('server', 'Merged worker volume sweep failed', { err: err.message });
+        log.warn('server', 'Stale active_turn reap failed', { sessionId: row.id, err: err.message });
       }
     }
-  }, config.staleSweepIntervalMs, { durable: pool });
+  } catch (err) {
+    log.warn('server', 'Stale active_turn watchdog sweep failed', { err: err.message });
+  }
+  }), config.sessionSweepIntervalMs);
 }
 
 // Graceful shutdown: mark drain state so new chats/app-creates/builds get
@@ -5452,7 +4659,6 @@ async function cleanup() {
   // once without a drain or at the drain's deadline, stops each at its next
   // step, its turn left running in its worker, and gives its work item up, so
   // the next leader carries it on from the step it saved.
-  const fixedCheckSyncStop = require('./src/services/fixed-check-sync').stop();
   const languageSyncStop = require('./src/services/language-sync-runner').stop();
   // The workflow runtime has its own pool; its running work reports nothing,
   // and gives its lease up so the next leader claims it at once.
@@ -5500,14 +4706,6 @@ async function cleanup() {
   if (sweeperHandle) {
     clearInterval(sweeperHandle);
     sweeperHandle = null;
-  }
-  if (sessionSweeperHandle) {
-    clearInterval(sessionSweeperHandle);
-    sessionSweeperHandle = null;
-  }
-  if (proposalMeasureHandle) {
-    clearInterval(proposalMeasureHandle);
-    proposalMeasureHandle = null;
   }
 
   // Stop leading, then finish what this process started, up to its drain
@@ -5621,7 +4819,7 @@ async function cleanup() {
     let poolTimer = null;
     try {
       await Promise.race([
-        Promise.all([fixedCheckSyncStop, languageSyncStop, workflowStop]).then(() => shutdownPool.end()),
+        Promise.all([languageSyncStop, workflowStop]).then(() => shutdownPool.end()),
         new Promise((resolve) => { poolTimer = setTimeout(resolve, POOL_CLOSE_TIMEOUT_MS); }),
       ]);
       log.info('server', 'Pool closed', { durationMs: Date.now() - poolStartedAt });

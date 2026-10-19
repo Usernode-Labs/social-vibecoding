@@ -180,15 +180,22 @@ const sessionsSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 
 const runCcSrc = fs.readFileSync(path.join(__dirname, '..', 'worker', 'run-cc.sh'), 'utf8');
 
 test('server.js sweepers use the shared busy predicate, not bare isInFlight', () => {
-  // Pass 2 (staging GC) and the active_turn watchdog gate on it.
-  const uses = serverSrc.match(/activeWorkersSvc\.isSessionBusy\(row\.id\)/g) || [];
-  assert.ok(uses.length >= 2, `expected >=2 isSessionBusy(row.id) gates, found ${uses.length}`);
-  assert.match(serverSrc,
-    /if \(activeWorkersSvc\.isSessionBusy\(row\.id\)\) continue;[\s\S]{0,300}teardownStagingForSession/,
+  // The active_turn watchdog gates on it.
+  assert.match(serverSrc, /const busy = activeWorkersSvc\.isSessionBusy\(row\.id\);\n[\s\S]{0,200}turnWatchdog\.classifyStaleTurn\(\{\n\s+activeTurn: row\.active_turn, nowMs, busy, executing: false,/,
+    'a turn somebody still holds, on any process, is never reaped');
+  // The staging GC (once Pass 2) and the stale-preview cleanup are the
+  // preview machine's: its idle give-back waits while somebody works on the
+  // session (a coding turn's journal, a turn on the author's machine, an
+  // operation a live process holds), read under the session's lock, so it
+  // cannot race a session-owned sync or pipeline tail.
+  assert.doesNotMatch(serverSrc, /teardownStagingForSession|stagingReap\.sweepStale\(/);
+  const preview = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/preview/machine.ts'), 'utf8');
+  const worked = preview.slice(preview.indexOf('function worked(s: Live, f: Facts): boolean {'));
+  assert.match(worked.slice(0, worked.indexOf('\n}\n')),
+    /if \(x && \(x\.turnRunning \|\| x\.localTurnRunning \|\| x\.shotsRunning\)\) return true;\n\s+return s\.data\.operations\.some\(\(o\) => f\.alive\.has\(o\.holder\)\);/);
+  const idleRetire = preview.slice(preview.indexOf('const idleDue: Entry'), preview.indexOf('const checksDue: Entry'));
+  assert.match(idleRetire, /if \(worked\(s, f\)\) return step\(\{ name: s\.name, data: s\.data, timer: \{ at: new Date\(ctx\.now\.getTime\(\) \+ WORKED_RECHECK_MS\), event: \{ type: 'IdleDue' \} \} \}\);\n\s+return toRetiring\(s, 'idle'/,
     'staging GC cannot race a session-owned sync/pipeline tail');
-  assert.match(serverSrc,
-    /stagingReap\.sweepStale\(config, \{ isInFlight: \(id\) => activeWorkersSvc\.isSessionBusy\(id\) \}\)/,
-    'stale-preview cleanup also respects non-worker session operations');
   // The idle pause (Pass 1, once) and the stale proposal archival are the
   // proposal machine's now: no sweeper in server.js pauses or archives a
   // session. The machine reads who works on it (the live turn record, a

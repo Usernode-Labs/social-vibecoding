@@ -5,16 +5,16 @@
     {
       "source": "server.js",
       "kind": "structural-template",
-      "fingerprint": "856f867d06e5b2aabdcc",
+      "fingerprint": "1439fe9c893bb33f9501",
       "count": 1,
-      "preview": "`SELECT cs.id FROM chat_sessions cs WHERE cs.active_turn IS NOT NULL AND cs.active_turn->>'phase' = ANY($1::text[]) AND COALESCE(cs.active_turn->>'lifecycleUpda"
+      "preview": "`SELECT cs.id, cs.user_id, cs.app_id, cs.status, cs.pr_number, cs.active_turn, cs.workflow_owner, u.username, u.is_synthetic AS user_is_synthetic FROM chat_sess"
     },
     {
       "source": "server.js",
       "kind": "structural-template",
-      "fingerprint": "a93a5c8f9dbfecec396a",
+      "fingerprint": "856f867d06e5b2aabdcc",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.user_id, cs.app_id, cs.status, cs.pr_number, cs.active_turn, cs.workflow_owner, u.username, u.is_synthetic AS user_is_synthetic FROM chat_sess"
+      "preview": "`SELECT cs.id FROM chat_sessions cs WHERE cs.active_turn IS NOT NULL AND cs.active_turn->>'phase' = ANY($1::text[]) AND COALESCE(cs.active_turn->>'lifecycleUpda"
     },
     {
       "source": "server.js",
@@ -1832,7 +1832,7 @@
     {
       "source": "src/workflow/preview/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "3fdb0ac002f0301bdf3e",
+      "fingerprint": "9080cc5d6581aec071a8",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.shared_at, cs.branch_name, cs.pr_number, cs.imported_pr_head_sha, cs.reviewed_hea"
     },
@@ -1846,7 +1846,7 @@
     {
       "source": "src/workflow/proposal/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "b149a8372cf1247d2020",
+      "fingerprint": "902268e325a637542f37",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.pr_number, cs.pr_title, cs.branch_name, cs.reviewed_head_sha, cs.imported_pr_head"
     },
