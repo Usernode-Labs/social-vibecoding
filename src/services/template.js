@@ -791,8 +791,10 @@ Once the real app exists, rewrite this README to describe it.
     // for every copy of a starter, so a new app's first build is served
     // them from the starter's shared layer cache instead of installing
     // cold (services/kubernetes-buildkit.js, "The starter's shared
-    // cache"). Nothing reads either field: the app is named by dapp.json,
-    // its README, CLAUDE.md and its screen.
+    // cache"). That cache is named by a hash of these two files and the
+    // Dockerfile below, so every starter that writes the same bytes, the
+    // empty scaffold included, shares one. Nothing reads either field: the
+    // app is named by dapp.json, its README, CLAUDE.md and its screen.
     {
       path: 'package.json',
       content: JSON.stringify({
