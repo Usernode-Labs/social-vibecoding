@@ -2929,9 +2929,9 @@
       "expectSelector": "#platform-mark-btn:not(:has([id^=\"notifications-badge\"]))"
     },
     {
-      "name": "Admin & moderation renders in Settings for admins, above Log out, moved from Me (#588, #2718)",
-      "path": "/?demo=1#settings",
-      "expectSelector": "#settings-screen:not(.hidden) #settings-footer > #settings-account-rows:has(#settings-row-admin[href=\"#admin\"]) + #settings-logout"
+      "name": "Admin & moderation is a row on Me for admins, out of personal Settings (#588, #2718, #5281)",
+      "path": "/?demo=1#profile",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-admin #profile-row-admin[href=\"#admin\"]"
     },
     {
       "name": "Settings renders the platform build as plain text, not a pill",
@@ -3395,7 +3395,7 @@
     },
     {
       "name": "The Username section says the old handle stays reserved",
-      "path": "/#settings/username",
+      "path": "/?shot=username-change#settings/username",
       "expectText": "kept reserved for you"
     },
     {

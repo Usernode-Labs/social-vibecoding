@@ -144,7 +144,7 @@ interface ElementLike {
   getClientRects?: () => { length: number };
 }
 
-interface DocLike {
+export interface DocLike {
   activeElement?: unknown;
   documentElement?: { classList?: { contains(name: string): boolean } } | null;
   getElementById(id: string): unknown;
@@ -196,8 +196,9 @@ function onScreen(el: ElementLike | null): boolean {
 /**
  * Anything presenting itself as a dialog: the kit's modals and sheets
  * (`aria-modal`), and the shell's own dialogs and menus (`role="dialog"`).
+ * ⌘K reads it too (../workshop/community-shortcut.ts).
  */
-function dialogShowing(doc: DocLike): boolean {
+export function dialogShowing(doc: DocLike): boolean {
   let nodes: ArrayLike<unknown>;
   try {
     nodes = doc.querySelectorAll('[aria-modal="true"], [role="dialog"]');

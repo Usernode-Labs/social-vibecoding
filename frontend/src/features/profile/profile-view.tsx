@@ -36,7 +36,7 @@ import {
 } from './profile-store.js';
 import { Profile } from './profile.js';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
-import { AccountPanel, RewardsPanel, SettingsPanel, WorkPanel } from './account-panel';
+import { AccountPanel, AdminPanel, RewardsPanel, SettingsPanel, WorkPanel } from './account-panel';
 import { FeedbackSheet } from './feedback-sheet';
 import { FriendsSheet } from './friends-sheet';
 import { ProfileEditSheet } from './profile-edit-sheet';
@@ -352,6 +352,7 @@ export function ProfileRoot(): ReactNode {
         <div className="lg:col-start-1 lg:row-start-2">
           <AccountPanel rows={view.rows} />
           <SettingsPanel />
+          <AdminPanel />
         </div>
       </div>
     </>

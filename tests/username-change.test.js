@@ -132,8 +132,59 @@ function makeMockPool(state) {
     const sql = collapse(rawSql);
     calls.push({ sql, params });
 
-    if (sql.startsWith('SELECT username, password FROM users WHERE id')) {
-      return { rows: state.me ? [{ username: state.me.username, password: state.me.password }] : [] };
+    if (sql.startsWith('SELECT username, password, password_set FROM users WHERE id')) {
+      return {
+        rows: state.me ? [{
+          username: state.me.username,
+          password: state.me.password,
+          password_set: state.me.password_set !== false,
+        }] : [],
+      };
+    }
+    // ── #5281: the emailed-code proof (services/account-email.js) ──
+    // `state.codes` is account_username_codes keyed by user id; a sign-in
+    // code lives in a different table, which nothing here may read.
+    if (sql.includes('mobile_otp_codes') || sql.includes('account_email_verifications')) {
+      throw new Error(`the username route read another proof's table: ${sql.slice(0, 100)}`);
+    }
+    if (sql.startsWith('SELECT email, email_confirmed, password, password_set, is_admin FROM users WHERE id = $1 FOR UPDATE')) {
+      const u = [state.me, ...(state.others || [])].find((x) => x && (x.id ?? 7) === params[0]);
+      return {
+        rows: u ? [{
+          email: u.email ?? null,
+          email_confirmed: !!u.email_confirmed,
+          password: u.password,
+          password_set: u.password_set !== false,
+          is_admin: !!u.is_admin,
+        }] : [],
+      };
+    }
+    if (sql.startsWith('SELECT created_at > NOW() - INTERVAL \'60 seconds\' AS recent FROM account_username_codes')) {
+      const row = state.codes[params[0]];
+      return { rows: row ? [{ recent: row.created_at > Date.now() - 60e3 }] : [] };
+    }
+    if (sql.startsWith('INSERT INTO account_username_codes')) {
+      state.codes[params[0]] = {
+        email: params[1], code_hash: params[2], password_hash: params[3],
+        attempts: 0, expires_at: Date.now() + 10 * 60e3, created_at: Date.now(),
+      };
+      return { rows: [], rowCount: 1 };
+    }
+    if (sql.startsWith('SELECT code_hash, email, password_hash, attempts, expires_at > NOW() AS valid FROM account_username_codes')) {
+      const row = state.codes[params[0]];
+      return { rows: row ? [{ ...row, valid: row.expires_at > Date.now() }] : [] };
+    }
+    if (sql.startsWith('UPDATE account_username_codes SET attempts = attempts + 1')) {
+      if (state.codes[params[0]]) state.codes[params[0]].attempts += 1;
+      return { rows: [], rowCount: 1 };
+    }
+    if (sql.startsWith('DELETE FROM account_username_codes')) {
+      const row = state.codes[params[0]];
+      if (row && row.code_hash === params[1] && row.expires_at > Date.now() && row.attempts < params[2]) {
+        delete state.codes[params[0]];
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
     }
     if (sql.startsWith('SELECT id FROM users WHERE LOWER(username)')) {
       const hit = state.live.find((u) => u.username.toLowerCase() === params[0]);
@@ -194,6 +245,7 @@ function freshState(over = {}) {
     retired: [],
     tx: [],
     events: [],
+    codes: {},
     ...over,
   };
 }
@@ -226,12 +278,12 @@ function makeApp(state, { user = ME } = {}) {
   return { app: appAround(pool, user), calls, state };
 }
 
-async function rename(app, payload) {
+async function rename(app, payload, route = '/api/me/username') {
   const server = app.listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   try {
     const { port } = server.address();
-    const res = await fetch(`http://127.0.0.1:${port}/api/me/username`, {
+    const res = await fetch(`http://127.0.0.1:${port}${route}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
@@ -658,6 +710,272 @@ test('the username charset is a strict subset of the branch charset', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
+// 6b. An account with no password confirms by emailed code (#5281)
+// ═══════════════════════════════════════════════════════════════════════
+//
+// An account made with an emailed code has no password (password_set FALSE,
+// a random hash nobody knows), so the password gate above locked it out of
+// renaming for good. POST /api/me/username/code mails a six-digit code to
+// its CONFIRMED address and the rename takes that code instead, but only
+// for such an account. The proof lives in its own table, so neither a
+// sign-in code nor an address-change code can stand in for it.
+
+const accountEmail = require('../src/services/account-email');
+const mailModule = require('../src/services/mail');
+
+/** A passwordless account with a confirmed address, as the email sign-up makes. */
+function codeState(over = {}) {
+  return freshState({
+    me: {
+      id: 7, username: 'ada', password: PASSWORD_HASH, password_set: false,
+      email: 'ada@example.test', email_confirmed: true,
+    },
+    others: [{
+      id: 8, username: 'bob', password: PASSWORD_HASH, password_set: false,
+      email: 'bob@example.test', email_confirmed: true,
+    }],
+    ...over,
+  });
+}
+
+/** Capture what the code request mails instead of sending it. */
+function captureMail(t) {
+  const sent = [];
+  const original = mailModule.send;
+  mailModule.send = async (_config, message) => { sent.push(message); };
+  t.after(() => { mailModule.send = original; });
+  return sent;
+}
+
+const askCode = (app) => rename(app, {}, '/api/me/username/code');
+const wrongCode = (code) => (code === '000000' ? '000001' : '000000');
+
+test('an account WITH a password still confirms with its password, and a code is worth nothing to it', async (t) => {
+  const sent = captureMail(t);
+  const state = freshState();
+  const { app, calls } = makeApp(state);
+  const res = await rename(app, { username: 'ada_l', code: '123456' });
+  assert.equal(res.status, 400);
+  assert.equal(res.body.error, 'Current password is required');
+  assert.equal(state.me.username, 'ada');
+  assert.ok(!calls.some((c) => c.sql.includes('account_username_codes')),
+    'the code is not even looked at for an account that has a password');
+
+  const ask = await askCode(makeApp(freshState()).app);
+  assert.equal(ask.status, 409, 'nor is one mailed to it');
+  assert.match(ask.body.error, /has a password/);
+  assert.equal(sent.length, 0);
+});
+
+test('an account with no password renames with the code mailed to its verified address', async (t) => {
+  const sent = captureMail(t);
+  const state = codeState();
+  const { app } = makeApp(state);
+
+  const ask = await askCode(app);
+  assert.equal(ask.status, 200);
+  assert.deepEqual(ask.body, { email: 'ada@example.test' });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].kind, 'username_change');
+  assert.equal(sent[0].to, 'ada@example.test', 'only ever the account\'s own confirmed address');
+  assert.match(sent[0].code, /^\d{6}$/);
+  assert.notEqual(state.codes[7].code_hash, sent[0].code, 'only the hash is stored');
+
+  const res = await rename(app, { username: 'ada_l', code: sent[0].code });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body, { username: 'ada_l', retired: 'ada' });
+  assert.equal(state.me.username, 'ada_l');
+  assert.equal(state.codes[7], undefined, 'the code is spent by the rename');
+});
+
+test('without a code, an account with no password is told to ask for one', async () => {
+  const state = codeState();
+  const res = await rename(makeApp(state).app, { username: 'ada_l', currentPassword: 'anything' });
+  assert.equal(res.status, 400);
+  assert.equal(res.body.codeRequired, true);
+  assert.equal(state.me.username, 'ada');
+});
+
+test('a wrong, expired or already-used code changes nothing', async (t) => {
+  const sent = captureMail(t);
+
+  // Wrong: refused, and the guess is counted.
+  let state = codeState();
+  let app = makeApp(state).app;
+  await askCode(app);
+  let res = await rename(app, { username: 'ada_l', code: wrongCode(sent[0].code) });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /Invalid or expired code/);
+  assert.equal(state.codes[7].attempts, 1);
+  assert.equal(state.me.username, 'ada');
+
+  // Expired.
+  sent.length = 0;
+  state = codeState();
+  app = makeApp(state).app;
+  await askCode(app);
+  state.codes[7].expires_at = Date.now() - 1000;
+  res = await rename(app, { username: 'ada_l', code: sent[0].code });
+  assert.equal(res.status, 400);
+  assert.equal(state.me.username, 'ada');
+
+  // Used: the same code a second time, after it renamed once.
+  sent.length = 0;
+  state = codeState();
+  app = makeApp(state).app;
+  await askCode(app);
+  assert.equal((await rename(app, { username: 'ada_l', code: sent[0].code })).status, 200);
+  res = await rename(app, { username: 'ada_m', code: sent[0].code });
+  assert.equal(res.status, 400, 'a spent code is gone');
+  assert.equal(state.me.username, 'ada_l');
+});
+
+test('five wrong guesses stop even the right code', async (t) => {
+  // The route's own limiter allows five renames an hour, so the per-code cap
+  // is proven on the service the route calls.
+  const sent = captureMail(t);
+  const state = codeState();
+  const { pool } = makeMockPool(state);
+  await accountEmail.requestUsernameCode(pool, {}, 7);
+  for (let i = 0; i < 5; i += 1) {
+    await assert.rejects(accountEmail.checkUsernameCode(pool, 7, wrongCode(sent[0].code)), { status: 400 });
+  }
+  assert.equal(state.codes[7].attempts, 5);
+  await assert.rejects(accountEmail.checkUsernameCode(pool, 7, sent[0].code), { status: 400 });
+});
+
+test('a code minted for another account does not rename this one', async (t) => {
+  const sent = captureMail(t);
+  const state = codeState();
+  // Bob asks for a code; Ada's session submits it.
+  await askCode(makeApp(state, { user: { id: 8, username: 'bob' } }).app);
+  assert.equal(sent[0].to, 'bob@example.test');
+  const res = await rename(makeApp(state).app, { username: 'ada_l', code: sent[0].code });
+  assert.equal(res.status, 400);
+  assert.equal(state.me.username, 'ada');
+  assert.ok(state.codes[8], 'and Bob\'s code is untouched');
+});
+
+test('a sign-in code cannot stand in for it, and its table is never read here', async () => {
+  // The sign-in code sits in mobile_otp_codes, keyed by address; the mock
+  // throws if the route reads it, or the address-change proof's table. With
+  // no username code minted, any six digits are refused.
+  const state = codeState();
+  const res = await rename(makeApp(state).app, { username: 'ada_l', code: '123456' });
+  assert.equal(res.status, 400);
+  assert.equal(state.me.username, 'ada');
+  // And the other way round: neither sign-in nor the address proof reads
+  // the username codes.
+  for (const rel of ['src/services/email-signup.js', 'src/routes/auth.js']) {
+    assert.doesNotMatch(read(rel), /account_username_codes/, `${rel} must not accept a username code`);
+  }
+  const accountEmailSrc = read('src/services/account-email.js');
+  const verifyBody = accountEmailSrc.slice(accountEmailSrc.indexOf('async function verifyCode('),
+    accountEmailSrc.indexOf('// ── A username change confirmed by email'));
+  assert.doesNotMatch(verifyBody, /account_username_codes/, 'nor does the address proof');
+  const usernameBody = accountEmailSrc.slice(accountEmailSrc.indexOf('// ── A username change confirmed by email'));
+  assert.doesNotMatch(usernameBody, /mobile_otp_codes|account_email_verifications/,
+    'and the username proof reads neither of theirs');
+});
+
+test('a code dies with a new password or a new address', async (t) => {
+  const sent = captureMail(t);
+  // A password added while the code is out: the account now confirms with
+  // the password, so the code is not even considered.
+  let state = codeState();
+  let app = makeApp(state).app;
+  await askCode(app);
+  state.me.password_set = true;
+  let res = await rename(app, { username: 'ada_l', code: sent[0].code });
+  assert.equal(res.status, 400);
+  assert.equal(res.body.error, 'Current password is required');
+  // The hash it was minted against changed (a password set and dropped
+  // again, or reset): the code is stale.
+  sent.length = 0;
+  state = codeState();
+  app = makeApp(state).app;
+  await askCode(app);
+  state.me.password = bcrypt.hashSync('another', 4);
+  res = await rename(app, { username: 'ada_l', code: sent[0].code });
+  assert.equal(res.status, 400);
+  // The address it went to changed.
+  sent.length = 0;
+  state = codeState();
+  app = makeApp(state).app;
+  await askCode(app);
+  state.me.email = 'new@example.test';
+  res = await rename(app, { username: 'ada_l', code: sent[0].code });
+  assert.equal(res.status, 400);
+  assert.equal(state.me.username, 'ada');
+});
+
+test('no code without a verified address, and none for an admin account', async (t) => {
+  const sent = captureMail(t);
+  for (const me of [
+    { email: null, email_confirmed: false },
+    { email: 'ada@example.test', email_confirmed: false },
+  ]) {
+    const state = codeState();
+    Object.assign(state.me, me);
+    const res = await askCode(makeApp(state).app);
+    assert.equal(res.status, 409);
+    assert.match(res.body.error, /verify an email address first, or add a password/);
+    assert.equal(state.codes[7], undefined);
+  }
+  const admin = codeState();
+  admin.me.is_admin = true;
+  const res = await askCode(makeApp(admin).app);
+  assert.equal(res.status, 409);
+  assert.match(res.body.error, /Admin accounts/);
+  // A code minted before the account became an admin is refused too.
+  const late = codeState();
+  const app = makeApp(late).app;
+  await askCode(app);
+  late.me.is_admin = true;
+  assert.equal((await rename(app, { username: 'ada_l', code: sent.at(-1).code })).status, 409);
+  assert.equal(late.me.username, 'ada');
+});
+
+test('the code is checked BEFORE any availability answer, and a taken name does not spend it', async (t) => {
+  const sent = captureMail(t);
+  const state = codeState();
+  const { pool, calls } = makeMockPool(state);
+  const app = appAround(pool, ME);
+  await askCode(app);
+  await rename(app, { username: 'bob', code: wrongCode(sent[0].code) });
+  assert.equal(calls.some((c) => c.sql.startsWith('SELECT id FROM users WHERE LOWER(username)')), false,
+    'a caller without the code learns nothing about who holds what');
+  // The right code and a taken name: refused as taken, and the code survives
+  // for the next name.
+  const taken = await rename(app, { username: 'bob', code: sent[0].code });
+  assert.equal(taken.status, 409);
+  assert.ok(state.codes[7], 'the code is spent only by a rename that happens');
+  assert.equal((await rename(app, { username: 'ada_l', code: sent[0].code })).status, 200);
+});
+
+test('rate limits: a minute between codes, five renames an hour, and the mail throttle', async (t) => {
+  const sent = captureMail(t);
+  const state = codeState();
+  const app = makeApp(state).app;
+  assert.equal((await askCode(app)).status, 200);
+  const again = await askCode(app);
+  assert.equal(again.status, 429, 'a double tap keeps the code already mailed');
+  assert.equal(sent.length, 1);
+  // usernameChangeLimiter: five rename attempts per user per hour, code or not.
+  for (let i = 0; i < 5; i += 1) {
+    assert.equal((await rename(app, { username: 'ada_l', code: wrongCode(sent[0].code) })).status, 400);
+  }
+  assert.equal((await rename(app, { username: 'ada_l', code: sent[0].code })).status, 429);
+  assert.equal(state.me.username, 'ada');
+  // The code request rides the profile-write limiter, and the mail its own
+  // per-recipient rule.
+  const routes = read('src/routes/profile.js');
+  assert.match(routes, /'\/api\/me\/username\/code',\s*requireUser,\s*profileWriteLimiter,/);
+  assert.deepEqual(require('../src/services/mail/rate-limit').RULES.username_change,
+    { minGapMs: 60 * 1000, perWindow: 5, windowMs: 60 * 60 * 1000 });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
 // 7. The form — Settings.changeUsername()
 // ═══════════════════════════════════════════════════════════════════════
 //
@@ -719,10 +1037,11 @@ function node(extra = {}) {
  * fetch that records what it was asked for. `respond` returns the fake
  * Response; the default is the server's own success shape.
  */
-function usernameForm({ respond } = {}) {
+function usernameForm({ respond, hasPassword } = {}) {
   const els = {
     'cu-new': node({ value: 'ada_l' }),
     'cu-password': node({ value: PASSWORD }),
+    'cu-code': node({ value: ' 123456 ' }),
     'cu-save': node(),
     'cu-status': node(),
     'cu-current': node(),
@@ -738,7 +1057,7 @@ function usernameForm({ respond } = {}) {
       querySelectorAll: () => [],
     },
     App: {
-      user: { id: 7, username: 'ada' },
+      user: { id: 7, username: 'ada', ...(hasPassword === undefined ? {} : { hasPassword }) },
       saveSessionSnapshot() {},
       resyncCurrentView() {},
     },
@@ -825,4 +1144,18 @@ test('the palette these painters read is token arrays, not class strings', () =>
     'STATUS_PALETTE holds token ARRAYS, spread into classList by paintStatus');
   assert.match(SETTINGS_SOURCE, /el\.classList\.add\(\.\.\.\(STATUS_PALETTE\[kind\] \|\| STATUS_PALETTE\.info\)\);/,
     'and they are SPREAD — one argument per token');
+});
+
+test('an account with no password sends the emailed code, never a password (#5281)', async () => {
+  const { Settings, els, calls } = usernameForm({ hasPassword: false });
+  await Settings.changeUsername();
+  assert.equal(calls.length, 1);
+  assert.deepEqual(JSON.parse(calls[0].options.body), { username: 'ada_l', code: '123456' });
+  assert.equal(els['cu-status'].textContent, 'You are now @ada_l.');
+
+  const empty = usernameForm({ hasPassword: false });
+  empty.els['cu-code'].value = '';
+  await empty.Settings.changeUsername();
+  assert.equal(empty.calls.length, 0, 'no request without a code');
+  assert.equal(empty.els['cu-status'].textContent, 'Enter the six-digit code from the email.');
 });

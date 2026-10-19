@@ -196,11 +196,14 @@ test('every part of the older Profile has a home', () => {
   assert.match(sheet, /Profile\._setPublished\(!published\)/);
   assert.match(sheet, /\{t\('profile:edit\.public\.copy'\)\}/);
   assert.equal(message('profile:edit.public.copy'), 'Copy public link');
-  // Admin & moderation, node / wallet / staking → Settings; Log out already there
+  // node / wallet / staking → Settings; Log out already there. Admin &
+  // moderation went to Settings too, and came back to Me (admins only) in
+  // #5281: tests/admin-console-entry-row.test.js pins where it is.
   const rows = read('frontend/src/features/settings/account-rows.tsx');
-  for (const needle of ['id="settings-row-admin"', '<NodePillRow />', '<WalletRow />', '<StakingRow />']) {
+  for (const needle of ['<NodePillRow />', '<WalletRow />', '<StakingRow />']) {
     assert.ok(rows.includes(needle), needle);
   }
+  assert.ok(!rows.includes('settings-row-admin'), 'Admin & moderation is not a Settings row any more');
   assert.match(read('frontend/src/features/settings/index.tsx'), /id="settings-logout"/);
   // completions → counted on Me, listed on the Challenges tab
   assert.match(read(STORE), /summary\.challenges && summary\.challenges\.done/);

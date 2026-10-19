@@ -20,6 +20,14 @@
  *   votes     #profile/your-votes: GET /api/me/history?type=votes, the changes
  *             and group decisions you voted on, Still open / Decided.
  *
+ * #5272 made the three one page: a tab strip at the top of the column
+ * (`data-profile-work-tab`) switches between them, and each tab is its
+ * address above, so a tab press changes the hash and the router opens the
+ * view, exactly as Profile's three rows do. Your changes adds stage chips
+ * and a Project choice over the rows it loaded (`data-profile-work-stage`,
+ * `data-profile-work-project`; see proposalsView), and a row whose own status
+ * says what comes next carries that step as one pill.
+ *
  * The legacy router (`App.navigateToProfileProposals`) is a classic script
  * and cannot import from this bundle, so it reaches the controller below by
  * name through `window.UsernodeReact.profileProposals`, the same seam as
@@ -34,14 +42,20 @@
 import { useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { Chip, ChipRail } from '@/components/ui/chip';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { Select } from '@/components/ui/select';
+import {
+  SECTION_TAB_ACTIVE, SECTION_TAB_BASE, SECTION_TAB_INACTIVE, SECTION_TABS_LIST,
+  Tabs, TabsList, TabsTrigger,
+} from '@/components/ui/tabs';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { createStore } from '../../lib/plain-store.js';
 import { useMessages } from '../../lib/i18n/react';
 import { FRESH, watch } from '../../lib/live-reads';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
-import { proposalsView, requestsView, votesView } from './profile-store.js';
+import { CHANGE_STAGE_LABELS, proposalsView, requestsView, votesView } from './profile-store.js';
 
 export type WorkKind = 'changes' | 'requests' | 'votes';
 
@@ -51,9 +65,13 @@ type WorkState = {
   /** Each view's read, as it answered; null until it does. */
   data: Partial<Record<WorkKind, unknown>>;
   error: boolean;
+  /** Your changes' stage chip: one of CHANGE_STAGES, or 'all' (#5272). */
+  stage: string;
+  /** Your changes' Project choice: an app slug, or '' for every project. */
+  project: string;
 };
 
-const initial: WorkState = { open: false, kind: 'changes', data: {}, error: false };
+const initial: WorkState = { open: false, kind: 'changes', data: {}, error: false, stage: 'all', project: '' };
 const profileProposalsStore = createStore(initial);
 
 /** Where each view reads from. */
@@ -61,6 +79,21 @@ const READS: Record<WorkKind, string> = {
   changes: '/api/me/proposal-history',
   requests: '/api/me/requests',
   votes: '/api/me/history?type=votes&limit=50',
+};
+
+/** The order of the tabs, and the address each one opens (app.js PROFILE_WORK). */
+export const WORK_KINDS: WorkKind[] = ['changes', 'requests', 'votes'];
+export const WORK_ROUTES: Record<WorkKind, string> = {
+  changes: '#profile/your-changes',
+  requests: '#profile/your-requests',
+  votes: '#profile/your-votes',
+};
+
+/** What each tab says. */
+export const WORK_TABS: Record<WorkKind, string> = {
+  changes: 'profile:work.tab.changes',
+  requests: 'profile:work.tab.requests',
+  votes: 'profile:work.tab.votes',
 };
 
 /** What each view is called, on the bar and in its messages. */
@@ -111,17 +144,91 @@ function demoQuery(url: string): string {
 
 /** The project a Your changes row belongs to, in app-card.js's field names. */
 type RowApp = { slug: string; name: string; icon_emoji: string | null; icon_url: string | null };
-type Row = { key: string; href: string | null; title: string; meta: string; app?: RowApp };
+type Row = { key: string; href: string | null; title: string; meta: string; app?: RowApp; step?: string | null };
 type Section = { key: string; label: string; rows: Row[] };
 
 /** The project's icon tile, drawn as the Communities list draws it. */
 const ICON_TILE = 'app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden '
   + 'flex items-center justify-center font-bold text-lg';
 
-function viewOf(kind: WorkKind, data: unknown): { loaded: boolean; sections: Section[]; empty: boolean } {
+/** A row's next step (#5272): an action, so the accent; one per row at most. */
+const STEP_PILL = 'shrink-0 rounded-full bg-violet-500/15 px-2.5 py-0.5 text-[0.75rem] font-semibold '
+  + 'text-violet-700 dark:text-violet-300';
+
+type View = {
+  loaded: boolean;
+  sections: Section[];
+  empty: boolean;
+  /** Your changes only: the filters left nothing, though something was started. */
+  filtered?: boolean;
+  stages?: string[];
+  projects?: { slug: string; name: string }[];
+  stage?: string;
+  project?: string;
+};
+
+function viewOf(kind: WorkKind, data: unknown, state: WorkState): View {
   if (kind === 'requests') return requestsView(data);
   if (kind === 'votes') return votesView(data);
-  return proposalsView(data);
+  return proposalsView(data, Date.now(), { stage: state.stage, project: state.project });
+}
+
+/** A tab press goes to the tab's address; the router opens the view. */
+function openTab(kind: string): void {
+  const current = (profileProposalsStore.get() as WorkState).kind;
+  const next = workKind(kind);
+  if (next === current) return;
+  try {
+    location.hash = WORK_ROUTES[next];
+  } catch {
+    // No location to move (a test renderer): nothing to open.
+  }
+}
+
+/**
+ * Your changes' filters (#5272): a chip per stage that has rows, and a
+ * Project choice once the list spans two projects or more. Each is left out
+ * when it could only offer one answer.
+ */
+function ChangeFilters({ view }: { view: View }): ReactNode {
+  const t = useMessages('profile');
+  const stages = view.stages || [];
+  const projects = view.projects || [];
+  if (stages.length < 2 && projects.length < 2) return null;
+  const stage = view.stage || 'all';
+  return (
+    <div className="mt-1 mb-1 flex flex-col gap-2" data-profile-work-filters="">
+      {stages.length > 1 ? (
+        <ChipRail className="-mx-4 gap-2 py-1" role="group" aria-label={t('profile:changes.filter.stage')}>
+          {['all', ...stages].map((key) => (
+            <Chip
+              key={key}
+              size="bar"
+              className="px-4"
+              data-profile-work-stage={key}
+              selected={stage === key}
+              onClick={() => profileProposalsStore.set({ stage: key })}
+            >
+              {t((CHANGE_STAGE_LABELS as Record<string, string>)[key])}
+            </Chip>
+          ))}
+        </ChipRail>
+      ) : null}
+      {projects.length > 1 ? (
+        <Select
+          variant="plain"
+          className="w-auto max-w-full self-start rounded-full"
+          aria-label={t('profile:changes.filter.project')}
+          data-profile-work-project=""
+          value={view.project || ''}
+          onChange={(event) => profileProposalsStore.set({ project: event.currentTarget.value })}
+        >
+          <option value="">{t('profile:changes.filter.allProjects')}</option>
+          {projects.map((p) => <option key={p.slug} value={p.slug}>{p.name}</option>)}
+        </Select>
+      ) : null}
+    </div>
+  );
 }
 
 function Group({ kind, section }: { kind: WorkKind; section: Section }): ReactNode {
@@ -157,6 +264,9 @@ function Group({ kind, section }: { kind: WorkKind; section: Section }): ReactNo
             titleClassName={TITLE}
             subtitle={row.meta}
             subtitleClassName={SUBTITLE}
+            trailing={row.step ? (
+              <span className={STEP_PILL} data-profile-work-step="">{row.step}</span>
+            ) : undefined}
             chevron={!!row.href}
           />
         ))}
@@ -183,7 +293,7 @@ export function ProfileProposalsScreen(): ReactNode {
   useVisibilityHiddenClass(screenRef, 'profile-proposals-screen', false);
   const kind = state.kind;
   const data = state.data[kind];
-  const view = viewOf(kind, data ?? null);
+  const view = viewOf(kind, data ?? null, state);
 
   return (
     <main
@@ -203,6 +313,26 @@ export function ProfileProposalsScreen(): ReactNode {
           edge to edge on a phone with no margin. The column is now
           #profile-root's, class for class. */}
       <div className="max-w-2xl mx-auto px-4 pt-5 pb-8">
+        {/* The three views' tabs (#5272). Drawn once the screen is opened, so
+            the prerender stays the empty frame the hydration expects. */}
+        {state.open ? (
+          <Tabs value={kind} onValueChange={openTab}>
+            <TabsList className={SECTION_TABS_LIST} data-profile-work-tabs="">
+              {WORK_KINDS.map((key) => (
+                <TabsTrigger
+                  key={key}
+                  value={key}
+                  data-profile-work-tab={key}
+                  className={SECTION_TAB_BASE}
+                  activeClassName={SECTION_TAB_ACTIVE}
+                  inactiveClassName={SECTION_TAB_INACTIVE}
+                >
+                  {t(WORK_TABS[key])}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        ) : null}
         {state.error ? (
           <div className={NOTE}>
             <p>{t(LOAD_FAILED[kind])}</p>
@@ -216,13 +346,17 @@ export function ProfileProposalsScreen(): ReactNode {
           </div>
         ) : data == null || !view.loaded ? (
           state.open ? <p className={NOTE}>{t('core:common.loading')}</p> : null
-        ) : view.empty ? (
+        ) : view.empty && !view.filtered ? (
           <p className={NOTE}>{t(EMPTY[kind])}</p>
         ) : (
-          // Keyed by view, so a fold opened on one list is not open on the next.
-          view.sections.map((section) => (
-            <Group key={`${kind}:${section.key}`} kind={kind} section={section} />
-          ))
+          <>
+            {kind === 'changes' ? <ChangeFilters view={view} /> : null}
+            {view.filtered ? <p className={NOTE}>{t('profile:changes.filter.noMatch')}</p> : null}
+            {/* Keyed by view, so a fold opened on one list is not open on the next. */}
+            {view.sections.map((section) => (
+              <Group key={`${kind}:${section.key}`} kind={kind} section={section} />
+            ))}
+          </>
         )}
         {kind === 'votes' && view.loaded && !view.empty ? (
           <p className="px-4 mt-3 text-xs text-zinc-500 dark:text-zinc-400">
