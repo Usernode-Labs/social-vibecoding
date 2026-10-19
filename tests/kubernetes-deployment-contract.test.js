@@ -29,6 +29,8 @@ test('Kubernetes hosted-app evidence image declares a numeric non-root user', ()
 
 // The build stages of Dockerfile.kubernetes, by name: what each is FROM, what
 // it copies from another stage, what it mounts, and its instructions.
+const DEPENDENCY_MOUNT = '--mount=type=bind,from=asset-deps,source=/build/frontend/node_modules,target=/build/frontend/node_modules,rw';
+
 function dockerStages(dockerfile) {
   const stages = [];
   const instructions = dockerfile.replace(/\\\n/g, ' ').split('\n').filter((line) => line && !line.startsWith('#'));
@@ -40,9 +42,45 @@ function dockerStages(dockerfile) {
   }
   for (const stage of stages) {
     stage.copiesFrom = stage.lines.flatMap((l) => [...l.matchAll(/^COPY .*--from=(\S+)/g)].map((m) => m[1]));
-    stage.mounts = stage.lines.flatMap((l) => [...l.matchAll(/--mount=type=bind,from=([^,\s]+)/g)].map((m) => m[1]));
+    // Every mount of every type, whole: a cache or bind mount from another
+    // stage, or a shared `sharing=locked` cache, makes one RUN wait on another.
+    stage.mounts = stage.lines.flatMap((l) => [...l.matchAll(/--mount=(\S+)/g)].map((m) => m[1]));
   }
   return stages;
+}
+
+// The three expensive steps run at the same time because none of their
+// stages waits for another: each is FROM the shared sources and takes
+// nothing from a sibling. Pass 1, pass 2 and Tailwind ran one after another
+// in a single stage before; built so again, the build is ~6 s slower and no
+// output differs, so only this can catch it.
+function assertSiblingStages(dockerfile) {
+  const stages = dockerStages(dockerfile);
+  const stage = (name) => {
+    const found = stages.filter((s) => s.name === name);
+    assert.equal(found.length, 1, `Dockerfile.kubernetes must have one stage named ${name}`);
+    return found[0];
+  };
+  const run = (s, command) => {
+    const runs = s.lines.filter((l) => /^RUN /.test(l));
+    assert.equal(runs.length, 1, `${s.name} runs one step`);
+    // The whole instruction, from RUN to the end: the one dependency mount,
+    // then the command. Anything added in between is a change to this rule.
+    assert.equal(runs[0].replace(/ +/g, ' '), `RUN ${DEPENDENCY_MOUNT} ${command}`,
+      `${s.name} must run exactly \`${command}\` with the dependency mount and nothing else`);
+  };
+  const siblings = [
+    [stage('shell-bundle'), 'node frontend/scripts/build-shell.mjs --bundle-only'],
+    [stage('shell-prerender'), 'node frontend/scripts/build-shell.mjs --prerender-only'],
+    [stage('shell-css'), 'node scripts/build-tailwind.js'],
+  ];
+  for (const [s, command] of siblings) {
+    run(s, command);
+    assert.equal(s.base, 'shell-src', `${s.name} must be FROM shell-src, so it starts as soon as the sources are in`);
+    assert.deepEqual(s.copiesFrom, [], `${s.name} must take nothing from another stage: that would make it wait`);
+    assert.deepEqual(s.mounts, [DEPENDENCY_MOUNT.slice('--mount='.length)],
+      `${s.name} mounts the dependency tree and nothing else: any other mount (a cache, another stage) can make it wait`);
+  }
 }
 
 test('Kubernetes platform image builds and contains the generated shell assets', () => {
@@ -55,33 +93,13 @@ test('Kubernetes platform image builds and contains the generated shell assets',
   };
   const deps = stage('asset-deps');
   const src = stage('shell-src');
-  const bundle = stage('shell-bundle');
-  const prerender = stage('shell-prerender');
-  const css = stage('shell-css');
   const shell = stage('shell');
   const runtime = stages.at(-1);
   assert.equal(deps.base, 'node:22-alpine');
   assert.equal(src.base, 'node:22-alpine');
   assert.equal(runtime.name, null, 'the runtime is the last, unnamed stage');
 
-  // The three expensive steps run at the same time because none of their
-  // stages waits for another: each is FROM the shared sources and takes
-  // nothing from a sibling. Pass 1, pass 2 and Tailwind ran one after another
-  // in a single stage before; built so again, the build is ~6 s slower and no
-  // output differs, so only this can catch it.
-  const run = (s, command) => {
-    const runs = s.lines.filter((l) => /^RUN /.test(l));
-    assert.equal(runs.length, 1, `${s.name} runs one step`);
-    assert.match(runs[0], new RegExp(`--mount=type=bind,from=asset-deps,source=/build/frontend/node_modules,target=/build/frontend/node_modules,rw +${command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`));
-  };
-  run(bundle, 'node frontend/scripts/build-shell.mjs --bundle-only');
-  run(prerender, 'node frontend/scripts/build-shell.mjs --prerender-only');
-  run(css, 'node scripts/build-tailwind.js');
-  for (const s of [bundle, prerender, css]) {
-    assert.equal(s.base, 'shell-src', `${s.name} must be FROM shell-src, so it starts as soon as the sources are in`);
-    assert.deepEqual(s.copiesFrom, [], `${s.name} must take nothing from another stage: that would make it wait`);
-    assert.deepEqual(s.mounts, ['asset-deps'], `${s.name} mounts the dependency tree and nothing else`);
-  }
+  assertSiblingStages(dockerfile);
 
   // The dependency tree is mounted, never inherited: a stage FROM asset-deps
   // would be a second dependency-bearing snapshot for rootless BuildKit to
@@ -149,6 +167,29 @@ test('Kubernetes platform image builds and contains the generated shell assets',
   assert.doesNotMatch(runtimeText, /^COPY .*frontend/m);
   assert.doesNotMatch(runtimeText, /^COPY .*tests/m);
   assert.doesNotMatch(runtimeText, /^COPY .*docs/m);
+});
+
+test('the sibling-stage guard refuses a mount that would make one asset step wait for another', () => {
+  // Review of #5518: a guard that only read the end of the RUN, and only bind
+  // mounts, let both of these through. In a real build the first made the
+  // prerender wait for the whole browser bundle; a shared cache with
+  // sharing=locked serializes every RUN that mounts it.
+  const dockerfile = read('Dockerfile.kubernetes');
+  assertSiblingStages(dockerfile);
+  const dependency = `RUN ${DEPENDENCY_MOUNT} \\\n    node frontend/scripts/build-shell.mjs --prerender-only`;
+  assert.ok(dockerfile.includes(dependency), 'the prerender stage is written as the cases below expect');
+  for (const extra of [
+    '--mount=type=cache,from=shell-bundle,source=/build/public,target=/review-copy',
+    '--mount=type=cache,id=shell,target=/root/.cache,sharing=locked',
+  ]) {
+    for (const mutated of [
+      dockerfile.replace(dependency, dependency.replace('RUN ', `RUN ${extra} `)),
+      dockerfile.replace(dependency, dependency.replace(' \\\n', ` ${extra} \\\n`)),
+    ]) {
+      assert.notEqual(mutated, dockerfile);
+      assert.throws(() => assertSiblingStages(mutated), /shell-prerender must run exactly/, extra);
+    }
+  }
 });
 
 test('Kubernetes platform image ships every directory the server reads beside src/', () => {
