@@ -1229,6 +1229,21 @@ async function becomeLeader() {
   // next release reset: due at once if it never ran.
   leaderTimers.every('cli-auth-cleanup', runCliAuthCleanup, 6 * 60 * 60 * 1000, { durable: getPool(config) });
 
+  // #5132: a person's IP address is kept IP_RETENTION_DAYS (90 by default)
+  // and then cleared from the rows that recorded it; the rows stay. Daily on
+  // the same durable clock. services/ip-retention.js lists every column.
+  const ipRetention = require('./src/services/ip-retention');
+  const runIpRetention = () => ipRetention.purgeExpiredIps(getPool(config))
+    .then((counts) => {
+      if (Object.values(counts).some((count) => count > 0)) {
+        log.info('ip-retention', 'Cleared expired IP addresses', { days: ipRetention.retentionDays(), ...counts });
+      }
+    })
+    .catch((err) => {
+      log.warn('ip-retention', 'IP address retention sweep failed', { message: err.message, counts: err.ipRetentionCounts });
+    });
+  leaderTimers.every('ip-retention', runIpRetention, 24 * 60 * 60 * 1000, { durable: getPool(config) });
+
   // Before & after shots is private, revision-scoped data: enforce the
   // shorter failed-media and bounded audit-retention windows, and remove
   // copies and checkouts nothing owns any more. Runs themselves are the
