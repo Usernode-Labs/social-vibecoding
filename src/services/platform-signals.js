@@ -122,6 +122,38 @@ const KINDS = Object.freeze({
     topic: 'infra', fixer: 'infra', source: 'poll', fileAfterMs: 0, quietMs: 30 * MINUTE, admin: 'status',
     done: 'Alertmanager\'s Watchdog heartbeat arrives again every hour.',
   }),
+  // ── Wave 2: detectors that did not exist before ──
+  server_errors: Object.freeze({
+    topic: 'infra', fixer: 'bot', source: 'poll', fileAfterMs: 0, quietMs: 6 * HOUR, admin: 'status',
+    done: 'This route answers without a server error for 6 hours.',
+  }),
+  client_errors: Object.freeze({
+    topic: 'infra', fixer: 'bot', source: 'poll', fileAfterMs: 0, quietMs: 6 * HOUR, admin: 'analytics',
+    done: 'No page hits this error for 6 hours.',
+  }),
+  homeroom_crash: Object.freeze({
+    topic: 'infra', fixer: 'bot', source: 'poll', fileAfterMs: 0, quietMs: DAY, admin: 'status',
+    done: 'Homeroom\'s processes run for a day without one dying.',
+  }),
+  // Filed on the PROJECT's own board, held for a person: the bot builds
+  // there only when somebody in the project mentions it on the request. The
+  // creator is told as before (app_health); nobody else is notified.
+  project_down: Object.freeze({
+    topic: 'infra', fixer: 'person', source: 'poll', fileAfterMs: 0, quietMs: HOUR, admin: 'status',
+    done: 'The project deploys again.',
+  }),
+  bot_health: Object.freeze({
+    topic: 'homeroom-bot', fixer: 'person', source: 'poll', fileAfterMs: 0, quietMs: DAY, admin: 'homeroom-bot',
+    done: 'The figure is back within its line in Admin › Homeroom bot (Rollout health) for a day.',
+  }),
+  figure_off_target: Object.freeze({
+    topic: 'infra', fixer: 'person', source: 'poll', fileAfterMs: DAY, quietMs: DAY, admin: 'analytics',
+    done: 'The figure is back on its target for a day.',
+  }),
+  turn_recovery_gave_up: Object.freeze({
+    topic: 'infra', fixer: 'bot', source: 'poll', fileAfterMs: 0, quietMs: DAY, admin: 'incidents',
+    done: 'Every interrupted turn is picked up again, with none given up on for a day.',
+  }),
 });
 
 const WHO_TEXT = Object.freeze({
@@ -330,7 +362,7 @@ function parseRepo(url) {
 // ── Filing, updating, closing ───────────────────────────────────────────
 
 const ROWS_TO_ACT_SQL = `
-  SELECT ps.*, a.slug AS app_slug, a.repo_url AS app_repo_url,
+  SELECT ps.*, a.slug AS app_slug, a.repo_url AS app_repo_url, a.self_hosted AS app_self_hosted,
          i.status AS issue_status,
          (EXTRACT(EPOCH FROM (NOW() - ps.first_seen_at)) * 1000)::bigint AS age_ms,
          (EXTRACT(EPOCH FROM (NOW() - ps.cleared_at)) * 1000)::bigint AS cleared_ms,
@@ -453,6 +485,9 @@ async function handOff(pool, row, app, issueNumber, deps) {
       try { deps.bot().noteIssueActivity?.({ appId: app.id, issueNumber, reason: 'created' }); } catch {}
       return;
     }
+    // A problem on a project's own board (project_down): its creator is
+    // told already (app_health), and Homeroom's admins are not its people.
+    if (row.app_self_hosted !== true) return;
     const notifications = deps.notifications();
     const created = await notifications.createPlatformIncidentNotifications(pool, {
       detail: `signal:${issueNumber}`, dedupePrefix: `signal:${issueNumber}`, since: new Date(Date.now() - DAY),
