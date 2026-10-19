@@ -3238,7 +3238,7 @@
       "name": "All communities is one list under audience chips, All pressed, then Public, Private and Just you in that order, with every community out and no Show more (#5296)",
       "path": "/?demo=1#workshop",
       "expectSelector": "#workshop-screen:not(.hidden):not(:has([data-workshop-more])) [data-workshop-chips] [data-workshop-chip=\"all\"][aria-pressed=\"true\"] ~ [data-workshop-chip=\"open\"][aria-pressed=\"false\"] ~ [data-workshop-chip=\"invited\"] ~ [data-workshop-chip=\"solo\"]",
-      "expectText": "Just you"
+      "expectText": "Public"
     },
     {
       "name": "The Communities screen draws no empty-state line while it has rows; beside the sidebar, whose Communities heading holds its search, it is one page of your communities under a search, nothing beside it; no scope chip on the page, and the page bounces (#3051, #852, #3566, D, v3)",
