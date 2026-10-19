@@ -14958,7 +14958,7 @@ CREATE TABLE IF NOT EXISTS platform_signal_sources (
 -- A 5xx was a log line and one process's 200-line buffer, so a route that
 -- failed one request in ten for a day was seen only by somebody reading
 -- logs. Each process counts what it answered, per minute, and flushes the
--- counts here (services/server-error-counts.js): every response in
+-- counts here (services/server-error-counts.js): every /api/ response in
 -- server_request_minutes, and each 5xx by its route TEMPLATE (never the raw
 -- path), error type and first frame in this repository in
 -- server_error_minutes. The `infra.server-errors` figure reads the first;

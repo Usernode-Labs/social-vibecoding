@@ -4,10 +4,19 @@
 // It never walks the DOM for clicks, reads a route/query, serializes a thrown
 // error, or accepts arbitrary metadata. Delivery is best-effort and bounded:
 // user work never awaits this queue.
+//
+// The one thing it hears without being called is a script error after boot
+// (`client_error`, platform signals wave 2). Such an error is reduced on the
+// spot to a fixed name (TypeError…), the message as a template with every
+// quoted string, number, id, URL and email replaced by a placeholder, the
+// first frame in this origin's own scripts (`/js/app.js:12:34`) and a hash
+// of the three. The message and the stack themselves never leave the page.
 (function (root, factory) {
   'use strict';
   const create = factory();
-  if (typeof module !== 'undefined' && module.exports) module.exports = { createUITelemetry: create };
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { createUITelemetry: create, clientError: create.clientError };
+  }
   if (root && root.document) root.UITelemetry = create(root);
 }(typeof window !== 'undefined' ? window : null, function () {
   'use strict';
@@ -73,6 +82,210 @@
   const LOAD_POLL_MS = 500;
   const LOAD_POLLS = 60;
 
+  // ── Script errors after boot (`client_error`) ────────────────────────
+  //
+  // Keep the names, the two patterns, the template rules and the code
+  // identical with src/services/ui-telemetry.js (tests/client-errors.test.js
+  // holds the two copies to each other): the server re-normalizes the
+  // template, computes the code again from what it was sent, and refuses a
+  // name, a frame or a code that does not fit, and one refused event drops
+  // the whole batch it rode in.
+  const CLIENT_ERROR_NAMES = new Set([
+    'Error', 'TypeError', 'ReferenceError', 'RangeError', 'SyntaxError',
+    'EvalError', 'URIError', 'AggregateError', 'InternalError', 'DOMException',
+    'AbortError', 'NotAllowedError', 'NotFoundError', 'NotSupportedError',
+    'InvalidStateError', 'SecurityError', 'QuotaExceededError', 'NetworkError',
+    'TimeoutError', 'DataCloneError', 'InvalidAccessError',
+    'HierarchyRequestError', 'InvalidCharacterError', 'NotReadableError',
+    'OperationError',
+  ]);
+  const CLIENT_ERROR_CODE_RE = /^js_[a-z0-9]{6,16}$/;
+  const CLIENT_ERROR_FRAME_RE = /^\/(?:js|shell\/assets)\/[A-Za-z0-9_.\/-]{1,160}:\d{1,7}:\d{1,7}$/;
+  const MAX_TEMPLATE_CHARS = 120;
+  // A visit reports at most this many script errors, each code once.
+  const MAX_CLIENT_ERRORS = 5;
+  // One frame of a stack, in the three engines' shapes, ending in
+  // `url:line:col`: `at f (https://h/js/a.js:1:2)`, `f@https://h/js/a.js:1:2`.
+  // The URL starts after a space, `(` or `@`, so Firefox's `f/<@https://…`
+  // is never read as a path of this origin.
+  const STACK_URL_RE = /(?:^|[\s(@])([a-z][a-z0-9+.-]*:\/\/[^\s()]+?|\/[^\s()@]*?):(\d+):(\d+)\)?\s*$/i;
+  // A deployed document loads its scripts from `/b/<build sha>/js/…`
+  // (frontend/src/lib/asset-url.ts); the build is reported on its own.
+  const BUILD_PREFIX_RE = /^\/b\/[0-9a-f]{7,40}(?=\/)/;
+
+  // Lone surrogates out: Postgres refuses them in jsonb.
+  function wellFormed(text) {
+    let out = '';
+    for (let i = 0; i < text.length; i += 1) {
+      const c = text.charCodeAt(i);
+      if (c >= 0xd800 && c <= 0xdbff) {
+        const d = text.charCodeAt(i + 1);
+        if (d >= 0xdc00 && d <= 0xdfff) { out += text[i] + text[i + 1]; i += 1; }
+        continue;
+      }
+      if (c >= 0xdc00 && c <= 0xdfff) continue;
+      out += text[i];
+    }
+    return out;
+  }
+
+  function templatePass(text) {
+    let out = text
+      // Control, bidi and zero-width characters say nothing about an error.
+      .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2069\ufeff]/g, ' ')
+      .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s'"`<>]+/gi, '[url]')
+      .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email]')
+      .replace(/"[^"]*"/g, '[string]')
+      .replace(/`[^`]*`/g, '[string]')
+      .replace(/[\u201c\u2018][^\u201d\u2019]*[\u201d\u2019]/g, '[string]');
+    // A single quote opens a string only where it is not an apostrophe
+    // ("can't"); repeated, because a replaced string can open the next.
+    for (let i = 0; i < 20; i += 1) {
+      const next = out.replace(/(^|[^A-Za-z0-9])'[^']*'/g, '$1[string]');
+      if (next === out) break;
+      out = next;
+    }
+    out = out
+      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '[id]')
+      .replace(/\b0x[0-9a-f]+\b/gi, '[hex]')
+      .replace(/\b(?=[a-f]*\d)[0-9a-f]{6,}\b/gi, '[hex]')
+      .replace(/(^|[^A-Za-z0-9])\d+(?:[.,]\d+)*/g, '$1[number]')
+      .replace(/\s+/g, ' ')
+      .trim();
+    out = wellFormed(out);
+    if (out.length > MAX_TEMPLATE_CHARS) out = `${wellFormed(out.slice(0, MAX_TEMPLATE_CHARS - 1))}\u2026`;
+    return out;
+  }
+
+  /** Pure: an error's message as a template, placeholders for every value. */
+  function normalizeErrorTemplate(raw) {
+    let out = templatePass(wellFormed(String(raw == null ? '' : raw).slice(0, 2000)));
+    // Run to a fixed point, so the server's second pass changes nothing.
+    for (let i = 0; i < 3; i += 1) {
+      const next = templatePass(out);
+      if (next === out) break;
+      out = next;
+    }
+    return out;
+  }
+
+  /** Pure: a short stable hash (cyrb53, base 36, 11 characters). */
+  function errorHash(text) {
+    let h1 = 0xdeadbeef;
+    let h2 = 0x41c6ce57;
+    for (let i = 0; i < text.length; i += 1) {
+      const ch = text.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+    h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+    h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36).padStart(11, '0');
+  }
+
+  /**
+   * Pure: the code a script error is grouped by. The frame counts by its
+   * file alone: its line and column move with every build of the shell
+   * bundle, and one bug keeps one code (and one request) across releases.
+   */
+  function clientErrorCode(errorName, template, frame) {
+    const path = String(frame || '').replace(/:\d+:\d+$/, '');
+    return `js_${errorHash(`${errorName}|${template}|${path}`)}`;
+  }
+
+  // `{ origin, path }` of a frame's URL, or null when it is not one.
+  function placeOf(url, origin) {
+    try {
+      const parsed = new URL(url, `${origin}/`);
+      return { origin: parsed.origin, path: parsed.pathname };
+    } catch (_) { return null; }
+  }
+
+  // `/js/app.js:12:34` for a frame in this origin's own scripts, else null.
+  function ownFrame(path, line, col) {
+    const bare = String(path || '').replace(BUILD_PREFIX_RE, '');
+    if (bare.includes('..') || bare.includes('//')) return null;
+    const frame = `${bare}:${line}:${col}`;
+    return CLIENT_ERROR_FRAME_RE.test(frame) ? frame : null;
+  }
+
+  /**
+   * Pure: what is reported of one `error` or `unhandledrejection` event:
+   * { errorName, template, frame, errorCode }, or null when it is not this
+   * origin's (an extension, another origin's script, a muted "Script
+   * error."), not a thrown error (a resource that failed to load) or says
+   * nothing (a rejection with a bare value).
+   */
+  function describeClientError(source, event, origin) {
+    if (!event || typeof origin !== 'string' || !origin || origin === 'null') return null;
+    let error = null;
+    let message = '';
+    let filename = '';
+    let lineno = 0;
+    let colno = 0;
+    if (source === 'error') {
+      // A script or stylesheet that failed to load: the boot watchdog's.
+      const target = event.target;
+      if (target && typeof target === 'object' && target.tagName) return null;
+      error = event.error;
+      message = typeof event.message === 'string' ? event.message : '';
+      filename = typeof event.filename === 'string' ? event.filename : '';
+      lineno = Number.isSafeInteger(event.lineno) ? event.lineno : 0;
+      colno = Number.isSafeInteger(event.colno) ? event.colno : 0;
+    } else if (source === 'unhandledrejection') {
+      error = event.reason;
+      if (!error || typeof error !== 'object') return null;
+    } else {
+      return null;
+    }
+    const errorLike = !!error && typeof error === 'object';
+    let rawName = '';
+    let text = '';
+    if (errorLike) {
+      try {
+        rawName = typeof error.name === 'string' ? error.name : '';
+        text = typeof error.message === 'string' ? error.message : '';
+      } catch (_) { return null; }
+    } else {
+      text = message.replace(/^\s*Uncaught\s+/, '');
+      if (/^\s*script error\.?\s*$/i.test(text)) return null;
+      const named = /^([A-Z][A-Za-z]*(?:Error|Exception))(?::\s*|$)/.exec(text);
+      if (named) { rawName = named[1]; text = text.slice(named[0].length); }
+    }
+    let stack = '';
+    try { stack = errorLike && typeof error.stack === 'string' ? error.stack.slice(0, 8000) : ''; } catch (_) { stack = ''; }
+    const places = [];
+    for (const line of stack.split('\n').slice(0, 50)) {
+      const m = STACK_URL_RE.exec(line);
+      if (m) places.push({ url: m[1], line: m[2], col: m[3] });
+    }
+    if (filename) {
+      const thrownAt = placeOf(filename, origin);
+      if (thrownAt && thrownAt.origin !== origin) return null;
+      places.push({ url: filename, line: String(lineno), col: String(colno) });
+    }
+    // The first frame that names a place decides whose error it is.
+    let owner = null;
+    let frame = null;
+    for (const p of places) {
+      const where = placeOf(p.url, origin);
+      if (!where) continue;
+      if (owner === null) owner = where.origin;
+      if (where.origin !== origin) continue;
+      frame = frame || ownFrame(where.path, p.line, p.col);
+      if (frame) break;
+    }
+    if (owner !== null && owner !== origin) return null;
+    // Nothing places a thrown error: muted, or not a script's.
+    if (owner === null && source === 'error') return null;
+    const errorName = CLIENT_ERROR_NAMES.has(rawName) ? rawName : 'Error';
+    const template = normalizeErrorTemplate(text);
+    if (!template && !frame) return null;
+    return { errorName, template, frame, errorCode: clientErrorCode(errorName, template, frame) };
+  }
+
   function createUITelemetry(env) {
     env = env || {};
     const doc = env.document || null;
@@ -126,6 +339,13 @@
     let loadEnded = false;
     let loadPolls = 0;
     let loadScheduled = false;
+    // Script errors (`client_error`): heard only once the boot has been
+    // classified, so an error is either a boot_failure or one of these,
+    // never both. Page-scoped like the load: at most MAX_CLIENT_ERRORS per
+    // visit, each code once.
+    let booted = false;
+    let clientErrorsSent = 0;
+    const clientErrorCodes = new Set();
 
     function adminRoute() {
       try { return String(env.location?.hash || '').startsWith('#admin'); } catch (_) { return false; }
@@ -214,6 +434,7 @@
     function emit(kind, screen, detail) {
       if (collectionDisabled || adminRoute() || !SCREENS.has(screen)) return null;
       detail = detail || {};
+      if (kind === 'client_error') return emitClientError(screen, detail);
       const item = {
         id: randomId(),
         visitId,
@@ -234,6 +455,10 @@
       if (kind === 'screen_visit' && NAV_SCREENS.has(screen) && VIAS.has(detail.via)) {
         item.via = detail.via;
       }
+      return enqueue(item);
+    }
+
+    function enqueue(item) {
       const build = platformBuild();
       if (build) item.build = build;
       queue.push(item);
@@ -241,6 +466,49 @@
       persist();
       schedule();
       return item.id;
+    }
+
+    // A script error carries its own four fields and nothing else: no
+    // attempt, action, app or duration (src/services/ui-telemetry.js
+    // refuses any of them on a client_error).
+    function emitClientError(screenCode, detail) {
+      if (!CLIENT_ERROR_CODE_RE.test(detail.errorCode) || !CLIENT_ERROR_NAMES.has(detail.errorName)
+          || typeof detail.template !== 'string' || detail.template.length > MAX_TEMPLATE_CHARS
+          || (detail.frame != null && !CLIENT_ERROR_FRAME_RE.test(detail.frame))) return null;
+      const item = {
+        id: randomId(),
+        visitId,
+        kind: 'client_error',
+        screen: screenCode,
+        occurredAt: new Date(clock()).toISOString(),
+        sequence: ++sequence,
+        errorCode: detail.errorCode,
+        errorName: detail.errorName,
+        template: detail.template,
+      };
+      if (detail.frame) item.frame = detail.frame;
+      return enqueue(item);
+    }
+
+    function ownOrigin() {
+      try {
+        const origin = env.location && env.location.origin;
+        return typeof origin === 'string' && origin && origin !== 'null' ? origin : null;
+      } catch (_) { return null; }
+    }
+
+    // The window's `error` / `unhandledrejection`, after boot. It never logs
+    // and never throws: a second error raised from here would be heard here.
+    function recordClientError(source, event) {
+      try {
+        if (!booted || collectionDisabled || clientErrorsSent >= MAX_CLIENT_ERRORS || adminRoute()) return;
+        const fields = describeClientError(source, event, ownOrigin());
+        if (!fields || clientErrorCodes.has(fields.errorCode)) return;
+        const id = emit('client_error', currentNav ? currentNav.screen : 'shell_boot', fields);
+        if (!id) return;
+        clientErrorCodes.add(fields.errorCode);
+        clientErrorsSent += 1;
+      } catch (_) { /* the page's error is not made worse by its report */ }
     }
 
     function screen(screenCode, context) {
@@ -624,6 +892,9 @@
     }
 
     function recordBoot() {
+      // From here on an error is a client_error: everything before it is in
+      // __unBoot.errors, read below as boot failures.
+      booted = true;
       if (adminRoute()) return;
       screen('shell_boot');
       const attemptId = attempt('shell_boot', { screen: 'shell_boot' });
@@ -686,6 +957,12 @@
       });
       env.addEventListener('online', () => schedule(0));
       env.addEventListener('hashchange', () => { if (!adminRoute()) schedule(0); });
+      // Bubble phase: a resource that failed to load does not reach it (the
+      // boot watchdog in frontend/src/head.html hears those in capture).
+      // Nothing here calls preventDefault, so the browser still reports the
+      // error as it always did.
+      env.addEventListener('error', (event) => recordClientError('error', event));
+      env.addEventListener('unhandledrejection', (event) => recordClientError('unhandledrejection', event));
     }
 
     return {
@@ -696,6 +973,18 @@
       diagnostics: () => ({ queued: queue.length, active: attempts.size, droppedEvents, failedBatches }),
     };
   }
+
+  // The pure half of client_error, for tests/client-errors.test.js.
+  createUITelemetry.clientError = Object.freeze({
+    NAMES: CLIENT_ERROR_NAMES,
+    CODE_RE: CLIENT_ERROR_CODE_RE,
+    FRAME_RE: CLIENT_ERROR_FRAME_RE,
+    MAX_TEMPLATE_CHARS,
+    MAX_PER_VISIT: MAX_CLIENT_ERRORS,
+    normalizeTemplate: normalizeErrorTemplate,
+    code: clientErrorCode,
+    describe: describeClientError,
+  });
 
   return createUITelemetry;
 }));
