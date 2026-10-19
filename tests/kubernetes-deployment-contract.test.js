@@ -64,7 +64,10 @@ function dockerInstructions(dockerfile) {
     .map((line) => line.replace(/[ \t]+/g, ' ').trim())
     .filter((line) => line);
   for (const line of instructions) {
-    assert.doesNotMatch(line, /<<-?\s*["']?[A-Za-z_]/, `heredocs are not read by this test's Dockerfile reader: ${line}`);
+    // Any `<<` at all: a heredoc delimiter may be a number, punctuation or
+    // quoted, and everything up to its terminator is payload, not
+    // instructions. This Dockerfile has none.
+    assert.ok(!line.includes('<<'), `heredocs are not read by this test's Dockerfile reader: ${line}`);
   }
   return instructions;
 }
@@ -273,7 +276,9 @@ test('a comment ending in a backslash cannot hide an instruction from the siblin
   assertSiblingStages(dockerfile.replace(`${DEPENDENCY_MOUNT} \\\n`, `${DEPENDENCY_MOUNT} \\\n  # the command \\\n`));
   // Syntax the reader does not parse is refused, not guessed at.
   assert.throws(() => dockerInstructions(`# escape=\`\n${dockerfile}`), /parser directives/);
-  assert.throws(() => dockerInstructions(dockerfile.replace(head, `${head}RUN <<EOF\ntrue\nEOF\n`)), /heredocs/);
+  for (const opener of ['RUN <<EOF', 'COPY <<123 /x', 'COPY <<. /x', "COPY <<'123' /x", 'COPY <<-"END" /x', 'RUN cat <<  EOF']) {
+    assert.throws(() => dockerInstructions(dockerfile.replace(head, `${head}${opener}\n`)), /heredocs/, opener);
+  }
   assert.throws(() => dockerInstructions(`${dockerfile.trimEnd()} \\\n`), /continuation left open/);
 });
 
