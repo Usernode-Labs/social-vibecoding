@@ -1,36 +1,56 @@
 'use strict';
 
-// Worker-driven "sync with main" flow.
+// "Sync with main": the worker merges the app's main into a proposal's
+// branch (Claude resolves a conflict), pushes, and the proposal takes the
+// pushed head as its revision.
 //
-// Extracted from routes/sessions.js so non-route callers (notably
-// services/conflict-resolver.js) can drive a MODE=sync worker turn
-// without a route-requires-route dependency cycle. The route handlers
-// in routes/sessions.js re-export these for backwards compatibility, so
-// POST /api/sessions/:id/sync-main and the /resume auto-trigger keep
-// calling the same implementation.
+// Every sync is the proposal machine's `branch.sync` work
+// (src/workflow/proposal/), whoever asks for it: a person ("Sync with main",
+// the connector's sync_change, the CLI), a resume of a session behind main,
+// the merge queue's conflict lane, a preview that will not start because
+// main moved (boot-failure-sync.js) and a check main has fixed since
+// (fixed-check-sync.js, the Homeroom bot). The machine decides whether it may
+// run (never while the proposal is merged or being merged, never two at
+// once, the platform's own syncs once per head), and writes the record of
+// having tried in the same transaction as the work; this file only does it.
+//
+// The worker turn is a durable step over the work item's checkpoint
+// (services/durable-turn.js): a restart follows the turn the worker still
+// runs, and then does what comes after it, so nothing a sync owes is lost to
+// a release (merge trace bug 10). What comes after is run once
+// (steps.once): the drift and conflict snapshots, the system-token spend, the
+// protected-settings re-stamp, the hand-off's pins, the timeline's last line,
+// and, for a proposal in review, its new head installed as the reviewed
+// revision with its checks started.
+
 const log = require('./logger');
 const worker = require('./worker');
 const limits = require('./limits');
 const events = require('./events');
-const { activeWorkers, beginSessionOperation } = require('./active-workers');
 
+// The worker's "[sync_*]" phase markers, as the timeline's progress lines
+// and as the banner's coarse phases (merging → resolving → pushing).
+const SYNC_PROGRESS_LABELS = new Map([
+  ['sync_fetch_main', 'Fetching main…'],
+  ['sync_merge', 'Merging origin/main…'],
+  ['sync_conflict_cc', 'Resolving conflicts with Claude…'],
+  ['sync_push', 'Pushing…'],
+]);
+const SYNC_PHASE_MAP = new Map([
+  ['sync_fetch_main', 'merging'],
+  ['sync_merge', 'merging'],
+  ['sync_conflict_cc', 'resolving'],
+  ['sync_push', 'pushing'],
+]);
 
-// Translate the worker's terse "[sync_*]" phase markers into the
-// human-readable lines that stream into the timeline's collapsible
-// progress log (mirroring how a build turn narrates its work). Anything
-// not in the map (other worker chatter forwarded by parseLine) is
-// passed through verbatim so nothing is silently dropped.
-const SYNC_PROGRESS_LABELS = {
-  sync_fetch_main: 'Fetching main…',
-  sync_merge: 'Merging origin/main…',
-  sync_conflict_cc: 'Resolving conflicts with Claude…',
-  sync_push: 'Pushing…',
-};
+// A sync turn's clock: a mechanical merge takes seconds, a resolution a few
+// minutes.
+const SYNC_BUDGET_MS = 20 * 60 * 1000;
 
 // #8: persist the latest behind-origin/main count for a session and
-// broadcast a session_update so the dev-chat banner refreshes live.
-// No-op (with logging) if the write fails — drift accounting is
-// best-effort; the next turn will refresh it.
+// broadcast a session_update so the dev-chat banner refreshes live. A count
+// for display: nothing decides on it (the merge reads the mirror's
+// measurement, services/integration.js). Best-effort.
 async function persistBehindMain(pool, session, behind) {
   try {
     const n = Number.isFinite(behind) ? Math.max(0, behind) : 0;
@@ -52,13 +72,9 @@ async function persistBehindMain(pool, session, behind) {
   }
 }
 
-// #361: persist the derived merge-conflict snapshot used by proposal
-// cards (merge_conflict_state + conflict_files + conflict_checked_at).
-// state ∈ clean | behind | conflict | resolving | failed. Best-effort —
-// a failed write just leaves the prior snapshot in place; the next
-// drift/sync refreshes it. Broadcasts nothing itself; callers (the
-// conflict-resolver lifecycle, the /promoted refetch on vote_update)
-// own the live update.
+// #361: the merge-conflict snapshot proposal cards show (merge_conflict_state
+// + conflict_files + conflict_checked_at). state ∈ clean | conflict | failed.
+// Best-effort, for display.
 async function persistConflictState(pool, session, { state, files }) {
   try {
     await pool.query(
@@ -74,57 +90,40 @@ async function persistConflictState(pool, session, { state, files }) {
   }
 }
 
-// #252: in-flight sync registry. One entry per session while a
-// MODE=sync turn is running, holding the coarse phase the UI banner
-// shows. Process-local — same single-Node-process assumption as the
-// conflict-resolver's isResolving registry.
-//   sessionId(Number) -> { phase, startedAt, promise }
-const _inFlightSyncs = new Map();
-
-function repoOf(session) {
-  const m = (session?.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-  return m ? { owner: m[1], repo: m[2] } : null;
+// A platform sync's wait for the session to be free (the old boot-failure
+// sync's waitForIdle): somebody's turn, a local agent's, or a live operation
+// on the session, read as the proposal machine reads them.
+const IDLE_POLL_MS = 3000;
+const IDLE_WAIT_MS = 10 * 60 * 1000;
+async function sessionBusy(pool, sessionId) {
+  const { botLookingSql, buildHoldSql, operationsLiveSql, shotsRunningSql } = require('../workflow/session-work.ts');
+  const { rows: [r] } = await pool.query(
+    `SELECT cs.active_turn IS NOT NULL
+            OR EXISTS (SELECT 1 FROM local_agent_turns t
+                        WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))
+            OR ${operationsLiveSql('cs.id')}
+            OR ${shotsRunningSql('cs.id')}
+            OR ${buildHoldSql('cs')}
+            OR ${botLookingSql('cs.id')} AS busy
+       FROM chat_sessions cs WHERE cs.id = $1`, [sessionId]);
+  return !!r?.busy;
 }
 
-// #2038 — the provenance ledger that used to live here is gone.
-//
-// A sync push needed a durable record (session_platform_pushes), a
-// first-parent chain walk and a vote-carrying UPDATE because approval was
-// pinned to a COMMIT: the platform's own merge changed the commit without
-// changing the work, so it had to prove the commit was its own and then move
-// the pin and every vote stamp across. It had to be built on recorded
-// provenance rather than on the commit's shape, because a merge whose first
-// parent is the reviewed sha is trivial to forge.
-//
-// Approval is pinned to an EPOCH now, and a mechanical merge does not move
-// it. There is nothing to carry, nothing to advance, and nothing to record:
-// the next reconciliation redoes the merge, sees the tree it expects, and
-// leaves the approvals exactly where they are. See
-// services/integration.js classifyHeadMove and routes/votes.js
-// reconcileNativeReviewedHead.
-//
-// The CAS this deletes is also where #2038's F7 lived: the advance was
-// guarded on a checks_commit_sha read from a row loaded before a
-// minutes-long sync, so a check run the sync itself kicked could make the
-// statement match zero rows — pin not advanced, votes not carried, no
-// warning.
-
-// Read by GET /api/sessions/:id/status for reload recovery and the
-// client's poll fallback. Null when nothing is syncing.
-function getSyncState(sessionId) {
-  const entry = _inFlightSyncs.get(Number(sessionId));
-  return entry ? { phase: entry.phase, startedAt: entry.startedAt } : null;
+// Read by GET /api/sessions/:id/status for reload recovery and the client's
+// poll fallback: the proposal machine's sync under way, or null.
+async function getSyncState(pool, sessionId) {
+  try {
+    const { rows: [i] } = await pool.query(
+      `SELECT data->'sync' AS sync FROM wf_instances WHERE machine = 'proposal' AND key = $1`, [`session:${Number(sessionId)}`]);
+    const sync = i && i.sync && typeof i.sync === 'object' ? i.sync : null;
+    // The live phase travels by push (broadcastSyncStatus); a poll knows only
+    // that a sync runs ('starting'), which the client never lets overwrite
+    // a phase it heard.
+    return sync ? { phase: 'starting', startedAt: sync.at ? Date.parse(sync.at) : null, reason: sync.reason || null } : null;
+  } catch {
+    return null;
+  }
 }
-
-// Map the worker's __USERNODE_PHASE__ markers (forwarded by
-// services/worker.js parseLine as "[sync_*]" progress lines) onto the
-// coarse phases the banner labels: merging → resolving → pushing.
-const SYNC_PHASE_MAP = {
-  sync_fetch_main: 'merging',
-  sync_merge: 'merging',
-  sync_conflict_cc: 'resolving',
-  sync_push: 'pushing',
-};
 
 // #252: lifecycle broadcast for the dev-chat sync banner. Same
 // session_update channel as behind_main; clients key on
@@ -143,79 +142,107 @@ function broadcastSyncStatus(session, state, extra = {}) {
   } catch (_) { /* ws failures are non-fatal */ }
 }
 
-// #8: dispatch a MODE=sync worker turn for the given session. Used by
-// POST /api/sessions/:id/sync-main (explicit user click), the silent
-// auto-trigger inside POST /resume, and the auto-conflict-resolver.
-// Idempotent / safe to call when nothing's behind (the worker
-// short-circuits with sync_result=already_synced).
-//
-// #252: concurrent calls for one session coalesce onto a single
-// in-flight promise (mirroring the conflict-resolver's
-// _inFlightResolves), so a user click that races the resume-triggered
-// background sync joins the running turn instead of tripping
-// execInWorker's "a turn is already in flight" guard.
-//
-// Returns an object the route can serialise verbatim:
-//   { ok: true, syncResult, behind, sha, pushOk, message }
-// Throws on infrastructure errors (image build, ensureWorker) — the
-// route catches and 500s; background callers catch and warn.
-async function runSyncMain(config, pool, sessionId, opts = {}) {
-  const key = Number(sessionId);
-  const existing = _inFlightSyncs.get(key);
-  if (existing) return existing.promise;
-
-  const releaseOperation = beginSessionOperation(key);
-  const entry = { phase: 'starting', startedAt: Date.now(), promise: null };
-  _inFlightSyncs.set(key, entry);
-  entry.promise = runSyncMainInner(config, pool, sessionId, opts, entry)
-    .finally(() => {
-      if (_inFlightSyncs.get(key) === entry) _inFlightSyncs.delete(key);
-      releaseOperation();
-    });
-  return entry.promise;
+async function loadSession(pool, sessionId) {
+  const { rows } = await pool.query(
+    `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+       FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+      WHERE cs.id = $1`,
+    [sessionId]
+  );
+  return rows[0] || null;
 }
 
-async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, debugRunId } = {}, entry) {
-  // Admin /debug: when the conflict-resolver passes its run id, narrate each
-  // worker sync phase + the outcome into that run. Fire-and-forget; a null
-  // runId (manual sync / resume auto-sync) makes every call a no-op.
-  const md = require('./merge-debug');
-  const dstep = (o) => md.step(pool, debugRunId, o);
-  let session = sessionRow;
-  if (!session) {
-    const { rows } = await pool.query(
-      `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
-       FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
-       WHERE cs.id = $1`,
-      [sessionId]
-    );
-    if (!rows.length) throw new Error('Session not found');
-    session = rows[0];
-  }
+const TRIGGERS = new Map([
+  ['person', 'manual'], ['resume', 'resume_autosync'], ['conflict', 'merge_queue'], ['boot_failure', 'boot_failure'],
+  ['fixed_check', 'fixed_on_main'], ['bot_fix', 'bot_fix'], ['bot_handoff', 'bot_handoff'],
+]);
 
-  if (!session.repo_url) {
-    throw new Error('Session has no repo_url; cannot sync');
+/**
+ * The proposal machine's `branch.sync` work. `steps` is the work item's
+ * durable context (services/durable-steps.js durable()). Resolves one
+ * outcome for the machine:
+ *   gone | unmeasured | level | conflict_skipped (a platform sync whose
+ *   proposal no longer is behind and clean: nothing ran) | clean_now (the
+ *   conflict lane's head merges cleanly by now: nothing ran) | over_budget
+ *   (the system token budget is spent: nothing ran) |
+ *   clean | resolved | already_synced (synced) | not_pushed |
+ *   unresolvable (Claude could not resolve it: the branch is unchanged)
+ * with { sha, behind, pushOk, conflictFiles, message, headBefore, mainSha }.
+ * Throws when the machinery under it failed (the worker, the budget, the
+ * push of a hand-off's revision), which the machine backs off from.
+ */
+async function runSyncWork(config, pool, {
+  sessionId, reason, measureFirst = false, waitForIdle = false, githubConflict = false, last = true, steps,
+  // The proposal machine's branch.sync item that runs this (turn-lifecycle
+  // turnOwner): on the turn's record, so the turn is that item's in every
+  // process, and a Stop is an event to the proposal machine.
+  owner = null,
+}, injected = {}) {
+  const deps = {
+    worker, limits, events, integration: require('./integration'), durableTurn: require('./durable-turn'),
+    votes: () => require('../routes/votes'), prImportSync: () => require('./pr-import-sync'),
+    sessionBusy, sleep: (ms) => new Promise((r) => setTimeout(r, ms)), now: Date.now,
+    ...injected,
+  };
+  const id = Number(sessionId);
+  // A platform sync for a head (a boot failure, a failing check) waits for
+  // whoever is working on the session, up to IDLE_WAIT_MS, as the old one
+  // did; still busy, it did nothing (the machine gives the once-record back).
+  if (waitForIdle && !steps.has('started')) {
+    const until = deps.now() + IDLE_WAIT_MS;
+    while (await deps.sessionBusy(pool, id)) {
+      if (steps.stopped) throw Object.assign(new Error('stopped'), { code: 'steps_stopped' });
+      if (deps.now() >= until) return { outcome: 'busy' };
+      await deps.sleep(IDLE_POLL_MS);
+    }
   }
+  let session = await loadSession(pool, id);
+  if (!session) return { outcome: 'gone' };
+  if (!session.repo_url || !session.branch_name) return { outcome: 'gone' };
   const m = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-  if (!m) throw new Error(`Unparseable repo_url: ${session.repo_url}`);
+  if (!m) return { outcome: 'gone' };
   const [, repoOwner, repoName] = m;
 
-  // #252: from here on the session (and its app_slug) is known, so
-  // every exit — phase change, done, failed — gets broadcast.
-  broadcastSyncStatus(session, 'starting');
+  // The platform's own syncs for a failure main may have caused: only a head
+  // behind main that merges with it cleanly is synced (boot-failure-sync.js,
+  // fixed-check-sync.js), measured from the mirror now.
+  let measured = steps.get('measured') || null;
+  if (!measured) {
+    const now = await deps.integration.measure({ pool, session }, { force: true }).catch(() => null);
+    measured = now && !now.error && !now.skipped
+      ? { behindBy: Number.isFinite(now.behindBy) ? now.behindBy : null, mergesClean: now.mergesClean ?? null,
+        headSha: now.headSha || null, mainSha: now.mainSha || null }
+      : { behindBy: null, mergesClean: null, headSha: null, mainSha: null };
+    await steps.set('measured', measured);
+  }
+  if (measureFirst) {
+    if (measured.behindBy == null) return { outcome: 'unmeasured' };
+    if (measured.behindBy === 0) return { outcome: 'level' };
+    if (measured.mergesClean !== true) return { outcome: 'conflict_skipped' };
+  }
+  // The merge queue's conflict lane: a head that merges cleanly by now is
+  // the direct lane's (a sibling's merge moved main), not a resolution's.
+  // (Unless GitHub refused it as a conflict the mirror does not see: then
+  // the turn merges main all the same.)
+  if (reason === 'conflict' && measured.mergesClean === true && !githubConflict && !steps.has('started')) return { outcome: 'clean_now' };
+  // #361: housekeeping is billed to the system budget; an exhausted one is
+  // an answer (the card says so), not a failure to back off from.
+  if (!steps.has('started')) {
+    const budget = await deps.limits.checkSystemBudget(pool);
+    if (budget.error) return { outcome: 'over_budget', message: budget.error };
+  }
+  const headBefore = measured.headSha || session.integration_head_sha || null;
+  const mainSha = measured.mainSha || session.integration_main_sha || null;
+  // The visible activity is only for a real merge: an already-synced sync
+  // leaves no "Syncing with main…" row in the timeline.
+  const behind = measured.behindBy != null ? measured.behindBy : (Number(session.behind_main) || 0);
+  const emitActivity = behind > 0;
 
-  // --- Session-native activity primitives -----------------------------
-  // Mirror runHeadlessSession's send/sendStatus so a sync turn emits the
-  // SAME artifacts a build turn does: live session_event broadcasts plus
-  // persisted chat_session_messages rows. The banner broadcasts above are
-  // kept as-is and are complementary — this is purely additive.
-  const seqPrefix = `s${Date.now().toString(36)}`;
-  let eventSeq = 0;
   const send = (type, data) => {
     try {
       const { broadcastGlobal } = require('./ws');
       const sessionBus = require('./session-bus');
-      const event = { type, _seq: `${seqPrefix}-${++eventSeq}`, ...data };
+      const event = { type, _seq: `s${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, ...data };
       broadcastGlobal({ ...event, type: 'session_event', sessionId: session.id, event: type });
       sessionBus.publish(session.id, event);
     } catch (_) { /* ws/bus failures are non-fatal */ }
@@ -224,29 +251,20 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
     send('status', { text, ...(metadata || {}) });
     try {
       await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-         VALUES ($1, 'system', $2, $3)`,
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3)`,
         [session.id, text, JSON.stringify(metadata || {})]
       );
     } catch (_) { /* persistence failure is non-fatal */ }
   };
-
-  // Confirmed decision: gate the visible activity on a non-zero `behind`
-  // pre-check. Auto/silent syncs (/resume auto-sync, conflict-resolver)
-  // run through here too; when nothing is behind, the worker
-  // short-circuits to already_synced and we must NOT leave a noisy
-  // self-resolving "Syncing with main…" entry in the timeline. The banner
-  // broadcasts still fire regardless. `behind_main` is the last persisted
-  // drift count (the same value the banner reads).
-  const behindPrecheck = Number(session.behind_main) || 0;
-  const emitActivity = behindPrecheck > 0;
-
-  // The collapsible progress row is created lazily on the first progress
-  // line so an already-synced run that never streams a marker leaves no
-  // orphan row behind. Captured id is reused for every subsequent append.
-  let progressMsgId = null;
+  let progressMsgId = steps.get('progressRow') || null;
+  // A restart follows the turn from its journal's start: a line already in
+  // the row is not added twice.
+  const seen = new Set(steps.get('progressSeen') || []);
   const appendProgress = async (text) => {
     if (!emitActivity) return;
+    if (seen.has(text)) return;
+    seen.add(text);
+    await steps.set('progressSeen', [...seen]).catch(() => {});
     send('cc_progress', { text });
     try {
       if (progressMsgId == null) {
@@ -256,6 +274,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
           [session.id, JSON.stringify({ progressLog: [] })]
         );
         progressMsgId = rows[0].id;
+        await steps.set('progressRow', progressMsgId).catch(() => {});
       }
       await pool.query(
         `UPDATE chat_session_messages SET metadata = jsonb_set(
@@ -266,235 +285,152 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
       );
     } catch (_) { /* progress persistence is best-effort */ }
   };
-
-  // The opening "action enqueued" entry — only when there's a real merge
-  // to do (see emitActivity above).
-  if (emitActivity) {
-    await sendStatus('Syncing with main…');
-  }
-
-  // Forward the worker's "[sync_*]" phase lines into the registry +
-  // a sync_status broadcast (the banner). Everything before the first
-  // marker (image build, ensureWorker bootstrap) stays 'starting'.
-  // Additively, translate each marker into a human progress line that
-  // streams into the collapsible log so the timeline narrates the sync.
+  let phase = 'starting';
   const onProgress = (line) => {
     if (typeof line !== 'string') return;
     const pm = line.match(/^\[(sync_[a-z_]+)\]$/);
     if (!pm) return;
-    const label = SYNC_PROGRESS_LABELS[pm[1]];
-    if (label) {
-      appendProgress(label);
-      dstep({ phase: `sync:${pm[1]}`, message: `Worker sync: ${label}` });
-    }
-    const phase = SYNC_PHASE_MAP[pm[1]];
-    if (!phase || entry.phase === phase) return;
-    entry.phase = phase;
+    const label = SYNC_PROGRESS_LABELS.get(pm[1]);
+    if (label) appendProgress(label);
+    const next = SYNC_PHASE_MAP.get(pm[1]);
+    if (!next || next === phase) return;
+    phase = next;
     broadcastSyncStatus(session, phase);
   };
 
+  // A sync is somebody working on the session for every machine that asks
+  // (src/workflow/session-work.ts syncWorkingSql): its own work item, while
+  // outstanding, and its turn's record names it.
   try {
-    // #361: merge-conflict / sync turns are platform housekeeping, not
-    // work the owner asked for, so they draw from the dedicated
-    // "system tokens" budget rather than any individual's allowance.
-    // Gate on the system cap up front; when it's exhausted, throw — the
-    // route 500s with the message and the conflict-resolver group-chats
-    // it (it also pre-checks the same gate before calling us). Always run
-    // with the platform key (anthropicApiKey: null → proxy path); system
-    // work must never touch a user's BYOK key.
-    const sysBudget = await limits.checkSystemBudget(pool);
-    if (sysBudget.error) throw new Error(sysBudget.error);
-    const userApiKey = null;
+    if (!steps.has('started')) {
+      broadcastSyncStatus(session, 'starting');
+      if (emitActivity) await sendStatus('Syncing with main…');
+      await steps.set('started', true);
+    }
 
-    await worker.ensureWorkerImage();
-    await worker.ensureWorker(session.id, {
-      repoOwner,
-      repoName,
-      branchName: session.branch_name,
-        onProgress,
+    const turn = await deps.durableTurn.runTurn(steps, 'sync', {
+      pool, session, mode: 'sync', budgetMs: SYNC_BUDGET_MS, onProgress, owner,
+      // Its own clock ends only its own turn (by its record), and says
+      // nobody stopped it.
+      stop: () => deps.durableTurn.clockStop(deps.worker, pool, id, owner),
+      dispatch: async (extra, { budgetMs } = {}) => {
+        // Always on the platform key.
+        await deps.worker.ensureWorkerImage();
+        await deps.worker.ensureWorker(id, { repoOwner, repoName, branchName: session.branch_name, onProgress });
+        const result = await deps.worker.execInWorker(id, {
+          mode: 'sync',
+          prompt: '(sync turn — see MODE=sync block in run-cc.sh)',
+          model: 'claude-sonnet-5-5',
+          commitMsg: '',
+          resumeSessionId: null,
+          branchName: session.branch_name,
+          anthropicApiKey: null,
+          onProgress,
+          ...(budgetMs ? { timeoutMs: budgetMs } : {}),
+          ...(extra.owner ? { owner: extra.owner } : {}),
+          ...(extra.holdTurnRecord ? { holdTurnRecord: true } : {}),
+          ...(typeof extra.onTurnRecord === 'function' ? { onTurnRecord: extra.onTurnRecord } : {}),
+        });
+        return { result };
+      },
     });
+    const routed = turn.routed || {};
+    // A person's Stop never gets here: the proposal machine ends the sync
+    // as stopped by them and cancels this work (its next checkpoint throws),
+    // so what the stopped turn left is never read as a conflict.
+    if (typeof routed.error === 'string') throw new Error(routed.error.replace(/^dispatch: /, ''));
+    const result = routed.result || {};
 
-    activeWorkers.add(session.id);
-    // #937: a sync turn is a NEW turn, so it owns the pending-stop
-    // boundary the same way a chat turn does. Without this, a stop
-    // requested against an earlier chat turn would still be pending in the
-    // registry and execInWorker's pre-dispatch gate would refuse to
-    // dispatch this sync — a sync turn isn't in stopRegistry, so nothing
-    // else would ever clear it.
-    worker.clearPendingStop(session.id);
-    let result;
-    try {
-      result = await worker.execInWorker(session.id, {
-        mode: 'sync',
-        prompt: '(sync turn — see MODE=sync block in run-cc.sh)',
-        // Use a small fast model — the prompt is short and the task is
-        // mechanical. The route's caller doesn't get to pick.
-        model: 'claude-sonnet-5-5',
-        commitMsg: '',
-        // Don't pass cc_session_id — we don't want sync turns polluting
-        // the session's main CC conversation thread.
-        resumeSessionId: null,
-        branchName: session.branch_name,
-        anthropicApiKey: userApiKey || null,
-        onProgress,
-      });
-    } finally {
-      activeWorkers.delete(session.id);
-    }
-
-    // Persist the new behind count regardless of outcome (a failed
-    // sync still teaches us how stale we are).
-    await persistBehindMain(pool, session, result.behind || 0);
-
-    // #361: record the turn's cost against the system-token budget. Same
-    // costUsd→cents conversion build turns use. Closes the long-standing
-    // gap where conflict turns were enforced live but never persisted to
-    // any ledger.
-    await limits.recordSystemSpend(pool, Math.round((result.costUsd || 0) * 100));
-
-    const syncResult = result.syncResult || (result.exitCode === 0 ? 'clean' : 'conflict');
-    let message;
-    switch (syncResult) {
-      case 'already_synced':
-        message = 'Already up to date with main, so there is nothing to merge.';
-        break;
-      case 'clean':
-        message = `Merged main cleanly. Pushed ${result.sha ? result.sha.slice(0, 7) : 'merge commit'}.`;
-        break;
-      case 'resolved':
-        message = `Claude resolved merge conflicts with main and pushed ${result.sha ? result.sha.slice(0, 7) : 'the merge commit'}.`;
-        break;
-      case 'conflict':
-      default:
-        message = 'Tried to sync with main but Claude couldn\'t resolve the conflicts. The branch is unchanged; try again or resolve locally.';
-        break;
-    }
-
-    // #361: persist the derived merge-conflict snapshot for proposal
-    // cards. An unresolved conflict leaves the branch broken → 'failed'
-    // (record which files conflicted, from the worker's CONFLICT_FILES);
-    // every other outcome (clean / resolved / already_synced) means the
-    // branch now merges → 'clean' with an empty file list.
-    if (syncResult === 'conflict') {
-      await persistConflictState(pool, session, { state: 'failed', files: result.conflictFiles || [] });
-      dstep({ phase: 'sync_result', level: 'error', message: 'Worker sync: Claude could not resolve the conflicts.', detail: { syncResult, conflictFiles: result.conflictFiles || [], costUsd: result.costUsd || 0, pushOk: !!result.pushOk } });
-    } else {
-      await persistConflictState(pool, session, { state: 'clean', files: [] });
-      dstep({ phase: 'sync_result', message: `Worker sync ${syncResult}${result.sha ? `, pushed ${String(result.sha).slice(0, 9)}` : ''}.`, detail: { syncResult, sha: result.sha || null, behind: result.behind || 0, conflictFiles: result.conflictFiles || [], costUsd: result.costUsd || 0, pushOk: !!result.pushOk } });
-    }
-
-    // #788 follow-up: a sync that pushed changed the branch's contents,
-    // so the explicit-approval classification may no longer hold (e.g. a
-    // merge commit that brings the branch's dapp.json in line with
-    // main's). Re-stamp on promoted rows so a stale flag clears (or a
-    // fresh one lands) without waiting for the next vote or sweeper
-    // pass. Best-effort: refreshExplicitApproval swallows GitHub
-    // failures and leaves the column untouched when indeterminate.
-    // Deliberately does NOT reset votes — a sync commit never has.
-    if ((syncResult === 'clean' || syncResult === 'resolved')
-        && result.pushOk && session.status === 'promoted') {
-      // eslint-disable-next-line global-require
-      await require('./app-admins').refreshExplicitApproval(pool, session, session);
-    }
-
-    // #2038: nothing to bind. A mechanical merge leaves the approval epoch
-    // alone, so the approvals survive on their own and the next
-    // reconciliation simply notices the head moved and agrees.
-
-    // Close the activity with a terminal status. Routing through
-    // sendStatus both persists the breadcrumb row (so it survives reload)
-    // AND broadcasts a live status event (so open viewers see the outcome
-    // without re-fetching). The metadata carries the syncMain summary the
-    // timeline keys on. Only emitted when we opened an activity entry (a
-    // real merge); a behind==0 short-circuit leaves no row, matching the
-    // banner-only behaviour callers had before this change.
-    const syncMeta = { syncMain: { syncResult, behind: result.behind || 0, sha: result.sha || null, pushOk: !!result.pushOk } };
-
-    // The worker owns the Git merge/push, but a CLI-handoff proposal also
-    // has immutable head pins that own its preview and check verdict. Adopt
-    // every successful outcome (including an already-synced retry after a
-    // prior partial failure) before reporting the sync complete.
-    let managedRevision = null;
-    const branchSettled = syncResult === 'already_synced'
-      || ((syncResult === 'clean' || syncResult === 'resolved') && result.pushOk);
-    if (session.source === 'cli_handoff' && branchSettled) {
-      managedRevision = await require('./cli-handoff-sync').reconcileCliHandoffSync({
-        config,
-        pool,
-        session,
-        newHead: result.sha || null,
-      });
-      if (!managedRevision.ok) {
-        const err = new Error(
-          `The branch synced, but Homeroom could not adopt its new proposal revision (${managedRevision.reason}). Retry Sync with main.`
-        );
-        err.code = 'SYNC_REVISION_NOT_ADOPTED';
-        throw err;
+    return await steps.once('after', async () => {
+      session = (await loadSession(pool, id)) || session;
+      await persistBehindMain(pool, session, result.behind || 0);
+      // Each effect that must not happen twice is its own step: an after-block
+      // run again (a retry, a lost lease) bills and says it once.
+      await steps.once('after:spend', () => deps.limits.recordSystemSpend(pool, Math.round((result.costUsd || 0) * 100)));
+      const syncResult = result.syncResult || (result.exitCode === 0 ? 'clean' : 'conflict');
+      const message = syncResult === 'already_synced'
+        ? 'Already up to date with main, so there is nothing to merge.'
+        : syncResult === 'clean'
+          ? `Merged main cleanly. Pushed ${result.sha ? result.sha.slice(0, 7) : 'merge commit'}.`
+          : syncResult === 'resolved'
+            ? `Claude resolved merge conflicts with main and pushed ${result.sha ? result.sha.slice(0, 7) : 'the merge commit'}.`
+            : 'Tried to sync with main but Claude couldn\'t resolve the conflicts. The branch is unchanged; try again or resolve locally.';
+      const pushed = (syncResult === 'clean' || syncResult === 'resolved') && !!result.pushOk;
+      // The card's snapshot: an unresolved conflict leaves the branch broken
+      // ('failed', with the files git could not merge); a merge that did not
+      // reach the branch says nothing new; anything else merges cleanly now.
+      if (syncResult === 'conflict') {
+        await persistConflictState(pool, session, { state: 'failed', files: result.conflictFiles || [] });
+      } else if (pushed || syncResult === 'already_synced') {
+        await persistConflictState(pool, session, { state: 'clean', files: [] });
       }
-    }
-
-    if (emitActivity) {
-      await sendStatus(message, syncMeta);
-    }
-
-    // Analytics: record the sync outcome on the terminal path. Attributed
-    // to session.user_id (the owner) to match the billing decision above —
-    // the clicking actor may be a collaborator. Fire-and-forget. Gated the
-    // same way as the visible activity so a silent already-synced resume
-    // doesn't flood the events table.
-    if (emitActivity) {
-      events.record(pool, {
-        type: events.EVENT_TYPES.SYNC_MAIN,
-        userId: session.user_id,
-        appId: session.app_id,
-        sessionId: session.id,
-        metadata: {
-          syncResult,
-          behind: result.behind || 0,
-          sha: result.sha || null,
-          pushOk: !!result.pushOk,
-          trigger: trigger || 'manual',
-        },
-      });
-    }
-
-    // #252: terminal broadcast. 'failed' covers the unresolved-conflict
-    // outcome (branch unchanged) so the banner shows the failure +
-    // re-enabled Try again; everything else is 'done'.
-    broadcastSyncStatus(
-      session,
-      syncResult === 'conflict' ? 'failed' : 'done',
-      { syncResult, message }
-    );
-
-    return {
-      ok: syncResult !== 'conflict',
-      syncResult,
-      behind: result.behind || 0,
-      sha: result.sha || null,
-      pushOk: !!result.pushOk,
-      conflictFiles: result.conflictFiles || [],
-      ...(managedRevision ? { managedRevision } : {}),
-      message,
-    };
+      // #788: a push changed the branch's contents, so the protected-settings
+      // classification is read again (a sync never resets votes).
+      if (pushed && session.status === 'promoted') {
+        await require('./app-admins').refreshExplicitApproval(pool, session, session);
+      }
+      // A CLI hand-off's own pins own its preview and verdict: adopted for
+      // every settled outcome.
+      let managedRevision = null;
+      if (session.source === 'cli_handoff' && (pushed || syncResult === 'already_synced')) {
+        managedRevision = await require('./cli-handoff-sync').reconcileCliHandoffSync({
+          config, pool, session, newHead: result.sha || null,
+        });
+        if (!managedRevision.ok) {
+          const err = new Error(`The branch synced, but Homeroom could not adopt its new proposal revision (${managedRevision.reason}).`);
+          err.code = 'SYNC_REVISION_NOT_ADOPTED';
+          throw err;
+        }
+      } else if (pushed && session.status === 'promoted') {
+        // In review: the pushed head is measured (it contains main, so it
+        // measures clean), installed as the reviewed revision (a mechanical
+        // or resolved move keeps the approvals) and its checks start.
+        await deps.integration.measure({ pool, session }, { force: true, blockReasons: [] }).catch(() => {});
+        if (session.source === 'imported') {
+          await deps.prImportSync().reconcileImportedHead({ config, pool, session, checks: 'background', notify: false });
+        } else {
+          await deps.votes().reconcileNativeReviewedHead({ config, pool, session, fresh: true, notify: false });
+        }
+      }
+      if (emitActivity) {
+        await steps.once('after:said', async () => {
+          await sendStatus(message, { syncMain: { syncResult, behind: result.behind || 0, sha: result.sha || null, pushOk: !!result.pushOk } });
+          events.record(pool, {
+            type: events.EVENT_TYPES.SYNC_MAIN,
+            userId: session.user_id, appId: session.app_id, sessionId: session.id,
+            metadata: { syncResult, behind: result.behind || 0, sha: result.sha || null, pushOk: !!result.pushOk, trigger: TRIGGERS.get(reason) || reason },
+          });
+          return true;
+        });
+      }
+      broadcastSyncStatus(session, syncResult === 'conflict' ? 'failed' : 'done', { syncResult, message });
+      return {
+        outcome: syncResult === 'conflict' ? 'unresolvable'
+          : (syncResult === 'clean' || syncResult === 'resolved') && !result.pushOk ? 'not_pushed' : syncResult,
+        sha: result.sha || null, behind: result.behind || 0, pushOk: !!result.pushOk,
+        conflictFiles: result.conflictFiles || [], message, headBefore, mainSha,
+        ...(managedRevision ? { managedRevision } : {}),
+      };
+    });
   } catch (err) {
-    // Thrown infrastructure/budget errors are terminal too — close the
-    // activity entry (if we opened one) and tell the banner before
-    // rethrowing to the caller.
-    if (emitActivity) {
-      await sendStatus(
-        `Sync with main failed: ${err.message}`,
-        { syncMain: { syncResult: 'error', behind: behindPrecheck, sha: null, pushOk: false } }
-      ).catch(() => {});
+    if (err && (err.stopped === true || err.code === 'steps_stopped')) throw err;
+    // Said only when no attempt follows: a retry may still succeed.
+    if (emitActivity && last) {
+      await sendStatus(`Sync with main failed: ${err.message}`,
+        { syncMain: { syncResult: 'error', behind, sha: null, pushOk: false } }).catch(() => {});
     }
-    broadcastSyncStatus(session, 'failed', { message: err.message });
+    if (last) broadcastSyncStatus(session, 'failed', { message: err.message });
+    log.warn('sync-main', 'Sync with main failed', { sessionId: id, reason, err: err.message });
     throw err;
   }
 }
 
 module.exports = {
-  runSyncMain,
+  runSyncWork,
   persistBehindMain,
   persistConflictState,
   getSyncState,
+  sessionBusy,
+  SYNC_BUDGET_MS,
+  IDLE_WAIT_MS,
 };

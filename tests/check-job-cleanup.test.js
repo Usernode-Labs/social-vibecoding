@@ -3,7 +3,7 @@
 // What a check run leaves on the cluster, and when it goes
 // (services/kubernetes.js runCheckJob, cancelPreviewChecks,
 // deleteSettledCheckJobs; services/visuals.js and services/check-harvest.js,
-// which delete a run's Jobs once its verdict is stored).
+// which delete a run's Jobs once it has settled).
 //
 // On 7 Oct 2026 the worker namespace reached 197 of 200 Secrets and 100 of
 // 100 Jobs, and proposal checks could not start. The Secrets were check input
@@ -137,12 +137,14 @@ test('a settled run\'s finished Jobs are deleted with their Pods; a running one,
   assert.equal(await kubernetes.deleteSettledCheckJobs(config, { sessionId: 'main-7', previewRunId: null }), 0);
 });
 
-test('a live run deletes its Jobs only once its verdict is stored and its manifest cleared', () => {
+test('a live run deletes its Jobs only once it has settled and its manifest is cleared', () => {
   const src = read('src/services/visuals.js');
-  const live = src.slice(src.indexOf('async function captureForSession('), src.indexOf('function holdCapture('));
+  const live = src.slice(src.indexOf('async function captureForSession('), src.indexOf('function workflowOperation('));
   const settle = live.indexOf('const settled = await settleCaptureRun(');
   assert.ok(settle !== -1);
-  assert.ok(live.indexOf('settledRun = true;') > settle, 'set after the settlement returns, never before');
+  // (A run superseded in line, before it started anything, also marks
+  // itself settled: there are no Jobs, and its row leaves the line.)
+  assert.ok(live.indexOf('settledRun = true;', settle) > settle, 'set after the settlement returns');
   const fin = live.lastIndexOf('} finally {');
   const finish = live.indexOf('await checkRuns.finish(', fin);
   const release = live.indexOf('if (harvestable && settledRun) releaseCheckJobs(config, session.id, runId);', fin);

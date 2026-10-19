@@ -27,6 +27,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { kanbanHtml, workshopHtml } = require('./lib/dev-card-html');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -42,6 +43,8 @@ function makeAppView({ search = '', mySessions = [] } = {}) {
   const store = {};
   const sandbox = {
     console, relTime: () => '2h ago',
+    // app-view.js words its cards through the English runtime.
+    PlatformI18n: englishPlatformI18n(),
     escapeHtml: (s) => String(s == null ? '' : s), escapeAttr: (s) => String(s == null ? '' : s),
     App: { user: { id: 1, username: 'me' }, currentApp: 'demo-app', currentSubTab: 'forum', _appUrl: () => '#x', switchTab: () => {} },
     Kudos: { renderButton: () => '', attach: () => {} },
@@ -142,6 +145,10 @@ test('a board column draws the board variant: no tile, the line in words, the ca
   assert.match(done, /<span class="dev-ws-wrow-sub">PR #1572 · alice · closed #1500 · 2d ago<\/span><span class="dev-ws-wrow-status"><span class="dev-ws-row-state dev-ws-row-state-ok dev-ws-wrow-live"[^>]*>✓ Live<\/span>/);
   assert.ok(!done.includes('dev-ws-row-band'), 'no bar across a live row');
   assert.ok(!/data-tone="ok"[^>]*>(?:<svg[^>]*>[\s\S]*?<\/svg>)?Live</.test(done), 'and no second, small Live tag');
+
+  // #4718: the board's rows carry no votes line — the bar and Vote stay on
+  // the band under the row, and live rows keep their one tags line.
+  assert.ok(!html.includes('dev-ws-wrow-votes'), 'no votes line on the board');
 });
 
 test('the row’s parts: its source', () => {

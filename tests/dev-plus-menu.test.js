@@ -22,6 +22,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { message } = require('./lib/platform-i18n');
 
 const VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -165,16 +166,21 @@ test('the members item is gated on the predicate, and only on the predicate', ()
 
 test('the members item keeps both label pairs, branched on self_hosted', () => {
   const { whenSelfHosted, otherwise } = selfHostedBranch(membersBlock());
-  assert.ok(whenSelfHosted.includes('Proposal approvals'), 'self-app label is Proposal approvals');
+  // The labels are catalog entries: each branch wires its own pair of ids.
+  assert.ok(whenSelfHosted.includes("title={t('project:menu.approvals.title')}"), 'self-app label is Proposal approvals');
+  assert.equal(message('project:menu.approvals.title'), 'Proposal approvals');
   assert.ok(
-    whenSelfHosted.includes('Who approves proposals and how many approvals are needed'),
+    whenSelfHosted.includes("sub={t('project:menu.approvals.sub')}"),
     'self-app sublabel unchanged'
   );
-  assert.ok(!whenSelfHosted.includes('Members &amp; approvals'),
+  assert.equal(message('project:menu.approvals.sub'), 'Who approves proposals and how many approvals are needed');
+  assert.ok(!whenSelfHosted.includes('project:menu.members.title'),
     'self-app does not use the Members label');
-  assert.ok(otherwise.includes('Members &amp; approvals'), 'other apps keep the Members label');
-  assert.ok(otherwise.includes('Manage collaborators, app admins and proposal approvals'),
+  assert.ok(otherwise.includes("title={t('project:menu.members.title')}"), 'other apps keep the Members label');
+  assert.equal(message('project:menu.members.title'), 'Members & approvals');
+  assert.ok(otherwise.includes("sub={t('project:menu.members.sub')}"),
     'other apps describe the remaining member and approval controls');
+  assert.equal(message('project:menu.members.sub'), 'Manage collaborators, app admins and proposal approvals');
   // The prop feeding that branch is appData.self_hosted, read in the module.
   assert.match(
     VIEW_SRC,
@@ -225,12 +231,14 @@ test('"+" menu has rename and secrets items in its Settings & rules panel, no Ap
   // #645 took the App settings nesting out. #4045 (the owner, 7 Oct) folds
   // the settings behind ONE "Settings & rules" row that opens them on top of
   // the menu; the rows themselves are still the menu's own.
-  assert.match(FRAME_SRC, /<PlusRow\s+data-plus="settings"\s+group="settings"[\s\S]{0,120}title="Settings &amp; rules"/);
+  assert.match(FRAME_SRC, /<PlusRow\s+data-plus="settings"\s+group="settings"[\s\S]{0,120}title=\{t\('project:menu\.settings\.title'\)\}/);
+  assert.equal(message('project:menu.settings.title'), 'Settings & rules');
   assert.ok(FRAME_SRC.indexOf('id="dev-plus-settings"') < FRAME_SRC.indexOf('data-plus="rename"')
     && FRAME_SRC.indexOf('data-plus="secrets"') < FRAME_SRC.indexOf('data-plus="suggest-back"'),
     'rename and secrets are inside the settings panel, and Suggest this back and Remix end it (the owner, 7 Oct)');
   assert.ok(FRAME_SRC.includes('data-plus="rename"'), 'rename item present');
-  assert.ok(FRAME_SRC.includes('App display name'), 'rename label present');
+  assert.match(FRAME_SRC, /data-plus="rename"[\s\S]{0,160}title=\{t\('project:menu\.rename\.title'\)\}/, 'rename label present');
+  assert.equal(message('project:menu.rename.title'), 'App display name');
   assert.ok(FRAME_SRC.includes('data-plus="secrets"'), 'secrets item present');
   assert.ok(FRAME_SRC.includes('id="dc-secrets-state"'),
     'secrets item carries the missing-required state slot for refreshDevChatSecretsState');
@@ -262,7 +270,8 @@ test('read-only viewers get only Fork in the "+" menu', () => {
   assert.ok(FRAME_SRC.slice(end).includes('data-plus="fork"'), 'fork item still present');
   // Read-only also swaps the "+" button's tooltip and, on the self-app,
   // hides the button outright.
-  assert.ok(FRAME_SRC.includes("? 'Remix: make your own copy'"), 'read-only tooltip names the one row it opens');
+  assert.ok(FRAME_SRC.includes("? t('project:menu.button.remix')"), 'read-only tooltip names the one row it opens');
+  assert.equal(message('project:menu.button.remix'), 'Remix: make your own copy');
   // Tolerant of layout classes before the gate: #1440 added `ml-auto` here
   // and broke a version of this that pinned the exact string, and the "+"
   // moving to the end of the Workshop's tab strip swapped the Tailwind
@@ -385,7 +394,8 @@ test('Settings & rules has a Topics row that opens the Topics dialog', () => {
   assert.ok(at > FRAME_SRC.indexOf('data-plus="rename"') && at < FRAME_SRC.indexOf('data-plus="secrets"'),
     'beside the other change that is a proposal against dapp.json, the display name');
   const row = FRAME_SRC.slice(at, FRAME_SRC.indexOf('/>', FRAME_SRC.indexOf('onClick', at)));
-  assert.match(row, /title="Topics"/);
+  assert.match(row, /title=\{t\('project:menu\.topics\.title'\)\}/);
+  assert.equal(message('project:menu.topics.title'), 'Topics');
   // Its own onClick, so it works however the menu was wired (a row the menu
   // wired before it rendered would otherwise be dead), and it closes the menu
   // before the dialog goes up.

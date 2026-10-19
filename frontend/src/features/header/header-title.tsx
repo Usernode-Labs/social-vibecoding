@@ -89,6 +89,7 @@ import type { RefObject } from 'react';
 import { ChevronDownIcon, Squares2X2Icon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { headerTitleStore } from './header-title-store.js';
 import { improveStore } from '../improve/improve-store.js';
@@ -98,6 +99,9 @@ import { MergeStatusPill } from '../dev-chat/session-header';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { useDevViewMode } from '../dev-board/view-mode-store';
 import { communityScopeStore, toggleSwitcher } from '../workshop/community-scope';
+import { HeaderPlaceName } from '../dev-board/workshop/place-bar';
+import { DrawerTitles, useDrawerMode } from '../nav-drawer/header-drawer';
+import { useSidebarRows } from '../nav/sidebar-rows';
 
 // The one string that means "this is naming the platform, not an app". It is
 // header-title-store.js's INITIAL, which is why the prerendered document and
@@ -106,15 +110,22 @@ import { communityScopeStore, toggleSwitcher } from '../workshop/community-scope
 const PLATFORM_NAME = 'Homeroom';
 
 export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingElement | null> }) {
+  const t = useMessages();
   const { text, subtitle } = useStoreState(headerTitleStore);
   const { slug, tab, subTab, name, iconUrl, iconEmoji, selfHosted } = useStoreState(improveStore);
   const { screen } = useStoreState(navStore);
   const { life } = useStoreState(sessionHeaderStore);
   const viewMode = useDevViewMode();
-  // "Your communities" (features/workshop/community-switcher.tsx): the
+    // "Your communities" (features/workshop/community-switcher.tsx): the
   // app's name opens it, and so does the Communities screen's All chip.
   const { switcher } = useStoreState(communityScopeStore);
   const switcherOpen = !!switcher;
+  // THE PHONE'S DRAWER (../nav-drawer/): on a community's page under 768px
+  // the title is the drawer's, "Communities", the community, or the
+  // community over its page, moving with the drawer; on Messages,
+  // "Messages" or the conversation over who it is with. Off until a drawer
+  // has settled that it applies, after hydration.
+  const drawerOn = useDrawerMode() !== null;
 
   const onSession = tab === 'dev' && subTab === 'sessions';
   const sessionPill = onSession && life ? <MergeStatusPill life={life} /> : null;
@@ -134,10 +145,19 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   // A card opened from it (#3602): an item's page is still the community's,
   // so its name switches community there too.
   const onCard = inApp && tab === 'dev' && subTab === 'topic';
+  // D (18 Oct 2026): ON A DESKTOP THE SIDEBAR LISTS YOUR COMMUNITIES
+  // (../nav/sidebar-rows.ts, from 768px), so the bar's name is a name again
+  // there: the community's tile and name, no chevron, and on All communities
+  // its title. Under 768px the name is the switcher, as it was.
+  const sidebarRows = useSidebarRows();
+  const communityPage = onWorkshop || onCard;
   // At every width (#3295): the Workshop draws no chip of its own any more.
-  const appSwitch = onWorkshop || onCard;
-  // The Communities screen, at every width: the title is its switcher.
-  const allAppsSwitcher = screen === 'workshop-screen';
+  const appSwitch = communityPage && !sidebarRows;
+  // The Communities screen: the title is its switcher, but beside the
+  // sidebar's own list.
+  const allAppsSwitcher = screen === 'workshop-screen' && !sidebarRows;
+  // Beside the sidebar, the community's name where the switcher would be.
+  const communityName = communityPage && sidebarRows;
   const showTile = inApp;
 
   /* `.app-icon-tile` + `data-icon` draw the box, and this call site adds no
@@ -167,6 +187,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
       id="header-title"
       className={"flex-1 min-w-0 text-base font-semibold pointer-events-none truncate\n               text-left"}
     >
+      {drawerOn ? <DrawerTitles /> : (
       <span className="inline-flex items-center gap-2 max-w-full align-middle">
         {appSwitch ? null : tile}
         {allAppsSwitcher ? (
@@ -182,11 +203,11 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
             aria-haspopup="dialog"
             aria-expanded={switcherOpen ? 'true' : 'false'}
             aria-controls="community-switcher"
-            aria-label="Communities: all of yours, or open one"
+            aria-label={t('core:header.communitiesSwitch')}
             onClick={(e) => toggleSwitcher('header', e.currentTarget)}
           >
             <Squares2X2Icon className="w-5 h-5 shrink-0" aria-hidden="true" />
-            <span id="header-title-name" className="min-w-0 truncate">Communities</span>
+            <span id="header-title-name" className="min-w-0 truncate">{t('core:header.communities')}</span>
             <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
           </button>
         ) : appSwitch ? (
@@ -194,37 +215,46 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
              `pointer-events-none` so its overlap never eats a tap meant for a
              control beside it — this is the one part of it that IS a
              control, and only the part the tile and the name cover. */
-          <button
-            id="header-app-switch"
-            type="button"
-            className="pointer-events-auto un-touch-target inline-flex items-center gap-2 min-w-0 max-w-full
-                       text-left font-semibold"
-            data-community-switch=""
-            aria-haspopup="dialog"
-            aria-expanded={switcherOpen ? 'true' : 'false'}
-            aria-controls="community-switcher"
-            aria-label={`${name || text}, switch community`}
-            onClick={(e) => toggleSwitcher('header', e.currentTarget)}
-          >
-            {tile}
-            {/* THE APP'S NAME, not the screen's: the bar reads "Workshop" on this
-                route, and a switcher labelled with the screen it switches
-                within would not say which app you are in.
+          <>
+            <button
+              id="header-app-switch"
+              type="button"
+              className="pointer-events-auto un-touch-target inline-flex items-center gap-2 min-w-0 max-w-full
+                         text-left font-semibold"
+              data-community-switch=""
+              aria-haspopup="dialog"
+              aria-expanded={switcherOpen ? 'true' : 'false'}
+              aria-controls="community-switcher"
+              aria-label={t('core:header.switchCommunity', { community: name || text })}
+              onClick={(e) => toggleSwitcher('header', e.currentTarget)}
+            >
+              {tile}
+              {/* THE APP'S NAME, not the screen's: the bar reads "Workshop" on this
+                  route, and a switcher labelled with the screen it switches
+                  within would not say which app you are in.
 
-                ON HOMEROOM'S OWN PAGES THE NAME IS THE LOGOTYPE (#3497): the
-                same drawing the bar names the platform with on Home, so the
-                community that is the platform is not the one place its name
-                is set as plain type. Keyed on the store's `selfHosted`, not
-                the name, so a project that happens to be called Homeroom
-                keeps its word. The button's aria-label already says the
-                name, so the drawing is aria-hidden, as on Home. */}
-            <span id="header-title-name" className="min-w-0 truncate">
-              {selfHosted
-                ? <Wordmark className="h-5 w-[77.5px]" aria-hidden="true" />
-                : name || text}
-            </span>
-            <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-          </button>
+                  ON HOMEROOM'S OWN PAGES THE NAME IS THE LOGOTYPE (#3497): the
+                  same drawing the bar names the platform with on Home, so the
+                  community that is the platform is not the one place its name
+                  is set as plain type. Keyed on the store's `selfHosted`, not
+                  the name, so a project that happens to be called Homeroom
+                  keeps its word. The button's aria-label already says the
+                  name, so the drawing is aria-hidden, as on Home. */}
+              <span id="header-title-name" className="min-w-0 truncate">
+                {selfHosted
+                  ? <Wordmark className="h-5 w-[77.5px]" aria-hidden="true" />
+                  : name || text}
+              </span>
+              <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
+            </button>
+            {/* #4703: THE PLACE'S NAME, on a phone, on the project page —
+                where the place bar's second row is gone and the header says
+                both whose page this is and where on it you are. An item's
+                page (onCard) has its own way back and draws none. Hidden
+                from screen readers: the heading is named by the switcher's
+                drawing already. */}
+            {onWorkshop ? <HeaderPlaceName slug={slug} /> : null}
+          </>
         ) : (
           <span className="min-w-0 flex items-baseline gap-1.5">
             <span id="header-title-name" className="min-w-0 truncate">
@@ -232,12 +262,21 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
                   from its contents, and the drawing IS the word "Homeroom" — a
                   title element or an sr-only span here would have it read
                   twice. The heading is still named, because `text` is what the
-                  screens beside it publish. */}
-              {showsWordmark
-                ? <Wordmark className="h-5 w-[77.5px]" aria-hidden="true" />
-                : text}
+                  screens beside it publish.
+
+                  BESIDE THE SIDEBAR, ON A COMMUNITY'S PAGE, the community's
+                  own name (the switcher's words, without the switch), and
+                  Homeroom's is the logotype there as well (#3497). An sr-only
+                  copy names the heading under the drawing. */}
+              {communityName
+                ? (selfHosted
+                  ? <><Wordmark className="h-5 w-[77.5px]" aria-hidden="true" /><span className="sr-only">{name || text}</span></>
+                  : name || text)
+                : showsWordmark
+                  ? <Wordmark className="h-5 w-[77.5px]" aria-hidden="true" />
+                  : text}
             </span>
-            {showSubtitle ? (
+            {showSubtitle && !communityName ? (
               <span
                 id="header-subtitle"
                 className="shrink-0 text-[0.6875rem] leading-none font-medium
@@ -255,6 +294,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
           </span>
         )}
       </span>
+      )}
     </h1>
   );
 }

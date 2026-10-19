@@ -7,12 +7,40 @@
 
 import type { Json, JsonObject, Push } from './kernel/index.ts';
 
+// The WebSocket bus (services/ws-bus.js), as the transitions publish on it:
+// its channel, the sender every web process recognises as a machine (it
+// relays such a push to its own sockets too: the deciding process has none
+// in hand), and the server's payload budget. One copy, imported back by the
+// bus.
+export const BUS_CHANNEL = 'usernode_ws';
+export const WORKFLOW_SENDER = 'workflow';
+// 8000 is the server's hard cap. The envelope around the payload is small but
+// not free (instance id, kind, routing), so budget the inner JSON well under
+// it rather than computing the exact remainder and living on the edge.
+export const BUS_PAYLOAD_BYTES = 7000;
+
+// The NOTIFY body for a push a transition publishes: the bus's envelope,
+// from WORKFLOW_SENDER, and the bus's resync nudge in place of a payload
+// over the budget. Pure.
+export function workflowBody(kind: string, routing: Json | null, data: Json): string {
+  const body = JSON.stringify({ i: WORKFLOW_SENDER, k: kind, r: routing || null, d: data });
+  if (Buffer.byteLength(body, 'utf8') <= BUS_PAYLOAD_BYTES) return body;
+  return JSON.stringify({ i: WORKFLOW_SENDER, k: kind, r: routing || null, o: 1 });
+}
+
 // Everyone who may view the app (ws.broadcastGlobalScoped).
 function scoped(type: string, data: JsonObject): Push {
   return { kind: 'scoped', routing: { appId: data.appId ?? null, appSlug: data.appSlug ?? null }, data: { type, ...data } };
 }
 
 export const issueUpdate = (data: JsonObject) => scoped('issue_update', data);   // ws.pushIssueUpdate
+
+// A card moved on a board: besides the browsers, the Workshop's placement
+// stage hears it in every web process that relays the push (services/ws.js
+// `routing.boardChange` → workshop-themes.noteBoardChange, debounced and
+// leased per app), the deciding one included. What ws.pushIssueUpdate /
+// pushSessionUpdate kick in the process that calls them.
+export const boardMoved = (p: Push): Push => ({ ...p, routing: { ...(p.routing || {}), boardChange: true } });
 export const voteUpdate = (data: JsonObject) => scoped('vote_update', data);     // ws.pushVoteUpdate
 export const appUpdate = (data: JsonObject) => scoped('app_update', data);       // ws.pushAppUpdate
 
@@ -20,6 +48,28 @@ export const appUpdate = (data: JsonObject) => scoped('app_update', data);      
 export function appVersion(d: { appId: number; appSlug: string; sha: string | null; prNumber: number | null }): Push {
   return { kind: 'scoped', routing: { appId: d.appId, appSlug: d.appSlug },
     data: { type: 'app_version_changed', appSlug: d.appSlug, sha: d.sha || null, prNumber: d.prNumber || null } };
+}
+
+// The version pill's "deploying", started or ended: services/app-deploy-status.js
+// markStart/markEnd's broadcast, to everyone (ws.broadcastGlobal).
+export function redeployStatus(d: {
+  appSlug: string; deploying: boolean; startedAt: string; fromSha: string | null;
+  toSha?: string | null; failed?: boolean; missingSecrets?: string[] | null;
+}): Push {
+  const data: JsonObject = { type: 'app_redeploy_status', appSlug: d.appSlug, deploying: d.deploying, startedAt: d.startedAt, fromSha: d.fromSha };
+  if (!d.deploying) Object.assign(data, { toSha: d.toSha ?? null, failed: !!d.failed, missingSecrets: d.missingSecrets ?? null });
+  return { kind: 'global', data };
+}
+
+// Issues just closed on GitHub, to every web process's own copy of the
+// repository's open issues (github.js: the "just closed" suppression, since
+// GitHub's list lags, and the cache). `open`: issues hidden as about to
+// close that are still open after all, shown again. It reaches no browser:
+// services/ws.js applies it where it relays workflow pushes. The cache is
+// per process, and this is how a process that did not close them hears it.
+export function issuesClosed(d: { owner: string; repo: string; numbers: number[]; open?: number[] }): Push {
+  return { kind: 'issues_closed', routing: { owner: d.owner, repo: d.repo },
+    data: { numbers: d.numbers, ...(d.open?.length ? { open: d.open } : {}) } };
 }
 
 // One person's tabs (ws.pushToUser).
@@ -44,3 +94,24 @@ export function chatLine(row: LineRow): Push {
     createdAt: (row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at) as Json,
   } };
 }
+
+// One session's live event (ws.broadcastGlobal's `session_event`, routed by
+// session as services/ws.js broadcastSessionEvent routes it): the owner's
+// tabs and the tabs watching the session, and for the few events lists and
+// boards draw (a checks run's progress and verdict, a preview built or
+// failed) everyone who may view the app. `seq` is the client's dedup key
+// (`_seq`), unique per event: the transition's instance and version.
+const SESSION_FANOUT_EVENTS: ReadonlySet<string> = new Set(['checks_ready', 'staging_ready', 'staging_failed']);
+export interface SessionRoute { sessionId: number; userId: number | null; appId: number | null; appSlug: string | null }
+export function sessionEvent(to: SessionRoute, event: string, seq: string, data: JsonObject): Push {
+  return {
+    kind: 'session',
+    routing: { sessionId: to.sessionId, userId: to.userId, appId: to.appId, appSlug: to.appSlug,
+      fanout: SESSION_FANOUT_EVENTS.has(event) },
+    data: { _seq: seq, ...data, type: 'session_event', sessionId: to.sessionId, event },
+  };
+}
+
+// A session's card moved on a board or list (ws.pushSessionUpdate, without
+// its in-process Workshop listener).
+export const sessionUpdate = (data: JsonObject) => scoped('session_update', data);

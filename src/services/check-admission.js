@@ -9,7 +9,7 @@
 // in check_state. The preview is for the people reviewing the change; the
 // verdict is for the merge gate.
 //
-// Under direct-merge lanes (services/merge-queue.js) a proposal merges as it
+// Under direct-merge lanes (the merge-queue machine, src/workflow/merge-queue/) a proposal merges as it
 // stands the moment it is approved and merges cleanly with main. A proposal
 // that CONFLICTS with main cannot merge as it stands: the tree the group
 // would test today is not the tree that lands after the resolution, so a

@@ -14,6 +14,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -64,6 +65,23 @@ test('a row links only to a request it can name', () => {
   assert.equal(row({ appSlug: 'ok', issueNumber: '12' }).href, '#app/ok/dev/issues/12');
   assert.equal(row({ status: 'counted', points: 0 }).statusLabel, 'Counted', 'no points, no "0 pts"');
   assert.equal(row({ status: 'reviewed' }).status, 'received', 'only the two statuses the server can prove');
+});
+
+test('recent feedback offers a sibling Edit row, subtracting time spent in the cached profile', () => {
+  const { feedbackListView } = loadTsx(STORE);
+  const { FeedbackSheet } = loadTsx('frontend/src/features/profile/feedback-sheet.tsx');
+  const now = Date.now();
+  const payload = { sent: 1, counted: 0, receivedAt: now - 61000, reports: [{
+    ...FEEDBACK.reports[1], edit: { reportId: 20, version: 2, title: 'Board jumps', description: 'Original words', secondsLeft: 300 },
+  }] };
+  const view = feedbackListView(payload, now);
+  assert.equal(view.rows[0].edit.expiresAt, now + 239000);
+  assert.equal(view.rows[0].edit.version, 2);
+  const html = renderToHtml(createElement(FeedbackSheet, { view }));
+  assert.match(html, /<\/a><button [^>]*data-feedback-edit="20"/);
+  assert.match(html, /Edit this request/);
+  assert.match(html, /4 more minutes/);
+  assert.equal(feedbackListView(payload, now + 240000).rows[0].edit, null);
 });
 
 test('a failed read is not "nothing sent", and a capped list says so', () => {
@@ -196,6 +214,7 @@ test('the feedback challenge\'s page links to Your feedback, and no other page d
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.runInContext(src, sandbox, { filename: 'topochain-challenges.js' });
   const pane = sandbox.window.TopochainChallenges;
   const pageOf = (illustration) => {

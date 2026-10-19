@@ -68,26 +68,32 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ChatIcon,
   CogIcon,
+  CompassIcon,
   HomeIcon,
-  SearchIcon,
+  Squares2X2Icon,
   UserGroupIcon,
   UserIcon,
 } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useClassToggle, useHiddenClass } from '../../lib/legacy-dom';
 import { useCommunityColor } from '../../lib/community-color';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import {
-  communityScopeStore, hydrateCommunityScope, tabVotes, warmCommunities,
+  communityScopeStore, goToCommunity, hydrateCommunityScope, tabVotes, warmCommunities,
   type CommunityInfo,
 } from '../workshop/community-scope';
 import { CommunitySwitcher } from '../workshop/community-switcher';
-import { createSwitcherHold, pressLitTab } from '../workshop/tab-ladder';
+import { pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
+import { RailCommunities, useRailCommunities } from './rail-communities';
+import { RailConversations } from './rail-conversations';
+import { RailPinned } from './rail-pinned';
+import { useSidebarRows } from './sidebar-rows';
 import { clearPeekTimer, clearPeekTimerByMouse, enterPeekByMouse, leavePeekByMouse } from './rail-peek';
-import { StripApps } from './strip-apps';
 import { schedulePress, type PendingPress } from './tab-press';
 
 /**
@@ -110,14 +116,18 @@ import { schedulePress, type PendingPress } from './tab-press';
  * own projects"). Inside a project, "Workshop" is the build tab beside its
  * hub — the one place that word is shown now.
  *
- * Discover keeps the magnifier rather than taking a grid glyph: it is the
- * same row the app menu spelled `#switcher-row-discover` with a
- * <SearchIcon/>, and moving a destination should not also rename its glyph.
+ * Discover is a compass (v3, 18 Oct 2026), on every bar alike, where it
+ * kept the magnifier the app menu's `#switcher-row-discover` drew: it is
+ * where you go to find something new, and a magnifier says "search", which
+ * the sidebar's Communities heading and the inbox already offer. One glyph
+ * a destination, whatever bar it is on.
  */
+// `label` is a message id (frontend/locales/en/core.json), read when the bar
+// renders so the words follow the language on screen.
 const TABS = [
   {
     key: 'home' as const,
-    label: 'Home',
+    label: 'core:tabs.home',
     // A REAL PATH, not a fragment, and that is deliberate: Home is the only
     // one of the five that is a document address rather than a hash route,
     // so a cmd-click on it opens the launcher in a new tab the way the app
@@ -126,12 +136,12 @@ const TABS = [
     href: '/',
     Icon: HomeIcon,
   },
-  { key: 'discover' as const, label: 'Discover', href: '#apps', Icon: SearchIcon },
-  { key: 'messages' as const, label: 'Messages', href: '#messages', Icon: ChatIcon },
-  { key: 'workshop' as const, label: 'Communities', href: '#communities', Icon: UserGroupIcon },
-  // "Me" is the label only until somebody is signed in: from then on this tab
-  // is named after them (#2760) — see tabLabel below.
-  { key: 'me' as const, label: 'Me', href: '#profile', Icon: UserIcon },
+  { key: 'discover' as const, label: 'core:tabs.discover', href: '#apps', Icon: CompassIcon },
+  { key: 'messages' as const, label: 'core:tabs.messages', href: '#messages', Icon: ChatIcon },
+  { key: 'workshop' as const, label: 'core:tabs.communities', href: '#communities', Icon: UserGroupIcon },
+  // "You", signed in or not (N7 of the 19 Oct polish board); the accessible
+  // name adds whose account it is — see tabLabel below.
+  { key: 'me' as const, label: 'core:tabs.me', href: '#profile', Icon: UserIcon },
 ];
 
 /**
@@ -152,16 +162,21 @@ const TABS = [
  * THE ACCESSIBLE NAME KEEPS SAYING WHAT THE TAB IS. A bare username among
  * Home, Discover, Communities and Messages would be read out as a person rather
  * than a place, so the label names both, and it starts with the visible text
- * so a voice command that says what is on screen still finds it. Long names
- * are cut by app.css with an ellipsis; usernames are at most 32 characters
- * and never contain a space, so a clipped one is still recognisably yours.
+ * so a voice command that says what is on screen still finds it.
+ *
+ * …AND THE TAB SAYS "You" NOW (N7 of the 19 Oct 2026 polish board; the owner
+ * agreed). A username is up to 32 characters, and in a fifth of a phone's
+ * width a long one was cut to "newbie_t1…", the only label on the bar that
+ * did not fit. "You" is the account's place, as Home and Messages are
+ * places; it is the prerender too, so the name arriving changes no text on
+ * screen, and the accessible name still says whose it is.
  */
 export function tabLabel(
   key: string,
   label: string,
   viewer: string | null,
 ): { text: string; ariaLabel: string | undefined } {
-  if (key === 'me' && viewer) return { text: viewer, ariaLabel: `${viewer}, your profile` };
+  if (key === 'me' && viewer) return { text: label, ariaLabel: translate('core:tabs.meNamed', { username: viewer }) };
   return { text: label, ariaLabel: undefined };
 }
 
@@ -179,7 +194,7 @@ export function tabLabel(
  * the prerender ships it.
  */
 export function communitiesAriaLabel(scoped: { name: string } | null): string | undefined {
-  return scoped ? `Communities, on ${scoped.name}` : undefined;
+  return scoped ? translate('core:tabs.communitiesOn', { community: scoped.name }) : undefined;
 }
 
 /**
@@ -228,14 +243,16 @@ function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
  * On the phone's bar, a square ring, the shape of an app's own tile, around
  * either that community's tile, in its colour (features/workshop/
  * community-scope.ts says which; lib/community-color.ts what colour), or, on
- * All communities, the tab's own people glyph. The ring is what says the tab
- * can be switched: hold it and "Your communities" opens (#3701,
- * ../workshop/tab-ladder.ts). The desktop rail draws no ring (app.css): the
- * header's name is the switcher there, as it is on a phone.
+ * All communities, the tab's own people glyph. The ring says which community
+ * the tab is on; switching is the drawer's list. Holding the tab no longer
+ * opens "Your communities" (18 Oct 2026): that was the old switcher, which
+ * the drawer replaced on a phone. The desktop rail draws no ring (app.css):
+ * the header's name is the switcher there.
  *
- * All communities is THE PRERENDER: the scope arrives from localStorage and
- * app.js after the first paint, so the shipped markup and the first client
- * render are both this branch.
+ * All communities is THE PRERENDER: the scope arrives from localStorage in
+ * an effect flushed with the hydration (before the first paint) and from
+ * app.js, so the shipped markup and the first client render are both this
+ * branch.
  */
 function CommunityTabFace({ info }: { info: CommunityInfo | null }) {
   const color = useCommunityColor(info
@@ -266,9 +283,10 @@ function CommunityTabFace({ info }: { info: CommunityInfo | null }) {
  * hides the quiet unread-channels count beside it: one number per glyph.
  */
 function VotesBadge({ count }: { count: number }) {
+  const t = useMessages();
   if (!(count > 0)) return null;
   return (
-    <span className="platform-tab-votes" aria-label={`${count} ${count === 1 ? 'vote' : 'votes'} waiting on you`}>
+    <span className="platform-tab-votes" aria-label={t('core:tabs.votesWaiting', { count })}>
       {count > 99 ? '99+' : String(count)}
     </span>
   );
@@ -289,10 +307,11 @@ function VotesBadge({ count }: { count: number }) {
  * The TEXT is React's, and it is empty at zero, so the prerender and the
  * first client render agree on an empty hidden span.
  */
-function TabBadge({ count, id = 'platform-tabs-badge', label = 'Unread conversations' }: {
+function TabBadge({ count, id = 'platform-tabs-badge', label }: {
   count: number;
   id?: string;
-  label?: string;
+  /** The accessible name, already in the language on screen. */
+  label: string;
 }) {
   const ref = useRef<HTMLSpanElement | null>(null);
   useHiddenClass(ref, count <= 0);
@@ -479,8 +498,8 @@ export function tabContentRect(tab: HTMLElement): ContentRect | null {
  * to 150ms while the new screen lays out and its data lands), so a slide
  * started two frames out still began inside one of them and showed from its
  * middle. So a press moves the pill FIRST, in the press's own task, and it is
- * the NAVIGATION that waits, until the slide is running on the compositor
- * where the swap cannot hold it (useTabMarker's `press`, schedulePress). This
+ * the NAVIGATION that waits, for the frame that lights the tab and no longer
+ * (useTabMarker's `press`, ./tab-press.ts schedulePress says why). This
  * path is still what a tab change the bar did not start takes (Back, a link,
  * a deep link).
  *
@@ -593,10 +612,8 @@ function useTabMarker(
 } {
   const [box, setBox] = useState<TabMarkerBox | null>(null);
   const markerRef = useRef<HTMLSpanElement | null>(null);
-  // The box the marker was last laid out at, which the next slide leaves,
-  // and the slide playing now, whose start a press waits for.
+  // The box the marker was last laid out at, which the next slide leaves.
   const laidOut = useRef<TabMarkerBox | null>(null);
-  const slide = useRef<Animation | null>(null);
   // THE TAB A PRESS LIT, until the router has answered it (#3259). The bar
   // answers a press at once, pill and label together, and the router's tab
   // takes over when it lands; `lit` is what the bar draws. Null at first,
@@ -683,10 +700,9 @@ function useTabMarker(
     const running = typeof el.getAnimations === 'function' ? el.getAnimations() : [];
     const from = prev && running.length ? shownBox(prev, getComputedStyle(el).transform) : prev;
     for (const animation of running) animation.cancel();
-    slide.current = null;
     if (!box || !from || !box.slide || !motionWelcome()) return;
     const [start, end] = slideKeyframes(from, box);
-    slide.current = el.animate([{ transform: start }, { transform: end }], {
+    el.animate([{ transform: start }, { transform: end }], {
       duration: MARKER_SLIDE.duration,
       easing: MARKER_SLIDE.easing,
     });
@@ -700,10 +716,10 @@ function useTabMarker(
 
   /**
    * A press on another tab (#3259): light it and slide to it NOW, and
-   * navigate once the slide is running (schedulePress). The slide is made in
-   * the press's own task, and the swap's long frames begin only after it is
-   * on the compositor, where they cannot hold it. `go` is the tab's own
-   * navigation, run a few frames late.
+   * navigate once that frame is painted (schedulePress). The slide is made in
+   * the press's own task; the swap no longer waits for it to be running
+   * (polish board #2: that wait held the old screen up for 120 to 205ms).
+   * `go` is the tab's own navigation, run a frame late.
    *
    * False when the pill cannot slide (the desktop rail, reduced motion,
    * nothing lit yet): the caller navigates as it always did, at once.
@@ -717,7 +733,7 @@ function useTabMarker(
     place(el, true);
     setPressed(key);
     // A second press before the first has navigated replaces it.
-    schedulePress(pending, key, go, () => setPressed(null), () => slide.current?.ready ?? null);
+    schedulePress(pending, key, go, () => setPressed(null));
     return true;
   };
 
@@ -744,22 +760,38 @@ function goToTab(key: string, href: string): void {
 
 export function PlatformTabs() {
   const barRef = useRef<HTMLElement | null>(null);
+  const t = useMessages();
   // `true` is what the prerendered document ships: the bar is present and
   // visible, and the routes that hide it (an app, chromeless, the signed-out
   // shell) publish `false` once the router has run.
   const visible = useVisibility('platform-tabs', true);
   const { tab, messages, communities, screen, peek, peekOut, railOpen, viewer } = useStoreState(navStore);
   // THE COMMUNITY THE FOURTH TAB IS ON (../workshop/community-scope.ts). Read
-  // from storage after the first paint, and every community's votes owed a
+  // from storage by this effect, which is flushed with the hydration itself
+  // (main.tsx hydrates in flushSync), so before the first paint; the viewer's
+  // list of communities follows in the same task (lib/shell-snapshot-apply.ts),
+  // and every community's votes owed a
   // moment after sign-in, so the badge can say so before anybody opens the
   // switcher.
   const scope = useStoreState(communityScopeStore);
   useEffect(() => { hydrateCommunityScope(); }, []);
-  useEffect(() => (viewer ? warmCommunities() : undefined), [viewer]);
+  // On a desktop the sidebar's own rows are your communities (D), so they are
+  // read at once rather than a moment after sign-in.
+  const sidebarRows = useSidebarRows();
+  useEffect(() => (viewer ? warmCommunities(sidebarRows ? 0 : undefined) : undefined), [viewer, sidebarRows]);
   const scoped = scope.slug ? scope.info[scope.slug] || null : null;
   // Less an unchosen community's votes: the one every account is put in,
   // until you have taken part there (tabVotes says why).
   const votes = tabVotes(scope);
+  // THE SIDEBAR OF ROWS (./sidebar-rows.ts, from 768px): the five
+  // communities it lists (./rail-communities.tsx), and on its All row every
+  // vote waiting on you, the tab's own figure (#18 of the 19 Oct polish
+  // board). It was the votes in the communities the rows above did not
+  // list, which read as a total and was not one: 67 there while Needs you
+  // said 93.
+  const railShown = useRailCommunities();
+  const allVotes = Number(scope.badgeNeeds) || 0;
+  const allCount = scope.list ? scope.list.length : 0;
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
   // fold the one there is (../header/../nav/sidebar-toggle.tsx). The peek
@@ -789,20 +821,12 @@ export function PlatformTabs() {
   // watch the viewport.
   useClassToggle(barRef, 'platform-tabs-folded', !railOpen);
   const { enter, leave } = useRailPeek(peek);
+  // A RUNNING APP, as this store tells it: the app view with no tab lit. Its
+  // Workshop and its threads light Workshop or Messages (App._syncPlatformTabs),
+  // so they are not this. The hot zone below needs it since the rail stays
+  // beside a running app on the desktop.
+  const runningApp = screen === 'app-view' && !tab;
   const { box: marker, lit, markerRef, press } = useTabMarker(barRef, tab);
-  // THE COMMUNITIES TAB, HELD on the phone's bar, opens "Your communities"
-  // (#3701, ../workshop/tab-ladder.ts createHold); a short press is the
-  // ladder below. One per bar, its timer and click guard let go on unmount.
-  // Only handlers ride on the tab, so the markup is the prerender's.
-  const [hold] = useState(createSwitcherHold);
-  useEffect(() => () => hold.dispose(), [hold]);
-  const holdProps = {
-    onPointerDown: hold.onPointerDown,
-    onPointerMove: hold.onPointerMove,
-    onPointerUp: hold.onPointerUp,
-    onPointerCancel: hold.onPointerCancel,
-    onContextMenu: hold.onContextMenu,
-  };
   // A plain press on another tab lights it and slides the pill first, and
   // navigates a frame later (useTabMarker's `press`, #3259). A modified click
   // stays the browser's, a second press on a tab still waiting for its route
@@ -820,7 +844,19 @@ export function PlatformTabs() {
     // back to the community, then to the top, then to All communities, whose
     // own press only scrolls (../workshop/tab-ladder.ts). It used to open
     // "Your communities" on a phone and go to All communities on the rail.
-    // The switcher is the header's name, and the phone's tab held (`hold`).
+    // On a wide window the switcher is the header's name; a phone has the
+    // drawer's list, and holding the tab opens nothing (18 Oct 2026).
+    // v3: IN THE SIDEBAR OF ROWS THE TAB IS "All 13 communities", and goes
+    // there, from a community's page too: a community's own row is the way
+    // up its page, and resuming the last one (App.resumeWorkshopView) is the
+    // strip's tab, whose face is that community. On the list itself it only
+    // scrolls, as before.
+    if (key === 'workshop' && sidebarRows) {
+      event.preventDefault();
+      if (screen === 'workshop-screen') pressLitTab(screen);
+      else goToCommunity(null);
+      return;
+    }
     if (key === 'workshop' && lit === 'workshop' && tab === 'workshop') {
       event.preventDefault();
       pressLitTab(screen);
@@ -848,12 +884,15 @@ export function PlatformTabs() {
           (#2718), so the rail came back over the app whenever the pointer
           drifted to the window's left edge — which is where an app's own
           menus, lists and scrollbars put the pointer all the time, and the
-          rail landed on top of whatever the reader was reaching for. Inside
-          an app the way out is the header's ✕, as it is on a phone; the
-          rail is the route's to hide there (`!visible`), so nothing at the
-          edge brings it back. That holds even with the rail folded by hand:
-          `railOpen` outlives the screen, and a fold made on Home must not
-          bring the hot zone back into the next app opened.
+          rail landed on top of whatever the reader was reaching for. On a
+          desktop the rail stays beside a running app now, and folding it
+          there gives the app the window: the way back is #sidebar-toggle in
+          the header's corner, never the edge (`!runningApp`). On a phone,
+          or with "Keep sidebar open in apps" off, the way out is the
+          header's ✕ and the rail is the route's to hide (`!visible`). That
+          holds even with the rail folded by hand: `railOpen` outlives the
+          screen, and a fold made on Home must not bring the hot zone into
+          the next app opened.
 
           Nor on the chromeless and signed-out shells, the other routes with
           no rail: a strip that peeked one in there would be conjuring
@@ -867,7 +906,7 @@ export function PlatformTabs() {
           lay an invisible 18px column down the left edge of the tabs and
           swallow the press meant for the one under the pointer.
       */}
-      {visible && !railOpen ? (
+      {visible && !railOpen && !runningApp ? (
         <div
           id="platform-rail-peek"
           className="platform-rail-peek"
@@ -880,7 +919,7 @@ export function PlatformTabs() {
         ref={barRef}
         id="platform-tabs"
         className="platform-tabs"
-        aria-label="Sections"
+        aria-label={t('core:tabs.sections')}
         onPointerEnter={enter}
         onPointerLeave={leave}
       >
@@ -904,12 +943,17 @@ export function PlatformTabs() {
         } : undefined}
       />
       {TABS.flatMap(({ key, label, href, Icon }) => [
-        // #4417: THE FIVE RECENT APPS SIT BETWEEN THE SECTIONS AND YOU, on
-        // the desktop strip: after the last section (Communities), before Me
-        // at its foot, where Recents (#2802) sat. The conversations it listed
-        // are Messages' own list. Desktop only; app.css keeps it off the
-        // phone's bar.
-        key === 'me' ? <StripApps key="apps" /> : null,
+        // 18 Oct 2026: THE COMMUNITIES YOU PINNED, under their heading,
+        // above your communities (./rail-pinned.tsx). Each community's app
+        // is the first row under it now, so the apps the strip listed apart
+        // from them (#4417, Pinned and Recent apps) have no section of their
+        // own. From 768px only; app.css keeps it off the phone's bar.
+        key === 'workshop' ? <RailPinned key="pinned" /> : null,
+        // D (18 Oct 2026): YOUR COMMUNITIES, under their heading, just above
+        // the Communities tab, which the sidebar of rows draws as their
+        // "All 13 communities" row. From 768px only; app.css keeps it off
+        // the strip and the phone's bar.
+        key === 'workshop' ? <RailCommunities key="communities" shown={railShown} /> : null,
         <a
           key={key}
           id={`platform-tab-${key}`}
@@ -923,14 +967,23 @@ export function PlatformTabs() {
           // router's tab, except for the moment between a press and its route
           // landing, when it is the tab pressed (useTabMarker, #3259).
           aria-current={lit === key ? 'page' : undefined}
-          aria-label={key === 'workshop' ? communitiesAriaLabel(scoped) : tabLabel(key, label, viewer).ariaLabel}
+          // Beside the sidebar's list the tab is its All row, and named by
+          // the words it shows ("All 13 communities"), not the community.
+          aria-label={key === 'workshop'
+            ? (sidebarRows ? undefined : communitiesAriaLabel(scoped))
+            : tabLabel(key, t(label), viewer).ariaLabel}
           onClick={(event) => onTabClick(event, key, href)}
-          {...(key === 'workshop' ? holdProps : {})}
         >
           <span className="platform-tab-mark">
             {key === 'workshop'
               ? <CommunityTabFace info={scoped} />
               : <Icon className="platform-tab-glyph" aria-hidden="true" />}
+            {/*
+                THE ALL ROW'S GLYPH, in the sidebar of rows (D): the grid,
+                drawn in the ring's place there, as the screen it opens is
+                every community at once. app.css shows one of the two.
+            */}
+            {key === 'workshop' ? <Squares2X2Icon className="platform-tab-glyph platform-tab-all-glyph" aria-hidden="true" /> : null}
             {/*
                 THE SECOND BADGE IN THE SHELL, and the first one that is not
                 the bell's. #1443 argued the platform should carry exactly
@@ -948,15 +1001,17 @@ export function PlatformTabs() {
                 Rendered only above zero, so the prerender (INITIAL is 0)
                 and the first client render agree with no badge at all.
 
-                AND IT IS THE QUIET ONE (#2912). Unread messages are counted
-                in the bell too, so this one is grey rather than the bell's
-                red: on the phone's bar a grey disc on the glyph's corner, on
-                the desktop rail a grey pill at the row's far end. It stays
+                AND IT IS THE QUIET ONE (#2912). Grey is "new to read"
+                everywhere (#18, 19 Oct 2026): the bell's red counts what
+                happened to you and leaves plain messages to this count, so
+                one message lights one number. On the phone's bar a grey disc
+                on the glyph's corner, on the desktop rail a grey pill at the
+                row's far end. It stays
                 HERE in the markup for both; app.css moves it on the rail by
                 dissolving this wrapper, so the phone keeps its anchor and a
                 declared check keeps finding it inside the Messages tab.
             */}
-            {key === 'messages' ? <TabBadge count={messages} /> : null}
+            {key === 'messages' ? <TabBadge count={messages} label={t('core:tabs.unreadConversations')} /> : null}
             {/*
                 THE CHANNELS' COUNT, on Communities. A project's channel lives
                 on its hub now, not in Messages, so "something was said in a
@@ -965,12 +1020,37 @@ export function PlatformTabs() {
                 Homeroom's). The same quiet grey disc, for the same reason.
             */}
             {key === 'workshop' ? (
-              <TabBadge count={communities} id="platform-tabs-badge-communities" label="Channels with unread messages" />
+              <TabBadge count={communities} id="platform-tabs-badge-communities" label={t('core:tabs.unreadChannels')} />
             ) : null}
             {key === 'workshop' ? <VotesBadge count={votes} /> : null}
           </span>
-          <span className="platform-tab-label">{tabLabel(key, label, viewer).text}</span>
+          <span className="platform-tab-label">{tabLabel(key, t(label), viewer).text}</span>
+          {/*
+              THE ALL ROW'S WORDS AND COUNT, in the sidebar of rows (D): how
+              many communities you are in, so the row says there are more than
+              the five above it, and every vote waiting on you (#18). Blue
+              wins its seat: the grey count of unread channels gives way
+              while a vote is owed (app.css), one number per row.
+              app.css shows these instead of the label and the tab's own
+              badge there; a hidden element is not in the accessible name, so
+              each width's name is what it shows.
+          */}
+          {key === 'workshop' ? (
+            <span className="platform-tab-all-label">
+              {allCount > 0 ? t('core:rail.all', { count: allCount }) : t('core:rail.allPlain')}
+            </span>
+          ) : null}
+          {key === 'workshop' && allVotes > 0 ? (
+            <span className="platform-tab-all-votes" aria-label={t('core:tabs.votesWaiting', { count: allVotes })}>
+              {allVotes > 99 ? '99+' : String(allVotes)}
+            </span>
+          ) : null}
         </a>,
+        // v3 (18 Oct 2026): THE CONVERSATIONS, nested under Messages while
+        // its screen is up in the sidebar of rows (./rail-conversations.tsx).
+        // The element is there at every width and on every screen, empty
+        // when shut, so the bar's sibling order is one order.
+        key === 'messages' ? <RailConversations key="conversations" /> : null,
       ])}
       {/*
           SETTINGS, ONE CLICK FROM THE RAIL'S FOOT (#3120). A cog beside the
@@ -993,8 +1073,8 @@ export function PlatformTabs() {
         id="platform-rail-settings"
         className="platform-rail-settings"
         href="#settings"
-        aria-label="Settings"
-        title="Settings"
+        aria-label={t('core:tabs.settings')}
+        title={t('core:tabs.settings')}
         aria-current={screen === 'settings-screen' ? 'page' : undefined}
       >
         <CogIcon className="platform-rail-settings-glyph" aria-hidden="true" />

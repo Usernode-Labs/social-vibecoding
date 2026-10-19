@@ -29,6 +29,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { getTemplateFiles } = require('../src/services/template.js');
+const { message } = require('./lib/platform-i18n');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -110,12 +111,13 @@ test('register.html stub forwards an incoming fragment into the SPA', () => {
 test('the anonymous SPA boot remembers either clean or legacy app deep links', () => {
   const src = read('public/js/app.js');
   // restoreFromHash's anonymous branch: a non-auth route (e.g.
-  // /app/<slug>/full) is stored for after login, then the login screen
-  // shows — parity with the old server redirect to login.html.
-  assert.ok(src.includes('AuthScreens.rememberDeepLink(App._deepLinkTarget());'),
-    'anonymous branch stores the deep link');
-  assert.ok(src.includes("AuthScreens.show('login');"),
-    'anonymous branch then shows the login screen');
+  // /app/<slug>/full) is stored for after login, then the landing's
+  // sign-in sheet opens, titled for it (#5264).
+  assert.ok(src.includes('AuthScreens.showSignInFor(App._deepLinkTarget());'),
+    'anonymous branch hands the deep link to the sign-in sheet');
+  const screens = read('public/js/auth-screens.js');
+  assert.match(screens, /showSignInFor\(fullHash\) \{\s*AuthScreens\.rememberDeepLink\(fullHash\);/,
+    'which stores it for after login');
 });
 
 test('finishLogin restores the pending deep link before the authed boot', () => {
@@ -259,7 +261,8 @@ test('app.js setChromeless toggles the header and the pill', () => {
   // the prerendered markup and the first hydrating render identical.
   assert.ok(pill.includes('if (!chromeless) return null;'));
   assert.ok(pill.includes("id=\"chromeless-pill\""));
-  assert.ok(pill.includes("aria-label=\"Open this app on Homeroom\""));
+  assert.ok(pill.includes("aria-label={t('core:chromeless.openAppLabel')}"));
+  assert.equal(message('core:chromeless.openAppLabel'), 'Open this app on Homeroom');
   // The pill's exit target is the regular App-tab view, which clears the
   // mode via restoreFromHash. The slug is read at CLICK time, so the pill
   // survives app-to-app navigation without a remount.

@@ -33,6 +33,18 @@ const APPS = {
     repo_url: 'https://github.com/example/secret.git',
     view_visibility: 'private', collab_visibility: 'private',
   },
+  'club-votes': {
+    id: 9, slug: 'club-votes', name: 'Club Votes', status: 'running',
+    repo_url: 'https://github.com/example/club-votes.git',
+    view_visibility: 'public', collab_visibility: 'public',
+    icon_image_id: 'a1b2c3', icon_emoji: '🗳️',
+  },
+  'emoji-only': {
+    id: 10, slug: 'emoji-only', name: 'Emoji Only', status: 'running',
+    repo_url: 'https://github.com/example/emoji-only.git',
+    view_visibility: 'public', collab_visibility: 'public',
+    icon_image_id: null, icon_emoji: '🌱',
+  },
 };
 
 /**
@@ -108,6 +120,24 @@ test('a community hub and its discussion are as visible as the app', async () =>
   const member = await sharedObjects.hydrateLink(fakePool({ member: true }), viewer, { type: 'hub', app_slug: 'secret' });
   assert.equal(member.available, true);
   assert.equal(member.title, 'Secret App');
+});
+
+// Run four (13 Oct 2026): an app's card and its community's wear the app's
+// own icon, its image else its emoji; an app with neither carries no field,
+// and its card draws the glyph.
+test('an app\'s card and its community\'s carry the app\'s own icon when it has one', async () => {
+  const pool = fakePool();
+  const hub = await sharedObjects.hydrateLink(pool, viewer, { type: 'hub', app_slug: 'club-votes' });
+  assert.equal(hub.iconUrl, '/app-icons/a1b2c3');
+  assert.equal(hub.iconEmoji, '🗳️');
+  const app = await sharedObjects.hydrateLink(pool, viewer, { type: 'app', app_slug: 'emoji-only' });
+  assert.equal(app.available, true);
+  assert.equal(app.iconUrl, undefined, 'no image, no address');
+  assert.equal(app.iconEmoji, '🌱');
+  const plain = await sharedObjects.hydrateLink(pool, viewer, { type: 'app', app_slug: 'open' });
+  assert.equal('iconUrl' in plain || 'iconEmoji' in plain, false, 'an app with no icon: the glyph');
+  const chat = await sharedObjects.hydrateLink(pool, viewer, { type: 'discussion', app_slug: 'club-votes' });
+  assert.equal('iconUrl' in chat, false, 'a discussion keeps its #');
 });
 
 test('a change shows only where the change itself is visible', async () => {

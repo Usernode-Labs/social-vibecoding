@@ -31,6 +31,7 @@ function fixture(current = session()) {
     response: async () => ({ ok: true, json: async () => ({ ok: true, prNumber: 987, prUrl: 'https://github.com/example/app/pull/987', prTitle: 'Ready change' }) }),
   };
   c.window = c;
+  c.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(c);
   for (const file of ['public/js/merge-status.js', 'public/js/app-view.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), c);

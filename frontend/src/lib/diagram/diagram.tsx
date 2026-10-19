@@ -18,6 +18,8 @@
 
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react';
 
+import { useMessages } from '../i18n/react';
+import { t as translate } from '../i18n/runtime';
 import { DIAGRAM_LABELS, diagramText, figure, type DiagramRecord, type DiagramSource } from './types';
 import { renderMermaid } from './mermaid';
 
@@ -27,9 +29,9 @@ export { decisionDiagram, type DecisionFacts } from './decision';
 
 /** The foot under a picture: where it came from. */
 export function sourceWords(source: DiagramSource, mermaid = false): string {
-  if (source === 'decision') return 'From the group decision';
-  if (source === 'files') return 'Drawn from the change’s files';
-  return `Diagram by the change’s author${mermaid ? ' · Mermaid' : ''}`;
+  if (source === 'decision') return translate('project:diagram.source.decision');
+  if (source === 'files') return translate('project:diagram.source.files');
+  return mermaid ? translate('project:diagram.source.authorMermaid') : translate('project:diagram.source.author');
 }
 
 function Arrow(): ReactNode {
@@ -76,25 +78,32 @@ function FlowRow({ label, steps, other, side }: { label: string; steps: string[]
 }
 
 function Flow({ d }: { d: Extract<DiagramRecord, { kind: 'flow' }> }): ReactNode {
+  const t = useMessages('project');
   return (
     <>
       <div className="dev-ws-diagram-flow">
-        <FlowRow label="Before" steps={d.before} other={d.after} side="before" />
-        <FlowRow label="After" steps={d.after} other={d.before} side="after" />
+        <FlowRow label={t('project:diagram.flow.before')} steps={d.before} other={d.after} side="before" />
+        <FlowRow label={t('project:diagram.flow.after')} steps={d.after} other={d.before} side="after" />
       </div>
       {d.note ? <p className="dev-ws-diagram-note">{d.note}</p> : null}
     </>
   );
 }
 
-const OP_WORDS = { added: 'Added', changed: 'Changed', removed: 'Removed' } as const;
+/** Each kind of change's word, as a message id read when it is drawn. */
+const OP_WORDS = {
+  added: 'project:diagram.changes.added',
+  changed: 'project:diagram.changes.changed',
+  removed: 'project:diagram.changes.removed',
+} as const;
 
 function Changes({ d }: { d: Extract<DiagramRecord, { kind: 'changes' }> }): ReactNode {
+  const t = useMessages('project');
   return (
     <ul className="dev-ws-diagram-rows">
       {d.rows.map((r, i) => (
         <li key={`${i}-${r.what}`} className="dev-ws-diagram-change" data-op={r.op}>
-          <span className="dev-ws-diagram-op">{OP_WORDS[r.op]}</span>
+          <span className="dev-ws-diagram-op">{t(OP_WORDS[r.op])}</span>
           <span className="dev-ws-diagram-what">
             <span className={r.op === 'removed' ? 'dev-ws-diagram-old' : r.op === 'added' ? 'dev-ws-diagram-new' : undefined}>{r.what}</span>
             {r.detail ? <span className="dev-ws-diagram-detail">{r.detail}</span> : null}
@@ -135,17 +144,17 @@ function isDark(): boolean {
 }
 
 /** The Mermaid kind: nothing until it is drawn, `onFail` if it cannot be. */
-function Mermaid({ source, onFail, onDrawn }: { source: string; onFail?: () => void; onDrawn?: () => void }): ReactNode {
+function Mermaid({ source, dark = false, onFail, onDrawn }: { source: string; dark?: boolean; onFail?: () => void; onDrawn?: () => void }): ReactNode {
   const [svg, setSvg] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
     setSvg(null);
-    renderMermaid(source, isDark()).then(
+    renderMermaid(source, dark || isDark()).then(
       (out) => { if (live) { setSvg(out); onDrawn?.(); } },
       () => { if (live) onFail?.(); },
     );
     return () => { live = false; };
-  }, [source]);
+  }, [source, dark]);
   if (!svg) return <span className="dev-ws-diagram-wait" aria-hidden="true" />;
   // DOMPurify-cleaned SVG from the vendored library (./mermaid.ts).
   return <div className="dev-ws-diagram-svg" dangerouslySetInnerHTML={{ __html: svg }} />;
@@ -153,27 +162,33 @@ function Mermaid({ source, onFail, onDrawn }: { source: string; onFail?: () => v
 
 /**
  * One diagram, with its label over it and its source under it. `onOpen`
- * makes the picture a door (the card opens Description from it, as tapping
- * the shots does); `onFail` is the Mermaid kind's way out.
+ * makes the picture a door (a Needs-you card opens its caption from it);
+ * `onFail` is the Mermaid kind's way out.
  */
-export function Diagram({ d, source, onOpen, onFail, className, defer = false }: {
+export function Diagram({ d, source, onOpen, onFail, className, defer = false, dark = false }: {
   d: DiagramRecord;
   source: DiagramSource;
   onOpen?: () => void;
   onFail?: () => void;
   className?: string;
   /**
+   * Drawn on a dark ground whatever the page's theme (a Needs-you card): a
+   * Mermaid diagram takes its dark theme there too.
+   */
+  dark?: boolean;
+  /**
    * Hold a Mermaid diagram back (an empty space) until the caller is near
    * it, so a feed of many cards loads the library only for the one in view.
    */
   defer?: boolean;
 }): ReactNode {
+  const t = useMessages('project');
   const mermaid = d.kind === 'mermaid';
   const body = d.kind === 'rename' ? <Rename d={d} />
     : d.kind === 'flow' ? <Flow d={d} />
       : d.kind === 'changes' ? <Changes d={d} />
         : d.kind === 'numbers' ? <Numbers d={d} />
-          : defer ? <span className="dev-ws-diagram-wait" aria-hidden="true" /> : <Mermaid source={d.source} onFail={onFail} />;
+          : defer ? <span className="dev-ws-diagram-wait" aria-hidden="true" /> : <Mermaid source={d.source} dark={dark} onFail={onFail} />;
   const door = onOpen ? {
     role: 'button' as const,
     tabIndex: 0,
@@ -187,10 +202,10 @@ export function Diagram({ d, source, onOpen, onFail, className, defer = false }:
       className={className ? `dev-ws-diagram ${className}` : 'dev-ws-diagram'}
       data-ws-diagram={d.kind}
       data-diagram-source={source}
-      aria-label={`${DIAGRAM_LABELS[d.kind]}. ${diagramText(d)}`}
+      aria-label={t('project:diagram.label', { kind: t(DIAGRAM_LABELS[d.kind]), text: diagramText(d) })}
       {...door}
     >
-      <span className="dev-ws-diagram-kicker" aria-hidden="true">{DIAGRAM_LABELS[d.kind]}</span>
+      <span className="dev-ws-diagram-kicker" aria-hidden="true">{t(DIAGRAM_LABELS[d.kind])}</span>
       <div className="dev-ws-diagram-body" aria-hidden={mermaid ? undefined : 'true'}>{body}</div>
       <p className="dev-ws-diagram-src">{sourceWords(source, mermaid)}</p>
     </div>

@@ -43,15 +43,29 @@ const phoneClipSize = SIZE.test(process.env.SHOTS_PHONE_CLIP_SIZE || '')
 // (`member_phone`): the boundary keeps one closed-session record per
 // directory, so a desktop session can never stand for a phone clip's.
 const PHONE_DEVICE = 'iPhone 15';
-const PERSONAS = ['member', 'read_only_admin', 'full_admin', 'guest'];
+const PERSONAS = ['member', 'read_only_admin', 'full_admin', 'guest', 'invited_member', 'invited_member_listed'];
+// Which desktop browsers this run starts (services/worker.js
+// SHOTS_BROWSER_PERSONAS): the four ordinary ones, plus an invited
+// fixture's only when the run's declared changes name it.
+const ORDINARY_PERSONAS = ['member', 'read_only_admin', 'full_admin', 'guest'];
+let browserPersonas;
+try { browserPersonas = JSON.parse(process.env.SHOTS_BROWSER_PERSONAS || 'null'); } catch { browserPersonas = null; }
+if (!Array.isArray(browserPersonas) || !browserPersonas.length
+    || !browserPersonas.every((persona) => PERSONAS.includes(persona))
+    || !ORDINARY_PERSONAS.every((persona) => browserPersonas.includes(persona))) {
+  browserPersonas = [...ORDINARY_PERSONAS];
+}
 let phonePersonas;
 try { phonePersonas = JSON.parse(process.env.SHOTS_PHONE_PERSONAS || '[]'); } catch { phonePersonas = null; }
 if (!Array.isArray(phonePersonas) || !phonePersonas.every((persona) => PERSONAS.includes(persona))) {
   throw new Error('Shots MCP config inputs are invalid.');
 }
+// A phone browser reads its persona's saved storage state, so its desktop
+// browser must have been bootstrapped for it.
+phonePersonas = phonePersonas.filter((persona) => browserPersonas.includes(persona));
 const directory = (persona, phone = false) => (
   `${persona === 'read_only_admin' ? 'admin' : persona}${phone ? '_phone' : ''}`);
-for (const persona of PERSONAS) {
+for (const persona of browserPersonas) {
   fs.mkdirSync(path.join(shotsDir, directory(persona)), { recursive: true, mode: 0o700 });
   if (phonePersonas.includes(persona)) {
     fs.mkdirSync(path.join(shotsDir, directory(persona, true)), { recursive: true, mode: 0o700 });
@@ -98,11 +112,11 @@ const browserEnv = {
 const config = {
   mcpServers: {
     shots: { command: 'node', args: ['/usr/local/bin/shots-mcp.js'] },
-    browser_member: { command: 'node', args: browserArgs('member'), env: browserEnv },
-    browser_admin: { command: 'node', args: browserArgs('read_only_admin'), env: browserEnv },
-    browser_full_admin: { command: 'node', args: browserArgs('full_admin'), env: browserEnv },
-    // Not signed in: its storage state is empty (shots-browser-bootstrap.js).
-    browser_guest: { command: 'node', args: browserArgs('guest'), env: browserEnv },
+    // Each ordinary persona's desktop browser, always started, plus an
+    // invited fixture's when this run declares a change for it: each is one
+    // more browser server in the worker's memory.
+    ...Object.fromEntries(browserPersonas.map((persona) => [`browser_${directory(persona)}`,
+      { command: 'node', args: browserArgs(persona), env: browserEnv }])),
     // Only the phone browsers this run's phone screens need: each is one
     // more browser server in the worker's memory.
     ...Object.fromEntries(phonePersonas.map((persona) => [`browser_${directory(persona, true)}`,

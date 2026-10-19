@@ -16,7 +16,8 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // opens a kind='maintenance_campaign' governance issue on the platform app,
 // and the engine starts when that vote passes (or an admin force-applies
 // the proposal). This section tracks per-app fan-out progress and offers
-// retry / re-run-checks / merge-all-green once PRs exist.
+// retry / re-run-checks / merge-all-green once PRs exist, and Stop while it
+// runs. Each move is an event on the campaign machine (src/workflow/campaign/).
 //
 // The `#admin/campaigns/<id>` deep link is owned entirely by this module —
 // read at mount so a link pre-expands that campaign, written back with
@@ -28,7 +29,7 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // PERMISSIONS: visible to any admin (isAdmin — full and view-only); every
 // mutating control is gated on AdminConsole.canWrite() (canAdminWrite), so
 // a view-only admin sees the list and the per-app states but no New
-// campaign form, no Retry, no Re-run checks and no Merge-all-green. The
+// campaign form, no Retry, no Re-run checks, no Merge-all-green and no Stop. The
 // server enforces this independently on /api/campaigns/*.
 //
 // ── React-owned (#1120 slice 11) ──────────────────────────────────────
@@ -60,6 +61,8 @@ interface CampaignApp {
   prUrl?: string;
   prNumber?: number;
   checkState?: string;
+  // Its proposal's status (merge-all-green forces only those in review).
+  sessionStatus?: string;
   sessionId?: number;
   error?: string;
 }
@@ -75,9 +78,25 @@ interface Campaign {
   failed_apps?: number;
 }
 
+// Waiting for room to change its next app (src/workflow/campaign/machine.ts
+// holdFor): the platform at the session limit's warning line, or the most
+// of its own proposals it keeps up for a vote at once.
+interface CampaignHold {
+  reason: 'platform' | 'window';
+  since: string;
+  used: number;
+  limit: number;
+  ceiling: number;
+  open: number;
+  maxOpen: number;
+}
+
 interface CampaignDetail extends Campaign {
   instructions?: string;
   apps?: CampaignApp[];
+  held?: CampaignHold | null;
+  // Merging each of its proposals as soon as its checks pass: since when, by whom.
+  autoMerge?: { at: string | null; by: string | null } | null;
 }
 
 const canWrite = () => !!(typeof window !== 'undefined'
@@ -126,17 +145,22 @@ function writeSubHash(id: number | null): void {
   if (location.hash !== target) history.replaceState(null, '', target);
 }
 
-const APP_BADGE: Record<string, [string, string]> = {
-  pending: ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Pending'],
-  running: ['bg-violet-500/10 text-violet-700 dark:text-violet-400', 'Running'],
-  pr_open: ['bg-sky-500/10 text-sky-700 dark:text-sky-400', 'PR open'],
-  merged: ['bg-green-500/10 text-green-800 dark:text-green-400', 'Merged'],
-  skipped: ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Skipped'],
-  failed: ['bg-red-500/10 text-red-700 dark:text-red-400', 'Failed'],
-};
+// An app's state: the campaign's own record, or (merged, closed) what came
+// of its proposal.
+const APP_BADGE: ReadonlyMap<string, [string, string]> = new Map([
+  ['pending', ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Pending']],
+  ['running', ['bg-violet-500/10 text-violet-700 dark:text-violet-400', 'Running']],
+  ['pr_open', ['bg-sky-500/10 text-sky-700 dark:text-sky-400', 'PR open']],
+  ['merged', ['bg-green-500/10 text-green-800 dark:text-green-400', 'Merged']],
+  ['closed', ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Closed']],
+  ['underway', ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Back underway']],
+  ['skipped', ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Skipped']],
+  ['failed', ['bg-red-500/10 text-red-700 dark:text-red-400', 'Failed']],
+  ['stopped', ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Not reached']],
+]);
 
 function AppBadge({ state }: { state?: string }) {
-  const [cls, label] = (state && APP_BADGE[state]) || ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', state || '—'];
+  const [cls, label] = (state && APP_BADGE.get(state)) || ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', state || '—'];
   return (
     <span className={`text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${cls} shrink-0`}>
       {label}
@@ -161,8 +185,8 @@ async function postRecheck(sessionId: number | string): Promise<void> {
 }
 
 function AppRow({
-  app, campaignId, write, onDone,
-}: { app: CampaignApp; campaignId: number; write: boolean; onDone: () => void }) {
+  app, campaignId, write, stopped, onDone,
+}: { app: CampaignApp; campaignId: number; write: boolean; stopped: boolean; onDone: () => void }) {
   const [busy, setBusy] = useState<'' | 'retry' | 'recheck'>('');
 
   const retry = async () => {
@@ -185,7 +209,7 @@ function AppRow({
     onDone();
   };
 
-  const showRetry = write && (app.state === 'failed' || app.state === 'skipped');
+  const showRetry = write && !stopped && (app.state === 'failed' || app.state === 'skipped');
   // Failing/error checks on an open campaign PR: offer the same manual re-run
   // as the proposal card (#447). POSTs to the session recheck endpoint, which
   // stamps 'pending' and rebuilds staging if the preview is gone — the 8s
@@ -234,6 +258,9 @@ function CampaignRow({
   const [detail, setDetail] = useState<CampaignDetail | null>(null);
   const [failed, setFailed] = useState(false);
   const [merging, setMerging] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [resuming, setResuming] = useState(false);
+  const [autoSaving, setAutoSaving] = useState(false);
   const [recheckingAll, setRecheckingAll] = useState(false);
   const [status, setStatus] = useState('');
   const alive = useRef(true);
@@ -257,8 +284,8 @@ function CampaignRow({
 
   const apps = detail?.apps || [];
   // "Green" = open campaign PR whose checks pass — what merge-green will
-  // force-merge (mirrors the server-side query in fleet-maintenance.mergeGreen).
-  const green = apps.filter((a) => a.state === 'pr_open'
+  // force-merge (mirrors the campaign machine's facts, campaign/facts.ts readGreen).
+  const green = apps.filter((a) => a.state === 'pr_open' && a.sessionStatus === 'promoted'
     && (a.checkState === 'passing' || a.checkState === 'skipped')).length;
   // Bulk companion to the per-row Re-run checks button. Each recheck is
   // fire-and-forget server-side; the loop below just queues them.
@@ -282,26 +309,102 @@ function CampaignRow({
   const mergeGreen = async () => {
     const ok = await confirmMsg({
       title: 'Merge all green?',
-      message: 'Force-merge every campaign PR whose checks pass? Each merge triggers a production rebuild of that app.',
+      message: 'Force-merge every campaign PR whose checks pass now? Each merges as soon as its app\'s merge queue can, and triggers a production rebuild of that app.',
       confirmLabel: 'Merge all green',
       destructive: true,
     });
     if (!ok) return;
     setMerging(true);
-    setStatus('Merging sequentially. This can take a while…');
     try {
       const res = await fetch(`/api/campaigns/${c.id}/merge-green`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      const merged = (data.results || []).filter((r: any) => r.merged).length;
-      const bad = (data.results || []).length - merged;
-      alertMsg(`Merge-green done: ${merged} merged${bad ? `, ${bad} failed (see per-app rows)` : ''}.`);
+      const forced = Array.isArray(data.forced) ? data.forced.length : 0;
+      if (alive.current) setStatus(data.pending ? 'Merge all green asked; the rows show each merge as it lands.'
+        : `${forced} forced; the rows show each merge as it lands.`);
     } catch (err: any) {
       alertMsg(`Merge-green failed: ${err.message}`);
     }
     if (!alive.current) return;
     setMerging(false);
     onReloadList();
+  };
+
+  const stop = async () => {
+    const ok = await confirmMsg({
+      title: 'Stop this campaign?',
+      message: 'No further app gets a change, and the one being changed now is abandoned. The PRs already opened stay up for their vote.',
+      confirmLabel: 'Stop campaign',
+      destructive: true,
+    });
+    if (!ok) return;
+    setStopping(true);
+    try {
+      const res = await fetch(`/api/campaigns/${c.id}/stop`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    } catch (err: any) {
+      alertMsg(`Stop failed: ${err.message}`);
+    }
+    if (!alive.current) return;
+    setStopping(false);
+    refresh();
+    onReloadList();
+  };
+
+  // A stopped campaign goes on with the apps the stop never reached, at the
+  // pace its room allows (src/workflow/campaign/machine.ts holdFor).
+  const notReached = apps.filter((a) => a.state === 'stopped').length;
+  const resume = async () => {
+    const ok = await confirmMsg({
+      title: 'Resume this campaign?',
+      message: `It goes on with the ${notReached} app${notReached === 1 ? '' : 's'} the stop never reached, one at a time, `
+        + 'and waits whenever the platform is near its session limit or 10 of its proposals are up for a vote.',
+      confirmLabel: 'Resume campaign',
+    });
+    if (!ok) return;
+    setResuming(true);
+    try {
+      const res = await fetch(`/api/campaigns/${c.id}/resume`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    } catch (err: any) {
+      alertMsg(`Resume failed: ${err.message}`);
+    }
+    if (!alive.current) return;
+    setResuming(false);
+    refresh();
+    onReloadList();
+  };
+
+  // Auto-merge: the campaign merges each of its proposals as soon as its
+  // checks pass (src/workflow/campaign/machine.ts autoMerged), so a long one
+  // runs through without anyone pressing "Merge all green" again.
+  const openCount = apps.filter((a) => a.state === 'pr_open').length;
+  const autoOn = !!detail?.autoMerge;
+  const setAutoMerge = async (on: boolean) => {
+    if (on) {
+      const ok = await confirmMsg({
+        title: 'Auto-merge green proposals?',
+        message: 'Each of this campaign\'s proposals is merged as soon as its checks pass, without waiting for its vote, '
+          + 'until you turn this off. It is the same merge as "Merge all green", in your name.',
+        confirmLabel: 'Turn on auto-merge',
+      });
+      if (!ok) return;
+    }
+    setAutoSaving(true);
+    try {
+      const res = await fetch(`/api/campaigns/${c.id}/auto-merge`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    } catch (err: any) {
+      alertMsg(`Auto-merge failed: ${err.message}`);
+    }
+    if (!alive.current) return;
+    setAutoSaving(false);
+    refresh();
   };
 
   const statusCls = c.status === 'running' ? 'text-violet-700 dark:text-violet-400'
@@ -340,10 +443,22 @@ function CampaignRow({
                 {detail.instructions || ''}
               </pre>
             </details>
+            {autoOn ? (
+              <p className="campaign-auto-merge-on text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+                {`Auto-merge is on${detail.autoMerge?.by ? ` (turned on by ${detail.autoMerge.by})` : ''}: each proposal merges as soon as its checks pass.`}
+              </p>
+            ) : null}
+            {detail.status === 'running' && detail.held ? (
+              <p className="campaign-held text-xs text-amber-800 dark:text-amber-400 mb-2">
+                {detail.held.reason === 'platform'
+                  ? `Waiting for room: ${detail.held.used} of ${detail.held.limit} sessions are in use, and it changes its next app only below ${detail.held.ceiling}.`
+                  : `Waiting: ${detail.held.open} of its proposals are up for a vote, the most it keeps open at once (${detail.held.maxOpen}). Merging or closing them lets it go on.`}
+              </p>
+            ) : null}
             <ul className="space-y-1">
               {apps.length
                 ? apps.map((a) => (
-                  <AppRow key={a.appId} app={a} campaignId={c.id} write={write} onDone={refresh} />
+                  <AppRow key={a.appId} app={a} campaignId={c.id} write={write} stopped={detail.status === 'cancelled'} onDone={refresh} />
                 ))
                 : <li className="text-xs text-zinc-500 dark:text-zinc-400">No target apps.</li>}
             </ul>
@@ -353,6 +468,24 @@ function CampaignRow({
                 <button type="button" className={`campaign-recheck-all-btn ${AdminUI.btn.primarySm}`}
                   disabled={recheckingAll} onClick={recheckAll}>
                   {recheckingAll ? 'Rechecking…' : `Re-run failing checks (${failingChecks.length})`}
+                </button>
+              ) : null}
+              {write && detail.status === 'running' ? (
+                <button type="button" className={`campaign-stop-btn ${AdminUI.btn.destructiveSm}`}
+                  disabled={stopping} onClick={stop}>
+                  {stopping ? 'Stopping…' : 'Stop campaign'}
+                </button>
+              ) : null}
+              {write && detail.status === 'cancelled' && notReached > 0 ? (
+                <button type="button" className={`campaign-resume-btn ${AdminUI.btn.primarySm}`}
+                  disabled={resuming} onClick={resume}>
+                  {resuming ? 'Resuming…' : `Resume campaign (${notReached} not reached)`}
+                </button>
+              ) : null}
+              {write && (autoOn || openCount > 0 || detail.status === 'running') ? (
+                <button type="button" className={`campaign-auto-merge-btn ${autoOn ? AdminUI.btn.outlineSm : AdminUI.btn.primarySm}`}
+                  disabled={autoSaving} onClick={() => setAutoMerge(!autoOn)}>
+                  {autoSaving ? 'Saving…' : autoOn ? 'Turn off auto-merge' : 'Auto-merge green'}
                 </button>
               ) : null}
               {write && green > 0 ? (

@@ -243,7 +243,8 @@ test('the ⋯ menu leads with its asks and names its settings group', () => {
   assert.ok(frame.indexOf('data-plus="issue"') < frame.indexOf('data-plus="import-pr"')
     && frame.indexOf('data-plus="import-pr"') < frame.indexOf('data-plus="settings"'));
   // #4045: one "Settings & rules" row now, which opens the settings on top.
-  assert.match(frame, /data-plus="settings"\s+group="settings"[\s\S]{0,120}title="Settings &amp; rules"[\s\S]{0,240}dividerCls=\{PLUS_ROW_DIVIDER_CLS\}/);
+  assert.match(frame, /data-plus="settings"\s+group="settings"[\s\S]{0,120}title=\{t\('project:menu\.settings\.title'\)\}[\s\S]{0,240}dividerCls=\{PLUS_ROW_DIVIDER_CLS\}/);
+  assert.equal(require('./lib/platform-i18n').message('project:menu.settings.title'), 'Settings & rules');
   // The menu has no heading any more (#4045): "Settings & rules" is a real
   // row, a PlusRow, which a tap acts on, so it is a button carrying both
   // data-plus and its group's marker.

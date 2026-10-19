@@ -26,11 +26,13 @@ const DDL = `
     needs_username_choice BOOLEAN NOT NULL DEFAULT FALSE,
     -- Communities, stage 5: the join screen's flag, set by the same INSERT.
     needs_communities_choice BOOLEAN NOT NULL DEFAULT FALSE,
-    -- The one list (2026-10-01): a new account's Getting started gate, set
-    -- by the same INSERT.
+    -- The one list (2026-10-01): the flag that marks a new account, set by
+    -- the same INSERT (its Getting started gate until #4635).
     getting_started_gate BOOLEAN NOT NULL DEFAULT FALSE,
     -- chooseFirstUsername stamps it (QA 2026-09-24 Q12's handle choice).
-    updated_at TIMESTAMPTZ
+    updated_at TIMESTAMPTZ,
+    -- "Are you 18 or older?" answered yes (#5095); the wallet claim waits for it.
+    adult_attested_at TIMESTAMPTZ
   );
   CREATE UNIQUE INDEX users_email_lower_unique
     ON users (lower(email)) WHERE email IS NOT NULL;
@@ -241,7 +243,7 @@ test('real PostgreSQL web signup keeps authority in HttpOnly cookies', async (t)
       assert.equal(pendingRow.needs_communities_choice, true,
         'a new account is asked which communities to join, after its username');
       assert.equal(pendingRow.getting_started_gate, true,
-        'and starts on the Getting started list that gates its season (2026-10-01)');
+        'and is marked as a new account (2026-10-01)');
 
       const setPassword = (payload) => fetch(`${base}/api/auth/otp/set-password`, {
         method: 'POST',
@@ -276,7 +278,17 @@ test('real PostgreSQL web signup keeps authority in HttpOnly cookies', async (t)
         ['new.user@example.com'],
       )).rows[0].password_set, false);
 
-      const complete = await setPassword({ username: 'New_User' });
+      // A confirmation that disagrees is refused, and spends nothing.
+      const mismatched = await setPassword({ username: 'New_User', passwordConfirmation: 'correct horse battery stapler' });
+      assert.equal(mismatched.status, 422);
+      assert.equal((await mismatched.json()).code, 'password_mismatch');
+      assert.equal((await pool.query(
+        'SELECT COUNT(*)::int AS count FROM web_signup_sessions',
+      )).rows[0].count, 1);
+
+      // The sign-in sheet asks for the password once and sends no
+      // confirmation (Evan, 10 Oct 2026): that is a password, not a mismatch.
+      const complete = await setPassword({ username: 'New_User', passwordConfirmation: undefined });
       assert.equal(complete.status, 200);
       const body = await complete.json();
       assert.deepEqual(Object.keys(body), ['user']);
@@ -347,6 +359,23 @@ test('real PostgreSQL web signup keeps authority in HttpOnly cookies', async (t)
       });
       assert.equal(claimCodeRequest.status, 200);
       assert.match(code, /^[0-9]{6}$/);
+
+      // Claiming a wallet waits for the 18+ answer (#5095): refused before
+      // it, with the code left unspent, and let through once it is given.
+      const unasked = await fetch(`${base}/api/v4/mobile/wallet/claim`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `session=${sessionCookie}`,
+        },
+        body: JSON.stringify({ email: 'legacy@example.com', code }),
+      });
+      assert.equal(unasked.status, 403);
+      assert.equal((await unasked.json()).code, 'adult_attestation_required');
+      await pool.query(
+        'UPDATE users SET adult_attested_at = NOW() WHERE email = $1',
+        ['new.user@example.com'],
+      );
 
       const claim = await fetch(`${base}/api/v4/mobile/wallet/claim`, {
         method: 'POST',

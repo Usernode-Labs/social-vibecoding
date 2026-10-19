@@ -1,4 +1,6 @@
-import { appTabSlug } from './bot-shared';
+import { useMessages } from '../../lib/i18n/react';
+import { appTabSlug, newsIcon } from './bot-shared';
+import { useBotWork } from './bot-work';
 import { MessageMarkdown, ObjectCard } from './format';
 import { pageOf, sameItem, type HomeroomLink } from './homeroom-links';
 import { useLinkCards } from './link-cards';
@@ -68,6 +70,8 @@ export interface BotHead {
   rest: string;
   /** The line goes without a card: the message's own Open button opens the same project. */
   hidden: boolean;
+  /** The project's emoji icon, when the message carries it (`appEmoji`). */
+  appEmoji?: string;
 }
 
 // requestLine's shapes, and the offers'. The name is matched against the
@@ -127,6 +131,7 @@ export function botHead(content: string, meta: HomeroomBotMeta | null): BotHead 
     rest: paragraphs.slice(at + 1).join('\n\n').trim(),
     hidden: parsed.kind === 'project' && !!slug
       && (meta.actions || []).some((action) => action.type === 'open' && appTabSlug(action.target) === slug),
+    ...(parsed.kind === 'project' && meta.appEmoji ? { appEmoji: meta.appEmoji } : {}),
   };
 }
 
@@ -141,16 +146,24 @@ const NO_LINKS: readonly HomeroomLink[] = [];
 
 /** The card the line names, from the best source there is (above). */
 export function BotHeadCard({ head, objects }: { head: BotHead; objects: readonly SharedObjectCard[] }) {
+  const t = useMessages('messages');
   const carried = objects.find((object) => object.available && isHeadCard(head, object)) || null;
   const [read] = useLinkCards(carried || head.kind !== 'request' || !head.link ? NO_LINKS : [head.link]);
+  // A project's card wears the project's own icon (run four, 13 Oct: it was
+  // "◆"): the tray's, as the strip and the news lines draw it, else the
+  // emoji the message carries; with neither, the glyph.
+  const { work } = useBotWork();
+  const icon = head.kind === 'project' ? newsIcon(work, head.appSlug, head.appName) : null;
   const own: SharedObjectCard = {
     type: head.kind === 'project' ? 'app' : head.kind === 'change' ? 'proposal' : 'issue',
     available: true,
     appSlug: head.appSlug || undefined,
     issueNumber: head.issueNumber || undefined,
-    title: head.kind === 'project' ? head.appName : head.title || `Request #${head.issueNumber}`,
-    subtitle: head.kind === 'project' ? 'First version'
-      : head.kind === 'draft' ? `${head.appName} · not filed yet` : head.appName,
+    title: head.kind === 'project' ? head.appName : head.title || t('messages:bot.head.requestNumber', { number: String(head.issueNumber) }),
+    subtitle: head.kind === 'project' ? t('messages:bot.head.firstVersion')
+      : head.kind === 'draft' ? t('messages:bot.head.notFiled', { project: head.appName }) : head.appName,
+    ...(icon && (icon.iconUrl || icon.iconEmoji || head.appEmoji)
+      ? { iconUrl: icon.iconUrl, iconEmoji: icon.iconEmoji || head.appEmoji || null } : {}),
   };
   const card = carried || read?.card || own;
   const quiet = head.kind === 'request' ? { author: null, state: null } : { author: null };

@@ -338,6 +338,15 @@ control ingress to its Pods. This also permits a cutover-ready configuration
 with the platform, migration Job, and ingress disabled until the database is
 writable.
 
+Preview databases (staging templates, preview copies, before & after shots
+copies) can live on a second PostgreSQL server instead of the main one:
+`previewPostgresql.enabled`, with the server's address and credential in the
+Secret as `STAGING_DB_ADMIN_URL`. The chart adds the platform's egress to that
+server and does not create it. It is off by default; see "A separate server
+for preview databases" in `docs/kubernetes-operations.md` for what the cluster
+has to provide, the drain step for switching back, and the costs. The
+placement preference below still follows the main server's primary.
+
 Previews and production apps prefer to run near the external CloudNativePG
 primary by default (`config.previewFollowDatabasePrimary: true`; the name
 predates apps following it too). The chart derives
@@ -347,21 +356,24 @@ namespace). Set the flag to `false` to disable the preference. Bundled PostgreSQ
 and external databases without the CNPG cluster selector keep normal placement.
 Installations without Helm can set both environment variables on the platform.
 
-Staging preview and production app Deployments receive two preferred Pod
-affinity terms matching that cluster's `cnpg.io/instanceRole: primary`: weight
-100 across `topology.kubernetes.io/zone`, and weight 50 across
-`kubernetes.io/hostname`. The zone term is the one that matters on a cluster
-spread over data centres: a page makes many sequential queries, so a pod in
-another data centre pays that round trip on every one, and checks against such
-a preview fail on data that arrives too late. Label every node with its
+Staging preview and production app Deployments receive one preferred Pod
+affinity term matching that cluster's `cnpg.io/instanceRole: primary`, weight
+100 across `topology.kubernetes.io/zone`. The platform's own Pods, web and
+conductor, get the same term from the chart, under the same switch: they make
+more queries than any app, the conductor's leader loops most of all. It matters on a cluster spread over
+data centres: a page makes many sequential queries, so a pod in another data
+centre pays that round trip on every one, and checks against such a preview
+fail on data that arrives too late. There is deliberately no term for the
+primary's own node: it gains nothing measurable inside one data centre and
+fills that node to its Pod limit while its neighbours stay half empty. Label every node with its
 location for the zone term to apply, for example:
 
 ```sh
 kubectl label node <node> topology.kubernetes.io/zone=<location>
 ```
 
-A node without the label matches no zone, so an unlabelled cluster keeps the
-host preference alone. Other eligible nodes remain available if the zone is
+A node without the label matches no zone, so an unlabelled cluster gets normal
+placement. Other eligible nodes remain available if the zone is
 full, unavailable, or no matching primary exists. This is a scheduler
 preference, not a guarantee: other scheduling scores can outweigh it. It needs
 no extra runtime RBAC or node lookup.
@@ -380,14 +392,51 @@ Platform upgrades use a Kubernetes-native blue/green equivalent: a
 requires two consecutive readiness successes plus `minReadySeconds`, and keeps
 `maxUnavailable: 0`. The stable Service starts routing to the new Pod only
 after it is Ready; Kubernetes removes and terminates the old Pod after the new
-ReplicaSet is Available. Existing connections receive the platform's normal
-pre-stop and SIGTERM drain budget.
+ReplicaSet is Available.
 
-Both Pods may serve independent requests during the brief overlap. That is safe
-because `PLATFORM_LEADER_LOCK=1` uses the platform's PostgreSQL advisory-lock
+The terminated Pod does not cut the work it started
+([docs/plans/draining-releases.md](../../../docs/plans/draining-releases.md)).
+On SIGTERM it hands leadership to the new Pod at once, closes its tabs' sockets
+so they reconnect there, refuses anything new, and finishes its turns, previews,
+checks, shots runs and merges. It exits as soon as it holds nothing, or after
+`platform.drainMinutes` (40 by default), whichever comes first, handing over
+whatever is left. `terminationGracePeriodSeconds` is that plus a minute.
+Kubernetes keeps a terminating Pod out of the Service and out of the
+Deployment's replica count, so the rollout completes without waiting for it.
+When releases come faster than work finishes, at most `platform.drainingMax`
+replaced Pods finish at once; the oldest hands its work over first.
+
+Both Pods may serve independent requests during the brief overlap, and a
+replaced Pod may still run work for as long as it drains. That is safe because
+`PLATFORM_LEADER_LOCK=1` uses the platform's PostgreSQL advisory-lock
 coordinator: only one Pod runs singleton recovery, sweepers and reconcilers.
+Each process also records what it is working on (`platform_processes`,
+`process_holds`), so the new leader's recovery leaves a replaced Pod's live
+work alone, and a Stop clicked on one Pod reaches the Pod that runs the turn.
 This is intentionally implemented with the built-in Deployment controller;
 the cluster does not need Caddy, Argo Rollouts, or another rollout CRD.
+
+`platform.conductor.enabled` (on by default) splits the platform in two
+([docs/plans/web-and-conductor.md](../../../docs/plans/web-and-conductor.md)).
+The Deployment above runs `PROCESS_ROLE=web`: it serves people's requests and
+never stands for leader. A second Deployment, `<fullname>-conductor`
+(`platform.conductor.replicas`, 1 by default; more are standbys), runs
+`PROCESS_ROLE=conductor`: it holds the leader lock and runs the leader's work,
+on Pods the Service sends no requests to. Both use the same image, Pod and
+drain. The conductor's Pods keep the platform's `component` label, so every
+network policy that admits the platform admits them; the Service and the
+platform PodDisruptionBudget select `social.usernode.io/serves-requests:
+"true"`, which only the serving Pods carry. The Service is in Argo CD sync wave
+1, after the Deployments are healthy, so the release that first requires that
+label (or drops it, switching the split off) changes the selector only once
+the Pods it selects are rolled out and Ready. The platform Deployment's
+immutable selector also matches the conductor's Pods (ownership keeps them
+apart); select them by `social.usernode.io/process-role` rather than
+`deploy/<fullname>`. A release that switches the split off has the old
+conductor finish its work beside the new Pods, which lead again. The release
+that first switches it on replaces Pods running a build from before the split,
+which do not know a conductor as their successor: they hand over with the
+minute's cutover they had before draining releases, once.
 
 If the candidate never becomes Ready, the Deployment times out without taking
 the old ReplicaSet down. Roll back by restoring the previous OCI chart version
@@ -434,6 +483,18 @@ leader re-drives it. Size it so the check Jobs' requests (4 CPU each, two per
 run) leave room in the worker namespace's ResourceQuota for coding workers,
 and so the previews under test do not saturate the shared Postgres primary.
 `0` turns the queue off.
+
+`config.checkNodePool` (`CHECK_NODE_POOL`, default empty) names a dedicated
+node pool for check Jobs as the pool nodes' label `key=value`, for example
+`usernodelabs.org/node-pool=cpu-heavy`. Label the pool's nodes with that pair
+and taint them with the same pair and `NoSchedule`, so nothing else is
+scheduled there. Capture and unit-suite Jobs then tolerate the taint and
+prefer those nodes. It is a preference, so checks still run on the other nodes
+when the pool is full or down. With a pool set, checks drop their hostname
+spread: on a pool of one large node it would push Pods back onto the small
+nodes. A value that is not a valid label pair is logged once and ignored.
+Coding workers, builds, apps and previews are not affected. Changes apply to
+newly created check Jobs.
 
 Capture Jobs visit the generated app and preview HTTPS ingress hostnames. The
 self-app's production capture uses the canonical platform hostname. Worker

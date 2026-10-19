@@ -29,16 +29,24 @@
  * are app.css's to decide, not this component's. The breakpoint, because a
  * phone's bar is at the foot and folding it would leave a reader with no
  * navigation and no hover to bring it back; and `#platform-tabs.hidden`,
- * because a toggle for a thing that is not there is a dead control; inside a
- * running app the way out is the header's ✕ (#3138). The note
+ * because a toggle for a thing that is not there is a dead control. The note
  * on the component below says why neither may be a render-time question.
+ *
+ * ── Beside a running app it takes the ✕'s place ────────────────────────
+ *
+ * On a desktop the rail stays docked beside a running app (App._railBesideApp
+ * in public/js/app.js), so this is in the app's corner too, and the back
+ * slot is empty there: the rail's tabs are the way out, as from any other
+ * screen, and folding the rail gives the app the whole window. On a phone,
+ * or with Settings' "Keep sidebar open in apps" off, the app covers the rail
+ * and the way out is the header's ✕ (#3138), with no toggle beside it.
  *
  * ── Collapsed is the app view's state, reached another way ─────────────
  *
- * Folding the rail puts the shell in the arrangement an open app already
+ * Folding the rail puts the shell in the arrangement a full-window app
  * produces — no band reserved, the page full width — plus the hot zone at
  * the left edge ready to peek it back (features/nav/tab-bar.tsx), which a
- * running app no longer has (#3138). That is
+ * running app never has (#3138). That is
  * why this needs no CSS of its own beyond being hidden on a phone — the
  * layout it asks for is one the stylesheet already draws.
  *
@@ -59,9 +67,11 @@
 
 import { SidebarIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { navStore } from './nav-store.js';
 import { clearPeekTimer, enterPeekByMouse, leavePeekByMouse } from './rail-peek';
+import { slideRail } from './rail-slide';
 
 // THE SAME DISC the back slot beside it wears — ../header/platform-header.tsx
 // hoists its own for the same reason: a class string that spans lines ships
@@ -97,6 +107,7 @@ export function SidebarToggle() {
   // publishes it before hydration: INITIAL is `true`, and only a press
   // moves it.
   const { railOpen, peek } = useStoreState(navStore);
+  const t = useMessages();
 
   return (
     <button
@@ -105,14 +116,15 @@ export function SidebarToggle() {
       className={TOGGLE_CLASS}
       aria-pressed={railOpen ? 'true' : 'false'}
       aria-controls="platform-tabs"
-      aria-label={railOpen ? 'Hide sidebar' : 'Show sidebar'}
+      aria-label={railOpen ? t('core:rail.hideSidebar') : t('core:rail.showSidebar')}
       // A PRESS ENDS ANY PEEK. Docking the rail makes the peek moot, and
       // left standing it would come straight back as an overlay the moment
       // the next press folded the rail under the same pointer.
-      onClick={() => {
+      // It slides rather than jumping (N21, ./rail-slide.ts).
+      onClick={() => slideRail(() => {
         clearPeekTimer();
         navStore.set({ railOpen: !navStore.get().railOpen, peek: false, peekOut: false });
-      }}
+      })}
       onPointerEnter={railOpen ? undefined : enterPeekByMouse}
       onPointerLeave={peek ? leavePeekByMouse : undefined}
     >

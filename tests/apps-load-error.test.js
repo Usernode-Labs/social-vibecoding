@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { renderComponent } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
 
@@ -24,12 +25,24 @@ test('the error card: title, detail, and a Try again button', () => {
   assert.match(html, /<svg/, 'with the warning glyph');
 });
 
+test('#4813: a detail prop overrides the line, and the default is unchanged', () => {
+  const html = renderComponent('frontend/src/features/apps/load-error.tsx', 'AppsLoadError', {
+    title: "Couldn't open this app",
+    detail: "It didn't finish loading. Check your connection and try again.",
+    onRetry: () => {},
+  });
+  assert.match(html, />It didn&#x27;t finish loading\. Check your connection and try again\.</,
+    'the override is rendered');
+  assert.doesNotMatch(html, /app directory/, 'the directory\'s own line is not');
+});
+
 test('Home\'s grid draws the card for an error notice and retries through Home.load', () => {
   const grid = read('frontend/src/features/home/app-grid.tsx');
   assert.match(grid, /state\.notice && state\.notice\.tone === 'error' \? \(/);
   assert.match(grid, /<AppsLoadError[\s\S]*?onRetry=\{\(\) => controller\(\)\?\.load\?\.\(\)\}/);
   assert.doesNotMatch(grid, /text-red-400/, 'no bare red line left');
-  assert.match(read('frontend/src/features/home/home.js'), /notice: \{ text: "Couldn't load your apps", tone: 'error' \}/);
+  assert.match(read('frontend/src/features/home/home.js'), /notice: \{ text: message\('home:grid\.notice\.loadFailed'\), tone: 'error' \}/);
+  assert.equal(message('home:grid.notice.loadFailed'), "Couldn't load your apps");
 });
 
 test('the directory screen draws the same card and retries its own load', () => {

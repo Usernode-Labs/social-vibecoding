@@ -102,6 +102,27 @@ function readIntegration(session) {
   };
 }
 
+// The commits a measurement of this proposal asks the mirror about.
+function knownShas(s) {
+  return [s.reviewed_head_sha, s.checks_base_sha, s.checks_commit_sha].map(normalizeSha).filter(Boolean);
+}
+
+/**
+ * One fetch of an app's mirror for every open proposal on it, with all the
+ * commits they will ask about, for the sweep that measures them in turn
+ * (`measure(..., { mirrorDir })`). Each measurement used to fetch the whole
+ * repository again: on 19 Oct 2026 a pass measured about 126 proposals with
+ * a full `git fetch` each, every two minutes, and the session sweeper the
+ * pass lived in took two to ten minutes. Throws as ensureMirror does.
+ */
+async function fetchAppMirror(sessions) {
+  const list = (sessions || []).filter(Boolean);
+  const parsed = list.length ? parseRepo(list[0].repo_url) : null;
+  if (!parsed) return null;
+  const refs = [...new Set(list.flatMap(knownShas))];
+  return mirror.ensureMirror(parsed.owner, parsed.repo, { refs });
+}
+
 /** Is this measurement young enough that a read path should not re-take it? */
 function isFresh(session, ttlMs = MEASURE_TTL_MS) {
   const at = session && session.integration_measured_at;
@@ -230,9 +251,10 @@ async function measure({ pool, session }, options = {}) {
   };
 
   try {
-    const known = [s.reviewed_head_sha, s.checks_base_sha, s.checks_commit_sha]
-      .map(normalizeSha).filter(Boolean);
-    const dir = await mirror.ensureMirror(parsed.owner, parsed.repo, { refs: known });
+    // `mirrorDir`: the sweep fetched this app's mirror once for every open
+    // proposal on it (fetchAppMirror), so this one reads it as it is.
+    const dir = options.mirrorDir
+      || await mirror.ensureMirror(parsed.owner, parsed.repo, { refs: knownShas(s) });
 
     const mainSha = await mirror.defaultBranchSha(dir);
     if (!mainSha) throw new Error(`${parsed.owner}/${parsed.repo} has no default-branch commit`);
@@ -426,53 +448,20 @@ async function setBlockReasons(pool, sessionId, reasons) {
  * statement, atomically, with no window in which a tally is half-cleared —
  * and the rows survive as a record of what was approved and when.
  *
- * Returns the new epoch, or null when the row was gone.
+ * Returns the new epoch, or null when nothing moved (the row gone, closed or
+ * merged).
  */
 async function clearApprovals(pool, sessionId, reason) {
-  const { rows } = await pool.query(
-    `UPDATE chat_sessions
-        SET approval_epoch = approval_epoch + 1
-      WHERE id = $1
-      RETURNING approval_epoch`,
-    [sessionId]
-  );
-  const epoch = rows[0] ? parseInt(rows[0].approval_epoch, 10) : null;
+  // The proposal machine's move (Q3): refused for a proposal that has closed
+  // or merged, whose votes are a record now (bug 6).
+  void pool;
+  const out = await require('../workflow/platform.ts').clearProposalApprovals({ sessionId: Number(sessionId), reason: reason || null });
+  const epoch = out && (out.status === 'accepted' || out.status === 'replayed') && out.reply?.epoch != null
+    ? parseInt(out.reply.epoch, 10) : null;
   if (epoch != null) {
     log.info('integration', 'Approvals cleared', { sessionId, epoch, reason: reason || null });
   }
   return epoch;
-}
-
-// ── The conflict lane's one pre-approval resolution ─────────────────────
-
-/**
- * Record that the queue spent a resolution on this proposal's current
- * authored head. "Current authored head" IS the approval epoch: an authored
- * push bumps it, the platform's own mechanical or resolved moves do not
- * (routes/votes.js reconcileNativeReviewedHead), so stamping the epoch ties
- * the resolution to the author's work rather than to a commit that the
- * resolution itself is about to replace. Never throws.
- */
-async function markResolutionSpent(pool, sessionId) {
-  try {
-    await pool.query(
-      `UPDATE chat_sessions SET integration_resolved_epoch = approval_epoch WHERE id = $1`,
-      [sessionId]
-    );
-  } catch (err) {
-    log.warn('integration', 'resolution stamp failed', { sessionId, err: err.message });
-  }
-}
-
-/**
- * Has this authored head already had its pre-approval resolution?
- * Reads the two columns off a row; a row that predates the stamp has not.
- */
-function resolutionSpent(session) {
-  const s = session || {};
-  const spent = intOrNull(s.integration_resolved_epoch);
-  if (spent == null) return false;
-  return spent === (intOrNull(s.approval_epoch) ?? 0);
 }
 
 // Registered once at boot (server.js) with the platform config in scope; see
@@ -492,12 +481,11 @@ module.exports = {
   readIntegration,
   isFresh,
   measure,
+  fetchAppMirror,
   measureDeduped,
   setBlockReasons,
   classifyHeadMove,
   clearApprovals,
-  markResolutionSpent,
-  resolutionSpent,
   onBecameClean,
   currentVotePredicateSql,
   MEASURE_TTL_MS,

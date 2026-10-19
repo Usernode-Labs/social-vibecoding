@@ -1,13 +1,15 @@
 'use strict';
 
-// The merge-followups machine wired into the platform (src/workflow/
-// platform.ts), with WF_MERGE_FOLLOWUPS_ENABLED on and a running runtime:
-// a confirmed merge goes live through the real work handlers (their I/O
-// stubbed), recovery's report reads the tally again, a successful deploy
-// anywhere reaches the merges still waiting, the admin's Retry delivery
-// works, and with the flag off the runtime still finishes accepted work but
-// takes no new merges. GitHub, the rebuild, the watcher and WS pushes are
-// stubbed; everything else is the full PostgreSQL schema.
+// The merge-followups and app-delivery machines wired into the platform
+// (src/workflow/platform.ts) with a running runtime: a confirmed merge asks
+// app-delivery for its deploy and goes live through the real work handlers
+// (their I/O stubbed), recovery's report reads the tally again, a later
+// deploy reaches the merges still waiting, the admin's Retry delivery works,
+// a merge accepted before a restart finishes after it, and a close proposal
+// for a request the merge closes is superseded once the close is seen.
+// GitHub, the deploy, the worker and WS pushes are stubbed (the watcher is
+// the real one for the app whose requests are looked at); everything else
+// is the full PostgreSQL schema.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -44,10 +46,16 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     pushIssueUpdate: () => {}, pushNotificationToUser: () => {},
   });
   const realGithub = require('../src/services/github');
-  const deploys = { fail: null };
+  const deploys = { fail: null, sha: null };
+  // GitHub's requests, by number: their state, and the closes asked of it.
+  const ghIssues = new Map();
   stub('../src/services/github', {
     ...realGithub,
     isEnabled: () => true,
+    getPR: async (owner, repo, n) => ({ number: n, body: '', merged: true,
+      base: { ref: 'main', repo: { full_name: `${owner}/${repo}`, default_branch: 'main' } } }),
+    getIssue: async (owner, repo, n) => ({ number: n, state: ghIssues.get(n) || 'open' }),
+    closeIssue: async (owner, repo, n) => { calls.push(['close', n]); ghIssues.set(n, 'closed'); return { number: n, state: 'closed' }; },
     listPullRequestCommitShas: async () => ({ shas: [], complete: true }),
     compareCommitAncestry: async (owner, repo, base, head) => {
       calls.push(['compare', base, head]);
@@ -58,29 +66,48 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
   const realStaging = require('../src/services/staging');
   stub('../src/services/staging', {
     ...realStaging,
-    async rebuildProduction(config, app, opts) {
-      calls.push(['rebuild', app.id, opts]);
+    async deployProduction(config, app, opts) {
+      calls.push(['deploy', app.id, opts]);
       if (deploys.fail) throw new realStaging.MissingSecretsError(['API_KEY']);
-      return { containerId: null, sha: opts.reuseRunningRevision || SHA('f') };
+      return { containerId: null, sha: opts.reuseRunningRevision || deploys.sha || SHA('f') };
     },
     async teardownStaging(row) { calls.push(['teardown', row.id, row.status]); return { removed: true }; },
   });
-  stub('../src/services/worker', { ...require('../src/services/worker'), retireWorker: async (id) => { calls.push(['retire', id]); return {}; } });
-  stub('../src/services/main-watch', { ...require('../src/services/main-watch'), afterMerge: async (c, p, o) => { calls.push(['main-check', o.mergeSha]); return null; } });
-  stub('../src/services/issue-close-watcher', {
-    ...require('../src/services/issue-close-watcher'),
-    watchIssuesClosedAfterMerge: async (o) => { calls.push(['watch', o.prNumber]); return { closed: [], skipped: [], stillOpen: [] }; },
+  // The fenced, strict removal: the unfenced one is not used.
+  stub('../src/services/worker', {
+    ...require('../src/services/worker'),
+    removeCcVolume: async (id, { proceed }) => {
+      if (!(await proceed())) return { skipped: true };
+      calls.push(['retire', id]);
+      return { removed: true };
+    },
+    destroyCcVolume: async () => { throw new Error('the unfenced removal is not used'); },
   });
-  stub('../src/services/conflict-resolver', { checkAndResolveConflicts: async () => {} });
+  // main's unit suite on the merge commit: the main-check machine's work,
+  // its run faked green.
+  stub('../src/services/main-watch', {
+    ...require('../src/services/main-watch'),
+    runMainSuite: async (c, p, o) => { calls.push(['main-check', o.sha]); return { state: 'passing', detail: {} }; },
+  });
+  // The real look for the app whose requests are looked at (`looked`); for
+  // the others, nothing to close.
+  const realWatcher = require('../src/services/issue-close-watcher');
+  const looked = new Set();
+  stub('../src/services/issue-close-watcher', {
+    ...realWatcher,
+    closeAfterMerge: async (o) => {
+      calls.push(['look', o.prNumber, o.look]);
+      return looked.has(o.appId) ? realWatcher.closeAfterMerge(o) : { closed: [], skipped: [], stillOpen: [], waiting: false, targets: [] };
+    },
+  });
   stub('../src/services/homeroom-bot', { ...require('../src/services/homeroom-bot'), noteRequestMerged: async () => null });
   stub('../src/services/homeroom-bot-dm', {
     ...require('../src/services/homeroom-bot-dm'),
-    noteProposalMerged: async (p, s, o) => { calls.push(['dm', s.id, o.live, o.sha]); return null; },
+    noteProposalMerged: async (p, s) => { calls.push(['dm', s.id]); return null; },
   });
 
   const config = {
-    databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfMergeFollowupsEnabled: true,
-    wfPoolMax: 4, wfSlots: 2, wfOwnershipMode: 'raise',
+    databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2,
   };
   const platform = require('../src/workflow/platform.ts');
   t.after(async () => {
@@ -99,6 +126,18 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
   const proposal = async (status = 'merging') => (await pool.query(
     `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title) VALUES ($1, $2, $3, $4, 'Change') RETURNING *`,
     [app.id, author.id, status, ++seq])).rows[0];
+  // One of the Homeroom bot's changes: its DM is the bot's change machine's
+  // (src/workflow/bot-change/), told by the merge's own write.
+  const { rows: [botUser] } = await pool.query(
+    `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE) RETURNING id`);
+  const botProposal = async () => {
+    const { rows: [s] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title, linked_issues) VALUES ($1, $2, 'merging', $3, 'Change', $4) RETURNING *`,
+      [app.id, botUser.id, ++seq, [seq]]);
+    await pool.query(`INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id) VALUES ($1, $2, 'live', 'ready', $3)`,
+      [app.id, seq, s.id]);
+    return s;
+  };
   const state = async (s) => (await pool.query(
     `SELECT state FROM wf_instances WHERE machine = 'merge-followups' AND key = $1`, [`session:${s.id}`])).rows[0]?.state;
   const until = async (check, what) => {
@@ -123,28 +162,50 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
      UNION ALL SELECT 1 FROM wf_events WHERE machine = 'merge-followups' AND status = 'pending'`)).rows.length,
   'every follow-up settled');
 
-  await t.test('the flag is recorded for the ownership triggers', async () => {
+  // GitHub merged it: merge-followups is created by Merged, here as the
+  // leader's merged-by-hand lookup reports it (the proposal machine's attempt
+  // reports it by message: tests/workflow-merge-postgres.test.js M1).
+  const confirmed = (m) => platform.mergeObserved({ ...m, mergedAt: null });
+
+  await t.test('every machine\'s guard is recorded for the ownership triggers', async () => {
     const { rows } = await pool.query(`SELECT key FROM wf_settings WHERE key LIKE 'enabled:%' ORDER BY key`);
-    assert.deepEqual(rows.map((r) => r.key), ['enabled:merge-followups']);
-    assert.equal(platform.mergeFollowupsEnabled(), true);
-    assert.equal(platform.governanceEnabled(), false, 'the governance machine has its own flag');
+    assert.deepEqual(rows.map((r) => r.key),
+      ['enabled:app-delivery', 'enabled:bot-request', 'enabled:campaign', 'enabled:governance-proposal', 'enabled:main-check', 'enabled:merge-followups',
+        'enabled:merge-queue', 'enabled:preview', 'enabled:proposal', 'enabled:shots'],
+      'no machine has a flag: their guards are on in every process');
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_settings WHERE key = 'ownership_mode'`)).rows[0].n, 0);
   });
 
   await t.test('a confirmed merge goes live through the real handlers', async () => {
-    const s = await proposal();
-    const out = await platform.mergeConfirmed({
-      sessionId: s.id, appId: app.id, mergeSha: SHA('a'), force: false, tally: { yes: 2, required: 2, active: 4 },
-    });
-    assert.ok(['accepted', 'pending'].includes(out.status), out.status);
+    const s = await botProposal();
+    await confirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('a') });
     await until(async () => (await state(s)) === 'live', 'live');
     const r = (await pool.query('SELECT status, live_at, merge_commit_sha FROM chat_sessions WHERE id = $1', [s.id])).rows[0];
     assert.equal(r.status, 'merged');
     assert.ok(r.live_at);
-    assert.ok(calls.some((c) => c[0] === 'rebuild' && c[2].reuseRunningRevision === SHA('a')), 'the merge commit, not main\'s tip');
-    await until(async () => calls.some((c) => c[0] === 'dm' && c[1] === s.id), 'the DM');
-    assert.deepEqual(calls.find((c) => c[0] === 'dm' && c[1] === s.id).slice(2), [true, SHA('a')]);
-    assert.ok(calls.some((c) => c[0] === 'teardown' && c[1] === s.id && c[2] === 'merged'));
-    assert.ok(calls.some((c) => c[0] === 'main-check' && c[1] === SHA('a')));
+    assert.ok(calls.some((c) => c[0] === 'deploy' && c[2].reuseRunningRevision === SHA('a')),
+      'app-delivery deploys, offered the merge commit');
+    await until(async () => calls.some((c) => c[0] === 'dm' && c[1] === s.id), 'the DM, from the bot\'s change machine');
+    assert.equal((await pool.query(`SELECT state FROM wf_instances WHERE machine = 'bot-change' AND key = $1`, [`session:${s.id}`])).rows[0]?.state, 'live');
+    // The preview goes at the merge (only a demo-mode deploy reuses its
+    // build and waits): the preview machine retires it, asked by the merge.
+    const key = `session:${s.id}`;
+    await until(async () => (await pool.query(
+      `SELECT state FROM wf_instances WHERE machine = 'preview' AND key = $1`, [key])).rows[0]?.state === 'retired', 'the preview retired');
+    const { rows: [ask] } = await pool.query(
+      `SELECT payload, source FROM wf_events WHERE machine = 'preview' AND key = $1 AND type = 'RetireRequested'`, [key]);
+    assert.deepEqual(ask.payload, { sessionId: s.id, reason: 'merged', terminal: true });
+    const { rows: [mergedEvent] } = await pool.query(
+      `SELECT id FROM wf_events WHERE machine = 'merge-followups' AND key = $1 AND type = 'Merged' ORDER BY id LIMIT 1`, [key]);
+    assert.deepEqual(ask.source.from, { machine: 'merge-followups', key, eventId: Number(mergedEvent.id) },
+      'asked by the transition that applied the merge');
+    assert.ok(!calls.some((c) => c[0] === 'teardown' && c[1] === s.id), 'nothing else tears it down');
+    await until(async () => calls.some((c) => c[0] === 'retire' && c[1] === s.id), 'the worker removed, fenced');
+    const { rows: [d] } = await pool.query(`SELECT state FROM wf_instances WHERE machine = 'app-delivery' AND key = $1`, [`app:${app.id}`]);
+    assert.equal(d.state, 'idle');
+    await until(async () => calls.some((c) => c[0] === 'main-check' && c[1] === SHA('a')), 'the main check, run by its machine');
+    await until(async () => (await pool.query('SELECT main_check_state FROM apps WHERE id = $1', [app.id])).rows[0].main_check_state === 'passing',
+      'its verdict on the row');
     const { rows: [m] } = await pool.query('SELECT main_sha FROM apps WHERE id = $1', [app.id]);
     assert.equal(m.main_sha, SHA('a'));
   });
@@ -155,7 +216,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [s.id, voter.id]);
     await platform.mergeObserved({ sessionId: s.id, appId: app.id, mergeSha: SHA('a'), mergedAt: '2026-10-07T10:00:00Z' });
     await until(async () => (await state(s)) === 'live', 'live');
-    const { rows: [i] } = await pool.query(`SELECT data FROM wf_instances WHERE key = $1`, [`session:${s.id}`]);
+    const { rows: [i] } = await pool.query(`SELECT data FROM wf_instances WHERE machine = 'merge-followups' AND key = $1`, [`session:${s.id}`]);
     assert.equal(i.data.tally.yes, 1);
     assert.equal(i.data.mergedAt, '2026-10-07T10:00:00.000Z');
   });
@@ -163,21 +224,27 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
   await t.test('a failed deploy goes live when any later deploy contains it', async () => {
     deploys.fail = true;
     const s = await proposal();
-    await platform.mergeConfirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('b'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+    await confirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('b') });
     await until(async () => (await state(s)) === 'deploy_failed', 'deploy failed');
     deploys.fail = false;
     // The drift poller's deploy of a build that does not contain it, then one that does.
-    await platform.productionDeployed(app.id, SHA('d'));
+    const idle = async () => (await pool.query(
+      `SELECT state FROM wf_instances WHERE machine = 'app-delivery' AND key = $1`, [`app:${app.id}`])).rows[0]?.state === 'idle';
+    deploys.sha = SHA('d');
+    await platform.requestDeploy(app.id, 'drift');
     await until(async () => calls.some((c) => c[0] === 'compare' && c[2] === SHA('d')), 'checked');
+    await until(idle, 'the deploy ended');
     assert.equal(await state(s), 'deploy_failed');
-    await platform.productionDeployed(app.id, SHA('c'));
+    deploys.sha = SHA('c');
+    await platform.requestDeploy(app.id, 'drift');
     await until(async () => (await state(s)) === 'live', 'live after a deploy containing it');
+    deploys.sha = null;
   });
 
   await t.test('an admin retries a failed delivery', async () => {
     deploys.fail = true;
     const s = await proposal();
-    await platform.mergeConfirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('e'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+    await confirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('e') });
     await until(async () => (await state(s)) === 'deploy_failed', 'deploy failed');
     deploys.fail = false;
     const out = await platform.adminEvent('merge-followups', `session:${s.id}`, 'RetryDelivery', {}, { id: author.id, username: 'author' });
@@ -187,46 +254,102 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
       /not an admin action/);
   });
 
-  await t.test('with the flag off, accepted work still finishes and nothing new is taken', async () => {
+  await t.test('a merge accepted before a restart finishes after it', async () => {
     const s = await proposal();
     await quiet();
     await platform.stopWorkflow();
-    // Accepted before the restart: the event waits for a runtime.
+    // Accepted with no loops running: the event waits for a runtime.
     await platform.startWorkflow(config, { loops: false });
-    await platform.mergeConfirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('a'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+    await confirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('a') });
     await platform.stopWorkflow();
-    const off = { ...config, wfMergeFollowupsEnabled: false };
-    await platform.startWorkflow(off, { loops: true });
-    assert.equal(platform.workflowRunning(), true, 'it runs to finish what it accepted');
-    assert.equal(platform.mergeFollowupsEnabled(), false, 'but takes no new merges');
-    const { rows } = await pool.query(`SELECT key FROM wf_settings WHERE key = 'enabled:merge-followups'`);
-    assert.equal(rows.length, 0, 'the legacy merge path may move rows into merged again');
+    await platform.startWorkflow(config, { loops: true });
     await until(async () => (await state(s)) === 'live', 'the accepted merge finished');
-    // And every follow-up of it, the DM and journey record that follow live included.
     await quiet();
-    await platform.stopWorkflow();
-    await platform.startWorkflow(off, { loops: true });
-    assert.equal(platform.workflowRunning(), false, 'nothing left: no runtime');
   });
 
-  await t.test('with the flag off, a merge still waiting for a deploy keeps the runtime (review finding 3)', async () => {
-    await platform.startWorkflow(config, { loops: true });
-    deploys.fail = true;
-    const s = await proposal();
-    await platform.mergeConfirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('9'), force: false, tally: { yes: 1, required: 1, active: 1 } });
-    await until(async () => (await state(s)) === 'deploy_failed', 'deploy failed');
-    deploys.fail = false;
-    await quiet();  // it now only waits for a deploy
-    await platform.stopWorkflow();
-    const off = { ...config, wfMergeFollowupsEnabled: false };
-    await platform.startWorkflow(off, { loops: true });
-    assert.equal(platform.workflowRunning(), true, 'a merge waiting for a deploy keeps it running');
-    assert.equal(platform.mergeFollowupsEnabled(), false);
-    // The drift poller's later deploy (a build GitHub says contains it) is heard.
-    await platform.productionDeployed(app.id, SHA('c'));
-    await until(async () => (await state(s)) === 'live', 'live after the flag went off');
+  // GitHub did not close the merged PR's `Closes #N`: the first look leaves
+  // it to GitHub, the second closes it, and only then is the close proposal
+  // for it superseded, by the merge's pull request. Before, the merge work
+  // superseded it before it had looked, so a request GitHub (and the
+  // platform) left open lost its close proposal anyway.
+  await t.test('a close proposal for a request the merge closes is superseded once the close is seen, not before', async () => {
+    const { rows: [shop] } = await pool.query(
+      `INSERT INTO apps (name, slug, created_by, repo_url, approvals_required) VALUES ('Shop 2', 'shop-2', $1, 'https://github.com/acme/shop-2', 5) RETURNING *`,
+      [author.id]);
+    looked.add(shop.id);
+    const n = 41;
+    const { rows: [close] } = await pool.query(
+      `INSERT INTO issues (app_id, title, kind, payload, created_by) VALUES ($1, 'Close #41', 'close_issue', $2, $3) RETURNING id`,
+      [shop.id, JSON.stringify({ issueNumber: n, issueTitle: 'Old bug' }), author.id]);
+    await platform.fileProposal(close.id, shop.id);
+    const gov = async () => (await pool.query(
+      `SELECT state FROM wf_instances WHERE machine = 'governance-proposal' AND key = $1`, [`issue:${close.id}`])).rows[0]?.state;
+    await until(async () => (await gov()) === 'open', 'filed');
+    const { rows: [s] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title, linked_issues) VALUES ($1, $2, 'merging', $3, 'Change', $4) RETURNING *`,
+      [shop.id, author.id, ++seq, [n]]);
+    const key = `session:${s.id}`;
+    const items = async () => (await pool.query(
+      `SELECT work_key, status FROM wf_work WHERE machine = 'merge-followups' AND key = $1 AND kind = 'issues.closeAfterMerge' ORDER BY created_at`,
+      [key])).rows;
+    await confirmed({ sessionId: s.id, appId: shop.id, mergeSha: SHA('a') });
+    await until(async () => (await items()).length === 2, 'the first look asked for a second');
+    assert.ok(calls.some((c) => c[0] === 'look' && c[1] === s.pr_number && c[2] === 1));
+    assert.ok(!calls.some((c) => c[0] === 'close' && c[1] === n), 'left to GitHub at the first look');
+    assert.equal(await gov(), 'open', 'its request is still open: nothing superseded it');
+    assert.equal((await pool.query('SELECT status FROM issues WHERE id = $1', [close.id])).rows[0].status, 'open');
+    // Thirty seconds on.
+    const [, second] = await items();
+    await pool.query(`BEGIN; SET LOCAL app.wf_writer = 'transition';
+      UPDATE wf_work SET due_at = NOW() WHERE machine = 'merge-followups' AND key = '${key}' AND work_key = '${second.work_key}'; COMMIT`);
+    await pool.query(`SELECT pg_notify('wf_work', 'made due')`);
+    await until(async () => (await gov()) === 'superseded', 'superseded once the second look closed its request');
+    assert.ok(calls.findIndex((c) => c[0] === 'close' && c[1] === n) > calls.findIndex((c) => c[0] === 'look' && c[1] === s.pr_number && c[2] === 2),
+      'closed at the second look');
+    const { rows: [row] } = await pool.query('SELECT status, payload FROM issues WHERE id = $1', [close.id]);
+    assert.equal(row.status, 'closed');
+    assert.equal(row.payload.supersededBy, `pr-merge:#${s.pr_number}`);
+    const { rows: told } = await pool.query(
+      `SELECT type, result, reason, source FROM wf_events WHERE machine = 'governance-proposal' AND key = $1 AND source->>'kind' = 'message' ORDER BY id`,
+      [`issue:${close.id}`]);
+    assert.deepEqual(told.map((e) => [e.type, e.result, e.reason, e.source.from.machine]),
+      [['Filed', 'rejected', 'already_filed', 'merge-followups'], ['TargetClosed', 'accepted', null, 'merge-followups']],
+      'filed already (a no-op), then told, by the merge');
     await quiet();
+  });
+
+  await t.test('a conductor booting a build says nothing is live; a process serving it does', async () => {
+    // The platform's own app: its merges go live when a build containing
+    // them serves (Deployed), not when the merge machine deploys anything.
+    const { rows: [own] } = await pool.query(
+      `INSERT INTO apps (name, slug, created_by, self_hosted, repo_url)
+       VALUES ('Homeroom', 'homeroom-own', $1, TRUE, 'https://github.com/acme/homeroom') RETURNING *`, [author.id]);
+    const { rows: [s] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title) VALUES ($1, $2, 'merging', $3, 'Change') RETURNING *`,
+      [own.id, author.id, ++seq]);
     await platform.stopWorkflow();
+    await platform.startWorkflow(config, { loops: true });
+    await confirmed({ sessionId: s.id, appId: own.id, mergeSha: SHA('a') });
+    await until(async () => (await state(s)) === 'delivering', 'waiting for a build that contains it');
+    const booted = async () => (await pool.query('SELECT booted_shas FROM apps WHERE id = $1', [own.id])).rows[0].booted_shas;
+    const was = process.env.GIT_SHA;
+    process.env.GIT_SHA = SHA('c');   // a build that contains the merge
+    try {
+      // The release's conductor boots first: it runs the workflow and serves
+      // nobody.
+      await quiet();
+      await platform.stopWorkflow();
+      await platform.startWorkflow(config, { loops: true });
+      await quiet();
+      assert.equal(await state(s), 'delivering', 'not live: nobody is served that build yet');
+      assert.deepEqual(await booted(), [], 'nor recorded as one production ran');
+      // Its web Pods come up and serve it.
+      await platform.releaseServing(pool);
+      await until(async () => (await state(s)) === 'live', 'live once a serving process runs it');
+      assert.deepEqual((await booted()).map((b) => b.sha), [SHA('c')]);
+    } finally {
+      if (was === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = was;
+    }
   });
 
   await t.test('a booting process records the build it runs; the migration\'s main_sha is not that (review finding, second pass)', async () => {
@@ -238,6 +361,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     const boot = async (sha) => {
       process.env.GIT_SHA = sha;
       await platform.startWorkflow(config, { loops: false });
+      await platform.releaseServing(pool);
       await platform.stopWorkflow();
     };
     const history = async () => (await pool.query('SELECT main_sha, booted_shas FROM apps WHERE id = $1', [self.id])).rows[0];
@@ -262,5 +386,22 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     } finally {
       if (was === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = was;
     }
+  });
+
+  await t.test('a note for the bot\'s change machine reaches it for a change of the bot\'s, and nothing about anybody else\'s', async () => {
+    const { rows: [s1] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title, linked_issues, check_state, reviewed_head_sha, checks_commit_sha)
+       VALUES ($1, $2, 'promoted', $3, 'Older', $4, 'passing', $5, $5) RETURNING *`, [app.id, botUser.id, ++seq, [seq], SHA('e')]);
+    await pool.query(`INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id) VALUES ($1, $2, 'live', 'ready', $3)`,
+      [app.id, seq, s1.id]);
+    await platform.startWorkflow(config, { loops: true });
+    // Its first note creates the instance, decided from its row.
+    assert.notEqual(await platform.botNote(s1.id, 'Proposed', {}), 0);
+    const inst = async (id) => (await pool.query(`SELECT state FROM wf_instances WHERE machine = 'bot-change' AND key = $1`, [`session:${id}`])).rows[0]?.state;
+    await until(async () => (await inst(s1.id)) === 'ready', 'decided from its row: ready to try');
+    // A session of somebody else's: nothing is appended.
+    const theirs = await proposal('promoted');
+    assert.equal(await platform.botNote(theirs.id, 'Verdict', { state: 'passing' }), 0);
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_events WHERE machine = 'bot-change' AND key = $1`, [`session:${theirs.id}`])).rows[0].n, 0);
   });
 });

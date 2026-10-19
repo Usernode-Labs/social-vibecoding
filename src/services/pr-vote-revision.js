@@ -30,31 +30,9 @@
 // The reviewed revision is still recorded and still useful — it is what the
 // exact-sha merge pins to, and what the classifier compares against — it is
 // simply no longer what decides whether a vote counts.
-function reviewedHeadForSession(session) {
-  return session?.source === 'imported'
-    ? (session.imported_pr_head_sha || null)
-    : (session?.reviewed_head_sha || null);
-}
-
-// The commit a stored preview artifact must describe before it may be shown.
-// Promoted/imported proposals have a reviewed head; active native handoffs can
-// have screenshots before promotion, so their current checks/handoff pin is
-// the strongest available provenance. NULL means the caller genuinely has no
-// revision to compare; once a head is known, unknown-provenance artifacts are
-// hidden rather than guessed current.
-function visualHeadForSession(session) {
-  return reviewedHeadForSession(session)
-    || session?.checks_commit_sha
-    || session?.handoff_head_sha
-    || null;
-}
-
-function checkedAlias(alias) {
-  if (!/^[a-z_][a-z0-9_]*$/i.test(alias || '')) {
-    throw new Error(`Invalid SQL alias: ${alias}`);
-  }
-  return alias;
-}
+// One copy, shared with the Homeroom bot's change machine
+// (src/workflow/rules/bot-readiness.ts).
+const { reviewedHeadForSession, visualHeadForSession, sameSha } = require('../workflow/rules/bot-readiness.ts');
 
 function reviewedHeadSql(sessionAlias = 'cs') {
   const cs = checkedAlias(sessionAlias);
@@ -62,43 +40,10 @@ function reviewedHeadSql(sessionAlias = 'cs') {
     + `THEN ${cs}.imported_pr_head_sha ELSE ${cs}.reviewed_head_sha END)`;
 }
 
-/**
- * The predicate every tally in the platform is built on.
- *
- * A NULL vote epoch never equals a NOT NULL session epoch, which is what makes
- * the migration a no-op in both directions: votes that were stale under the
- * old commit rule were backfilled to NULL and stay uncounted, and votes that
- * were counting were backfilled to 0 and keep counting.
- */
-function currentVotePredicateSql(voteAlias = 'pv', sessionAlias = 'cs') {
-  const pv = checkedAlias(voteAlias);
-  const cs = checkedAlias(sessionAlias);
-  return `(${pv}.approval_epoch = ${cs}.approval_epoch)`;
-}
-
-/**
- * The predicate every TALLY counts with: a current vote (above) that also
- * counts toward the app's outcome. A test account's vote on an app a real
- * person made is current — it is the voter's own, shown on their card as
- * theirs and labelled — but it is not counted (D1, services/test-accounts.js;
- * the rule itself is counts_toward_outcome in schema.sql, which the active-
- * member denominator shares). So "what did I vote" reads currentVotePredicateSql
- * and "how many approvals" reads this one. `cs` must expose `app_id`.
- */
-function countedVotePredicateSql(voteAlias = 'pv', sessionAlias = 'cs') {
-  const pv = checkedAlias(voteAlias);
-  const cs = checkedAlias(sessionAlias);
-  return `(${currentVotePredicateSql(pv, cs)} AND counts_toward_outcome(${pv}.user_id, ${cs}.app_id))`;
-}
-
-// The one place that decides "is this stamp the reviewed revision?" for JS
-// callers. Still case-insensitive: every writer lands a lower-case sha, but a
-// single upper-case character would make an IDENTICAL commit read as a
-// different one, and the comparison is the cheap place to be exact (#955).
-function sameSha(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string') return false;
-  return a.toLowerCase() === b.toLowerCase();
-}
+// The predicate every tally in the platform is built on, and the alias
+// guard (src/workflow/rules/vote-predicate.ts, one copy: the merged line's
+// credits count with it inside the merge-followups transaction).
+const { checkedAlias, countedVotePredicateSql, currentVotePredicateSql } = require('../workflow/rules/vote-predicate.ts');
 
 module.exports = {
   reviewedHeadForSession,

@@ -215,7 +215,7 @@ function linkUnavailable() {
     'This Homeroom deployment has no GitHub OAuth app configured, so it cannot verify which GitHub account is '
     + 'yours — and work built by your own coding agent is only submitted under a verified account. Ask an admin '
     + 'to set GITHUB_LINK_CLIENT_ID and GITHUB_LINK_CLIENT_SECRET in the platform variables panel. In the '
-    + 'meantime, start_platform_build has Homeroom build the change itself out of your daily Homeroom credits — '
+    + 'meantime, start_platform_build has Homeroom build the change itself out of your weekly Homeroom credits — '
     + 'that path needs no GitHub link.',
     { retryable: false }
   );
@@ -1243,8 +1243,10 @@ function buildWorkOrder({
       '   changes and how a person reaches each one; changes that show on the',
       '   same screen are one declared change. Text, counts, loading,',
       '   error and status changes are visible even when existing markup and',
-      '   styles are reused. An absent fixture or a hard-to-reach state is a',
-      '   blocker to report, not a reason to call a visible change non-visual.',
+      '   styles are reused. A state a fresh staging copy lacks is seeded in this',
+      '   change: the seed reaches the after copy, the side a new state needs. One',
+      '   that can be neither reached nor seeded is a blocker to report, not a',
+      '   reason to call a visible change non-visual.',
       '   For an error state reached only by a failed',
       '   request, declare the exact GET /api/ path as',
       '   intent.controlledFailurePath and make the first intent.steps entry',
@@ -1434,9 +1436,13 @@ function buildWorkOrder({
       '   For a visible change use impact "ui" or "motion" and one to three',
       '   declared changes; changes that show on the same screen are one',
       '   declared change. Text, counts, loading, error and status changes are',
-      '   visible even when existing markup and styles are reused. If the required',
-      '   fixture or state is unavailable, report that blocker; do not label a',
-      '   visible change "none" because it is hard to reach. For an error',
+      '   visible even when existing markup and styles are reused. If a fresh',
+      '   staging copy lacks the state a change shows, seed it in this change,',
+      '   idempotent and obviously fake ("Who the before & after shots see" in',
+      '   the conventions): the seed reaches the after copy, the side a new state',
+      '   needs. If a state can be neither reached nor seeded,',
+      '   report that blocker; do not label a visible change "none" because it',
+      '   is hard to reach. For an error',
       '   state that needs a failed request, declare its exact GET /api/ path',
       '   as intent.controlledFailurePath and make the first intent.steps entry',
       '   exactly "Controlled test: deliberately block the declared API GET on',
@@ -1555,6 +1561,8 @@ function buildWorkOrder({
       '   and a ready change\'s `note` says what its shots leave out. A skip or',
       '   note usually means the declared steps or data cannot reach the state:',
       '   fix `steps` or `hints` rather than accepting a partial pair.',
+      '   An `unchanged` change\'s before and after came out the same, so its',
+      '   shots cannot show it: treat it as a skip.',
       '   A change whose `shotResults` status is `failed` was tried and broke',
       '   on the after build (for example a server error): fix the code.',
       '   `failed` includes a specific reason.',

@@ -59,6 +59,7 @@ import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { CheckIcon, ChevronRightIcon } from '@/components/ui/icons';
 import { Switch } from '@/components/ui/switch';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { socialIdentityStore } from './social-identity-store.js';
 import { openNativeSocialConnect, watchSocialConnectReturn } from './native-social-connect.js';
@@ -264,16 +265,18 @@ function AuditNote({ provider }: { provider: 'github' | 'x' }) {
       {...(provider === 'github' ? { id: 'github-link-audit-note' } : null)}
       className="mt-1 text-[0.8125rem] text-zinc-500 dark:text-zinc-500"
     >
-      {'Review or revoke this authorization at '}
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-violet-700 dark:text-violet-400 hover:underline"
-      >
-        {label}
-      </a>
-      .
+      <RichMessage
+        id="settings:linkedAccounts.auditNote"
+        values={{ address: label }}
+        components={[
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-violet-700 dark:text-violet-400 hover:underline"
+          />,
+        ]}
+      />
     </p>
   );
 }
@@ -284,10 +287,24 @@ function AuditNote({ provider }: { provider: 'github' | 'x' }) {
  * the exact callback URL the developer app must register, and a live check of
  * the pair against the token endpoint.
  */
+/** The configuration check's line, by outcome: its tone and its message id.
+ *  Every message takes {{provider}}. */
+const VERDICTS = {
+  checking: { tone: 'text-zinc-500 dark:text-zinc-400', id: 'settings:linkedAccounts.diagnostics.checking' },
+  accepted: { tone: 'text-emerald-700 dark:text-emerald-400', id: 'settings:linkedAccounts.diagnostics.accepted' },
+  rejected: { tone: 'text-red-700 dark:text-red-400', id: 'settings:linkedAccounts.diagnostics.rejected' },
+  unreachable: { tone: 'text-amber-800 dark:text-amber-400', id: 'settings:linkedAccounts.diagnostics.unreachable' },
+  failed: { tone: 'text-red-700 dark:text-red-400', id: 'settings:linkedAccounts.diagnostics.failed' },
+} as const;
+
 function Diagnostics({ view }: { view: DiagnosticsView }) {
+  const t = useMessages('settings');
   const [copied, setCopied] = useState(false);
   const [checking, setChecking] = useState(false);
-  const [verdict, setVerdict] = useState<{ tone: string; text: string } | null>(null);
+  // The outcome, not its sentence: the line is read when it renders, so it
+  // follows the language on screen.
+  const [outcome, setOutcome] = useState<keyof typeof VERDICTS | null>(null);
+  const verdict = outcome ? VERDICTS[outcome] : null;
 
   return (
     <div
@@ -296,7 +313,7 @@ function Diagnostics({ view }: { view: DiagnosticsView }) {
     >
       <div className="font-medium text-zinc-700 dark:text-zinc-300">{view.source}</div>
       <div className="mt-1 flex items-center gap-2 min-w-0">
-        <span className="text-zinc-500 dark:text-zinc-400 shrink-0">Callback URI:</span>
+        <span className="text-zinc-500 dark:text-zinc-400 shrink-0">{t('settings:linkedAccounts.diagnostics.callbackUri')}</span>
         <code className="truncate text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 rounded px-1 py-0.5">
           {view.callbackUrl}
         </code>
@@ -311,7 +328,7 @@ function Diagnostics({ view }: { view: DiagnosticsView }) {
             } catch { /* clipboard unavailable — the address is still visible */ }
           }}
         >
-          {copied ? 'Copied' : 'Copy'}
+          {copied ? t('core:common.copied') : t('core:common.copy')}
         </button>
       </div>
       <p className="mt-1 text-zinc-500 dark:text-zinc-400">{view.warning}</p>
@@ -323,7 +340,7 @@ function Diagnostics({ view }: { view: DiagnosticsView }) {
           className="shrink-0 rounded-md border border-violet-400 dark:border-violet-700 px-2 py-1 font-medium text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950 disabled:opacity-50 transition-colors"
           onClick={async () => {
             setChecking(true);
-            setVerdict({ tone: 'text-zinc-500 dark:text-zinc-400', text: 'Checking…' });
+            setOutcome('checking');
             try {
               let answer;
               if (view.demo) {
@@ -338,38 +355,23 @@ function Diagnostics({ view }: { view: DiagnosticsView }) {
                 answer = await response.json();
               }
               if (answer.clientAuth === 'ok') {
-                setVerdict({
-                  tone: 'text-emerald-700 dark:text-emerald-400',
-                  text: `${view.name} accepted the platform’s client credentials. `
-                    + `If connecting still fails on ${view.name}’s own page, the callback address above `
-                    + `is not registered on the ${view.name} app.`,
-                });
+                setOutcome('accepted');
               } else if (answer.clientAuth === 'rejected') {
-                setVerdict({
-                  tone: 'text-red-700 dark:text-red-400',
-                  text: `${view.name} rejected the platform’s client ID or secret. `
-                    + 'the configured credential pair is wrong.',
-                });
+                setOutcome('rejected');
               } else {
-                setVerdict({
-                  tone: 'text-amber-800 dark:text-amber-400',
-                  text: `Couldn’t reach ${view.name} to verify the credentials. Try again shortly.`,
-                });
+                setOutcome('unreachable');
               }
             } catch {
-              setVerdict({
-                tone: 'text-red-700 dark:text-red-400',
-                text: 'The configuration check failed to run. Try again shortly.',
-              });
+              setOutcome('failed');
             } finally {
               setChecking(false);
             }
           }}
         >
-          Run configuration check
+          {t('settings:linkedAccounts.diagnostics.run')}
         </button>
         <span className={`${verdict ? verdict.tone : 'text-zinc-500 dark:text-zinc-400'} pt-1`}>
-          {verdict ? verdict.text : null}
+          {verdict ? t(verdict.id, { provider: view.name }) : null}
         </span>
       </div>
     </div>
@@ -386,6 +388,7 @@ async function errorMessage(response: Response, fallback: string) {
 }
 
 function ProviderRow({ row }: { row: ProviderRowView }) {
+  const t = useMessages('settings');
   const opening = useRef(false);
   const [actionStatus, setActionStatus] = useState('');
   const [actionFailed, setActionFailed] = useState(false);
@@ -409,7 +412,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
     if (opening.current) return;
     opening.current = true;
     setActionFailed(false);
-    setActionStatus('Opening your browser…');
+    setActionStatus(t('settings:linkedAccounts.status.openingBrowser'));
     try {
       await openNativeSocialConnect({
         bridge,
@@ -418,10 +421,9 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
         accountId: (window as any).App?.user?.id,
         origin: window.location.origin,
       });
-      setActionStatus(
-        `Finish ${action.intent === 'connect' ? 'connecting' : 'verification'} in your browser, `
-        + 'then return to the app. Sign in with the same Homeroom account if asked.'
-      );
+      setActionStatus(action.intent === 'connect'
+        ? t('settings:linkedAccounts.status.finishConnecting')
+        : t('settings:linkedAccounts.status.finishVerification'));
     } catch (err) {
       setActionFailed(true);
       setActionStatus((err as Error).message);
@@ -451,7 +453,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
     setPublicVisible(next);
     setBusy('visibility');
     setActionFailed(false);
-    setActionStatus('Saving profile visibility…');
+    setActionStatus(t('settings:linkedAccounts.status.savingVisibility'));
     try {
       const response = await fetch(
         `/api/me/social-identities/${encodeURIComponent(row.provider)}/visibility`,
@@ -464,10 +466,12 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
         }
       );
       if (!response.ok) {
-        throw new Error(await errorMessage(response, 'Could not change profile visibility.'));
+        throw new Error(await errorMessage(response, t('settings:linkedAccounts.status.visibilityFailed')));
       }
       await refreshIdentitySurfaces();
-      setActionStatus(next ? 'Shown on your public profile.' : 'Hidden from your public profile.');
+      setActionStatus(next
+        ? t('settings:linkedAccounts.status.shownOnProfile')
+        : t('settings:linkedAccounts.status.hiddenFromProfile'));
     } catch (err) {
       setPublicVisible(previous);
       setActionFailed(true);
@@ -480,7 +484,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
   const confirmReplacement = async () => {
     setBusy('replace');
     setActionFailed(false);
-    setActionStatus('Replacing account…');
+    setActionStatus(t('settings:linkedAccounts.status.replacing'));
     try {
       const response = await fetch(
         `/api/me/social-identities/${encodeURIComponent(row.provider)}/replacement`,
@@ -493,10 +497,10 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
         }
       );
       if (!response.ok) {
-        throw new Error(await errorMessage(response, 'Could not replace this account.'));
+        throw new Error(await errorMessage(response, t('settings:linkedAccounts.status.replaceFailed')));
       }
       await refreshIdentitySurfaces();
-      setActionStatus(`${row.name} account replaced.`);
+      setActionStatus(t('settings:linkedAccounts.status.replaced', { provider: row.name }));
     } catch (err) {
       setActionFailed(true);
       setActionStatus((err as Error).message);
@@ -514,10 +518,12 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
         { method: 'DELETE', credentials: 'same-origin', cache: 'no-store' }
       );
       if (!response.ok) {
-        throw new Error(await errorMessage(response, 'Could not cancel this replacement.'));
+        throw new Error(await errorMessage(response, t('settings:linkedAccounts.status.cancelFailed')));
       }
       await refreshIdentitySurfaces();
-      setActionStatus(`No changes made. @${row.pendingReplacement?.currentHandle} is still connected.`);
+      setActionStatus(t('settings:linkedAccounts.status.replacementCancelled', {
+        handle: row.pendingReplacement?.currentHandle ?? '',
+      }));
     } catch (err) {
       setActionFailed(true);
       setActionStatus((err as Error).message);
@@ -581,7 +587,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
           ) : null}
           {row.visibility ? (
             <label className="flex min-h-[44px] items-center justify-between gap-3 text-[0.9375rem] text-zinc-900 dark:text-zinc-100 cursor-pointer select-none">
-              Show on public profile
+              {t('settings:linkedAccounts.showOnProfile')}
               <Switch
                 id={`${row.provider}-profile-visible`}
                 checked={publicVisible}
@@ -604,7 +610,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
                   controller()?._unlinkGithub?.(e.currentTarget, row.provider);
                 }}
               >
-                Disconnect
+                {t('settings:linkedAccounts.disconnect')}
               </button>
             ) : null}
           </div>
@@ -677,23 +683,23 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
       {row.pendingReplacement ? (
         <section
           id={`${row.provider}-replacement-confirmation`}
-          aria-label={`Confirm ${row.name} account replacement`}
+          aria-label={t('settings:linkedAccounts.replacement.aria', { provider: row.name })}
           className="mx-4 mb-4 rounded-xl border border-violet-300 dark:border-violet-800 bg-white dark:bg-zinc-900 p-3"
         >
           <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
-            Replace {row.name} account?
+            {t('settings:linkedAccounts.replacement.title', { provider: row.name })}
           </div>
           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-            The new account is verified. Nothing changes until you confirm.
+            {t('settings:linkedAccounts.replacement.intro')}
           </p>
           <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
             <div className="rounded-md border border-zinc-300 dark:border-zinc-700 px-2.5 py-2 min-w-0">
-              <div className="text-[0.65rem] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Current</div>
+              <div className="text-[0.65rem] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{t('settings:linkedAccounts.replacement.current')}</div>
               <div className="text-sm font-medium truncate">@{row.pendingReplacement.currentHandle}</div>
             </div>
             <span aria-hidden="true" className="text-zinc-500 dark:text-zinc-400">→</span>
             <div className="rounded-md border border-violet-400 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/30 px-2.5 py-2 min-w-0">
-              <div className="text-[0.65rem] uppercase tracking-wide text-violet-700 dark:text-violet-300">Verified replacement</div>
+              <div className="text-[0.65rem] uppercase tracking-wide text-violet-700 dark:text-violet-300">{t('settings:linkedAccounts.replacement.verified')}</div>
               <div className="text-sm font-medium truncate">@{row.pendingReplacement.replacementHandle}</div>
             </div>
           </div>
@@ -704,10 +710,10 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
               disabled={row.pendingReplacement.disabled || !!busy}
               onChange={(e) => setReplacementVisible(e.currentTarget.checked)}
             />
-            Show the replacement on my public profile
+            {t('settings:linkedAccounts.replacement.showOnProfile')}
           </label>
           <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-            Cancelling keeps @{row.pendingReplacement.currentHandle} connected with its current visibility.
+            {t('settings:linkedAccounts.replacement.cancelNote', { handle: row.pendingReplacement.currentHandle })}
           </p>
           <div className="mt-3 flex justify-end gap-2">
             <Button
@@ -720,7 +726,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
               className="min-h-[36px]"
               onClick={() => { void cancelReplacement(); }}
             >
-              Cancel
+              {t('core:common.cancel')}
             </Button>
             <Button
               type="button"
@@ -731,7 +737,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
               className="min-h-[36px]"
               onClick={() => { void confirmReplacement(); }}
             >
-              {busy === 'replace' ? 'Replacing…' : 'Replace account'}
+              {busy === 'replace' ? t('settings:linkedAccounts.replacement.replacing') : t('settings:linkedAccounts.replacement.confirm')}
             </Button>
           </div>
         </section>
@@ -768,7 +774,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
       {row.diagnostics ? (
         <details className="group/diag px-4 pb-3 pl-[3.125rem]" open={!!row.strandedNote || undefined}>
           <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-1 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">
-            {`${row.name} setup · admins only`}
+            {t('settings:linkedAccounts.diagnostics.summary', { provider: row.name })}
             <ChevronRightIcon
               aria-hidden="true"
               className="h-4 w-4 shrink-0 transition-transform group-open/diag:rotate-90"
@@ -782,13 +788,14 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
 }
 
 export function SocialIdentityView({ phase, message, tier, providers }: SocialIdentityState) {
+  const t = useMessages('settings');
   if (phase === 'idle') return null;
   // Bare text nodes, as the two `body.textContent = …` writes produced.
   if (phase === 'loading' || phase === 'error') return <>{message}</>;
   return (
     <>
       <h4 id="github-link-credits-label" className="px-4 text-[0.9375rem] font-normal text-zinc-500 dark:text-zinc-500">
-        Daily credits
+        {t('settings:linkedAccounts.dailyCredits')}
       </h4>
       <GroupedList className="mx-0 py-1.5" role="group" aria-labelledby="github-link-credits-label">
         {tier ? <TierRow tier={tier} /> : null}

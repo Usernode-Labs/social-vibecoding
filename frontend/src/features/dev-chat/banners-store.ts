@@ -53,8 +53,10 @@ export type SyncBannerView =
 
 /** "This change has been proposed / merged — start a new change." */
 export interface NewChangeBannerView {
-  /** Already composed: "proposed to the group (PR #12)" / "merged (PR #12)". */
-  stateLabel: string;
+  /** Which of the banner's two sentences: up for a vote, or merged. */
+  state: 'proposed' | 'merged';
+  /** The pull request both sentences name. */
+  prNumber: number;
   /**
    * #2602: the proposal card's hash route, or null when the slug cannot be
    * resolved. The banner is the moment a person learns their change went up

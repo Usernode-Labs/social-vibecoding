@@ -162,6 +162,11 @@ COPY run-codex-agent.sh /usr/local/bin/run-codex-agent.sh
 COPY start-inloop-db.sh /usr/local/bin/start-inloop-db.sh
 # Sourced by worker-run.sh and both runners, from their own directory.
 COPY session-branch.sh /usr/local/bin/session-branch.sh
+# Sourced by both runners: the container's memory for a turn's result line.
+COPY memory-fields.sh /usr/local/bin/memory-fields.sh
+# #5123: required by both OpenRouter adapters below, from their own directory:
+# every request they send denies data collection (no training, no retention).
+COPY openrouter-privacy.js /usr/local/bin/openrouter-privacy.js
 COPY codex-openrouter-request.js /usr/local/bin/codex-openrouter-request.js
 # #3296: the same per-invocation, worker-local adapter for an OpenRouter turn
 # that Claude Code runs. It holds that turn's key; claude gets a local token.
@@ -184,6 +189,10 @@ COPY shots-boundary.js /usr/local/bin/shots-boundary.js
 COPY shots-memory.js /usr/local/bin/shots-memory.js
 COPY shots-hosted-app-contract.js /usr/local/bin/shots-hosted-app-contract.js
 COPY shots-browser-observer.js /usr/local/bin/shots-browser-observer.js
+# The only files a shots page can be handed (the shots bridge's upload_file),
+# drawn once into a read-only directory the observer chooses them from.
+COPY shots-samples.js /usr/local/bin/shots-samples.js
+RUN node /usr/local/bin/shots-samples.js /usr/local/share/usernode/shots-samples
 COPY shots-browser-bootstrap.js /usr/local/bin/shots-browser-bootstrap.js
 COPY session-bootstrap.js /usr/local/bin/session-bootstrap.js
 COPY write-shots-mcp-config.js /usr/local/bin/write-shots-mcp-config.js
@@ -237,6 +246,11 @@ COPY usernode-run-inloop /usr/local/bin/usernode-run-inloop
 # adding now ("Adding the tier rows"). It only echoes: the platform reads
 # the phrase off the command in the turn's stream.
 COPY usernode-progress /usr/local/bin/usernode-progress
+# usernode-screen (13 Oct 2026): a first version's spec saves its main
+# screen first, and the platform draws the app's first look from it while
+# the spec goes on (services/first-version-screens.js). It only writes the
+# screen under /tmp/usernode-screens; nothing is sent from it.
+COPY usernode-screen /usr/local/bin/usernode-screen
 # usernode-debug (#616) is read-only production debugging for ADMIN
 # sessions on the self-edit app. It calls the platform's prod-debug
 # internal API (deny-listed read-only SQL role, allowlisted container
@@ -268,6 +282,7 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/usernode-run-inloop \
               /usr/local/bin/usernode-debug \
               /usr/local/bin/usernode-progress \
+              /usr/local/bin/usernode-screen \
   && mkdir -p /home/node/workspace /home/node/.claude \
   && chown -R node:node /home/node
 

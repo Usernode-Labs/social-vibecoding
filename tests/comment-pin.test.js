@@ -21,6 +21,11 @@
 //      own origin (platform.json, https only), answers that origin alone,
 //      draws what is on screen at its scroll position, and puts the app's
 //      own `window.snapdom` back.
+//   3b. THE PANEL'S PICTURE (#4975). The side panel's document draws itself,
+//      and takeBase lays its picture in at the frame's rectangle, beside the
+//      app's. Every leg of takeBase is bounded: the panel gets three seconds
+//      and the shell fifteen, so a slow panel draws nothing instead of
+//      holding the mode on "Taking a screenshot…" with clicks doing nothing.
 //   4. THE SEAMS. The dialog takes a handed-over comment; the drawing
 //      library is the pinned, recorded copy, byte for byte.
 
@@ -31,12 +36,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const picture = loadTsx('frontend/src/features/comment-pin/picture.ts');
-const post = loadTsx('frontend/src/features/comment-pin/post.ts');
+// The posting suites below exercise the Kudos as it works when kudos is not
+// parked, so they load post.ts with the switch off; `parkedPost` is the real
+// module, with kudos parked (#5249).
+const post = loadTsx('frontend/src/features/comment-pin/post.ts', {
+  stubs: { '../leaderboard/kudos-parked': { KUDOS_PARKED: false } },
+});
+const parkedPost = loadTsx('frontend/src/features/comment-pin/post.ts');
 const BRIDGE = read('public/usernode-bridge/v1/bridge.js');
 const SNAPSHOT = BRIDGE.split('/* __USERNODE_SNAPSHOT_BEGIN__ */')[1].split('/* __USERNODE_SNAPSHOT_END__ */')[0];
 
@@ -119,13 +131,14 @@ test('the reworked mode: the bar as the view\'s header, the phone sheet, and the
   // rides on the page. The old rest-on-the-picture's-bottom-edge default is
   // gone with it.
   assert.match(src, /const HEADER_BAND = 60;/);
-  assert.match(src, /INSET_MARGIN, HEADER_BAND\)/);
+  assert.match(src, /INSET_MARGIN, band\)/);
   assert.doesNotMatch(src, /inset\.y \+ window\.innerHeight \* inset\.scale - barSize\.height/);
   // The handle that drags the bar belongs to the live-page fallback alone.
-  assert.match(src, /"Move the bar: drag it anywhere, double-click to put it back"/);
-  assert.match(src, /\{!inset \? \(\s*<button\s+type="button"\s+aria-label="Move the bar/);
+  assert.equal(message('devchat:commentPin.bar.move'), 'Move the bar: drag it anywhere, double-click to put it back');
+  assert.match(src, /\{!inset \? \(\s*<button\s+type="button"\s+aria-label=\{t\('devchat:commentPin\.bar\.move'\)\}/);
   // Taking a new picture says so in the bar, and taps wait while it draws.
-  assert.match(src, /viewShot\?\.state === 'drawing' \? 'Taking a screenshot…'/);
+  assert.match(src, /viewShot\?\.state === 'drawing' \? t\('devchat:commentPin\.hint\.taking'\)/);
+  assert.equal(message('devchat:commentPin.hint.taking'), 'Taking a screenshot…');
   assert.match(src, /if \(viewShot\?\.state === 'drawing'\) return;/);
   // On a phone the box is a bottom sheet, riding the keyboard, and while the
   // wait for the next pin is on it holds just that row.
@@ -133,16 +146,329 @@ test('the reworked mode: the bar as the view\'s header, the phone sheet, and the
   assert.match(src, /useKeyboardSurface\(boxRef, \{ ride: true \}\);/);
   assert.match(src, /phone && draft\.active == null \?/);
   assert.match(src, /nextPinRow\n          \) : \(/);
-  // The close-up at the top of the sheet draws the pin's area of the view
-  // picture, or the comment's own thumbnail when the page has moved on.
-  assert.match(src, /<CloseUp\s+view=\{viewShot\?\.url \|\| ''\}/);
-  assert.match(src, /own=\{viewDiffers \? activePicture\?\.thumb \|\| null : null\}/);
+  // The close-up at the top of the sheet draws the pin's area of the picture
+  // the pin is on: the comment's own once drawn — the full picture now, with
+  // the crop framed on it (#5020) — the view picture while it still shows
+  // the same view, and nothing (never a stretched thumbnail) otherwise.
+  assert.match(src, /<CloseUp\s+view=\{closeUpSrc\}/);
+  assert.match(src, /const closeUpSrc = activePicture\?\.url \|\| \(viewDiffers \? '' : viewShot\?\.url \|\| ''\);/);
+  assert.match(src, /crop=\{activePicture\?\.cut\?\.rect \?\? null\}/,
+    'the close-up frames the crop on the full picture');
+  assert.doesNotMatch(src, /pin=\{\(boxComment \? pinInCrop/,
+    'the pin is a full-picture fraction now, never mapped into the crop');
   const closeUp = read('frontend/src/features/comment-pin/close-up.tsx');
   assert.match(closeUp, /touchAction: 'none'/, 'the close-up box only, never the page under it');
-  assert.match(closeUp, /Pinch to zoom/);
+  assert.match(closeUp, /\{t\('devchat:commentPin\.closeUp\.pinchHint'\)\}/);
+  assert.equal(message('devchat:commentPin.closeUp.pinchHint'), 'Pinch to zoom');
   assert.match(closeUp, /Math\.min\(MAX_ZOOM, zPrev \* dist \/ g\.dist\)/, 'the pinch sets the zoom from the fingers');
   assert.match(closeUp, /mid\.x - c\.x - \(g\.mid\.x - c\.x - panRef\.current\.x\) \* \(z \/ zPrev\)/,
     'the point under the fingers stays under them as the zoom changes');
+});
+
+test('the pins can land in a change\'s staging preview, not only the running app', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // The frame looked up first is the staging preview's: it sits over the app
+  // when both are up, so a pin inside it is a pin in the preview.
+  assert.match(src, /\['staging-iframe'[\s\S]{0,120}'app-iframe'/,
+    'the staging frame is looked up before the app frame');
+  assert.match(src, /_stagingPreview/, 'the previewed change comes from AppView._stagingPreview');
+});
+
+test('on a phone the bar sits under the status bar, where a finger can reach it', () => {
+  // iPhone 17 simulator, the Homeroom app, 12 Oct 2026: the bar sat in the
+  // status bar's strip, under the clock and the Dynamic Island, and a tap
+  // there never reaches the page, so Done, Form and the confirm's Discard
+  // could not be pressed. The band starts at the top safe area, read off a
+  // probe sized by the shell's own --platform-safe-top.
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /style=\{\{ height: 'var\(--platform-safe-top, 0px\)' \}\}/);
+  assert.match(src, /const band = safeTop \+ HEADER_BAND;/);
+  assert.match(src, /insetFrame\(size, phone \? INSET_MARGIN_PHONE : INSET_MARGIN, band\)/);
+  assert.match(src, /top: safeTop \+ Math\.max\(6, Math\.round\(\(HEADER_BAND - barSize\.height\) \/ 2\)\),/);
+  assert.match(src, /style=\{inset \? \{ top: band \+ 8 \} : \{ bottom: 'calc\(76px \+ var\(--platform-safe-bottom, 0px\)\)' \}\}/, 'the first-use note too');
+  assert.match(src, /return inset \? \{ x: at\.x, y: Math\.max\(at\.y, band \+ 8\) \} : at;/, 'and the box and the card');
+  assert.match(src, /: \{ bottom: 'calc\(1rem \+ var\(--platform-safe-bottom, 0px\)\)' \}\}/, 'the live-page bar clears the home indicator');
+  assert.doesNotMatch(src, /top-\[68px\]|'bottom-4 left-1\/2/);
+});
+
+test('on a phone the keyboard is not the page moving, and the sheet stays under the bar', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // The page's size is the mode's own: the keys collapse innerHeight (874
+  // to 539 on an iPhone 17), and nothing in the mode reads the window's.
+  assert.match(src, /const \[size, setSize\] = useState<Size>\(windowSize\);/);
+  assert.equal(src.split('window.innerHeight').length - 1, 1, 'read once, in windowSize');
+  assert.match(src, /if \(next\.width === was\.width && keyboardAbout\(\)\) return;/, 'a height-only resize with the keys about is the keys');
+  assert.match(src, /vv\?\.addEventListener\('resize', onResize\);/, 'and the keys leaving re-measures');
+  // Scrolls that are not the page: the mode's own sheet and field, and a
+  // document pan while the keys are about.
+  assert.match(src, /if \(target instanceof Node && host\.contains\(target\)\) return;/);
+  assert.match(src, /if \(isDocumentScroll\(target\) && keyboardAbout\(\)\) return;/);
+  assert.match(src, /const keyboardAbout = \(\) => textFocused\(document\)\s*\|\| document\.documentElement\.classList\.contains\(KB_OPEN_CLASS\)\s*\|\| performance\.now\(\) < keyboardUntil\.current;/);
+  // The page holds still while the mode is up (#5045): the wheel is stopped
+  // at the layer by hand (React's onWheel is passive), and a drag never
+  // scrolls.
+  assert.doesNotMatch(src, /scrollBy\(/);
+  assert.doesNotMatch(src, /scrollerAt/);
+  assert.doesNotMatch(src, /onWheel=\{/);
+  assert.match(src, /addEventListener\('wheel', onWheel, \{ passive: false \}\)/);
+  assert.match(src, /const onWheel = \(e: WheelEvent\) => \{ e\.preventDefault\(\); \};/);
+  // Fields take the keyboard without iOS panning the page (and the bar) away.
+  assert.match(src, /t\.focus\(\{ preventScroll: true \}\);\s*t\.setSelectionRange/);
+  assert.doesNotMatch(src, /\.focus\(\)/, 'no focus that pans');
+  assert.doesNotMatch(src, /^\s+autoFocus$/m, 'autoFocus pans too');
+  assert.match(src, /ref=\{focusWithoutPan\}/);
+  // The sheet: capped below the band, on the keys with them up, Post at its foot.
+  assert.match(src, /'--comment-band' as string\]: `\$\{inset \? band : safeTop\}px`/);
+  assert.match(src, /`comment-sheet comment-sheet-in platform-kb-sheet absolute inset-x-0 bottom-0 flex flex-col/);
+  assert.match(src, /\$\{phone \? ' comment-sheet-actions' : ''\}/);
+  const css = read('public/css/app.css');
+  assert.match(css, /#comment-pin-box\.comment-sheet \{\s*--comment-sheet-pb: calc\(0\.75rem \+ var\(--platform-safe-bottom, 0px\)\);\s*max-height: min\(85%, calc\(100% - var\(--comment-band, 0px\) - 8px\)\);/);
+  assert.match(css, /html\.platform-kb-open #comment-pin-box\.comment-sheet \{[^}]*max-height: calc\(100% - var\(--comment-band, 0px\) - 8px - var\(--platform-vv-top, 0px\) - var\(--platform-kb-cover, 0px\)\);/);
+  assert.match(css, /#comment-pin-box\.comment-sheet \.comment-sheet-actions \{\s*position: sticky;\s*bottom: calc\(-1 \* var\(--comment-sheet-pb\)\);/);
+});
+
+test('on a phone a tap leaves a small comment, and only its field opens the sheet', () => {
+  // Evan, 14 Oct 2026: a tap opened the whole sheet with the keyboard over
+  // the page he was still looking at, the sheet's ✕ was hard to find and to
+  // hit, and its arrows ("Open in the form") read as "make this bigger" and
+  // left comment mode. Now a tap leaves the pin and a small box beside it,
+  // with no field and so no keyboard; a tap on the box opens the sheet with
+  // the keys, in the same gesture; the pin and the box drag; ✕ closes it.
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /const small = phone && !expanded && !!draft && draft\.active != null;/);
+  assert.match(src, /\{draft && target && smallComment \? \(/);
+  assert.match(src, /id="comment-pin-small"/);
+  // No keyboard until the sheet: on a phone the focus effect waits for it.
+  assert.match(src, /const writing = !phone \|\| expanded;/);
+  assert.match(src, /if \(!t \|\| !writing\) return;/);
+  // The field opens the sheet inside the tap: drawn first (flushSync), then
+  // focused, or iOS would not raise the keys.
+  assert.match(src, /flushSync\(\(\) => setExpanded\(true\)\);\s*const field = textRef\.current;\s*if \(!field\) return;\s*field\.focus\(\{ preventScroll: true \}\);/);
+  assert.match(src, /onClick=\{expand\}/);
+  // A new comment, the request's first or its next, starts small.
+  assert.equal((src.match(/setExpanded\(false\);\n\s+setDraft\(\{/g) || []).length, 2);
+  // A drag on the box or on the open pin moves the pin; a lift without one is a tap.
+  assert.match(src, /if \(Math\.hypot\(dx, dy\) <= 8\) return;/);
+  assert.match(src, /place\(onPicture\(\{ x: d\.from\.x \+ e\.clientX - d\.start\.x, y: d\.from\.y \+ e\.clientY - d\.start\.y \}\)\);/);
+  assert.match(src, /performance\.now\(\) - draggedAt\.current < 400/, 'the click a drag ends with is not a tap');
+  assert.match(src, /const handle = on && small;/);
+  assert.match(src, /onPointerDown=\{\(e\) => e\.stopPropagation\(\)\}\s*onClick=\{closeSmall\}/, 'its ✕ never starts a drag');
+  // With the sheet open, a press on the page above it folds it; the pin stays.
+  assert.match(src, /if \(phone && expanded && draft && draft\.active != null\) \{\s*if \(!draft\.sending\) setExpanded\(false\);\s*return;\s*\}/);
+  // The sheet's head: Minimize folds it, ✕ is a disc in a 44px target, and
+  // on a phone nothing in it hands over to the form (the bar's Form does).
+  assert.match(src, /const PHONE_TOOL = 'grid h-11 w-11 /);
+  assert.match(src, /onClick=\{collapse\}\s*className=\{PHONE_TOOL\}/);
+  assert.match(src, /onClick=\{requestDiscard\}\s*className=\{PHONE_TOOL\}/);
+  const head = src.slice(src.indexOf('const head = draft && target ? ('), src.indexOf('const small = phone'));
+  const phoneHead = head.slice(head.indexOf('{phone ? ('), head.indexOf(') : (\n        <>'));
+  assert.ok(phoneHead.includes('ChevronDownIcon'), 'the phone head is found');
+  assert.doesNotMatch(phoneHead, /toForm/);
+  assert.match(src, /<div className="comment-sheet-head">\s*<div aria-hidden="true" className="comment-sheet-grabber" \/>/);
+  const css = read('public/css/app.css');
+  assert.match(css, /#comment-pin-box\.comment-sheet \.comment-sheet-head \{\s*position: sticky;\s*top: -0\.75rem;/,
+    'the head stays at the top while the sheet scrolls under it');
+  assert.match(css, /\.comment-small-in \{ animation: comment-small-in 160ms ease-out; \}/);
+  assert.equal(message('devchat:commentPin.box.minimize'), 'Minimize');
+  assert.equal(message('devchat:commentPin.box.write'), 'Write your comment');
+  // The box keeps above the home indicator.
+  assert.match(src, /style=\{\{ height: 'var\(--platform-safe-bottom, 0px\)' \}\}/);
+  assert.match(src, /size\.height - \(inset \|\| barAt \? 0 : BAR_SPACE\) - safeBottom/);
+});
+
+test('the preview draws only the pins that fall inside it', () => {
+  // Two pins far apart on a phone's tall picture do not both fit the
+  // preview's 64x42 slice, and the one outside was drawn over the Title and
+  // Kudos rows (iPhone 17 Pro simulator, 14 Oct 2026).
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /\.filter\(\(\{ left, top \}\) => left >= 0 && left <= 64 && top >= 0 && top <= 42\)/);
+});
+
+test('the close-up always zooms a full picture about its own pin', () => {
+  const closeUp = read('frontend/src/features/comment-pin/close-up.tsx');
+  // The stretched-thumbnail fallback, and its pin placed as a fraction of
+  // the box, are gone.
+  assert.doesNotMatch(closeUp, /\bown\?: |\{own \?/);
+  assert.doesNotMatch(closeUp, /object-cover/);
+  assert.match(closeUp, /export function CloseUp\(\{ view, pin, crop \}: \{ view: string; pin: Point; crop\?: Rect \| null \}\)/);
+  // A cut picture is shown whole: the kept part is framed where the zoom
+  // draws the picture, and the rest is dimmed (#5020).
+  assert.match(closeUp, /view2\.offset\.x \+ crop\.x \* view2\.size\.width/);
+  assert.match(closeUp, /view2\.offset\.y \+ crop\.y \* view2\.size\.height/);
+  assert.match(closeUp, /boxShadow: CROP_SHADE/);
+  // A picture already in memory can load before an effect runs: its size is
+  // kept with its own source rather than reset by one.
+  assert.match(closeUp, /const picture = loaded && loaded\.src === view \? loaded\.size : null;/);
+  assert.match(closeUp, /key=\{view\}/);
+  assert.doesNotMatch(closeUp, /setPicture\(null\)/);
+  assert.match(closeUp, /\{view \? \(\s*<img/, 'never an empty src');
+  // The comment's own picture is kept whole for it.
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /b\?\.canvas\.toBlob\(\(blob\) => \{[\s\S]*?land\(\{ url \}\);/);
+  // CropFrame and the reopened views (#5020) dim with the one shared shade.
+  assert.match(src, /height: rect\.height \* H, boxShadow: CROP_SHADE/,
+    'CropFrame dims with the shared shade, not its own literal');
+  assert.equal(picture.CROP_SHADE, '0 0 0 9999px rgba(0,0,0,0.45)');
+});
+
+test('the first picture animates out of the live page instead of a bare grey ground (#4665)', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // The first picture, nothing drawn yet: the live page shows through (the
+  // mode's layer above it already keeps every press off) and neither the
+  // grey ground nor the word that names the picture is drawn.
+  assert.match(src, /viewShot\?\.state === 'drawing' && !viewShot\.url/,
+    'the first picture: still drawing, with nothing to show');
+  assert.match(src, /shotIntro \? null : \(/);
+  // Once the picture lands it mounts with its ground and its word for the first
+  // time and shrinks from the full page into its frame; a degenerate scale
+  // skips the move.
+  assert.match(src, /inset\.scale > 0 \? 'comment-shot-in' : ''/);
+  assert.match(src, /comment-shot-ground-in/);
+  assert.match(src, /comment-shot-label-in/);
+  assert.match(src, /--comment-shot-from/, 'the start of the move: the inverse of the inset frame');
+  // The hover outline and the posted pins wait with it: both are placed
+  // against the inset frame and would sit wrong over the full-size page.
+  assert.match(src, /hover && !shotIntro \? \(/);
+  assert.match(src, /!shotIntro && postedPins\.map/);
+  // app.css carries the three mount animations and settles at once under
+  // reduced motion.
+  const css = read('public/css/app.css');
+  assert.match(css, /\.comment-shot-in \{ animation: comment-shot-in 320ms ease-out; transform-origin: 0 0; \}/);
+  assert.match(css, /\.comment-shot-ground-in \{ animation: comment-shot-ground-in 320ms ease-out; \}/);
+  assert.match(css, /\.comment-shot-label-in \{ animation: comment-shot-label-in 160ms ease-out 200ms both; \}/);
+  assert.match(css, /@keyframes comment-shot-in \{\s*from \{ transform: var\(--comment-shot-from, none\); border-radius: 0; \}\s*\}/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.comment-shot-in,\s*\.comment-shot-ground-in,\s*\.comment-shot-label-in,\s*\.comment-bar-in \{ animation: none; \}\s*\}/);
+});
+
+test('opening and leaving are one motion each, never a frame-long jump (12 Oct 2026)', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  const css = read('public/css/app.css');
+  // The first picture waits for the sheet the mode was opened from (the menu,
+  // the form) to finish leaving, rather than landing on it mid-slide.
+  assert.match(src, /void Promise\.all\(\[ahead, overlaysGone\(\)\]\)/, 'with or without a picture drawn ahead');
+  // Nothing of the mode is drawn over the live page before the first picture:
+  // the state starts as drawing, and the bar and the first-use note wait.
+  assert.match(src, /useState<ViewShot \| null>\(\{ url: '', view: 0, state: 'drawing' \}\)/);
+  assert.match(src, /shotIntro \? 'pointer-events-none opacity-0' : 'comment-bar-in',/);
+  assert.match(src, /\{intro && !confirm && !shotIntro \? \(/);
+  assert.match(css, /\.comment-bar-in \{ animation: comment-shot-ground-in 320ms ease-out; \}/);
+  // The picture is decoded before it goes up, or its first frame is a white box.
+  assert.match(src, /decoded\.src = url;[\s\S]*?decoded\.decode\(\) : Promise\.resolve\(\)\)\.then\(show, show\);/);
+  // Leaving plays the entrance backwards, then closes and opens what follows.
+  assert.match(src, /const LEAVE_MS = 200;/);
+  assert.match(src, /if \(!inset \|\| shotIntro \|\| !viewShot\?\.url \|\| reducedMotion\(\)\) \{ finish\(\); return; \}/);
+  assert.match(src, /setLeaving\(true\);\s*setTimeout\(finish, LEAVE_MS\);/);
+  assert.match(src, /className=\{leaving \? 'comment-mode-leaving fixed inset-0' : 'fixed inset-0'\}/);
+  assert.match(src, /leave\(\(\) => \{\s*if \(post\) \{\s*handOver\(post\);/, 'Form opens after the mode has left');
+  assert.match(src, /leave\(\(\) => handOver\(post\)\);/, 'and a failed post hands over the same way');
+  assert.match(src, /else leave\(\); \}\}/, 'the confirm\'s Discard on Done');
+  assert.equal((src.match(/\bonClose\(\)/g) || []).length, 3, 'onClose only inside leave and on the cards\' links, which navigate (the sent card\'s link joins the marker card\'s, #5008)');
+  assert.match(css, /\.comment-mode-leaving \.comment-shot-in \{ animation: comment-shot-out 200ms ease-in forwards; \}/);
+  assert.match(css, /@keyframes comment-shot-out \{\s*to \{ transform: var\(--comment-shot-from, none\); border-radius: 0; \}\s*\}/);
+  assert.match(css, /\.comment-mode-leaving > :not\(\.comment-shot-in\):not\(\.comment-shot-ground-in\) \{ animation: comment-fade-out 120ms ease-in forwards; \}/);
+});
+
+test('the picture is drawn ahead while the menu or the form is open, and opens at once (12 Oct 2026)', () => {
+  // Tap to zoom used to wait for the code, the library and the whole drawing
+  // after the menu had gone: 0.3s of a still screen, 1.3s on the first open
+  // after launch. The menu and the form now ask for the picture as they open.
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  const shortcut = read('frontend/src/features/improve/suggest-shortcut.ts');
+  const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  const form = read('frontend/src/features/dialogs/feedback.tsx');
+  assert.match(shortcut, /export function prepareComment\(\): void \{\s*if \(!suggestOpensComment\(\)\) return;\s*import\('\.\.\/comment-pin\/comment-pin'\)\s*\.then\(\(m\) => m\.prepareCommentView\(\)\)/,
+    'only where the switch is on, and the mode\'s code loads with it');
+  assert.match(menu, /useEffect\(\(\) => \{\s*if \(open\) prepareComment\(\);\s*\}, \[open\]\);/);
+  assert.match(form, /Feedback\._open\(opts \|\| \{\}\);[\s\S]*?prepareComment\(\);\s*\},/);
+  // Drawn once the sheet has slid in, watched from the moment it starts, and
+  // put up the moment the sheet has gone; otherwise drawn fresh, as before.
+  assert.match(src, /const AHEAD_SETTLE_MS = 350;/);
+  assert.match(src, /const AHEAD_TTL_MS = 20000;/);
+  assert.match(src, /watching = true;\s*observer\.observe\(document\.body, \{ subtree: true, childList: true, characterData: true, characterDataOldValue: true \}\);/);
+  assert.match(src, /const ahead = takeAhead\(sizeRef\.current\);\s*void Promise\.all\(\[ahead, overlaysGone\(\)\]\)\.then\(\(\[got\]\) => \{\s*if \(!live\) return;\s*if \(!got\) \{ takeViewShot\(\); return; \}/);
+  assert.match(src, /if \(!stillFresh\(a\) \|\| a\.size\.width !== size\.width\) \{/);
+  // A scroll of the page or a new width spoils it too.
+  assert.match(src, /const onScroll = \(e: Event\) => \{ if \(!outOfPicture\(e\.target instanceof Node \? e\.target : null\)\) spoil\(\); \};/);
+  assert.match(src, /const onResize = \(\) => \{ if \(window\.innerWidth !== size\.width\) spoil\(\); \};/);
+  // The menu's dim is cut out of every picture, or one drawn under the menu would be dimmed.
+  assert.ok(picture.PAGE_EXCLUDES.includes('.overlay-scrim'));
+});
+
+test('what counts as the page changing since the picture was drawn', () => {
+  const realDoc = global.document;
+  const el = ({ parent = null, overlay = false, internal = false, rects = 1, holdsOverlay = false, text = '' } = {}) => ({
+    nodeType: 1, parentElement: parent, isConnected: true, textContent: text,
+    closest: (sel) => ((overlay && /#apps-switcher-sheet/.test(sel)) || (internal && /data-snapdom-internal/.test(sel)) ? {} : null),
+    matches: (sel) => (overlay && /#apps-switcher-sheet/.test(sel)) || (internal && /data-snapdom-internal/.test(sel)),
+    querySelector: () => (holdsOverlay ? {} : null),
+    getClientRects: () => ({ length: rects }),
+  });
+  const text = (parent, value) => ({ nodeType: 3, parentElement: parent, isConnected: true, textContent: value });
+  const rec = (type, target, added = [], removed = []) => ({ type, target, addedNodes: added, removedNodes: removed });
+  try {
+    const page = el();
+    const heading = el({ parent: page });
+    // A visible change of nodes on the page counts.
+    assert.equal(picture.changesPicture(rec('childList', heading, [text(heading, 'New')], [text(heading, 'Old')])), true);
+    // Inside an overlay, inside the drawing library's own nodes, or on a
+    // node that is not laid out: it does not.
+    assert.equal(picture.changesPicture(rec('childList', el({ overlay: true }), [el()])), false);
+    assert.equal(picture.changesPicture(rec('childList', el({ internal: true }), [el()])), false);
+    assert.equal(picture.changesPicture(rec('childList', el({ rects: 0 }), [el()])), false);
+    // The kit lifting the menu sheet out of the page and putting it back,
+    // and the library adding its sandbox to the body: not a change.
+    assert.equal(picture.changesPicture(rec('childList', page, [], [el({ overlay: true })])), false);
+    assert.equal(picture.changesPicture(rec('childList', page, [el({ holdsOverlay: true }), { nodeType: 8 }, text(page, '  ')])), false);
+    assert.equal(picture.changesPicture(rec('childList', page, [el({ internal: true })])), false);
+    assert.equal(picture.changesPicture(rec('childList', page, [el({ overlay: true }), el()])), true, 'one real node among them counts');
+    // Text: judged by the first value against what it says now.
+    const a = text(heading, 'Plant Pal');
+    const b = text(heading, 'Changed');
+    assert.equal(picture.textsUnchanged(new Map([[a, 'Plant Pal']])), true, 'written away and back');
+    assert.equal(picture.textsUnchanged(new Map([[b, 'Before']])), false);
+    assert.equal(picture.textsUnchanged(new Map([[{ ...b, isConnected: false }, 'Before']])), true, 'a node that has gone is a childList change, judged there');
+  } finally {
+    global.document = realDoc;
+  }
+});
+
+test('overlayOnScreen: a leaving sheet counts, the always-mounted dim and a hidden menu do not', () => {
+  const el = (style, rects = 1) => ({ style, getClientRects: () => ({ length: rects }) });
+  const doc = (els) => ({ querySelectorAll: (sel) => { assert.equal(sel, picture.PAGE_EXCLUDES.join(',')); return els; } });
+  const styleOf = (e) => e.style;
+  assert.equal(picture.overlayOnScreen(doc([]), styleOf), false);
+  assert.equal(picture.overlayOnScreen(doc([el({ visibility: 'visible', opacity: '0' })]), styleOf), false, 'the menu\'s dim at rest');
+  assert.equal(picture.overlayOnScreen(doc([el({ visibility: 'hidden', opacity: '1' })]), styleOf), false, 'a closed menu sheet');
+  assert.equal(picture.overlayOnScreen(doc([el({ visibility: 'visible', opacity: '1' }, 0)]), styleOf), false, 'a hidden form');
+  assert.equal(picture.overlayOnScreen(doc([el({ visibility: 'visible', opacity: '1' })]), styleOf), true, 'the form sliding away');
+  assert.equal(picture.overlayOnScreen(doc([el({ visibility: 'visible', opacity: '0' }), el({ visibility: 'visible', opacity: '0.5' })]), styleOf), true, 'a fading dim');
+});
+
+test('"Screenshot" leads the bar above the picture, never over the picture (#4774)', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // The word used to be a chip drawn at the picture's top-left corner, where
+  // it covered the page's own header. It is now the bar's leading label, in
+  // the band above the picture, shown exactly while the picture is.
+  assert.doesNotMatch(src, /comment-shot-chip-in/);
+  assert.doesNotMatch(src, /left: inset\.x \+ 10, top: inset\.y \+ 10/,
+    'nothing is positioned over the picture\'s corner');
+  assert.match(src, /const shotLabel = !!inset && !shotIntro;/);
+  const bar = src.slice(src.indexOf('role="toolbar"'));
+  const label = bar.indexOf("{t('devchat:commentPin.view.chip')}");
+  assert.ok(label > 0, 'the word renders inside the toolbar');
+  // It leads every state of the bar — the crop frame's (#4977) first, then
+  // the question, then the usual one.
+  assert.ok(label < bar.indexOf('{cropping && cropView ? ('), 'it leads the bar, before each of its states');
+  assert.equal(src.split("t('devchat:commentPin.view.chip')").length - 1, 1, 'rendered once, in the bar');
+  assert.match(bar, /\{shotLabel \? \(\s*<>\s*\{\/\*[\s\S]*?\*\/\}\s*<span\s+aria-hidden="true"\s+className=\{`comment-shot-label-in min-w-0 truncate pl-1\.5 text-\[13px\] font-semibold text-zinc-500 dark:text-zinc-400\$\{confirm \? ' hidden sm:inline' : ''\}`\}/,
+    'a muted label that truncates first, and stays while the bar asks its question on a computer: the picture is still there');
+  // On a phone the label takes the place of the mode's chat glyph, so the
+  // bar still fits a 390px screen.
+  assert.match(bar, /\$\{shotLabel \? 'hidden sm:inline-flex' : 'inline-flex'\} shrink-0 items-center gap-1\.5 text-sm font-bold text-violet-700/);
+  // And the Form / Comment switch drops its two glyphs on a phone while the
+  // word shows, so "Screenshot" is whole at 390px rather than "Screen…".
+  assert.match(bar, /<DescriptionIcon className=\{`\$\{shotLabel \? 'hidden sm:block' : ''\} h-4 w-4`\} \/>/);
+  assert.match(bar, /<ChatIcon className=\{`\$\{shotLabel \? 'hidden sm:block' : ''\} h-4 w-4`\} \/>\s*\{t\('devchat:commentPin\.bar\.comment'\)\}/);
 });
 
 test('the picture leaves the suggest flow\'s own overlays out, so the form never shows in it', () => {
@@ -156,10 +482,497 @@ test('the picture leaves the suggest flow\'s own overlays out, so the form never
   assert.ok(picture.PAGE_EXCLUDES.includes('#feedback-modal'), 'the form, in its sheet presentation');
   assert.ok(picture.PAGE_EXCLUDES.includes('.un-modal'), 'the kit dialog\'s shell, the form on a computer');
   assert.ok(picture.PAGE_EXCLUDES.includes('.un-backdrop'), 'the kit\'s dim, which would grey the whole page');
+  // #4730: the Homeroom menu on a computer is a CSS dropdown of its own ids,
+  // not a kit shell, so nothing above names it — and the suggest row opens
+  // comment mode, whose picture would carry the menu still on screen.
+  assert.ok(picture.PAGE_EXCLUDES.includes('#apps-switcher-sheet'), 'the Homeroom menu on a computer');
+  assert.ok(picture.PAGE_EXCLUDES.includes('#apps-switcher-overlay'), 'its dim, which would grey the whole page');
   for (const sel of picture.PAGE_EXCLUDES) {
     assert.match(sel, /^[.#][\w-]+$/, 'a selector SnapDOM can match, not a bare word');
   }
-  assert.match(src, /exclude: \[\(el: Element\) => el === host, 'iframe', \.\.\.PAGE_EXCLUDES\]/);
+  // They are cut out of the picture, not hidden in it (#4773): SnapDOM's
+  // `hide` stands an in-flow block of the element's size in its place,
+  // dropping its `position`, so the menu's always-mounted `fixed inset-0`
+  // dim became a screen-tall block that pushed the whole screen out of the
+  // bounded shell's body. Only the layer's host and the frames keep `hide`.
+  assert.match(src, /exclude: \[\(el: Element\) => el === host, 'iframe'\],\s*excludeMode: 'hide',\s*filter: \(el: Element\) => !isPageOverlay\(el\),\s*filterMode: 'remove',/);
+  assert.doesNotMatch(src, /'iframe', \.\.\.PAGE_EXCLUDES\]/, 'no overlay goes through hide');
+  const el = (matches) => ({ matches: (sel) => matches.includes(sel) });
+  assert.equal(picture.isPageOverlay(el(['#apps-switcher-overlay'])), true);
+  assert.equal(picture.isPageOverlay(el(['.un-sheet'])), true);
+  assert.equal(picture.isPageOverlay(el(['#home-screen'])), false, 'the page itself stays');
+  assert.equal(picture.isPageOverlay({ matches: () => { throw new Error('bad'); } }), false);
+  assert.equal(picture.isPageOverlay(null), false);
+});
+
+test('scrollers are drawn as clipped boxes in the copy, so WebKit paints them the first time', () => {
+  // Home's Discover rail (a horizontal scroller) was missing from the first
+  // picture after the app launched: WebKit left the scrolling layer out of
+  // its first rasterization of the SVG. The copy draws every scroller as a
+  // plain clipped box instead; the page itself is never touched.
+  const node = (connected, styleProps = null) => {
+    const set = {};
+    return { nodeType: 1, isConnected: connected, styleProps, style: { setProperty: (k, v, p) => { set[k] = `${v}${p ? ' !' + p : ''}`; } }, set };
+  };
+  const rail = node(true, { overflowX: 'auto', overflowY: 'hidden' });
+  const railCopy = node(false);
+  const card = node(true, { overflowX: 'visible', overflowY: 'visible' });
+  const cardCopy = node(false);
+  const feed = node(true, { overflowX: 'hidden', overflowY: 'scroll' });
+  const feedCopy = node(false);
+  const text = { nodeType: 3, isConnected: true };
+  const styleOf = (el) => el.styleProps;
+  // SnapDOM's map, either way round: original to copy, or copy to original.
+  const map = new Map([[rail, railCopy], [cardCopy, card], [feed, feedCopy], [text, { nodeType: 3 }]]);
+  assert.equal(picture.flattenScrollers({ nodeMap: map }, styleOf), 2);
+  assert.deepEqual(railCopy.set, { overflow: 'hidden !important', '-webkit-overflow-scrolling': 'auto !important' });
+  assert.deepEqual(feedCopy.set, { overflow: 'hidden !important', '-webkit-overflow-scrolling': 'auto !important' });
+  assert.deepEqual(cardCopy.set, {}, 'a box that does not scroll is left as it is');
+  assert.deepEqual(rail.set, {}, 'the page is never written to');
+  assert.equal(picture.flattenScrollers({}, styleOf), 0, 'no map, nothing done');
+  assert.equal(picture.FLAT_SCROLLERS.name, 'homeroom-flat-scrollers');
+  const src = read('frontend/src/features/comment-pin/picture.ts');
+  assert.match(src, /filterMode: 'remove',\s*plugins: \[FLAT_SCROLLERS\],/, 'every capture of the page uses it');
+});
+
+test('the picture is clipped to the page the mode keeps, and only a paged document scrolls it', () => {
+  const realDoc = global.document;
+  const realWin = global.window;
+  const withPage = (paged, win, fn) => {
+    global.document = { documentElement: { hasAttribute: (name) => paged && name === 'data-browser-scroller' } };
+    global.window = win;
+    try { return fn(); } finally { global.document = realDoc; global.window = realWin; }
+  };
+  const win = { scrollX: 0, scrollY: 335, innerWidth: 402, innerHeight: 539 };
+  // The bounded shell (the app, a computer): the document never scrolls, so
+  // an offset is iOS panning a field into view, and the keys' collapsed
+  // innerHeight gives way to the size the mode keeps.
+  assert.deepEqual(withPage(false, win, () => picture.pageClip({ width: 402, height: 874 })),
+    { x: 0, y: 0, width: 402, height: 874 });
+  // A phone browser's paged document is the page's own scroller.
+  assert.deepEqual(withPage(true, { ...win, scrollY: 1200 }, () => picture.pageClip({ width: 402, height: 874 })),
+    { x: 0, y: 1200, width: 402, height: 874 });
+  // No kept size: the window's.
+  assert.deepEqual(withPage(false, win, () => picture.pageClip(null)), { x: 0, y: 0, width: 402, height: 539 });
+  const src = read('frontend/src/features/comment-pin/picture.ts');
+  assert.match(src, /clip: pageClip\(viewport\),/);
+  assert.match(src, /const actual = canvas\.width \/ width;/, 'the picture\'s scale is read against the kept width');
+});
+
+test('a preview crop slides to the pins and puts them where the crop drew them', () => {
+  const box = { width: 64, height: 42 };
+  const phone = { width: 804, height: 1748 };
+  // A phone's tall picture in the wide chip: the width fills, a slice of the
+  // height shows, centred on the pin where the edges allow.
+  const mid = picture.coverCrop(box, phone, { x: 0.3, y: 0.4 });
+  assert.equal(mid.width, 64);
+  assert.ok(Math.abs(mid.height - 139.14) < 0.01);
+  assert.ok(Math.abs(mid.y - (21 - 0.4 * mid.height)) < 1e-9, 'the pin sits at the box\'s middle');
+  const pinY = mid.y + 0.4 * mid.height;
+  assert.ok(pinY > 0 && pinY < 42, 'and inside the box');
+  // Near an edge the crop stops at the picture's edge instead.
+  assert.deepEqual(picture.coverCrop(box, phone, { x: 0.5, y: 0 }).y, 0);
+  const foot = picture.coverCrop(box, phone, { x: 0.5, y: 1 });
+  assert.ok(Math.abs(foot.y - (42 - foot.height)) < 1e-9);
+  // A wide picture fills the height and slides sideways.
+  const wide = picture.coverCrop(box, { width: 2880, height: 1800 }, { x: 0.9, y: 0.5 });
+  assert.equal(wide.height, 42);
+  assert.ok(Math.abs(wide.x - (64 - wide.width)) < 1e-9);
+  // The chip draws the crop and its pins with it, never as fractions of the box.
+  // A cropped picture is shown whole now, the part kept framed and the rest
+  // dimmed (#5020), and only the pins the crop keeps are drawn.
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /const shown = pic\.size \|\| size;/);
+  assert.match(src, /const crop = coverCrop\(\{ width: 64, height: 42 \}, shown, focus\);/);
+  assert.match(src, /\(\{ c, left: crop\.x \+ at\.x \* crop\.width, top: crop\.y \+ at\.y \* crop\.height \}\)/);
+  assert.doesNotMatch(src, /left: `\$\{c\.pin\.x \* 100\}%`/);
+  assert.match(src, /<img\s+src=\{pic\.thumb\}/,
+    'the chip draws the full picture, never the crop\'s own thumb');
+  assert.match(src, /left: crop\.x \+ pic\.cut\.rect\.x \* crop\.width/,
+    'the frame sits over the kept part of the full picture');
+  assert.match(src, /boxShadow: CROP_SHADE/, 'the kept part is framed, the rest dimmed');
+  assert.match(src, /pinInCrop\(c\.pin, pic\.cut\.rect\) !== null/, 'a pin the crop cut away is not drawn');
+});
+
+// ── 1d. Cropping a screenshot by dragging its corners and edges (#4977) ─
+
+test('dragCrop moves only the sides the handle names, inward only, and never below the minimum', () => {
+  // Fractions of a picture add up to noise past the twelfth decimal; the
+  // frame's geometry is what is pinned, not the last bits of the sum.
+  const rounded = (r) => ({ x: +r.x.toFixed(10), y: +r.y.toFixed(10), width: +r.width.toFixed(10), height: +r.height.toFixed(10) });
+  const is = (actual, expected, note) => assert.deepEqual(rounded(actual), expected, note);
+  const full = { x: 0, y: 0, width: 1, height: 1 };
+  // A corner moves exactly its two sides; the opposite ones stay put.
+  is(picture.dragCrop(full, 'nw', { x: 0.25, y: 0.1 }, { width: 0.05, height: 0.05 }),
+    { x: 0.25, y: 0.1, width: 0.75, height: 0.9 });
+  is(picture.dragCrop(full, 'se', { x: -0.2, y: -0.3 }, { width: 0.05, height: 0.05 }),
+    { x: 0, y: 0, width: 0.8, height: 0.7 });
+  is(picture.dragCrop(full, 'ne', { x: -0.1, y: 0.2 }, { width: 0.05, height: 0.05 }),
+    { x: 0, y: 0.2, width: 0.9, height: 0.8 });
+  is(picture.dragCrop(full, 'sw', { x: 0.15, y: -0.25 }, { width: 0.05, height: 0.05 }),
+    { x: 0.15, y: 0, width: 0.85, height: 0.75 });
+  // An edge moves only its one side.
+  const part = { x: 0.2, y: 0.2, width: 0.5, height: 0.5 };
+  is(picture.dragCrop(part, 'e', { x: 0.1, y: 0.4 }, { width: 0.05, height: 0.05 }),
+    { x: 0.2, y: 0.2, width: 0.6, height: 0.5 }, 'east grows to the picture\'s edge, height untouched');
+  is(picture.dragCrop(part, 'w', { x: 0.1, y: 0.4 }, { width: 0.05, height: 0.05 }),
+    { x: 0.3, y: 0.2, width: 0.4, height: 0.5 }, 'west moves the left side only');
+  is(picture.dragCrop(part, 'n', { x: 0.4, y: -0.15 }, { width: 0.05, height: 0.05 }),
+    { x: 0.2, y: 0.05, width: 0.5, height: 0.65 }, 'north moves the top side only');
+  is(picture.dragCrop(part, 's', { x: 0.4, y: 0.15 }, { width: 0.05, height: 0.05 }),
+    { x: 0.2, y: 0.2, width: 0.5, height: 0.65 }, 'south grows the bottom only');
+  // Inward only: a drag past the picture's edge clamps there.
+  is(picture.dragCrop(part, 'e', { x: 1, y: 0 }, { width: 0.05, height: 0.05 }),
+    { x: 0.2, y: 0.2, width: 0.8, height: 0.5 });
+  is(picture.dragCrop(part, 'w', { x: -1, y: 0 }, { width: 0.05, height: 0.05 }),
+    { x: 0, y: 0.2, width: 0.7, height: 0.5 });
+  is(picture.dragCrop(part, 'n', { x: 0, y: -1 }, { width: 0.05, height: 0.05 }),
+    { x: 0.2, y: 0, width: 0.5, height: 0.7 });
+  is(picture.dragCrop(part, 's', { x: 0, y: 1 }, { width: 0.05, height: 0.05 }),
+    { x: 0.2, y: 0.2, width: 0.5, height: 0.8 });
+  // Crossing sides stops at the minimum, never inverting the frame: a west
+  // or north handle dragged far inward stops a minimum short of its
+  // opposite side.
+  const thin = { x: 0.1, y: 0.1, width: 0.3, height: 0.3 };
+  is(picture.dragCrop(thin, 'w', { x: 0.5, y: 0 }, { width: 0.1, height: 0.1 }),
+    { x: 0.3, y: 0.1, width: 0.1, height: 0.3 }, 'west stops a minimum short of the right side');
+  is(picture.dragCrop(thin, 'n', { x: 0, y: 0.5 }, { width: 0.1, height: 0.1 }),
+    { x: 0.1, y: 0.3, width: 0.3, height: 0.1 }, 'north stops a minimum short of the bottom');
+  is(picture.dragCrop(thin, 'e', { x: 0.9, y: 0 }, { width: 0.1, height: 0.1 }),
+    { x: 0.1, y: 0.1, width: 0.9, height: 0.3 }, 'east stops at the picture\'s right edge');
+  is(picture.dragCrop(thin, 'se', { x: 0.9, y: 0.9 }, { width: 0.1, height: 0.1 }),
+    { x: 0.1, y: 0.1, width: 0.9, height: 0.9 }, 'a corner clamps on both sides at once');
+});
+
+test('pinInCrop maps a pin into the crop, and nulls the ones the crop cuts away', () => {
+  // No crop: every pin comes back unchanged.
+  assert.deepEqual(picture.pinInCrop({ x: 0.3, y: 0.7 }, null), { x: 0.3, y: 0.7 });
+  const crop = { x: 0.25, y: 0.25, width: 0.5, height: 0.5 };
+  assert.deepEqual(picture.pinInCrop({ x: 0.5, y: 0.5 }, crop), { x: 0.5, y: 0.5 }, 'the crop\'s middle stays the middle');
+  assert.deepEqual(picture.pinInCrop({ x: 0.25, y: 0.75 }, crop), { x: 0, y: 1 }, 'the crop\'s corner maps to the frame\'s');
+  assert.equal(picture.pinInCrop({ x: 0.1, y: 0.5 }, crop), null, 'left of the frame is gone');
+  assert.equal(picture.pinInCrop({ x: 0.5, y: 0.9 }, crop), null, 'below the frame is gone');
+  assert.equal(picture.pinInCrop({ x: 0.5, y: 0.5 }, { x: 0.5, y: 0.5, width: 0, height: 0.5 }), null, 'a flat frame keeps nothing');
+  assert.deepEqual(picture.pinInCrop({ x: 0.8, y: 0.8 }, picture.FULL_CROP), { x: 0.8, y: 0.8 }, 'the full crop keeps everything, unchanged');
+});
+
+test('cropPixels rounds a crop to whole pixels inside the picture, and isFullCrop says when nothing was cut', () => {
+  const size = { width: 1000, height: 500 };
+  assert.deepEqual(picture.cropPixels(size, { x: 0.1, y: 0.2, width: 0.5, height: 0.4 }),
+    { x: 100, y: 100, width: 500, height: 200 });
+  assert.deepEqual(picture.cropPixels(size, picture.FULL_CROP), { x: 0, y: 0, width: 1000, height: 500 });
+  // Rounding never leaves the picture or collapses to nothing.
+  assert.deepEqual(picture.cropPixels(size, { x: 0.9995, y: 0, width: 0.001, height: 1 }),
+    { x: 999, y: 0, width: 1, height: 500 });
+  assert.deepEqual(picture.cropPixels({ width: 10, height: 10 }, { x: 0.95, y: 0.95, width: 0.05, height: 0.05 }),
+    { x: 9, y: 9, width: 1, height: 1 });
+  assert.equal(picture.isFullCrop(picture.FULL_CROP), true);
+  assert.equal(picture.isFullCrop({ x: 0, y: 0, width: 1, height: 1 }), true);
+  assert.equal(picture.isFullCrop(null), true, 'no crop is the whole picture');
+  assert.equal(picture.isFullCrop({ x: 0.0005, y: 0, width: 0.9998, height: 1 }), true, 'a hair off full is still full');
+  assert.equal(picture.isFullCrop({ x: 0.01, y: 0, width: 0.99, height: 1 }), false);
+});
+
+test('a cropped picture posts cropped: the frame is cut off the canvas and its pins remapped', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // The posted pins go through pinInCrop, and a pin the crop cuts away does
+  // not post — the part of the picture it was on is gone.
+  assert.match(src, /const pins = live\.map\(\(c, i\) => \(\{ c, i, at: pinInCrop\(c\.pin, pic\.cut\?\.rect \?\? null\) \}\)\)/,
+    'every comment\'s pin maps through pinInCrop');
+  assert.match(src, /\.filter\(\(\{ c, at \}\) => c\.picture === pic\.key && at\)/,
+    'a pin outside the crop does not post');
+  assert.match(src, /const canvas = pic\.cut \? cropCanvas\(base\.canvas, pic\.cut\.rect\) : base\.canvas;/,
+    'the posted picture is the crop cut off the full canvas');
+  assert.match(src, /const blob = await encodeUnder\(canvas\);/,
+    'the cropped canvas is what is encoded');
+  // Applying the crop: comments outside go, with a toast saying how many.
+  assert.match(src, /const dropped = onPic\.filter\(\(c\) => pinInCrop\(c\.pin, crop\.rect\) === null\);/);
+  assert.match(src, /t\('devchat:commentPin\.crop\.removed', \{ count: dropped\.length \}\)/);
+  // Crop opens at the saved rect, or the whole picture when there is none.
+  assert.match(src, /setCropping\(\{ picture: pic\.key, rect: pic\.cut\?\.rect \?\? FULL_CROP \}\)/);
+});
+
+test('the crop frame reads its words from the catalog, and the thumbnail gains a Crop button', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /aria-label=\{t\('devchat:commentPin\.shot\.cropLabel'\)\}/,
+    'the thumbnail\'s crop button is named for screen readers');
+  assert.match(src, /t\('devchat:commentPin\.crop\.title'\)/, 'the bar names the drag');
+  assert.match(src, /t\('devchat:commentPin\.crop\.keepOne'\)/, 'the bar says why Apply is off');
+  assert.match(src, /t\('devchat:commentPin\.crop\.dropping', \{ count: cropView\.dropped \}\)/,
+    'the bar counts what applying would remove');
+  assert.equal(message('devchat:commentPin.shot.crop'), 'Crop');
+  assert.equal(message('devchat:commentPin.shot.cropLabel'), 'Crop the screenshot');
+  assert.equal(message('devchat:commentPin.crop.title'), 'Drag the corners or edges to crop');
+  assert.equal(message('devchat:commentPin.crop.reset'), 'Reset');
+  assert.equal(message('devchat:commentPin.crop.apply'), 'Apply');
+  assert.equal(message('devchat:commentPin.crop.keepOne'), 'Keep at least one pin inside');
+  assert.equal(message('devchat:commentPin.crop.dropping', { count: 1 }), '1 comment outside will be removed');
+  assert.equal(message('devchat:commentPin.crop.dropping', { count: 3 }), '3 comments outside will be removed');
+  assert.equal(message('devchat:commentPin.crop.removed', { count: 1 }), 'Removed 1 comment outside the crop.');
+  assert.equal(message('devchat:commentPin.crop.removed', { count: 2 }), 'Removed 2 comments outside the crop.');
+});
+
+// ── 1c. The retake when the picture lost what the pin is on (#4773) ────
+
+test('flatRegion: one colour, noise under the tolerance, one inked pixel', () => {
+  const of = (...values) => new Uint8ClampedArray(values.flatMap((v) => [v, v, v, 255]));
+  assert.equal(picture.flatRegion(of(18)), true, 'a single colour');
+  assert.equal(picture.flatRegion(of(18, 22, 14, 24, 11)), true, 'noise within the tolerance is the same colour');
+  const inked = of(18, 18, 18, 18);
+  inked.set([18, 18, 18, 255, 200, 200, 200, 255], 4);
+  assert.equal(picture.flatRegion(inked), false, 'one inked pixel is not flat');
+  assert.equal(picture.flatRegion(new Uint8ClampedArray(2)), true, 'nothing to read counts as flat');
+  assert.equal(picture.flatRegion(of(18), 0), true, 'the tolerance is on every channel, alpha included');
+  const faded = new Uint8ClampedArray([18, 18, 18, 255, 18, 18, 18, 200]);
+  assert.equal(picture.flatRegion(faded), false, 'a different alpha is not the same colour');
+});
+
+test('the retake captures with the cache off when fresh, and keeps the excludes either way', () => {
+  const src = read('frontend/src/features/comment-pin/picture.ts');
+  assert.match(src, /cache: fresh \? 'disabled' : 'soft',/, 'the flag is SnapDOM\'s cache switch');
+  assert.match(src, /excludeMode: 'hide',/, 'the layer and frames keep their places');
+  assert.match(src, /filterMode: 'remove',/, 'the overlays are cut out');
+  assert.match(src, /drawShell\(scale, host, false, viewport\)/, 'the first picture is clipped to the kept page size');
+});
+
+test('pinTarget: the page element under the pin, never the layer, a frame or an overlay', () => {
+  const rect = (x, y, w, h) => ({ left: x, top: y, width: w, height: h });
+  const el = (name, r, text = '', attrs = {}) => ({
+    tagName: name,
+    getBoundingClientRect: () => r,
+    innerText: text,
+    textContent: text,
+    closest: (sel) => (attrs.hits && attrs.hits.includes(sel) ? attrs.self : null),
+    getAttribute: (a) => (attrs.attrs || {})[a] || null,
+  });
+  const body = { tagName: 'BODY', closest: () => null };
+  const docElement = { tagName: 'HTML', closest: () => null };
+  const host = { contains: (e) => e === host || e === hostChild };
+  const hostChild = { tagName: 'DIV' };
+  const frame = { tagName: 'IFRAME' };
+  const overlay = el('DIV', rect(10, 10, 100, 20), 'Comment', { hits: ['.un-sheet'], self: {} });
+  const good = el('H2', rect(50, 100, 300, 24), 'OVERVIEW');
+  const tiny = el('SPAN', rect(50, 50, 3, 3), 'x');
+  const silent = el('DIV', rect(50, 50, 300, 24), '   ');
+  const previousDocument = globalThis.document;
+  globalThis.document = {
+    documentElement: docElement,
+    body,
+    elementsFromPoint: () => [hostChild, overlay, tiny, silent, good, body],
+  };
+  try {
+    assert.deepEqual(picture.pinTarget({ x: 60, y: 110 }, host), { x: 50, y: 100, width: 300, height: 24 },
+      'the first element with words and a real size, past the layer and the small and silent ones');
+    globalThis.document.elementsFromPoint = () => [hostChild, frame];
+    assert.equal(picture.pinTarget({ x: 60, y: 110 }, host), null, 'the running app\'s frame is another document: no check, no retake');
+    globalThis.document.elementsFromPoint = () => [overlay];
+    assert.equal(picture.pinTarget({ x: 60, y: 110 }, host), null, 'the flow\'s own overlay: no check');
+    globalThis.document.elementsFromPoint = () => [tiny, silent];
+    assert.equal(picture.pinTarget({ x: 60, y: 110 }, host), null, 'nothing with words to check: no retake');
+    globalThis.document.elementsFromPoint = () => [docElement, body];
+    assert.equal(picture.pinTarget({ x: 60, y: 110 }, host), null, 'the page itself is never a target');
+  } finally {
+    globalThis.document = previousDocument;
+  }
+});
+
+test('takeBase checks the pin\'s element and retakes at most once, with a clean cache, only on a flat region', () => {
+  const src = read('frontend/src/features/comment-pin/picture.ts');
+  // The retake is one call, spelled through the fresh flag, and it sits
+  // behind the flat-region check: no flat region, no retake; a second flat
+  // picture is kept, never retaken again.
+  assert.equal((src.match(/drawShell\(scale, host, true, viewport\)/g) || []).length, 1, 'one retake, not a loop');
+  assert.match(src, /const checked = await missingUnderPin\(canvas, actual, target\);\s*if \(checked\) \{/);
+  assert.match(src, /return flatRegion\(data\);/, 'the check is a flat region under the pin');
+  // The retake waits two animation frames before it draws.
+  assert.match(src, /requestAnimationFrame\(\(\) => requestAnimationFrame\(\(\) => r\(\)\)\)/);
+  // Without a target nothing extra happens, and the first canvas stands.
+  assert.match(src, /if \(!target\) return false;/);
+  // A canvas that cannot be read keeps the first picture.
+  assert.match(src, /catch \{\s*return false;\s*\}/, 'the read is guarded');
+  // The app's picture is laid into the retake too, so a pin beside the frame
+  // keeps it.
+  assert.match(src, /if \(frameRect\) await layInApp\(again, retaken, frameRect, picture\);/);
+});
+
+// ── 3b. The side panel's picture (#4975) ──────────────────────────────
+
+test('takeBase asks the side panel for its picture with the others, and lays it in on the first picture and the retake', () => {
+  const src = read('frontend/src/features/comment-pin/picture.ts');
+  // The panel's frame is found by id, measured and visibility-checked, like
+  // any other frame the picture fills in.
+  assert.match(src, /getElementById\('side-panel-frame'\)/);
+  assert.match(src, /export function panelFrame\(\): \{ frame: HTMLIFrameElement; rect: Rect \} \| null \{/);
+  // Asked once, in the same Promise.all as the shell and the app's picture,
+  // so the slowest of the three bounds the wait.
+  assert.match(src, /Promise\.all\(\[shell, app, panelPicture\]\)/);
+  // Laid in at the frame's rectangle times the picture's real scale, on the
+  // first canvas and on the retake (the same blob, asked once).
+  assert.match(src, /await layInPanel\(canvas, actual, panel\?\.rect, panelBlob\);/);
+  assert.match(src, /await layInPanel\(again, retaken, panel\?\.rect, panelBlob\);/);
+  // No plate when it did not answer: the frame's rectangle keeps whatever
+  // the shell drew there, at worst the empty body the bug described.
+  const lay = src.match(/async function layInPanel[\s\S]*?\n\}/);
+  assert.ok(lay, 'layInPanel exists beside layInApp');
+  assert.doesNotMatch(lay[0], /fillStyle|fillText/);
+  // The flow's own overlays keep the treatment they had: the panel is not
+  // one of them, and the kit's touch-header drawer (.un-panel) stays.
+  assert.deepEqual(picture.PAGE_EXCLUDES, [
+    '#feedback-modal',
+    '#apps-switcher-sheet',
+    '#apps-switcher-overlay',
+    '.overlay-scrim',
+    '.un-modal',
+    '.un-sheet',
+    '.un-panel',
+    '.un-action-sheet',
+    '.un-backdrop',
+  ]);
+});
+
+test('drawDocument is the panel drawing its own page, with the shell\'s exclusions and none laid in', () => {
+  const src = read('frontend/src/features/comment-pin/picture.ts');
+  // Frames are hidden in place (no panel page runs an app the picture could
+  // ask), the flow's overlays are cut out, scrollers are flattened for
+  // WebKit's first paint.
+  assert.match(src, /exclude: \['iframe'\],\s*\n\s*excludeMode: 'hide',\s*\n\s*filter: \(el: Element\) => !isPageOverlay\(el\),\s*\n\s*filterMode: 'remove',\s*\n\s*plugins: \[FLAT_SCROLLERS\],/,
+    'the same exclusions as drawShell, over the panel document\'s own body');
+  // It hands back a PNG blob, and null on any failure.
+  assert.match(src, /return await toBlob\(canvas, 'image\/png'\);/);
+  const draw = src.match(/export async function drawDocument[\s\S]*?\n\}\n\nexport interface Base/);
+  assert.ok(draw, 'drawDocument is exported beside drawShell');
+  assert.match(draw[0], /catch \{\s*\n\s*return null;/, 'any failure is null, never a rejection');
+});
+
+test('requestPanelPicture: no runtime, a throwing draw, a slow draw, a real answer', async () => {
+  const blob = new Blob(['png'], { type: 'image/png' });
+  const frame = (embed) => ({
+    contentWindow: embed ? { UsernodeReact: { sidePanelEmbed: embed } } : {},
+  });
+  // The panel still booting or gone: no runtime, nothing to lay in.
+  assert.equal(await picture.requestPanelPicture(frame(null), 1, 50), null);
+  // A draw that throws resolves null, never a rejection.
+  assert.equal(await picture.requestPanelPicture(
+    frame({ picture: () => { throw new Error('gone'); } }), 1, 50), null);
+  // One that never answers is cut off by the timeout.
+  assert.equal(await picture.requestPanelPicture(
+    frame({ picture: () => new Promise(() => {}) }), 1, 20), null);
+  // One that answers is passed through as it said.
+  assert.equal(await picture.requestPanelPicture(frame({ picture: async () => blob }), 1, 50), blob);
+  // Something that is not a picture is not drawn.
+  assert.equal(await picture.requestPanelPicture(frame({ picture: async () => 'png' }), 1, 50), null);
+});
+
+test('requestPanelPicture gives the panel three seconds and takes the frame realm\'s own Blob', async () => {
+  // The panel's bound is its own constant, below the app's.
+  assert.match(read('frontend/src/features/comment-pin/picture.ts'), /timeoutMs = PANEL_PICTURE_TIMEOUT_MS/);
+  assert.ok(picture.PANEL_PICTURE_TIMEOUT_MS < picture.APP_PICTURE_TIMEOUT_MS);
+  // The panel's `toBlob` makes the Blob in the PANEL window's realm, which
+  // the top window's `instanceof Blob` never matched — the panel's picture
+  // was thrown away whatever it drew. The frame window's own class vouches
+  // for it instead.
+  class PanelBlob {}
+  const made = new PanelBlob();
+  const frame = {
+    contentWindow: {
+      Blob: PanelBlob,
+      UsernodeReact: { sidePanelEmbed: { picture: async () => made } },
+    },
+  };
+  assert.equal(await picture.requestPanelPicture(frame, 1, 50), made);
+  // Without a Blob class on the frame window nothing vouches for it, and it
+  // is refused as before.
+  const orphan = {
+    contentWindow: { UsernodeReact: { sidePanelEmbed: { picture: async () => made } } },
+  };
+  assert.equal(await picture.requestPanelPicture(orphan, 1, 50), null);
+});
+
+test('within passes a settled value through, and falls back on a rejection or a wait past ms', async (t) => {
+  assert.equal(await picture.within(Promise.resolve('v'), 20, 'fb'), 'v');
+  assert.equal(await picture.within(Promise.reject(new Error('gone')), 20, 'fb'), 'fb');
+  // A promise that never settles is cut off by the timer, not left pending.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    let settled = false;
+    const done = picture.within(new Promise(() => {}), 3000, 'fb').then((v) => { settled = true; return v; });
+    assert.equal(settled, false, 'a promise that never settles does not settle on its own');
+    t.mock.timers.tick(3000);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(await done, 'fb');
+    assert.equal(settled, true);
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test('the panel picture promise cannot block takeBase', async (t) => {
+  // The panel is open and laid out, its runtime answers, and its draw never
+  // settles (a capture competing for the shared main thread). takeBase must
+  // still resolve within the panel's bound, with the panel left undrawn.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const prev = {
+    document: globalThis.document,
+    window: globalThis.window,
+    getComputedStyle: globalThis.getComputedStyle,
+    requestAnimationFrame: globalThis.requestAnimationFrame,
+  };
+  const script = { onload: null, remove() {} };
+  const panel = {
+    src: 'https://homeroom.test/?panel=1#home',
+    getBoundingClientRect: () => ({ left: 880, top: 0, width: 380, height: 680 }),
+    checkVisibility: () => true,
+    contentWindow: {
+      UsernodeReact: { sidePanelEmbed: { picture: () => new Promise(() => {}) } },
+    },
+  };
+  const canvas = { width: 1280, height: 800, getContext: () => null };
+  globalThis.document = {
+    body: {},
+    documentElement: { hasAttribute: () => false },
+    getElementById: (id) => (id === 'side-panel-frame' ? panel : null),
+    createElement: () => script,
+    head: { appendChild: (s) => { s.onload(); } },
+    elementsFromPoint: () => [],
+  };
+  globalThis.window = { snapdom: () => Promise.resolve({ toCanvas: async () => canvas }) };
+  globalThis.getComputedStyle = () => ({ backgroundColor: '#ffffff' });
+  globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
+  try {
+    const base = picture.takeBase({
+      host: {}, scale: 1, frame: null, frameRect: null,
+      pin: { x: 10, y: 10 }, viewport: { width: 1280, height: 800 },
+    });
+    let settled = false;
+    const done = base.then((v) => { settled = true; return v; });
+    t.mock.timers.tick(picture.PANEL_PICTURE_TIMEOUT_MS);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(settled, true, 'takeBase did not wait on the panel past its bound');
+    const out = await done;
+    assert.ok(out, 'takeBase resolved with a picture, not null');
+    assert.equal(out.canvas, canvas);
+    assert.equal(out.scale, 1);
+    assert.equal(out.app, null);
+  } finally {
+    t.mock.timers.reset();
+    globalThis.document = prev.document;
+    globalThis.window = prev.window;
+    globalThis.getComputedStyle = prev.getComputedStyle;
+    globalThis.requestAnimationFrame = prev.requestAnimationFrame;
+  }
+});
+
+test('takeBase bounds the shell\'s own draw, and layInPanel bounds the panel blob\'s decode', () => {
+  const src = read('frontend/src/features/comment-pin/picture.ts');
+  // Both shell reads go through within: a capture slowed or stalled by the
+  // panel's competing draw gives way after fifteen seconds.
+  assert.match(src, /const shell = within\(drawShell\(scale, host, false, viewport\), SHELL_PICTURE_TIMEOUT_MS, null\);/);
+  assert.match(src, /const again = await within\(drawShell\(scale, host, true, viewport\), SHELL_PICTURE_TIMEOUT_MS, null\);/);
+  // And the panel blob's decode: a blob that will not decode draws nothing.
+  const lay = src.match(/async function layInPanel[\s\S]*?\n\}/);
+  assert.ok(lay, 'layInPanel exists beside layInApp');
+  assert.match(lay[0], /within\(createImageBitmap\(blob\), PANEL_PICTURE_TIMEOUT_MS, null\)/);
+  assert.match(lay[0], /if \(!bitmap\) return;/);
 });
 
 // ── 2. Posting ────────────────────────────────────────────────────────
@@ -170,6 +983,11 @@ test('the request says where the comment was pinned, in words', () => {
   assert.equal(post.whereLine({ inApp: true, screen: '/lists/42', at: { tag: 'div', id: '', text: 'Buy milk' } }),
     'Pinned with C in the app at /lists/42, on div "Buy milk".');
   assert.equal(post.whereLine({ inApp: true, screen: '', at: null }), 'Pinned with C in the app at /.');
+  assert.equal(post.whereLine({ inApp: true, screen: '/lists/42', at: { tag: 'div', id: '', text: 'Buy milk' }, preview: 4223 }, 'milkdrop'),
+    'Pinned with C in the preview of change 4223 at /lists/42, on div "Buy milk". Change: #app/milkdrop/dev/sessions/4223');
+  assert.equal(post.whereLine({ inApp: true, screen: '/lists/42', at: null, preview: 4223 }, null),
+    'Pinned with C in the preview of change 4223 at /lists/42.', 'no slug, no link');
+  assert.equal(post.whereLine({ inApp: false, screen: '#home', at: null, preview: null }), 'Pinned with C on Homeroom at #home.');
   assert.equal(post.descriptionFor('  Make it bigger  ', 'Pinned.'), 'Make it bigger\n\nPinned.');
 });
 
@@ -255,6 +1073,20 @@ test('the box posts every picture first, then its title, Kudos and the page\'s p
   assert.equal(post.numberFromUrl(''), null);
 }));
 
+test('parked, the box sends no bounty, says nothing of one, and hands none over (#5249)', () => withFetch([
+  { status: 200, body: { id: 'a'.repeat(32) } },
+  { status: 200, body: { id: 'b'.repeat(32) } },
+  { status: 200, body: { id: 'c'.repeat(32) } },
+  { status: 200, body: { url: 'https://github.com/o/r/issues/4490', title: 'Bigger Join button', bounty: { placed: true, remaining: 4 } } },
+], async (calls) => {
+  const out = await parkedPost.postComment(full);
+  assert.equal(out.bounty, null, 'an answer\'s bounty is not read');
+  assert.equal(JSON.parse(calls[3].init.body).bounty, undefined, 'a restored draft\'s Kudos is not sent');
+  assert.equal(parkedPost.handOverOptions(full).bounty, undefined, 'nor handed to the dialog');
+  const pin = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(pin, /if \(outcome\.bounty && !KUDOS_PARKED\) \{/, 'and the toast says no kudos sentence');
+}));
+
 test('no more than three pictures, and a pin only on a picture the server took', () => withFetch([
   { status: 400, body: { error: 'Screenshot too large' } },
   { status: 200, body: { id: 'b'.repeat(32) } },
@@ -286,6 +1118,19 @@ test('a request of several comments numbers them, and each picture carries its o
     { inApp: false, screen: '#home', at: { tag: 'h1', id: 'hi', text: 'Home' } },
   ]), 'Pinned with C: 1 in the app at /runs, on button "Join"; 2 on Homeroom at #home, on h1 "Home" (#hi).');
   assert.equal(post.whereLines([{ inApp: false, screen: '#x', at: null }]), 'Pinned with C on Homeroom at #x.');
+  assert.equal(post.whereLines([
+    { inApp: true, screen: '/lists', at: null, preview: 4223 },
+    { inApp: false, screen: '#home', at: null },
+  ], 'milkdrop'), 'Pinned with C: 1 in the preview of change 4223 at /lists; 2 on Homeroom at #home. Change: #app/milkdrop/dev/sessions/4223',
+  'each comment names its place; the change link comes once, at the end');
+  assert.equal(post.whereLines([
+    { inApp: true, screen: '/lists', at: null, preview: 4223 },
+    { inApp: false, screen: '#home', at: null },
+  ]), 'Pinned with C: 1 in the preview of change 4223 at /lists; 2 on Homeroom at #home.', 'no slug, no link');
+  assert.equal(post.whereLines([
+    { inApp: true, screen: '/lists', at: null, preview: 4223 },
+    { inApp: true, screen: '/lists', at: null, preview: 4223 },
+  ], 'milkdrop'), 'Pinned with C in the preview of change 4223 at /lists: 1 on the page; 2 on the page. Change: #app/milkdrop/dev/sessions/4223');
 
   const shotB = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 2])], { type: 'image/png' });
   await post.postComment({
@@ -346,7 +1191,8 @@ test('handing over opens the dialog with the words, the pictures, the pin, the t
   assert.match(fc, /void attachScreenshotBlob\(handed\.blob, Array\.isArray\(handed\.pins\) \? handed\.pins : null\);/, 'each picture, its pins beside it');
   assert.match(fc, /feedbackTitle\.value = opts\.title\.trim\(\)\.slice\(0, 200\);\s*titleDirty = true;/,
     'the title the box showed is kept, not dropped as a stale suggestion');
-  assert.match(fc, /if \(opts\.bounty === true && !bountyCheckbox\.disabled\) bountyCheckbox\.checked = true;/);
+  // #5249: honoured only while kudos is not parked.
+  assert.match(fc, /if \(opts\.bounty === true && !KUDOS_PARKED && !bountyCheckbox\.disabled\) bountyCheckbox\.checked = true;/);
   // The form sends the pins beside the pictures it was handed with.
   assert.match(fc, /const pinned = screenshots\.filter\(\(shot\) => shot\.id && shot\.pins && shot\.pins\.length\)\s*\.flatMap\(/);
   assert.match(fc, /if \(pinned\.length\) body\.screenshotPins = pinned;/);
@@ -563,14 +1409,25 @@ test('comment mode opens on demand into a host of its own, once, and C asks it t
   assert.match(src, /id="comment-pin-box"\s+role="dialog"/);
   // Each picture is drawn without the layer: no marker is ever in one.
   assert.match(src, /const promise = takeBase\(\{\s*host,/);
-  // Posted clean, each picture's pins beside it, numbered when there are several.
-  assert.match(src, /\.map\(\(\{ c, i \}\) => \(\{ x: c\.pin\.x, y: c\.pin\.y, n: many \? i \+ 1 : null, note: c\.text\.trim\(\) \}\)\);/);
+  // Posted clean, each picture's pins beside it, numbered when there are
+  // several. A cropped picture's pins map into the crop first (#4977), and a
+  // pin the crop cut away does not post.
+  assert.match(src, /\.map\(\(\{ c, i, at \}\) => \(\{ x: at!\.x, y: at!\.y, n: many \? i \+ 1 : null, note: c\.text\.trim\(\) \}\)\);/);
   assert.match(src, /if \(blob\) shots\.push\(\{ blob, pins \}\);/);
-  // A comment on the same view shares the earlier picture; another view is another picture, while there is room.
-  assert.match(src, /const same = d\.pictures\.find\(\(pic\) => pic\.view === view\.current && pic\.screen === routeOf\(\) && pic\.base !== null\);/);
+  // A comment on the same view shares the earlier picture; another view is
+  // another picture, while there is room. A cropped picture is shared only
+  // when the new pin's spot survived the crop (#4977).
+  assert.match(src, /const same = d\.pictures\.find\(\(pic\) => pic\.view === view\.current && pic\.screen === routeOf\(\)\s*&& pic\.base !== null && \(!pic\.cut \|\| pinInCrop\(pin, pic\.cut\.rect\) !== null\)\);/);
   assert.match(src, /if \(inUse \+ d\.images\.length >= MAX_PICTURES\) return \{ pictures: d\.pictures, picture: null \};/);
   // Kudos is one line that says who it is for.
-  assert.match(src, />Kudos for whoever solves it</);
+  assert.match(src, />\{t\('devchat:commentPin\.kudos\.label'\)\}</);
+  assert.equal(message('devchat:commentPin.kudos.label'), 'Kudos for whoever solves it');
+  // #5249: and not drawn at all while kudos is parked; nothing the box sends
+  // or restores carries a kudos then.
+  assert.match(src, /import \{ KUDOS_PARKED \} from '\.\.\/leaderboard\/kudos-parked';/);
+  assert.match(src, /\{KUDOS_PARKED \? null : <button\s+type="button"\s+id="comment-pin-kudos"/);
+  assert.match(src, /bounty: !KUDOS_PARKED && d\.kudos && budget\.remaining !== 0,/);
+  assert.match(src, /kudos: !KUDOS_PARKED && !!c\?\.bounty,/);
   // The bar: moved by its handle (four arrows, a move cursor); it starts at
   // the foot every time (#4541, the device no longer keeps where it was left)
   // and never hides on its own.
@@ -581,22 +1438,56 @@ test('comment mode opens on demand into a host of its own, once, and C asks it t
   assert.match(src, /onDoubleClick=\{\(\) => \{ setBarAt\(null\); \}\}/);
   assert.doesNotMatch(src, /DUCK_AFTER_MS|ducked|onBarEnter/, 'resting the pointer on the bar never hides it');
   // One label that says what to do (#4541): not the mode's name plus a second hint.
-  assert.match(src, /'Tap anywhere to suggest an improvement'/);
+  assert.match(src, /: t\('devchat:commentPin\.hint\.start'\);/);
+  assert.equal(message('devchat:commentPin.hint.start'), 'Tap anywhere to suggest an improvement');
   assert.doesNotMatch(src, />Comment mode</);
+  assert.doesNotMatch(src, />\{t\('devchat:commentPin\.bar\.label'\)\}</);
   assert.doesNotMatch(src, /Click anything to comment on it/);
-  assert.match(src, /aria-label="Comment mode"/, 'the bar keeps its screen-reader name');
+  assert.doesNotMatch(read('frontend/locales/en/devchat.json'), /Click anything to comment on it/);
+  assert.match(src, /aria-label=\{t\('devchat:commentPin\.bar\.label'\)\}/, 'the bar keeps its screen-reader name');
+  assert.equal(message('devchat:commentPin.bar.label'), 'Comment mode');
   // A first-use note, once per device, that says how it works and that the
   // Form switch goes back to the form (#4541).
   assert.match(src, /const INTRO_KEY = 'usernode:comment-intro-seen';/);
-  assert.match(src, /How comment mode works/);
-  assert.match(src, />Got it</);
-  assert.match(src, /Prefer the form\? Tap Form to switch back at any time\./);
-  // A finger: a tap is a comment, a drag scrolls.
+  assert.match(src, />\{t\('devchat:commentPin\.intro\.title'\)\}</);
+  assert.equal(message('devchat:commentPin.intro.title'), 'How comment mode works');
+  assert.match(src, />\{t\('devchat:commentPin\.intro\.gotIt'\)\}</);
+  assert.equal(message('devchat:commentPin.intro.gotIt'), 'Got it');
+  assert.match(src, /<li>\{t\('devchat:commentPin\.intro\.form'\)\}<\/li>/);
+  assert.equal(message('devchat:commentPin.intro.form'), 'Prefer the form? Tap Form to switch back at any time.');
+  // A finger: a tap is a comment, a drag does nothing.
   assert.match(src, /if \(!t\.moved\) place\(\{ x: e\.clientX, y: e\.clientY \}\);/);
   // The form is called the form.
   assert.doesNotMatch(src, /Detailed/);
+  assert.doesNotMatch(JSON.stringify(Object.entries(JSON.parse(read('frontend/locales/en/devchat.json')))
+    .filter(([key]) => key.startsWith('commentPin.')).map(([, entry]) => entry.text)), /Detailed/);
   assert.doesNotMatch(read('frontend/src/features/dialogs/feedback.tsx'), />\s*Detailed\s*</);
   // The dialog's rule for when a request can go to the app, read the same way.
   assert.match(src, /!\/github\\\.com\\\/\[\^\/\]\+\\\/\[\^\/\]\+\/\.test\(data\.repo_url \|\| ''\) \|\| data\.self_hosted/);
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'), /const hasRepo = \/github\\\.com\\\/\[\^\/\]\+\\\/\[\^\/\]\+\/\.test\(repoUrl\);/);
+});
+
+test('posting a comment shows a sent card on the screen (#5008), not only the toast', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // Send success marks the request sent; the toast stays as it was.
+  assert.match(src, /setSent\(d\.key\);/);
+  assert.match(src, /toast\(kudosLine \? t\('devchat:commentPin\.toast\.sentences'/);
+  // Typing the next comment stands the card down, and stays down after.
+  assert.match(src, /useEffect\(\(\) => \{\s*if \(hasWords\(draft\)\) setSent\(null\);\s*\}, \[draft\]\);/);
+  // The card: where it went in the marker's own words, the request's title,
+  // "View request" behind the post's link, and a close button. No hiding at
+  // any width: phones show it too, unlike the bar's posted chip.
+  assert.match(src, /aria-label=\{t\('devchat:commentPin\.sent\.label'\)\}/);
+  assert.match(src, /\{placeOf\(sentRequest\)\}/);
+  assert.match(src, /sentRequest\.title \? <p/);
+  assert.match(src, /sentRequest\.href \? \(\s*<a\s+href=\{sentRequest\.href\}\s+onClick=\{\(\) => onClose\(\)\}/);
+  assert.match(src, /devchat:commentPin\.card\.open/, 'the marker card\'s own words for the link');
+  assert.match(src, /sentRequest && !shotIntro && !cropping && !hasWords\(draft\) \? \(/, 'up while the next draft has no words');
+  const cardStart = src.indexOf('data-comment-pin-sent');
+  const cardClass = src.slice(src.indexOf('className="', cardStart), src.indexOf('"', src.indexOf('className="', cardStart) + 12));
+  assert.doesNotMatch(cardClass, /md:inline|hidden|sm:/, 'visible at every width');
+  assert.match(cardClass, /bg-white p-3 .* ring-1 ring-black\/10/, 'the marker card\'s own card');
+  assert.match(src.slice(cardStart, src.indexOf(') : null}', cardStart)), /\$\{PIN_SHAPE\} bg-violet-600/, 'the posted markers\' own disc');
+  assert.equal(message('devchat:commentPin.sent.label'), 'Request posted');
+  assert.match(src, /CheckIcon/, 'a check says it went through');
 });

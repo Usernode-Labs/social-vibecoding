@@ -26,8 +26,11 @@
 // Results land on apps.anon_shell + anon_shell_checked_at (schema.sql).
 // The sweep runs every SWEEP_INTERVAL_MS and re-probes an app when it has
 // never been probed, was deployed since its last probe, or its result is
-// older than RECHECK_AFTER_MS. Boot also refreshes positive verdicts so an
-// older shell-only result does not remain unlocked for another hour.
+// older than RECHECK_AFTER_MS. The first sweep a new platform build runs also
+// refreshes positive verdicts, so an older shell-only result does not remain
+// unlocked for another hour. It is a pass of the `shell-probe` clock
+// (src/workflow/clock/services.ts), which hands each run the build the last one
+// ran under.
 
 const http = require('http');
 const log = require('./logger');
@@ -43,10 +46,6 @@ const RECHECK_AFTER_MS = 60 * 60 * 1000;
 // on one tick.
 const SWEEP_CONCURRENCY = 4;
 
-let intervalHandle = null;
-let sweepInFlight = false;
-let lastSweepAt = null;
-let lastError = null;
 
 // The app ROW decides the address, not the slug alone: `runtime_kind` and
 // `runtime_name` are what the deploy actually created, so an app on
@@ -174,60 +173,34 @@ async function selectDueApps(pool, refreshPublic = false) {
   return rows;
 }
 
-async function sweep(config) {
-  if (sweepInFlight) return;
-  sweepInFlight = true;
-  try {
-    const pool = getPool(config);
-    const due = await selectDueApps(pool, lastSweepAt === null);
-    if (due.length) {
-      log.info('shell-probe', 'Probing app shells', { count: due.length });
-    }
-    // Simple bounded worker pool over the due list.
-    let idx = 0;
-    const workers = Array.from({ length: Math.min(SWEEP_CONCURRENCY, due.length) }, async () => {
-      while (idx < due.length) {
-        const app = due[idx++];
-        try {
-          await probeApp(pool, app, config);
-        } catch (err) {
-          log.warn('shell-probe', 'Probe failed', { slug: app.slug, err: err.message });
-        }
-      }
-    });
-    await Promise.all(workers);
-    lastSweepAt = new Date();
-    lastError = null;
-  } catch (err) {
-    lastError = err.message;
-    log.warn('shell-probe', 'Sweep failed', { err: err.message });
-  } finally {
-    sweepInFlight = false;
+// `refreshPublic`: re-probe every app that read public (the first sweep of
+// a new build). Returns what it probed.
+async function sweep(config, { refreshPublic = false, shouldStop = () => false } = {}) {
+  const pool = getPool(config);
+  const due = await selectDueApps(pool, refreshPublic);
+  if (due.length) {
+    log.info('shell-probe', 'Probing app shells', { count: due.length });
   }
-}
-
-function start(config) {
-  if (intervalHandle) return;
-  // First pass shortly after boot (give app containers a moment to come
-  // up alongside the platform), then steady-state ticks.
-  setTimeout(() => { sweep(config); }, 15 * 1000);
-  intervalHandle = setInterval(() => { sweep(config); }, SWEEP_INTERVAL_MS);
-  intervalHandle.unref?.();
-}
-
-function stop() {
-  if (intervalHandle) { clearInterval(intervalHandle); intervalHandle = null; }
-}
-
-function getStatus() {
-  return { lastSweepAt, lastError, sweepInFlight };
+  let failed = 0;
+  // Simple bounded worker pool over the due list.
+  let idx = 0;
+  const workers = Array.from({ length: Math.min(SWEEP_CONCURRENCY, due.length) }, async () => {
+    while (idx < due.length && !shouldStop()) {
+      const app = due[idx++];
+      try {
+        await probeApp(pool, app, config);
+      } catch (err) {
+        failed += 1;
+        log.warn('shell-probe', 'Probe failed', { slug: app.slug, err: err.message });
+      }
+    }
+  });
+  await Promise.all(workers);
+  return { probed: due.length, failed, refreshedPublic: !!refreshPublic };
 }
 
 module.exports = {
-  start,
-  stop,
   sweep,
-  getStatus,
   // Exported for tests:
   classifyResponse,
   probeUrl,

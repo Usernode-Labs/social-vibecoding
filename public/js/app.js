@@ -462,14 +462,66 @@ const App = {
       // but leave the cache alone, and let the next read settle it.
       try { window.Offline?.nudge(); } catch (err) { /* ignore */ }
       await App.enterAnonymous();
+      App._adoptLateSession();
       return;
     }
 
-    // No answer and no snapshot: offline on a device that was never signed
-    // in. Probe so the strip appears; the anonymous shell shows its own
-    // offline state and refuses submits (see auth-screens.js).
+    // No answer and no snapshot. Offline on a device that was never signed
+    // in, or a server too slow to answer inside the boot's deadline: the
+    // two look the same from here. Probe so the strip appears; the anonymous
+    // shell shows its own offline state and refuses submits (see
+    // auth-screens.js). Then ask once more, so a slow answer still lets a
+    // signed-in viewer in (_adoptLateSession).
     try { window.Offline?.nudge(); } catch (err) { /* ignore */ }
     await App.enterAnonymous();
+    App._adoptLateSession();
+  },
+
+  // ── A boot read that never said no ──────────────────────────────────
+  //
+  // A boot with no snapshot that gets no answer about the session (the
+  // read timed out, the network failed, or the server answered 5xx) paints
+  // the anonymous shell, because there is nothing else to paint. Until
+  // this, it also STAYED there: nothing asked again, so a signed-in viewer
+  // whose cookie the server still honoured was left on the sign-in screen
+  // until they reloaded.
+  //
+  // A device with no snapshot and a live cookie is not rare. Every browser
+  // context opened on a preview has one (the staging `?token=` exchange
+  // sets the cookie on the document, and the origin's storage is new), and
+  // on a just-started preview the first /api/auth/me can take longer than
+  // BOOT_SESSION_TIMEOUT_MS. The proposal checks met exactly that: the
+  // capture pods' first pages were signed in on the server and showed the
+  // sign-in form or the landing, and every retry passed.
+  //
+  // So the anonymous boot asks once more, through the sign-in completion
+  // every login uses (AuthScreens.finishLogin). Its read has a longer
+  // deadline (12s), and a session that answers enters the signed-in shell
+  // the way a sign-in does: the remembered deep link, the waiting room, a
+  // move to the live build. A 401/403 is a real "no": finishLogin returns
+  // its failure and nothing on screen changes; neither does another
+  // non-answer. Only an answered session grants anything, and the cookie is
+  // still the credential: this asks the server, it trusts nothing local.
+  //
+  // Not for the native shell, whose own recovery (NativeChrome.
+  // restoreWebSession) decides its session, nor the side panel, whose
+  // anonymous boot reloads the top window instead. Nor once the viewer has
+  // started a sign-in of their own: that one finishes the same way.
+  _adoptLateSession() {
+    if (App._lateSessionAsked) return;
+    App._lateSessionAsked = true;
+    // NativeChrome is loaded on the web too; the bridge is what says this is
+    // the app (the test restoreWebSession makes).
+    if (window.usernode?.isNative === true || App.embeddedPanel) return;
+    const stillWanted = () => !App.user && !App._authedBooted && !App._signInBegun;
+    if (!stillWanted()) return;
+    if (!window.AuthScreens || typeof AuthScreens.finishLogin !== 'function') return;
+    // Not awaited by init: the landing is already up, and nothing waits on
+    // this. finishLogin answers every failure with a value, never a throw.
+    // `stillWanted` is asked again after its read: a sign-in the viewer
+    // began while it was out owns the page by then, and this one stands
+    // down without touching the address or the shell.
+    AuthScreens.finishLogin({ stillWanted }).catch(() => {});
   },
 
   // Does this answer mean the SESSION is over? Only the two statuses the API
@@ -663,6 +715,20 @@ const App = {
   //                          or the full one-shot authed boot.
   _authedBooted: false,
 
+  // The head's first-session hold (frontend/src/head.html): a document that
+  // opens while the story's sheet is handing a new account to "What do you
+  // want to make?" (a sign-in that reloaded onto the live build), or with no
+  // saved session (SESSION_SNAPSHOT_KEY: the landing is coming, not Home),
+  // keeps its body hidden until the shell has drawn its first screen. Each
+  // way the boot ends lifts it; it never holds a screen nobody is about to
+  // cover.
+  _liftFirstSessionBoot() {
+    try { document.documentElement.classList.remove('first-session-boot'); } catch (err) { /* no document */ }
+    // The head's spinner for a sign-in link goes with it: the landing has
+    // drawn "Signing you in…" by now, its own spinner in the same place.
+    try { document.documentElement.classList.remove('release-signing-in'); } catch (err) { /* no document */ }
+  },
+
   async enterAnonymous() {
     let nativeBoundary = null;
     if (window.NativeChrome && NativeChrome.enterAnonymous) {
@@ -697,6 +763,7 @@ const App = {
     // platformMovedOn() needs a boot-time baseline to compare against.
     App.loadVersion();
     if (window.AuthScreens) AuthScreens.enter();
+    App._liftFirstSessionBoot();
     App._drainLogoutNotice();
     // A signed-out document behind the live build moves to it before a
     // sign-in starts on it (see _moveToLiveShell). Not awaited: the landing
@@ -723,10 +790,10 @@ const App = {
   },
 
   // True for the anonymous-shell screenshot-state links (see init). Also
-  // normalises the fragment for `?shot=waitlist-joined`, which names one
-  // specific screen — so the path needs no hash of its own and the shot
-  // stays deterministic. AuthScreens._waitlistOnShow reads the same param
-  // to paint the post-join state.
+  // normalises the fragment for the `?shot=waitlist-*` states, which name one
+  // specific screen (check your status, `#waitlist?confirm=1`), so the path
+  // needs no hash of its own and the shot stays deterministic.
+  // AuthScreens._waitlistOnShow reads the same param to paint the state.
   _anonShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
@@ -746,20 +813,17 @@ const App = {
     // `email-code-password-account` (#1586) is the login screen carrying the
     // explanation an email code hands back when the account it matches can
     // only be signed in with its password. Same anonymous boot, same reason.
-    // `waitlist-confirmed` is the state AFTER the six-digit code lands:
-    // confirming is what puts somebody on the list now, so the list place
-    // and the stage-2 offer live there rather than on `waitlist-joined`,
-    // which stops at the confirm step.
     // `waitlist-more` opens the stage-2 survey for the token in the
     // fragment (`/?shot=waitlist-more#more/<48 hex>`). The survey is an
     // auth screen, and restoreFromHash drops an auth route outright for a
     // signed-in user who has platform access — which every capture and
     // proposal-check session is — so without this the screen is reachable
     // by a real recipient and by nothing that photographs or checks it.
-    // `waitlist-step1` and `waitlist-code-entry` are the two halves of the
-    // returning-user path: the join form carrying the "Already joined?"
-    // link, and the confirm step reached through it, which is the only
-    // state that asks which address the code belongs to. Both need the
+    // `waitlist-code-entry` is check-your-status's first step, the only
+    // state that asks which address the code belongs to (the join form and
+    // its `waitlist-step1`, `waitlist-joined`, `waitlist-confirmed` and
+    // `waitlist-rejoined` states are retired, #5261: Continue joins now).
+    // It needs the
     // anonymous boot for the same reason waitlist-more does: restoreFromHash
     // drops an auth route outright for the signed-in session every capture
     // and proposal check runs as.
@@ -774,23 +838,12 @@ const App = {
     // the one settled state no other route can paint, because reaching it
     // for real needs a row with a released_at behind it.
     // `waitlist-status` is the same panel one state earlier: still waiting,
-    // read back through check-my-status rather than confirmed just now. It
-    // is a separate shot from `waitlist-confirmed` because the difference
-    // between them is the whole point of the panel — the celebration is the
-    // join's and the state pill is the status read's — and one shot cannot
-    // photograph both.
+    // read back through check-my-status, with the stage-2 offer still made.
     // `waitlist-not-found` (#2201) is the third answer that address step can
     // get: the address is not on the list at all. It carries the note saying
     // so and the control that turns the dead end into a join, and like the
     // two above it needs the anonymous boot. Nothing is sent to paint it —
     // waitlist.tsx sets the note from a literal.
-    // `waitlist-rejoined` (#2201) is that same settled panel reached a
-    // fourth way: an address already on the list AND already confirmed
-    // submits the join form again, and the server answers with its status
-    // instead of a code, so the client skips the code step entirely. No URL
-    // reaches it without the POST behind it, so a capture cannot get there
-    // on its own — and it is the state this change exists to produce, so a
-    // before/after that photographed the home screen would show none of it.
     // `signup-code-sent` (#1548) is the signup screen a second after a
     // waitlist-release link opens it: the code step, the confirmation, and
     // the resend held for its cooldown. The address rides in the fragment
@@ -798,11 +851,9 @@ const App = {
     // `waitlist-more` it needs the anonymous boot, because restoreFromHash
     // drops an auth route for the signed-in session every capture and
     // proposal check runs as. login.tsx paints it and sends nothing.
-    if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'waitlist-confirmed' &&
-        shot !== 'waitlist-step1' && shot !== 'waitlist-code-entry' &&
+    if (shot !== 'anon' && shot !== 'waitlist-code-entry' &&
         shot !== 'waitlist-code-step' && shot !== 'waitlist-not-found' &&
         shot !== 'waitlist-admitted' && shot !== 'waitlist-status' &&
-        shot !== 'waitlist-rejoined' &&
         shot !== 'waitlist-more' &&
         shot !== 'anon-back' &&
         shot !== 'signup-code-sent' &&
@@ -811,13 +862,11 @@ const App = {
         shot !== 'email-code-password-account') {
       return false;
     }
-    if ((shot === 'waitlist-joined' || shot === 'waitlist-confirmed'
-         || shot === 'waitlist-step1' || shot === 'waitlist-code-entry'
+    if ((shot === 'waitlist-code-entry'
          || shot === 'waitlist-code-step' || shot === 'waitlist-not-found'
-         || shot === 'waitlist-admitted' || shot === 'waitlist-status'
-         || shot === 'waitlist-rejoined') &&
+         || shot === 'waitlist-admitted' || shot === 'waitlist-status') &&
         (!location.hash || location.hash === '#')) {
-      try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
+      try { history.replaceState(null, '', location.search + '#waitlist?confirm=1'); } catch (err) { /* ignore */ }
     }
     return true;
   },
@@ -965,11 +1014,13 @@ const App = {
     // must not lock anyone out.
     if (App.user?.hasPlatformAccess === false && window.AuthScreens) {
       AuthScreens.showWaiting();
+      App._liftFirstSessionBoot();
       return;
     }
 
     if (App._authedBooted) {
       App.restoreFromHash();
+      App._liftFirstSessionBoot();
       return;
     }
     App._authedBooted = true;
@@ -1005,6 +1056,10 @@ const App = {
     document.dispatchEvent(new CustomEvent('sv:authed', {
       detail: { user: App.user },
     }));
+    // The first screen is drawn now ("What do you want to make?" opened by
+    // the `sv:authed` listeners, in this same tick, before anything paints),
+    // so the head's hold comes off.
+    App._liftFirstSessionBoot();
     App.restoreFromHash();
     // The fragment-scoped `?shot=` states, applied for whatever fragment is
     // live now and re-applied whenever it changes — see _applyRouteShots.
@@ -1270,6 +1325,11 @@ const App = {
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'app-updating' && shot !== 'app-update-ready') return;
     const ready = shot === 'app-update-ready';
+    // The frame this shot opens loads the build that is live, which is what
+    // withdraws a real offer (AppView.renderAppTab). Pinned while the shot
+    // is on screen, as _platformUpdateShot pins the platform's row; nothing
+    // else reads this flag.
+    App._appUpdateShot = true;
     App._openImproveShot(() => {
       // `update()` no-ops without a slug, and the menu opens before the app
       // fetch lands — see Improve.hasTarget()'s note. Keep waiting.
@@ -1593,10 +1653,15 @@ const App = {
   _applyLaunchShot() {
     let shot = null;
     let settled = false;
+    let failed = false;
     try {
       const params = new URLSearchParams(location.search);
       shot = params.get('shot');
       settled = params.get('settle') === '1';
+      // #4813: the paired failed state. On the base commit `failed=1` is
+      // ignored and the spinner stays up; on this commit it synthesises the
+      // failed card, so the before/after capture observes the actual change.
+      failed = params.get('failed') === '1';
     } catch (err) { /* ignore */ }
     // #1945: `?shot=app-tone-dark` / `?shot=app-tone-light` — a running app
     // whose page is that tone, so the bar above it can be seen taking it.
@@ -1618,6 +1683,13 @@ const App = {
     if (settled) {
       setTimeout(() => {
         try { AppView.showSettledLaunchShot(); } catch (err) { /* ignore */ }
+      }, 50);
+      return;
+    }
+    // #4813: the failed launch card, same 50ms defer as the settled state.
+    if (failed) {
+      setTimeout(() => {
+        try { AppView.showLaunchFailedShot(); } catch (err) { /* ignore */ }
       }, 50);
       return;
     }
@@ -2536,6 +2608,41 @@ const App = {
       const messages = window.UsernodeReact?.messages;
       if (messages?.showing?.()) messages.resync?.();
 
+      // Your work (#5453): a vote cast on a slow link is missing from the
+      // saved copy of Your votes the screen opened with. Re-read whichever
+      // view is up through its own loader, the same way the Communities
+      // screen corrects itself. `return`: this screen holds no app view to
+      // fall through to, like the Workshop branch below.
+      const work = window.UsernodeReact?.profileProposals;
+      if (visible('profile-proposals-screen') && work?.isOpen?.()) { work.reload?.(); return; }
+
+      // The Communities screen (#5164): its counts and Needs you feed are
+      // the workshop controller's own quiet reads. When the worker corrected
+      // one of them after a slow first answer, re-run it here — the same
+      // loader, so a correction can never diverge from what the screen
+      // shows on its own. `return`: the workshop screen holds no app view
+      // to fall through to.
+      //
+      // ON the Communities screen, which is the controller open AND no app
+      // on screen (see navigateToWorkshop): the controller stays open under a
+      // project page opened from it, and this branch used to swallow that
+      // page's correction, so a hub reached from Communities kept the numbers
+      // it was first drawn with (polish board #3).
+      const workshop = window.UsernodeReact?.workshop;
+      if (workshop?.isOpen?.() && !App.currentApp) { workshop.refreshNeeds?.(); return; }
+
+      // Your work (#5456): Your changes, Your requests and Your votes read
+      // once per open, on the ordinary deadline. When the worker corrected
+      // that read after serving its saved copy (a vote cast a moment before,
+      // still missing), re-run the controller's own reload, the same loader
+      // Try again uses. `return`: the screen holds no app view to fall
+      // through to.
+      const profileProposals = window.UsernodeReact?.profileProposals;
+      if (visible('profile-proposals-screen') && profileProposals?.isOpen?.()) {
+        profileProposals.reload?.();
+        return;
+      }
+
       // The app record itself is in the service worker's zero-deadline boot
       // lane. If its cached `creating` snapshot is corrected after first
       // paint, revalidate the open App tab just as the branches below refresh
@@ -2647,8 +2754,8 @@ const App = {
       const staging = info.env === 'staging';
       const label = staging ? 'staging' : 'dev';
       const tip = staging
-        ? 'Staging preview of the platform, built without a commit SHA, so there is no revision to link'
-        : 'Running outside of a deploy (no GIT_SHA set)';
+        ? PlatformI18n.htmlText('shell:version.tip.staging')
+        : PlatformI18n.htmlText('shell:version.tip.dev');
       paint(`
         <span class="drawer-ver drawer-ver--dev" title="${tip}">${label}</span>`, 'idle');
       return;
@@ -2660,12 +2767,18 @@ const App = {
       const elapsed = deploy.startedAt
         ? Math.max(0, Math.floor((Date.now() - new Date(deploy.startedAt).getTime()) / 1000))
         : null;
-      const tipParts = [`Deploying ${newShort || 'new build'}`];
-      if (oldShort) tipParts.push(`from ${oldShort}`);
-      if (elapsed != null) tipParts.push(`${elapsed}s elapsed`);
-      const shaLabel = newShort ? `→ ${newShort}` : 'deploying';
+      // One whole tooltip per case: the new build named or not, the time
+      // elapsed known or not. `oldShort` is the running build's, always here.
+      const deployTip = newShort
+        ? (elapsed != null
+          ? PlatformI18n.htmlText('shell:version.tip.deployingElapsed', { newSha: newShort, oldSha: oldShort, count: elapsed })
+          : PlatformI18n.htmlText('shell:version.tip.deploying', { newSha: newShort, oldSha: oldShort }))
+        : (elapsed != null
+          ? PlatformI18n.htmlText('shell:version.tip.deployingNewBuildElapsed', { oldSha: oldShort, count: elapsed })
+          : PlatformI18n.htmlText('shell:version.tip.deployingNewBuild', { oldSha: oldShort }));
+      const shaLabel = newShort ? `→ ${newShort}` : PlatformI18n.htmlText('shell:version.label.deploying');
       paint(`
-        <span class="drawer-ver drawer-ver--deploying" title="${tipParts.join(' · ')}">
+        <span class="drawer-ver drawer-ver--deploying" title="${deployTip}">
           <span class="drawer-ver-spinner" aria-hidden="true"></span>${shaLabel}
         </span>`, 'deploying');
       return;
@@ -2690,8 +2803,8 @@ const App = {
         // is one.
         paint(`
           <span class="drawer-ver drawer-ver--stale drawer-ver--fetching"
-                title="Platform updated from ${oldShort} to ${newShort}. Downloading it now; the reload appears once there is something to switch to.">
-            <span class="drawer-ver-spinner" aria-hidden="true"></span>${newShort} · updating…
+                title="${PlatformI18n.htmlText('shell:version.tip.downloading', { oldSha: oldShort, newSha: newShort })}">
+            <span class="drawer-ver-spinner" aria-hidden="true"></span>${PlatformI18n.htmlText('shell:version.label.updating', { sha: newShort })}
           </span>`, 'downloading');
         return;
       }
@@ -2701,20 +2814,20 @@ const App = {
       // this row had before, and a tab with no way back would be worse.
       const failed = !!(update && update.state === 'failed');
       const tip = failed
-        ? `Platform updated from ${oldShort} to ${newShort}. Click to reload (the update could not be pre-downloaded, so this may take two tries).`
-        : `Platform updated from ${oldShort} to ${newShort}, and the new build is ready. Click to reload.`;
+        ? PlatformI18n.htmlText('shell:version.tip.reloadFailedPrefetch', { oldSha: oldShort, newSha: newShort })
+        : PlatformI18n.htmlText('shell:version.tip.reloadReady', { oldSha: oldShort, newSha: newShort });
       paint(`
         <button type="button"
                 class="drawer-ver drawer-ver--stale"
                 title="${tip}"
-                onclick="location.reload()">${newShort} · reload</button>`, failed ? 'failed' : 'ready');
+                onclick="location.reload()">${PlatformI18n.htmlText('shell:version.label.reload', { sha: newShort })}</button>`, failed ? 'failed' : 'ready');
       return;
     }
 
     const shortSha = runningSha.slice(0, 7);
     const href = `${repoUrl.replace(/\/$/, '')}/commit/${runningSha}`;
     paint(`
-      <a href="${href}" target="_blank" rel="noopener" class="drawer-ver" title="Platform commit ${shortSha}">${shortSha}</a>`, 'idle');
+      <a href="${href}" target="_blank" rel="noopener" class="drawer-ver" title="${PlatformI18n.htmlText('shell:version.tip.commit', { sha: shortSha })}">${shortSha}</a>`, 'idle');
   },
 
   // Tiny local HTML-escaper for server-sourced strings interpolated into
@@ -2732,9 +2845,9 @@ const App = {
   // of the yellow + spinner state. Reacts to BOTH the start broadcast
   // (deploying:true → render the deploying pill) and the end
   // broadcast (deploying:false → re-fetch the version so the new
-  // SHA shows up). The server emits these from staging.js around
-  // every rebuildProduction call, so all entry paths (dev-chat
-  // merge, drift poller, manual check-updates) are covered.
+  // SHA shows up). The app-delivery workflow machine pushes these
+  // around every production deploy, so all entry paths (a merge, the
+  // drift poller, manual check-updates) are covered.
   handleAppRedeployStatus(data) {
     if (!data || !data.appSlug) return;
     const slug = data.appSlug;
@@ -2781,8 +2894,15 @@ const App = {
       } else {
         // A failed build leaves nothing new to load onto, and a frame let go
         // above loads the new build when the app is next opened, so offering
-        // a reload too would load it twice more.
-        window.Improve.update({ deploying: false, appUpdateReady: !data.failed && !evicted });
+        // a reload too would load it twice more. Nor is there anything to
+        // reload unless the build before this one is on screen
+        // (AppView.frameShowing): Homeroom bot's first version going live,
+        // with no frame ever shown, is the version they are about to see, and
+        // the menu said "This app has a new version" about it (sign-up test,
+        // 19 Oct 2026).
+        const showing = !data.failed && !evicted
+          && typeof AppView !== 'undefined' && !!AppView.frameShowing?.(slug);
+        window.Improve.update({ deploying: false, appUpdateReady: showing });
       }
     }
   },
@@ -3981,6 +4101,14 @@ const App = {
   // caught up by the drawer's stale-revision indicator
   // (renderPlatformVersionPill) or by pull-to-refresh (_refreshOrReload).
   handleVoteUpdate(data) {
+    // #5233: a merge lands while the viewer is anywhere but the board itself
+    // — the app tab, the proposal's own page, Home — and the board's cached
+    // lists still hold it as open. The helper checks which app the lists
+    // belong to, so it is called whatever is showing here; the burst below
+    // covers the board showing live.
+    if (data.merged && typeof AppView !== 'undefined' && AppView.noteSessionMerged) {
+      AppView.noteSessionMerged(data.sessionId, data.appSlug);
+    }
     // Refresh the proposals tab / inline chat vote state if we're in this
     // app's Dev view, and the work drawer and Home, which track tallies:
     // once for the burst this event arrives in, which usually also carries
@@ -4034,6 +4162,7 @@ const App = {
 
   ImproveStatus: {
     setAppOpen(open) { window.ImproveStatus?.setAppOpen(open); },
+    setPendingApp(record) { window.ImproveStatus?.setPendingApp?.(record); },
     refreshDeployDot() { window.ImproveStatus?.refreshDeployDot(); },
   },
 
@@ -4334,7 +4463,7 @@ const App = {
     App._publishBootSession({ signedOut: true });
     if (!reload) {
       if (window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast('You are signed out. Sign in again to join.', { error: true });
+        PlatformUI.toast(PlatformI18n.t('shell:invite.signedOut'), { error: true });
       }
       return;
     }
@@ -4419,10 +4548,10 @@ const App = {
         if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(msg, error ? { error: true } : undefined);
       };
       const DEAD = {
-        expired: 'That invite link has expired.',
-        revoked: 'That invite link was turned off.',
-        used_up: 'That invite link has been used as many times as it allows.',
-        unknown: 'That invite link does not work.',
+        expired: 'shell:invite.dead.expired',
+        revoked: 'shell:invite.dead.revoked',
+        used_up: 'shell:invite.dead.usedUp',
+        unknown: 'shell:invite.dead.unknown',
       };
       const openHub = (slug) => {
         if (!slug) return;
@@ -4459,7 +4588,7 @@ const App = {
         // Only the link's own answer says what is wrong with it: 200 with its
         // state, or 404 for one that never existed. A 500 or a 429 is a read
         // that did not land, and the link may be fine.
-        if (status !== 200 && status !== 404) { toast('Could not open that invite link. Try again.', true); return; }
+        if (status !== 200 && status !== 404) { toast(PlatformI18n.t('shell:invite.couldNotOpen'), true); return; }
         if (standing.mine === 'joined' && standing.slug) {
           joinedHere = true;
           // Joined by the sign-in that brought them here (within the last
@@ -4472,13 +4601,17 @@ const App = {
           openHub(standing.slug);
           return;
         }
-        if (!standing.live) { toast(DEAD[standing.reason] || DEAD.unknown, true); return; }
-        const name = standing.project && standing.project.name ? standing.project.name : 'this project';
+        if (!standing.live) { toast(PlatformI18n.t(DEAD[standing.reason] || DEAD.unknown), true); return; }
+        const name = standing.project && standing.project.name ? standing.project.name : null;
         const count = standing.memberCount || 0;
         // Who it is from, in the words the invite page uses, then their note.
         const from = standing.inviterMadeIt && standing.inviterName
-          ? `${standing.inviterName} ${standing.building ? 'is making' : 'made'} it and invited you.`
-          : (standing.inviter ? `@${standing.inviter} invited you.` : 'You were invited.');
+          ? (standing.building
+            ? PlatformI18n.t('shell:invite.from.isMaking', { inviter: standing.inviterName })
+            : PlatformI18n.t('shell:invite.from.made', { inviter: standing.inviterName }))
+          : (standing.inviter
+            ? PlatformI18n.t('shell:invite.from.handle', { handle: standing.inviter })
+            : PlatformI18n.t('shell:invite.from.unknown'));
         // Join was already pressed on the link's own page, and the person chose
         // "Sign in with a password" from its sheet (features/auth/
         // sign-in-sheet.tsx): that press was the consent, so it is not asked
@@ -4514,12 +4647,18 @@ const App = {
           return;
         }
         const ok = pressed ? true : window.ConfirmModal ? await ConfirmModal.show({
-          title: `Join ${name}?`,
-          message: from
-            + (standing.note ? ` “${standing.note}”` : '')
-            + (count ? ` ${count} ${count === 1 ? 'person is' : 'people are'} in it.` : ''),
-          confirmLabel: 'Join',
-          cancelLabel: 'Not now',
+          title: name
+            ? PlatformI18n.t('shell:invite.confirm.title', { project: name })
+            : PlatformI18n.t('shell:invite.confirm.titleUnnamed'),
+          // Up to three whole sentences, in this order: who invited them,
+          // their note, how many people are in it.
+          message: App._inviteConfirmMessage([
+            from,
+            standing.note ? PlatformI18n.t('shell:invite.confirm.note', { note: standing.note }) : null,
+            count ? PlatformI18n.t('shell:invite.confirm.members', { count }) : null,
+          ]),
+          confirmLabel: PlatformI18n.t('shell:invite.confirm.join'),
+          cancelLabel: PlatformI18n.t('shell:invite.confirm.notNow'),
         }) : true;
         if (!ok) return;
         // A public community asks a provisional handle for a username first
@@ -4533,7 +4672,7 @@ const App = {
         if (joined.status === 401) { App._inviteSessionEnded(address); return; }
         const result = await joined.json().catch(() => ({}));
         if (result.reason === 'username_required') { toast(result.error, true); return; }
-        if (!joined.ok || !result.ok) { toast(DEAD[result.reason] || 'Could not join. Try again.', true); return; }
+        if (!joined.ok || !result.ok) { toast(PlatformI18n.t(DEAD[result.reason] || 'shell:invite.couldNotJoin'), true); return; }
         joinedHere = true;
         // Read Home's challenges again now. Home painted them above, before
         // the confirm, and they are cached for a minute (HomePanels.TTL_MS),
@@ -4548,13 +4687,26 @@ const App = {
           await App._landJoined(result.slug);
         }
       } catch (_) {
-        toast('Could not open that invite link. Try again.', true);
+        toast(PlatformI18n.t('shell:invite.couldNotOpen'), true);
       }
     } finally {
       if (!deferred) settle(joinedHere);
       // The held frame goes, unless "You're in" has taken its place.
       if (held) App._endWelcomeHold();
     }
+  },
+
+  // The confirm's body: the sentences that apply, one after another. Each
+  // is a whole message; the catalog decides what goes between them.
+  _inviteConfirmMessage(sentences) {
+    const said = sentences.filter(Boolean);
+    if (said.length === 3) {
+      return PlatformI18n.t('shell:invite.confirm.threeSentences', { first: said[0], second: said[1], third: said[2] });
+    }
+    if (said.length === 2) {
+      return PlatformI18n.t('shell:invite.confirm.twoSentences', { first: said[0], second: said[1] });
+    }
+    return said[0] || '';
   },
 
   // Where the landing marks the invite link it showed signed out, for a
@@ -4619,7 +4771,7 @@ const App = {
       owed = !!count && Number(count.needs) > 0;
     } catch (_) { /* the hub */ }
     const said = !!(opts && opts.said);
-    if (!said && window.PlatformUI && PlatformUI.toast) PlatformUI.toast("You're in.");
+    if (!said && window.PlatformUI && PlatformUI.toast) PlatformUI.toast(PlatformI18n.t('shell:invite.joined'));
     if (typeof AppView !== 'undefined' && AppView._landOnTab) AppView._landOnTab(slug, owed ? 'needs' : 'status');
     App.navigateToApp(slug, 'dev');
   },
@@ -4642,13 +4794,15 @@ const App = {
     const project = standing.project || {};
     return island.open({
       token,
-      name: project.name || 'this community',
+      name: project.name || PlatformI18n.t('shell:invitePreview.unnamed'),
+      // No name came with the link: the Join button has its own wording.
+      unnamed: !project.name,
       iconEmoji: project.iconEmoji || null,
       iconUrl: project.iconUrl || null,
       iconColor: shown.iconColor || null,
       description: project.description || null,
       memberCount: Number(standing.memberCount) || 0,
-      audienceLabel: shown.audienceLabel || 'Private community',
+      audienceLabel: shown.audienceLabel || PlatformI18n.t('shell:invitePreview.privateCommunity'),
       inviter: standing.inviter || null,
       inviterName: standing.inviterName || null,
       inviterMadeIt: !!standing.inviterMadeIt,
@@ -4744,6 +4898,14 @@ const App = {
           if (publicProfileRoute) {
             AuthScreens.hideAll();
           } else {
+            // A bare #waitlist named the join form, which is retired
+            // (#5261): it opens Continue on the landing instead, keeping an
+            // old link's ?ref= code. `#waitlist?confirm=1` is check your
+            // status, which stays.
+            if (authRoute === 'waitlist' && !/(?:^|&)confirm=1(?:&|$)/.test(fragQuery)) {
+              AuthScreens.retireWaitlistLink(fragQuery);
+              return;
+            }
             if (authRoute && authRoute !== 'waiting') {
               AuthScreens.show(authRoute, authSeg);
               return;
@@ -4752,8 +4914,9 @@ const App = {
               AuthScreens.show('landing');
               return;
             }
-            AuthScreens.rememberDeepLink(App._deepLinkTarget());
-            AuthScreens.show('login');
+            // Remembered for after the sign-in, and answered with the
+            // landing's sign-in sheet titled for where it leads (#5264).
+            AuthScreens.showSignInFor(App._deepLinkTarget());
             return;
           }
         }
@@ -4766,13 +4929,12 @@ const App = {
                 AuthScreens.show('landing');
                 return;
               }
-              // #waitlist stays reachable from the waiting room (a bookmark,
-              // the back button) — the screen shows them the "already on the
-              // list" note instead of the join form, which beats bouncing them.
-              if (authRoute === 'waitlist') {
-                AuthScreens.show('waitlist');
-                return;
-              }
+              // #waitlist is for a visitor with no account: its join form is
+              // retired (#5261) and check your status reads an address's
+              // signup, while this account's spot is the waiting room's to
+              // show. So it goes there, keeping an old link's ?ref= code for
+              // the room to send on (features/auth/waiting-about.tsx).
+              if (authRoute === 'waitlist') AuthScreens.keepWaitlistRef(fragQuery);
               // The stage-2 waitlist survey stays reachable from the waiting
               // room — a gated account is exactly who "Want in sooner?" is
               // for (the link arrives in the join email).
@@ -4814,13 +4976,13 @@ const App = {
         }
       }
 
-      // THE SIDE PANEL'S DOCUMENT shows only the panel's own pages — an app's
-      // Workshop, a proposal, an issue, a change, a discussion, a
-      // conversation, an agent chat, and the inbox a thread climbs back to.
-      // Anything else a link inside it names belongs to the TOP window: an
-      // app's App tab goes to the running app beside the panel, and a tab, a
-      // profile or Settings is somewhere the top window goes, leaving the app
-      // exactly as the same link would from the app's own menu. The runtime
+      // THE SIDE PANEL'S DOCUMENT shows only the panel's own pages — a
+      // proposal, an issue, a change, a conversation, an agent chat, and the
+      // inbox a thread climbs back to. Anything else a link inside it names
+      // belongs to the TOP window: an app's App tab goes to the running app
+      // beside the panel, and a tab, a profile, Settings or a community's
+      // page is somewhere the top window goes, leaving the app exactly as the
+      // same link would from the app's own menu. The runtime
       // (frontend/src/features/side-panel/embedded.ts) puts this document's
       // address back on the page it is still showing.
       if (App.embeddedPanel
@@ -4902,6 +5064,16 @@ const App = {
         const profileUser = parts[1] === 'users' && parts[2]
           ? decodeURIComponent(parts[2])
           : null;
+        // #5249: kudos is parked (features/leaderboard/kudos-parked.ts; the
+        // bundle then publishes no window.Kudos), so the Kudos tab and its
+        // three sub-views are gone. Their addresses land on Challenges, the
+        // default tab, rewritten in place so Back does not return to them.
+        // A person's page (#leaderboard/users/<name>) stays where it is.
+        if (!profileUser && !window.Kudos && App.PARKED_KUDOS_SUBS.includes(parts[1])) {
+          try { history.replaceState(null, '', '#leaderboard/challenges'); } catch (_) { /* hash stays */ }
+          App.navigateToLeaderboard('challenges', null, null);
+          return;
+        }
         // #leaderboard/challenges/<eventId>[/<challengeId>] (#982) — the
         // address the profile's completed-challenge rows link to. The
         // event id is part of the path because a challenge id alone is
@@ -4915,6 +5087,16 @@ const App = {
             challengeId: App._numericSegment(parts[3]),
           }
           : null;
+        // #leaderboard/seasons was the History tab, retired with the seasons
+        // it listed (2026-10-16). An old link lands on Challenges, its address
+        // rewritten first so Leaderboard._syncHash finds nothing to heal.
+        if (parts[1] === 'seasons') {
+          try {
+            history.replaceState(null, '', '#leaderboard/challenges');
+          } catch (err) { /* non-fatal: navigation below still works */ }
+          App.navigateToLeaderboard('challenges', null, null);
+          return;
+        }
         App.navigateToLeaderboard(parts[1], profileUser, challengeTarget);
         return;
       }
@@ -5055,32 +5237,33 @@ const App = {
         }
         // #2813: AN AGENT THREAD OPENS BESIDE THE LIST TOO, on a desktop —
         // a global agent chat at `#messages/agent/<id>`, an app's dev
-        // session at `#messages/session/<slug>/<id>`. A PHONE has one pane,
-        // and there these have always been screens of their own, so the
-        // address is swapped in place for that screen's (`#chat/<id>`,
-        // `#app/<slug>/dev/sessions/<id>`): no history entry of its own, so
-        // Back from the chat still lands on the inbox it was opened from.
+        // session at `#messages/session/<slug>/<id>`. On a PHONE an agent
+        // chat and an agent session open here as well, as the second level
+        // of the inbox's drawer (features/nav-drawer/messages-drawer.ts;
+        // Evan, 18 Oct 2026), so a swipe goes back to the list. A dev session
+        // is still a screen of its own there, so its address is swapped in
+        // place for that screen's (`#app/<slug>/dev/sessions/<id>`): no
+        // history entry of its own, so Back from it still lands on the inbox
+        // it was opened from.
         const agent = App._messagesAgentThread(parts);
         if (agent && agent.kind === 'agent') App._takeAgentFlow(hash, fragQuery);
         if (agent) {
-          if (!window.matchMedia('(min-width: 768px)').matches) {
-            if (agent.kind === 'session' && typeof Improve !== 'undefined') {
-              Improve.enterSessionFrom?.('#messages');
-            }
+          if (agent.kind === 'session' && !window.matchMedia('(min-width: 768px)').matches) {
+            if (typeof Improve !== 'undefined') Improve.enterSessionFrom?.('#messages');
             // replaceState and route the new address in this same pass, the
             // way the #topochain aliases heal: a `location.replace` from
             // inside the router lost the app route to the pass it raced.
             try {
-              history.replaceState(null, '', App._rootUrl(agent.kind === 'chat'
-                ? `#chat/${encodeURIComponent(agent.id)}`
-                : agent.kind === 'agent'
-                  ? `#agent/${agent.id}`
-                  : `#app/${encodeURIComponent(agent.slug)}/dev/sessions/${agent.id}`));
+              history.replaceState(null, '', App._rootUrl(
+                `#app/${encodeURIComponent(agent.slug)}/dev/sessions/${agent.id}`));
             } catch (_) { return; }
             App.restoreFromHash();
             return;
           }
           App.navigateToMessages(null, null, agent);
+          // The pane does not open the conversation it is already showing
+          // again, so a `?flow=` link to that one is handed to it here.
+          if (agent.kind === 'agent') window.UsernodeReact?.agentSession?.applyHandoff?.(agent.id);
           return;
         }
         // #2783: `#messages/channel/<handle>` is where a `#name` channel
@@ -5118,6 +5301,14 @@ const App = {
         );
         return;
       }
+      // On a phone an agent chat and an agent session open in Messages, as
+      // the second level of its drawer, and their screens' addresses come
+      // with them (_agentToInbox): a chat with its id, an agent session or a
+      // new one, a ?flow= kept for that route to hand over. A bare #chat and
+      // #agent/<id>/changes keep their screens.
+      if (parts.length === 2 && ((parts[0] === 'chat' && parts[1])
+        || (parts[0] === 'agent' && (parts[1] === 'new' || App._numericSegment(parts[1]) != null)))
+        && App._agentToInbox(`#messages/agent/${parts[1]}`, fragQuery)) return;
       if (parts[0] === 'chat') {
         // #2543: Global Chat is an ordinary, resumable platform screen. Its
         // UUID names the exact session selected from Improve; a bare #chat
@@ -5128,8 +5319,9 @@ const App = {
       }
       if (parts[0] === 'agent') {
         // #2779: an agent session, one conversation with the Mayor that works
-        // on any app. Its own screen at #agent/<id> (a phone's surface; a
-        // desktop can also draw it beside the inbox at #messages/agent/<id>).
+        // on any app. Its own screen at #agent/<id> on a wide window (a
+        // desktop can also draw it beside the inbox at #messages/agent/<id>,
+        // and a phone opens it there, _agentToInbox).
         // A serial id, so the same signed-int32 bound as a conversation's;
         // `#agent/new` is one not sent yet, created by its first message.
         App.setChromeless(false);
@@ -5296,6 +5488,7 @@ const App = {
         if (App._inProfile) App._exitProfile();
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
+        if (App._inProfileProposals) App._exitProfileProposals();
             App.setChromeless(chromeless);
         // Stash the validated inner path where renderAppTab / the token
         // refresh read it. Set on EVERY pass (null when absent) so
@@ -5868,6 +6061,43 @@ const App = {
     try { window.UsernodeReact?.communityScope?.setScope(slug || null); } catch (_) { /* no bundle yet */ }
   },
 
+  // THE TAB FOLLOWS THE APP BESIDE IT. With the rail docked beside a running
+  // app (_railBesideApp), the Communities tab is on screen next to that app,
+  // and it read as the last project page left, often another app's: the
+  // whiteboard's tile beside the tier list. So opening an app makes the tab
+  // that app's community, and a press on it goes to that app's Workshop
+  // (resumeWorkshopView). A view already inside this app is kept, so the tab
+  // still returns to the card you were reading there. Its name and icon come
+  // from the record the app view opened with, filled in for a community the
+  // switcher's list does not hold (one you use but are not in).
+  _scopeToRunningApp() {
+    const slug = App.currentApp;
+    if (!slug || App.embeddedPanel) return;
+    let rec = null;
+    try {
+      rec = (typeof AppView !== 'undefined'
+        && ((AppView.appData?.slug === slug ? AppView.appData : null)
+          || AppView.launchRecordFor?.(slug))) || null;
+    } catch (_) { /* no record: the store keeps what it knows */ }
+    if (rec?.self_hosted) return;
+    if (App._readWorkshopView()?.slug !== slug) {
+      try {
+        localStorage.setItem(App._WORKSHOP_VIEW_KEY,
+          JSON.stringify({ slug, path: `/app/${encodeURIComponent(slug)}/workshop` }));
+      } catch (_) { /* the tab still shows it; the press keeps the old view */ }
+    }
+    if (rec?.name) {
+      try {
+        window.UsernodeReact?.communityScope?.describe?.(slug, {
+          name: rec.name,
+          iconUrl: rec.icon_url || undefined,
+          iconEmoji: rec.icon_emoji || undefined,
+        });
+      } catch (_) { /* no bundle yet */ }
+    }
+    App._publishCommunityScope(slug);
+  },
+
   _readWorkshopView() {
     try {
       const v = JSON.parse(localStorage.getItem(App._WORKSHOP_VIEW_KEY) || 'null');
@@ -6009,14 +6239,18 @@ const App = {
     // that settles which screen is showing, so it is where a step is
     // reported. Optional call: several suites run this method alone.
     App._reportNavigation?.(screen, inApp);
-    // …UNLESS THE VIEWER PINNED IT (#3319). Settings → Theme's "Keep sidebar
-    // open in apps" keeps the desktop rail docked beside a running app. Off
-    // by default, and desktop only: below 768px the bar is the phone's
-    // bottom bar, and an app keeps the whole screen there whatever is stored.
-    // `rail-pinned` on the body is what app.css keys the frame's own padding
-    // off (no gutter around somebody's program).
-    const railPinned = inApp && !App.embeddedPanel && App._railPinned() && !App._isPhoneLayout();
+    // …EXCEPT ON A DESKTOP, WHERE THE RAIL STAYS BESIDE IT. The rail is
+    // docked beside a running app by default now, and the header's corner is
+    // the sidebar toggle rather than a ✕ (_railBesideApp says when, and
+    // _backSlotFor agrees). Settings → Theme's "Keep sidebar open in apps"
+    // (#3319) switches it off for the old full-window app. Below 768px the
+    // bar is the phone's bottom bar, and an app keeps the whole screen there
+    // whatever is stored. `rail-pinned` on the body is what app.css keys the
+    // frame's own padding off (no gutter around somebody's program).
+    const railPinned = inApp && App._railBesideApp();
     document.body?.classList?.toggle('rail-pinned', railPinned);
+    // …and its Communities tab names this app's community (_scopeToRunningApp).
+    if (railPinned && !App.chromeless) App._scopeToRunningApp();
     App._watchRailBreakpoint();
     App.Visibility.publish(
       'platform-tabs',
@@ -6145,17 +6379,31 @@ const App = {
   // ── "Keep sidebar open in apps" (#3319) ─────────────────────────────
   //
   // A per-browser display preference, like the theme: localStorage, read at
-  // every _syncPlatformTabs. Every access is guarded — storage throws in a
-  // private window or with site data blocked, and that must read as "off",
-  // the old behaviour, never as a broken router.
+  // every _syncPlatformTabs. ON BY DEFAULT now: nothing stored keeps the rail
+  // beside a running app on the desktop, and '0' is the viewer switching it
+  // off. A '1' stored while it was opt-in still reads as on. Every access is
+  // guarded — storage throws in a private window or with site data blocked,
+  // and that must read as the default, never as a broken router.
   RAIL_PINNED_KEY: 'usernode:rail-pinned',
 
   _railPinned() {
     try {
-      return window.localStorage?.getItem(App.RAIL_PINNED_KEY) === '1';
+      return window.localStorage?.getItem(App.RAIL_PINNED_KEY) !== '0';
     } catch (_) {
-      return false;
+      return true;
     }
+  },
+
+  // Whether a running app has the rail docked beside it, and so the sidebar
+  // toggle in the header's corner where the ✕ was. One predicate, because
+  // the rail (_syncPlatformTabs) and the back slot (_backSlotFor) are two
+  // answers to it and have to agree. Desktop only: on a phone an app keeps
+  // the whole screen and its ✕. Never in the side panel's document, which
+  // draws no chrome. And not for a private member's first app, which has
+  // no way out but the mark menu's "Go to Homeroom" (_privateNoClose).
+  _railBesideApp() {
+    return !App.embeddedPanel && App._railPinned() && !App._isPhoneLayout()
+      && !App._privateNoClose();
   },
 
   // Written by the Settings switch (features/settings/sections/theme.tsx),
@@ -6163,15 +6411,26 @@ const App = {
   // the moment the viewer goes back to it.
   setRailPinned(on) {
     try {
-      if (on) window.localStorage?.setItem(App.RAIL_PINNED_KEY, '1');
-      else window.localStorage?.removeItem(App.RAIL_PINNED_KEY);
+      if (on) window.localStorage?.removeItem(App.RAIL_PINNED_KEY);
+      else window.localStorage?.setItem(App.RAIL_PINNED_KEY, '0');
     } catch (_) { /* unwritable storage: the switch simply does not stick */ }
+    App._resyncRailBesideApp();
+  },
+
+  // Re-decide the rail, and with it a running app's corner: the toggle where
+  // the rail stays, the ✕ where the app takes the window. The back slot is
+  // otherwise published only on a screen swap or a tab switch, and neither
+  // happens when the switch is flipped or the window crosses 768px.
+  _resyncRailBesideApp() {
     App._syncPlatformTabs();
+    if (App._revealedScreen === 'app-view' && App.currentTab === 'app') {
+      App.setBackIcon(...App._backSlotFor('app-view'));
+    }
   },
 
   // A window resized across 768px inside an app changes the answer above
-  // (a pinned rail on the desktop, the full-screen app on a phone), so the
-  // breakpoint re-decides too. Installed once, lazily, where it is needed.
+  // (the rail beside it on the desktop, the full-screen app on a phone), so
+  // the breakpoint re-decides too. Installed once, lazily, where it is needed.
   _railBreakpointWatched: false,
   _watchRailBreakpoint() {
     if (App._railBreakpointWatched) return;
@@ -6179,7 +6438,7 @@ const App = {
     try {
       const mql = window.matchMedia?.('(min-width: 768px)');
       mql?.addEventListener?.('change', () => {
-        if (App._railPinned()) App._syncPlatformTabs();
+        if (App._railPinned()) App._resyncRailBesideApp();
       });
     } catch (_) { /* no matchMedia: nothing to watch */ }
   },
@@ -6726,24 +6985,29 @@ const App = {
       Kudos sub-views (#leaderboard/prs, /users, /history) fell through to
       "Leaderboard". It is one entry per ADDRESS now, each the label of the
       tab that address shows (frontend/src/features/leaderboard/index.tsx's
-      SECTION_TABS); `seasons` is the History tab. And it is no longer only
+      SECTION_TABS). And it is no longer only
       the ENTRY's title: a tab press rewrites the address with replaceState
       and never comes back through here, so Leaderboard._syncTitle asks this
       same method on every section change. One table, both paths.
   */
+  // Message ids: the table is read before the language runtime exists, and
+  // _leaderboardTitle reads the words when it names the screen.
+  // The Kudos addresses that land on Challenges while kudos is parked
+  // (#5249, the #leaderboard branch of restoreFromHash).
+  PARKED_KUDOS_SUBS: ['kudos', 'prs', 'users', 'history'],
+
   LEADERBOARD_TITLES: {
-    challenges: 'Challenges',
-    kudos: 'Kudos',
-    prs: 'Kudos',
-    users: 'Kudos',
-    history: 'Kudos',
-    topochain: 'Standings',
-    seasons: 'History',
+    challenges: 'shell:title.leaderboard.challenges',
+    kudos: 'shell:title.leaderboard.kudos',
+    prs: 'shell:title.leaderboard.kudos',
+    users: 'shell:title.leaderboard.kudos',
+    history: 'shell:title.leaderboard.kudos',
+    topochain: 'shell:title.leaderboard.standings',
   },
 
   _leaderboardTitle(sub, profileUser) {
     if (profileUser) return `@${profileUser}`;
-    return App.LEADERBOARD_TITLES[sub || 'challenges'] || 'Challenges';
+    return PlatformI18n.t(App.LEADERBOARD_TITLES[sub || 'challenges'] || 'shell:title.leaderboard.challenges');
   },
 
   _routeLeaderboard(sub, profileUser, challengeTarget) {
@@ -6756,8 +7020,7 @@ const App = {
       Leaderboard.openProfile(profileUser);
     } else if (!sub && window.Leaderboard?._setSection) {
       Leaderboard._setSection('challenges');
-    } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges'
-                || sub === 'seasons')
+    } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges')
                && window.Leaderboard?._setSection) {
       // Register the challenge deep link BEFORE the section mounts (#982).
       // Selecting the event first means the pane's very first fetch is
@@ -6826,7 +7089,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('profile-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle(username ? `@${username}` : 'Profile');
+      App.setHeaderTitle(username ? `@${username}` : PlatformI18n.t('shell:title.profile'));
       // NOTHING IN THE LEFT SLOT. Me is a tab root: the bar is on screen
       // beside it, so a control in the corner that goes home is a second way
       // to press a button already in view.
@@ -6850,7 +7113,7 @@ const App = {
   // not a new screen entry. Keep it out of the global transition gate so
   // drawer navigation still has exactly one transition per screen entry.
   _routeMountedProfile(username) {
-    App.setHeaderTitle(username ? `@${username}` : 'Profile');
+    App.setHeaderTitle(username ? `@${username}` : PlatformI18n.t('shell:title.profile'));
     if (window.Profile?.open) Profile.open(username);
   },
 
@@ -6878,13 +7141,19 @@ const App = {
     'your-requests': 'requests',
     'your-votes': 'votes',
   },
+  // Message ids, read when the screen is named.
   PROFILE_WORK_TITLES: {
-    changes: 'Your changes', requests: 'Your requests', votes: 'Your votes',
+    changes: 'shell:title.yourChanges', requests: 'shell:title.yourRequests', votes: 'shell:title.yourVotes',
   },
 
   navigateToProfileProposals(kind = 'changes') {
     const view = App.PROFILE_WORK_TITLES[kind] ? kind : 'changes';
-    if (App._inProfileProposals && window.UsernodeReact?.profileProposals?.isOpen?.(view)) {
+    // The guard stops only the duplicate dispatch (popstate + hashchange in
+    // one tick, #979): the same view re-entered while it is on screen with
+    // no app open. Opening an app from a row leaves both flags set, so a
+    // return trip must take the full entry below and read the list again
+    // (#5454) — navigateToWorkshop documents the same trap.
+    if (App._inProfileProposals && !App.currentApp && window.UsernodeReact?.profileProposals?.isOpen?.(view)) {
       return;
     }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
@@ -6906,7 +7175,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('profile-proposals-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle(App.PROFILE_WORK_TITLES[view]);
+      App.setHeaderTitle(PlatformI18n.t(App.PROFILE_WORK_TITLES[view]));
     }, { type: App._entryTransition(switching || fromIframe ? 'none' : 'push', screen) });
   },
 
@@ -6955,7 +7224,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('browse-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('All apps');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.allApps'));
       // Browse owns the header title / back icon for whichever level the
       // slug selected, so its sync runs after setHeaderTitle above.
       if (window.Browse?.syncChrome) Browse.syncChrome();
@@ -7021,7 +7290,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('workshop-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('Communities');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.communities'));
       // Nothing in the left slot: the Workshop is a tab root, and its tab is
       // on screen beside it. _showOnlyScreen publishes that from App._BACK_SLOT
       // — see the table for why a root shows no glyph at all.
@@ -7312,7 +7581,9 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('admin-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle(publicMode ? 'Platform status' : 'Admin & moderation');
+      App.setHeaderTitle(publicMode
+        ? PlatformI18n.t('shell:title.platformStatus')
+        : PlatformI18n.t('shell:title.admin'));
       if (window.AdminConsole?.syncChrome) AdminConsole.syncChrome();
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
@@ -7363,7 +7634,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('settings-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('Settings');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.settings'));
       // Runs after app.js's own setHeaderTitle, so on a mobile deep link
       // the header ends up showing the section's name rather than
       // "Settings".
@@ -7422,7 +7693,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('messages-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('Messages');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.messages'));
       messages?.syncChrome?.();
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
@@ -7477,6 +7748,25 @@ const App = {
   // The value is taken out of the address once handed over, so a reload,
   // Back, or the first message giving an unsent conversation its own address
   // does not open the sheet again. Any other value is ignored.
+  // ON A PHONE AN AGENT CHAT AND AN AGENT SESSION ARE MESSAGES' (the inbox's
+  // drawer, features/nav-drawer/messages-drawer.ts; Evan, 18 Oct 2026): the
+  // list sits beside them and a swipe goes back to it. So their own screens'
+  // addresses, `#chat/<id>`, `#agent/<id>` and `#agent/new`, are swapped in
+  // place for the inbox's (`#messages/agent/…`), the fragment's query (a
+  // `?flow=`) kept, and routed in this same pass, as the inbox's own
+  // addresses were swapped the other way before. A bare `#chat` (resume the
+  // latest), `#agent/<id>/changes` (the changes drawer, which the inbox does
+  // not carry), a wide window and the side panel's own document keep the
+  // screens. Returns whether it took the address.
+  _agentToInbox(address, fragQuery) {
+    if (App.embeddedPanel || window.matchMedia('(min-width: 768px)').matches) return false;
+    try {
+      history.replaceState(null, '', App._rootUrl(`${address}${fragQuery ? `?${fragQuery}` : ''}`));
+    } catch (_) { return false; }
+    App.restoreFromHash();
+    return true;
+  },
+
   _takeAgentFlow(hash, fragQuery) {
     const read = (query) => {
       try { return new URLSearchParams(query || '').get('flow'); } catch (_) { return null; }
@@ -7534,7 +7824,7 @@ const App = {
       App._showOnlyScreen('global-chat-screen');
       App._enterScreenChrome();
       if (typeof Home !== 'undefined') Home.publishImproveTarget();
-      App.setHeaderTitle('Chat');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.chat'));
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
@@ -7607,7 +7897,7 @@ const App = {
       App._showOnlyScreen('agent-session-screen');
       App._enterScreenChrome();
       if (typeof Home !== 'undefined') Home.publishImproveTarget();
-      App.setHeaderTitle('Agent session');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.agentSession'));
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
@@ -8087,6 +8377,21 @@ const App = {
       // own Workshop (`App.currentTab` is committed above) the bar stays up
       // and so does the handle — that is a platform screen, not the app.
       App._syncPlatformTabs('app-view');
+      // THE APP YOU TAPPED, NAMED FROM THE FIRST FRAME (polish board #9). The
+      // header kept the screen you left ("Homeroom", a blank tile) for the
+      // whole zoom, until the app's own record answered. The launcher's
+      // cached record already has its name and icon, the ones the tile
+      // showed, so the header says them as the view is revealed (here, not
+      // before the transition: #979); the read below confirms them, or says
+      // the app is not available. The App tab only: a Dev view names itself.
+      if (initialRoute.tab === 'app') {
+        let named = null;
+        try { named = AppView.launchRecordFor?.(slug) || null; } catch (_) { named = null; }
+        if (named && named.name && !named.self_hosted) {
+          App.setHeaderTitle(named.name);
+          App.ImproveStatus.setPendingApp(named);
+        }
+      }
       // Best-effort: returns false (and changes nothing) for anything whose
       // App tab wouldn't be a plain production iframe — self-hosted apps,
       // demo cards, non-running apps, an explicit non-app tab, offline.
@@ -8111,7 +8416,8 @@ const App = {
       enter();
     };
     if (!viaTab) reveal();
-    // Intentionally NOT setting the header to `slug` here. Slugs are
+    // Intentionally NOT setting the header to `slug` here (the launcher's
+    // record names it above when it has the app; polish board #9). Slugs are
     // generated as `${name}-${randomHex}` (see routes/apps.js), so a
     // slug-as-placeholder shows up to users as something like
     // "whiteboard-abc123" — which the Flutter WebView's AppBar then
@@ -8177,7 +8483,7 @@ const App = {
     if (AppView.appData?.slug === slug && AppView.appData.name && App.currentTab !== 'dev') {
       App.setHeaderTitle(AppView.appData.name);
     } else if (!AppView.appData) {
-      App.setHeaderTitle('App not available');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.appNotAvailable'));
     }
 
     // "View on GitHub" and "Share app" were drawer rows revealed by hand
@@ -8453,6 +8759,11 @@ const App = {
       // an invite link landed them in is where they are, and the mark menu's
       // "Go to Homeroom" is the way on (_privateNoClose).
       if (App._privateNoClose()) return ['none'];
+      // ON A DESKTOP THE RAIL STAYS BESIDE THE APP, and the corner is the
+      // sidebar toggle instead of a ✕: the rail's tabs are the way out, as
+      // they are from every other screen. _syncPlatformTabs asks the same
+      // predicate, so the ✕ and the rail never show together.
+      if (App._railBesideApp()) return ['none'];
       // The ✕'s DESTINATION is the page the app was opened from (App.closeApp
       // traverses back to it; this is the href a modified click follows), and
       // Home when there is none. The table holds the glyph; this holds the
@@ -8767,10 +9078,10 @@ const App = {
       // the default for everything that was not Home, and the reset was
       // written before an app had a slot of its own. Its href is where
       // App.closeApp goes: the page the app was opened from. A private
-      // member's first app has none: the table's own answer for it, so the
-      // two writers agree (_backSlotFor, _privateNoClose).
-      if (App._privateNoClose()) App.setBackIcon(...App._backSlotFor('app-view'));
-      else App.setBackIcon('close', App._closeAppHref());
+      // member's first app has none, and a desktop with the rail beside the
+      // app has the sidebar toggle instead: the table's own answers, so the
+      // two writers agree (_backSlotFor, _privateNoClose, _railBesideApp).
+      App.setBackIcon(...App._backSlotFor('app-view'));
       AppView.renderAppTab();
       if (opening && AppView.appData?.slug === App.currentApp
           && App._isScreenVisible?.('app-view')) {
@@ -8835,20 +9146,26 @@ const App = {
   // THE SIDE PANEL, asked by openAppTab before it navigates
   // (frontend/src/features/side-panel/). Undefined lets openAppTab go on
   // exactly as before; anything else is what openAppTab returns.
-  //   - In the TOP document, while an app runs on its App tab, a Workshop
-  //     page — a proposal, an issue, a change, the discussion — that a
+  //   - In the TOP document, while an app runs on its App tab, a piece of
+  //     an app's work — a proposal, an issue, a change — that a
   //     notification, a desktop alert or any other caller opens goes to a
   //     panel BESIDE the app instead of replacing it (true). `take` says no
   //     whenever that is not the moment: a phone-width window, no app on
-  //     screen, chromeless.
-  //   - In the panel's OWN document a Workshop page opens right here, and an
-  //     App tab is the running app's, beside the panel (false).
+  //     screen, chromeless — and to a community's page at any moment
+  //     (side-panel/routes.ts): it replaces the app, full screen.
+  //   - In the panel's OWN document a piece of work opens right here, a
+  //     community's page goes to the top window (full screen, leaving the
+  //     app), and an App tab is the running app's, beside the panel (false).
   _openAppTabInPanel(slug, tab, opts) {
     const ref = opts && opts.sessionId != null ? opts.sessionId
       : (opts && opts.ref != null ? opts.ref : null);
     const subTab = (opts && opts.subTab) || null;
     if (App.embeddedPanel) {
-      if (App._normalizeTab(tab, ref, subTab).tab !== 'app') return undefined;
+      if (App._normalizeTab(tab, ref, subTab).tab !== 'app') {
+        const route = App._panelRouteFor(slug, tab, ref, subTab);
+        if (route && window.UsernodeReact?.sidePanelEmbed?.forward?.(route)) return false;
+        return undefined;
+      }
       App._forwardAppTab(slug, 'app');
       return false;
     }
@@ -8971,7 +9288,14 @@ App._applyBootScreen = function _applyBootScreen() {
   // that carries it is installed by the bundle, which has not evaluated yet,
   // and lighting a tab before hydration would be a first render that
   // disagrees with the prerender.
-  if (target === 'app-view' || target.startsWith('auth-')) {
+  //
+  // …EXCEPT AN APP ON A DESKTOP, whose rail stays beside it
+  // (_railBesideApp): hiding it here would only have the router bring it
+  // back, sliding the app a rail's width right under the reader. A private
+  // member's first app is the one desktop app without it; App.user is not
+  // known yet, so theirs is taken away by the router instead.
+  const railStays = target === 'app-view' && App._railBesideApp();
+  if ((target === 'app-view' && !railStays) || target.startsWith('auth-')) {
     App.Visibility.publish('platform-tabs', false);
   }
 };
@@ -9017,19 +9341,22 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
 
   // The anonymous shell owns the whole document when there is no session, so
   // it outranks the route — and the four cases below are restoreFromHash's
-  // own, in its order. The last one is the easy one to get wrong: a signed-out
-  // DEEP LINK does not land on the marketing page, it lands on LOGIN, with the
-  // address remembered for after ("'/' → landing, deeper paths → login", which
-  // is the parity with the old static documents the router notes).
+  // own, in its order. A signed-out DEEP LINK lands on the landing screen,
+  // which opens its sign-in sheet over it, titled for the place the link
+  // names, with the address remembered for after (AuthScreens.showSignInFor,
+  // #5264). It used to land on the full-page sign-in form.
   if (!signedIn) {
-    if (head === 'login' || head === 'signup') return 'auth-login-screen';
+    if (head === 'login' || head === 'signup' || head === 'reset-password') return 'auth-login-screen';
     if (head === 'register') return 'auth-register-screen';
-    if (head === 'waitlist') return 'auth-waitlist-screen';
-    // No route at all, and 'waiting' — which the router redirects to landing
-    // for a viewer with no session to be waiting on. `appPath` is why this
-    // asks about the ROUTE and not the fragment.
-    if ((head === '' && !appPath) || head === 'waiting') return 'auth-landing-screen';
-    return 'auth-login-screen';
+    // Check your status (`#waitlist?confirm=1`) is the waitlist screen; a
+    // bare #waitlist opens Continue on the landing (#5261).
+    if (head === 'waitlist' || head.startsWith('waitlist?')) {
+      return /[?&]confirm=1(?:&|$)/.test(head) ? 'auth-waitlist-screen' : 'auth-landing-screen';
+    }
+    // Everything else is the landing: no route at all, 'waiting' (which the
+    // router redirects to landing for a viewer with no session to be waiting
+    // on), and a deep link, an app path included, under its sign-in sheet.
+    return 'auth-landing-screen';
   }
 
   if (head === 'app' || appPath) return 'app-view';
@@ -9061,3 +9388,10 @@ try {
 } catch (err) { /* no usable DOM — the router still routes, one paint later */ }
 
 document.addEventListener('DOMContentLoaded', () => App.init());
+
+// The platform version at the foot of the side menu is painted from the last
+// /api/version answer, so it is painted again when the language changes.
+// (A `?shot=` pose owns the row while it is up, as in the poll.)
+document.addEventListener('homeroom:language-changed', () => {
+  if (App._lastVersionInfo && !App._platformUpdateShot) App.renderPlatformVersionPill(App._lastVersionInfo);
+});

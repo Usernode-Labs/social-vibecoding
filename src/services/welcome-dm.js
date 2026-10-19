@@ -13,7 +13,8 @@
  * row on that false → true edge, while the switch is on. So a path added
  * later is covered without anybody remembering this file.
  *
- * The leader's sweep (server.js becomeLeader) turns each row into:
+ * The welcome-dm clock's sweep (src/workflow/clock/services.ts) turns each
+ * row into:
  *   1. the group — everyone a `member` from the start, because an invited
  *      member sees no messages until they accept, and a welcome nobody can
  *      read until they say yes to it is not a welcome. The group's id is
@@ -73,10 +74,6 @@ const RECENT_LIMIT = 20;
 const SEARCH_LIMIT = 8;
 
 const INTERVAL_MS = 30_000;
-const FIRST_SWEEP_DELAY_MS = 20_000;
-
-let timer = null;
-let running = false;
 
 function parseMemberIds(raw) {
   try {
@@ -417,7 +414,12 @@ async function processOne(pool, userId, settings) {
   return 'sent';
 }
 
-/** One pass over the queue. Does nothing while the switch is off. */
+/**
+ * One pass over the queue: the `welcome-dm` clock (src/workflow/clock/services.ts).
+ * Does nothing while the switch is off. Each row is claimed under its lock
+ * with the group it made, and the message carries an idempotency key, so two
+ * passes at once welcome nobody twice.
+ */
 async function sweep(pool) {
   const result = { sent: 0, skipped: 0, failed: 0, retry: 0 };
   const settings = await readSettings(pool);
@@ -449,34 +451,7 @@ async function sweep(pool) {
   return result;
 }
 
-function start(config) {
-  if (timer) return;
-  const { getPool } = require('../db/pool');
-  const run = async () => {
-    if (running) return;
-    running = true;
-    try {
-      const result = await sweep(getPool(config));
-      if (result.sent || result.failed) log.info('welcome-dm', 'Welcome messages sent', result);
-    } catch (err) {
-      log.error('welcome-dm', 'Sweep failed', { err: err.message });
-    } finally {
-      running = false;
-    }
-  };
-  setTimeout(run, FIRST_SWEEP_DELAY_MS).unref?.();
-  timer = setInterval(run, INTERVAL_MS);
-  if (typeof timer.unref === 'function') timer.unref();
-}
-
-function stop() {
-  if (timer) clearInterval(timer);
-  timer = null;
-}
-
 module.exports = {
-  start,
-  stop,
   sweep,
   processOne,
   readSettings,

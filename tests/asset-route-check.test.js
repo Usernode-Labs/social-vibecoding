@@ -296,15 +296,17 @@ test('a blocking asset-route failure fails the run', () => {
   assert.equal(out.state, 'failing');
 });
 
-test('settlement probes, carries the row, and records it in check history', () => {
+test('settlement probes, carries the row, and returns it in the check history rows', () => {
   // Source pin: the settlement half is shared with the harvester, so the
   // wiring has to live in settleCaptureRun rather than beside the launch.
+  // The settlement stores nothing; the machine records its history rows.
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'visuals.js'), 'utf8');
   const body = src.slice(src.indexOf('async function settleCaptureRun('));
   assert.match(body, /const assetOutcome = shotsOnly \? null : await assetRouteCheck\.maybeRunAssetRouteCheck\(\{/);
   assert.match(body, /if \(assetOutcome\) extraRows\.push\(assetOutcome\.row\);/);
-  assert.match(body, /\(dispatched \|\| unitOutcome \|\| assetOutcome \|\| renderOutcome\) && checksResult\.state !== 'error'/);
-  assert.match(body, /if \(assetOutcome\) historyRows\.push\(assetOutcome\.history\);/);
+  assert.match(body, /history: checksResult\.state === 'error' \? \[\]\s*: historyRowsOf\(checksResult, \{[^}]*\bassetOutcome\b[^}]*\}\)/);
+  const rowsOf = src.slice(src.indexOf('function historyRowsOf('));
+  assert.match(rowsOf, /if \(assetOutcome\) rows\.push\(assetOutcome\.history\);/);
 });
 
 test('its synthetic index does not collide with the other synthetic rows', () => {

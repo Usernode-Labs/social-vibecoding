@@ -42,6 +42,7 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const { renderComponent } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const COMPOSER = 'frontend/src/features/group-chat/composer.tsx';
 const gcJs = read('public/js/group-chat.js');
@@ -148,8 +149,18 @@ test('the module publishes the staged reply to both scopes, and no longer paints
   assert.match(fn[1], /_publishComposer\('thread', \{ quote: !scope \|\| scope === 'thread' \? view : null \}\)/);
   // The label the sources produce: a PR number, an @author, or what an
   // authorless row is (#2391).
-  assert.match(fn[1], /`PR #\$\{q\.prNumber \|\| ''\}`\.trim\(\)/);
-  assert.match(fn[1], /q\.author \? `@\$\{q\.author\}` : \(q\.source === 'event' \? 'a platform message' : 'a message'\)/);
+  assert.match(fn[1], /q\.prNumber \? PlatformI18n\.t\('chat:group\.quote\.pr', \{ number: q\.prNumber \}\) : PlatformI18n\.t\('chat:group\.quote\.prUnnumbered'\)/);
+  assert.equal(message('chat:group.quote.pr', { number: 12 }), 'PR #12');
+  assert.equal(message('chat:group.quote.prUnnumbered'), 'PR #');
+  assert.match(fn[1], /pr: q\.source === 'pr' \? String\(q\.prNumber \|\| ''\) : null,/, 'a pull request is not passed as a name');
+  assert.match(fn[1], /q\.author \? `@\$\{q\.author\}` : ''/);
+  // An authorless row has a sentence of its own: the module says which, and
+  // the strip reads it from the catalog.
+  assert.match(fn[1], /unnamed: q\.source === 'pr' \? null\s*: q\.authorMissing && q\.author \? q\.authorMissing\s*: q\.author \? null : \(q\.source === 'event' \? 'event' : 'message'\)/);
+  assert.match(slots('general', { quote: { label: '', unnamed: 'event', snippet: 'x' } }), />↩ Replying to a platform message<\/span>/);
+  assert.match(slots('general', { quote: { label: '', unnamed: 'message', snippet: 'x' } }), />↩ Replying to a message<\/span>/);
+  assert.equal(message('chat:group.composer.replyingToPlatform'), '↩ Replying to a platform message');
+  assert.equal(message('chat:group.composer.replyingToMessage'), '↩ Replying to a message');
 });
 
 test('the attach error line hides itself when there is nothing to say', () => {
@@ -223,9 +234,12 @@ test('the status line is one slot with two owners, and both publish', () => {
   assert.doesNotMatch(fn[1], /getElementById|textContent/);
   // Connection state still WINS over typing when the socket is down: it is
   // the actionable one, and a typing notice from a stale state misleads.
-  assert.match(fn[1], /Reconnecting… \(\$\{queued\} queued\)/);
+  assert.match(fn[1], /queued > 0 \? PlatformI18n\.t\('chat:group\.status\.reconnectingQueued', \{ count: queued \}\) : PlatformI18n\.t\('chat:group\.status\.reconnecting'\)/);
+  assert.equal(message('chat:group.status.reconnectingQueued', { count: 2 }), 'Reconnecting… (2 queued)');
+  assert.equal(message('chat:group.status.reconnecting'), 'Reconnecting…');
   assert.match(fn[1], /_publishComposer\('general'/);
-  assert.match(code, /_publishComposer\('thread', \{ status: `\$\{username\} is typing\.\.\.` \}\)/);
+  assert.match(code, /_publishComposer\('thread', \{ status: PlatformI18n\.t\('chat:group\.typing\.one', \{ name: username \}\) \}\)/);
+  assert.equal(message('chat:group.typing.one', { name: 'bob' }), 'bob is typing...');
 });
 
 test('removing an upload goes back through the module, by index', () => {

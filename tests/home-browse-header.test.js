@@ -20,6 +20,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 const APP = read('public/js/app.js');
@@ -29,7 +30,7 @@ const initialBack = { ...ui.backButtonStore.get() };
 const initialTitle = { ...ui.headerTitleStore.get() };
 const initialImprove = { ...ui.improveStore.get() };
 
-function harness({ improveAvailable = true } = {}) {
+function harness({ improveAvailable = true, phone = false } = {}) {
   ui.backButtonStore.set(initialBack);
   ui.headerTitleStore.set(initialTitle);
   // Target availability is held steady, as it is on these two platform
@@ -59,6 +60,8 @@ function harness({ improveAvailable = true } = {}) {
     localStorage: { getItem: () => null, setItem() {} },
     document: { getElementById: node, querySelector: () => null, querySelectorAll: () => [], addEventListener() {} },
     addEventListener() {},
+    // A desktop unless `phone` (no matchMedia reads as the desktop).
+    ...(phone ? { matchMedia: () => ({ matches: false, addEventListener() {} }) } : {}),
     PlatformUI: { transition: (fn, options) => transitions.push({ fn, options }) },
     Home: { _apps: [{ slug: 'notes', name: 'Notes' }], load() {}, publishImproveTarget() {} },
     AppView: { close() {}, _teardownDevRoots() {}, _unmountAppFrame() {}, _retireAppFrame() {} },
@@ -74,6 +77,7 @@ function harness({ improveAvailable = true } = {}) {
     },
   };
   sandbox.window = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(APP, sandbox);
   vm.runInContext(BROWSE, sandbox);
@@ -184,7 +188,7 @@ for (const improveAvailable of [true, false]) {
     assert.doesNotMatch(label(home), /Homeroom/,
       'and draws it INSTEAD of the word, not beside it');
     assert.equal(label(browse),
-      '<span id="header-title-name" class="min-w-0 truncate">All apps</span>',
+      '<span id="header-title-name" class="min-w-0 truncate">Discover</span>',
       'Browse names the destination in words, in the same slot');
     // Two writers own this transition — the screen reveal and Browse's own
     // chrome sync — and the LATER one wins, so they have to AGREE or one
@@ -349,12 +353,19 @@ test('a tab root shows nothing; a sub-page shows an arrow to its tab', () => {
     assert.equal(ui.backButtonStore.get().mode, 'arrow', `${screen} has a level above`);
     assert.equal(ui.backButtonStore.get().href, href, `${screen} goes up to its tab`);
   }
-  // …and the app view gets the ✕ instead (#2718), which is the same
-  // guarantee in a different glyph: leaving somebody else's program is not
-  // going up a level, so the slot says "step out" rather than "go up".
-  h.App._showOnlyScreen('browse-screen');
-  h.App._showOnlyScreen('app-view');
+  // …and on a phone the app view gets the ✕ instead (#2718), which is the
+  // same guarantee in a different glyph: leaving somebody else's program is
+  // not going up a level, so the slot says "step out" rather than "go up".
+  const phone = harness({ phone: true });
+  phone.App._showOnlyScreen('browse-screen');
+  phone.App._showOnlyScreen('app-view');
   assert.equal(ui.backButtonStore.get().mode, 'close', 'an app view offers the way out');
+  // On a desktop the rail stays beside the app and is the way out, as on a
+  // root: the corner is empty for the sidebar toggle.
+  const desktop = harness();
+  desktop.App._showOnlyScreen('browse-screen');
+  desktop.App._showOnlyScreen('app-view');
+  assert.equal(ui.backButtonStore.get().mode, 'none', 'the rail beside the app is the way out');
 });
 
 test('Home and Discover are reachable from the bar, on every platform screen', () => {
@@ -367,7 +378,8 @@ test('Home and Discover are reachable from the bar, on every platform screen', (
   assert.match(bar, /key: 'home' as const[\s\S]{0,400}href: '\/'/);
   // A press on the tab says so, and swaps like any other tab's (#2881).
   assert.match(bar, /\.App\?\.navigateHome\?\.\(\{ viaTab: true \}\)/);
-  assert.match(bar, /key: 'discover' as const, label: 'Discover', href: '#apps'/);
+  assert.match(bar, /key: 'discover' as const, label: 'core:tabs\.discover', href: '#apps'/);
+  assert.equal(message('core:tabs.discover'), 'Discover');
   // …and the menu they left carries no platform destination at all.
   const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.doesNotMatch(menu, /id="switcher-row-/);

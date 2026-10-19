@@ -6,11 +6,13 @@
 
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type {
-  Check, DomainWrite, Event, Json, Machine, Notification, Outcome, Push, TransitionContext, Tx, WorkRequest,
+  Check, DomainWrite, Event, Json, Machine, Outcome, Push, TransitionContext, Tx, WorkRequest,
   WorkResultPayload, WriteContext,
 } from '../kernel/index.ts';
-import { legacy } from '../legacy.ts';
-import { appUpdate, chatLine, issueUpdate as issuePush } from '../pushes.ts';
+import { applyProposal } from '../rules/illustrations.ts';
+import { decrypt, encrypt } from '../rules/secrets.ts';
+import { deleteValue, setValue } from '../rules/platform-vars.ts';
+import { appUpdate, boardMoved, chatLine, issuesClosed, issueUpdate as issuePush } from '../pushes.ts';
 import { GOVERNANCE_KINDS, readFacts } from './facts.ts';
 import type { Facts, Issue } from './facts.ts';
 import { evaluate, nextCheck, withVote } from './gate.ts';
@@ -31,7 +33,7 @@ interface OpenData {
   targetCheckedAt: string | null;
   // The gate passed (or an admin applied) and the target check decides:
   // admin null is the group vote.
-  applyAfterCheck?: { admin: string | null } | null;
+  applyAfterCheck?: { admin: string | null; adminId?: number | null } | null;
 }
 interface ClosedData {
   issueId: number;
@@ -74,18 +76,33 @@ const EVENTS = {
     if (typeof p?.workKey !== 'string' || !p.workKey) throw new Error('workKey is required');
     return { workKey: p.workKey as string };
   },
+  // app-delivery's answer to a secret change's redeploy (its request stays
+  // open there after a failure, so a later deploy still answers Delivered).
+  Delivered: (p: any) => ({ sha: typeof p?.sha === 'string' ? p.sha : null }),
+  DeliveryFailed: (p: any) => ({ message: typeof p?.message === 'string' && p.message ? p.message : 'the deploy failed' }),
 };
+
+const DELIVERY = 'app-delivery';
+// A message from a merge's follow-ups (merge-followups' issues.closeAfterMerge result).
+const fromMerge = (e: Event<any>) => e.source.kind === 'message' && e.source.from.machine === 'merge-followups';
+// A secret change's redeploy, asked of app-delivery: recorded as a
+// follow-up of this kind, answered by message rather than by a work result.
+const DELIVERY_FOLLOWUP = 'app-delivery';
+// The rebuild a secret change ran itself before every deploy was
+// app-delivery's: no item of it is left to run, and a follow-up of it in an
+// old record is asked again of app-delivery.
+const OWN_REBUILD = 'app.rebuildProduction';
+// The follow-up kinds a retry can queue: those with a handler (services.ts).
+const RETRYABLE_WORK: ReadonlySet<string> = new Set(['github.closeIssue', 'governance.checkTarget', 'bot.requestsClosed']);
+const deliveryRequest = (appId: number) => ({
+  to: { machine: DELIVERY, key: `app:${appId}` }, event: { type: 'DeployRequested', payload: { appId, reason: 'secret_change' } },
+});
 
 export interface MachineDeps {
   dataKey: string;               // config.dataEncryptionKey, to check a secret decrypts
   backstopMs?: number;           // re-evaluate an open proposal at least this often
   targetCheckMs?: number;        // how often an open close proposal checks its target on GitHub
-  // One implementation per NOTIFIERS entry: post-commit kicks into flows not
-  // migrated yet. What browsers hear is a push, published with the transition.
-  notifiers: Record<string, (n: any) => void | Promise<void>>;
 }
-
-export const NOTIFIERS = ['boardChange', 'scoreVote', 'startCampaign'] as const;
 
 // ── Copy ────────────────────────────────────────────────────────────────
 
@@ -140,38 +157,38 @@ const chat = (event: Event<any>, issue: Issue, content: string, thread: { type: 
 const governanceThread = (issue: Issue) => ({ type: 'governance', ref: issue.id });
 const issueUpdate = (issue: Issue, action: string, extra: Record<string, Json> = {}): Push =>
   issuePush({ action, appId: issue.appId, appSlug: issue.app.slug, issueId: issue.id, ...extra });
-// A request board changed: the Workshop re-places its cards (the kick
-// ws.pushIssueUpdate gave its in-process listeners; services/workshop-themes.js).
-const boardChange = (appId: number | null, appSlug: string | null): Notification => ({ type: 'boardChange', appId, appSlug });
 
 // The thread lines an outcome writes push themselves (the chat and vote
 // writes), with the rows they inserted.
-interface Extra { writes?: DomainWrite[]; push?: Push[]; notify?: Notification[] }
+interface Extra { writes?: DomainWrite[]; push?: Push[] }
 
 function close(
   name: Closed, issue: Issue, event: Event<any>, ctx: TransitionContext,
-  audit: Record<string, Json>, extra: Extra & { work?: WorkRequest[] },
+  audit: Record<string, Json>, extra: Extra & { work?: WorkRequest[]; asked?: { key: string; input: Json }[] },
 ): Outcome<GovState> {
   const work = [...(extra.work || [])];
+  const asked = extra.asked || [];
   // The proposal's own GitHub twin (only legacy renames have one) closes with it.
   if (issue.githubIssueNumber && issue.app.repo) {
     work.push({ kind: 'github.closeIssue', key: 'twin', input: { ...issue.app.repo, number: issue.githubIssueNumber, comment: null } });
   }
   const followups: Record<string, Followup> = {};
   for (const w of work) followups[w.key] = { kind: w.kind, input: w.input, status: 'pending' };
+  for (const a of asked) followups[a.key] = { kind: DELIVERY_FOLLOWUP, input: a.input, status: 'pending' };
   return {
     next: { name, data: { issueId: issue.id, kind: issue.kind, audit, followups } },
     writes: extra.writes,
     work,
+    messages: asked.length ? [deliveryRequest(issue.appId)] : undefined,
     timer: null,
-    push: [...(extra.push || []), issueUpdate(issue, 'closed')],
-    notify: [...(extra.notify || []), boardChange(issue.appId, issue.app.slug)],
+    // A request board changed: the Workshop re-places its cards.
+    push: [...(extra.push || []), boardMoved(issueUpdate(issue, 'closed'))],
   };
 }
 
 function apply(
   issue: Issue, event: Event<any>, ctx: TransitionContext, e: Evaluation, refusal: string | null,
-  by: { admin: string } | null, extra: Extra,
+  by: { admin: string; adminId?: number | null } | null, extra: Extra,
 ): Outcome<GovState> {
   const at = ctx.now.toISOString();
   const tally = { upCount: e.yes, required: by ? e.yes : e.required, active: e.active };
@@ -187,11 +204,11 @@ function apply(
   const line = appliedLine(issue, how, campaignTitle);
   // The row is locked since the facts read it: its payload is current.
   writes.push({ type: 'apply', kind: issue.kind, issueId: issue.id, appId: issue.appId, selfHosted: issue.app.selfHosted,
-    authorId: issue.createdBy, payload: issue.payload, campaignTitle, admin: by?.admin || null });
+    authorId: issue.createdBy, payload: issue.payload, campaignTitle, admin: by?.admin || null, adminId: by?.adminId ?? null });
   writes.push(chat(event, issue, line, governanceThread(issue)));
   const work: WorkRequest[] = [];
+  const asked: { key: string; input: Json }[] = [];
   const push: Push[] = [...(extra.push || [])];
-  const notify: Notification[] = [...(extra.notify || [])];
   if (issue.kind === 'close_issue') {
     const n = Number(p.issueNumber);
     writes.push(chat(event, issue, line, { type: 'issue', ref: n }));
@@ -203,19 +220,22 @@ function apply(
         input: { ...issue.app.repo, number: n, comment, marker: `homeroom-governance:${issueKey(issue.id)}:close`,
           bustCache: true, appId: issue.appId, appSlug: issue.app.slug } });
     }
+    // The Homeroom bot's proposals for that request come down once every
+    // request they are linked to is closed (services/homeroom-bot-closed-requests.js).
+    work.push({ kind: 'bot.requestsClosed', key: 'bot', input: { appId: issue.appId, closed: [n] } });
   } else if (issue.kind === 'secret_change' && !issue.app.selfHosted) {
-    work.push({ kind: 'app.rebuildProduction', key: 'rebuild', input: { appId: issue.appId } });
+    asked.push({ key: 'rebuild', input: { appId: issue.appId } });
   } else if (issue.kind === 'rename') {
     push.push(appUpdate({ action: 'renamed', appId: issue.appId, slug: issue.app.slug,
       oldName: issue.app.name, newName: String(p.newName).trim() }));
   } else if (issue.kind === 'featured_illustration') {
     push.push(appUpdate({ action: 'illustration_changed', appId: issue.appId, slug: issue.app.slug,
       illustration: p.proposed || null }));
-  } else if (issue.kind === 'maintenance_campaign') {
-    notify.push({ type: 'startCampaign', issueId: issue.id });
   }
+  // A maintenance campaign is started by the apply's own write: it inserts
+  // the campaign's row and messages the campaign machine (src/workflow/campaign/).
   const audit = { appliedAt: at, appliedBy: by ? `admin:${by.admin}` : 'group-vote', ...tally };
-  return close('applied', issue, event, ctx, audit, { writes, work, push, notify });
+  return close('applied', issue, event, ctx, audit, { writes, work, asked, push });
 }
 
 type Timing = Required<Pick<MachineDeps, 'backstopMs' | 'targetCheckMs'>>;
@@ -238,11 +258,11 @@ function targetCheckWork(data: OpenData, issue: Issue, ctx: TransitionContext): 
 // Stay open until the target check answers, then apply as `by` says.
 function awaitTarget(
   s: { data: OpenData }, issue: Issue, e: Evaluation, ctx: TransitionContext, timing: Timing,
-  by: { admin: string | null }, extra: Extra = {},
+  by: { admin: string | null; adminId?: number | null }, extra: Extra = {},
 ): Outcome<GovState> {
   const data: OpenData = { ...s.data, evaluation: e, applyAfterCheck: by };
   return {
-    next: { name: 'open', data }, writes: extra.writes, push: extra.push, notify: extra.notify, work: targetCheckWork(data, issue, ctx),
+    next: { name: 'open', data }, writes: extra.writes, push: extra.push, work: targetCheckWork(data, issue, ctx),
     timer: { at: new Date(ctx.now.getTime() + timing.backstopMs), event: { type: 'Evaluate' } },
   };
 }
@@ -263,7 +283,7 @@ function decide(
   const stale = !data.targetCheckedAt || ctx.now.getTime() - Date.parse(data.targetCheckedAt) >= timing.targetCheckMs;
   const work = checksTarget(issue) && stale ? targetCheckWork(data, issue, ctx) : [];
   return {
-    next: { name: 'open', data }, writes: extra.writes, push: extra.push, notify: extra.notify, work,
+    next: { name: 'open', data }, writes: extra.writes, push: extra.push, work,
     timer: { at: nextCheck(e, ctx.now, timing.backstopMs), event: { type: 'Evaluate' } },
   };
 }
@@ -279,8 +299,8 @@ function supersede(issue: Issue, event: Event<any>, ctx: TransitionContext, caus
 }
 
 // A follow-up result on a closed proposal updates its record.
-// A target closed on GitHub: the open-issues lists re-read (the handler has
-// kept the eventually consistent list from showing it again).
+// A target closed on GitHub: every web process stops listing it (GitHub's
+// list lags; pushes.ts issuesClosed), then the open-issues lists re-read.
 function followupResult(s: { name: Closed; data: ClosedData }, e: Event<WorkResultPayload>, status: Followup['status']): Outcome<GovState> {
   const prev = s.data.followups[e.payload.workKey]!;
   const followups = { ...s.data.followups, [e.payload.workKey]: { ...prev, status, ...(e.payload.error ? { error: e.payload.error.message } : {}) } };
@@ -289,14 +309,17 @@ function followupResult(s: { name: Closed; data: ClosedData }, e: Event<WorkResu
     && !(e.payload.result as { gone?: boolean } | null)?.gone;
   return {
     next: { name: s.name, data: { ...s.data, followups } },
-    push: closed ? [issuePush({ action: 'github_synced', appSlug: input.appSlug ?? null, appId: input.appId ?? null, source: 'close_issue_vote' })] : undefined,
-    notify: closed ? [boardChange(input.appId as number ?? null, input.appSlug as string ?? null)] : undefined,
+    push: closed ? [
+      issuesClosed({ owner: String(input.owner), repo: String(input.repo), numbers: [Number(input.number)] }),
+      boardMoved(issuePush({ action: 'github_synced', appSlug: input.appSlug ?? null, appId: input.appId ?? null, source: 'close_issue_vote' })),
+    ] : undefined,
   };
 }
 
-// Something other than this machine closed or deleted the issue row: the
-// flag was turned off for a while and [main]'s paths decided it, or the app
-// was deleted. The proposal ends without applying, and the row, which
+// Something other than this machine closed or deleted the issue row: it
+// was closed before the machine enrolled it (the old paths, before they were
+// deleted, or a write in the moment between filing and enrolling), or the
+// app was deleted. The proposal ends without applying, and the row, which
 // already says what happened, is left as it is (see project).
 const OUTSIDE = new Set(['closed_outside', 'issue_gone']);
 const outside = (f: Facts) => (!f.issue ? 'issue_gone' : f.issue.status !== 'open' ? 'closed_outside' : null);
@@ -321,13 +344,28 @@ function watchingOutside(t: { guard?: (s: any, e: Event<any>, f: Facts, ctx: Tra
   };
 }
 
+// app-delivery's answer settles the newest redeploy asked of it: a failure
+// leaves the request open there, so a later Delivered still marks it done.
+const fromDelivery = (s: any, e: Event<any>): Check =>
+  (e.source.kind === 'message' && e.source.from.machine === DELIVERY && askedKey(s.data) ? ok() : reject('not_asked'));
+function askedKey(d: ClosedData): string | null {
+  const keys = Object.keys(d.followups).filter((k) => d.followups[k].kind === DELIVERY_FOLLOWUP
+    && ['pending', 'failed'].includes(d.followups[k].status));
+  return keys.length ? keys[keys.length - 1] : null;
+}
+function deliveryAnswer(s: { name: Closed; data: ClosedData }, status: 'done' | 'failed', message: string | null): Outcome<GovState> {
+  const key = askedKey(s.data)!;
+  const prev = s.data.followups[key];
+  const followups = { ...s.data.followups, [key]: { ...prev, status, ...(message ? { error: message } : {}) } };
+  return { next: { name: s.name, data: { ...s.data, followups } } };
+}
+
 const pendingFollowup = (s: any, e: Event<WorkResultPayload>): Check =>
   s.data.followups[e.payload.workKey]?.status === 'pending' ? ok() : reject('stale_result');
 
 // ── The machine ─────────────────────────────────────────────────────────
 
 export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> {
-  for (const n of NOTIFIERS) if (typeof deps.notifiers[n] !== 'function') throw new Error(`governance-proposal: notifier ${n} missing`);
   const timing = { backstopMs: deps.backstopMs ?? 10 * 60 * 1000, targetCheckMs: deps.targetCheckMs ?? 60 * 60 * 1000 };
   const user = (e: Event<any>) => e.actor === `user:${e.payload.userId}`;
   const closedRow = {
@@ -335,13 +373,25 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
     WorkSucceeded: { guard: pendingFollowup, to: (s: any, e: Event<any>) => followupResult(s, e, 'done') },
     WorkFailed: { guard: pendingFollowup, to: (s: any, e: Event<any>) => followupResult(s, e, 'failed') },
     WorkExhausted: { guard: pendingFollowup, to: (s: any, e: Event<any>) => followupResult(s, e, 'exhausted') },
+    Delivered: { guard: fromDelivery, to: (s: any, e: Event<any>) => deliveryAnswer(s, 'done', null) },
+    DeliveryFailed: { guard: fromDelivery, to: (s: any, e: Event<any>) => deliveryAnswer(s, 'failed', e.payload.message) },
     RetryFollowup: {
-      guard: (s: any, e: Event<any>) => (['failed', 'exhausted'].includes(s.data.followups[e.payload.workKey]?.status)
-        ? ok() : reject('not_retryable')),
+      guard: (s: any, e: Event<any>) => {
+        const f = s.data.followups[e.payload.workKey];
+        const retryable = !!f && (f.kind === DELIVERY_FOLLOWUP || f.kind === OWN_REBUILD || RETRYABLE_WORK.has(f.kind));
+        return retryable && ['failed', 'exhausted'].includes(f.status) ? ok() : reject('not_retryable');
+      },
       to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<GovState> => {
         const prev = s.data.followups[e.payload.workKey] as Followup;
         const key = `${e.payload.workKey.replace(/~\d+$/, '')}~${ctx.version + 1}`;
         const followups = { ...s.data.followups, [e.payload.workKey]: { ...prev, status: 'retried' }, [key]: { ...prev, status: 'pending' } };
+        // A redeploy is asked of app-delivery again (also one this machine
+        // rebuilt itself, before every deploy was app-delivery's).
+        if (prev.kind === DELIVERY_FOLLOWUP || prev.kind === OWN_REBUILD) {
+          const asked = { kind: DELIVERY_FOLLOWUP, input: prev.input, status: 'pending' as const };
+          return { next: { name: s.name, data: { ...s.data, followups: { ...followups, [key]: asked } } },
+            messages: [deliveryRequest(Number((prev.input as any).appId))] };
+        }
         // The retry starts from the failed item's checkpoint: a close that
         // already commented does not comment again.
         return {
@@ -360,14 +410,24 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
       const pending = (s.data as OpenData).applyAfterCheck;
       if (!pending) return { next: checked };
       // Still open (or GitHub could not say): apply as the gate or the admin decided.
-      if (pending.admin) return apply(f.issue!, e, ctx, evaluate(f.gate!, ctx.now), f.refusal, { admin: pending.admin }, {});
+      if (pending.admin) return apply(f.issue!, e, ctx, evaluate(f.gate!, ctx.now), f.refusal, { admin: pending.admin, adminId: pending.adminId ?? null }, {});
       return decide(checked, e, f, ctx, timing, f.gate!, {}, true);
     },
   });
 
   return defineMachine<GovState, Facts>({
     name: MACHINE,
-    version: 1,
+    // 2: campaign.run work (the startCampaign notifier went), the issue lists'
+    // push, the forcing admin as a platform variable's author. 3: a secret
+    // change's redeploy asked of app-delivery (Delivered, DeliveryFailed).
+    // 4: bot.requestsClosed work on a close vote's apply. 5: every secret
+    // change's redeploy is asked of app-delivery (an app.rebuildProduction
+    // item from before hands off to it). 6: a maintenance campaign is
+    // started by a message to the campaign machine, not campaign.run work.
+    // 7: a merge's follow-ups file and supersede a close proposal by
+    // message. During a rollout an older Pod leaves the instances a newer
+    // version wrote alone.
+    version: 7,
     events: EVENTS,
     create: ['Filed'],
     terminal: ['applied', 'refused', 'withdrawn', 'superseded'],
@@ -379,13 +439,17 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
       return readFacts(tx, issueId, event, state.name === 'open' || state.name === NONE, deps.dataKey);
     },
     authorize: {
-      Filed: (e) => (['route', 'system', 'admin'].includes(e.source.kind) ? ok() : reject('not_allowed')),
+      // A merge's follow-ups file a close proposal whose target it saw
+      // closed, then tell it (TargetClosed): messages, in its transaction.
+      Filed: (e) => (['route', 'system', 'admin'].includes(e.source.kind) || fromMerge(e) ? ok() : reject('not_allowed')),
       VoteCast: (e) => (e.source.kind === 'route' && user(e) ? ok() : reject('not_the_voter')),
       Evaluate: (e) => (e.source.kind === 'timer' || e.source.kind === 'admin' ? ok() : reject('internal_only')),
       AdminApply: (e) => (e.source.kind === 'admin' && user(e) ? ok() : reject('admin_only')),
       Withdraw: (e, f) => (user(e) && f.issue?.createdBy === e.payload.userId ? ok() : reject('not_author')),
-      TargetClosed: (e) => (e.source.kind === 'system' || e.source.kind === 'route' ? ok() : reject('internal_only')),
+      TargetClosed: (e) => (e.source.kind === 'system' || e.source.kind === 'route' || fromMerge(e) ? ok() : reject('internal_only')),
       RetryFollowup: (e) => (e.source.kind === 'admin' ? ok() : reject('admin_only')),
+      Delivered: (e) => (e.source.kind === 'message' && e.source.from.machine === DELIVERY ? ok() : reject('internal_only')),
+      DeliveryFailed: (e) => (e.source.kind === 'message' && e.source.from.machine === DELIVERY ? ok() : reject('internal_only')),
     },
     transitions: {
       [NONE]: {
@@ -413,17 +477,19 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
               ? chat(e, issue, `${e.payload.username} voted ${vote} on ${voteSubject(issue)}${r ? `: “${r}”` : ''}`, governanceThread(issue), 'vote')
               : null;
             const writes: DomainWrite[] = [{ type: 'vote', issueId: issue.id, appId: issue.appId, userId: e.payload.userId, vote, reason: r, line }];
-            const push = [issueUpdate(issue, 'voted', vote ? { vote } : { toggled: true })];
-            const notify: Notification[] = [boardChange(issue.appId, issue.app.slug), ...(vote ? [{ type: 'scoreVote' }] : [])];
-            return decide(s as any, e, f, ctx, timing, withVote(f.gate!, f.voter!, vote), { writes, push, notify });
+            // The Workshop re-places the board's cards. A vote cast is scored for
+            // "Vote on a change" by the route once it is accepted (routes/issues.js),
+            // as a vote on a request or a change is.
+            const push = [boardMoved(issueUpdate(issue, 'voted', vote ? { vote } : { toggled: true }))];
+            return decide(s as any, e, f, ctx, timing, withVote(f.gate!, f.voter!, vote), { writes, push });
           },
         }),
         Evaluate: watchingOutside({ to: (s, e, f, ctx) => decide(s as any, e, f, ctx, timing) }),
         AdminApply: watchingOutside({
           guard: (s, e, f) => (f.issue!.kind === 'rename' ? reject('not_admin_appliable') : ok()),
           to: (s, e, f, ctx) => (checksTarget(f.issue!)
-            ? awaitTarget(s, f.issue!, evaluate(f.gate!, ctx.now), ctx, timing, { admin: e.payload.username })
-            : apply(f.issue!, e, ctx, evaluate(f.gate!, ctx.now), f.refusal, { admin: e.payload.username }, {})),
+            ? awaitTarget(s, f.issue!, evaluate(f.gate!, ctx.now), ctx, timing, { admin: e.payload.username, adminId: e.payload.userId })
+            : apply(f.issue!, e, ctx, evaluate(f.gate!, ctx.now), f.refusal, { admin: e.payload.username, adminId: e.payload.userId }, {})),
         }),
         Withdraw: watchingOutside({
           to: (s, e, f, ctx) => close('withdrawn', f.issue!, e, ctx,
@@ -436,6 +502,8 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
           to: (s, e, f, ctx) => supersede(f.issue!, e, ctx, e.payload.cause),
         }),
         RetryFollowup: { ignore: 'no_followups' },
+        Delivered: { ignore: 'not_asked' },
+        DeliveryFailed: { ignore: 'not_asked' },
         WorkSucceeded: watchingOutside(targetCheckResult('done')),
         WorkFailed: watchingOutside(targetCheckResult('failed')),
         WorkExhausted: watchingOutside(targetCheckResult('failed')),
@@ -453,7 +521,7 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
            VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, app_id, content, msg_type, metadata, thread_type, thread_ref, created_at`, chatValues(w));
         ctx.push(chatLine(row));
       },
-      apply: (tx, w) => applyKind(tx, w, deps.dataKey),
+      apply: (tx, w, ctx) => applyKind(tx, w, deps.dataKey, ctx),
     },
     async project(tx, before, after) {
       // On entering a closed state, from open or straight from Filed (a
@@ -485,7 +553,6 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
       }
       return { result: await kindResult(tx, after, facts) };
     },
-    notifiers: deps.notifiers,
   });
 }
 
@@ -540,19 +607,19 @@ async function writeVote(tx: Tx, w: any, ctx: WriteContext) {
        SELECT $7, $8, $9, $10::jsonb, $11, $12 WHERE $8::text IS NOT NULL
        RETURNING id, app_id, content, msg_type, metadata, thread_type, thread_ref, created_at)
      SELECT * FROM line`,
-    [w.issueId, w.userId, w.vote, w.reason, w.appId, legacy('services/events').EVENT_TYPES.ISSUE_VOTE_CAST, ...line]);
+    [w.issueId, w.userId, w.vote, w.reason, w.appId, 'issue_vote_cast', ...line]);
   for (const row of rows) ctx.push(chatLine(row));
 }
 
 // The kind's own change, in the transaction that closes the proposal.
-async function applyKind(tx: Tx, w: any, dataKey: string) {
+async function applyKind(tx: Tx, w: any, dataKey: string, ctx?: WriteContext) {
   const p = w.payload || {};
   switch (w.kind) {
     case 'rename':
       await tx.query('UPDATE apps SET name = $1 WHERE id = $2', [String(p.newName).trim(), w.appId]);
       return;
     case 'featured_illustration':
-      await legacy('services/illustration-proposals').applyProposal(tx, w.appId, p, w.issueId);
+      await applyProposal(tx, w.appId, p, w.issueId);
       return;
     case 'close_issue':
       // The platform's open twin rows for the target, and its open bounties
@@ -568,11 +635,13 @@ async function applyKind(tx: Tx, w: any, dataKey: string) {
       return;
     case 'maintenance_campaign': {
       const targetFilter = Array.isArray(p.targetFilter) && p.targetFilter.length ? p.targetFilter : null;
-      await tx.query(
+      const { rows: [c] } = await tx.query(
         `INSERT INTO maintenance_campaigns (issue_id, title, instructions, target_filter, status, created_by)
-         VALUES ($1, $2, $3, $4, 'running', $5)`,
+         VALUES ($1, $2, $3, $4, 'running', $5) RETURNING id`,
         [w.issueId, w.campaignTitle.slice(0, 300), p.instructions.trim(),
           targetFilter ? JSON.stringify(targetFilter) : null, w.authorId]);
+      // Only this write knows the row's id, which names the campaign's instance.
+      ctx!.message({ to: { machine: 'campaign', key: `campaign:${c.id}` }, event: { type: 'Start', payload: { campaignId: Number(c.id) } } });
       return;
     }
     case 'secret_change':
@@ -584,18 +653,16 @@ async function applyKind(tx: Tx, w: any, dataKey: string) {
 }
 
 async function applySecret(tx: Tx, w: any, p: any, createdBy: number | null, dataKey: string) {
-  const platformEnv = legacy('services/platform-env');
-  const secrets = legacy('services/secrets');
   const key = String(p.key).trim();
   const isPrivate = !!(p.private || p.sensitive);
   if (p.action === 'delete') {
-    if (w.selfHosted) await platformEnv.deleteValue(tx, w.appId, key);
+    if (w.selfHosted) await deleteValue(tx, w.appId, key);
     else await tx.query('DELETE FROM app_secrets WHERE app_id = $1 AND key = $2', [w.appId, key]);
   } else {
-    const plaintext = secrets.decrypt(p.valueEnc, dataKey);
+    const plaintext = decrypt(p.valueEnc, dataKey)!;
     if (w.selfHosted) {
       // The DAO re-encrypts, re-checks writability and takes `private` from the declaration.
-      await platformEnv.setValue(tx, w.appId, key, plaintext, { userId: createdBy, dataKey });
+      await setValue(tx, w.appId, key, plaintext, { userId: createdBy, dataKey });
     } else {
       await tx.query(
         `INSERT INTO app_secrets (app_id, key, value_enc, value_last4, updated_by)
@@ -603,14 +670,16 @@ async function applySecret(tx: Tx, w: any, p: any, createdBy: number | null, dat
          ON CONFLICT (app_id, key)
          DO UPDATE SET value_enc = EXCLUDED.value_enc, value_last4 = EXCLUDED.value_last4,
                        updated_at = NOW(), updated_by = EXCLUDED.updated_by`,
-        [w.appId, key, secrets.encrypt(plaintext, dataKey), isPrivate ? null : plaintext.slice(-4), createdBy]);
+        [w.appId, key, encrypt(plaintext, dataKey), isPrivate ? null : plaintext.slice(-4), createdBy]);
     }
   }
   if (w.selfHosted) {
-    const events = legacy('services/events');
+    // One event type for a platform-variable change whichever path wrote
+    // it, recorded as [main] did: by the admin who forced it, else by the
+    // proposal's author.
     await tx.query(
-      `INSERT INTO events (user_id, app_id, event_type, metadata) VALUES ($1, $2, $3, $4::jsonb)`,
-      [createdBy, w.appId, events.EVENT_TYPES.PLATFORM_ENV_CHANGED, JSON.stringify({
+      `INSERT INTO events (user_id, app_id, event_type, metadata) VALUES ($1, $2, 'platform_env_changed', $3::jsonb)`,
+      [w.admin ? (w.adminId ?? null) : createdBy, w.appId, JSON.stringify({
         key, action: p.action === 'delete' ? 'clear' : 'set', private: isPrivate,
         appliedBy: w.admin ? 'admin-force-apply' : 'group-vote',
       })]);

@@ -112,6 +112,18 @@ export interface CheckRow {
   keepReason?: boolean;
   reason?: string | null;
   /**
+   * 'early_burst' when this check's failure was one of a burst in the run's
+   * first seconds whose retries all passed (src/services/check-signals.js):
+   * often the environment, never proof of it. Null otherwise.
+   */
+  retryClass?: 'early_burst' | null;
+  /**
+   * An advisory about the check itself, shown in its fold: today, that a
+   * check this proposal adds or changes needed a fresh load after its
+   * address change. Never a verdict.
+   */
+  note?: string | null;
+  /**
    * The repo unit suite row's per-test excerpts (request #3978): the file,
    * the test name and the captured error text — assertion message,
    * expected/actual, the first stack lines. Empty on every other row; a
@@ -132,6 +144,8 @@ export interface ChecksVerdict {
   summary: string;
   failures: CheckRow[];
   passes: CheckRow[];
+  /** The passes with something to say, for the Checks step (see StepRun.noted). */
+  noted?: CheckRow[];
   /**
    * How many passed. More than `passes.length` while the row counts its
    * passes rather than listing them (a Workshop list row, or the item's own
@@ -184,6 +198,12 @@ export interface LedgerUnitProgress {
   /** Last completed run's `# tests`, when known; null while it is not. */
   expected: number | null;
   done?: boolean;
+  /**
+   * Set when this run did not run the suite but reused an earlier pass of the
+   * same commit (services/unit-suite-reuse.js): how long ago that pass was,
+   * the start of its run id, the whole id and its time.
+   */
+  reused?: { when: string; run: string; runId: string | null; at: string | null };
 }
 
 /** One phase inside the image build (a buildpack lifecycle phase). */
@@ -320,7 +340,6 @@ export interface RosterView {
   approved?: boolean;
   yes?: { label: string; names: string };
   no?: { label: string; names: string };
-  needs?: string;
   /** #1688: the line each counted vote carries, one entry per voter who left one. */
   reasons?: { who: string; vote: 'yes' | 'no'; text: string }[];
   /** #1688: "Earlier version: @alice, @bob …" — votes on a previous version, or null. */
@@ -372,8 +391,8 @@ export interface IssueClosedBand {
   /** Short stamp: "Oct 5", or "3d ago" inside a week. */
   when: string | null;
   whenTitle: string | null;
-  /** "by vote" / "by an admin"; null on a merged close (the pill says it). */
-  how: string | null;
+  /** Which way it was closed; null on a merged close (the pill says it). */
+  how: 'vote' | 'admin' | null;
   ref: IssueProposalRef | null;
 }
 
@@ -476,6 +495,8 @@ export interface StepRun {
   checks: { ran: number; passed: number; failed: number; expected: number | null; done: boolean } | null;
   unit: LedgerUnitProgress | null;
   fails: CheckRow[];
+  /** Passing checks with something to say: a retry and its class, or a note. */
+  noted?: CheckRow[];
   note: string | null;
 }
 
@@ -514,6 +535,15 @@ export interface RequestView {
    */
   editor: { issue: number; markdown: string; source: string | null; canEdit: boolean };
   status: RequestStatusView;
+  /**
+   * 16 Oct 2026: where Homeroom bot's work on it is, as the server words it
+   * (services/homeroom-bot-track.js), read field by field by
+   * ../../messages/api.ts normalizeBotTrack. Null when the bot has none.
+   */
+  track?: unknown;
+  /** The page is drawn from the board's older row: the track card keeps its
+      place, hidden, until the board's reload lands (polish board #12). */
+  trackPending?: boolean;
 }
 
 /** The card under the request: where it stands, and the one next step. */
@@ -530,6 +560,11 @@ export interface RequestStatusView {
   action: { label: string; title?: string; disabled?: boolean; act?: { fn: string; args?: unknown[] }; href?: string } | null;
   /** A closed request: the words that say so, and no stepper. */
   closed: string | null;
+  /**
+   * The sentence already says what Homeroom bot is doing with its plan (or
+   * its change), so no "Plan v1 is ready for comments." after it.
+   */
+  botSays?: boolean;
 }
 
 /** #4455: one part of a Votes or Testing card's bar. */
@@ -575,6 +610,12 @@ export interface ChangeGateView {
 export interface ChangeThreadView {
   /** The pull request's number, for "Change #N"; null before it has one. */
   number: number | null;
+  /**
+   * The status pill the board card shows, beside "Change #N": "✓ Live",
+   * "Going live…", or the vote's own words. Null while the change is being
+   * built or closed (AppView._changeThreadView).
+   */
+  status: StatusPillState | null;
   category: string | null;
   author: string;
   at: string | null;

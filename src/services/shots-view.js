@@ -5,6 +5,7 @@
 // view model.
 
 const state = require('./shots-state');
+const shotsFiles = require('./shots-files');
 const { visualHeadForSession } = require('./pr-vote-revision');
 
 const PUBLIC_STATES = new Set([
@@ -21,7 +22,7 @@ function cleanClaims(value) {
   return value.slice(0, 3).map((claim) => ({
     id: String(claim?.id || '').slice(0, 96),
     claim: String(claim?.claim || '').slice(0, 1000),
-    persona: ['member', 'read_only_admin', 'full_admin', 'guest'].includes(claim?.persona)
+    persona: ['member', 'read_only_admin', 'full_admin', 'guest', 'invited_member', 'invited_member_listed'].includes(claim?.persona)
       ? claim.persona : 'member',
     viewports: Array.isArray(claim?.viewports)
       ? claim.viewports.slice(0, 2).map((name) => String(name).slice(0, 32))
@@ -34,24 +35,35 @@ function cleanClaims(value) {
   })).filter((claim) => claim.id && claim.claim);
 }
 
-// One result per declared change: its shots are ready, or the shots agent
-// skipped it and says why, or it failed: the agent did the steps and the
-// after build broke.
+// One result per declared change: its shots are ready, or unchanged (shown,
+// but its before and after came out the same, and its note says so), or the
+// shots agent skipped it and says why, or it failed: the agent did the steps
+// and the after build broke.
 // The agent sometimes writes a quotation mark already escaped, as it would
 // inside JSON (\"Continue\"); people should read the quotation mark.
 const unescapeQuotes = (text) => text.replace(/\\+(["'])/g, '$1');
+const SHOWN_RESULTS = new Set(['ready', 'unchanged']);
 
+// A result carries `conditions` only when the shots agent did something to
+// both builds to reach the change: an API GET it held or made fail, or
+// sample files it uploaded, each from a fixed shape (shots-files.condition).
 function cleanShotResults(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 3).filter((result) => STORY_ID_RE.test(String(result?.id || '')))
-    .map((result) => ({
-      id: String(result.id),
-      status: result.status === 'ready' || result.status === 'failed' ? result.status : 'skipped',
-      reason: result.status === 'ready' || typeof result.reason !== 'string'
-        ? null : unescapeQuotes(result.reason).slice(0, 1000),
-      note: result.status !== 'ready' || typeof result.note !== 'string'
-        ? null : unescapeQuotes(result.note).slice(0, 500),
-    }));
+    .map((result) => {
+      const status = SHOWN_RESULTS.has(result.status) || result.status === 'failed' ? result.status : 'skipped';
+      const shown = SHOWN_RESULTS.has(status);
+      const conditions = shotsFiles.cleanConditions(result.conditions);
+      return {
+        id: String(result.id),
+        status,
+        reason: shown || typeof result.reason !== 'string'
+          ? null : unescapeQuotes(result.reason).slice(0, 1000),
+        note: !shown || typeof result.note !== 'string'
+          ? null : unescapeQuotes(result.note).slice(0, 500),
+        ...(conditions.length ? { conditions } : {}),
+      };
+    });
 }
 
 // What the shots agent noticed broken on the after build besides the
@@ -108,7 +120,9 @@ function artifactUrl(slug, sessionId, artifactId) {
 
 function cleanArtifacts(items, { slug, sessionId, verified }) {
   if (!verified || !Array.isArray(items)) return [];
-  return items.slice(0, 36).filter((artifact) => {
+  // Up to 48: three changes more than the old 36, the room a run's dark
+  // shots (#4459) take beside their light ones.
+  return items.slice(0, 48).filter((artifact) => {
     if (!artifact || !ARTIFACT_ID_RE.test(String(artifact.id || ''))
         || !STORY_ID_RE.test(String(artifact.storyId || ''))
         || !VIEWPORT_RE.test(String(artifact.viewport || ''))
@@ -129,6 +143,10 @@ function cleanArtifacts(items, { slug, sessionId, verified }) {
     side: ['base', 'head', 'paired'].includes(artifact.side) ? artifact.side : null,
     variant: ['focus', 'context', 'animation'].includes(artifact.variant) ? artifact.variant : null,
     media: ['png', 'webm', 'gif'].includes(artifact.media) ? artifact.media : null,
+    // A dark artifact exists only as a whole-screen PNG; anything else reads
+    // as light, which is what every row before the column held.
+    theme: artifact.theme === 'dark' && artifact.variant === 'context' && artifact.media === 'png'
+      ? 'dark' : 'light',
     contentType: String(artifact.contentType || '').slice(0, 32),
     width: Number.isInteger(artifact.width) ? artifact.width : null,
     height: Number.isInteger(artifact.height) ? artifact.height : null,
@@ -142,7 +160,7 @@ function cleanArtifacts(items, { slug, sessionId, verified }) {
 }
 
 // #2601/#2558: why a run that is still 'planned' never got under way, as
-// `shots-orchestrator.noteNotStarted` recorded it on the proposal.
+// the shots machine recorded it on the proposal (src/workflow/shots/).
 // A sibling of `failureReason` rather than a reuse of it: a run that never
 // started has not failed, and the two words reach different copy. It is
 // dropped once the run has moved on, and on a superseded revision, where it
@@ -178,6 +196,7 @@ function fromSnapshot(session, currentHead) {
     planHash: typeof detail.planHash === 'string' ? detail.planHash : null,
     shotResults: [],
     shotNotices: [],
+    afterOnly: false,
     screens: [],
     progress: null,
     verifiedReason: null,
@@ -206,22 +225,29 @@ function serialize(run, session, slug, currentHead) {
       ? (run.failureReason || null)
       : 'A newer revision of this proposal replaced these shots.',
     notStartedReason: notStartedReason(session, !matchesCurrent),
-    // A restart interrupted this run and the recovery sweep starts it again
-    // by itself, so the card says it is trying again instead of asking a
-    // person to. A merged or archived proposal gets no automatic retry.
+    // A restart or a platform fault ended this run and the recovery sweep
+    // starts it again by itself, so the card says it is trying again instead
+    // of asking a person to. A merged or archived proposal gets no automatic
+    // retry.
     automaticRetryPending: matchesCurrent && run.automaticRetryPending === true
       && !['merged', 'archived'].includes(session?.status),
     repairAvailable: matchesCurrent && run.repairAvailable === true
       && !(run.automaticRetryPending === true && !['merged', 'archived'].includes(session?.status)),
     planHash: run.planHash || null,
     // A failed run carries them only when a declared change failed
-    // (shots_change_failed), so the change page can say which one.
+    // (shots_change_failed), so the change page can say which one, or when
+    // none could be reached (shots_capture_incomplete), so its author's
+    // agent reads why each was skipped (get_proposal's nextStep).
     shotResults: matchesCurrent && (run.state === 'verified'
-      || (run.state === 'failed' && run.failureCode === 'shots_change_failed'))
+      || (run.state === 'failed' && ['shots_change_failed', 'shots_capture_incomplete'].includes(run.failureCode)))
       ? cleanShotResults(run.shotResults) : [],
     // Only a published run's card shows them.
     shotNotices: matchesCurrent && run.state === 'verified'
       ? cleanShotNotices(run.shotNotices, cleanClaims(run.claims)) : [],
+    // A project's first version (services/shots-starter.js): its before was
+    // the starter template's placeholder, so the run took the after side
+    // only, and the card says "New app: nothing before".
+    afterOnly: matchesCurrent && run.state === 'verified' && run.afterOnly === true,
     screens: matchesCurrent && run.state === 'verified' ? cleanScreens(run.screens, cleanClaims(run.claims)) : [],
     progress: matchesCurrent && PUBLIC_STATES.has(run.state) ? (run.progress || null) : null,
     verifiedReason: null,
@@ -254,20 +280,13 @@ async function getForSessions(pool, sessions, slug) {
                 SELECT jsonb_agg(jsonb_build_object(
                   'id', a.id, 'storyId', a.story_id, 'viewport', a.viewport,
                   'side', a.side, 'variant', a.variant, 'media', a.media,
+                  'theme', a.theme,
                   'contentType', a.content_type, 'width', a.width,
                   'height', a.height, 'bytes', a.bytes,
                   'focusRect', a.focus_rect, 'stageLabels', a.stage_labels
-                ) ORDER BY a.story_id, a.viewport, a.side, a.variant)
+                ) ORDER BY a.story_id, a.viewport, a.side, a.variant, a.theme)
                   FROM shot_artifacts a WHERE a.run_id = r.id
-              ), '[]'::jsonb) AS artifact_summary,
-              -- Its automatic retries, so the view can say one is coming.
-              (SELECT COUNT(*) FROM shot_runs retry
-                WHERE retry.session_id = r.session_id AND retry.head_sha = r.head_sha
-                  AND retry.trigger = 'interrupted-retry')::int AS interrupted_retries,
-              (SELECT COUNT(*) FROM shot_runs crash
-                WHERE crash.session_id = r.session_id AND crash.head_sha = r.head_sha
-                  AND crash.failure_code = 'shots_run_interrupted'
-                  AND COALESCE(crash.trace_summary->>'interruptedBy', '') <> 'shutdown')::int AS unexplained_interruptions
+              ), '[]'::jsonb) AS artifact_summary
          FROM shot_runs r WHERE r.id = ANY($1::varchar[])`,
       [runIds]
     );

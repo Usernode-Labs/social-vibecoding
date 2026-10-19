@@ -498,12 +498,13 @@ test('the writes share one per-user rate-limit bucket', () => {
   ]) {
     assert.match(route, surface);
   }
-  // Three profile writes plus the account-email request/verify loop. Counted at the ROUTE level
+  // Three profile writes plus the account-email request/verify loop and the
+  // username-change code request (#5281). Counted at the ROUTE level
   // (`requireUser,` immediately before it) rather than by bare occurrences
   // of the name: the import line mentions it too, and since the username change that line
   // also destructures usernameChangeLimiter beside it.
   assert.equal(
-    (route.match(/requireUser,\s*profileWriteLimiter/g) || []).length, 4,
+    (route.match(/requireUser,\s*profileWriteLimiter/g) || []).length, 5,
   );
 });
 

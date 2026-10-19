@@ -369,16 +369,16 @@ for (const [name, environment, database, preferred] of [
           'cnpg.io/cluster': 'writer-cluster', 'cnpg.io/instanceRole': 'primary',
         } },
       };
-      // The zone outweighs the host: a node in the primary's data centre is
-      // near enough, a node in another one is not (the evidence is in the
-      // comment on databaseAffinity). Both stay soft so a full zone still
-      // schedules.
+      // The zone is the whole preference: a node in the primary's data centre
+      // is near enough, a node in another one is not, and a term for the
+      // primary's own host packs the fleet onto it (the evidence for both is
+      // in the comment on databaseAffinity). It stays soft so a full zone
+      // still schedules.
       assert.deepEqual(spec.affinity, {
         podAffinity: { preferredDuringSchedulingIgnoredDuringExecution: [
           { weight: 100, podAffinityTerm: { ...primary, topologyKey: 'topology.kubernetes.io/zone' } },
-          { weight: 50, podAffinityTerm: { ...primary, topologyKey: 'kubernetes.io/hostname' } },
         ] },
-      }, 'prefer the current primary’s zone, then its host, and require neither');
+      }, 'prefer the current primary’s zone, never its host, and require neither');
       assert.equal(spec.affinity.podAffinity.requiredDuringSchedulingIgnoredDuringExecution, undefined);
     } else {
       assert.equal(spec.affinity, undefined);
@@ -432,6 +432,64 @@ for (const [name, listPods, expected] of [
     assert.equal(result.node, expected);
   });
 }
+
+// #4895: how the new Pod's start was spent, read off its own status, and the
+// moment everything is applied, for app-creator's 'deploy' and 'rollout'.
+const TIMED_POD = {
+  metadata: { creationTimestamp: '2026-10-12T15:32:10Z' },
+  spec: { nodeName: 'talos-hel1-node', containers: [{ name: 'app', image: 'ghcr.io/example/demo@sha256:deadbeef' }] },
+  status: {
+    conditions: [
+      { type: 'PodScheduled', status: 'True', lastTransitionTime: '2026-10-12T15:32:11Z' },
+      { type: 'Ready', status: 'True', lastTransitionTime: '2026-10-12T15:32:19Z' },
+    ],
+    containerStatuses: [{ name: 'app', restartCount: 0, state: { running: { startedAt: '2026-10-12T15:32:16Z' } } }],
+  },
+};
+
+test('podStartTimeline: scheduled, pulled and started, booted to Ready', () => {
+  assert.deepEqual(kubernetes.podStartTimeline(TIMED_POD), { scheduleMs: 1000, startMs: 5000, readyMs: 3000 });
+  assert.equal(kubernetes.podStartTimeline(null), null);
+  const restarted = structuredClone(TIMED_POD);
+  restarted.status.containerStatuses[0].restartCount = 1;
+  assert.equal(kubernetes.podStartTimeline(restarted), null, 'a restart is not the first start');
+  const waiting = structuredClone(TIMED_POD);
+  waiting.status.containerStatuses[0].state = { waiting: { reason: 'ContainerCreating' } };
+  assert.equal(kubernetes.podStartTimeline(waiting), null);
+});
+
+test('deploy says when everything is applied, then returns the Pod\'s start timeline', async () => {
+  let deployment;
+  const order = [];
+  const missing = async () => { throw notFound(); };
+  const record = async ({ body }) => body;
+  kubernetes._setClientsForTest({
+    core: {
+      readNamespacedSecret: missing, createNamespacedSecret: record,
+      readNamespacedService: missing, createNamespacedService: record,
+      listNamespacedPod: async () => ({ items: [TIMED_POD] }),
+    },
+    apps: {
+      readNamespacedDeployment: async () => {
+        if (!deployment) throw notFound();
+        order.push('rollout read');
+        return { ...deployment, metadata: { ...deployment.metadata, generation: 1 },
+          status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
+      },
+      createNamespacedDeployment: async ({ body }) => { deployment = body; return body; },
+    },
+    networking: { readNamespacedIngress: missing, createNamespacedIngress: async ({ body }) => { order.push('ingress'); return body; } },
+  });
+  const result = await kubernetes.deployApplication(config(), {
+    app: { id: 7, slug: 'demo' }, environment: 'staging', sessionId: 42,
+    imageRef: 'ghcr.io/example/demo@sha256:deadbeef', env: {},
+    onRollout: () => { order.push('applied'); throw new Error('an observer cannot fail the deploy'); },
+  });
+  assert.deepEqual(order.slice(0, 2), ['ingress', 'applied']);
+  assert.ok(order.indexOf('applied') < order.lastIndexOf('rollout read'));
+  assert.equal(result.node, 'talos-hel1-node');
+  assert.deepEqual(result.podTimeline, { scheduleMs: 1000, startMs: 5000, readyMs: 3000 });
+});
 
 test('the staging deploy log names the node the preview was scheduled on', () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/services/staging.js'), 'utf8');
@@ -522,6 +580,8 @@ test('worker runtime reconciles a retained PVC, Secret and warm Deployment', asy
   assert.equal(pvc.spec.storageClassName, 'openebs-lvm-retain');
   const deployment = written.find((item) => item.kind === 'Deployment').body;
   assert.equal(deployment.spec.strategy.type, 'Recreate');
+  // The pause container is PID 1 and reaps the zombies `sleep infinity` never would.
+  assert.equal(deployment.spec.template.spec.shareProcessNamespace, true);
   const workerContainer = deployment.spec.template.spec.containers[0];
   assert.deepEqual(workerContainer.startupProbe.exec.command, ['test', '-f', '/tmp/usernode-worker-ready']);
   assert.deepEqual(workerContainer.readinessProbe.exec.command, workerContainer.startupProbe.exec.command);
@@ -577,6 +637,41 @@ test('temporary shots worker uses pod storage without allocating a PVC', async (
   const deployment = written.find((item) => item.kind === 'Deployment').body;
   assert.deepEqual(deployment.spec.template.spec.volumes, [{ name: 'state', emptyDir: {} }]);
   assert.equal(deployment.metadata.labels['social.usernode.io/storage-mode'], 'temporary');
+  // No limit given and none configured: the historical 2Gi.
+  assert.equal(deployment.spec.template.spec.containers[0].resources.limits.memory, '2Gi');
+});
+
+test('a worker\'s memory limit is the one it is made with, in Kubernetes units, else the configured one', async () => {
+  const limits = [];
+  kubernetes._setClientsForTest({
+    core: {
+      readNamespacedSecret: async () => { throw notFound(); },
+      createNamespacedSecret: async ({ body }) => body,
+      listNamespacedPod: async () => ({ items: [{
+        metadata: { name: 'worker-pod', annotations: { 'social.usernode.io/env-checksum': kubernetes._envChecksumForTest({}) } },
+        spec: { containers: [{ name: 'worker', image: config().kubernetes.workerImage }] },
+        status: { phase: 'Running', conditions: [{ type: 'Ready', status: 'True' }],
+          containerStatuses: [{ name: 'worker', ready: true, state: { running: {} } }] },
+      }] }),
+      readNamespacedPodLog: async () => '__USERNODE_PHASE__ warm-ready',
+    },
+    apps: {
+      readNamespacedDeployment: async ({ name }) => {
+        if (limits.length) {
+          return { metadata: { name, generation: 1 }, status: { observedGeneration: 1,
+            replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
+        }
+        throw notFound();
+      },
+      createNamespacedDeployment: async ({ body }) => { limits.push(body.spec.template.spec.containers[0].resources.limits.memory); return body; },
+      replaceNamespacedDeployment: async ({ body }) => { limits.push(body.spec.template.spec.containers[0].resources.limits.memory); return body; },
+    },
+  });
+  // A worker on the platform's own repository (worker.js workerMemoryFor).
+  await kubernetes.ensureWorker(config(), { sessionId: 45, env: {}, temporary: true, memory: '4g' });
+  await kubernetes.ensureWorker({ ...config(), workerMemory: '2g' }, { sessionId: 45, env: {}, temporary: true });
+  await kubernetes.ensureWorker(config(), { sessionId: 45, env: {}, temporary: true, memory: '1280m' });
+  assert.deepEqual(limits, ['4Gi', '2Gi', '1280Mi']);
 });
 
 test('a worker setup retry stamps its attempt on the Pod template, so the stuck Pod is replaced', async () => {
@@ -670,6 +765,7 @@ test('capture runtime uses a bounded Job and caps log retrieval', async () => {
   assert.equal(created.body.spec.activeDeadlineSeconds, 120);
   assert.equal(created.body.spec.ttlSecondsAfterFinished, 3600);
   assert.equal(created.body.spec.template.spec.automountServiceAccountToken, false);
+  assert.equal(created.body.spec.template.spec.shareProcessNamespace, true);
   assert.deepEqual(created.body.spec.template.spec.containers[0].resources, {
     requests: { cpu: '4', memory: '3Gi', 'ephemeral-storage': '1Gi' },
     // 6Gi: the pool is sixteen pages now (services/visuals.js CAPTURE_MEMORY
@@ -711,6 +807,66 @@ for (const kind of ['Capture', 'UnitSuite']) {
     });
   }
 }
+
+// CHECK_NODE_POOL (services/kubernetes.js checkPlacement): the Jobs both check
+// kinds create, with the pool set as `checkNodePool`.
+async function checkJobsWithNodePool(checkNodePool) {
+  const jobs = [];
+  kubernetes._setClientsForTest({
+    batch: {
+      async createNamespacedJob({ body }) { jobs.push(body); },
+      async readNamespacedJob() { return { status: { succeeded: 1 } }; },
+    },
+    core: {
+      async createNamespacedSecret() {},
+      async deleteNamespacedSecret() {},
+      async listNamespacedPod() { return { items: [{ metadata: { name: 'check-pod' } }] }; },
+      async readNamespacedPodLog() { return 'passed'; },
+    },
+  });
+  const cfg = config();
+  cfg.kubernetes.checkNodePool = checkNodePool;
+  for (const [index, kind] of ['Capture', 'UnitSuite'].entries()) {
+    await kubernetes[`run${kind}Job`](cfg, { sessionId: 60 + index, env: {}, previewRunId: `pool-${index}` });
+  }
+  assert.equal(jobs.length, 2);
+  return jobs.map((job) => job.spec.template.spec);
+}
+
+test('checks tolerate and prefer a configured node pool, and drop the host spread', async () => {
+  for (const pod of await checkJobsWithNodePool('usernodelabs.org/node-pool=cpu-heavy')) {
+    assert.deepEqual(pod.tolerations, [{
+      key: 'usernodelabs.org/node-pool', operator: 'Equal', value: 'cpu-heavy', effect: 'NoSchedule',
+    }]);
+    assert.deepEqual(pod.affinity, { nodeAffinity: { preferredDuringSchedulingIgnoredDuringExecution: [{
+      weight: 100,
+      preference: { matchExpressions: [{ key: 'usernodelabs.org/node-pool', operator: 'In', values: ['cpu-heavy'] }] },
+    }] } });
+    assert.equal(pod.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution, undefined,
+      'a preference: checks still run elsewhere when the pool is full or down');
+    assert.equal(pod.nodeSelector, undefined);
+    assert.equal(pod.topologySpreadConstraints, undefined,
+      'the spread would push Pods off a pool of one large node');
+  }
+});
+
+test('an empty or malformed node pool leaves checks on the default spread', async () => {
+  for (const value of ['', '   ', 'cpu-heavy', 'usernodelabs.org/node-pool=', '=cpu-heavy',
+    'usernodelabs.org/node-pool=cpu heavy', 'a=b=c', 'Bad_Prefix/pool=x', `pool=${'x'.repeat(64)}`]) {
+    for (const pod of await checkJobsWithNodePool(value)) {
+      assert.equal(pod.tolerations, undefined, JSON.stringify(value));
+      assert.equal(pod.affinity, undefined, JSON.stringify(value));
+      assert.equal(pod.topologySpreadConstraints.length, 1, JSON.stringify(value));
+      assert.equal(pod.topologySpreadConstraints[0].topologyKey, 'kubernetes.io/hostname');
+    }
+  }
+});
+
+test('a node pool label without a prefix is accepted', async () => {
+  for (const pod of await checkJobsWithNodePool(' pool=checks_1.a ')) {
+    assert.deepEqual(pod.tolerations, [{ key: 'pool', operator: 'Equal', value: 'checks_1.a', effect: 'NoSchedule' }]);
+  }
+});
 
 test('check kinds and sessions share one spread group without including resident workers', async () => {
   const jobs = [];
@@ -969,6 +1125,7 @@ for (const failed of [false, true]) {
     }
     const pod = job.spec.template.spec;
     assert.equal(pod.automountServiceAccountToken, false);
+    assert.equal(pod.shareProcessNamespace, true);
     assert.equal(pod.securityContext.runAsUser, 1000);
     assert.equal(job.spec.backoffLimit, 0);
     assert.equal(job.spec.activeDeadlineSeconds, 60);

@@ -127,7 +127,7 @@ change follows it, and updates it when a request changes the look on purpose.
 
 The kit is in \`styles/tailwind-input.css\`: colour tokens with a light and
 a dark value (named in \`tailwind.config.js\`), and a few components
-(\`btn-primary\`, \`btn-secondary\`, \`field\`, \`list\` and \`list-row\`,
+(\`page-column\`, \`btn-primary\`, \`btn-secondary\`, \`field\`, \`list\`, \`list-row\`,
 \`card\`, \`section-label\`, \`skeleton\`, \`state-empty\`, \`state-error\`).
 Re-theme by changing the token values there, keeping every text pair at
 4.5:1 or more in both looks.
@@ -139,12 +139,17 @@ Re-theme by changing the token values there, keeping every text pair at
 - A field's label says what it is; its placeholder, if any, is an example
   that says so ("e.g. 5.0"), never a bare value that could pass for one
   already entered.
+- Each screen sits in \`page-column\`, one centred column on a wide window.
 - Every screen that loads data has honest loading, empty and error states.
   Never show the empty state while loading or after a failure; an error says
-  what failed, what still works, and offers Retry.
+  what failed, what still works, and offers Retry. Loading has the content's
+  own shape (its rows, with \`skeleton\` bars for their text).
 - Seed obviously fake staging demo data so the populated screen can be seen
   ("Staging mock data" in the platform conventions).
-- No cards in cards, no uppercase eyebrows, no emoji as icons.`;
+- No cards in cards, no uppercase eyebrows, no emoji as icons.
+- A header that shows the app's own mark shows the project's icon there
+  (the emoji in \`dapp.json\`'s \`icon\` block) or no mark at all: never an
+  empty tile, and never \`brand/icon.png\`, which the app does not serve.`;
 
 // The design kit's half of styles/tailwind-input.css, after the three
 // @tailwind lines. Part of the Tailwind build every new app shares (a
@@ -213,6 +218,14 @@ const DESIGN_KIT_CSS = `
  * text-small (tailwind.config.js), nothing in between.
  */
 @layer components {
+  /* Each screen's content in one centred column, <main
+     class="page-column">. A phone fills it; a wider window keeps it a
+     readable column instead of stretching rows and buttons across the
+     window. The screen's own padding goes inside it. */
+  .page-column {
+    @apply mx-auto w-full max-w-2xl;
+  }
+
   /* Buttons: one primary per screen, the rest secondary. At least 44 px
      each way, so they are easy to tap. */
   .btn-primary,
@@ -257,7 +270,9 @@ const DESIGN_KIT_CSS = `
   }
 
   /* The states of anything that loads data. Show exactly one at a time:
-     - loading: .skeleton shapes where the data will be, never a blank;
+     - loading: the content's own shape, never a blank: the same list and
+       rows at their height, with .skeleton bars where their text goes, so
+       nothing moves when the data arrives;
      - empty, only when the load WORKED and found nothing: a title, one
        sentence and the action that fills it;
      - error, only when the load FAILED: what failed, what still works,
@@ -627,35 +642,32 @@ function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = n
       path: 'CLAUDE.md',
       content: `# ${appName} — notes for Claude Code
 
-This app runs on **Homeroom**. If you're Claude Code
-editing this repo, read the platform conventions before making
-changes:
+This app runs on **Homeroom**. The platform conventions are the single
+source of truth for platform-wide behavior (auth model, \`USERNODE_ENV\`,
+public/private tables, "don't \`git push\`", etc.):
 
 **Platform conventions (authoritative, always current):**
 ${PLATFORM_BASE_URL}/claude.md
 
-Fetch that URL at the start of each session — it's the single source
-of truth for platform-wide behavior (auth model, \`USERNODE_ENV\`,
-public/private tables, "don't \`git push\`", etc.). The hosted copy is
+**Inside Homeroom** (its dev chat, and Homeroom bot's builds), do not
+fetch that URL: what applies to your change is already in your
+instructions, and the \`homeroom\` MCP server's
+\`get_platform_conventions\` reads any one section of the conventions
+when you need it. The two sections below are for working outside
+Homeroom; skip them there.
+
+**Anywhere else** (Claude Code run against this repo locally, or another
+harness), fetch it at the start of each session. The hosted copy is
 updated in place when platform rules change, so fetching it gives you
 today's rules, not a stale snapshot.
 
-When running inside Homeroom's dev-chat, those same conventions are
-already injected into your system prompt, so the fetch is a no-op in
-that path — but it's the right reflex when someone runs Claude Code
-against this repo locally or from another harness.
-
-## Connector permission prompts
+## Connector permission prompts (outside Homeroom)
 
 This repo ships \`.claude/settings.json\`, which allows the **read-only**
 Homeroom connector calls (\`mcp__${CONNECTOR_SERVER_NAME}__get_*\`,
-\`…__list_*\`, \`…__whoami\`) so they stop prompting one at a time. Everything
-that acts — filing a request, opening or advancing a proposal — still asks.
-Claude Code applies those rules only after you accept the
-workspace trust dialog, which lists them for review. See \`.claude/README.md\`
-for the whole story, including what to do if you are still being prompted
-(usually: your connector is registered under a different name than the rules
-assume).
+\`…__list_*\`, \`…__whoami\`) once you accept the workspace trust dialog.
+See \`.claude/README.md\` for the whole story, including what to do if you
+are still being prompted.
 
 ## Check that this checkout is current
 
@@ -682,8 +694,9 @@ answers the same question.
 
 A session-start hook (\`${FRESHNESS_HOOK_PATH}\`, see \`.claude/README.md\`) runs
 this check for you and tells you when you are behind. It is silent offline, so
-its silence is not proof the checkout is current. Inside Homeroom's dev-chat
-the platform fixes the base commit, and none of this applies.
+its silence is not proof the checkout is current. Inside Homeroom (its dev
+chat, and Homeroom bot's builds) the platform fixes the base commit, and none
+of this applies.
 
 ${starter ? starterClaudeSection(starter) : `## Starter template
 
@@ -771,12 +784,21 @@ carries the app-specific notes and points at the platform rules.
 Once the real app exists, rewrite this README to describe it.
 `,
     },
+    // The package files are the starter's own, the same bytes in every app
+    // made from it: no slug or name of this app's goes into them (they
+    // carried both until October 2026). The image's `COPY package.json
+    // package-lock.json` and the `npm ci` after it are then the same steps
+    // for every copy of a starter, so a new app's first build is served
+    // them from the starter's shared layer cache instead of installing
+    // cold (services/kubernetes-buildkit.js, "The starter's shared
+    // cache"). That cache is named by a hash of these two files and the
+    // Dockerfile below, so every starter that writes the same bytes, the
+    // empty scaffold included, shares one. Nothing reads either field: the
+    // app is named by dapp.json, its README, CLAUDE.md and its screen.
     {
       path: 'package.json',
       content: JSON.stringify({
         ...nodeAppPackage,
-        name: slug,
-        description: appName,
         ...(extraDeps ? { dependencies: sortedKeys({ ...nodeAppPackage.dependencies, ...extraDeps.ranges }) } : {}),
       }, null, 2),
     },
@@ -784,19 +806,14 @@ Once the real app exists, rewrite this README to describe it.
       path: 'package-lock.json',
       content: JSON.stringify({
         ...nodeAppLock,
-        name: slug,
         packages: extraDeps ? sortedKeys({
           ...nodeAppLock.packages,
           '': {
             ...nodeAppLock.packages[''],
-            name: slug,
             dependencies: sortedKeys({ ...nodeAppLock.packages[''].dependencies, ...extraDeps.ranges }),
           },
           ...extraDeps.packages,
-        }, '') : {
-          ...nodeAppLock.packages,
-          '': { ...nodeAppLock.packages[''], name: slug },
-        },
+        }, '') : nodeAppLock.packages,
       }, null, 2),
     },
     {
@@ -947,6 +964,16 @@ test-results/
 playwright-report/
 `,
     },
+    // #5120 (compliance plan X-07, decided in T-15): every change merged
+    // into an app, by a person or a bot, comes in under MIT, and Usernode
+    // claims no ownership of app code (L-08), so the copyright line names the
+    // app's contributors. No year: the same create writes the same file. A
+    // starter, a game and a healed repo all get it; an import or a fork
+    // keeps whatever licence its own tree carries.
+    {
+      path: 'LICENSE',
+      content: mitLicense(appName),
+    },
     {
       path: 'project.toml',
       content: `[_]
@@ -996,11 +1023,14 @@ value = "build"
         {
           ...(about ? { description: about } : {}),
           // A starter's tile icon, else the first session card's, and the
-          // checks a starter's first proposal runs.
+          // checks a starter's first proposal runs. The empty starter ships
+          // an empty `tests` array, so the key its checks go under is there
+          // from the first commit: App bench run 191's builds wrote theirs
+          // under `checks`, which the platform never reads.
           ...(icon ? { icon } : {}),
           secrets: [],
           ...(governanceBlock ? { governance: governanceBlock } : {}),
-          ...(starter ? { tests: starter.tests } : {}),
+          tests: starter ? starter.tests : [],
         },
         null,
         2,
@@ -1508,6 +1538,33 @@ function extraDependencies(starter) {
   return { ranges, packages };
 }
 
+// The standard MIT text (https://opensource.org/license/mit), unchanged but
+// for the copyright line.
+function mitLicense(appName) {
+  return `MIT License
+
+Copyright (c) The ${appName} contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`;
+}
+
 function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -1515,6 +1572,9 @@ function escapeHtml(str) {
 module.exports = {
   getTemplateFiles,
   getConnectorScaffoldFiles,
+  // The Empty starter's design kit (its tokens and components), for the
+  // early first look's prompt (first-version-early-look.js).
+  DESIGN_KIT_CSS,
   getCanonicalRepoFile,
   canonicalRepoUrl,
   CANONICAL_REPO_PATH,

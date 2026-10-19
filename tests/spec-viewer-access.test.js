@@ -26,6 +26,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const express = require('express');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -341,14 +342,17 @@ test('both spec read routes consume the ONE shared visibility fragment', () => {
   );
   // One interpolation per route: the version-list route (viewer is $2)
   // and the single-version route (viewer is $3), plus the change page's
-  // plan card (changePlanFor, #4479), which names the version Read opens.
+  // plan card (changePlanFor, #4479), which names the version Read opens,
+  // and the same plan for a whole board list (attachChangePlans, polish
+  // board #14), so the change page draws its card with the page.
   // If any inlines its own copy of the predicate again, this count drifts
   // and the gates can diverge — the exact bug class this refactor removes.
   const callSites = src.match(/\$\{specVersionSharedVisibilitySql\(/g) || [];
-  assert.equal(callSites.length, 3, 'exactly three interpolation call sites');
+  assert.equal(callSites.length, 4, 'exactly four interpolation call sites');
   assert.ok(src.includes("specVersionSharedVisibilitySql('s', '$2')"), 'list route call site');
   assert.ok(src.includes("specVersionSharedVisibilitySql('s', '$3')"), 'single-version route call site');
   assert.ok(src.includes("async function changePlanFor("), 'plan card call site');
+  assert.ok(src.includes("async function attachChangePlans("), 'board list call site');
 });
 
 test('_specViewerView gates the owner-only affordances on _ownsSession', () => {
@@ -363,8 +367,10 @@ test('_specViewerView gates the owner-only affordances on _ownsSession', () => {
   assert.ok(/userShare = !isOwner \? \{ kind: 'absent' \}/.test(render),
     'user-share button is owner-only');
   assert.ok(render.includes('isOwner && isLatest && !isEmpty'), 'build hint is owner-only');
-  assert.ok(render.includes('No plan has been shared for this session yet.'), 'non-owner empty copy');
-  assert.ok(render.includes('No plan yet. Ask the AI to draft one.'), 'owner empty copy kept');
+  assert.ok(render.includes("PlatformI18n.t('devchat:spec.empty.viewer')"), 'non-owner empty copy');
+  assert.equal(message('devchat:spec.empty.viewer'), 'No plan has been shared for this session yet.');
+  assert.ok(render.includes("PlatformI18n.t('devchat:spec.empty.owner')"), 'owner empty copy kept');
+  assert.equal(message('devchat:spec.empty.owner'), 'No plan yet. Ask the AI to draft one.');
   // And the component renders nothing at all for an `absent` action.
   const tsx = read('frontend', 'src', 'features', 'dev-chat', 'spec-viewer.tsx');
   assert.ok((tsx.match(/if \(action\.kind === 'absent'\) return null;/g) || []).length === 2,

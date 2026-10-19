@@ -17,6 +17,7 @@ function deferred() {
 }
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 // ONE bundle per process: a second `loadTsx` entry would hand this file a
 // different `nodePillStore` from the one the components subscribe to.
@@ -87,6 +88,9 @@ function loadNodePill({ hasNodeStatus, snapshot = null, isNative = true, reader 
   sandbox.nodePillStore = mod().nodePillStore;
   sandbox.NODE_PILL_EMPTY = mod().NODE_PILL_EMPTY;
   sandbox.mountNodeSheet = () => {};
+  // The module imports the runtime's `t`; the dropped import is bound to the
+  // real English runtime, so the words asserted below are the catalog's.
+  sandbox.t = englishPlatformI18n().t;
   sandbox.unmountNodeSheet = () => {};
   vm.createContext(sandbox);
   vm.runInContext(source.replace(/^import[^\n]*\n/gm, ''), sandbox);

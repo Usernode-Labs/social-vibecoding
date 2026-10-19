@@ -17,6 +17,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+
+// The scripts under test read their text from the language runtime's
+// global; give them the real English one.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -176,25 +180,36 @@ const sessionsSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 
 const runCcSrc = fs.readFileSync(path.join(__dirname, '..', 'worker', 'run-cc.sh'), 'utf8');
 
 test('server.js sweepers use the shared busy predicate, not bare isInFlight', () => {
-  // Pass 1 (auto-pause) and Pass 2 (staging GC) both gate on it.
+  // Pass 2 (staging GC) and the active_turn watchdog gate on it.
   const uses = serverSrc.match(/activeWorkersSvc\.isSessionBusy\(row\.id\)/g) || [];
   assert.ok(uses.length >= 2, `expected >=2 isSessionBusy(row.id) gates, found ${uses.length}`);
   assert.match(serverSrc,
+    /if \(activeWorkersSvc\.isSessionBusy\(row\.id\)\) continue;[\s\S]{0,300}teardownStagingForSession/,
+    'staging GC cannot race a session-owned sync/pipeline tail');
+  assert.match(serverSrc,
     /stagingReap\.sweepStale\(config, \{ isInFlight: \(id\) => activeWorkersSvc\.isSessionBusy\(id\) \}\)/,
     'stale-preview cleanup also respects non-worker session operations');
-  assert.match(serverSrc,
-    /if \(activeWorkersSvc\.isSessionBusy\(row\.id\)\) continue;[\s\S]{0,300}archiveSession/,
-    'stale proposal archival cannot race a session-owned sync/pipeline tail');
-  // The auto-pause SQL must exclude sessions with a live detached-turn record.
-  assert.ok(
-    /status = 'active'\s*\n\s*AND active_turn IS NULL/.test(serverSrc),
-    "Pass 1 SQL must carry AND active_turn IS NULL"
-  );
+  // The idle pause (Pass 1, once) and the stale proposal archival are the
+  // proposal machine's now: no sweeper in server.js pauses or archives a
+  // session. The machine reads who works on it (the live turn record, a
+  // session-owned operation) under the session's lock, so neither can race
+  // a sync or pipeline tail, on this process or another.
+  assert.doesNotMatch(serverSrc, /archiveSession\(|pauseSession\(/);
+  const machine = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/proposal/machine.ts'), 'utf8');
+  assert.match(machine, /const busy = \(r: Row\) => r\.activeTurn \|\| r\.workedOn;/);
+  const idle = machine.slice(machine.indexOf('const idleCheck: Handler'), machine.indexOf('const reviewCheck: Handler'));
+  assert.match(idle, /if \(busy\(row\) \|\| s\.data\.sync \|\| row\.shotsRunning \|\| row\.buildHold/, 'the idle pause skips a session somebody works on, or that a sync is asked for');
+  const review = machine.slice(machine.indexOf('const reviewCheck: Handler'));
+  assert.match(review.slice(0, review.indexOf('\n};\n')), /if \(busy\(row\)\) return step\(s, \{ timer: again \}\);/,
+    'stale proposal archival waits while somebody works on it');
+  const facts = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/proposal/facts.ts'), 'utf8');
+  assert.match(facts, /activeTurn: !!r\.active_turn, workedOn: !!r\.local_turn \|\| !!r\.operations,/,
+    'a live detached-turn record reads as busy');
 });
 
 test('server.js recovery flow registers in activeWorkers and bumps last_activity_at', () => {
   assert.ok(
-    /activeWorkersSvc\.activeWorkers\.add\(sessionId\)/.test(serverSrc),
+    /activeWorkersSvc\.activeWorkers\.enter\(sessionId\)/.test(serverSrc),
     'resumeDetachedTurn must add the session to activeWorkers'
   );
   assert.ok(

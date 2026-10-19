@@ -63,6 +63,8 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       // hint would cost a query per instance to protect nothing.
       if (oversize) deliverGlobal(payload);
       else deliverGlobalScoped(payload, { appId: r.appId ?? null, appSlug: r.appSlug ?? null });
+      // A card a machine moved on a board: the Workshop hears it (debounced, leased).
+      if (fromWorkflow && r.boardChange) noteBoardChange({ appId: r.appId ?? null, appSlug: r.appSlug ?? null });
       return;
     case 'admins':
       deliverToAdmins(payload);
@@ -83,11 +85,65 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       if (!oversize) void require('./mayor/agent-turn').receiveStopRequest(_pool, payload)
         .catch(() => log.warn('ws', 'Agent stop notification will retry from durable state'));
       return;
+    case 'issues_closed':
+      // From a workflow transition only: issues it closed on GitHub, for
+      // this process's own copy of the open-issues list (github.js keeps one
+      // per process). Nothing is sent to sockets; the transition's own
+      // issue_update tells browsers to re-read.
+      // Applied here only: every process hears the transition itself.
+      if (fromWorkflow && r.owner && r.repo) {
+        require('./github').applyIssuesChange(r.owner, r.repo, {
+          closed: payload.numbers, open: payload.open, invalidate: true,
+        });
+      }
+      return;
+    case 'app_access':
+      // What another process changed about an app's visibility, governance
+      // or admins (app-access.js shareAccessChange), for this process's own
+      // caches. Nothing is sent to sockets.
+      if (!oversize) {
+        appAccess.invalidateVisibilityHere(r.appId ?? payload?.appId ?? null, payload?.slug || null);
+        const id = payload?.appId ?? null;
+        if (id != null) {
+          require('./governance').invalidateGovernanceHere(Number(id));
+          require('./app-admins').invalidateAppAdminsHere(Number(id));
+        } else {
+          require('./app-admins').invalidateAppAdminsHere(null);
+        }
+      }
+      return;
+    case 'issues_cache':
+      // What another process learned of a repo's issues (github.js
+      // shareIssuesChange), for this process's own copy. Nothing is sent to
+      // sockets: the sender's issue_update tells browsers to re-read.
+      if (!oversize && r.owner && r.repo) require('./github').applyIssuesChange(r.owner, r.repo, payload);
+      return;
     case 'homeroom_bot':
-      // Not a socket event at all: the Homeroom bot's loop runs on one Pod
-      // and an issue event can land on any, so the wake rides this bus.
-      // The bot ignores it on every Pod but the one running the loop.
-      require('./homeroom-bot').onBusMessage(payload);
+      // An older release's wake for the bot's loop, which is the workflow's
+      // now (bot-request, bot-lane): nothing to do.
+      return;
+    // Stops for work another platform process runs (docs/plans/
+    // draining-releases.md): the process that holds it does what a stop in
+    // its own process does; every other one finds nothing and ignores it.
+    // Never a socket event, and the sender has already checked who may stop.
+    case 'session_stop':
+      if (!oversize) void Promise.resolve(require('../routes/sessions').receiveSessionStop?.(payload))
+        .catch((err) => log.warn('ws', 'A stop for a turn here failed', { err: err.message }));
+      return;
+    case 'turn_byok':
+      if (!oversize) require('./worker').receiveTurnByok(payload);
+      return;
+    case 'bench_cancel':
+      if (!oversize) void Promise.resolve(require('./bench/lane').receiveCancel(payload))
+        .catch((err) => log.warn('ws', 'A bench cancel here failed', { err: err.message }));
+      return;
+    // Wakes for the leader's loops, asked by a process that does not run
+    // them (docs/plans/web-and-conductor.md): the one running each passes.
+    case 'bench_wake':
+      require('./bench/lane').wakeHere();
+      return;
+    case 'shots_eval_wake':
+      require('./shots-eval-runner').wakeHere();
       return;
     default:
       log.warn('ws', 'unknown bus kind', { kind });
@@ -101,6 +157,17 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
 // `App.resyncCurrentView`, a chat room with `GroupChat.resyncLoaded`. It says
 // only "re-read", so it leaks nothing to anyone in any room.
 function _onBusListening() {
+  // And what it missed may have invalidated this process's own caches (a
+  // merge's issues_closed, an app made private): they are read again rather
+  // than trusted until their TTL.
+  try {
+    appAccess.invalidateAllVisibility();
+    require('./governance').invalidateGovernanceHere(null);
+    require('./app-admins').invalidateAppAdminsHere(null);
+    require('./github').expireIssuesCachesHere();
+  } catch (err) {
+    log.warn('ws', 'Could not clear the caches after the bus came back', { err: err.message });
+  }
   const hint = { type: 'resync_hint' };
   deliverGlobal(hint);
   for (const appId of rooms.keys()) deliverToRoom(appId, hint);
@@ -133,6 +200,23 @@ function disconnectUser(userId) {
       client.ws.terminate();
     }
   }
+}
+
+// A release is replacing this process, which finishes its work without
+// serving anyone (docs/plans/draining-releases.md). Every socket is closed
+// with 1012 (service restart): each tab reconnects, which the Service sends
+// to the new Pod, and re-reads what it shows, as on any dropped socket.
+// Returns how many were closed.
+let _closedForRelease = false;
+function closeAllForRelease() {
+  _closedForRelease = true;
+  let n = 0;
+  for (const clients of [globalClients, ...rooms.values()]) {
+    for (const client of [...clients]) {
+      try { client.ws.close(1012, 'Service restart'); n += 1; } catch { /* already gone */ }
+    }
+  }
+  return n;
 }
 
 function connectedUserIds() {
@@ -255,6 +339,8 @@ function admitSocketFrame(client, msg, now = Date.now()) {
 
 function attach(server, config) {
   const pool = getPool(config);
+  // The bot's voice is handed messages from here, and reads its config here.
+  require('./homeroom-bot-voice').setConfig(config);
   // Also reconcile after a missed NOTIFY or reconnect. This includes HTTP
   // streams; the timer runs on every pod, independently of leader duties.
   const revocationTimer = setInterval(() => {
@@ -278,6 +364,9 @@ function attach(server, config) {
   wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', async (req, socket, head) => {
+    // A process finishing its work after a release serves no new socket: the
+    // tab tries again and reaches the new Pod (closeAllForRelease).
+    if (_closedForRelease) { socket.destroy(); return; }
     // Caddy's forward_auth PRESERVES the Connection/Upgrade headers on its
     // auth subrequest while rewriting the URI to /__caddy/access. Node
     // routes any upgrade-flagged request to this 'upgrade' event instead of
@@ -1320,7 +1409,18 @@ async function handleMessage(pool, client, msg) {
         attRows = attIds.map((id) => found.find((r) => r.id === id));
       }
 
-      const metadata = (quote || attRows.length) ? {} : null;
+      // `client.relayKey` (server-side callers only: the Homeroom bot passing
+      // a person's DM words on, from its workflow work): the post's mark, so
+      // a retry after a restart finds it and posts it nowhere twice.
+      const relayKey = typeof client.relayKey === 'string' && client.relayKey ? client.relayKey.slice(0, 200) : null;
+      if (relayKey) {
+        const { rows: had } = await pool.query(
+          `SELECT id, created_at FROM chat_messages WHERE app_id = $1 AND user_id = $2 AND metadata->>'relayKey' = $3 LIMIT 1`,
+          [client.appId, client.user.id, relayKey]);
+        if (had.length) return { ok: true, message: { id: Number(had[0].id), createdAt: had[0].created_at }, again: true };
+      }
+      const metadata = (quote || attRows.length || relayKey) ? {} : null;
+      if (relayKey) metadata.relayKey = relayKey;
       if (quote) metadata.quote = quote;
       if (attRows.length) {
         // Render-time summary rides in the message row's metadata so
@@ -1344,6 +1444,14 @@ async function handleMessage(pool, client, msg) {
       // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
       const insertParams = [client.appId, client.user.id, content, JSON.stringify(metadata || {}),
         thread ? thread.type : null, thread ? thread.ref : null, postedVia];
+      // 17 Oct 2026: a person's message in any place but a governance vote's
+      // is heard by the Homeroom bot's voice there (src/workflow/bot-voice/)
+      // in the statement that inserts it: an answer it owes is never only in
+      // this process's memory. Never a connector's post.
+      const heard = postedVia !== 'agent' && (!thread || thread.type !== 'governance');
+      const insert = (db) => (heard
+        ? require('../workflow/platform.ts').insertHeard(db, insertSql, insertParams, { appId: client.appId, thread: thread || null })
+        : db.query(insertSql, insertParams).then((r) => r.rows));
       let rows;
       if (attRows.length) {
         // Insert + link atomically — a half-linked send would render
@@ -1351,7 +1459,7 @@ async function handleMessage(pool, client, msg) {
         const cx = await pool.connect();
         try {
           await cx.query('BEGIN');
-          ({ rows } = await cx.query(insertSql, insertParams));
+          rows = await insert(cx);
           await cx.query(
             `UPDATE chat_message_attachments SET message_id = $1 WHERE id = ANY($2)`,
             [rows[0].id, attIds]
@@ -1364,7 +1472,7 @@ async function handleMessage(pool, client, msg) {
           cx.release();
         }
       } else {
-        ({ rows } = await pool.query(insertSql, insertParams));
+        rows = await insert(pool);
       }
 
       // #2387 follow-up: a reply in a reply thread is drawn in the general
@@ -1401,15 +1509,9 @@ async function handleMessage(pool, client, msg) {
       };
 
       await broadcastFromSender(pool, client.appId, outMsg, client.user.id);
-      // B9: a message in the main stream that mentions Homeroom bot asks it
-      // for something (services/homeroom-bot-chat.js). Not awaited: the read
-      // takes a moment, and the room has the message already. Never an edit
-      // (that is chat_edit), and never a connector's post.
-      if (!thread || thread.type === appChat.CATEGORY_THREAD) {
-        void require('./homeroom-bot-chat').noteChatMessage(pool, null, {
-          appId: client.appId, userId: client.user.id, messageId: rows[0].id, content, thread, postedVia,
-        }).catch((err) => log.warn('ws', 'Homeroom bot hand-over failed', { err: err.message }));
-      }
+      // What the Homeroom bot does with it (its voice's answer, a
+      // newcomer's offer, the chat's ask) is the place's workflow machine's:
+      // heard above, in the insert's transaction.
       // WP-E: somebody an invite brought, writing here for the first time:
       // the link's maker hears they said hi (services/invite-activity.js).
       // Not awaited here; the small-group ring below waits for it, so the
@@ -1420,8 +1522,23 @@ async function handleMessage(pool, client, msg) {
         })
         : null;
       // A person answering on an issue's thread is exactly what the Homeroom
-      // bot waits for; a system row (a claim, a bounty) is not a message.
-      if (thread && thread.type === 'issue') noteIssueActivityForBot(client.appId, thread.ref, 'thread');
+      // bot waits for; a system row (a claim, a bounty) is not a message. Its
+      // request's instance heard it in the statement above (insertHeard).
+      // A connector's post (a person's agent writing for them) is heard
+      // after it, as what they said; one on a request the bot has no
+      // instance for yet only asks for its project's refresh.
+      if (thread && thread.type === 'issue' && !heard) noteIssueActivityForBot(client.appId, thread.ref, 'thread');
+      else if (thread && thread.type === 'issue' && !rows[0]?.requestHeard) noteIssueActivityForBot(client.appId, thread.ref, 'posted');
+      // #4974: that reply also settles the bot's asks in the requester's DM —
+      // the question it is waiting on, a stop still showing its buttons — and
+      // says so in the request's thread there. Not awaited. The bot's own post
+      // of a DM answer is skipped by its viaBotDm flag, a connector's above.
+      if (thread && thread.type === 'issue' && postedVia !== 'agent' && !client.viaBotDm) {
+        void require('./homeroom-bot-dm').noteRequestReply(pool, {
+          appId: client.appId, issueNumber: thread.ref, userId: client.user.id,
+          chatMessageId: rows[0].id, content, createdAt: rows[0].created_at,
+        }).catch((err) => log.warn('ws', 'Homeroom bot request-reply note failed', { err: err.message }));
+      }
       // #3264: a reply in the discussion of the bot's own proposal.
       if (thread && thread.type === 'session') noteProposalActivityForBot(pool, client.appId, thread.ref);
       // #2387: a reply thread grew — every row showing its root redraws its
@@ -2042,6 +2159,20 @@ async function sendBotMessage(pool, appId, { user, content, metadata = null, thr
      RETURNING id, created_at`,
     [appId, Number(user.id), text, JSON.stringify(metadata || {}), thread.type, thread.ref, kind]
   );
+  // A reply in a reply thread names its root, as a person's does, so the
+  // stream the root is in can draw it (the bot's voice answers there).
+  let threadRoot = null;
+  if (thread.type === appChat.MESSAGE_THREAD) {
+    const root = await appChat.findThreadRoot(pool, appId, thread.ref).catch(() => null);
+    if (root) {
+      threadRoot = {
+        id: Number(root.id), username: root.username || null,
+        content: root.deleted_at ? '' : appChat.snippet(root.content), deleted: !!root.deleted_at,
+        thread_type: root.thread_type || null,
+        thread_ref: root.thread_ref == null ? null : Number(root.thread_ref),
+      };
+    }
+  }
   await broadcastFromSender(pool, appId, {
     type: 'chat',
     id: rows[0].id,
@@ -2051,6 +2182,7 @@ async function sendBotMessage(pool, appId, { user, content, metadata = null, thr
     msgType: kind,
     ...(metadata ? { metadata } : {}),
     thread,
+    ...(threadRoot ? { threadRoot } : {}),
     createdAt: rows[0].created_at,
     postedVia: null,
   }, Number(user.id));
@@ -2358,7 +2490,7 @@ function broadcastToAdmins(payload) {
 // above (and any external caller) read naturally and don't have to churn.
 function deliverToUser(userId, payload) {
   if (payload.type === 'app_blocks_changed') {
-    appAccess.invalidateVisibility(payload.appId, payload.slug);
+    appAccess.invalidateVisibilityHere(payload.appId, payload.slug);
     if (payload.blocked) {
       for (const client of rooms.get(payload.appId) || []) {
         if (client.user.id === userId) client.ws.close(4004, 'App blocked');
@@ -2431,4 +2563,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { noteBoardChange, connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastSessionEvent, sessionEventAudience, canWatchSessionRow, SESSION_FANOUT_EVENTS, MAX_WATCHED_SESSIONS_PER_SOCKET, SLOW_CLIENT_MAX_BUFFERED, SLOW_CLIENT_RESUME_BUFFERED, _checkLaggingClients: checkLaggingClients, _sessionMetaCache: sessionMetaCache, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, TOPIC_CLOSED_MESSAGE, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };
+module.exports = { noteBoardChange, broadcastThreadSummary, connectedUserIds, disconnectUser, closeAllForRelease, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastSessionEvent, sessionEventAudience, canWatchSessionRow, SESSION_FANOUT_EVENTS, MAX_WATCHED_SESSIONS_PER_SOCKET, SLOW_CLIENT_MAX_BUFFERED, SLOW_CLIENT_RESUME_BUFFERED, _checkLaggingClients: checkLaggingClients, _sessionMetaCache: sessionMetaCache, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, TOPIC_CLOSED_MESSAGE, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };

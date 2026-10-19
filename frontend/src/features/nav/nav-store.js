@@ -58,8 +58,9 @@ import { createStore } from '../../lib/plain-store.js';
  * FIVE TABS, TEN ROOTS: the bar names sections, not screens, so several
  * roots share a tab. Global Chat is a conversation, so it lights Messages;
  * Leaderboard, Settings and Admin are all things about YOU or your account,
- * so they light Me. `#app-view` is absent on purpose — the bar is hidden
- * inside a running app, and an app is not one of the platform's places.
+ * so they light Me. `#app-view` is absent on purpose — an app is not one of
+ * the platform's places, so the rail beside a running app (on a desktop;
+ * a phone's bar is hidden there) lights nothing.
  *
  * @type {Readonly<Record<string, TabKey>>}
  */
@@ -98,16 +99,18 @@ export const TAB_FOR_SCREEN = Object.freeze({
  *   fifth tab shows in place of "Me" (#2760), or null while nobody is known.
  *   Null is the prerender: the document is built in Node with no session, so
  *   it can only ever say "Me", and the first client render has to agree with
- *   it. Nothing writes this before hydration — app.js publishes it from
- *   App.enterAuthed, which runs on DOMContentLoaded, after the bundle has
- *   hydrated — so the name arrives as an ordinary update, like `tab` does.
+ *   it. Nothing writes this before hydration. The session snapshot's name
+ *   is applied in the same task, right after hydration and before the first
+ *   paint (lib/shell-snapshot-apply.ts applyNavSnapshot), and app.js
+ *   publishes the verified one from App.enterAuthed: both are ordinary
+ *   updates, like `tab`.
  */
 
 /**
  * @typedef {object} PeekState
  * @property {boolean} peek  The FOLDED rail is showing over the page because
  *   the pointer is at the window's left edge or on #sidebar-toggle (#2718,
- *   #2764, desktop only; never over a running app, #3138). It is not the
+ *   #2764, desktop only; never from the edge over a running app, #3138). It is not the
  *   same fact as `platform-tabs` visibility or `railOpen` and must not be
  *   folded into either: the screens reserve no band for it, and this is a
  *   temporary overlay on top of that answer.

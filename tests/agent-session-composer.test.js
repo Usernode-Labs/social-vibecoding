@@ -18,6 +18,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
@@ -309,7 +310,8 @@ test('the composer keeps what was typed per conversation, and the drafts list of
   assert.equal(renderToHtml(createElement(SavedDrafts, { drafts: [], busy: false, onSend() {}, onEdit() {} })), '', 'no drafts, no row');
 
   const panel = read('frontend/src/features/agent-session/index.tsx');
-  assert.match(panel, /data-agent-session-send="save"[\s\S]*?aria-label="Save as draft"/, 'the one button turns into Save');
+  assert.match(panel, /data-agent-session-send="save"[\s\S]*?aria-label=\{t\('agent:session\.composer\.saveAsDraft'\)\}/, 'the one button turns into Save');
+  assert.equal(message('agent:session.composer.saveAsDraft'), 'Save as draft');
   assert.match(panel, /const saving = running && !snapshot\.stopping && !!value\.trim\(\);/,
     'Save only with something typed, and never while stopping: Stop fills the box under its own click');
   assert.match(panel, /key="save"\s+type="submit"/, 'Save and Stop are different buttons, so a type flip never lands on one click');
@@ -318,13 +320,63 @@ test('the composer keeps what was typed per conversation, and the drafts list of
     'only Ctrl/Cmd+Enter submits from the box, as in the dev chat');
   assert.doesNotMatch(panel, /event\.key === 'Enter' && !event\.shiftKey/,
     'plain Enter never sends: it is a new line');
-  assert.match(panel, /Save this as a draft \(Ctrl\+Enter or ⌘\+Enter\)\. It stays here until you send it/,
+  assert.match(panel, /const SAVE_TITLE = 'agent:session\.composer\.saveTitle';/);
+  assert.match(panel, /title=\{t\(SAVE_TITLE\)\}/);
+  assert.equal(message('agent:session.composer.saveTitle'), 'Save this as a draft (Ctrl+Enter or ⌘+Enter). It stays here until you send it',
     'the Save draft hint names the chord, not Enter');
-  assert.doesNotMatch(panel, /\(Enter\)\. It stays here until you send it/, 'the old Enter hint is gone');
-  assert.match(panel, /The agent is working\. Type your next message and save it for later\./);
+  assert.doesNotMatch(message('agent:session.composer.saveTitle'), /\(Enter\)\. It stays here until you send it/, 'the old Enter hint is gone');
+  assert.match(panel, /const BUSY_PLACEHOLDER = 'agent:session\.composer\.busyPlaceholder';/);
+  assert.match(panel, /running \? t\(BUSY_PLACEHOLDER\)/);
+  assert.equal(message('agent:session.composer.busyPlaceholder'), 'The agent is working. Type your next message and save it for later.');
 });
 
 // ── 4. What a typical change costs ─────────────────────────────────────
+
+test('the low-credits note sits between the field and the send row, whenever the pill is red (#4784, #4801)', () => {
+  const panel = read('frontend/src/features/agent-session/index.tsx');
+  assert.match(panel, /refused: !!s\.credits/,
+    'a refusal set on the store opens the out-of-credits card, and the note hides while it is open');
+  assert.doesNotMatch(panel, /started: s\.messages\.length > 0 \|\| s\.outbox\.length > 0/,
+    'the note is no longer gated to a new conversation: it shows mid-session too');
+  assert.match(panel, /\{!archived && !pendingSend && showLowCreditNote\(credit, snapshot\.refused\) \? <LowCreditNote credit=\{credit\} \/> : null\}/,
+    'the note shows whenever the pill is red, never in an archived conversation, and it gives way while the low-credits check is open (#4792)');
+  const field = panel.indexOf('<textarea');
+  const note = panel.indexOf('showLowCreditNote(credit, snapshot.refused)');
+  const row = panel.indexOf('<div className="flex items-center gap-2 [container-type:inline-size]">', note);
+  assert.ok(field !== -1 && note !== -1 && row !== -1 && field < note && note < row,
+    'the note reads between the box and the row with Send');
+  assert.equal(message('agent:session.credits.lowNote', { amount: '$0.60' }),
+    'Only $0.60 of credits left. A build can cost more than that and may stop partway. To keep going, <0>add your own Anthropic API key</0> or wait for your free credits to reset.');
+  assert.equal(message('agent:session.credits.lowNoteNone'),
+    'No credits left. A build may not start, or may stop partway. To keep going, <0>add your own Anthropic API key</0> or wait for your free credits to reset.');
+});
+
+test('a send with almost no credits stops for one tap first, then never again this visit (#4792)', () => {
+  const panel = read('frontend/src/features/agent-session/index.tsx');
+  assert.match(panel, /if \(needsLowCreditCheck\(credit\)\) \{\s*setPendingSend\(\{ kind: 'text' \}\);\s*return;\s*\}\s*sendTyped\(\);/,
+    'submit asks before it clears the box, so Cancel keeps the message');
+  assert.match(panel, /const onSendDraft = \(draft: SavedDraft\) => \{\s*if \(running\) return;\s*if \(needsLowCreditCheck\(credit\)\) \{\s*setPendingSend\(\{ kind: 'draft', draft \}\);\s*return;\s*\}/,
+    'a saved draft\'s Send asks the same question');
+  assert.match(panel, /const onConfirmSend = \(\) => \{\s*const held = pendingSend;\s*confirmLowCredit\(\);\s*setPendingSend\(null\);/,
+    'Continue confirms for the rest of the visit, then runs the held send');
+  assert.match(panel, /const onCancelSend = \(\) => setPendingSend\(null\);/, 'Cancel only closes the check');
+  assert.match(panel, /setPendingSend\(null\);\s*\}, \[target, running\]\)/,
+    'a switch of conversation or a turn that starts closes the check');
+  assert.match(panel, /if \(pendingSend && !isLowCredit\(credit\)\) setPendingSend\(null\)/,
+    'figures that refresh above the threshold (a top-up) close it too');
+  assert.match(panel, /\{!archived && pendingSend && credit \? \(/, 'the check shows only where a send is held');
+  assert.match(panel, /buttonClass=\{CARD_BUTTON\}\s*primaryClass=\{CARD_PRIMARY\}/,
+    'the check reuses the composer\'s own card buttons, not a copied class string');
+  const field = panel.indexOf('<textarea');
+  const check = panel.indexOf('<LowCreditConfirm');
+  const row = panel.indexOf('<div className="flex items-center gap-2 [container-type:inline-size]">', check);
+  assert.ok(field !== -1 && check !== -1 && row !== -1 && field < check && check < row,
+    'the check sits between the box and the row with Send, in the note\'s slot');
+
+  assert.equal(message('agent:session.credits.confirmContinue'), 'Continue');
+  assert.equal(message('agent:session.credits.confirmCancel'), 'Cancel');
+});
+
 
 test('each model says what a typical change costs on it, never as a bare amount', () => {
   const choice = loadTsx('frontend/src/features/agent-session/model-choice.ts');
@@ -382,10 +434,14 @@ test('each model says what a typical change costs on it, never as a bare amount'
 
 test('a reply says what it cost, and a turn that did not finish offers to try again', () => {
   const transcript = loadTsx('frontend/src/features/agent-session/transcript.ts');
-  assert.equal(transcript.replyCostLabel({ costCents: 1.2, metadata: {} }), 'reply $0.012');
-  assert.equal(transcript.replyCostLabel({ costCents: '0.5', metadata: { costEstimated: true } }), 'reply ~$0.005', 'an estimate says so');
-  assert.equal(transcript.replyCostLabel({ costCents: 0, metadata: {} }), '');
-  assert.equal(transcript.replyCostLabel({ costCents: null, metadata: {} }), '');
+  // The amount is the model's; the words around it ("reply $0.012") are one
+  // catalog message, the reply's label.
+  assert.equal(transcript.replyCostAmount({ costCents: 1.2, metadata: {} }), '$0.012');
+  assert.equal(transcript.replyCostAmount({ costCents: '0.5', metadata: { costEstimated: true } }), '~$0.005', 'an estimate says so');
+  assert.equal(transcript.replyCostAmount({ costCents: 0, metadata: {} }), '');
+  assert.equal(transcript.replyCostAmount({ costCents: null, metadata: {} }), '');
+  assert.equal(message('agent:session.reply.agentWithCost', { cost: '$0.012' }), 'Agent<0> · reply $0.012</0>');
+  assert.match(read('frontend/src/features/agent-session/index.tsx'), /id="agent:session\.reply\.agentWithCost"\s+values=\{\{ cost: item\.cost \}\}/);
 
   const row = (id, role, content, metadata = {}, extra = {}) => ({ id, role, content, metadata, changeId: null, createdAt: null, ...extra });
   const items = transcript.buildTranscript([
@@ -393,7 +449,7 @@ test('a reply says what it cost, and a turn that did not finish offers to try ag
     row(2, 'assistant', 'Hello', { quickReplies: ['Make it blue'] }, { costCents: 1.25 }),
   ]);
   const mayor = items.find((i) => i.kind === 'mayor');
-  assert.equal(mayor.cost, 'reply $0.013');
+  assert.equal(mayor.cost, '$0.013');
   assert.equal(mayor.ended, null);
   assert.deepEqual(transcript.latestReplies(items), ['Make it blue'], 'its own suggestions first');
 
@@ -427,7 +483,8 @@ test('the outline is the card\'s in every engine; the Mayor at work is three dot
   assert.match(panel, /className="agent-session-composer-input /);
   assert.doesNotMatch(panel, /rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700/, 'the full-width bubble is gone');
   assert.match(panel, /<TypingDots \/>/);
-  assert.match(panel, /<span className="sr-only">The agent is thinking<\/span>/, 'said to a screen reader when the dots say it alone');
+  assert.match(panel, /<span className="sr-only">\{t\('agent:session\.live\.thinking'\)\}<\/span>/, 'said to a screen reader when the dots say it alone');
+  assert.equal(message('agent:session.live.thinking'), 'The agent is thinking');
 
   const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   assert.match(devChat, /\|\| \(DevChat\._agentSessionThinking \? 'thinking' : null\)/, 'one title writer, one marker');

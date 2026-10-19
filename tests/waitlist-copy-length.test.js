@@ -15,6 +15,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -39,41 +40,21 @@ function wordsIn(text) {
     .filter(Boolean).length;
 }
 
-test('stage 1 leads with one sentence, then a list', () => {
-  const pitch = WAITLIST.slice(
-    WAITLIST.indexOf('Describe the app you want'),
-    WAITLIST.indexOf('Just your email to join.'));
-  assert.match(pitch, /<ul/, 'the three supporting claims are a list now');
-  const items = pitch.match(/<li>/g) || [];
-  assert.equal(items.length, 3);
-  assert.ok(wordsIn(pitch) < 70,
-    `the pitch should be well under the original ~75 words, saw ${wordsIn(pitch)}`);
-});
-
-test('and keeps every claim it used to make', () => {
-  for (const claim of [
-    /Describe the app you want in chat, an AI builds it, and the group votes the changes in\./,
-    /built here, by the people who use it/,
-    /run on the Homeroom chain, and contributors own a share of what they build/,
-    /We're letting people in a few at a time\./,
-    /public apps are open to everyone now/,
-    /Just your email to join\./,
-  ]) {
-    assert.match(flat(WAITLIST), claim);
+// #5261 retired the join form, and its pitch went with it: Continue joins
+// now, and the screen left is check your status, which pitches nothing.
+test('the status check carries no join pitch', () => {
+  for (const id of ['auth:waitlist.intro', 'auth:waitlist.justEmail', 'auth:waitlist.title']) {
+    assert.ok(!WAITLIST.includes(`t('${id}')`), `${id} is not drawn`);
   }
-});
-
-test('the heading and the step line are untouched: checks pin them', () => {
-  // "Enter your confirmation code" and "Registered with" are declared-check
-  // text on ?shot= routes, and the whole pitch hides on `joined` as before.
-  assert.match(WAITLIST, /Join the waitlist/);
-  assert.match(WAITLIST, /hiddenLast\(joined, 'mt-3 text-sm font-medium/);
+  assert.doesNotMatch(WAITLIST, /<ul/);
 });
 
 test('want-in-sooner drops the sentence that said it twice', () => {
-  const intro = MORE.slice(
-    MORE.indexOf('Four questions, about three minutes'),
-    MORE.indexOf('id="more-invalid"'));
+  // One message between the heading and the invalid-link notice, and no other.
+  const between = MORE.slice(MORE.indexOf("{t('auth:more.title')}"), MORE.indexOf('id="more-invalid"'));
+  assert.deepEqual(Array.from(between.matchAll(/\bt\('([^']+)'/g), (m) => m[1]), ['auth:more.title', 'auth:more.intro']);
+  const intro = message('auth:more.intro');
+  assert.match(intro, /^Four questions, about three minutes/);
   assert.ok(wordsIn(intro) < 40, `saw ${wordsIn(intro)} words`);
   // What it must still say.
   assert.match(flat(intro), /what we read when we pick who gets in next/);
@@ -84,10 +65,12 @@ test('want-in-sooner drops the sentence that said it twice', () => {
   // removed, which is exactly the sort of prose a whole-file grep trips on.
   assert.doesNotMatch(flat(intro), /worth more than the order/);
   assert.doesNotMatch(flat(intro), /Every one is optional/);
-  assert.match(MORE, /Optional \(moves you up the list\)/,
+  assert.match(MORE, /\{t\('auth:more\.eyebrow'\)\}/);
+  assert.match(message('auth:more.eyebrow'), /Optional \(moves you up the list\)/,
     'the optional label is still there, which is why the sentence could go');
 });
 
 test('the "Want in sooner?" heading survives, because a check asserts it', () => {
-  assert.match(MORE, /Want in sooner\?/);
+  assert.match(MORE, /\{t\('auth:more\.title'\)\}/);
+  assert.match(message('auth:more.title'), /Want in sooner\?/);
 });

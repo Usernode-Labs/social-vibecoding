@@ -58,6 +58,7 @@ const RETIRED_LABELS = [
 function loadBrowserModule(relPath, globalName) {
   const sandbox = { window: {}, module: { exports: {} }, document: undefined };
   sandbox.self = sandbox.window;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   for (const dep of ['public/js/build-venues.js', relPath]) {
     const src = fs.readFileSync(path.join(__dirname, '..', dep), 'utf8');

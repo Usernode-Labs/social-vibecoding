@@ -19,6 +19,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -67,7 +68,8 @@ test('it is the same 44px round, opaque chevron on every screen', () => {
   const w = sharedClasses();
   assert.ok(w.includes('h-11') && w.includes('w-11'), '44px');
   assert.ok(w.includes('bg-white'), 'opaque, so nothing reads through it');
-  assert.match(BACK, /data-auth-back=""[\s\S]{0,400}?aria-label="Back"[\s\S]{0,200}?<ChevronLeftIcon/);
+  assert.match(BACK, /data-auth-back=""[\s\S]{0,400}?aria-label=\{t\('core:common\.back'\)\}[\s\S]{0,200}?<ChevronLeftIcon/);
+  assert.equal(message('core:common.back'), 'Back');
   assert.doesNotMatch(WAITLIST, /&larr; Back/, 'the text link is gone');
 });
 

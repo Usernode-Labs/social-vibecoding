@@ -30,6 +30,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -224,7 +225,8 @@ test('the chassis gates the panes on the chunk, and init() runs where the panes 
   assert.doesNotMatch(indexTsx, /import '\.\/mount'/, 'nor settings.js (which ./mount imports)');
   assert.match(indexTsx, /\{mounted && Sections \? <Sections \/> : null\}/);
   assert.match(indexTsx, /if \(mounted\) ensureSettings\(\);/, 'a reveal without open() still asks for the module');
-  assert.match(indexTsx, /Settings could not be loaded\./, 'a failed load says so in the host instead of leaving it blank');
+  assert.match(indexTsx, /t\('settings:screen\.loadFailed'\)/, 'a failed load says so in the host instead of leaving it blank');
+  assert.match(message('settings:screen.loadFailed'), /Settings could not be loaded\./);
   assert.match(sectionsTsx, /export function SettingsSections\(\) \{\n[\s\S]{0,900}?useIsomorphicLayoutEffect\(\(\) => \{\n\s*window\.Settings\?\.init\?\.\(\);\n\s*\}, \[\]\);/,
     'init() binds by id once the panes exist: a layout effect of the panes component');
   assert.match(chunkTs, /^import '\.\/mount';/m, 'the chunk evaluates settings.js (via ./mount) …');
@@ -298,4 +300,22 @@ test('the About pane still renders the pill slot EMPTY, as app.js\'s host', () =
   assert.ok(!html.includes('drawer-ver drawer-ver--'),
     'no pill variant class: those are app.js\'s to write');
   assert.match(html, /id="drawer-row-platform-version"/);
+});
+
+test('Settings → About ends with the terms and the privacy notice (#5094, #5106)', () => {
+  // Under the version rows, so the declared checks' `~` chains over those
+  // rows still hold; and the Homeroom app shows this same screen, which is
+  // how the app's Settings carries both too.
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const { AboutSection } = loadTsx(`${SETTINGS_DIR}/sections/about.tsx`);
+  const html = renderToHtml(createElement(AboutSection, {}));
+  const versions = html.indexOf('id="drawer-row-native-app-version"');
+  const legal = html.indexOf('id="settings-about-legal"');
+  assert.ok(versions > 0 && legal > versions, 'the Legal block comes after the version rows');
+  assert.match(html, /<button id="settings-about-terms" type="button"[^>]*>Terms<\/button>/);
+  // The privacy notice opens in a new tab; its address arrives with the
+  // options (effects do not run here), so the first render has no href.
+  assert.match(html, /<a id="settings-about-privacy" target="_blank" rel="noopener noreferrer"[^>]*>Privacy notice<\/a>/);
+  assert.match(aboutTsx, /const privacy = useWaitlistOptions\(\)\?\.privacy_link \|\| undefined;/);
+  assert.match(aboutTsx, /const show = settings\?\.showTermsSheet;/);
 });

@@ -62,7 +62,8 @@ test('planner origin list rejects stale or malformed hosted-app catalogs', () =>
   }
 });
 
-const SHOTS_TOOLS = ['get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request'];
+const SHOTS_TOOLS = ['get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request',
+  'control_request', 'upload_file'];
 const RETIRED_TOOLS = /evidence_(?:get_context|run_plan|finish|capture|report_blocker|set_request_failure|reset_pair|reset_side)/;
 
 // Run the real config writer against a temporary state directory.
@@ -164,6 +165,43 @@ test('every shots browser, the guest\'s included, is denied the tools that run c
   }
 });
 
+// The invited fixtures' browsers (#4437): a run's declared changes name
+// their personas, so the config writer starts those servers only then, and
+// the runner gives their directories and tokens to the bootstrap alone.
+test('the invited fixtures\' browsers start only when a run names them', () => {
+  const worker = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
+  assert.match(worker,
+    /browser_\(member\|admin\|full_admin\|guest\|invited_member\|invited_member_listed\)\(_phone\)\?\$/);
+  const claudeRunner = read('run-cc.sh');
+  assert.match(claudeRunner, /: "\$\{SHOTS_INVITED_MEMBER_TOKEN:=\}"/);
+  assert.match(claudeRunner, /: "\$\{SHOTS_INVITED_MEMBER_LISTED_TOKEN:=\}"/);
+  assert.match(claudeRunner, /mkdir -p "\$SHOTS_DIR\/invited_member"/);
+  assert.match(claudeRunner, /mkdir -p "\$SHOTS_DIR\/invited_member_listed"/);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-invited-config-'));
+  try {
+    const plain = writeConfig(dir);
+    assert.ok(!('browser_invited_member' in plain.config.mcpServers), 'no invited browser without the run naming one');
+    const named = writeConfig(dir, {
+      SHOTS_BROWSER_PERSONAS: '["member","read_only_admin","full_admin","guest","invited_member","invited_member_listed"]',
+      SHOTS_PHONE_PERSONAS: '["invited_member_listed"]',
+    });
+    assert.ok(named.config.mcpServers.browser_invited_member);
+    assert.ok(named.config.mcpServers.browser_invited_member_listed);
+    // A phone browser reads its persona's saved state, so it starts only
+    // beside the desktop browser the run also starts.
+    assert.ok(named.config.mcpServers.browser_invited_member_listed_phone);
+    assert.ok(!('browser_invited_member_phone' in named.config.mcpServers));
+    // A list without the four ordinary personas is refused: those start on
+    // every run.
+    const fallback = writeConfig(dir, { SHOTS_BROWSER_PERSONAS: '["invited_member"]' });
+    assert.ok(!('browser_invited_member' in fallback.config.mcpServers));
+    assert.ok(fallback.config.mcpServers.browser_member);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('the guest browser is never signed in, and its optional token never outlives the bootstrap', () => {
   const claudeRunner = read('run-cc.sh');
   const bootstrap = read('shots-browser-bootstrap.js');
@@ -178,7 +216,7 @@ test('the guest browser is never signed in, and its optional token never outlive
   assert.match(claudeRunner, /: "\$\{SHOTS_GUEST_TOKEN:=\}"/);
   assert.match(claudeRunner, /"guest":17895/);
   assert.match(claudeRunner,
-    /unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN SHOTS_GUEST_TOKEN\n/);
+    /unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN SHOTS_GUEST_TOKEN \\?\n\s*SHOTS_INVITED_MEMBER_TOKEN SHOTS_INVITED_MEMBER_LISTED_TOKEN\n/);
 });
 
 test('on Homeroom\'s own pairs every signed-in persona makes the copies\' first-view demo data on both sides', async () => {
@@ -207,7 +245,7 @@ test('on Homeroom\'s own pairs every signed-in persona makes the copies\' first-
   const worker = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
   assert.match(worker, /SHOTS_PLATFORM_ASSETS: shotsPlatformAssets \? '1' : '0',/);
   const orchestrator = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'shots-orchestrator.js'), 'utf8');
-  assert.match(orchestrator, /platformAssets: app\.slug !== config\.selfAppSlug,/);
+  assert.match(orchestrator, /const selfApp = app\.slug === config\.selfAppSlug;[\s\S]*platformAssets: !selfApp,/);
   // Each persona, each side, before the browsers' storage is saved; never the guest.
   const bootstrap = read('shots-browser-bootstrap.js');
   const warm = bootstrap.indexOf('await warmDemoData(context, origin');
@@ -551,7 +589,7 @@ function bridgeFixture(t, { declaredChanges } = {}) {
   return { dir, shotsDir, runId, env, calls, tools, serverInfo, call, platformFetch };
 }
 
-test('the shots bridge offers exactly seven tools and talks only to its own run', async (t) => {
+test('the shots bridge offers exactly nine tools and talks only to its own run', async (t) => {
   const bridge = bridgeFixture(t);
   assert.equal(bridge.serverInfo.name, 'usernode-before-after-shots');
   assert.deepEqual([...bridge.tools.keys()], SHOTS_TOOLS);
@@ -578,6 +616,7 @@ test('the shots bridge offers exactly seven tools and talks only to its own run'
   assert.equal(problem.isError, false);
   const unsure = await bridge.call('note_problem', {
     change: 'invite-suggestions', screen: 'desktop', problem: 'The sort control overlaps a column heading.',
+    alsoBefore: 'unknown',
   });
   assert.equal(unsure.isError, false);
 
@@ -599,6 +638,7 @@ test('the shots bridge offers exactly seven tools and talks only to its own run'
   });
   assert.deepEqual(JSON.parse(bridge.calls[5].body), {
     change: 'invite-suggestions', screen: 'desktop', problem: 'The sort control overlaps a column heading.',
+    alsoBefore: 'unknown',
   });
   const problemTool = /registerTool\('note_problem', \{[\s\S]*?\n\}, async/.exec(read('shots-mcp.js'))[0];
   assert.match(problemTool, /not about the declared change itself/);
@@ -606,7 +646,13 @@ test('the shots bridge offers exactly seven tools and talks only to its own run'
   assert.match(problemTool, /"Also noticed" and changes nothing about the shots/);
   assert.match(problemTool, /At most five per run/);
   assert.match(problemTool, /problem: z\.string\(\)\.trim\(\)\.min\(1\)\.max\(300\)/);
-  assert.match(problemTool, /alsoBefore: z\.union\(\[z\.boolean\(\), z\.literal\('unknown'\)\]\)\.optional\(\)/);
+  // The agent must say whether the before build has it: left optional, it
+  // was "unknown" for every problem noted in the proposals merged
+  // 2026-10-09 to 10-12.
+  assert.match(problemTool, /alsoBefore: z\.union\(\[z\.boolean\(\), z\.literal\('unknown'\)\]\)\s+\.describe\('true if your before shot of the same screen/);
+  assert.doesNotMatch(problemTool, /alsoBefore: z\.union\(\[z\.boolean\(\), z\.literal\('unknown'\)\]\)\.optional\(\)/);
+  assert.match(problemTool, /"unknown" only if you could not look/);
+  assert.match(problemTool, /you shoot the before side of the same screen anyway, so look at that shot/);
 
   // A bridge without its run, token or platform refuses to start.
   for (const broken of [{ SHOTS_JWT: '' }, { SHOTS_RUN_ID: 'not-a-run' }, { PLATFORM_URL: 'file:///etc' }]) {
@@ -684,6 +730,36 @@ test('save_shot publishes only a plain .png the browser saved in a persona direc
   assert.equal(batch.value.refused, 1);
   assert.equal(batch.value.results[2].error.code, 'shot_file_not_found');
   assert.deepEqual(uploads(bridge).slice(2).map((sent) => sent.query.change), ['invite-suggestions', 'saved-toast']);
+});
+
+// The brief's dark shots (#4459): the browser opens the page with the mode
+// parameter set, and save_shot says so when it uploads, so the run stores
+// the file as a dark slot and not a retake of the light one.
+test('save_shot forwards theme "dark" for a whole-screen shot taken in dark mode', async (t) => {
+  const bridge = bridgeFixture(t);
+  const image = Buffer.from('png bytes the platform will check');
+  fs.writeFileSync(path.join(bridge.shotsDir, 'admin', 'invite-desktop-after-dark.png'), image);
+  stamp(bridge, 'admin', 'invite-desktop-after-dark.png', `${HEAD}/?un-theme=dark#invite`);
+  const shot = { change: 'invite-suggestions', screen: 'desktop', side: 'after', theme: 'dark' };
+
+  const saved = await bridge.call('save_shot', { shots: [{ ...shot, file: 'invite-desktop-after-dark.png' }] });
+  assert.equal(saved.isError, false);
+  const [sent] = uploads(bridge);
+  assert.deepEqual(sent.query, { change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen', theme: 'dark' });
+  assert.ok(Buffer.from(sent.body).equals(image));
+
+  // A light shot (the default) carries no theme in the query at all.
+  const light = await bridge.call('save_shot', { shots: [{
+    change: 'invite-suggestions', screen: 'desktop', side: 'after', theme: 'light', file: 'invite-desktop-after-dark.png',
+  }] });
+  assert.equal(light.isError, false);
+  assert.equal('theme' in uploads(bridge)[1].query, false);
+
+  // The tool takes the field for a whole-screen shot only, and describes why.
+  const tool = /registerTool\('save_shot', \{[\s\S]*?\n\}, async/.exec(read('shots-mcp.js'))[0];
+  assert.match(tool, /theme: z\.enum\(\['light', 'dark'\]\)\.optional\(\)/);
+  assert.match(tool, /Set "dark" only for a whole-screen shot taken with the page in dark mode/);
+  assert.match(tool, /also pass theme "dark"; element shots and clips are always light/);
 });
 
 test('save_shot publishes a shot only from its own side\'s address', async (t) => {
@@ -923,6 +999,154 @@ test('fail_request only toggles an API path a change declared', async (t) => {
   assert.equal(control.path, '/__usernode_shots_control/request-failure');
   assert.equal(control.headers['x-shots-control-token'], 'c'.repeat(64));
   assert.deepEqual(JSON.parse(control.body), { path: '/api/lists/demo', enabled: true });
+});
+
+// reloop PR 12's loading and error states and smart-cashier PR 2's skeleton
+// went unshot (2026-10-09 to 10-12): no change declared the request, so the
+// agent could not hold or fail it.
+test('control_request holds or fails one exact API GET for a change, recorded before the proxy is told', async (t) => {
+  const bridge = bridgeFixture(t);
+  for (const [args, code] of [
+    [{ change: 'invite-suggestions', path: 'http://head.example.invalid/api/items', mode: 'hold' }, 'invalid_request_path'],
+    [{ change: 'invite-suggestions', path: '/api/items/*', mode: 'hold' }, 'invalid_request_path'],
+    [{ change: 'invite-suggestions', path: '/lists/demo', mode: 'fail' }, 'invalid_request_path'],
+    [{ change: 'invite-suggestions', path: '/api/items#top', mode: 'fail' }, 'invalid_request_path'],
+    [{ change: 'someone-elses-change', path: '/api/items', mode: 'hold' }, 'unknown_change'],
+  ]) {
+    const refused = await bridge.call('control_request', args);
+    assert.deepEqual([refused.isError, refused.value.code], [true, code], JSON.stringify(args));
+  }
+  assert.ok(bridge.calls.every((sent) => sent.path.endsWith('/context')), 'nothing recorded, nothing told');
+
+  const held = await bridge.call('control_request', { change: 'invite-suggestions', path: '/api/items?page=1', mode: 'hold' });
+  assert.deepEqual(held, { isError: false, value: {
+    ok: true, change: 'invite-suggestions', path: '/api/items?page=1', mode: 'hold', hitCount: 0,
+  } });
+  const [record, told] = bridge.calls.slice(-2);
+  assert.equal(record.path, `/api/internal/shots/${bridge.runId}/condition`);
+  assert.equal(record.headers.authorization, 'Bearer run-scoped-jwt');
+  assert.deepEqual(JSON.parse(record.body), { change: 'invite-suggestions', kind: 'request_held', request: '/api/items?page=1' });
+  assert.equal(told.origin, 'http://127.0.0.1:17891');
+  assert.equal(told.path, '/__usernode_shots_control/request-failure');
+  assert.equal(told.headers['x-shots-control-token'], 'c'.repeat(64));
+  assert.deepEqual(JSON.parse(told.body), { path: '/api/items?page=1', mode: 'hold' });
+
+  await bridge.call('control_request', { change: 'saved-toast', path: '/api/items', mode: 'fail' });
+  assert.deepEqual(JSON.parse(bridge.calls.at(-2).body), { change: 'saved-toast', kind: 'request_failed', request: '/api/items' });
+  // A change's own declared failure already says so in its steps, and "off"
+  // does nothing to anyone: neither is recorded.
+  for (const args of [
+    { change: 'load-error', path: '/api/lists/demo', mode: 'fail' },
+    { change: 'invite-suggestions', path: '/api/items?page=1', mode: 'off' },
+  ]) {
+    const before = bridge.calls.length;
+    assert.equal((await bridge.call('control_request', args)).isError, false);
+    assert.deepEqual(bridge.calls.slice(before).map((sent) => sent.path),
+      [`/api/internal/shots/${bridge.runId}/context`, '/__usernode_shots_control/request-failure']);
+    assert.deepEqual(JSON.parse(bridge.calls.at(-1).body), { path: args.path, mode: args.mode });
+  }
+
+  // A recording the platform refuses stops it before the proxy is told.
+  const told2 = [];
+  const refusing = loadBridge(bridge.env, async (url, init = {}) => {
+    const parsed = new URL(url);
+    told2.push(parsed.pathname);
+    const payload = parsed.pathname.endsWith('/context') ? { ok: true, context: (await (await bridge.platformFetch(url)).json()).context }
+      : { ok: false, code: 'invalid_condition', message: 'No.' };
+    return new Response(JSON.stringify(payload), { status: payload.ok ? 200 : 400 });
+  });
+  const result = await refusing.tools.get('control_request')({ change: 'invite-suggestions', path: '/api/items', mode: 'hold' });
+  assert.equal(result.isError, true);
+  assert.equal(JSON.parse(result.content[0].text).code, 'invalid_condition');
+  assert.ok(!told2.includes('/__usernode_shots_control/request-failure'));
+});
+
+// pixora PR 3 (2026-10-10) went unshot: "no file-upload tool".
+test('upload_file has the browser\'s observer choose sample files, recorded first, and takes no path', async (t) => {
+  const bridge = bridgeFixture(t);
+  const args = { change: 'invite-suggestions', browser: 'browser_member', files: ['landscape.png'] };
+  assert.equal((await bridge.call('upload_file', args)).value.code, 'upload_unavailable', 'a turn without the control');
+
+  const ctl = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-ctl-'));
+  const received = [];
+  let reply = { ok: true, outcome: 'ok', text: '### Page state\n- Page URL: http://head.example.invalid/upload' };
+  const observer = require('node:net').createServer((socket) => {
+    let data = '';
+    socket.on('data', (chunk) => {
+      data += chunk;
+      if (!data.includes('\n')) return;
+      received.push(JSON.parse(data));
+      socket.end(`${JSON.stringify(reply)}\n`);
+    });
+  });
+  await new Promise((resolve) => observer.listen(path.join(ctl, 'member.sock'), resolve));
+  t.after(() => { observer.close(); fs.rmSync(ctl, { recursive: true, force: true }); });
+  const { tools } = loadBridge({ ...bridge.env, SHOTS_BROWSER_CONTROL_DIR: ctl, SHOTS_BROWSER_CONTROL_TOKEN: 'd'.repeat(64) },
+    bridge.platformFetch);
+  const upload = async (input) => {
+    const result = await tools.get('upload_file')(input);
+    return { isError: result.isError === true, content: result.content, value: JSON.parse(result.content[0].text) };
+  };
+
+  // Only sample names, each once, three at most, in a browser of the run.
+  for (const files of [['../state/member.json'], ['landscape.png', 'landscape.png'],
+    ['landscape.png', 'portrait.png', 'table.csv', 'document.pdf']]) {
+    assert.equal((await upload({ ...args, files })).value.code, 'invalid_sample_files', JSON.stringify(files));
+  }
+  assert.equal((await upload({ ...args, browser: 'browser_other' })).value.code, 'unknown_browser');
+  assert.equal((await upload({ ...args, change: 'someone-elses-change' })).value.code, 'unknown_change');
+  assert.equal(received.length, 0);
+  assert.ok(bridge.calls.every((sent) => sent.path.endsWith('/context')));
+
+  const done = await upload(args);
+  assert.equal(done.isError, false);
+  assert.deepEqual(done.value, { ok: true, change: 'invite-suggestions', browser: 'browser_member', uploaded: ['landscape.png'] });
+  assert.equal(done.content[1].text, reply.text, 'the browser\'s own answer follows, as after a click');
+  assert.deepEqual(JSON.parse(bridge.calls.at(-1).body), { change: 'invite-suggestions', kind: 'sample_file', files: ['landscape.png'] });
+  assert.equal(bridge.calls.at(-1).path, `/api/internal/shots/${bridge.runId}/condition`);
+  assert.deepEqual(received, [{ action: 'upload', files: ['landscape.png'], token: 'd'.repeat(64) }]);
+
+  // An empty list closes the chooser and records nothing.
+  const recorded = bridge.calls.filter((sent) => sent.path.endsWith('/condition')).length;
+  assert.equal((await upload({ ...args, files: [] })).isError, false);
+  assert.equal(bridge.calls.filter((sent) => sent.path.endsWith('/condition')).length, recorded);
+  assert.deepEqual(received.at(-1).files, []);
+
+  // No chooser open: the agent is told what to do first.
+  reply = { ok: false, outcome: 'tool_error',
+    text: 'Error: The tool "browser_file_upload" can only be used when there is related modal state present.' };
+  const closed = await upload(args);
+  assert.equal(closed.isError, true);
+  assert.match(closed.value.message, /^No file chooser is open in browser_member\. Click the page's upload control first/);
+  // A browser this turn does not run.
+  assert.equal((await upload({ ...args, browser: 'browser_admin_phone' })).value.code, 'browser_unavailable');
+
+  const tool = /registerTool\('upload_file', \{[\s\S]*?\n\}, async/.exec(read('shots-mcp.js'))[0];
+  assert.match(tool, /which you do not have/);
+  assert.match(tool, /files: z\.array\(z\.enum\(samples\.SAMPLE_NAMES\)\)\.max\(samples\.MAX_FILES\)/);
+  assert.match(tool, /browser: z\.enum\(BROWSER_SERVERS\)/);
+});
+
+test('the sample files are drawn into the image, and only the runner\'s own processes reach a browser\'s control', () => {
+  const dockerfile = read('Dockerfile');
+  assert.match(dockerfile,
+    /COPY shots-samples\.js \/usr\/local\/bin\/shots-samples\.js\nRUN node \/usr\/local\/bin\/shots-samples\.js \/usr\/local\/share\/usernode\/shots-samples\n/);
+  // As root, before the image switches to the node user: read-only to the turn.
+  assert.ok(dockerfile.indexOf('RUN node /usr/local/bin/shots-samples.js') < dockerfile.lastIndexOf('\nUSER node\n'));
+  assert.equal(require('../worker/shots-samples').SAMPLES_DIR, '/usr/local/share/usernode/shots-samples');
+  const runner = read('run-cc.sh');
+  assert.match(runner, /export SHOTS_BROWSER_CONTROL_DIR="\$SHOTS_TMP\/ctl"\n/);
+  assert.match(runner,
+    /export SHOTS_BROWSER_CONTROL_TOKEN=\$\(node -e "process\.stdout\.write\(require\('crypto'\)\.randomBytes\(32\)\.toString\('hex'\)\)"\)\n/);
+  assert.match(runner, /mkdir -m 700 "\$SHOTS_BROWSER_CONTROL_DIR" \|\| die/);
+  assert.ok(runner.indexOf('export SHOTS_BROWSER_CONTROL_DIR=') < runner.indexOf('node /usr/local/bin/write-shots-mcp-config.js'),
+    'before the browsers start');
+  for (const file of ['shots-browser-observer.js', 'shots-mcp.js']) {
+    assert.match(read(file), /require\('\.\/shots-samples'\)/, file);
+  }
+  // The dry run's copy of the bridge loads them from the repository.
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'scripts', 'shots-dry-run.js'), 'utf8'),
+    /\.replace\("require\('\.\/shots-samples'\)",/);
 });
 
 test('a shots turn samples the worker\'s memory through the proxy, which the image carries', () => {

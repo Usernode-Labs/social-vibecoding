@@ -8,10 +8,11 @@
 //             wall: past it, POST /api/apps and /fork answer 429 "This
 //             server is at its app limit" to everyone but full admins. Set
 //             in Admin → Limits, else MAX_APPS (services/app-limit.js).
-//   sessions  MAX_GLOBAL_SESSIONS — active + promoted coding workers. A soft
+//   sessions  the session limit — active + promoted coding workers. A soft
 //             wall: at it, starting or reopening a session pauses somebody
 //             else's idle one, and 429s "Platform is at capacity" when
-//             nothing is idle.
+//             nothing is idle. Set in Admin → Limits, else
+//             MAX_GLOBAL_SESSIONS (services/session-limit.js).
 //
 // and two that are GitHub's rather than ours, its hourly REST budget as the
 // last response reported it (services/github-budget.js):
@@ -48,11 +49,11 @@
 //
 // The level last reached is kept per cap in platform_limit_alerts, read and
 // written under a row lock in the same transaction that inserts the
-// notifications, so the leader's sweep and a create route racing it cannot
-// both claim the same crossing.
+// notifications, so the sweep and a create route racing it cannot both
+// claim the same crossing.
 //
-// Evaluated by the leader's sweep (server.js, startPlatformLimitSweeper)
-// for both caps, and — for apps only — right after a create or fork
+// Evaluated by the platform-limits clock (src/workflow/clock/services.ts)
+// for every cap, and — for apps only — right after a create or fork
 // succeeds or is refused at the cap, and right after an admin changes the
 // app limit (routes/admin.js), so the alert does not wait for the next
 // sweep.
@@ -65,6 +66,7 @@
 const log = require('./logger');
 const { withTransaction } = require('./cli-auth');
 const appLimit = require('./app-limit');
+const sessionLimit = require('./session-limit');
 const githubBudget = require('./github-budget');
 
 const DEFAULT_WARN_PERCENT = 80;
@@ -98,34 +100,37 @@ const LIMITS = Object.freeze([
   Object.freeze({
     key: 'sessions',
     envKey: 'MAX_GLOBAL_SESSIONS',
-    enabled: (config) => Number(config && config.maxGlobalSessions) > 0,
-    cap: async (config) => Number(config && config.maxGlobalSessions),
-    async count(pool) {
-      // routes/sessions.js — the global-cap probe every start/resume runs.
-      const { rows } = await pool.query(
-        `SELECT COUNT(*)::int AS n FROM chat_sessions
-          WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'
-            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
-      );
-      return Number(rows[0] && rows[0].n);
-    },
+    // Always on: there is no off switch for the session limit, and an
+    // admin's setting applies whatever the deploy's value.
+    enabled: () => true,
+    cap: (config, pool) => sessionLimit.effective(pool, config),
+    // The count every start, resume and reopen asks
+    // (session-caps.countGlobalSessions), so the alert and the refusal agree.
+    count: (pool) => require('./session-caps').countGlobalSessions(pool),
   }),
   Object.freeze({
     key: 'github',
+    // Read off GitHub's answers to this process: unknown (no cap) until it
+    // has made a call, which says nothing about the level.
+    fromAnswers: true,
     envKey: 'GITHUB_BOT_TOKEN',
     enabled: () => !!process.env.GITHUB_BOT_TOKEN,
     percent: () => GITHUB_WARN_PERCENT,
     cap: async () => githubBudget.alertFigures('pat').cap,
     count: async () => githubBudget.alertFigures('pat').used,
+    window: () => githubBudget.alertFigures('pat').resetAt,
   }),
   Object.freeze({
     key: 'github_app',
+    // Read off GitHub's answers to this process: unknown (no cap) until it
+    // has made a call, which says nothing about the level.
+    fromAnswers: true,
     envKey: 'GITHUB_APP_ID',
     enabled: () => githubBudget.alertFigures('installation').cap > 0,
     percent: () => GITHUB_WARN_PERCENT,
     cap: async () => githubBudget.alertFigures('installation').cap,
     count: async () => githubBudget.alertFigures('installation').used,
+    window: () => githubBudget.alertFigures('installation').resetAt,
   }),
 ]);
 const LIMIT_BY_KEY = new Map(LIMITS.map((limit) => [limit.key, limit]));
@@ -225,6 +230,9 @@ async function evaluate(pool, config, key, deps = {}) {
   const limit = LIMIT_BY_KEY.get(key);
   if (!limit) throw new Error(`unknown platform limit: ${key}`);
   const cap = await limit.cap(config, pool);
+  // A process that has not heard from GitHub yet knows no figures: recording
+  // "ok" would re-arm a crossing already told (each new process used to).
+  if (limit.fromAnswers && !(Number(cap) > 0)) return { key, used: null, cap: null, level: null, notified: null, recipients: 0, unknown: true };
   const percent = limit.percent ? limit.percent() : warnPercent();
   const used = await limit.count(pool);
   if (!Number.isFinite(used) || used < 0) throw new Error(`bad ${key} count`);
@@ -239,17 +247,38 @@ async function evaluate(pool, config, key, deps = {}) {
       [key]
     );
     const { rows } = await db.query(
-      'SELECT level FROM platform_limit_alerts WHERE limit_key = $1 FOR UPDATE',
+      `SELECT level, (EXTRACT(EPOCH FROM window_reset_at) * 1000)::float8 AS window_ms
+         FROM platform_limit_alerts WHERE limit_key = $1 FOR UPDATE`,
       [key]
     );
-    const decision = decide({ used, cap, percent, level: rows[0] && rows[0].level });
+    // GitHub's figures are each process's own last answer, about the quota
+    // window GitHub named (its reset). The level is that window's: within it
+    // a level only rises (another process's older answer re-arms nothing),
+    // an answer about a window before it is not recorded at all, and a new
+    // window starts from ok, so its own crossings are told.
+    let baseline = rows[0] && rows[0].level;
+    let sameWindow = false;
+    let window = null;
+    if (limit.fromAnswers) {
+      window = Number(limit.window()) || null;
+      const storedWindow = rows[0] && rows[0].window_ms != null ? Number(rows[0].window_ms) : null;
+      if (storedWindow && storedWindow > Date.now() && (!window || window < storedWindow)) {
+        return { decision: null, inserted: [], stale: true };
+      }
+      sameWindow = !!storedWindow && window === storedWindow;
+      if (!sameWindow) baseline = 'ok';
+    }
+    let decision = decide({ used, cap, percent, level: baseline });
+    const stored = normalizeLevel(rows[0] && rows[0].level);
+    if (sameWindow && RANK[decision.level] < RANK[stored]) decision = { level: stored, notify: null };
     await db.query(
       `UPDATE platform_limit_alerts
           SET level = $2, used = $3, cap = $4, measured_at = NOW(),
-              notified_at = CASE WHEN $5::boolean THEN NOW() ELSE notified_at END
+              notified_at = CASE WHEN $5::boolean THEN NOW() ELSE notified_at END,
+              window_reset_at = CASE WHEN $6::float8 IS NULL THEN window_reset_at ELSE to_timestamp($6::float8 / 1000) END
         WHERE limit_key = $1`,
       [key, decision.level, used, Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : null,
-        !!decision.notify]
+        !!decision.notify, window]
     );
     let inserted = [];
     if (decision.notify && !staging) {
@@ -260,6 +289,9 @@ async function evaluate(pool, config, key, deps = {}) {
     return { decision, inserted };
   });
 
+  if (outcome.stale) {
+    return { key, used: null, cap: null, level: null, notified: null, recipients: 0, stale: true };
+  }
   if (outcome.decision.notify) {
     log.info('platform-limits', 'Platform limit crossed', {
       limit: key, level: outcome.decision.notify, used, cap, percent,

@@ -38,15 +38,26 @@
 #   - main and origin/main are the base, so `origin/main..HEAD` still counts
 #     the trial's own commits and nothing names a later one;
 #   - origin's fetch URL points at nothing, so `git fetch` and `git pull`
-#     fail; its push URL is GitHub's, so the platform's push proxy
+#     fail; it pushes to GitHub (url.<clone URL>.pushInsteadOf, which no
+#     rewrite below applies to), so the platform's push proxy
 #     (worker.js buildPushScript, `git push -u origin "$BRANCH"`) still
 #     lands the trial's branch. A push updates origin/$BRANCH through the
-#     fetch refspec, which names the session branch alone.
+#     fetch refspec, which names the session branch alone;
+#   - the repository's own address on GitHub, typed out, reaches a stand-in
+#     inside .git whose main is the base (url.<stand-in>.insteadOf). The
+#     repository's AGENTS.md tells an agent to `git fetch
+#     https://github.com/Usernode-Labs/social-vibecoding main` and check
+#     that HEAD contains it. In runs 206 and 208 six platform builds did,
+#     found the request already merged on today's main and stopped with
+#     BLOCKED, which the benchmark counts as a failed build. The check now
+#     answers "current", as it does for a live build on today's main, and
+#     fetches nothing later. The stand-in borrows the checkout's objects
+#     (objects/info/alternates), so nothing is copied.
 #
 # What this cannot stop: the worker has network access (its model provider,
-# npm), and the repository is public, so a model that fetches GitHub by its
-# URL could still read later history. Nothing in the checkout points it
-# there any more except the push URL.
+# npm), and the repository is public, so a model that reaches GitHub some
+# other way (its API, another spelling of the address) could still read
+# later history.
 USERNODE_SEALED_URL=/dev/null/no-upstream-in-a-benchmark-trial
 
 usernode_pinned() {
@@ -55,7 +66,7 @@ usernode_pinned() {
 
 # Re-assert the seal (every turn, through usernode_fetch_session_refs): the
 # fetch URL, the session branch's refspec, no tags, no remote-tracking ref
-# but the session branch's, and origin/main at the base.
+# but the session branch's, origin/main at the base, and the stand-in.
 usernode_reseal() {
   git config remote.origin.url "$USERNODE_SEALED_URL" || return 1
   git config --replace-all remote.origin.fetch "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" || return 1
@@ -66,7 +77,53 @@ usernode_reseal() {
       *) git update-ref --no-deref -d "$ref" ;;
     esac
   done
-  git update-ref refs/remotes/origin/main "$USERNODE_PINNED_BASE"
+  git update-ref refs/remotes/origin/main "$USERNODE_PINNED_BASE" || return 1
+  usernode_reseal_upstream
+}
+
+# The stand-in for the repository on GitHub (a bare repository inside the
+# checkout's .git, never part of the worktree), its one ref (main at the
+# base, whatever a turn pushed into it), and the rewrites: the clone URL ($1
+# to usernode_clone_sealed, kept as usernode.sealedOrigin) with and without
+# `.git`, also in lower case (GitHub reads owner and name either way) and over
+# plain http. A rewrite matches by prefix, so another repository whose name
+# merely begins with this one's would reach the stand-in too; no app has one.
+# Pushing to origin goes to the clone URL through pushInsteadOf, which these
+# rewrites never touch.
+usernode_reseal_upstream() {
+  usernode_origin=$(git config --get usernode.sealedOrigin) || return 1
+  usernode_git_dir=$(git rev-parse --absolute-git-dir) || return 1
+  usernode_standin="$usernode_git_dir/usernode-sealed-upstream"
+  if [ ! -d "$usernode_standin" ]; then
+    git init --quiet --bare "$usernode_standin" || return 1
+  fi
+  printf '%s/objects\n' "$usernode_git_dir" > "$usernode_standin/objects/info/alternates" || return 1
+  git --git-dir="$usernode_standin" for-each-ref --format='%(refname)' | while read -r ref; do
+    [ "$ref" = refs/heads/main ] || git --git-dir="$usernode_standin" update-ref --no-deref -d "$ref"
+  done
+  git --git-dir="$usernode_standin" update-ref refs/heads/main "$USERNODE_PINNED_BASE" || return 1
+  git --git-dir="$usernode_standin" symbolic-ref HEAD refs/heads/main || return 1
+  git config --unset-all remote.origin.pushurl || true
+  git config --replace-all "url.$usernode_origin.pushInsteadOf" "$USERNODE_SEALED_URL" || return 1
+  # Push negotiation fetches from the push URL, which the rewrites send to the
+  # stand-in; it borrows every object the checkout has, so the push would
+  # conclude GitHub had the trial's commits and send none of them.
+  git config push.negotiate false || return 1
+  git config --unset-all "url.$usernode_standin.insteadOf" || true
+  usernode_bare=${usernode_origin%.git}
+  usernode_lower=$(printf '%s' "$usernode_bare" | tr 'A-Z' 'a-z')
+  for usernode_spelling in "$usernode_bare" "$usernode_lower"; do
+    case "$usernode_spelling" in
+      https://*) set -- "$usernode_spelling" "http://${usernode_spelling#https://}" ;;
+      *) set -- "$usernode_spelling" ;;
+    esac
+    for usernode_address in "$@"; do
+      for usernode_form in "$usernode_address.git" "$usernode_address"; do
+        git config --get-all "url.$usernode_standin.insteadOf" | grep -qxF "$usernode_form" \
+          || git config --add "url.$usernode_standin.insteadOf" "$usernode_form" || return 1
+      done
+    done
+  done
 }
 
 # The sealed checkout, into the (empty) current directory. $1 is the clone
@@ -87,7 +144,7 @@ usernode_clone_sealed() {
   fi
   git update-ref refs/heads/main "$base" || return 1
   git checkout --quiet -b "$BRANCH" "refs/remotes/origin/$BRANCH" 2>&1 || return 1
-  git config remote.origin.pushurl "$1" || return 1
+  git config usernode.sealedOrigin "$1" || return 1
   usernode_reseal
 }
 

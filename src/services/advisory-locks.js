@@ -52,10 +52,10 @@ const BUILD_RETENTION_LOCK = 991004;
 const STAGING_BUILD_LOCK = 991005;
 const PRODUCTION_BUILD_LOCK = 991006;
 const STAGING_TEMPLATE_LOCK = 991007;
-const PREVIEW_LIFECYCLE_LOCK = 991008;
-// #1374: the once-a-day "what needs your vote" digest. Exclusive across
-// platform Pods, because every instance runs the same interval and a digest
-// sent twice is worse than one sent late.
+// 991008 was the preview lifecycle's (retired with it); not reused.
+// #1374: the once-a-day "what needs your vote" digest, as a transaction
+// lock per person (the second key is the user id): its INSERT checks again
+// that none went out lately, so two passes at once send one digest.
 const VOTE_DIGEST_LOCK = 991009;
 // The automatic challenge scorer's tick. Exclusive across platform Pods for
 // the same reason the digest is: every instance runs the same interval, and
@@ -64,10 +64,8 @@ const VOTE_DIGEST_LOCK = 991009;
 // still refuse the duplicate row, so this lock is about not doing the work
 // (and not spending the grading calls) twice, rather than about correctness.
 const CHALLENGE_SCORER_LOCK = 991010;
-// #1688: the Friday "this week on <app>" card. Exclusive across platform
-// Pods for the digest's reason: every instance runs the interval, and a card
-// posted twice into one chat is worse than one posted an hour late.
-const WEEKLY_DIGEST_LOCK = 991011;
+// 991011 was the Friday card's (#1688), whose conditional stamp of
+// apps.weekly_digest_at is the fence; not reused.
 // #2684: the Homeroom bot's work loop. Session-scoped, held by the leader
 // for the length of one pass over the queue, because a pass runs container
 // turns that cost money: two Pods draining the same queue would triage the
@@ -75,9 +73,8 @@ const WEEKLY_DIGEST_LOCK = 991011;
 // would still refuse a duplicate row, so this is about not doing the work
 // twice rather than about correctness.
 const HOMEROOM_BOT_LOCK = 991012;
-// Held from the GitHub merge call through its finalizer. Recovery may only
-// inspect/replay that proposal after the live owner has released it.
-const MERGE_FINALIZATION_LOCK = 991013;
+// 991013: retired (the merge finalization lock; the merge is the proposal
+// machine's now). Never reuse it: a release being replaced may still hold it.
 // The Homeroom bot's activity cards for work already under way: the
 // CLASSIFIER half of `pg_try_advisory_lock(classifier, userId)`, session-
 // scoped, held while one person's missing cards are found and sent
@@ -90,8 +87,24 @@ const HOMEROOM_BOT_CARDS_LOCK = 991014;
 // holds or wants a checks slot and admits the next ones, and two passes
 // reading the same free slot at once would both fill it.
 const CHECKS_QUEUE_LOCK = 991015;
+// 991016: retired (an app's merge queue pass; the queue is the merge-queue
+// workflow machine now). Never reuse it.
+// A preview attempt's Docker deploy (services/application-runtime.js): the
+// CLASSIFIER half of `pg_advisory_lock(classifier, sessionId)`, session-
+// scoped, held from reading the session's container's attempt label through
+// starting the new container, so an older attempt cannot read the label,
+// stall, and then replace a newer attempt's container. Kubernetes has its
+// fence in the Deployment write itself (a replace on the version read).
+const PREVIEW_DOCKER_DEPLOY_LOCK = 991017;
+// A platform process's presence: the CLASSIFIER half of
+// `pg_advisory_lock(classifier, key)`, session-scoped, held on one
+// connection for the process's whole life (services/process-presence.js).
+// What the process records as working on a session counts while it is held
+// (src/workflow/rules/presence.ts, where the id is defined: the workflow's
+// readers test it in SQL).
+const { PROCESS_PRESENCE_LOCK } = require('../workflow/rules/presence.ts');
 
-module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, MERGE_FINALIZATION_LOCK, BUILD_RETENTION_LOCK,
-  STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK, PREVIEW_LIFECYCLE_LOCK,
-  VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, WEEKLY_DIGEST_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK,
-  CHECKS_QUEUE_LOCK };
+module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, BUILD_RETENTION_LOCK,
+  STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK,
+  VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK,
+  CHECKS_QUEUE_LOCK, PREVIEW_DOCKER_DEPLOY_LOCK, PROCESS_PRESENCE_LOCK };

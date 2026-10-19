@@ -98,10 +98,10 @@ async function setStoryLanding(pool, { enabled, actorId = null }) {
  * first session reached them ('story' or 'sign_in'), and what they said is
  * `first_session_answer` beside it. A project made with no start recorded
  * is 'made', as it always was. communities_onboarded_at stays unset either
- * way (it records the join screen itself being answered); the Getting started
- * card and the First-challenges gate do not wait on it, since #4601 they
- * follow `getting_started_gate` alone, so a new account that came this way
- * gets both like any other. Each is a no-op for anyone who already answered.
+ * way (it records the join screen itself being answered); since #4601
+ * `getting_started_gate` alone marks a new account, so one that came this
+ * way is a newcomer like any other. Each is a no-op for anyone who already
+ * answered.
  */
 async function recordStart(pool, userId, via) {
   await pool.query(
@@ -139,8 +139,39 @@ async function answerJoinScreen(pool, userId, answer) {
     [userId, answer]
   );
 }
-const answerJoinScreenByMaking = (pool, userId) => answerJoinScreen(pool, userId, 'made');
-const answerJoinScreenByLookingAround = (pool, userId) => answerJoinScreen(pool, userId, 'looked_around');
+
+/**
+ * The first session's answer owes the newcomer Homeroom bot's hello (Evan,
+ * sign-up test, 19 Oct 2026): the walk on Home that follows points at
+ * Messages and the bot, and for anybody who did not make a project the bot
+ * builds or a ready-made app, which greet them as its maker
+ * (routes/apps.js), Messages was empty. Owed as the tour's hello
+ * (homeroom-bot-dm.js TOUR_HELLO, through their DM machine): who the bot is
+ * and what to ask it. A person has one hello, ever, so somebody already
+ * greeted hears nothing; the bot switched off, or not building for them,
+ * says nothing either. Best-effort: an answer never fails for it.
+ */
+async function greetNewcomer(pool, userId) {
+  try {
+    await require('../workflow/platform.ts').greet(pool, { userId: Number(userId), kind: 'tour' });
+    return true;
+  } catch (err) {
+    log.warn('first-session', 'Homeroom bot hello not owed', { userId, err: err.message });
+    return false;
+  }
+}
+
+/** Make it: answered by making a project; `greet: false` when making it greets them already (routes/apps.js). */
+async function answerJoinScreenByMaking(pool, userId, { greet = true } = {}) {
+  await answerJoinScreen(pool, userId, 'made');
+  if (greet) await greetNewcomer(pool, userId);
+}
+
+/** "Look around first": answered, and the bot's hello owed. */
+async function answerJoinScreenByLookingAround(pool, userId) {
+  await answerJoinScreen(pool, userId, 'looked_around');
+  await greetNewcomer(pool, userId);
+}
 
 /**
  * Is an account that is still due the join screen asked "What do you want
@@ -224,6 +255,7 @@ module.exports = {
   answerJoinScreen,
   answerJoinScreenByMaking,
   answerJoinScreenByLookingAround,
+  greetNewcomer,
   asksWhatToMake,
   waitlistIdea,
 };

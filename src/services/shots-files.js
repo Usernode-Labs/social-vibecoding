@@ -25,9 +25,17 @@
 // kept beside the results as the verdict's `notices`: they never change a
 // change's status, never fail a run and are never read as the change not
 // working.
+//
+// And what the agent did to both builds alike to reach a change's state,
+// beyond the author's steps: an API GET it held unanswered or made fail
+// (control_request), or a sample file it uploaded (upload_file). Each is a
+// change's `conditions`, recorded before the agent can do it, and shown
+// beside that change's shots, so a loading state nobody's network produced
+// is never taken for the app's own.
 
 const crypto = require('crypto');
 const planContract = require('./visible-changes');
+const { SAMPLE_NAMES, MAX_FILES: MAX_SAMPLE_FILES } = require('../../worker/shots-samples');
 
 const SHOTS_MODE = 'shots';
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
@@ -40,6 +48,9 @@ const MAX_NOTE = 500;
 // handful: more than that is a review, not a notice.
 const MAX_NOTICE = 300;
 const MAX_NOTICES = 5;
+// What the agent did to reach a change's state, at most this many a change.
+const CONDITION_KINDS = Object.freeze(['request_held', 'request_failed', 'sample_file']);
+const MAX_CONDITIONS = 4;
 // An element shot taller than this many screens is not one element a person
 // can read on the card, and Chromium can tile the capture of an element far
 // taller than the screen (a 2026-10-06 survey of runs found a 3679 px mosaic
@@ -118,12 +129,15 @@ function changeFor(intent, changeId) {
   return story;
 }
 
-function slotKey({ storyId, viewport, side, variant }) {
-  return `${storyId}\u0000${viewport}\u0000${side}\u0000${variant}`;
+function slotKey({ storyId, viewport, side, variant, theme }) {
+  // A dark slot's key extends the light one only when it is dark, so every
+  // light key stays exactly as it is now.
+  return `${storyId}\u0000${viewport}\u0000${side}\u0000${variant}${theme === 'dark' ? '\u0000dark' : ''}`;
 }
 
 // Where a saved file belongs: a declared change, one of its screen sizes, a
-// side, and whether it is the screen, one element, or a clip.
+// side, and whether it is the screen, one element, or a clip — in light, or
+// (whole screens only) in dark.
 function shotTarget(intent, raw = {}) {
   const story = changeFor(intent, raw.change);
   const viewport = String(raw.screen || '');
@@ -138,7 +152,15 @@ function shotTarget(intent, raw = {}) {
   if (kind.variant === 'animation' && !planContract.needsClip(story)) {
     throw new ShotError('clip_not_needed', `${story.id} is not declared as motion; save still shots for it.`);
   }
-  return { storyId: story.id, viewport, side, variant: kind.variant, media: kind.media };
+  const theme = raw.theme == null || raw.theme === '' ? 'light' : String(raw.theme);
+  if (!['light', 'dark'].includes(theme)) {
+    throw new ShotError('invalid_theme', 'Theme must be light or dark.');
+  }
+  if (theme === 'dark' && kind.variant !== 'context') {
+    throw new ShotError('dark_screen_only',
+      'A dark shot is the whole screen only: element shots and clips stay in light mode.');
+  }
+  return { storyId: story.id, viewport, side, variant: kind.variant, media: kind.media, theme };
 }
 
 // Whether a skip says the after build broke ('failed') or the state could
@@ -192,6 +214,61 @@ function notice(intent, raw = {}) {
     shot = raw.shot;
   }
   return { text, change: story.id, screen, shot, alsoBefore: alsoBefore(raw.alsoBefore) };
+}
+
+// An API GET the shots tools may hold or fail, as people will read it: the
+// same exact-path rule as a declared controlledFailurePath, and nothing that
+// looks like a credential.
+function requestPath(value) {
+  if (typeof value !== 'string' || !planContract.validControlledFailurePath(value)) return null;
+  let decoded = value;
+  try { decoded = decodeURIComponent(value); } catch { return null; }
+  return planContract.credentialLike(value) || planContract.credentialLike(decoded) ? null : value;
+}
+
+// One thing the agent did to both builds to reach a declared change's state:
+// `{ change, kind, request }` for an API GET held or failed, `{ change, kind,
+// files }` for sample files uploaded.
+function condition(intent, raw = {}) {
+  const story = changeFor(intent, raw.change);
+  const kind = String(raw.kind || '');
+  if (!CONDITION_KINDS.includes(kind)) {
+    throw new ShotError('invalid_condition', `Kind must be one of ${CONDITION_KINDS.join(', ')}.`);
+  }
+  if (kind === 'sample_file') {
+    const files = Array.isArray(raw.files) ? raw.files : [];
+    if (!files.length || files.length > MAX_SAMPLE_FILES || new Set(files).size !== files.length
+        || !files.every((name) => SAMPLE_NAMES.includes(name))) {
+      throw new ShotError('invalid_condition', `Name 1 to ${MAX_SAMPLE_FILES} of the sample files: ${SAMPLE_NAMES.join(', ')}.`);
+    }
+    return { change: story.id, kind, files: [...files] };
+  }
+  const request = requestPath(raw.request);
+  if (!request) {
+    throw new ShotError('invalid_condition', 'The request must be one exact API GET path under /api/, with its query if it has one.');
+  }
+  return { change: story.id, kind, request };
+}
+
+function sameCondition(a, b) {
+  return a.kind === b.kind && (a.kind === 'sample_file'
+    ? a.files.join('\n') === b.files.join('\n') : a.request === b.request);
+}
+
+// What a stored or served result's conditions may hold: the three kinds,
+// their own fields, nothing else.
+function cleanConditions(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, MAX_CONDITIONS).map((entry) => {
+    if (!entry || !CONDITION_KINDS.includes(entry.kind)) return null;
+    if (entry.kind === 'sample_file') {
+      const files = Array.isArray(entry.files)
+        ? entry.files.filter((name) => SAMPLE_NAMES.includes(name)).slice(0, MAX_SAMPLE_FILES) : [];
+      return files.length ? { kind: entry.kind, files } : null;
+    }
+    const request = requestPath(entry.request);
+    return request ? { kind: entry.kind, request } : null;
+  }).filter(Boolean);
 }
 
 function stored(target, buffer, info) {
@@ -265,6 +342,23 @@ function markUnchanged(stories, ids) {
   });
 }
 
+// What a change's result reads as wherever results are read
+// (shots-state.runSummary's shotResults, the admin listing, the runs
+// export): ready, unchanged, skipped or failed. The verdict stores an
+// unchanged change as `status: 'ready'` with `unchanged: true`, because its
+// shots are still published and the run still counts it as ready (`passed`,
+// the manifest and the outlines read it so), and runs saved before the
+// flag existed have neither. A reader that knows only ready, skipped and
+// failed can take unchanged for ready: its shots are there, and its note
+// says they came out the same. Until 2026-10-12 results said 'ready' for
+// these (at least six changes in the 200 proposals merged 10-09 to 10-12),
+// so only their note told them apart.
+const RESULT_STATUSES = Object.freeze(['ready', 'unchanged', 'skipped', 'failed']);
+function resultStatus(story) {
+  if (story?.status === 'ready') return story.unchanged === true ? 'unchanged' : 'ready';
+  return story?.status === 'failed' ? 'failed' : 'skipped';
+}
+
 function missingWords(viewport, side, variant) {
   const which = side === 'base' ? 'before' : 'after';
   return `the ${which} ${variant === 'animation' ? 'clip' : 'shot'} on ${viewport}`;
@@ -280,29 +374,44 @@ function missingWords(viewport, side, variant) {
 // skip of everything) only explains the changes that are not ready, and
 // `fallbackFailed` says that skip was the app breaking. `notices` (what
 // the agent noticed broken on the after build) ride along as they are, and
-// a notice names its shot only while that shot is published.
+// a notice names its shot only while that shot is published. A change's
+// `conditions` (what the agent did to both builds to reach it) go on its
+// result whatever its status, and only when there are some.
+// `afterOnly` is a project's first version, whose before side is the
+// starter template's placeholder (shots-starter.js): a change is ready with
+// its after shots alone, nothing from the before side is published, and the
+// verdict says so for the card.
 function summarize(intent, saved, skipped = new Map(), {
   fallbackReason = null, notes = new Map(), failed = new Set(), fallbackFailed = false, notices = [],
+  conditions = new Map(), afterOnly = false,
 } = {}) {
   const published = [];
-  const results = intent.stories.map((story) => {
+  const sides = afterOnly ? ['head'] : ['base', 'head'];
+  const resultFor = (story) => {
     if (skipped.has(story.id)) {
       return { id: story.id, status: failed.has(story.id) ? 'failed' : 'skipped', reason: skipped.get(story.id) };
     }
     const missing = [];
     const files = [];
+    // Dark shots (#4459) are extras beside the light ones: they are never
+    // required, so a change with no dark shot is still ready.
+    const darkFiles = [];
     const required = planContract.needsClip(story) ? ['context', 'animation'] : ['context'];
     for (const viewport of story.viewports) {
-      for (const side of ['base', 'head']) {
+      for (const side of sides) {
         for (const variant of ['context', 'focus', 'animation']) {
           const file = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side, variant }));
           if (file) files.push(file);
           else if (required.includes(variant)) missing.push(missingWords(viewport.name, side, variant));
+          if (variant === 'context') {
+            const dark = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side, variant, theme: 'dark' }));
+            if (dark) darkFiles.push(dark);
+          }
         }
       }
     }
     if (!missing.length) {
-      published.push(...files);
+      published.push(...files, ...darkFiles);
       const note = notes.get(story.id);
       return { id: story.id, status: 'ready', files: files.length, ...(note ? { note } : {}) };
     }
@@ -311,14 +420,20 @@ function summarize(intent, saved, skipped = new Map(), {
       status: fallbackReason && fallbackFailed ? 'failed' : 'skipped',
       reason: fallbackReason || `The shots agent did not save ${missing.join(', ')}.`,
     };
+  };
+  const results = intent.stories.map((story) => {
+    const result = resultFor(story);
+    const done = cleanConditions(conditions.get(story.id));
+    return done.length ? { ...result, conditions: done } : result;
   });
   // A ready change is still published when its before and after are the same
   // image (people judge the shots), but the card says so rather than letting
-  // two copies of one screen pass for the change.
-  const stories = markUnchanged(results, identicalStories(intent, saved));
+  // two copies of one screen pass for the change. An after-only run has no
+  // before to compare.
+  const stories = afterOnly ? results : markUnchanged(results, identicalStories(intent, saved));
   const ready = stories.filter((story) => story.status === 'ready').length;
   const manifest = published
-    .map(({ storyId, viewport, side, variant, sha256: digest }) => ({ storyId, viewport, side, variant, sha256: digest }))
+    .map(({ storyId, viewport, side, variant, theme, sha256: digest }) => ({ storyId, viewport, side, variant, theme, sha256: digest }))
     .sort((a, b) => slotKey(a).localeCompare(slotKey(b)));
   const publishedSlots = new Set(published.map(slotKey));
   const noticed = (Array.isArray(notices) ? notices : []).slice(0, MAX_NOTICES).map((entry) => ({
@@ -337,8 +452,12 @@ function summarize(intent, saved, skipped = new Map(), {
     // which files were published.
     manifestHash: sha256(Buffer.from(planContract.canonicalJson({ mode: SHOTS_MODE, intent, manifest }))),
     // A run without notices stores no `notices` key, as every run before
-    // them did.
-    verdict: { passed: ready > 0, mode: SHOTS_MODE, runs: 1, stories, ...(noticed.length ? { notices: noticed } : {}) },
+    // them did, and only an after-only run stores `afterOnly`.
+    verdict: {
+      passed: ready > 0, mode: SHOTS_MODE, runs: 1, stories,
+      ...(noticed.length ? { notices: noticed } : {}),
+      ...(afterOnly ? { afterOnly: true } : {}),
+    },
   };
 }
 
@@ -361,6 +480,8 @@ module.exports = {
   MAX_CLIP_BYTES,
   MAX_NOTICE,
   MAX_NOTICES,
+  CONDITION_KINDS,
+  MAX_CONDITIONS,
   UNCHANGED_NOTE,
   ShotError,
   inspectImage,
@@ -370,12 +491,17 @@ module.exports = {
   checkElementSize,
   identicalStories,
   markUnchanged,
+  RESULT_STATUSES,
+  resultStatus,
   OUTCOMES,
   outcome,
   reason,
   note,
   alsoBefore,
   notice,
+  condition,
+  sameCondition,
+  cleanConditions,
   stored,
   summarize,
   failedReason,

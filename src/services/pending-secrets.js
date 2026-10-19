@@ -10,14 +10,15 @@
  * in `app_secrets` / `platform_env_values`. Before this, those were two
  * separate governance acts: a dev session edited the manifest, and then
  * somebody remembered to set the value. This table lets ONE proposal
- * carry both, by parking the encrypted value here until
- * routes/votes.js finalizeMerge() writes it to the real store.
+ * carry both, by parking the encrypted value here until the merge writes
+ * it to the real store (the merge-followups workflow machine, in the
+ * transition that records the merge: applyInTransaction).
  *
  * Deliberately a sibling of `app-secrets.js` / `platform-env.js` rather
  * than an extension: it owns no deploy path at all. Nothing here is ever
  * read by mergeForDeploy() or dump-platform-env.js — the value only
- * becomes real when applyForSession() moves it into the scope's own
- * store, and from that moment the existing DAOs own it exclusively.
+ * becomes real when the merge moves it into the scope's own store, and
+ * from that moment the existing DAOs own it exclusively.
  *
  * The one exception is the staging preview (rawValuesForSession), which
  * injects NON-PRIVATE pending values into the proposal's OWN staging
@@ -41,8 +42,7 @@ const LIVE_SESSION_STATUSES = ['promoted', 'merging'];
 /**
  * Trim a held value — same rule as app-secrets/platform-env
  * normalizeValue, and duplicated for the same reason computeLast4 below is:
- * the two DAOs are only required lazily inside applyForSession() to avoid a
- * load-time cycle, so a two-line rule is cheaper here than a new import.
+ * a two-line rule is cheaper here than a dependency on those DAOs.
  *
  * The declare route already normalizes before calling create(), so this is
  * belt-and-braces — but it also keeps the HELD ciphertext and its last-4
@@ -236,165 +236,9 @@ async function rawValuesForSession(pool, sessionId, dataKey, { includePrivate = 
   return out;
 }
 
-/**
- * Merge-time apply. Claims each pending row for this session with a
- * status flip so a re-run (recoverStuckMerges) can never double-apply,
- * then writes the held value into the scope's real store.
- *
- * Called from routes/votes.js finalizeMerge() BEFORE the production
- * rebuild: a newly `required` child-app secret whose value arrived with
- * the proposal must be stored before mergeForDeploy() looks for it, or
- * the merge would park the app in `awaiting_secrets` over its own change.
- *
- * Returns { applied: [{ key, scope, private, hadValue }] } — never the
- * value. Throws only on a DB failure; the caller logs and continues (a
- * GitHub merge has already happened and must not be rolled back).
- */
-async function applyForSession(config, pool, sessionId) {
-  const appSecrets = require('./app-secrets');
-  const platformEnv = require('./platform-env');
-
-  const { rows } = await pool.query(
-    `UPDATE pending_secret_declarations
-        SET status = 'applied'
-      WHERE session_id = $1 AND status = 'pending'
-      RETURNING id, app_id, scope, key, declaration, value_enc,
-                value_applied_at, created_by`,
-    [sessionId]
-  );
-  if (!rows.length) return { applied: [] };
-
-  const applied = [];
-  for (const r of rows) {
-    const decl = r.declaration || {};
-    const isPrivate = !!decl.private;
-    let hadValue = !!r.value_applied_at;
-
-    if (r.value_enc) {
-      const plaintext = decrypt(r.value_enc, config.dataEncryptionKey);
-      if (plaintext == null) {
-        log.warn('pending-secrets', 'Pending value could not be decrypted (skipping write)', {
-          key: r.key, sessionId,
-        });
-      } else if (r.scope === 'platform') {
-        // Through the DAO so isWritableKey() is re-checked and the value
-        // is re-encrypted with a fresh IV. `privateHint` is honoured only
-        // when nothing declares the key yet, which is exactly the case
-        // here: the declaration lands in platform_env_declarations on the
-        // post-deploy boot's reconcile, not now.
-        await platformEnv.setValue(pool, r.app_id, r.key, plaintext, {
-          userId: r.created_by || null,
-          dataKey: config.dataEncryptionKey,
-          privateHint: isPrivate,
-        });
-        hadValue = true;
-      } else {
-        await appSecrets.setValue(pool, r.app_id, r.key, plaintext, {
-          sensitive: isPrivate,
-          userId: r.created_by || null,
-          dataKey: config.dataEncryptionKey,
-        });
-        hadValue = true;
-      }
-      // Stamp the moment the value became real, and drop the ciphertext:
-      // the row is an audit trail from here on, and keeping a second
-      // encrypted copy of a live secret buys nothing.
-      await pool.query(
-        `UPDATE pending_secret_declarations
-            SET value_enc = NULL, value_applied_at = COALESCE(value_applied_at, NOW())
-          WHERE id = $1`,
-        [r.id]
-      );
-    }
-
-    applied.push({
-      key: r.key,
-      scope: r.scope,
-      private: isPrivate,
-      hadValue,
-      appId: r.app_id,
-      userId: r.created_by || null,
-    });
-  }
-
-  log.info('pending-secrets', 'Applied pending declarations', {
-    sessionId, keys: applied.map((a) => a.key),
-  });
-  return { applied };
-}
-
-/**
- * Merge-time apply inside the caller's transaction (the merge-followups
- * workflow machine, src/workflow/merge-followups/), so the values commit
- * with the merge or not at all. Each row is locked, written to its scope's
- * store and marked applied in that one transaction: no claim-then-write gap.
- *
- * A value that cannot be written (a platform key that is not writable, a
- * value the scope refuses) is not an error of the merge: its row is
- * discarded and it comes back under `refused` with the reason, for the
- * thread to say. Database errors throw, and with them the whole merge
- * transition, which is retried.
- *
- * Returns { applied: [{ key, scope, private, hadValue, userId }],
- *           refused: [{ key, scope, reason }] }.
- */
-async function applyInTransaction(db, { sessionId, dataKey }) {
-  const appSecrets = require('./app-secrets');
-  const platformEnv = require('./platform-env');
-  const { rows } = await db.query(
-    `SELECT id, app_id, scope, key, declaration, value_enc, value_applied_at, created_by
-       FROM pending_secret_declarations
-      WHERE session_id = $1 AND status = 'pending'
-      ORDER BY id
-      FOR UPDATE`,
-    [sessionId]
-  );
-  const applied = [];
-  const refused = [];
-  for (const r of rows) {
-    const isPrivate = !!(r.declaration || {}).private;
-    let hadValue = !!r.value_applied_at;
-    let reason = null;
-    if (r.value_enc) {
-      const plaintext = decrypt(r.value_enc, dataKey);
-      if (plaintext == null) {
-        reason = 'its value could no longer be read';
-      } else if (r.scope === 'platform') {
-        const value = platformEnv.normalizeValue(plaintext);
-        if (!platformEnv.isWritableKey(r.key)) reason = 'that variable is set by the deploy and cannot be written here';
-        else if (platformEnv.validateValue(value)) reason = platformEnv.validateValue(value);
-        else {
-          await platformEnv.setValue(db, r.app_id, r.key, value, {
-            userId: r.created_by || null, dataKey, privateHint: isPrivate,
-          });
-          hadValue = true;
-        }
-      } else if (!appSecrets.normalizeValue(plaintext)) {
-        reason = 'its value is empty';
-      } else {
-        await appSecrets.setValue(db, r.app_id, r.key, plaintext, {
-          sensitive: isPrivate, userId: r.created_by || null, dataKey,
-        });
-        hadValue = true;
-      }
-    }
-    if (reason) {
-      await db.query(
-        `UPDATE pending_secret_declarations SET status = 'discarded', value_enc = NULL WHERE id = $1`, [r.id]);
-      refused.push({ key: r.key, scope: r.scope, reason });
-      continue;
-    }
-    await db.query(
-      `UPDATE pending_secret_declarations
-          SET status = 'applied', value_enc = NULL,
-              value_applied_at = CASE WHEN $2::boolean THEN COALESCE(value_applied_at, NOW()) ELSE value_applied_at END
-        WHERE id = $1`,
-      [r.id, hadValue && !!r.value_enc]
-    );
-    applied.push({ key: r.key, scope: r.scope, private: isPrivate, hadValue, userId: r.created_by || null });
-  }
-  return { applied, refused };
-}
+// The merge-time apply inside the merge-followups machine's transaction:
+// src/workflow/rules/pending-secret-apply.ts.
+const { applyInTransaction } = require('../workflow/rules/pending-secret-apply.ts');
 
 /** Withdrawn / rejected proposal: the held value stops existing. */
 async function discardForSession(pool, sessionId) {
@@ -416,7 +260,6 @@ module.exports = {
   findLiveByKey,
   keysForSession,
   rawValuesForSession,
-  applyForSession,
   applyInTransaction,
   discardForSession,
   normalizeDeclaration,

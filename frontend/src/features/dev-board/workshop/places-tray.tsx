@@ -4,15 +4,16 @@
  * Opened from the place bar's button (./place-bar.tsx), or by a swipe right
  * that starts at the screen's left edge; a swipe left on it, Escape, the
  * scrim, the button again and the device's Back each close it. It slides in
- * from the left over a scrim, as wide as the list needs (296px, never more
- * than the screen less a strip of the page), and holds the list
+ * from the left over a scrim, under the header (#5384: the header stays as
+ * it is, undimmed and pressable), as wide as the list needs (296px, never
+ * more than the screen less a strip of the page), and holds the list
  * (./project-places.tsx) with "Switch community" at its foot.
  *
- * Like the community switcher it is rendered only while open, into
- * `document.body`, from state that only ever changes after the first paint:
- * nothing here is in the prerendered shell, and nothing legacy writes into
- * it. Focus moves into it (onto the place you are on) and back to the button
- * that opened it.
+ * Like the community switcher it is rendered while open — and while it
+ * slides back out — into `document.body`, from state that only ever changes
+ * after the first paint: nothing here is in the prerendered shell, and
+ * nothing legacy writes into it. Focus moves into it (onto the place you are
+ * on) and back to the button that opened it.
  *
  * WHERE THE BROWSER OWNS THE EDGE. Safari on an iPhone (the browser, not an
  * installed app or the native shell) takes a swipe from the left edge for
@@ -71,6 +72,12 @@ function readEnv() {
   };
 }
 
+/** Whether the page may take the left edge here (`edgeSwipeAllowed`, of this browser). */
+export function pageTakesEdge(): boolean {
+  if (typeof window === 'undefined') return false;
+  return edgeSwipeAllowed(readEnv());
+}
+
 /**
  * Open the tray on a swipe right from the left edge, while `enabled` (a
  * phone's width, the page up, the tray shut). Listens on the document,
@@ -104,11 +111,15 @@ export function useEdgeSwipe(enabled: boolean, onOpen: () => void): void {
   }, [enabled]);
 }
 
-export function PlacesTray({ id, label, onClose, returnTo, navigating, children }: {
+export function PlacesTray({ id, label, onClose, closing, onClosed, returnTo, navigating, children }: {
   id: string;
   /** What the tray is, for a screen reader: "Homeroom's places". */
   label: string;
   onClose: () => void;
+  /** Whether it is sliding back out, the open played in reverse. */
+  closing?: boolean;
+  /** Called when the slide is over (or skipped) and the tray may go. */
+  onClosed?: () => void;
   /** The button that opened it, which takes focus back. */
   returnTo: () => HTMLElement | null;
   /**
@@ -123,13 +134,19 @@ export function PlacesTray({ id, label, onClose, returnTo, navigating, children 
   const panelRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  const closedRef = useRef(onClosed);
+  closedRef.current = onClosed;
+  const closingRef = useRef(!!closing);
+  closingRef.current = !!closing;
   const returnRef = useRef(returnTo);
   returnRef.current = returnTo;
   const navRef = useRef(navigating);
   navRef.current = navigating;
 
-  // Focus in, onto the place you are on, and back out to the button.
+  // Focus in, onto the place you are on, and back out to the button. While
+  // it slides out the focus went back already, in the close's own commit.
   useEffect(() => {
+    if (closing) return undefined;
     const panel = panelRef.current;
     const first = panel?.querySelector<HTMLElement>('[aria-current="page"]')
       || panel?.querySelector<HTMLElement>('a[href], button');
@@ -138,10 +155,11 @@ export function PlacesTray({ id, label, onClose, returnTo, navigating, children 
       const back = returnRef.current();
       if (back && back.isConnected) back.focus({ preventScroll: true });
     };
-  }, []);
+  }, [closing]);
 
   // Escape closes; Tab stays inside while it is up.
   useEffect(() => {
+    if (closing) return undefined;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -163,10 +181,11 @@ export function PlacesTray({ id, label, onClose, returnTo, navigating, children 
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, []);
+  }, [closing]);
 
   // The device's Back closes it, as it does a dialog (lib/back-stack.ts).
   useEffect(() => {
+    if (closing) return undefined;
     let release: Release | null = pushDismissible(() => {
       release = null;
       closeRef.current();
@@ -177,14 +196,33 @@ export function PlacesTray({ id, label, onClose, returnTo, navigating, children 
       release = null;
       r?.(navRef.current?.() ? { navigating: true } : undefined);
     };
-  }, []);
+  }, [closing]);
+
+  // The slide's end: the card's animationend, or a fallback timer a little
+  // past it, so a missed event never leaves the tray on screen. Reduced
+  // motion skips the slide, as the open does, and closes at once.
+  useEffect(() => {
+    if (!closing) return undefined;
+    if (typeof window === 'undefined') return undefined;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
+      closedRef.current?.();
+      return undefined;
+    }
+    const timer = window.setTimeout(() => closedRef.current?.(), 320);
+    return () => window.clearTimeout(timer);
+  }, [closing]);
 
   // A swipe left on the tray closes it.
   const start = useRef<{ x: number; y: number } | null>(null);
 
   if (typeof document === 'undefined') return null;
   return createPortal(
-    <div className="dev-ws-tray-root" data-places-tray="">
+    <div
+      className={closing ? 'dev-ws-tray-root is-closing' : 'dev-ws-tray-root'}
+      data-places-tray=""
+      inert={!!closing}
+      aria-hidden={closing || undefined}
+    >
       <div className="dev-ws-tray-scrim" aria-hidden="true" onClick={() => closeRef.current()} />
       <div
         ref={panelRef}
@@ -193,6 +231,11 @@ export function PlacesTray({ id, label, onClose, returnTo, navigating, children 
         role="dialog"
         aria-modal="true"
         aria-label={label}
+        onAnimationEnd={(e) => {
+          if (e.target !== e.currentTarget || e.animationName !== 'dev-ws-tray-out') return;
+          if (!closingRef.current) return;
+          closedRef.current?.();
+        }}
         onTouchStart={(e) => {
           const t = e.touches[0];
           start.current = t && e.touches.length === 1 ? { x: t.clientX, y: t.clientY } : null;

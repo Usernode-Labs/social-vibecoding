@@ -19,10 +19,22 @@ let markerFails;
 let destinationFails;
 let platformRegistered;
 let databaseClient;
+let receipts, receiptReadFails;
 
 require('../src/db/pool').getPool = () => ({
   async query(sql, params = []) {
     queries.push({ sql, params });
+    if (/INSERT INTO feedback_reports/.test(sql)) {
+      const id = receipts.length + 1;
+      receipts.push({ id, user_id: params[0], issue_owner: params[3], issue_repo: params[4],
+        issue_number: params[5], title: params[6], description: params[7], source: params[8],
+        body_prefix: params[9], body_suffix: params[10], edit_version: 0, has_body: true, seconds_left: 300 });
+      return { rows: [{ id }] };
+    }
+    if (/FROM feedback_reports fr/.test(sql)) {
+      if (receiptReadFails) throw new Error('receipt read unavailable');
+      return { rows: receipts.filter(r => r.id === params[0] && r.user_id === params[1]) };
+    }
     if (/UPDATE users SET first_feedback_at/.test(sql)) {
       if (databaseClient) return databaseClient.query(sql, params);
       if (markerFails) throw new Error('database unavailable');
@@ -84,6 +96,7 @@ test.beforeEach(() => {
   user = { id: 7, username: 'reporter' };
   seen = new Set(); queries = []; issueNumber = 40;
   githubFails = markerFails = destinationFails = false;
+  receipts = []; receiptReadFails = false;
   platformRegistered = true;
   app.view_visibility = app.collab_visibility = 'public';
   platform.view_visibility = platform.collab_visibility = 'public';
@@ -101,6 +114,27 @@ test('the first successful feedback returns the filed issue and allowed next ste
   assert.equal(status, 200);
   assert.deepEqual(data.firstFeedback, { userId: 7, issueNumber: 41, appSlug: 'demo-app', canFix: true });
   assert.equal(seen.has(7), true);
+});
+
+test('both feedback destinations return edit metadata and retain the immutable issue envelope', async () => {
+  for (const target of ['app', 'platform']) {
+    const { status, data } = await submit({ target });
+    assert.equal(status, 200);
+    assert.equal(data.edit.reportId, receipts.length);
+    assert.equal(data.edit.description, 'The board jumps when scrolling.');
+    assert.equal(data.edit.title, 'Board jumps');
+    assert.equal(data.edit.version, 0);
+    assert.equal(data.edit.secondsLeft, 300);
+    assert.match(receipts.at(-1).body_prefix, /\*\*Source:\*\*/);
+    assert.equal(receipts.at(-1).body_suffix, '');
+  }
+});
+test('a failed optional edit read never turns a filed request into a failed submission', async () => {
+  receiptReadFails = true;
+  const { status, data } = await submit();
+  assert.equal(status, 200);
+  assert.equal(data.edit, null);
+  assert.equal(issueNumber, 41);
 });
 test('the moment is account-wide across apps and not repeated on later submissions', async () => {
   assert.ok((await submit()).data.firstFeedback);

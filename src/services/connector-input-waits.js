@@ -145,10 +145,14 @@ async function clearForUser(pool, userId, _reason) {
 }
 
 /**
- * Fire every wait whose moment has come.
+ * Fire every wait whose moment has come: a pass of the
+ * `connector-input-waits` clock (src/workflow/clock/services.ts).
  *
  * `fired_at` is stamped in the SAME statement that selects the row, so two
- * overlapping sweeps cannot both send one wait — the second finds nothing. The
+ * overlapping sweeps cannot both send one wait: the inner select skips rows
+ * another sweep holds, and the outer UPDATE checks again that the row is
+ * still unfired (Postgres re-reads a row another statement changed against
+ * the outer WHERE only, never the subquery's). The
  * notification is created afterwards, which means a crash between the stamp and
  * the insert loses a notification rather than duplicating one. That is the
  * right way round for something whose whole job is to not be annoying.
@@ -165,13 +169,16 @@ async function sweepDue(pool, deps = {}) {
            WHERE cleared_at IS NULL AND fired_at IS NULL AND notify_at <= NOW()
            ORDER BY notify_at ASC
            LIMIT 100
+           FOR UPDATE SKIP LOCKED
         )
+          AND cleared_at IS NULL AND fired_at IS NULL
         RETURNING id, user_id, app_id, armed_at`
     );
     due = rows;
   } catch (err) {
+    // The clock records the failed pass and tries again sooner.
     log.warn('connector-input-waits', 'sweep query failed', { err: err.message });
-    return 0;
+    throw err;
   }
 
   let sent = 0;
@@ -193,30 +200,11 @@ async function sweepDue(pool, deps = {}) {
   return sent;
 }
 
-let intervalHandle = null;
-
-function start(config, deps = {}) {
-  if (intervalHandle) return;
-  const pool = deps.pool || require('../db/pool').getPool();
-  intervalHandle = setInterval(() => {
-    sweepDue(pool, deps).catch((err) => {
-      log.warn('connector-input-waits', 'sweep failed', { err: err.message });
-    });
-  }, SWEEP_INTERVAL_MS);
-  intervalHandle.unref?.();
-}
-
-function stop() {
-  if (intervalHandle) { clearInterval(intervalHandle); intervalHandle = null; }
-}
-
 module.exports = {
   arm,
   hasLiveWait,
   clearForUser,
   sweepDue,
-  start,
-  stop,
   resolveDelayMs,
   DEFAULT_DELAY_MS,
   MIN_DELAY_MS,

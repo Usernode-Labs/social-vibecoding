@@ -4,7 +4,8 @@
 //
 // Follows the headless-clarify.test.js pattern: the pool is an in-memory
 // mock that pattern-matches SQL, and the github/llm/ws/worker/staging/
-// app-access/limits/events modules are stubbed via require.cache. The
+// preview-workflow/app-access/limits/events modules are stubbed via
+// require.cache. The
 // full route → headless runner → runClaudeCodeTool/runScoutTool path is
 // driven over HTTP against an ephemeral express server.
 //
@@ -43,6 +44,7 @@ function loadSessions(mockPool, overrides = {}) {
     events: require.resolve('../src/services/events'),
     sessions: require.resolve('../src/routes/sessions'),
     notifications: require.resolve('../src/services/notifications'),
+    previewWorkflow: require.resolve('../src/services/preview-workflow'),
   };
 
   const githubStub = {
@@ -77,15 +79,17 @@ function loadSessions(mockPool, overrides = {}) {
     workerContainerName: (id) => `usernode-worker-${id}`,
     ...(overrides.worker || {}),
   };
-  // Staging always fails fast in these tests — on the headless path that
-  // is non-fatal (the pushed commit is the deliverable), so the run still
-  // finalizes with outcome 'code'.
   const stagingStub = {
     PrivateSecretMissingStagingDefaultError,
     MissingSecretsError,
-    buildAndDeployStaging: async () => { throw new Error('staging disabled in tests'); },
     verifyStagingEdge: async () => {},
     ...(overrides.staging || {}),
+  };
+  // The tail hands a pushed commit to the preview machine and ends the run
+  // without waiting for the build, so the run finalizes with outcome 'code'.
+  const previewWorkflowStub = {
+    revision: async () => {},
+    ...(overrides.previewWorkflow || {}),
   };
 
   const originals = [
@@ -99,6 +103,7 @@ function loadSessions(mockPool, overrides = {}) {
     [paths.llm, stubModule(paths.llm, llmStub)],
     [paths.worker, stubModule(paths.worker, workerStub)],
     [paths.staging, stubModule(paths.staging, stagingStub)],
+    [paths.previewWorkflow, stubModule(paths.previewWorkflow, previewWorkflowStub)],
     [paths.appAccess, stubModule(paths.appAccess, {
       ...require('../src/services/app-access'),
       getAppForUser: async () => ({

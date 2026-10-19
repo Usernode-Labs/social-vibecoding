@@ -25,6 +25,7 @@ const managedOpenRouter = require('../services/openrouter-managed-keys');
 const agentModels = require('../services/agent-models');
 const registry = require('../agents/registry');
 const agentPreferences = require('../services/agent-preferences');
+const defaultModelSetting = require('../services/default-model');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 function credentialRoutes(config) {
@@ -279,7 +280,7 @@ function credentialRoutes(config) {
     }
     try {
       const last4 = clean.slice(-4);
-      let defaultModel = config.openrouterDefaultCodexModel || null;
+      let defaultModel = await defaultModelSetting.effective(pool, config);
       try {
         const catalog = await agentModels.listOpenRouterModels({
           pool, userId: req.user.id, credentialRevision: 'personal-save',
@@ -404,7 +405,7 @@ function credentialRoutes(config) {
         if (meta?.status === 'valid') {
           defaultBackend = 'codex_openrouter';
           backends.codex_openrouter ||= {
-            model: config.openrouterDefaultCodexModel || null,
+            model: await defaultModelSetting.effective(pool, config),
             reasoningEffort: null,
             isDefault: true,
           };

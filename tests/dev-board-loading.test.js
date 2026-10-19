@@ -62,6 +62,7 @@ function makeAppView(over) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return sandbox.__AppView;
@@ -292,7 +293,8 @@ test('_loadDevData distinguishes not-ready from failed, and the feed respects it
   const fn = code.slice(code.indexOf('async _loadDevFeed('),
     code.indexOf('_repaintDevBody() {', code.indexOf('async _loadDevFeed(')));
   const nullGuard = fn.indexOf('if (ok === null) return;');
-  const failure = fn.indexOf('load the feed right now');
+  const failure = fn.indexOf("PlatformI18n.htmlText('changes:feed.loadFailed')");
+  assert.equal(require('./lib/platform-i18n').message('changes:feed.loadFailed'), "Couldn't load the feed right now.");
   assert.notEqual(nullGuard, -1, '_loadDevFeed returns early on null');
   assert.ok(nullGuard < failure,
     'the not-ready case is handled BEFORE the failure paint — claiming failure '

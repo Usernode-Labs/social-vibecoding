@@ -111,6 +111,7 @@ function editedSince(lastNote, comments, updatedAt) {
  */
 function addressed({
   lastNote, messages = [], comments = [], botLogin = '', ownCommentIds = [], waitingOnly = false, updatedAt = null,
+  voiceAnswers = false,
 }) {
   if (!lastNote) return { speak: true, why: 'first_note' };
   if (waitingOnly && !NOTE_KINDS.includes(lastNote.kind)) return { speak: true, why: 'not_waiting' };
@@ -129,8 +130,11 @@ function addressed({
   let answered = false;
   for (const msg of messages) {
     if (!after(msg.createdAt)) continue;
-    if (mention.test(String(msg.body || ''))) return { speak: true, why: 'mention' };
-    if (msg.quotesBot) return { speak: true, why: 'reply' };
+    // `voiceAnswers`: the bot's voice answers a mention or a reply in the
+    // discussion itself (homeroom-bot-voice.js), so a look does not say its
+    // note again for one; after a question, it is still the answer.
+    if (!voiceAnswers && mention.test(String(msg.body || ''))) return { speak: true, why: 'mention' };
+    if (!voiceAnswers && msg.quotesBot) return { speak: true, why: 'reply' };
     answered = true;
   }
   for (const comment of comments) {
@@ -163,11 +167,11 @@ async function loadAddressed(pool, { appId, issueNumber, botId }) {
  * speaks, keeping the behaviour this change found.
  */
 async function shouldSpeak(pool, {
-  appId, issueNumber, botId, comments = [], botLogin = '', waitingOnly = false, updatedAt = null,
+  appId, issueNumber, botId, comments = [], botLogin = '', waitingOnly = false, updatedAt = null, voiceAnswers = false,
 }) {
   try {
     const { lastNote, messages, ownCommentIds } = await loadAddressed(pool, { appId, issueNumber, botId });
-    return addressed({ lastNote, messages, comments, botLogin, ownCommentIds, waitingOnly, updatedAt });
+    return addressed({ lastNote, messages, comments, botLogin, ownCommentIds, waitingOnly, updatedAt, voiceAnswers });
   } catch (err) {
     log.warn('homeroom-bot', 'Could not check whether the request addressed the bot; speaking as before', {
       appId, issueNumber, err: err.message,

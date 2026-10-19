@@ -157,25 +157,28 @@ test('a turn\'s replayed lines are counted as a tracker counts them', () => {
   assert.deepEqual(progress.looksIn(null), { screenshots: 0, snapshots: 0, navigations: 0 });
 });
 
-test('a tracker keeps its looks on the checkpoint at each step and at most every interval as they change, never after close', async () => {
+test('a tracker keeps its looks where the trial goes on from at each step and at most every interval as they change, never after close', async () => {
+  // What the caller keeps (lane.js executeTrial: a durable step): the
+  // counts as they are when it is told to, read off the tracker.
   const kept = [];
   let failing = false;
   const warned = [];
+  let tr = null;
   const keep = async (part) => {
     if (failing) throw new Error('db down');
-    kept.push(part);
+    kept.push({ part, looks: tr.looks() });
   };
   const log = { warn: (_c, msg) => warned.push(msg) };
   let t = 0;
   const pool = { async query() { return { rows: [] }; } };
-  const tr = progress.tracker(pool, 7, {
+  tr = progress.tracker(pool, 7, {
     now: () => t, writeEveryMs: 60_000, keepEveryMs: 20, keep, log, looks: { screenshots: 1, snapshots: 0, navigations: 2 },
   });
   const settle = () => new Promise((r) => { setImmediate(r); });
 
   // A step: kept at once, with the counts its turn starts from.
   await tr.step('build');
-  assert.deepEqual(kept, [{ stepLooks: { step: 'build', screenshots: 1, snapshots: 0, navigations: 2 } }]);
+  assert.deepEqual(kept, [{ part: {}, looks: { screenshots: 1, snapshots: 0, navigations: 2 } }], 'nothing in the part: the caller reads the counts');
   await tr.step('build');
   assert.equal(kept.length, 1, 'the same step keeps nothing again');
 
@@ -186,7 +189,7 @@ test('a tracker keeps its looks on the checkpoint at each step and at most every
   tr.note('Using browser_navigate');
   await settle();
   assert.equal(kept.length, 2, 'the first change is kept at once');
-  assert.deepEqual(kept[1], {}, 'the caller adds the counts as it writes');
+  assert.deepEqual(kept[1], { part: {}, looks: { screenshots: 1, snapshots: 0, navigations: 3 } });
 
   // More within the interval: held back, then kept once for all of them.
   t = 5;
@@ -208,7 +211,7 @@ test('a tracker keeps its looks on the checkpoint at each step and at most every
   // A step keeps what a held-back look would have, and the hold is dropped.
   tr.note('Using browser_snapshot');
   await tr.step('capture');
-  assert.deepEqual(kept[4], { stepLooks: { step: 'capture', screenshots: 3, snapshots: 2, navigations: 3 } });
+  assert.deepEqual(kept[4], { part: {}, looks: { screenshots: 3, snapshots: 2, navigations: 3 } });
   await new Promise((r) => { setTimeout(r, 40); });
   assert.equal(kept.length, 5, 'its looks rode on the step\'s keep');
 
@@ -269,4 +272,83 @@ test('a tracker writes a step at once, notes later, keeps the last four lines, a
   await tr.step('build');
   tr.note('seven');
   assert.equal(writes.length, 2, 'nothing after close');
+});
+
+test('a tracker writes the whole transcript with its progress: every line, repeats too, each step\'s start, and a replay\'s new lines only', async () => {
+  const writes = [];
+  const pool = { async query(sql, params) { writes.push({ sql: String(sql), params }); return { rows: [] }; } };
+  const tr = progress.tracker(pool, 7, { writeEveryMs: 60_000, transcript: {} });
+  await tr.step('build');
+  tr.note('Using Write public/app.js');
+  tr.note('OpenRouter request #3: still responding after 30s');
+  tr.note('OpenRouter request #3: still responding after 30s');
+  tr.note(`Using Bash\n${'x'.repeat(3000)}`);
+  await tr.close();
+  const rows = writes.filter((w) => /INSERT INTO bench_trial_lines/.test(w.sql));
+  const kinds = rows.flatMap((w) => w.params[3]);
+  const lines = rows.flatMap((w) => w.params[4]);
+  const steps = rows.flatMap((w) => w.params[2]);
+  assert.deepEqual(kinds, ['step', 'line', 'line', 'line', 'line'], 'its step\'s start, then every line, the repeat included');
+  assert.equal(lines[0], 'build');
+  assert.equal(lines[1], 'Using Write public/app.js');
+  assert.ok(steps.every((s) => s === 'build'), 'each with the step it came in');
+  assert.match(lines[4], /^Using Bash\nx+…$/, 'its own line breaks, cut at the transcript\'s length');
+  assert.equal(lines[4].length, progress.TRANSCRIPT_LINE_CHARS);
+  assert.ok(rows.flatMap((w) => w.params[5]).every((r) => r === false), 'nothing replayed');
+  assert.deepEqual(tr.snapshot().lines, ['Using Write public/app.js', 'OpenRouter request #3: still responding after 30s', `Using Bash ${'x'.repeat(3000)}`.slice(0, 199) + '…'],
+    'the watch still keeps its last few, repeats dropped');
+
+  // A turn followed after a restart, from its start: the lines written before the restart are skipped, the rest marked replayed.
+  writes.length = 0;
+  const replay = progress.tracker(pool, 7, { writeEveryMs: 60_000, transcript: { replayed: true, skip: 2 }, seed: { step: 'build', stepAt: '2026-10-13T18:20:00.000Z', lines: ['old'] } });
+  for (const line of ['Using Write public/app.js', 'OpenRouter request #3: ok after 174s', 'Using Bash npm test', 'OpenRouter request #4: ok after 12s']) replay.note(line);
+  await replay.close();
+  const again = writes.filter((w) => /INSERT INTO bench_trial_lines/.test(w.sql));
+  assert.deepEqual(again.flatMap((w) => w.params[4]), ['Using Bash npm test', 'OpenRouter request #4: ok after 12s']);
+  assert.ok(again.flatMap((w) => w.params[5]).every((r) => r === true));
+  assert.deepEqual(again.flatMap((w) => w.params[2]), ['build', 'build'], 'in the step it was seeded at');
+
+  // A tracker asked for no transcript writes none.
+  writes.length = 0;
+  const plain = progress.tracker(pool, 7, { writeEveryMs: 60_000 });
+  plain.note('Using Read x');
+  await plain.close();
+  assert.equal(writes.filter((w) => /bench_trial_lines/.test(w.sql)).length, 0);
+});
+
+// A turn a restart caught is followed from its start (services/durable-turn.js):
+// its journal is replayed whole, so the looks it took before the restart come
+// through again. Until trials were durable builds, lane.js recoveredLooks
+// added them up off the checkpoint; now the tracker is told (replay).
+test('a turn followed after a restart counts its looks again on those its step began with, never twice, and writes only its new lines', async () => {
+  const writes = [];
+  const pool = { async query(sql, params) { writes.push({ sql: String(sql), params }); return { rows: [] }; } };
+  // Carried on from what the trial kept: its looks a few seconds before the
+  // restart, two of the turn's own among them.
+  const tr = progress.tracker(pool, 7, {
+    writeEveryMs: 60_000, transcript: {}, looks: { screenshots: 2, snapshots: 1, navigations: 2 },
+    seed: { step: 'build', stepAt: '2026-10-13T18:20:00.000Z', lines: ['Using browser_navigate'] },
+  });
+  // The turn began on these, and its transcript holds its first two lines.
+  tr.replay({ looks: { screenshots: 0, snapshots: 1, navigations: 1 }, skip: 2 });
+  const lines = ['Using browser_navigate', 'Using browser_take_screenshot', 'Using browser_take_screenshot',
+    'Using browser_take_screenshot', 'Using browser_navigate', 'Using browser_take_screenshot'];
+  for (const line of lines) tr.note(line);
+  assert.deepEqual(tr.looks(), { screenshots: 4, snapshots: 1, navigations: 3 }, 'the step\'s counts plus the whole turn\'s, none twice');
+  tr.replayed();
+  tr.note('Using browser_snapshot');
+  assert.deepEqual(tr.looks(), { screenshots: 4, snapshots: 2, navigations: 3 }, 'what comes after it is new');
+  await tr.close();
+  const rows = writes.filter((w) => /INSERT INTO bench_trial_lines/.test(w.sql));
+  assert.deepEqual(rows.flatMap((w) => w.params[4]), [...lines.slice(2), 'Using browser_snapshot'],
+    'the lines written before the restart are not written again');
+  assert.deepEqual(rows.flatMap((w) => w.params[5]), [true, true, true, true, false], 'the replay\'s marked so, the next not');
+  assert.ok(rows.flatMap((w) => w.params[2]).every((s) => s === 'build'), 'in the step it was carried on at');
+
+  // Told no counts, it keeps those it has.
+  const plain = progress.tracker(pool, 8, { writeEveryMs: 60_000, looks: { screenshots: 3, snapshots: 0, navigations: 0 } });
+  plain.replay({});
+  plain.note('Using browser_take_screenshot');
+  assert.deepEqual(plain.looks(), { screenshots: 4, snapshots: 0, navigations: 0 });
+  await plain.close();
 });

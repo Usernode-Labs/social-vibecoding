@@ -11,8 +11,8 @@
 // flight need one more way in: the request the change was built FROM was
 // made for them.
 //
-// The rule is the bot queue's own ("who each one is for", services/
-// homeroom-bot.js liveCandidates): whoever `homeroom_bot_requesters` records
+// The rule is the bot queue's own ("who each one is for", workflow/rules/
+// bot-loop.ts READ_CANDIDATES_SQL): whoever `homeroom_bot_requesters` records
 // for the request, else whoever filed the issue on Homeroom. A request the
 // bot took from a DM is recorded only in `homeroom_bot_requesters` — the
 // platform-filed twin row does not name them — so `issues.created_by` alone

@@ -26,6 +26,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -124,6 +125,8 @@ function makeAppView({ board = null, fetchImpl } = {}) {
     setTimeout, clearTimeout, setInterval, clearInterval,
     addEventListener() {},
     localStorage: { getItem: () => null, setItem() {} },
+    // The language runtime's global, as the shell publishes it.
+    PlatformI18n: englishPlatformI18n(),
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;

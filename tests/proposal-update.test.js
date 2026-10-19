@@ -801,6 +801,15 @@ test('an imported fork head the classifier keeps reports the votes kept', async 
   });
   assert.equal(raced.votesCleared, 2, 'reported as it always was');
   assert.equal(raced.checksRerun, true);
+
+  // Homeroom did not decide the move in time (each ask refused as expired):
+  // nothing moved, so the agent is told to submit again, not that it landed.
+  const undecided = await forkHeadMove({
+    applied: false, votesKept: false, checksCarry: false, kind: 'authored', epoch: null, notDecided: true,
+  });
+  assert.equal(undecided.ok, false);
+  assert.equal(undecided.code, 'not_decided');
+  assert.equal(undecided.retryable, true);
 });
 
 // #1196. The proposal the connector's mirror rung opens: imported, but its
@@ -995,12 +1004,15 @@ test('a proposal mid-build is told to retry rather than pushed onto', async () =
   assert.equal(log.began, undefined, 'refused before an operation is even opened');
 });
 
-test('the busy check asks the same four questions the commit-upload route asks', () => {
-  const block = SRC.slice(SRC.indexOf('function defaultBusyCheck'));
-  for (const needle of [
-    'isSessionBusy', 'hasInFlightHandoffPipeline', 'hasInFlightBuild', 'hasInFlightCapture',
-  ]) {
-    assert.ok(block.includes(needle), `${needle} is one of the four`);
+test('the busy check asks the same questions the commit-upload route asks', () => {
+  const block = SRC.slice(SRC.indexOf('function defaultBusyCheck'), SRC.indexOf('// ── The bot-owned branch'));
+  for (const needle of ['isSessionBusy', 'hasInFlightHandoffPipeline']) {
+    assert.ok(block.includes(needle), `${needle} is one of them`);
+  }
+  // A build or checks run of the current head is the preview machine's: the
+  // new head reaches it as a revision, which cancels that run.
+  for (const needle of ['hasInFlightBuild', 'hasInFlightCapture']) {
+    assert.ok(!block.includes(needle), `${needle} is not asked`);
   }
 });
 
@@ -1223,13 +1235,6 @@ test('a reconciliation that fails after a successful push still reports the upda
 // about which tail ran must not do any of that.
 function sessionParts(log, over = {}) {
   return Object.assign({
-    visuals: {
-      setChecksPending: async (...args) => {
-        (log.pending = log.pending || []).push(args);
-        return true;
-      },
-      notifyChecksPending: (...args) => { (log.notified = log.notified || []).push(args); },
-    },
     pipeline: {
       OWNED_SOURCE_SQL: "source = 'native'",
       beginHandoffPipeline: (id) => {
@@ -1260,8 +1265,16 @@ function sessionRow(status, over) {
   }, over));
 }
 
+// The paused tail asks the preview machine to clear the stale verdict
+// (services/preview-workflow.js clear, read at call time).
+const previewWorkflow = require('../src/services/preview-workflow');
+const realClear = previewWorkflow.clear;
+
 function runSession(status, over = {}, log = {}, params = {}) {
   const session = over.session || sessionRow(status);
+  previewWorkflow.clear = async ({ session: cleared, reason }) => {
+    (log.verdictCleared = log.verdictCleared || []).push({ sessionId: cleared.id, reason });
+  };
   const pool = over.pool || fakePool([
     ['FROM chat_sessions cs JOIN apps a', [session]],
     ['UPDATE chat_sessions', () => (over.adopted === false ? [] : [{ id: session.id }])],
@@ -1282,8 +1295,29 @@ function runSession(status, over = {}, log = {}, params = {}) {
     Object.assign({
       user: USER, session, branch: 'fix/failing-check', origin: 'https://usernode.test',
     }, params)
-  );
+  ).finally(() => { previewWorkflow.clear = realClear; });
 }
+
+// Bug 13 of the proposal lifecycle: an update read the session active, and
+// a promote committed before the active tail's guarded write. The tail is
+// the one for the status the row has NOW: a proposal gone up for a vote has
+// its reviewed head reconciled, and keeps its verdict and its preview.
+test('an update racing a promote reconciles the promoted proposal, never clears its verdict (bug 13)', async () => {
+  const log = {};
+  const session = sessionRow('active');
+  const pool = fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['SELECT status FROM chat_sessions', [{ status: 'promoted' }]],
+    ['UPDATE chat_sessions', []],
+    ['FROM pr_votes', [{ n: 4 }]],
+  ]);
+  const result = await runSession('active', { session, pool }, log);
+  assert.equal(result.ok, true);
+  assert.equal(log.verdictCleared, undefined, 'the promoted proposal keeps its verdict');
+  assert.equal(log.tornDown, undefined, 'and its preview');
+  assert.equal(log.reconcile.length, 1, 'its reviewed head is reconciled instead');
+  assert.equal(log.reconcile[0].session.status, 'promoted');
+});
 
 // The queries a run actually issued — used both ways round: to assert an
 // UPDATE's shape, and to assert that pr_votes was never read.
@@ -1349,7 +1383,7 @@ test('an archived session is refused before anything is pushed', async () => {
   assert.equal(log.push, undefined, 'an explicit put-away is not silently reopened');
 });
 
-test('an ACTIVE session gets the commit, pending checks and a staging rebuild', async () => {
+test('an ACTIVE session gets the commit and a staging rebuild', async () => {
   const log = {};
   const result = await runSession('active', {}, log);
   assert.equal(result.ok, true);
@@ -1367,11 +1401,11 @@ test('an ACTIVE session gets the commit, pending checks and a staging rebuild', 
   assert.equal(log.push[0].expectedRemoteSha, NATIVE_HEAD);
 
   // And the platform's ordinary post-commit machinery ran, rather than a
-  // second implementation of it.
-  // #1144: the phase and the trigger ride along on the same call — a reviewer
-  // watching this run sees "preparing the staging preview", started by a push.
-  assert.deepEqual(log.pending[0].slice(1), [501, FORK_HEAD, 'building', 'commit-push']);
-  assert.equal(log.notified.length, 1);
+  // second implementation of it. The verdict is the preview machine's: this
+  // tail stamps none.
+  assert.ok(!sqlsOf(log).some((s) => /SET check_state|checks_commit_sha =/.test(s)),
+    'no pending stamp of its own');
+  assert.equal(log.verdictCleared, undefined);
   assert.deepEqual(log.pipelineBegan, [501]);
   assert.equal(log.started.length, 1);
   assert.equal(log.started[0].headSha, FORK_HEAD);
@@ -1383,29 +1417,50 @@ test('an ACTIVE session gets the commit, pending checks and a staging rebuild', 
     'a session with no votes is not asked how many it has');
 });
 
-test('the checks UPDATE is guarded on the status and the commit it replaces', async () => {
+test('the adopting UPDATE is guarded on the status and the commit it replaces', async () => {
   const log = {};
   await runSession('active', {}, log);
-  const update = queryOf(log, "SET check_state = 'pending'");
+  const update = queryOf(log, 'SET last_activity_at = NOW()');
   assert.match(update.sql, /status = 'active'/, 'a pause between the lock and here wins');
-  assert.match(update.sql, /checks_commit_sha IS NOT DISTINCT FROM \$3/,
-    'a newer head that took the session is not regressed to an older pending state');
-  assert.match(update.sql, /check_state = 'pending'/);
-  assert.deepEqual(update.params, [FORK_HEAD, 501, OTHER_HEAD]);
+  assert.match(update.sql, /checks_commit_sha IS NOT DISTINCT FROM \$2/,
+    'a newer head that took the session keeps it');
+  // The verdict and the preview are the preview machine's: nothing else is set.
+  assert.doesNotMatch(update.sql, /check_state|staging_url|staging_container_id/);
+  assert.deepEqual(update.params, [501, OTHER_HEAD]);
 });
 
 test('an active session that stopped being active falls back to the paused tail', async () => {
   // The guarded UPDATE matched nothing: something paused or archived the
   // session between the lock and the write. The commit is already on the
   // branch, so the answer is "it landed, reopen to rebuild" — never a failure.
+  // The tail is the one for the status it has now (bug 13 of the proposal
+  // lifecycle): paused here.
   const log = {};
-  const result = await runSession('active', { adopted: false }, log);
+  const session = sessionRow('active');
+  const pool = fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['SELECT status FROM chat_sessions', [{ status: 'paused' }]],
+    ["AND status = 'active'", []],
+    ["AND status = 'paused'", [{ id: session.id }]],
+    ['FROM pr_votes', [{ n: 4 }]],
+  ]);
+  const result = await runSession('active', { session, pool }, log);
   assert.equal(result.ok, true);
   assert.equal(result.checksRerun, false);
   assert.equal(result.previewRebuilding, false);
   assert.equal(result.resumeRequired, true);
   assert.equal(log.started, undefined, 'no build is started for a session that is not active');
   assert.equal(log.tornDown.length, 1, 'and the stale preview is reclaimed');
+  // Closed meanwhile: nothing of it is touched.
+  const closedLog = {};
+  const closed = sessionRow('active');
+  await runSession('active', { session: closed, pool: fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [closed]],
+    ['SELECT status FROM chat_sessions', [{ status: 'archived' }]],
+    ['UPDATE chat_sessions', []],
+    ['FROM pr_votes', [{ n: 4 }]],
+  ]) }, closedLog);
+  assert.deepEqual([closedLog.tornDown, closedLog.verdictCleared, closedLog.started], [undefined, undefined, undefined]);
 });
 
 test('a PAUSED session takes the commit and defers the build to its reopen', async () => {
@@ -1425,13 +1480,13 @@ test('a PAUSED session takes the commit and defers the build to its reopen', asy
   assert.equal(log.started, undefined);
   assert.equal(log.pipelineBegan, undefined);
 
-  // The stale verdict is cleared and the stale preview torn down.
-  const cleared = queryOf(log, 'SET check_state = NULL');
-  assert.match(cleared.sql, /status = 'paused'/);
-  assert.match(cleared.sql, /check_state = NULL/,
-    "a 'pending' no pipeline will resolve is a spinner forever");
-  assert.doesNotMatch(cleared.sql, /checks_commit_sha =/,
+  // The stale verdict is cleared (by the preview machine: NULL, never a
+  // 'pending' no pipeline will resolve) and the stale preview torn down.
+  assert.deepEqual(log.verdictCleared, [{ sessionId: 501, reason: 'paused-update' }]);
+  assert.ok(!sqlsOf(log).some((s) => /checks_commit_sha =/.test(s)),
     'the commit the last verdict described is what the resume path compares against');
+  const touched = queryOf(log, 'SET last_activity_at = NOW() WHERE id = $1 AND status = \'paused\'');
+  assert.ok(touched, 'the paused row is touched, guarded on its status');
   assert.deepEqual(log.tornDown[0].sessionId, 501);
   assert.equal(log.tornDown[0].reason, 'external_update');
 
@@ -1575,13 +1630,15 @@ test('an update stores the routes it was given, and stores them BEFORE the captu
 
   const write = testingWrite(log);
   assert.ok(write, 'the routes reached the column');
-  assert.match(String(write.sql), /testing_paths = \$1::jsonb/);
-  assert.match(String(write.sql), /testing_path = \$2/);
-  assert.match(String(write.sql), /testing_md = \$3/);
-  assert.deepEqual(JSON.parse(write.params[0]), TESTING.testingPaths);
-  assert.equal(write.params[1], '/?shot=invite', 'the PRIMARY path is the first entry, same rule as the block parser');
-  assert.equal(write.params[2], '1. Open the invite dialog.');
-  assert.equal(write.params[3], 501);
+  assert.match(String(write.sql), /testing_paths = CASE WHEN \$2::boolean THEN \$3::jsonb/);
+  assert.match(String(write.sql), /testing_path = CASE WHEN \$2::boolean THEN \$4/);
+  assert.match(String(write.sql), /testing_md = CASE WHEN \$5::boolean THEN \$6/);
+  assert.equal(write.params[0], 501);
+  assert.equal(write.params[1], true);
+  assert.deepEqual(JSON.parse(write.params[2]), TESTING.testingPaths);
+  assert.equal(write.params[3], '/?shot=invite', 'the PRIMARY path is the first entry, same rule as the block parser');
+  assert.equal(write.params[4], true);
+  assert.equal(write.params[5], '1. Open the invite dialog.');
 
   // Property 1: the row the tails hand to captureForSession says the new
   // routes, not the old ones — and it said so before the tail ran.
@@ -1623,7 +1680,7 @@ test('an unusable route is dropped rather than stored, and the rules are the blo
   // from services/testing-notes.js rather than from a second copy here.
   assert.deepEqual(result.testingPaths, ['/ok?x=1', '/a', '/b']);
   const write = testingWrite(log);
-  assert.deepEqual(JSON.parse(write.params[0]).map((p) => p.path), ['/ok?x=1', '/a', '/b']);
+  assert.deepEqual(JSON.parse(write.params[2]).map((p) => p.path), ['/ok?x=1', '/a', '/b']);
 
   // …and every one of those drops is NAMED (#1214). Dropping is right —
   // one bad route must not cost an update that already landed on GitHub —
@@ -1691,7 +1748,7 @@ test('the @mobile annotation survives an update written as a plain string (#1214
   assert.equal(result.ok, true);
   assert.deepEqual(result.testingPaths, ['/?shot=invite @mobile', '/?shot=members @mobile']);
   assert.equal(result.testingPathsRejected, null);
-  assert.deepEqual(JSON.parse(testingWrite(log).params[0]), [
+  assert.deepEqual(JSON.parse(testingWrite(log).params[2]), [
     { path: '/?shot=invite', viewport: 'mobile' },
     { path: '/?shot=members', viewport: 'mobile' },
   ]);
@@ -1745,11 +1802,43 @@ test('a same-commit resubmit with new routes stores them and forces a fresh capt
 
   // The stored routes, and the re-run that shoots them.
   const write = testingWrite(log);
-  assert.deepEqual(JSON.parse(write.params[0]), TESTING.testingPaths);
+  assert.deepEqual(JSON.parse(write.params[2]), TESTING.testingPaths);
   assert.equal(rechecks.length, 1);
   assert.equal(rechecks[0].reason, 'testing-update');
   assert.deepEqual(rechecks[0].session.testing_paths, TESTING.testingPaths,
     'the recheck is handed the row that already says the new routes');
+});
+
+test('a same-commit resubmit that changes the shots ALONE is a shots-update; with new routes or recheck: true it is a manual testing-update', async (t) => {
+  // 'testing-update' reads as "Run checks again" (manual-recheck), which
+  // never reuses an earlier unit-suite pass (services/unit-suite-reuse.js);
+  // 'shots-update' reads as an automatic re-run, which may.
+  const shotsStateModule = require('../src/services/shots-state');
+  t.mock.method(shotsStateModule, 'recordIntent', async () => ({
+    state: 'planned', detail: { required: true }, runId: 'shots-run', unchanged: false, required: true,
+  }));
+  const SHOTS = { version: 1, impact: 'none', rationale: 'A new rationale for the shots.', stories: [] };
+  const reasonFor = async (params) => {
+    const log = {};
+    const rechecks = [];
+    const session = nativeSession({ testing_paths: [{ path: '/', viewport: 'desktop' }], testing_path: '/' });
+    const d = deps({
+      session,
+      pool: testingPool(session, log),
+      gh: { getBranchSha: async () => FORK_HEAD },
+      recovery: { recheckSessionChecks: async (args) => { rechecks.push(args); return 'rechecked'; } },
+    }, log);
+    const result = await svc.updateProposalFromForkBranch({ ...d, config: { shots: { collect: true } } }, {
+      user: USER, session, branch: 'fix/failing-check', origin: 'https://usernode.test', ...params,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(rechecks.length, 1, JSON.stringify(params));
+    return rechecks[0].reason;
+  };
+  assert.equal(await reasonFor({ visibleChanges: SHOTS }), 'shots-update', 'shots alone');
+  assert.equal(await reasonFor({ visibleChanges: SHOTS, testing: TESTING }), 'testing-update', 'shots and routes together');
+  assert.equal(await reasonFor({ visibleChanges: SHOTS, recheck: true }), 'testing-update', 'shots and an explicit recheck');
+  assert.equal(await reasonFor({ testing: TESTING }), 'testing-update', 'routes alone');
 });
 
 test('a same-commit resubmit of the SAME routes stays the no-op it always was', async () => {

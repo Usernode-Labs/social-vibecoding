@@ -39,7 +39,7 @@ require.cache[wsId] = {
     pushNotificationToUser(userId, payload) { events.push({ userId, payload }); return 1; },
     async handleMessage(_pool, client, msg) {
       if (!threadAllowed) return { ok: false, code: 'not_collaborator' };
-      threadPosts.push({ userId: client.user.id, appId: client.appId, msg });
+      threadPosts.push({ userId: client.user.id, appId: client.appId, viaBotDm: client.viaBotDm === true, msg });
       return { ok: true, message: { id: threadPosts.length } };
     },
     async sendSystemMessage(_pool, appId, content, msgType, metadata, thread) {
@@ -81,7 +81,13 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 8 });
+  // An answer in the DM owes its request a look, by its bot-request
+  // instance (its queue row the projection): the workflow runtime runs
+  // here, on this database, its pipeline only (no timers, no work).
+  const platform = require('../src/workflow/platform.ts');
+  require('../src/db/pool').getPool = () => pool;
   t.after(async () => {
+    await platform.stopWorkflow();
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
@@ -89,6 +95,28 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
   const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
   await pool.query(schema);
   await pool.query(schema); // boot-idempotent
+  await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
+  // The bot's queue is bot-request's projection: a test clears it as the
+  // machines would have none (each request's instance, its pending events
+  // and work, its row), written as the kernel writes.
+  const forgetRequests = async (appId = null) => {
+    const c = await pool.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query("SET LOCAL app.wf_writer = 'transition'");
+      const keys = appId == null ? 'request:%' : `request:${Number(appId)}:%`;
+      await c.query("DELETE FROM wf_work WHERE machine = 'bot-request' AND key LIKE $1", [keys]);
+      await c.query("DELETE FROM wf_events WHERE machine = 'bot-request' AND key LIKE $1 AND status = 'pending'", [keys]);
+      await c.query("DELETE FROM wf_instances WHERE machine = 'bot-request' AND key LIKE $1", [keys]);
+      await c.query('DELETE FROM homeroom_bot_queue WHERE $1::int IS NULL OR app_id = $1', [appId]);
+      await c.query('COMMIT');
+    } catch (err) {
+      await c.query('ROLLBACK');
+      throw err;
+    } finally {
+      c.release();
+    }
+  };
 
   // The bot works for anybody Homeroom has let in (homeroom-bot-dm.js
   // hasBot): each person carries it as req.user does.
@@ -372,7 +400,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       'SELECT priority, reason FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 7', [app.id],
     );
     assert.deepEqual(queued, { priority: 0, reason: 'dm_answer' }, 'an answer puts its request at the front of the queue');
-    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1', [app.id]);
+    await forgetRequests(app.id);
   });
 
   await t.test('an answer the request cannot take (not a member) is said, and the question stays open', async () => {
@@ -410,6 +438,20 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.equal(await dm.overWeeklyAllowance(pool, { userWeeklyCents: 5000 }, ada.id), false);
     assert.equal(await dm.overWeeklyAllowance(pool, { userWeeklyCents: 1200 }, ada.id), true);
     assert.equal(await dm.overWeeklyAllowance(pool, { userWeeklyCents: 0 }, ada.id), false, '0 is no cap');
+    // An admin's week is the per-admin cap, in place of the per-person one.
+    await pool.query('UPDATE users SET is_admin = TRUE WHERE id = $1', [ada.id]);
+    try {
+      assert.equal(await dm.weeklyCapCents(pool, { userWeeklyCents: 1200, adminWeeklyCents: 5000 }, ada.id), 5000);
+      assert.equal(await dm.overWeeklyAllowance(pool, { userWeeklyCents: 1200, adminWeeklyCents: 5000 }, ada.id), false);
+      assert.equal(await dm.overWeeklyAllowance(pool, { userWeeklyCents: 5000, adminWeeklyCents: 1200 }, ada.id), true);
+      assert.equal(await dm.overWeeklyAllowance(pool, { userWeeklyCents: 1200, adminWeeklyCents: 0 }, ada.id), false, '0 is no cap for an admin');
+      assert.equal(await dm.allowanceLow(pool, { userWeeklyCents: 5000, adminWeeklyCents: 1500 }, ada.id), true);
+    } finally {
+      await pool.query('UPDATE users SET is_admin = FALSE WHERE id = $1', [ada.id]);
+    }
+    assert.equal(await dm.weeklyCapCents(pool, { userWeeklyCents: 1200, adminWeeklyCents: 5000 }, ada.id), 1200);
+    assert.equal(await dm.overWeeklyAllowance(pool, { userWeeklyCents: 1200, adminWeeklyCents: 5000 }, ada.id), true,
+      'everyone else keeps the per-person cap');
     assert.equal(await dm.weeklySpentCents(pool, sam.id), 0);
 
     // What the bot caused itself (a restart's look, fixing its own checks) is
@@ -596,15 +638,27 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       // then a new project's first version gone live, with Open, Open
       // community and Invite people.
       // #4488: and, after the two questions, a complicated change's plan.
-      assert.equal(messages.length, 14, 'one question, one ask, one offer, a built plan and its card, a plan and its card, two questions, a complicated change\'s plan, a stuck build, a first version live, a ready card and two cards, not one per visit');
-      const [question, ask, offer, built, building, planCard, plan, two, complicated, stuck, firstLive, ready, ...cards] = [...messages].sort((a, b) => a.id - b.id);
+      // One story: and, after them, a request whose card is its thread's
+      // root, with its question also shown in the main chat (its quiet
+      // lines stay in the thread).
+      assert.equal(messages.length, 16, 'one question, one ask, one offer, a built plan and its card, a plan and its card, two questions, a complicated change\'s plan, a stuck build, a first version live, a ready card and two cards, then a story\'s card and its question, not one per visit');
+      const sorted = [...messages].sort((a, b) => a.id - b.id);
+      const [storyCard, storyQuestion] = sorted.slice(-2);
+      assert.equal(storyCard.metadata.homeroomBot.kind, 'activity');
+      assert.equal(storyCard.thread.replyCount, 5, 'four quiet lines and the question');
+      assert.equal(storyQuestion.threadRootId, storyCard.id);
+      assert.deepEqual([storyQuestion.metadata.homeroomBot.moment, storyQuestion.metadata.homeroomBot.alsoInChat], ['needs_you', true]);
+      const storyThread = await conversations.listThread(pool, viewer, first, storyCard.id, {});
+      assert.deepEqual(storyThread.messages.slice(0, 2).map((m) => m.content),
+        ['You suggested this on Staging demo app\'s page. It\'s request #18.', 'Reading it.']);
+      const [question, ask, offer, built, building, planCard, plan, two, complicated, stuck, firstLive, ready, ...cards] = sorted.slice(0, -2);
       assert.deepEqual([complicated.metadata.homeroomBot.kind, complicated.metadata.homeroomBot.firstVersion, complicated.metadata.homeroomBot.plan.complicated],
         ['plan', false, true]);
       assert.match(complicated.content, /^Before I build \*\*Staging demo app\*\* request #17, here's my plan:/);
       assert.equal(firstLive.metadata.homeroomBot.kind, 'merged');
       assert.equal(firstLive.metadata.homeroomBot.firstVersion, true);
       assert.deepEqual(firstLive.metadata.homeroomBot.actions.map((a) => a.label), ['Open Staging demo plants', 'Open community', 'Invite people']);
-      assert.match(firstLive.content, /^\*\*Staging demo plants\*\*, its first version\n\nIt's live now\. Open Staging demo plants below to try it\.$/);
+      assert.match(firstLive.content, /^\*\*Staging demo plants\*\*, its first version\n\nYour first version is live\. Open Staging demo plants to try it\.$/);
       assert.equal(stuck.metadata.homeroomBot.kind, 'build_failed');
       assert.equal(stuck.metadata.homeroomBot.status, 'open');
       assert.deepEqual(stuck.metadata.homeroomBot.actions, [{ id: 'try_again', label: 'Try again', style: 'primary', type: 'prompt', quote: true }]);
@@ -613,7 +667,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       assert.deepEqual([built.metadata.homeroomBot.kind, built.metadata.homeroomBot.status, built.metadata.homeroomBot.choices],
         ['plan', 'answered', ['Each runner picks their own goal']]);
       assert.deepEqual([building.metadata.homeroomBot.kind, building.metadata.homeroomBot.appName], ['activity', 'Staging demo run club']);
-      assert.equal(building.content, 'Thanks for answering about the plan. I\'ll let you know when Staging demo run club is ready to try.');
+      assert.equal(building.content, 'Building it now. I\'ll tell you when it\'s ready to try.');
       assert.equal(building.metadata.homeroomBot.thanks, true);
       assert.deepEqual([planCard.metadata.homeroomBot.kind, planCard.metadata.homeroomBot.appName, planCard.metadata.homeroomBot.issueNumber],
         ['activity', 'Staging demo plants', 1], 'the waiting plan\'s own card, above it');
@@ -680,9 +734,11 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
         `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, $2, $3, 'Tags')`,
         [app.id, issueNumber, requester.id],
       );
+      // News that is a DM message of its own (homeroom-bot-dm.js cardOnly):
+      // "I'm building it now" is the card's to say, and is never sent.
       const posted = await live.post({
-        pool: db, github, ws: io, app, repo, issueNumber, kind: 'spec', text: 'Building it now.',
-        sender: bot, senderId: bot.id, mentions: [requester.username, sam.username], dm: { building: true },
+        pool: db, github, ws: io, app, repo, issueNumber, kind: 'empty', text: 'Nothing to build.',
+        sender: bot, senderId: bot.id, mentions: [requester.username, sam.username], dm: { reason: 'Nothing named.' },
       });
       assert.equal(posted.thread, true);
       const { rows: [thread] } = await pool.query(
@@ -708,14 +764,14 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       return { thread, bells, dms: dms.map((r) => r.id) };
     };
     const onlyDm = (seen, why) => {
-      assert.equal(seen.thread.content, `@${sam.username} Building it now.`, `${why}: not tagged on the request`);
+      assert.equal(seen.thread.content, `@${sam.username} Nothing to build.`, `${why}: not tagged on the request`);
       assert.equal(seen.dms.length, 1, `${why}: told in the DM`);
-      // B4: "I'm building it now" is progress, not one of the moments that
-      // ring: told in the DM, it rings nothing, and the post tags nobody.
-      assert.deepEqual(seen.bells, [], `${why}: no bell, the DM is where it is`);
+      // Nothing to build rings in the DM, once, as Needs you (contract
+      // 2.1: `empty` is a needs_you moment): the post tags nobody for it.
+      assert.deepEqual(seen.bells.map((b) => [b.kind, b.chat_message_id]), [['build_needs_you', null]], `${why}: the DM's bell, not a mention`);
     };
     const onlyMention = (seen, who, why) => {
-      assert.equal(seen.thread.content, `@${who.username} @${sam.username} Building it now.`, `${why}: tagged on the request`);
+      assert.equal(seen.thread.content, `@${who.username} @${sam.username} Nothing to build.`, `${why}: tagged on the request`);
       assert.deepEqual(seen.dms, [], `${why}: nothing in a DM`);
       assert.deepEqual(seen.bells, [{ kind: 'mention', chat_message_id: seen.thread.id, conversation_message_id: null }],
         `${why}: one bell, the post's mention`);
@@ -742,7 +798,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     // They blocked the bot: nothing from it, here or in a DM.
     await pool.query('INSERT INTO user_blocks (blocker_id, blocked_user_id) VALUES ($1, $2)', [blocker.id, bot.id]);
     const blocked = await postFor(blocker);
-    assert.equal(blocked.thread.content, `@${sam.username} Building it now.`, 'not tagged');
+    assert.equal(blocked.thread.content, `@${sam.username} Nothing to build.`, 'not tagged');
     assert.deepEqual(blocked.dms, [], 'no DM');
     assert.deepEqual(blocked.bells, [], 'and nothing rings');
 
@@ -838,7 +894,9 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     await runOf(3784, { proposal: earlier, ago: 86400 * 2 });
     const later = await runOf(3784);
     const going = await dm.relayIssuePost({ pool, app, issueNumber: 3784, kind: 'spec', runId: later, postId: 37841, bot, dm: { building: true } });
-    assert.ok(going.messageId, 'a later request on the same issue is news');
+    // A later request on the same issue is news: not stale, and on its card
+    // (homeroom-bot-dm.js cardOnly), never a message of its own.
+    assert.deepEqual([going.stale, going.quiet, going.messageId], [undefined, true, null], 'a later request on the same issue is news, on its card');
 
     // A plan or a failure a newer look overtook is not sent; with no other
     // proposal anywhere, the run's own proposal is.
@@ -850,9 +908,10 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.ok((await dm.relayIssuePost({ pool, app, issueNumber: 3785, kind: 'proposal', runId: overtaken, postId: 37853, bot, dm: { link: 'https://x/1' } })).messageId);
   });
 
-  // WP1 (#9): a build a restart interrupted is started again, and its
-  // requester hears it once, so the card going back a step is no mystery.
-  await t.test('WP1 (#9): a build started again after a restart is said once, in plain words', async () => {
+  // WP1 (#9): a build a restart interrupted is started again. Its card and
+  // the tray say it is building; nothing else is sent ("Nothing you need to
+  // do." was the case for saying nothing).
+  await t.test('WP1 (#9): a build started again after a restart is not a message', async () => {
     const kit = await user('kit');
     await pool.query(
       `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 3786, $2, 'Reminders')`,
@@ -861,19 +920,14 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     const { rows: [run] } = await pool.query(
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 3786, 'live', 'ready') RETURNING id`, [app.id],
     );
-    const sent = await dm.noteBuildRestarted(pool, { app, issueNumber: 3786, runId: run.id });
-    assert.ok(sent.messageId);
-    const message = await conversations.getMessage(pool, kit, sent.conversationId, sent.messageId);
-    assert.equal(message.content, `**Seed swap** · request #3786: Reminders\n\n${dm.RESTARTED_TEXT}`);
-    assert.equal(dm.RESTARTED_TEXT, 'My build was interrupted, so I\'ve started it again. Nothing you need to do.');
-    assert.equal(message.metadata.homeroomBot.kind, 'restarted');
-    const { rows: [keyed] } = await pool.query('SELECT idempotency_key FROM conversation_messages WHERE id = $1', [sent.messageId]);
-    assert.equal(keyed.idempotency_key, `hrbot-restart-${run.id}`);
-    const again = await dm.noteBuildRestarted(pool, { app, issueNumber: 3786, runId: run.id });
-    assert.equal(again.messageId, sent.messageId, 'once per run');
-    assert.equal(again.duplicate, true);
-    await pool.query('UPDATE users SET has_platform_access = FALSE WHERE id = $1', [kit.id]);
-    assert.equal(await dm.noteBuildRestarted(pool, { app, issueNumber: 3786, runId: run.id + 1 }), null, 'nobody the bot DMs, nothing sent');
+    assert.equal(await dm.noteBuildRestarted(pool, { app, issueNumber: 3786, runId: run.id }), null);
+    const { rows } = await pool.query(
+      `SELECT m.id FROM conversation_messages m
+         JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = $1
+        WHERE m.sender_id = $2`,
+      [kit.id, bot.id],
+    );
+    assert.deepEqual(rows, [], 'nothing reached her DM');
   });
 
   await t.test('#4097 follow-up: where it is stuck it says what to tap, and only its newest message\'s suggestions stay live', async () => {
@@ -895,18 +949,277 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     meta = await read(blocked);
     assert.deepEqual(meta.actions, [{ id: 'add_detail', label: 'Add detail', style: 'primary', type: 'reply' }], 'Add detail, quoted in the composer');
     assert.equal(meta.mirrors, true, 'and what they write is posted on the request, which the reply bar says');
-    assert.equal((await read(failed)).status, 'closed', 'the bot moved on: Try again went with it');
+    // One story (contract 2.3): news about ANOTHER request leaves Try again
+    // be; it stays until it is used or newer news about the same request.
+    assert.equal((await read(failed)).status, 'open', 'news about another request: Try again stays');
 
     const chat = await dm.sendDm(pool, {
       bot, userId: ada.id, content: 'It is waiting its turn.', moment: 'reply',
       metadata: { kind: 'chat', actions: dm.promptActions(['How long will it take?']), status: 'open' },
     });
-    assert.equal((await read(blocked)).status, 'closed');
+    assert.equal((await read(blocked)).status, 'open', 'a general reply leaves Add detail be');
     assert.equal((await read(chat)).status, 'open', 'the newest message keeps its own');
+    // Newer news about the same request replaces them, and says why.
+    await dm.relayIssuePost({ pool, app, issueNumber: 4097, kind: 'build_failed', postId: 40972, bot, dm: { reason: 'it produced no change' } });
+    const replaced = await read(failed);
+    assert.equal(replaced.status, 'closed');
+    assert.equal(replaced.closedWhy, 'No longer needed');
     assert.equal((await read(decision)).status, 'open', 'an offer is a decision, not a suggestion');
     await dm.sendDm(pool, { bot, userId: ada.id, content: 'Plain words.' });
     assert.equal((await read(chat)).status, 'closed');
     assert.equal(await dm.settlePrompt(pool, { botId: bot.id, userId: ada.id, conversationId: chat.conversationId, content: 'How long will it take?' }), false,
       'a retired suggestion is not settled by typing its words');
+  });
+
+  // #4974: when someone replies on a request's public discussion after the
+  // bot asked them something in their DM, the ask is settled from there —
+  // the question reads answered, a stop's buttons go, the tray stops calling
+  // it Needs you — and one quiet line in the request's thread says what was
+  // replied. Only the first reply after an ask adds a line.
+  await t.test('a reply on the request settles the ask it answers, and says so quietly in its thread', async () => {
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES
+         ($1, 5010, $2, 'Plant shelf'), ($1, 5011, $3, 'Dark mode'), ($1, 5012, $2, 'Print view'), ($1, 5013, $2, 'Label sheet')`,
+      [app.id, ada.id, sam.id],
+    );
+    const readMeta = async (messageId) => (await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [messageId])).rows[0].metadata.homeroomBot;
+    const askRow = async (messageId) => (await pool.query('SELECT question_status, answered_at FROM homeroom_bot_dm_messages WHERE message_id = $1', [messageId])).rows[0];
+
+    // Her own reply settles the question it answers.
+    const asked = await dm.relayIssuePost({
+      pool, app, issueNumber: 5010, kind: 'question', postId: 50101, bot,
+      dm: { question: 'Which shelf?', answers: ['Top', 'Bottom'] },
+    });
+    assert.equal((await askRow(asked.messageId)).question_status, 'open');
+    const from = events.length;
+    const noted = await dm.noteRequestReply(pool, {
+      appId: app.id, issueNumber: 5010, userId: ada.id, chatMessageId: 99001,
+      content: 'The top one', createdAt: new Date(),
+    });
+    assert.equal(noted.settled.length, 1, 'the open question is what the reply settled');
+    assert.equal((await askRow(asked.messageId)).question_status, 'answered');
+    assert.ok((await askRow(asked.messageId)).answered_at, 'and it says when');
+    assert.deepEqual([(await readMeta(asked.messageId)).status, (await readMeta(asked.messageId)).answeredOnRequest], ['answered', true]);
+    assert.ok(noted.line?.messageId, 'one quiet line, in the request\'s thread');
+    const line = await conversations.getMessage(pool, ada, asked.conversationId, noted.line.messageId);
+    assert.equal(line.content, `You replied on the request's discussion: “The top one”`);
+    assert.equal(line.metadata.homeroomBot.step, 'replied');
+    assert.equal(line.metadata.homeroomBot.issueNumber, 5010);
+    assert.equal(line.metadata.homeroomBot.moment, undefined, 'it rings nothing');
+    assert.equal(line.threadRootId, asked.messageId, 'no card yet, so the thread hangs off the ask it settled');
+    assert.deepEqual((await pool.query('SELECT 1 FROM notifications WHERE conversation_message_id = $1', [noted.line.messageId])).rows, [],
+      'and no bell for it');
+    assert.ok(events.slice(from).some((e) => e.userId === ada.id && e.payload.type === 'homeroom_bot_work_changed'),
+      'the tray is told to look again');
+
+    // A second reply after it settles nothing and adds no line.
+    const again = await dm.noteRequestReply(pool, {
+      appId: app.id, issueNumber: 5010, userId: ada.id, chatMessageId: 99002,
+      content: 'Also the middle shelf', createdAt: new Date(),
+    });
+    assert.equal(again.settled.length, 0);
+    assert.equal(again.line, null, 'only the first reply after an ask is said');
+
+    // Somebody else's reply names them, and settles their ask the same way.
+    const askedSam = await dm.relayIssuePost({
+      pool, app, issueNumber: 5011, kind: 'question', postId: 50111, bot,
+      dm: { question: 'Follow the system setting?', answers: ['Follow it', 'A toggle'] },
+    });
+    // The reply's stamp reaches settleMirroredAsks as a JS Date, cut to the
+    // millisecond (ws.js hands it the chat_messages row's created_at). Reading
+    // the ask's own stamp back through the pool hands the same shape: this
+    // reply lands in the ask's own millisecond and must still settle it.
+    const askStamp = (await pool.query('SELECT created_at FROM homeroom_bot_dm_messages WHERE message_id = $1', [askedSam.messageId])).rows[0].created_at;
+    const theirs = await dm.noteRequestReply(pool, {
+      appId: app.id, issueNumber: 5011, userId: ada.id, chatMessageId: 99003,
+      content: 'A toggle, please', createdAt: askStamp,
+    });
+    assert.equal(theirs.settled.length, 1);
+    const theirLine = await conversations.getMessage(pool, sam, askedSam.conversationId, theirs.line.messageId);
+    assert.equal(theirLine.content, `@${ada.username} replied on the request's discussion: “A toggle, please”`);
+    assert.ok(events.slice(from).some((e) => e.userId === sam.id && e.payload.type === 'homeroom_bot_work_changed'));
+
+    // The bot's own post on a request is never an answer, and a reply from
+    // before an ask does not settle the ask that came after it.
+    const askedAgain = await dm.relayIssuePost({
+      pool, app, issueNumber: 5012, kind: 'question', postId: 50121, bot,
+      dm: { question: 'Print which page?', answers: ['All'] },
+    });
+    const byBot = await dm.noteRequestReply(pool, {
+      appId: app.id, issueNumber: 5012, userId: bot.id, chatMessageId: 99004, content: 'On it', createdAt: new Date(),
+    });
+    assert.equal(byBot, null, 'a synthetic account never counts as a reply');
+    assert.equal((await askRow(askedAgain.messageId)).question_status, 'open', 'and its ask stays open');
+    const earlier = new Date(Date.now() - 60_000);
+    const late = await dm.noteRequestReply(pool, {
+      appId: app.id, issueNumber: 5012, userId: ada.id, chatMessageId: 99005, content: 'All of them', createdAt: earlier,
+    });
+    assert.equal(late.settled.length, 0, 'a reply from before the ask settles nothing');
+    assert.equal((await askRow(askedAgain.messageId)).question_status, 'open');
+
+    // A DM answer settles a stop with its buttons the same way: her words
+    // go to the request as hers, marked as relayed from the DM, the buttons
+    // go, and the tray stops calling it Needs you.
+    const stopped = await dm.relayIssuePost({
+      pool, app, issueNumber: 5013, kind: 'blocked', postId: 50131, bot,
+      dm: { reason: 'it does not say which printer' },
+    });
+    const stopMeta = await readMeta(stopped.messageId);
+    assert.equal(stopMeta.status, 'open');
+    assert.deepEqual(stopMeta.actions, [{ id: 'add_detail', label: 'Add detail', style: 'primary', type: 'reply' }]);
+    const posts = threadPosts.length;
+    const posted = await dm.postOnRequest(pool, {
+      user: ada,
+      target: { app_id: app.id, issue_number: 5013, message_id: stopped.messageId, conversation_id: stopped.conversationId, kind: 'blocked', question_status: null },
+      text: 'It is the office one',
+    });
+    assert.equal(posted.ok, true);
+    assert.equal(threadPosts.length, posts + 1, 'her words went to the request as hers');
+    assert.equal(threadPosts[posts].userId, ada.id);
+    assert.equal(threadPosts[posts].viaBotDm, true, 'marked as relayed from her DM, so it never counts as a reply');
+    assert.deepEqual(threadPosts[posts].msg.thread, { type: 'issue', ref: 5013 });
+    assert.equal((await askRow(stopped.messageId)).question_status, null, 'a stop is not a question');
+    assert.ok((await askRow(stopped.messageId)).answered_at);
+    const closedMeta = await readMeta(stopped.messageId);
+    assert.deepEqual([closedMeta.status, closedMeta.answeredOnRequest], ['closed', true]);
+    // Settled from the DM, it needs no quiet line from the discussion.
+    const after = await dm.noteRequestReply(pool, {
+      appId: app.id, issueNumber: 5013, userId: ada.id, chatMessageId: 99006, content: 'It is the office one', createdAt: new Date(),
+    });
+    assert.equal(after.settled.length, 0);
+    assert.equal(after.line, null);
+  });
+
+  // One request, one story: the request's card is the root of its thread in
+  // the chat with the bot, the one direct chat with threads. Everything about
+  // the request is said there; the moments that ring are shown in the main
+  // chat too, counted once; quiet lines stay in the thread.
+  await t.test('one story: a request\'s thread in the chat with the bot, its moments in the main chat too', async () => {
+    const activity = require('../src/services/homeroom-bot-activity');
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 5001, $2, 'Plant photos')`,
+      [app.id, ada.id],
+    );
+    const requester = await dm.requesterOf(pool, app.id, 5001);
+    const card = await activity.startCard(pool, { app, issueNumber: 5001, requester, bot, jobKey: 'story-5001' });
+    assert.ok(card?.messageId, 'every request gets a card, however it was asked');
+    const conversationId = card.conversationId;
+    const viewer = { id: ada.id, username: ada.username };
+    const read0 = (await conversations.getConversation(pool, viewer, conversationId)).unreadCount;
+
+    const asked = await dm.relayIssuePost({
+      pool, app, issueNumber: 5001, kind: 'question', postId: 50011, bot,
+      dm: { question: 'Which camera?', answers: ['Front', 'Back'] },
+    });
+    const building = await dm.relayIssuePost({ pool, app, issueNumber: 5001, kind: 'spec', postId: 50012, bot, dm: { building: true, plan: 'A photo per plant' } });
+    const question = await conversations.getMessage(pool, viewer, conversationId, asked.messageId);
+    assert.equal(question.threadRootId, card.messageId, 'the question is in the request\'s thread');
+    const meta = question.metadata.homeroomBot;
+    assert.deepEqual([meta.moment, meta.said, meta.alsoInChat, meta.threadRootId, meta.requestTitle, meta.appName],
+      ['needs_you', 'question', true, card.messageId, 'Plant photos', 'Seed swap']);
+    assert.ok(!question.content.includes('request #5001'), 'under its card, it does not name the request again');
+    const step = await conversations.getMessage(pool, viewer, conversationId, building.messageId);
+    assert.equal(step.content, 'Plan: A photo per plant. I\'m building it now.');
+    assert.equal(step.threadRootId, card.messageId);
+    assert.equal(step.metadata.homeroomBot.moment, undefined, 'a quiet line');
+    assert.deepEqual(step.metadata.homeroomBot.actions.map((a) => a.label), ['Read the plan']);
+    const { rows: rang } = await pool.query(
+      'SELECT kind FROM notifications WHERE user_id = $1 AND conversation_message_id = ANY($2::int[]) ORDER BY id',
+      [ada.id, [asked.messageId, building.messageId]],
+    );
+    assert.deepEqual(rang.map((r) => r.kind), ['build_needs_you'], 'the question rings; the quiet line does not');
+
+    // The main chat: the card, and the moment (not the quiet lines).
+    const main = await conversations.listMessages(pool, viewer, conversationId, {});
+    const ids = main.messages.map((m) => m.id);
+    assert.ok(ids.includes(card.messageId) && ids.includes(asked.messageId));
+    assert.ok(!ids.includes(building.messageId), 'a quiet line stays in its thread');
+    const root = main.messages.find((m) => m.id === card.messageId);
+    assert.ok(root.thread.replyCount >= 3, 'the card counts its thread');
+    const after = await conversations.getConversation(pool, viewer, conversationId);
+    assert.equal(after.unreadCount, read0 + 1, 'the moment counts once; the quiet lines not at all');
+    assert.equal(after.latestMessage.id, asked.messageId, 'and is the inbox\'s preview');
+    // Read where it is shown: a main-chat position, and its bell row goes.
+    await conversations.markRead(pool, viewer, conversationId, asked.messageId);
+    assert.equal((await conversations.getConversation(pool, viewer, conversationId)).unreadCount, 0);
+    const { rows: unreadBells } = await pool.query(
+      'SELECT 1 FROM notifications WHERE user_id = $1 AND conversation_message_id = $2 AND read_at IS NULL', [ada.id, asked.messageId],
+    );
+    assert.equal(unreadBells.length, 0);
+
+    // The thread: everything about the request, in order.
+    const thread = await conversations.listThread(pool, viewer, conversationId, card.messageId, {});
+    assert.deepEqual(thread.messages.map((m) => m.content.split('\n')[0]).slice(0, 2),
+      ['You suggested this on Seed swap\'s page. It\'s request #5001.', 'Reading it.']);
+    assert.ok(thread.messages.some((m) => m.id === asked.messageId) && thread.messages.some((m) => m.id === building.messageId));
+
+    // The person replies in it; the bot reads it as about that request.
+    const reply = await conversations.sendMessage(pool, viewer, conversationId, { content: 'The back one', thread_root_id: card.messageId });
+    assert.equal(reply.message.threadRootId, card.messageId);
+    const about = await dm.threadRequest(pool, { userId: ada.id, conversationId, message: reply.message });
+    assert.deepEqual([about.issueNumber, about.title, about.rootId], [5001, 'Plant photos', card.messageId]);
+    assert.equal(await dm.threadRootFor(pool, { conversationId, userId: ada.id, replyToId: reply.message.id }), card.messageId,
+      'what the bot says back goes in the same thread');
+
+    // A request from before threads has no card: the chat opens its story on
+    // its oldest message, and a reply written there is about it all the same.
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 5003, $2, 'Print view')`,
+      [app.id, ada.id],
+    );
+    const old = await dm.sendDm(pool, {
+      bot, userId: ada.id, threadRootId: false, content: 'I can\'t build this as written.',
+      metadata: { kind: 'blocked', appSlug: app.slug, appName: 'Seed swap', issueNumber: 5003 },
+    });
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind)
+       VALUES ($1, $2, $3, $4, 5003, 'blocked') ON CONFLICT (message_id) DO NOTHING`,
+      [old.messageId, ada.id, conversationId, app.id],
+    );
+    const underOld = await conversations.sendMessage(pool, viewer, conversationId, { content: 'The print screen', thread_root_id: old.messageId });
+    const aboutOld = await dm.threadRequest(pool, { userId: ada.id, conversationId, message: underOld.message });
+    assert.deepEqual([aboutOld?.issueNumber, aboutOld?.title, aboutOld?.rootId], [5003, 'Print view', old.messageId]);
+    const plain = await dm.sendDm(pool, { bot, userId: ada.id, threadRootId: false, content: 'Hello.', metadata: { kind: 'chat' } });
+    const underPlain = await conversations.sendMessage(pool, viewer, conversationId, { content: 'hi', thread_root_id: plain.messageId });
+    assert.equal(await dm.threadRequest(pool, { userId: ada.id, conversationId, message: underPlain.message }), null,
+      'a thread under words about no request is no request\'s');
+
+    // The main list draws the bot's news as one-line rows, never their cards:
+    // it sends those rows without them, so the page answers without filling
+    // (and, for a request card, asking GitHub about) cards nobody sees there.
+    // The request's story keeps them, and so does the bot's conversation.
+    const say = async (meta, threadRoot = null) => {
+      const { rows: [m] } = await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, metadata, thread_root_id)
+         VALUES ($1, $2, 'words', $3, $4) RETURNING id`,
+        [conversationId, bot.id, JSON.stringify({ homeroomBot: { appSlug: app.slug, appName: app.name, ...meta } }), threadRoot],
+      );
+      await pool.query(
+        `INSERT INTO conversation_message_objects (message_id, position, object_type, app_id, object_ref) VALUES ($1, 0, 'app', $2, $2)`,
+        [m.id, app.id],
+      );
+      return m.id;
+    };
+    const storyCard = await say({ kind: 'activity', issueNumber: 5002 });
+    const ringing = await say({ kind: 'merged', moment: 'live', alsoInChat: true, issueNumber: 5002, threadRootId: storyCard }, storyCard);
+    const talk = await say({ kind: 'chat' });
+    const listed = await conversations.listMessages(pool, viewer, conversationId, { limit: 50 });
+    const cardsOf = (id) => listed.messages.find((m) => m.id === id)?.objects?.length;
+    assert.equal(cardsOf(storyCard), 0, 'a request\'s row comes without its card');
+    assert.equal(cardsOf(ringing), 0);
+    assert.equal(cardsOf(talk), 1, 'the bot\'s conversation keeps its cards');
+    const around = await conversations.listMessages(pool, viewer, conversationId, { around: storyCard, limit: 10 });
+    assert.equal(around.messages.find((m) => m.id === storyCard).objects.length, 0, 'a permalink window too');
+    const story = await conversations.listThread(pool, viewer, conversationId, storyCard, {});
+    assert.equal(story.root.objects.length, 1, 'the story keeps the request\'s card');
+    assert.equal(story.messages.find((m) => m.id === ringing).objects.length, 1);
+
+    // People-to-people direct chats keep no threads.
+    const people = await conversations.createDirect(pool, ada, sam.id);
+    const peopleId = people.conversationId || people.conversation?.id;
+    const first = await conversations.sendMessage(pool, viewer, peopleId, { content: 'hi sam' });
+    assert.deepEqual(await conversations.listThread(pool, viewer, peopleId, first.message.id, {}), { error: 'threads_not_supported' });
+    assert.deepEqual(await conversations.sendMessage(pool, viewer, peopleId, { content: 'x', thread_root_id: first.message.id }),
+      { error: 'threads_not_supported' });
   });
 });

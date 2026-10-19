@@ -99,6 +99,29 @@ test('the stream: "N replies", a GitHub reply in the same row with "· on GitHub
   assert.doesNotMatch(html, /Homeroom bot/, 'the bot\'s copy of the posting is not drawn');
 });
 
+// One request, one story: Homeroom bot's plan reads as its own sentence on
+// the request's page (homeroom-bot-live.js specCard puts `botNote` on it).
+test('Homeroom bot\'s plan row says what it is doing with the plan, with its Read', () => {
+  const lead = { earlier: false, placeholder: null, language: 'request', request: { loaded: true, githubMore: null } };
+  const bot = (patch) => specShare(1, { sharedBy: 'homeroom_bot', title: 'Dark mode', ...patch });
+  const html = renderComponent(TRANSCRIPT, 'RequestRows', { view: { lead, messages: [
+    row({ id: 1, kind: 'spec_share', specShare: bot({ botNote: 'building' }) }),
+    row({ id: 2, kind: 'spec_share', specShare: bot({ version: 2, botNote: 'waiting', waitingFor: 'sam' }) }),
+    row({ id: 3, kind: 'spec_share', specShare: bot({ version: 3, botNote: 'waiting' }) }),
+    row({ id: 4, kind: 'spec_share', specShare: bot({ version: 4 }) }),
+    row({ id: 5, kind: 'spec_share', specShare: bot({ version: 5, botNote: 'replaced' }) }),
+    row({ id: 6, kind: 'spec_share', specShare: bot({ version: 6, botNote: 'stopped' }) }),
+  ] } });
+  assert.match(html, /Plan v1: Dark mode\. I(?:'|&#x27;|&#39;)m building it now\.[\s\S]*?>Read</);
+  assert.match(html, /Plan v2: Dark mode\. Waiting for @sam to say Build it\.[\s\S]*?>Read</);
+  assert.match(html, /Plan v3: Dark mode\. Waiting for the person who asked for it to say Build it\./);
+  assert.match(html, /Plan v4: Dark mode · /, 'an older row of the bot\'s reads as the plan');
+  // Papote #3: once it stopped waiting, it says so (homeroom-bot-live.js notePlanRows).
+  assert.match(html, /Plan v5: Dark mode\. A newer plan replaced it\.[\s\S]*?>Read</);
+  assert.match(html, /Plan v6: Dark mode\. It stopped waiting for Build it\./);
+  assert.doesNotMatch(html, /posted plan/);
+});
+
 test('an empty stream says so once its history is in, and "Loading replies…" before', () => {
   const lead = (loaded) => ({ earlier: false, placeholder: null, language: 'request', request: { loaded } });
   assert.match(renderComponent(TRANSCRIPT, 'RequestRows', { view: { lead: lead(true), messages: [] } }), /No replies yet/);
@@ -156,6 +179,7 @@ function appView(username = 'evan', globals = {}) {
     location: { search: '', hash: '' }, URLSearchParams,
   };
   c.window = c;
+  c.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(c);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/js/app-view.js'), 'utf8'), c);
   vm.runInContext('globalThis.av = AppView', c);
@@ -198,11 +222,60 @@ test('the status sentence says who is on it once, and when the claim lapses', ()
   assert.equal(nobody.lead, 'Nobody is working on this yet.');
   const merged = av._requestStatusView(issue({ addressed_by: { sessionId: 9, state: 'merged', prNumber: 12, title: 'Topics' } }));
   assert.equal(merged.stage, 'voted');
+  assert.equal(merged.lead, 'Live.');
+  assert.equal(merged.note, null, 'the sentence already says it is live');
   assert.equal(merged.action.label, 'See the change');
   const underway = av._requestStatusView(issue({ myPrSessionId: 77, addressed_by: { sessionId: 77, state: 'underway', title: 'Topics' } }));
   assert.equal(underway.stage, 'built');
   assert.equal(underway.action.label, 'Continue your work');
   assert.deepEqual(JSON.parse(JSON.stringify(underway.action.act)), { fn: 'openChangeWorkspace', args: [77] });
+});
+
+// #4663: Homeroom bot built this request, its change waits for approval, and
+// the status card still offered "Ask Homeroom bot to build this" — a second
+// build of something already built. The card offers "See the change" instead.
+test('the status card asks the bot no more once its change waits for approval', () => {
+  const av = appView();
+  av._ghIssuesMeta = { homeroomBot: { typicalMinutes: 7 } };
+  const built = av._requestStatusView(issue({
+    addressed_by: { sessionId: 9, state: 'review', prNumber: 12, title: 'Topics' },
+  }));
+  assert.equal(built.stage, 'built');
+  // One request, one story: no "Nobody is working on this yet." while its
+  // change waits for votes; the sentence says it is up for a vote.
+  assert.equal(built.lead, 'Up for a vote.');
+  assert.equal(built.note, null);
+  assert.equal(built.action.label, 'See the change');
+  assert.equal(built.action.href, '#app/example/dev/changes/12');
+  assert.equal(built.action.act, undefined);
+});
+
+// One request, one story: the status card says what is really happening.
+test('the status card says what Homeroom bot is really doing, or waiting for', () => {
+  const av = appView();
+  const lead = (patch) => av._requestStatusView(issue(patch)).lead;
+  assert.equal(lead({ botAwaits: { kind: 'question', messageId: 5 } }), 'Waiting for an answer to Homeroom bot\'s question.');
+  assert.equal(lead({ bot: { what: 'queued', since: null, plan: true, askedBy: 'sam' } }), 'Waiting for @sam to OK the plan.');
+  assert.equal(lead({ bot: { what: 'queued', since: null, plan: true } }), 'Waiting for the person who asked for it to OK the plan.');
+  assert.equal(lead({ bot: { what: 'building', since: null } }), 'Homeroom bot is building this.');
+  assert.equal(lead({ bot: { what: 'queued', since: null, held: true } }),
+    'Homeroom bot will start when one of its changes here is voted in or closed.');
+  assert.equal(lead({ bot: { what: 'queued', since: null } }), 'Homeroom bot will build this next.');
+  // Its sentence is the plan's news: no "Plan v1 is ready for comments." after it.
+  assert.match(fs.readFileSync(path.join(__dirname, '..', HEAD), 'utf8'), /const specLine = stage === 'spec' && !s\.botSays/);
+  assert.equal(av._requestStatusView(issue({ bot: { what: 'queued', plan: true, askedBy: 'sam' } })).botSays, true);
+  assert.equal(av._requestStatusView(issue()).botSays, false);
+  // Up for a vote, with how many more yes it needs when the vote panel knows.
+  av.voteState = { bySession: { 9: { id: 9, status: 'promoted' } }, byPrNumber: {} };
+  av.statusPillState = () => ({ yes: 1, majority: 3 });
+  assert.equal(lead({ addressed_by: { sessionId: 9, state: 'review', prNumber: 12, title: 'Topics' } }), 'Up for a vote: needs 2 more yes.');
+  av.statusPillState = () => ({ yes: 0, majority: 1 });
+  assert.equal(lead({ addressed_by: { sessionId: 9, state: 'review', prNumber: 12, title: 'Topics' } }), 'Up for a vote: needs 1 more yes.');
+  // Its plan waiting, and its build held, say so on the card's button too.
+  const button = (bot) => av._issuePrimaryActionSpec(issue({ bot }), { noNav: true });
+  assert.equal(button({ what: 'queued', plan: true, askedBy: 'sam' }).label, 'Waiting for the plan\'s OK');
+  assert.equal(button({ what: 'queued', held: true }).label, 'Homeroom bot will build this');
+  assert.equal(button({ what: 'queued' }).label, 'Homeroom bot is on it');
 });
 
 test('⋯ holds the work rows first, then the author\'s edits and the tags', () => {

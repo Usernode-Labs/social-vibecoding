@@ -89,6 +89,9 @@ const NON_SECRET_APP_COLUMNS = [
   // The community the app belongs to (services/communities.js). An id, and
   // the community's members are the app's own collaborators and joiners.
   'community_id',
+  // A production deploy app delivery is running (src/workflow/app-delivery/):
+  // the version pill's "deploying".
+  'deploy_state', 'deploy_started_at', 'deploy_from_sha',
 ];
 
 // `NON_SECRET_APP_COLUMNS` rendered as a bare comma-joined column list
@@ -291,7 +294,7 @@ function invalidateAllVisibility() {
   visCacheById.clear(); slugToId.clear(); hostVisBySlug.clear();
 }
 
-function invalidateVisibility(appId, slug) {
+function invalidateVisibilityHere(appId, slug) {
   if (appId != null) visCacheById.delete(Number(appId));
   if (slug) {
     slugToId.delete(slug);
@@ -299,6 +302,12 @@ function invalidateVisibility(appId, slug) {
   }
   // Slug entries are tiny and TTL-bounded; a stale slug->id mapping is
   // harmless (ids never re-point), so no full sweep needed.
+}
+
+// Here and in every other process (access-change.js).
+function invalidateVisibility(appId, slug) {
+  invalidateVisibilityHere(appId, slug);
+  require('./access-change').shareAccessChange(appId, slug);
 }
 
 async function getWsVisibility(pool, { appId = null, appSlug = null } = {}) {
@@ -440,6 +449,7 @@ module.exports = {
   issueCollabGuard,
   getWsVisibility,
   invalidateVisibility,
+  invalidateVisibilityHere,
   invalidateAllVisibility,
   parseAppHost,
   getHostVisibility,

@@ -21,6 +21,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { interiorHtmlFor } = require('./lib/lazy-interiors');
+const { message } = require('./lib/platform-i18n');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -35,10 +36,12 @@ test('the refusal copy the screen falls back to matches the one the server sends
   assert.ok(server, 'the service names its refusal message');
   const client = /^const PASSWORD_ACCOUNT_MSG =\n\s*'([^']+)';$/m.exec(read(LOGIN_TSX));
   assert.ok(client, 'the screen names its fallback');
-  assert.equal(client[1], server[1],
+  // The screen's constant holds the message id; the words are the catalog's.
+  assert.equal(client[1], 'auth:login.passwordAccount');
+  assert.equal(message(client[1]), server[1],
     'a real refusal and the ?shot= state must read identically');
   // The rule for user-facing strings, on the copy this change adds.
-  for (const line of [server[1], client[1]]) {
+  for (const line of [server[1], message(client[1])]) {
     assert.doesNotMatch(line, /—|&mdash;|&#8212;/, 'no em dash in user-facing copy');
   }
 });
@@ -57,10 +60,12 @@ test('a refused-but-correct code lands on the password form, address carried ove
     'the code step is left for the form that can actually succeed');
   assert.match(body, /username\.current\.value = st\.otpEmail \|\| ''/,
     'the address just typed is prefilled, not asked for twice');
-  assert.match(body, /setLoginError\(data\.error \|\| PASSWORD_ACCOUNT_MSG\)/,
+  assert.match(body, /setLoginError\(data\.error \|\| translate\(PASSWORD_ACCOUNT_MSG\)\)/,
     'the explanation is shown on the form it applies to');
   // The branch must be taken BEFORE the generic "invalid or expired" message.
-  assert.ok(body.indexOf('admin_password_required') < body.indexOf('Invalid or expired code.'));
+  assert.equal(message('auth:login.otp.codeRejected'), 'Invalid or expired code.');
+  assert.ok(body.includes("'auth:login.otp.codeRejected'"));
+  assert.ok(body.indexOf('admin_password_required') < body.indexOf("'auth:login.otp.codeRejected'"));
 });
 
 test('a code that signs you straight in finishes the login instead of asking for a password', () => {

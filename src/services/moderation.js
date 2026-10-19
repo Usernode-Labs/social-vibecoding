@@ -1,8 +1,14 @@
 'use strict';
 
 const appAccess = require('./app-access');
+const { PRODUCTION_ORIGIN } = require('./cli-auth-constants');
+const log = require('./logger');
 const REMOVED = 'Removed by moderation';
-const REASONS = new Set(['spam', 'scam', 'harassment', 'hate', 'threats', 'sexual_content', 'impersonation', 'unsafe_avatar', 'unsafe_content', 'other']);
+// #5102: child_safety is first everywhere a reason is listed, its cases sort
+// to the top of the queue, and a report with it marks the case
+// preserve_evidence so the retention purge below keeps its evidence.
+const CHILD_SAFETY = 'child_safety';
+const REASONS = new Set([CHILD_SAFETY, 'spam', 'scam', 'harassment', 'hate', 'threats', 'sexual_content', 'impersonation', 'unsafe_avatar', 'unsafe_content', 'other']);
 const TYPES = new Set(['app', 'user', 'app_message', 'conversation_message']);
 const STATUSES = new Set(['new', 'in_review', 'resolved', 'dismissed']);
 const ACTIONS = {
@@ -132,11 +138,27 @@ async function notify(db, userId, kind, detail) {
   const { rows } = await db.query('INSERT INTO notifications (user_id, kind, detail) VALUES ($1, $2, $3) RETURNING id', [userId, kind, detail.slice(0, 1200)]);
   (db.moderationNotifications ||= []).push(rows[0].id);
 }
-async function submitReport(pool, user, input) {
+// Compliance mail (#5072). Sent AFTER the transaction commits, for every
+// newly inserted report row; a mail failure is logged and never reaches the
+// reporter's request. The recipient is the deployment's compliance inbox
+// (config.complianceEmail, defaulting to compliance@usernodelabs.org).
+function sendComplianceMail(config, sendMail, payload) {
+  const to = (config && config.complianceEmail) || 'compliance@usernodelabs.org';
+  const url = `${PRODUCTION_ORIGIN}/#admin/reports/${payload.caseId}`;
+  Promise.resolve()
+    .then(() => (sendMail || require('./mail').send)(config, { kind: 'content_report', to, ...payload, url }))
+    .catch((err) => log.warn('moderation', 'Compliance mail failed', { message: err.message }));
+}
+
+async function submitReport(pool, user, input, { config = null, sendMail = null } = {}) {
   if (!user?.id) fail(401, 'Sign in to report');
   if (!input || !REASONS.has(input.reason)) fail(400, 'Choose a report reason');
   const detail = details(input.detail, input.reason === 'other');
-  return transaction(pool, async (db) => {
+  // Set only when a report row was actually inserted; the duplicate path and
+  // every refusal leave it null, so nothing is mailed. Never added to the
+  // returned receipt, which goes to the client.
+  let mailPayload = null;
+  const result = await transaction(pool, async (db) => {
     // Per-user transactional rate guard includes all target types and devices.
     await db.query('SELECT pg_advisory_xact_lock(2721, $1)', [user.id]);
     let target = await resolveTarget(db, user, input.targetType, input.target);
@@ -172,10 +194,24 @@ async function submitReport(pool, user, input) {
         [input.targetType, file.id, file.filename, file.content_type, file.data]);
       await db.query('INSERT INTO moderation_report_files (report_id,file_id) VALUES ($1,$2)', [rows[0].id, saved.rows[0].id]);
     }
-    await db.query('UPDATE moderation_cases SET revision = revision + 1, updated_at = NOW() WHERE id = $1', [c.id]);
+    await db.query(
+      `UPDATE moderation_cases SET revision = revision + 1, updated_at = NOW(),
+         preserve_evidence = preserve_evidence OR $2::boolean WHERE id = $1`,
+      [c.id, input.reason === CHILD_SAFETY]);
     await notify(db, user.id, 'moderation_report', `Report #${rows[0].id} received. We’ll review it.`);
+    mailPayload = {
+      caseId: c.id,
+      reportId: rows[0].id,
+      reason: input.reason,
+      detail,
+      targetType: input.targetType,
+      targetLabel: target.label,
+      reporter: user.username,
+    };
     return { id: rows[0].id, received: true, duplicate: false, ...blockActions(input.targetType, target, user.id) };
   });
+  if (config && mailPayload) sendComplianceMail(config, sendMail, mailPayload);
+  return result;
 }
 
 async function moderate(pool, actor, caseId, input) {
@@ -189,17 +225,22 @@ async function moderate(pool, actor, caseId, input) {
     const c = rows[0];
     if (!c) fail(404, 'Case not found');
     if (c.revision !== input.revision) fail(409, 'This case changed. Refresh before acting.');
-    const caseAction = ['review', 'resolve', 'dismiss', 'reopen', 'note'].includes(action);
+    const caseAction = ['review', 'resolve', 'dismiss', 'reopen', 'note', 'release_evidence'].includes(action);
     if (!caseAction && !ACTIONS[c.target_type].includes(action)) fail(400, 'Action does not apply to this target');
     if (['resolved', 'dismissed'].includes(c.status) && action === 'review') fail(409, 'Reopen this case first');
     if (['resolve', 'dismiss'].includes(action) && ['resolved', 'dismissed'].includes(c.status)) fail(409, 'Case already closed');
     if (action === 'reopen' && !['resolved', 'dismissed'].includes(c.status)) fail(409, 'Case is already open');
+    if (action === 'release_evidence' && !c.preserve_evidence) fail(409, 'Evidence is not preserved for this case');
     if (['resolve', 'dismiss'].includes(action)) {
       const { actionTaken } = await reviewState(db, c);
       if (action === 'resolve' && !actionTaken) fail(409, 'No moderation action has been taken. Dismiss this case instead.');
       if (action === 'dismiss' && actionTaken) fail(409, 'A moderation action has been taken. Resolve this case instead.');
     }
     let effect = null;
+    // #5102: lifting the hold is a full administrator's audited decision (the
+    // moderation_actions row below carries who, when and why); the ordinary
+    // retention clock applies again from the case's closing time.
+    if (action === 'release_evidence') await db.query('UPDATE moderation_cases SET preserve_evidence = FALSE WHERE id = $1', [c.id]);
     if (action === 'hide_message' || action === 'restore_message') {
       const table = c.target_type === 'app_message' ? 'chat_messages' : 'conversation_messages';
       const message = await db.query(`SELECT * FROM ${table} WHERE id = $1 FOR UPDATE`, [c.target_id]);
@@ -290,20 +331,27 @@ async function isRestricted(db, userId) {
 async function purgeExpired(db) {
   // Migrated records have one retention clock. Remove old copies before
   // dropping unified metadata, so boot-time import cannot resurrect them.
-  await db.query(`DELETE FROM profile_reports old USING moderation_reports r, moderation_cases c WHERE r.case_id = c.id AND r.legacy_type = 'profile' AND r.legacy_id = old.id AND c.closed_at < NOW() - INTERVAL '180 days'`);
-  await db.query(`DELETE FROM conversation_message_reports old USING moderation_reports r, moderation_cases c WHERE r.case_id = c.id AND r.legacy_type = 'conversation' AND r.legacy_id = old.id AND c.closed_at < NOW() - INTERVAL '180 days'`);
-  await db.query(`DELETE FROM chat_message_reports old USING moderation_reports r, moderation_cases c WHERE r.case_id = c.id AND r.legacy_type = 'app_message' AND r.legacy_id = old.id AND c.closed_at < NOW() - INTERVAL '180 days'`);
-  await db.query(`DELETE FROM app_reports old USING moderation_reports r, moderation_cases c WHERE r.case_id = c.id AND r.legacy_type = 'app' AND r.legacy_id = old.id AND c.closed_at < NOW() - INTERVAL '180 days'`);
+  // #5102: a case with preserve_evidence (every child-safety case, until a
+  // full administrator releases it) is outside that clock: nothing below
+  // removes its reports, evidence, files, audit or hidden originals.
+  await db.query(`DELETE FROM profile_reports old USING moderation_reports r, moderation_cases c WHERE r.case_id = c.id AND r.legacy_type = 'profile' AND r.legacy_id = old.id AND c.closed_at < NOW() - INTERVAL '180 days' AND NOT c.preserve_evidence`);
+  await db.query(`DELETE FROM conversation_message_reports old USING moderation_reports r, moderation_cases c WHERE r.case_id = c.id AND r.legacy_type = 'conversation' AND r.legacy_id = old.id AND c.closed_at < NOW() - INTERVAL '180 days' AND NOT c.preserve_evidence`);
+  await db.query(`DELETE FROM chat_message_reports old USING moderation_reports r, moderation_cases c WHERE r.case_id = c.id AND r.legacy_type = 'app_message' AND r.legacy_id = old.id AND c.closed_at < NOW() - INTERVAL '180 days' AND NOT c.preserve_evidence`);
+  await db.query(`DELETE FROM app_reports old USING moderation_reports r, moderation_cases c WHERE r.case_id = c.id AND r.legacy_type = 'app' AND r.legacy_id = old.id AND c.closed_at < NOW() - INTERVAL '180 days' AND NOT c.preserve_evidence`);
   await db.query(`DELETE FROM moderation_report_files f USING moderation_reports r, moderation_cases c
-    WHERE f.report_id = r.id AND r.case_id = c.id AND c.closed_at < NOW() - INTERVAL '180 days'`);
+    WHERE f.report_id = r.id AND r.case_id = c.id AND c.closed_at < NOW() - INTERVAL '180 days' AND NOT c.preserve_evidence`);
   await db.query(`UPDATE moderation_reports r SET evidence = NULL, detail = NULL FROM moderation_cases c
-    WHERE c.id = r.case_id AND c.closed_at < NOW() - INTERVAL '180 days'`);
+    WHERE c.id = r.case_id AND c.closed_at < NOW() - INTERVAL '180 days' AND NOT c.preserve_evidence`);
   await db.query('DELETE FROM moderation_evidence_files f WHERE NOT EXISTS (SELECT 1 FROM moderation_report_files r WHERE r.file_id = f.id)');
-  await db.query("DELETE FROM moderation_actions WHERE created_at < NOW() - INTERVAL '1 year'");
-  await db.query(`DELETE FROM moderation_reports r USING moderation_cases c WHERE r.case_id = c.id AND c.closed_at < NOW() - INTERVAL '1 year'`);
+  await db.query(`DELETE FROM moderation_actions a WHERE a.created_at < NOW() - INTERVAL '1 year'
+    AND NOT EXISTS (SELECT 1 FROM moderation_cases c WHERE c.id = a.case_id AND c.preserve_evidence)`);
+  await db.query(`DELETE FROM moderation_reports r USING moderation_cases c WHERE r.case_id = c.id AND c.closed_at < NOW() - INTERVAL '1 year' AND NOT c.preserve_evidence`);
   // Hidden originals are retained live content needed for restoration, not
-  // report evidence. Once their message is deleted they have no purpose.
-  await db.query(`DELETE FROM moderation_message_originals o WHERE o.target_type = 'app_message' AND NOT EXISTS (SELECT 1 FROM chat_messages m WHERE m.id = o.target_id)`);
-  await db.query(`DELETE FROM moderation_message_originals o WHERE o.target_type = 'conversation_message' AND NOT EXISTS (SELECT 1 FROM conversation_messages m WHERE m.id = o.target_id)`);
+  // report evidence. Once their message is deleted they have no purpose,
+  // unless their case is preserved: then the original is the evidence.
+  await db.query(`DELETE FROM moderation_message_originals o WHERE o.target_type = 'app_message' AND NOT EXISTS (SELECT 1 FROM chat_messages m WHERE m.id = o.target_id)
+    AND NOT EXISTS (SELECT 1 FROM moderation_cases c WHERE c.target_type = o.target_type AND c.target_id = o.target_id AND c.preserve_evidence)`);
+  await db.query(`DELETE FROM moderation_message_originals o WHERE o.target_type = 'conversation_message' AND NOT EXISTS (SELECT 1 FROM conversation_messages m WHERE m.id = o.target_id)
+    AND NOT EXISTS (SELECT 1 FROM moderation_cases c WHERE c.target_type = o.target_type AND c.target_id = o.target_id AND c.preserve_evidence)`);
 }
-module.exports = { REMOVED, REASONS, TYPES, STATUSES, ACTIONS, ModerationError, id, details, transaction, resolveTarget, submitReport, moderate, reviewState, isRestricted, purgeExpired };
+module.exports = { REMOVED, CHILD_SAFETY, REASONS, TYPES, STATUSES, ACTIONS, ModerationError, id, details, transaction, resolveTarget, submitReport, moderate, reviewState, isRestricted, purgeExpired };

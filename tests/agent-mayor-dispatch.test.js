@@ -237,10 +237,19 @@ test('a run that finishes while nobody is watching lands in the bell, once per c
   ];
   // The user left: this turn's stream is closed and nobody follows the events.
   const notified = [];
+  const notStalled = [];
   const left = fakeRes();
   left.destroyed = true;
-  await runTurn({ steps, res: left, extra: { notifyDone: async (_pool, changeId) => { notified.push(changeId); } } });
+  await runTurn({
+    steps,
+    res: left,
+    extra: {
+      notifyDone: async (_pool, changeId) => { notified.push(changeId); },
+      notifyStalled: async (_pool, changeId) => { notStalled.push(changeId); },
+    },
+  });
   assert.deepEqual(notified, [50], 'the dev chat\'s own "Session finished", on the change the run was on');
+  assert.deepEqual(notStalled, [], 'a run that finished is not a stopped one (#4729)');
 
   // Still watching, through the turn's stream or the conversation's events.
   const watched = [];
@@ -252,6 +261,7 @@ test('a run that finishes while nobody is watching lands in the bell, once per c
     res: followed,
     extra: {
       notifyDone: async (_pool, id) => { watched.push(id); },
+      notifyStalled: async (_pool, id) => { watched.push(id); },
       sessionBus: { publish() {}, clearSession() {}, subscriberCount: () => 1 },
     },
   });
@@ -263,9 +273,29 @@ test('a run that finishes while nobody is watching lands in the bell, once per c
     steps,
     res: left,
     stub: dispatchStub({ outcome: { ran: true, changeId: 50, kind: 'build', isError: false, stopped: true, toolResultText: 'stopped' } }),
-    extra: { notifyDone: async (_pool, id) => { stopped.push(id); } },
+    extra: {
+      notifyDone: async (_pool, id) => { stopped.push(id); },
+      notifyStalled: async (_pool, id) => { stopped.push(id); },
+    },
   });
   assert.deepEqual(stopped, []);
+
+  // An errored run is the bell's other line (#4729): "Session stopped
+  // before finishing", against the change the run was on — and the
+  // finished line stays silent.
+  const stalled = [];
+  const doneToo = [];
+  await runTurn({
+    steps,
+    res: left,
+    stub: dispatchStub({ outcome: { ran: true, changeId: 50, kind: 'build', isError: true, stopped: false, toolResultText: 'The build failed.' } }),
+    extra: {
+      notifyDone: async (_pool, id) => { doneToo.push(id); },
+      notifyStalled: async (_pool, id) => { stalled.push(id); },
+    },
+  });
+  assert.deepEqual(stalled, [50]);
+  assert.deepEqual(doneToo, []);
 });
 
 test('one dispatch per turn; one the change cannot take is refused to the model', async () => {
@@ -593,7 +623,17 @@ function dispatchDeps({
       activeWorkers: new Map(),
       beginSessionOperation: (id) => { log.push(['begin', id]); return () => log.push(['release', id]); },
     },
-    shotsRunFor: () => shotsRun,
+    // A run of the change's shots under way (the shots machine's state) and
+    // the wait for its end.
+    shotsRunning: async () => !!shotsRun,
+    shotsWait: async (_id, { timeoutMs }) => {
+      if (!shotsRun) return 'idle';
+      let timer;
+      const waited = await Promise.race([shotsRun.then(() => 'finished'),
+        new Promise((resolve) => { timer = setTimeout(() => resolve('timeout'), timeoutMs); })]);
+      clearTimeout(timer);
+      return waited;
+    },
     shotsWaitMs,
     stopRegistry: {
       createHandle: ({ sessionId, phase, send }) => ({ sessionId, phase, send, stopped: false, stoppedBy: null, abort: new AbortController() }),
@@ -740,7 +780,7 @@ test('a dispatch is refused when there is nothing to build on', async () => {
   const busy = await dispatchWith({ busy: true });
   assert.match(busy.outcome.toolResultText, /^busy/);
   assert.ok(!busy.log.some((e) => e[0] === 'begin'), 'a busy change is not claimed');
-  assert.equal(dispatch.canDispatch(null), false);
+  assert.equal(await dispatch.canDispatch(null), false);
 });
 
 test('a change held only by a shots run waits it out, then builds', async () => {
@@ -748,7 +788,7 @@ test('a change held only by a shots run waits it out, then builds', async () => 
   let finish;
   const shotsRun = new Promise((resolve) => { finish = resolve; });
   const { deps } = dispatchDeps({ busy: () => running, shotsRun });
-  assert.equal(dispatch.canDispatch(CHANGE_ROW, deps), true, 'the tools stay on offer while evidence records');
+  assert.equal(await dispatch.canDispatch(CHANGE_ROW, deps), true, 'the tools stay on offer while evidence records');
   setTimeout(() => { running = false; finish(); }, 5);
   const { outcome, log, agentEvents } = await dispatchWith({ busy: () => running, shotsRun });
   assert.equal(outcome.toolResultText, 'built');
@@ -765,7 +805,7 @@ test('a shots run that outlasts the wait is refused as what it is, not as the co
   assert.ok(!log.some((e) => e[0] === 'begin'));
 
   const turn = dispatchDeps({ busy: true });
-  assert.equal(dispatch.canDispatch(CHANGE_ROW, turn.deps), false, 'a turn holding the change still hides the tools');
+  assert.equal(await dispatch.canDispatch(CHANGE_ROW, turn.deps), false, 'a turn holding the change still hides the tools');
 });
 
 test('a stopped or crashed dispatch leaves the change\'s turn to its recovery', async () => {

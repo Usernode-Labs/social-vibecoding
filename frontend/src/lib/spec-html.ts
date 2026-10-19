@@ -39,6 +39,8 @@
 
 import { useEffect, type RefObject } from 'react';
 
+import { htmlRich, t } from './i18n/runtime';
+
 export interface SpecHtmlDoc {
   /** Both halves were found: draw the tabs. */
   split: boolean;
@@ -227,17 +229,25 @@ function screensHtml(figure: Element, key: string, styles: SpecStyles): string {
     const list = here.map((change) => `<li class="shots-change" data-shots-n="${escapeAttr(change.n)}"><span class="shots-change-n">${escapeText(change.n)}</span>`
       + `<div class="min-w-0 flex-1"><strong class="text-sm leading-snug">${escapeText(change.claim)}</strong>`
       + `${change.steps ? `<div class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">${escapeText(change.steps)}</div>` : ''}</div></li>`).join('');
-    const zoomWords = g.focus ? '<span class="shots-close-only"> · close-up</span><span class="shots-whole-only"> · whole screen</span>' : '';
-    const size = g.kind === 'phone' ? 'Phone' : 'Desktop';
+    // One whole line per size, with and without the close-up. The persona is
+    // the spec's own word and is escaped with the rest of the line.
+    const metaValues = { width: g.width, height: g.height, persona };
+    const zoomTags = [
+      (inner: string) => `<span class="shots-close-only">${inner}</span>`,
+      (inner: string) => `<span class="shots-whole-only">${inner}</span>`,
+    ];
+    const meta = g.kind === 'phone'
+      ? (g.focus ? htmlRich('core:spec.screens.metaPhoneZoom', metaValues, zoomTags) : htmlRich('core:spec.screens.metaPhone', metaValues))
+      : (g.focus ? htmlRich('core:spec.screens.metaDesktopZoom', metaValues, zoomTags) : htmlRich('core:spec.screens.metaDesktop', metaValues));
     return {
       viewport: g.kind,
       zoomable: !!g.focus,
-      afterHtml: sideHtml('after', markup, g, `After (planned): ${described}`, styles),
-      beforeHtml: sideHtml('before', markup, g, `Before: ${described}`, styles),
-      afterChip: 'After · planned',
-      beforeChip: 'Before · today',
+      afterHtml: sideHtml('after', markup, g, t('core:spec.screens.afterLabel', { changes: described }), styles),
+      beforeHtml: sideHtml('before', markup, g, t('core:spec.screens.beforeLabel', { changes: described }), styles),
+      afterChip: t('core:spec.screens.afterChip'),
+      beforeChip: t('core:spec.screens.beforeChip'),
       notesHtml: `${list ? `<ol class="shots-changes">${list}</ol>` : ''}`
-        + `<div class="shots-view-meta"><span>${size}, ${g.width} × ${g.height}${zoomWords} · seen as a ${escapeText(persona)}</span></div>`,
+        + `<div class="shots-view-meta"><span>${meta}</span></div>`,
     };
   });
   // Grouped by size, as the card groups them: the Desktop / Phone switch picks
@@ -341,6 +351,42 @@ function renderPart(nodes: Node[], key: string, screensBox: { next: number }, st
     html = html.replace(new RegExp(`<p[^>]*>${marker}-${index}</p>`), () => viewer);
   });
   return html;
+}
+
+/** One screen of a plan, as a sandboxed frame's document for each side, at its drawn size. */
+export interface SpecScreen {
+  width: number;
+  height: number;
+  /** The part of the screen that changes, `[x, y, w, h]`, when the plan named one. */
+  focus: [number, number, number, number] | null;
+  before: string;
+  after: string;
+}
+
+/**
+ * 16 Oct 2026: the first screen a plan drew (its first `template
+ * data-screen`), before and after, as the documents of two sandboxed frames:
+ * the same cleaned markup and frame the plan's own viewer draws, for a small
+ * picture on a request's track card (features/messages/bot-track.tsx). Null
+ * when the plan drew no screens.
+ */
+export function firstSpecScreen(source: string): SpecScreen | null {
+  if (typeof source !== 'string' || !source.trim() || typeof DOMParser === 'undefined') return null;
+  const parsed = new DOMParser().parseFromString(source, 'text/html');
+  const article = parsed.querySelector('article[data-spec]') || parsed.body;
+  const styles: SpecStyles = article.getAttribute('data-spec-styles') === 'platform' ? 'platform' : 'kit';
+  const tpl = article.querySelector('figure[data-screens] template[data-screen]') || article.querySelector('template[data-screen]');
+  if (!tpl) return null;
+  const g = geometryOf(tpl);
+  const markup = cleanScreenMarkup((tpl as HTMLTemplateElement).innerHTML);
+  if (!markup.trim()) return null;
+  return {
+    width: g.width,
+    height: g.height,
+    focus: g.focus,
+    before: frameDoc(markup, 'before', styles),
+    after: frameDoc(markup, 'after', styles),
+  };
 }
 
 const cache = new Map<string, SpecHtmlDoc>();

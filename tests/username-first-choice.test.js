@@ -36,6 +36,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
@@ -85,7 +86,6 @@ test('the #3575 helpers stay retired; only the email sign-up step suggests from 
 test('the suggestion is the letters and digits before the @, lowercased, cut to 32 (#4596)', () => {
   const { usernameFromEmail } = usernames;
   assert.equal(usernameFromEmail('Ada.Lovelace@example.com'), 'adalovelace');
-  assert.equal(usernameFromEmail('alex+homeroom@example.com'), 'alexhomeroom');
   assert.equal(usernameFromEmail('j_o-e.99@example.com'), 'joe99', 'underscores and hyphens go too');
   assert.equal(usernameFromEmail('Zoë@example.com'), 'zoe', 'accents fold to their letter');
   assert.equal(usernameFromEmail(`${'a'.repeat(40)}@example.com`), 'a'.repeat(32));
@@ -98,6 +98,27 @@ test('the suggestion is the letters and digits before the @, lowercased, cut to 
   assert.equal(usernameFromEmail('staging1@example.com'), null);
   assert.equal(usernameFromEmail(''), null);
   assert.equal(usernameFromEmail(null), null);
+});
+
+test('a "+" alias is cut off before the suggestion is made (#4891)', async () => {
+  const { usernameFromEmail } = usernames;
+  // The address in the report: what follows the "+" is a filing tag, not
+  // the person's name.
+  assert.equal(usernameFromEmail('evan.a.shapiro+test1012a@example.com'), 'evanashapiro');
+  assert.equal(usernameFromEmail('Ada.Lovelace+hr@example.com'), 'adalovelace');
+  assert.equal(usernameFromEmail('alex+homeroom+more@example.com'), 'alex', 'cut at the first "+"');
+  // What is left before the "+" is held to the same rules: too short, or
+  // nothing at all, and the field starts empty rather than borrowing the tag.
+  assert.equal(usernameFromEmail('al+homeroom@example.com'), null);
+  assert.equal(usernameFromEmail('+homeroom@example.com'), null);
+  // A "+" after the @ is not an alias.
+  assert.equal(usernameFromEmail('alex@plus+example.com'), 'alex');
+  // And the free-name walk starts from the cut name.
+  const none = { query: async (sql, [candidates]) => {
+    assert.equal(candidates[0], 'evanashapiro');
+    return { rows: [] };
+  } };
+  assert.equal(await usernames.suggestUsernameForEmail(none, 'evan.a.shapiro+test1012a@example.com', 7), 'evanashapiro');
 });
 
 test('a taken suggestion takes the smallest free number, over live and retired names (#4596)', async () => {
@@ -348,7 +369,7 @@ test('the users INSERT no longer puts the email in the username column', () => {
 test('the created row is marked as still needing a choice', () => {
   // Communities, stage 5 added the join screen's flag to the same INSERT,
   // one step later in the same first run: TRUE for both. The one list
-  // (2026-10-01) added the new account's Getting started gate beside them.
+  // (2026-10-01) added the flag that marks a new account beside them.
   assert.match(signupJs,
     /needs_username_choice, needs_communities_choice,\s*\n\s*getting_started_gate\)\s*\n\s*VALUES \(\$1, \$2, \$3, TRUE, NOW\(\), FALSE, FALSE, TRUE, TRUE, TRUE\)/);
 });
@@ -383,12 +404,6 @@ test('the column is added the way every other users column is', () => {
   const schema = read('src/db/schema.sql');
   assert.match(schema,
     /ALTER TABLE users ADD COLUMN IF NOT EXISTS needs_username_choice BOOLEAN NOT NULL DEFAULT FALSE;/);
-  // The preview_operations block has to stay last in the file — see its
-  // own comment and tests/preview-lifecycle.test.js.
-  assert.ok(
-    schema.indexOf('needs_username_choice')
-      < schema.indexOf('CREATE TABLE IF NOT EXISTS preview_operations'),
-    'the new column must sit above the trailing preview_operations block');
 });
 
 test('the backfill matches the two columns exactly, not "looks like an email"', () => {
@@ -461,10 +476,15 @@ test('it presents at once, with an empty field and nothing fetched to fill it (#
 test('beside the field, every sign-up surface says the username will be public (#3575)', () => {
   const shared = read('frontend/src/features/auth/shared.ts');
   const note = 'Your username will be public to other users on Homeroom.';
-  assert.match(shared, /export const USERNAME_PUBLIC_NOTE = 'Your username will be public to other users on Homeroom\.';/);
-  // The gate is a classic module with no imports, so it spells the words;
-  // this is what holds the two copies together.
-  assert.ok(gateJs.includes(`const PUBLIC_NOTE = '${note}';`));
+  // The React forms read the sentence from the catalog, one entry per form.
+  assert.match(shared, /auth:register\.usernamePublic and auth:login\.signup\.usernamePublic/);
+  assert.equal(message('auth:register.usernamePublic'), note);
+  assert.equal(message('auth:login.signup.usernamePublic'), note);
+  // The gate is a classic module with no imports, so it reads the words
+  // from the catalog by id; this is what holds the copies together.
+  assert.ok(gateJs.includes("const PUBLIC_NOTE = 'onboarding:username.publicNote';"));
+  assert.match(gateJs, /PlatformI18n\.t\(PUBLIC_NOTE\)/);
+  assert.equal(message('onboarding:username.publicNote'), note);
   // Right after the input, ahead of the error line, so a refusal never
   // displaces it — and the input names it for a screen reader.
   const inputAt = gateJs.indexOf('panel.appendChild(input);');
@@ -478,10 +498,10 @@ test('beside the field, every sign-up surface says the username will be public (
   // shared constant on its own line, directly under the input.
   const register = read('frontend/src/features/auth/register.tsx');
   assert.match(register,
-    /aria-describedby="reg-username-public reg-username-hint"[\s\S]{0,700}?<p id="reg-username-public" className=\{FIELD_HINT\}>\s*\{USERNAME_PUBLIC_NOTE\}\s*<\/p>\s*<p\s+id="reg-username-hint"/);
+    /aria-describedby="reg-username-public reg-username-hint"[\s\S]{0,700}?<p id="reg-username-public" className=\{FIELD_HINT\}>\s*\{t\('auth:register\.usernamePublic'\)\}\s*<\/p>\s*<p\s+id="reg-username-hint"/);
   const login = read('frontend/src/features/auth/login.tsx');
   assert.match(login,
-    /aria-describedby="otp-username-public otp-username-hint"[\s\S]{0,300}?\/>\s*<p id="otp-username-public" className=\{FIELD_HINT\}>\s*\{USERNAME_PUBLIC_NOTE\}\s*<\/p>\s*<p id="otp-username-hint"/);
+    /aria-describedby="otp-username-public otp-username-hint"[\s\S]{0,300}?\/>\s*<p id="otp-username-public" className=\{FIELD_HINT\}>\s*\{t\('auth:login\.signup\.usernamePublic'\)\}\s*<\/p>\s*<p id="otp-username-hint"/);
 });
 
 test('screenshot and demo routes are skipped, except this step own shot', () => {
@@ -521,8 +541,11 @@ test('the declared checks reach the step and pin its copy', () => {
   // The strings the checks match on live in the module; a reword that
   // breaks them fails here, next to the code, instead of in a proposal
   // check.
+  // The module reads them from the catalog: the English of the ids it asks for.
+  const gateWords = [...gateJs.matchAll(/'(onboarding:username\.[A-Za-z.]+)'/g)].map((m) => message(m[1], { username: 'x' }));
+  assert.ok(gateWords.length >= 10, 'the gate reads its words by id');
   for (const t of ours) {
-    if (t.expectText) assert.ok(gateJs.includes(t.expectText), t.expectText);
+    if (t.expectText) assert.ok(gateWords.some((words) => words.includes(t.expectText)), t.expectText);
   }
   assert.ok(gateJs.includes('data-choose-username-save'));
   // #3575: the visual check asserts the field arrives EMPTY (the

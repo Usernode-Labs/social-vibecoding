@@ -29,6 +29,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -131,6 +132,7 @@ function loadPane({ challenges, eventId = null }) {
   sandbox.TopochainEventContext = context;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.runInContext(CHALLENGES_SRC, sandbox, { filename: 'topochain-challenges.js' });
 
   const pane = sandbox.window.TopochainChallenges;
@@ -179,13 +181,13 @@ test('onboarding progress uses personal completion and explains the later unlock
   pane._onboarding = { total: 3, completed: 2, unlocked: false, event_id: 10 };
   pane._renderGrid();
   const grid = store.get().grid;
-  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, caption: 'done in First challenges' },
-    'setup is its own scope while it gates the rest');
+  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, points: null },
+    'the summary counts the viewer’s own completion; no scope of its own');
   // 2026-10-01: what a new account finishes is its Getting started list.
   assert.equal(grid.notice, 'Finish Getting started to unlock the rest of the season.');
   assert.equal(grid.lockedCount, 0, 'no hidden_count in this payload, so no placeholder');
-  assert.equal(grid.groups.length, 1);
-  assert.equal(grid.groups[0].heading, 'First challenges', 'the setup group’s heading (key `setup`)');
+  assert.deepEqual(Array.from(grid.groups, (g) => g.heading), ['First challenges', 'Done'],
+    'the open step is First, the finished ones Done');
   assert.equal(grid.groups[0].cards[0].done, false, 'the organiser flag cannot finish a personal step');
 });
 
@@ -199,11 +201,11 @@ test('unlocked challenge groups preserve each card’s detail target', () => {
   pane._onboarding = { total: 3, completed: 3, unlocked: true, event_id: 10 };
   pane._renderGrid();
   const grid = store.get().grid;
-  // The board's order (tests/challenge-groups.test.js): unlocked, First challenges
-  // goes last. The identity card is found by its group rather than by position.
-  assert.deepEqual(Array.from(grid.groups, (g) => g.heading),
-    ['This week', 'Always open', 'First challenges']);
-  const identity = grid.groups.find((g) => g.key === 'always').cards[0];
+  // The tab's order (tests/challenge-groups.test.js): the finished First
+  // challenge is Done, last. The identity card is found by its group and
+  // goal rather than by position.
+  assert.deepEqual(Array.from(grid.groups, (g) => g.heading), ['Next challenges', 'Done']);
+  const identity = grid.groups.find((g) => g.key === 'next').cards.find((c) => c.goal === 'Prove your identity');
   pane._openIdx(identity.idx);
   assert.equal(pane._detailChallenge.id, 4);
   assert.equal('notice' in grid, false, 'unlocked, there is no notice');
@@ -363,10 +365,10 @@ test('a real event switch still reloads and clears the overlay', () => {
     'and the previous event’s detail is torn down');
 });
 
-test('the event list landing after the grid redraws the deadline lines, reloading and closing nothing', () => {
-  // A deep link can load the grid before the event bar's list lands, and a
-  // card's deadline falls back to that list's `ends_at`. The bar's tail
-  // notification carries the same event, so it must redraw the cards in place.
+test('the event list landing after the grid reloads nothing and closes nothing', () => {
+  // A deep link can load the grid before the event bar's list lands. The
+  // bar's tail notification carries the same event, and since the cards no
+  // longer read the event's end (the Semi design) there is nothing to redraw.
   const { pane, context, store } = loadPane({ challenges: CH, eventId: 900500 });
   pane._open = false;
   let reloads = 0;
@@ -375,15 +377,15 @@ test('the event list landing after the grid redraws the deadline lines, reloadin
   pane._challenges = [{ id: 900500, completed: false, card_preview: { goal: 'Report a bug' } }];
   pane._challengesLoading = false;
   pane._renderGrid();
-  const deadline = () => store.get().grid.groups[0].cards[0].deadline;
-  assert.equal(deadline(), null, 'no event list yet: no line');
+  const before = store.get().grid;
   pane.openFromHash(900500, 900500);
 
   context.selectedEvent = () => ({ id: 900500, ends_at: inHours(71) });
   context.notify(); // the list landed — same event
   assert.equal(reloads, 1, 'no refetch');
-  assert.equal(deadline(), '3d left', 'the cards now say how long is left');
-  assert.equal(pane._detailChallenge?.id, 900500, 'and the open overlay survives');
+  assert.equal(store.get().grid, before, 'the grid is left as it was');
+  assert.equal('deadline' in store.get().grid.groups[0].cards[0], false, 'and no card says how long is left');
+  assert.equal(pane._detailChallenge?.id, 900500, 'and the open page survives');
 });
 
 test('_loadedEventId tracks the event the grid belongs to', () => {
@@ -533,24 +535,28 @@ test('a finished challenge the viewer scored on says what they earned', () => {
   const { pane } = loadPane({ challenges: CH, eventId: 900500 });
   pane._mine = new Map([[900511, { id: 900511, activities_total: 1000, activities: rows(1, 1000) }]]);
   assert.deepEqual(stateOf(pane, CH[1]),
-    { state: 'done', stateLabel: 'Done', fill: 1, earned: 'Earned 1,000 pts' });
+    { state: 'done', stateLabel: 'Done', fill: 1, earned: '1,000 pts' },
+    'the points alone: the card draws them in emerald, and the word "Earned" is gone');
 });
 
-test('the task is not on the card; the detail overlay carries it in full, never a tooltip', () => {
+test('the task line is on neither the card nor the page, and nothing is a tooltip', () => {
   const ch = [{ id: 1, completed: false, card_preview: { goal: 'Try apps', task: 'Open three apps from the directory and use each one' } }];
   const { pane, store } = loadPane({ challenges: ch, eventId: 900500 });
   pane._renderGrid();
-  assert.equal(store.get().grid.groups[0].cards[0].task, undefined, 'the card is title and rail only');
+  assert.equal(store.get().grid.groups[0].cards[0].task, undefined, 'the card is title, points and rail only');
   pane._openIdx(0);
-  assert.equal(store.get().detail.task, 'Open three apps from the directory and use each one',
-    'a tap reveals the task the card leaves out');
+  assert.equal(store.get().detail.task, undefined,
+    'the page’s title says what to do, and What counts says how it is counted (the Semi design)');
   const paneSrc = require('node:fs').readFileSync(
     require('node:path').join(root, 'frontend/src/features/leaderboard/challenges-pane.tsx'), 'utf8');
-  // `<SectionHeading title=…/>` is @/components/ui/field's PROP, not the DOM
-  // attribute of the same name: it renders the heading's visible text. Strip
-  // those and the blunt rule below still catches a real tooltip.
-  const noHeadings = paneSrc.replace(/<SectionHeading[\s\S]*?\/>/g, '');
-  assert.doesNotMatch(noHeadings, /title=\{/,
+  // `<SectionHeading title=…/>` and `<ListRow title=…/>` are kit PROPS, not
+  // the DOM attribute of the same name: they render visible text (grouped-
+  // list Omits the DOM tooltip `title` from its own props). And ListRow's
+  // `subtitle=` contains the letters `title=` — so the rule is about the
+  // attribute word itself: `title={` not preceded by another letter, which
+  // is what a real DOM tooltip write looks like.
+  const noHeadings = paneSrc.replace(/<(SectionHeading|ListRow)[\s\S]*?\/>/g, '');
+  assert.doesNotMatch(noHeadings, /(?<![A-Za-z])title=\{/,
     'a phone has no hover: nothing on this screen may live only in a title attribute');
 });
 
@@ -596,99 +602,30 @@ test('per-viewer progress on the public row drives the rail, blocks included', (
     'an organiser archive flag does not mark the viewer’s onboarding step done');
 });
 
-// The deadline line's words, pinned by the same table as HomePanels.timeLeft
-// in tests/home-panels-render.test.js, so both surfaces say one thing.
-const TIME_LEFT = [
-  [0.2, '1h left'], [7.5, '8h left'], [23, '23h left'], [23.5, '1d left'],
-  [25, '2d left'], [71, '3d left'], [5 * 24 - 1, '5d left'], [-1, null],
-];
 const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
 
-test('an open card says how long it has left: its own end, else the event’s', () => {
+// The Semi design (2026-10-16): no card and no page says how long is left,
+// when it ends or when the scorer next counts (#3185's "next count" went with
+// the rest), whatever the payload carries.
+test('a card and its page tell no time, whatever the payload carries', () => {
   const { pane, context } = loadPane({ challenges: CH, eventId: 900500 });
   context.selectedEvent = () => ({ id: 900500, ends_at: inHours(71) });
-  const open = { id: 900500, completed: false, card_preview: { goal: 'Report a bug' } };
-  assert.equal(pane.cardView(open, 0).deadline, '3d left', 'the event’s end when the challenge sets none');
-  const own = { ...open, effective: { schedule_end: inHours(23) } };
-  assert.equal(pane.cardView(own, 0).deadline, '23h left', 'the challenge’s own end wins');
-  assert.equal(pane.cardView(CH[1], 1).deadline, null, 'a finished card counts down to nothing');
-  const notYet = { ...open, effective: { schedule_start: inHours(20), schedule_end: inHours(71) } };
-  assert.equal(pane.cardView(notYet, 0).deadline, null, 'not open yet: no countdown, as on Home');
-  const closedStep = { ...open, completed: true, progress: { done: false, current: 0, target: 3 } };
-  assert.equal(pane.cardView(closedStep, 0).deadline, null,
-    'an organiser-closed step the viewer never finished: no countdown either');
-  context.selectedEvent = () => ({ id: 900500, ends_at: inHours(-5) });
-  assert.equal(pane.cardView(open, 0).deadline, null, 'an ended event gives no line');
-  delete context.selectedEvent;
-  assert.equal(pane.cardView(open, 0).deadline, null, 'and no event known, no line');
-  for (const [h, want] of TIME_LEFT) assert.equal(pane._timeLeft(inHours(h)), want, `${h}h`);
-  assert.equal(pane._timeLeft('not a date'), null);
-  assert.equal(pane._timeLeft(null), null);
-});
-
-// #3185: a challenge the background scorer counts carries `scoring` ({
-// interval_minutes, last_scored_at }) on its public row, and its card and page
-// say it under the rail, because the count only moves when a run does. Times
-// are the viewer's own locale and zone, so the expected strings are built with
-// the same Intl call rather than typed out.
-test('a card the scorer counts says when it next counts, and owns up when the schedule is late', () => {
-  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
-  const noon = new Date();
-  noon.setHours(12, 0, 0, 0);
-  const last = new Date(noon.getTime() - 18 * 60000);
-  const time = (d) => d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  const dated = (d) => d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-  const scored = (scoring, extra = {}) => ({
-    id: 900500, completed: false, card_preview: { goal: 'Try Three Apps' },
-    progress: { done: false, current: 1, target: 3 }, scoring, ...extra,
-  });
-  const at = (minutes, from = last) => scored({ interval_minutes: minutes, last_scored_at: from.toISOString() });
-
-  // Due later: the time of the next pass, which is the last one plus the interval.
-  const next = new Date(last.getTime() + 30 * 60000);
-  assert.equal(pane._cadenceOf(at(30), noon.getTime()), `next count ${time(next)}`);
-  assert.match(time(next), /12:12/, 'counted from the last complete pass, not from the page load');
-
-  // Late by less than one interval: the run is coming.
-  assert.equal(pane._cadenceOf(at(10), noon.getTime()), 'counting now', 'due 11:52, 8 minutes late on a 10-minute rule');
-
-  // Late by more than that: the schedule has stalled, so say when it last counted.
-  assert.equal(pane._cadenceOf(at(5), noon.getTime()), `last count ${time(last)}`, 'due 11:47, 13 minutes late on a 5-minute rule');
-  const twoDaysOn = noon.getTime() + 2 * 86400000;
-  assert.equal(pane._cadenceOf(at(15), twoDaysOn), `last count ${dated(last)}`,
-    'a pass from another day carries its date, so a stalled schedule reads as stale');
-
-  // A next pass that falls tomorrow carries its date as well.
-  const lateNight = new Date(noon); lateNight.setHours(23, 55, 0, 0);
-  const tomorrow = new Date(lateNight.getTime() + 15 * 60000);
-  assert.equal(pane._cadenceOf(at(15, lateNight), lateNight.getTime() + 60000), `next count ${dated(tomorrow)}`);
-
-  // Nothing to state, or nothing left to count: no line.
-  const NONE = [
-    [scored(undefined), 'no schedule sent'],
-    [scored(null), 'a challenge nothing counts'],
-    [at(0), 'a zero interval'],
-    [at(-5), 'a negative one'],
-    [at(1.5), 'a fractional one'],
-    [scored({ interval_minutes: 'often', last_scored_at: last.toISOString() }), 'not a number'],
-    [scored({ interval_minutes: 15, last_scored_at: null }), 'never counted yet'],
-    [scored({ interval_minutes: 15, last_scored_at: 'yesterday' }), 'not a date'],
-    [scored({ interval_minutes: 15 }), 'no time at all'],
-    [{ ...at(15), progress: { done: true, current: 3, target: 3 } }, 'the viewer finished it'],
-    [{ ...at(15), progress: undefined, completed: true }, 'the organiser closed it'],
-  ];
-  for (const [c, why] of NONE) assert.equal(pane._cadenceOf(c, noon.getTime()), null, why);
-
-  // Both descriptors carry it, from the same rule.
-  const live = scored({ interval_minutes: 15, last_scored_at: new Date(Date.now() - 60000).toISOString() });
-  assert.match(pane.cardView(live, 0).cadence, /^next count /);
-  assert.equal(pane.cardView(live, 0).cadence, pane._cadenceOf(live));
-  assert.equal(pane.cardView(CH[0], 0).cadence, null, 'a card with no schedule has no line');
-  pane._detailChallenge = live;
-  assert.equal(pane.detailView().cadence, pane._cadenceOf(live), 'the page says what the card says');
-  pane._detailChallenge = CH[0];
-  assert.equal(pane.detailView().cadence, null);
+  const timed = {
+    id: 900500, completed: false, card_preview: { goal: 'Try Three Apps', label: 'WEEKLY' },
+    effective: { schedule_end: inHours(23) },
+    progress: { done: false, current: 1, target: 3 },
+    scoring: { interval_minutes: 15, last_scored_at: new Date(Date.now() - 60000).toISOString() },
+  };
+  const card = pane.cardView(timed, 0);
+  for (const key of ['deadline', 'cadence']) assert.equal(key in card, false, `no ${key} on the card`);
+  pane._detailChallenge = timed;
+  const page = pane.detailView();
+  for (const key of ['deadline', 'ends', 'cadence', 'eyebrow']) assert.equal(key in page, false, `no ${key} on the page`);
   pane._detailChallenge = null;
+  assert.doesNotMatch(JSON.stringify(card) + JSON.stringify(page), /left|next count|counting now|last count|ends /);
+  for (const gone of ['_timeLeft', '_deadlineOf', '_cadenceOf', '_endsText', '_weekEnd']) {
+    assert.equal(pane[gone], undefined, `${gone} is gone`);
+  }
 });
 
 // The template's illustration rides both descriptors as a slug of the
@@ -761,20 +698,21 @@ test('card and page descriptors carry the illustration tone only when it is tone
 
 // The progress over the grid (ITERATION 03): "N/M done in this event", scoped
 // to the selected event once the bar's list has it.
-test('the grid opens on its progress: the tally, scoped to the selected event', () => {
+test('the grid opens on its summary: the tally, and never the event', () => {
   const { pane, context, store } = loadPane({ challenges: CH, eventId: 900500 });
   pane._renderGrid();
-  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3, caption: 'done' },
-    'no event known yet: the bare tally');
+  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3, points: null },
+    'the tally; the points unknown until the viewer’s own rows land');
+  assert.equal(message('leaderboard:progress.plainLabel', { done: 2, count: 3 }), '2 of 3 done');
   context.selectedEvent = () => ({ id: 900500, name: 'Season 2' });
   pane._renderGrid();
-  // QA 2026-09-24 Q17: an event's tally says it is an event's. It does not
-  // name it (issue #4528): production's event name is the season's.
-  assert.equal(store.get().grid.progress.caption, 'done in this event');
-  context.selectedEvent = () => ({ id: 900500, name: '  ' });
+  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3, points: null },
+    'a selected event changes nothing: the summary names no season and no event');
+  pane._mine = new Map([[900511, { id: 900511, activities_total: 1000 }]]);
   pane._renderGrid();
-  assert.equal(store.get().grid.progress.caption, 'done', 'a blank name is left out');
-  assert.equal(store.get().grid.points, undefined, 'and it carries no points');
+  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3, points: 1000 });
+  assert.equal(message('leaderboard:progress.summary', { points: '1,000 pts', done: 2, count: 3 }),
+    '<0>1,000 pts</0> · 2 of 3 done');
   delete context.selectedEvent;
 });
 
@@ -867,7 +805,7 @@ test('without an event id there is no address to push, and the page still opens'
   assert.equal(pane._detailHash, null);
 });
 
-test('the page descriptor: category, the card’s meta line, task, a clean rail', () => {
+test('the page descriptor: title, points, artwork, a clean rail, the action and What counts', () => {
   const ch = {
     id: 5, completed: false,
     effective: { schedule_end: inHours(71) },
@@ -877,60 +815,35 @@ test('the page descriptor: category, the card’s meta line, task, a clean rail'
   const { pane, store } = loadPane({ challenges: [ch], eventId: 900500 });
   pane.openChallengeDetail(ch);
   const d = store.get().detail;
-  assert.equal(d.eyebrow, 'First challenges',
-    'a grouped page names its group; the First challenges header has no clock, so the deadline stays on the meta line');
-  assert.equal(d.deadline, '3d left', 'in the card’s words, from the card’s rule');
   assert.equal(d.goal, 'Join block production');
-  assert.equal(d.task, 'Up to 2,000 pts a week');
-  assert.equal(d.description, 'Run a node.');
-  assert.equal(d.requirements, 'A node reachable all week.');
-  assert.equal(d.scoring, 'Points scale with blocks.', 'reward logic reads as Scoring');
+  assert.equal(d.requirements, 'A node reachable all week.', 'the requirements, under What counts');
   assert.deepEqual([d.state, d.stateLabel, d.fill, d.counted], ['new', 'Not started', 0, false]);
   assert.deepEqual({ ...d.amount }, { text: '2000 pts', earned: false }, 'nothing scored yet: the reward on offer');
-  assert.equal(d.participants, 'Participants', 'no count before the breakdown lands');
-  assert.equal(d.pointsTotal, null);
-  for (const retired of ['label', 'mineNote', 'rewardLogic', 'totals', 'chip']) {
+  for (const retired of ['eyebrow', 'deadline', 'ends', 'cadence', 'task', 'description', 'scoring', 'participants',
+    'pointsTotal', 'moreLabel', 'entries', 'label', 'mineNote', 'rewardLogic', 'totals', 'chip']) {
     assert.equal(retired in d, false, `${retired} retired from the descriptor`);
   }
 
   pane._mine = new Map([[5, { id: 5, activities_total: 720, activities: rows(3, 240) }]]);
   pane._renderDetailOverlay();
   assert.deepEqual({ ...store.get().detail.amount }, { text: '720 pts so far', earned: false },
-    'the contribution line retired into the meta line');
+    'the viewer’s points so far, under the title');
 
   ch.completed = true;
   pane._renderDetailOverlay();
-  const done = store.get().detail;
-  assert.deepEqual({ ...done.amount }, { text: 'Earned 720 pts', earned: true });
-  assert.equal(done.deadline, null, 'a finished challenge counts down to nothing, as on the card');
-
-  ch.completed = false;
-  ch.effective.schedule_end = inHours(-1);
-  pane._renderDetailOverlay();
-  assert.equal(store.get().detail.deadline, null, 'an ended challenge shows no time left');
+  assert.deepEqual({ ...store.get().detail.amount }, { text: '720 pts', earned: true },
+    'finished: what was earned, drawn in emerald, without the word');
 });
-test('participants: count and total in the heading row, "Show all" only when one page finishes it', () => {
-  const { pane, store } = loadPane({ challenges: CH, eventId: 900500 });
-  pane.openChallengeDetail(CH[0]);
-  pane._breakdownLoading = false;
-  pane._breakdown = {
-    entries: Array.from({ length: 25 }, (_, i) => ({ user_id: i + 1, display_name: `P${i}`, points: 2000 - i, rate: null })),
-    totals: { participants: 34, total_points: 12800 },
-    has_more: true,
-    next_offset: 25,
-  };
-  pane._renderDetailOverlay();
-  let d = store.get().detail;
-  assert.equal(d.participants, 'Participants · 34');
-  assert.equal(d.pointsTotal, '12,800 pts between them');
-  assert.equal(d.moreLabel, 'Show all 34 →');
-  assert.equal(d.entries.rows[0].points, '2,000 pts');
 
-  pane._breakdown = { ...pane._breakdown, totals: { participants: 200, total_points: 0 } };
-  pane._renderDetailOverlay();
-  d = store.get().detail;
-  assert.equal(d.moreLabel, 'Show more →', 'beyond one more page, "all" would overpromise');
-  assert.equal(d.pointsTotal, null);
+test('opening a page reads no participants and no profile', () => {
+  const { pane, sandbox } = loadPane({ challenges: CH, eventId: 900500 });
+  const urls = [];
+  sandbox.fetch = (url) => { urls.push(String(url)); return new Promise(() => {}); };
+  pane.openChallengeDetail(CH[0]);
+  assert.deepEqual(urls.filter((u) => /breakdown|\/profile/.test(u)), [], 'no breakdown read and no profile read');
+  for (const gone of ['_loadBreakdown', '_moreBreakdown', 'openUserProfile', 'closeUserProfile', 'profileView']) {
+    assert.equal(pane[gone], undefined, `${gone} is gone`);
+  }
 });
 
 // App.LEADERBOARD_TITLES, parsed from public/js/app.js rather than copied:
@@ -958,7 +871,9 @@ test('the page is a level of the screen: the platform header is its nav bar', ()
     // pane asks App for that name rather than knowing it — a stub that
     // answered `undefined` would have this test passing on the fallback while
     // the screen said the wrong word.
-    _leaderboardTitle: (sub) => LEADERBOARD_TITLES[sub || 'challenges'] || 'Leaderboard',
+    // The table holds message ids; the name is its English catalog text.
+    _leaderboardTitle: (sub) => (LEADERBOARD_TITLES[sub || 'challenges']
+      ? message(LEADERBOARD_TITLES[sub || 'challenges']) : 'Leaderboard'),
   };
   sandbox.window.Leaderboard = { isOpen: () => true, section: 'challenges' };
   pane._openIdx(0);

@@ -5,9 +5,10 @@
  * up — Hub, Needs you, Workshop, #general or a topic's channel — as its own
  * state, because a press there also pushes a history entry, scrolls the page
  * and remembers where it was. Several things outside that component draw the
- * place or move it: the places list in the section column beside the strip
- * on desktop (../../nav/section-column.tsx), the card a merged topic leaves
- * in a channel's history (./merged-topic-card.tsx), and a topic's head line.
+ * place or move it: the places list nested under the community's row in
+ * the desktop sidebar (../../nav/rail-communities.tsx), the card a merged
+ * topic leaves in a channel's history (./merged-topic-card.tsx), and a
+ * topic's head line.
  *
  * So the page publishes the place it shows here, and registers the one way
  * to move it (`openTab`), and they read and call those. When the page is not
@@ -17,7 +18,8 @@
 
 import { createStore } from '../../../lib/plain-store.js';
 import { cachedCommunity, communityInflight, reloadCommunity } from './community-card';
-import { channelPlace, channelsOf, topicHandleMap, type PlaceKey } from './places';
+import { keepPlace } from '../../nav-drawer/drawer-math';
+import { channelPlace, channelsOf, liveTopics, topicHandleMap, type PlaceKey } from './places';
 
 export interface PlaceState {
   /** The project whose page is mounted, or null. */
@@ -27,14 +29,18 @@ export interface PlaceState {
   /** The votes waiting on the viewer there, less the ones seen (the page's own count). */
   owed: number;
   /**
-   * An item's page is open in the panel beside the list (./side-panel.tsx).
-   * Under 1296px the places column steps aside for it
-   * (../../nav/section-column.tsx).
+   * #4703: unread across the project's channels less the one on screen, and
+   * whether the places tray is open — what the header's places button draws
+   * on a phone, where the merged header carries the button (place-bar.tsx
+   * HeaderPlace).
    */
-  side: boolean;
+  unread: number;
+  tray: boolean;
 }
 
-export const placeStore = createStore<PlaceState>({ slug: null, place: 'status', owed: 0, side: false });
+export const placeStore = createStore<PlaceState>({
+  slug: null, place: 'status', owed: 0, unread: 0, tray: false,
+});
 
 let opener: { slug: string; open: (key: PlaceKey) => void } | null = null;
 
@@ -45,21 +51,48 @@ export function registerPlaceOpener(slug: string, open: (key: PlaceKey) => void)
   return () => { if (opener === mine) opener = null; };
 }
 
-/** The page says where it is. */
-export function publishPlace(slug: string | null, place: PlaceKey, owed: number): void {
-  const was = placeStore.get();
-  placeStore.set({ slug, place, owed: Math.max(0, Number(owed) || 0), side: was.slug === slug && was.side });
+/** How the page opens its places tray, while it is mounted (#4703). */
+let trayToggle: { slug: string; toggle: () => void } | null = null;
+/** The element the last tray toggle came from, for focus to return to. */
+let trayReturn: HTMLElement | null = null;
+
+/** The page says how its tray opens, while it is mounted. Returns the undo. */
+export function registerTrayToggle(slug: string, toggle: () => void): () => void {
+  const mine = { slug, toggle };
+  trayToggle = mine;
+  return () => { if (trayToggle === mine) trayToggle = null; };
 }
 
-/** The page says whether an item's page is open beside its list. */
-export function publishSide(slug: string, side: boolean): void {
-  const was = placeStore.get();
-  if (was.slug === slug && was.side !== side) placeStore.set({ ...was, side });
+/**
+ * The merged header's places button (place-bar.tsx HeaderPlace) presses this:
+ * it names the page's own tray toggle, and hands the button over so the tray
+ * can return focus to it when it closes.
+ */
+export function toggleTray(el: HTMLElement | null): void {
+  trayReturn = el;
+  if (trayToggle && placeStore.get().slug === trayToggle.slug) trayToggle.toggle();
+}
+
+/** Where focus in the tray returns to: the header's button, if it drew one. */
+export function trayButton(): HTMLElement | null {
+  return trayReturn;
+}
+
+/** The page says where it is. */
+export function publishPlace(
+  slug: string | null, place: PlaceKey, owed: number, unread = 0, tray = false,
+): void {
+  placeStore.set({
+    slug, place, owed: Math.max(0, Number(owed) || 0),
+    unread: Math.max(0, Number(unread) || 0), tray,
+  });
 }
 
 /** The page is gone (unmounted, or another project is on it). */
 export function clearPlace(slug: string): void {
-  if (placeStore.get().slug === slug) placeStore.set({ slug: null, place: 'status', owed: 0, side: false });
+  if (placeStore.get().slug === slug) {
+    placeStore.set({ slug: null, place: 'status', owed: 0, unread: 0, tray: false });
+  }
 }
 
 type ViewApi = {
@@ -136,11 +169,16 @@ export async function openTopicRef(slug: string, ref: number, target: ChannelTar
  * group chat's pane (public/js/group-chat.js markRead / markUnread). The
  * places list's count for it is the project's record, read again when it
  * showed one, or when the reader asked for one back (`unread`).
+ * #4647: `ref` null names #general, matched by its `kind: 'general'` row in
+ * the same record.
  */
-export function channelRead(slug: string, ref: number, unread = false): void {
+export function channelRead(slug: string, ref: number | null, unread = false): void {
   if (!slug) return;
   const record = cachedCommunity(slug);
-  const channel = channelsOf(record?.places).find((c) => c.kind === 'topic' && Number(c.id) === Number(ref)) || null;
+  const channels = channelsOf(record?.places);
+  const channel = ref == null
+    ? channels.find((c) => c.kind === 'general') || null
+    : channels.find((c) => c.kind === 'topic' && Number(c.id) === Number(ref)) || null;
   if (unread || (channel && Number(channel.unread) > 0)) void reloadCommunity(slug);
 }
 
@@ -169,4 +207,32 @@ if (typeof window !== 'undefined') {
   const w = window as unknown as { UsernodeReact?: Record<string, unknown> };
   w.UsernodeReact = w.UsernodeReact || {};
   w.UsernodeReact.places = { topicHandles, openPlace, openTopicRef, channelRead };
+}
+
+/** The live topics' handles in `slug`'s record, or null when it has not been read. */
+export function cachedTopics(slug: string): string[] | null {
+  const record = cachedCommunity(slug);
+  return record ? liveTopics(record.places).map((c) => String(c.handle || '')) : null;
+}
+
+/**
+ * A SWITCH KEEPS YOUR PAGE, on a desktop as in the phone's drawer. Picking
+ * another community from the header's ⌄ menu or from All communities opens
+ * it on the place you were on when it has that place, else on its hub: the
+ * drawer's own rule (keepPlace). Hub, Needs you, the Workshop and #general
+ * are in every community; a topic only where it is live, as far as its
+ * record has been read. The place you were on is the one the project page
+ * remembers (AppView._workshopTab), which is the one it last showed. Like
+ * AppView._landOnHub it only says where the page opens; the caller
+ * navigates. Returns the place it chose.
+ */
+export function landKeepingPlace(slug: string): string {
+  const view = (window as unknown as {
+    AppView?: { _workshopTab?: () => unknown; _landOnTab?: (slug: string, tab: string) => void };
+  }).AppView;
+  let was: unknown = null;
+  try { was = view?._workshopTab?.(); } catch { /* nothing remembered: its hub */ }
+  const keep = keepPlace(typeof was === 'string' ? was : null, cachedTopics(slug));
+  try { view?._landOnTab?.(slug, keep); } catch { /* the page opens where it opens */ }
+  return keep;
 }

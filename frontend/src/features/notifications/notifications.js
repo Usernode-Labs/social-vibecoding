@@ -53,6 +53,13 @@
 // Node, in tests/notification-row-lines.test.js — see the note there.
 import { agoStamp } from '../../lib/timestamp';
 
+// The rows' own words (frontend/locales/en/notifications.json), read when a
+// row is built so they follow the language on screen. Through the global the
+// language runtime publishes rather than a second import: the tests that
+// evaluate this file in a vm strip the one import above and nothing else.
+const t = (id, values) => PlatformI18n.t(id, values);
+const listText = (parts) => PlatformI18n.listText(parts);
+
 const NATIVE_INVALIDATION_TIMEOUT_MS = 10000;
 const NATIVE_INVALIDATION_REFRESH_VERSION = 1;
 
@@ -88,7 +95,30 @@ const Notifications = {
   // path, the grouping transform or the pagination cursor — all of which
   // operate on `items` alone.
   saved: [],
+  // #4769: the pinned section's other half, saved NOTIFICATIONS. Deliberately
+  // NOT folded into `items`, for the same reasons as `saved` above — a save
+  // has no unread state and must not touch the badge, mark-all, grouping or
+  // pagination.
+  savedNotifications: [],
   unread: 0,
+  // #18 (19 Oct 2026 polish board): how many of `unread` are a plain message
+  // in a conversation or a channel (`conversation_message`,
+  // `channel_message`), which the bell leaves to the Messages tab. The
+  // server's figure (countUnreadSplit), walked with `unread` wherever that
+  // is. The kinds are spelled out at each use: the harnesses rebuild single
+  // methods with `new Function`, which can close over nothing.
+  messageUnread: 0,
+
+  // #5249: whether a notification is drawn at all. While kudos is parked
+  // (features/leaderboard/kudos-parked.ts; the bundle then publishes no
+  // window.Kudos) a kudos row is not: nobody can give kudos, so an old one
+  // would point at a feature that is not there. The rows stay in the
+  // database; every way a row enters `items` asks this first.
+  _shown(n) {
+    if (!n) return false;
+    if (n.kind === 'kudos' && !(typeof window !== 'undefined' && window.Kudos)) return false;
+    return true;
+  },
   // `open` is a GETTER now, defined beside show()/hide() below — the drawer
   // owns the presentation, so this module derives the state rather than
   // storing a flag that would disagree with the screen during the drawer's
@@ -106,6 +136,22 @@ const Notifications = {
   msgNextBefore: null,  // { createdAt, id } | null
   msgHasMore: true,
   msgLoading: false,
+  // #5527: the Unread tab's own cursor, walked by loadMoreUnread() over
+  // `?unread=1` — pages of unread rows only, under the exact filters
+  // countUnread counts the badge with. Separate from nextBefore and
+  // msgNextBefore for the same reason those two are separate from each
+  // other: the unread query skips rows the other two keep, so advancing a
+  // shared cursor would strand rows the tab behind it can never reach.
+  // unreadHasMore starts false because refresh() seeds it from the first
+  // page's own hasMore: every unread row newer than the first page's last
+  // row is already loaded, so there is nothing to discover before asking.
+  unreadNextBefore: null,  // { createdAt, id } | null
+  unreadHasMore: false,
+  unreadLoading: false,
+  // #5527: bumped by every refresh() whose first page landed and published
+  // on the store — the Unread tab's auto-fill arms on sheet-open and fires
+  // when this changes while the sheet is open (see the store field's note).
+  refreshTick: 0,
   // Only the newest first-page refresh may replace the authoritative feed.
   // This prevents an older boot/bell request from completing after a native
   // network-only invalidation and overwriting its fresher result.
@@ -134,12 +180,28 @@ const Notifications = {
       Notifications._setShowOlder(false);
     });
 
+    // The rows hold their words, so a new language rebuilds them from the
+    // same notifications.
+    document.addEventListener('homeroom:language-changed', () => {
+      Notifications._renderSaved();
+      Notifications._renderInvites();
+      Notifications._renderList();
+    });
+
     // Anonymous SPA boot (fold-auth-pages-into-SPA): the initial fetch
     // waits for the authed boot stage instead of firing a guaranteed 401
     // on a sessionless document. `sv:authed` fires at most once.
-    if (window.App && App.user) Notifications.refresh();
+    //
+    // FROM THE NETWORK (polish board #7, 19 Oct 2026). A boot read is in a
+    // crowd of requests, and past the service worker's API deadline it was
+    // answered from the worker's copy: the bell opened on "Unread (1)", and
+    // the read on open replaced it a few seconds later with "You're all
+    // caught up". `fresh` asks the worker for the current answer, which it
+    // falls back from only when the network fails (public/sw.js
+    // wantsFreshAnswer).
+    if (window.App && App.user) Notifications.refresh({ fresh: true });
     else document.addEventListener('sv:authed',
-      () => Notifications.refresh(), { once: true });
+      () => Notifications.refresh({ fresh: true }), { once: true });
   },
 
   // --- fetching --------------------------------------------------------
@@ -170,6 +232,8 @@ const Notifications = {
       const invalidation = networkOnly
         ? `&native_invalidation=1&native_invalidation_nonce=${encodeURIComponent(invalidationNonce)}`
         : '';
+      // The boot read's: the network's answer rather than the worker's copy.
+      const fresh = !networkOnly && !!(options && options.fresh === true);
       let timeout = null;
       let controller = null;
       if (networkOnly && typeof AbortController === 'function') {
@@ -188,7 +252,7 @@ const Notifications = {
             credentials: 'same-origin',
             cache: 'no-store',
             ...(controller ? { signal: controller.signal } : {}),
-          } : undefined
+          } : fresh ? { cache: 'no-cache' } : undefined
         );
         if (!res.ok) return false;
         data = await res.json();
@@ -196,12 +260,29 @@ const Notifications = {
         if (timeout) clearTimeout(timeout);
       }
       if (generation !== Notifications._refreshGeneration) return false;
-      Notifications.items = Array.isArray(data.notifications) ? data.notifications : [];
+      Notifications.items = Array.isArray(data.notifications)
+        ? data.notifications.filter(Notifications._shown) : [];
       Notifications.invites = Array.isArray(data.pendingInvites) ? data.pendingInvites : [];
       Notifications.saved = Array.isArray(data.savedMessages) ? data.savedMessages : [];
+      // #4769: the pinned section's other half, saved NOTIFICATIONS. Same
+      // contract as `saved`: whatever the server sent, else an empty list.
+      // #5249: through _shown like the feed, so a kudos row saved before
+      // kudos was parked is not drawn here either (the server skips the kind
+      // too; this holds for an older server or a staging demo row).
+      Notifications.savedNotifications = Array.isArray(data.savedNotifications)
+        ? data.savedNotifications.filter(Notifications._shown) : [];
       Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
       Notifications.hasMore = !!data.hasMore;
       Notifications.nextBefore = data.nextBefore || null;
+      // #5527: the Unread tab's cursor is seeded from the first page too.
+      // Every unread row newer than the first page's last row is already in
+      // `items` (the page holds them all), so paging starts exactly where
+      // the shared page stopped. A refresh resets this pair, so a reload
+      // never mixes two cursors.
+      Notifications.unreadHasMore = !!data.hasMore;
+      Notifications.unreadNextBefore = data.nextBefore || null;
+      Notifications.refreshTick += 1;
       Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
       // Rendered UNCONDITIONALLY now, where this was gated on `open`.
@@ -280,7 +361,7 @@ const Notifications = {
       const res = await fetch(`/api/notifications?${params.toString()}`);
       if (!res.ok) return;
       const data = await res.json();
-      const incoming = Array.isArray(data.notifications) ? data.notifications : [];
+      const incoming = Array.isArray(data.notifications) ? data.notifications.filter(Notifications._shown) : [];
       // Append, deduping on id (a concurrent prepend could overlap).
       const seen = new Set(Notifications.items.map((n) => n.id));
       for (const n of incoming) {
@@ -331,7 +412,7 @@ const Notifications = {
       const res = await fetch(`/api/notifications?${params.toString()}`);
       if (!res.ok) return;
       const data = await res.json();
-      const incoming = Array.isArray(data.notifications) ? data.notifications : [];
+      const incoming = Array.isArray(data.notifications) ? data.notifications.filter(Notifications._shown) : [];
       const seen = new Set(Notifications.items.map((n) => n.id));
       for (const n of incoming) {
         if (!seen.has(n.id)) {
@@ -358,8 +439,95 @@ const Notifications = {
     }
   },
 
+  // #5527: TRUE while the bell counts more unread notifications than the
+  // list holds. `unread` is countUnread's account-wide figure — the number
+  // the badge paints — and the loaded unread rows are what has been fetched
+  // so far. The comparison is the same one the badge makes: a settled
+  // decided-ask row serializes read (the server stamps read_at live off the
+  // change's status), and a parked kind never reaches either side.
+  //
+  // #18: plain messages on both sides. The bell leaves them to the Messages
+  // tab (_badgeTotal), and `?unread=1` no longer pages them.
+  _unreadShort() {
+    const loaded = Notifications.items
+      .filter((n) => n && !n.readAt && !/^(conversation|channel)_message$/.test(n.kind)).length;
+    return loaded < Notifications.unread - (Notifications.messageUnread || 0);
+  },
+
+  /**
+   * #5527: fill the Unread list up to the bell's number.
+   *
+   * The badge counts every unread row on the account (countUnread) while
+   * the sheet's Unread tab shows the unread rows among the newest 100
+   * fetched — so a backlog of unread sitting behind a long run of read rows
+   * read as a bell of 46 over a list of 1. `?unread=1`
+   * (routes/notifications.js) pages those rows directly, under the exact
+   * filters the badge counts with, on a cursor of its own: advancing
+   * `nextBefore` here would strand every row between the two positions,
+   * which is exactly why msgNextBefore is separate too.
+   *
+   * Up to `pages` batches per call. The sheet auto-fills five (500 rows) on
+   * opening so a huge backlog cannot hang it; anything further waits for
+   * the foot button's next tap. It stops as soon as `_unreadShort()` is
+   * false — loaded has caught up with counted — and never touches
+   * `nextBefore` or `hasMore`, the All tab's cursor.
+   */
+  async loadMoreUnread(options) {
+    const pages = (options && options.pages) || 5;
+    if (Notifications.unreadLoading) return;
+    Notifications.unreadLoading = true;
+    Notifications._renderList();
+    try {
+      for (let page = 0; page < pages; page += 1) {
+        if (!Notifications.unreadHasMore || !Notifications._unreadShort()) break;
+        const generation = Notifications._refreshGeneration;
+        const params = new URLSearchParams({ limit: '100', unread: '1' });
+        // First batch has no cursor of its own: it starts from the shared
+        // first page's last row (refresh seeded unreadNextBefore), and the
+        // dedupe below drops anything already on screen.
+        if (Notifications.unreadNextBefore) {
+          params.set('before', String(Notifications.unreadNextBefore.createdAt));
+          params.set('before_id', String(Notifications.unreadNextBefore.id));
+        }
+        const res = await fetch(`/api/notifications?${params.toString()}`);
+        if (!res.ok) break;
+        const data = await res.json();
+        // A refresh that landed while the page was in flight replaced the
+        // feed and re-seeded the unread cursor; this page is from before
+        // that, so drop it whole rather than mixing two cursors.
+        if (generation !== Notifications._refreshGeneration) return;
+        const incoming = Array.isArray(data.notifications) ? data.notifications.filter(Notifications._shown) : [];
+        const seen = new Set(Notifications.items.map((n) => n.id));
+        for (const n of incoming) {
+          if (!seen.has(n.id)) {
+            Notifications.items.push(n);
+            seen.add(n.id);
+          }
+        }
+        // An unread-only page reaches further back than the shared cursor
+        // has, so its rows do not simply append in feed order the way
+        // loadMore's do. The comparator loadOlderMessages sorts with — the
+        // server's own ORDER BY.
+        Notifications.items.sort((a, b) => {
+          const at = new Date(a.createdAt || a.created_at || 0).getTime();
+          const bt = new Date(b.createdAt || b.created_at || 0).getTime();
+          return (bt - at) || (Number(b.id) - Number(a.id));
+        });
+        Notifications.unreadHasMore = !!data.hasMore;
+        Notifications.unreadNextBefore = data.nextBefore || null;
+        Notifications._renderList();
+      }
+    } catch (err) {
+      console.warn('[notifications] loadMoreUnread failed', err);
+    } finally {
+      Notifications.unreadLoading = false;
+      Notifications._renderList();
+    }
+  },
+
   handleIncoming(notif) {
     if (!notif) return;
+    if (!Notifications._shown(notif)) return;
     // Dedup on id — a reconnect might replay the same notification that
     // /api/notifications already returned.
     //
@@ -382,7 +550,12 @@ const Notifications = {
     } else {
       Notifications.items.unshift(notif);
     }
-    if (!notif.readAt && !wasUnread) Notifications.unread += 1;
+    if (!notif.readAt && !wasUnread) {
+      Notifications.unread += 1;
+      if (/^(conversation|channel)_message$/.test(notif.kind)) {
+        Notifications.messageUnread = (Notifications.messageUnread || 0) + 1;
+      }
+    }
     // #161: a completion arriving while the user is away from the
     // browser tab sets the dedicated tab-title marker (the replacement
     // for the old streaming-driven "✅ Done"). If they're actively
@@ -529,7 +702,7 @@ const Notifications = {
     // Nothing is cleared until the server answers, so a failed request leaves
     // every unread mark where it was. It still has to say so: a tap that
     // silently did nothing reads as a broken button.
-    const failed = () => window.PlatformUI?.toast?.('Couldn’t mark notifications as read. Try again.');
+    const failed = () => window.PlatformUI?.toast?.(t('notifications:toast.markAllFailed'));
     try {
       const res = await fetch('/api/notifications/read', {
         method: 'POST',
@@ -539,6 +712,7 @@ const Notifications = {
       if (!res.ok) { failed(); return; }
       const data = await res.json();
       Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
       const now = new Date().toISOString();
       Notifications.items = Notifications.items.map((n) => (
         { ...n, readAt: n.readAt || now }
@@ -554,6 +728,57 @@ const Notifications = {
     } catch (err) {
       console.warn('[notifications] markAllRead failed', err);
       failed();
+    }
+  },
+
+  // #5406: mark every unread notification from ONE app read — the per-app
+  // "Mark read" button on the sheet's Unread tab. A busy app can be cleared
+  // in one tap while every other app's unread rows stay where they are.
+  //
+  // It reuses the route's `{ app_id }` branch (markReadForApp), which is the
+  // whole of what the server does here: the clear reaches every unread row
+  // for that app the server has, including ones the sheet has not paged in,
+  // and its `unread` figure is the account-wide truth the badge adopts.
+  // Cross-tab refresh is the route's own `notifications_changed` push.
+  //
+  // The same rule markAllRead follows: nothing clears until the server
+  // answers, so a failed request leaves every unread mark where it was and
+  // says so with a toast. No optimistic flip and no kinds scoping — the
+  // app branch of the route ignores them.
+  async markAppRead(appId) {
+    if (appId == null) return false;
+    // Nothing in hand to clear (another tab or a refresh got there first):
+    // no request, and the caller's button has nothing to wait on.
+    if (!Notifications.items.some((n) => n && n.appId === appId && !n.readAt)) return false;
+    const failed = () => window.PlatformUI?.toast?.(t('notifications:toast.markAppFailed'));
+    try {
+      const res = await fetch('/api/notifications/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ app_id: appId }),
+      });
+      if (!res.ok) { failed(); return false; }
+      const data = await res.json();
+      Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
+      // Flip only what is still unread: a refresh that landed while the
+      // request was running replaced `items` with the server's own rows,
+      // which already say what is true.
+      const now = new Date().toISOString();
+      for (const n of Notifications.items) {
+        if (n && n.appId === appId && !n.readAt) n.readAt = now;
+      }
+      Notifications._reconcileCompletionTitle();
+      Notifications._renderBadge();
+      Notifications._renderList();
+      // #449's reason, for one app: an open group chat may be drawing dots
+      // for the notifications that were just cleared.
+      window.GroupChat?.reconcileDotsFromNotifications?.();
+      return true;
+    } catch (err) {
+      console.warn('[notifications] markAppRead failed', err);
+      failed();
+      return false;
     }
   },
 
@@ -592,6 +817,7 @@ const Notifications = {
       const data = await res.json();
       // Reconcile with the server's authoritative unread count.
       Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
       Notifications._renderBadge();
       return true;
     } catch (err) {
@@ -639,6 +865,8 @@ const Notifications = {
     const stamp = new Date().toISOString();
     for (const n of members) n.readAt = stamp;
     Notifications.unread = Math.max(0, Notifications.unread - members.length);
+    Notifications.messageUnread = Math.max(0, (Notifications.messageUnread || 0)
+      - members.filter((n) => /^(conversation|channel)_message$/.test(n.kind)).length);
     Notifications._reconcileCompletionTitle();
     Notifications._renderBadge();
     Notifications._renderList();
@@ -660,7 +888,7 @@ const Notifications = {
     Notifications._renderBadge();
     Notifications._renderList();
     window.GroupChat?.reconcileDotsFromNotifications?.();
-    window.PlatformUI?.toast?.('Couldn’t clear this notification. Try again.');
+    window.PlatformUI?.toast?.(t('notifications:toast.clearFailed'));
     return false;
   },
 
@@ -700,6 +928,7 @@ const Notifications = {
     if (!Number.isSafeInteger(id) || id <= 0) return;
     const now = new Date().toISOString();
     let cleared = 0;
+    let messages = 0;
     for (const n of Notifications.items) {
       if (!n || n.readAt || Number(n.conversationId) !== id) continue;
       // #2387: an alert about a message inside a reply thread waits for that
@@ -707,11 +936,13 @@ const Notifications = {
       if (n.conversationThreadRootId) continue;
       n.readAt = now;
       cleared += 1;
+      if (/^(conversation|channel)_message$/.test(n.kind)) messages += 1;
     }
     if (!cleared) return;
     // `unread` is the server's account-wide total; only ever walk it down by
     // what was actually cleared here, and never below zero.
     Notifications.unread = Math.max(0, Notifications.unread - cleared);
+    Notifications.messageUnread = Math.max(0, (Notifications.messageUnread || 0) - messages);
     Notifications._renderBadge();
     Notifications._renderList();
   },
@@ -724,14 +955,17 @@ const Notifications = {
     if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(root) || root <= 0) return;
     const now = new Date().toISOString();
     let cleared = 0;
+    let messages = 0;
     for (const n of Notifications.items) {
       if (!n || n.readAt || Number(n.conversationId) !== id) continue;
       if (Number(n.conversationThreadRootId) !== root) continue;
       n.readAt = now;
       cleared += 1;
+      if (/^(conversation|channel)_message$/.test(n.kind)) messages += 1;
     }
     if (!cleared) return;
     Notifications.unread = Math.max(0, Notifications.unread - cleared);
+    Notifications.messageUnread = Math.max(0, (Notifications.messageUnread || 0) - messages);
     Notifications._renderBadge();
     Notifications._renderList();
   },
@@ -760,6 +994,7 @@ const Notifications = {
       const data = await res.json();
       if (!data.cleared) return;
       Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
       Notifications._renderBadge();
       Notifications._renderList();
     } catch (err) {
@@ -822,7 +1057,7 @@ const Notifications = {
         : await fetch(`/api/friends/${userId}/decline`, init);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        toast(data.error && res.status === 429 ? data.error : 'Couldn’t answer this friend request. Try again.');
+        toast(data.error && res.status === 429 ? data.error : t('notifications:friend.answerFailed'));
         return false;
       }
       item.friendRequestPending = false;
@@ -835,19 +1070,23 @@ const Notifications = {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('usernode:friends-changed'));
       }
-      const who = item.sourceUsername ? `@${item.sourceUsername}` : 'them';
-      if (accept) toast(data.state === 'friends' ? `You and ${who} are friends` : 'This request was withdrawn');
-      else toast('Request declined');
+      if (accept) {
+        toast(data.state !== 'friends' ? t('notifications:friend.withdrawn')
+          : item.sourceUsername ? t('notifications:friend.nowFriends', { username: item.sourceUsername })
+            : t('notifications:friend.nowFriendsUnnamed'));
+      } else toast(t('notifications:friend.declined'));
       return true;
     } catch (err) {
       console.warn('[notifications] friend answer failed', err);
-      toast('Couldn’t answer this friend request. Try again.');
+      toast(t('notifications:friend.answerFailed'));
       return false;
     }
   },
 
   _onItemClick(id) {
-    const item = Notifications.items.find((n) => n.id === id);
+    // #4769: saved rows route the same.
+    const item = Notifications.items.find((n) => n.id === id)
+      || Notifications.savedNotifications.find((n) => n.id === id);
     if (!item) return false;
     // Every notification tap, in-app or a native push (openById), comes
     // through here: the screen it opens was reached by a nudge (#3369).
@@ -921,15 +1160,13 @@ const Notifications = {
       }
       return;
     }
-    // A platform limit opens where it is raised. The app limit is set in
-    // Admin → Limits (services/app-limit.js), which works on every deploy;
-    // the session cap opens Health & status, whose capacity meter shows the
-    // load behind it (MAX_GLOBAL_SESSIONS itself is deploy configuration).
-    // GitHub's budget opens Limits too, where its GitHub requests card is.
+    // A platform limit opens where it is raised: the app limit and the
+    // session limit are both set in Admin → Limits (services/app-limit.js,
+    // services/session-limit.js), which works on every deploy, and GitHub's
+    // budget has its GitHub requests card there too.
     if (item.kind === 'platform_limit') {
       Notifications._dismissSheetForNav();
-      const limit = parsePlatformLimitDetail(item.detail);
-      const section = limit?.limit === 'sessions' ? 'status' : 'limits';
+      const section = 'limits';
       if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
         App.navigateToAdminConsole(section);
       } else {
@@ -938,6 +1175,18 @@ const Notifications = {
       return;
     }
     // #4296: an unexpected events alert opens the section that lists them.
+    // A platform signal opens its request on Homeroom's own board.
+    const signal = item.kind === 'platform_incident' ? parsePlatformIncidentDetail(item.detail) : null;
+    const platformSlug = signal && signal.type === 'signal' ? window.PlatformTarget?.slug?.() : null;
+    if (platformSlug) {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.openAppTab) {
+        App.openAppTab(platformSlug, 'dev', { subTab: 'issues', ref: signal.issueNumber });
+      } else {
+        window.location.hash = `#app/${platformSlug}/dev/issues/${signal.issueNumber}`;
+      }
+      return;
+    }
     if (item.kind === 'platform_incident') {
       Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
@@ -987,7 +1236,7 @@ const Notifications = {
         GroupChat._writeSpecPanelOpen(item.appSlug, {
           sessionId: item.sessionId,
           version,
-          title: `Plan v${version}`,
+          title: t('notifications:spec.panelTitle', { version }),
         });
       }
       Notifications._dismissSheetForNav();
@@ -1144,8 +1393,18 @@ const Notifications = {
       const proposalKinds = new Set([
         'pr_proposed', 'stale_pr', 'kudos', 'check_failed',
         'pr_merged', 'proposal_vote', 'vote_digest', 'revision_recheck', 'change_ready',
+        // #4787: a change the viewer voted on going live opens that change,
+        // the same way the author's own "Live" row does.
+        'voted_change_merged',
       ]);
       const toProposals = proposalKinds.has(item.kind);
+      // Run four (13 Oct 2026): a row that asks for the reader's vote (the
+      // asks a vote clears, and the digest that names one change) opens the
+      // change at its Votes card, not at its title a screen and a half above
+      // it (dev-board/topic/votes-in-view.ts).
+      if (VOTE_ASK_KINDS.has(item.kind) && item.sessionId) {
+        window.UsernodeReact?.devBoard?.showVotes?.(Number(item.sessionId));
+      }
       // A new issue opens THAT ISSUE. `detail` is its number (the producer
       // has no issue column), and this row fell through to the app's general
       // chat, a screen that says nothing about the issue it announces.
@@ -1204,9 +1463,11 @@ const Notifications = {
 
   // Badge total folds in pending invites so an invite is as loud as an
   // unread notification (its underlying collab_invite row may already
-  // be read while the invite is still actionable).
+  // be read while the invite is still actionable). Less the plain messages
+  // (#18, `messageUnread`): the Messages tab counts those, in grey, and one
+  // message lit three numbers while the bell counted it too.
   _badgeTotal() {
-    return Notifications.unread + Notifications.invites.length;
+    return Math.max(0, Notifications.unread - (Notifications.messageUnread || 0)) + Notifications.invites.length;
   },
 
   // Of the loaded items, the ones that are a finished dev session
@@ -1222,9 +1483,9 @@ const Notifications = {
   _renderBadge() {
     // ONE EVENT, ONE BADGE, ON THE SURFACE THAT OWNS IT — and one count.
     //
-    // The bell's number is now every unread notification plus pending
-    // invites, session kinds included. There is no second badge and no
-    // split.
+    // The bell's number is every unread notification plus pending invites,
+    // session kinds included, less the plain messages the Messages tab
+    // counts (#18, _badgeTotal). There is no second badge for the bell.
     //
     // The split it replaces put unread session kinds on #improve-btn — the
     // header pill #2718 has since retired altogether — on the grounds that
@@ -1236,10 +1497,10 @@ const Notifications = {
     // Opening the Improve panel marks nothing, so a finished session left a
     // number pointing at the one surface with no way to dismiss it, and the
     // viewer never found the notification that was waiting for them. Folding
-    // it back in also re-aligns the bell with the two counts that never
-    // learned about the split: the tab title (_updateTitle, which reads
-    // _badgeTotal) and the home-screen icon badge (_publishAppBadge, which
-    // reads `unread`).
+    // it back in also re-aligned the bell with the two counts that never
+    // learned about the split: the tab title (_updateTitle) and the
+    // home-screen icon badge (_publishAppBadge, which reads `unread`). Both
+    // still count the plain messages the bell leaves out since #18.
     //
     // The pulse dot survived both moves and is the reason the distinction
     // matters: "a session is running right now" is a live fact, true only
@@ -1301,9 +1562,11 @@ const Notifications = {
     // so it re-renders on its own.
   },
 
+  // The tab's title keeps counting everything, messages too (#18): it is the
+  // one number a tab in the background shows, and it never lit a badge.
   _updateTitle() {
     const base = document.title.replace(/^\(\d+\)\s*/, '');
-    const total = Notifications._badgeTotal();
+    const total = Notifications.unread + Notifications.invites.length;
     if (total > 0) document.title = `(${total}) ${base}`;
     else document.title = base;
   },
@@ -1352,8 +1615,20 @@ const Notifications = {
   _renderSaved() {
     const store = Notifications._store;
     if (!store) return;
+    // #4769: ONE section over two kinds of save. Each list arrives
+    // newest-save-first from the server, but the merge has to interleave
+    // them by save time, not concatenate — a message saved today sits
+    // above a notification saved last week wherever each belongs. The
+    // combined cap is messageBookmarks.MAX_SAVED (SAVED_SECTION_CAP),
+    // applied here across both kinds so neither can crowd the other out.
+    const savedAtMs = (v) => Date.parse(v && v.savedAt) || 0;
+    const merged = [
+      ...Notifications.saved.map((s) => ({ ...savedView(s), type: 'message', savedAt: s.savedAt || '' })),
+      ...Notifications.savedNotifications.map((n) => ({ ...savedNotificationView(n), type: 'notification' })),
+    ].sort((a, b) => savedAtMs(b) - savedAtMs(a))
+      .slice(0, SAVED_SECTION_CAP);
     store.set({
-      saved: Notifications.saved.map(savedView),
+      saved: merged,
       touch: isTouchNow(),
     });
   },
@@ -1445,6 +1720,74 @@ const Notifications = {
     }
   },
 
+  // #4769: SAVE / UNSAVE A NOTIFICATION. The bookmark button at the feed
+  // row's right end and the pinned section's Unsave control are two doors
+  // into this one toggle: the row's `saved` flag and the section's list are
+  // two views of one fact, so both move together, and a refusal puts both
+  // back. Saving deliberately does not touch the row's read state.
+  //
+  // Optimistic like _unsave above, with clearNotification's guard: only a
+  // row still in hand and still carrying THIS toggle's stamp is rolled
+  // back, and the saved list is only restored while it is still the very
+  // array this toggle edited — a refresh that landed meanwhile replaced it
+  // with the server's own truth, which already says what is saved.
+  async toggleSave(id) {
+    const item = Notifications.items.find((n) => n.id === id);
+    const savedEntry = Notifications.savedNotifications.find((n) => n.id === id);
+    if (!item && !savedEntry) return;
+    // The feed row is the truth when both views exist; a saved row whose
+    // feed row is out of reach (older pages, a collapsed run that no longer
+    // carries it) still unsaves via its section row.
+    const save = item ? !item.saved : false;
+    const stamp = new Date().toISOString();
+
+    // 1. Optimistic: flip the feed row's flag and grow or shrink the pinned
+    //    section's list, then repaint both.
+    const previousSaved = Notifications.savedNotifications;
+    if (item) {
+      item._saveStamp = stamp;
+      item.saved = save;
+    }
+    let optimisticSaved;
+    if (save) {
+      // The section row is the feed row's own data plus the save time, so
+      // the same per-kind routing opens it on click.
+      optimisticSaved = [{ ...item, savedAt: stamp }, ...previousSaved];
+    } else {
+      optimisticSaved = previousSaved.filter((n) => n.id !== id);
+    }
+    Notifications.savedNotifications = optimisticSaved;
+    Notifications._renderSaved();
+    Notifications._renderList();
+    try {
+      const res = await fetch(`/api/notifications/${id}/save`, {
+        method: save ? 'PUT' : 'DELETE',
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      // 2. Roll back what this toggle touched, and say so.
+      if (item && item._saveStamp === stamp && Notifications.items.includes(item)) {
+        item.saved = !save;
+        delete item._saveStamp;
+      }
+      if (Notifications.savedNotifications === optimisticSaved) {
+        Notifications.savedNotifications = previousSaved;
+      }
+      Notifications._renderSaved();
+      Notifications._renderList();
+      window.PlatformUI?.toast?.(t(save
+        ? 'notifications:toast.saveFailed'
+        : 'notifications:toast.unsaveFailed'));
+      console.warn('[notifications] save toggle failed', err);
+    }
+  },
+
+  // The pinned section's Unsave control — the same toggle the feed row's
+  // bookmark runs, reached from its other end.
+  async _unsaveNotification(id) {
+    return Notifications.toggleSave(id);
+  },
+
   // --- pinned invites section -------------------------------------------
 
   // The pinned section is a descriptor list now; ./notifications-list.tsx
@@ -1476,11 +1819,16 @@ const Notifications = {
   // welcome has been shown for this project, the chat opens as before.
   async _acceptInvite(appId, slug, kind) {
     const base = kind === 'approver' ? '/api/approver-invites' : '/api/invites';
+    // The row's own name for the project, read before the local removal (and
+    // the refresh that replaces the list) takes it away (#4740).
+    const invite = Notifications.invites.find(
+      (i) => i.appId === appId && (i.kind || 'collab') === (kind || 'collab')
+    );
     try {
       const res = await fetch(`${base}/${appId}/accept`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        PlatformUI.toast(data.error || `Accept failed (HTTP ${res.status})`);
+        PlatformUI.toast(data.error || t('notifications:invite.acceptFailed', { status: res.status }));
         // The invite may have been revoked — re-sync.
         Notifications.refresh();
         return;
@@ -1498,7 +1846,17 @@ const Notifications = {
         // presented over the screen this opens (#1329). The people you just
         // joined are in the app's discussion, which is a thread of Messages.
         Notifications._dismissSheetForNav();
-        if (kind !== 'approver' && Notifications._welcome(data.welcome, target)) return;
+        if (kind !== 'approver') {
+          if (Notifications._welcome(data.welcome, target)) return;
+          // #4740: an accept that lands where the viewer already was said
+          // nothing — say what the tap did. When "You're in" opened, that
+          // welcome is the confirmation instead. An approver accept is
+          // unchanged: it says nothing new.
+          const project = (invite && invite.appName) || '';
+          window.PlatformUI?.toast?.(project
+            ? t('notifications:invite.acceptedBuild', { project })
+            : t('notifications:invite.acceptedBuildUnnamed'));
+        }
         Notifications._openAppDiscussion(target);
       }
     } catch (err) {
@@ -1527,6 +1885,8 @@ const Notifications = {
         return;
       }
       Notifications._removeInviteLocal(appId, kind);
+      // #4740: the tap used to only take the row away; say so.
+      window.PlatformUI?.toast?.(t('notifications:invite.declined'));
       Notifications.refresh();
     } catch (err) {
       console.warn('[notifications] declineInvite failed', err);
@@ -1633,6 +1993,7 @@ const Notifications = {
         // ever arrived while offering to show you what had.
         empty: Notifications.invites.length === 0
           && Notifications.saved.length === 0
+          && Notifications.savedNotifications.length === 0
           && olderCount === 0,
         // …and this is the new one: caught up, with history behind it.
         caughtUp: olderCount > 0 && !Notifications.showOlder,
@@ -1646,6 +2007,13 @@ const Notifications = {
         loadingMore: Notifications.loading,
         messagesCanLoadMore: Notifications.msgHasMore,
         loadingOlderMessages: Notifications.msgLoading,
+        // #5527: the Unread tab's own pager. Offered only while the bell
+        // counts more unread than the list has loaded — a viewer who is
+        // caught up (or whose whole unread fit on the first page) gets
+        // nothing to tap.
+        unreadCanLoadMore: Notifications.unreadHasMore && Notifications._unreadShort(),
+        loadingUnread: Notifications.unreadLoading,
+        refreshTick: Notifications.refreshTick,
         touch,
       });
       return;
@@ -1672,6 +2040,10 @@ const Notifications = {
       // The Messages tab's pager, on its own cursor — see loadOlderMessages().
       messagesCanLoadMore: Notifications.msgHasMore,
       loadingOlderMessages: Notifications.msgLoading,
+      // #5527: the Unread tab's pager, on its own cursor — see loadMoreUnread().
+      unreadCanLoadMore: Notifications.unreadHasMore && Notifications._unreadShort(),
+      loadingUnread: Notifications.unreadLoading,
+      refreshTick: Notifications.refreshTick,
       touch,
     });
   },
@@ -1730,6 +2102,16 @@ function conversationNotificationHref(n) {
   if (n.kind === 'conversation_thread_reply' && valid(rootId)) {
     return `#messages/${conversationId}/thread/${rootId}`;
   }
+  // "One story": one of Homeroom bot's moments opens its request's thread in
+  // the chat with the bot: the thread its message is in, or the card the
+  // detail names (services/homeroom-bot-notify-copy.js); else the message
+  // itself, whose permalink lands inside its thread.
+  if (BUILD_KIND_MOMENTS[n.kind] || isBotMomentDetail(n.detail)) {
+    const root = valid(rootId) ? rootId : (parseBotDetail(n.detail) || {}).threadRootId;
+    if (valid(root)) return `#messages/${conversationId}/thread/${root}`;
+    if (valid(messageId)) return `#messages/${conversationId}/m/${messageId}`;
+    return `#messages/${conversationId}`;
+  }
   if (['conversation_mention', 'conversation_reply', 'conversation_reaction'].includes(n.kind)
       && valid(messageId)) {
     return `#messages/${conversationId}/m/${messageId}`;
@@ -1754,9 +2136,14 @@ function parsePlatformLimitDetail(detail) {
 // hourly line).
 const PLATFORM_INCIDENT_DIGEST_RE = /^digest:(\d{1,5}):((?:[a-z][a-z0-9_]{0,23}=\d{1,5})(?:,[a-z][a-z0-9_]{0,23}=\d{1,5})*)?$/;
 const PLATFORM_INCIDENT_HOUR_RE = /^hour:([a-z][a-z0-9_]{0,23}):(\d{1,5})$/;
+// services/platform-signals.js: "signal:<n>", a problem the platform found in
+// itself and filed as request #n on its own board, for a person to fix.
+const PLATFORM_INCIDENT_SIGNAL_RE = /^signal:(\d{1,9})$/;
 
 function parsePlatformIncidentDetail(detail) {
   const s = String(detail || '');
+  const sig = PLATFORM_INCIDENT_SIGNAL_RE.exec(s);
+  if (sig) return { type: 'signal', issueNumber: Number(sig[1]) };
   const h = PLATFORM_INCIDENT_HOUR_RE.exec(s);
   if (h) return { type: 'hour', kind: h[1], n: Number(h[2]) };
   const d = PLATFORM_INCIDENT_DIGEST_RE.exec(s);
@@ -1782,6 +2169,10 @@ function parsePlatformIncidentDetail(detail) {
 // same attention as one that finished, on the same channels (the tab title,
 // the chime, the OS notification; see handleIncoming).
 const PRIORITY_KINDS = new Set(['session_done', 'session_stalled', 'auto_solve_done']);
+// The rows that ask for the reader's vote on one change: the asks a vote
+// clears (services/notifications.js, `vote_cast`), and the daily digest
+// when it names one change. Each opens the change at its Votes card.
+const VOTE_ASK_KINDS = new Set(['pr_proposed', 'stale_pr', 'revision_recheck', 'change_ready', 'vote_digest']);
 function isPriorityNotif(n) {
   return !!n && PRIORITY_KINDS.has(n.kind) && !n.readAt;
 }
@@ -1832,18 +2223,46 @@ function isTouchNow() {
 // as "@who in <that>", and the answer to "in what" is the app for one kind
 // and the conversation for the other. Renaming the field to suit both would
 // have touched every call site to say the same thing.
+// The row's first line is one message, "@who in <place> · 2h ago", chosen
+// here by what is known: `line` is its id, `author` and `appName` its
+// parameters (an unnamed place is in the message's own words).
+const SAVED_LINE_IDS = {
+  author: ['notifications:saved.line.author', 'notifications:saved.line.authorConversation', 'notifications:saved.line.authorApp'],
+  system: ['notifications:saved.line.system', 'notifications:saved.line.systemConversation', 'notifications:saved.line.systemApp'],
+};
 function savedView(s) {
   const conversationId = Number(s.conversationId) || 0;
+  const place = conversationId ? (s.conversationTitle || '') : (s.appName || s.appSlug || '');
   return {
     messageId: s.messageId,
     slug: s.appSlug || '',
     conversationId,
-    who: s.author ? `@${s.author}` : 'System',
-    appName: conversationId
-      ? (s.conversationTitle || 'a conversation')
-      : (s.appName || s.appSlug || 'an app'),
+    who: s.author ? `@${s.author}` : t('notifications:saved.system'),
+    author: s.author || '',
+    appName: place,
+    line: SAVED_LINE_IDS[s.author ? 'author' : 'system'][place ? 0 : (conversationId ? 1 : 2)],
     ...stampFields(s.savedAt),
     text: (s.content || '').slice(0, 140),
+  };
+}
+
+// #4769: a saved NOTIFICATION in the same pinned section, as data. The
+// section is one renderer over two kinds of save, so this carries the fields
+// that row needs: the kind line and subject the feed row shows (rowView's
+// `label` and `segments`, by kind) and the feed row's glyph for the tile.
+// `time` is the age of the SAVE — when the user pinned it — not of the
+// notification, for the same reason savedView's is; a week-old notification
+// saved today was saved today.
+const SAVED_SECTION_CAP = 50; // messageBookmarks.MAX_SAVED, applied client-side
+function savedNotificationView(n) {
+  const view = rowView(n);
+  return {
+    id: n.id,
+    icon: view.icon,
+    label: view.label,
+    segments: view.segments,
+    savedAt: n.savedAt || '',
+    ...stampFields(n.savedAt),
   };
 }
 
@@ -1859,20 +2278,40 @@ function savedView(s) {
 // build" is left for a project anyone can use but only its invited people
 // build. First-session run-through, 5 October 2026: a group's invite by
 // username said "invited you to build", with no note and no headcount.
+// The invite's sentence is one message, "@who invited you to join <project>",
+// chosen here by what is asked and what is known: `line` is its id,
+// `inviter` and `appName` its parameters. In each row: both named, the
+// project unnamed, the inviter unnamed, neither named.
+const INVITE_LINE_IDS = {
+  approve: ['notifications:invite.line.approve', 'notifications:invite.line.approveUnnamed',
+    'notifications:invite.line.someoneApprove', 'notifications:invite.line.someoneApproveUnnamed'],
+  join: ['notifications:invite.line.join', 'notifications:invite.line.joinUnnamed',
+    'notifications:invite.line.someoneJoin', 'notifications:invite.line.someoneJoinUnnamed'],
+  build: ['notifications:invite.line.build', 'notifications:invite.line.buildUnnamed',
+    'notifications:invite.line.someoneBuild', 'notifications:invite.line.someoneBuildUnnamed'],
+};
 function inviteView(inv) {
   const isApprover = inv.kind === 'approver';
   const count = Number(inv.memberCount) || 0;
+  const project = inv.appName || inv.appSlug || '';
   return {
     appId: inv.appId,
     slug: inv.appSlug || '',
     kind: isApprover ? 'approver' : 'collab',
     icon: isApprover ? '🗳️' : '✉️',
-    who: inv.invitedBy ? `@${inv.invitedBy}` : 'Someone',
-    verb: isApprover ? 'asked you to help approve changes to'
-      : inv.joins ? 'invited you to join' : 'invited you to build',
-    appName: inv.appName || inv.appSlug || 'an app',
+    who: inv.invitedBy ? `@${inv.invitedBy}` : t('notifications:invite.someone'),
+    inviter: inv.invitedBy || '',
+    line: INVITE_LINE_IDS[isApprover ? 'approve' : inv.joins ? 'join' : 'build'][
+      (inv.invitedBy ? 0 : 2) + (project ? 0 : 1)],
+    appName: project,
     note: !isApprover && inv.note ? String(inv.note) : '',
-    members: !isApprover && count ? `${count} ${count === 1 ? 'person is' : 'people are'} in it` : '',
+    // #4740: on a project the viewer already joined (by a link or the Join
+    // button) a build invite still offers something they do not have — the
+    // right to build it — so the row stays, and its meta line says they are
+    // already in it instead of a headcount they are part of.
+    members: isApprover ? '' : (inv.inCommunity
+      ? t('notifications:invite.alreadyIn')
+      : (count ? t('notifications:invite.members', { count }) : '')),
     ...stampFields(inv.createdAt),
   };
 }
@@ -1883,22 +2322,40 @@ function inviteView(inv) {
 // rowView so the OS notification reads the same as the bell-menu entry. (It
 // used to name previewText too — that was the collapsed group header's
 // one-liner, which #1385 retired with the rest of the group chrome.)
+// Each body is a whole message, picked by what is known. In order: the
+// request's number and the app both known, the app unknown ("your app"), the
+// number unknown ("a request"), neither known.
+const ALERT_CHANGE_IDS = {
+  failed: {
+    title: 'notifications:alert.change.failed.title',
+    body: ['notifications:alert.change.failed.body', 'notifications:alert.change.failed.bodyYourApp',
+      'notifications:alert.change.failed.bodyARequest', 'notifications:alert.change.failed.bodyARequestYourApp'],
+  },
+  question: {
+    title: 'notifications:alert.change.question.title',
+    body: ['notifications:alert.change.question.body', 'notifications:alert.change.question.bodyYourApp',
+      'notifications:alert.change.question.bodyARequest', 'notifications:alert.change.question.bodyARequestYourApp'],
+  },
+  ready: {
+    title: 'notifications:alert.change.ready.title',
+    body: ['notifications:alert.change.ready.body', 'notifications:alert.change.ready.bodyYourApp',
+      'notifications:alert.change.ready.bodyARequest', 'notifications:alert.change.ready.bodyARequestYourApp'],
+  },
+};
+// The same for a finished session: the app and the title both known, the app
+// unknown, the title unknown ("your session"), neither known.
+const ALERT_AGENT_DONE_IDS = ['notifications:alert.agentDone.body', 'notifications:alert.agentDone.bodyYourApp',
+  'notifications:alert.agentDone.bodyYourSession', 'notifications:alert.agentDone.bodyYourAppYourSession'];
+const ALERT_SESSION_DONE_IDS = ['notifications:alert.sessionDone.body', 'notifications:alert.sessionDone.bodyYourApp',
+  'notifications:alert.sessionDone.bodyYourSession', 'notifications:alert.sessionDone.bodyYourAppYourSession'];
+
 function completionAlertInfo(n) {
-  const appName = n.appName || 'your app';
+  const app = n.appName || '';
   if (n.kind === 'auto_solve_done') {
-    const issue = n.headlessIssueNumber ? `request #${n.headlessIssueNumber}` : 'a request';
-    let title;
-    let body;
-    if (n.detail === 'failed') {
-      title = 'Change failed';
-      body = `The change for ${issue} in ${appName} failed. You can retry`;
-    } else if (n.detail === 'question') {
-      title = 'Change has a question';
-      body = `The change for ${issue} in ${appName} is waiting for your input`;
-    } else {
-      title = 'Change ready to try';
-      body = `The change for ${issue} in ${appName} is ready`;
-    }
+    const number = n.headlessIssueNumber || null;
+    const copy = ALERT_CHANGE_IDS[n.detail === 'failed' ? 'failed' : n.detail === 'question' ? 'question' : 'ready'];
+    const title = t(copy.title);
+    const body = t(copy.body[(number ? 0 : 2) + (app ? 0 : 1)], { number, app });
     return {
       kind: n.kind,
       appSlug: n.appSlug || null,
@@ -1917,13 +2374,14 @@ function completionAlertInfo(n) {
       sessionId: n.sessionId || null,
       ...(n.agentSessionId ? { agentSessionId: n.agentSessionId } : {}),
       headlessIssueNumber: null,
-      title: 'Session stopped before finishing',
-      body: `Your session on ${appName} stopped before finishing. Open it to continue`,
+      title: t('notifications:alert.stalled.title'),
+      body: app ? t('notifications:alert.stalled.body', { app }) : t('notifications:alert.stalled.bodyYourApp'),
     };
   }
   // session_done — #971: the session's own title first, then the PR title,
   // and only then the machine-generated branch name.
-  const label = n.sessionTitle || n.prTitle || n.branchName || 'your session';
+  const title = n.sessionTitle || n.prTitle || n.branchName || '';
+  const which = (title ? 0 : 2) + (app ? 0 : 1);
   if (n.agentSessionId) {
     // #2779: a run in an agent session (a spec drafted or a build done).
     return {
@@ -1932,8 +2390,8 @@ function completionAlertInfo(n) {
       sessionId: n.sessionId || null,
       agentSessionId: n.agentSessionId,
       headlessIssueNumber: null,
-      title: 'The coding agent finished',
-      body: `The coding agent finished on ${appName}: ${label}`,
+      title: t('notifications:alert.agentDone.title'),
+      body: t(ALERT_AGENT_DONE_IDS[which], { app, title }),
     };
   }
   return {
@@ -1941,8 +2399,8 @@ function completionAlertInfo(n) {
     appSlug: n.appSlug || null,
     sessionId: n.sessionId || null,
     headlessIssueNumber: null,
-    title: 'Agent session finished',
-    body: `Your agent session in ${appName} finished: ${label}`,
+    title: t('notifications:alert.sessionDone.title'),
+    body: t(ALERT_SESSION_DONE_IDS[which], { app, title }),
   };
 }
 
@@ -1973,7 +2431,9 @@ function collapseConversationRuns(items) {
     const id = n && n.conversationId != null ? Number(n.conversationId) : null;
     // B4: the bot's moments are each their own news ("I have a question",
     // then "is live"), so none of them folds into a run or takes one in.
-    const moment = !!(n && /^hrbot:[a-z_]{1,20}:/.test(String(n.detail || '')));
+    // ("hrbot:<said>:<app>" on a row from before "one story", "hrbot2:{…}"
+    // now; kept to the shape here so the function stands on its own.)
+    const moment = !!(n && /^hrbot(?::[a-z_]{1,20}:|2:\{)/.test(String(n.detail || '')));
     if (prev && id !== null && prev.conversationId === id
         && prev.read === !!n.readAt && !moment && !prev.moment) {
       prev.count += 1;
@@ -2070,12 +2530,104 @@ const AGENT_NOTIF_KINDS = new Set([
 // session — has no actor and no `by` either.
 // The two lines of a row's own copy. Spread into the view — `...headline(…)`
 // — rather than assigned to one field, because it fills two.
-// B4: the Homeroom bot's four moments, and its answer to what somebody just
-// wrote to it, as notifications.detail carries them ("hrbot:<moment>:<app>").
-// The same words as the push (services/mobile-push-policy.js botMomentCopy;
-// tests/homeroom-bot-notify.test.js holds the two together), under the bot's
-// name instead of "Replied" over "@homeroom_bot".
-const BOT_DETAIL_RE = /^hrbot:([a-z_]{1,20}):(.*)$/;
+// B4 / "one story": the Homeroom bot's moments, and its answer to what
+// somebody just wrote to it, as notifications.detail carries them:
+// `hrbot2:{…}` (services/homeroom-bot-notify-copy.js botNotificationDetail),
+// or `hrbot:<said>:<app>` on a row from before. The bell heads the row with
+// the moment ("Needs you", "Ready to try", "Stopped", "On hold", "Live")
+// over the request's title, with the project and "Homeroom bot" under it;
+// the push says the same request and project (botMomentCopy there;
+// tests/homeroom-bot-notify.test.js holds the two together).
+const BOT_DETAIL_PREFIX = 'hrbot2:';
+const BOT_LEGACY_RE = /^hrbot:([a-z_]{1,20}):(.*)$/;
+const BOT_MOMENT_ALIASES = { question: 'needs_you', held: 'on_hold' };
+const BOT_LABEL_IDS = {
+  needs_you: 'notifications:row.bot.label.needsYou',
+  ready: 'notifications:row.bot.label.ready',
+  stopped: 'notifications:row.bot.label.stopped',
+  on_hold: 'notifications:row.bot.label.onHold',
+  live: 'notifications:row.bot.label.live',
+  done_elsewhere: 'notifications:row.bot.label.doneElsewhere',
+};
+// 16 Oct 2026: what a "needs you" asks for, heading its row in place of the
+// bare moment (homeroom-bot-notify-copy.js NEEDS_YOU_ASKS, held to these by
+// tests/homeroom-bot-notify.test.js). By `said`; any other keeps "Needs you".
+const BOT_ASK_IDS = {
+  question: 'notifications:row.bot.ask.question',
+  questions: 'notifications:row.bot.ask.questions',
+  followup_ask: 'notifications:row.bot.ask.question',
+  plan: 'notifications:row.bot.ask.plan',
+  plan_first: 'notifications:row.bot.ask.plan',
+  decide: 'notifications:row.bot.ask.decide',
+  blocked: 'notifications:row.bot.ask.moreDetail',
+  empty: 'notifications:row.bot.ask.moreDetail',
+  done: 'notifications:row.bot.ask.done',
+  platform: 'notifications:row.bot.ask.platform',
+};
+// A row from before "one story": the moment each old token is.
+const BOT_LEGACY_MOMENTS = {
+  question: 'needs_you',
+  ready: 'ready', ready_group: 'ready', ready_broken: 'ready',
+  stopped: 'stopped', stopped_build: 'stopped', stopped_first: 'stopped', stopped_preview: 'stopped', stopped_look: 'stopped',
+  stopped_blocked: 'needs_you', stopped_person: 'needs_you', stopped_empty: 'needs_you',
+  held: 'on_hold',
+  live: 'live', live_soon: 'live', live_first: 'live', live_first_soon: 'live',
+  reply: 'reply',
+};
+// The build kinds' moments, for a row that carries no detail.
+const BUILD_KIND_MOMENTS = {
+  build_ready: 'ready', build_needs_you: 'needs_you', build_stopped: 'stopped', build_live: 'live',
+};
+function oneLine(value, max) {
+  const text = String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+  return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
+}
+function positiveId(value) {
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n > 0 && n <= 2147483647 ? n : null;
+}
+// A detail read back, or null when it is not the bot's.
+function parseBotDetail(detail) {
+  const s = typeof detail === 'string' ? detail : '';
+  if (s.startsWith(BOT_DETAIL_PREFIX)) {
+    let raw = null;
+    try { raw = JSON.parse(s.slice(BOT_DETAIL_PREFIX.length)); } catch { return null; }
+    if (!raw || typeof raw !== 'object') return null;
+    const moment = BOT_MOMENT_ALIASES[raw.m] || raw.m;
+    if (moment === 'reply') return { moment };
+    if (!Object.prototype.hasOwnProperty.call(BOT_LABEL_IDS, moment)) return null;
+    return {
+      moment,
+      said: typeof raw.s === 'string' ? raw.s : '',
+      appName: oneLine(raw.a, 80),
+      requestTitle: oneLine(raw.t, 120),
+      firstVersion: raw.f === 1 || raw.f === true,
+      deciders: oneLine(raw.d, 120),
+      count: positiveId(raw.c),
+      issueNumber: positiveId(raw.i),
+      threadRootId: positiveId(raw.r),
+    };
+  }
+  const m = BOT_LEGACY_RE.exec(s);
+  if (!m || !BOT_LEGACY_MOMENTS[m[1]]) return null;
+  const moment = BOT_LEGACY_MOMENTS[m[1]];
+  if (moment === 'reply') return { moment };
+  return {
+    moment,
+    said: '',
+    appName: oneLine(m[2], 80),
+    requestTitle: '',
+    firstVersion: /^live_first/.test(m[1]) || m[1] === 'stopped_first',
+    deciders: '',
+    count: null,
+    issueNumber: null,
+    threadRootId: null,
+  };
+}
+function isBotMomentDetail(detail) {
+  const d = parseBotDetail(detail);
+  return !!d && d.moment !== 'reply';
+}
 function plainMarkdown(value) {
   return String(value || '')
     .replace(/!?\[([^\]\n]*)\]\([^)\s]*\)/g, '$1')
@@ -2085,34 +2637,65 @@ function plainMarkdown(value) {
     .replace(/\s+/g, ' ')
     .trim();
 }
+// The Homeroom bot's account (services/conversations.js HOMEROOM_BOT_USERNAME): a
+// synthetic account nobody else can hold.
+function isBotUsername(username) {
+  return String(username || '').toLowerCase() === 'homeroom_bot';
+}
+
+// The row's words for one of the bot's notifications: { label, subject, meta },
+// or null when the detail is not the bot's. Its answer is what it wrote,
+// under its name.
 function botMomentLine(detail, message) {
-  const m = BOT_DETAIL_RE.exec(typeof detail === 'string' ? detail : '');
-  if (!m) return null;
-  const app = m[2].replace(/\s+/g, ' ').trim();
-  const words = {
-    question: app ? `${app}: I have a question` : 'I have a question',
-    ready: app ? `${app} is ready to try` : 'Your change is ready to try',
-    ready_group: app ? `Your change to ${app} is ready to try` : 'Your change is ready to try',
-    ready_broken: app ? `${app} is built, but not everything works yet` : 'Your change is built, but not everything works yet',
-    stopped: app ? `${app}: your change stopped. I said why in our chat` : 'Your change stopped. I said why in our chat',
-    // 5 Oct 2026: what the DM it opens ends with (homeroom-bot-dm.js dmText
-    // 'build_failed'), whose why is there. A reply starts it again; "A person
-    // can pick it up" was a dead end for the person it was for.
-    stopped_build: app ? `${app}: I couldn't finish building it. Reply and I'll try again` : 'I couldn\'t finish building it. Reply and I\'ll try again',
-    stopped_blocked: app ? `${app}: I can't build it as written. Tell me more` : 'I can\'t build it as written. Tell me more',
-    stopped_person: app ? `${app}: this needs a person to decide` : 'This needs a person to decide',
-    stopped_empty: app ? `${app}: I couldn't find anything to build. Tell me more` : 'I couldn\'t find anything to build. Tell me more',
-    stopped_first: app ? `${app}: I couldn't start building it. You can still post a request` : 'I couldn\'t start building it',
-    stopped_preview: app ? `${app}: the preview didn't start. I'm trying again` : 'The preview didn\'t start. I\'m trying again',
-    stopped_look: app ? `${app}: it's built, but it needs a look before you can try it` : 'It\'s built, but it needs a look before you can try it',
-    held: app ? `${app}: I'll start it on Monday` : 'I\'ve paused until Monday',
-    live: app ? `Your change to ${app} is live` : 'Your change is live',
-    live_first: app ? `${app} is live` : 'Your project is live',
-    live_soon: app ? `Your change to ${app} is going live` : 'Your change is going live',
-    live_first_soon: app ? `${app} is going live` : 'Your project is going live',
-    reply: plainMarkdown(message).slice(0, 140),
-  }[m[1]];
-  return words || null;
+  const d = parseBotDetail(detail);
+  if (!d) return null;
+  if (d.moment === 'reply') {
+    const words = plainMarkdown(message).slice(0, 140);
+    return words ? { label: t('notifications:row.bot.name'), subject: words, meta: null } : null;
+  }
+  let subject;
+  if (d.moment === 'on_hold' && d.count > 1) subject = t('notifications:row.bot.subject.onHold', { count: d.count });
+  else if (d.firstVersion) {
+    subject = d.appName
+      ? t('notifications:row.bot.subject.firstVersion', { project: d.appName })
+      : t('notifications:row.bot.subject.firstVersionUnnamed');
+  } else if (d.requestTitle) subject = d.requestTitle;
+  // A request whose title is not known is named by its number, never by its
+  // project alone ("Needs you / Homeroom / Homeroom · Homeroom bot").
+  else if (d.issueNumber) subject = t('notifications:row.bot.subject.request', { number: d.issueNumber });
+  else subject = d.appName || t('notifications:row.bot.name');
+  let label = t(BOT_LABEL_IDS[d.moment]);
+  if (d.moment === 'needs_you' && d.said === 'decide_others') {
+    label = d.deciders
+      ? t('notifications:row.bot.ask.waitingOn', { people: d.deciders })
+      : t('notifications:row.bot.ask.waitingOnUnnamed');
+  } else if (d.moment === 'needs_you' && Object.prototype.hasOwnProperty.call(BOT_ASK_IDS, d.said)) {
+    label = t(BOT_ASK_IDS[d.said]);
+  }
+  let meta = t('notifications:row.bot.name');
+  if (d.appName && d.requestTitle && d.issueNumber && !d.firstVersion) {
+    meta = t('notifications:row.bot.metaRequest', { project: d.appName, number: d.issueNumber });
+  } else if (d.appName) meta = t('notifications:row.bot.meta', { project: d.appName });
+  return { label, subject, meta };
+}
+
+// A whole message with one emphasised part, as a row's segments: the catalog
+// text is "<0>12 of 50 apps in use.</0> New apps are refused…", and what is
+// inside the tag is the strong segment. A parameter is filled in after the
+// tags are read, so a value that looks like a tag stays text.
+function messageSegments(id, values = {}) {
+  const text = t(id, {
+    count: typeof values.count === 'number' ? values.count : undefined,
+    interpolation: { prefix: '[[unused:', suffix: ']]' },
+  });
+  const fill = (part) => part.replace(/{{\s*(\w+)\s*}}/g, (_, name) => String(values[name] ?? ''));
+  const segments = [];
+  for (const part of text.split(/(<0>[\s\S]*?<\/0>)/)) {
+    if (!part) continue;
+    const strong = /^<0>([\s\S]*)<\/0>$/.exec(part);
+    segments.push(strong ? { t: 'strong', v: fill(strong[1]) } : { t: 'text', v: fill(part) });
+  }
+  return segments;
 }
 
 function headline(label, subject) {
@@ -2127,14 +2710,20 @@ function headline(label, subject) {
 // what happened.
 function appQuotaChangeText(detail) {
   const m = /^(\d{1,6}):(\d{1,6})$/.exec(String(detail || '').trim());
-  if (!m) return 'Your app allowance changed.';
+  if (!m) return t('notifications:row.quota.changed.unknown');
   const before = Number(m[1]);
   const after = Number(m[2]);
-  const slots = (count) => `${count} app ${count === 1 ? 'slot' : 'slots'}`;
-  if (after > before) return `Your app allowance went up from ${before} to ${slots(after)}.`;
-  if (after < before) return `Your app allowance went down from ${before} to ${slots(after)}.`;
-  return `Your app allowance is ${slots(after)}.`;
+  if (after > before) return t('notifications:row.quota.changed.up', { before, count: after });
+  if (after < before) return t('notifications:row.quota.changed.down', { before, count: after });
+  return t('notifications:row.quota.changed.same', { count: after });
 }
+
+// A discussion row's first line, by what is known. In order: the author and
+// the project both named, the project unnamed, the author unnamed, neither.
+const CHANNEL_ASKED_IDS = ['notifications:row.channel.askedIn', 'notifications:row.channel.askedInUnnamed',
+  'notifications:row.channel.someoneAskedIn', 'notifications:row.channel.someoneAskedInUnnamed'];
+const CHANNEL_SAID_IDS = ['notifications:row.channel.saidIn', 'notifications:row.channel.saidInUnnamed',
+  'notifications:row.channel.someoneIn', 'notifications:row.channel.someoneInUnnamed'];
 
 function rowView(n) {
   // #103: keep the violet left line on every row, read or unread, so a
@@ -2149,10 +2738,18 @@ function rowView(n) {
   // place), and every one of them used to render "app · 4m ago" under itself.
   // The renderer drops a falsy part, so an app-less row simply says less.
   const appLine = n.appName ? n.appName : '';
-  const who = n.sourceUsername ? n.sourceUsername : 'someone';
+  const who = n.sourceUsername ? n.sourceUsername : t('notifications:row.unknownPerson');
   const base = {
     id: n.id,
     unread: !n.readAt,
+    // #18 (19 Oct 2026 polish board): a plain message in a conversation or a
+    // channel, which the bell leaves to the Messages tab: the sheet's Unread
+    // tab neither lists nor counts it, so it says what the badge says.
+    plainMessage: n.kind === 'conversation_message' || n.kind === 'channel_message',
+    // #4769: whether the user has bookmarked this row — the feed row's
+    // bookmark button and the pinned section both read it. A save is not a
+    // read state; the two flags never derive from each other.
+    saved: !!n.saved,
     unreadCls,
     ...stampFields(n.createdAt),
     // The sheet buckets rows into Today/Earlier and leads each with an
@@ -2161,6 +2758,9 @@ function rowView(n) {
     createdAtMs: Date.parse(n.createdAt) || 0,
     who,
     appLine,
+    // Which app the row came from, for the Unread tab's per-app groups
+    // (#5406). Conversation kinds carry no app, so they group under "Other".
+    appId: n.appId ?? null,
     // Meta-line attribution. Null unless the source user actually DID this.
     by: null,
     // The kind line. Every branch below overwrites it; '' would render a
@@ -2177,8 +2777,8 @@ function rowView(n) {
   };
 
   if (n.kind === 'test_alert') {
-    return { ...base, label: 'Homeroom test alert', icon: '🔔',
-      segments: [{ t: 'text', v: 'You requested a push notification test. Open Alerts settings to try again.' }] };
+    return { ...base, label: t('notifications:row.testAlert.label'), icon: '🔔',
+      segments: [{ t: 'text', v: t('notifications:row.testAlert.body') }] };
   }
 
   if (CONVERSATION_NOTIF_KINDS.has(n.kind)) {
@@ -2187,7 +2787,7 @@ function rowView(n) {
     // the surface, not who wrote. The person on the other end of a DM is
     // the sender, so it is headed with them.
     const conversation = n.conversationTitle
-      || (n.conversationKind === 'direct' && n.sourceUsername ? `@${n.sourceUsername}` : 'Messages');
+      || (n.conversationKind === 'direct' && n.sourceUsername ? `@${n.sourceUsername}` : t('notifications:row.conversation.untitled'));
     const snippet = (n.messageContent || '').slice(0, 140);
     // The conversation is the SUBJECT of every one of these, so it leads —
     // and for a plain message the snippet follows it, which is the only part
@@ -2199,21 +2799,27 @@ function rowView(n) {
     // alone above its object is a sentence cut in half, and the line below is
     // plainly what it is in.
     const copy = {
-      conversation_invite: headline('Invite', conversation),
+      conversation_invite: headline(t('notifications:row.conversation.invite'), conversation),
       // The only kind whose label is not a fixed category. A message's kind
       // IS its thread — "Message" over the snippet would name the surface,
       // which the meta line already does.
       conversation_message: headline(conversation, snippet),
-      conversation_mention: headline('Mentioned you', conversation),
-      conversation_reply: headline('Replied', conversation),
-      conversation_thread_reply: headline('Replied in thread', conversation),
-      conversation_reaction: headline('Reacted', conversation),
-      // WP-E: a build moment without its detail (botMomentLine words the rest).
-      build_ready: headline('Homeroom bot', 'Your change is ready to try'),
-      build_needs_you: headline('Homeroom bot', 'I have a question'),
-      build_stopped: headline('Homeroom bot', 'Your change stopped. I said why in our chat'),
-      build_live: headline('Homeroom bot', 'Your change is live'),
+      conversation_mention: headline(t('notifications:row.conversation.mention'), conversation),
+      conversation_reply: headline(t('notifications:row.conversation.reply'), conversation),
+      conversation_thread_reply: headline(t('notifications:row.conversation.threadReply'), conversation),
+      conversation_reaction: headline(t('notifications:row.conversation.reaction'), conversation),
+      // WP-E: a build moment without its detail (botMomentLine words the
+      // rest): its moment, from Homeroom bot.
+      build_ready: headline(t(BOT_LABEL_IDS[BUILD_KIND_MOMENTS.build_ready]), t('notifications:row.bot.name')),
+      build_needs_you: headline(t(BOT_LABEL_IDS[BUILD_KIND_MOMENTS.build_needs_you]), t('notifications:row.bot.name')),
+      build_stopped: headline(t(BOT_LABEL_IDS[BUILD_KIND_MOMENTS.build_stopped]), t('notifications:row.bot.name')),
+      build_live: headline(t(BOT_LABEL_IDS[BUILD_KIND_MOMENTS.build_live]), t('notifications:row.bot.name')),
     }[n.kind];
+    // #3228: the inviter's note rides the invite row after the group's name,
+    // so the bell says why too.
+    if (n.kind === 'conversation_invite' && n.conversationInviteNote) {
+      copy.segments.push({ t: 'text', v: t('notifications:row.conversation.inviteNote', { note: n.conversationInviteNote }) });
+    }
     const icons = {
       conversation_invite: '✉️',
       conversation_message: '💬',
@@ -2226,9 +2832,11 @@ function rowView(n) {
       build_stopped: '💬',
       build_live: '💬',
     };
-    // B4: one of the bot's moments says what happened, in its own words,
-    // from "Homeroom bot". The name leads, so the meta line drops the
-    // "by @homeroom_bot" that would say it twice.
+    // B4 / "one story": one of the bot's moments is headed by the moment
+    // over the request it is about, with its project and "Homeroom bot"
+    // under it; its answer to what somebody wrote is its words, under its
+    // name. Either way the meta line drops the "by @homeroom_bot" that
+    // would say it twice.
     const bot = n.kind === 'conversation_reaction' ? null : botMomentLine(n.detail, n.messageContent);
     if (bot) {
       return {
@@ -2238,15 +2846,21 @@ function rowView(n) {
         by: null,
         conversation: true,
         conversationId: n.conversationId != null ? Number(n.conversationId) : null,
-        appLine: 'Messages',
+        appLine: bot.meta || t('notifications:row.source.messages'),
         botMoment: true,
-        ...headline('Homeroom bot', bot),
+        // Run six: the row wears the bot's own face (the sheet's AvatarChip),
+        // never a letter tile of its handle.
+        bot: true,
+        ...headline(bot.label, bot.subject),
       };
     }
     return {
       ...base,
       wrap: true,
       icon: icons[n.kind],
+      // A build moment always comes from the bot; so does anything its
+      // account sent, a moment without its detail included.
+      ...(BUILD_KIND_MOMENTS[n.kind] || isBotUsername(n.sourceUsername) ? { bot: true } : {}),
       by: n.sourceUsername || null,
       // What the sheet's Messages tab filters on. Carried as a flag rather
       // than re-deriving it there from `kind`: CONVERSATION_NOTIF_KINDS lives
@@ -2264,7 +2878,7 @@ function rowView(n) {
       // Deliberately the SURFACE and not the conversation's title: the title
       // is the headline's own subject, and repeating it under itself reads as
       // a rendering fault rather than as attribution.
-      appLine: 'Messages',
+      appLine: t('notifications:row.source.messages'),
       ...copy,
     };
   }
@@ -2278,15 +2892,15 @@ function rowView(n) {
     const request = n.kind === 'friend_request';
     return {
       ...base,
-      appLine: 'Friends',
+      appLine: t('notifications:row.source.friends'),
       wrap: true,
       icon: request ? '👋' : '🤝',
-      label: request ? 'Friend request' : 'Accepted your friend request',
+      label: request ? t('notifications:row.friend.request') : t('notifications:row.friend.accepted'),
       segments: [{ t: 'who', v: who }],
       ...(request && n.friendRequestPending ? {
         actions: [
-          { key: 'friend_accept', label: 'Accept', primary: true },
-          { key: 'friend_decline', label: 'Decline' },
+          { key: 'friend_accept', label: t('notifications:row.friend.accept'), primary: true },
+          { key: 'friend_decline', label: t('notifications:row.friend.decline') },
         ],
       } : {}),
     };
@@ -2301,38 +2915,39 @@ function rowView(n) {
       wrap: true,
       icon: '🗑️',
       by: n.sourceUsername || null,
-      ...headline('Tried to delete this shared app', null),
+      ...headline(t('notifications:row.appDeleteAttempted'), null),
     };
   }
   if (n.kind === 'app_deleted') {
     return {
       ...base,
-      appLine: 'Account',
+      appLine: t('notifications:row.source.account'),
       wrap: true,
       icon: '🗑️',
       by: n.sourceUsername || null,
-      ...headline('Deleted a shared app you contributed to', n.detail || 'an app'),
+      ...headline(t('notifications:row.appDeleted.label'), n.detail || t('notifications:row.appDeleted.unnamed')),
     };
   }
 
   if (n.kind === 'moderation_report' || n.kind === 'moderation_action') {
-    return { ...base, appLine: 'Account', wrap: true, icon: '⚑',
-      ...headline(n.kind === 'moderation_report' ? 'Report update' : 'Moderation action', n.detail || '') };
+    return { ...base, appLine: t('notifications:row.source.account'), wrap: true, icon: '⚑',
+      ...headline(n.kind === 'moderation_report'
+        ? t('notifications:row.moderation.report') : t('notifications:row.moderation.action'), n.detail || '') };
   }
 
   if (n.kind === 'app_quota_changed') {
-    return { ...base, appLine: 'Account', wrap: true, icon: '＋',
-      label: 'App allowance changed',
+    return { ...base, appLine: t('notifications:row.source.account'), wrap: true, icon: '＋',
+      label: t('notifications:row.quota.changed.label'),
       segments: [{ t: 'text', v: appQuotaChangeText(n.detail) }] };
   }
   if (n.kind === 'app_quota_requested') {
-    return { ...base, appLine: 'Admin', wrap: true, icon: '＋',
-      label: 'Requested more app slots', segments: [{ t: 'who', v: who }] };
+    return { ...base, appLine: t('notifications:row.source.admin'), wrap: true, icon: '＋',
+      label: t('notifications:row.quota.requested'), segments: [{ t: 'who', v: who }] };
   }
   if (n.kind === 'app_quota_request_declined') {
-    return { ...base, appLine: 'Account', wrap: true, icon: 'ℹ️',
-      label: 'App allowance request declined',
-      segments: [{ t: 'text', v: 'Your app allowance is unchanged.' }] };
+    return { ...base, appLine: t('notifications:row.source.account'), wrap: true, icon: 'ℹ️',
+      label: t('notifications:row.quota.declined.label'),
+      segments: [{ t: 'text', v: t('notifications:row.quota.declined.body') }] };
   }
 
   // Managed OpenRouter review alerts, plus historical successful-issuance
@@ -2343,10 +2958,10 @@ function rowView(n) {
     const review = n.kind === 'openrouter_key_review';
     return {
       ...base,
-      appLine: 'Admin',
+      appLine: t('notifications:row.source.admin'),
       wrap: true,
       icon: review ? '⚠️' : '🔑',
-      label: review ? 'OpenRouter key needs admin review' : 'OpenRouter access enabled',
+      label: review ? t('notifications:row.openrouter.review') : t('notifications:row.openrouter.enabled'),
       segments: [{ t: 'who', v: who }],
     };
   }
@@ -2358,47 +2973,43 @@ function rowView(n) {
   if (n.kind === 'platform_limit') {
     const limit = parsePlatformLimitDetail(n.detail);
     if (!limit) {
-      return { ...base, appLine: 'Admin', wrap: true, icon: '\u26A0\uFE0F',
-        ...headline('Platform limit', 'the server is nearing one of its limits') };
+      return { ...base, appLine: t('notifications:row.source.admin'), wrap: true, icon: '\u26A0\uFE0F',
+        ...headline(t('notifications:row.limit.unknown.label'), t('notifications:row.limit.unknown.body')) };
     }
     const full = limit.level === 'full';
     // GitHub's hourly budget (services/github-budget.js): the bot token's,
     // or the GitHub App's. The card under Admin → Limits has the figures.
     if (limit.limit === 'github' || limit.limit === 'github_app') {
       const app = limit.limit === 'github_app';
-      const noun = app ? 'GitHub App requests' : 'GitHub requests';
+      const figures = { used: limit.used, count: limit.cap };
       return {
         ...base,
-        appLine: 'Admin',
+        appLine: t('notifications:row.source.admin'),
         wrap: true,
         icon: full ? '\u{1F6A8}' : '\u26A0\uFE0F',
-        label: full ? `${noun} used up` : `${noun} running low`,
-        segments: [
-          { t: 'strong', v: `${limit.used} of ${limit.cap} ${noun} used this hour.` },
-          { t: 'text', v: app ? ' It resets within the hour.'
-            : (full ? ' Work that needs GitHub fails until the hour resets.'
-              : ' Background work waits so people\'s work keeps the rest.') },
-        ],
+        label: app
+          ? (full ? t('notifications:row.limit.githubApp.full.label') : t('notifications:row.limit.githubApp.warn.label'))
+          : (full ? t('notifications:row.limit.github.full.label') : t('notifications:row.limit.github.warn.label')),
+        // One message each: the figures, strong, then what follows from them.
+        segments: app ? messageSegments('notifications:row.limit.githubApp.body', figures)
+          : (full ? messageSegments('notifications:row.limit.github.full.body', figures)
+            : messageSegments('notifications:row.limit.github.warn.body', figures)),
       };
     }
-    const noun = limit.limit === 'apps' ? 'apps' : 'coding sessions';
-    const consequence = limit.limit === 'apps'
-      ? (full ? ' New apps are refused until the app limit is raised in Admin \u2192 Limits or an app is removed.'
-        : ' Raise the app limit in Admin \u2192 Limits before new apps are refused.')
-      : (full ? ' New sessions pause idle ones, or wait, until MAX_GLOBAL_SESSIONS is raised.'
-        : ' At the limit, idle sessions are paused to make room.');
+    const figures = { used: limit.used, count: limit.cap };
     return {
       ...base,
-      appLine: 'Admin',
+      appLine: t('notifications:row.source.admin'),
       wrap: true,
       icon: full ? '\u{1F6A8}' : '\u26A0\uFE0F',
       label: full
-        ? (limit.limit === 'apps' ? 'App limit reached' : 'Session limit reached')
-        : (limit.limit === 'apps' ? 'Nearing the app limit' : 'Nearing the session limit'),
-      segments: [
-        { t: 'strong', v: `${limit.used} of ${limit.cap} ${noun} in use.` },
-        { t: 'text', v: consequence },
-      ],
+        ? (limit.limit === 'apps' ? t('notifications:row.limit.apps.full.label') : t('notifications:row.limit.sessions.full.label'))
+        : (limit.limit === 'apps' ? t('notifications:row.limit.apps.warn.label') : t('notifications:row.limit.sessions.warn.label')),
+      segments: limit.limit === 'apps'
+        ? (full ? messageSegments('notifications:row.limit.apps.full.body', figures)
+          : messageSegments('notifications:row.limit.apps.warn.body', figures))
+        : (full ? messageSegments('notifications:row.limit.sessions.full.body', figures)
+          : messageSegments('notifications:row.limit.sessions.warn.body', figures)),
     };
   }
 
@@ -2408,34 +3019,43 @@ function rowView(n) {
   if (n.kind === 'platform_incident') {
     const alert = parsePlatformIncidentDetail(n.detail);
     const words = (kind) => String(kind).replace(/_/g, ' ');
+    if (alert && alert.type === 'signal') {
+      return {
+        ...base,
+        appLine: t('notifications:row.source.admin'),
+        wrap: true,
+        icon: '\u{1F6E0}\uFE0F',
+        label: t('notifications:row.incident.signal.label'),
+        segments: [{ t: 'text', v: t('notifications:row.incident.signal.body', { number: alert.issueNumber }) }],
+      };
+    }
     if (alert && alert.type === 'hour') {
       return {
         ...base,
-        appLine: 'Admin',
+        appLine: t('notifications:row.source.admin'),
         wrap: true,
         icon: '\u{1F6A8}',
-        label: 'Unexpected events piling up',
-        segments: [
-          { t: 'strong', v: `${alert.n} ${words(alert.kind)} in the last hour.` },
-          { t: 'text', v: ' Admin \u2192 Unexpected events has each one.' },
-        ],
+        label: t('notifications:row.incident.hour.label'),
+        segments: messageSegments('notifications:row.incident.hour.body', { count: alert.n, kind: words(alert.kind) }),
       };
     }
     if (alert && alert.type === 'digest') {
       const listed = alert.kinds.reduce((sum, k) => sum + k.n, 0);
-      const parts = alert.kinds.map((k) => `${words(k.kind)} ${k.n}`);
-      if (alert.total > listed) parts.push(`other ${alert.total - listed}`);
+      const parts = alert.kinds.map((k) => t('notifications:row.incident.digest.kindCount', { kind: words(k.kind), count: k.n }));
+      if (alert.total > listed) parts.push(t('notifications:row.incident.digest.otherCount', { count: alert.total - listed }));
       return {
         ...base,
-        appLine: 'Admin',
+        appLine: t('notifications:row.source.admin'),
         wrap: true,
         icon: '\u26A0\uFE0F',
-        label: `${alert.total} unexpected event${alert.total === 1 ? '' : 's'} yesterday`,
-        segments: [{ t: 'text', v: parts.length ? `${parts.join(', ')}.` : 'See Admin \u2192 Unexpected events.' }],
+        label: t('notifications:row.incident.digest.label', { count: alert.total }),
+        segments: [{ t: 'text', v: parts.length
+          ? t('notifications:row.incident.digest.list', { kinds: listText(parts) })
+          : t('notifications:row.incident.digest.empty') }],
       };
     }
-    return { ...base, appLine: 'Admin', wrap: true, icon: '\u26A0\uFE0F',
-      ...headline('Unexpected events', 'something that should not happen did') };
+    return { ...base, appLine: t('notifications:row.source.admin'), wrap: true, icon: '\u26A0\uFE0F',
+      ...headline(t('notifications:row.incident.unknown.label'), t('notifications:row.incident.unknown.body')) };
   }
 
   const prLabel = n.prTitle || null;
@@ -2451,10 +3071,9 @@ function rowView(n) {
       ...base,
       icon: '\u{1F44F}',
       by: n.sourceUsername || null,
-      ...headline('Kudos', prLabel || 'your change'),
-      note: `A thank-you from another member. Kudos you get don't expire; `
-        + `they count on the Kudos leaderboard. Everyone has ${limit} a week to give.`,
-      actions: [{ key: 'kudos_board', label: 'Leaderboard' }],
+      ...headline(t('notifications:row.kudos.label'), prLabel || t('notifications:row.kudos.yourChange')),
+      note: t('notifications:row.kudos.note', { limit }),
+      actions: [{ key: 'kudos_board', label: t('notifications:row.kudos.board') }],
     };
   }
 
@@ -2463,7 +3082,7 @@ function rowView(n) {
       ...base,
       icon: n.detail || '❤️',
       by: n.sourceUsername || null,
-      ...headline('Reacted', (n.messageContent || '').slice(0, 140)),
+      ...headline(t('notifications:row.reaction.label'), (n.messageContent || '').slice(0, 140)),
     };
   }
 
@@ -2471,11 +3090,14 @@ function rowView(n) {
   // heading for auto-archive. The old copy spelled the whole mechanism out
   // ("is going stale, it'll auto-archive soon without votes"); what the row
   // has to say is that it needs votes, and the rest is on the proposal.
+  // `detail` 'blocked': its votes are met and its merge is what stands
+  // still, so the row says that rather than asking for votes.
   if (n.kind === 'stale_pr') {
     return {
       ...base,
       icon: '⏳',
-      ...headline('Needs votes', prLabel || n.sessionTitle || 'your change'),
+      ...headline(t(n.detail === 'blocked' ? 'notifications:row.stale.blocked' : 'notifications:row.stale.label'),
+        prLabel || n.sessionTitle || t('notifications:row.stale.yourChange')),
     };
   }
 
@@ -2485,7 +3107,7 @@ function rowView(n) {
     return {
       ...base,
       icon: '⚠️',
-      ...headline('Testing couldn\'t run', prLabel || n.sessionTitle || 'your change'),
+      ...headline(t('notifications:row.checkFailed.label'), prLabel || n.sessionTitle || t('notifications:row.checkFailed.yourChange')),
     };
   }
 
@@ -2498,7 +3120,7 @@ function rowView(n) {
       ...base,
       icon: '\u{1F5F3}️',
       by: n.sourceUsername || null,
-      ...headline('New change', prLabel || 'a change'),
+      ...headline(t('notifications:row.proposed.label'), prLabel || t('notifications:row.proposed.aChange')),
     };
   }
 
@@ -2507,23 +3129,23 @@ function rowView(n) {
   // 5 October (Page Turners): once it is decided the row stops asking. It
   // says what became of it, read live off the change (`sessionStatus`,
   // services/notifications.js): Live (a tap opens the app), Going live, or
-  // Closed. A live one was put back unread for whoever had not said yes.
+  // Closed.
   if (n.kind === 'change_ready') {
-    const subject = prLabel || n.sessionTitle || 'a change';
+    const subject = prLabel || n.sessionTitle || t('notifications:row.changeReady.aChange');
     if (n.sessionStatus === 'merged') {
-      return { ...base, icon: '\u{1F389}', by: n.sourceUsername || null, ...headline('Live', subject) };
+      return { ...base, icon: '\u{1F389}', by: n.sourceUsername || null, ...headline(t('notifications:row.changeReady.live'), subject) };
     }
     if (n.sessionStatus === 'merging') {
-      return { ...base, icon: '\u{1F680}', by: n.sourceUsername || null, ...headline('Going live', subject) };
+      return { ...base, icon: '\u{1F680}', by: n.sourceUsername || null, ...headline(t('notifications:row.changeReady.goingLive'), subject) };
     }
     if (n.sessionStatus === 'archived') {
-      return { ...base, icon: '\u{1F5C2}\uFE0F', by: n.sourceUsername || null, ...headline('Closed', subject) };
+      return { ...base, icon: '\u{1F5C2}\uFE0F', by: n.sourceUsername || null, ...headline(t('notifications:row.changeReady.closed'), subject) };
     }
     return {
       ...base,
       icon: '\u{1F440}',
       by: n.sourceUsername || null,
-      ...headline('Ready to try', subject),
+      ...headline(t('notifications:row.changeReady.ready'), subject),
     };
   }
 
@@ -2536,19 +3158,41 @@ function rowView(n) {
   // The good-news row. `detail === 'forced'` is an admin override rather than
   // a vote that carried, and the label says which: to the person who wrote
   // the change those are the same event with very different meanings.
+  // #5064: until production runs it (`sessionStatus` 'merging', read live
+  // off the change as a "ready to try" row is), it says Going live.
   if (n.kind === 'pr_merged') {
+    const going = n.sessionStatus === 'merging';
     const head = headline(
-      n.detail === 'forced' ? 'Made live by an admin' : 'Live',
-      prLabel || n.sessionTitle || 'your change',
+      n.detail === 'forced' ? t('notifications:row.merged.forced')
+        : (going ? t('notifications:row.merged.goingLive') : t('notifications:row.merged.live')),
+      prLabel || n.sessionTitle || t('notifications:row.merged.yourChange'),
     );
     // #1688: on a merge the vote carried, `detail` names who backed and
     // shaped it. An admin override's marker is not a sentence to show.
     const credits = n.detail && n.detail !== 'forced' ? String(n.detail) : '';
     return {
       ...base,
-      icon: '\u{1F389}',
+      icon: going ? '\u{1F680}' : '\u{1F389}',
       label: head.label,
       segments: credits ? [...head.segments, { t: 'text', v: credits }] : head.segments,
+    };
+  }
+
+  // #4787: a change the viewer voted on (yes or no) went live. Drawn like
+  // the author's "Live" row above: the same tile, a small grey first line
+  // naming the kind, the change's title in bold below it. No button of its
+  // own; the row itself opens the change (proposalKinds).
+  // #5064: "going live" until production runs it, as the author's row.
+  if (n.kind === 'voted_change_merged') {
+    const going = n.sessionStatus === 'merging';
+    const head = headline(
+      going ? t('notifications:row.votedMerged.goingLive') : t('notifications:row.votedMerged.label'),
+      prLabel || n.sessionTitle || t('notifications:row.votedMerged.aChange'),
+    );
+    return {
+      ...base,
+      icon: going ? '\u{1F680}' : '\u{1F389}',
+      ...head,
     };
   }
 
@@ -2557,8 +3201,8 @@ function rowView(n) {
   // usually long enough to push it off the row.
   if (n.kind === 'proposal_vote') {
     const head = headline(
-      n.detail === 'no' ? 'Voted no' : 'Voted yes',
-      prLabel || n.sessionTitle || 'your change',
+      n.detail === 'no' ? t('notifications:row.vote.no') : t('notifications:row.vote.yes'),
+      prLabel || n.sessionTitle || t('notifications:row.vote.yourChange'),
     );
     // #1688: the voter's own line rides after the subject, quoted — the
     // proposer's first sight of an objection is the sentence, not the thumb.
@@ -2569,7 +3213,7 @@ function rowView(n) {
       icon: n.detail === 'no' ? '\u{1F44E}' : '\u{1F44D}',
       label: head.label,
       segments: reason
-        ? [...head.segments, { t: 'text', v: `“${reason}”` }]
+        ? [...head.segments, { t: 'text', v: t('notifications:row.vote.reason', { reason }) }]
         : head.segments,
     };
   }
@@ -2583,8 +3227,8 @@ function rowView(n) {
       ...base,
       by: n.sourceUsername || null,
       icon: '\u{1F501}',
-      ...headline('Still good?', prLabel || n.sessionTitle || 'a change you backed'),
-      actions: n.readAt ? [] : [{ key: 'still_yes', label: 'Still yes', primary: true }],
+      ...headline(t('notifications:row.recheck.label'), prLabel || n.sessionTitle || t('notifications:row.recheck.aChange')),
+      actions: n.readAt ? [] : [{ key: 'still_yes', label: t('notifications:row.recheck.stillYes'), primary: true }],
     };
   }
 
@@ -2596,15 +3240,18 @@ function rowView(n) {
     const merged = counts ? Number(counts[1]) : 0;
     const open = counts ? Number(counts[2]) : 0;
     const shipped = merged === 0
-      ? 'Nothing landed this week'
-      : `${merged} ${merged === 1 ? 'change' : 'changes'} went live`;
+      ? t('notifications:row.weekly.nothing')
+      : t('notifications:row.weekly.wentLive', { count: merged });
     const waiting = open
-      ? `${open} ${open === 1 ? 'change is' : 'changes are'} waiting for approval`
+      ? t('notifications:row.weekly.waiting', { count: open })
       : '';
     return {
       ...base,
       icon: '\u{1F4F0}',
-      ...headline(`This week on ${n.appName || 'the app'}`, [shipped, waiting].filter(Boolean).join(' · ')),
+      ...headline(
+        n.appName ? t('notifications:row.weekly.label', { project: n.appName }) : t('notifications:row.weekly.labelUnnamed'),
+        waiting ? t('notifications:row.factPair', { first: shipped, second: waiting }) : shipped,
+      ),
     };
   }
 
@@ -2617,7 +3264,8 @@ function rowView(n) {
       ...base,
       by: n.sourceUsername || null,
       icon: '\u{1F4DD}',
-      ...headline('New request', n.detail ? `#${n.detail}` : 'filed'),
+      ...headline(t('notifications:row.issueOpened.label'),
+        n.detail ? t('notifications:row.issueOpened.number', { number: n.detail }) : t('notifications:row.issueOpened.filed')),
     };
   }
 
@@ -2628,7 +3276,8 @@ function rowView(n) {
     return {
       ...base,
       by: n.sourceUsername || null,
-      ...headline('Mentioned you', /^\d+$/.test(String(n.detail || '')) ? `request #${n.detail}` : 'a request'),
+      ...headline(t('notifications:row.issueMention.label'), /^\d+$/.test(String(n.detail || ''))
+        ? t('notifications:row.issueMention.request', { number: n.detail }) : t('notifications:row.issueMention.aRequest')),
     };
   }
 
@@ -2647,13 +3296,14 @@ function rowView(n) {
     // the app. The app name leads the line on purpose: this row is only
     // ever about one app, and "has used most of its storage" with nothing
     // in front of it reads as the platform talking about itself.
-    const appName = n.appName || 'Your app';
     if (n.detail === 'storage_warn') {
       return {
         ...base,
         wrap: true,
         icon: '\u{1F4BE}',
-        ...headline('App storage', `${appName} has used most of its storage`),
+        ...headline(t('notifications:row.health.storage.label'), n.appName
+          ? t('notifications:row.health.storage.warn', { app: n.appName })
+          : t('notifications:row.health.storage.warnUnnamed')),
       };
     }
     if (n.detail === 'storage_full') {
@@ -2661,24 +3311,24 @@ function rowView(n) {
         ...base,
         wrap: true,
         icon: '\u{1F4BE}',
-        label: 'App storage',
-        segments: [
-          { t: 'strong', v: `${appName} is out of storage.` },
-          { t: 'text', v: ' New data cannot be saved until an admin raises its limit or allows time to clean up' },
-        ],
+        label: t('notifications:row.health.storage.label'),
+        segments: n.appName
+          ? messageSegments('notifications:row.health.storage.full', { app: n.appName })
+          : messageSegments('notifications:row.health.storage.fullUnnamed'),
       };
     }
     // release_stalled: the platform's own app, a merged commit that has not
     // become the running release (services/release-watch.js).
     const APP_HEALTH_COPY = {
-      deploy_failed: 'an update did not go live',
-      release_stalled: 'an approved change has not gone live yet',
+      deploy_failed: 'notifications:row.health.problem.deployFailed',
+      release_stalled: 'notifications:row.health.problem.releaseStalled',
     };
     return {
       ...base,
       wrap: true,
       icon: '\u{1F6A8}',
-      ...headline('App problem', APP_HEALTH_COPY[n.detail] || 'something needs looking at'),
+      ...headline(t('notifications:row.health.problem.label'), Object.prototype.hasOwnProperty.call(APP_HEALTH_COPY, n.detail)
+        ? t(APP_HEALTH_COPY[n.detail]) : t('notifications:row.health.problem.other')),
     };
   }
 
@@ -2694,14 +3344,14 @@ function rowView(n) {
     const count = Number.isFinite(Number(n.digestWaiting)) && n.digestWaiting != null
       ? Number(n.digestWaiting) : (Number(n.detail) || 0);
     if (count === 0) {
-      return { ...base, icon: '\u{1F5F3}\uFE0F', ...headline('Nothing is waiting for your approval now', null) };
+      return { ...base, icon: '\u{1F5F3}\uFE0F', ...headline(t('notifications:row.voteDigest.none'), null) };
     }
     return {
       ...base,
       icon: '\u{1F5F3}\uFE0F',
       ...headline(
-        'Waiting for your approval',
-        count === 1 ? '1 change' : `${count} changes`,
+        t('notifications:row.voteDigest.label'),
+        t('notifications:row.voteDigest.count', { count }),
       ),
     };
   }
@@ -2717,8 +3367,8 @@ function rowView(n) {
       wrap: true,
       icon: shared ? '\u{1F441}️' : '\u{1F4E4}',
       ...headline(
-        shared ? 'Shared by your agent' : 'Submitted by your agent',
-        n.sessionTitle || prLabel || 'your change',
+        shared ? t('notifications:row.connector.shared') : t('notifications:row.connector.submitted'),
+        n.sessionTitle || prLabel || t('notifications:row.connector.yourChange'),
       ),
     };
   }
@@ -2735,7 +3385,7 @@ function rowView(n) {
       ...base,
       wrap: true,
       icon: '\u{1F4AC}',
-      ...headline('Claude asked you something', n.sessionTitle || null),
+      ...headline(t('notifications:row.agentAsked'), n.sessionTitle || null),
     };
   }
 
@@ -2752,8 +3402,8 @@ function rowView(n) {
       icon: '✅',
       ...headline(
         // #2779: a run in an agent session says what finished, not "session".
-        n.agentSessionId ? 'The coding agent finished' : 'Session finished',
-        n.sessionTitle || prLabel || n.branchName || 'your session',
+        n.agentSessionId ? t('notifications:row.session.agentFinished') : t('notifications:row.session.finished'),
+        n.sessionTitle || prLabel || n.branchName || t('notifications:row.session.yourSession'),
       ),
     };
   }
@@ -2768,8 +3418,8 @@ function rowView(n) {
       wrap: true,
       icon: '⏸️',
       ...headline(
-        n.agentSessionId ? 'The coding agent stopped before finishing' : 'Session stopped before finishing',
-        n.sessionTitle || prLabel || n.branchName || 'your session',
+        n.agentSessionId ? t('notifications:row.session.agentStopped') : t('notifications:row.session.stopped'),
+        n.sessionTitle || prLabel || n.branchName || t('notifications:row.session.yourSession'),
       ),
     };
   }
@@ -2779,15 +3429,17 @@ function rowView(n) {
   // label says so.
   if (n.kind === 'auto_solve_done') {
     const failed = n.detail === 'failed';
-    const label = failed ? 'Change failed'
-      : (n.detail === 'question' ? 'Change has a question' : 'Change ready to try');
+    const label = failed ? t('notifications:row.autoSolve.failed')
+      : (n.detail === 'question' ? t('notifications:row.autoSolve.question') : t('notifications:row.autoSolve.ready'));
     return {
       ...base,
       wrap: true,
       icon: failed ? '⚠️' : '\u{1F916}',
       ...headline(
         label,
-        n.headlessIssueNumber ? `request #${n.headlessIssueNumber}` : 'a request',
+        n.headlessIssueNumber
+          ? t('notifications:row.autoSolve.request', { number: n.headlessIssueNumber })
+          : t('notifications:row.autoSolve.aRequest'),
       ),
     };
   }
@@ -2802,8 +3454,8 @@ function rowView(n) {
       icon: '\u{1F4CB}',
       by: n.sourceUsername || null,
       ...headline(
-        'Plan shared',
-        n.sessionTitle || prLabel || n.branchName || `v${n.detail || '?'}`,
+        t('notifications:row.spec.label'),
+        n.sessionTitle || prLabel || n.branchName || t('notifications:row.spec.version', { version: n.detail || '?' }),
       ),
     };
   }
@@ -2821,19 +3473,29 @@ function rowView(n) {
   // messages folded into one row stay messages.
   if (n.kind === 'channel_message') {
     const count = /^\d{1,6}$/.test(String(n.detail || '')) ? Number(n.detail) : 1;
-    const place = n.appName || 'the discussion';
+    const project = n.appName || '';
     const snippet = (n.messageContent || '').slice(0, 140);
-    const author = n.sourceUsername ? `@${n.sourceUsername}` : 'Someone';
+    const username = n.sourceUsername || '';
     const asked = count === 1 && n.requestNumber != null;
+    // Each line is a whole message, picked by what is known: who wrote, and
+    // the project's name.
+    const which = (username ? 0 : 2) + (project ? 0 : 1);
+    const names = { username, project };
     return {
       ...base,
       wrap: true,
       icon: asked ? '\u{1F4A1}' : '💬',
       by: null,
-      appLine: 'Discussion',
+      appLine: t('notifications:row.source.discussion'),
       ...(count > 1
-        ? headline(`${count} new messages in ${place}`, snippet ? `${author}: ${snippet}` : author)
-        : headline(asked ? `${author} asked for a change in ${place}` : `${author} in ${place}`, snippet || null)),
+        ? headline(
+          project ? t('notifications:row.channel.many', { count, project }) : t('notifications:row.channel.manyUnnamed', { count }),
+          snippet
+            ? (username ? t('notifications:row.channel.snippet', { username, message: snippet })
+              : t('notifications:row.channel.snippetSomeone', { message: snippet }))
+            : (username ? `@${username}` : t('notifications:row.channel.someone')),
+        )
+        : headline(asked ? t(CHANNEL_ASKED_IDS[which], names) : t(CHANNEL_SAID_IDS[which], names), snippet || null)),
     };
   }
 
@@ -2843,14 +3505,13 @@ function rowView(n) {
   // never anybody's name.
   if (n.kind === 'invite_opened' || n.kind === 'member_joined' || n.kind === 'first_message') {
     const count = /^\d{1,6}$/.test(String(n.detail || '')) ? Number(n.detail) : 1;
-    const more = count > 1 ? `, with ${count - 1} ${count === 2 ? 'other' : 'others'}` : '';
     if (n.kind === 'invite_opened') {
       return {
         ...base,
         wrap: true,
         icon: '\u{1F517}',
         by: null,
-        ...headline(count > 1 ? `${count} people opened your invite` : 'Someone opened your invite', null),
+        ...headline(count > 1 ? t('notifications:row.inviteLink.openedMany', { count }) : t('notifications:row.inviteLink.openedOne'), null),
       };
     }
     // 5 October (Page Turners): a first message is often what they want from
@@ -2865,8 +3526,12 @@ function rowView(n) {
       icon: asked ? '\u{1F4A1}' : '\u{1F44B}',
       by: n.sourceUsername || null,
       ...(n.kind === 'member_joined'
-        ? headline(`Joined through your invite${more}`, null)
-        : headline(asked ? 'Asked for a change' : `Said hi${more}`, (n.messageContent || '').slice(0, 140))),
+        ? headline(count > 1
+          ? t('notifications:row.inviteLink.joinedWithOthers', { count: count - 1 })
+          : t('notifications:row.inviteLink.joined'), null)
+        : headline(asked ? t('notifications:row.inviteLink.asked')
+          : (count > 1 ? t('notifications:row.inviteLink.saidHiWithOthers', { count: count - 1 })
+            : t('notifications:row.inviteLink.saidHi')), (n.messageContent || '').slice(0, 140))),
     };
   }
 
@@ -2881,12 +3546,12 @@ function rowView(n) {
   if (n.kind === 'collab_invite' || n.kind === 'collab_invite_accepted'
     || n.kind === 'approver_invite' || n.kind === 'approver_invite_accepted') {
     const label = n.kind === 'collab_invite'
-      ? (n.detail === 'join' ? 'Invited you to join' : 'Invited you to build with them')
+      ? (n.detail === 'join' ? t('notifications:row.collab.invitedJoin') : t('notifications:row.collab.invitedBuild'))
       : n.kind === 'collab_invite_accepted'
-        ? 'Joined through your invite'
+        ? t('notifications:row.collab.accepted')
         : n.kind === 'approver_invite'
-          ? 'Asked you to help approve changes'
-          : 'Can approve changes now';
+          ? t('notifications:row.collab.approverInvite')
+          : t('notifications:row.collab.approverAccepted');
     return {
       ...base,
       mb: false,
@@ -2904,16 +3569,17 @@ function rowView(n) {
     metaFlex: false,
     by: n.sourceUsername || null,
     ...headline(
-      n.kind === 'mention' ? 'Mentioned you'
-        : n.kind === 'reply' ? 'Replied to you'
+      n.kind === 'mention' ? t('notifications:row.chat.mention')
+        : n.kind === 'reply' ? t('notifications:row.chat.reply')
           // #2387: somebody answered in a reply thread you started or joined.
-          : n.kind === 'thread_reply' ? 'Replied in thread'
+          : n.kind === 'thread_reply' ? t('notifications:row.chat.threadReply')
             // #4535: somebody posted in a request's discussion you filed or
             // posted in; `detail` is the request's number.
             : n.kind === 'issue_thread_reply'
               ? (/^\d+$/.test(String(n.detail || ''))
-                ? `Replied on request #${n.detail}` : 'Replied on a request')
-              : 'Posted',
+                ? t('notifications:row.chat.requestReply', { number: n.detail })
+                : t('notifications:row.chat.requestReplyUnnumbered'))
+              : t('notifications:row.chat.posted'),
       (n.messageContent || '').slice(0, 140),
     ),
   };
@@ -2947,6 +3613,8 @@ function stampFields(ts) {
 Notifications._rowView = rowView;
 // B4: the sheet's rows, folded, for tests (a bot moment never folds).
 Notifications._screenViews = screenViews;
+// "One story": where a conversation row (and its push) opens, for tests.
+Notifications._conversationHref = conversationNotificationHref;
 
 // Published exactly where the classic <script> published it: at module
 // evaluation, which for the React entry is still before DOMContentLoaded. The

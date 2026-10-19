@@ -10,15 +10,50 @@ import { createLanguageRuntime } from './core';
 const runtime = createLanguageRuntime(catalogs);
 
 export const {
-  i18n, t, htmlText, languageName, registerNamespace, ensureNamespace,
+  i18n, t, htmlText, htmlRich, listText, languageName, registerNamespace, ensureNamespace,
   changeLanguage, applySessionLanguage, getLanguage, getPreference,
-  getNotice, subscribeNotice, dismissNotice,
+  getNotice, subscribeNotice, dismissNotice, getLanguages, subscribeLanguages,
 } = runtime;
 
-/** The languages Settings offers, in config order, with their own names. */
+/**
+ * The languages this build's own catalogs ship, in config order, with their
+ * own names: what Settings lists before the server's list arrives, and all it
+ * lists without one. getLanguages() is what is offered now.
+ */
 export const shippedLanguages: readonly { tag: string; name: string }[] = Object.freeze(
   Object.entries(catalogs.languages).map(([tag, name]) => ({ tag, name })),
 );
+
+const LIVE_TIMEOUT_MS = 8000;
+
+/**
+ * What the server's translation cache offers now (GET /api/languages): a
+ * language translated since this build, and newer packs for the ones it
+ * ships. Without it, the build's own catalogs stand. Resolves whether the
+ * list could be used — the same question a moved pack asks later, so core.ts
+ * calls this again through setLiveRefresh.
+ */
+async function loadLiveLanguages(): Promise<boolean> {
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), LIVE_TIMEOUT_MS);
+  try {
+    // no-cache: a caller asking again is asking because its list is old, and
+    // an old answer from a shared cache is exactly what it must not get.
+    const response = await fetch('/api/languages', { credentials: 'same-origin', signal: controller.signal, redirect: 'error', cache: 'no-cache' });
+    if (!response.ok) return false;
+    return runtime.setLiveCatalogs(await response.json());
+  } catch {
+    // Offline, or a server without the cache: the build's languages stand.
+    return false;
+  } finally {
+    clearTimeout(deadline);
+  }
+}
+
+if (typeof document !== 'undefined' && typeof location !== 'undefined' && typeof fetch === 'function') {
+  runtime.setLiveRefresh(loadLiveLanguages);
+  runtime.waitForLive(loadLiveLanguages());
+}
 
 /** The notice's way back: English, saved where this person's choice lives. */
 export function switchToEnglish(): Promise<boolean> {
@@ -30,8 +65,8 @@ export function switchToEnglish(): Promise<boolean> {
 // The legacy modules' adapter. Translate at render time, never at module
 // initialization, and repaint on `homeroom:language-changed`.
 (globalThis as unknown as { PlatformI18n: unknown }).PlatformI18n = {
-  t, htmlText, languageName, getLanguage, getPreference, changeLanguage,
-  applySessionLanguage, saveAccountLocale,
+  t, htmlText, htmlRich, listText, languageName, getLanguage, getPreference, changeLanguage,
+  applySessionLanguage, saveAccountLocale, getLanguages,
 };
 
 if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {

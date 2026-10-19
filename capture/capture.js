@@ -128,6 +128,21 @@ const VIEWPORT = {
   height: 800,
   deviceScaleFactor: resolveDeviceScaleFactor(process.env.DEVICE_SCALE_FACTOR),
 };
+// The checks' own density. A check asserts on the DOM and the console, never
+// on pixels, and painting every check page at 2× is four times the pixels:
+// on 10 Oct 2026 the browser pod spent a 733-check run at 7.9 of its 8 CPUs,
+// throttled most of the time, while the preview it was testing idled under
+// one. The platform sends TEST_DEVICE_SCALE_FACTOR=1; without it the checks
+// keep the run's density, as before. The shots keep DEVICE_SCALE_FACTOR.
+function resolveTestViewport(env) {
+  const raw = (env || {}).TEST_DEVICE_SCALE_FACTOR;
+  return {
+    ...VIEWPORT,
+    deviceScaleFactor: raw == null || String(raw).trim() === ''
+      ? VIEWPORT.deviceScaleFactor : resolveDeviceScaleFactor(raw),
+  };
+}
+const TEST_VIEWPORT = resolveTestViewport(process.env);
 
 // #768: optional per-target viewport override ({ width, height } from the
 // TARGETS entry — a `@mobile` testing path). Bounds keep a corrupted value
@@ -522,6 +537,8 @@ function setFrameSink(fn) {
   // failing one because a previous run had recorded it passing.
   _testStatus.clear();
   _retryOf.clear();
+  _startedMs.clear();
+  _podLabel = null;
   _diagCount = 0;
 }
 
@@ -574,6 +591,13 @@ const _testStatus = new Map();
 // are four, so a retry frame cannot be emitted without saying what it is a
 // retry OF.
 const _retryOf = new Map();
+// A primary check's index -> when its group started, in ms after this pod
+// began running checks, and which pod this is (its shard, or its retry slot).
+// The platform reads the pair to tell a run's own fault from a flaky check:
+// a burst of failures in a pod's first seconds whose retries all pass is
+// the preview not being ready yet, not the checks (src/services/check-signals.js).
+const _startedMs = new Map();
+let _podLabel = null;
 function emitTest(index, status, loadStatus, payload) {
   const key = Number(index) || 0;
   if (_emittedTests.has(key)) return false;
@@ -581,10 +605,13 @@ function emitTest(index, status, loadStatus, payload) {
   const verdict = status === 'pass' ? 'pass' : 'fail';
   _testStatus.set(key, verdict);
   const of = _retryOf.get(key);
+  const started = _startedMs.get(key);
   // In the base64 payload, not the header: the header's attributes are a
   // fixed shape older platforms parse positionally-ish, and an unknown key
   // in the JSON is ignored by any reader that does not know about it.
-  const json = JSON.stringify(of == null ? (payload || {}) : { ...(payload || {}), retryOf: of });
+  const json = JSON.stringify(of != null
+    ? { ...(payload || {}), retryOf: of }
+    : (started != null ? { ...(payload || {}), startedMs: started, pod: _podLabel } : (payload || {})));
   _sink(
     `__USERNODE_TEST__ index=${index || 0} status=${verdict} loadStatus=${loadStatus || 0}\n`
   );
@@ -603,8 +630,12 @@ function emitTest(index, status, loadStatus, payload) {
 // an OLDER platform reading a NEWER image is unaffected by this line. The
 // other direction (new platform, old image) sees no sentinel at all and
 // falls back to comparing frame count against dispatched count.
-function emitTestsDone(ran, expected, deadline) {
-  _sink(`__USERNODE_TESTS_DONE__ ran=${ran || 0} expected=${expected || 0} deadline=${deadline ? 1 : 0}\n`);
+//
+// A shard (TEST_SHARD_INDEX / TEST_SHARD_COUNT) counts its own checks and
+// says which shard it was; the platform adds the shards' lines up.
+function emitTestsDone(ran, expected, deadline, shard = null) {
+  _sink(`__USERNODE_TESTS_DONE__ ran=${ran || 0} expected=${expected || 0} deadline=${deadline ? 1 : 0}`
+    + `${shard ? ` shard=${shard.index}/${shard.count}` : ''}\n`);
 }
 
 function execFileAsync(cmd, args, opts = {}) {
@@ -1097,6 +1128,11 @@ function resolveTests(env, readStdin) {
       expectSelector: t.expectSelector ? String(t.expectSelector).slice(0, 256) : '',
       expectText: t.expectText ? String(t.expectText).slice(0, 256) : '',
       allowConsoleErrors: !!t.allowConsoleErrors,
+      // How groupTests loads the check's page. The platform sets these
+      // from the app's dapp.json rules (app-manifest.js checkLoadFlags);
+      // only when set, so a list that uses none reads exactly as before.
+      ...(t.coldLoad === true ? { coldLoad: true } : {}),
+      ...(t.endsGroup === true ? { endsGroup: true } : {}),
     });
   }
   return out;
@@ -1161,6 +1197,62 @@ const RETRY_RUNS = 3;
 const RETRY_MAX_CHECKS = 10;
 // And none are, when this fraction of the suite is red: that is the change.
 const RETRY_SKIP_FRACTION = 0.25;
+
+// Each shard numbers its retries from its own base, so two shards' retries
+// of different checks never share an index once the platform joins their
+// output.
+const RETRY_SHARD_STRIDE = 100000;
+
+// ── Shards ──────────────────────────────────────────────────────────────
+//
+// The platform can split one run's checks across several browser pods
+// (services/visuals.js, CAPTURE_SHARDS). Every pod gets the whole list and
+// TEST_SHARD_INDEX / TEST_SHARD_COUNT, groups the checks exactly as an
+// unsharded run would, and runs only the groups assigned to its index. The
+// assignment is a pure function of the list, so the pods agree on it without
+// talking to each other, and every group lands in exactly one shard.
+const MAX_SHARDS = 16;
+
+function testShard(env) {
+  const e = env || {};
+  const count = parseInt(e.TEST_SHARD_COUNT, 10);
+  const index = parseInt(e.TEST_SHARD_INDEX, 10);
+  if (!Number.isInteger(count) || count < 2 || count > MAX_SHARDS) return null;
+  if (!Number.isInteger(index) || index < 0 || index >= count) return null;
+  return { index, count };
+}
+
+// What a group costs, roughly: its cold load dominates, each further hash
+// cohort is a switch and a settle, and each check an assertion. Only the
+// order matters, for longest-first.
+function groupCost(group) {
+  const tests = Array.isArray(group) ? group : [group];
+  return 3 + Math.max(0, cohortsOf(tests).length - 1) + 0.1 * tests.length;
+}
+
+// The groups, heaviest first, ties in their original order. A pool that
+// takes a heavy group last finishes on it alone; taking the heavy ones
+// first lets the light ones fill in around them.
+function heaviestFirst(groups) {
+  return (groups || [])
+    .map((group, position) => ({ group, position, cost: groupCost(group) }))
+    .sort((a, b) => (b.cost - a.cost) || (a.position - b.position))
+    .map((g) => g.group);
+}
+
+// Split the groups into `count` shards of about equal cost: each group, the
+// heaviest first, goes to the shard with the least so far (the lowest index
+// on a tie). Every shard's groups stay heaviest first.
+function shardGroups(groups, count) {
+  const shards = Array.from({ length: Math.max(1, count) }, () => ({ load: 0, groups: [] }));
+  for (const group of heaviestFirst(groups)) {
+    let target = shards[0];
+    for (const shard of shards) if (shard.load < target.load) target = shard;
+    target.groups.push(group);
+    target.load += groupCost(group);
+  }
+  return shards.map((shard) => shard.groups);
+}
 
 function retryRuns(env) {
   const raw = parseInt((env || {}).TEST_RETRY_RUNS, 10);
@@ -1295,10 +1387,60 @@ function groupTestsByDocument(tests, opts) {
     const cohorts = hoistBareCohort(
       Array.from(byHash.entries()).map(([hash, members]) => ({ hash, tests: members }))
     );
-    for (let i = 0; i < cohorts.length; i += cap) {
+    // A cohort at one of the app's routing boundaries ends its group (see
+    // groupTests): it is still reached by a switch, but last, so nothing is
+    // switched to after it. That is ordering only, and it must never change
+    // WHICH checks are loaded rather than switched to. A cohort that leads a
+    // group is never reached by a switch, so a new leader, boundary or not,
+    // would be judged without its incoming switch: the exemption a plain
+    // address must not get, and a truthful boundary must not hand to another
+    // screen's navigation bug (Codex, review of 8764).
+    //
+    // So the chunks are plain grouping's own, with the same leaders, and only
+    // what follows a leader moves:
+    //   * a boundary that leads its chunk keeps it, alone: the cohorts after
+    //     it join the other chunks (the smallest first), switched to there as
+    //     they were here. With no chunk led by an ordinary cohort to take
+    //     them, they stay;
+    //   * each chunk's first boundary that is not its leader goes to that
+    //     chunk's end, and a further one to the end of a chunk that has none
+    //     yet (past the cap if it must).
+    // A boundary that finds no such place stays where it is, an ordinary
+    // cohort: a check switched to after it may fall back, which costs time
+    // and never a verdict. Same number of groups, the same leaders, so every
+    // check plain grouping reaches by a switch is still reached by one. A bare
+    // cohort cannot be a boundary (a boundary is a fragment route).
+    const ends = (c) => !!c.hash && c.tests.some((t) => t && t.endsGroup);
+    const chunks = [];
+    for (let i = 0; i < cohorts.length; i += cap) chunks.push({ cohorts: cohorts.slice(i, i + cap), ended: false });
+    const takers = chunks.filter((ch) => !ends(ch.cohorts[0]));
+    for (const ch of chunks) {
+      if (!ends(ch.cohorts[0]) || ch.cohorts.length < 2 || !takers.length) continue;
+      for (const c of ch.cohorts.splice(1)) {
+        const host = takers.reduce((a, b) => (b.cohorts.length < a.cohorts.length ? b : a));
+        host.cohorts.push(c);
+      }
+    }
+    const spare = [];
+    for (const ch of chunks) {
+      const movable = ch.cohorts.slice(1).filter(ends);
+      if (!movable.length) continue;
+      ch.cohorts.splice(ch.cohorts.indexOf(movable[0]), 1);
+      ch.cohorts.push(movable[0]);
+      ch.ended = true;
+      for (const c of movable.slice(1)) spare.push({ c, from: ch });
+    }
+    for (const { c, from } of spare) {
+      const host = chunks.find((ch) => !ch.ended);
+      if (!host) break;
+      from.cohorts.splice(from.cohorts.indexOf(c), 1);
+      host.cohorts.push(c);
+      host.ended = true;
+    }
+    for (const ch of chunks) {
       // Flatten the chunk: a group stays a plain array of tests, which is what
       // the pool's budget/timeout/emit paths already iterate.
-      groups.push([].concat(...cohorts.slice(i, i + cap).map((c) => c.tests)));
+      groups.push([].concat(...ch.cohorts.map((c) => c.tests)));
     }
   }
   return groups;
@@ -1317,13 +1459,41 @@ function groupTestsByDocument(tests, opts) {
 // navigation on purpose. Nothing else in the suite is affected: they are
 // pulled out before grouping and appended after, so a normal run groups
 // exactly as it did.
+//
+// A `coldLoad` check is exempt from DOCUMENT grouping, never from sharing a
+// load with the checks of its own URL. Its address carries one of the app's
+// boot parameters (dapp.json `bootParams`): a one-time deep link scripted at
+// boot (Homeroom's `?shot=`, `?details=1`), which an address change on a
+// loaded page rightly does not replay. Reached by a hash switch it could only
+// fail and be re-run cold by runTestGroup's fallback (#1146), after waiting
+// out the whole assertion window on a screen that was not coming (5-17s a
+// cohort in Homeroom's runs). Given its own load from the start, it is judged
+// exactly as the ungrouped runner judged it, which is what that fallback
+// re-runs anyway: same navigation, same window, same console errors. Only
+// the wait before it goes.
+//
+// An `endsGroup` check stays in its document's group and is reached by a
+// switch like any other; nothing is switched to after it
+// (groupTestsByDocument). Its route is one of the app's routing boundaries
+// (dapp.json `routingBoundaries`): a screen that sends the next address
+// change somewhere else, as a running app on a desktop opens the pages about
+// it in a side panel beside it (Homeroom's). A check switched to after it
+// would be judged on a screen its address does not draw.
+//
+// The platform sets both bits from the app's rules (app-manifest.js
+// checkLoadFlags); a check cannot ask for either, and this file knows no
+// app's parameters or routes. Nothing shortens the window a switch gets: a
+// shorter one changed verdicts both ways (see
+// tests/capture-switch-window.test.js).
 function groupTests(tests, env) {
   const all = Array.isArray(tests) ? tests : [];
   const solo = all.filter((t) => t && t.solo);
-  const shared = solo.length ? all.filter((t) => !(t && t.solo)) : all;
+  const cold = all.filter((t) => t && !t.solo && t.coldLoad);
+  const shared = (solo.length || cold.length) ? all.filter((t) => !(t && (t.solo || t.coldLoad))) : all;
   const groups = groupByDocument(env)
     ? groupTestsByDocument(shared, { cap: hashGroupCap(env) })
     : groupTestsByUrl(shared);
+  for (const g of groupTestsByUrl(cold)) groups.push(g);
   for (const t of solo) groups.push([t]);
   return groups;
 }
@@ -1537,10 +1707,12 @@ async function readRenderHealth(page, stylesheets, { recheckMs = RENDER_BLANK_RE
 // failures, and a run that overlapped a rollout went round again and again.
 //
 // It is never the app's doing, so a group whose cold load meets it starts
-// over once, on a fresh context, before it has reported anything. What
-// changed in the pod is not known yet, so the run also writes down what the
-// pod's network looked like at that moment (emitDiag), which the platform
-// logs.
+// over once, on a fresh context, before it has reported anything. The run
+// also writes down what the pod's network looked like at that moment
+// (emitDiag), which the platform logs. Those lines found the cause, the pod's
+// IPv6 address settling after the browser started; the run now waits for it
+// before its first load (waitForNetworkSettled, below), and the start-over
+// stays for anything else that changes the network.
 const NETWORK_CHANGED_RE = /net::ERR_NETWORK_CHANGED/;
 const NETWORK_CHANGED_RETRY_DELAY_MS = 1000;
 // One run whose every group meets it must not write a frame per group.
@@ -1579,6 +1751,108 @@ function networkSnapshot() {
   };
 }
 
+// ── Waiting for the pod's IPv6 address to settle ────────────────────────
+//
+// What changed. From 16 to 18 Oct 2026, 56 of 90 Homeroom runs started a
+// group over (142 times), and the diag lines above say when: 0.8 to 1.3 s
+// into the pod for a cancelled navigation, 2.5 to 3.5 s for a cancelled
+// subresource (found at the end of its load). Of the pods with more than
+// one such line, most had them all within 0.05 s of each other: one change
+// across the pod, not a page's doing. The pod's DNS files were written
+// 0.1 to 0.3 s BEFORE this process started, so they did not change under
+// the browser. What does is eth0's IPv6 link-local address: the kernel adds
+// it as tentative (flag 0x40 in /proc/net/if_inet6) when the pod's link
+// comes up, runs duplicate address detection, and 1.2 to 2.1 s later clears
+// the flag. Chromium's address tracker compares an address's whole netlink
+// record, flags included, so the cleared flag is an IP address change to it:
+// it aborts the lookups and connections in flight with ERR_NETWORK_CHANGED.
+// A pod is a few hundred milliseconds old when this process starts, so its
+// first loads ran straight into that. Reproduced in a fresh network
+// namespace: Chromium reports the change within milliseconds of the flag
+// clearing, and a load waiting on DNS at that moment fails; launched once no
+// address is tentative, the same load succeeds every time.
+//
+// So the run reads the addresses while Chromium launches, and when one is
+// still tentative it waits, at most NETWORK_SETTLE_MAX_MS in all, for
+// detection to finish before the first load. A pod whose addresses are
+// already settled waits for nothing. The wait is advisory: if it fails, the
+// run goes on without it. The start-over above stays as the safety net.
+const IFA_F_TENTATIVE = 0x40;
+// A failed detection leaves the address tentative for good: never waited on.
+const IFA_F_DADFAILED = 0x08;
+const NETWORK_SETTLE_MAX_MS = 3000;
+const NETWORK_SETTLE_POLL_MS = 50;
+// Chromium hears the change on its own thread and then tells its socket
+// pools; a load started in that gap could still meet it. Counted within the
+// cap.
+const NETWORK_SETTLE_GRACE_MS = 150;
+
+// The interfaces with an address still being checked, from the text of
+// /proc/net/if_inet6 (address, index, prefix length, scope, flags, name).
+function tentativeInterfaces(text) {
+  const names = [];
+  for (const line of String(text || '').split('\n')) {
+    const f = line.trim().split(/\s+/);
+    if (f.length < 6) continue;
+    if (!/^[0-9a-f]{1,8}$/i.test(f[4])) continue;
+    const flags = parseInt(f[4], 16);
+    if ((flags & IFA_F_TENTATIVE) && !(flags & IFA_F_DADFAILED) && !names.includes(f[5])) names.push(f[5]);
+  }
+  return names;
+}
+
+// Resolves, never rejects, with what it saw: { waitedMs, tentative (the
+// interfaces it waited on), timedOut }, or null when the wait itself failed;
+// a run whose wait fails goes on as before it existed. The whole wait, grace
+// included, stays within `maxMs`. `read`, `sleep` and `now` are for the
+// tests.
+async function waitForNetworkSettled(opts = {}) {
+  try {
+    const read = typeof opts.read === 'function' ? opts.read : () => readSmallFile('/proc/net/if_inet6');
+    const pause = typeof opts.sleep === 'function' ? opts.sleep : sleep;
+    const now = typeof opts.now === 'function' ? opts.now : () => Date.now();
+    const maxMs = Number.isFinite(opts.maxMs) ? opts.maxMs : NETWORK_SETTLE_MAX_MS;
+    const pollMs = Number.isFinite(opts.pollMs) ? opts.pollMs : NETWORK_SETTLE_POLL_MS;
+    const graceMs = Number.isFinite(opts.graceMs) ? opts.graceMs : NETWORK_SETTLE_GRACE_MS;
+    const startedAt = now();
+    const left = () => Math.max(0, maxMs - (now() - startedAt));
+    const readTentative = () => {
+      try { return tentativeInterfaces(read()); } catch { return []; }
+    };
+    let pending = readTentative();
+    if (!pending.length) return { waitedMs: 0, tentative: [], timedOut: false };
+    const tentative = pending.slice();
+    while (pending.length) {
+      if (left() <= 0) {
+        return { waitedMs: Math.round(now() - startedAt), tentative, timedOut: true };
+      }
+      await pause(Math.min(pollMs, left()));
+      pending = readTentative();
+    }
+    const grace = Math.min(graceMs, left());
+    if (grace > 0) await pause(grace);
+    return { waitedMs: Math.round(now() - startedAt), tentative, timedOut: false };
+  } catch {
+    return null;
+  }
+}
+
+// Starts the wait alongside the browser's launch, not before it: a pod whose
+// address has settled pays nothing, and one still in detection overlaps the
+// wait with the launch. Returns once both are done, so no page loads first.
+// The wait is advisory: if it throws or rejects, the run goes on with the
+// browser it launched (networkSettle: null). A failed launch still fails.
+async function launchWhenSettled(launch, settle = waitForNetworkSettled) {
+  let settling;
+  try {
+    settling = Promise.resolve(settle()).catch(() => null);
+  } catch {
+    settling = Promise.resolve(null);
+  }
+  const browser = await launch();
+  return { browser, networkSettle: await settling };
+}
+
 // The document a check loaded, without its query: the checks' URLs carry a
 // session token.
 function documentOf(url) {
@@ -1594,12 +1868,34 @@ function documentOf(url) {
 // a line on another stream could land inside one when Kubernetes merges them.
 //   __USERNODE_DIAG__ kind=<kind> <base64 JSON>
 // The platform's frame readers skip any line they do not know.
-function emitDiag(kind, data) {
-  if (_diagCount >= MAX_DIAG_FRAMES) return false;
-  _diagCount += 1;
+// `uncapped` is for the one summary a run writes at its end (checks-timing),
+// which must neither be crowded out by nor crowd out the frames above.
+function emitDiag(kind, data, { uncapped = false } = {}) {
+  if (!uncapped) {
+    if (_diagCount >= MAX_DIAG_FRAMES) return false;
+    _diagCount += 1;
+  }
   const json = JSON.stringify(data || {});
   _sink(`__USERNODE_DIAG__ kind=${kind} ${Buffer.from(json, 'utf8').toString('base64')}\n`);
   return true;
+}
+
+// Nearest-rank percentile over a numeric array (ms), 0 for none.
+function percentile(values, p) {
+  const xs = values.filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+  if (!xs.length) return 0;
+  return Math.round(xs[Math.min(xs.length - 1, Math.max(0, Math.ceil((p / 100) * xs.length) - 1))]);
+}
+
+function timingSummary(values) {
+  const xs = values.filter((v) => Number.isFinite(v));
+  return {
+    n: xs.length,
+    p50: percentile(xs, 50),
+    p90: percentile(xs, 90),
+    max: percentile(xs, 100),
+    mean: xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : 0,
+  };
 }
 
 // #47: run the declared tests for ONE route against the staging build.
@@ -1642,6 +1938,9 @@ async function runTestGroup(browser, group, opts) {
   const tests = Array.isArray(group) ? group : [group];
   const cohorts = cohortsOf(tests);
   const lead = tests[0];
+  // When the caller asks: how long the cold load took, from opening the
+  // context to the first settle (the checks-timing summary in runTests).
+  const startedAt = Date.now();
   const quietMs = Number.isFinite(o.settleQuietMs) ? o.settleQuietMs : SETTLE_QUIET_MS;
   const maxMs = Number.isFinite(o.settleMaxMs) ? o.settleMaxMs : SETTLE_MAX_MS;
   const assertMax = Number.isFinite(o.assertMaxMs) ? o.assertMaxMs : ASSERT_MAX_MS;
@@ -1707,7 +2006,7 @@ async function runTestGroup(browser, group, opts) {
       context = await browser.createBrowserContext();
     }
     page = await (context || browser).newPage();
-    await page.setViewport(VIEWPORT);
+    await page.setViewport(TEST_VIEWPORT);
 
     // The settle's activity clock. Every signal that the document is still
     // doing something bumps it; `waitForQuiet` returns once nothing has.
@@ -1810,6 +2109,7 @@ async function runTestGroup(browser, group, opts) {
     for (let ci = 0; ci < cohorts.length; ci += 1) {
       const cohort = cohorts[ci];
       let cohortFrom = 0;
+      const cohortStartedAt = Date.now();
       if (ci === 0) {
         // Stamp the clock so the cold load always gets a listening window,
         // then wait it out.
@@ -1824,6 +2124,7 @@ async function runTestGroup(browser, group, opts) {
             return await startOver('subresource');
           }
         }
+        if (o.timing) o.timing.loadMs = Date.now() - startedAt;
       } else {
         await consoleSink.settle();
         cohortFrom = consoleErrors.length;
@@ -1854,6 +2155,12 @@ async function runTestGroup(browser, group, opts) {
       // Evaluated BEFORE the console errors are frozen so the cold-load
       // fallback below can re-run them on a reloaded document.
       let presence = loadFailure ? new Map() : await pollPresence(cohort.tests);
+      // The checks of this cohort that held only on a reloaded document,
+      // each with how long the hash switch was waited on before the reload
+      // and the cohort's whole lane time. Carried in that check's own frame
+      // (`cohortFallback`), which already names its path: the run's
+      // checks-timing line keeps only the count and the sum.
+      const fellBack = new Map();
 
       // ── A hash switch is not always equivalent to a cold load (#1146) ──
       //
@@ -1887,6 +2194,12 @@ async function runTestGroup(browser, group, opts) {
       // not reload anything.
       if (ci > 0 && !loadFailure && cohortReloadFallback(o.env)
         && [...presence.values()].some(Boolean)) {
+        // Counted for the run's checks-timing line: how many cohorts a hash
+        // switch could not reach, and the lane time they took from the
+        // switch to their verdict. A count and a sum, never a URL.
+        if (o.timing) o.timing.fallbacks = (o.timing.fallbacks || 0) + 1;
+        const switchPresence = presence;
+        const waitMs = Date.now() - cohortStartedAt;
         try {
           await page.goto('about:blank', { timeout: NAV_TIMEOUT_MS });
           const resp = await gotoTestDocument(page, cohort.tests[0].url);
@@ -1903,6 +2216,16 @@ async function runTestGroup(browser, group, opts) {
           // The hash-switch verdict stands. A fallback that cannot navigate
           // must not turn a real assertion failure into a load error.
           pushErr('load', `cohort reload of ${cohort.hash} failed: ${err.message}`, cohort.tests[0].url);
+        }
+        const laneMs = Date.now() - cohortStartedAt;
+        if (o.timing) o.timing.fallbackMs = (o.timing.fallbackMs || 0) + laneMs;
+        // Only the checks the reload changed: unmet after the switch, met
+        // after it. A sibling that already held did not need it, and one
+        // that fails either way is a failure, not a navigation gap.
+        if (presence !== switchPresence) {
+          for (const t of cohort.tests) {
+            if (switchPresence.get(t) && !presence.get(t)) fellBack.set(t, { waitMs, ms: laneMs });
+          }
         }
       }
 
@@ -1938,6 +2261,7 @@ async function runTestGroup(browser, group, opts) {
           consoleErrors: t.allowConsoleErrors ? [] : cohortErrors,
           failureReason: pass ? '' : failureReason,
           ...(render ? { render } : {}),
+          ...(fellBack.has(t) ? { cohortFallback: fellBack.get(t) } : {}),
         });
       }
     }
@@ -2043,13 +2367,17 @@ async function runTests(browser, tests, opts) {
   const budgetMs = Number(o.deadlineMs) > 0 ? Number(o.deadlineMs) : 650000;
   const now = typeof o.now === 'function' ? o.now : () => Date.now();
 
+  const env = o.env || process.env;
+  const shard = o.shard !== undefined ? o.shard : testShard(env);
   if (!list.length) {
-    emitTestsDone(0, 0, false);
+    emitTestsDone(0, 0, false, shard);
     return { ran: 0, expected: 0, deadline: false };
   }
 
-  const env = o.env || process.env;
-  const groups = typeof o.groupTests === 'function' ? o.groupTests(list) : groupTests(list, env);
+  const allGroups = typeof o.groupTests === 'function' ? o.groupTests(list) : groupTests(list, env);
+  const groups = shard ? shardGroups(allGroups, shard.count)[shard.index] : heaviestFirst(allGroups);
+  // The checks this run answers for: a shard's own, or all of them.
+  const own = shard ? groups.flat() : list;
   const settleOpts = {
     settleQuietMs: Number.isFinite(o.settleQuietMs) ? o.settleQuietMs : settleQuietMs(env),
     settleMaxMs: Number.isFinite(o.settleMaxMs) ? o.settleMaxMs : settleMaxMs(env),
@@ -2059,10 +2387,29 @@ async function runTests(browser, tests, opts) {
     env,
   };
   const startedAt = now();
+  const wallStartedAt = Date.now();
+  // Which pod the stamped frames came from: a sharded run's stdout is its
+  // pods' joined, and each pod's clock starts on its own.
+  _podLabel = shard ? `${shard.index}/${shard.count}`
+    : (parseInt(env.TEST_RETRY_SLOT, 10) > 0 ? `slot ${parseInt(env.TEST_RETRY_SLOT, 10)}` : null);
   let ran = 0;
   let hitDeadline = false;
+  // Wall-clock milliseconds per group (and per cold load), for the summary
+  // the run writes at its end.
+  const groupTimes = [];
+  const retryTimes = [];
+  const loadTimes = [];
+  // Hash cohorts that needed the cold-load fallback, and their lane time.
+  const fallbacks = { n: 0, ms: 0 };
 
   const runOne = async (group, { counts = true } = {}) => {
+    const groupStartedAt = Date.now();
+    // When a primary check's group started in this pod's run (see
+    // _startedMs). A retry is not stamped: it names its primary instead.
+    if (counts) {
+      for (const t of group) _startedMs.set(Number(t.index) || 0, groupStartedAt - wallStartedAt);
+    }
+    const timing = {};
     const cohortCount = cohortsOf(group).length;
     const groupBudgetMs = perTestMs
       + navBudgetMs
@@ -2078,6 +2425,8 @@ async function runTests(browser, tests, opts) {
       // The group's own ceiling, so a rolling assert window can never
       // outlive the budget this race enforces (see ASSERT_REPORT_RESERVE_MS).
       const groupOpts = { ...settleOpts, groupDeadlineAt: now() + groupBudgetMs };
+      // Where the group writes how long its cold load took.
+      groupOpts.timing = timing;
       outcome = await Promise.race([
         Promise.resolve()
           .then(() => runTestGroup(browser, group, groupOpts))
@@ -2105,6 +2454,12 @@ async function runTests(browser, tests, opts) {
       }
     }
     if (counts) ran += group.length;
+    (counts ? groupTimes : retryTimes).push(Date.now() - groupStartedAt);
+    if (counts && Number.isFinite(timing.loadMs)) loadTimes.push(timing.loadMs);
+    if (timing.fallbacks) {
+      fallbacks.n += timing.fallbacks;
+      fallbacks.ms += Math.round(timing.fallbackMs || 0);
+    }
   };
 
   // Every group straight through the pool — with per-group contexts there
@@ -2145,10 +2500,15 @@ async function runTests(browser, tests, opts) {
   // stops the pass, because that run is red whatever the rest would say.
   const retries = retryRuns(env);
   const failedPrimaries = retries > 0
-    ? list.filter((t) => _testStatus.get(Number(t.index) || 0) === 'fail')
+    ? own.filter((t) => _testStatus.get(Number(t.index) || 0) === 'fail')
     : [];
-  const tooManyRed = failedPrimaries.length > list.length * RETRY_SKIP_FRACTION;
-  let nextIndex = RETRY_INDEX_BASE;
+  const tooManyRed = failedPrimaries.length > own.length * RETRY_SKIP_FRACTION;
+  // A shard's retries, and a sweep's (TEST_RETRY_SLOT, one past the last
+  // shard), each start from a base of their own.
+  const retrySlot = shard
+    ? shard.index
+    : Math.min(MAX_SHARDS, Math.max(0, parseInt(env.TEST_RETRY_SLOT, 10) || 0));
+  let nextIndex = RETRY_INDEX_BASE + retrySlot * RETRY_SHARD_STRIDE;
   for (let offset = 0;
     failedPrimaries.length && !tooManyRed && !hitDeadline && offset < failedPrimaries.length;
     offset += RETRY_MAX_CHECKS) {
@@ -2184,11 +2544,31 @@ async function runTests(browser, tests, opts) {
     if (!allRecovered) break;
   }
 
+  // How long this run's groups took, in one line the platform logs
+  // (visuals.js parseDiagnostics). Wall clock, not CPU: it is what a check
+  // run waits on. No verdict reads it. Nothing in it names a URL.
+  // `fallbacks` counts the hash cohorts that had to be loaded cold (#1146)
+  // and the lane time they took: the cost grouping did not save. One on a
+  // plain address is a navigation bug in the app; an app's boot parameters
+  // and routing boundaries are what it declares instead (see groupTests).
+  emitDiag('checks-timing', {
+    shard: shard ? `${shard.index}/${shard.count}` : null,
+    lanes: Math.min(concurrency, groups.length),
+    wallMs: Date.now() - wallStartedAt,
+    groups: timingSummary(groupTimes),
+    loads: timingSummary(loadTimes),
+    retries: timingSummary(retryTimes),
+    fallbacks,
+    // What waiting for the pod's IPv6 address cost this pod (see
+    // waitForNetworkSettled), or null when the caller did not wait.
+    networkSettle: o.networkSettle || null,
+  }, { uncapped: true });
+
   // `ran` and `expected` still count DECLARED checks only. A retry is a
   // second opinion on a check the suite already ran, not another check, and
   // the platform's "did every check report?" arithmetic reads these two.
-  emitTestsDone(ran, list.length, hitDeadline);
-  return { ran, expected: list.length, deadline: hitDeadline };
+  emitTestsDone(ran, own.length, hitDeadline, shard);
+  return { ran, expected: own.length, deadline: hitDeadline };
 }
 
 async function main() {
@@ -2203,11 +2583,11 @@ async function main() {
   // outside the capture image) can require this file for parseCookie /
   // resolveTargets.
   const puppeteer = require('puppeteer-core');
-  const browser = await puppeteer.launch({
+  const { browser, networkSettle } = await launchWhenSettled(() => puppeteer.launch({
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
     headless: true,
     args: CHROMIUM_LAUNCH_ARGS,
-  });
+  }));
 
   const media = mediaEnabled(process.env);
   const haveTests = tests.length > 0;
@@ -2262,6 +2642,7 @@ async function main() {
         testTimeoutMs: testTimeoutMs(process.env),
         deadlineMs: testsDeadlineMs(process.env),
         env: process.env,
+        networkSettle,
       })
       : Promise.resolve();
     // Settle both before closing the browser: a media-pass failure must not
@@ -2289,4 +2670,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { networkSnapshot, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { timingSummary, testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, tentativeInterfaces, waitForNetworkSettled, launchWhenSettled, NETWORK_SETTLE_MAX_MS, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };

@@ -40,7 +40,7 @@ test('shots worker reports the last browser tool without retaining its inputs or
       briefToolAvailable: true, saveShotToolAvailable: true,
       skipChangeToolAvailable: true,
       browserMemberToolCount: 0, browserAdminToolCount: 0, browserFullAdminToolCount: 0,
-      browserGuestToolCount: 0, browserPhoneToolCount: 0 },
+      browserGuestToolCount: 0, browserPhoneToolCount: 0, browserInvitedToolCount: 0 },
     { kind: 'first_stream' },
     { kind: 'first_output' },
     { kind: 'tool_start', sequence: 1, tool: 'browser_navigate', persona: 'member' },
@@ -67,7 +67,7 @@ test('provider init distinguishes unavailable shots tools from absent tool metad
     briefToolAvailable: false, saveShotToolAvailable: false,
     skipChangeToolAvailable: false,
     browserMemberToolCount: 1, browserAdminToolCount: 0, browserFullAdminToolCount: 0,
-    browserGuestToolCount: 2, browserPhoneToolCount: 3,
+    browserGuestToolCount: 2, browserPhoneToolCount: 3, browserInvitedToolCount: 0,
   }]);
 
   const missing = [];
@@ -80,6 +80,7 @@ test('provider init distinguishes unavailable shots tools from absent tool metad
     skipChangeToolAvailable: null,
     browserMemberToolCount: null, browserAdminToolCount: null,
     browserFullAdminToolCount: null, browserGuestToolCount: null, browserPhoneToolCount: null,
+    browserInvitedToolCount: null,
   }]);
 });
 
@@ -161,7 +162,7 @@ test('the shots tools are named in diagnostics; the retired shots tools are not'
   const events = [];
   const state = worker.newWatchState();
   state.shotsDiagnosticObserver = (event) => events.push(event);
-  const names = ['get_brief', 'save_shot', 'save_clip', 'skip_change', 'fail_request',
+  const names = ['get_brief', 'save_shot', 'save_clip', 'skip_change', 'fail_request', 'control_request', 'upload_file',
     'evidence_get_context', 'evidence_run_plan', 'evidence_finish', 'evidence_capture', 'evidence_report_blocker'];
   worker.parseLine(JSON.stringify({
     type: 'assistant', message: { content: names.map((name, index) => ({
@@ -169,10 +170,30 @@ test('the shots tools are named in diagnostics; the retired shots tools are not'
     })) },
   }), () => {}, state);
   assert.deepEqual(events.filter((event) => event.kind === 'tool_start').map(({ tool }) => tool), [
-    'get_brief', 'save_shot', 'save_clip', 'skip_change', 'fail_request',
+    'get_brief', 'save_shot', 'save_clip', 'skip_change', 'fail_request', 'control_request', 'upload_file',
     'other', 'other', 'other', 'other', 'other',
   ]);
   assert.doesNotMatch(JSON.stringify(events), /private-change/);
+});
+
+// What the proxy did to a request (held or failed) and how a sample upload
+// went reach the trace as fixed words and numbers, never a path or a name.
+test('a held or failed request and a sample upload reach the trace as fixed words only', () => {
+  const orchestrator = require('../src/services/shots-orchestrator');
+  const metrics = orchestrator.newRunMetrics();
+  for (const raw of [
+    { kind: 'controlled_failure_set', enabled: true, mode: 'hold', path: '/api/private' },
+    { kind: 'controlled_failure_hit', mode: 'hold', side: 'head', hitOrdinal: 2 },
+    { kind: 'controlled_failure_hit', mode: 'evaluate', side: 'base', hitOrdinal: 3 },
+    { kind: 'sample_upload', persona: 'member', phone: true, outcome: 'timeout', count: 2, files: ['landscape.png'] },
+  ]) orchestrator.recordAgentDiagnostic(metrics, raw);
+  const events = metrics.agentActivity.events.map(({ atMs: _atMs, ...event }) => event);
+  assert.deepEqual(events, [
+    { kind: 'controlled_failure_set', enabled: true, mode: 'hold' },
+    { kind: 'controlled_failure_hit', hitOrdinal: 2, mode: 'hold', side: 'head' },
+    { kind: 'controlled_failure_hit', hitOrdinal: 3, side: 'base' },
+    { kind: 'sample_upload', outcome: 'timeout', count: 2, persona: 'member', phone: true },
+  ]);
 });
 
 test('shots diagnostics classify unknown tools and phases without copying their names', () => {

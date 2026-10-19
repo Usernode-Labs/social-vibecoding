@@ -26,6 +26,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -104,9 +105,18 @@ test('the chips say what landed, and never invent a count', () => {
   // Pinned against the shipped implementation, not just against itself.
   const at = DEV_CHAT.indexOf('_stopLandingChips(landing) {');
   const body = DEV_CHAT.slice(at, DEV_CHAT.indexOf('\n  },', at));
-  assert.match(body, /if \(!s\.sha\) return \['nothing committed'\];/);
-  assert.match(body, /s\.commits == null\n\s+\? 'changes committed'/);
-  assert.match(body, /s\.pushOk \? 'pushed' : 'not pushed'/);
+  // The shipped implementation makes the same choices and reads each chip
+  // from the catalog, where the words above are held.
+  const { message } = require('./lib/platform-i18n');
+  assert.match(body, /if \(!s\.sha\) return \[PlatformI18n\.t\('devchat:transcript\.stopLanding\.nothingCommitted'\)\];/);
+  assert.match(body, /s\.commits == null\n\s+\? PlatformI18n\.t\('devchat:transcript\.stopLanding\.changesCommitted'\)\n\s+: PlatformI18n\.t\('devchat:transcript\.stopLanding\.countCommitted', \{ count: s\.commits \}\)/);
+  assert.match(body, /s\.pushOk \? PlatformI18n\.t\('devchat:transcript\.stopLanding\.pushed'\) : PlatformI18n\.t\('devchat:transcript\.stopLanding\.notPushed'\)/);
+  assert.equal(message('devchat:transcript.stopLanding.nothingCommitted'), 'nothing committed');
+  assert.equal(message('devchat:transcript.stopLanding.changesCommitted'), 'changes committed');
+  assert.equal(message('devchat:transcript.stopLanding.countCommitted', { count: 1 }), '1 change committed');
+  assert.equal(message('devchat:transcript.stopLanding.countCommitted', { count: 3 }), '3 changes committed');
+  assert.equal(message('devchat:transcript.stopLanding.pushed'), 'pushed');
+  assert.equal(message('devchat:transcript.stopLanding.notPushed'), 'not pushed');
 
   assert.deepEqual(chips({ sha: null, commits: 0 }), ['nothing committed']);
   assert.deepEqual(chips({ sha: '7c41ab90', commits: 1, pushOk: false }),

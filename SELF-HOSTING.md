@@ -559,7 +559,8 @@ in [dapp.json](./dapp.json) (via the shared manifest-PR core in
 A full admin's value is written to `platform_env_values` on submit —
 which they may already do for any declared key — while everybody
 else's waits encrypted in `pending_secret_declarations` and is written
-by [routes/votes.js](./src/routes/votes.js) `finalizeMerge()` the
+by the merge (the merge-followups workflow machine, in
+[src/workflow/merge-followups/](./src/workflow/merge-followups/)) the
 moment the PR merges. The pre-merge platform-env check counts a value
 carried by the same session, so such a proposal never blocks itself;
 the declaration itself reaches `platform_env_declarations` on the
@@ -609,7 +610,8 @@ has `self_hosted = TRUE`, append a paragraph (after the existing
 > any code that reads or writes `JWT_SECRET`,
 > `DATA_ENCRYPTION_KEY`, the `IFRAME_JWT_*` pair,
 > `WORKER_JWT_SECRET`, `EDGE_JWT_SECRET`, or anything in
-> `src/services/secrets.js` / `src/services/platform-jwt.js`;
+> `src/services/secrets.js` / `src/workflow/rules/secrets.ts` /
+> `src/services/platform-jwt.js`;
 > `src/db/migrate.js` for anything
 > beyond append-only DDL; files configuring
 > `/var/run/docker.sock` mounting; `docker-compose.yml`;

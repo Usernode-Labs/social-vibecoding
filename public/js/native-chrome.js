@@ -148,6 +148,8 @@
 
     // ── Protocol-2 native-session realm ──────────────────────────────
     _ATTEMPT_STORAGE_KEY: 'usernode.native-session-v2.attempt',
+    // When the web session was last renewed, for the attempt above (#5049).
+    _RENEWAL_STORAGE_KEY: 'usernode.native-session-v2.web-renewal',
     _HANDOFF_ENDPOINT: '/api/v4/mobile/auth/native-establish-handoff',
     _realmGeneration: 0,
     _establishLease: null,
@@ -200,6 +202,8 @@
 
     _removeStoredAttempt() {
       try { localStorage.removeItem(NativeChrome._ATTEMPT_STORAGE_KEY); }
+      catch (_) {}
+      try { localStorage.removeItem(NativeChrome._RENEWAL_STORAGE_KEY); }
       catch (_) {}
     },
 
@@ -481,6 +485,54 @@
 
     _webRecovery: null,
     _lastWebRenewal: 0,
+    _WEB_RENEWAL_INTERVAL_MS: 24 * 60 * 60 * 1000,
+
+    // A RENEWAL IS DAILY, NOT PER DOCUMENT (#5049). The stamp used to live in
+    // this document's memory only, so every load in the app (a cold start, a
+    // tapped link) renewed, and every renewal rotates the session: a window
+    // of 401s beside the boot's first reads. It is kept in storage now, bound
+    // to the stored attempt's user and attempt, so a sign-out (which removes
+    // the attempt) or another account renews at once. Memory still answers
+    // when storage does not.
+    _renewedRecently() {
+      const fresh = (at) => {
+        const age = Date.now() - Number(at);
+        return age >= 0 && age < NativeChrome._WEB_RENEWAL_INTERVAL_MS;
+      };
+      if (NativeChrome._lastWebRenewal && fresh(NativeChrome._lastWebRenewal)) return true;
+      let stamp = null;
+      try {
+        stamp = JSON.parse(localStorage.getItem(NativeChrome._RENEWAL_STORAGE_KEY) || 'null');
+      } catch (_) {}
+      const attempt = stamp && typeof stamp === 'object' ? NativeChrome._readStoredAttempt() : null;
+      return !!attempt && stamp.userId === attempt.userId &&
+        stamp.attemptId === attempt.attemptId && fresh(stamp.at);
+    },
+
+    _stampWebRenewal(userId, attemptId) {
+      NativeChrome._lastWebRenewal = Date.now();
+      try {
+        localStorage.setItem(NativeChrome._RENEWAL_STORAGE_KEY, JSON.stringify({
+          userId, attemptId, at: NativeChrome._lastWebRenewal,
+        }));
+      } catch (_) { /* this document's memory alone */ }
+    },
+    // How many times this document's web session has been restored (#5049).
+    // The server ROTATES the session on every restore, deleting the old token
+    // before the app has installed the new cookie, so a request that reached
+    // it in between was refused 401 with nothing wrong. A request that saw
+    // this count move while it was out was such a request:
+    // frontend/src/lib/session-renewal-retry.ts sends it again.
+    _webSessionEpoch: 0,
+
+    /**
+     * Where the web session's renewal stands, for a request deciding whether
+     * its 401 is the renewal's: `epoch` counts the restores this document has
+     * had, `settled` is the restore still running (null when none is).
+     */
+    webSessionRenewal() {
+      return { epoch: NativeChrome._webSessionEpoch, settled: NativeChrome._webRecovery };
+    },
 
     restoreWebSession({ force = false } = {}) {
       const bridge = window.usernode;
@@ -488,10 +540,7 @@
         return Promise.resolve(false);
       }
       if (NativeChrome._webRecovery) return NativeChrome._webRecovery;
-      if (!force && NativeChrome._lastWebRenewal &&
-          Date.now() - NativeChrome._lastWebRenewal < 24 * 60 * 60 * 1000) {
-        return Promise.resolve(false);
-      }
+      if (!force && NativeChrome._renewedRecently()) return Promise.resolve(false);
       const generation = NativeChrome._realmGeneration;
       let run;
       run = (async () => {
@@ -512,7 +561,8 @@
         NativeChrome._writeStoredAttempt({
           protocol: 2, userId: result.userId, attemptId: result.attemptId, desiredRuntime: 'running',
         });
-        NativeChrome._lastWebRenewal = Date.now();
+        NativeChrome._stampWebRenewal(result.userId, result.attemptId);
+        NativeChrome._webSessionEpoch += 1;
         return true;
       })().finally(() => {
         if (NativeChrome._webRecovery === run) NativeChrome._webRecovery = null;
@@ -1054,22 +1104,17 @@
       };
 
       const panel = el('div', 'px-4 pb-5');
-      panel.appendChild(el('div', 'text-lg font-bold py-3', 'Set up your device'));
+      panel.appendChild(el('div', 'text-lg font-bold py-3',
+        PlatformI18n.t('shell:permissions.title')));
       // iOS: requestPermissions() maps to the notification prompt, and v4
       // turned iOS block production off — so the block-production pitch is
       // Android-only, and the iOS copy names what the OS will actually ask.
       panel.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-400 mb-3',
         isAndroid && producerAsks
-          ? 'Your phone helps run Homeroom: your node can produce blocks ' +
-            'while the app is in the background. For that, Android needs ' +
-            'to wake it at exact slot times and leave it free of battery ' +
-            'optimization. These settings only schedule wake-ups. They ' +
-            'give Homeroom no access to your data.'
+          ? PlatformI18n.t('shell:permissions.intro.androidProducer')
           : isAndroid
-            ? 'Allow notifications so Homeroom can tell you about activity ' +
-              'on your apps and your node.'
-            : 'Allow notifications so Homeroom can alert you about node ' +
-            'and account activity.'));
+            ? PlatformI18n.t('shell:permissions.intro.android')
+            : PlatformI18n.t('shell:permissions.intro.ios')));
 
       const statusRow = (label, ok) => {
         const row = el('div', 'flex items-center gap-2 mt-1 text-sm');
@@ -1079,7 +1124,8 @@
         row.appendChild(el('span', 'ml-auto text-xs ' + (ok
           ? 'text-emerald-700 dark:text-emerald-400'
           : 'text-amber-800 dark:text-amber-400'),
-        ok ? 'Granted' : 'Not granted'));
+        ok ? PlatformI18n.t('shell:permissions.status.granted')
+          : PlatformI18n.t('shell:permissions.status.notGranted')));
         return row;
       };
 
@@ -1101,14 +1147,16 @@
           : !!p.exactAlarmGranted;
         const batteryOk = p.batteryOptDisabled === true;
         body.appendChild(statusRow(
-          isAndroid ? 'Exact alarms' : 'Notifications', alarmOk));
-        if (isAndroid) body.appendChild(statusRow('Battery optimization', batteryOk));
+          isAndroid ? PlatformI18n.t('shell:permissions.row.exactAlarms')
+            : PlatformI18n.t('shell:permissions.row.notifications'), alarmOk));
+        if (isAndroid) body.appendChild(statusRow(PlatformI18n.t('shell:permissions.row.battery'), batteryOk));
 
         const btns = el('div', 'mt-4 space-y-2');
         if (!alarmOk) {
           const b = el('button', 'w-full rounded-lg bg-violet-600 ' +
             'hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white',
-          isAndroid ? 'Grant permissions' : 'Allow notifications');
+          isAndroid ? PlatformI18n.t('shell:permissions.action.grant')
+            : PlatformI18n.t('shell:permissions.action.allowNotifications'));
           b.addEventListener('click', async () => {
             interacted = true;
             b.disabled = true;
@@ -1149,7 +1197,7 @@
           const b = el('button', 'w-full rounded-lg border border-zinc-300 ' +
             'dark:border-zinc-700 px-4 py-2 text-sm font-medium ' +
             'text-zinc-700 dark:text-zinc-200',
-          'Open battery settings');
+          PlatformI18n.t('shell:permissions.action.openBatterySettings'));
           b.addEventListener('click', () => {
             interacted = true;
             window.usernode.openBatterySettings().catch(() => {});
@@ -1158,7 +1206,8 @@
         }
         const done = el('button', 'w-full px-4 py-2 text-sm ' +
           'text-zinc-500 dark:text-zinc-400',
-        (alarmOk && (!isAndroid || batteryOk)) ? 'Done' : 'Skip for now');
+        (alarmOk && (!isAndroid || batteryOk)) ? PlatformI18n.t('core:common.done')
+          : PlatformI18n.t('shell:permissions.action.skip'));
         done.addEventListener('click', () => {
           interacted = true;
           if (sheet && sheet.dismiss) sheet.dismiss();
@@ -1190,16 +1239,16 @@
       const renderAndroid = (p) => {
         const missing = androidMissing(p);
         if (notificationsAskable) {
-          body.appendChild(statusRow('Notifications', !missing.notifications));
+          body.appendChild(statusRow(PlatformI18n.t('shell:permissions.row.notifications'), !missing.notifications));
         }
         if (producerAsks) {
-          body.appendChild(statusRow('Exact alarms', !missing.alarm));
-          body.appendChild(statusRow('Battery optimization', !missing.battery));
+          body.appendChild(statusRow(PlatformI18n.t('shell:permissions.row.exactAlarms'), !missing.alarm));
+          body.appendChild(statusRow(PlatformI18n.t('shell:permissions.row.battery'), !missing.battery));
         }
 
         const btns = el('div', 'mt-4 space-y-2');
         if (missing.notifications && !notificationsAsked) {
-          const b = primaryButton('Allow notifications');
+          const b = primaryButton(PlatformI18n.t('shell:permissions.action.allowNotifications'));
           b.addEventListener('click', async () => {
             interacted = true;
             b.disabled = true;
@@ -1227,20 +1276,17 @@
             renderAndroid(nextPerms);
           });
           btns.appendChild(b);
-          btns.appendChild(hint('Android will ask whether Homeroom may send ' +
-            'you notifications. Tap Allow. You can turn them off any time ' +
-            'in Settings.'));
+          btns.appendChild(hint(PlatformI18n.t('shell:permissions.hint.notifications')));
         } else if (missing.notifications) {
-          const b = primaryButton('Open notification settings');
+          const b = primaryButton(PlatformI18n.t('shell:permissions.action.openNotificationSettings'));
           b.addEventListener('click', () => {
             interacted = true;
             window.usernode.openNotificationSettings().catch(() => {});
           });
           btns.appendChild(b);
-          btns.appendChild(hint('Notifications are off for Homeroom. Turn ' +
-            'them on in Android settings, then come back here.'));
+          btns.appendChild(hint(PlatformI18n.t('shell:permissions.hint.notificationsOff')));
         } else if (missing.alarm) {
-          const b = primaryButton('Allow exact alarms');
+          const b = primaryButton(PlatformI18n.t('shell:permissions.action.allowExactAlarms'));
           b.addEventListener('click', async () => {
             interacted = true;
             b.disabled = true;
@@ -1258,28 +1304,23 @@
             // when the page is visible again.
           });
           btns.appendChild(b);
-          btns.appendChild(hint('Android opens the "Alarms & reminders" ' +
-            'page. Turn on Allow for Homeroom, then come back here. Your ' +
-            'node only wakes a few minutes before each of its slots.'));
+          btns.appendChild(hint(PlatformI18n.t('shell:permissions.hint.exactAlarms')));
         } else if (missing.battery) {
-          const b = primaryButton('Allow background use');
+          const b = primaryButton(PlatformI18n.t('shell:permissions.action.allowBackground'));
           b.addEventListener('click', () => {
             interacted = true;
             window.usernode.openBatterySettings().catch(() => {});
           });
           btns.appendChild(b);
-          btns.appendChild(hint('Android will ask whether Homeroom may ' +
-            'always run in the background, and warn that this can use more ' +
-            'battery. Tap Allow. Your node still sleeps between slots, so ' +
-            'the real impact is small, and you can change it any time in ' +
-            'Settings.'));
+          btns.appendChild(hint(PlatformI18n.t('shell:permissions.hint.background')));
         }
 
         if ((missing.alarm || missing.battery) &&
             typeof window.usernode.manageStaking === 'function') {
           const delegate = el('button', 'w-full rounded-lg border ' +
             'border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm ' +
-            'font-medium text-zinc-700 dark:text-zinc-200', 'Delegate instead');
+            'font-medium text-zinc-700 dark:text-zinc-200',
+          PlatformI18n.t('shell:permissions.action.delegate'));
           delegate.addEventListener('click', async () => {
             interacted = true;
             delegate.disabled = true;
@@ -1295,22 +1336,18 @@
               console.warn('[native-chrome] manageStaking failed:', e);
             } finally { delegate.disabled = false; }
           });
-          btns.appendChild(hint('Prefer not to change these settings? ' +
-            'Delegate your stake to the server instead. You still earn ' +
-            'half the block-production points, and you can switch back any ' +
-            'time.'));
+          btns.appendChild(hint(PlatformI18n.t('shell:permissions.hint.delegate')));
           btns.appendChild(delegate);
         }
 
         if (productionDeferred) {
-          btns.appendChild(hint('Block production settings (exact alarms ' +
-            'and battery) come later, when you ask to produce blocks in ' +
-            'Settings, Homeroom app.'));
+          btns.appendChild(hint(PlatformI18n.t('shell:permissions.hint.productionDeferred')));
         }
 
         const allDone = !missing.notifications && !missing.alarm && !missing.battery;
         const done = el('button', 'w-full px-4 py-2 text-sm ' +
-          'text-zinc-500 dark:text-zinc-400', allDone ? 'Done' : 'Skip for now');
+          'text-zinc-500 dark:text-zinc-400',
+        allDone ? PlatformI18n.t('core:common.done') : PlatformI18n.t('shell:permissions.action.skip'));
         done.addEventListener('click', () => {
           interacted = true;
           if (sheet && sheet.dismiss) sheet.dismiss();
@@ -1436,8 +1473,10 @@
     // same way).
     _PING_ASK_COPY: {
       'app-building': {
-        title: 'Get a ping when your app is ready?',
-        message: 'Homeroom bot will message you when it’s ready to try.',
+        // Message ids: this table is read before the language runtime
+        // exists, and askForPing reads the words when it asks.
+        title: 'shell:pingAsk.appBuilding.title',
+        message: 'shell:pingAsk.appBuilding.message',
       },
     },
     // Written once "Notify me" has called requestPermissions() on this
@@ -1606,10 +1645,10 @@
         attempt = telemetry && typeof telemetry.attempt === 'function'
           ? telemetry.attempt('push_permission', { screen: 'ping_ask' }) : null;
         const yes = await ui.confirm({
-          title: copy.title,
-          message: copy.message,
-          confirmLabel: 'Notify me',
-          cancelLabel: 'Not now',
+          title: PlatformI18n.t(copy.title),
+          message: PlatformI18n.t(copy.message),
+          confirmLabel: PlatformI18n.t('shell:pingAsk.confirm'),
+          cancelLabel: PlatformI18n.t('shell:pingAsk.notNow'),
         });
         if (!yes) {
           NativeChrome._pingAskDeclined = true;
@@ -1941,9 +1980,13 @@
     //
     // So the app is told the tone of the GROUND under the status bar
     // whenever it changes: 'dark' while the fullscreen preview or the
-    // compare overlay is open, else the running app's tone, else null,
-    // which hands the bar back to the app's theme. A 'dark' ground wants
-    // light glyphs. Unprivileged and not persisted (NATIVE-BRIDGE.md,
+    // compare overlay is open, 'dark' on a project's pages, whose header
+    // wears its community's colour (`data-community-tint`,
+    // frontend/src/features/header/community-tint.ts; every such colour is
+    // fitted for white text, lib/community-color.ts), else the running app's
+    // tone, else null, which hands the bar back to the app's theme. A 'dark'
+    // ground wants light glyphs. The tint is taken off inside a running app,
+    // so there the app's own tone still decides. Unprivileged and not persisted (NATIVE-BRIDGE.md,
     // `setStatusBarTone`), and capability-gated like setAppearance, so an
     // older build never sees the call.
     //
@@ -1965,16 +2008,18 @@
     statusBarToneFor(state) {
       const s = state || {};
       if (s.previewFullscreen === true || s.compareOpen === true) return 'dark';
+      // Polish board #6: black clock and battery on the navy community bar.
+      if (s.communityTint === true) return 'dark';
       return s.appTone === 'dark' || s.appTone === 'light' ? s.appTone : null;
     },
 
     // Read off the document: the overlays' classes (React toggles them
-    // through refs, frontend/src/features/staging/) and the app-tone
-    // attribute. The preview counts only when FULLSCREEN: docked it sits
+    // through refs, frontend/src/features/staging/), the community tint and
+    // the app-tone attribute. The preview counts only when FULLSCREEN: docked it sits
     // mid-page, and under a session's chrome the platform header is what
     // the status bar is over.
     _statusBarToneState() {
-      const state = { previewFullscreen: false, compareOpen: false, appTone: null };
+      const state = { previewFullscreen: false, compareOpen: false, communityTint: false, appTone: null };
       try {
         const shown = (el) => !!el && !el.classList.contains('hidden');
         const preview = document.getElementById('staging-overlay');
@@ -1982,6 +2027,7 @@
           !preview.classList.contains('staging-overlay-docked') &&
           !preview.classList.contains('staging-overlay-under-chrome');
         state.compareOpen = shown(document.getElementById('visual-compare-overlay'));
+        state.communityTint = document.documentElement.getAttribute('data-community-tint') !== null;
         state.appTone = document.documentElement.getAttribute('data-app-tone');
       } catch (_) { /* no document to read: the theme's bar */ }
       return state;
@@ -2073,7 +2119,7 @@
           NativeChrome.publishStatusBarTone();
         });
         observer.observe(document.documentElement,
-          { attributes: true, attributeFilter: ['data-app-tone'] });
+          { attributes: true, attributeFilter: ['data-app-tone', 'data-community-tint'] });
         // Both overlays are in the shell's static markup ahead of this
         // script, and their islands never unmount (the staging one holds
         // the preview iframe, whose identity is pinned).
@@ -2085,6 +2131,193 @@
         console.warn('[native-chrome] status-bar tone observer failed:',
           err && err.message);
       }
+    },
+
+    // ── First paint (`shellPainted`) ──────────────────────────────────
+    //
+    // A cold launch of the app used to walk through six screens in about
+    // 3.3 s: the native splash, a "Connecting" screen, a white frame, a
+    // blank one, this document's skeleton with its header under the status
+    // bar, and then Home settling into place. The app now keeps one cover
+    // over the web view until THIS DOCUMENT SAYS its first screen is drawn,
+    // then fades the cover out over 150 ms (its own cap is 3 s). This is
+    // the saying.
+    //
+    // DRAWN means three things at once:
+    //   - the document is parsed and no boot hold is up (the head's
+    //     `first-session-boot` and `language-pending` hide the body);
+    //   - no skeleton is on screen in a screen root: no `.animate-pulse`
+    //     placeholder inside a visible <main>, which is how Home's grid,
+    //     its Discover and Challenges sections (features/home/panels/
+    //     sections.tsx) and every SkeletonGroup draw "not yet";
+    //   - every image on screen in a screen root has finished (loaded or
+    //     failed), so the challenge art is there when the cover lifts.
+    // …and, inside the app, `env(safe-area-inset-top)` is no longer 0. The
+    // web view can lay the page out before it knows the inset, which drew
+    // the header under the clock; the cover stays until it does.
+    //
+    // Then it waits for the next paint (two animation frames), so what the
+    // app fades to is on screen, and calls `shellPainted` once for this
+    // document. Whatever is still loading, it calls at the latest 1.5 s
+    // after DOMContentLoaded: the cover is a curtain over a page, never a
+    // wait for one.
+    //
+    // Unprivileged, capability-gated like setStatusBarTone (NATIVE-BRIDGE.md,
+    // `shellPainted`), and only from the top document. A browser, a framed
+    // copy of the shell or a build without the capability pays nothing: no
+    // probe, no polling.
+    _SHELL_PAINTED_CAP_MS: 1500,
+    _SHELL_PAINTED_POLL_MS: 50,
+    _shellPaintedSent: false,
+    _shellPaintedStarted: false,
+
+    // Pure over a document and a window, so the test can hand it a fake.
+    firstScreenDrawn(doc, win) {
+      try {
+        if (!doc || doc.readyState === 'loading') return false;
+        const root = doc.documentElement;
+        if (root && root.classList && (root.classList.contains('first-session-boot')
+            || root.classList.contains('language-pending'))) return false;
+        const vw = Number(win && win.innerWidth) || 0;
+        const vh = Number(win && win.innerHeight) || 0;
+        const onScreen = (el) => {
+          const rects = el.getClientRects ? el.getClientRects() : [];
+          for (let i = 0; i < rects.length; i += 1) {
+            const r = rects[i];
+            if (r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0
+                && r.top < vh && r.left < vw) return true;
+          }
+          return false;
+        };
+        // Screen roots only. The header's node pill pulses a live dot, and
+        // a dialog's spinner is not the first screen.
+        const pulses = doc.querySelectorAll('main .animate-pulse');
+        for (let i = 0; i < pulses.length; i += 1) {
+          if (onScreen(pulses[i])) return false;
+        }
+        const images = doc.querySelectorAll('main img');
+        for (let i = 0; i < images.length; i += 1) {
+          const img = images[i];
+          if (!img.complete && img.getAttribute('src') && onScreen(img)) return false;
+        }
+        return true;
+      } catch (_) {
+        // A document that cannot be read cannot be waited on.
+        return true;
+      }
+    },
+
+    // `env(safe-area-inset-top)` as the page resolves it now, off a probe on
+    // <html> (the body is React's to hydrate, so nothing is added there).
+    _safeTopInset(doc, win) {
+      try {
+        let probe = NativeChrome._insetProbe;
+        if (!probe) {
+          probe = doc.createElement('div');
+          probe.setAttribute('aria-hidden', 'true');
+          probe.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;'
+            + 'visibility:hidden;pointer-events:none;'
+            + 'padding-top:env(safe-area-inset-top,0px)';
+          doc.documentElement.appendChild(probe);
+          NativeChrome._insetProbe = probe;
+        }
+        return parseFloat(win.getComputedStyle(probe).paddingTop) || 0;
+      } catch (_) {
+        return 0;
+      }
+    },
+
+    _dropInsetProbe() {
+      const probe = NativeChrome._insetProbe;
+      NativeChrome._insetProbe = null;
+      try { if (probe && probe.parentNode) probe.parentNode.removeChild(probe); } catch (_) { /* gone */ }
+    },
+
+    // Pure: is it time to send? `elapsed` is ms since DOMContentLoaded, or
+    // null before it.
+    shellPaintedDue(state) {
+      const s = state || {};
+      if (s.elapsed != null && s.elapsed >= NativeChrome._SHELL_PAINTED_CAP_MS) return 'cap';
+      if (s.drawn === true && Number(s.insetTop) > 0) return 'drawn';
+      return null;
+    },
+
+    _shellPaintedCallable() {
+      const bridge = window.usernode;
+      return !!bridge && bridge.isNative === true &&
+        typeof bridge.shellPainted === 'function' &&
+        NativeChrome._isTopDocument();
+    },
+
+    // Once per document. Never throws, never console.errors: an old build
+    // that drops the method times out in the wrapper and lands in the warn.
+    async _sendShellPainted(reason) {
+      if (NativeChrome._shellPaintedSent) return false;
+      NativeChrome._shellPaintedSent = true;
+      NativeChrome._dropInsetProbe();
+      NativeChrome._shellPaintedReason = reason;
+      try {
+        await window.usernode.shellPainted();
+        return true;
+      } catch (err) {
+        console.warn('[native-chrome] shellPainted failed:', err && err.message);
+        return false;
+      }
+    },
+
+    // After the paint that shows what was checked: two frames, and a timer
+    // under them in case the web view is not producing frames under the
+    // app's cover.
+    _afterNextPaint(fn) {
+      let done = false;
+      const once = () => { if (!done) { done = true; fn(); } };
+      try {
+        if (typeof window.requestAnimationFrame === 'function') {
+          window.requestAnimationFrame(() => window.requestAnimationFrame(once));
+        }
+      } catch (_) { /* no frames: the timer sends */ }
+      setTimeout(once, 120);
+    },
+
+    _domContentLoadedAt() {
+      try {
+        const nav = performance.getEntriesByType('navigation')[0];
+        if (nav && nav.domContentLoadedEventStart > 0) return nav.domContentLoadedEventStart;
+      } catch (_) { /* no timing: the event listener records it */ }
+      return NativeChrome._dclAt != null ? NativeChrome._dclAt : null;
+    },
+
+    async _initShellPainted() {
+      if (NativeChrome._shellPaintedStarted || !NativeChrome._shellPaintedCallable()) return;
+      NativeChrome._shellPaintedStarted = true;
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+          NativeChrome._dclAt = performance.now();
+        }, { once: true });
+      }
+      // Asked once, now, so the answer is in hand by the time the screen
+      // is. A degraded probe is "don't know" (#978): one more ask, then the
+      // app's own cap lifts its cover.
+      let info = await NativeChrome.getInfo();
+      if (info && info.degraded === true) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        info = await NativeChrome.getInfo();
+      }
+      const capabilities = Array.isArray(info && info.capabilities) ? info.capabilities : [];
+      if ((info && info.degraded === true) || !capabilities.includes('shellPainted')) return;
+      const tick = () => {
+        if (NativeChrome._shellPaintedSent) return;
+        const dcl = NativeChrome._domContentLoadedAt();
+        const due = NativeChrome.shellPaintedDue({
+          elapsed: dcl == null ? null : performance.now() - dcl,
+          drawn: NativeChrome.firstScreenDrawn(document, window),
+          insetTop: NativeChrome._safeTopInset(document, window),
+        });
+        if (due === 'cap') { NativeChrome._sendShellPainted('cap'); return; }
+        if (due === 'drawn') { NativeChrome._afterNextPaint(() => NativeChrome._sendShellPainted('drawn')); return; }
+        setTimeout(tick, NativeChrome._SHELL_PAINTED_POLL_MS);
+      };
+      tick();
     },
 
     init() {
@@ -2099,6 +2332,8 @@
       NativeChrome._initAppearancePublish();
       // Same reasoning: the tone under the status bar is presentation state.
       NativeChrome._initStatusBarTonePublish();
+      // …and so is the first paint, which the app's launch cover waits for.
+      NativeChrome._initShellPainted();
       // Native session establishment needs a verified web session, so it
       // waits for the session boot stage. Always observe later SPA account
       // changes, even when a session was already present at script load.

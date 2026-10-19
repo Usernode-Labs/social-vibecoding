@@ -46,6 +46,7 @@
 
 const { Router } = require('express');
 const { getPool } = require('../../db/pool');
+const { activityTimePrecision } = require('../../services/topochain/activity-time');
 const log = require('../../services/logger');
 const { optionalSessionAuth } = require('../../middleware/topochain-auth');
 const { computeStandings } = require('../../services/topochain/standings');
@@ -55,7 +56,7 @@ const { computeStandings } = require('../../services/topochain/standings');
 // widget started previewing the same standings. One definition of a rank and
 // one of a display name, shared by the routes and the widget.
 const {
-  resolveIdentifier, maskIdentifier, resolveDisplayName, fetchEventLeaderboardRows,
+  resolveIdentifier, maskIdentifier, resolveDisplayName, publicUsername, fetchEventLeaderboardRows,
   resolveDefaultPublicEvent,
 } = require('../../services/topochain/event-standings');
 const {
@@ -63,8 +64,7 @@ const {
 } = require('./helpers');
 const { TEMPLATE_JOIN_COLUMNS_SQL, buildChallengeListItem } = require('./challenge-view');
 const {
-  loadOnboarding, visibleChallenges, challengeCategory, resolveProgress, loadEventBlocks,
-  isLocked, gateSummary, COUNTS_THIS_WEEK_SQL,
+  loadOnboarding, challengeCategory, resolveProgress, loadEventBlocks, COUNTS_THIS_WEEK_SQL,
 } = require('../../services/topochain/challenge-onboarding');
 const { loadRuleFacts, intervalMinutes } = require('../../services/topochain/challenge-scorer');
 const events = require('../../services/events');
@@ -151,6 +151,33 @@ function truthyQuery(raw) {
 // of this file, and that module's header for why they moved. Their behaviour
 // is unchanged; the SQL text is byte-identical.
 
+// Letters and digits only, lowercased, trailing digits dropped: the shape a
+// handle suggested from an address takes (usernames.usernameFromEmail, then
+// `alex2`, `alex3` for a taken one).
+function handleStem(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '').replace(/\d+$/, '');
+}
+
+// The username a row may show beside its masked identifier, or null. Not a
+// generated handle, nothing shaped like an address, and nothing that gives
+// away what the mask hides: an email sign-up's handle is suggested from the
+// address's local part (#4596) and is often kept, and a Telegram or Discord
+// handle is an identifier in its own right, so a username that matches one
+// of them (either containing the other, once reduced to its stem) is left
+// out and the pane says "Member #<rank>" instead.
+function shownUsername(r) {
+  const name = publicUsername(r.username);
+  if (!name || name.includes('@')) return null;
+  const stem = handleStem(name);
+  if (stem.length < 3) return null;
+  const local = String(r.email || '').split('@')[0].split('+')[0];
+  for (const secret of [local, r.telegram, r.discord]) {
+    const other = handleStem(secret);
+    if (other.length >= 3 && (other.includes(stem) || stem.includes(other))) return null;
+  }
+  return name;
+}
+
 function formatLeaderboardRow(r) {
   const identifier = resolveIdentifier(r);
   return {
@@ -158,6 +185,13 @@ function formatLeaderboardRow(r) {
     is_non_podium: !!r.exclude_podium,
     identifier: maskIdentifier(identifier),
     display_name: resolveDisplayName(r),
+    // #5275: the platform username, when it is one somebody chose. The
+    // display-name chain above puts a MASKED email before it (SPEC 1246),
+    // so a row like "sed***@***.com" may well have a public name the
+    // standings pane would rather show. Usernames are public already (the
+    // Kudos board, chat); one that looks like an email address, or that
+    // was made from the address or handle the mask hides, is not offered.
+    username: shownUsername(r),
     discord: r.discord || null,
     wallet_address: r.wallet_address || null,
     bech32m: r.bech32m || null,
@@ -310,7 +344,7 @@ function topochainPublicRoutes(config) {
       // list, meta.total 0.
       if (!event.display_leaderboard) {
         return ok(res, {
-          data: { event: eventPayload, leaderboard: [], non_podium_count: 0 },
+          data: { event: eventPayload, leaderboard: [], non_podium_count: 0, viewer_row: null },
         }, { meta: meta(page, perPage, 0) });
       }
 
@@ -331,10 +365,26 @@ function topochainPublicRoutes(config) {
 
       const total = visible.length;
       const start = (page - 1) * perPage;
-      const leaderboard = visible.slice(start, start + perPage).map(formatLeaderboardRow);
+      // #5275: the signed-in viewer's own row, whichever page it is on, so
+      // the pane can pin "You · #22" above the table instead of making them
+      // page through to find themselves. Read from the SAME visible list
+      // the page is cut from, so its rank is the one the table shows, and
+      // null for a guest or a viewer with no row here. `is_viewer` marks
+      // that row on the page itself, which is how the pane opens it in
+      // place rather than below the table.
+      const viewerId = req.user && req.user.id != null ? Number(req.user.id) : null;
+      const isViewer = (r) => viewerId != null && Number(r.user_id) === viewerId;
+      const own = viewerId != null ? visible.find(isViewer) : null;
+      const leaderboard = visible.slice(start, start + perPage)
+        .map((r) => ({ ...formatLeaderboardRow(r), is_viewer: isViewer(r) }));
 
       return ok(res, {
-        data: { event: eventPayload, leaderboard, non_podium_count: nonPodiumCount },
+        data: {
+          event: eventPayload,
+          leaderboard,
+          non_podium_count: nonPodiumCount,
+          viewer_row: own ? { ...formatLeaderboardRow(own), is_viewer: true } : null,
+        },
       }, { meta: meta(page, perPage, total) });
     } catch (err) {
       if (err instanceof ValidationError) {
@@ -544,6 +594,7 @@ function topochainPublicRoutes(config) {
         points: num(r.points) ?? 0,
         description: r.description,
         activity_at: iso(r.activity_at),
+        activity_time_precision: activityTimePrecision(r),
         metadata: r.metadata,
       }));
 
@@ -768,9 +819,12 @@ function topochainPublicRoutes(config) {
       // skipping any row whose template join came back empty instead
       // (the FK itself should make this unreachable in practice — see the
       // schema.sql comment on `challenges.challenge_template_id`).
+      //
+      // The season's First challenges (their ids and the viewer's lifetime
+      // progress on them) are ordinary rows of this list for everyone: since
+      // #4635 they gate nothing, so the list is the whole event.
       const onboarding = await loadOnboarding(pool, req.user?.id, { eventId: id });
-      const listed = rows.filter((r) => r.t_id != null);
-      const visible = visibleChallenges(listed, onboarding);
+      const visible = rows.filter((r) => r.t_id != null);
 
       // The viewer's own credit count per challenge.
       //
@@ -861,27 +915,10 @@ function topochainPublicRoutes(config) {
           return item;
         });
 
-      // This list now carries the signed-in viewer's onboarding state. While
-      // the gate is closed it also says how many of THIS event's challenges
-      // it hides and the first few of their names (additive `hidden_count`
-      // and `hidden_names`, the tab's locked placeholder, which names them
-      // the way Home's does); unlocked, the summary is exactly what it was.
-      // Only a new account on its Getting started list is gated at all
-      // (2026-10-01): an existing member and a signed-out visitor get the
-      // whole event and no summary, as for a season with no First challenges.
-      const gate = gateSummary(onboarding);
-      const summary = gate && isLocked(onboarding)
-        ? {
-          ...gate,
-          hidden_count: listed.length - visible.length,
-          hidden_names: listed.filter((r) => !visible.includes(r))
-            // Two, as Home's (home-panels.js HIDDEN_NAMES): what the card's
-            // second line holds on a phone with the count after them.
-            .map((r) => String(r.goal ?? r.t_goal ?? '').trim()).filter(Boolean).slice(0, 2),
-        }
-        : gate;
       res.set('Cache-Control', 'private, no-store');
-      return ok(res, { data, ...(summary ? { onboarding: summary } : {}) });
+      // No `onboarding` summary any more (#4635): nothing is gated, and every
+      // client already reads a missing summary as "not gated".
+      return ok(res, { data });
     } catch (err) {
       log.error('topochain-public', 'GET /season-events/:id/challenges failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
@@ -1045,7 +1082,7 @@ function topochainPublicRoutes(config) {
         );
 
         const { rows: activityRows } = await pool.query(
-          `SELECT id, challenge_id, activity_type, points, description, activity_at
+          `SELECT id, challenge_id, activity_type, points, description, activity_at, metadata
              FROM user_activities WHERE user_id = $1 AND season_event_id = $2
             ORDER BY activity_at DESC`,
           [userId, seasonEventId]
@@ -1083,6 +1120,7 @@ function topochainPublicRoutes(config) {
               points: num(a.points) ?? 0,
               description: a.description,
               activity_at: iso(a.activity_at),
+              activity_time_precision: activityTimePrecision(a),
             })),
           },
         });
@@ -1124,7 +1162,7 @@ function topochainPublicRoutes(config) {
         [userId]
       );
       const { rows: activityRows2 } = await pool.query(
-        `SELECT id, challenge_id, activity_type, points, description, activity_at
+        `SELECT id, challenge_id, activity_type, points, description, activity_at, metadata
            FROM user_activities WHERE user_id = $1 ORDER BY activity_at DESC`,
         [userId]
       );
@@ -1156,6 +1194,7 @@ function topochainPublicRoutes(config) {
             points: num(a.points) ?? 0,
             description: a.description,
             activity_at: iso(a.activity_at),
+            activity_time_precision: activityTimePrecision(a),
           })),
         },
       });
@@ -1225,4 +1264,4 @@ function topochainPublicRoutes(config) {
   return router;
 }
 
-module.exports = { topochainPublicRoutes };
+module.exports = { topochainPublicRoutes, shownUsername };

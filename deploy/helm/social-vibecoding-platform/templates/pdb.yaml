@@ -11,6 +11,32 @@ spec:
     matchLabels:
       {{- include "social-vibecoding-platform.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: platform
+      {{- if .Values.platform.conductor.enabled }}
+      # The Pods that serve requests: the conductor's share the component
+      # label, and would otherwise satisfy this budget while the only web
+      # Pod is evicted. A conductor evicted drains as a release does.
+      social.usernode.io/serves-requests: "true"
+      {{- end }}
+{{- if .Values.platform.conductor.enabled }}
+---
+# The conductor's replicas run the workflow: a node drain evicts one at a
+# time, so another runs it meanwhile. One at a time, not one kept: a single
+# replica (as after a rollback to a release before this) is still evicted,
+# and drains as a release does.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "social-vibecoding-platform.fullname" . }}-conductor
+  labels:
+    {{- include "social-vibecoding-platform.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "social-vibecoding-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: platform
+      social.usernode.io/process-role: conductor
+{{- end }}
 {{- end }}
 {{- if and .Values.enabled .Values.podDisruptionBudget.enabled .Values.postgresql.enabled }}
 {{- if .Values.platform.enabled }}

@@ -77,10 +77,6 @@ function makePool({ epoch = 2 } = {}) {
       if (/SELECT reviewed_head_sha, approval_epoch/.test(text)) {
         return { rows: [{ reviewed_head_sha: HEAD, approval_epoch: state.epoch }], rowCount: 1 };
       }
-      if (/approval_epoch = approval_epoch \+ CASE/.test(text)) {
-        if (params[2] !== true) state.epoch += 1;
-        return { rows: [{ approval_epoch: state.epoch }], rowCount: 1 };
-      }
       return { rows: [], rowCount: 0 };
     },
   };
@@ -93,7 +89,6 @@ function loadVotes({ pool, mirror, move = 'authored' }) {
     github: require.resolve('../src/services/github'),
     staging: require.resolve('../src/services/staging'),
     docker: require.resolve('../src/services/docker'),
-    resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
     activeUsers: require.resolve('../src/services/active-users'),
     notifications: require.resolve('../src/services/notifications'),
@@ -103,10 +98,12 @@ function loadVotes({ pool, mirror, move = 'authored' }) {
     topicAttrs: require.resolve('../src/services/topic-attributes'),
     visuals: require.resolve('../src/services/visuals'),
     prImportSync: require.resolve('../src/services/pr-import-sync'),
+    previewWorkflow: require.resolve('../src/services/preview-workflow'),
     governance: require.resolve('../src/services/governance'),
     conversation: require.resolve('../src/services/conversation-prompt'),
     mirror: require.resolve('../src/services/repo-mirror'),
     integration: require.resolve('../src/services/integration'),
+    platform: require.resolve('../src/workflow/platform.ts'),
     subject: require.resolve('../src/routes/votes'),
   };
   const orig = {};
@@ -115,6 +112,8 @@ function loadVotes({ pool, mirror, move = 'authored' }) {
   const systemMessages = [];
   const voteUpdates = [];
   const gateCalls = [];
+  const revisions = [];
+  const headMoves = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => pool });
@@ -125,11 +124,6 @@ function loadVotes({ pool, mirror, move = 'authored' }) {
   });
   stub(ids.staging, { rebuildProduction: async () => ({ ok: true }), teardownStaging: async () => {} });
   stub(ids.docker, {});
-  stub(ids.resolver, {
-    checkAndResolveConflicts: async () => {},
-    resolveAndMaybeRetry: async () => ({ ok: true }),
-    isResolving: () => false,
-  });
   stub(ids.ws, {
     sendSystemMessage: async (_pool, appId, content, msgType, metadata) => {
       systemMessages.push({ appId, content, msgType, metadata });
@@ -168,6 +162,10 @@ function loadVotes({ pool, mirror, move = 'authored' }) {
     rerunChecksForNewHead: async () => {},
     reconcileImportedHead: async () => ({ reconciled: false, reason: 'fork_head' }),
   });
+  // The preview machine builds and checks a moved head.
+  stub(ids.previewWorkflow, {
+    revision: async (o) => { revisions.push({ head: o.head, source: o.source }); return { taken: true }; },
+  });
   stub(ids.governance, {
     getGovernance: async () => ({ approverPolicy: 'anyone' }),
     getApproverSet: async () => ({ ids: [] }),
@@ -186,6 +184,21 @@ function loadVotes({ pool, mirror, move = 'authored' }) {
     classifyHeadMove: async () => ({ kind: move }),
   });
 
+  // The head move is the proposal machine's (ReviewHeadMoved): it installs
+  // the head and, unless the move keeps the approvals, moves the epoch on,
+  // in one statement. The stub applies it to the pool's epoch the same way.
+  stub(ids.platform, {
+    // After the fresh read, the vote asks the app's merge queue: the merge
+    // gate is the proposal machine's work from there (counted as the merge
+    // check here).
+    wantMerge: async () => { gateCalls.push(Date.now()); },
+    moveReviewHead: async (m) => {
+      headMoves.push(m);
+      if (!m.keepVotes) pool.state.epoch += 1;
+      return { status: 'accepted', eventId: headMoves.length, reply: { epoch: pool.state.epoch, prSummaryStale: false } };
+    },
+  });
+
   delete require.cache[ids.subject];
   const subject = require(ids.subject);
   const restore = () => {
@@ -193,7 +206,7 @@ function loadVotes({ pool, mirror, move = 'authored' }) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, systemMessages, voteUpdates, gateCalls, restore };
+  return { subject, systemMessages, voteUpdates, gateCalls, revisions, headMoves, restore };
 }
 
 // A mirror whose fetch settles only when the test says so, recording every
@@ -265,11 +278,8 @@ test('a Yes is recorded and answered while the repository fetch is still outstan
     assert.equal(ctx.gateCalls.length, 0, 'the merge check waits for the fresh read');
 
     mirror.fetches[0].resolve('/tmp/mirror');
-    // checkAndMerge's own non-fresh reconcile follows.
-    await until(() => mirror.calls.length >= 2);
-    assert.equal(mirror.calls[1].fresh, false);
-    mirror.fetches[1].resolve('/tmp/mirror');
     await until(() => ctx.gateCalls.length >= 1);
+    assert.equal(mirror.calls.length, 1, 'the merge gate\'s own read is its work\'s, not the vote\'s');
     assert.equal(pool.state.epoch, 2, 'an unmoved head clears nothing');
   });
 });
@@ -286,8 +296,6 @@ test('a mirror that never answers cannot hold a vote hostage', async () => {
     // Fail the fetch: the vote stands, and the merge check still runs on
     // the stored revision (the exact-sha merge is its guard).
     mirror.fetches[0].reject(new Error('network down'));
-    await until(() => mirror.calls.length >= 2);
-    mirror.fetches[1].reject(new Error('network down'));
     await until(() => ctx.gateCalls.length >= 1);
     assert.equal(pool.inserted.length, 1);
     assert.equal(pool.state.epoch, 2);
@@ -379,7 +387,7 @@ test('the offline read answers from the row and never touches the mirror', async
 test('an authored push found after the vote clears the approvals and skips the merge check', async () => {
   const pool = makePool();
   const mirror = controlledMirror(PUSHED);
-  const { subject, systemMessages, voteUpdates, gateCalls, restore } = loadVotes({ pool, mirror, move: 'authored' });
+  const { subject, systemMessages, voteUpdates, gateCalls, revisions, headMoves, restore } = loadVotes({ pool, mirror, move: 'authored' });
   try {
     const session = nativeRow();
     const settled = subject.settleVoteInBackground({
@@ -391,9 +399,12 @@ test('an authored push found after the vote clears the approvals and skips the m
     assert.equal(out.merged, false);
     assert.equal(out.reviewReset, true);
     assert.equal(pool.state.epoch, 3, 'the epoch the vote was stamped with no longer counts');
-    assert.equal(mirror.calls.length, 1, 'fresh read only; checkAndMerge never ran');
+    assert.deepEqual(headMoves.map(({ sessionId, column, from, to, keepVotes }) => ({ sessionId, column, from, to, keepVotes })),
+      [{ sessionId: 7, column: 'reviewed', from: HEAD, to: PUSHED, keepVotes: false }], 'the machine moves the head and clears the approvals');
+    assert.equal(mirror.calls.length, 1, 'fresh read only; nothing is asked of the merge queue');
     assert.equal(mirror.calls[0].fresh, true);
     assert.equal(gateCalls.length, 0);
+    assert.deepEqual(revisions, [{ head: PUSHED, source: 'reviewed-head' }], 'the machine checks the pushed head');
     assert.ok(voteUpdates.some((u) => u.headMoved), 'every client hears the head moved');
     assert.ok(systemMessages.some((m) => /votes were cleared/.test(m.content)),
       'and the thread asks for a re-review');
@@ -405,18 +416,18 @@ test('an authored push found after the vote clears the approvals and skips the m
 test('a mechanical sync found after the vote keeps it and goes on to the merge check', async () => {
   const pool = makePool();
   const mirror = controlledMirror(PUSHED);
-  const { subject, gateCalls, restore } = loadVotes({ pool, mirror, move: 'mechanical' });
+  const { subject, gateCalls, headMoves, restore } = loadVotes({ pool, mirror, move: 'mechanical' });
   try {
     const settled = subject.settleVoteInBackground({
       config: {}, pool, session: nativeRow(), revision: { enforced: true, deferred: true, epoch: 2 },
     });
     await until(() => mirror.calls.length >= 1);
     mirror.fetches[0].resolve('/tmp/mirror');
-    await until(() => mirror.calls.length >= 2);
-    mirror.fetches[1].resolve('/tmp/mirror');
     await settled;
     assert.equal(pool.state.epoch, 2, 'a sync that changed nothing keeps every vote');
-    assert.equal(gateCalls.length, 1, 'and the majority is checked');
+    assert.equal(headMoves.length, 1);
+    assert.equal(headMoves[0].keepVotes, true, 'the machine is asked to keep the votes');
+    assert.equal(gateCalls.length, 1, 'and the merge queue is asked');
   } finally {
     restore();
   }

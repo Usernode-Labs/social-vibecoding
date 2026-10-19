@@ -14,7 +14,7 @@
  * a container looking perfectly healthy while still holding stale env.
  *
  * Before this module the only on-demand env-correct path was
- * `POST /api/apps/:slug/redeploy` → `staging.rebuildProduction`, which does
+ * `POST /api/apps/:slug/redeploy` → `staging.deployProduction`, which does
  * a full clone + `docker build` (p50 ~28s per app) one app at a time. The
  * cheap path — `appRespawn.runExistingImage`, which re-runs the image that
  * is already on the host with a freshly assembled env (~3-6s per app) —
@@ -54,6 +54,8 @@ const appDeployStatus = require('./app-deploy-status');
 const deployFailure = require('./deploy-failure');
 const events = require('./events');
 const { getPool } = require('../db/pool');
+const { withResourceUse } = require('./build-retention-guard');
+const { PRODUCTION_BUILD_LOCK } = require('./advisory-locks');
 
 // Mirrors app-heal.js's MAX_HEALS_PER_TICK: the existing precedent for
 // "how much docker churn is polite on this host". At 3, at most three apps
@@ -74,17 +76,27 @@ const ELIGIBLE_WHERE = "status = 'running' AND self_hosted IS NOT TRUE";
 
 // slug -> row shape runExistingImage needs (db_password, manifest_snapshot)
 // plus what the fallback and the UI need.
+const ELIGIBLE_COLUMNS = `id, slug, name, db_password, manifest_snapshot, repo_url,
+         self_hosted, main_sha, image_ref, deploy_state, deploy_started_at, deploy_from_sha`;
 const SELECT_ELIGIBLE = `
-  SELECT id, slug, name, db_password, manifest_snapshot, repo_url,
-         self_hosted, main_sha
+  SELECT ${ELIGIBLE_COLUMNS}
     FROM apps
    WHERE ${ELIGIBLE_WHERE}
    ORDER BY id`;
+// The same row again, read once this app's turn holds the locks: a deploy
+// that ran while the job waited (a merge, Redeploy, the drift poller) may
+// have built a newer image, which the respawn must run rather than the one
+// the job saw when it started (on Kubernetes image_ref is a digest).
+const SELECT_ONE = `
+  SELECT ${ELIGIBLE_COLUMNS}
+    FROM apps
+   WHERE id = $1 AND ${ELIGIBLE_WHERE}`;
 
 // Per-app outcomes, in the spirit of app-heal.checkAndHealOne's documented
 // status enum:
 //   rolled                  — image re-run with fresh env, healthy
-//   rebuilt                 — image was missing; full rebuildProduction ran
+//   rebuild_requested       — image was missing; the rebuild was asked of
+//                             app delivery
 //   skipped_deploying       — another rebuild owns this slug right now
 //   skipped_missing_secrets — required secrets unset; image can't run
 //   skipped_no_db_password  — per-role migration hasn't populated it
@@ -179,7 +191,7 @@ function demoJob() {
     apps: [
       { appId: 900001, slug: 'staging-demo-app-one', state: 'rolled', ms: 4100, error: null },
       { appId: 900002, slug: 'staging-demo-app-two', state: 'rolled', ms: 3700, error: null },
-      { appId: 900003, slug: 'staging-demo-app-three', state: 'rebuilt', ms: 31200, error: null },
+      { appId: 900003, slug: 'staging-demo-app-three', state: 'rebuild_requested', ms: 31200, error: null },
       {
         appId: 900004,
         slug: 'staging-demo-app-four',
@@ -305,7 +317,7 @@ async function run(config, job) {
       jobId: job.id,
       total: job.total,
       rolled: tally.rolled || 0,
-      rebuilt: tally.rebuilt || 0,
+      rebuildRequested: tally.rebuild_requested || 0,
       skipped: Object.keys(tally)
         .filter((k) => k.startsWith('skipped_'))
         .reduce((n, k) => n + tally[k], 0),
@@ -324,9 +336,10 @@ async function rollOne(config, pool, app) {
   const containerName = `usernode-app-${app.slug}`;
   const imageName = `usernode-app-${app.slug}:latest`;
 
-  // Something else (merge, drift poller, heal) owns this slug right now.
+  // Something else (merge, drift poller, heal) owns this slug right now, in
+  // this process or by app delivery anywhere (the row's deploy_state).
   // Stepping on it would interleave two stopAndRemove/runContainer pairs.
-  const deploy = appDeployStatus.read(app.slug);
+  const deploy = appDeployStatus.read(app.slug, app);
   if (deploy && deploy.deploying) return { outcome: 'skipped_deploying' };
 
   const kubernetesMode = config.appRuntime === 'kubernetes';
@@ -335,9 +348,9 @@ async function rollOne(config, pool, app) {
     : await docker.imageExists(imageName).catch(() => false);
 
   if (!hasImage) {
-    // Fallback: the cheap path needs an image on the host. Deliberately
-    // NOT wrapped in serializeRebuild — rebuildProduction takes that lock
-    // itself, and nesting would deadlock the slug's chain.
+    // Fallback: the cheap path needs an image on the host. Without one, a
+    // rebuild is asked of app delivery, which runs it (one deploy of an app
+    // at a time, under the build lock).
     if (!app.repo_url) {
       const err = new Error(
         `no image ${imageName} on the host and no repo_url — nothing to run`
@@ -347,17 +360,9 @@ async function rollOne(config, pool, app) {
       return { outcome: FAILED, error: err.message };
     }
     try {
-      const staging = require('./staging');
-      const { containerId, sha } = await staging.rebuildProduction(config, app);
-      const { rowCount } = await pool.query(
-        `UPDATE apps SET container_id = $1, main_sha = $2, last_deploy_at = NOW()
-          WHERE id = $3`,
-        [containerId, sha || app.main_sha || null, app.id]
-      );
-      if (!rowCount) return { outcome: 'skipped_deleted' };
-      return { outcome: 'rebuilt' };
+      await require('../workflow/platform.ts').requestDeploy(app.id, 'rollover');
+      return { outcome: 'rebuild_requested' };
     } catch (err) {
-      // rebuildProduction persists its own last_failure record.
       log.warn('app-rollover', 'Rebuild fallback failed', {
         slug: app.slug, err: err.message,
       });
@@ -365,12 +370,19 @@ async function rollOne(config, pool, app) {
     }
   }
 
-  // Per-slug serialization: bulk rollover, dev-chat merges, the drift
-  // poller and heals all queue behind one another for the same app. This
-  // is the race staging.js's serializeRebuild comment documents —
-  // runExistingImage does not take the lock on its own.
+  // Per-slug serialization: a rollover and app delivery's deploys of the
+  // same app queue behind one another. This is the race staging.js's
+  // serializeRebuild comment documents — runExistingImage does not take the
+  // lock on its own. The chain orders this process; PRODUCTION_BUILD_LOCK
+  // (Kubernetes) orders this against a deploy in another process, as
+  // staging.deployProduction takes it.
   const staging = require('./staging');
-  return staging.serializeRebuild(app.slug, async () => {
+  return staging.serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug, async () => {
+    const { rows: [current] } = await pool.query(SELECT_ONE, [app.id]);
+    if (!current) return { outcome: 'skipped_deleted' };
+    const now = appDeployStatus.read(current.slug, current);
+    if (now && now.deploying) return { outcome: 'skipped_deploying' };
+    app = current;
     // markStart/markEnd are the only emitters of app_redeploy_status, so
     // this is what makes the version pills spin during a rollover.
     appDeployStatus.markStart(app.slug, { fromSha: app.main_sha || null });
@@ -391,7 +403,7 @@ async function rollOne(config, pool, app) {
       }
 
       // null means required secrets are unset. Do NOT fall back to
-      // rebuildProduction — it would raise MissingSecretsError for the
+      // deployProduction — it would raise MissingSecretsError for the
       // same reason, after a pointless clone + build.
       if (!containerId) return { outcome: 'skipped_missing_secrets' };
 
@@ -428,7 +440,7 @@ async function rollOne(config, pool, app) {
     } finally {
       appDeployStatus.markEnd(app.slug, { failed: failedForPill });
     }
-  });
+  }));
 }
 
 // apps.last_failure so the existing "View build log" panel covers rollover

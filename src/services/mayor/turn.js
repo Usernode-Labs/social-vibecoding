@@ -457,6 +457,7 @@ async function runMayorTurn(ctx, deps) {
       }
 
       releaseDispatchOperation = beginSessionOperation(session.id);
+      await releaseDispatchOperation.recorded;
       send('assistant_message_end', {});
 
       let attachmentsBlock = '';
@@ -1417,6 +1418,7 @@ async function runMayorTurn(ctx, deps) {
     // pass a point-in-time busy check and then mutate the branch while the
     // other is awaiting DB/GitHub work.
     releaseDispatchOperation = beginSessionOperation(session.id);
+    await releaseDispatchOperation.recorded;
 
     // Seal the phase-1 assistant bubble so the phase-2 wrap-up
     // lands in a fresh bubble below the CC status/progress events.

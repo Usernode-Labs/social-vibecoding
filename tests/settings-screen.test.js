@@ -35,6 +35,7 @@ const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const { renderComponent } = require('./lib/render-tsx');
 const { shellMarkup } = require('./lib/shell-markup');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 // The markup the shell renders — document plus the settings panes, which
 // mount on first reveal (tests/lib/shell-markup.js).
@@ -238,8 +239,12 @@ test('the default section is an ungated page, and the first one', () => {
 
 test('the registry groups pages under four headings, Account first', () => {
   const sections = registrySections();
-  const order = [];
-  for (const s of sections) if (!order.includes(s.group)) order.push(s.group);
+  // A group is named by its message id; the heading is that id's English.
+  const groupIds = [];
+  for (const s of sections) if (!groupIds.includes(s.group)) groupIds.push(s.group);
+  assert.deepEqual(groupIds, ['settings:nav.group.account', 'settings:nav.group.aiBuilding',
+    'settings:nav.group.preferences', 'settings:nav.group.helpAbout']);
+  const order = groupIds.map((id) => message(id));
   assert.deepEqual(order, ['Account', 'AI & building', 'Preferences', 'Help & about'],
     'four groups, in menu order');
   // dapp.json asserts this heading by TEXT, so the spelling is a contract.
@@ -282,16 +287,27 @@ test('the registry groups pages under four headings, Account first', () => {
   }
   assert.deepEqual(['app-permissions', 'app-ai', 'blocked-apps'].map(pageOf),
     Array(3).fill('app-permissions'), 'what each app may do, on one page');
-  assert.deepEqual(['theme', 'dev-console', 'admin-preview'].map(pageOf), Array(3).fill('theme'),
-    'Appearance: what the shell shows on this device');
+  // #5285: Appearance is the theme (and the desktop sidebar switch inside
+  // its pane); the developer console's switch and the admin preview are the
+  // Developer page, the last page of Preferences.
+  assert.deepEqual(registryPages().find((p) => p.key === 'theme').parts.map((s) => s.key), ['theme'],
+    'Appearance holds the theme alone');
+  assert.deepEqual(['dev-console', 'admin-preview'].map(pageOf), Array(2).fill('developer'),
+    'Developer: the console switch and the admin preview');
+  const developer = registryPages().find((p) => p.key === 'developer');
+  assert.equal(developer.group, 'settings:nav.group.preferences', 'Developer stays in Preferences');
+  const preferences = registryPages().filter((p) => p.group === 'settings:nav.group.preferences');
+  assert.equal(preferences.at(-1).key, 'developer', 'and is its last page');
+  assert.equal(message('settings:nav.page.developer'), 'Developer');
   // No "Admin" group in the nav any more: it sat directly above the footer's
   // own Admin block, two identical headings in a row.
-  assert.ok(!order.includes('Admin'), 'admin preview shares Appearance rather than a group of its own');
+  assert.ok(!order.includes('Admin'), 'admin preview shares Developer rather than a group of its own');
 
   // A gated part is a page of its own — so its gate hides exactly one row —
   // unless it shares a page with ungated parts, where the gate hides only its
   // block. Admin preview is the one of those, and it is never a page's first
-  // part, so the page's own address and title never depend on it.
+  // part, so the page's own address and title never depend on it. Its
+  // partner, the console switch, is ungated, so everyone has the row.
   for (const s of sections.filter((x) => x.gate)) {
     if (s.key === 'admin-preview') {
       assert.notEqual(registryPages().find((p) => p.key === s.page).parts[0].key, s.key);
@@ -347,6 +363,11 @@ test('a part address resolves to its page, scrolled to the part', () => {
   assert.deepEqual(S._resolve('build-venue'), { page: null, anchor: null }, 'a retired part (#4311)');
   assert.deepEqual(S._resolve('api-key'), { page: 'ai', anchor: 'api-key' });
   assert.deepEqual(S._resolve('theme'), { page: 'theme', anchor: null });
+  // #5285: the developer tools' page, and the parts' own addresses.
+  assert.deepEqual(S._resolve('developer'), { page: 'developer', anchor: null });
+  assert.deepEqual(S._resolve('dev-console'), { page: 'developer', anchor: null },
+    'the console switch\'s own address opens Developer at its top');
+  assert.deepEqual(S._resolve('admin-preview'), { page: 'developer', anchor: 'admin-preview' });
   assert.deepEqual(S._resolve('usernode'), { page: 'usernode', anchor: null });
   assert.deepEqual(S._resolve('nope'), { page: null, anchor: null });
   assert.deepEqual(S._resolve(null), { page: null, anchor: null });
@@ -390,7 +411,8 @@ test('the nav lists pages and hands the filter its terms', () => {
   assert.match(navTsx, /\{mobile \? \(/, 'and so does the menu\'s');
   assert.match(navTsx, /e\.key === 'Enter' && hits\[0\]/, 'Enter opens the first hit');
   assert.match(navTsx, /e\.key === 'Escape'/, 'Escape clears');
-  assert.match(navTsx, /No settings match/, 'an empty result says so');
+  assert.match(navTsx, /t\('settings:nav\.filter\.noMatch', \{ query: query\.trim\(\) \}\)/, 'an empty result says so');
+  assert.equal(message('settings:nav.filter.noMatch', { query: 'zzz' }), 'No settings match “zzz”.');
 });
 
 test('the filter matches every word, and names the parts that matched', () => {
@@ -582,7 +604,8 @@ test('navigateToSettings mounts the screen and routes when already mounted', () 
     'an in-screen navigation is handed to the module, not re-mounted');
   assert.match(head, /App\._showOnlyScreen\('settings-screen'\)/,
     'reveals #settings-screen (and hides every sibling root) through the shared primitive');
-  assert.match(head, /App\.setHeaderTitle\('Settings'\)/, 'sets the header title');
+  assert.match(head, /App\.setHeaderTitle\(PlatformI18n\.t\('shell:title\.settings'\)\)/, 'sets the header title');
+  assert.equal(message('shell:title.settings'), 'Settings');
   assert.match(head, /App\._inSettings = true;/, 'records that we are on the screen');
   assert.match(head, /Settings\.open\(section, \{ chrome: false \}\)/,
     'hands the section to the module, holding its header write for the transition');
@@ -668,7 +691,9 @@ test('Settings is reached from the Me tab, by a real anchor', () => {
   // Settings went into it; #2718 took the platform's destinations back out,
   // because the menu holds the APP's options now and the tab bar carries the
   // platform's places. It is a Profile row again — one entrance, two hops
-  // from anywhere: the Me tab, then the row.
+  // from anywhere: the Me tab, then the row. (The navigation review keeps it
+  // off the page where the sidebar's gear already opens Settings; on a
+  // phone, which has no gear, this row is the entrance.)
   const panel = read('frontend/src/features/profile/account-panel.tsx');
   assert.match(panel, /id="profile-row-settings"[\s\S]{0,120}href="#settings"/,
     'navigation rides the anchor hash, like Challenges beside it');
@@ -1065,7 +1090,8 @@ test('the native-only password creation link has a read-only browser review stat
     'exactly one declared check drives the password-creation screenshot state');
   assert.equal(checks[0].path, '/?shot=password-create#settings/password');
   assert.equal(checks[0].expectText, 'Don’t have a password? Create one');
-  assert.match(passwordTsx, /Don’t have a password\? Create one/,
+  assert.match(passwordTsx, /t\('settings:password\.useWallet'\)/);
+  assert.equal(message('settings:password.useWallet'), checks[0].expectText,
     'the component renders the user-facing copy the check expects');
 
   assert.match(sliceMethod(settingsJs, '_passwordCreateDemo'),
@@ -1080,6 +1106,51 @@ test('the native-only password creation link has a read-only browser review stat
   const firstRequest = submit.indexOf('fetch(');
   assert.ok(nativeGate > -1 && firstRequest > nativeGate,
     'a browser using the review state cannot reach the wallet request path');
+});
+
+test('Settings → Account offers "Add a password" to an account that has none (#4891)', () => {
+  // The email sign-up asks for no password and says "You can add a password
+  // later in Settings." This is where: the Password part, titled and
+  // buttoned for the account it is showing to.
+  assert.equal(message('settings:password.titleAdd'), 'Add a password');
+  assert.equal(message('settings:password.submitAdd'), 'Add password');
+  assert.equal(message('settings:password.title'), 'Change password');
+  // Both wordings ship, the "add" one hidden, so the section stays a static
+  // render that settings.js toggles (no React state over its nodes).
+  assert.match(html, /<span id="cp-title-change">Change password<\/span><span id="cp-title-add" class="hidden">Add a password<\/span>/);
+  assert.match(html, /<span id="cp-save-change">Change password<\/span><span id="cp-save-add" class="hidden">Add password<\/span>/);
+
+  // settings.js picks the wording from /api/auth/me's hasPassword, with the
+  // current-password row (#4595), each time the section is shown.
+  const shown = (hasPassword) => {
+    const els = new Map();
+    const document = {
+      getElementById(id) {
+        if (!els.has(id)) {
+          const el = { hidden: false };
+          el.classList = { toggle(name, on) { if (name === 'hidden') el.hidden = on; } };
+          els.set(id, el);
+        }
+        return els.get(id);
+      },
+    };
+    const App = { user: { hasPassword } };
+    const S = new Function('document', 'window', 'App',
+      `return ({${sliceMethod(settingsJs, '_noPasswordYet')},${sliceMethod(settingsJs, '_setChangePasswordMode')}});`,
+    )(document, { App }, App);
+    S._walletChangeAvailable = false;
+    S._setChangePasswordMode('password');
+    return (id) => !els.get(id).hidden;
+  };
+  const none = shown(false);
+  for (const id of ['cp-title-add', 'cp-save-add', 'cp-save']) assert.equal(none(id), true, `${id} shows with no password`);
+  for (const id of ['cp-title-change', 'cp-save-change', 'cp-current-row']) assert.equal(none(id), false, `${id} hides with no password`);
+  const has = shown(true);
+  for (const id of ['cp-title-change', 'cp-save-change', 'cp-current-row', 'cp-save']) assert.equal(has(id), true, `${id} shows with a password`);
+  for (const id of ['cp-title-add', 'cp-save-add']) assert.equal(has(id), false, `${id} hides with a password`);
+  // Once the first one is set, the section reads "Change password" again.
+  assert.match(sliceMethod(settingsJs, 'changePassword'),
+    /if \(j\.first && window\.App && App\.user\) \{\s*App\.user\.hasPassword = true;\s*this\._setChangePasswordMode\('password'\);/);
 });
 
 // ── #1102: route() is idempotent, so a duplicate dispatch cannot repaint
@@ -1193,7 +1264,8 @@ test('the usernode section renders a reason, not just "could not load"', () => {
     'the reason is read through one helper');
   assert.match(settingsJs, /NativeChrome\.lastReadError\('getSettingsState'\)/,
     'it comes from the shared bridge record, not a settings-local guess');
-  assert.match(usernodeTsx, /Could not load Homeroom app settings\./,
+  assert.match(usernodeTsx, /t\('settings:usernode\.body\.loadFailed'\)/);
+  assert.equal(message('settings:usernode.body.loadFailed'), 'Could not load Homeroom app settings.',
     'the headline is unchanged so existing reports stay recognisable');
   // #1079: the box is sections/usernode.tsx now. The MODEL carries the
   // app's own message and the component renders it verbatim in a mono run.
@@ -1209,8 +1281,9 @@ test('the failed read is recoverable in place', () => {
   // a retry that swaps in a progress line rather than blanking the section.
   assert.match(usernodeTsx, /id="settings-usernode-error"/,
     'the error box has a stable id');
-  assert.match(usernodeTsx, /id: 'settings-usernode-retry', label: 'Try again'/,
+  assert.match(usernodeTsx, /id: 'settings-usernode-retry', label: t\('core:common\.tryAgain'\)/,
     'the retry button has a stable id and is offered on the screen');
+  assert.equal(message('core:common.tryAgain'), 'Try again');
   const retry = sliceMethod(settingsJs, '_retryUsernodeRead');
   assert.match(retry, /this\._usernodeLoading = true;/,
     'a retry swaps the box for a progress line instead of blanking the section');
@@ -1242,8 +1315,9 @@ test('a failed read still leaves the snapshot-independent blocks up', () => {
   ]) {
     assert.ok(view.includes(field), `${field} is computed with or without a snapshot`);
   }
-  assert.match(view, /actions: \[\s*\n?\s*\{ label: 'Device benchmark'/,
+  assert.match(view, /actions: \[\s*\n?\s*\{ label: tr\('settings:usernode\.diagnostics\.deviceBenchmark'\)/,
     'the two native screens are reachable whether or not the snapshot loaded');
+  assert.equal(message('settings:usernode.diagnostics.deviceBenchmark'), 'Device benchmark');
   assert.match(usernodeTsx, /<Faq s=\{s\} \/>/, 'the FAQ needs no snapshot');
 
   // These read the snapshot, so every one of them must be guarded.
@@ -1268,14 +1342,16 @@ test('the native ZK identity entry is capability-gated and dispatchable', () => 
     /const canOpenZkIdentity = this\._hasNativeCapability\('zkIdentityFlow'\)/,
     'the button follows the additive feature capability, not bridge version');
   assert.match(view,
-    /open: canOpenZkIdentity \? \{[\s\S]*label: 'Open ZK identity'[\s\S]*action: '_openZkIdentityScreen'/,
+    /open: canOpenZkIdentity \? \{[\s\S]*label: tr\('settings:usernode\.privacy\.openZkIdentity'\)[\s\S]*action: '_openZkIdentityScreen'/,
     'supported builds publish a visible settings action');
+  assert.equal(message('settings:usernode.privacy.openZkIdentity'), 'Open ZK identity');
   assert.match(usernodeTsx,
     /s\.privacy\.open \? <UnBtn btn=\{s\.privacy\.open\} \/> : null/,
     'unsupported builds render no dead control');
   assert.match(sliceMethod(settingsJs, '_openZkIdentityScreen'),
-    /_openNativeScreen\('zkIdentity', 'Could not open ZK identity'\)/,
+    /_openNativeScreen\('zkIdentity', tr\('settings:usernode\.privacy\.openZkIdentityFailed'\)\)/,
     'the action uses the allowlisted native target');
+  assert.equal(message('settings:usernode.privacy.openZkIdentityFailed'), 'Could not open ZK identity');
 });
 
 
@@ -1332,8 +1408,9 @@ test('activity notifications wait for native admission and surface failures', ()
     'and the retry actually re-runs the handoff');
   assert.match(usernodeTsx, /includeErrorDetail: true/,
     'native storage and admission errors remain visible to the user');
-  assert.match(usernodeUiTsx, /Could not save the setting/,
+  assert.match(usernodeUiTsx, /useAction\(t\('settings:usernode\.settingSaveFailed'\)\)/,
     'a failed setter says so rather than silently reverting');
+  assert.equal(message('settings:usernode.settingSaveFailed'), 'Could not save the setting');
 });
 
 test('only the newest usernode read attempt paints', () => {
@@ -1430,7 +1507,8 @@ test('the machine list reads the account route, not the CLI surface', () => {
     settingsJs.indexOf('_detachLocalAgent(')
   );
   assert.match(render, /_cliTokensDemo\(\) \? '\?demo=1' : ''/);
-  assert.match(render, /Demo data/);
+  assert.match(render, /status\.textContent = tr\('settings:localAgents\.demoData'\)/);
+  assert.match(message('settings:localAgents.demoData'), /Demo data/);
 });
 
 test('detaching is confirmed, and an already-gone lease is not an error', () => {
@@ -1498,8 +1576,10 @@ test('the panel has stable ids and both actions', () => {
   assert.match(usernodeTsx, /id="settings-usernode-connection"/);
   assert.match(usernodeTsx, /id: 'settings-usernode-connection-retry'/);
   assert.match(usernodeTsx, /id: 'settings-usernode-connection-copy'/);
-  assert.match(usernodeTsx, /'Try again'/);
-  assert.match(usernodeTsx, /'Copy diagnostics'/);
+  assert.match(usernodeTsx, /id: 'settings-usernode-connection-retry', label: t\('core:common\.tryAgain'\)/);
+  assert.equal(message('core:common.tryAgain'), 'Try again');
+  assert.match(usernodeTsx, /id: 'settings-usernode-connection-copy', label: t\('settings:usernode\.connection\.copyDiagnostics'\)/);
+  assert.equal(message('settings:usernode.connection.copyDiagnostics'), 'Copy diagnostics');
   // PlatformUI.copyText is the real API (async → boolean, never throws).
   const copy = sliceMethod(settingsJs, '_copyUsernodeDiagnostics');
   assert.match(copy, /PlatformUI\.copyText\(/);
@@ -1526,7 +1606,8 @@ test('the widget-icon box reports every step of the icon decision', () => {
   // #1079: the DECISIONS are _widgetIconsView's; the heading is the
   // component's. Every property below is unchanged.
   const widget = sliceMethod(settingsJs, '_widgetIconsView');
-  assert.match(usernodeTsx, /Homeroom app: widget icons/);
+  assert.match(usernodeTsx, /title=\{t\('settings:usernode\.widgetIcons\.title'\)\}/);
+  assert.equal(message('settings:usernode.widgetIcons.title'), 'Homeroom app: widget icons');
   for (const id of [
     'settings-widget-mechanism-row',
     'settings-widget-registry-row',
@@ -1542,13 +1623,31 @@ test('the widget-icon box reports every step of the icon decision', () => {
   // app couldn't say" and "the app said no" are different diagnoses with
   // different fixes, and collapsing them is the bug being diagnosed.
   assert.match(widget, /diag\.capability === true/);
-  assert.match(widget, /diag\.capability === false \? 'Not advertised' : 'The app couldn’t say'/);
+  assert.match(widget, /diag\.capability === false\s*\? tr\('settings:usernode\.widgetIcons\.capability\.notAdvertised'\)\s*: tr\('settings:usernode\.widgetIcons\.capability\.unknown'\)/);
+  assert.equal(message('settings:usernode.widgetIcons.capability.notAdvertised'), 'Not advertised');
+  assert.equal(message('settings:usernode.widgetIcons.capability.unknown'), 'The app couldn’t say');
   // Same for the behavioural verdict and what SV is actually sending.
   assert.match(widget, /diag\.verdict === 'supported'/);
-  assert.match(widget, /diag\.verdict === 'unsupported' \? 'Single face only' : 'Not confirmed yet'/);
+  assert.match(widget, /diag\.verdict === 'unsupported'\s*\? tr\('settings:usernode\.widgetIcons\.verdict\.unsupported'\)\s*: tr\('settings:usernode\.widgetIcons\.verdict\.unconfirmed'\)/);
+  assert.equal(message('settings:usernode.widgetIcons.verdict.unsupported'), 'Single face only');
+  assert.equal(message('settings:usernode.widgetIcons.verdict.unconfirmed'), 'Not confirmed yet');
   assert.match(widget, /diag\.resolved === true/);
-  assert.match(widget, /Verdict bound to app version/);
-  assert.match(widget, /Last icon check/);
+  assert.match(widget, /tr\('settings:usernode\.widgetIcons\.verdictBound', \{/);
+  assert.match(message('settings:usernode.widgetIcons.verdictBound', { version: '1.2', build: '34' }), /Verdict bound to app version/);
+  assert.match(message('settings:usernode.widgetIcons.verdictUnbound'), /Verdict bound to app version/);
+  // The "Last icon check" note is a whole message per outcome, chosen by a
+  // helper of its own.
+  assert.match(widget, /\{ text: this\._widgetIconLastCheckText\(diag\), tone: 'muted' \}/);
+  const lastCheck = sliceMethod(settingsJs, '_widgetIconLastCheckText');
+  assert.match(lastCheck, /const \[timed, never\] = this\.WIDGET_ICON_LAST_CHECK\[kind\];/);
+  assert.match(lastCheck, /\? tr\(timed, \{ \.\.\.values, when: this\._widgetIconTime\(diag\.lastHealAt\) \}\)\s*: tr\(never, values\)/);
+  const lastCheckTable = settingsJs.slice(settingsJs.indexOf('    WIDGET_ICON_LAST_CHECK: {'));
+  const lastCheckIds = [...new Set(lastCheckTable.slice(0, lastCheckTable.indexOf('\n    },'))
+    .match(/settings:usernode\.widgetIcons\.lastCheck\.[A-Za-z]+/g) || [])];
+  assert.equal(lastCheckIds.length, 12, 'the note is drawn from the catalog: a timed and a never message per outcome');
+  for (const id of lastCheckIds) {
+    assert.match(message(id, { when: 'now', count: 2, refused: 1 }), /^Last icon check/, id);
+  }
   // A failed probe explains itself in the same plain language the rest
   // of this screen uses, rather than leaving a silent "couldn't say".
   assert.match(widget, /USERNODE_READ_ERROR_REASONS\[diag\.readError\.kind\]/);
@@ -1575,11 +1674,19 @@ test('per-entry rows separate "never sent" from "sent and not kept"', () => {
   // apart from a shell bug — they live in different repositories.
   assert.match(entries, /entry\.hasIcon/);
   assert.match(entries, /entry\.hasIconDark/);
-  assert.match(entries, /entry\.matches \? 'current' : 'stale'/);
+  assert.match(entries, /entry\.matches\s*\? tr\('settings:usernode\.widgetIcons\.entry\.sentCurrent'\)\s*: tr\('settings:usernode\.widgetIcons\.entry\.sentStale'\)/);
+  assert.equal(message('settings:usernode.widgetIcons.entry.sentCurrent'), 'sent current');
+  assert.equal(message('settings:usernode.widgetIcons.entry.sentStale'), 'sent stale');
   // Tri-state all the way down: a shell that reports neither key says
   // "—", not "no".
-  assert.match(entries, /v === true \? 'yes' : \(v === false \? 'no' : '—'\)/);
-  assert.match(entries, /pinned by another app/,
+  for (const [fact, word] of [['icon', 'icon'], ['dark', 'dark']]) {
+    assert.match(entries, new RegExp(`const ${fact} = \\(v\\) => tr\\(v === true \\? 'settings:usernode\\.widgetIcons\\.entry\\.${fact}Yes'`
+      + `\\s*: \\(v === false \\? 'settings:usernode\\.widgetIcons\\.entry\\.${fact}No' : 'settings:usernode\\.widgetIcons\\.entry\\.${fact}Unknown'\\)\\)`));
+    assert.deepEqual(['Yes', 'No', 'Unknown'].map((v) => message(`settings:usernode.widgetIcons.entry.${fact}${v}`)),
+      [`${word} yes`, `${word} no`, `${word} —`]);
+  }
+  assert.match(entries, /entry\.foreign\s*\? tr\('settings:usernode\.widgetIcons\.entry\.foreign'\)/);
+  assert.equal(message('settings:usernode.widgetIcons.entry.foreign'), 'pinned by another app',
     'a foreign shortcut is named as such rather than shown as broken');
 });
 
@@ -1611,8 +1718,10 @@ test('?widgeticons=demo opens the box on a plain browser', () => {
   // a device — is unchanged.
   const widget = sliceMethod(settingsJs, '_widgetIconsView');
   assert.match(widget, /recheck: !this\._widgetIconsDemo\(\)/);
-  assert.match(usernodeTsx, /w\.recheck \? <UnBtn btn=\{\{ label: 'Re-check icons'/);
-  assert.match(usernodeTsx, /Staging demo: sample data/);
+  assert.match(usernodeTsx, /w\.recheck \? <UnBtn btn=\{\{ label: t\('settings:usernode\.widgetIcons\.recheck'\)/);
+  assert.equal(message('settings:usernode.widgetIcons.recheck'), 'Re-check icons');
+  assert.match(usernodeTsx, /w\.demo \? <UnP note=\{\{ text: t\('settings:usernode\.demoNote'\)/);
+  assert.equal(message('settings:usernode.demoNote'), 'Staging demo: sample data');
 });
 
 test('Try again re-probes, re-admits and re-arms readiness in one press', () => {
@@ -1645,9 +1754,10 @@ test('every privileged state has a plain-language reason, remedy-ordered', () =>
   // The remedy order the report asked for: force-close and reopen FIRST,
   // reinstall only if that does not clear it.
   for (const key of ['blocked-frame', 'unattached']) {
-    const at = table.indexOf(`'${key}':`);
-    const next = table.indexOf("':", table.indexOf('\n', at) + 1);
-    const copy = table.slice(at, next > at ? next + 200 : table.length);
+    // The table names a message per state; the copy is that message's English.
+    const id = table.match(new RegExp(`'${key}': '(settings:usernode\\.connection\\.reason\\.[A-Za-z]+)',`));
+    assert.ok(id, `${key} names its reason`);
+    const copy = message(id[1]);
     const closeAt = copy.search(/[Ff]orce-close/);
     const reinstallAt = copy.search(/reinstall/i);
     assert.ok(closeAt > -1, `${key} tells the user to force-close and reopen`);
@@ -1678,8 +1788,12 @@ test('a refused bridge changes what the dependent messages say', () => {
   // through the SAME helper by name across the seam.
   assert.match(usernodeUiTsx, /settings\(\)\?\._nativeActionMessage\?\.\(err, fallback\)/,
     'the shared control wrapper routes through the helper');
-  for (const fallback of ['Could not save the setting', 'Action failed']) {
-    assert.ok(usernodeUiTsx.includes(fallback), `${fallback} is a fallback message`);
+  for (const [id, fallback] of [
+    ['settings:usernode.settingSaveFailed', 'Could not save the setting'],
+    ['settings:usernode.actionFailed', 'Action failed'],
+  ]) {
+    assert.ok(usernodeUiTsx.includes(`useAction(t('${id}'))`), `${fallback} is a fallback message`);
+    assert.equal(message(id), fallback);
   }
   assert.ok(settingsJs.includes('this._nativeActionMessage(err, failMsg)'),
     'the native-screen opener still routes through the helper');
@@ -1723,8 +1837,9 @@ test('the bridgediag demo hook is read-only and reads the HASH query', () => {
   // component's — a demo snapshot still says so on screen.
   assert.match(sliceMethod(settingsJs, '_usernodeConnectionView'),
     /demo: !!this\._bridgeDiagDemo\(\)/);
-  assert.match(usernodeTsx, /c\.demo \? <UnP note=\{\{ text: 'Staging demo: sample data'/,
+  assert.match(usernodeTsx, /c\.demo \? <UnP note=\{\{ text: t\('settings:usernode\.demoNote'\)/,
     'the demo snapshot is labelled as fake on screen');
+  assert.equal(message('settings:usernode.demoNote'), 'Staging demo: sample data');
   // Read-only hook: the buttons render so the screenshot shows the real
   // panel, but they must not touch a bridge or a session.
   assert.match(sliceMethod(settingsJs, '_usernodeConnectionView'),
@@ -1765,7 +1880,8 @@ test('the connection panel offers wallet recovery off the recorded failure', () 
   assert.match(view, /walletRecovery: this\._walletRecoveryAvailable\(\) \?/,
     'the button is a slice of the connection model');
   assert.match(view, /id: 'settings-usernode-connect-wallet'/);
-  assert.match(view, /label: 'Connect existing wallet'/);
+  assert.match(view, /label: tr\('settings:usernode\.connection\.connectWallet'\)/);
+  assert.equal(message('settings:usernode.connection.connectWallet'), 'Connect existing wallet');
   assert.match(view, /action: '_openWalletRecovery'/);
 
   const available = sliceMethod(settingsJs, '_walletRecoveryAvailable');
@@ -1923,8 +2039,12 @@ test('the local-agent setup guide is always-visible section markup', () => {
   assert.match(source, /PlatformUI/);
   assert.match(source, /copyText\?\.\(value\)/,
     'the shared helper keeps the clipboard fallback used elsewhere in the shell');
-  assert.match(source, /ok \? 'Copied' : 'Copy failed'/,
+  // The button's label follows the outcome, each outcome its own message.
+  assert.match(source, /setCopyState\(ok \? 'copied' : 'failed'\)/,
     'a rejected copy never claims success');
+  assert.match(source, /copied: 'core:common\.copied',\s*failed: 'settings:cli\.guide\.copyFailed',/);
+  assert.match(source, /\{t\(COPY_STATE_LABEL\[copyState\]\)\}/);
+  assert.equal(require('./lib/platform-i18n').message('settings:cli.guide.copyFailed'), 'Copy failed');
   const shell = shellMarkup();
   assert.match(shell, /id="cli-setup-guide"/,
     'the SSG output contains the guide before capability detection or credential loading');
@@ -1967,7 +2087,8 @@ test('settings.js publishes the rows rather than building them', () => {
   // The two SIBLINGS of the host stay the module's: the Load-more button
   // follows the keyset cursor and the status line has three writers.
   assert.match(render, /more\.classList\.toggle\('hidden', !this\._cliTokenCursor\)/);
-  assert.match(render, /status\.textContent = 'Demo data/);
+  assert.match(render, /status\.textContent = tr\('settings:cliTokens\.demoData'\)/);
+  assert.match(message('settings:cliTokens.demoData'), /^Demo data/);
 });
 
 // ── App AI permissions rows (#1957) ───────────────────────────────────
@@ -2122,19 +2243,27 @@ test('the social block renders its four host states', () => {
 // two more cards. These drive the real view builder rather than hand-written
 // fixtures, because the defect worth catching is the builder and the markup
 // disagreeing about what a state says.
-const tierView = () => new Function(`return ({${[
+// The builders read their words through settings.js's own `tr` and `dotText`,
+// so a slice of them is given the English catalog and the module's joiner.
+const tr = englishPlatformI18n().t;
+const dotTextSrc = settingsJs.match(/\n  const dotText = \(parts\) => \{\n[\s\S]*?\n  \};\n/);
+assert.ok(dotTextSrc, 'settings.js defines dotText');
+const dotText = new Function('tr', `${dotTextSrc[0]}\nreturn dotText;`)(tr);
+const sliced = (...methods) => new Function('tr', 'dotText', `return ({${methods.join(',')}})`)(tr, dotText);
+const tierView = () => sliced(
   sliceMethod(settingsJs, '_socialIdentityMoney'),
   sliceMethod(settingsJs, '_socialIdentityTierView'),
-].join(',')}})`)();
+);
 
 test('the head row says where the account stands, in words a reader has', () => {
   const view = tierView();
   const locked = view._socialIdentityTierView({
     policy: 'tiered', limitCents: 0, verificationRequired: true, entitlementAvailable: true,
+    weeklyLimitCents: 5000,
   });
   const html2 = socialHtml({ ...socialBase, tier: locked });
   assert.match(html2, />Signed in</);
-  assert.match(html2, />\$0 \/ day</);
+  assert.match(html2, />\$0 \/ week</);
   assert.match(html2, /id="github-link-tier-note"[^>]*>Either one is enough\./,
     'the one sentence the ladder needs sits under the list');
   assert.doesNotMatch(html2, /Layer 1/,
@@ -2147,39 +2276,75 @@ test('off the credit ladder the list promises nothing a connection cannot delive
   const view = tierView();
   // `legacy` is IDENTITY_CREDIT_POLICY's default, so this is the state most
   // deployments are in: a flat allowance that connecting does not change.
+  // #4913: the figure is the weekly allowance. `limitCents` is the daily
+  // value #2571 switched off; printed, it read "$20 / day" beside a $50 week.
   const legacy = view._socialIdentityTierView({
-    policy: 'legacy', limitCents: 2500, verificationRequired: false, entitlementAvailable: true,
+    policy: 'legacy', limitCents: 2000, weeklyLimitCents: 5000, weeklySource: 'default',
+    verificationRequired: false, entitlementAvailable: true,
   });
   assert.equal(legacy.title, 'Your credits');
-  assert.equal(legacy.amount, '$25 / day');
+  assert.equal(legacy.amount, '$50 / week');
   assert.match(legacy.note, /do not depend on a connected account/);
   const override = view._socialIdentityTierView({
-    policy: 'tiered', tier: 'override', limitCents: 5050, entitlementAvailable: true,
+    policy: 'tiered', tier: 'override', limitCents: 2000, weeklyLimitCents: 5050, entitlementAvailable: true,
   });
-  assert.equal(override.amount, '$50.50 / day', 'a part-dollar amount keeps its cents');
+  assert.equal(override.amount, '$50.50 / week', 'a part-dollar amount keeps its cents');
   assert.match(override.note, /administrator set this amount/i);
+  // An administrator's weekly figure for one account is an override too…
+  const weeklyOverride = view._socialIdentityTierView({
+    policy: 'legacy', limitCents: 2500, weeklyLimitCents: 10000, weeklySource: 'admin_override',
+    entitlementAvailable: true,
+  });
+  assert.equal(weeklyOverride.amount, '$100 / week');
+  assert.match(weeklyOverride.note, /administrator set this amount/i);
+  // A DAILY override changes no figure since #2571, so it claims none.
+  const dailyOnly = view._socialIdentityTierView({
+    policy: 'legacy', tier: 'override', limitCents: 2000, weeklyLimitCents: 5000, weeklySource: 'default',
+    entitlementAvailable: true,
+  });
+  assert.equal(dailyOnly.amount, '$50 / week');
+  assert.match(dailyOnly.note, /do not depend on a connected account/);
+  // A weekly override does not lift the tiered identity gate: until the
+  // account connects it is on the ladder, and the head row says so.
+  const gated = view._socialIdentityTierView({
+    policy: 'tiered', tier: 'unverified', limitCents: 0, verificationRequired: true,
+    weeklyLimitCents: 8000, weeklySource: 'admin_override', entitlementAvailable: true,
+  });
+  assert.equal(gated.title, 'Signed in');
+  assert.equal(gated.amount, '$0 / week');
+  // …and an entitlement with no weekly figure shows none, not a daily one.
+  assert.equal(view._socialIdentityTierView({
+    policy: 'legacy', limitCents: 2500, entitlementAvailable: true,
+  }).amount, null);
   for (const tier of [legacy, override]) {
     assert.doesNotMatch(socialHtml({ ...socialBase, tier }), /Signed in|Either one is enough/);
   }
 
-  const rows = new Function(`return ({${sliceMethod(settingsJs, '_socialIdentityRowView')}})`)();
+  const rows = sliced(
+    sliceMethod(settingsJs, '_socialIdentityMoney'),
+    sliceMethod(settingsJs, '_socialIdentityRowView'),
+  );
   const unlinked = { available: true, linked: false };
-  assert.equal(rows._socialIdentityRowView('github', unlinked, { policy: 'legacy' }, false).amount, null,
-    'no "$10 / day" beside Connect where connecting unlocks no $10');
+  assert.equal(rows._socialIdentityRowView('github', unlinked, { policy: 'legacy', weeklyLimitCents: 5000 }, false).amount, null,
+    'no figure beside Connect where connecting unlocks nothing');
   assert.equal(
-    rows._socialIdentityRowView('github', unlinked, { policy: 'tiered', verificationRequired: true }, false).amount,
-    '$10 / day');
+    rows._socialIdentityRowView('github', unlinked,
+      { policy: 'tiered', verificationRequired: true, weeklyLimitCents: 5000 }, false).amount,
+    '$50 / week');
 });
 
 test('a second proof never reads as a second $10', () => {
   // src/services/limits.js: "provider proofs replace one another; they do
-  // not stack". Two rows each saying "$10 / day" would say the opposite.
-  const rows = new Function(`return ({${sliceMethod(settingsJs, '_socialIdentityRowView')}})`)();
-  const tiered = { policy: 'tiered', tier: 'social', verificationRequired: false };
+  // not stack". Two rows each carrying the figure would say the opposite.
+  const rows = sliced(
+    sliceMethod(settingsJs, '_socialIdentityMoney'),
+    sliceMethod(settingsJs, '_socialIdentityRowView'),
+  );
+  const tiered = { policy: 'tiered', tier: 'social', verificationRequired: false, weeklyLimitCents: 5000 };
   const github = { available: true, linked: true, handle: 'octo' };
   const x = { available: true, linked: true, handle: 'octo' };
   const both = { github, x };
-  assert.equal(rows._socialIdentityRowView('github', github, tiered, false, both).amount, '$10 / day');
+  assert.equal(rows._socialIdentityRowView('github', github, tiered, false, both).amount, '$50 / week');
   const second = rows._socialIdentityRowView('x', x, tiered, false, both);
   assert.equal(second.amount, null);
   assert.equal(second.state.text, 'No extra credits');
@@ -2192,7 +2357,7 @@ test('an unverifiable entitlement is the one head row that reads as a fault', ()
   const down = tierView()._socialIdentityTierView({ entitlementAvailable: false });
   assert.equal(down.amount, null, 'no figure is shown when none could be checked');
   const html2 = socialHtml({ ...socialBase, tier: down });
-  assert.match(html2, /text-amber-800[^"]*"[^>]*>Daily credits unavailable</);
+  assert.match(html2, /text-amber-800[^"]*"[^>]*>Weekly credits unavailable</);
   assert.match(html2, /Your own API key still works/);
 });
 
@@ -2202,7 +2367,7 @@ test('a not-connected row is one full-width control, inert but present in a fixt
     name: 'GitHub',
     heading: 'GitHub',
     state: { tone: 'muted', text: '' },
-    amount: '$10 / day',
+    amount: '$50 / week',
     done: false,
     linkedAt: null,
     noToken: null,
@@ -2226,7 +2391,7 @@ test('a not-connected row is one full-width control, inert but present in a fixt
   // affordance are inside it, and nothing interactive is nested in it.
   const anchor = live.slice(live.indexOf('<a '), live.indexOf('</a>'));
   assert.match(anchor, />GitHub</);
-  assert.match(anchor, />\$10 \/ day</);
+  assert.match(anchor, />\$50 \/ week</);
   assert.match(anchor, /<span[^>]*>Connect<\/span>/, 'an affordance, not a nested control');
   assert.doesNotMatch(anchor.slice(3), /<button|<a /);
   // The ?demo= twin must not navigate out of the fixture, so it is a disabled
@@ -2246,7 +2411,7 @@ test('a not-connected row is one full-width control, inert but present in a fixt
 });
 
 test('a connected provider offers refresh, safe replacement, visibility and disconnect separately', () => {
-  const view = new Function(`return ({${sliceMethod(settingsJs, '_socialIdentityRowView')}})`)();
+  const view = sliced(sliceMethod(settingsJs, '_socialIdentityRowView'));
   const row = view._socialIdentityRowView('github', {
     available: true,
     linked: true,
@@ -2311,7 +2476,7 @@ test('a verified replacement is reviewable and cancellable before the active acc
 });
 
 test('unfinished social connections describe the symptom without diagnosing the callback (#1543)', () => {
-  const view = new Function(`return ({${sliceMethod(settingsJs, '_socialIdentityRowView')}})`)();
+  const view = sliced(sliceMethod(settingsJs, '_socialIdentityRowView'));
   for (const provider of ['github', 'x']) {
     const row = view._socialIdentityRowView(provider, {
       available: true, linked: false, pendingAttemptAt: '2026-09-07T10:00:00Z',

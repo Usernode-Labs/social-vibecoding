@@ -1,5 +1,7 @@
 import * as React from 'react';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+
 /**
  * The canonical Claude.ai and ChatGPT connector walkthroughs (#2706).
  *
@@ -67,27 +69,33 @@ export function SetupStep({ n, title, children }: {
   );
 }
 
+/** Inline marks the walkthroughs' sentences carry; the catalog numbers them. */
+const STRONG = <strong className="font-semibold text-zinc-600 dark:text-zinc-400" />;
+const CODE = <code className="font-mono text-zinc-600 dark:text-zinc-400" />;
+const PLUGINS_LINK = <a href="https://chatgpt.com/plugins" target="_blank" rel="noopener noreferrer" className="font-semibold text-violet-700 dark:text-violet-400 underline underline-offset-2" />;
+
 /** Claude.ai: six steps, and the route that also sets up Claude Code. */
 export function ClaudeSetupSteps() {
+  const t = useMessages('settings');
   return (
     <ol className="space-y-2">
-      <SetupStep n={1} title="Open connector settings.">
-        Go to <strong className="font-semibold text-zinc-600 dark:text-zinc-400">Customize &rarr; Connectors</strong> in Claude (<code className="font-mono text-zinc-600 dark:text-zinc-400">claude.ai/customize/connectors</code>). This is where both directory connectors and your own custom ones live.
+      <SetupStep n={1} title={t('settings:connectors.claudeSteps.open.title')}>
+        <RichMessage id="settings:connectors.claudeSteps.open.body" components={[STRONG, CODE]} />
       </SetupStep>
-      <SetupStep n={2} title="Start a custom connector.">
-        Click the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> button, then choose &ldquo;Add custom connector&rdquo;. In the dialog, put <code className="font-mono text-zinc-600 dark:text-zinc-400">homeroom</code> in the Name field, exactly that spelling: Claude Code builds its permission rules from what you type here, and the read-only allowlist Homeroom ships in every app repo matches only the names it knows. On Team or Enterprise plans this option isn&rsquo;t there for members, so an Owner adds it first from Organization settings &rarr; Connectors (Add &rarr; hover &ldquo;Custom&rdquo; &rarr; &ldquo;Web&rdquo;).
+      <SetupStep n={2} title={t('settings:connectors.claudeSteps.start.title')}>
+        <RichMessage id="settings:connectors.claudeSteps.start.body" components={[CODE, CODE]} />
       </SetupStep>
-      <SetupStep n={3} title="Paste your MCP server URL.">
-        For Homeroom that is the MCP server URL above, a public HTTPS endpoint ending in <code className="font-mono text-zinc-600 dark:text-zinc-400">/mcp</code>. A custom server must be reachable from Anthropic&rsquo;s cloud, not just from your machine.
+      <SetupStep n={3} title={t('settings:connectors.claudeSteps.paste.title')}>
+        <RichMessage id="settings:connectors.claudeSteps.paste.body" components={[CODE]} />
       </SetupStep>
-      <SetupStep n={4} title="Add OAuth credentials if needed.">
-        If a server requires OAuth, open &ldquo;Advanced settings&rdquo; and enter your OAuth Client ID and Client Secret. Skip this for Homeroom: it uses dynamic client registration, so there is nothing to enter.
+      <SetupStep n={4} title={t('settings:connectors.claudeSteps.oauth.title')}>
+        {t('settings:connectors.claudeSteps.oauth.body')}
       </SetupStep>
-      <SetupStep n={5} title="Save and authenticate.">
-        Click &ldquo;Add&rdquo; to finish configuring, then click &ldquo;Connect&rdquo; next to the connector. You&rsquo;ll be redirected through the OAuth flow; review the scopes it asks for before approving.
+      <SetupStep n={5} title={t('settings:connectors.claudeSteps.save.title')}>
+        {t('settings:connectors.claudeSteps.save.body')}
       </SetupStep>
-      <SetupStep n={6} title="Enable it in a conversation.">
-        In a chat, use the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> button at the lower left, then &ldquo;Connectors&rdquo;, and toggle your connector on. Toggles are per-conversation, so you control which chats can reach it.
+      <SetupStep n={6} title={t('settings:connectors.claudeSteps.enable.title')}>
+        <RichMessage id="settings:connectors.claudeSteps.enable.body" components={[CODE]} />
       </SetupStep>
     </ol>
   );
@@ -125,16 +133,17 @@ export function ClaudeSetupSteps() {
 const STEP_URL_PLACEHOLDER = 'https://<your-homeroom-host>/mcp';
 
 export function ChatgptSetupSteps({ url }: { url?: string }) {
+  const t = useMessages('settings');
   return (
     <>
       <ol className="space-y-2">
-        <SetupStep n={1} title="Open the plugins directory.">
-          Go to <a href="https://chatgpt.com/plugins" target="_blank" rel="noopener noreferrer" className="font-semibold text-violet-700 dark:text-violet-400 underline underline-offset-2">chatgpt.com/plugins</a> in your browser. Plugin and MCP setup is currently a web feature.
+        <SetupStep n={1} title={t('settings:connectors.chatgptSteps.directory.title')}>
+          <RichMessage id="settings:connectors.chatgptSteps.directory.body" components={[PLUGINS_LINK]} />
         </SetupStep>
-        <SetupStep n={2} title="Create a custom MCP server.">
-          Click <strong className="font-semibold text-zinc-600 dark:text-zinc-400">&ldquo;Add plugin&rdquo;</strong>, then choose <strong className="font-semibold text-zinc-600 dark:text-zinc-400">&ldquo;Create custom MCP server&rdquo;</strong>.
+        <SetupStep n={2} title={t('settings:connectors.chatgptSteps.create.title')}>
+          <RichMessage id="settings:connectors.chatgptSteps.create.body" components={[STRONG, STRONG]} />
         </SetupStep>
-        <SetupStep n={3} title="Enter Homeroom MCP server URL.">
+        <SetupStep n={3} title={t('settings:connectors.chatgptSteps.url.title')}>
           {/* The step names the endpoint itself rather than pointing at the
               value rendered above it, but the URL is still never written
               into the copy: the caller hands over the live `${origin}/mcp`
@@ -149,12 +158,12 @@ export function ChatgptSetupSteps({ url }: { url?: string }) {
             {url || STEP_URL_PLACEHOLDER}
           </code>
         </SetupStep>
-        <SetupStep n={4} title="Turn the server on in a chat.">
-          Open the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> / connector picker next to the message box, select the server you just created, and set it as active. Now ask ChatGPT to perform something that uses one of the tools, for example: <em>&ldquo;Use my MCP server to list the open support tickets.&rdquo;</em> When appropriate, ChatGPT will call the tools your MCP server exposes and use their results in the conversation.
+        <SetupStep n={4} title={t('settings:connectors.chatgptSteps.use.title')}>
+          <RichMessage id="settings:connectors.chatgptSteps.use.body" components={[CODE, <em />]} />
         </SetupStep>
       </ol>
       <p className={`${CONNECTOR_BODY} mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800`}>
-        <strong className="font-semibold text-zinc-600 dark:text-zinc-400">In short:</strong> chatgpt.com/plugins &rarr; Add plugin &rarr; Create custom MCP server &rarr; enter the Homeroom MCP server URL &rarr; connector picker &rarr; set it active.
+        <RichMessage id="settings:connectors.chatgptSteps.inShort" components={[STRONG]} />
       </p>
     </>
   );

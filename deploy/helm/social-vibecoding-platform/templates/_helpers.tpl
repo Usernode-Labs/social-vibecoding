@@ -63,6 +63,34 @@ app.kubernetes.io/component: postgresql
 {{- end -}}
 {{- end -}}
 
+{{- /*
+The platform's own Pods (web and conductor) prefer the zone of the external
+CloudNativePG primary, as previews and production apps do
+(src/services/kubernetes.js databaseAffinity): every request and every leader
+loop makes many sequential queries, and a Pod in another data centre pays that
+round trip on each. Same switch and same cluster as PREVIEW_DATABASE_CLUSTER;
+empty for bundled PostgreSQL or a database without the CNPG cluster selector.
+A preference only: the Pod still schedules when that zone is full.
+*/}}
+{{- define "social-vibecoding-platform.databasePrimaryAffinity" -}}
+{{- if and .Values.config.previewFollowDatabasePrimary (not .Values.postgresql.enabled) -}}
+{{- $cluster := index .Values.postgresql.podSelector "cnpg.io/cluster" | default "" -}}
+{{- if $cluster -}}
+affinity:
+  podAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          namespaces: [{{ default .Release.Namespace .Values.postgresql.namespace | quote }}]
+          labelSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ $cluster | quote }}
+              cnpg.io/instanceRole: primary
+          topologyKey: topology.kubernetes.io/zone
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "social-vibecoding-platform.validate" -}}
 {{- if .Values.enabled -}}
   {{- if or .Values.platform.enabled .Values.migration.enabled -}}
@@ -74,6 +102,20 @@ app.kubernetes.io/component: postgresql
     {{- end -}}
   {{- end -}}
   {{- if .Values.platform.enabled -}}
+    {{- $drain := float64 .Values.platform.drainMinutes -}}
+    {{- if or (lt $drain 5.0) (gt $drain 240.0) (ne (float64 (int $drain)) $drain) -}}
+      {{- fail "platform.drainMinutes must be a whole number of minutes from 5 to 240" -}}
+    {{- end -}}
+    {{- $draining := float64 .Values.platform.drainingMax -}}
+    {{- if or (lt $draining 0.0) (ne (float64 (int $draining)) $draining) -}}
+      {{- fail "platform.drainingMax must be a whole number, 0 or more" -}}
+    {{- end -}}
+    {{- if .Values.platform.conductor.enabled -}}
+      {{- $conductors := float64 .Values.platform.conductor.replicas -}}
+      {{- if or (lt $conductors 1.0) (ne (float64 (int $conductors)) $conductors) -}}
+        {{- fail "platform.conductor.replicas must be a whole number, 1 or more" -}}
+      {{- end -}}
+    {{- end -}}
     {{- range $name, $image := dict "platform.workerImage" .Values.platform.workerImage "platform.captureImage" .Values.platform.captureImage -}}
       {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $image.digest) -}}
         {{- fail (printf "%s.digest must be an immutable sha256 digest when platform is enabled" $name) -}}
@@ -91,6 +133,22 @@ app.kubernetes.io/component: postgresql
   {{- end -}}
   {{- if and .Values.secrets.create (not (regexMatch "^[A-Za-z0-9._~-]+$" .Values.secrets.databasePassword)) -}}
     {{- fail "secrets.databasePassword must be non-empty and URL-safe" -}}
+  {{- end -}}
+  {{- if .Values.previewPostgresql.enabled -}}
+    {{- if or (lt (int .Values.previewPostgresql.port) 1) (gt (int .Values.previewPostgresql.port) 65535) -}}
+      {{- fail "previewPostgresql.port must be between 1 and 65535" -}}
+    {{- end -}}
+    {{- if and .Values.networkPolicy.enabled .Values.platform.enabled (empty .Values.previewPostgresql.podSelector) -}}
+      {{- fail "previewPostgresql.podSelector is required when previewPostgresql and the network policy are enabled" -}}
+    {{- end -}}
+    {{- if .Values.secrets.create -}}
+      {{- if or (empty .Values.previewPostgresql.host) (empty .Values.previewPostgresql.username) (empty .Values.previewPostgresql.database) -}}
+        {{- fail "previewPostgresql.host, username and database are required when previewPostgresql is enabled with chart-created secrets" -}}
+      {{- end -}}
+      {{- if not (regexMatch "^[A-Za-z0-9._~-]+$" .Values.secrets.previewDatabasePassword) -}}
+        {{- fail "secrets.previewDatabasePassword must be non-empty and URL-safe when previewPostgresql is enabled" -}}
+      {{- end -}}
+    {{- end -}}
   {{- end -}}
   {{- if and .Values.platform.enabled .Values.secrets.create (or (empty .Values.secrets.githubAppId) (empty .Values.secrets.githubPrivateKey) (empty .Values.secrets.githubBotToken)) -}}
     {{- fail "secrets.githubAppId, secrets.githubPrivateKey and secrets.githubBotToken are required when platform is enabled" -}}

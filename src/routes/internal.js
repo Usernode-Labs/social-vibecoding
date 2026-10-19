@@ -116,8 +116,9 @@ function internalRoutes(_config) {
 
   // Run-scoped shots control plane. The shots worker receives a
   // purpose-bound token naming both its session and run; it has no access to
-  // push, issues, production diagnostics, or the generic worker API. The
-  // callbacks live only while the orchestrator owns the paired environments.
+  // push, issues, production diagnostics, or the generic worker API. Its
+  // calls are answered from the run's workspace in Postgres, by whichever web
+  // process serves them, while the run is current and its agent at work.
   const shotsAuth = internalAuthPurpose([platformJwt.PUR_SHOTS]);
   const shotsLimiter = rateLimit({
     windowMs: 60 * 1000,
@@ -126,14 +127,16 @@ function internalRoutes(_config) {
     legacyHeaders: false,
     keyGenerator: (req) => `shots:${req.workerSession?.shotsRunId || 'anon'}`,
   });
-  function shotsControlForRequest(req) {
+  // Applies one of the agent's calls to its run's workspace, in whichever
+  // process serves it (services/shots-control.js).
+  function withShotsControl(req, fn, opts = {}) {
     const runId = String(req.params.runId || '');
     if (req.workerSession.shotsRunId !== runId) {
       throw new shotsControl.ShotsControlError(
         'shots_scope_mismatch', 'Shots token does not own this run.', 403
       );
     }
-    return shotsControl.forRequest({ runId, sessionId: req.workerSession.sessionId });
+    return shotsControl.withControl(pool, { runId, sessionId: req.workerSession.sessionId }, fn, opts);
   }
   function shotsError(res, err) {
     const status = Number(err?.status)
@@ -142,17 +145,17 @@ function internalRoutes(_config) {
     return res.status(status).json({ ok: false, code: err?.code || 'shots_control_failed', message: err?.message || 'Shots control failed.' });
   }
 
-  router.get('/api/internal/shots/:runId/context', shotsAuth, shotsLimiter, (req, res) => {
-    try { return res.json({ ok: true, context: shotsControlForRequest(req).getContext() }); }
+  router.get('/api/internal/shots/:runId/context', shotsAuth, shotsLimiter, async (req, res) => {
+    try { return res.json({ ok: true, context: await withShotsControl(req, (c) => c.getContext(), { readOnly: true }) }); }
     catch (err) { return shotsError(res, err); }
   });
 
   // The app's tile on Homeroom's home screen, as one side's dapp.json draws
   // it. The shots proxy asks for it when the browser opens the home tile
   // path on that side's address (services/shots-home-tile.js).
-  router.get('/api/internal/shots/:runId/home-tile/:side', shotsAuth, shotsLimiter, (req, res) => {
+  router.get('/api/internal/shots/:runId/home-tile/:side', shotsAuth, shotsLimiter, async (req, res) => {
     try {
-      const page = shotsControlForRequest(req).homeTilePage(String(req.params.side || ''));
+      const page = await withShotsControl(req, (c) => c.homeTilePage(String(req.params.side || '')), { readOnly: true });
       res.set({
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
@@ -168,38 +171,48 @@ function internalRoutes(_config) {
   // its change/screen/side/kind as query fields. The parser limit sits above
   // the clip limit so the structured clip_too_large code wins.
   const shotBody = raw({ type: 'application/octet-stream', limit: '21mb' });
-  router.post('/api/internal/shots/:runId/shot', shotsAuth, shotsLimiter, shotBody, (req, res) => {
+  router.post('/api/internal/shots/:runId/shot', shotsAuth, shotsLimiter, shotBody, async (req, res) => {
     try {
-      const result = shotsControlForRequest(req).saveShot({
+      const result = await withShotsControl(req, (c) => c.saveShot({
         change: req.query.change,
         screen: req.query.screen,
         side: req.query.side,
         kind: req.query.kind,
-      }, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0));
+        theme: req.query.theme,
+      }, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)));
       return res.json({ ok: true, result });
     } catch (err) { return shotsError(res, err); }
   });
 
-  router.post('/api/internal/shots/:runId/skip', shotsAuth, shotsLimiter, (req, res) => {
+  router.post('/api/internal/shots/:runId/skip', shotsAuth, shotsLimiter, async (req, res) => {
     try {
-      const result = shotsControlForRequest(req).skipChange(req.body || {});
+      const result = await withShotsControl(req, (c) => c.skipChange(req.body || {}));
       return res.json({ ok: true, result });
     } catch (err) { return shotsError(res, err); }
   });
 
   // What a change's shots leave out, shown beside them on the proposal.
-  router.post('/api/internal/shots/:runId/note', shotsAuth, shotsLimiter, (req, res) => {
+  router.post('/api/internal/shots/:runId/note', shotsAuth, shotsLimiter, async (req, res) => {
     try {
-      const result = shotsControlForRequest(req).noteChange(req.body || {});
+      const result = await withShotsControl(req, (c) => c.noteChange(req.body || {}));
       return res.json({ ok: true, result });
     } catch (err) { return shotsError(res, err); }
   });
 
   // A problem the shots agent noticed on the after build besides the
   // declared changes, shown on the proposal under "Also noticed".
-  router.post('/api/internal/shots/:runId/problem', shotsAuth, shotsLimiter, (req, res) => {
+  router.post('/api/internal/shots/:runId/problem', shotsAuth, shotsLimiter, async (req, res) => {
     try {
-      const result = shotsControlForRequest(req).noteProblem(req.body || {});
+      const result = await withShotsControl(req, (c) => c.noteProblem(req.body || {}));
+      return res.json({ ok: true, result });
+    } catch (err) { return shotsError(res, err); }
+  });
+
+  // What the shots agent is about to do to both builds to reach a change (an
+  // API GET held or failed, a sample file uploaded), shown beside its shots.
+  router.post('/api/internal/shots/:runId/condition', shotsAuth, shotsLimiter, async (req, res) => {
+    try {
+      const result = await withShotsControl(req, (c) => c.noteCondition(req.body || {}));
       return res.json({ ok: true, result });
     } catch (err) { return shotsError(res, err); }
   });

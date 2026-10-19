@@ -39,6 +39,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -76,7 +77,18 @@ test('the browse directory’s tier labels ARE grouped-list’s SectionHeader', 
     rows: [row('ready-app', 'ready'), row('new-app', 'unreviewed')],
     curated: true,
   }));
-  for (const label of ['Reviewed working apps', 'Not yet reviewed']) {
+  const picked = { ...row('picked-app', 'ready'), recommended: true };
+  const html2 = renderToHtml(createElement(BrowseRows, {
+    rows: [picked, row('ready-app', 'ready'), row('new-app', 'unreviewed')],
+    curated: true,
+  }));
+  for (const label of ['Recommended for you', 'More apps']) {
+    assert.ok(
+      html2.includes(headerHtml({ className: 'md:col-span-full' }, label)),
+      `“${label}” no longer renders through SectionHeader: it is hand-written again`,
+    );
+  }
+  for (const label of ['All apps']) {
     assert.ok(
       html.includes(headerHtml({ className: 'md:col-span-full' }, label)),
       `“${label}” no longer renders through SectionHeader — it is hand-written again`,
@@ -89,39 +101,33 @@ test('the browse directory’s tier labels ARE grouped-list’s SectionHeader', 
   // check reads `#browse-list[data-sort="users"]…:not(:has(h2))` to say the
   // ungrouped list draws no tier headings at all, and that only means anything
   // while the grouped list draws them AS h2.
-  assert.match(html, /<h2[^>]*>Reviewed working apps</);
+  assert.match(html, /<h2[^>]*>All apps</);
 });
 
-test('the challenge detail page’s section labels ARE field’s SectionHeading', () => {
-  // Requirements, Scoring and the participants line each sit tight above the
-  // block they name, flush on the screen's own surface — no gutter, no card,
-  // so not the grouped-list label.
+test('the challenge detail page’s What counts label IS field’s SectionHeading', () => {
+  // What counts sits tight above the block it names, flush on the screen's
+  // own surface — no gutter, no card, so not the grouped-list label. (Scoring
+  // and the participants line went with the Semi design, 2026-10-16.)
   const Pane = loadTsx('frontend/src/features/leaderboard/challenges-pane.tsx');
   const view = {
-    key: '5', eyebrow: 'ONBOARDING', deadline: '3d left', amount: null,
-    goal: 'Join block production', task: 'Up to 2,000 pts a week.',
+    key: '5', amount: null, goal: 'Join block production',
     illustration: null, illustrationTone: null, state: 'progress',
     stateLabel: '180/500 blocks', fill: 0.36, counted: true, cta: null,
-    description: 'Run a node that produces blocks.',
     requirements: 'A node reachable all week.',
-    scoring: 'Points scale with the blocks you produce.',
-    participants: 'Participants · 34', pointsTotal: '12,800 pts between them',
-    moreLabel: null, entries: { kind: 'list', hasMore: false, rows: [] },
   };
   const html = renderToHtml(createElement(Pane.DetailPage, { view }));
-  for (const label of ['Requirements', 'Scoring']) {
-    assert.ok(html.includes(headingHtml({ title: label })),
-      `“${label}” no longer renders through SectionHeading`);
-  }
-  // The participants line is an ITEM on a shared baseline with the points
-  // total rather than a block of its own, so it cancels the primitive's
-  // bottom gap and adds `shrink-0` — through the prop, not by re-spelling the
-  // whole class string.
-  assert.ok(
-    html.includes(headingHtml({ title: 'Participants · 34', className: 'shrink-0 mb-0' })),
-    'the participants heading no longer renders through SectionHeading',
-  );
-  assert.doesNotMatch(html, /mb-1[^"]*"[^>]*>Participants/, '`mb-0` really cancels `mb-1`');
+  assert.ok(html.includes(headingHtml({ title: 'What counts' })),
+    '“What counts” no longer renders through SectionHeading');
+  assert.doesNotMatch(html, /Scoring|Participants/);
+});
+
+test('the Challenges tab’s group labels ARE grouped-list’s SectionHeader', () => {
+  // First challenges, Next challenges and Done each label a grid of cards:
+  // the label over a card group, small caps, set flush with the grid.
+  const src = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'frontend/src/features/leaderboard/challenges-pane.tsx'), 'utf8');
+  assert.match(src, /<SectionHeader className=\{n \? GROUP_HEADING : GROUP_HEADING_FIRST\}>\{g\.heading\}<\/SectionHeader>/);
+  assert.match(src, /const GROUP_HEADING = 'px-1 pt-6 pb-2';/, 'only the gutter and the step above it change');
 });
 
 test('the Homeroom-app settings section ARE field’s SectionHeading, rule included', () => {
@@ -151,7 +157,8 @@ test('the public-profile controls are a group of the Edit profile sheet, headed 
   // what matters is that it is that shared heading and no class string of its
   // own.
   const sheet = read('frontend/src/features/profile/profile-edit-sheet.tsx');
-  assert.match(sheet, /<Group title="Public page">/,
+  assert.equal(message('profile:edit.public.group'), 'Public page');
+  assert.match(sheet, /<Group title=\{t\('profile:edit\.public\.group'\)\}>/,
     'the “Public page” heading is the sheet’s shared Group, not a hand-written <h2>');
   const view = read('frontend/src/features/profile/profile-view.tsx');
   assert.doesNotMatch(view, /className="font-semibold text-base"/,

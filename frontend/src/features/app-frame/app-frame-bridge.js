@@ -309,6 +309,17 @@ export const appFrameBridge = {
   },
 
   /**
+   * Is `slug`'s document on screen: the mounted frame this app's, shown, and
+   * loaded? Only then is there a build the viewer is looking at, for a new
+   * one to be offered over (AppView.frameShowing). A frame mounted for a
+   * launch that has not navigated yet is not one.
+   */
+  showing(slug) {
+    const current = appFrameStore.get();
+    return !!slug && current.slug === slug && !!current.active && current.navigatedAt > 0 && !!appFrameRefs.iframe;
+  },
+
+  /**
    * #2902: let one app's frame go — a kept one, or the mounted one. For an app
    * whose build just changed underneath it: the next open loads the new one.
    */
@@ -497,6 +508,23 @@ export const appFrameBridge = {
   },
   coverNote(text) {
     appFrameStore.set((s) => (s.cover ? { ...s, cover: { ...s.cover, note: text || '' } } : s));
+  },
+  /**
+   * #4813: the launch failed, or the failed launch is being retried. With
+   * `true` the cover keeps its icon and name and shows the failed card in
+   * place of the wait; with `false` the card goes away and the cover returns
+   * to "Opening…" while the retry's src assignment re-arms the ladder. Both
+   * are no-ops without a cover, like `coverNote`.
+   */
+  coverFailed(failed) {
+    appFrameStore.set((s) => (s.cover
+      ? {
+        ...s,
+        cover: failed
+          ? { ...s.cover, failed: true, spinner: false }
+          : { ...s.cover, failed: false, note: null, spinner: false, out: false },
+      }
+      : s));
   },
   /**
    * Cross-fade the app in and the cover out. `reduceMotion` drops the cover

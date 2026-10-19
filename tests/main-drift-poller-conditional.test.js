@@ -3,9 +3,8 @@
 // The drift poller reads main conditionally and gives way to people's work.
 //
 // It read every running app's main every five minutes: 12 requests an app an
-// hour against the bot token's 5,000, the whole budget at about 400 apps, and
-// services/merge-followup-recovery.js read it again every four minutes for
-// every app with a merged proposal. Now the read sends If-None-Match with the
+// hour against the bot token's 5,000, the whole budget at about 400 apps. Now
+// the read sends If-None-Match with the
 // last ETag for the repo. An unchanged main answers 304, which GitHub does
 // not count, and Octokit reports as a thrown RequestError; the poller answers
 // from the cached body in the same shape. And while the hourly budget is
@@ -24,11 +23,8 @@ const ids = {
   logger: require.resolve('../src/services/logger'),
   pool: require.resolve('../src/db/pool'),
   github: require.resolve('../src/services/github'),
-  staging: require.resolve('../src/services/staging'),
-  ws: require.resolve('../src/services/ws'),
-  conflictResolver: require.resolve('../src/services/conflict-resolver'),
   releaseWatch: require.resolve('../src/services/release-watch'),
-  mainWatch: require.resolve('../src/services/main-watch'),
+  platform: require.resolve('../src/workflow/platform.ts'),
 };
 
 stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
@@ -72,13 +68,14 @@ stub(ids.github, {
   isEnabled: () => true,
 });
 
-const rebuilds = [];
-stub(ids.staging, {
-  rebuildProduction: async (config, app) => { rebuilds.push(app.slug); return { containerId: 'c-1', sha: tip }; },
-  MissingSecretsError: class extends Error {},
+// The deploys asked of app delivery.
+const requested = [];
+stub(ids.platform, {
+  requestDeploy: async (appId, reason) => { requested.push([appId, reason]); return 1; },
+  wantMerge: async () => {},
+  // main's unit suite on a new main (the main-check machine) is its own concern.
+  requestMainCheck: async () => {},
 });
-stub(ids.ws, { broadcastGlobal: () => {} });
-stub(ids.conflictResolver, { checkAndResolveConflicts: async () => {} });
 const observed = [];
 stub(ids.releaseWatch, {
   observe: async (config, pool, app, head) => {
@@ -87,7 +84,6 @@ stub(ids.releaseWatch, {
   },
   converged: async () => ({ cleared: false }),
 });
-stub(ids.mainWatch, { afterMerge: async () => {} });
 
 let pollRows = [];
 const pool = {
@@ -99,21 +95,19 @@ const pool = {
 
 const budget = require('../src/services/github-budget');
 const poller = require('../src/services/main-drift-poller');
-const recovery = require('../src/services/merge-followup-recovery');
 
 const APP = { id: 5, slug: 'demo', repo_url: 'https://github.com/usernode-bot/demo', main_sha: SHA, self_hosted: false };
 
 test.beforeEach(() => {
   tip = SHA;
   branchCalls.length = 0;
-  rebuilds.length = 0;
+  requested.length = 0;
   observed.length = 0;
   poller._forTest.resetHeadCache();
-  poller._forTest.resetBackoff();
   budget._resetForTests();
 });
 
-test('the second read is conditional, and a 304 answers unchanged with no rebuild and no extra call', async () => {
+test('the second read is conditional, and a 304 answers unchanged with no deploy and no extra call', async () => {
   const first = await poller.checkAndRedeployOne({}, pool, { ...APP });
   assert.equal(first.status, 'no_drift');
   assert.equal(branchCalls.length, 1);
@@ -123,40 +117,33 @@ test('the second read is conditional, and a 304 answers unchanged with no rebuil
   assert.equal(second.status, 'no_drift');
   assert.equal(branchCalls.length, 2, 'one call per check, the 304 included');
   assert.deepEqual(branchCalls[1].headers, { 'if-none-match': `W/"${SHA}"` });
-  assert.equal(rebuilds.length, 0);
+  assert.equal(requested.length, 0);
 });
 
-test('fetchRemoteHead keeps its shape on a 304, with the cached date and subject', async () => {
-  const fresh = await poller.fetchRemoteHead('usernode-bot', 'demo');
-  assert.deepEqual({ ...fresh, octokit: undefined },
-    { sha: SHA, committedAt: COMMITTED_AT, subject: SUBJECT, octokit: undefined });
-  const cached = await poller.fetchRemoteHead('usernode-bot', 'demo');
-  assert.equal(cached.sha, SHA);
-  assert.equal(cached.committedAt, COMMITTED_AT, 'the self-hosted row still dates its merge');
-  assert.equal(cached.subject, SUBJECT, 'and still names its PR');
-  assert.equal(cached.octokit, octokit, 'release-watch still gets a client');
-  assert.equal(cached.notModified, true);
-});
-
-test('the self-hosted row hands release-watch the cached head on a 304', async () => {
+test('the self-hosted row hands release-watch the cached head on a 304, in the same shape', async () => {
   const self = { ...APP, id: 1, slug: 'homeroom', repo_url: 'https://github.com/Usernode-Labs/social-vibecoding', main_sha: 'c'.repeat(40), self_hosted: true };
   await poller.checkAndRedeployOne({}, pool, self);
   await poller.checkAndRedeployOne({}, pool, self);
   assert.equal(observed.length, 2);
+  assert.equal(observed[0].notModified, undefined);
+  assert.equal(observed[1].notModified, true);
   assert.equal(observed[1].sha, SHA);
-  assert.equal(observed[1].committedAt, COMMITTED_AT);
-  assert.equal(observed[1].subject, SUBJECT);
+  assert.equal(observed[1].committedAt, COMMITTED_AT, 'the self-hosted row still dates its merge');
+  assert.equal(observed[1].subject, SUBJECT, 'and still names its PR');
+  assert.equal(observed[1].octokit, octokit, 'release-watch still gets a client');
 });
 
-test('a moved main is a 200 with the new tip, and is rebuilt', async () => {
+test('a moved main is a 200 with the new tip, and a deploy is asked for', async () => {
   await poller.checkAndRedeployOne({}, pool, { ...APP });
   tip = NEWER;
   const out = await poller.checkAndRedeployOne({}, pool, { ...APP });
-  assert.equal(out.status, 'redeployed');
-  assert.deepEqual(rebuilds, ['demo']);
-  const third = await poller.fetchRemoteHead('usernode-bot', 'demo');
-  assert.equal(third.notModified, true, 'and the new ETag is the one sent next');
-  assert.equal(third.sha, NEWER);
+  assert.equal(out.status, 'deploy_requested');
+  assert.equal(out.to, NEWER);
+  assert.deepEqual(requested, [[5, 'drift']]);
+  const third = await poller.checkAndRedeployOne({}, pool, { ...APP, main_sha: NEWER });
+  assert.equal(third.status, 'no_drift');
+  assert.deepEqual(branchCalls[2].headers, { 'if-none-match': `W/"${NEWER}"` },
+    'and the new ETag is the one sent next');
 });
 
 test('a 304 for a repo with nothing cached is still an error, never a guess', async () => {
@@ -167,7 +154,10 @@ test('a 304 for a repo with nothing cached is still an error, never a guess', as
   const prior = github.getReadOctokit;
   github.getReadOctokit = async () => bare;
   try {
-    await assert.rejects(poller.fetchRemoteHead('usernode-bot', 'never-read'), (err) => err.status === 304);
+    const out = await poller.checkAndRedeployOne({}, pool,
+      { ...APP, slug: 'never-read', repo_url: 'https://github.com/usernode-bot/never-read' });
+    assert.equal(out.status, 'fetch_failed');
+    assert.deepEqual(requested, []);
   } finally {
     github.getReadOctokit = prior;
   }
@@ -197,29 +187,4 @@ test('a pass is held while the budget is under the reserve, and the admin check 
   budget._resetForTests();
   const free = await poller.poll({});
   assert.deepEqual(free, { apps: 2, checked: 2, held: false });
-});
-
-test('merge follow-up recovery reads main through the same ETag, and is held too', async () => {
-  const row = {
-    ...APP, session_id: 42, pr_number: 7, merge_commit_sha: SHA,
-    main_check_sha: SHA, main_check_state: 'passing',
-  };
-  const recPool = {
-    async query(sql) {
-      if (/WITH latest AS/.test(sql)) return { rows: [row] };
-      return { rows: [], rowCount: 1 };
-    },
-  };
-  await poller.checkAndRedeployOne({}, pool, { ...APP });
-  const out = await recovery.recover({}, { pool: recPool, enabled: () => true });
-  await out.done;
-  assert.equal(out.held, false);
-  assert.equal(branchCalls.length, 2);
-  assert.deepEqual(branchCalls[1].headers, { 'if-none-match': `W/"${SHA}"` },
-    'the sweep\'s read is the poller\'s conditional one: a 304 that costs nothing');
-
-  const held = await recovery.recover({}, { pool: recPool, enabled: () => true, allowed: () => false });
-  await held.done;
-  assert.equal(held.held, true);
-  assert.equal(branchCalls.length, 2, 'not one read while held');
 });

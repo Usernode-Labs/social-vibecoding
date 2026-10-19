@@ -46,9 +46,10 @@ const {
 } = require('../middleware/rate-limits');
 const { waitlistIntegratorAuth } = require('../services/waitlist-integrator');
 const waitlist = require('../services/waitlist');
+const releaseLinks = require('../services/release-links');
 const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail, sendWaitlistCodeMail } = require('../services/topochain/mailer');
-const { inviteUrl, siteUrl, waitlistUrl } = require('../services/marketing-links');
+const { inviteUrl, privacyNoticeUrl, siteUrl, waitlistUrl } = require('../services/marketing-links');
 const { loadContributors, shapeContributor } = require('../services/contributors');
 const { listPublicApps, isPublicDirectoryApp, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
 const { loadMobileAppUrls } = require('../services/mobile-store-links');
@@ -219,6 +220,10 @@ function publicApiRoutes(config) {
   // is the terms gate's rule (routes/topochain/mobile.js): the latest
   // published version. null when none is published, it has no link, or the
   // read fails; the notice then names the terms without a link.
+  //
+  // `privacy_link` is Homeroom's privacy notice on the marketing site
+  // (services/marketing-links.js), which the same notice names beside the
+  // terms and Settings › About links to (#5094, #5106). Never null.
   async function currentTermsLink() {
     try {
       const { rows } = await pool.query(
@@ -244,6 +249,7 @@ function publicApiRoutes(config) {
       // Sync on purpose — the gate reads config, not the database.
       phone_sign_in: phoneAuth.offered(config),
       terms_link: await currentTermsLink(),
+      privacy_link: privacyNoticeUrl(config),
       // The same, from the Homeroom app's own sheets (the bridge's
       // signInWithProvider), once the app's client IDs are saved.
       native_sign_in_providers: await signInProviders.offeredNativeProviders(pool, config),
@@ -684,6 +690,12 @@ function publicApiRoutes(config) {
         // short-circuit: that branch is the confirmation poll, it repeats on a
         // timer, and it has no reader for this.
         email: row.email,
+        // Whether a "You're in" mail's link for this row may be spent as the
+        // page opens (features/auth/landing.tsx): released, and the account
+        // the address would prove is still new (none yet, or no username and
+        // no password). A boolean and nothing else. Read only: it spends no
+        // link and makes no session (services/release-links.js isNewAccount).
+        new_account: await releaseLinks.isNewAccount(pool, row),
         answers,
         oauth: {
           github: !!(config.waitlistGithubClientId && config.waitlistGithubClientSecret),

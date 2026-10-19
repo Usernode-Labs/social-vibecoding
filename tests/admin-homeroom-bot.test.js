@@ -66,9 +66,15 @@ poolMod.getPool = () => ({
       return { rows: botExists ? [{ id: 77, username: 'homeroom_bot', weekly_limit_cents: 15000 }] : [] };
     }
     if (/COUNT\(\*\)::int AS runs/.test(s)) return { rows: [{ runs: 3, questions: 1, ready: 1, person: 1, failed: 0, rated: 2, agreed: 1, suppressed: 0, cost_usd: 0.12 }] };
-    if (/FROM homeroom_bot_queue q JOIN apps/.test(s)) return { rows: [] };
-    if (/COUNT\(\*\)::int AS depth/.test(s)) return { rows: [{ depth: 4 }] };
-    if (/FROM homeroom_bot_runs r/.test(s)) {
+    // The queue's one snapshot (queueSnapshot): its counts ride on its rows.
+    if (/FROM snap q/.test(s)) {
+      return { rows: [{
+        id: 3, app_id: 9, issue_number: 7, priority: 1, reason: 'new', started_at: null,
+        app_slug: 'todo', app_name: 'Todo', waiting_total: 4, running_total: 1,
+      }] };
+    }
+    // (Not the move offers' read of the week's platform verdicts.)
+    if (/FROM homeroom_bot_runs r/.test(s) && !/move_offer/.test(s)) {
       runsParams.push(params);
       // [app, verdict, cursor, limit] — the export walks the cursor, so the
       // mock answers from a fixture ledger the way Postgres would.
@@ -92,9 +98,12 @@ poolMod.getPool = () => ({
     if (/SELECT id, slug FROM apps WHERE slug/.test(s)) {
       return { rows: params[0] === 'todo' ? [{ id: 9, slug: 'todo' }] : [] };
     }
-    if (/INSERT INTO homeroom_bot_queue/.test(s)) {
-      writes.push(['enqueue', params[0], params[1], params[2]]);
-      return { rows: [{ id: 5, app_id: params[0], issue_number: params[1], priority: 0, reason: 'admin', enqueued_at: 'now' }] };
+    // Run now is owed to the request's instance (bot-request's Owed, at the
+    // head of the queue: priority 0), which writes the queue's row.
+    if (/INSERT INTO wf_events/.test(s)) {
+      const payload = JSON.parse(params[4]);
+      writes.push([params[3], payload.appId, payload.issueNumber, payload.priority, payload.reason]);
+      return { rows: [{ id: 5 }] };
     }
     // limits.getWeeklySpentCents / usesIncludedKey and the like: nothing.
     return { rows: [] };
@@ -141,6 +150,8 @@ test('GET /api/admin/homeroom-bot: a view-only admin reads the whole dashboard; 
   assert.equal(data.bot.model, 'z-ai/glm-5.3-flash');
   assert.equal(data.totals.runs, 3);
   assert.equal(data.queue.depth, 4);
+  assert.equal(data.queue.running, 1, 'waiting and running counted in the one snapshot the items come from');
+  assert.deepEqual(data.queue.items.map((i) => [i.issue_number, i.waiting && i.waiting.reason]), [[7, 'bot_paused']], 'the bot is off');
   assert.equal(data.runs.length, 1);
   assert.equal(data.runs[0].issueUrl, 'https://github.com/usernode-bot/todo/issues/12');
   assert.deepEqual(data.caps, { proposalsPerApp: 5, proposalsTotal: 100, questionsPerAppPerDay: 10 });
@@ -247,7 +258,7 @@ test('POST run: validates the target, 404s an unknown app, and queues at the hea
   assert.equal(res.status, 202);
   const data = await res.json();
   assert.equal(data.item.priority, 0);
-  assert.deepEqual(writes[0], ['enqueue', 9, 12, 1]);
+  assert.deepEqual(writes[0], ['Owed', 9, 12, 0, 'admin']);
 });
 
 // ── Surface pins ─────────────────────────────────────────────────────────
@@ -588,7 +599,7 @@ test('how much the bot works on at once is set here, and what runs now is listed
   assert.equal(waitingFor(0, 0), '');
   assert.match(tsx, /tile\('Waiting in the queue',\s*payload \? String\(payload\.queue\.depth \+ \(payload\.queue\.buildsWaiting \|\| 0\)\) : '–', 'admin-homeroom-bot-tile-queue',/);
   const botSrc = read('src/services/homeroom-bot.js');
-  assert.match(botSrc, /queue: \{ depth: depthRows\[0\]\?\.depth \|\| 0, items: queueRows, buildsWaiting: builds\.waiting \}/);
+  assert.match(botSrc, /queue: \{ \.\.\.queue, buildsWaiting: builds\.waiting \}/);
   assert.match(botSrc, /workingNow: \[\.\.\.await workingNow\(pool, settings\), \.\.\.builds\.building\]/);
   assert.match(renderToHtml(createElement(WorkingNow, { items: [] })), /id="admin-homeroom-bot-working-none"[^>]*>Nothing is running right now\./);
 
@@ -659,8 +670,31 @@ test('Save changes sends only what changed, in the route\'s own shape, or says w
   assert.match(buildPatch({ ...form, models: { ...form.models, build: 'not a model' } }, saved, ['models']).error, /^Build: a model is an OpenRouter id/);
   assert.match(buildPatch({ ...form, botCap: '' }, saved, ['botCap']).error, /^The bot's weekly budget: enter a dollar amount\.$/);
   assert.match(buildPatch({ ...form, userCap: '-1' }, saved, ['userCap']).error, /0 for no limit/);
+  assert.equal(saved.adminCap, '100.00', 'an admin\'s budget is $100 until it is saved');
+  assert.deepEqual(buildPatch({ ...form, adminCap: '250' }, saved, ['adminCap']).patch, { adminWeeklyCents: 25000 });
+  assert.match(buildPatch({ ...form, adminCap: '-1' }, saved, ['adminCap']).error, /^The budget per admin: .*0 for no limit/);
   assert.deepEqual(buildPatch({ ...form, models: { ...saved.models, build: '' } }, saved, ['models']).patch, { models: { build: '' } },
     'back to the platform default is a blank');
+  // The platform default itself (services/default-model.js): an id, or a
+  // blank for the deployment's.
+  assert.equal(saved.defaultModel, '', 'unset is the deployment default');
+  assert.equal(savedForm({ settings: { mode: 'shadow', defaultModel: 'z-ai/glm-5.3-flash' }, bot: null }).defaultModel, 'z-ai/glm-5.3-flash');
+  assert.deepEqual(dirtyFields({ defaultModel: 'z-ai/glm-5.3-flash' }, saved), ['defaultModel']);
+  assert.deepEqual(buildPatch({ ...saved, defaultModel: 'z-ai/glm-5.3-flash' }, saved, ['defaultModel']),
+    { patch: { defaultModel: 'z-ai/glm-5.3-flash' }, error: null });
+  assert.deepEqual(buildPatch({ ...saved, defaultModel: '' }, { ...saved, defaultModel: 'z-ai/glm-5.3-flash' }, ['defaultModel']).patch,
+    { defaultModel: '' }, 'back to the deployment default is a blank');
+  assert.match(buildPatch({ ...saved, defaultModel: 'not a model' }, saved, ['defaultModel']).error, /^Platform default: a model is an OpenRouter id/);
+  // The helper calls' model (services/helper-model.js): an id, or a blank
+  // for the built-in GLM.
+  assert.equal(saved.helperModel, '', 'unset is the built-in model');
+  assert.equal(savedForm({ settings: { mode: 'shadow', helperModel: 'deepseek/deepseek-v4.1-flash-1017' }, bot: null }).helperModel,
+    'deepseek/deepseek-v4.1-flash-1017');
+  assert.deepEqual(buildPatch({ ...saved, helperModel: 'deepseek/deepseek-v4.1-flash-1017' }, saved, ['helperModel']),
+    { patch: { helperModel: 'deepseek/deepseek-v4.1-flash-1017' }, error: null });
+  assert.deepEqual(buildPatch({ ...saved, helperModel: '' }, { ...saved, helperModel: 'deepseek/deepseek-v4.1-flash-1017' }, ['helperModel']).patch,
+    { helperModel: '' }, 'back to the built-in model is a blank');
+  assert.match(buildPatch({ ...saved, helperModel: 'not a model' }, saved, ['helperModel']).error, /^Helper calls: a model is an OpenRouter id/);
 
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
   assert.match(tsx, /id="admin-homeroom-bot-savebar"/);
@@ -687,7 +721,7 @@ test('a model picked in the Benchmark fills the form in and waits for Save', () 
   assert.equal(benchHint(null, 'build', 'a/glm'), '');
 
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
-  assert.match(tsx, /<BenchmarkArea canWrite=\{canWrite\} active=\{tab === 'benchmark'\} inUse=\{payload\?\.bot\?\.models \|\| null\}\s+defaultModel=\{payload\?\.defaultModel \|\| null\} onUseModel=\{applyBenchModel\} \/>/,
+  assert.match(tsx, /<BenchmarkArea canWrite=\{canWrite\} active=\{tab === 'benchmark'\} inUse=\{modelsInUse\(payload\)\}\s+defaultModel=\{payload\?\.defaultModel \|\| null\} onUseModel=\{applyBenchModel\} \/>/,
     'the Benchmark reads the model in use from this section\'s own data, and writes its address only while it is the tab on screen');
   const fn = tsx.slice(tsx.indexOf('const applyBenchModel = '), tsx.indexOf('const liveNow = '));
   assert.match(fn, /setModel\(stage, id\);/);
@@ -729,4 +763,41 @@ test('the tabs have addresses of their own, and Settings and the Overview stay r
   for (const place of ['benchmark/runs', 'benchmark/runs/936551', 'benchmark/runs/936550', 'benchmark/suites', 'benchmark/suites/936542']) {
     assert.ok(audit.includes(`'#admin/homeroom-bot/${place}'`), `the ownership audit walks the Benchmark's ${place}`);
   }
+});
+
+// While a bot configuration is current it decides a build's plan and build
+// (and a first version's triage) over the stage's own picker, which is then
+// only the fallback: the Models card says what runs, and the Benchmark's
+// "In use" reads it too.
+test('the Models card names what a configuration runs, over the fallback pickers', () => {
+  const { configuredLine, modelsInUse } = loadBotSection();
+  const both = {
+    firstVersion: { id: 15, key: 'fv', label: 'FV', version: 1, models: { triage: 'z-ai/glm-5.3-flash', spec: 'anthropic/claude-opus-5.5', build: 'deepseek/deepseek-v4.1-flash-1017' } },
+    later: { id: 5, key: 'later', label: 'Later', version: 1, models: { spec: 'anthropic/claude-opus-5.5', build: 'z-ai/glm-5.3-flash' } },
+  };
+  assert.equal(configuredLine('build', both),
+    'First versions build on deepseek/deepseek-v4.1-flash-1017 and later changes build on z-ai/glm-5.3-flash, as the current bot configurations say. The picker below applies only when no configuration is current.');
+  assert.equal(configuredLine('spec', both, (id) => (id === 'anthropic/claude-opus-5.5' ? 'Claude Opus 5.5' : id)),
+    'First versions plan on Claude Opus 5.5 and later changes plan on Claude Opus 5.5, as the current bot configurations say. The picker below applies only when no configuration is current.');
+  assert.equal(configuredLine('triage', both),
+    'A project\'s first version is triaged on z-ai/glm-5.3-flash, as its bot configuration says. Every other request uses the picker below.');
+  assert.equal(configuredLine('followup', both), '', 'follow-ups are always the picker\'s');
+  assert.equal(configuredLine('build', { firstVersion: null, later: both.later }),
+    'Later changes build on z-ai/glm-5.3-flash, as the current bot configurations say. First versions use the picker below.');
+  assert.equal(configuredLine('build', { firstVersion: both.firstVersion, later: null }),
+    'First versions build on deepseek/deepseek-v4.1-flash-1017, as the current bot configurations say. Later changes use the picker below.');
+  assert.equal(configuredLine('triage', { firstVersion: null, later: both.later }), '', 'a later change\'s triage is the picker\'s');
+  assert.equal(configuredLine('build', null), '', 'with no configuration the picker decides');
+
+  const stages = { triage: 'd/x', spec: 'd/x', build: 'd/x', followup: 'd/x' };
+  assert.deepEqual(modelsInUse({ bot: { models: stages }, configurations: both }),
+    { triage: 'd/x', spec: 'anthropic/claude-opus-5.5', build: 'z-ai/glm-5.3-flash', followup: 'd/x' },
+    'the benchmark\'s plan and build tasks are later changes');
+  assert.deepEqual(modelsInUse({ bot: { models: stages }, configurations: null }), stages);
+  assert.equal(modelsInUse({ bot: null, configurations: both }), null);
+
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  assert.match(tsx, /configurations=\{payload\?\.configurations \|\| null\}/, 'each stage row is handed the configurations');
+  assert.match(tsx, /<a className=\{AdminUI\.btn\.link\} href="#admin\/bot-configs">Bot configurations<\/a>/);
+  assert.match(tsx, /data-model-configured=\{stage\}/);
 });

@@ -11,9 +11,11 @@
 // and the platform executes the reads on its side:
 //
 //   - SQL runs through a dedicated `usernode_debug_ro` Postgres role
-//     whose password exists only in this process's memory (regenerated
-//     every boot) and whose grants exclude every credential-bearing
-//     table/column (deny lists below).
+//     whose password each release's migration step regenerates
+//     (services/db-roles.js), and whose grants exclude every
+//     credential-bearing table/column (deny lists below). Every process
+//     reads it from platform_db_roles, encrypted with the data key as app
+//     secrets are, a table this role itself cannot read.
 //   - docker reads (`docker logs`, `docker ps`) run via the platform's
 //     existing docker.js helpers against an allowlist of container
 //     names.
@@ -25,6 +27,7 @@ const crypto = require('crypto');
 const { Pool } = require('pg');
 const { getPool } = require('../db/pool');
 const log = require('./logger');
+const secrets = require('./secrets');
 
 const ROLE = 'usernode_debug_ro';
 const SAFE_IDENT = /^[a-z_][a-z0-9_]*$/;
@@ -53,6 +56,7 @@ const DENIED_TABLES = new Set([
   'platform_env_values', // platform's own env values (AES blobs, still deny)
   'pending_secret_declarations', // values held for a declaration PR (AES blobs)
   'account_email_verifications', // mailbox proof and current-password hash snapshot
+  'account_username_codes', // #5281 username-change mailbox proof and password hash snapshot
   'mobile_otp_codes',   // hashed one-time email signup/claim codes
   'waitlist_verification_codes', // one-time waitlist email codes, same treatment as mobile_otp_codes
   'waitlist_release_links', // hashed one-time sign-in links from the release mail (#4594)
@@ -117,6 +121,9 @@ const DENIED_TABLES = new Set([
   'global_chat_tool_runs', // private action inputs and authoritative results
   'global_chat_action_tokens', // one-use action capabilities and sealed payloads
   'agent_session_actions', // the agent-session Mayor's sealed confirmation cards (#2779)
+  'private_requests',         // admin-only confidential and security requests, kept off GitHub (#5048)
+  'private_request_comments', // their discussion (#5048)
+  'platform_db_roles',   // this role's own password, encrypted (AES blob, still deny)
 ]);
 
 const DENIED_COLUMNS = {
@@ -148,6 +155,17 @@ const DENIED_COLUMNS = {
     'input_hash',
     'normalized_input',
   ],
+  server_error_minutes: [
+    // One scrubbed 5xx message per route and minute: it can still carry
+    // what a person sent (services/server-error-counts.js).
+    'sample',
+  ],
+  platform_signals: [
+    // Raw evidence behind a problem the platform found in itself (log
+    // lines, ids, a project's own build output): full admins read it on the
+    // request's page; services/platform-signals.js never publishes it.
+    'evidence_private',
+  ],
   phone_sign_in_tokens: [
     // SHA-256 digest of a spent Firebase ID token (replay detection) —
     // derived from auth material, so it is denied rather than reviewed.
@@ -175,6 +193,8 @@ const DENIED_COLUMNS = {
     'plan_change', // what a creator asked the bot's plan changed with; never posted anywhere
     'review', // a first version's review: issues quoting a private project's screens (review_rounds and review_stop stay readable)
     'build_no_change', // a build agent's last message when it changed nothing: can quote a private project's code
+    'build_retry', // why a first version's first try failed, which can quote its build agent's last message
+    'build_checkpoint', // where a build is between its steps, with its build agent's last message
   ],
   waitlist_signups: [
     'ip',         // submitter IP — same treatment as users.waitlist_ip
@@ -224,11 +244,15 @@ function clampTail(raw) {
 
 // ── Role bootstrap ──────────────────────────────────────────────────────
 
-// In-memory only: regenerated on every boot, never persisted anywhere.
+// Regenerated at every election. In the clear only in memory: the copy in
+// platform_db_roles is encrypted (recordBootstrap, loadShared).
 let _roPassword = null;
 let _roPool = null;
 let _available = false;
 let _unavailableReason = 'prod-debug role not initialized';
+// When this process last read the role's record (loadShared).
+let _sharedReadAt = 0;
+const SHARED_TTL_MS = 30 * 1000;
 
 function quoteIdent(name) {
   return `"${name}"`;
@@ -298,6 +322,7 @@ async function ensureRole(config) {
   for (let attempt = 1; attempt <= BOOTSTRAP_ATTEMPTS; attempt++) {
     try {
       await bootstrapRole(config);
+      await recordBootstrap(config, { ok: true, password: _roPassword });
       return;
     } catch (err) {
       if (attempt < BOOTSTRAP_ATTEMPTS) {
@@ -315,8 +340,83 @@ async function ensureRole(config) {
       log.warn('prod-debug', 'Role bootstrap failed — capability disabled', {
         err: err.message, attempts: BOOTSTRAP_ATTEMPTS,
       });
+      await recordBootstrap(config, { ok: false, reason: _unavailableReason });
     }
   }
+}
+
+// What the migration step made, for every process (loadShared): whether the
+// setup succeeded and the password, encrypted with the data key. Retried: a
+// record left at the previous password refuses every process's queries until
+// the next release. Never throws.
+const RECORD_RETRY_MS = [500, 2000, 5000];
+async function recordBootstrap(config, { ok, password = null, reason = null }) {
+  let secretEnc;
+  try {
+    secretEnc = ok ? secrets.encrypt(password, config && config.dataEncryptionKey) : null;
+  } catch (err) {
+    log.warn('prod-debug', 'Could not encrypt the role\'s password for the other processes', { err: err.message });
+    return;
+  }
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await getPool(config).query(
+        `INSERT INTO platform_db_roles (role, ok, reason, secret_enc, release, ensured_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())
+         ON CONFLICT (role) DO UPDATE SET ok = EXCLUDED.ok, reason = EXCLUDED.reason,
+           secret_enc = EXCLUDED.secret_enc, release = EXCLUDED.release, ensured_at = NOW()`,
+        [ROLE, !!ok, reason, secretEnc, process.env.GIT_SHA || null]);
+      return;
+    } catch (err) {
+      if (attempt >= RECORD_RETRY_MS.length) {
+        log.warn('prod-debug', 'Could not record the role for the other processes', { err: err.message });
+        return;
+      }
+      await sleep(RECORD_RETRY_MS[attempt]);
+    }
+  }
+}
+
+// A process that did not set the role up (every process: the migration
+// step does, services/db-roles.js; or one whose password the next release
+// rotated) uses the record. Read at most every SHARED_TTL_MS unless `force`d (a
+// password Postgres refused). Never throws: a record it cannot read leaves
+// the capability as it was.
+async function loadShared(config, { force = false } = {}) {
+  if (!force && Date.now() - _sharedReadAt < SHARED_TTL_MS) return;
+  _sharedReadAt = Date.now();
+  let row;
+  try {
+    ({ rows: [row] } = await getPool(config).query(
+      'SELECT ok, reason, secret_enc FROM platform_db_roles WHERE role = $1', [ROLE]));
+  } catch (err) {
+    log.warn('prod-debug', 'Could not read the record of the role', { err: err.message });
+    return;
+  }
+  if (!row) {
+    _unavailableReason = 'prod-debug role not set up yet (the release\'s migration step does it)';
+    return;
+  }
+  if (!row.ok) {
+    _available = false;
+    _unavailableReason = row.reason || 'prod-debug role bootstrap failed in the migration step';
+    return;
+  }
+  const password = secrets.decrypt(row.secret_enc, config && config.dataEncryptionKey);
+  if (!password) {
+    _available = false;
+    _unavailableReason = 'prod-debug role password could not be decrypted';
+    return;
+  }
+  if (password !== _roPassword) {
+    _roPassword = password;
+    if (_roPool) {
+      _roPool.end().catch(() => {});
+      _roPool = null;
+    }
+  }
+  _available = true;
+  _unavailableReason = null;
 }
 
 // One bootstrap attempt. Throws on any failure so ensureRole can retry;
@@ -430,6 +530,7 @@ function truncateRows(rows, { maxRows = MAX_ROWS, maxBytes = MAX_RESULT_BYTES } 
 // denied on a denied column, syntax errors, read-only violations) are
 // passed through with their message so the agent can self-correct.
 async function runQuery(sql, { config = null } = {}) {
+  if (!_available) await loadShared(config);
   if (!_available) {
     const err = new Error(_unavailableReason || 'prod-debug unavailable');
     err.code = 'unavailable';
@@ -440,8 +541,20 @@ async function runQuery(sql, { config = null } = {}) {
     err.code = 'bad_query';
     throw err;
   }
-  const pool = _getRoPool(config);
-  const res = await pool.query(sql);
+  let res;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      res = await _getRoPool(config).query(sql);
+      break;
+    } catch (err) {
+      // 28P01: the password was rotated by a newer release's setup. Its
+      // record has the new one; ask once more with it.
+      if (err.code !== '28P01' || attempt > 1) throw err;
+      const before = _roPassword;
+      await loadShared(config, { force: true });
+      if (!_available || _roPassword === before) throw err;
+    }
+  }
   // Multi-statement strings resolve to an array of results; report the
   // last one (writes are impossible regardless — see role setup).
   const last = Array.isArray(res) ? res[res.length - 1] : res;
@@ -525,6 +638,7 @@ Everything here is strictly READ-ONLY and audit-logged; credential-bearing data 
 module.exports = {
   ROLE,
   ensureRole,
+  loadShared,
   isAvailable,
   runQuery,
   checkSessionEligibility,

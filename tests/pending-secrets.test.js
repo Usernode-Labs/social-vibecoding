@@ -1,18 +1,18 @@
 // Tests for src/services/pending-secrets.js — the DAO holding a value
 // while its declaration PR is up for vote.
 //
-// Four properties carry the weight of this feature, and each has a test
-// below that fails loudly if it regresses:
+// Three properties carry the weight of this feature, and each has a test
+// below that fails loudly if it regresses (the fourth, that a merge applies
+// a value exactly once, is the merge-followups machine's: its transaction
+// applies them through rules/pending-secret-apply.ts, tested in
+// tests/workflow-merge-followups-postgres.test.js):
 //
 //  1. A PRIVATE HELD VALUE KEEPS NO LAST-4. Same rule the other two
 //     stores follow: 4 characters of a token is 4 characters of a token.
 //  2. A PRIVATE VALUE NEVER REACHES STAGING. rawValuesForSession omits
 //     it, so an unreviewed PR's container can't be handed a credential —
 //     the same reasoning as mergeForDeploy's private-in-staging branch.
-//  3. APPLY CLAIMS ROWS EXACTLY ONCE. The claim is a status flip in the
-//     UPDATE itself, so a merge retry (recoverStuckMerges) can't write
-//     the value twice or resurrect a discarded one.
-//  4. A DEAD PROPOSAL'S VALUE STOPS BEING OFFERED. listLive drops rows
+//  3. A DEAD PROPOSAL'S VALUE STOPS BEING OFFERED. listLive drops rows
 //     whose session left ('promoted','merging') and flips them to
 //     discarded, so a withdrawn proposal can't leave a live value behind
 //     even if archiveSession's own cleanup was missed.
@@ -29,7 +29,7 @@ const SECRET = 'test-jwt-secret-for-pending-secrets';
 
 // Minimal pool double: matches on the shape of each statement this DAO
 // issues, records every call, and returns whatever the test staged.
-function mockPool({ liveRows = [], sessionRows = [], claimRows = [], valueRows = [] } = {}) {
+function mockPool({ liveRows = [], sessionRows = [], valueRows = [] } = {}) {
   const calls = [];
   return {
     calls,
@@ -40,9 +40,6 @@ function mockPool({ liveRows = [], sessionRows = [], claimRows = [], valueRows =
       }
       if (/JOIN chat_sessions cs ON cs\.id = p\.session_id/.test(sql)) {
         return { rows: liveRows };
-      }
-      if (/SET status = 'applied'/.test(sql)) {
-        return { rows: claimRows, rowCount: claimRows.length };
       }
       if (/SET status = 'discarded'/.test(sql)) {
         return { rows: [], rowCount: 1 };
@@ -197,77 +194,6 @@ test('listLive never previews a private held value', async () => {
   assert.equal(row.valueLast4, null);
   assert.equal(row.private, true);
   assert.equal(row.hasValue, true, 'presence is still reported — just not the preview');
-});
-
-test('applyForSession claims rows once and writes through the scope DAO', async (t) => {
-  const appSecrets = require('../src/services/app-secrets');
-  const platformEnv = require('../src/services/platform-env');
-  const platformWrites = [];
-  const appWrites = [];
-  t.mock.method(platformEnv, 'setValue', async (pool, appId, key, value, opts) => {
-    platformWrites.push({ appId, key, value, opts });
-    return { key, private: !!opts.privateHint };
-  });
-  t.mock.method(appSecrets, 'setValue', async (pool, appId, key, value, opts) => {
-    appWrites.push({ appId, key, value, opts });
-  });
-
-  const pool = mockPool({
-    claimRows: [
-      {
-        id: 1, app_id: 9, scope: 'platform', key: 'PLAT_KEY',
-        declaration: { private: false }, value_enc: encrypt('plat-value', SECRET),
-        value_applied_at: null, created_by: 5,
-      },
-      {
-        id: 2, app_id: 9, scope: 'app', key: 'APP_KEY',
-        declaration: { private: true }, value_enc: encrypt('app-value', SECRET),
-        value_applied_at: null, created_by: 6,
-      },
-    ],
-  });
-
-  const { applied } = await pendingSecrets.applyForSession({ dataEncryptionKey: SECRET }, pool, 7);
-  assert.deepEqual(applied.map((a) => a.key).sort(), ['APP_KEY', 'PLAT_KEY']);
-  assert.ok(applied.every((a) => a.hadValue));
-
-  assert.equal(platformWrites.length, 1);
-  assert.equal(platformWrites[0].value, 'plat-value');
-  assert.equal(platformWrites[0].opts.privateHint, false,
-    'the declaration decides privacy, and it travels with the proposal');
-
-  assert.equal(appWrites.length, 1);
-  assert.equal(appWrites[0].opts.sensitive, true, 'a private app secret is stored as sensitive');
-
-  // The claim IS the status flip, so a second run finds nothing.
-  const claim = pool.calls.find((c) => /SET status = 'applied'/.test(c.sql));
-  assert.match(claim.sql, /WHERE session_id = \$1 AND status = 'pending'/);
-  assert.match(claim.sql, /RETURNING/);
-});
-
-test('applyForSession on an already-applied session is a no-op', async () => {
-  const pool = mockPool({ claimRows: [] });
-  const result = await pendingSecrets.applyForSession({ dataEncryptionKey: SECRET }, pool, 7);
-  assert.deepEqual(result, { applied: [] });
-  assert.ok(!pool.calls.some((c) => /SET value_enc = NULL/.test(c.sql)),
-    'nothing is written when no row was claimed');
-});
-
-test('applyForSession skips (but still claims) a row whose value cannot be decrypted', async (t) => {
-  const platformEnv = require('../src/services/platform-env');
-  let wrote = 0;
-  t.mock.method(platformEnv, 'setValue', async () => { wrote++; });
-
-  const pool = mockPool({
-    claimRows: [{
-      id: 1, app_id: 9, scope: 'platform', key: 'BROKEN',
-      declaration: {}, value_enc: 'v1:garbage', value_applied_at: null, created_by: null,
-    }],
-  });
-  const { applied } = await pendingSecrets.applyForSession({ dataEncryptionKey: SECRET }, pool, 7);
-  assert.equal(wrote, 0, 'no write attempted with a null plaintext');
-  assert.equal(applied.length, 1);
-  assert.equal(applied[0].hadValue, false, 'and the caller is told no value landed');
 });
 
 test('discardForSession clears the ciphertext as well as the status', async () => {

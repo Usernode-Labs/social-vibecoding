@@ -79,7 +79,7 @@ function reasonLine(reason) {
 // A secret-change request (issues.kind = 'secret_change') always carries a
 // value, so it is always flagged. Which reason depends on where the value
 // lands: the platform's own variables on the self-hosted app, the app's
-// keys everywhere else (routes/issues.js maybeApplySecretChangeProposal).
+// keys everywhere else (the governance machine's applySecret).
 function secretChangeReason(selfHosted) {
   return selfHosted ? 'platform_env' : 'secrets';
 }

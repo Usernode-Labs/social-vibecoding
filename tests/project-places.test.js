@@ -4,9 +4,11 @@
 //
 // The four tabs (Hub · Discussion · Needs you · Workshop) became one list:
 // Hub, Needs you and Workshop, a line, then Channels (#general) and Topics,
-// each a group under its heading. On a phone it is a tray behind the place
-// bar's button; on a wide window it is the section column beside the strip
-// (tests/section-column.test.js). These pin the list, the bar and the tray,
+// each a group under its heading. On a phone it is the drawer's middle
+// level, or a tray behind the place bar's button; from 768px it is nested
+// under the community's row in the sidebar (tests/desktop-sidebar-nested.test.js),
+// with the project's App row first (tests/desktop-sidebar-apps.test.js).
+// These pin the list, the bar and the tray,
 // the ladder that walks places, and the addresses that open one.
 
 const test = require('node:test');
@@ -16,6 +18,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -96,14 +99,32 @@ test('counts say what they count aloud, and a zero says nothing', () => {
   assert.equal(countPhrase('c:onboarding', 3), '3 unread');
   assert.equal(countPhrase('needs', 0), null);
   assert.equal(countText(120), '99+');
+  // A channel's pill and its hover text say unread, the number capped; the
+  // sr-only phrase keeps the real count.
+  assert.equal(countPhrase('c:x', 150, countText(150)), '99+ unread');
+  assert.equal(countPhrase('c:x', 150), '150 unread');
   const html = list({ owed: 29 });
   assert.match(html, /data-place="needs"[\s\S]*?<span class="dev-ws-place-count" data-place-count="" aria-hidden="true">29<\/span><span class="sr-only"> \(29 to vote\)<\/span><\/a>/);
-  assert.match(html, /data-place="c:onboarding"[\s\S]*?>3<\/span><span class="sr-only"> \(3 unread\)<\/span><\/a>/);
-  assert.match(html, /data-place="c:infra"[\s\S]*?>1<\/span><span class="sr-only"> \(1 unread\)<\/span><\/a>/);
+  assert.match(html, /data-place="c:onboarding"[\s\S]*?title="3 unread">3 unread<\/span><span class="sr-only"> \(3 unread\)<\/span><\/a>/);
+  assert.match(html, /data-place="c:infra"[\s\S]*?title="1 unread">1 unread<\/span><span class="sr-only"> \(1 unread\)<\/span><\/a>/);
   // #general has nothing unread here, and the Hub never counts: no number.
   const general = html.slice(html.indexOf('data-place="discussion"'), html.indexOf('</a>', html.indexOf('data-place="discussion"')));
   assert.doesNotMatch(general, /data-place-count/);
   assert.doesNotMatch(list({ owed: 0 }).slice(0, list({ owed: 0 }).indexOf('data-place="workshop"')), /data-place-count/);
+});
+
+// #5447: the channel on screen draws no count of its own — you are reading
+// it — as the place bar already leaves it out of its unread. The count of
+// Needs you stays while you are there: the rule is for channels.
+test('the channel on screen draws no count; Needs you keeps its own while lit', () => {
+  const reading = list({ place: 'c:onboarding' });
+  const onboarding = reading.slice(reading.indexOf('data-place="c:onboarding"'), reading.indexOf('</a>', reading.indexOf('data-place="c:onboarding"')));
+  assert.doesNotMatch(onboarding, /data-place-count/, 'no pill while you read there');
+  assert.doesNotMatch(onboarding, /sr-only/, 'and no phrase for a screen reader');
+  assert.match(reading, /data-place="c:infra"[\s\S]*?title="1 unread">1 unread<\/span>/, 'another channel keeps its pill');
+  const needs = list({ place: 'needs', owed: 29 });
+  assert.match(needs, /data-place="needs" aria-current="page"[\s\S]*?<span class="dev-ws-place-count" data-place-count="" aria-hidden="true">29<\/span><span class="sr-only"> \(29 to vote\)<\/span>/,
+    'Needs you still counts while you are on it');
 });
 
 test('the tray\'s list ends with Switch community; the column\'s does not', () => {
@@ -138,7 +159,12 @@ test('the place bar: the tray\'s button, a dot while something waits, then the p
 test('the page draws the bar where the tabs were, and the tray only while it is open', () => {
   const WS = read(`${DIR}/workshop.tsx`);
   assert.match(WS, /const band = \(\s*<PlaceBar/);
-  assert.match(WS, /const tray = trayOpen \? \(\s*<PlacesTray/);
+  // #5386: the tray stays mounted while it slides out — `trayOpen` turns
+  // false at once, `trayShown` holds it until the slide has run.
+  assert.match(WS, /const tray = trayOpen \|\| trayShown \? \(\s*<PlacesTray/);
+  assert.match(WS, /closing=\{!trayOpen\}/);
+  assert.match(WS, /onClosed=\{\(\) => setTrayShown\(false\)\}/);
+  assert.match(WS, /useEffect\(\(\) => \{ if \(trayOpen\) setTrayShown\(true\); \}, \[trayOpen\]\);/);
   // #4486: All items' way back is in its pinned head, so nothing sits
   // between the bar and the tray (which renders nothing in place).
   assert.match(WS, /\{band\}\s*\{tray\}/);
@@ -147,21 +173,35 @@ test('the page draws the bar where the tabs were, and the tray only while it is 
   // moves the page; the tray shuts when the place changes under it.
   assert.match(WS, /const choosePlace = \(key: TabKey\) => \{\s*trayNav\.current = true;\s*setTrayOpen\(false\);/);
   assert.match(WS, /useEffect\(\(\) => \{ setTrayOpen\(false\); \}, \[tab, v\.slug, placesInColumn\]\);/);
-  // The page publishes where it is, and how to move it, for the column.
+  // The page publishes where it is, and how to move it, for the column —
+  // #4703: with the unread and the tray state the merged header's button
+  // draws, and the toggle its press calls.
   assert.match(WS, /registerPlaceOpener\(mine, /);
-  assert.match(WS, /publishPlace\(v\.slug, tab, owed\)/);
+  assert.match(WS, /registerTrayToggle\(mine, /);
+  assert.match(WS, /publishPlace\(v\.slug, tab, owed, unreadElsewhere, trayOpen\)/);
 });
 
 test('the tray: rendered only while open, into the body; focus in and back; Escape, the scrim and a swipe close it', () => {
   const src = read(TRAY);
-  assert.match(src, /return createPortal\(\s*<div className="dev-ws-tray-root" data-places-tray="">/);
+  // #5386: while it slides out the root wears `is-closing` (the CSS animates
+  // the close) and takes no presses.
+  assert.match(src, /return createPortal\(\s*<div\s*className=\{closing \? 'dev-ws-tray-root is-closing' : 'dev-ws-tray-root'\}\s*data-places-tray=""\s*inert=\{!!closing\}\s*aria-hidden=\{closing \|\| undefined\}\s*>/);
   assert.match(src, /document\.body,\s*\);/);
   assert.match(src, /<div className="dev-ws-tray-scrim" aria-hidden="true" onClick=\{\(\) => closeRef\.current\(\)\} \/>/);
   assert.match(src, /role="dialog"\s*aria-modal="true"\s*aria-label=\{label\}/);
   assert.match(src, /querySelector<HTMLElement>\('\[aria-current="page"\]'\)/, 'focus lands on the place you are on');
   assert.match(src, /back\.focus\(\{ preventScroll: true \}\)/, 'and goes back to the button');
+  // The focus return and the Back release run in the close's own commit: the
+  // effects depend on `closing`, so their cleanups fire when it starts.
+  assert.match(src, /querySelector<HTMLElement>\('a\[href\], button'\);[\s\S]*?\}, \[closing\]\);/, 'the focus effect ends with the close\'s start');
   assert.match(src, /if \(e\.key === 'Escape'\) \{/);
   assert.match(src, /pushDismissible\(/, 'the device\'s Back closes it too');
+  assert.match(src, /\{ navigating: true \} : undefined\);\s*\};\s*\}, \[closing\]\);/, 'a place press\'s navigating release, in the close\'s own commit');
+  // The slide's end calls `onClosed`: the card's animationend, a 320ms
+  // fallback if it is missed, and at once under reduced motion.
+  assert.match(src, /onAnimationEnd=\{\(e\) => \{\s*if \(e\.target !== e\.currentTarget \|\| e\.animationName !== 'dev-ws-tray-out'\) return;\s*if \(!closingRef\.current\) return;/, 'the card\'s own out slide ends it');
+  assert.match(src, /setTimeout\(\(\) => closedRef\.current\?\.\(\), 320\)/, 'a missed animationend never leaves it on screen');
+  assert.match(src, /if \(window\.matchMedia\?\.\('\(prefers-reduced-motion: reduce\)'\)\?\.matches\) \{\s*closedRef\.current\?\.\(\);/, 'reduced motion closes at once, as the open skips its slide');
   const { isEdgeSwipe, isCloseSwipe, edgeSwipeAllowed } = loadTsx(TRAY);
   assert.equal(isEdgeSwipe(4, 300, 120, 310), true, 'a swipe right from the edge');
   assert.equal(isEdgeSwipe(60, 300, 200, 300), false, 'not from the edge');
@@ -175,6 +215,21 @@ test('the tray: rendered only while open, into the body; focus in and back; Esca
   assert.equal(edgeSwipeAllowed({ ua: iphone, maxTouchPoints: 5, standalone: true, native: false }), true, 'an installed app has no browser Back');
   assert.equal(edgeSwipeAllowed({ ua: iphone, maxTouchPoints: 5, standalone: false, native: true }), true, 'nor the native shell');
   assert.equal(edgeSwipeAllowed({ ua: 'Mozilla/5.0 (Linux; Android 14) Chrome/129 Mobile', maxTouchPoints: 5, standalone: false, native: false }), true);
+  // #5386: the close's CSS — the open in reverse, presses passing through.
+  const CSS = read('public/css/app.css');
+  assert.match(CSS, /\.dev-ws-tray-root\.is-closing \{ pointer-events: none; \}/);
+  assert.match(CSS, /\.dev-ws-tray-root\.is-closing \.dev-ws-tray \{ animation: dev-ws-tray-out 200ms cubic-bezier\(\.2, \.8, \.2, 1\) forwards; \}/);
+  assert.match(CSS, /\.dev-ws-tray-root\.is-closing \.dev-ws-tray-scrim \{ animation: dev-ws-tray-fade-out 160ms ease-out forwards; \}/);
+  assert.match(CSS, /@keyframes dev-ws-tray-out \{ from \{ transform: none; \} to \{ transform: translateX\(-100%\); \} \}/);
+  assert.match(CSS, /@keyframes dev-ws-tray-fade-out \{ from \{ opacity: 1; \} to \{ opacity: 0; \} \}/);
+  assert.match(CSS, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.dev-ws-tray-root\.is-closing \.dev-ws-tray, \.dev-ws-tray-root\.is-closing \.dev-ws-tray-scrim \{ animation: none; \}/);
+  // #5384: it opens under the header, which stays undimmed and pressable,
+  // and the list no longer pads for the status bar the header now covers.
+  const root = CSS.slice(CSS.indexOf('.dev-ws-tray-root {'), CSS.indexOf('}', CSS.indexOf('.dev-ws-tray-root {')));
+  assert.match(root, /top: calc\(var\(--browser-banner-h, 0px\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top, 0px\)\);/);
+  assert.doesNotMatch(root, /inset: 0/, 'not over the header');
+  const card = CSS.slice(CSS.indexOf('.dev-ws-tray {'), CSS.indexOf('}', CSS.indexOf('.dev-ws-tray {')));
+  assert.match(card, /padding: 16px 12px calc\(16px \+ var\(--platform-safe-bottom, 0px\)\);/);
 });
 
 test('places: keys, handles, aliases and addresses', () => {
@@ -296,6 +351,15 @@ test('a topic\'s door carries the place in the channel its address names, for th
     store.channelRead('homeroom', 11);
     store.channelRead('homeroom', 12, true);
     assert.deepEqual(reloads, ['homeroom', 'homeroom'], '#onboarding showed 3; a "Mark unread" always');
+    // #4647: #general's read is the record's too — `ref` null names it.
+    reloads.length = 0;
+    store.channelRead('homeroom', null);
+    assert.deepEqual(reloads, [], '#general showed none');
+    store.channelRead('homeroom', null, true);
+    assert.deepEqual(reloads, ['homeroom'], 'a "Mark unread" always, at 0 as well');
+    record = { places: { ...PLACES_PAYLOAD, channels: PLACES_PAYLOAD.channels.map((c) => (c.kind === 'general' ? { ...c, unread: 4 } : c)) } };
+    store.channelRead('homeroom', null);
+    assert.deepEqual(reloads, ['homeroom', 'homeroom'], '#general showed 4');
   } finally {
     if (had) globalThis.window = was; else delete globalThis.window;
   }
@@ -312,5 +376,43 @@ test('a topic\'s line: what it is for and its requests, nothing for none, and wh
   assert.deepEqual({ ...topicLine({ ...t, state: 'merged' }, 'onboarding') }, { about: 'Merged into #onboarding. Read only.', link: null });
   assert.deepEqual({ ...topicLine({ ...t, state: 'archived' }) }, { about: 'Archived. Read only.', link: null });
   // A topic's empty room says so in its own words, not a reply thread's.
-  assert.match(read('public/js/group-chat.js'), /a\.type === 'category' \? 'Nothing said here yet\.' : 'No messages yet\. Start the thread\.'/);
+  assert.match(read('public/js/group-chat.js'), /a\.type === 'category' \? PlatformI18n\.t\('chat:group\.topicChannel\.empty'\) : PlatformI18n\.t\('chat:group\.thread\.empty'\)/);
+  assert.equal(message('chat:group.topicChannel.empty'), 'Nothing said here yet.');
+  assert.equal(message('chat:group.thread.empty'), 'No messages yet. Start the thread.');
+});
+
+// A SWITCH KEEPS YOUR PAGE (the header's ⌄ menu, a row of All communities):
+// another community opens on the place you were on when it has it, else its
+// hub. keepPlace is the phone drawer's rule; the place is the one the project
+// page remembers (AppView._workshopTab).
+test('a switch opens another community on the place you were on, else its hub', () => {
+  const records = { homeroom: { places: PLACES_PAYLOAD } };
+  const store = loadTsx(`${DIR}/place-store.ts`, {
+    stubs: {
+      './community-card': {
+        cachedCommunity: (slug) => records[slug] || null,
+        communityInflight: () => false,
+        reloadCommunity: async () => {},
+      },
+    },
+  });
+  const had = Object.prototype.hasOwnProperty.call(globalThis, 'window');
+  const was = globalThis.window;
+  let remembered = 'workshop';
+  const landed = [];
+  globalThis.window = { AppView: { _workshopTab: () => remembered, _landOnTab: (slug, key) => landed.push([slug, key]) } };
+  try {
+    assert.equal(store.landKeepingPlace('homeroom'), 'workshop', 'the Workshop is in every community');
+    remembered = 'c:infra';
+    assert.equal(store.landKeepingPlace('homeroom'), 'c:infra', 'a topic it has');
+    assert.equal(store.landKeepingPlace('garden'), 'status', 'a topic it is not known to have: its hub');
+    remembered = 'all';
+    assert.equal(store.landKeepingPlace('garden'), 'workshop', 'All items is under the Workshop');
+    assert.deepEqual(landed, [['homeroom', 'workshop'], ['homeroom', 'c:infra'], ['garden', 'status'], ['garden', 'workshop']],
+      'each is where the page then opens');
+    globalThis.window = {};
+    assert.equal(store.landKeepingPlace('garden'), 'status', 'nothing remembered: its hub');
+  } finally {
+    if (had) globalThis.window = was; else delete globalThis.window;
+  }
 });

@@ -44,6 +44,7 @@ function makeSandbox({ kit } = {}) {
   if (kit) sandbox.unNative = kit;
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(SRC, sandbox);
   return { PlatformUI: sandbox.PlatformUI, calls, sandbox };
@@ -379,6 +380,48 @@ test('kit present: zoom opts (el, fromEl, fallback, after, outEl) forward to unN
     'outEl (#764: destination measured with the outgoing screen hidden) forwards untouched');
 });
 
+// The kit pins a zooming screen as a fixed card at z-index 9960 over its whole
+// box. #app-view's box runs under the desktop rail, so an app opening beside
+// the rail covered it until the zoom ended. The zooming screen says so for
+// exactly as long as it is pinned, and app.css lifts the docked rail over it.
+test('a zooming screen carries data-zooming until its after runs, exactly once', () => {
+  const attrs = new Map();
+  const el = {
+    setAttribute: (k, v) => attrs.set(k, v),
+    removeAttribute: (k) => attrs.delete(k),
+  };
+  let held = null;
+  const { kit } = stubKit();
+  kit.transition = (fn, opts) => { fn(); held = opts; };
+  const { PlatformUI } = makeSandbox({ kit });
+  let afters = 0;
+  const seenDuring = [];
+  PlatformUI.transition(() => seenDuring.push(attrs.has('data-zooming')), {
+    type: 'zoom-in', el, after: () => { afters += 1; seenDuring.push(attrs.has('data-zooming')); },
+  });
+  assert.equal(attrs.has('data-zooming'), true, 'on while the card is pinned');
+  held.after();
+  assert.equal(attrs.has('data-zooming'), false, 'gone once the kit runs after');
+  assert.equal(afters, 1, "the caller's own after still runs, once");
+  assert.deepEqual(seenDuring, [true, false], 'set before fn, cleared before the caller\'s after');
+  // A push, or a zoom whose el is not an element, is untouched.
+  const plain = { type: 'push', after() {} };
+  PlatformUI.transition(() => {}, plain);
+  assert.equal(held, plain);
+});
+
+test('app.css lifts the docked rail over a zooming app, on the desktop only', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  const rule = 'body:has(#app-view[data-zooming]) :is(#platform-tabs, #platform-parked):not(.hidden) {';
+  const at = css.indexOf(rule);
+  assert.ok(at > 0, 'the rule is there');
+  assert.match(css.slice(at, css.indexOf('}', at)), /z-index: 9961;/,
+    'over the kit\'s pinned card (9960), under its sheets (9990 and up)');
+  const open = css.lastIndexOf('@media (min-width: 768px) {', at);
+  assert.ok(open > 0);
+  assert.doesNotMatch(css.slice(open, at), /\n\}/, 'inside the desktop breakpoint');
+});
+
 // ── 3. Include regressions ─────────────────────────────────────────────
 
 const INDEX = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
@@ -472,6 +515,23 @@ test('the right group is the bell and the mark, in that order, after the title',
     header.indexOf('id="header-menu-btn"') < header.indexOf('id="header-title"'),
     'the hamburger leads the bar, before the title'
   );
+  // #3702: the running app's two doors lead the group — Suggest and "N to
+  // vote", then the bell, then the mark. They ship nothing in the prerendered
+  // document (the component is null until mounted), so this is read from the
+  // component's place in the header's source, where the ordering lives.
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'header', 'platform-header.tsx'), 'utf8'
+  );
+  const group = source.slice(
+    source.indexOf('ref={rightGroupRef}'),
+    source.indexOf('<PlatformMark />') + '<PlatformMark />'.length,
+  );
+  assert.ok(
+    group.indexOf('<InAppActions />') !== -1
+    && group.indexOf('<InAppActions />') < group.indexOf('id="notifications-btn"')
+    && group.indexOf('id="notifications-btn"') < group.indexOf('<PlatformMark />'),
+    'InAppActions, then the bell, then the mark — the two app doors first',
+  );
 });
 
 test('the Improve row is retired; what it led to is in the menu', () => {
@@ -491,15 +551,15 @@ test('the Improve row is retired; what it led to is in the menu', () => {
   const band = INDEX.match(/<div id="improve-quick-actions"[\s\S]*?<\/div>/);
   assert.ok(band, 'missing #improve-quick-actions');
   assert.ok(band[0].includes('id="improve-row-feedback"'), 'Suggest an improvement is the band\'s button');
-  // New change is Build it now, leading Agent chats (UI overhaul, B8).
+  // New change was Build it now under Agent chats (UI overhaul, B8); the
+  // section left for Messages whole (#4729), so the band's one button is
+  // Suggest an improvement and nothing of theirs is drawn at all.
   assert.ok(!band[0].includes('id="improve-row-new-session"'), 'and alone in it');
-  // That section is drawn after mount, and only for somebody who has had an
-  // agent session (first-session run-through, 5 Oct 2026): not prerendered.
   assert.ok(!INDEX.includes('id="app-menu-sessions"') && !INDEX.includes('id="improve-row-new-session"'),
-    'Agent chats is not in the prerender');
-  assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'),
-    /<div id="app-menu-sessions">\s*<div className=\{SECTION\}>Agent chats<\/div>\s*\{readOnly \? null : \(\s*<button\s+id="improve-row-new-session"/,
-    'Build it now leads the Agent chats section');
+    'no agent entries in the prerender');
+  assert.doesNotMatch(read('frontend/src/features/app-context/app-context-sheet.tsx'),
+    /app-menu-sessions|improve-row-new-session/,
+    'and none after mount either: Messages\' Agents list is their home');
   assert.ok(!/\bhidden\b/.test(band[0].slice(0, band[0].indexOf('>'))),
     'the band itself ships visible');
 
@@ -715,11 +775,12 @@ test('the menu\'s action leads it, shaped like the pill that used to open it', (
   // element claiming it.
   assert.ok(!read('frontend/src/features/app-context/app-context-sheet.tsx')
     .includes('id="improve-row-feedback"'), 'and not in two places');
-  // New change survives as Build it now, a row under Agent chats
-  // in the menu's list (UI overhaul), with the same handler.
+  // New change left the menu with its Agent chats section (#4729); it is
+  // Messages' "+" choice now, which starts an agent session the same way.
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /id="improve-row-new-session"/, 'New change survives');
-  assert.match(sheet, /Improve\.startSession\(\)/, 'with the same handler');
+  assert.ok(!sheet.includes('id="improve-row-new-session"'), 'the menu carries no New change row');
+  assert.match(read('frontend/src/features/messages/index.tsx'),
+    /startAgentSession\(\{ entry: 'messages' \}\)/, 'Messages\' + starts it');
   // The BAND stays, and it is the same element: `#improve-quick-actions`
   // was a direct child of `#improve-body` and is a direct child of the
   // menu's sheet now. dapp.json's band-order check used to select the four

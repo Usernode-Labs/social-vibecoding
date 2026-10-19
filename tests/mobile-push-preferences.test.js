@@ -42,6 +42,8 @@ const CURRENT_KINDS = [
   'revision_recheck', 'weekly_digest',
   // B7: a change you can approve is ready to try, proposal lifecycle too.
   'change_ready',
+  // #4787: a change the person voted on going live, proposal lifecycle too.
+  'voted_change_merged',
   // #2387: a reply in an app-chat reply thread you started or joined. A
   // direct interaction, beside mention and reply.
   'thread_reply',

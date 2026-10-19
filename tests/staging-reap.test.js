@@ -629,6 +629,32 @@ test('selectStale: skips a session with a coding turn in flight', async () => {
   assert.ok(names.includes('prelabel-ccc333'), 'other stale previews are unaffected');
 });
 
+// A boot runs this pass while the harvest seats the old leader's checks runs
+// (services/check-harvest.js), whose capture Jobs run against the session's
+// preview. An out-of-date preview of a live session with a run on the
+// cluster (a check_runs row: running, waiting for its slot, or left for the
+// harvest) was torn down under it.
+test('selectStale: skips a preview a checks run on the cluster still uses', async () => {
+  const reap = setup();
+  const fp = currentFp();
+  labelledFleet(fp);
+  fx.sessions = fx.sessions.map((s) => (s.id === 3002 ? { ...s, status: 'active', check_run_open: true } : s));
+  const items = await reap.classify(fakePool, await reap.listStagingContainers());
+  const classified = fx.queries.find((q) => /FROM chat_sessions cs/.test(q.sql));
+  assert.match(classified.sql, /EXISTS \(SELECT 1 FROM check_runs cr WHERE cr\.session_id = cs\.id\) AS check_run_open/);
+
+  const names = reap.selectStale(items, fp).map((s) => s.slug);
+  assert.equal(names.includes('oldmerged-bbb222'), false, 'its run reads from it');
+  assert.ok(names.includes('prelabel-ccc333'), 'other stale previews are unaffected');
+  const freed = items.map((i) => (i.sessionId === 3002 ? { ...i, session: { ...i.session, check_run_open: false } } : i));
+  assert.ok(reap.selectStale(freed, fp).map((s) => s.slug).includes('oldmerged-bbb222'),
+    'once the run has settled, the next pass takes it');
+
+  const summary = await reap.sweepStale({});
+  assert.equal(fx.teardownCalls.some((c) => c.sessionId === 3002), false, 'the automatic pass leaves it');
+  assert.equal(summary.stale, 2);
+});
+
 test('sweepStale: tears down the stale, spares the current and the vote-backed', async () => {
   const reap = setup();
   const fp = currentFp();

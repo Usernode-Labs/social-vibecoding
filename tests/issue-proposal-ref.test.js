@@ -25,6 +25,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -185,6 +186,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -277,8 +279,13 @@ test('a closed issue gets one status band: emerald for a merged change, zinc for
   assert.ok(merged.closedBand.when, 'says when');
   assert.equal(merged.addressedBy, null, 'the band carries the change; no second box');
 
-  assert.equal(view({ addressed_by: null, closed_via: 'vote' }).closedBand.how, 'by vote');
-  assert.equal(view({ addressed_by: null, closed_via: 'admin' }).closedBand.how, 'by an admin');
+  // The view says which way, as a key; the band's whole message words it.
+  assert.equal(view({ addressed_by: null, closed_via: 'vote' }).closedBand.how, 'vote');
+  assert.equal(view({ addressed_by: null, closed_via: 'admin' }).closedBand.how, 'admin');
+  assert.equal(message('changes:request.closedBand.byVote'), '<0>Closed</0><1>·</1><2>by vote</2>');
+  assert.equal(message('changes:request.closedBand.byAdmin'), '<0>Closed</0><1>·</1><2>by an admin</2>');
+  assert.equal(message('changes:request.closedBand.whenByVote', { date: 'Oct 5' }), '<0>Closed</0><1>·</1><2>Oct 5</2><3>·</3><4>by vote</4>');
+  assert.equal(message('changes:request.closedBand.whenByAdmin', { date: 'Oct 5' }), '<0>Closed</0><1>·</1><2>Oct 5</2><3>·</3><4>by an admin</4>');
   const unknown = view({ addressed_by: null, closed_via: null, closedAt: null }).closedBand;
   assert.deepEqual({ ...unknown }, { tone: 'settled', when: null, whenTitle: null, how: null, ref: null });
 

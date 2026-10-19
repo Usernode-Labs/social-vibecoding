@@ -37,6 +37,8 @@
  * inside it. Nothing else on a card needs one.
  */
 
+import type { BotTrack } from '../../messages/types';
+
 /** A resolved type-chip: the tint classes and the SVG path, from DEV_CARD_ICONS. */
 export interface CardIconSpec {
   tint: string;
@@ -65,6 +67,8 @@ export interface StatusPillState {
   tier: number;
   key: string;
   label: string;
+  /** The label is the plain vote wait ("Vote · 1/2"), which some lines leave out because they say it themselves. */
+  plainVote?: boolean;
   tone: string;
   fill?: boolean | 'full-yes' | 'full-no';
   yes: number;
@@ -120,6 +124,12 @@ export type PreviewSpec =
 export interface ActionSpec {
   key: string;
   label: string;
+  /**
+   * A vote button's count ("2", "1✓ +2"), beside the label that also says
+   * it ("Yes (2)"). What draws the count reads this; a label is words in
+   * the language on screen and is never parsed.
+   */
+  tally?: string;
   /** Rendered as text, so a label with an entity in it arrives decoded. */
   title?: string;
   cls?: string;
@@ -169,6 +179,14 @@ export interface ActionSpec {
    * so in one line.
    */
   uncounted?: boolean;
+  /**
+   * #4747, on the Yes spec: the viewer is outside the people who decide this
+   * change (not an approver on an approver project, or outside every group
+   * the project's rules name), so their vote is recorded and advisory. The
+   * picker says so in one line. Never set together with `uncounted` — the
+   * test-account line wins.
+   */
+  advisory?: boolean;
 }
 
 /** Everything that can appear in the status band, as a tagged union. */
@@ -185,8 +203,8 @@ export type BadgeSpec =
   /** A metadata chip (priority / assignee / category). */
   | { t: 'attr'; key: string; field: 'priority' | 'assignee' | 'category'; targetType: string; targetRef: string | number; cls: string; hover: string; title: string; count: number; readonly: boolean; label: AttrLabel }
   /** Closes #N — in-app (button) or on GitHub (anchor). */
-  | { t: 'issueChip'; key: string; n: number; prefix: string; cls: string; title: string }
-  | { t: 'issueLink'; key: string; n: number; href: string; verb: string; cls: string; title: string }
+  | { t: 'issueChip'; key: string; n: number; label: string; cls: string; title: string }
+  | { t: 'issueLink'; key: string; n: number; href: string; label: string; cls: string; title: string }
   /** MergeStatus.badgeHtml's descriptor, as data. */
   | { t: 'ms'; key: string; tone: string; label: string; title?: string; spinner?: boolean; glyph?: string; votes?: { yes: number; majority: number; reached: boolean } }
   /** BuildVenues.chipHtml — where this session's turns run. */
@@ -364,14 +382,17 @@ export interface ChecksProgress {
   total: number;
   /** True until the run knows its total: a pulsing bar, not a filling one. */
   indeterminate?: boolean;
+  /** The run's real checks position in percent (the slower of its two halves, #4727): the fill follows it when present, the aria counts stay `done`/`total`. */
+  pct?: number;
   text: string;
 }
 
 export interface RowTag {
   label: string;
   tone: 'plain' | 'run' | 'ok' | 'warn' | 'bad';
-  /** `lock`: only the viewer can see it ("Only you", "Spec draft · only you", #4486). */
-  glyph?: 'eye' | 'lock';
+  /** `lock`: only the viewer can see it ("Only you", "Spec draft · only you", #4486).
+   *  `bot`: Homeroom bot built it from the viewer's request (#4728). */
+  glyph?: 'eye' | 'lock' | 'bot';
   /** #4485: the fewer words the row draws ("Taking shots"); `label` stays
    *  the chip's tooltip and what a screen reader says. */
   short?: string;
@@ -387,7 +408,8 @@ export interface RowTag {
 export interface RowBrief {
   /** The neutral tile's glyph. */
   kind: 'request' | 'change' | 'live' | 'vote';
-  noun: string;
+  /** Which word names it ("Change #4456", "Request"): a key, the row reads the message. */
+  noun: 'change' | 'request' | 'vote';
   n: number | null;
   /** Who made it ('' when nobody is named). */
   by: string;
@@ -413,6 +435,12 @@ export interface RowBrief {
   tags: RowTag[];
   /** One part per Yes it needs; `ask` when this viewer's vote is wanted. */
   vote: { yes: number; need: number; ask: boolean } | null;
+  /**
+   * #5385: on a request Homeroom bot has in hand for the viewer, its track
+   * (the Activity drawer's), whose step the What's happening row ends with.
+   * What's happening's own rows only: the board's brief has none.
+   */
+  botTrack?: BotTrack;
 }
 
 export type ListRow =
@@ -439,6 +467,12 @@ export type ListRow =
     placing?: boolean;
     /** What the Workshop tab's row says about it, in words (#4457, AppView._workshopBrief). */
     brief?: RowBrief;
+    /**
+     * #4772: on the viewer's own work (`mine`), the What's happening section
+     * it is filed in: Waiting on you, Your work, Yours up for a vote, or
+     * Going live. Absent reads as Your work.
+     */
+    group?: 'waiting' | 'work' | 'vote' | 'live';
     /**
      * Which item the Needs-you deck's ask box is asking about — an ADDRESS,
      * never content. The server resolves the kind/ref pair against this
@@ -524,7 +558,7 @@ export interface DevWorkshopView {
    * Which place a `?ws=` deep link asked for; null for the viewer's own
    * choice. A topic's channel is `c:<handle>` (#4417).
    */
-  tab: 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | `c:${string}` | null;
+  tab: 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | 'bot' | `c:${string}` | null;
   /**
    * The models the ask box may talk to — the dev session's own list
    * (`DevChat.MODELS`), not a second one. Empty where DevChat is absent, and
@@ -532,27 +566,36 @@ export interface DevWorkshopView {
    */
   models: { list: { id: string; label: string; note: string }[]; selected: string | null };
   /**
-   * The Needs-you tab's queue, in order: the proposals owed a vote, then the
-   * issues nobody has claimed. One card, one question, three answers — the
-   * row carries the question and what Yes and No DO, so the deck renders
-   * buttons rather than deciding policy.
+   * The Needs-you tab's queue, in order: the changes and group decisions
+   * owed this viewer's vote, and nothing else (the requests nobody has
+   * picked up are `dashboard.unclaimed` and `nextUp`). The row carries the
+   * question and what Yes and No DO, so the deck renders buttons rather than
+   * deciding policy.
    */
   queue: (ListRow & {
-    kind: 'vote' | 'claim';
+    kind: 'vote';
     ask: string;
     /**
      * `approve` (#3977): a change on a project that is just yours whose Yes
      * is the one it needs (ActionSpec.approve, B7): the item reads Approve
-     * and Don't approve instead of a vote.
+     * and Don't approve instead of a vote. `advisory`/`uncounted` (#4747,
+     * #5365): the viewer's vote does not decide the change, as on the card's
+     * own ActionSpec — the item is labelled and the vote sheet's picker
+     * carries the same line, and the feed puts the rows whose vote decides
+     * first.
      */
-    yes: { label: string; act: { fn: string; args: unknown[] } | null; approve?: boolean } | null;
-    no: { label: string; act: { fn: string; args: unknown[] } | null } | null;
+    yes: { label: string; tally?: string; act: { fn: string; args: unknown[] } | null; approve?: boolean; advisory?: boolean; uncounted?: boolean } | null;
+    no: { label: string; tally?: string; act: { fn: string; args: unknown[] } | null } | null;
     /** The caption's facts, lifted off the card's meta line. */
     who?: string | null;
     ago?: string;
     number?: number | null;
-    /** An issue's body as one plain run, the claim item's sub-hero. */
-    body?: string | null;
+    /**
+     * Exactly one more Yes meets the change's rule, and the viewer's counts
+     * (AppView._yesPutsItLive): the facts line says "your yes puts it live",
+     * and the end card "Your yes put it over the line" once it is cast.
+     */
+    lastYes?: boolean;
     /**
      * The project the row belongs to, on the Communities screen's Needs you
      * (#3488), which mixes every project's. Unset inside a project, whose
@@ -565,9 +608,8 @@ export interface DevWorkshopView {
      */
     tally?: { yes: number; no: number } | null;
     /**
-     * The Description sheet's body: a proposal's summary or an issue's
-     * body, rendered and sanitised where it was built (app-view.js). Empty
-     * when there is none.
+     * The expanded caption's body: a proposal's summary, rendered and
+     * sanitised where it was built (app-view.js). Empty when there is none.
      */
     descriptionHtml?: string;
     /**
@@ -653,6 +695,12 @@ export interface DevWorkshopView {
     count: number;
     shown: number;
     rows: ListRow[];
+    /**
+     * #4772: what Homeroom bot waits on the viewer for on an item that is not
+     * otherwise theirs (a plan or a question on their request, a back and
+     * forth on a change), drawn under Waiting on you after `rows`' own.
+     */
+    extra?: ListRow[];
   };
   /**
    * What happened since the viewer last opened this app's Workshop, or null
@@ -686,6 +734,25 @@ export interface DevWorkshopView {
      */
     seen: { total: number; rows: ListRow[] };
   } | null;
+  /**
+   * The week whose page is open on the Workshop tab, filled from the board's
+   * own data — everything in the week's range over ALL loaded entries,
+   * uncapped, split on the same baseline `since` uses — or null while no
+   * week page is open. `loading` and `failed` are the fetch's
+   * (AppView.openWorkshopWeek): the page says "Loading this week…" while it
+   * runs and names a part-load when it fails, and the empty line shows only
+   * once loading finished with no rows.
+   */
+  week: {
+    startMs: number;
+    endMs: number;
+    loading: boolean;
+    failed: boolean;
+    /** In the week and moved since the viewer's last visit, newest first. */
+    fresh: ListRow[];
+    /** In the week, from before it — which they have seen. */
+    seen: ListRow[];
+  } | null;
   /** First-visit orientation: the board's shape in numbers. */
   /**
    * The app's state in numbers, every visit rather than only the first —
@@ -697,6 +764,13 @@ export interface DevWorkshopView {
     open: number;
     themes: number;
     votesWaiting: number;
+    /**
+     * #4745: the waiting items' own addresses, in the same order the count
+     * reads them. The "waiting on a vote" figure opens the single one's page,
+     * or All items when several wait. Optional so older view objects still
+     * type-check.
+     */
+    votesWaitingRefs?: { kind: 'proposal' | 'gov'; id: number }[];
     /** Merges in the last 7 days, and in the 7 before them — a rate. */
     shippedWeek: number;
     shippedPrevWeek: number;
@@ -784,6 +858,22 @@ export interface DevWorkshopView {
      */
     summary: string | null;
   } | null;
+  /**
+   * The hub's Recently live (AppView._workshopRecentLive): the newest few
+   * changes that merged, newest first. `picture` is the after still of its
+   * before & after shots, when the checks took one. `at` is when it went
+   * live; null, with `going`, while production has not run it yet.
+   */
+  recentLive?: {
+    key: string;
+    sessionId: number;
+    prNumber: number | null;
+    title: string;
+    who: string | null;
+    at: string | null;
+    going: boolean;
+    picture: string | null;
+  }[];
   /**
    * One unclaimed open issue to suggest, as a row. Null when there is none;
    * All items' search and filters do not reach it (#2915).

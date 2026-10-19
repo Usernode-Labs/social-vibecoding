@@ -21,6 +21,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { message } = require('./lib/platform-i18n');
 
 const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 
@@ -147,7 +148,9 @@ test('no app\'s Workshop has a ✕ — only the running app does — and a chann
   // #2740 review: an app's Workshop has NO back control. #2799 made that true
   // for the platform's own row and left every other app's Workshop wearing a
   // "Close app" ✕ that OPENED the app it claimed to close.
-  const { App, AppView } = harness();
+  // A phone, where the running app below has its ✕; on a desktop its rail
+  // stays beside it and the corner is the sidebar toggle (checked last).
+  const { App, AppView } = harness({ wide: false });
   App.currentApp = 'todo';
   App.currentTab = 'dev';
   App.currentSubTab = 'forum';
@@ -165,6 +168,13 @@ test('no app\'s Workshop has a ✕ — only the running app does — and a chann
   // …or the page it was opened from (App.closeApp; tests/app-close-origin.test.js).
   App._appReturn = { slug: 'todo', url: '/#messages/5', depth: null, pushes: null };
   assert.deepEqual([...App._backSlotFor('app-view')], ['close', '/#messages/5']);
+  // On a desktop the running app keeps the rail, and the corner is empty
+  // for the sidebar toggle (App._railBesideApp, tests/nav-rail-pinned.test.js).
+  const desktop = harness();
+  desktop.App.currentApp = 'todo';
+  desktop.App.currentTab = 'app';
+  desktop.AppView.appData = { slug: 'todo', self_hosted: false };
+  assert.deepEqual([...desktop.App._backSlotFor('app-view')], ['none']);
   // A project's channel hangs off its community's hub now, not Messages.
   App.currentApp = 'homeroom';
   App.currentTab = 'dev';
@@ -274,6 +284,7 @@ test('the Workshop\'s loading state fills its column, and hands off to the Works
   const frame = read('frontend/src/features/dev-board/board-frame.tsx');
   const workshop = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   const frameRows = Number(/skeletonListHtml\((\d+)\)/.exec(frame.slice(frame.indexOf('const DEV_BODY_WORKSHOP_INITIAL')))[1]);
-  const ownRows = Number(/<CardSkeleton n=\{(\d+)\} label="Loading the workshop"/.exec(workshop)[1]);
+  const ownRows = Number(/<CardSkeleton n=\{(\d+)\} label=\{t\('project:page\.loading'\)\}/.exec(workshop)[1]);
   assert.equal(frameRows, ownRows, 'the frame\'s placeholder and the Workshop\'s loading state draw the same rows');
+  assert.equal(message('project:page.loading'), 'Loading the workshop');
 });

@@ -10,8 +10,8 @@
 //   - the worker's late correction (store.ts resync) reads the tray again;
 //   - while the bot has work in hand and the page is in view, the tray reads
 //     again every POLL_MS, and stops once nothing is in hand;
-//   - a phone's short form says "#3 queued" for work that only waits its
-//     turn, while the long form keeps "Working on 3" (D6).
+//   - work that only waits its turn says so (D6): one request, one story
+//     draws it in the strip's In progress line as "in the queue".
 //
 // Run with: node --test tests/homeroom-bot-tray-fresh.test.js
 
@@ -77,7 +77,7 @@ function createFakeReact() {
 const EMPTY = { now: [], needsYou: [], history: [] };
 const queuedJob = {
   key: 'ear-trainer#3', appSlug: 'ear-trainer', appName: 'Ear Trainer', issueNumber: 3, title: 'Sort', firstVersion: false,
-  phase: 'queued', step: 1, of: 6, stepName: 'Read the request', doing: 'next in line to be read', since: null,
+  phase: 'queued', step: 1, of: 6, stepName: 'Reading', doing: 'next in line to be read', since: null,
   href: null, links: { request: null, proposal: null, project: null }, earlier: [],
 };
 
@@ -120,7 +120,6 @@ test('the tray reads fresh after the DM opens, polls while the bot has work in h
   fake.mount(() => mod.BotWorkSync({ conversationId: 5, newsKey }));
   await settle();
   assert.deepEqual(reads, [{ fresh: false }], 'opening the DM: the one ordinary read, the worker\'s to correct');
-  assert.equal(mod.trayStatus(busy).long, 'Working on Ear Trainer #3 · in my queue');
 
   // Work in hand: asked again now and then, as the activity cards are.
   assert.equal(timers.size, 1);
@@ -169,8 +168,13 @@ test('the tray\'s read passes `fresh` as cache: no-store, as every other re-read
     { url: '/api/conversations/homeroom-bot/work', cache: undefined },
     { url: '/api/conversations/homeroom-bot/work', cache: 'no-store' },
   ]);
-  // The retry button reads fresh too, rather than passing its click event on.
-  assert.match(read(TRAY), /onRetry=\{\(\) => loadBotWork\(\)\}/);
+  // One request, one story: the strip's Approve reads the strip again
+  // fresh once the yes is in (it has no retry button: the panel that had one
+  // is gone, and the strip waits for its first read before it draws).
+  // #5483: the yes is recorded for the page first, so the row stops
+  // offering Approve at once.
+  assert.match(read('frontend/src/features/messages/bot-strip.tsx'),
+    /if \(out\.ok\) \{ noteApprovedHere\(sessionId, ready\?\.epoch \?\? null, out\.goesLive \|\| null\); loadBotWork\(\); return; \}/);
 });
 
 test('the worker\'s late correction (resync) reads the tray and the cards again, through the event both re-read on', () => {
@@ -181,18 +185,16 @@ test('the worker\'s late correction (resync) reads the tray and the cards again,
     'only for the conversation on screen');
 });
 
-test('#8 (D6): a phone\'s line says "queued" for work that only waits its turn; the long form keeps counting it', () => {
-  const { trayStatus } = loadTsx(TRAY);
-  const job = (issueNumber, phase) => ({ ...queuedJob, key: `ear-trainer#${issueNumber}`, issueNumber, phase });
-  const needs = { ...queuedJob, id: 4, outcome: 'question', doing: null, at: null };
-  const status = (now, needsYou = []) => trayStatus({ now, needsYou, history: [] });
-  assert.deepEqual(status([job(3, 'queued')]), { kind: 'working', long: 'Working on Ear Trainer #3 · in my queue', short: '#3 queued' });
-  assert.deepEqual(status([job(3, 'follow_up_queued')]).short, '#3 queued', 'a follow-up waiting its turn too');
-  assert.deepEqual(status([job(3, 'queued'), job(4, 'queued'), job(5, 'follow_up_queued')]),
-    { kind: 'working', long: 'Working on 3 requests', short: '3 queued' });
-  assert.equal(status([job(3, 'queued')], [needs]).short, 'Queued · 1 needs you', 'what waits on them still wins');
-  // Anything actually under way: "Working on", as before.
-  assert.equal(status([job(3, 'building')]).short, 'Working on #3');
-  assert.deepEqual(status([job(3, 'building'), job(4, 'building'), job(5, 'follow_up_queued')]),
-    { kind: 'working', long: 'Working on 3 requests', short: 'Working on 3' }, 'the declared check reads "Working on 3"');
+test('#8 (D6): work that only waits its turn says so; anything under way says what is being done', () => {
+  // One request, one story: the header's status line is gone; each In
+  // progress row of the activity drawer says what its request is doing
+  // (bot-strip.tsx).
+  const { doingWord, stripGroups } = loadTsx('frontend/src/features/messages/bot-strip.tsx');
+  const job = (issueNumber, phase, stage = null) => ({ ...queuedJob, key: `ear-trainer#${issueNumber}`, issueNumber, title: `Request ${issueNumber}`, phase, stage });
+  assert.equal(doingWord(job(3, 'queued')), 'in the queue');
+  assert.equal(doingWord(job(3, 'follow_up_queued')), 'following up', 'a follow-up waiting its turn');
+  assert.equal(doingWord(job(3, 'building', 'build_queued')), 'in the queue', 'a build waiting its turn');
+  assert.equal(doingWord(job(3, 'building')), 'building');
+  const rows = stripGroups({ now: [job(3, 'queued'), job(4, 'building'), job(5, 'follow_up_queued')], needsYou: [], history: [] }).progress;
+  assert.deepEqual(rows.map((row) => row.state), ['in the queue', 'building', 'following up']);
 });

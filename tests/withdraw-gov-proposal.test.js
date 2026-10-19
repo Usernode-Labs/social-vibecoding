@@ -1,15 +1,16 @@
 // Tests for the creator-gated governance withdraw — POST /api/issues/:id/close
 // in src/routes/issues.js (repurposed from the old unguarded close route).
 //
-// A governance proposal (kind='secret_change' or legacy 'rename') may be
-// withdrawn only by its creator (issues.created_by === req.user.id) and only
-// while status='open'. Withdrawing stamps withdrawnAt/withdrawnBy onto the
-// payload, posts a "withdrew their proposal" group-chat line (dual-posted
-// into the governance thread), best-effort closes a GitHub twin when set,
-// and pushes an issue update so open clients drop the card.
+// A governance proposal may be withdrawn only by its creator
+// (issues.created_by === req.user.id). The route checks that, then hands the
+// withdrawal to the governance machine (src/workflow/platform.ts
+// withdrawProposal), which decides it under the row lock and answers; its
+// own behaviour (audit keys, the thread line, the twin close as work, an
+// already-closed proposal) is pinned by tests/workflow-governance-postgres
+// and tests/workflow-governance-routes-postgres.
 //
-// We stub getPool (db/pool) to hand the route a mock pool and stub the ws
-// collaborators, then drive the POST handler directly off the router stack.
+// We stub getPool (db/pool), the ws collaborators and the workflow module,
+// then drive the POST handler directly off the router stack.
 //
 // Run with: node --test tests/withdraw-gov-proposal.test.js
 
@@ -40,13 +41,18 @@ function loadRoute(pool) {
   const poolId = require.resolve('../src/db/pool');
   const wsId = require.resolve('../src/services/ws');
   const issuesId = require.resolve('../src/routes/issues');
+  const workflowId = require.resolve('../src/workflow/platform.ts');
   const orig = {
     pool: require.cache[poolId],
     ws: require.cache[wsId],
     issues: require.cache[issuesId],
+    workflow: require.cache[workflowId],
   };
 
-  const spies = { systemMessages: [], issueUpdates: [] };
+  const spies = { systemMessages: [], issueUpdates: [], withdrawn: [] };
+  require.cache[workflowId] = { id: workflowId, exports: {
+    async withdrawProposal(issue, user) { spies.withdrawn.push([issue.id, user.username]); return { status: 200, body: { ok: true } }; },
+  } };
 
   require.cache[poolId] = { id: poolId, exports: { getPool: () => pool } };
   // Preserve the real ws exports, override just what the route touches.
@@ -68,6 +74,7 @@ function loadRoute(pool) {
   const restore = () => {
     if (orig.pool) require.cache[poolId] = orig.pool; else delete require.cache[poolId];
     if (orig.ws) require.cache[wsId] = orig.ws; else delete require.cache[wsId];
+    if (orig.workflow) require.cache[workflowId] = orig.workflow; else delete require.cache[workflowId];
     delete require.cache[issuesId];
   };
   return { router, spies, restore };
@@ -100,39 +107,16 @@ const ISSUE = (over) => ({
   ...over,
 });
 
-test('creator can withdraw their own open governance proposal', async () => {
-  const pool = makePool([
-    [/SELECT i\.\*, a\.slug AS app_slug/, [ISSUE()]],
-    [/UPDATE issues SET status = 'closed', payload/, (params) => [{ id: 31, app_id: 9 }]],
-  ]);
+test('the creator\'s withdrawal goes to the governance machine', async () => {
+  const pool = makePool([[/SELECT i\.\*, a\.slug AS app_slug/, [ISSUE()]]]);
   const { router, spies, restore } = loadRoute(pool);
   try {
-    const handler = closeHandler(router);
     const res = mockRes();
-    await handler({ params: { id: '31' }, user: { id: 42, username: 'maker' } }, res);
-
+    await closeHandler(router)({ params: { id: '31' }, user: { id: 42, username: 'maker' } }, res);
     assert.equal(res.statusCode, 200);
     assert.deepEqual(res.body, { ok: true });
-
-    // status flipped to closed with an audit payload stamping the withdrawer.
-    const upd = pool.issued(/UPDATE issues SET status = 'closed', payload/);
-    assert.ok(upd, 'UPDATE … status=closed issued');
-    assert.match(upd.sql, /WHERE id = \$1 AND status = 'open'/, 'guarded on still-open');
-    const audit = JSON.parse(upd.params[1]);
-    assert.equal(audit.key, 'API_KEY', 'existing payload preserved');
-    assert.equal(audit.withdrawnBy, 'maker', 'withdrawnBy stamped');
-    assert.ok(audit.withdrawnAt, 'withdrawnAt stamped');
-
-    // Said in the governance thread only; a channel carries no activity.
-    assert.equal(spies.systemMessages.length, 1, 'the governance thread line');
-    assert.match(spies.systemMessages[0][2], /withdrew their proposal/);
-    assert.match(spies.systemMessages[0][2], /Set secret API_KEY/);
-    assert.deepEqual(spies.systemMessages[0][5], { type: 'governance', ref: 31 }, 'in the gov thread');
-
-    // Clients told to drop the card.
-    assert.equal(spies.issueUpdates.length, 1);
-    assert.equal(spies.issueUpdates[0].action, 'closed');
-    assert.equal(spies.issueUpdates[0].issueId, 31);
+    assert.deepEqual(spies.withdrawn, [[31, 'maker']]);
+    assert.ok(!pool.issued(/UPDATE issues/), 'the route writes nothing itself');
   } finally {
     restore();
   }
@@ -149,30 +133,21 @@ test('a non-creator gets 403 and nothing is mutated', async () => {
     await handler({ params: { id: '31' }, user: { id: 42, username: 'intruder' } }, res);
 
     assert.equal(res.statusCode, 403);
-    assert.ok(!pool.issued(/UPDATE issues SET status = 'closed'/), 'no UPDATE on 403');
-    assert.equal(spies.systemMessages.length, 0, 'no chat line on 403');
-    assert.equal(spies.issueUpdates.length, 0, 'no push on 403');
+    assert.deepEqual(spies.withdrawn, [], 'nothing reaches the machine');
   } finally {
     restore();
   }
 });
 
-test('withdrawing an already-closed proposal is a no-op (404)', async () => {
-  const pool = makePool([
-    // The issue is loaded (creator matches) but the guarded UPDATE matches
-    // no row because status is already 'closed'.
-    [/SELECT i\.\*, a\.slug AS app_slug/, [ISSUE({ status: 'closed' })]],
-    [/UPDATE issues SET status = 'closed', payload/, []],
-  ]);
+test('a request that is not a governance proposal is not withdrawn here', async () => {
+  const pool = makePool([[/SELECT i\.\*, a\.slug AS app_slug/, [ISSUE({ kind: 'general' })]]]);
   const { router, spies, restore } = loadRoute(pool);
   try {
-    const handler = closeHandler(router);
     const res = mockRes();
-    await handler({ params: { id: '31' }, user: { id: 42, username: 'maker' } }, res);
-
-    assert.equal(res.statusCode, 404, 'already-closed → 404 no-op');
-    assert.equal(spies.systemMessages.length, 0, 'no duplicate withdrawal chat line');
-    assert.equal(spies.issueUpdates.length, 0, 'no push for a no-op');
+    await closeHandler(router)({ params: { id: '31' }, user: { id: 42, username: 'maker' } }, res);
+    assert.equal(res.statusCode, 400);
+    assert.deepEqual(spies.withdrawn, []);
+    assert.ok(!pool.issued(/UPDATE issues/));
   } finally {
     restore();
   }

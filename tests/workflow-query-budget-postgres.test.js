@@ -109,7 +109,7 @@ test('a governance vote stays within its query budget', { timeout: 120000 }, asy
     ...realWs, pushIssueUpdate() {}, pushAppUpdate() {}, broadcast() {}, sendSystemMessage: async () => {},
   });
   const config = {
-    databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfGovernanceEnabled: true,
+    databaseUrl: String(url), dataEncryptionKey: 'synthetic-key',
     wfPoolMax: 4, wfSlots: 2, wfOwnershipMode: 'raise',
   };
   const platform = require('../src/workflow/platform.ts');

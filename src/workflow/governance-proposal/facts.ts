@@ -2,13 +2,18 @@
 // instance lock: the issue and its app, the gate's inputs, the voter, and
 // whether applying now would fail. Read fresh every event; nothing cached.
 
-import { legacy } from '../legacy.ts';
 import type { Event, Tx } from '../kernel/index.ts';
+import { electorate } from '../rules/electorate.ts';
+import { appMetaFromRow, governanceFromRow } from '../rules/governance-gate.ts';
+import { GOVERNANCE_KINDS as KINDS } from '../rules/governance-kinds.ts';
+import type { RulesFacts } from '../rules/governance-rules.ts';
+import { parseGithubUrl } from '../rules/github-url.ts';
+import { missingProposalImage } from '../rules/illustrations.ts';
+import { isWritableKey, normalizeValue, validateValue } from '../rules/platform-vars.ts';
+import { decrypt } from '../rules/secrets.ts';
 import type { GateInputs, Vote, Voter } from './gate.ts';
 
-export const GOVERNANCE_KINDS: ReadonlySet<string> = new Set(
-  legacy('services/governance-kinds').GOVERNANCE_KINDS as string[],
-);
+export const GOVERNANCE_KINDS: ReadonlySet<string> = new Set(KINDS);
 
 export interface Issue {
   id: number;
@@ -33,16 +38,16 @@ export interface Facts {
 
 // The platform's own parser: https, ssh, a .git suffix, and dotted names.
 function parseRepo(url: string | null): Issue['app']['repo'] {
-  return legacy('services/github').parseGithubUrl(url || '');
+  return parseGithubUrl(url || '');
 }
 
 // One vote on the proposal, as the facts read it.
 interface VoteRow { userId: number; vote: string; counts: boolean; admin: boolean }
 
 // The issue, and its app as far as naming it goes. The row is locked:
-// anything else that decides it ([main]'s apply, while old and new Pods
-// overlap in a deploy) waits for this transition, or this transition waits
-// for it and sees the row closed. Only the locked row is read as it is after
+// anything else that writes it (a row closed before the machine enrolled
+// it, an app's deletion) waits for this transition, or this transition
+// waits for it and sees the row closed. Only the locked row is read as it is after
 // a wait; what decides the proposal is read after it (readOpen).
 async function readIssue(tx: Tx, issueId: number) {
   const { rows: [r] } = await tx.query(
@@ -75,7 +80,12 @@ async function readIssue(tx: Tx, issueId: number) {
 // from them once the electorate is known (countVotes).
 async function readOpen(tx: Tx, issue: Issue, voterId: number | null) {
   const { rows: [r] } = await tx.query(
-    `SELECT a.approver_policy, a.approvals_required, a.self_hosted, a.collab_visibility, a.locked,
+    `SELECT a.approver_policy, a.approvals_required, a.governance_rules, a.self_hosted, a.collab_visibility, a.locked,
+            -- #4666: what a project's own rules read (rules/governance-rules.ts): its
+            -- creator, everyone in its community, and its admins.
+            a.created_by,
+            (SELECT COUNT(*)::int FROM community_members cm WHERE cm.community_id = a.community_id) AS all_members,
+            COALESCE((SELECT array_agg(ad.user_id) FROM app_admins ad WHERE ad.app_id = a.id), '{}') AS admin_ids,
             (SELECT COALESCE(json_agg(json_build_object(
                       'userId', v.user_id, 'vote', v.vote,
                       'counts', counts_toward_issue_outcome(v.user_id, v.issue_id),
@@ -107,16 +117,37 @@ export function countVotes(votes: VoteRow[], approverIds: number[] | null, autho
   };
 }
 
-// The electorate is [main]'s JavaScript (governance.getElectorate), with
-// the app row passed in so it costs one query.
+// The electorate (rules/electorate.ts, which services/governance.js uses
+// too), with the app row passed in so it costs one query.
 async function readGate(tx: Tx, issue: Issue, v: any): Promise<{ gate: GateInputs; approverIds: number[] | null }> {
-  const governance = legacy('services/governance');
-  const gov = governance.governanceFromRow(v);
-  const { active, approverIds } = await governance.getElectorate(tx, issue.appId, gov,
-    legacy('services/active-users').appMetaFromRow(v));
+  const gov = governanceFromRow(v);
+  const { active, approverIds } = await electorate(tx, issue.appId, gov, appMetaFromRow(v));
   const explicitApproval = issue.kind === 'secret_change';
   const votes = v.votes as VoteRow[];
   const counts = countVotes(votes, approverIds, issue.createdBy);
+  // #4666: a project with rules decides by who voted, and by the facts its
+  // rules read, all from the row above (governance.js rulesFacts is the same
+  // read for every other path). The active people are not read here: a share
+  // of a named group's active people counts the whole group instead, which
+  // only ever asks for more yeses.
+  let rulesFacts: RulesFacts | null = null;
+  let voters: { yes: number[]; no: number[] } | null = null;
+  if (gov.rules) {
+    const rules = gov.rules;
+    rulesFacts = {
+      creatorId: !v.self_hosted && v.created_by ? Number(v.created_by) : null,
+      memberCount: Number(v.all_members) || 0,
+      membersActive: active,
+      adminIds: ((v.admin_ids || []) as unknown[]).map(Number).filter(Number.isFinite),
+      groups: new Map(rules.groups.map((g) => [g.key, g.ids])),
+      activeIds: null,
+    };
+    const counted = votes.filter((x) => x.counts);
+    voters = {
+      yes: counted.filter((x) => x.vote === 'up').map((x) => x.userId),
+      no: counted.filter((x) => x.vote === 'down').map((x) => x.userId),
+    };
+  }
   return {
     approverIds,
     gate: {
@@ -124,6 +155,7 @@ async function readGate(tx: Tx, issue: Issue, v: any): Promise<{ gate: GateInput
       explicitApproval, memberCount: explicitApproval ? Number(v.member_count) || 0 : null,
       authorId: issue.createdBy, openedAt: issue.createdAt, locked: issue.app.locked,
       adminUpVoters: votes.filter((x) => x.vote === 'up' && x.admin).map((x) => x.userId),
+      voters, rulesFacts,
     },
   };
 }
@@ -150,16 +182,18 @@ async function readRefusal(tx: Tx, issue: Issue, dataKey: string): Promise<strin
     case 'maintenance_campaign':
       return typeof p.instructions === 'string' && p.instructions.trim() ? null : 'missing_instructions';
     case 'featured_illustration':
-      return legacy('services/illustration-proposals').missingProposalImage(tx, issue.appId, p, issue.id);
+      return missingProposalImage(tx, issue.appId, p, issue.id);
     case 'secret_change': {
-      const platformEnv = legacy('services/platform-env');
       const key = String(p.key || '').trim();
       if (!key) return 'missing_key';
-      if (issue.app.selfHosted && !platformEnv.isWritableKey(key)) return 'unwritable';
+      if (issue.app.selfHosted && !isWritableKey(key)) return 'unwritable';
       if (p.action === 'delete') return null;
-      const plaintext = legacy('services/secrets').decrypt(p.valueEnc, dataKey);
+      // Without the data key every value reads as unreadable: a fault of
+      // this process's configuration, never a verdict on the proposal.
+      if (!dataKey) throw new Error('The data encryption key is not configured; the proposed value cannot be read');
+      const plaintext = decrypt(p.valueEnc, dataKey);
       if (!plaintext) return 'undecryptable';
-      if (issue.app.selfHosted && platformEnv.validateValue(platformEnv.normalizeValue(plaintext))) return 'invalid_value';
+      if (issue.app.selfHosted && validateValue(normalizeValue(plaintext))) return 'invalid_value';
       return null;
     }
     default:

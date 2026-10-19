@@ -16,7 +16,7 @@ const STATUS_VALUES = new Set([
   'running', 'merged', 'blocked', 'conflict_resolving',
   'conflict_failed', 'awaiting_github', 'noop', 'error',
   // The proposal's PR is closed on GitHub and couldn't be reopened —
-  // terminal, distinct from a conflict (conflict-resolver / checkAndMerge).
+  // terminal, distinct from a conflict (the proposal machine's merge attempt).
   'pr_closed',
 ]);
 const KIND_VALUES = new Set(['merge', 'conflict_resolution', 'checks']);
@@ -74,10 +74,7 @@ function stagingMockMergeRuns() {
         { phase: 'claim', message: 'Claimed merge (promoted → merging).' },
         { phase: 'github_merge', message: 'Calling GitHub merge for PR #900201…' },
         { phase: 'github_merge', message: 'GitHub merged PR #900201 as commit abc1234.', detail: { sha: 'abc1234ef' } },
-        { phase: 'prod_rebuild', message: 'Production rebuild started.' },
-        { phase: 'prod_rebuild', message: 'Production rebuild finished (deployed def5678).', detail: { sha: 'def5678ab' } },
-        { phase: 'staging_teardown', message: 'Staging container torn down.' },
-        { phase: 'merged', message: 'Marked session merged.' },
+        { phase: 'merged', message: 'Merged (commit abc1234ef). Delivery and the follow-ups are the merge-followups workflow\'s (accepted).', detail: { sha: 'abc1234ef', outcome: 'accepted' } },
       ]),
     // 2. Conflict auto-resolved, then merged.
     mk(9500002, 900202, 'Refactor the feed renderer for infinite scroll',

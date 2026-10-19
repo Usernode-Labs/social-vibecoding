@@ -32,7 +32,7 @@ test('the fragment is one rule the routes read, not a copy each', () => {
   // From a request at all: a shadow build carries no issue number.
   assert.match(fragment, /cs\.created_from_issue_number IS NOT NULL/);
   // For the viewer: the requesters row wins, the filed issue is the
-  // fallback — the bot queue's own order (liveCandidates' COALESCE), because
+  // fallback — the bot queue's own order (READ_CANDIDATES_SQL's COALESCE), because
   // a request the bot took from a DM is recorded only in the requesters
   // table and `issues.created_by` alone would miss it.
   const coalesce = /COALESCE\(\s*\(SELECT r\.user_id FROM homeroom_bot_requesters r[\s\S]*?\)\s*,\s*\(SELECT i\.created_by FROM issues i[\s\S]*?LIMIT 1\)\)/.exec(fragment);
@@ -50,6 +50,17 @@ test('the routes read the shared fragment', () => {
   assert.match(votes,
     /COALESCE\(\$\{botRequestedBySql\('cs', '\$2'\)\}, FALSE\) AS requested_by_me/,
     'the flag rides the /promoted payload, FALSE for a guest');
+
+  // #4715: the merged rows carry it too, so Your work can tell whose ask a
+  // going-live bot change was once it has merged. mergedRowSelect is the
+  // shared fragment both /merged and the single-proposal fetch select
+  // through, and both bind the viewer as $2 — assert on the function body,
+  // not the file, so the match names THIS select and not /promoted's.
+  const mergedSelect = /function mergedRowSelect\(\) \{[\s\S]*?\n\}/.exec(votes);
+  assert.ok(mergedSelect, 'mergedRowSelect found');
+  assert.match(mergedSelect[0],
+    /COALESCE\(\$\{botRequestedBySql\('cs', '\$2'\)\}, FALSE\) AS requested_by_me/,
+    'the flag rides the /merged payload too, for the same viewer parameter');
 
   // The Communities counts read it inside MY_PROPOSALS_WHERE, on $1.
   const overview = read('src/routes/workshop-overview.js');

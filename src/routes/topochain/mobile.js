@@ -41,13 +41,14 @@
 'use strict';
 
 const { nativeWebSessionIsLive } = require('../../services/web-session-auth');
+const { activityTimePrecision } = require('../../services/topochain/activity-time');
 
 
 const {
-  loadOnboarding, visibleChallenges, challengeCategory, resolveProgress, loadEventBlocks,
-  gateSummary,
+  loadOnboarding, challengeCategory, resolveProgress, loadEventBlocks,
 } = require('../../services/topochain/challenge-onboarding');
 const { isWeekly, weekStartMs } = require('../../services/topochain/challenge-rules');
+const { inviteStatuses } = require('../../services/topochain/invite-statuses');
 
 const { Router } = require('express');
 const bcrypt = require('bcrypt');
@@ -69,6 +70,7 @@ const { nativeEpochDelegationRoutes } = require('./epoch-delegation');
 const { mobileIdentityHash } = require('../../services/mobile-identity-hash');
 const { mobilePushRegistrationRoutes } = require('./mobile-push-registration');
 const { verifyCompletion, ZkBridgeError } = require('../../services/topochain/zk-bridge');
+const { requireAdultAttestation } = require('../../services/adult-attestation');
 
 // ─── Small shared formatters (duplicated in miniature from public.js — ──
 // that file doesn't export its identifier/display-name helpers, and these
@@ -299,9 +301,14 @@ async function fetchChallengeProgress(pool, userId, eventId) {
 // activity's own challenge's template `kind` (INNER JOIN is safe here —
 // user_activities.challenge_id CASCADEs with its challenge row, so no
 // activity can outlive the challenge it points at).
+//
+// `grade_reason` carries the challenge grader's short explanation of the
+// points (#3200) from `metadata.grade`, which the challenge scorer writes on
+// graded rows. Rows without a grade — ungraded measures, partner `api` rows,
+// admin-created rows — get null, so the client draws nothing there.
 async function fetchBreakdownActivities(pool, userId, eventId) {
   const { rows } = await pool.query(
-    `SELECT ua.id, ua.challenge_id, ua.activity_type, ua.points, ua.description, ua.activity_at,
+    `SELECT ua.id, ua.challenge_id, ua.activity_type, ua.points, ua.description, ua.activity_at, ua.metadata,
             ct.kind AS activity_kind
        FROM user_activities ua
        JOIN challenges c ON c.id = ua.challenge_id
@@ -318,6 +325,10 @@ async function fetchBreakdownActivities(pool, userId, eventId) {
     points: num(r.points) ?? 0,
     description: r.description,
     activity_at: iso(r.activity_at),
+    activity_time_precision: activityTimePrecision(r),
+    grade_reason: r.metadata && typeof r.metadata.grade === 'object' && r.metadata.grade !== null
+      ? String(r.metadata.grade.reason || '').trim() || null
+      : null,
   }));
 }
 
@@ -686,7 +697,7 @@ async function fetchChallengesForSeason(pool, seasonId) {
 // whole list, grouped in JS per challenge_id by the route below.
 async function fetchOwnChallengeActivities(pool, userId, challengeIds) {
   const { rows } = await pool.query(
-    `SELECT challenge_id, points, description, activity_at
+    `SELECT challenge_id, points, description, activity_at, metadata
        FROM user_activities
       WHERE user_id = $1 AND challenge_id = ANY($2::bigint[])
       ORDER BY activity_at DESC`,
@@ -718,7 +729,7 @@ async function fetchSeasonEventChallengeItems(pool, seasonEventId, opts) {
       ORDER BY c.display_order ASC, c.id ASC`,
     params
   );
-  return visibleChallenges(rows.filter((r) => r.t_id != null), onboarding)
+  return rows.filter((r) => r.t_id != null)
     .map((r) => {
       const item = buildSeasonChallengeItem(r);
       item.category = challengeCategory(item.challenge_id, item.category, onboarding);
@@ -889,6 +900,27 @@ function topochainMobileRoutes(config) {
       });
     } catch (err) {
       log.error('topochain-mobile', 'POST bp/request failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  }
+
+  // ── GET /me/invites (#3650) ──────────────────────────────────────────
+  // Why each person an INVITES_JOINED challenge's viewer invited does or
+  // does not count. Read-only over the same rule row and the same
+  // first-invite records the scorer pays on (./invite-statuses.js); the
+  // decision of what each status means lives there, not here.
+  async function meInvitesHandler(req, res) {
+    try {
+      const challengeId = toIntId(req.query.challenge_id);
+      if (challengeId == null) return fail(res, 422, 'challenge_id must be a positive integer.');
+      const data = await inviteStatuses(pool, {
+        userId: req.user.id,
+        challengeId,
+      });
+      if (!data) return fail(res, 404, 'Not found.');
+      return ok(res, { data });
+    } catch (err) {
+      log.error('topochain-mobile', 'GET me/invites failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
   }
@@ -1320,9 +1352,11 @@ function topochainMobileRoutes(config) {
         rows = await fetchChallengesForSeason(pool, seasonId);
       }
 
+      // The season's First challenges: their ids (for the category) and the
+      // viewer's lifetime progress on them. Since #4635 they hide nothing, so
+      // the list is the whole event or season.
       const onboarding = await loadOnboarding(pool, req.user.id,
         { seasonId: resolvedSeasonId, eventId: seasonEventId });
-      rows = visibleChallenges(rows, onboarding);
       const ids = rows.map((r) => Number(r.id));
       const activityRows = ids.length ? await fetchOwnChallengeActivities(pool, req.user.id, ids) : [];
       const activitiesByChallenge = new Map();
@@ -1337,6 +1371,7 @@ function topochainMobileRoutes(config) {
         return buildMobileChallengeItem(r, {
           activities: list.map((a) => ({
             points: num(a.points) ?? 0, description: a.description, activity_at: iso(a.activity_at),
+            activity_time_precision: activityTimePrecision(a),
           })),
           // activities_total: this endpoint's own aggregate, summed from
           // the SAME rows `activities` carries (judgment call: mirrors
@@ -1408,11 +1443,9 @@ function topochainMobileRoutes(config) {
         });
       }
 
-      // The gate summary only for a viewer it applies to: a new account on
-      // its Getting started list (2026-10-01). Anyone else gets the whole
-      // season and no summary, as for a season with no First challenges.
-      const gate = gateSummary(onboarding);
-      return ok(res, { data: items, ...(gate ? { onboarding: gate } : {}) });
+      // No `onboarding` summary any more (#4635): nothing is gated, and the
+      // app already reads a missing summary as "not gated".
+      return ok(res, { data: items });
     } catch (err) {
       log.error('topochain-mobile', 'GET /challenges failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
@@ -1493,7 +1526,6 @@ function topochainMobileRoutes(config) {
           ends_at: iso(season.ends_at),
           is_active: season.is_active,
           events,
-          ...(gateSummary(onboarding) ? { onboarding: onboarding.summary } : {}),
         };
         if (includeChallenges) {
           // "season_challenges ... same shape, from the season-type
@@ -1528,7 +1560,15 @@ function topochainMobileRoutes(config) {
   // (mobileTokenAuth's own "never trust a client-supplied id" rule,
   // Constraint #12, now holds on the web surface too).
   const webSessionAuth = optionalSessionAuth(config);
+  // A session lookup that threw (a DB error or pool timeout, which
+  // optionalSessionAuth swallows for the public reads) is a server fault,
+  // not "signed out": answer 500 as authMiddleware does, so the Profile
+  // screen never tells a signed-in person to sign in (#4808).
   const requireSessionUser = (req, res, next) => {
+    if (req.sessionLookupError) {
+      log.warn('topochain-mobile', 'web session lookup failed', { message: req.sessionLookupError.message });
+      return fail(res, 500, 'Internal server error.');
+    }
     if (!req.user) return fail(res, 401, 'Unauthenticated.');
     return next();
   };
@@ -1537,6 +1577,7 @@ function topochainMobileRoutes(config) {
   router.get('/challenges-api/leaderboard', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, leaderboardHandler);
   router.get('/challenges-api/me/ranking', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, meRankingHandler);
   router.get('/challenges-api/me/breakdown', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, meBreakdownHandler);
+  router.get('/challenges-api/me/invites', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, meInvitesHandler);
   // Terms review + consent (thin-shell migration): the native terms
   // screen is gone; SV settings renders the current terms and posts the
   // consent with the platform session. The handlers are hoisted function
@@ -1547,7 +1588,10 @@ function topochainMobileRoutes(config) {
   // shows "Ask to produce blocks" and its pending/released state with
   // the platform session.
   router.get('/challenges-api/bp/state', webSessionAuth, requireSessionUser, bpStateHandler);
-  router.post('/challenges-api/bp/request', webSessionAuth, requireSessionUser, sameOriginBrowserOnly, bpRequestHandler);
+  // Running a node is for adults (#5095): the request waits for the 18+
+  // answer. The state read above stays open.
+  router.post('/challenges-api/bp/request', webSessionAuth, requireSessionUser, sameOriginBrowserOnly,
+    requireAdultAttestation(pool, { shape: 'topochain' }), bpRequestHandler);
   // Everything else under /challenges-api keeps the old proxy allowlist's
   // "off-list -> 404" contract instead of falling through to the SPA
   // catch-all (which would 200 with index.html) or authMiddleware's 401.
@@ -1742,7 +1786,10 @@ function topochainMobileRoutes(config) {
   //      state; this mirrors the §4.10 "challenge_progress placeholder"
   //      precedent of reporting the honest absence of a mechanism rather
   //      than a fabricated success.
-  router.post('/api/v4/mobile/zkpassport/complete', mobileTokenAuth(config), async (req, res) => {
+  // A passport proof is for adults (#5095), refused until the account said
+  // it is 18 or older.
+  router.post('/api/v4/mobile/zkpassport/complete', mobileTokenAuth(config),
+    requireAdultAttestation(pool, { shape: 'topochain' }), async (req, res) => {
     try {
       const body = req.body || {};
       const details = {};
@@ -1998,6 +2045,8 @@ function topochainMobileRoutes(config) {
     // populated before its key is computed.
     optionalSessionAuth(config),
     mobileWalletClaimLimiter,
+    // Claiming a wallet is for adults (#5095).
+    requireAdultAttestation(pool, { shape: 'topochain' }),
     async (req, res) => {
       const sessionToken = req.cookies?.session;
       if (!req.user || !sessionToken) return fail(res, 401, 'Unauthenticated.');

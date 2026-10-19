@@ -98,6 +98,29 @@ test('a clip is saved only for a motion change, and a refused file saves nothing
   assert.equal(run.saved.size, 1);
 });
 
+// A project's first version: the before address is the starter template's
+// placeholder (services/shots-starter.js), so the run takes the after side
+// only, and a before shot is refused while the agent can still move on.
+test('a first version\'s run refuses a before shot and is ready with the after side alone', () => {
+  const run = control({ intent: fixtures.intent(), afterOnly: true });
+  assert.throws(() => run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' },
+    sideShot('before')), (error) => {
+    assert.equal(error.code, 'before_not_needed');
+    assert.equal(error.status, 400);
+    assert.match(error.message, /starter template's placeholder/);
+    assert.match(error.message, /takes after shots only/);
+    return true;
+  });
+  assert.equal(run.saved.size, 0, 'nothing from the before side is kept');
+  assert.equal(run.lastToolFailure.operation, 'save-shot');
+  run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, sideShot('after'));
+  assert.deepEqual(statuses(run), [['invite-suggestions', 'ready']]);
+  assert.equal(run.summary().verdict.afterOnly, true);
+  // An ordinary run takes both sides, as before.
+  assert.equal(control({ intent: fixtures.intent() }).saveShot(
+    { change: 'invite-suggestions', screen: 'desktop', side: 'before' }, sideShot('before')).side, 'before');
+});
+
 test('progress reports each change as missing, ready or skipped', () => {
   const run = control();
   const initial = run.progress();
@@ -315,6 +338,80 @@ test('a problem noticed on the after build is kept with the run, capped, and cha
     { code: 'shots_turn_finished', status: 409 });
 });
 
+// Every problem noted in the proposals merged 2026-10-09 to 10-12 said
+// "unknown", though the agent shoots the before side of every screen.
+test('a problem noted without saying whether the before build has it asks the agent to look', () => {
+  const run = control({ intent: threeChanges() });
+  run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, sideShot('after'));
+  const early = run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: 'The table is cut off.' });
+  assert.equal(early.alsoBefore, 'unknown');
+  assert.match(early.hint, /^Once you have shot the before side of this screen, look at it and note this problem again with alsoBefore true or false/);
+
+  run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, sideShot('before'));
+  const later = run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: 'The table is cut off.', alsoBefore: 'unknown' });
+  assert.match(later.hint, /^You saved the before shot of this screen: look at it and note this problem again/);
+  assert.match(later.hint, /Noting the same problem at the same place updates it\.$/);
+
+  const said = run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: 'The table is cut off.', alsoBefore: false });
+  assert.equal(Object.hasOwn(said, 'hint'), false, 'a notice that says true or false is not asked again');
+  assert.deepEqual(run.notices.map((entry) => entry.alsoBefore), [false], 'noting it again updated the one notice');
+});
+
+// control_request and upload_file record what they are about to do to both
+// builds before they do it; it goes on the change's result, whatever its
+// status, so the card can say so beside the shots.
+test('what the agent did to both builds is kept with its change, once each, and only in a fixed shape', () => {
+  const run = control({ intent: threeChanges() });
+  shootBothSides(run, 'invite-suggestions');
+  const before = run.summary();
+  assert.deepEqual(run.noteCondition({ change: 'invite-suggestions', kind: 'request_held', request: '/api/items?page=1' }),
+    { recorded: 'invite-suggestions', conditions: 1 });
+  // The same again is recorded once.
+  assert.equal(run.noteCondition({ change: 'invite-suggestions', kind: 'request_held', request: '/api/items?page=1' }).conditions, 1);
+  run.noteCondition({ change: 'invite-suggestions', kind: 'sample_file', files: ['landscape.png', 'table.csv'] });
+  run.noteCondition({ change: 'member-count', kind: 'request_failed', request: '/api/members' });
+
+  const summary = run.summary();
+  const ready = summary.stories.find((story) => story.id === 'invite-suggestions');
+  assert.equal(ready.status, 'ready');
+  assert.deepEqual(ready.conditions, [
+    { kind: 'request_held', request: '/api/items?page=1' },
+    { kind: 'sample_file', files: ['landscape.png', 'table.csv'] },
+  ]);
+  // A change that is not ready keeps its conditions too; one with none has no key.
+  assert.deepEqual(summary.stories.find((story) => story.id === 'member-count').conditions,
+    [{ kind: 'request_failed', request: '/api/members' }]);
+  assert.equal('conditions' in summary.stories.find((story) => story.id === 'saved-toast'), false);
+  assert.equal(summary.manifestHash, before.manifestHash, 'the published files are the same files');
+  assert.deepEqual(summary.verdict.stories, summary.stories);
+
+  for (const [raw, code] of [
+    [{ change: 'nobody', kind: 'request_held', request: '/api/items' }, 'unknown_change'],
+    [{ change: 'invite-suggestions', kind: 'evaluate', request: '/api/items' }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'request_held', request: '/lists' }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'request_held', request: '/api/items/*' }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'request_held', request: 'https://evil.example/api/items' }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'request_failed', request: '/api/items?token=abc' }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'sample_file', files: [] }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'sample_file', files: ['/etc/passwd'] }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'sample_file', files: ['table.csv', 'table.csv'] }, 'invalid_condition'],
+  ]) {
+    assert.throws(() => run.noteCondition(raw), { code, status: 400 }, JSON.stringify(raw));
+  }
+  assert.equal(run.lastToolFailure.operation, 'note-condition');
+  // Four a change at most.
+  run.noteCondition({ change: 'invite-suggestions', kind: 'request_failed', request: '/api/items?page=1' });
+  run.noteCondition({ change: 'invite-suggestions', kind: 'sample_file', files: ['portrait.png'] });
+  assert.throws(() => run.noteCondition({ change: 'invite-suggestions', kind: 'request_held', request: '/api/other' }),
+    { code: 'too_many_conditions', status: 409 });
+  // What it already holds is still recorded once, at the cap.
+  assert.equal(run.noteCondition({ change: 'invite-suggestions', kind: 'sample_file', files: ['portrait.png'] }).conditions, 4);
+
+  run.skipChange({ reason: 'Nothing else loads.' });
+  assert.throws(() => run.noteCondition({ change: 'member-count', kind: 'request_held', request: '/api/members' }),
+    { code: 'shots_turn_finished', status: 409 });
+});
+
 test('the last refused tool call is kept for the owner\'s diagnostics', () => {
   const run = control();
   assert.equal(run.lastToolFailure, null);
@@ -366,55 +463,26 @@ test('a control only accepts an intent the author could have declared', () => {
   assert.equal(control({ intent: fixtures.intent() }).intent.stories[0].intent.baseState, 'present');
 });
 
-test('one registration owns a run id at a time', (t) => {
-  controlPlane._clearForTests();
-  t.after(() => controlPlane._clearForTests());
-  const options = {
-    runId: 'b'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {},
-    expiresAt: Date.now() + 10_000,
-  };
-  assert.throws(() => controlPlane.registerRun({ ...options, runId: 'not-a-run' }),
+test('a run\'s workspace is made only for a run id, and a lapsed one answers nothing', async () => {
+  // The workspace lives in Postgres (shot_run_control): which process
+  // serves a call does not matter, and the routes reach it only through
+  // withControl, which checks the run's session and that it is current
+  // (tests/shots-run-steps-postgres.test.js).
+  const pool = { query: async () => { throw new Error('nothing is written for an invalid run'); } };
+  await assert.rejects(controlPlane.create(pool, { runId: 'not-a-run', sessionId: 42, intent: fixtures.intent(), context: {}, expiresAt: Date.now() }),
     { code: 'invalid_shots_run', status: 400 });
-  assert.throws(() => controlPlane.registerRun({ ...options, runId: 'B'.repeat(32) }),
+  await assert.rejects(controlPlane.create(pool, { runId: 'B'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {}, expiresAt: Date.now() }),
     { code: 'invalid_shots_run' });
-
-  const first = controlPlane.registerRun(options);
-  assert.throws(() => controlPlane.registerRun(options), { code: 'shots_control_exists', status: 409 });
-  first.unregister();
-  const second = controlPlane.registerRun(options);
-  assert.notEqual(second.control, first.control);
-  // A stale unregister cannot remove the registration that replaced it.
-  first.unregister();
-  assert.equal(controlPlane.forRequest({ runId: options.runId, sessionId: 42 }), second.control);
-  second.unregister();
-  assert.throws(() => controlPlane.forRequest({ runId: options.runId, sessionId: 42 }),
-    { code: 'shots_control_not_found' });
-});
-
-test('a request reaches a control only for its own session while the run is live', (t) => {
-  controlPlane._clearForTests();
-  t.after(() => controlPlane._clearForTests());
-  const runId = 'c'.repeat(32);
-  const { control: live } = controlPlane.registerRun({
-    runId, sessionId: 42, intent: fixtures.intent(), context: {}, expiresAt: Date.now() + 10_000,
-  });
-  assert.equal(controlPlane.forRequest({ runId, sessionId: 42 }), live);
-  assert.equal(controlPlane.forRequest({ runId, sessionId: '42' }), live, 'a JWT claim may carry the id as text');
-  assert.throws(() => controlPlane.forRequest({ runId, sessionId: 43 }),
-    { code: 'shots_scope_mismatch', status: 403 });
-  assert.throws(() => controlPlane.forRequest({ runId, sessionId: undefined }),
-    { code: 'shots_scope_mismatch', status: 403 });
-  assert.throws(() => controlPlane.forRequest({ runId: 'd'.repeat(32), sessionId: 42 }),
+  await assert.rejects(controlPlane.withControl(pool, { runId: 'nope', sessionId: 42 }, () => {}),
     { code: 'shots_control_not_found', status: 410 });
-  assert.throws(() => controlPlane.forRequest({ sessionId: 42 }),
-    { code: 'shots_control_not_found', status: 410 });
-
-  const expiredRun = 'e'.repeat(32);
-  controlPlane.registerRun({
-    runId: expiredRun, sessionId: 42, intent: fixtures.intent(), context: {}, expiresAt: Date.now() - 1,
+  const lapsed = new controlPlane.RunControl({
+    runId: 'e'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {}, expiresAt: Date.now() - 1,
   });
-  assert.throws(() => controlPlane.forRequest({ runId: expiredRun, sessionId: 42 }),
-    { code: 'shots_control_expired', status: 410 });
+  assert.throws(() => lapsed.getContext(), { code: 'shots_control_expired', status: 410 });
+  assert.equal(controlPlane.dbSlot({ storyId: 'c1', viewport: 'desktop', side: 'base', variant: 'context' }), 'c1/desktop/base/context',
+    'a slot Postgres can hold (the in-memory key separates with NUL)');
+  assert.equal(controlPlane.dbSlot({ storyId: 'c1', viewport: 'desktop', side: 'base', variant: 'context', theme: 'dark' }),
+    'c1/desktop/base/context/dark', 'a dark slot is a light slot with /dark at its end (#4459)');
 });
 
 test('saving the same image on both sides warns the agent while it can still retake them', () => {
@@ -440,4 +508,41 @@ test('an element shot wider than its screen is refused and saves nothing', () =>
     fixtures.png({ width: 1300, height: 40 })), { code: 'element_shot_too_wide', status: 400 });
   assert.equal(run.saved.size, 1);
   assert.equal(run.lastToolFailure.operation, 'save-shot');
+});
+
+// A dark shot only earns its place when the screen looks different in dark
+// mode (#4459): one identical to its light copy is not kept, and the answer
+// tells the agent it can leave out the rest of this app's dark shots.
+test('a dark shot that matches its light copy answers sameAsLight and stores nothing', () => {
+  const run = control();
+  const light = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' },
+    fixtures.png({ shade: 5 }));
+  assert.equal(light.saved, true);
+
+  const same = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after', theme: 'dark' },
+    fixtures.png({ shade: 5 }));
+  assert.equal(same.saved, false, 'nothing was stored for the dark shot');
+  assert.equal(same.sameAsLight, true);
+  assert.equal(same.kind, 'screen');
+  assert.match(same.hint, /leave out the rest of the dark shots/);
+  assert.equal(run.saved.size, 1, 'the dark copy is not in the run\'s saved files');
+  assert.equal(run.lastToolFailure, null, 'not an error, so no refusal is recorded');
+
+  // The comparison is against this slot's own light shot, not another
+  // change's, and a dark shot that differs is kept as its own slot.
+  const different = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after', theme: 'dark' },
+    fixtures.png({ shade: 9 }));
+  assert.equal(different.saved, true);
+  assert.equal(run.saved.size, 2);
+  const [lightFile, darkFile] = [...run.saved.values()];
+  assert.equal(lightFile.theme, 'light');
+  assert.equal(darkFile.theme, 'dark');
+  assert.ok(darkFile.sha256 !== lightFile.sha256);
+
+  // A dark shot with no light counterpart yet is kept whatever it shows:
+  // the light one may come later, or never (the agent shoots light first,
+  // but no rule here depends on that order).
+  const beforeDark = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before', theme: 'dark' },
+    fixtures.png());
+  assert.equal(beforeDark.saved, true);
 });

@@ -143,28 +143,3 @@ test('the block reasons written are the caller\'s when given, the row\'s otherwi
     assert.equal(w2.params[10], '[]');
   } finally { restore(); }
 });
-
-test('resolutionSpent: the stamp is the approval epoch of the head it was spent on', async () => {
-  // Nothing stamped: not spent.
-  assert.equal(integration.resolutionSpent({ approval_epoch: 0 }), false);
-  assert.equal(integration.resolutionSpent({}), false);
-  // Stamped at the current epoch: spent, until an authored push moves it.
-  assert.equal(integration.resolutionSpent({ approval_epoch: 2, integration_resolved_epoch: 2 }), true);
-  assert.equal(integration.resolutionSpent({ approval_epoch: 3, integration_resolved_epoch: 2 }), false,
-    'a new authored head is a new question');
-  // A row from before the epoch column reads epoch 0.
-  assert.equal(integration.resolutionSpent({ integration_resolved_epoch: 0 }), true);
-  assert.equal(integration.resolutionSpent({ integration_resolved_epoch: '1', approval_epoch: '1' }), true, 'pg text');
-
-  // The stamp copies the row's own epoch, in one statement, so it cannot
-  // race an authored push that bumps it.
-  const calls = [];
-  const pool = { query: async (sql, params) => { calls.push({ sql, params }); return { rows: [], rowCount: 1 }; } };
-  await integration.markResolutionSpent(pool, 9);
-  assert.match(calls[0].sql, /SET integration_resolved_epoch = approval_epoch WHERE id = \$1/);
-  assert.deepEqual(calls[0].params, [9]);
-  // Never throws: a stamp that could not be written is a second resolution
-  // attempt at worst, not a failed sync.
-  const broken = { query: async () => { throw new Error('gone'); } };
-  await assert.doesNotReject(() => integration.markResolutionSpent(broken, 9));
-});

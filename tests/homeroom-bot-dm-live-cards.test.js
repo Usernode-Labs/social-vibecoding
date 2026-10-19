@@ -134,7 +134,8 @@ test('the card says the work\'s time, and the wait apart, in words', () => {
   const draw = (card, now = new Date(at('12:12'))) => renderToHtml(createElement(BotActivityCardView, { meta, card, loaded: true, now }));
   assert.match(draw(building), /<span> · 16m so far, after waiting 46m for the first version<\/span>/, 'not "1h so far"');
   const built = { ...building, state: 'done', outcome: 'proposed', endedAt: at('12:20'), step: null, of: null, doing: null };
-  assert.match(draw(built), /Built it\. Waiting for approval<\/span><span> · took 24m, after waiting 46m for the first version<\/span>/,
+  // One request, one story: "Ready to try · waiting for approval".
+  assert.match(draw(built), />Waiting for approval<\/span><span> · took 24m, after waiting 46m for the first version<\/span>/,
     'not "took 1h 9m"');
   assert.match(draw({ ...built, waitedFor: 'turn' }), /took 24m, after waiting 46m for its turn</);
   assert.match(draw({ ...built, waitedFor: undefined }), /<span> · took 24m<\/span>/);
@@ -144,9 +145,11 @@ test('the card says the work\'s time, and the wait apart, in words', () => {
   assert.match(draw(checking), /data-progress-ring-spinning=""/);
   assert.doesNotMatch(draw(checking), /Waiting for approval/);
   // #4227: going live spins too; waiting for approval and a person's look do not.
-  assert.match(draw({ ...built, outcome: 'going_live' }), /data-progress-ring-spinning=""[\s\S]*Built it\. Going live now</);
+  // One request, one story: "Approved · going live"; a change a person must
+  // look at first stopped ("Stopped: it's built, but a person needs to look").
+  assert.match(draw({ ...built, outcome: 'going_live' }), /data-progress-ring-spinning=""[\s\S]*>Approved<[\s\S]*>Going live</);
   assert.doesNotMatch(draw(built), /data-progress-ring-spinning/);
-  assert.match(draw({ ...built, outcome: 'needs_look' }), /Needs you[\s\S]*Built it, but it needs a look</);
+  assert.match(draw({ ...built, outcome: 'needs_look' }), />Stopped<[\s\S]*It’s built, but a person needs to look at it</);
   // Nothing begun yet: its time is the wait, under words that say it waits.
   const queued = { ...building, workedFrom: null, waitedFor: undefined, step: 2, doing: 'waiting for the first version to go live' };
   assert.match(draw(queued, new Date(at('11:40'))), /<span> · 30m so far<\/span>/);
@@ -176,7 +179,8 @@ test('the live news carries its own button to open the app, as the shell opens o
   assert.equal(dm.openAppAction({ slug: 'x', appName: 'y'.repeat(80) }).label.length <= 46, true, 'a long name is cut');
   // Its words point at the button, card or no card.
   const line = '**Page Turners**, its first version';
-  assert.equal(dm.mergedText({ line, appName: 'Page Turners', live: true }), `${line}\n\nIt's live now. Open Page Turners below to try it.`);
+  // One story (contract 2.2): "Your first version is live."
+  assert.equal(dm.mergedText({ line, appName: 'Page Turners', live: true }), `${line}\n\nYour first version is live. Open Page Turners to try it.`);
   const merged = read('src/services/homeroom-bot-dm.js');
   const fn = merged.slice(merged.indexOf('async function noteProposalMerged('), merged.indexOf('// ── A person writing to the bot'));
   assert.match(fn, /const open = platform \? null : openAppAction\(\{ slug: run\.slug, appName: context\.appName \}\);/);
@@ -317,8 +321,9 @@ test('the client keeps a ready card\'s state only as one it knows, and only the 
 test('a vote on one of the bot\'s changes reads its requester\'s DM again', () => {
   const votes = read('src/routes/votes.js');
   const route = votes.slice(votes.indexOf('const goesLive = vote === \'yes\''), votes.indexOf('const voteLabel = session.pr_title'));
-  assert.ok(route.indexOf('if (reasonOnly) {') < route.indexOf('noteVoted(pool, session.id)'), 'after a real change of vote only');
-  assert.match(route, /void require\('\.\.\/services\/homeroom-bot-dm'\)\.noteVoted\(pool, session\.id\);/);
+  assert.ok(route.indexOf('if (reasonOnly) {') < route.indexOf('noteVoted(pool, session.id'), 'after a real change of vote only');
+  // One story: with who voted and how, so a yes is a quiet line in the request's thread.
+  assert.match(route, /void require\('\.\.\/services\/homeroom-bot-dm'\)\.noteVoted\(pool, session\.id, \{ voter: req\.user, vote \}\);/);
   const store = read('frontend/src/features/messages/bot-activity-store.ts');
   assert.match(store, /ready: new Map\(ready\.map\(\(entry\) => \[entry\.messageId, entry\]\)\),/);
 });
@@ -403,49 +408,51 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
        VALUES ($1, 1, 'live', 'ready', $2, TRUE)`,
       [app.id, first.id],
     );
-    await dm.noteChangeReady(pool, first.id, { bot, domain: 'app.example.test' });
+    // The bot's change machine decided it is ready (src/workflow/bot-change/): its card.
+    const { rows: [{ approval_epoch: epoch }] } = await pool.query('SELECT approval_epoch FROM chat_sessions WHERE id = $1', [first.id]);
+    await dm.tellReady(pool, first.id, { epoch, deps: { bot, domain: 'app.example.test' } });
     const { rows: [sent] } = await pool.query(
       `SELECT m.id, m.metadata->'homeroomBot' AS meta FROM homeroom_bot_dm_messages d JOIN conversation_messages m ON m.id = d.message_id
         WHERE d.user_id = $1 AND d.kind = 'proposal'`,
       [alex.id],
     );
     assert.ok(sent?.meta?.ready, 'Alex has his ready card');
-    const needed = sent.meta.ready.needed;
-    assert.ok(needed >= 2, 'a group of three needs more than his Yes');
+    // 13 Oct 2026 (D1): a project's first version goes live without a vote,
+    // whoever is in it. Page Turners' needed two of its three members' Yes
+    // on 5 October; now it needs none, and nobody is waited on.
+    assert.equal(sent.meta.ready.needed, 0, 'a group of three needs no Yes for its first version');
+    assert.deepEqual(sent.meta.actions.map((a) => a.id), ['try', 'change'], 'no Approve');
     const ready = async (who = alex) => dm.readyStates(pool, { user: { id: who.id } });
     const yes = (who) => pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [first.id, who.id]);
 
-    await t.test('up for approval: who it waits on, as it stands', async () => {
+    await t.test('ready to try: it waits on nobody, as it stands', async () => {
       const [now] = await ready();
       assert.equal(now.messageId, Number(sent.id));
       assert.equal(now.state, 'open');
-      assert.deepEqual([now.approval.missing, now.approval.needed, now.approval.approved], [needed, needed, false]);
-      assert.deepEqual(now.approval.waitingOn.sort(), [mo.username, priya.username]);
-      assert.equal('goesLive' in now, false, 'nothing about what happens next before his Yes');
+      assert.deepEqual([now.approval.missing, now.approval.needed, now.approval.approved, now.approval.last], [0, 0, false, false]);
+      assert.deepEqual(now.approval.waitingOn, []);
+      assert.equal('goesLive' in now, false, 'nothing about what happens next without a Yes of his');
     });
 
-    await t.test('after his Yes, and then Priya\'s: what happens next moves with them', async () => {
+    await t.test('a Yes anyway, his and then Priya\'s: it goes live in a minute or two, and his DM still hears of it', async () => {
       await yes(alex);
-      await dm.noteApproved(pool, first.id, alex.id);
+      assert.deepEqual(await dm.noteApproved(pool, first.id, alex.id), { soon: true });
       const [mine] = await ready();
       assert.equal(mine.approval.approved, true);
-      assert.equal(mine.approval.missing, needed - 1);
-      assert.equal(mine.goesLive.soon, false);
-      assert.equal(mine.goesLive.missing, needed - 1);
-      // Priya says Yes elsewhere: Alex's DM is told to read again, and his card says so.
+      assert.equal(mine.approval.missing, 0);
+      assert.deepEqual(mine.goesLive, { soon: true });
+      // Priya says Yes elsewhere: Alex's DM is told to read again.
       pushedTo.length = 0;
       await yes(priya);
       assert.equal(await dm.noteVoted(pool, first.id), alex.id, 'whoever asked for it');
       assert.deepEqual(pushedTo, [[alex.id, 'homeroom_bot_work_changed']]);
       const [after] = await ready();
-      if (needed === 2) assert.ok(after.goesLive.soon || after.goesLive.missing === 0, 'two of three: it has the approvals it needs');
-      else assert.equal(after.goesLive.missing, needed - 2);
-      assert.equal(after.approval.missing, Math.max(needed - 2, 0));
+      assert.deepEqual([after.approval.missing, after.approval.waitingOn], [0, []]);
       assert.equal(await dm.noteVoted(pool, 999999), null, 'one indexed read for a change that is not the bot\'s');
     });
 
     await t.test('merged: the card says it is live, with no button of its own (#4228)', async () => {
-      await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = $2 WHERE id = $1`, [first.id, at('11:56')]);
+      await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = $2, live_at = $2 WHERE id = $1`, [first.id, at('11:56')]);
       const [live] = await ready();
       assert.deepEqual(live, { messageId: Number(sent.id), state: 'live', actions: [] });
       const read = await activity.cardsFor(pool, { user: { id: alex.id }, deps: {} });
@@ -455,7 +462,7 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
       assert.equal((await ready())[0].state, 'going_live');
       await pool.query(`UPDATE chat_sessions SET status = 'closed' WHERE id = $1`, [first.id]);
       assert.equal((await ready())[0].state, 'closed');
-      await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [first.id]);
+      await pool.query(`UPDATE chat_sessions SET status = 'merged', live_at = COALESCE(merged_at, NOW()) WHERE id = $1`, [first.id]);
     });
 
     await t.test('only the reader\'s own cards, on a project they can still view', async () => {
@@ -476,7 +483,7 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
       const { rows: [queued] } = await pool.query(
         `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason) VALUES ($1, 2, 1, 'new') RETURNING id`, [app.id],
       );
-      const filed = await activity.startCard(pool, {
+      const filed = await activity.startCard(pool, { inDm: true,
         app, issueNumber: 2, bot, jobKey: Number(queued.id), filed: true, settings,
         requester: {
           userId: priya.id, username: priya.username, hasPlatformAccess: true, issueTitle: 'Books we have read', firstVersion: false, askedText: 'Keep a list',

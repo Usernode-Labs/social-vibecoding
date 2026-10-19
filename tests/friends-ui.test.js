@@ -10,6 +10,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -158,7 +159,8 @@ test('Me\'s Friends row opens the private Friends section as a card', () => {
   });
   const html = renderToHtml(createElement(mod.ProfileRoot, {}));
   const at = (needle) => html.indexOf(needle);
-  // A row of More (UI overhaul), saying only how many requests wait; its
+  // A row of Account (UI overhaul; it led the "More" list before the
+  // navigation review regrouped it), saying only how many requests wait; its
   // card, when open, holds the section it used to be.
   assert.match(html, /id="profile-row-friends"[\s\S]*?1 request waiting/);
   assert.ok(at('id="profile-friends-sheet"') >= 0 && at('id="profile-friends-sheet"') < at('id="profile-friends"'),
@@ -198,6 +200,7 @@ test('the controller reads the lists with Me, and the relationship with a person
 // import, the same way tests/notification-row-lines.test.js loads it.
 function rowView() {
   if (!globalThis.window) globalThis.window = globalThis;
+  globalThis.PlatformI18n = englishPlatformI18n();
   loadTsx('frontend/src/features/notifications/notifications.js');
   return globalThis.window.Notifications._rowView;
 }
@@ -304,7 +307,7 @@ test('Me\'s Friends section leads with the search box, which fetches nothing unt
   assert.doesNotMatch(html, /profile-friend-search-results/, 'no results before anything is typed');
   assert.match(html, /No friends yet\. Find someone by username above\./);
 
-  assert.match(read('frontend/src/features/profile/friends-section.tsx'), /\{heading \? <SectionHeader>Friends<\/SectionHeader> : null\}\s*\{\/\*[^*]*\*\/\}\s*<FriendSearch lists=\{view\} \/>/,
+  assert.match(read('frontend/src/features/profile/friends-section.tsx'), /\{heading \? <SectionHeader>\{t\('profile:friends\.title'\)\}<\/SectionHeader> : null\}\s*\{\/\*[^*]*\*\/\}\s*<FriendSearch lists=\{view\} \/>/,
     'the search sits right under the Friends header (the card\'s title, in the card)');
   const src = read(SEARCH);
   assert.match(src, /import \{ searchUsers \} from '\.\.\/messages\/api'/,

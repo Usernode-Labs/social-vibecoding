@@ -85,6 +85,8 @@ export interface HomeAppView {
   showRetry: boolean;
   /** Resolved live name of the app this was forked from, or null. */
   forkName: string | null;
+  /** The original app is gone; `forkName` is a placeholder and the badge has its own wording. */
+  forkDeleted?: boolean;
   /**
    * Who the project is for (communities; services/communities.js): 'open'
    * (a Public community), 'invited' (a Private community) or 'solo' (Just
@@ -116,6 +118,13 @@ export interface CreateTileView {
   enabled: boolean;
   /** The ask-an-admin sentence the locked tile announces. */
   hint: string;
+  /**
+   * #4757: a collapsed grid whose last shown row is full holds the tile back
+   * (#3047) — heldBack marks that state, and apps-more.tsx answers it with a
+   * compact New project entry beside "Show all N apps". False whenever the
+   * tile IS the grid's trailing cell, expanded or not.
+   */
+  heldBack: boolean;
   placement: GridPlacement | null;
 }
 
@@ -141,10 +150,20 @@ export interface HomeGridState {
   /**
    * The trailing Create tile, or null: before the first paint (so the
    * prerender and the first client render agree — the tile is data-placed),
-   * in the search view, with a load notice on screen, and in a collapsed grid
-   * it would add a row to (#3047) — there it is behind "Show all N apps".
+   * in the search view, and with a load notice on screen. A collapsed grid
+   * whose last shown row is full keeps the view with `heldBack: true` (#4757):
+   * app-grid.tsx then draws no tile, and the compact New project entry beside
+   * "Show all N apps" stands in for it.
    */
   create: CreateTileView | null;
+  /**
+   * EDIT MODE (#4669): the launcher is being arranged. The tiles wiggle, each
+   * one shows its remove button, and the trailing tile is "Add apps" rather
+   * than "New project". False in the search view even while the flag holds —
+   * a search is a transient list, not the shelf — and false in INITIAL_GRID,
+   * so the prerendered document is unchanged.
+   */
+  editing: boolean;
 }
 
 export const INITIAL_GRID: HomeGridState = {
@@ -156,6 +175,7 @@ export const INITIAL_GRID: HomeGridState = {
   emptyQuery: null,
   notice: null,
   create: null,
+  editing: false,
 };
 
 export const gridStore = createStore<HomeGridState>(INITIAL_GRID);

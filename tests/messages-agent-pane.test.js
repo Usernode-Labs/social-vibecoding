@@ -11,10 +11,12 @@
 //
 //   1. THE ROWS LINK TO THE INBOX'S OWN ADDRESSES, `#messages/agent/<id>`
 //      and `#messages/session/<slug>/<id>`, and the store validates both.
-//   2. A PHONE KEEPS ITS FULL-SCREEN BEHAVIOUR: the router swaps those
-//      addresses in place (replaceState, then routes the new one) for the
-//      screens they always led to there, and
-//      records the session's origin so its chevron comes back to the inbox.
+//   2. ON A PHONE A DEV SESSION KEEPS ITS FULL-SCREEN BEHAVIOUR: the router
+//      swaps its address in place (replaceState, then routes the new one)
+//      for the app view's, and records the session's origin so its chevron
+//      comes back to the inbox. An agent chat and an agent session open in
+//      the inbox there too, as the second level of its drawer (Evan, 18 Oct
+//      2026), and their own screens' addresses are swapped for the inbox's.
 //   3. ONE THREAD IS OPEN — an agent thread clears a conversation and a
 //      discussion, and hides the list on a phone like any other thread.
 //   4. THE GLOBAL CHAT IS ONE PANEL ON TWO SURFACES, told which one is
@@ -28,6 +30,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { message } = require('./lib/platform-i18n');
 const { loadTsx } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
@@ -91,16 +94,55 @@ test('the rows link to the inbox addresses and mark the open one', () => {
   assert.doesNotMatch(SCREEN, /onNavigate=\{\(\) => \{\s*if \(session\.kind === 'session'\) Improve\.enterSessionFrom/);
 });
 
-test('the router opens agent threads in the pane on a desktop and swaps them on a phone', () => {
+test('#4729: the Agents list folds its archived chats behind Show archived at its foot', () => {
+  // The toggle, a quiet link like "N older chats", shows for somebody who
+  // has had an agent session on the Agents list with no query — search does
+  // not cover the archived — and after mount only, so the hydrating render
+  // matches the prerender.
+  assert.match(SCREEN, /id="messages-show-archived"/);
+  assert.match(SCREEN, /className="messages-inbox-older"\s*aria-expanded=\{archivedOpen\}/);
+  assert.match(SCREEN, /const showArchivedToggle = mounted && !!agentChatsShown && !snap\.folded\.includes\('agents'\) && !searching;/);
+  // Under all of the open ones: once "N older chats" has shown the rest,
+  // at the foot of the Agents card.
+  assert.match(SCREEN, /const archive = section === 'agents' && showArchivedToggle && \(!older \|\| agentsExpanded\);/);
+  assert.match(SCREEN, /\{olderShown\.map\(inboxRow\)\}\s*\{archive \? archivedToggle : null\}\s*<\/div>/);
+  assert.match(SCREEN, /\{archivedOpen \? t\('messages:inbox\.archived\.hide'\) : t\('messages:inbox\.archived\.show'\)\}/);
+  // Opening it reads the archived list from the same route the open list
+  // reads, ?status=archived, and reads it again on EVERY open, so a session
+  // archived or unarchived meanwhile is where it now belongs.
+  assert.match(read('frontend/src/features/agent-session/api.ts'),
+    /export async function listArchivedSessions\(\)[\s\S]{0,400}'\/api\/agent-sessions\?status=archived&limit=50'/);
+  assert.match(SCREEN, /useEffect\(\(\) => \{\s*if \(archivedOpen\) readArchived\(\);\s*\}, \[archivedOpen, readArchived\]\);/);
+  // The open group is a section like the others: headed, carded, with its
+  // own empty line and the list's error-and-retry shape, and its rows mark
+  // the one that is open.
+  assert.match(SCREEN, /<h3 className="messages-section-head" data-inbox-section="archived">\{t\('messages:inbox\.archived\.heading'\)\}<\/h3>/);
+  assert.match(SCREEN, /<div className="messages-section-card" data-inbox-card="archived">/);
+  assert.match(SCREEN, /active=\{open\?\.kind === 'agent' && open\.id === session\.id\}/);
+  assert.match(SCREEN, /<div className="messages-state"><p>\{t\('messages:inbox\.archived\.empty'\)\}<\/p><\/div>/);
+  assert.match(SCREEN, /archivedError \? \(\s*<div className="messages-state messages-state-error">/);
+  // The words, in English, in the catalog.
+  assert.equal(message('messages:inbox.archived.show'), 'Show archived');
+  assert.equal(message('messages:inbox.archived.hide'), 'Hide archived');
+  assert.equal(message('messages:inbox.archived.heading'), 'Archived');
+  assert.equal(message('messages:inbox.archived.empty'), 'No archived agent chats.');
+});
+
+test('the router opens agent threads in the pane, and on a phone swaps only a dev session away', () => {
   const at = APP.indexOf('const agent = App._messagesAgentThread(parts);');
   assert.ok(at > 0, 'the #messages route reads agent threads');
   const block = APP.slice(at, APP.indexOf('App.navigateToMessages(null, null, agent);', at));
-  assert.match(block, /window\.matchMedia\('\(min-width: 768px\)'\)\.matches/);
+  assert.match(block, /if \(agent\.kind === 'session' && !window\.matchMedia\('\(min-width: 768px\)'\)\.matches\) \{/);
   assert.match(block, /Improve\.enterSessionFrom\?\.\('#messages'\)/);
-  assert.match(block, /history\.replaceState\(null, '', App\._rootUrl\(agent\.kind === 'chat'/);
   assert.match(block, /App\.restoreFromHash\(\);/);
-  assert.match(block, /`#chat\/\$\{encodeURIComponent\(agent\.id\)\}`/);
   assert.match(block, /`#app\/\$\{encodeURIComponent\(agent\.slug\)\}\/dev\/sessions\/\$\{agent\.id\}`/);
+  assert.doesNotMatch(block, /`#chat\//, 'an agent chat stays in the inbox on a phone');
+  assert.doesNotMatch(block, /`#agent\//, 'and so does an agent session');
+  // Their own screens' addresses come to the inbox on a phone, a ?flow= with them.
+  assert.match(APP, /_agentToInbox\(address, fragQuery\) \{\s*if \(App\.embeddedPanel \|\| window\.matchMedia\('\(min-width: 768px\)'\)\.matches\) return false;/);
+  assert.match(APP, /history\.replaceState\(null, '', App\._rootUrl\(`\$\{address\}\$\{fragQuery \? `\?\$\{fragQuery\}` : ''\}`\)\);/);
+  assert.match(APP, /if \(parts\.length === 2 && \(\(parts\[0\] === 'chat' && parts\[1\]\)\s*\|\| \(parts\[0\] === 'agent' && \(parts\[1\] === 'new' \|\| App\._numericSegment\(parts\[1\]\) != null\)\)\)\s*&& App\._agentToInbox\(`#messages\/agent\/\$\{parts\[1\]\}`, fragQuery\)\) return;\s*(?:\/\/[^\n]*\n\s*)*if \(parts\[0\] === 'chat'\) \{/,
+    'a chat with its id, an agent session or a new one; a bare #chat and #agent/<id>/changes keep their screens');
   // #2387: a fourth argument carries a reply thread or a message link.
   assert.match(APP, /navigateToMessages\(conversationId, appSlug, agent, extras\) \{/);
   assert.match(APP, /messages\.route\?\.\(conversationId \|\| null, appSlug \|\| null, agent \|\| null, more\);/);

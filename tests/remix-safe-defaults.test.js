@@ -21,6 +21,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -75,30 +76,44 @@ test('the dialog says what a remix copies, what starts fresh and what it leaves 
 });
 
 test('the name field suggests "<App> (remix)" and a failed POST says so in plain words', () => {
-  assert.match(DIALOG_SRC, /`\$\{src\?\.name \|\| 'App'\} \(remix\)`/);
-  assert.match(DIALOG_SRC, /\{busy \? 'Remixing…' : 'Remix'\}/);
-  assert.match(DIALOG_SRC, /'Could not make your copy\.'/);
-  assert.match(DIALOG_SRC, /'Your copy is being made\. It will appear in your apps when it is ready\.'/);
+  assert.match(DIALOG_SRC, /inputRef\.current\.value = src\?\.name\s*\? t\('dialogs:fork\.defaultName\.named', \{ app: src\.name \}\)\s*: t\('dialogs:fork\.defaultName\.unnamed'\);/);
+  assert.equal(message('dialogs:fork.defaultName.named', { app: 'Book Club' }), 'Book Club (remix)');
+  assert.equal(message('dialogs:fork.defaultName.unnamed'), 'App (remix)');
+  assert.match(DIALOG_SRC, /\{busy \? t\('dialogs:fork\.submitting'\) : t\('dialogs:fork\.submit'\)\}/);
+  assert.deepEqual([message('dialogs:fork.submitting'), message('dialogs:fork.submit')], ['Remixing…', 'Remix']);
+  assert.match(DIALOG_SRC, /setError\(data\.error \|\| t\('dialogs:fork\.error\.failed'\)\)/);
+  assert.equal(message('dialogs:fork.error.failed'), 'Could not make your copy.');
+  assert.match(DIALOG_SRC, /toast\?\.\(\s*t\('dialogs:fork\.beingMade'\),/);
+  assert.equal(message('dialogs:fork.beingMade'), 'Your copy is being made. It will appear in your apps when it is ready.');
   assert.match(DIALOG_SRC, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(source\.slug\)\}\/fork`/,
     'the route keeps its name');
 });
 
 test('the allowance line names remixing among what shares it', () => {
   const src = read('frontend/src/features/dialogs/app-allowance.tsx');
-  assert.match(src, /Creating, importing and remixing share this allowance\./);
+  assert.match(src, /t\('dialogs:allowance\.detail\.available', \{ count: quota\.remaining \}\)/);
+  for (const id of ['dialogs:allowance.detail.available', 'dialogs:allowance.detail.availableSpent']) {
+    assert.match(message(id, { count: 2 }), /Creating, importing and remixing share this allowance\./);
+    assert.doesNotMatch(message(id, { count: 2 }), /importing and forking/);
+  }
   assert.doesNotMatch(src, /importing and forking/);
 });
 
 test('the four doors say "Remix", and keep their ids and data attributes', () => {
   const about = read('frontend/src/features/app-context/about-pane.tsx');
-  assert.match(about, /id="app-about-fork"[\s\S]{0,120}label="Remix"\s+sub="Make your own copy"/);
+  assert.match(about, /id="app-about-fork"[\s\S]{0,120}label=\{t\('agent:appContext\.about\.remix'\)\}\s+sub=\{t\('agent:appContext\.about\.remixSub'\)\}/);
+  assert.equal(message('agent:appContext.about.remix'), 'Remix');
+  assert.equal(message('agent:appContext.about.remixSub'), 'Make your own copy');
 
   const plus = read('frontend/src/features/dev-board/actions-row.tsx');
-  assert.match(plus, /data-plus="fork"[\s\S]{0,140}title="Remix"\s+sub="Make your own copy"/);
+  assert.match(plus, /data-plus="fork"[\s\S]{0,140}title=\{t\('project:menu\.remix\.title'\)\}\s+sub=\{t\('project:menu\.remix\.sub'\)\}/);
+  assert.deepEqual([message('project:menu.remix.title'), message('project:menu.remix.sub')], ['Remix', 'Make your own copy']);
 
   const home = read('frontend/src/features/home/home.js');
-  assert.match(home, /key: 'fork',\s+label: 'Remix',\s+sub: 'Make your own copy',/,
+  assert.match(home, /key: 'fork',\s+label: message\('home:menu\.remix\.label'\),\s+sub: message\('home:menu\.remix\.sub'\),/,
     'the card menu, which Discover\'s page draws its rows from too');
+  assert.equal(message('home:menu.remix.label'), 'Remix');
+  assert.equal(message('home:menu.remix.sub'), 'Make your own copy');
 
   const detail = read('frontend/src/features/apps/browse-detail.tsx');
   assert.match(detail, /subtitle=\{a\.sub \|\| undefined\}/, 'Discover shows the line under the label');
@@ -109,14 +124,27 @@ test('the four doors say "Remix", and keep their ids and data attributes', () =>
 });
 
 test('lineage reads "Remixed from" wherever people see it', () => {
-  for (const file of [
-    'frontend/src/features/apps/browse-detail.tsx',
-    'frontend/src/features/home/home.js',
-    'frontend/src/features/home/app-grid.tsx',
-    'frontend/src/features/app-context/about-pane.tsx',
+  // Where the line is a catalog message, the file names its id and the catalog
+  // holds the words; a file that still writes the line holds it itself.
+  for (const [file, ids] of [
+    ['frontend/src/features/apps/browse-detail.tsx',
+      ['discover:detail.remixedFrom.line', 'discover:detail.remixedFrom.openOriginal']],
+    ['frontend/src/features/home/home.js', ['home:grid.tile.remixedFrom']],
+    ['frontend/src/features/home/app-grid.tsx', ['home:grid.tile.remixedFrom']],
+    ['frontend/src/features/app-context/about-pane.tsx',
+      ['agent:appContext.about.lineage.remixedFrom', 'agent:appContext.about.lineage.linkTitle']],
   ]) {
     const src = read(file);
-    assert.match(src, /Remixed from \$\{/, `${file} says Remixed from`);
+    if (ids.length) {
+      for (const id of ids) {
+        assert.ok(src.includes(`'${id}'`), `${file} reads ${id}`);
+        const said = message(id, { app: 'Recipe Box' });
+        assert.match(said, /Remixed from Recipe Box/, `${file} says Remixed from`);
+        assert.doesNotMatch(said, /Forked from/, `${id} no longer says Forked from`);
+      }
+    } else {
+      assert.match(src, /Remixed from \$\{/, `${file} says Remixed from`);
+    }
     assert.doesNotMatch(src, /[`"']Forked from|\bForked from \$\{/, `${file} no longer says Forked from`);
   }
 });

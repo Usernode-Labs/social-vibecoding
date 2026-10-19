@@ -12,6 +12,8 @@ export type MemberRole = 'owner' | 'member';
 export interface ConversationUser {
   id: number;
   username: string;
+  /** `username` is the stand-in for a person whose username did not come with the row. */
+  unnamed?: boolean;
   avatarUrl?: string | null;
   /** A platform account (the Homeroom bot), not a person (#3624). */
   bot?: boolean;
@@ -92,6 +94,30 @@ export interface HomeroomBotMeta {
   appEmoji?: string;
   /** B7: once its person approved it, what happens next (services/homeroom-bot-dm.js goesLiveAfterYes). */
   goesLive?: HomeroomBotGoesLive;
+  /** Why its buttons were closed ("No longer needed", "A newer plan replaced this"), said in their place. */
+  closedWhy?: string;
+  /**
+   * One request, one story: the request's activity card (its thread's root)
+   * that this message was posted under. Set on every message in a request's
+   * thread, as the message's own `threadRootId` is.
+   */
+  threadRootId?: number;
+  /**
+   * Which of the four moments that ring this is (`needs_you`, `ready`,
+   * `stopped`, `on_hold`, `live`), `reply` for the bot's own replies, or
+   * absent for a quiet one; `said` is its variant (services/homeroom-bot-
+   * dm.js). The bell and the push word them; the chat draws the message.
+   */
+  moment?: string;
+  said?: string;
+  /** The request's title, as the request page has it; absent for a first version. */
+  requestTitle?: string;
+  /** Who a ready change waits on ("you and @ada"), as the push says it. */
+  waiting?: string;
+  /** An on-hold summary: how many of the person's requests are held. */
+  count?: number;
+  /** A moment in a request's thread the main chat also lists, under its "↳ in …" label. */
+  alsoInChat?: boolean;
 }
 
 export interface HomeroomBotReady {
@@ -110,7 +136,7 @@ export interface HomeroomBotReady {
   /**
    * What does not work yet: the declared changes its before & after shots
    * showed failing, after the bot's own fix round (homeroom-bot-dm.js
-   * noteChangeReady). The card then says so instead of "ready to try".
+   * tellReady). The card then says so instead of "ready to try".
    */
   broken?: string[];
 }
@@ -204,6 +230,8 @@ export interface HomeroomBotJob {
   key: string;
   appSlug: string | null;
   appName: string;
+  /** `appName` is the stand-in for a project with neither a name nor a slug. */
+  appUnnamed?: boolean;
   /** #4201: the app's own icon, `/app-icons/<id>`, else null. */
   iconUrl: string | null;
   /** #4201: the app's emoji icon, for an app with no image; else null. */
@@ -220,11 +248,47 @@ export interface HomeroomBotJob {
    * (services/release-watch.js), which the tray words. Absent otherwise.
    */
   release?: ReleaseOutlook;
+  /**
+   * One request, one story (services/homeroom-bot-tray.js threadsOf): the
+   * request's card in the chat with the bot, the root of its thread.
+   */
+  cardId?: number;
+  /** Its newest message there still waiting on the person: what the strip's Needs you button opens. */
+  ask?: HomeroomBotAsk;
+  /** Its newest "ready to try" card there, and what that card's buttons do. */
+  ready?: HomeroomBotReadyRef;
+  /** A build that stopped: why (as an activity card's `stopCause`). */
+  stopCause?: HomeroomBotActivity['stopCause'];
+}
+
+/** The newest message about a request still waiting on its person (tray entry `ask`). */
+export interface HomeroomBotAsk {
+  messageId: number | null;
+  /** question, followup_ask, plan, person, blocked, empty, build_failed, checks, needs_look, first_version_failed. */
+  kind: string;
+  said?: string;
+  /** A question's own words. */
+  question?: string;
+}
+
+/** A request's newest "ready to try" card (tray entry `ready`). */
+export interface HomeroomBotReadyRef {
+  messageId: number | null;
+  sessionId: number | null;
+  epoch: number;
+  /** Its buttons are still open. */
+  open: boolean;
+  /** The person's yes would count: Approve is theirs to press. */
+  approve: boolean;
+  /** Who it waits on ("@ada"), when not on them. */
+  waiting: string | null;
 }
 
 /** What the bot is doing for them now: its step of the request's steps, what it is doing, since when. */
 export interface HomeroomBotCurrentJob extends HomeroomBotJob {
   phase: HomeroomBotPhase;
+  /** The progress stage it is at (reading, planning, building, on_hold…), when the server says. */
+  stage?: string | null;
   step: number | null;
   of: number | null;
   stepName: string | null;
@@ -248,6 +312,115 @@ export interface HomeroomBotWork {
   now: HomeroomBotCurrentJob[];
   needsYou: HomeroomBotPastJob[];
   history: HomeroomBotPastJob[];
+  /**
+   * 16 Oct 2026: one track per request (services/homeroom-bot-track.js),
+   * which every surface draws. Absent from an older server's answer.
+   */
+  tracks?: BotTrack[];
+}
+
+/**
+ * Where a request the Homeroom bot has is, as one track every surface draws
+ * the same way (services/homeroom-bot-track.js). A loop: queued, planning,
+ * building, checks, vote, going live, live, going back to `waiting` (on the
+ * person) for a question and to `building` for its next try; or held at a
+ * limit, stopped, done another way, or closed. Codes only: the client words
+ * them (./bot-track.tsx).
+ */
+export type BotTrackState =
+  | 'queued' | 'planning' | 'waiting' | 'building' | 'checks' | 'vote' | 'going_live' | 'live'
+  | 'held' | 'stopped' | 'done_elsewhere' | 'closed';
+export type BotTrackStep = 'plan' | 'build' | 'checks' | 'vote' | 'live';
+
+export interface BotTrack {
+  key: string;
+  appSlug: string | null;
+  appName: string;
+  appUnnamed?: boolean;
+  iconUrl: string | null;
+  iconEmoji: string | null;
+  issueNumber: number | null;
+  title: string | null;
+  firstVersion: boolean;
+  state: BotTrackState;
+  /** The step of the five its bar lights, or null for one before them all. */
+  step: BotTrackStep | null;
+  /** Why it is where it is, as a code (bot.track.why.*), or null. */
+  why: string | null;
+  waitingOn: 'you' | 'group' | null;
+  /**
+   * Who a track waiting on "you" waits on, by username, where it is drawn
+   * for somebody else (a request's page: homeroom-bot-track.js forViewer).
+   */
+  waitingFor?: string;
+  /** The bot is working on it this minute. */
+  busy: boolean;
+  /** Which try it is on: 2 after its checks failed once and it built again. */
+  try: number;
+  /** When this try's work began: its clock. */
+  tryStartedAt: string | null;
+  /** When each try began, oldest first, for a request with more than one. */
+  tryStarts: string[];
+  since: string | null;
+  /** The root of its thread in the chat with the bot, when known. */
+  rootId: number | null;
+  /** Its message still waiting on the person, when there is one. */
+  askId: number | null;
+  /** Its change up for a vote, when there is one. */
+  proposalId: number | null;
+  /** The session its plan and change live in. */
+  sessionId: number | null;
+  links: HomeroomBotLinks;
+  /** `by`: who has it, for a request a person took (limit 'taken'). */
+  held?: { limit: string; position: number | null; until: string | null; by?: string | null };
+  queue?: { ahead: number };
+  doneBy?: { username: string | null; prNumber: number | null };
+  release?: ReleaseOutlook;
+}
+
+/** One request in the slots view: what it is, and its track. */
+export interface BotSlotEntry {
+  /** In a slot: a change or a build. Up next: in the queue, or an older request. */
+  kind?: 'proposal' | 'build' | 'queued' | 'older';
+  /** An older request: what the bot's trial run made of it (a verdict code), or null. */
+  trial?: string | null;
+  issueNumber: number | null;
+  title: string | null;
+  /** Who asked for it, when the bot knows. */
+  askedBy?: string | null;
+  /** A line of what it asks, in the person's own words. */
+  excerpt?: string | null;
+  /** Who has it, for one a person took (BotSlotsView.taken). */
+  by?: string | null;
+  position?: number | null;
+  limit?: string | null;
+  since?: string | null;
+  until?: string | null;
+  track: BotTrack | null;
+}
+
+/** A project's bot slots (GET /api/apps/:slug/homeroom-bot/slots). */
+export interface BotSlotsView {
+  app: { slug: string; name: string };
+  botOn: boolean;
+  acts: boolean;
+  paused: boolean;
+  cap: number;
+  buildsAtOnce: number | null;
+  slots: BotSlotEntry[];
+  waiting: BotSlotEntry[];
+  /** Held requests a person has now: the bot leaves them alone. */
+  taken: BotSlotEntry[];
+  onHold: BotSlotEntry[];
+  /** Every other open request, by where the bot is on it (16 Oct 2026). */
+  waitingOn: BotSlotEntry[];
+  upNext: BotSlotEntry[];
+  stopped: BotSlotEntry[];
+  leftToPeople: BotSlotEntry[];
+  /** Open requests people have taken on, counted only. */
+  withPeople: number;
+  reading: number;
+  week: { limited: boolean; usedShare: number | null; usedUp: boolean; resetsAt: string | null } | null;
 }
 
 /**
@@ -288,6 +461,12 @@ export interface HomeroomBotActivity {
   endedAt: string | null;
   /** How long the step it is at usually takes, in minutes, when it takes a while. */
   typicalMinutes?: { from: number; to: number };
+  /** While it is working: who it waits on (`them`, the viewer; `the group`; `time`, on hold until Monday), when it waits (services/homeroom-bot-progress.js). */
+  waitingOn?: string;
+  /** A `build_failed` ending: why the build stopped. */
+  stopCause?: 'time' | 'restart' | 'restarts' | 'no_change' | 'unproposed' | 'no_start' | 'other';
+  /** A `held` ending: which of the bot's limits holds it back. */
+  heldBy?: 'proposals_per_app' | 'proposals_total' | 'questions_per_day';
   /**
    * `going_live`, on a merge of the platform's own app: when the platform's
    * next release carries it (services/release-watch.js), which the card
@@ -389,6 +568,10 @@ export interface SharedObjectCard extends Omit<SharedObjectReference, 'type'> {
   state?: string | null;
   author?: string | null;
   href?: string | null;
+  /** An app's or a community's own icon, `/app-icons/<id>`, when it has one: drawn in place of the glyph. */
+  iconUrl?: string | null;
+  /** An app's or a community's emoji icon, for one with no image. */
+  iconEmoji?: string | null;
 }
 
 export interface ConversationMessage {
@@ -465,6 +648,8 @@ export interface ConversationSummary {
   id: number;
   kind: ConversationKind;
   title: string;
+  /** `title` is the stand-in for a conversation nobody named and whose other member is not known. */
+  untitled?: boolean;
   avatarUrl?: string | null;
   members: ConversationMember[];
   memberCount: number;
@@ -501,6 +686,8 @@ export interface ConversationSummary {
 
 export interface ConversationDetail extends ConversationSummary {
   members: ConversationMember[];
+  /** #3228: the inviter's note, set on the invitation only. */
+  inviteNote?: string | null;
 }
 
 export interface UserSearchResult extends ConversationUser {}
@@ -541,10 +728,10 @@ export interface MessagesRoute {
    * #2813: an AGENT thread open beside the list on a desktop — a global
    * agent chat (`#messages/agent/<id>`) or an app's dev session
    * (`#messages/session/<slug>/<id>`). Both used to navigate away to a
-   * screen of their own (`#chat/<id>`, `#app/<slug>/dev/sessions/<id>`),
-   * which is still where a PHONE goes: the router swaps these addresses for
-   * those there, so the full-screen behaviour on a narrow viewport is the
-   * one it always was.
+   * screen of their own (`#chat/<id>`, `#app/<slug>/dev/sessions/<id>`).
+   * On a PHONE a dev session still goes to its own: the router swaps that
+   * address there. An agent chat and an agent session open here on a phone
+   * too, as the second level of the inbox's drawer (Evan, 18 Oct 2026).
    *
    * Mutually exclusive with the other two, for the same reason they are
    * with each other: one thread is open.
@@ -596,7 +783,7 @@ export interface DiscussionContext {
   iconEmoji: string | null;
 }
 
-import type { AppDiscussion, InboxFilter } from './inbox';
+import type { AppDiscussion, InboxSection } from './inbox';
 
 export interface MessagesSnapshot {
   route: MessagesRoute;
@@ -624,8 +811,7 @@ export interface MessagesSnapshot {
    * #2718: the other two kinds of thread this screen lists.
    *
    * `discussions` is GET /api/messages/app-discussions — the general thread
-   * on each app the viewer is a member of, one row per app. `filter` is which
-   * of the four the list is showing. Agent chats are NOT here: they are
+   * on each app the viewer is a member of, one row per app. Agent chats are NOT here: they are
    * already in features/global-chat's own store, and a second copy of a list
    * that is loaded, merged and invalidated elsewhere is a copy that drifts.
    */
@@ -639,7 +825,11 @@ export interface MessagesSnapshot {
    */
   discussionContext: DiscussionContext | null;
   discussionError: string | null;
-  filter: InboxFilter;
+  /**
+   * The list's sections folded away from their headings (16 Oct 2026):
+   * Agents, People, or both. Remembered per device; the bot's never folds.
+   */
+  folded: InboxSection[];
   /**
    * #2387: the reply thread open beside the conversation, or null. Its own
    * page of messages, loaded from `/threads/<root>`, so a thread never pushes
@@ -654,12 +844,6 @@ export interface MessagesSnapshot {
   nextAfter: number | null;
   /** #2387: the list pane folded away on a desktop — single-panel mode. */
   listCollapsed: boolean;
-  /**
-   * #4229: the strip is wider than a phone but too narrow for an open
-   * conversation to keep a readable measure beside the list, so the list
-   * steps aside while one is open and the bar's back arrow returns to it.
-   */
-  listCrowded: boolean;
   /** #2967: the channels outside Your apps shown, under "Show more". */
   showMoreChannels: boolean;
   /**
@@ -670,6 +854,13 @@ export interface MessagesSnapshot {
    * nothing was unread. Optional so a fixture without it reads as null.
    */
   unreadMark?: UnreadMark | null;
+  /**
+   * The message a reply thread opens at (store.openThreadAt): the strip's
+   * Needs you button opens a request's thread at the question it asks.
+   * Scrolled to and flashed once by the thread pane, never by the
+   * conversation beside it. Optional so a fixture without it reads as null.
+   */
+  threadFocusId?: number | null;
 }
 
 export interface ReplyThreadState {
@@ -680,4 +871,31 @@ export interface ReplyThreadState {
   loading: boolean;
   error: string | null;
   nextBefore: number | null;
+  /**
+   * #5219: when this thread hangs off a Homeroom bot request card, the
+   * request's public discussion on its request page, read alongside the DM
+   * replies; the pane merges the two by time. Null when the root is no bot
+   * card naming a request, the viewer cannot view that project, or the
+   * thread is loading.
+   */
+  discussion?: DiscussionState | null;
+}
+
+/** One message from the request's public discussion, shown in its bot-card thread (#5219). */
+export interface DiscussionMessage {
+  id: number;
+  source: 'discussion';
+  sender: ConversationUser;
+  content: string;
+  createdAt: string;
+  editedAt?: string | null;
+}
+
+/** #5219: a request's public discussion, as its bot-card thread carries it. */
+export interface DiscussionState {
+  appSlug: string;
+  issueNumber: number;
+  /** The discussion has older messages than the ones shown: they stay on the request page. */
+  more: boolean;
+  messages: DiscussionMessage[];
 }

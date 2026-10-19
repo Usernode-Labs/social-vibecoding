@@ -29,7 +29,9 @@ test('the database\'s notice is ws-bus.js\'s own envelope, on its channel, and a
   const schema = read('src/db/schema.sql');
   const announce = schema.slice(schema.indexOf('CREATE OR REPLACE FUNCTION agent_session_state_announce()'));
   const bus = read('src/services/ws-bus.js');
-  const channel = /const CHANNEL = '([^']+)';/.exec(bus)[1];
+  // The bus's channel is the workflow's copy (src/workflow/pushes.ts).
+  assert.match(bus, /const CHANNEL = pushes\.BUS_CHANNEL;/);
+  const channel = /export const BUS_CHANNEL = '([^']+)';/.exec(read('src/workflow/pushes.ts'))[1];
   assert.match(announce, new RegExp(`pg_notify\\('${channel}', json_build_object\\(`), 'the channel every instance LISTENs on');
   assert.match(bus, /return \{ i: INSTANCE_ID, k: kind, r: routing \|\| null, d: data \};/, 'the envelope ws-bus reads');
   assert.match(announce, /'i', 'db:agent_sessions',\s*'k', 'user',\s*'r', json_build_object\('userId', NEW\.user_id\),\s*'d', json_build_object\(/);

@@ -44,7 +44,7 @@ test('the section is registered: menu, module, icon, lazy import and ownership a
 });
 
 test('the problems panel lists each kind of problem, and says when nothing is stuck', () => {
-  const empty = { flagged: [], overdueDeadlines: [], work: [], ownershipViolations: [] };
+  const empty = { flagged: [], overdueDeadlines: [], work: [] };
   assert.match(render('Problems', { overview: { problems: empty }, onOpen() {} }), /Nothing is stuck\./);
   const html = render('Problems', {
     onOpen() {},
@@ -53,20 +53,20 @@ test('the problems panel lists each kind of problem, and says when nothing is st
         flagged: [{ machine: 'governance-proposal', key: 'issue:4', flag: 'faulted', flagDetail: { message: 'boom' }, heldEvents: 2 }],
         overdueDeadlines: [{ machine: 'governance-proposal', key: 'issue:5', deadlineAt: '2026-10-01T00:00:00Z' }],
         work: [{ id: 'w', machine: 'governance-proposal', key: 'issue:6', kind: 'github.closeIssue', workKey: 'target', status: 'settled', lastError: { message: '503' } }],
-        ownershipViolations: [{ table_name: 'issues', column_path: 'status', count: 3, last_at: '2026-10-01T00:00:00Z' }],
-        ownershipViolationRows: [{ id: 7, table: 'issues', column: 'status', row: { id: 42 }, application: 'homeroom-platform',
-          query: 'UPDATE issues SET status = $1 WHERE id = $2', createdAt: '2026-10-01T00:00:00Z' }],
+        waiting: [{ machine: 'proposal', key: 'session:7', state: 'unconfirmed', says: 'GitHub was asked to merge it and has not answered' }],
       },
     },
   });
-  for (const kind of ['flagged', 'overdue', 'work', 'ownership']) assert.match(html, new RegExp(`data-wf-problem="${kind}"`));
+  for (const kind of ['flagged', 'overdue', 'work', 'waiting']) assert.match(html, new RegExp(`data-wf-problem="${kind}"`));
+  assert.match(html, /proposal \/ session:7/);
+  assert.match(html, /has not answered/);
   assert.match(html, /governance-proposal \/ issue:4/);
   assert.match(html, /boom · 2 held/);
   assert.match(html, /out of retries/);
-  assert.match(html, /data-wf-violation="7"/);
-  assert.match(html, /row \{&quot;id&quot;:42\}/, 'the row the write touched');
-  assert.match(html, /by homeroom-platform/, 'the application that wrote it');
   assert.doesNotMatch(html, /Nothing is stuck/);
+  // Every machine's guard refuses a write from outside it: there is no log
+  // of such writes, and no flag whose guard could be left on.
+  assert.doesNotMatch(read('frontend/src/features/admin/admin-workflows.tsx'), /ownershipViolation|guard-off|flagHere/);
 });
 
 test('the timeline shows result, reason, transition, source, cause and what an event emitted', () => {

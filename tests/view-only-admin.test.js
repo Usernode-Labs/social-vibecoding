@@ -301,10 +301,3 @@ test('admin-approval (PR): the locked-app gate is scoped to the approval epoch, 
   assert.deepEqual(captured.params, [9]);
 });
 
-test('admin-approval (issue): a full admin up-vote satisfies, a view-only one does not', async () => {
-  const fullUp = approvalPool([{ vote: 'up', is_admin: true, admin_readonly: false }], 'up');
-  assert.equal(await adminApproval.hasAdminUpVote(fullUp, 1), true);
-
-  const viewUp = approvalPool([{ vote: 'up', is_admin: true, admin_readonly: true }], 'up');
-  assert.equal(await adminApproval.hasAdminUpVote(viewUp, 1), false);
-});

@@ -114,10 +114,6 @@ test('a proposal\'s own notices that only ever went to the channel now go to its
   const thread = /'system', null, \{ type: 'session', ref: session\.id \}/;
   const votes = read('src/routes/votes.js');
   for (const lead of [
-    'merged on GitHub, but the production deploy failed',
-    'is closed on GitHub and couldn\'t be reopened',
-    'hit a conflict with main during a merge attempt',
-    'Failed to merge PR #',
     'Please open the revert PR manually.`,\n        \'system\'',
     'Most likely later commits depend on it.',
     'proposed undoing ${label}. Opened revert PR',
@@ -126,13 +122,31 @@ test('a proposal\'s own notices that only ever went to the channel now go to its
     assert.ok(at > 0, lead);
     assert.match(votes.slice(at, at + 700), thread, lead);
   }
-  const lifecycle = read('src/services/session-lifecycle.js');
-  assert.match(lifecycle, /await sendSystemMessage\(pool, session\.app_id, content, 'system', null, \{ type: 'session', ref: session\.id \}\);\n {4}\} catch \(err\) \{\n {6}log\.warn\('session-lifecycle', 'Failed to post PR-withdrawn chat message'/);
-  assert.match(read('src/services/merge-queue.js'), /sendSystemMessage\(pool, session\.app_id, content, 'conflict', null, \{ type: 'session', ref: session\.id \}\)/);
+  // A merge whose deploy failed is the merge-followups machine's to say, and
+  // every chat line it writes names the proposal's thread.
+  const mf = read('src/workflow/merge-followups/machine.ts');
+  assert.match(mf, /function failureLine\(d: Data, message: string\): string \{\n {2}return `\$\{label\(d\)\} merged on GitHub, but the production deploy failed: /);
+  assert.match(mf, /writes\.push\(chat\(e, d\.appId, d\.sessionId, failureLine\(d, message\)\)\)/);
+  assert.match(mf, /const chat = \([^)]*\): DomainWrite =>\n {2}\(\{ type: 'chat', eventId: e\.id, appId, thread: \{ type: 'session', ref: sessionId \}, content, metadata \}\);/);
+  // A closed PR taken off the vote, and a withdrawn proposal, are the
+  // proposal machine's lines now (a merge attempt's 'closed', Close), and
+  // every line it writes goes into the proposal's thread.
+  const pm = read('src/workflow/proposal/machine.ts');
+  assert.match(pm, /const abandoned: Handler = [\s\S]{0,800}line\(e, s\.data, `\$\{prLabel\(f\.row!\)\} is closed on GitHub and couldn't be reopened, so it has been taken off the vote panel\./);
+  assert.match(pm, /if \(row\.prNumber\) writes\.push\(line\(e, d, closedLine\(row, reason, !!more\.byOwner\)\)\);/);
+  assert.match(pm, /async function writeLine\(tx: Tx, w: any, ctx: WriteContext\) \{\n[\s\S]{0,600}?\n {2}const \{ rows: \[row\] \} = await tx\.query\(\n {4}`INSERT INTO chat_messages \(app_id, content, msg_type, metadata, thread_type, thread_ref\)\n {5}VALUES \(\$1, \$2, \$3, \$4, 'session', \$5\)/);
+  // The conflict lane's "could not be resolved automatically" is the
+  // proposal machine's line too (its sync's outcome).
+  assert.match(pm, /writes\.push\(\{ type: 'line', eventId: e\.id, appId: d\.appId, sessionId: d\.sessionId, msgType: 'conflict'/);
   assert.match(read('src/services/rename-pr.js'), /\{ vote: \{ sessionId, prNumber: prData\.number \} \},\n {4}\{ type: 'session', ref: sessionId \}/);
-  const fleet = read('src/services/fleet-maintenance.js');
-  assert.match(fleet, /\{ vote: \{ sessionId, prNumber: prData\.number \} \},\n {4}\{ type: 'session', ref: sessionId \}/);
-  assert.match(fleet, /'system', null, \{ type: 'governance', ref: campaign\.issue_id \}\);/, 'the campaign\'s tallies go to the decision that voted it');
+  // A maintenance campaign's proposal goes up for a vote through the
+  // proposal machine's promote (its vote line is the promote's, in the
+  // proposal's thread, above); the campaign's own lines (done, stopped) go
+  // to the decision that voted it.
+  const campaign = read('src/workflow/campaign/machine.ts');
+  assert.match(campaign, /`INSERT INTO chat_messages \(app_id, content, msg_type, metadata, thread_type, thread_ref\)\n {5}VALUES \(\$1, \$2, 'system', '\{\}'::jsonb, 'governance', \$3\)/,
+    'the campaign\'s tallies go to the decision that voted it');
+  assert.doesNotMatch(read('src/services/fleet-maintenance.js'), /sendSystemMessage/);
 });
 
 test('the lines written before are cleared on boot, after the staging fixtures', () => {

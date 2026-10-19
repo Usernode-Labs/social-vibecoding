@@ -50,6 +50,17 @@ function makeUsers() {
       has_platform_access: true,
       bp_requested_at: null,
       bp_released_at: null,
+      adult_attested_at: new Date(),
+    },
+    // Never answered "Are you 18 or older?" (#5095).
+    3: {
+      id: 3, username: 'unasked', email: 'unasked@example.com', display_name: 'Unasked',
+      email_confirmed: true, is_in_waitlist: false, github: null, x: null,
+      password_set: true, is_admin: false,
+      has_platform_access: true,
+      bp_requested_at: null,
+      bp_released_at: null,
+      adult_attested_at: null,
     },
   };
 }
@@ -57,6 +68,7 @@ function makeUsers() {
 const SESSIONS = {
   'released-session': { user_id: 1, expires_at: new Date(Date.now() + DAY) },
   'fresh-session': { user_id: 2, expires_at: new Date(Date.now() + DAY) },
+  'unasked-session': { user_id: 3, expires_at: new Date(Date.now() + DAY) },
 };
 
 const MOBILE_TOKEN = 'raw-mobile-token';
@@ -102,6 +114,12 @@ function makeMockPool(users) {
           username: users[1].username,
         }],
       };
+    }
+
+    // The 18+ check in front of bp/request (#5095).
+    if (sql.includes('adult_attested_at IS NOT NULL AS attested FROM users')) {
+      const u = users[params[0]];
+      return { rows: u ? [{ attested: !!u.adult_attested_at }] : [] };
     }
 
     // bp/state's user-row read.
@@ -226,6 +244,25 @@ test('bp/request stamps once; asking again keeps the original request time', asy
     });
     assert.equal(again.status, 200);
     assert.equal(users[2].bp_requested_at, stamped);
+  });
+});
+
+test('bp/request waits for the 18+ answer: 403 adult_attestation_required, nothing stamped (#5095)', async () => {
+  await withServer(async (base, users) => {
+    const refused = await fetch(`${base}/challenges-api/bp/request`, {
+      method: 'POST', headers: sessionHeaders('unasked-session'),
+    });
+    assert.equal(refused.status, 403);
+    const body = await refused.json();
+    assert.equal(body.success, false);
+    assert.equal(body.code, 'adult_attestation_required');
+    assert.equal(users[3].bp_requested_at, null, 'the request was never written');
+
+    // Reading the state stays open.
+    const state = await fetch(`${base}/challenges-api/bp/state`, {
+      headers: sessionHeaders('unasked-session'),
+    });
+    assert.equal(state.status, 200);
   });
 });
 

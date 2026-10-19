@@ -15,10 +15,12 @@
  * and the chip run, never the wrapper.
  */
 
+import { useCallback, useState } from 'react';
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 
 import { Glyph } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import {
   appPillsFor,
   iconViewFor,
@@ -30,26 +32,52 @@ import {
 type AppRecord = Record<string, any>;
 
 /**
+ * An image icon, with the app's initial under it until the image has drawn
+ * (polish board #11, 19 Oct 2026). On a first visit every tile on Discover was
+ * an empty white square for a frame or more while its picture loaded; the
+ * initial is the letter tile's own quiet placeholder (app.css
+ * `.app-icon-wait`), and it goes once the picture is there, so a picture with
+ * transparent parts never shows it through them.
+ */
+function IconImage({ src, letter, eager }: { src: string; letter: string; eager: boolean }): ReactNode {
+  const [drawn, setDrawn] = useState(false);
+  // An image the browser already holds can finish before React listens for
+  // its load event, so the mounted element is asked as well.
+  const ref = useCallback((img: HTMLImageElement | null) => {
+    if (img && img.complete && img.naturalWidth > 0) setDrawn(true);
+  }, []);
+  return (
+    <>
+      {drawn ? null : <span className="app-icon-wait" aria-hidden="true">{letter}</span>}
+      {/* w-full/h-full (not w-14/h-14): the tile draws a 1px hairline border,
+          so the image fills the border box's content area and stays flush
+          inside the ring instead of being cropped. */}
+      <img
+        ref={ref}
+        src={src}
+        alt=""
+        loading={eager ? 'eager' : 'lazy'}
+        draggable="false"
+        className="w-full h-full rounded-xl object-cover"
+        onLoad={() => setDrawn(true)}
+      />
+    </>
+  );
+}
+
+/**
  * The tile's inner markup. Carries no sizing of its own except the emoji's
  * `text-3xl` — the launcher tile's size, which the two browse surfaces
  * override on the wrapper, exactly as the string version documents.
+ *
+ * `eager` is for a tile on screen when its list first draws (Discover's first
+ * rows): the browser would otherwise wait to lay the page out before asking.
  */
-export function AppIconContent({ app }: { app: AppRecord }): ReactNode {
+export function AppIconContent({ app, eager = false }: { app: AppRecord; eager?: boolean }): ReactNode {
   const icon = iconViewFor(app) as
     { kind: 'image'; src: string } | { kind: 'emoji'; emoji: string } | { kind: 'letter'; letter: string };
   if (icon.kind === 'image') {
-    // w-full/h-full (not w-14/h-14): the tile draws a 1px hairline border, so
-    // the image fills the border box's content area and stays flush inside the
-    // ring instead of being cropped.
-    return (
-      <img
-        src={icon.src}
-        alt=""
-        loading="lazy"
-        draggable="false"
-        className="w-full h-full rounded-xl object-cover"
-      />
-    );
+    return <IconImage src={icon.src} letter={(app.name || '?').charAt(0).toUpperCase()} eager={eager} />;
   }
   if (icon.kind === 'emoji') {
     return <span className="text-3xl leading-none" aria-hidden="true">{icon.emoji}</span>;
@@ -102,10 +130,11 @@ export function AppIconLink({
   id?: string;
   'data-icon'?: string;
 }): ReactNode {
+  const t = useMessages('discover');
   if (!slug) {
     return <span id={id} data-icon={dataIcon} className={className} aria-hidden="true">{children}</span>;
   }
-  const label = `Open ${name || slug}`;
+  const label = t('discover:card.openApp', { app: name || slug });
   const cls = `${className || ''} app-icon-link cursor-pointer`;
   if (nested) {
     return (
@@ -159,6 +188,8 @@ export function AppPills({ app, limit }: {
    */
   limit?: number;
 }): ReactNode {
+  // Subscribed: appPillsFor reads the pills' words as it is called.
+  useMessages('discover');
   const all = appPillsFor(app) as {
     chips: Array<{ cls: string; label: string; tip: string }>;
     vis: { icon: 'lock' | 'mail'; label: string; tip: string } | null;

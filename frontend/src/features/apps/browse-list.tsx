@@ -25,9 +25,11 @@
 import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 
-import { CheckIcon, PlusIcon } from '@/components/ui/icons';
+import { GlobeIcon, PlusIcon } from '@/components/ui/icons';
+import { IconTile } from '@/components/ui/icon-tile';
 import { ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { Button } from '@/components/ui/button';
+import { useMessages } from '../../lib/i18n/react';
 import { AppIconContent, AppIconLink, AppPills, appIconKind, hasAppPills } from './app-card-view';
 
 type RowView = {
@@ -41,6 +43,10 @@ type RowView = {
   demo: boolean;
   openable: boolean;
   added: boolean;
+  /** A joined row's Open: the app can run, and it is not an inert fixture. */
+  canOpen?: boolean;
+  /** In "Recommended for you", the default list's first section (#5267). */
+  recommended?: boolean;
   addTitle: string;
 };
 
@@ -50,50 +56,47 @@ function controller(): any {
 
 const ADD_BASE = 'browse-add-btn shrink-0 inline-flex items-center gap-1 rounded-full '
   + 'border px-3 py-1.5 text-xs font-medium transition-colors ';
-// JOINED IS A QUIET STATE, not a filled green. A column of solid emerald pills
-// down the directory made the one thing that is already done the loudest
-// thing on the screen, in a second accent the product uses nowhere else for
-// state (AGENTS.md, "Type and colour": one accent, and colour for what asks
-// for you). It keeps its check and its word, in grey with no fill, so a
-// joined row reads as settled and the filled "Join" beside it as the action.
-// It is still a button: a tap asks before leaving (Home.setMembership).
-const ADD_ON = 'border-transparent bg-transparent text-zinc-600 dark:text-zinc-300 '
-  + 'hover:bg-zinc-100 dark:hover:bg-zinc-800';
-// Filled neutral, not an accent outline: the row sits on a white card now, and
-// an outlined control on a floating surface is the shape the language never
-// draws (see the `neutral` variant in @/components/ui/button.tsx).
-const ADD_OFF = 'border-transparent bg-zinc-100 dark:bg-zinc-800 text-zinc-900 '
+// Join and Open are the same filled neutral pill, the App Store's Get / Open
+// (#5267). A joined row used to say "✓ Joined", and down a directory where
+// most rows were joined that was a column of a state nobody needed told; it
+// now offers the next thing to do with the app, opening it. Filled neutral,
+// not an accent outline: the row sits on a white card, and an outlined
+// control on a floating surface is the shape the language never draws (see
+// the `neutral` variant in @/components/ui/button.tsx).
+const ADD_FILL = 'border-transparent bg-zinc-100 dark:bg-zinc-800 text-zinc-900 '
   + 'dark:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700';
 
 /**
- * The review label a Discover row shows (#3911). The API's `directory.label`
- * is the admin console's vocabulary, and one of its words is not for
- * browsers: "Needs re-review" (state `outdated`, see
- * src/services/discovery-curation.js) is an app reviewed as working whose
- * newer version nobody has checked yet. To someone browsing, that version is
- * simply not yet reviewed, which is the heading the app already sits under
- * in Recommended, so the row says that instead. Its tier and its place in
- * every sort are unchanged; Admin › Featured apps reads the server's label
- * and keeps the distinction it needs.
+ * The label a Discover row shows under its name, from the API's
+ * `directory` (src/services/discovery-curation.js), or null.
+ *
+ * REVIEW STATE IS NOT SHOWN (#5267). "Reviewed working", "Not yet reviewed"
+ * and "Needs re-review" (states `working`, `unreviewed` and `outdated`) are
+ * the admin console's moderation vocabulary: the directory used to group by
+ * them under headings and, where no heading said it, label each row. People
+ * browsing see the apps in the same order without the words; an admin finds
+ * the unreviewed ones under the "Not yet reviewed" chip, and Admin › Featured
+ * apps keeps every distinction. A label that says what a person can DO
+ * about an app stays: Demo, Needs fixes, Not running, Needs an icon, which
+ * are the rows under Show more.
  */
+const REVIEW_STATES = new Set(['working', 'unreviewed', 'outdated']);
 export function rowDirectoryLabel(directory?: { state?: string; label?: string } | null): string | null {
   if (!directory?.label) return null;
-  return directory.state === 'outdated' ? 'Not yet reviewed' : directory.label;
+  if (directory.state && REVIEW_STATES.has(directory.state)) return null;
+  return directory.label;
 }
 
-function Row({ view, headingSays }: {
+/** How many rows down the list load their icons without waiting: a phone's
+    first screen, or the first rows of the wide window's grid. */
+const EAGER_ICON_ROWS = 12;
+
+function Row({ view, eager = false }: {
   view: RowView;
-  /**
-   * The directory label the tier heading over this row already says
-   * ("Reviewed working" under "Reviewed working apps", "Not yet reviewed"
-   * under "Not yet reviewed"). A row whose own label is that one drops it:
-   * the same words once over the section and again on every row under it was
-   * the metadata that made a Discover row four lines deep. A label the
-   * heading does NOT say stays, and so does every label in an ungrouped sort
-   * or a search, where no heading says anything.
-   */
-  headingSays?: string;
+  /** On the first screen: its icon loads at once (AppIconContent `eager`). */
+  eager?: boolean;
 }): ReactNode {
+  const t = useMessages('discover');
   const rowRef = useRef<HTMLDivElement | null>(null);
 
   // NavLink.wireModified binds its own listeners to the node, so it runs in an
@@ -153,7 +156,7 @@ function Row({ view, headingSays }: {
           className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
           data-icon={appIconKind(view.app)}
         >
-          <AppIconContent app={view.app} />
+          <AppIconContent app={view.app} eager={eager} />
         </AppIconLink>
       )}
       title={(
@@ -172,7 +175,7 @@ function Row({ view, headingSays }: {
           {/* `truncate`, not just `block` (QA 2026-09-24 Q10): the subtitle box
               clips, so without its own ellipsis this line was cut mid-word
               ("Reviewed workir") on a phone. */}
-          {label && label !== headingSays ? (
+          {label ? (
             <span className="block truncate text-xs text-zinc-600 dark:text-zinc-400">{label}</span>
           ) : null}
           <span className="block truncate">{view.meta}</span>
@@ -189,40 +192,96 @@ function Row({ view, headingSays }: {
       trailing={(
         <>
       {/* No `type` — the hand-written row shipped a bare <button>, and it sits
-          in no form, so the default submit type is inert either way. */}
-      <button
-        className={ADD_BASE + (view.added ? ADD_ON : ADD_OFF)}
-        data-slug={view.slug}
-        data-added={String(view.added)}
-        aria-pressed={view.added}
-        aria-label={view.added ? undefined : `Join ${view.name}`}
-        title={view.addTitle}
-        onClick={(e) => {
-          e.stopPropagation();
-          controller()?.toggleRowAdded(view);
-        }}
-      >
-        {view.added
-          ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />
-          : <PlusIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />}
-        {/* JOIN, not Add (communities, stage 1). The pill used to put the
-            app on Home; it now puts YOU in the app's community, which is
-            what lets you propose and vote (and it still pins the app, so
-            nothing you relied on went away). QA 2026-09-24 Q10's width rule
-            holds: the visible label is one short word and the accessible
-            name carries the rest — "Join <app>", so a screen reader hears
-            what is being joined. "Joined" is a state and stays short; a tap
-            on it asks before leaving (Home.setMembership). */}
-        {view.added ? 'Joined' : 'Join'}
-      </button>
+          in no form, so the default submit type is inert either way. Both
+          buttons keep `browse-add-btn` and `data-added`: the row's own click
+          skips that class, and the declared checks select on the pair. */}
+      {!view.added ? (
+        <button
+          className={ADD_BASE + ADD_FILL}
+          data-slug={view.slug}
+          data-added="false"
+          data-action="join"
+          aria-label={t('discover:list.join.named', { app: view.name })}
+          title={view.addTitle}
+          onClick={(e) => {
+            e.stopPropagation();
+            controller()?.toggleRowAdded(view);
+          }}
+        >
+          <PlusIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />
+          {/* JOIN, not Add (communities, stage 1): it puts YOU in the app's
+              community, which is what lets you propose and vote, and it
+              still pins the app. QA 2026-09-24 Q10's width rule holds: the
+              visible label is one short word and the accessible name
+              carries the rest, "Join <app>". */}
+          {t('discover:list.join.action')}
+        </button>
+      ) : view.canOpen ? (
+        <button
+          className={ADD_BASE + ADD_FILL}
+          data-slug={view.slug}
+          data-added="true"
+          data-action="open"
+          aria-label={t('discover:list.open.named', { app: view.name })}
+          title={view.addTitle}
+          onClick={(e) => {
+            e.stopPropagation();
+            controller()?.openRowApp(view);
+          }}
+        >
+          {t('discover:list.open.action')}
+        </button>
+      ) : null}
         </>
       )}
     />
   );
 }
 
-export function BrowseRows({ rows, curated = false, grouped = true, moreExpanded = false }: {
+/**
+ * The "Open site" row (#5364): drawn while the search text is a web address,
+ * above every app row. An app row cannot be an anchor because it wraps its
+ * own Join button; this row wraps nothing, so it IS one — an absolute external
+ * href with target="_blank", which NavLink has nothing to do with (it is never
+ * handed to wireModified, and the router does not intercept it). It carries no
+ * data-slug, so every selector that reads `.browse-row[data-slug]` and the
+ * Join button skip it.
+ */
+function SiteRow({ site }: { site: { href: string; label: string } }): ReactNode {
+  const t = useMessages('discover');
+  return (
+    <ListRow
+      as="a"
+      href={site.href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="browse-row browse-site-row md:col-span-full"
+      inset="none"
+      chevron={false}
+      contentClassName="browse-row-content"
+      titleClassName="browse-row-title"
+      subtitleClassName="browse-row-meta"
+      leading={(
+        // The grey tile an app's icon would sit in, holding a globe: the row
+        // leaves Homeroom, so it has no app artwork.
+        <IconTile className="w-11 h-11 shrink-0 rounded-xl" aria-hidden="true">
+          <GlobeIcon className="w-5 h-5" aria-hidden="true" />
+        </IconTile>
+      )}
+      title={<span className="browse-row-name truncate">{site.label}</span>}
+      subtitle={<span className="block truncate">{t('discover:site.subtitle')}</span>}
+    />
+  );
+}
+
+export function BrowseRows({ rows, site = null, curated = false, grouped = true, moreExpanded = false }: {
   rows: RowView[] | null;
+  /**
+   * The "Open site" row's descriptor from Browse.siteFor, or null: while the
+   * search text is a web address, one row above the app matches offers to
+   * open that site in a new tab (#5364).
+   */
+  site?: { href: string; label: string } | null;
   /** Tuck the `more` tier (demos, apps needing fixes) behind Show more. */
   curated?: boolean;
   /**
@@ -232,14 +291,24 @@ export function BrowseRows({ rows, curated = false, grouped = true, moreExpanded
   grouped?: boolean;
   moreExpanded?: boolean;
 }): ReactNode {
+  const t = useMessages('discover');
   if (!rows) return null;
-  const renderRows = (items: RowView[], headingSays?: string) => items.map((view) => (
-    <Row key={view.slug} view={view} headingSays={headingSays} />
+  const siteRow = site ? <SiteRow site={site} /> : null;
+  // The rows a first screen shows load their icons at once (#11); the rest
+  // wait until they are scrolled near. Counted down the list as drawn.
+  let drawn = 0;
+  const renderRows = (items: RowView[]) => items.map((view) => (
+    <Row key={view.slug} view={view} eager={drawn++ < EAGER_ICON_ROWS} />
   ));
-  if (!curated) return <>{renderRows(rows)}</>;
+  if (!curated) return <>{siteRow}{renderRows(rows)}</>;
   const shown = rows.filter((view) => view.directoryTier !== 'more');
-  const ready = rows.filter((view) => view.directoryTier === 'ready');
-  const unreviewed = rows.filter((view) => view.directoryTier !== 'ready' && view.directoryTier !== 'more');
+  // The default list's two sections (#5267): "Recommended for you" (the
+  // featured apps you are not in, Browse.recommendedApps) and then the rest,
+  // reviewed apps first as the Recommended order puts them, under one
+  // heading. The rest is "More apps" under a Recommended section and "All
+  // apps" where there is none. No heading names a review state any more.
+  const picked = shown.filter((view) => view.recommended);
+  const rest = shown.filter((view) => !view.recommended);
   const more = rows.filter((view) => view.directoryTier === 'more');
   // A LABEL OVER A CARD GROUP, so it is @/components/ui/grouped-list's
   // SectionHeader and not a fourth hand-written heading: the rows under it are
@@ -255,19 +324,24 @@ export function BrowseRows({ rows, curated = false, grouped = true, moreExpanded
   const headingClass = 'md:col-span-full';
   return (
     <>
+      {siteRow}
       {grouped ? (
         <>
-          {ready.length ? <SectionHeader className={headingClass}>Reviewed working apps</SectionHeader> : null}
-          {renderRows(ready, 'Reviewed working')}
-          {unreviewed.length ? <SectionHeader className={headingClass}>Not yet reviewed</SectionHeader> : null}
-          {renderRows(unreviewed, 'Not yet reviewed')}
+          {picked.length ? <SectionHeader className={headingClass}>{t('discover:list.heading.recommended')}</SectionHeader> : null}
+          {renderRows(picked)}
+          {rest.length ? (
+            <SectionHeader className={headingClass}>
+              {picked.length ? t('discover:list.heading.moreApps') : t('discover:list.heading.allApps')}
+            </SectionHeader>
+          ) : null}
+          {renderRows(rest)}
         </>
       ) : renderRows(shown)}
       {more.length ? (
         <>
           <div className="md:col-span-full p-3">
             <p className="mb-2 text-sm text-zinc-600 dark:text-zinc-400">
-              Demos and apps needing fixes, setup, or an icon are still available below and in search.
+              {t('discover:list.more.note')}
             </p>
             <Button
               type="button"
@@ -277,7 +351,7 @@ export function BrowseRows({ rows, curated = false, grouped = true, moreExpanded
               aria-controls="browse-more-apps"
               onClick={() => controller()?.toggleMore()}
             >
-              {moreExpanded ? 'Show less' : `Show more (${more.length})`}
+              {moreExpanded ? t('discover:list.more.showLess') : t('discover:list.more.showMore', { count: more.length })}
             </Button>
           </div>
           <div id="browse-more-apps" className={moreExpanded

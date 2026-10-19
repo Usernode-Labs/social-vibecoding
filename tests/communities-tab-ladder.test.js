@@ -1,7 +1,8 @@
 'use strict';
 
-// #3701 — pressing the lit Communities tab goes up a level, at every width;
-// holding it on a phone's bar opens "Your communities".
+// #3701 — pressing the lit Communities tab goes up a level, at every width.
+// Holding it on a phone's bar opened "Your communities" until the drawer's
+// list replaced that switcher there (18 Oct 2026); a held tab is a press.
 //
 // The same press did two things by width (#852): on a phone the lit tab
 // opened the switcher, on the desktop rail the lit row went to All
@@ -15,13 +16,13 @@
 //   4. on All communities → to the top, and nothing else.
 //
 // A step that changes page pushes an entry (#3620). The switcher is the
-// header's name, as before, and the phone's tab held for HOLD_MS.
+// header's name on a wide window; nothing on the phone's bar opens it.
 //
 // What is pinned, each a way it could quietly go back to what it was:
 //
 //   1. THE LADDER'S TABLE, and where each press lands from each place.
-//   2. THE HOLD: touch only, the phone's bar only, cancelled by movement or an
-//      early lift, and the click its lift leaves is swallowed once.
+//   2. NO HOLD: the tab carries no long-press handlers and the ladder makes
+//      none, so a held tab cannot bring the old switcher back over the drawer.
 //   3. THE WIRING: the tab bar's lit press is the ladder at every width and
 //      never the switcher; the pages say what is below their tabs.
 
@@ -36,14 +37,13 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 
 const LADDER_PATH = 'frontend/src/features/workshop/tab-ladder.ts';
 
-/** The ladder with community-scope's two calls recorded rather than made. */
+/** The ladder with community-scope's call recorded rather than made. */
 function loadLadder() {
   const calls = [];
   const mod = loadTsx(LADDER_PATH, {
     stubs: {
       './community-scope': {
         goToCommunity: (slug) => calls.push(['goToCommunity', slug]),
-        openSwitcher: (from, el) => calls.push(['openSwitcher', from, el]),
       },
     },
   });
@@ -101,7 +101,6 @@ test('the ladder: below → up, a tab → its top then the root, the root → it
   assert.equal(mod.tabToReturnTo('discussion'), 'discussion');
   assert.equal(mod.tabToReturnTo('nowhere'), 'status');
   assert.equal(mod.tabToReturnTo(null), 'status');
-  assert.equal(mod.HOLD_MS, 500, 'about half a second');
 });
 
 test('step 4: on All communities a press only scrolls, and at the top does nothing', () => {
@@ -195,122 +194,23 @@ test('on the project page: All items or a thread goes up first, then the top, th
   withPage({ app, view }, () => assert.equal(mod.pressLitTab('home-screen'), 'none'));
 });
 
-test('the hold: touch only, still for HOLD_MS, cancelled by moving or lifting early', () => {
-  const { mod } = loadLadder();
-  const timers = new Map();
-  let next = 1;
-  const setTimer = (fn, ms) => { const id = next++; timers.set(id, { fn, ms }); return id; };
-  const clearTimer = (id) => { timers.delete(id); };
-  const fire = (ms) => {
-    for (const [id, t] of [...timers]) if (t.ms === ms) { timers.delete(id); t.fn(); }
-  };
-  const listeners = [];
-  const doc = {
-    addEventListener: (type, fn, capture) => listeners.push({ type, fn, capture }),
-    removeEventListener: (type, fn) => {
-      const at = listeners.findIndex((l) => l.type === type && l.fn === fn);
-      if (at >= 0) listeners.splice(at, 1);
-    },
-  };
-  const held = [];
-  let enabled = true;
-  const hold = mod.createHold({ enabled: () => enabled, onHold: (el) => held.push(el), doc, setTimer, clearTimer });
-  const tabEl = { id: 'platform-tab-workshop' };
-  const touch = (x = 10, y = 10, extra = {}) => ({ pointerType: 'touch', isPrimary: true, clientX: x, clientY: y, currentTarget: tabEl, ...extra });
-
-  // A mouse never holds; a second finger never holds.
-  hold.onPointerDown(touch(10, 10, { pointerType: 'mouse' }));
-  hold.onPointerDown(touch(10, 10, { isPrimary: false }));
-  assert.equal(timers.size, 0);
-
-  // A short press is an ordinary tap.
-  hold.onPointerDown(touch());
-  assert.equal([...timers.values()][0].ms, 500);
-  hold.onPointerUp();
-  fire(500);
-  assert.deepEqual(held, [], 'lifted before HOLD_MS');
-  assert.equal(listeners.length, 0, 'and its click is its own');
-
-  // Moving cancels; a wobble within the slop does not.
-  hold.onPointerDown(touch());
-  hold.onPointerMove(touch(16, 14));
-  assert.equal(timers.size, 1, 'within HOLD_SLOP_PX');
-  hold.onPointerMove(touch(10, 30));
-  assert.equal(timers.size, 0, 'a scroll is not a hold');
-  hold.onPointerUp();
-  assert.deepEqual(held, []);
-
-  // The desktop rail (a wide window) never starts one.
-  enabled = false;
-  hold.onPointerDown(touch());
-  assert.equal(timers.size, 0);
-  enabled = true;
-
-  // Held: it lands on the tab while the finger is still down.
-  hold.onPointerDown(touch());
-  fire(500);
-  assert.deepEqual(held, [tabEl]);
-  // …and the lift's click is swallowed once, at the document, in capture.
-  hold.onPointerUp();
-  const click = listeners.find((l) => l.type === 'click');
-  assert.ok(click && click.capture === true, 'a capture listener on the document');
-  let prevented = 0;
-  let stopped = 0;
-  click.fn({ preventDefault: () => { prevented += 1; }, stopPropagation: () => { stopped += 1; } });
-  assert.equal(prevented, 1);
-  assert.equal(stopped, 1);
-  assert.equal(listeners.length, 0, 'only the one click');
-
-  // A new press before any click lets the guard go: that tap is its own.
-  hold.onPointerDown(touch());
-  fire(500);
-  hold.onPointerUp();
-  assert.equal(listeners.length, 2, 'click and pointerdown guards');
-  listeners.find((l) => l.type === 'pointerdown').fn();
-  assert.equal(listeners.length, 0);
-  // …and so does HOLD_CLICK_MS passing with no click at all.
-  hold.onPointerDown(touch());
-  fire(500);
-  hold.onPointerUp();
-  fire(mod.HOLD_CLICK_MS);
-  assert.equal(listeners.length, 0);
-
-  // The browser deciding the press was held (Android's contextmenu) lands it
-  // at once, and its own menu is stood down.
-  held.length = 0;
-  hold.onPointerDown(touch());
-  let menu = 0;
-  hold.onContextMenu({ preventDefault: () => { menu += 1; } });
-  assert.equal(menu, 1);
-  assert.deepEqual(held, [tabEl]);
-  assert.equal(timers.size, 0, 'the timer does not land it twice');
-  hold.onPointerCancel();
-  assert.equal(listeners.length, 2, 'a cancelled lift still guards its click');
-  hold.dispose();
-  assert.equal(listeners.length, 0, 'unmounting lets the guard go');
-  // A right-click with a mouse keeps the browser's menu.
-  let mouseMenu = 0;
-  hold.onContextMenu({ preventDefault: () => { mouseMenu += 1; } });
-  assert.equal(mouseMenu, 0);
-});
-
-test('the tab bar: the lit Communities tab is the ladder at every width, and the switcher only when held', () => {
+test('the tab bar: the lit Communities tab is the ladder at every width, and holding it opens nothing', () => {
   const src = read('frontend/src/features/nav/tab-bar.tsx');
   const click = src.slice(src.indexOf('const onTabClick = '), src.indexOf('return (', src.indexOf('const onTabClick = ')));
   assert.match(click, /if \(key === 'workshop' && lit === 'workshop' && tab === 'workshop'\) \{\s*event\.preventDefault\(\);\s*pressLitTab\(screen\);\s*return;\s*\}/);
-  assert.doesNotMatch(click, /toggleSwitcher|openSwitcher|matchMedia|goToCommunity/,
-    'no width decides it, and a press never opens the switcher');
+  // v3: in the sidebar of rows the tab is "All 13 communities" and goes
+  // there (a community's own row is the way up its page); on the list it
+  // only scrolls. The strip and the phone's bar keep the ladder.
+  assert.match(click, /if \(key === 'workshop' && sidebarRows\) \{\s*event\.preventDefault\(\);\s*if \(screen === 'workshop-screen'\) pressLitTab\(screen\);\s*else goToCommunity\(null\);\s*return;\s*\}/);
+  assert.doesNotMatch(click, /toggleSwitcher|openSwitcher|matchMedia/,
+    'no media query decides it, and a press never opens the switcher');
   assert.doesNotMatch(src, /toggleSwitcher/);
-  // The hold rides on the Communities tab alone, as handlers only.
-  assert.match(src, /const \[hold\] = useState\(createSwitcherHold\);/);
-  assert.match(src, /useEffect\(\(\) => \(\) => hold\.dispose\(\), \[hold\]\);/);
-  assert.match(src, /\{\.\.\.\(key === 'workshop' \? holdProps : \{\}\)\}/);
+  // No hold: the old switcher would open over the phone's drawer (18 Oct 2026).
+  assert.doesNotMatch(src, /createSwitcherHold|holdProps|onContextMenu/);
   const ladder = read(LADDER_PATH);
-  assert.match(ladder, /export function createSwitcherHold\(\) \{\s*return createHold\(\{ enabled: onPhoneBar, onHold: \(el\) => openSwitcher\('tab', el\) \}\);/);
-  assert.match(ladder, /return !window\.matchMedia\('\(min-width: 768px\)'\)\.matches;/, 'the phone\'s bar only');
-  // iOS's own long press on a link would open over the sheet.
+  assert.doesNotMatch(ladder, /createHold|createSwitcherHold|HOLD_MS|openSwitcher/);
   const css = read('public/css/app.css');
-  assert.match(css, /#platform-tab-workshop \{\s*-webkit-touch-callout: none;\s*-webkit-user-select: none;\s*user-select: none;\s*\}/);
+  assert.doesNotMatch(css, /#platform-tab-workshop \{\s*-webkit-touch-callout: none;/);
   // The header's name still opens it, unchanged.
   const header = read('frontend/src/features/header/header-title.tsx');
   assert.equal((header.match(/onClick=\{\(e\) => toggleSwitcher\('header', e\.currentTarget\)\}/g) || []).length, 2);
@@ -334,7 +234,9 @@ test('the pages say what is below their tabs: All items on the project page, a r
   assert.match(store, /export function embeddedThreadOpen\(conversationId: number\): boolean \{\s*return !!state\.route\.embedded && state\.route\.conversationId === conversationId && !!state\.route\.threadRootId;/);
   // The switcher's notes say where it opens from now.
   const switcher = read('frontend/src/features/workshop/community-switcher.tsx');
-  assert.match(switcher, /the phone's tab HELD \(#3701\)/);
+  // #5290: and from ⌘K, the third place.
+  assert.match(switcher, /opens from three places, all through the same store/);
+  assert.match(switcher, /The phone's tab held\s*\* opened it too \(#3701\) until the drawer's list replaced it there/);
   assert.doesNotMatch(switcher, /lit sidebar row goes back/);
   assert.match(switcher, /t\.closest\('\[data-community-switch\]'\)/, 'a press on the rail row closes the menu like any other');
 });

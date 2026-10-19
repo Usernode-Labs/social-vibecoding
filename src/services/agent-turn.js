@@ -213,7 +213,7 @@ async function resolveCodexRuntimeContext({
     }
   }
 
-  const resolvedModel = session.agent_model || config.openrouterDefaultCodexModel || null;
+  const resolvedModel = session.agent_model || await require('./default-model').effective(pool, config);
   if (!resolvedModel) {
     return { error: 'model_required' };
   }
@@ -293,6 +293,9 @@ async function resolveCodexRuntimeContext({
       ? null
       : requestedReasoningEffort,
     agentModelMetadata: runtimeModelMetadataForModel(catalogModel, resolvedModel),
+    // The hosts this model's turn may use, when the platform overrides the
+    // worker listener's own shortlist (config.openrouterProviderShortlists).
+    agentProviderShortlist: config.openrouterProviderShortlists?.[resolvedModel] || null,
     openrouterApiKey,
     openrouterApiBase,
     resumeThreadId: resumeThreadDropped ? null : candidateThreadId,
@@ -318,8 +321,13 @@ async function startCodexAttempt({
   // may replace an existing record; every ordinary dispatch still fails
   // closed on any active_turn.
   allowRetryPending = false,
+  // The work item that runs the turn, when workflow work started it
+  // (turn-lifecycle.turnOwner): written with the claim, as execInWorker
+  // writes it for a turn it registers itself.
+  owner = null,
 }) {
   const ctx = runtimeContext || {};
+  const turnOwnerRecord = turnLifecycle.turnOwner(owner);
   const turnId = crypto.randomUUID();
   const durableTurnId = logicalTurnId || crypto.randomUUID();
   const journal = turnLifecycle.journalPathForAttempt(turnId);
@@ -416,6 +424,7 @@ async function startCodexAttempt({
       model: model || '',
       startedAt: new Date().toISOString(),
       byok: false,
+      ...(turnOwnerRecord ? { owner: turnOwnerRecord } : {}),
     }, { turnId: durableTurnId, phase: turnLifecycle.PHASE_DISPATCH_PENDING });
     const registered = await client.query(
       `UPDATE chat_sessions
@@ -486,6 +495,47 @@ async function lockAttempt(client, turnUuid) {
   return rows[0] || null;
 }
 
+// The paths a turn changed after its first browser call, as worker.js keeps
+// them: at most 20, each a short plain string, or null for none. Pure.
+const CHANGED_PATHS_MAX = 20;
+const CHANGED_PATH_MAX_CHARS = 200;
+function changedPaths(value) {
+  if (!Array.isArray(value)) return null;
+  const out = [];
+  for (const path of value) {
+    // eslint-disable-next-line no-control-regex
+    if (typeof path !== 'string' || !path || /[\u0000-\u001f]/.test(path)) continue;
+    const kept = path.slice(0, CHANGED_PATH_MAX_CHARS);
+    if (!out.includes(kept)) out.push(kept);
+    if (out.length >= CHANGED_PATHS_MAX) break;
+  }
+  return out.length ? out : null;
+}
+
+// Every upstream provider a turn's requests went to, first seen first, as
+// worker.js keeps them (state.routedProviders), and how many of its requests
+// the shortlist refused and were sent again to every host
+// (state.shortlistFallbacks): run seven (14 Oct 2026) found slow hosts
+// serving builds, and the row kept only the last provider, so neither which
+// hosts a build used nor how often it left the shortlist could be read back.
+// At most eight names, each in a provider name's own shape, or null for none;
+// a count, or null when nothing reported one. Pure.
+const ROUTED_PROVIDERS_MAX = 8;
+const ROUTED_PROVIDER_NAME = /^[a-zA-Z0-9 ._:/()-]{1,80}$/;
+function routedProvidersOf(value) {
+  if (!Array.isArray(value)) return null;
+  const out = [];
+  for (const name of value) {
+    if (typeof name !== 'string' || !ROUTED_PROVIDER_NAME.test(name) || out.includes(name)) continue;
+    out.push(name);
+    if (out.length >= ROUTED_PROVIDERS_MAX) break;
+  }
+  return out.length ? out : null;
+}
+function shortlistFallbacksOf(value) {
+  return Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000 ? value : null;
+}
+
 // ── Phase 3: complete one attempt idempotently ────────────────────────
 // Lock the attempt, compute cumulative provider totals (delta vs the latest
 // terminal row for the same thread), estimate cost from the immutable pricing
@@ -505,6 +555,9 @@ async function completeCodexAttempt({
   pool, turnUuid, status = 'completed', threadId = null, usageTotal = null,
   errorCode = null, errorDetail = null, telemetryComponent = null,
   telemetryMetrics = null, usageScope = 'thread', routedProvider = null,
+  // Run seven: every provider the turn used and its shortlist fallbacks
+  // (routedProvidersOf), kept in the row's metadata beside routed_provider.
+  routedProviders = null, shortlistFallbacks = null,
 }) {
   if (!turnUuid) return { updated: false, alreadyTerminal: true };
   const client = await pool.connect();
@@ -561,6 +614,10 @@ async function completeCodexAttempt({
     // finished, or, without those, a floor from what Claude Code streamed.
     if (usageTotal?.source === 'requests') metadata.usage_source = 'request_sum';
     if (usageTotal?.source === 'stream') metadata.usage_source = 'stream_floor';
+    const providers = routedProvidersOf(routedProviders);
+    if (providers) metadata.routed_providers = providers;
+    const fallbacks = shortlistFallbacksOf(shortlistFallbacks);
+    if (fallbacks != null) metadata.shortlist_fallbacks = fallbacks;
     if (measuredComponent) {
       metadata.telemetry_component = measuredComponent;
       const errorClassByCode = {
@@ -572,6 +629,7 @@ async function completeCodexAttempt({
         dispatch_failed: 'worker',
         agent_context_changed: 'worker',
         recovery_abandoned: 'worker',
+        worker_lost: 'worker',
       };
       const normalizedMetrics = llmTelemetry.normalizeDiagnostics({
         ...(telemetryMetrics || {}),
@@ -583,6 +641,12 @@ async function completeCodexAttempt({
           || (status === 'cancelled' ? 'cancelled'
             : status === 'failed' ? 'provider' : null),
       });
+      // The paths the turn changed after its first browser call (worker.js
+      // noteFileChangeAfterBrowser), at most CHANGED_PATHS_MAX: a path,
+      // never what is in it. On this row only: normalizeDiagnostics feeds
+      // the content-free llm_invocation ledger too, and keeps no path.
+      const afterBrowser = changedPaths(telemetryMetrics?.filesChangedAfterFirstBrowser);
+      if (afterBrowser) normalizedMetrics.files_changed_after_first_browser = afterBrowser;
       if (Object.keys(normalizedMetrics).length) {
         metadata.telemetry_metrics = normalizedMetrics;
       }
@@ -902,11 +966,14 @@ async function settleRecoveredAgentAttempt({
       usageTotal: usageTotalFromResult({ ...(result || {}), agentHarness: activeTurn.harness }),
       usageScope: usageScopeForHarness(activeTurn.harness),
       routedProvider: result?.routedProvider || null,
+      routedProviders: result?.routedProviders || null,
+      shortlistFallbacks: result?.shortlistFallbacks ?? null,
       telemetryComponent: result?.providerDispatched === true
         ? activeTurn.telemetryComponent || null
         : null,
       telemetryMetrics: result || null,
-      errorCode: result?.agentRetryFresh === true ? 'resume_thread_missing' : null,
+      errorCode: result?.agentRetryFresh === true ? 'resume_thread_missing'
+        : result?.markerlessCause ? 'worker_lost' : null,
     });
   }
   if (typeof settleClaude === 'function') {
@@ -1050,6 +1117,9 @@ module.exports = {
   usageScopeForHarness,
   startCodexAttempt,
   completeCodexAttempt,
+  changedPaths,
+  routedProvidersOf,
+  shortlistFallbacksOf,
   completeCodexTurn,
   resolveCodexTurn,
   settleRecoveredAgentAttempt,

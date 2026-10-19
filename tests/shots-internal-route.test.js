@@ -1,8 +1,11 @@
 'use strict';
 
-// The shots agent's only way into the platform: three run-scoped internal
-// routes (src/routes/internal.js) behind a purpose-bound shots JWT that
-// names both the proposal session and the run.
+// The shots agent's only way into the platform: run-scoped internal routes
+// (src/routes/internal.js) behind a purpose-bound shots JWT that names both
+// the proposal session and the run, answered from the run's workspace in
+// Postgres (services/shots-control.js) by whichever process serves them.
+//
+// Run with: TEST_DATABASE_URL=postgres://… node --test tests/shots-internal-route.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -11,9 +14,40 @@ const express = require('express');
 process.env.WORKER_JWT_SECRET = process.env.WORKER_JWT_SECRET || 'shots-route-test-secret';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'shots-route-test-secret';
 
-// The route acquires a pool at construction, but these requests need only the
-// run-scoped in-memory control. Keep the HTTP test independent of Postgres.
-require('../src/db/pool').getPool = () => ({ query: async () => assert.fail('unexpected database request') });
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const { Pool } = require('pg');
+const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
+
+// One database for the file: the routes take their pool when they are built.
+let pool = null;
+let admin = null;
+let dbName = null;
+let skip = null;
+const ready = (async () => {
+  admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+  admin.on('error', () => {});
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    skip = 'PostgreSQL unavailable; set TEST_DATABASE_URL to require this check';
+    return;
+  }
+  dbName = 'shots_route_' + crypto.randomBytes(6).toString('hex');
+  await admin.query(`CREATE DATABASE ${dbName}`);
+  const url = new URL(DSN); url.pathname = '/' + dbName;
+  pool = new Pool({ connectionString: String(url), max: 4 });
+  pool.on('error', () => {});
+  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+  const { rows: [u] } = await pool.query(`INSERT INTO users (username, password) VALUES ('route', 'x') RETURNING id`);
+  const { rows: [a] } = await pool.query(`INSERT INTO apps (name, slug, created_by) VALUES ('route', 'route', $1) RETURNING id`, [u.id]);
+  await pool.query(`INSERT INTO chat_sessions (id, app_id, user_id, status) VALUES (42, $1, $2, 'promoted'), (43, $1, $2, 'promoted')`, [a.id, u.id]);
+})();
+test.after(async () => {
+  if (pool) await pool.end();
+  if (dbName) { await admin.query(`DROP DATABASE ${dbName}`); await admin.end(); }
+});
+require('../src/db/pool').getPool = () => pool;
 
 const { internalRoutes } = require('../src/routes/internal');
 const controlPlane = require('../src/services/shots-control');
@@ -33,11 +67,19 @@ async function listen(app, t) {
 // global JSON parser runs first, so an octet-stream file must pass through it
 // untouched to the shot route's own raw parser.
 async function serve(t, { runId, sessionId = 42, intent = fixtures.motionIntent(), context = {}, expiresAt, homeTiles } = {}) {
-  controlPlane._clearForTests();
-  const registration = controlPlane.registerRun({
+  await ready;
+  if (skip) { t.skip(skip); return null; }
+  await pool.query('DELETE FROM shot_run_control WHERE run_id = $1', [runId]);
+  await controlPlane.create(pool, {
     runId, sessionId, intent, context, expiresAt: expiresAt ?? Date.now() + 60_000, homeTiles,
   });
-  t.after(() => { registration.unregister(); controlPlane._clearForTests(); });
+  // The run is its proposal's current one, its agent at work.
+  await pool.query(`UPDATE chat_sessions SET shots_run_id = $2, shots_state = 'exploring' WHERE id = $1`, [sessionId, runId]);
+  // What the run's workspace holds now.
+  const registration = {
+    control: () => controlPlane.read(pool, runId),
+    end: () => pool.query(`UPDATE chat_sessions SET shots_state = 'failed' WHERE id = $1`, [sessionId]),
+  };
   const app = express();
   // Keeps Express's default handler from printing the deliberate 413 below.
   app.set('env', 'test');
@@ -69,7 +111,7 @@ test('the brief is readable only with this run\'s shots token', async (t) => {
   assert.equal(read.status, 200);
   assert.deepEqual(read.body, {
     ok: true,
-    context: { ...context, progress: registration.control.progress() },
+    context: { ...context, progress: (await registration.control()).progress() },
   });
   assert.deepEqual(read.body.context.progress.map((entry) => entry.status), ['missing', 'missing']);
 
@@ -93,7 +135,7 @@ test('the brief is readable only with this run\'s shots token', async (t) => {
     assert.deepEqual([refused.status, refused.body.code], [401, 'bad_token']);
   }
 
-  registration.unregister();
+  await registration.end();
   const gone = await json(await get(bearer(token)));
   assert.deepEqual([gone.status, gone.body.code], [410, 'shots_control_not_found']);
 });
@@ -122,9 +164,10 @@ test('the shot route takes the raw file and maps each refusal to a status', asyn
     saved: true, change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen',
     bytes: image.length, width: 5, height: 4, progress: undefined,
   });
-  const [stored] = registration.control.saved.values();
+  const [stored] = (await registration.control()).saved.values();
   assert.equal(stored.side, 'head');
-  assert.ok(stored.data.equals(image), 'the stored bytes are exactly the request body');
+  const [file] = await controlPlane.filesFor(pool, runId);
+  assert.ok(file.data.equals(image), 'the stored bytes are exactly the request body');
 
   assert.equal((await json(await post({ ...still, side: 'before', kind: 'element' }, image))).body.result.kind,
     'element');
@@ -132,7 +175,7 @@ test('the shot route takes the raw file and maps each refusal to a status', asyn
     fixtures.webm()));
   assert.equal(clip.status, 200);
   assert.equal(clip.body.result.kind, 'clip');
-  assert.equal(registration.control.saved.size, 3);
+  assert.equal((await registration.control()).saved.size, 3);
 
   for (const [query, body, status, code] of [
     [{ ...still, screen: 'phone', side: 'after' }, image, 400, 'unknown_screen'],
@@ -173,8 +216,47 @@ test('the shot route takes the raw file and maps each refusal to a status', asyn
   });
   assert.equal(unauthenticated.status, 401);
 
-  assert.equal(registration.control.saved.size, 3, 'no refused request saved anything');
-  assert.equal(registration.control.lastToolFailure.operation, 'save-shot');
+  assert.equal((await registration.control()).saved.size, 3, 'no refused request saved anything');
+  assert.equal((await registration.control()).lastToolFailure.operation, 'save-shot');
+});
+
+// Dark shots (#4459): the same query field carries the mode, dark whole
+// screens live beside their light copies, and a dark shot that matches its
+// light one stores nothing.
+test('the shot route takes a theme: dark is stored beside light, whole screens only', async (t) => {
+  const runId = 'b'.repeat(32);
+  const { registration, base, token } = await serve(t, { runId });
+  const post = (query, body, auth = token) => fetch(`${base}/shot?${new URLSearchParams(query)}`,
+    { method: 'POST', headers: { authorization: `Bearer ${auth}`, 'content-type': 'application/octet-stream' }, body });
+  const still = { change: 'invite-suggestions', screen: 'desktop' };
+
+  const midnight = await json(await post({ ...still, side: 'after', theme: 'midnight' }, fixtures.png()));
+  assert.deepEqual([midnight.status, midnight.body.code], [400, 'invalid_theme']);
+
+  const light = await json(await post({ ...still, side: 'after' }, fixtures.png({ shade: 3 })));
+  const dark = await json(await post({ ...still, side: 'after', theme: 'dark' }, fixtures.png({ shade: 40 })));
+  assert.deepEqual([light.status, dark.status], [200, 200]);
+  const control = await registration.control();
+  assert.deepEqual([...control.saved.values()].map((file) => [file.theme, controlPlane.dbSlot(file).endsWith('/dark')]), [
+    ['light', false], ['dark', true],
+  ], 'the theme survives the round trip through Postgres, under two slot names');
+
+  // Only a whole screen may be dark.
+  const elementDark = await json(await post({ ...still, side: 'after', kind: 'element', theme: 'dark' }, fixtures.png()));
+  assert.deepEqual([elementDark.status, elementDark.body.code], [400, 'dark_screen_only']);
+  const clipDark = await json(await post({ change: 'saved-toast', screen: 'desktop', side: 'after', kind: 'clip', theme: 'dark' },
+    fixtures.webm()));
+  assert.deepEqual([clipDark.status, clipDark.body.code], [400, 'dark_screen_only']);
+
+  // A dark shot identical to its light one stores nothing and says so.
+  const same = await json(await post({ ...still, side: 'after', theme: 'dark' }, fixtures.png({ shade: 3 })));
+  assert.equal(same.body.result.sameAsLight, true);
+  assert.equal(same.body.result.saved, false);
+  assert.equal((await registration.control()).saved.size, 2, 'still light and dark only');
+
+  // filesFor serves the theme with the bytes (the screen diff reads it).
+  const files = await controlPlane.filesFor(pool, runId);
+  assert.deepEqual(files.map((file) => [file.variant, file.theme]).sort(), [['context', 'dark'], ['context', 'light']]);
 });
 
 test('the skip route records a reason per change or for all, then closes the turn', async (t) => {
@@ -202,7 +284,7 @@ test('the skip route records a reason per change or for all, then closes the tur
   const foreign = await json(await skip({ reason: 'Not mine to skip.' },
     platformJwt.signShotsToken({ runId, sessionId: 43 })));
   assert.deepEqual([foreign.status, foreign.body.code], [403, 'shots_scope_mismatch']);
-  assert.equal(registration.control.skippedAll, null);
+  assert.equal((await registration.control()).skippedAll, null);
 
   // The bridge sends change: null to skip everything.
   const all = await json(await skip({ change: null, reason: 'Every screen shows a sign-in page.' }));
@@ -220,7 +302,7 @@ test('the skip route records a reason per change or for all, then closes the tur
     method: 'POST', headers: { ...bearer(token), 'content-type': 'application/octet-stream' }, body: fixtures.png(),
   }));
   assert.deepEqual([late.status, late.body.code], [409, 'shots_turn_finished']);
-  assert.equal(registration.control.saved.size, 0);
+  assert.equal((await registration.control()).saved.size, 0);
 });
 
 test('the note route records what a change\'s shots leave out, for its own run only', async (t) => {
@@ -232,7 +314,7 @@ test('the note route records what a change\'s shots leave out, for its own run o
   const saved = await json(await note({ change: 'invite-suggestions', note: 'The suggestions list needs a second member.' }));
   assert.equal(saved.status, 200);
   assert.equal(saved.body.result.noted, 'invite-suggestions');
-  assert.equal(registration.control.notes.get('invite-suggestions'), 'The suggestions list needs a second member.');
+  assert.equal((await registration.control()).notes.get('invite-suggestions'), 'The suggestions list needs a second member.');
 
   for (const [body, code] of [
     [{ change: 'invite-suggestions' }, 'note_required'],
@@ -266,7 +348,7 @@ test('the problem route records what the agent noticed on the after build, for i
   assert.deepEqual(saved.body.result, {
     noticed: 'invite-suggestions', screen: 'desktop', alsoBefore: true, notices: 1, remaining: 4,
   });
-  assert.deepEqual(registration.control.notices, [{
+  assert.deepEqual((await registration.control()).notices, [{
     text: 'The sort control overlaps the Done heading.', change: 'invite-suggestions', screen: 'desktop',
     shot: 'screen', alsoBefore: true,
   }]);
@@ -289,6 +371,36 @@ test('the problem route records what the agent noticed on the after build, for i
     platformJwt.signShotsToken({ runId, sessionId: 43 })));
   assert.deepEqual([foreign.status, foreign.body.code], [403, 'shots_scope_mismatch']);
   assert.equal((await fetch(`${base}/problem`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+  })).status, 401);
+});
+
+test('the condition route records what the agent is about to do to both builds, for its own run only', async (t) => {
+  const runId = '6'.repeat(32);
+  const { registration, base, token } = await serve(t, { runId });
+  const condition = (body, auth = token) => fetch(`${base}/condition`, {
+    method: 'POST', headers: { ...bearer(auth), 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const held = await json(await condition({ change: 'invite-suggestions', kind: 'request_held', request: '/api/items?page=1' }));
+  assert.deepEqual([held.status, held.body.result], [200, { recorded: 'invite-suggestions', conditions: 1 }]);
+  const uploaded = await json(await condition({ change: 'invite-suggestions', kind: 'sample_file', files: ['document.pdf'] }));
+  assert.equal(uploaded.body.result.conditions, 2);
+  assert.deepEqual((await registration.control()).conditions.get('invite-suggestions'), [
+    { kind: 'request_held', request: '/api/items?page=1' },
+    { kind: 'sample_file', files: ['document.pdf'] },
+  ]);
+  for (const [body, code] of [
+    [{ change: 'someone-elses-change', kind: 'request_held', request: '/api/items' }, 'unknown_change'],
+    [{ change: 'invite-suggestions', kind: 'request_held', request: '/api/*' }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'sample_file', files: ['../../member.json'] }, 'invalid_condition'],
+  ]) {
+    const refused = await json(await condition(body));
+    assert.deepEqual([refused.status, refused.body.code], [400, code]);
+  }
+  const foreign = await json(await condition({ change: 'invite-suggestions', kind: 'request_held', request: '/api/x' },
+    platformJwt.signShotsToken({ runId, sessionId: 43 })));
+  assert.deepEqual([foreign.status, foreign.body.code], [403, 'shots_scope_mismatch']);
+  assert.equal((await fetch(`${base}/condition`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
   })).status, 401);
 });
@@ -327,7 +439,7 @@ test('a run without home tiles answers 404 for them', async (t) => {
   assert.deepEqual([response.status, response.body.code], [404, 'home_tile_unavailable']);
 });
 
-test('the brief, shot, skip, note, problem and home tile routes are the whole shots surface', async (t) => {
+test('the brief, shot, skip, note, problem, condition and home tile routes are the whole shots surface', async (t) => {
   const runId = '1'.repeat(32);
   const { base, token } = await serve(t, { runId });
   // The replay-era routes are gone, even for a valid token of this run.
@@ -338,7 +450,7 @@ test('the brief, shot, skip, note, problem and home tile routes are the whole sh
     });
     assert.equal(response.status, 404, `POST /${route} must not exist`);
   }
-  for (const route of ['shot', 'skip', 'note', 'problem', 'diagnostics', 'artifacts']) {
+  for (const route of ['shot', 'skip', 'note', 'problem', 'condition', 'diagnostics', 'artifacts']) {
     const response = await fetch(`${base}/${route}`, { headers: bearer(token) });
     assert.equal(response.status, 404, `GET /${route} must not exist`);
   }

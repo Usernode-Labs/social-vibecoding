@@ -30,27 +30,27 @@ function moderationRoutes(config, { pool = getPool(config) } = {}) {
     }
   };
   router.post('/api/reports', conversationReportLimiter, run(async (req, res) => {
-    res.status(202).json(await svc.submitReport(pool, req.user, req.body));
+    res.status(202).json(await svc.submitReport(pool, req.user, req.body, { config }));
   }));
   // Old clients use the same service/queue; do not leave two moderation systems.
   router.post('/api/conversations/:id/messages/:messageId/report', conversationReportLimiter, run(async (req, res) => {
     const { rows } = await pool.query('SELECT id FROM conversation_messages WHERE id = $1 AND conversation_id = $2', [svc.id(req.params.messageId), svc.id(req.params.id)]);
     if (!rows.length) throw new svc.ModerationError(404, 'Target unavailable');
-    const result = await svc.submitReport(pool, req.user, { ...req.body, targetType: 'conversation_message', target: req.params.messageId });
+    const result = await svc.submitReport(pool, req.user, { ...req.body, targetType: 'conversation_message', target: req.params.messageId }, { config });
     res.status(202).json({ ok: true, ...result });
   }));
   router.post(['/api/profiles/:username/report', '/api/users/:username/report'], conversationReportLimiter, run(async (req, res) => {
-    const result = await svc.submitReport(pool, req.user, { ...req.body, targetType: 'user', target: req.params.username });
+    const result = await svc.submitReport(pool, req.user, { ...req.body, targetType: 'user', target: req.params.username }, { config });
     res.status(202).json({ ok: true, ...result });
   }));
   router.post('/api/apps/:slug/report', conversationReportLimiter, run(async (req,res) => {
-    const result = await svc.submitReport(pool,req.user,{ ...req.body,targetType:'app',target:req.params.slug });
+    const result = await svc.submitReport(pool,req.user,{ ...req.body,targetType:'app',target:req.params.slug },{ config });
     res.status(202).json({ ok:true,...result });
   }));
   router.post('/api/apps/:slug/messages/:id/report', conversationReportLimiter, run(async (req,res) => {
     const { rows } = await pool.query('SELECT m.id FROM chat_messages m JOIN apps a ON a.id = m.app_id WHERE m.id = $1 AND a.slug = $2', [svc.id(req.params.id),req.params.slug]);
     if (!rows.length) throw new svc.ModerationError(404,'Target unavailable');
-    const result = await svc.submitReport(pool,req.user,{ ...req.body,targetType:'app_message',target:req.params.id });
+    const result = await svc.submitReport(pool,req.user,{ ...req.body,targetType:'app_message',target:req.params.id },{ config });
     res.status(202).json({ ok:true,...result });
   }));
   // Compatibility for older admin clients: their decisions go through the
@@ -91,16 +91,26 @@ function moderationRoutes(config, { pool = getPool(config) } = {}) {
     const since = req.query.since || null;
     if (since && !/^\d{4}-\d{2}-\d{2}$/.test(since)) throw new svc.ModerationError(400, 'Invalid date');
     if (since && (Number.isNaN(Date.parse(since)) || new Date(since).toISOString().slice(0,10) !== since)) throw new svc.ModerationError(400, 'Invalid date');
-    const before = svc.id(req.query.before);
+    // #5102: cases with a child-safety report come first, newest first within
+    // each group. The cursor names its group: "c<id>" inside the child-safety
+    // group, "<id>" after it.
+    const cursor = String(req.query.before || '');
+    const priorityCursor = cursor.startsWith('c');
+    const before = svc.id(priorityCursor ? cursor.slice(1) : cursor);
     const { rows } = await pool.query(
-      `SELECT c.*, COUNT(r.id)::int AS report_count, ARRAY_AGG(DISTINCT r.reason) AS reasons
-       FROM moderation_cases c LEFT JOIN moderation_reports r ON r.case_id = c.id
-       WHERE ($1 = 'all' OR c.status = $1) AND ($2::text IS NULL OR c.target_type = $2)
-         AND ($3::text IS NULL OR EXISTS (SELECT 1 FROM moderation_reports mr WHERE mr.case_id = c.id AND mr.reason = $3))
-         AND ($4::date IS NULL OR c.created_at >= $4::date)
-         AND ($5::bigint IS NULL OR c.id < $5)
-       GROUP BY c.id ORDER BY c.id DESC LIMIT 51`, [status, type, reason, since, before]);
-    res.json({ cases: rows.slice(0,50), next: rows.length > 50 ? rows[49].id : null, canWrite: !!req.user.canAdminWrite });
+      `SELECT * FROM (
+         SELECT c.*, COUNT(r.id)::int AS report_count, ARRAY_AGG(DISTINCT r.reason) AS reasons,
+                COALESCE(BOOL_OR(r.reason = 'child_safety'), FALSE) AS child_safety
+         FROM moderation_cases c LEFT JOIN moderation_reports r ON r.case_id = c.id
+         WHERE ($1 = 'all' OR c.status = $1) AND ($2::text IS NULL OR c.target_type = $2)
+           AND ($3::text IS NULL OR EXISTS (SELECT 1 FROM moderation_reports mr WHERE mr.case_id = c.id AND mr.reason = $3))
+           AND ($4::date IS NULL OR c.created_at >= $4::date)
+         GROUP BY c.id
+       ) q
+       WHERE $5::bigint IS NULL OR (q.child_safety = $6 AND q.id < $5) OR ($6 AND NOT q.child_safety)
+       ORDER BY q.child_safety DESC, q.id DESC LIMIT 51`, [status, type, reason, since, before, priorityCursor]);
+    const last = rows[49];
+    res.json({ cases: rows.slice(0,50), next: rows.length > 50 ? `${last.child_safety ? 'c' : ''}${last.id}` : null, canWrite: !!req.user.canAdminWrite });
   }));
   router.get('/api/admin/moderation/:id', run(async (req, res) => {
     const caseId = svc.id(req.params.id);

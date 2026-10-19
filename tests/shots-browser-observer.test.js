@@ -588,3 +588,128 @@ test('the observer starts the installed Playwright server unless the dry run nam
   assert.deepEqual(browserCommand('["npx",""]'), ['mcp-server-playwright']);
   assert.deepEqual(browserCommand('["npx","@playwright/mcp@0.0.41"]'), ['npx', '@playwright/mcp@0.0.41']);
 });
+
+// upload_file (worker/shots-mcp.js) asks the observer to send the browser an
+// upload the agent's own tools cannot: the parker queues it with the agent's
+// calls and hands its answer back to the tool alone.
+test('a shots tool\'s own call reaches the browser in turn, and its answer goes to the tool, never the agent', async () => {
+  const h = parkerHarness();
+  // Behind a screenshot that waits for its park.
+  h.parker.input.write(call(1, 'browser_click', { element: 'Upload', ref: 'e1' }) + call(2, 'browser_take_screenshot'));
+  await h.tick();
+  const uploaded = h.parker.inject('browser_file_upload', { paths: ['/samples/landscape.png'] });
+  await h.tick();
+  assert.deepEqual(h.names(), ['browser_click', 'browser_mouse_move_xy']);
+  h.parker.output.write(`${JSON.stringify({ jsonrpc: '2.0', id: h.forwarded[1].id, result: { content: [] } })}\n`);
+  await h.tick();
+  assert.deepEqual(h.names(), ['browser_click', 'browser_mouse_move_xy', 'browser_take_screenshot', 'browser_file_upload']);
+  const injected = h.forwarded[3];
+  assert.equal(injected.id, 'usernode-shots-control-n0-1');
+  assert.deepEqual(injected.params.arguments, { paths: ['/samples/landscape.png'] });
+  const page = '### Page state\n- Page URL: http://head.internal/upload';
+  h.parker.output.write([
+    JSON.stringify({ jsonrpc: '2.0', id: 1, result: {} }),
+    JSON.stringify({ result: { content: [{ type: 'text', text: page }] }, jsonrpc: '2.0', id: injected.id }),
+    JSON.stringify({ jsonrpc: '2.0', id: 2, result: {} }),
+    '',
+  ].join('\n'));
+  assert.deepEqual(await uploaded, { outcome: 'ok', text: page });
+  await h.tick();
+  assert.deepEqual(h.answerIds(), [1, 2], 'the agent sees only its own calls answered');
+  // A refusal is the tool's to report.
+  const refused = h.parker.inject('browser_file_upload', {});
+  await h.tick();
+  h.parker.output.write(`${JSON.stringify({ jsonrpc: '2.0', id: h.forwarded.at(-1).id,
+    result: { isError: true, content: [{ type: 'text', text: 'No file chooser visible' }] } })}\n`);
+  assert.deepEqual(await refused, { outcome: 'tool_error', text: 'No file chooser visible' });
+  assert.deepEqual(h.answerIds(), [1, 2]);
+  h.parker.close();
+});
+
+test('an injected call not answered in time is dropped when it is, and a closed browser answers at once', async () => {
+  const h = parkerHarness();
+  const late = h.parker.inject('browser_file_upload', { paths: ['/samples/table.csv'] }, { limitMs: 20 });
+  await h.tick();
+  const id = h.forwarded.at(-1).id;
+  assert.deepEqual(await late, { outcome: 'timeout', text: '' });
+  h.parker.output.write(`${JSON.stringify({ jsonrpc: '2.0', id, result: { content: [] } })}\n`);
+  await h.tick();
+  assert.deepEqual(h.answerIds(), [], 'the late answer never reaches the agent');
+  const pending = h.parker.inject('browser_file_upload', {});
+  h.parker.close();
+  assert.deepEqual(await pending, { outcome: 'browser_gone', text: '' });
+  assert.deepEqual(await h.parker.inject('browser_file_upload', {}), { outcome: 'browser_gone', text: '' });
+});
+
+test('the observer chooses the sample files itself, on its own socket, for the turn\'s token only', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-ctl-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const samplesDir = path.join(dir, 'samples');
+  require('../worker/shots-samples').writeSamples(samplesDir);
+  const received = path.join(dir, 'received.log');
+  const diagnosticFile = path.join(dir, 'diagnostics.log');
+  fs.writeFileSync(diagnosticFile, '');
+  const token = 'e'.repeat(64);
+  const observerPath = path.join(__dirname, '..', 'worker', 'shots-browser-observer.js');
+  const stub = `const fs=require('fs');process.stdin.setEncoding('utf8');let b='';process.stdin.on('data',c=>{b+=c;let i;while((i=b.indexOf('\\n'))>=0){const line=b.slice(0,i);b=b.slice(i+1);fs.appendFileSync(${JSON.stringify(received)},line+'\\n');const m=JSON.parse(line);process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{content:[{type:'text',text:'### Ran '+m.params.name+' '+JSON.stringify(m.params.arguments)+'\\n### Page state\\n- Page URL: http://head.internal/upload'}]}})+'\\n')}});`;
+  const launcher = `require(${JSON.stringify(observerPath)}).start({persona:'member',binary:process.execPath,args:['-e',${JSON.stringify(stub)}],controlDir:${JSON.stringify(dir)},controlToken:${JSON.stringify(token)},samplesDir:${JSON.stringify(samplesDir)},diagnosticFile:${JSON.stringify(diagnosticFile)}});`;
+  const child = spawn(process.execPath, ['-e', launcher], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const stdout = [];
+  child.stdout.on('data', (chunk) => stdout.push(chunk));
+  t.after(() => child.kill('SIGKILL'));
+  const socketPath = path.join(dir, 'member.sock');
+  for (let i = 0; i < 300; i += 1) {
+    try { if ((fs.statSync(socketPath).mode & 0o777) === 0o600) break; } catch { /* not yet */ }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(fs.statSync(socketPath).mode & 0o777, 0o600);
+  const ask = (message) => new Promise((resolve, reject) => {
+    const socket = require('node:net').createConnection(socketPath);
+    let data = '';
+    socket.on('connect', () => socket.write(`${JSON.stringify(message)}\n`));
+    socket.on('data', (chunk) => { data += chunk; });
+    socket.on('end', () => resolve(JSON.parse(data)));
+    socket.on('error', reject);
+  });
+
+  const answer = await ask({ token, action: 'upload', files: ['landscape.png', 'table.csv'] });
+  const chosen = [path.join(samplesDir, 'landscape.png'), path.join(samplesDir, 'table.csv')];
+  assert.deepEqual(answer, { ok: true, outcome: 'ok',
+    text: `### Ran browser_file_upload ${JSON.stringify({ paths: chosen })}\n### Page state\n- Page URL: http://head.internal/upload` });
+  for (const [message, code] of [
+    [{ token: 'f'.repeat(64), action: 'upload', files: ['landscape.png'] }, 'forbidden'],
+    [{ action: 'upload', files: ['landscape.png'] }, 'forbidden'],
+    [{ token, action: 'evaluate', files: [] }, 'unknown_action'],
+    [{ token, action: 'upload', files: ['../state/member.json'] }, 'unknown_sample_file'],
+    [{ token, action: 'upload', files: ['/etc/passwd'] }, 'unknown_sample_file'],
+    [{ token, action: 'upload', files: 'landscape.png' }, 'invalid_sample_files'],
+  ]) {
+    const refused = await ask(message);
+    assert.deepEqual([refused.ok, refused.code], [false, code], JSON.stringify(message));
+  }
+  // The browser was sent the one upload, with the samples' own paths, and the
+  // agent's stream carried none of it.
+  const sent = fs.readFileSync(received, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(sent.map((message) => [message.params.name, message.params.arguments]),
+    [['browser_file_upload', { paths: chosen }]]);
+  assert.match(sent[0].id, /^usernode-shots-control-[0-9a-f]{12}-1$/);
+  assert.equal(Buffer.concat(stdout).length, 0);
+  const events = fs.readFileSync(diagnosticFile, 'utf8').trim().split('\n').filter(Boolean)
+    .map((line) => JSON.parse(line.slice(MARKER.length)));
+  assert.deepEqual(events.filter((event) => event.kind === 'sample_upload'),
+    [{ kind: 'sample_upload', persona: 'member', outcome: 'ok', count: 2 }]);
+  assert.doesNotMatch(fs.readFileSync(diagnosticFile, 'utf8'), /landscape|samples/, 'no file names in the trace');
+
+  child.stdin.end();
+  child.kill('SIGTERM');
+  await once(child, 'close');
+  assert.equal(fs.existsSync(socketPath), false, 'the socket goes with the browser');
+});
+
+test('the observer opens no control without its directory and a well-formed token', () => {
+  const { startControl } = require('../worker/shots-browser-observer');
+  const parker = { inject: async () => ({ outcome: 'ok', text: '' }) };
+  assert.equal(startControl({ dir: '', name: 'member', token: 'e'.repeat(64), parker }), null);
+  assert.equal(startControl({ dir: os.tmpdir(), name: 'member', token: 'short', parker }), null);
+  assert.equal(startControl({ dir: os.tmpdir(), name: '../member', token: 'e'.repeat(64), parker }), null);
+});

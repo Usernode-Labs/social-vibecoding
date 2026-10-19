@@ -29,6 +29,9 @@ import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type Ref
 
 import { ChevronDownIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
+
 /**
  * A typed "+…" number as the server takes it (firebase-phone-auth.js
  * normalizePhone): `+`, the country code and the number, with spaces,
@@ -60,7 +63,7 @@ export async function readPhone(el: HTMLInputElement | null | undefined): Promis
     // The chunk could not load: a "+…" number still goes as it is.
     numbers = null;
     const value = phoneE164(el?.value || '');
-    return value ? { ok: true, e164: value } : { ok: false, error: 'Network error' };
+    return value ? { ok: true, e164: value } : { ok: false, error: translate('auth:phone.loadFailed') };
   }
   const country = el?.dataset.phoneCountry;
   return n.toE164(el?.value || '', n.isCountry(country) ? country : n.FALLBACK);
@@ -82,6 +85,7 @@ export function PhoneInput({ id, inputRef, defaultValue = '', className = '', on
   className?: string;
   onKeyDown?: (e: ReactKeyboardEvent<HTMLInputElement>) => void;
 }) {
+  const t = useMessages('auth');
   const [country, setCountry] = useState('US');
   const [dial, setDial] = useState('1');
   const [options, setOptions] = useState<{ code: string; label: string }[]>([{ code: 'US', label: `${flag('US')} +1` }]);
@@ -115,7 +119,7 @@ export function PhoneInput({ id, inputRef, defaultValue = '', className = '', on
         <span aria-hidden="true">{flag(country)}</span>
         <span>+{dial}</span>
         <ChevronDownIcon className="h-4 w-4 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
-        <select aria-label="Country" value={country} onChange={(e) => choose(e.target.value)} className={SELECT}>
+        <select aria-label={t('auth:phone.country')} value={country} onChange={(e) => choose(e.target.value)} className={SELECT}>
           {options.map((o) => <option key={o.code} value={o.code}>{o.label}</option>)}
         </select>
       </div>

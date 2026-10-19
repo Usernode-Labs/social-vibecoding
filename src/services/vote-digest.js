@@ -38,17 +38,15 @@
 
 const log = require('./logger');
 const { VOTE_DIGEST_LOCK } = require('./advisory-locks');
+const { firstVersionSql } = require('./first-version-rule');
 
-const INTERVAL_MS = 60 * 60 * 1000;      // sweep hourly
-const FIRST_SWEEP_DELAY_MS = 5 * 60_000; // let boot settle first
+const INTERVAL_MS = 60 * 60 * 1000;      // swept hourly (the vote-digest clock)
 // 20 rather than 24: the sweep is hourly and a strict 24 would drift a
 // person's digest an hour later every day until it lapped, skipping one.
 const MIN_GAP_HOURS = 20;
 // Nobody reads "47 proposals need you" as a to-do list, and a runaway count
 // usually means something is wrong rather than that somebody is very busy.
 const MAX_COUNT = 99;
-
-let timer = null;
 
 /**
  * Users who owe at least one vote, with the count.
@@ -68,7 +66,10 @@ let timer = null;
  *   - `hidden` is not read, so a hidden opt-out row counts like a pin.
  *
  * Excluded: the proposal's own author, apps the person blocked, proposals
- * they already voted on, and anyone who had a digest in the last
+ * they already voted on, a change Homeroom bot built for a request they
+ * asked for, a change they were told is ready to try in the last 24 hours,
+ * a project's first version (it goes live without a vote:
+ * services/first-version-rule.js), and anyone who had a digest in the last
  * MIN_GAP_HOURS.
  *
  * Deliberately ONE query rather than a loop: this runs over every user on
@@ -88,6 +89,8 @@ const PENDING_SQL = `
     SELECT cs.id, cs.app_id, cs.user_id AS author_id
       FROM chat_sessions cs
      WHERE cs.status = 'promoted'
+       -- 13 Oct 2026, D1: a project's first version waits on nobody's vote.
+       AND NOT ${firstVersionSql('cs')}
   )
   SELECT s.user_id, COUNT(DISTINCT p.id) AS pending,
          -- The one change, when there is exactly one: the row names it, so a
@@ -102,6 +105,22 @@ const PENDING_SQL = `
        SELECT 1 FROM pr_votes v
         WHERE v.session_id = p.id AND v.user_id = s.user_id
      )
+     -- "One story": not a change Homeroom bot built for a request this
+     -- person asked for. The bot is its author, so they would otherwise
+     -- "owe" a vote on their own change; the bot's own message asks them.
+     AND NOT EXISTS (
+       SELECT 1 FROM homeroom_bot_runs r
+         JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+        WHERE r.proposal_session_id = p.id AND q.user_id = s.user_id
+     )
+     -- Nor one they were told is ready to try in the last day: that ping
+     -- already asked them.
+     AND NOT EXISTS (
+       SELECT 1 FROM notifications n
+        WHERE n.user_id = s.user_id AND n.session_id = p.id
+          AND n.kind IN ('change_ready', 'build_ready')
+          AND n.created_at > NOW() - INTERVAL '24 hours'
+     )
      AND NOT EXISTS (
        SELECT 1 FROM notifications n
         WHERE n.user_id = s.user_id
@@ -112,106 +131,77 @@ const PENDING_SQL = `
    HAVING COUNT(DISTINCT p.id) > 0`;
 
 /**
- * One sweep. Returns what it did, so a test can drive it directly without
- * waiting on the interval.
+ * One sweep: a pass of the `vote-digest` clock (src/workflow/clock/services.ts),
+ * on whichever process runs the workflow. Returns what it did, so a test
+ * can drive it directly.
+ *
+ * Each digest is written under its person's own transaction lock, by an
+ * INSERT that checks again that none went out within MIN_GAP_HOURS, so two
+ * sweeps at once (a run whose process stalled past its lease, beside the
+ * next) send one.
  */
 async function sweep(pool) {
-  const result = { candidates: 0, sent: 0, busy: false };
-  const client = await pool.connect();
-  let locked = false;
-  try {
-    // Every platform instance runs this interval. A digest sent twice is
-    // worse than one sent late, so a instance that cannot take the lock
-    // simply skips this hour rather than waiting for it.
-    const lock = await client.query(
-      'SELECT pg_try_advisory_lock($1, $2) AS acquired',
-      [VOTE_DIGEST_LOCK, 0]
-    );
-    if (lock.rows[0]?.acquired !== true) {
-      result.busy = true;
-      return result;
-    }
-    locked = true;
+  const result = { candidates: 0, sent: 0 };
+  const { rows } = await pool.query(PENDING_SQL, [String(MIN_GAP_HOURS)]);
+  result.candidates = rows.length;
+  if (!rows.length) return result;
 
-    const { rows } = await client.query(PENDING_SQL, [String(MIN_GAP_HOURS)]);
-    result.candidates = rows.length;
-    if (!rows.length) return result;
+  // Required lazily: this module is otherwise pure SQL and a top-level
+  // require would drag the notification stack into every context that
+  // merely wants its constants.
+  const notificationPreferences = require('./notification-preferences');
+  const notifications = require('./notifications');
+  const { withTransaction } = require('./cli-auth');
 
-    // Required lazily: this module is otherwise pure SQL and a top-level
-    // require would drag the notification stack into every context that
-    // merely wants its constants.
-    const notificationPreferences = require('./notification-preferences');
-    const notifications = require('./notifications');
+  // The digest is account-wide, so it resolves against the account layer
+  // only — there is no app to override it with.
+  const allowed = await notificationPreferences.filterUsersByCategory(pool, {
+    userIds: rows.map((row) => Number(row.user_id)),
+    appId: null,
+    categoryKey: 'vote_digest',
+  });
+  const allowedSet = new Set(allowed);
 
-    // The digest is account-wide, so it resolves against the account layer
-    // only — there is no app to override it with.
-    const allowed = await notificationPreferences.filterUsersByCategory(pool, {
-      userIds: rows.map((row) => Number(row.user_id)),
-      appId: null,
-      categoryKey: 'vote_digest',
-    });
-    const allowedSet = new Set(allowed);
-
-    for (const row of rows) {
-      const userId = Number(row.user_id);
-      if (!allowedSet.has(userId)) continue;
-      const pending = Math.min(Number(row.pending) || 0, MAX_COUNT);
-      if (!pending) continue;
-      // One change waiting: the row carries its app and session, and opens
-      // it (notifications.js). Several: no app, and a tap opens the
-      // Communities screen's Needs you, which lists them all.
-      const one = pending === 1 && row.only_session_id && row.only_app_id;
-      try {
-        const { rows: created } = await pool.query(
-          `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
-           VALUES ($1, $3, $4, NULL, 'vote_digest', $2)
-           RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
-          [userId, String(pending), one ? Number(row.only_app_id) : null, one ? Number(row.only_session_id) : null]
-        );
-        if (created[0]) {
-          result.sent += 1;
-          await notifications.hydrateAndPush(pool, created[0]);
-        }
-      } catch (err) {
-        // One user's digest failing must not end the sweep for everybody
-        // behind them in the list.
-        log.warn('vote-digest', 'Digest insert failed', { userId, err: err.message });
-      }
-    }
-    return result;
-  } finally {
-    if (locked) {
-      await client.query('SELECT pg_advisory_unlock($1, $2)', [VOTE_DIGEST_LOCK, 0])
-        .catch(() => {});
-    }
-    client.release();
-  }
-}
-
-function start(config) {
-  if (timer) return;
-  const { getPool } = require('../db/pool');
-  const run = async () => {
+  for (const row of rows) {
+    const userId = Number(row.user_id);
+    if (!allowedSet.has(userId)) continue;
+    const pending = Math.min(Number(row.pending) || 0, MAX_COUNT);
+    if (!pending) continue;
+    // One change waiting: the row carries its app and session, and opens
+    // it (notifications.js). Several: no app, and a tap opens the
+    // Communities screen's Needs you, which lists them all.
+    const one = pending === 1 && row.only_session_id && row.only_app_id;
     try {
-      const result = await sweep(getPool(config));
-      if (result.sent) log.info('vote-digest', 'Digests sent', result);
+      const created = await withTransaction(pool, async (db) => {
+        await db.query('SELECT pg_advisory_xact_lock($1, $2)', [VOTE_DIGEST_LOCK, userId]);
+        const { rows: made } = await db.query(
+          `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
+           SELECT $1, $3, $4, NULL, 'vote_digest', $2
+            WHERE NOT EXISTS (
+              SELECT 1 FROM notifications n
+               WHERE n.user_id = $1 AND n.kind = 'vote_digest'
+                 AND n.created_at > NOW() - ($5 || ' hours')::interval)
+           RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+          [userId, String(pending), one ? Number(row.only_app_id) : null, one ? Number(row.only_session_id) : null,
+            String(MIN_GAP_HOURS)]
+        );
+        return made[0] || null;
+      });
+      if (created) {
+        result.sent += 1;
+        await notifications.hydrateAndPush(pool, created);
+      }
     } catch (err) {
-      log.error('vote-digest', 'Sweep failed', { err: err.message });
+      // One user's digest failing must not end the sweep for everybody
+      // behind them in the list.
+      log.warn('vote-digest', 'Digest insert failed', { userId, err: err.message });
     }
-  };
-  setTimeout(run, FIRST_SWEEP_DELAY_MS);
-  timer = setInterval(run, INTERVAL_MS);
-  if (typeof timer.unref === 'function') timer.unref();
-}
-
-function stop() {
-  if (timer) clearInterval(timer);
-  timer = null;
+  }
+  if (result.sent) log.info('vote-digest', 'Digests sent', result);
+  return result;
 }
 
 module.exports = {
-  start,
-  stop,
   sweep,
   PENDING_SQL,
   INTERVAL_MS,

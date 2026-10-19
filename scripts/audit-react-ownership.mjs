@@ -128,10 +128,6 @@ const OWNED = [
   // its route: #challenges-root is only mounted — and only React's — while the
   // Leaderboard screen's Challenges tab is the section on screen.
   { sel: '#challenges-root', when: '#leaderboard/challenges' },
-  // The History pane (features/leaderboard/history-pane.tsx), the same
-  // arrangement one tab over: React-owned from the day it shipped, and only
-  // on screen while History is the section showing.
-  { sel: '#leaderboard-history-root', when: '#leaderboard/seasons' },
   // Settings' account block (features/settings/account-rows.tsx) inside the
   // footer settings.js MOVES between columns: the move is the module's, the
   // subtree is React's alone.
@@ -345,6 +341,7 @@ const OWNED = [
   { sel: '#admin-section-content', when: '#admin/sms' },     // features/admin/admin-sms.tsx
   { sel: '#admin-section-content', when: '#admin/status' },  // features/admin/admin-status.tsx
   { sel: '#admin-section-content', when: '#admin/incidents' }, // features/admin/admin-incidents.tsx (#4296)
+  { sel: '#admin-section-content', when: '#admin/apps' },   // features/admin/admin-apps-usage.tsx
   { sel: '#admin-section-content', when: '#admin/estimator' }, // features/admin/admin-estimator.tsx
   { sel: '#admin-section-content', when: '#admin/analytics' }, // features/admin/admin-analytics.tsx
   { sel: '#admin-section-content', when: '#admin/journey' }, // features/admin/admin-journey.tsx
@@ -395,7 +392,7 @@ const ROUTES = [
   '?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990411',
   '?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401',
   '#home', '#apps', '#apps/recipebot', '#workshop', '#settings', '#settings/app-ai',
-  '#settings/email', '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/linked-accounts', '#settings/experimental', '#profile', '#leaderboard', '#leaderboard/challenges', '#leaderboard/seasons', '#messages', '#notifications',
+  '#settings/email', '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/linked-accounts', '#settings/experimental', '#profile', '#leaderboard', '#leaderboard/challenges', '#messages', '#notifications',
   '#agent/990801', '#agent/990801/changes', '#messages/agent/990801',
   '#app/recipebot', '#app/recipebot/app', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
@@ -418,7 +415,7 @@ const ROUTES = [
   // #4455: a change's page in the same layout (`.dev-request.dev-change`),
   // on the demo proposal whose testing is part way through.
   '?demo=1#app/usernode-2d5619/dev/proposals/9000026',
-  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/sms', '#admin/estimator', '#admin/analytics', '#admin/journey', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/users/900301', '#admin/support', '#admin/support/900302', '#admin/status', '#admin/incidents', '#admin/rollover', '#admin/staging-reap', '#admin/workflows',
+  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/sms', '#admin/estimator', '#admin/analytics', '#admin/journey', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/users/900301', '#admin/support', '#admin/support/900302', '#admin/status', '#admin/incidents', '#admin/apps', '#admin/rollover', '#admin/staging-reap', '#admin/workflows',
   '#admin/model-costs', '#admin/reports', '#admin/welcome-dm', '#admin/sign-in', '#admin/test-accounts', '#admin/homeroom-bot', '#admin/homeroom-bot/settings', '#admin/homeroom-bot/benchmark', '#admin/small-changes',
   // The Benchmark's own places, in the same host (`when: '#admin/homeroom-bot'`
   // covers them): runs, one run of each kind on the staging demo, and suites.

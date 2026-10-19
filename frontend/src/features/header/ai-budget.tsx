@@ -9,6 +9,7 @@
 
 import type { ReactNode } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { aiBudgetStore } from './ai-budget-store.js';
 
@@ -109,9 +110,10 @@ export function AiBudgetMeter({ view }: { view: AiBudgetState['view'] }): ReactN
 /** The whole row: its own `hidden`, its label, and the slot the meter fills. */
 export function AiBudgetRow(): ReactNode {
   const { view, hidden } = useStoreState<AiBudgetState>(aiBudgetStore);
+  const t = useMessages('wallet');
   return (
     <div id="drawer-row-ai-budget" className={hidden ? `${ROW} hidden` : ROW}>
-      <span className="font-medium text-zinc-700 dark:text-zinc-300">AI credit</span>
+      <span className="font-medium text-zinc-700 dark:text-zinc-300">{t('wallet:credit.row.label')}</span>
       <span id="ai-budget-slot" className="ml-auto grow min-w-0 text-right">
         <AiBudgetMeter view={view} />
       </span>

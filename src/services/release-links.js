@@ -19,12 +19,32 @@
 //     db console and denied to the debug role);
 //   - bound to the waitlist row it was minted for and that row's address: a
 //     row whose address changed, or that was un-released, spends nothing;
-//   - single use, and good for RELEASE_LINK_TTL_MS (7 days);
+//   - single use once the account it starts is set up, and good for
+//     RELEASE_LINK_TTL_MS (7 days). Until then (no username chosen and no
+//     password set) the newest link for the row works again: the phone
+//     app's own browser opened it and spent it before handing it to Safari
+//     (Evan, 10 Oct 2026), so the person's own tap found it used and was
+//     asked for a code. A second spend only reopens the same unfinished
+//     account's step, which the first one already handed out;
 //   - spent only by a POST from the page (POST /api/auth/release-link),
 //     never by the GET that opens it, so the mail's click-tracking redirect
 //     and the mail scanners that prefetch links cannot use it up. The mail
 //     leaves this link out of click tracking (services/mail/tracking.js),
 //     which would otherwise store the destination URL, token and all.
+//
+// WHEN THE PAGE SPENDS IT (Evan, 12 Oct 2026, superseding the 10 Oct rule
+// that only Get started's tap spent it). For an account that is still new
+// (no account yet, or one with no username and no password), the page spends
+// it as it opens: "Signing you in…", then the Welcome. It decides that with
+// a read that spends nothing, the `new_account` boolean on GET
+// /api/public/waitlist/more/:token (isNewAccount below), and the spend
+// itself carries `newAccountOnly`, which refuses (unspent, no session) an
+// account set up in the meantime. An account already set up keeps the 10 Oct
+// rule: the story and Get started, and the link is spent only on that tap,
+// so a mail scanner or an app's own browser that runs the page can never
+// sign it in. Spent early by such a browser, a new account's link still
+// works for the person's own (the replay rule above): that browser reached
+// only the account step, which mints no session.
 //
 // Anything else (expired, used, unknown, malformed) answers one refusal, and
 // the page falls back to the flow it had before: the address filled in and a
@@ -78,23 +98,49 @@ async function mint(pool, { signupId, email }) {
   return token;
 }
 
+// The first time the row's link was spent, for the admin Journey's first
+// mile (services/journey.js): the mail's own click tracking leaves this link
+// out, and its rows are deleted a day after they expire, so this is the one
+// lasting record that the button was followed. The earliest spend stands.
+const FOLLOWED_SQL = `UPDATE waitlist_signups
+    SET release_link_followed_at = NOW()
+  WHERE id = $1::bigint AND release_link_followed_at IS NULL`;
+
+/** A record beside the spend, never part of it: a failure is a warning. */
+async function noteFollowed(pool, signupId) {
+  if (signupId == null) return;
+  try {
+    await pool.query(FOLLOWED_SQL, [signupId]);
+  } catch (error) {
+    log.warn('release-links', 'Could not record a followed link', { message: error.message });
+  }
+}
+
 /**
  * Spend a link: the mailbox is proven, so continue as an email code would.
  * Throws EmailSignupError `invalid_release_link` for anything that is not a
- * live, unspent link to a released row with the same address, and the
- * code's own refusals (an admin, an unconfirmed account with a password)
- * once the link is spent.
+ * live link to a released row with the same address, unspent or (the row's
+ * newest) spent on an account still unfinished, and the code's own refusals
+ * (an admin, an unconfirmed account with a password) once it is spent.
+ *
+ * `newAccountOnly` is the page's spend as it opens, before any tap: an
+ * account that is set up is refused with `account_set_up`, the whole
+ * transaction rolled back, so the link stays unspent and no session is made
+ * (emailSignup.continueProvenEmail). It can only ever answer `set-password`.
  */
-async function spend(pool, rawToken, { createSession } = {}) {
+async function spend(pool, rawToken, { createSession, newAccountOnly = false } = {}) {
   const token = typeof rawToken === 'string' ? rawToken.trim() : '';
   if (!TOKEN_RE.test(token)) {
     throw new emailSignup.EmailSignupError('invalid_release_link', INVALID_MESSAGE);
   }
   let email = null;
+  let signupId = null;
   const result = await emailSignup.withTransaction(pool, async (client) => {
     const { rows } = await client.query(
-      `SELECT l.token_hash, l.email, l.expires_at, l.consumed_at,
-              w.email AS signup_email, w.released_at
+      `SELECT l.token_hash, l.signup_id, l.email, l.expires_at, l.consumed_at,
+              w.email AS signup_email, w.released_at,
+              EXISTS (SELECT 1 FROM waitlist_release_links n
+                       WHERE n.signup_id = l.signup_id AND n.created_at > l.created_at) AS superseded
          FROM waitlist_release_links l
          JOIN waitlist_signups w ON w.id = l.signup_id
         WHERE l.token_hash = $1
@@ -102,23 +148,58 @@ async function spend(pool, rawToken, { createSession } = {}) {
       [hashToken(token)]
     );
     const link = rows[0];
-    if (!link || link.consumed_at || new Date(link.expires_at) <= new Date()
+    if (!link || new Date(link.expires_at) <= new Date()
         || !link.released_at
         || emailSignup.normalizeEmail(link.signup_email) !== link.email) {
       return { invalid: true };
     }
-    await client.query(
-      'UPDATE waitlist_release_links SET consumed_at = NOW() WHERE token_hash = $1',
-      [link.token_hash]
-    );
+    if (link.consumed_at) {
+      // Spent already: again only while it is the row's newest link and the
+      // account it started is unfinished (no username chosen, no password).
+      if (link.superseded) return { invalid: true };
+      const { rows: [account] } = await client.query(
+        `SELECT needs_username_choice, password_set FROM users
+          WHERE lower(email) = lower($1)`,
+        [link.email]
+      );
+      if (!account || account.needs_username_choice !== true || account.password_set) {
+        return { invalid: true };
+      }
+    } else {
+      await client.query(
+        'UPDATE waitlist_release_links SET consumed_at = NOW() WHERE token_hash = $1',
+        [link.token_hash]
+      );
+    }
     email = link.email;
-    return emailSignup.continueProvenEmail(client, email, { createSession });
+    signupId = link.signup_id;
+    return emailSignup.continueProvenEmail(client, email, { createSession, newAccountOnly });
   });
   if (result.invalid) {
     throw new emailSignup.EmailSignupError('invalid_release_link', INVALID_MESSAGE);
   }
+  await noteFollowed(pool, signupId);
   const finished = await emailSignup.finishProvenEmail(pool, email, result);
   return { ...finished, email };
 }
 
-module.exports = { RELEASE_LINK_TTL_MS, TOKEN_RE, mint, spend, hashToken };
+/**
+ * Whether the page may spend this waitlist row's release link as it opens:
+ * the row was released (so a link was minted for it) and the account its
+ * address would prove is still new (emailSignup.isUnfinishedAccount). A read
+ * and nothing else: no link is spent, no row written, no session made.
+ * `signup` is the row GET /api/public/waitlist/more/:token already read
+ * (`email`, `released_at`). False on any failure, which keeps the 10 Oct rule:
+ * the story, and the link spent on Get started.
+ */
+async function isNewAccount(pool, signup) {
+  if (!signup || !signup.released_at || !signup.email) return false;
+  try {
+    return await emailSignup.accountIsUnfinished(pool, signup.email);
+  } catch (error) {
+    log.warn('release-links', 'New-account check failed', { message: error.message });
+    return false;
+  }
+}
+
+module.exports = { RELEASE_LINK_TTL_MS, TOKEN_RE, FOLLOWED_SQL, mint, spend, hashToken, isNewAccount };

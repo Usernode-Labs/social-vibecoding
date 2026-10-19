@@ -15,8 +15,9 @@
 //
 // What still reads as infrastructure is what the run's own output shows to
 // be: an origin no route could reach (#1381), a Postgres out of connections
-// (#1771), a unit suite that never ran. Those classifiers apply to a
-// harvested run exactly as to a live one.
+// (#1771), a unit suite that never ran. Those classifiers apply to a run the
+// preview machine's retry collects from the cluster (check-harvest
+// collectForWorkflow) exactly as to a live one.
 //
 // The copy stays for the rows already stored with it: storeChecks gave each
 // a retry, so the error lane runs them again and every surface that reads
@@ -26,14 +27,26 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+
+// The scripts under test read their text from the language runtime's
+// global; give them the real English one.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const fs = require('node:fs');
 const path = require('node:path');
+
+// The settlement takes its Postgres census through getPool(); pointing it at
+// the test's fake keeps the census off the network.
+const census = { pool: null };
+const poolId = require.resolve('../src/db/pool');
+require.cache[poolId] = {
+  id: poolId, filename: poolId, loaded: true, paths: [],
+  exports: { getPool: () => census.pool || { async query() { return { rows: [] }; } } },
+};
 
 const visuals = require('../src/services/visuals');
 const stagingRecovery = require('../src/services/staging-recovery');
 const harvest = require('../src/services/check-harvest');
 const kubernetes = require('../src/services/kubernetes');
-const lifecycle = require('../src/services/preview-lifecycle');
 const ws = require('../src/services/ws');
 const tools = require('../src/services/mcp-tools');
 const mergeRequirements = require('../src/services/merge-requirements');
@@ -78,8 +91,9 @@ const STARVED = [0, 1, 2].map((i) => frame(i, 'fail', {
   failureReason: 'GET /api/board answered 500: sorry, too many clients already',
 })).join('\n');
 
-// A pool that answers what a settlement and a harvest ask. `checks` collects
-// every storeChecks write as { state, detail, retryScheduled, streakBumped }.
+// A pool that answers what a settlement and a collect ask. `checks` collects
+// any storeChecks write as { state, detail, retryScheduled, streakBumped }:
+// a settlement stores nothing (the machine does), so it stays empty.
 // `graduated` is the app's graduated check keys.
 function makePool({ session = null, orphans = [], graduated = [] } = {}) {
   const pool = {
@@ -99,10 +113,9 @@ function makePool({ session = null, orphans = [], graduated = [] } = {}) {
       if (/SELECT check_key FROM app_check_history/.test(sql)) {
         return { rows: graduated.map((key) => ({ check_key: key })), rowCount: graduated.length };
       }
-      if (/SELECT run_id, session_id, commit_sha, owner, manifest/.test(sql)) {
+      if (/SELECT run_id, session_id, commit_sha, manifest, started_at FROM check_runs/.test(sql)) {
         return { rows: orphans.map((r) => ({ ...r })), rowCount: orphans.length };
       }
-      if (/UPDATE check_runs SET owner/.test(sql)) return { rows: [], rowCount: 1 };
       if (/DELETE FROM check_runs/.test(sql)) { pool.deleted.push(params[0]); return { rows: [], rowCount: 1 }; }
       if (/FROM chat_sessions cs JOIN apps a/.test(sql)) {
         return { rows: session ? [{ ...session }] : [], rowCount: session ? 1 : 0 };
@@ -116,10 +129,9 @@ function makePool({ session = null, orphans = [], graduated = [] } = {}) {
   return pool;
 }
 
-// getPool() hands the connection census the lifecycle operation's pool when
-// one is current; pointing it at the fake keeps the census off the network.
 function quiet(t, pool) {
-  stub(t, lifecycle, { current: () => ({ pool }) });
+  census.pool = pool;
+  t.after(() => { census.pool = null; });
   stub(t, ws, { broadcastGlobal: () => {} });
 }
 
@@ -129,10 +141,9 @@ const SESSION = {
 };
 const APP = { id: 9, slug: 'demo', name: 'Demo', repo_url: '' };
 
-function settle(pool, { stdout, sent = [], unitOutcome = null }) {
+function settle(pool, { stdout, unitOutcome = null }) {
   return visuals.settleCaptureRun({}, pool, {
-    session: SESSION, app: APP, commitHash: SHA, trigger: 'commit-push',
-    send: (type, data) => sent.push({ type, ...data }),
+    session: SESSION, app: APP, commitHash: SHA, collect: { runId: 'run-key-1' },
     runStartedAt: Date.now(), media: false, capturePaths: ['/board'],
     pathDefaulted: false, prodRunning: false, stagingOrigin: '', targets: [],
     testsCount: 3, dispatched: null, ceilingDropped: 0,
@@ -182,14 +193,15 @@ test('the auto-retry cap is still read in one place, and the reconcile reads it'
 
 // ── A live run ──────────────────────────────────────────────────────────
 
-test('a live red run is failing, whenever it started: no lookup, no retry, history recorded', async (t) => {
+test('a live red run is failing, whenever it started: no lookup, no reason', async (t) => {
   const pool = makePool();
   quiet(t, pool);
-  const sent = [];
-  const out = await settle(pool, { stdout: RED, sent });
+  const out = await settle(pool, { stdout: RED });
+  assert.equal(out.result.outcome, 'verdict');
   assert.equal(out.result.state, 'failing');
-  assert.deepEqual(pool.checks, [{ state: 'failing', detail: null, retryScheduled: false, streakBumped: false }]);
-  assert.equal(sent.filter((e) => e.type === 'checks_ready')[0].checkState, 'failing');
+  assert.equal(out.result.errorDetail, null);
+  assert.equal(out.result.platformFault, false);
+  assert.deepEqual(pool.checks, [], 'the settlement is returned for the machine to store, not written');
   assert.ok(!pool.calls.some((c) => /consecutive_check_failures\s+FROM chat_sessions/.test(c.sql)),
     'it does not ask whether a retry would follow: there is nothing to relabel');
 });
@@ -200,20 +212,20 @@ test('a live green run is passing', async (t) => {
   assert.equal((await settle(pool, { stdout: GREEN })).result.state, 'passing');
 });
 
-// ── A harvested run ─────────────────────────────────────────────────────
+// ── A collected run ─────────────────────────────────────────────────────
+//
+// The machine's retry of a checks run whose claim was lost reads the Jobs
+// its manifest names (check-harvest collectForWorkflow) and settles them
+// the same way.
 
 const harvestConfig = { captureRuntime: 'kubernetes', kubernetes: { workerNamespace: 'workers', appNamespace: 'apps' } };
 
 function orphanRow() {
   return {
-    run_id: 'run-1', session_id: 42, commit_sha: SHA, owner: 'dead-pod:7',
+    run_id: 'run-1', session_id: 42, commit_sha: SHA,
     started_at: new Date(Date.now() - 90_000).toISOString(),
-    heartbeat_at: new Date(Date.now() - 70_000).toISOString(),
-    queued_at: new Date(Date.now() - 95_000).toISOString(),
-    admitted_at: new Date(Date.now() - 92_000).toISOString(),
-    stale: true,
     manifest: {
-      launched: true, trigger: 'commit-push', startedAt: Date.now() - 90_000,
+      workflow: true, runKey: 'run-key-1', launched: true, trigger: 'commit-push', startedAt: Date.now() - 90_000,
       media: false, capturePaths: ['/board'], targets: [], testsCount: 3,
     },
   };
@@ -244,53 +256,49 @@ async function harvestWith(t, stdout, { unit = null, graduated = [] } = {}) {
     }),
     deleteSettledCheckJobs: async () => 1,
   });
-  stub(t, visuals, { scheduleShots: () => {} });
-  const summary = await harvest.sweep(harvestConfig, { reason: 'boot', pool });
-  const [result] = await summary.done;
+  const session = harvestedSession();
+  const result = await harvest.collectForWorkflow(harvestConfig, pool, {
+    runKey: 'run-key-1', session, app: { id: 9, slug: 'demo', name: 'Demo', repo_url: '' },
+  });
   return { pool, result };
 }
 
-test('a harvested red run stays failing: crossing a restart is not a reason to run it again', async (t) => {
+test('a collected red run stays failing: crossing a restart is not a reason to run it again', async (t) => {
   const { pool, result } = await harvestWith(t, RED);
-  assert.equal(result.outcome, 'settled');
+  assert.equal(result.outcome, 'verdict');
   assert.equal(result.state, 'failing');
-  assert.deepEqual(pool.checks, [{ state: 'failing', detail: null, retryScheduled: false, streakBumped: false }],
-    'the passing/failing branch of storeChecks: no retry, no streak, no reason');
+  assert.equal(result.errorDetail, null, 'no reason: it is judged on its own results');
+  assert.deepEqual(pool.checks, [], 'the settlement is returned for the machine to store');
   assert.deepEqual(pool.deleted, ['run-1'], 'the manifest, and with it the checks slot, is cleared');
 });
 
-test('a harvested green run stays passing', async (t) => {
-  const { pool, result } = await harvestWith(t, GREEN);
+test('a collected green run stays passing', async (t) => {
+  const { result } = await harvestWith(t, GREEN);
   assert.equal(result.state, 'passing');
-  assert.deepEqual(pool.checks.map((c) => c.state), ['passing']);
 });
 
-test('the infrastructure classifiers still apply to a harvested run: an unreachable origin (#1381)', async (t) => {
-  const { pool, result } = await harvestWith(t, UNREACHABLE);
+test('the infrastructure classifiers still apply to a collected run: an unreachable origin (#1381)', async (t) => {
+  const { result } = await harvestWith(t, UNREACHABLE);
+  assert.equal(result.state, 'error', 'the error lane runs it again');
+  assert.match(result.errorDetail, /^Staging preview unreachable/);
+  assert.notEqual(result.errorDetail, ROLLOUT_RETRY_DETAIL);
+});
+
+test('the infrastructure classifiers still apply to a collected run: Postgres out of connections (#1771)', async (t) => {
+  const { result } = await harvestWith(t, STARVED);
   assert.equal(result.state, 'error');
-  assert.equal(pool.checks.length, 1);
-  assert.equal(pool.checks[0].retryScheduled, true, 'the error lane runs it again');
-  assert.match(pool.checks[0].detail, /^Staging preview unreachable/);
-  assert.notEqual(pool.checks[0].detail, ROLLOUT_RETRY_DETAIL);
+  assert.match(result.errorDetail, /^Infrastructure problem, not this change: the shared Postgres server ran out of connections/);
 });
 
-test('the infrastructure classifiers still apply to a harvested run: Postgres out of connections (#1771)', async (t) => {
-  const { pool, result } = await harvestWith(t, STARVED);
-  assert.equal(result.state, 'error');
-  assert.match(pool.checks[0].detail, /^Infrastructure problem, not this change: the shared Postgres server ran out of connections/);
-  assert.equal(pool.checks[0].retryScheduled, true);
-});
-
-test('the infrastructure classifiers still apply to a harvested run: a unit suite that never ran', async (t) => {
+test('the infrastructure classifiers still apply to a collected run: a unit suite that never ran', async (t) => {
   const unitKey = appManifest.checkKey(unitSuiteRow.UNIT_CHECK_NAME, unitSuiteRow.UNIT_CHECK_PATH);
-  const { pool, result } = await harvestWith(t, GREEN, {
+  const { result } = await harvestWith(t, GREEN, {
     unit: { state: 'failed', stdout: '', stderr: 'BackoffLimitExceeded: Error' },
     graduated: [unitKey],
   });
   assert.equal(result.state, 'error', 'a merge-blocking suite with no verdict is no verdict');
-  assert.match(pool.checks[0].detail, /unit suite/i);
-  assert.equal(pool.checks[0].retryScheduled, true);
-  assert.notEqual(pool.checks[0].detail, ROLLOUT_RETRY_DETAIL);
+  assert.match(result.errorDetail, /unit suite/i);
+  assert.notEqual(result.errorDetail, ROLLOUT_RETRY_DETAIL);
 });
 
 // ── What people and agents read, for a row stored with it ───────────────
@@ -402,7 +410,9 @@ test('the merge gate blocks on it as an error and words it as a retry', () => {
   const gate = src.slice(src.indexOf("const errorDetail = checkState === 'error'"));
   assert.match(gate, /const rolloutRetry = errorDetail === require\('\.\.\/services\/staging-recovery'\)\.ROLLOUT_RETRY_DETAIL;/);
   assert.match(gate, /'ran its tests while Homeroom was updating, so they will run again on their own'/);
-  assert.match(gate, /\(\(checkState === 'failing' \|\| checkState === 'error'\) && !rolloutRetry\) \? 'blocked' : 'active'/);
+  // A platform fault the error lane still runs again needs nobody either
+  // (#5054, tests/checks-platform-fault.test.js).
+  assert.match(gate, /\(\(checkState === 'failing' \|\| checkState === 'error'\) && !rolloutRetry && !platformRetry\) \? 'blocked' : 'active'/);
   // It is still not 'passing' or 'skipped', so the gate above it blocks the
   // merge exactly as for any other error.
   assert.match(src, /if \(checkState !== 'passing' && checkState !== 'skipped'\) \{/);
@@ -427,6 +437,7 @@ function stagingRow(id) {
   }
   const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL };
   ctx.globalThis = ctx;
+  ctx.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(ctx);
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
   return JSON.parse(JSON.stringify(ctx.__rows('me').find((r) => r.id === id) || null));
@@ -458,6 +469,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext([
     read('public/js/merge-status.js'),

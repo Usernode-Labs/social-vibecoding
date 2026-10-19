@@ -1,8 +1,9 @@
 'use strict';
 
 // services/boot-failure-sync.js against the FULL PostgreSQL schema: the row
-// it reads and the claim that makes its sync once per head. The mirror and
-// the worker are stubbed; the session, its app and the claim are real.
+// its plan reads, and the once-per-head stamp it honours. The sync itself
+// and the stamp's write are the proposal machine's
+// (tests/workflow-merge-postgres.test.js M8). The mirror is stubbed.
 //
 // Like the repository's other postgres tests it skips when no database is
 // reachable, unless TEST_DATABASE_URL insists on one.
@@ -73,34 +74,17 @@ test('a proposal is synced once for a head, and only while it is the head', { ti
   assert.equal(found.sync, true, 'the real row reads as promoted, native, on the failed head');
   assert.equal(found.row.repo_url, 'https://github.com/Usernode-Labs/social-vibecoding', 'with its app\'s repo');
 
-  const first = await subject.run({ config: {}, pool, sessionId: session.id, commitHash: HEAD }, deps);
-  assert.equal(first.synced, true);
-  assert.equal(synced.length, 1);
-  assert.equal(synced[0].opts.sessionRow.app_slug, 'usernode-2d5619');
-  const { rows: [after] } = await pool.query('SELECT boot_failure_sync_head FROM chat_sessions WHERE id = $1', [session.id]);
-  assert.equal(after.boot_failure_sync_head, HEAD, 'the head is stamped');
+  // The stamp the proposal machine writes with the sync: a second failure on
+  // the same head waits for a person.
+  await pool.query('UPDATE chat_sessions SET boot_failure_sync_head = $2 WHERE id = $1', [session.id, HEAD]);
+  assert.equal((await subject.plan({ pool, sessionId: session.id, commitHash: HEAD }, deps)).why, 'already_tried');
 
-  const again = await subject.run({ config: {}, pool, sessionId: session.id, commitHash: HEAD }, deps);
-  assert.deepEqual(again, { synced: false, why: 'already_tried' }, 'a second failure on the same head waits for a person');
-  assert.equal(synced.length, 1);
-
-  // A head that is no longer the checked one cannot be claimed, even by a
-  // caller that measured before it moved.
+  // A head that is no longer the checked one is not synced.
   await pool.query('UPDATE chat_sessions SET checks_commit_sha = $2, boot_failure_sync_head = NULL WHERE id = $1', [session.id, MERGED]);
-  const { rows: stale } = await pool.query(
-    `UPDATE chat_sessions SET boot_failure_sync_head = $2
-      WHERE id = $1 AND status = 'promoted' AND checks_commit_sha = $2
-        AND boot_failure_sync_head IS DISTINCT FROM $2
-      RETURNING id`,
-    [session.id, HEAD],
-  );
-  assert.equal(stale.length, 0);
+  assert.equal((await subject.plan({ pool, sessionId: session.id, commitHash: HEAD }, deps)).why, 'head_moved');
 
   // A draft is never synced.
   await pool.query(`UPDATE chat_sessions SET status = 'active', checks_commit_sha = $2 WHERE id = $1`, [session.id, HEAD]);
-  assert.deepEqual(
-    await subject.run({ config: {}, pool, sessionId: session.id, commitHash: HEAD }, deps),
-    { synced: false, why: 'not_promoted' },
-  );
-  assert.equal(synced.length, 1);
+  assert.equal((await subject.plan({ pool, sessionId: session.id, commitHash: HEAD }, deps)).why, 'not_promoted');
+  void synced;
 });

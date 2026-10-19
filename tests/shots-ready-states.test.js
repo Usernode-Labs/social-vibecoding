@@ -26,8 +26,11 @@ test('every demo state is a ready-made state with a name, in the same order, for
     assert.ok(state.name.length > 10 && state.name.length < 90, state.id);
   }
   const ids = new Set(demoStates.STATE_IDS);
+  const fixtures = require('../src/services/shots-fixtures');
+  const fixtureIds = new Set([fixtures.INVITED_FIRST_VISIT_PROFILE, fixtures.INVITED_LISTED_PROFILE,
+    fixtures.INVITE_LINK_PROFILE]);
   for (const need of readyStates.NEEDS) {
-    assert.ok(need.states.every((id) => ids.has(id)), need.needs);
+    assert.ok(need.states.every((id) => ids.has(id) || fixtureIds.has(id)), need.needs);
   }
 });
 
@@ -38,7 +41,18 @@ test('Homeroom\'s answer lists the ready-made states; a child app\'s says it has
   assert.match(own.dataNote, /src\/db\/migrate\.js/);
   assert.match(own.dataNote, /hints\.setup/);
   assert.match(own.dataNote, /reaches only the after copy/);
+  // A file to choose, and a loading or error state behind one request, the
+  // shots agent reaches itself (upload_file, control_request).
+  assert.match(own.dataNote, /chooses one of Homeroom's sample files \(landscape\.png, portrait\.png, table\.csv, document\.pdf\)/);
+  assert.match(own.dataNote, /hold or fail one API GET on both copies to show a loading or error state: name the file or the request in hints\.setup/);
   assert.deepEqual(own.warnings, []);
+  // A state new in the proposal is seeded in it: the after copy is the side
+  // that needs it (22 failed runs and 13 skipped changes, 2026-10-09 to 10-12).
+  // What a seed may hold keeps the platform's seed rule.
+  assert.match(own.dataNote, /A seed is idempotent and obviously fake: rows for the shots' fixture accounts \(usernode-capture is the member\) and fake people, never a signal the code reads to decide something\./);
+  assert.match(own.dataNote, /which is the side a state new in this proposal needs: seed such a state in this proposal\./);
+  assert.match(own.dataNote, /A change to a state that already existed needs it on both copies, so its seed merges first, in its own proposal\./);
+  assert.doesNotMatch(own.dataNote, /merged before this one/);
 
   const child = readyStates.declarationAdvice(declare(story('a', 'The list shows its items.')), { selfApp: false });
   assert.deepEqual(child.availableStates, []);
@@ -63,9 +77,66 @@ test('the states that cost changes their shots are ready-made on Homeroom\'s cop
   const child = warned(held, false);
   assert.equal(child.length, 3);
   assert.match(child[0], /^approval-chip seems to need a change waiting for approval, and this app's copies have no ready-made states\./);
-  assert.match(child[0], /seed it in the app's own staging seed \(its IS_STAGING seed\) in a change merged before this one/);
+  assert.match(child[0], /or seed it in the app's own staging seed \(its IS_STAGING seed\)\. A seed this proposal adds reaches only the after copy/);
+  assert.match(child[0], /seed such a state in this proposal\. A change to a state that already existed needs it on both copies, so its seed merges first, in its own proposal\.$/);
+  assert.match(readyStates.declarationAdvice(held, { selfApp: false }).dataNote, /A seed is idempotent and obviously fake/);
   assert.match(child[1], /^activity-times seems to need standings rows with recorded activities/);
   assert.match(child[2], /^bot-thanks seems to need an answered first-version plan/);
+});
+
+// The changes that ended with no shots from 9 to 12 October 2026, in the
+// words their authors declared them with.
+test('the states the October changes went unshot for are ready-made on Homeroom\'s copies, and named on a child app\'s', () => {
+  const held = declare(
+    story('voted-merged-bell-row', 'When a change you voted on goes live, your bell now has one new row for it.',
+      { steps: ['Open the notifications panel from the bell in the header'] }),
+    story('low-credits-note', 'Starting a brand new conversation when the credits pill is already red, a short red note appears.',
+      { steps: ['Sign in as a member whose weekly AI allowance is almost spent, so the credits pill beside Send is red'] }),
+    story('your-work-bot-tag', 'In Your work, a change Homeroom bot built from your request now wears a small tag.'),
+    story('working-line', 'Messaging the bot on its change gets a line in that change\'s discussion.',
+      { steps: ['Open a change built by Homeroom bot that is up for a vote', 'Open its Discussion'] }),
+    story('person-card', 'In the chat with Homeroom bot, a request on a project somebody else runs says who decides there.',
+      { steps: ['Find the newest card about a request that needs a person to decide'] }),
+    story('testing-card', 'While a change\'s tests run, the Testing card\'s bar fills only as far as the slower half.',
+      { steps: ['Open a change whose checks are mid-run'] }),
+  );
+  const own = readyStates.declarationAdvice(held, { selfApp: true });
+  // Each has a ready-made state. PR 4622's line still needs the bot to take
+  // its turn, which no state makes, so it is warned about the model; and
+  // the nearly spent allowance is the full admin's, so a member's change
+  // that needs it is told whose it is.
+  assert.equal(own.warnings.length, 2);
+  assert.match(own.warnings[0], /^low-credits-note seems to need a weekly allowance nearly spent, and the ready-made state that holds it on these copies is for full_admin \(see availableStates\)\. Declare the change for full_admin, or add hints\.setup/);
+  assert.match(own.warnings[1], /^working-line seems to need a live reply from a model/);
+  const asFullAdmin = declare(story('low-credits-note', held.stories[1].claim,
+    { persona: 'full_admin', steps: held.stories[1].intent.steps }));
+  assert.deepEqual(warned(asFullAdmin, true), [], 'declared for the persona the state is for');
+  const names = own.availableStates.map((state) => state.name);
+  for (const id of ['shots-demo-member-voted-change-live-v1', 'shots-demo-full-admin-allowance-low-v1',
+    'shots-demo-member-bot-built-proposal-v1', 'shots-demo-member-bot-deciders-v1',
+    'shots-demo-member-checks-part-way-v1']) {
+    const state = readyStates.READY_STATES.find((each) => each.id === id);
+    assert.ok(names.includes(state.name), id);
+  }
+  // The allowance is the full admin's: the member is shot far more often.
+  assert.deepEqual(own.availableStates.find((state) => /allowance/.test(state.name)).personas, ['full_admin']);
+  const child = warned(held, false).map((w) => w.split(' to need ')[1].split(', and ')[0]);
+  assert.deepEqual(child.filter((need) => !/^a live reply/.test(need)).sort(), [
+    'a change you voted on that went live',
+    'a change Homeroom bot built from a request',
+    'a Homeroom bot hand-off that needs a person to decide',
+    'checks part-way through',
+    'a weekly allowance nearly spent',
+    // PR 4622's steps open the bot's change "that is up for a vote".
+    'a change waiting for approval',
+  ].sort());
+});
+
+test('every answer says another persona\'s browser can be the second account', () => {
+  for (const selfApp of [true, false]) {
+    const { dataNote } = readyStates.declarationAdvice(declare(story('a', 'A reply shows in the thread.')), { selfApp });
+    assert.match(dataNote, /Each signed-in persona is its own account, so a step somebody else takes \(a reply to the member's message, a vote on their change\) can be one of those steps, in another persona's browser\./);
+  }
 });
 
 test('a change needing a state no ready-made state holds is warned about, once per state', () => {
@@ -83,13 +154,37 @@ test('a change needing a state no ready-made state holds is warned about, once p
   ]);
   assert.match(warnings[0], /a member in their first session \(its tour\), and no ready-made state on these copies holds it \(see availableStates\)/);
   assert.match(warnings[0], /seed it in the staging seeds in src\/db\/migrate\.js/);
-  assert.match(warnings[0], /a seed this proposal adds reaches only the after copy\.$/);
+  assert.match(warnings[0], /A seed this proposal adds reaches only the after copy, which is the side a state new in this proposal needs/);
+  assert.match(warnings[0], /its seed merges first, in its own proposal\.$/);
+  assert.doesNotMatch(warnings.join(' '), /merged before this one/, 'a new state is seeded in the proposal that makes it');
   assert.match(warnings[1], /an account somebody invited/);
   assert.match(warnings[2], /an empty state, or an account with nothing of its own yet/);
   assert.match(warnings[3], /an account on the waitlist/);
 
   // A child app's empty state its own seed fills (Todo List #90).
   assert.equal(warned(declare(story('no-lists', 'A new user with no lists sees how to start one.')), false).length, 1);
+});
+
+// The invited fixtures (#4437) hold a change for the persona they answer
+// for on Homeroom's own copies, so a change declared for one of them is not
+// warned about a state the copies lack.
+test('the invited fixtures hold a change declared for the persona they answer for', () => {
+  const held = declare(
+    story('first-visit', 'An invited member who has not been Home yet sees the welcome.',
+      { persona: 'invited_member' }),
+    story('listed', 'An invited member on the waitlist sees when they get in.',
+      { persona: 'invited_member_listed' }),
+    story('link', 'The invite link shows the project before somebody accepts an invitation.',
+      { persona: 'guest' }),
+  );
+  assert.deepEqual(warned(held, true), []);
+  // On a child app's copies there are no such people, and no such link.
+  const child = warned(held, false).map((w) => w.split(' to need ')[0].split(' seem')[0]);
+  assert.deepEqual(child, ['first-visit, listed, link', 'listed']);
+  // A member persona is not one of them: the fixtures do not hold its
+  // change, so both needs that match its words are warned about.
+  assert.equal(warned(declare(story('invited-home',
+    'An invited private member who has not been Home yet sees a welcome.')), true).length, 2);
 });
 
 test('no warning when the author says how to make it, for the guest\'s own state, or for ordinary words', () => {
@@ -121,10 +216,10 @@ test('a change whose steps wait for a model\'s reply is warned about whatever se
   const [own] = warned(declare(asked), true);
   assert.match(own, /^close-offer seems to need a live reply from a model \(the Homeroom bot, or an app's own AI feature\)/);
   assert.match(own, /nothing on these copies answers with a model: they have no model key/);
-  assert.match(own, /start from a ready-made state that already holds it \(see availableStates\), or seed it in the staging seeds in src\/db\/migrate\.js/);
+  assert.match(own, /start from a ready-made state that already holds it \(see availableStates\), or seed the reply in the staging seeds in src\/db\/migrate\.js as the stored message\./);
   const [child] = warned(declare(story('summary', 'Send the AI a page and it replies with a summary.')), false);
   assert.match(child, /^summary seems to need a live reply from a model/);
-  assert.match(child, /start from a reply the copies already hold, or seed it in the app's own staging seed/);
+  assert.match(child, /start from a reply the copies already hold, or seed the reply in the app's own staging seed \(its IS_STAGING seed\) as the stored message\./);
   for (const steps of [['Ask Homeroom bot to propose closing request 900003'], ['DM the bot: close it'],
     ['Mention @homeroom_bot on the request'], ['Wait until the bot replies']]) {
     assert.equal(warned(declare(story('asks', 'The card has a new line.', { steps })), true).length, 1, steps[0]);
@@ -138,9 +233,36 @@ test('a change whose steps wait for a model\'s reply is warned about whatever se
   ]) {
     assert.deepEqual(warned(declare(story('said', claim)), true), [], claim);
   }
-  // And every answer says the copies have no model.
+  // And every answer says the copies have no model, so a reply is seeded as stored.
   assert.match(readyStates.declarationAdvice(declare(story('a', 'A change.')), { selfApp: true }).dataNote,
-    /Nothing on them answers with a model, the Homeroom bot included: they have no model key\.$/);
+    /Nothing on them answers with a model, the Homeroom bot included: they have no model key, so seed a reply as the stored message rather than asking for it\.$/);
   assert.match(readyStates.declarationAdvice(declare(story('a', 'A change.')), { selfApp: false }).dataNote,
-    /Nothing on them answers with a model: they have no model key\.$/);
+    /Nothing on them answers with a model: they have no model key, so seed a reply as the stored message rather than asking for it\.$/);
+});
+
+// The same advice, wherever an author reads how to declare: a state new in
+// the proposal is seeded in it, a seed holds fixture accounts' and fake
+// people's rows (never a signal the code reads), a reply is seeded as
+// stored, and only a change to a state that already existed needs its seed
+// merged first. AGENTS.md said to report a missing fixture as a blocker,
+// and the declare tool said to report missing data; the other surfaces are
+// pinned in their own suites (homeroom-bot-build-design, app-conventions,
+// external-agent-tasks).
+test('AGENTS.md and the declare tool say to seed a new state in the same proposal', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+  const agents = read('AGENTS.md');
+  const start = agents.indexOf('## Declare visible changes');
+  const section = agents.slice(start, agents.indexOf('\n## ', start + 1)).replace(/\s+/g, ' ');
+  assert.match(section, /If a fresh staging copy lacks the state a change shows, seed it in the same proposal \(`src\/db\/migrate\.js`, idempotent, obviously fake\): it reaches the after copy, the side a new state needs\./);
+  assert.match(section, /Seed rows for the shots' fixture accounts \(`usernode-capture` is the member\) and fake people, never a signal the code reads to decide something, and a bot's reply as the stored message, never asked for\./);
+  assert.match(section, /A change to a state that already existed needs it on both sides: its seed merges first, in its own proposal\./);
+  assert.match(section, /If a required state can be neither reached nor seeded, report that blocker instead of declaring `none`\./);
+  assert.doesNotMatch(section, /If a required fixture or state is missing/);
+
+  const tool = read('worker/visible-changes-mcp.js');
+  assert.match(tool, /When a fresh staging copy lacks the state, seed it in this same change/);
+  assert.match(tool, /a staging seed, in this same change for a state new in it/);
+  assert.doesNotMatch(tool, /Report missing data or an unreachable state instead of guessing/);
 });

@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 // `extra.App` adds to the App stub (a recording switchTab, say) and
 // `extra.location` is the one a navigation writes, for a test to read back.
@@ -15,6 +16,7 @@ function context(user = { id: 42, username: 'Builder' }, extra = {}) {
     setTimeout, clearTimeout, setInterval, clearInterval,
     location: extra.location || { search: '', hash: '' }, URLSearchParams };
   c.window = c;
+  c.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(c);
   for (const path of ['public/js/merge-status.js', 'public/js/app-view.js']) {
     vm.runInContext(fs.readFileSync(path, 'utf8'), c);
@@ -327,16 +329,16 @@ test('actual shared component renders the entire card and escapes the issue titl
   // addresses, the Votes and Testing cards; the steps sheet (with the failing
   // check's reason behind its door) in Details. Its discussion is the
   // thread's own stream. The Build is a ⋯ row that LEAVES this page (#2605).
-  for (const label of ['Addresses', 'Waiting on you', 'Submitted for review', 'Expected app, received login', 'Checks']) assert.ok(html.includes(label), `${label} is on the page`);
+  for (const label of ['Built for', 'Waiting on you', 'Submitted for review', 'Expected app, received login', 'Checks']) assert.ok(html.includes(label), `${label} is on the page`);
   assert.ok(!html.includes('Where it stands'), 'a draft draws the same short steps as a proposal');
   assert.ok(html.includes('&lt;script&gt;issue&lt;/script&gt;'));
   assert.ok(!html.includes('<script>issue</script>'));
   assert.ok(av._cardMenuItems(v.card.rail.menuKey).some((a) => a.label === 'Edit requests'), 'the owner can manage associations after creation, from the ⋯');
-  // The issue is a chip on the "Addresses" line, in the Needs-you chip's
+  // The issue is a chip on the "Built for" line, in the Needs-you chip's
   // accent tint: the number bold, the title after it, the issue's own page
   // behind it.
   assert.match(html, /<a href="[^"]*\/dev\/issues\/1993" class="dev-ws-chip dev-ws-chip-info dev-topic-issue" data-issue-ref="1993"[^>]*><b>#1993<\/b><span>&lt;script&gt;issue&lt;\/script&gt;<\/span><\/a>/);
-  assert.match(html, /class="dev-change-chips-lead">Addresses</);
+  assert.match(html, /class="dev-change-chips-lead">Built for</);
   assert.doesNotMatch(html, /dev-issue-ref/, 'the event-box row is the ISSUE page\u2019s (AddressedBy), not the change page\u2019s');
   // #2193: a long title truncates instead of scrolling the page sideways.
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
@@ -462,6 +464,7 @@ test('every change route mounts its thread, and an unshared change reads no disc
   const source = fs.readFileSync('public/js/app-view.js', 'utf8');
   const calls = [];
   const c = { AppView: av, document: { getElementById: () => ({}) },
+    PlatformI18n: require('./lib/platform-i18n').englishPlatformI18n(),
     GroupChat: { mountThread: (opts) => calls.push(opts), unmountThread: () => calls.push('detach') } };
   const method = source.slice(source.indexOf('  _mountTopicThread() {'), source.indexOf('\n  // Open a topic full-screen.', source.indexOf('  _mountTopicThread() {'))).trim().replace(/,$/, '');
   vm.runInNewContext(`({ ${method} })._mountTopicThread()`, c);
@@ -729,8 +732,10 @@ test('the issue picker computes bounded add/remove deltas for the existing PATCH
   });
 
   const src = fs.readFileSync('frontend/src/features/dev-board/topic/topic-head.tsx', 'utf8');
-  assert.match(src, /Search by number or title/);
-  assert.match(src, /aria-label={`Remove #\$\{issue\.n}: \$\{issue\.title}`}/);
+  assert.match(src, /placeholder=\{t\('project:topic\.requests\.searchPlaceholder'\)\}/);
+  assert.equal(message('project:topic.requests.searchPlaceholder'), 'Search by number or title');
+  assert.match(src, /aria-label=\{t\('project:topic\.requests\.remove', \{ number: issue\.n, title: issue\.title \}\)\}/);
+  assert.equal(message('project:topic.requests.remove', { number: 27, title: 'Fix sign-in' }), 'Remove #27: Fix sign-in');
   assert.match(src, /event\.key === 'Escape'/);
   assert.match(src, /if \(suggestions\[0\]\) addIssue/);
   assert.match(src, /disabled=\{saving \|\| !changed\}/);

@@ -11,15 +11,15 @@
 // fix to the first version (#5) was queued to build on the starter too,
 // where the button it fixes does not exist.
 //
-// Pinned here, through the real queries (homeroom-bot.js
+// Pinned here, through the real queries (rules/bot-loop.ts
 // FIRST_VERSION_PENDING_SQL):
 //   - while the first version is not live, no other request on the project
-//     is read (liveCandidates) and no other build starts
-//     (liveBuildCandidates); the request keeps its queue row and its place;
+//     is read (the lane's READ_CANDIDATES_SQL) and no other build starts
+//     (BUILD_CANDIDATES_SQL); the request keeps its queue row and its place;
 //   - the first version's own request, a follow-up on a change of the
 //     bot's already up for a vote, and an admin's Run now are not held;
 //   - once the first version merges, the waiting requests come back in
-//     their usual order, and the merge wakes the loop for them;
+//     their usual order, and the merge asks the lane to refresh the project;
 //   - a first version that ended short of a merge holds nothing (filing
 //     failed, left to the group, build failed, change closed, request
 //     closed, a background look only), and one taken up again holds again;
@@ -37,6 +37,7 @@ const fs = require('node:fs');
 const { Pool } = require('pg');
 
 const bot = require('../src/services/homeroom-bot');
+const rules = require('../src/workflow/rules/bot-loop.ts');
 const progress = require('../src/services/homeroom-bot-progress');
 const logger = require('../src/services/logger');
 
@@ -56,7 +57,6 @@ test('a project\'s first version goes first, against the full PostgreSQL schema'
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 8 });
   t.after(async () => {
-    bot._resetForTests();
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
@@ -105,24 +105,49 @@ test('a project\'s first version goes first, against the full PostgreSQL schema'
     }
     return app;
   };
-  const queue = async (app, issue, { priority = 1, reason = 'new', ago = 0 } = {}) => (await pool.query(
-    `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, enqueued_at)
-     VALUES ($1, $2, $3, $4, NOW() - make_interval(secs => $5)) RETURNING id`,
-    [app.id, issue, priority, reason, ago],
-  )).rows[0].id;
+  // A request's machine (bot-request), as the lane reads it: queued with
+  // its queue row, or building with its build waiting for a slot. Written
+  // as its transitions would (the machine's own moves are driven in
+  // tests/workflow-bot-loop-postgres.test.js); its guard is off here, so
+  // the rows below can be moved by hand.
+  const instance = async (app, issue, state, data = {}) => {
+    const cl = await pool.connect();
+    try {
+      await cl.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+      await cl.query(
+        `INSERT INTO wf_instances (machine, key, app_id, state, data, machine_version) VALUES ($1, $2, $3, $4, $5, 1)
+         ON CONFLICT (machine, key) DO UPDATE SET state = EXCLUDED.state, data = EXCLUDED.data`,
+        [rules.BOT_REQUEST, rules.requestKey(app.id, issue), app.id, state, { appId: app.id, issueNumber: issue, ...data }],
+      );
+      await cl.query('COMMIT');
+    } finally { cl.release(); }
+  };
+  const queue = async (app, issue, { priority = 1, reason = 'new', ago = 0 } = {}) => {
+    await instance(app, issue, 'queued');
+    return (await pool.query(
+      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, enqueued_at)
+       VALUES ($1, $2, $3, $4, NOW() - make_interval(secs => $5)) RETURNING id`,
+      [app.id, issue, priority, reason, ago],
+    )).rows[0].id;
+  };
   const change = async (app, issue, status = 'promoted') => (await pool.query(
     `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, linked_issues)
      VALUES ($1, $2, $3, $4, FALSE, $5::int[]) RETURNING id`,
     [app.id, botUser.id, `dev/homeroom_bot-${crypto.randomBytes(3).toString('hex')}`, status, [issue]],
   )).rows[0].id;
+  // A run; one whose build waits is its request's build owed (building).
   const run = async (app, issue, {
     mode = 'live', verdict = 'ready', buildOk = null, proposal = null, waiting = false, error = null,
-  } = {}) => (await pool.query(
-    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_ok, proposal_session_id,
-                                    live_build_waiting_at, error, build_note)
-     VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $7 THEN NOW() END, $8, 'build it') RETURNING id`,
-    [app.id, issue, mode, verdict, buildOk, proposal, waiting, error],
-  )).rows[0].id;
+  } = {}) => {
+    const id = (await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_ok, proposal_session_id,
+                                      live_build_waiting_at, error, build_note)
+       VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $7 THEN NOW() END, $8, 'build it') RETURNING id`,
+      [app.id, issue, mode, verdict, buildOk, proposal, waiting, error],
+    )).rows[0].id;
+    if (waiting) await instance(app, issue, 'building', { build: { runId: id, phase: 'waiting', since: new Date().toISOString(), key: null } });
+    return id;
+  };
   // The first version built and up for approval: the moment request #2 came.
   const firstVersionProposed = async (app) => {
     const pr = await change(app, 1, 'promoted');
@@ -130,11 +155,11 @@ test('a project\'s first version goes first, against the full PostgreSQL schema'
     return pr;
   };
 
-  const readable = async (app) => (await bot.liveCandidates(pool, {
-    liveSlugs: [app.slug], excludeAppIds: [], pausedApps: [], busyAppIds: [], botId: botUser.id,
-  })).map((r) => Number(r.issue_number));
-  const buildable = async (app) => (await bot.liveBuildCandidates(pool, { liveSlugs: [app.slug] }))
-    .map((r) => Number(r.issue_number));
+  // What the lane would grant on the project (its candidates; no app paused).
+  const readable = async (app) => (await pool.query(rules.READ_CANDIDATES_SQL, [botUser.id, []])).rows
+    .filter((r) => Number(r.app_id) === Number(app.id)).map((r) => Number(r.issue_number));
+  const buildable = async (app) => (await pool.query(rules.BUILD_CANDIDATES_SQL, [[]])).rows
+    .filter((r) => Number(r.app_id) === Number(app.id)).map((r) => Number(r.issue_number));
   const holds = async (app) => bot.firstVersionHolds(pool, [app.id]);
   const held = async (app) => (await holds(app)).has(Number(app.id));
 
@@ -174,19 +199,27 @@ test('a project\'s first version goes first, against the full PostgreSQL schema'
     assert.deepEqual(byNumber.get(2).waitingFor, { reason: 'first_version_pending', number: 1 });
 
     // The first version merges: the waiting requests come back in their
-    // usual order, and the merge wakes the loop for them.
+    // usual order, and the merge asks the lane to refresh the project.
     const said = [];
+    const told = [];
     const realInfo = logger.info;
     logger.info = (cat, msg, data) => { said.push({ msg, data }); };
     try {
-      await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [pr]);
-      const out = await bot.noteRequestMerged(pool, { id: pr }, { worker: { async stopTurn() {} } });
-      assert.deepEqual(out, { skipped: 0, stopped: 0, withdrawn: 0, dequeued: 0 }, 'what it returns is unchanged');
+      await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [pr]);
+      const out = await bot.noteRequestMerged(pool, { id: pr }, {
+        platform: {
+          async botRequestMerged(_db, p) { told.push(['merged', p.issueNumber]); },
+          async botRefresh(appId) { told.push(['refresh', appId]); },
+          async stopBuilds() {},
+        },
+      });
+      assert.deepEqual(out, { skipped: 0, stopped: 0, withdrawn: 0, dequeued: 1 }, 'the first version\'s request is told it merged');
     } finally {
       logger.info = realInfo;
     }
     assert.ok(said.some((s) => /first version is live; what waited for it is picked up now/.test(s.msg)
-      && s.data.issueNumber === 1), 'the loop is woken for what waited');
+      && s.data.issueNumber === 1), 'what waited is picked up now');
+    assert.deepEqual(told, [['merged', 1], ['refresh', Number(app.id)]], 'its request hears it merged, and the lane refreshes the project');
     assert.equal(await held(app), false);
     assert.deepEqual(await readable(app), [5], 'the fix is read now, on the new main');
     assert.deepEqual(await buildable(app), [2], 'and the idea\'s build starts');
@@ -335,7 +368,7 @@ test('a project\'s first version goes first, against the full PostgreSQL schema'
     })), true, 'a turn killed as collateral is not a look at it');
   });
 
-  // Everything above, at once, as the loop reads it: one query over every
+  // Everything above, at once, as the lane reads it: one query over every
   // project, each held or not on its own.
   await t.test('one read over many projects keeps each one\'s own answer', async () => {
     const { rows } = await pool.query('SELECT id, slug FROM apps WHERE slug = ANY($1::text[])', [slugs]);

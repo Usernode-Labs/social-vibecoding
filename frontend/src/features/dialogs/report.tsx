@@ -1,18 +1,74 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
+import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { CheckIcon } from '@/components/ui/icons';
+import { useMessages } from '../../lib/i18n/react';
 import { useDialog } from './use-dialog';
 
 export type ReportTarget = { targetType: 'app' | 'user' | 'app_message' | 'conversation_message'; target: string | number; label: string; userId?: number };
 export function openReport(target: ReportTarget) {
   (window as any).UsernodeReact?.dialogs?.report?.open(target);
 }
+// The second item is a message id (frontend/locales/en/dialogs.json), read
+// when the list renders. Child safety is first (#5102): it is the report that
+// must not wait, and its case keeps its evidence past the retention period.
 export const REPORT_REASONS = [
-  ['spam', 'Spam'], ['scam', 'Scam or fraud'], ['harassment', 'Harassment'],
-  ['hate', 'Hate'], ['threats', 'Threats'], ['sexual_content', 'Sexual or unsafe content'],
-  ['impersonation', 'Impersonation'], ['other', 'Other'],
+  ['child_safety', 'dialogs:report.reason.childSafety'],
+  ['spam', 'dialogs:report.reason.spam'], ['scam', 'dialogs:report.reason.scam'], ['harassment', 'dialogs:report.reason.harassment'],
+  ['hate', 'dialogs:report.reason.hate'], ['threats', 'dialogs:report.reason.threats'], ['sexual_content', 'dialogs:report.reason.sexualContent'],
+  ['impersonation', 'dialogs:report.reason.impersonation'], ['other', 'dialogs:report.reason.other'],
 ];
+/**
+ * The reasons as a short list to tap (#5294), not a drop-down: a radio group
+ * of rows, the whole row the target, a check on the picked one. One row is in
+ * the tab order (the picked one, else the first) and the arrow keys move the
+ * pick, as a native radio group does. The value sent is the same key the
+ * drop-down sent.
+ */
+function ReasonList({ reasons, value, onPick, labelId }: {
+  reasons: string[][]; value: string; onPick: (key: string) => void; labelId: string;
+}) {
+  const t = useMessages('dialogs');
+  const focusable = reasons.some(([key]) => key === value) ? value : reasons[0]?.[0];
+  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const step = event.key === 'ArrowDown' || event.key === 'ArrowRight' ? 1
+      : event.key === 'ArrowUp' || event.key === 'ArrowLeft' ? -1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const at = Math.max(0, reasons.findIndex(([key]) => key === value));
+    const next = value ? (at + step + reasons.length) % reasons.length : (step > 0 ? 0 : reasons.length - 1);
+    const key = reasons[next][0];
+    onPick(key);
+    const row = event.currentTarget.querySelector<HTMLElement>(`[data-report-reason="${key}"]`);
+    row?.focus();
+  }
+  return (
+    <GroupedList className="mx-0" role="radiogroup" aria-labelledby={labelId} aria-required="true" data-report-reasons="" onKeyDown={onKeyDown}>
+      {reasons.map(([key, label]) => (
+        <ListRow
+          key={key}
+          as="button"
+          role="radio"
+          aria-checked={value === key}
+          tabIndex={key === focusable ? 0 : -1}
+          data-report-reason={key}
+          onClick={() => onPick(key)}
+          className="py-3"
+          title={t(label)}
+          titleClassName="font-medium"
+          chevron={false}
+          trailing={value === key
+            ? <CheckIcon className="h-5 w-5 shrink-0 text-violet-600 dark:text-violet-400" aria-hidden="true" />
+            : <span className="h-5 w-5 shrink-0" aria-hidden="true" />}
+        />
+      ))}
+    </GroupedList>
+  );
+}
+
 export function ReportDialog() {
+  const t = useMessages('dialogs');
   const [target, setTarget] = useState<ReportTarget | null>(null);
   const [reason, setReason] = useState('');
   const [detail, setDetail] = useState('');
@@ -22,7 +78,10 @@ export function ReportDialog() {
   const [busy, setBusy] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [blockAction, setBlockAction] = useState<{ appSlug?: string; userId?: number; username?: string } | null>(null);
+  // A bottom sheet on a phone, the centred card elsewhere (#5294): the
+  // presentation the feedback dialog and Who can see & change it use.
   const dialog = useDialog<ReportTarget>('report', {
+    phoneSheet: true,
     onOpen(value) {
       (window as any).UITelemetry?.screen?.('report_dialog');
       if (detailRef.current) detailRef.current.value = '';
@@ -52,7 +111,7 @@ export function ReportDialog() {
         telemetry?.outcome?.(attemptId, 'failure', {
           errorCode: telemetry?.errorCodeFor?.(response.status),
         });
-        throw new Error(data.error || 'Could not send your report. Try again.');
+        throw new Error(data.error || t('dialogs:report.error.send'));
       }
       telemetry?.outcome?.(attemptId, 'success');
       setReceipt(data.id);
@@ -74,7 +133,7 @@ export function ReportDialog() {
       const path = blockAction.appSlug ? `/api/me/app-blocks/${encodeURIComponent(blockAction.appSlug)}` : `/api/me/blocks/${blockAction.userId}`;
       const response = await fetch(path, { method: 'PUT' });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Could not block. Try again.');
+      if (!response.ok) throw new Error(data.error || t('dialogs:report.error.block'));
       setBlocked(true);
       if (blockAction.appSlug) {
         window.dispatchEvent(new CustomEvent('app-blocks-changed', { detail: data }));
@@ -89,28 +148,36 @@ export function ReportDialog() {
   return <DialogRoot id="report-modal" ref={dialog.rootRef} {...dialog.backdropProps}>
     <DialogCard>
       {target ? <>
-      <h2 className="text-lg font-bold">{receipt ? 'Report received' : `Report ${target?.targetType === 'app' ? 'app' : target?.targetType === 'user' ? 'user' : 'message'}`}</h2>
+      <h2 className="text-lg font-bold">{receipt ? t('dialogs:report.title.received') : target?.targetType === 'app' ? t('dialogs:report.title.app') : target?.targetType === 'user' ? t('dialogs:report.title.user') : t('dialogs:report.title.message')}</h2>
       <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{target?.label}</p>
       {receipt ? <div className="mt-4 space-y-4">
-        <p role="status">{`Report #${receipt} received. We’ll review it and notify you when review finishes.`}</p>
-        {blockAction?.appSlug ? <p className="text-sm text-zinc-500 dark:text-zinc-400">Blocking hides this app and stops its notifications for you. It does not block any contributors. You can unblock it in Settings → Blocked apps.</p> : null}
+        <p role="status">{t('dialogs:report.received', { number: receipt })}</p>
+        {blockAction?.appSlug ? <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('dialogs:report.blockAppNote')}</p> : null}
         <div className="flex flex-wrap gap-3">
-          {blockAction ? <Button type="button" disabled={busy || blocked} onClick={() => void block()}>{blocked ? (blockAction.appSlug ? 'App blocked' : `@${blockAction.username} blocked`) : (blockAction.appSlug ? 'Block app' : `Block @${blockAction.username}`)}</Button> : null}
-          <Button type="button" disabled={busy} onClick={dialog.close}>Done</Button>
+          {blockAction ? <Button type="button" disabled={busy || blocked} onClick={() => void block()}>{blocked ? (blockAction.appSlug ? t('dialogs:report.block.appDone') : t('dialogs:report.block.userDone', { username: blockAction.username })) : (blockAction.appSlug ? t('dialogs:report.block.app') : t('dialogs:report.block.user', { username: blockAction.username }))}</Button> : null}
+          <Button type="button" disabled={busy} onClick={dialog.close}>{t('core:common.done')}</Button>
         </div>
       </div> : <form className="mt-4 space-y-4" onSubmit={submit}>
-        {target?.targetType === 'conversation_message' ? <p className="text-sm">Moderators will receive this message and its attachments. Your other private messages are not included.</p> : null}
-        <label className="block text-sm font-medium">Reason
-          <select required className="mt-1 w-full min-h-[44px] rounded-lg border border-zinc-300 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-900" value={reason} onChange={(e) => setReason(e.target.value)}>
-            <option value="">Choose a reason</option>
-            {REPORT_REASONS.filter(([key]) => key !== 'impersonation' || target?.targetType === 'user').map(([key,label]) => <option key={key} value={key}>{label}</option>)}
-          </select>
-        </label>
-        <label className="block text-sm font-medium">{reason === 'other' ? 'Details (required)' : 'Details (optional)'}
+        {target?.targetType === 'conversation_message' ? <p className="text-sm">{t('dialogs:report.privateMessageNote')}</p> : null}
+        <div>
+          <SectionHeader className="px-1 pb-2" id="report-reason-label">{t('dialogs:report.reason.label')}</SectionHeader>
+          <ReasonList
+            reasons={REPORT_REASONS.filter(([key]) => key !== 'impersonation' || target?.targetType === 'user')}
+            value={reason}
+            onPick={setReason}
+            labelId="report-reason-label"
+          />
+        </div>
+        <label className="block text-sm font-medium">{reason === 'other' ? t('dialogs:report.details.required') : t('dialogs:report.details.optional')}
           <textarea className="mt-1 w-full rounded-lg border border-zinc-300 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-900" rows={4} maxLength={1000} required={reason === 'other'} ref={detailRef} defaultValue="" onChange={(e) => setDetail(e.target.value)} />
         </label>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">Your identity is visible to moderators, not to the reported person or app owner.</p>
-        <div className="flex gap-3"><Button type="button" disabled={busy} onClick={dialog.close}>Cancel</Button><Button type="submit" disabled={busy || !reason || (reason === 'other' && !detail.trim())}>{busy ? 'Sending…' : 'Submit report'}</Button></div>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('dialogs:report.identityNote')}</p>
+        {/* One strong button (#5294): Send report is the filled one, Cancel
+            is quiet text beside it. */}
+        <div className="flex items-center justify-end gap-2">
+          <Button type="button" variant="unstyled" size="default" ink="muted" className="rounded-lg" disabled={busy} onClick={dialog.close}>{t('core:common.cancel')}</Button>
+          <Button type="submit" disabledStyle="block" disabled={busy || !reason || (reason === 'other' && !detail.trim())}>{busy ? t('dialogs:report.sending') : t('dialogs:report.submit')}</Button>
+        </div>
       </form>}
       {error ? <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-400">{error}</p> : null}
       </> : null}

@@ -13,6 +13,7 @@ const prMetadata = require('../services/pr-metadata');
 const sessionTitles = require('../services/session-title');
 const testingNotes = require('../services/testing-notes');
 const previewClock = require('../services/preview-clock');
+const previewStart = require('../services/preview-start');
 const proposalDescription = require('../services/proposal-description');
 const proposalDescriptionEdit = require('../services/proposal-description-edit');
 const platformIssueBlock = require('../services/platform-issue-block');
@@ -22,7 +23,6 @@ const topicAttrs = require('../services/topic-attributes');
 const agentSessions = require('../services/agent-sessions');
 const classicSessions = require('../services/classic-sessions');
 const { claimIssueForUser } = require('../services/issue-claims');
-const { appIdentityEnv } = require('../services/app-identity-env');
 const visuals = require('../services/visuals');
 const docker = require('../services/docker');
 const applicationRuntime = require('../services/application-runtime');
@@ -39,6 +39,7 @@ const { MIN_MAX_OUTPUT_TOKENS } = require('../../worker/build-codex-model-catalo
 const workerProgress = require('../services/worker-progress');
 const sessionLifecycle = require('../services/session-lifecycle');
 const stagingRecovery = require('../services/staging-recovery');
+const previewWorkflow = require('../services/preview-workflow');
 const sessionBus = require('../services/session-bus');
 const chatDelivery = require('../services/chat-delivery');
 const { drainGuard } = require('../services/lifecycle');
@@ -215,19 +216,11 @@ const {
   countedVotePredicateSql,
 } = require('../services/pr-vote-revision');
 const notifications = require('../services/notifications');
-// runSyncMain + persistBehindMain now live in services/sync-main.js so
-// the conflict-resolver can drive a sync turn without a route-requires-
-// route cycle. Re-exported below for backwards compatibility. Route
-// handlers call through the module object (syncMainSvc.*) so tests can
-// monkey-patch individual functions, mirroring how worker.isInFlight
-// is stubbed in the route suites.
+// A sync with main is the proposal machine's (src/workflow/proposal/,
+// branch.sync: services/sync-main.js runSyncWork); the routes ask for one.
+// persistBehindMain is re-exported for the build turn's tail.
 const syncMainSvc = require('../services/sync-main');
-const {
-  runSyncMain, persistBehindMain,
-  // #955: the post-sync review advance now covers every native proposal, not
-  // just CLI handoffs. Both names are the same function; the historical one is
-  // kept because callers and tests import it from here.
-} = syncMainSvc;
+const { persistBehindMain } = syncMainSvc;
 
 // Track sessions with active Claude Code workers. The Set lives in a
 // shared module so services/sync-main.js writes to the same instance
@@ -527,18 +520,15 @@ const PROCESS_BOOT_ID = String(Date.now());
 // sessionState.setPhaseResolver wiring that used to sit here.
 const stopRegistry = require('../services/stop-registry');
 
-// Per-session in-flight guard for on-demand staging rebuilds (the
-// ensure-staging route below). Repeated Preview clicks while a rebuild is
-// already running must not kick off a second concurrent docker build +
-// pg clone for the same session. Mirrors the stagingHealAttempts map the
-// sweeper uses in server.js. Cleared when the rebuild settles.
+// Coalesces repeated Preview clicks (the ensure-staging route below) while
+// one is still handing the rebuild to the preview machine, which builds it
+// once whoever asks. Only this process's clicks; cleared when the hand-off
+// settles.
 const ensureStagingInFlight = new Set();
 
-// #447: per-session in-flight guard for the manual "Re-run checks" route
-// below. Coalesces repeat clicks so one stuck proposal can't kick off
-// several concurrent staging rebuilds + capture runs. Cleared when the
-// recheck settles. (captureForSession is _inFlight-guarded internally too;
-// this just avoids a redundant rebuild on the rebuild path.)
+// #447: coalesces repeat clicks on the manual "Re-run checks" route below
+// while one is still handing the recheck to the preview machine (which joins
+// a run already going). Cleared when the hand-off settles.
 const recheckInFlight = new Set();
 
 // ── Staging mock data ──────────────────────────────────────────────────
@@ -879,6 +869,33 @@ async function changePlanFor(pool, sessionId, ownerId, viewerId) {
     [sessionId, ownerId ?? null, viewerId ?? null]
   );
   return rows[0] ? { version: Number(rows[0].version), at: rows[0].built_at } : null;
+}
+
+// The same plan for every change on a board list (/promoted, /merged), by
+// changePlanFor's rule, in one read. The change page draws from the board's
+// row first, and its plan card used to be inserted when the page's own read
+// answered, pushing its votes and shots down (polish board #14). Best-effort:
+// a failed read leaves the rows as they were, and the page's own read still
+// brings the card.
+async function attachChangePlans(pool, rows, viewerId) {
+  const list = (rows || []).filter((r) => r && (r.row_type || 'pr') === 'pr'
+    && Number.isSafeInteger(Number(r.id)) && Number(r.id) > 0);
+  if (!list.length) return;
+  try {
+    const { rows: found } = await pool.query(
+      `SELECT DISTINCT ON (s.session_id) s.session_id, s.version, s.built_at
+         FROM chat_session_specs s
+         JOIN chat_sessions owner_session ON owner_session.id = s.session_id
+        WHERE s.session_id = ANY($1::int[])
+          AND (owner_session.user_id = $2::int OR ${specVersionSharedVisibilitySql('s', '$2')})
+        ORDER BY s.session_id, s.version DESC`,
+      [list.map((r) => Number(r.id)), viewerId ?? null]
+    );
+    const byId = new Map(found.map((p) => [Number(p.session_id), { version: Number(p.version), at: p.built_at }]));
+    for (const r of list) r.plan = byId.get(Number(r.id)) || null;
+  } catch (err) {
+    log.warn('sessions', 'Could not read the plans for a board list', { message: err.message });
+  }
 }
 
 function stagingMockTranscript(sessionId) {
@@ -1643,9 +1660,11 @@ async function resolveDefaultAgentPreference(client, userId, config) {
   }
 
   let modelId = pref?.model_id
-    || (config && config.openrouterDefaultCodexModel)
-    || null;
+    || await require('../services/default-model').effective(client, config);
 
+  // A preference with no model follows the platform default
+  // (services/default-model.js; provisioning stores it that way), which an
+  // admin's save has already checked against the catalog.
   // Accounts with a usable key but no preference predate the
   // OpenRouter-default migration. Resolve their first new session against
   // the live key-visible catalog so a configured future model can fall back
@@ -1933,81 +1952,72 @@ async function switchSessionAgent(pool, { sessionId, userId, pref }) {
 // bookkeeping the user never has to manage). Ownership is checked first, then
 // the global cap (another user's idle session may be paused), then the user's
 // own cap (their least recently used session is paused). Returns { ok: true }
-// or { ok: false, status, error }.
+// or { ok: false, status, error, code? }: code 'not_decided' (a 503) when the
+// machine did not decide in time, which sendResumeRefusal answers with
+// Retry-After.
 async function resumePausedSession({ pool, config, user, sessionId }) {
   // Ownership FIRST: everything below is platform-wide bookkeeping (the
-  // global-cap probe can pause a third party's idle session, the per-user
-  // LRU one of the requester's own), and none of it may run for a request
-  // that was going to 404 anyway.
+  // global cap can pause a third party's idle session, the per-user one one
+  // of the requester's own), and none of it may run for a request that was
+  // going to 404 anyway.
   const { rows: ownRows } = await pool.query(
-    'SELECT id FROM chat_sessions WHERE id = $1 AND user_id = $2',
+    'SELECT id, app_id, status FROM chat_sessions WHERE id = $1 AND user_id = $2',
     [sessionId, user.id]
   );
-  if (!ownRows.length) return { ok: false, status: 404, error: 'Session not found or not paused' };
+  const own = ownRows[0];
+  if (!own || own.status !== 'paused') return { ok: false, status: 404, error: 'Session not found or not paused' };
 
-  const { rows: globalRows } = await pool.query(
-    `SELECT COUNT(*) as cnt FROM chat_sessions
-      WHERE status IN ('active', 'promoted')
-        AND source IS DISTINCT FROM 'imported'
-        AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
-  );
-  if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
-    // At the global cap: reclaim a slot from a globally idle session
-    // (not this one) rather than blocking the reopen. Only 429 if
-    // everything else is genuinely active.
-    const { freed } = await sessionLifecycle.freeGlobalSlot({
-      pool, graceMs: config.sessionPressureGraceMs, excludeSessionId: sessionId,
-    });
-    if (!freed) {
-      return { ok: false, status: 429, error: 'Platform is at capacity right now. Try again in a few minutes.' };
-    }
-  }
-
-  // Per-user cap counts only 'active' sessions (#193) — promoted ones
-  // are un-pausable while their PR is in a vote, so they're exempt.
-  // This also keeps the count consistent with the LRU eviction below,
-  // which has always only considered 'active' victims. The ceiling is
-  // per-requester (full admins get a raised cap; see
-  // services/session-caps.js) — raising it just means the LRU pause
-  // below fires less often for them.
+  // The proposal machine resumes it under the caps, counted under locks
+  // (the owner's row, the platform's slots): over one, it is refused, and a
+  // session to pause for it is asked to, once per cap, before it asks again.
+  // The per-user cap counts only 'active' sessions (#193); its ceiling is
+  // per-requester (full admins get a raised cap: services/session-caps.js).
+  // The global one is the session limit (services/session-limit.js).
   const caps = effectiveSessionCaps(config, user);
-  const { rows: countRows } = await pool.query(
-    `SELECT COUNT(*) as cnt FROM chat_sessions
-     WHERE user_id = $1 AND status = 'active'
-       AND source IS DISTINCT FROM 'imported'`,
-    [user.id]
-  );
-  if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
-    if (!config.sessionLruOnResume) {
-      return { ok: false, status: 429, error: `You already have ${caps.activeSessions} sessions in progress. Try again when one of them finishes.` };
-    }
-    // LRU: pause the user's least-recently-active 'active' session
-    // (not 'promoted' — those await merge votes) to free a slot.
-    // Skip any that are mid-turn; if none can be freed, 429.
-    const { freed } = await sessionLifecycle.freeUserSlot({
-      pool, userId: user.id, excludeSessionId: sessionId, includeHeadless: true,
+  const cap = {
+    user: caps.activeSessions,
+    global: await require('../services/session-limit').effective(pool, config),
+  };
+  const platform = require('../workflow/platform.ts');
+  const tried = new Set();
+  for (;;) {
+    const out = await platform.resumeProposal({
+      sessionId: Number(sessionId), appId: own.app_id, from: 'paused', userId: user.id, caps: cap, source: { kind: 'route', name: 'resume' },
     });
-    if (!freed) return { ok: false, status: 429, error: sessionLifecycle.USER_SLOTS_BUSY };
+    if (out.status === 'accepted' || out.status === 'replayed') break;
+    // Not applied in time: past its deadline the machine refuses it, so the
+    // session is still paused.
+    if (out.status === 'pending' || out.reason === 'expired') return RESUME_NOT_DECIDED;
+    const reason = out.reason;
+    if (reason === 'already_active') break;
+    if (reason === 'global_cap' && !tried.has(reason)) {
+      tried.add(reason);
+      const { freed, notDecided } = await sessionLifecycle.freeGlobalSlot({ pool, graceMs: config && config.sessionPressureGraceMs, excludeSessionId: sessionId });
+      if (freed) continue;
+      if (notDecided) return RESUME_NOT_DECIDED;
+      await sessionLifecycle.recordCapacityRefusal(pool, { cap: 'global', path: 'resume', userId: user.id });
+      return { ok: false, status: 429, error: sessionLifecycle.PLATFORM_AT_CAPACITY };
+    }
+    if (reason === 'user_cap' && !tried.has(reason)) {
+      tried.add(reason);
+      if (!config.sessionLruOnResume) {
+        sessionLifecycle.recordCapacityRefusal(pool, { cap: 'user', path: 'resume', userId: user.id });
+        return { ok: false, status: 429, error: `You already have ${caps.activeSessions} sessions in progress. Try again when one of them finishes.` };
+      }
+      // LRU: their least recently active session nobody works on is paused
+      // to free a slot (never one up for a vote).
+      const { freed, notDecided } = await sessionLifecycle.freeUserSlot({
+        pool, userId: user.id, excludeSessionId: sessionId, includeHeadless: true,
+      });
+      if (freed) continue;
+      if (notDecided) return RESUME_NOT_DECIDED;
+      sessionLifecycle.recordCapacityRefusal(pool, { cap: 'user', path: 'resume', userId: user.id });
+      return { ok: false, status: 429, error: sessionLifecycle.USER_SLOTS_BUSY };
+    }
+    if (reason === 'global_cap') return { ok: false, status: 429, error: sessionLifecycle.PLATFORM_AT_CAPACITY };
+    if (reason === 'user_cap') return { ok: false, status: 429, error: sessionLifecycle.USER_SLOTS_BUSY };
+    return { ok: false, status: 404, error: 'Session not found or not paused' };
   }
-
-  const { rows } = await pool.query(
-    `UPDATE chat_sessions SET status = 'active', last_activity_at = NOW()
-     WHERE id = $1 AND user_id = $2 AND status = 'paused'
-     RETURNING id, app_id`,
-    [sessionId, user.id]
-  );
-  if (!rows.length) return { ok: false, status: 404, error: 'Session not found or not paused' };
-
-  const { rows: sessionRows } = await pool.query(
-    `SELECT a.slug as app_slug
-     FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
-     WHERE cs.id = $1`,
-    [sessionId]
-  );
-  const appSlug = sessionRows[0]?.app_slug;
-
-  const { pushSessionUpdate } = require('../services/ws');
-  pushSessionUpdate({ action: 'resumed', sessionId, appSlug });
   log.info('sessions', 'Session resumed', { sessionId });
 
   // #8: if the resumed session is behind main, kick off a silent
@@ -2018,26 +2028,50 @@ async function resumePausedSession({ pool, config, user, sessionId }) {
   // run this only when the session has a known positive drift
   // count from a prior turn; sessions that never ran a turn
   // have behind_main=0 and the next /chat turn will populate it.
+  // How far behind main it is: the mirror's measurement when there is one,
+  // else the last turn's count.
   const { rows: driftRows } = await pool.query(
-    'SELECT behind_main FROM chat_sessions WHERE id = $1',
+    'SELECT COALESCE(integration_behind_by, behind_main) AS behind FROM chat_sessions WHERE id = $1',
     [sessionId]
   );
-  if ((driftRows[0]?.behind_main || 0) > 0) {
-    // Fire-and-forget. Failures are logged but don't bubble up;
-    // the user explicitly clicking "Sync with main" later will
-    // re-attempt with full surface area for errors.
-    runSyncMain(config, pool, sessionId, { trigger: 'resume_autosync' }).catch((err) => {
-      log.warn('sessions', 'Background sync-on-resume failed', {
-        sessionId, err: err.message,
-      });
+  if ((driftRows[0]?.behind || 0) > 0) {
+    // Asked of the proposal machine, not waited for: the sync is its work,
+    // and a refusal (somebody working on it) is logged. The user clicking
+    // "Sync with main" later asks again with the answer in front of them.
+    require('../workflow/platform.ts').requestSync({
+      sessionId: Number(sessionId), appId: own.app_id, reason: 'resume', userId: user.id,
+      source: { kind: 'route', name: 'resume' },
+    }).then((out) => {
+      if (out.status === 'rejected') log.info('sessions', 'Sync-on-resume not started', { sessionId, reason: out.reason });
+    }).catch((err) => {
+      log.warn('sessions', 'Background sync-on-resume failed', { sessionId, err: err.message });
     });
   }
   return { ok: true };
 }
 
+// A resume Homeroom has not decided yet (the machine slow or restarting):
+// the session is still paused, and asking again may resume it.
+const RESUME_NOT_DECIDED = Object.freeze({
+  ok: false, status: 503, code: 'not_decided',
+  error: 'Homeroom has not decided on resuming this session yet. Try again in a few seconds.',
+});
+
+// Answers a resumePausedSession refusal: its status and error, and for one
+// not decided yet its code and Retry-After.
+function sendResumeRefusal(res, resumed) {
+  if (resumed.code === 'not_decided') return sessionLifecycle.answerNotDecided(res, resumed.error);
+  return res.status(resumed.status).json({ error: resumed.error });
+}
+
+// What a stop forwarded from another platform process runs with here
+// (receiveSessionStop): this process's pool and recovery scheduler.
+let forwardedStopDeps = null;
+
 function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   const router = Router();
   const pool = getPool(config);
+  forwardedStopDeps = { pool, scheduleInteractiveRecovery };
 
   // #1038: the notifier needs a pool to resolve a touched session's app /
   // owner / share state before it can decide who a `session_state` event
@@ -2367,6 +2401,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // use this endpoint as a cross-app worker/session list; the Dev board
       // opts in so it can render the owner's imported In-progress cards.
       const includeImported = req.query.include_imported === '1';
+      // #5379: source='settings' rows are the manifest proposals the platform
+      // writes itself (rename, visibility, governance, admins, secret-declare,
+      // who-decides, topics). No agent conversation backs them, so the agent
+      // lists leave them out by default; the connector's proposal views opt
+      // back in with include_settings=1, alongside include_imported above.
+      const includeSettings = req.query.include_settings === '1';
       // last_activity_at = the newest message in the session's thread,
       // falling back to the session's own creation time. The dev tab's
       // card list sorts session rows by this ("most recent activity"),
@@ -2422,8 +2462,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          WHERE cs.user_id = $1 AND cs.status IN ('active', 'promoted', 'paused')
            AND cs.is_headless = FALSE
            AND ($2::boolean OR cs.source IS DISTINCT FROM 'imported')
+           AND ($3::boolean OR cs.source IS DISTINCT FROM 'settings')
          ORDER BY last_activity_at DESC`,
-        [req.user.id, includeImported]
+        [req.user.id, includeImported, includeSettings]
       );
       // #1196: the same login /api/sessions/:id carries, read once for the
       // whole list rather than per row. It is what makes "can you push this
@@ -3010,8 +3051,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // paused for them (session-lifecycle.freeUserSlot): pausing keeps
       // everything and opening it resumes it, so nobody is asked to manage it.
       if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
-        const { freed } = await sessionLifecycle.freeUserSlot({ pool, userId: req.user.id });
-        if (!freed) return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
+        const { freed, notDecided } = await sessionLifecycle.freeUserSlot({ pool, userId: req.user.id });
+        if (notDecided) return sessionLifecycle.answerNotDecided(res, sessionLifecycle.SLOT_NOT_DECIDED);
+        if (!freed) {
+          sessionLifecycle.recordCapacityRefusal(pool, { cap: 'user', path: 'start', userId: req.user.id });
+          return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
+        }
       }
 
       // A browser that offers the coding-agent picker sends `backend`
@@ -3049,23 +3094,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // budget, not a policy privilege, so full admins queue behind it like
       // everyone else. Imported PRs are produced externally and own no
       // Homeroom worker, so they do not spend this budget.
-      const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions
-          WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'
-            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
-      );
-      if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
-        // At the global cap: try to reclaim a slot from a globally idle
-        // session (idle past the pressure grace window, not mid-turn)
-        // instead of making this user wait for the slow 2h auto-pause.
-        // Only 429 if everything is genuinely active.
-        const { freed } = await sessionLifecycle.freeGlobalSlot({
-          pool, graceMs: config.sessionPressureGraceMs,
-        });
-        if (!freed) {
-          return res.status(429).json({ error: 'Platform is at capacity right now. Try again in a few minutes.' });
-        }
+      // The platform-wide cap (session-lifecycle.claimGlobalSlot): an idle
+      // session elsewhere is paused to make room, or this is refused and
+      // the refusal recorded.
+      const globalSlot = await sessionLifecycle.claimGlobalSlot({ pool, config, path: 'start', userId: req.user.id });
+      if (globalSlot.notDecided) return sessionLifecycle.answerNotDecided(res, sessionLifecycle.SLOT_NOT_DECIDED);
+      if (!globalSlot.ok) {
+        return res.status(429).json({ error: sessionLifecycle.PLATFORM_AT_CAPACITY });
       }
 
       // #287: an optional issue number links this dev chat back to the
@@ -3276,19 +3311,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // cap (they're shared, unattended work — see the cap query in POST
       // /sessions), but they consume a real worker slot, so the global cap
       // still applies.
-      const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions
-          WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'
-            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
-      );
-      if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
-        const { freed } = await sessionLifecycle.freeGlobalSlot({
-          pool, graceMs: config.sessionPressureGraceMs,
-        });
-        if (!freed) {
-          return res.status(429).json({ error: 'Platform is at capacity right now. Try again in a few minutes.' });
-        }
+      // The platform-wide cap (session-lifecycle.claimGlobalSlot): an idle
+      // session elsewhere is paused to make room, or this is refused and
+      // the refusal recorded.
+      const globalSlot = await sessionLifecycle.claimGlobalSlot({ pool, config, path: 'issue_headless', userId: req.user.id });
+      if (globalSlot.notDecided) return sessionLifecycle.answerNotDecided(res, sessionLifecycle.SLOT_NOT_DECIDED);
+      if (!globalSlot.ok) {
+        return res.status(429).json({ error: sessionLifecycle.PLATFORM_AT_CAPACITY });
       }
 
       const selectedModel = models.resolve(req.body && req.body.model);
@@ -3446,8 +3475,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
-        const { freed } = await sessionLifecycle.freeUserSlot({ pool, userId: req.user.id });
-        if (!freed) return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
+        const { freed, notDecided } = await sessionLifecycle.freeUserSlot({ pool, userId: req.user.id });
+        if (notDecided) return sessionLifecycle.answerNotDecided(res, sessionLifecycle.SLOT_NOT_DECIDED);
+        if (!freed) {
+          sessionLifecycle.recordCapacityRefusal(pool, { cap: 'user', path: 'clone_headless', userId: req.user.id });
+          return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
+        }
       }
 
       // Resolve (and, for a first-time eligible user, provision) the coding
@@ -3463,19 +3496,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         throw err;
       }
 
-      const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions
-          WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'
-            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
-      );
-      if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
-        const { freed } = await sessionLifecycle.freeGlobalSlot({
-          pool, graceMs: config.sessionPressureGraceMs,
-        });
-        if (!freed) {
-          return res.status(429).json({ error: 'Platform is at capacity right now. Try again in a few minutes.' });
-        }
+      // The platform-wide cap (session-lifecycle.claimGlobalSlot): an idle
+      // session elsewhere is paused to make room, or this is refused and
+      // the refusal recorded.
+      const globalSlot = await sessionLifecycle.claimGlobalSlot({ pool, config, path: 'clone_headless', userId: req.user.id });
+      if (globalSlot.notDecided) return sessionLifecycle.answerNotDecided(res, sessionLifecycle.SLOT_NOT_DECIDED);
+      if (!globalSlot.ok) {
+        return res.status(429).json({ error: sessionLifecycle.PLATFORM_AT_CAPACITY });
       }
 
       // Fork the new branch off the auto session's branch so any commit it
@@ -3872,6 +3899,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           // from someone other than its author, so the header pill says
           // that rather than "merging shortly".
           const flagged = !!rows[0].requires_explicit_approval;
+          rows[0].first_version = await require('../services/first-version-rule').isFirstVersion(pool, rows[0].id);
           const q = electorate.approverIds
             ? await governanceSvc.qualifiedCounts(
               pool, 'pr', rows[0].id, electorate.approverIds,
@@ -3885,6 +3913,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
               otherYes: q.otherYes,
               memberCount: flagged
                 ? await governanceSvc.communityMemberCount(pool, rows[0].app_id) : undefined,
+              // #4666: who voted, on a project with rules of its own.
+              ...(gov.rules ? governanceSvc.rulesGateOpts(
+                await governanceSvc.rulesContext(pool, rows[0].app_id, gov, 'pr', [rows[0].id]),
+                rows[0].id, rows[0].user_id ?? null, rows[0].explicit_approval_reason || null
+              ) : {}),
+              // 13 Oct 2026, D1: a project's first version needs no vote.
+              firstVersion: rows[0].first_version,
             }
           );
           rows[0].votes_required = gate.required;
@@ -3894,6 +3929,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           rows[0].qualified_yes_count = gate.qualifiedYes;
           rows[0].qualified_no_count = gate.qualifiedNo;
           Object.assign(rows[0], governanceSvc.explicitApprovalRowFields(rows[0], gate));
+          if (gate.mode === 'rules') Object.assign(rows[0], governanceSvc.ruleRowFields(gate));
         } catch { /* pill falls back to the raw tallies */ }
         // B10a: a project that is just you reads "Waiting for your approval"
         // where a group's reads "Waiting for approval" (MergeStatus.lifecycle).
@@ -4015,12 +4051,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // #1442: opening a promoted proposal is the one moment its freshness
       // numbers are about to be READ by a person deciding how to vote, so
       // this is where they are worth re-measuring. TTL-gated (60s) and
-      // single-flighted per session in the service, so the dev chat's
-      // frequent machine refetches and several voters opening the same
-      // proposal at once still cost at most one pair of GitHub calls a
-      // minute. Never throws, and the refreshed block is folded onto the row
-      // that is about to be serialized so the response carries the number it
-      // just measured rather than the one it read a moment earlier.
+      // single-flighted per session in the service. While the leader's own
+      // measurement of this head is under three minutes old it answers, for
+      // no GitHub request; otherwise a refresh costs four to seven, at most
+      // once a minute. Never throws, and the refreshed block is folded onto
+      // the row that is about to be serialized so the response carries the
+      // number it just measured rather than the one it read a moment earlier.
       if (session.status === 'promoted' && session.repo_url) {
         try {
           const freshnessSvc = require('../services/proposal-freshness');
@@ -4333,6 +4369,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         }
       }
 
+      const { rows: [own] } = await pool.query(
+        'SELECT status FROM chat_sessions WHERE id = $1 AND user_id = $2', [sessionId, req.user.id]);
+      if (!own || !['active', 'paused', 'promoted'].includes(own.status)) {
+        return res.status(404).json({ error: 'Session not found or already archived' });
+      }
+
       // Release any in-flight bookkeeping first (archiving mid-turn).
       if (activeWorkers.has(sessionId)) {
         activeWorkers.delete(sessionId);
@@ -4340,7 +4382,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       }
 
       const { archived } = await sessionLifecycle.archiveSession({
-        pool, sessionId, userId: req.user.id, reason: 'manual',
+        pool, sessionId, userId: req.user.id, username: req.user.username, reason: 'manual', from: own.status,
       });
       if (!archived) return res.status(404).json({ error: 'Session not found or already archived' });
       res.json({ ok: true });
@@ -4379,6 +4421,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           return res.status(409).json({ error: 'A build is running on this change. Wait for it to finish, then move it back to Underway.' });
         case 'pending_secret':
           return res.status(409).json({ error: 'This proposal holds a secret value that is discarded when it leaves review. Withdraw it instead if you want to stop it.' });
+        case 'not_decided':
+          return sessionLifecycle.answerNotDecided(res,
+            'Homeroom has not decided on moving this proposal back to Underway yet, so it is still in review. Try again in a few seconds.');
         default:
           return res.status(409).json({ error: 'This proposal is no longer in review.' });
       }
@@ -4581,11 +4626,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           return res.status(403).json({ error: CLI_CREDENTIAL_MANAGEMENT_ERROR });
         }
       }
-      const { unarchived, ccPurged, prReopened } = await sessionLifecycle.unarchiveSession({
+      const { unarchived, ccPurged, busy, notDecided } = await sessionLifecycle.unarchiveSession({
         pool, sessionId, userId: req.user.id,
       });
+      if (notDecided) {
+        return sessionLifecycle.answerNotDecided(res,
+          'Homeroom has not decided on reopening this session yet, so it is still closed. Try again in a few seconds.');
+      }
+      if (busy) return res.status(503).json({ error: 'The session is still being closed. Try again shortly.' });
       if (!unarchived) return res.status(404).json({ error: 'Session not found or not archived' });
-      res.json({ ok: true, ccPurged: !!ccPurged, prReopened: !!prReopened });
+      // Its pull request is reopened by the proposal machine's own work,
+      // after this answer.
+      res.json({ ok: true, ccPurged: !!ccPurged });
     } catch (err) {
       log.error('sessions', 'Unarchive failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -4857,37 +4909,37 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     try {
       const sessionId = parseInt(req.params.id, 10);
 
+      const { rows: [own] } = await pool.query(
+        'SELECT id, status FROM chat_sessions WHERE id = $1 AND user_id = $2', [sessionId, req.user.id]);
+      if (!own) return res.status(404).json({ error: 'Session not found or cannot be paused' });
+      // Soft 200 if it's already paused so the UI can no-op the button click.
+      if (own.status === 'paused') return res.json({ ok: true, alreadyPaused: true });
+
       // Drop in-flight bookkeeping first so pausing mid-turn (the user
       // pausing to abort a running turn) releases the activeWorkers slot.
-      // pauseSession() tears down the container + staging itself.
       if (activeWorkers.has(sessionId)) {
         activeWorkers.delete(sessionId);
         workerProgress.clear(sessionId);
       }
 
-      const { paused } = await sessionLifecycle.pauseSession({
-        pool, sessionId, userId: req.user.id, reason: 'manual',
+      // Promoted: honor the user's intent to free the warm worker (it is the
+      // stop button), but leave the proposal up for its vote: no lifecycle
+      // move, only the worker.
+      if (own.status === 'promoted') {
+        workerProgress.clear(sessionId);
+        await worker.destroyWorker(worker.workerContainerName(sessionId)).catch(() => {});
+        return res.json({ ok: true, keptPromoted: true });
+      }
+      if (own.status !== 'active') return res.status(404).json({ error: 'Session not found or cannot be paused' });
+
+      const { paused, reason } = await sessionLifecycle.pauseSession({
+        pool, sessionId, userId: req.user.id, reason: 'manual', from: own.status,
       });
       if (!paused) {
-        // Either it doesn't exist, isn't ours, or is already paused/archived,
-        // or it's a promoted session (which pauseSession deliberately refuses
-        // to demote so its PR stays up for vote).
-        const { rows: check } = await pool.query(
-          `SELECT id, status FROM chat_sessions WHERE id = $1 AND user_id = $2`,
-          [sessionId, req.user.id]
-        );
-        // Soft 200 if it's already paused so the UI can no-op the button click.
-        if (check[0] && check[0].status === 'paused') return res.json({ ok: true, alreadyPaused: true });
-        // Promoted: honor the user's intent to free the warm worker (same
-        // teardown pauseSession does for 'active'), but leave status =
-        // 'promoted' so the PR keeps showing its voting buttons and stays
-        // votable. The vote endpoint and cast-vote handler key off the
-        // promoted status, so flipping it here would silently pull the PR
-        // from the vote — exactly the bug we're fixing.
-        if (check[0] && check[0].status === 'promoted') {
-          workerProgress.clear(sessionId);
-          await worker.destroyWorker(worker.workerContainerName(sessionId)).catch(() => {});
-          return res.json({ ok: true, keptPromoted: true });
+        if (reason === 'already_paused') return res.json({ ok: true, alreadyPaused: true });
+        if (reason === 'not_decided') {
+          return sessionLifecycle.answerNotDecided(res,
+            'Homeroom has not decided on pausing this session yet, so it is still running. Try again in a few seconds.');
         }
         return res.status(404).json({ error: 'Session not found or cannot be paused' });
       }
@@ -4921,7 +4973,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const resumed = await resumePausedSession({ pool, config, user: req.user, sessionId });
-      if (!resumed.ok) return res.status(resumed.status).json({ error: resumed.error });
+      if (!resumed.ok) return sendResumeRefusal(res, resumed);
       res.json({ ok: true });
     } catch (err) {
       log.error('sessions', 'Resume failed', { message: err.message });
@@ -4958,7 +5010,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // paused is bookkeeping, never a step anybody is asked to take first.
       if (session.status === 'paused') {
         const resumed = await resumePausedSession({ pool, config, user: req.user, sessionId });
-        if (!resumed.ok) return res.status(resumed.status).json({ error: resumed.error });
+        if (!resumed.ok) return sendResumeRefusal(res, resumed);
         session = { ...session, status: 'active' };
       }
       if (!['active', 'promoted'].includes(session.status)) {
@@ -4967,21 +5019,40 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         });
       }
 
-      // #252: a regular chat turn holds the worker — dispatching a sync
-      // now would just trip execInWorker's "a turn is already in
-      // flight" guard with a raw 500. Surface it as a friendly 409
-      // instead. When the in-flight turn IS a sync, fall through:
-      // runSyncMain coalesces and this caller joins the running sync.
-      if (!syncMainSvc.getSyncState(sessionId)
-          && isSessionBusy(sessionId)) {
+      // The proposal machine decides whether it may run (nobody else
+      // working on it, not being merged) and runs it; this waits for it. A
+      // sync already under way is joined.
+      const platform = require('../workflow/platform.ts');
+      let out = await platform.requestSync({
+        sessionId, appId: session.app_id, reason: 'person', userId: req.user.id, wait: true,
+        source: { kind: 'route', name: 'sync-main' },
+      });
+      if (out.status === 'rejected' && out.reason === 'in_progress') {
+        const running = await platform.syncUnderWay(sessionId);
+        const i = running ? await platform.waitForSync(sessionId, running.n) : null;
+        out = { ...out, status: 'accepted', lastSync: i };
+      }
+      if (out.status === 'rejected') {
+        const busy = out.reason === 'busy';
         return res.status(409).json({
-          error: 'Claude is still working in this session. Wait for the turn to finish before syncing.',
-          busy: true,
+          error: busy ? 'Claude is still working in this session. Wait for the turn to finish before syncing.'
+            : out.reason === 'merging' ? 'This change is being merged.'
+              : `This change can't be synced now (${out.reason}).`,
+          ...(busy ? { busy: true } : {}),
         });
       }
-
-      const result = await syncMainSvc.runSyncMain(config, pool, sessionId, { sessionRow: session });
-      res.json(result);
+      // Not ended within the wait (or ended by a close or a merge): still
+      // under way as far as this answer knows, never "done".
+      const done = out.status === 'pending' ? null : out.lastSync;
+      if (!done) return res.status(202).json({ ok: false, pending: true, message: 'The sync with main is still running.' });
+      if (done.outcome === 'error' || done.outcome === 'over_budget' || done.outcome === 'gone') {
+        return res.status(done.outcome === 'gone' ? 409 : 500).json({ error: done.message || 'Sync with main failed' });
+      }
+      const syncResult = done.outcome === 'unresolvable' ? 'conflict' : done.outcome === 'not_pushed' ? 'clean' : done.outcome;
+      res.json({
+        ok: done.outcome !== 'unresolvable', syncResult, sha: done.sha || null, pushOk: done.pushOk ?? done.outcome !== 'not_pushed',
+        behind: done.behind || 0, conflictFiles: done.conflictFiles || [], message: done.message,
+      });
     } catch (err) {
       log.error('sessions', 'sync-main failed', { sessionId, err: err.message });
       res.status(500).json({ error: err.message || 'Internal server error' });
@@ -5901,14 +5972,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // #4533: what the running turn is and since when, off its record, for
     // get_change: a busy change said nothing of what held it (PR #4533's
     // checks fix waited an hour behind one). Its mode ('build', 'scout',
-    // 'sync', 'shots'), or the Homeroom bot's follow-up its mark names
-    // ('homeroom_bot_checks_fix', 'homeroom_bot_reply').
+    // 'sync', 'shots'), or the Homeroom bot's follow-up (its record names
+    // the bot's look as its owner: 'homeroom_bot_follow_up').
     let turn = null;
     if (durableTurn) {
-      const mark = require('../services/homeroom-bot-followup').turnMarkOf(durableTurn);
+      const own = turnLifecycle.ownerOf(durableTurn);
       turn = {
         startedAt: durableTurn.startedAt || null,
-        kind: mark ? `homeroom_bot_${mark.followUp}` : (durableTurn.mode || null),
+        kind: own?.machine === 'bot-request' ? 'homeroom_bot_follow_up' : (durableTurn.mode || null),
       };
     }
 
@@ -5930,7 +6001,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // instead of restarting it on every 3s poll.
     const estimate = workerProgress.get(sessionId)?.estimate || null;
 
-    // #239: whether the auto-conflict-resolver currently has a resolve
+    // #239: whether the merge queue's conflict lane currently has a resolve
     // in flight for this session. The client's "resolving merge
     // conflicts" banner used to poll this as its reload-recovery and
     // missed-WS-event safety net; that banner was retired in #962, so
@@ -5938,7 +6009,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // the session for admin/debug tooling and future surfaces — the
     // per-proposal badge derives the same state from the WS
     // `resolving` broadcasts + the merge_conflict_state snapshot.
-    const { isResolving } = require('../services/conflict-resolver');
+    const sync = await syncMainSvc.getSyncState(pool, sessionId);
 
     // Merge lifecycle status ('promoted' | 'merging' | 'merged' | …).
     // The self-app "Platform updating…" banner's restore path used to
@@ -6011,8 +6082,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       spend: busy ? workerProgress.get(sessionId)?.spend || null : null,
       agentBackend: progressAgentBackend,
       agentModel: progressAgentModel,
-      resolving: isResolving(sessionId),
-      sync: syncMainSvc.getSyncState(sessionId),
+      resolving: !!sync && sync.reason === 'conflict',
+      sync,
       status: mergeStatus,
       runner, runnerLabel, localAgent: attached,
       ...(delivery !== undefined ? { delivery } : {}),
@@ -6240,51 +6311,25 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         } catch {}
       }
 
-      // Manual deployment can discover a newer branch head. Claim it before
-      // entering the coordinator, but never regress a concurrently changed pin.
-      if (require('../services/preview-lifecycle').enabled(config) && commitHash !== 'latest') {
-        const client = await pool.connect();
-        try {
-          await client.query('BEGIN');
-          const claim = await client.query(`SELECT id FROM chat_sessions
-            WHERE id = $1 AND checks_commit_sha IS NOT DISTINCT FROM $2::text
-            FOR UPDATE`, [session.id, session.checks_commit_sha || null]);
-          if (!claim.rows.length) throw require('../services/preview-lifecycle').cancelled();
-          await visuals.setChecksPending(client, session.id, commitHash, 'building', 'manual-recheck');
-          await client.query('COMMIT');
-        } catch (err) {
-          await client.query('ROLLBACK');
-          throw err;
-        } finally { client.release(); }
+      // The exact head this deploy is for, resolved once: the branch's tip
+      // when it was read, else what the machine resolves for the row (its
+      // pin, its tip, its checks).
+      const head = await previewWorkflow.exactHead(pool, session, commitHash === 'latest' ? null : commitHash);
+      // A preview deployed by hand runs its checks as 'manual-recheck': the
+      // head is owed a unit suite that really runs (services/unit-suite-reuse.js).
+      // Recorded before the machine is asked, so a build or run already going
+      // that answers instead (it may have copied an earlier pass) is not
+      // taken as theirs.
+      await require('../services/unit-suite-reuse').markFreshOwed(pool, { sessionId: session.id, commitSha: head });
+      // The preview machine builds a new attempt of the head (a build or run
+      // already going is the answer).
+      const out = await previewWorkflow.request({
+        pool, session, head, reason: 'deploy', actor: `user:${req.user.id}`,
+      });
+      if (out.status === 'rejected' && ['not_open', 'not_deployable', 'no_head'].includes(out.reason)) {
+        return res.status(409).json({ error: 'This session cannot deploy a preview now', reason: out.reason });
       }
-
-      // Build and deploy staging (async — respond immediately)
-      res.json({ ok: true, status: 'deploying' });
-
-      staging.buildAndDeployStaging(config, session, app, commitHash)
-        .then(async (result) => {
-          await pool.query(
-            `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
-            [result.containerId, result.stagingUrl, session.id]
-          );
-          // Verify the edge only after staging_url is persisted — that is
-          // the point at which the hostname is a referenceable preview.
-          await staging.verifyStagingEdge(session, result.hostname, result.stagingUrl);
-          // #461: run the proposal checks against the fresh build, matching
-          // every other staging-deploy path. Before this, a preview built
-          // via this button left check_state NULL — the promote path then
-          // skipped its own build+capture (staging_url already set) and the
-          // proposal sat merge-blocked on "still running its tests" until a
-          // sweep happened to heal it. Fire-and-forget; captureForSession
-          // owns all failure handling and is _inFlight-guarded.
-          visuals.captureForSession(config, session, app, commitHash === 'latest' ? null : commitHash, result, { send: null, trigger: 'manual-recheck' })
-            .catch((err) => log.warn('visuals', 'Deploy-staging capture failed (non-fatal)', {
-              sessionId: session.id, err: err.message,
-            }));
-        })
-        .catch((err) => {
-          log.error('sessions', 'Staging deploy failed', { sessionId: session.id, err: err.message });
-        });
+      return res.json({ ok: true, status: 'deploying' });
     } catch (err) {
       log.error('sessions', 'Deploy staging error', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -6368,6 +6413,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // it at (services/preview-clock.js). Try it opens the preview there and
       // the bar says so. Absent when nothing is declared.
       ...previewClock.previewAnswer(session),
+      // The page the change is about (services/preview-start.js): the first
+      // declared shots start path, else the testing deep link. Try it opens
+      // the preview there instead of the first screen. Absent when neither
+      // names one, so those answers stay byte-identical.
+      ...previewStart.previewAnswer(session),
     };
   }
 
@@ -6535,50 +6585,47 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.json({ status: 'unavailable', reason: 'demo' });
       }
 
+      // From this press on the head is owed a unit suite that really runs
+      // (services/unit-suite-reuse.js): whichever run answers it, the one it
+      // is folded into below or its own, copies no earlier pass, and a
+      // verdict that carries a copied pass is not stored. Durable, and set
+      // before any of the answers below.
+      // On the head the request is for, read from the row now: a promoted
+      // proposal's reviewed head, not a checks pin an older run left.
+      const requestedHead = await stagingRecovery.requestedRecheckHead(pool, session);
+      await require('../services/unit-suite-reuse').markFreshOwed(pool, {
+        sessionId, commitSha: requestedHead,
+      });
+
       // Coalesce repeat clicks.
       if (recheckInFlight.has(sessionId)) {
         return res.json({ status: 'running' });
       }
-      // A local proposal submission holds a non-worker session operation
-      // through staging + capture. Starting a manual recheck inside that
-      // window would queue a second capture that can outlive the operation
-      // claim and overlap the next web coding turn. Treat every existing
-      // session-owned pipeline as the run the user is trying to request.
-      if (isSessionBusy(sessionId)
-          || staging.hasInFlightBuild(sessionId)
-          || visuals.hasInFlightCapture(sessionId)) {
+      // A turn or an operation holds the session (a local proposal
+      // submission among them): its own pipeline is the run the user is
+      // asking for. A build or checks run going is the preview machine's,
+      // which joins a recheck to it (or replaces it when its inputs changed).
+      //
+      // Folded into what holds the session, the head is still owed a unit
+      // suite that really runs (services/unit-suite-reuse.js): a verdict
+      // stored before this press no longer stands for it, so it reads
+      // pending (and merge-blocked) until one does, and once the session is
+      // idle again the owed run starts if nothing has answered it. The stale
+      // sweep, whose scope covers an owed head, re-drives it after a restart.
+      const busyNow = () => isSessionBusy(sessionId);
+      if (busyNow()) {
+        await require('../services/unit-suite-reuse').owePendingRun({
+          pool, stagingRecovery, config, session, busy: busyNow, head: requestedHead,
+        });
         return res.json({ status: 'running' });
       }
-      // The same holds for a run of this commit that another process
-      // launched and that is still on the cluster, running or finished but
-      // not yet read: the harvest collects it (services/check-harvest.js),
-      // and starting over would throw it away, or cancel it mid-run. Asked
-      // before the stamp below, which would set it back to "building". Its
-      // stored verdict clears its manifest, and a press after that starts a
-      // fresh run. `collecting` lets the client say why nothing new started.
       recheckInFlight.add(sessionId);
-      if (await require('../services/check-harvest').runToCollect(config, pool, sessionId, session.checks_commit_sha || null)) {
-        recheckInFlight.delete(sessionId);
-        return res.json({ status: 'running', checkState: 'pending', collecting: true });
-      }
-
-      // #607: stamp 'pending' + broadcast BEFORE responding so the client's
-      // immediate refresh deterministically sees the in-progress state (the
-      // fire-and-forget below re-stamps idempotently — same commit sha, so
-      // the failure-streak bookkeeping is preserved).
-      const visualsService = require('../services/visuals');
-      await visualsService.setChecksPending(pool, sessionId, session.checks_commit_sha || null, 'building', 'manual-recheck')
-        .catch((err) => log.warn('sessions', 'recheck setChecksPending failed (non-fatal)', {
-          sessionId, err: err.message,
-        }));
-      visualsService.notifyChecksPending(sessionId, session.checks_commit_sha || null, 'building', 'manual-recheck');
 
       res.json({ status: 'running', checkState: 'pending' });
 
-      // Fire-and-forget. recheckSessionChecks rebuilds staging when the
-      // preview is missing (the rebuild re-runs the checks) or re-runs the
-      // checks directly against the live container otherwise. All progress +
-      // failure surfacing rides the existing capture/broadcast paths.
+      // Fire-and-forget: the preview machine rebuilds the preview when it is
+      // missing (the rebuild re-runs the checks) or re-runs the checks against
+      // the live one, and stamps and announces the pending state itself.
       stagingRecovery.recheckSessionChecks({ config, pool, session, reason: 'manual-recheck' })
         .catch((err) => {
           log.error('sessions', 'manual recheck failed', { sessionId, err: err.message });
@@ -6596,7 +6643,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 }
 
 // Thin alias so existing in-file callers keep working unchanged.
-// New callers (conflict-resolver, etc.) should `require('../services/limits')`
+// New callers should `require('../services/limits')`
 // directly and call `limits.checkBudget(pool, userId)`.
 async function checkBudget(pool, userId) {
   return limits.checkBudget(pool, userId);
@@ -6913,24 +6960,22 @@ async function postHeadlessQuestionThreadMessage({ pool, appId, issueNumber, que
 // cc_running → wrapping transition so a 'wrapping' resume knows what the
 // dispatch arrived at without re-deriving it.
 async function setHeadlessStep(pool, sessionId, step, outcome, headlessTurnId = undefined) {
-  const sets = ['headless_step = $1'];
-  const params = [step, sessionId];
-  if (outcome !== undefined) {
-    params.push(outcome);
-    sets.push(`headless_outcome = $${params.length}`);
-  }
-  if (headlessTurnId !== undefined) {
-    params.push(headlessTurnId);
-    sets.push(`headless_turn_id = $${params.length}`);
-  } else if (step === 'planning') {
-    sets.push('headless_turn_id = NULL');
-  }
+  // An outcome or a turn id left undefined keeps the stored one; a step back
+  // to planning without a turn id clears it. One fixed SET list, so what it
+  // can write is read from the text (tests/lib/workflow-boundary.js).
+  //
   // This is a dispatch/replay boundary, not telemetry. If it cannot commit,
   // the caller must not make the next paid call under an identity recovery
   // cannot rediscover.
   await pool.query(
-    `UPDATE chat_sessions SET ${sets.join(', ')} WHERE id = $2`,
-    params,
+    `UPDATE chat_sessions
+        SET headless_step = $1::text,
+            headless_outcome = CASE WHEN $3::boolean THEN $4::text ELSE headless_outcome END,
+            headless_turn_id = CASE WHEN $5::boolean THEN $6::uuid
+                                    WHEN $1::text = 'planning' THEN NULL ELSE headless_turn_id END
+      WHERE id = $2`,
+    [step, sessionId, outcome !== undefined, outcome === undefined ? null : outcome,
+      headlessTurnId !== undefined, headlessTurnId === undefined ? null : headlessTurnId],
   );
 }
 
@@ -7073,7 +7118,16 @@ async function settleHeadlessMayorUsage({
   return costCents;
 }
 
-async function runHeadlessSession({
+// The whole run holds its session (services/processes.js), planning and
+// wrap-up included, not only its coding turn: a process that replaced this
+// one at a release must not resume a run this one is still carrying
+// (resumeHeadlessRuns), and a draining process finishes it before it exits.
+function runHeadlessSession(args) {
+  const release = require('../services/processes').hold('session', Number(args.session.id));
+  return runHeadlessSessionInner(args).finally(release);
+}
+
+async function runHeadlessSessionInner({
   pool, config, session, user, selectedModel,
   repoOwner, repoName, userApiKey, issueNumber, issue,
   comments = [], botUsername = null,
@@ -8010,6 +8064,28 @@ async function runRecoveredWrapUp({
   pool, config, session, sessionId, outcome, dispatchSummary,
   fallbackPillKind, turnModel, turnId = null, emit = () => {}, signal = null,
 }) {
+  // A change an agent session started has no dev chat: the turn that
+  // dispatched this run was the conversation's, and its wrap-up belongs in
+  // the conversation, written the way that turn would have written it. The
+  // classic prompt below would answer from the change's slice as a dev-chat
+  // Mayor, and the conversation's Mayor would later read a reply that is
+  // not its own.
+  if (session?.agent_session_id != null) {
+    const conversation = await require('../services/mayor/agent-turn').writeRecoveredWrapUp({
+      pool,
+      config,
+      agentSessionId: Number(session.agent_session_id),
+      userId: session.user_id,
+      username: session.username || null,
+      changeId: sessionId,
+      kind: outcome === 'spec' ? 'scout' : 'build',
+      isError: outcome === 'push_failed' || outcome === 'failed',
+      toolResultText: dispatchSummary || '',
+      turnId,
+      signal,
+    });
+    if (conversation.reason !== 'no_conversation') return conversation;
+  }
   const recoveryPills = require('../services/recovery-pills');
   const fallbackPills = recoveryPills.buildRecoveryQuickReplies(fallbackPillKind);
 
@@ -8334,7 +8410,11 @@ async function runRecoveredWrapUp({
 //                transcript.
 // Anything that can't be carried forward is marked 'failed' — same
 // terminal state as before, just no longer the only possibility.
-async function resumeHeadlessRuns(config) {
+//
+// `minIdleMs` (the leader's periodic pass, server.js orphan-headless-sweep):
+// only runs that have not moved for that long, so a run starting in some
+// process is never taken before its hold is seen.
+async function resumeHeadlessRuns(config, { minIdleMs = 0 } = {}) {
   const pool = getPool(config);
   let rows;
   try {
@@ -8346,12 +8426,34 @@ async function resumeHeadlessRuns(config) {
        JOIN users u ON cs.user_id = u.id
        WHERE cs.is_headless = TRUE
          AND (cs.headless_status = 'generating'
-              OR cs.active_turn->>'phase' = 'cleanup_pending')`
+              OR cs.active_turn->>'phase' = 'cleanup_pending')
+         AND ($1::double precision = 0
+              OR cs.last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0))`,
+      [Number(minIdleMs) || 0]
     ));
   } catch (err) {
     log.error('sessions', 'resumeHeadlessRuns query failed', { err: err.message });
     return;
   }
+  if (!rows.length) return;
+  // A run a live process still carries (the Pod a release replaced, finishing
+  // its work) is that process's, not a restart's to resume. Read exactly; a
+  // run whose holders cannot be read waits for the next pass.
+  const processes = require('../services/processes');
+  const free = [];
+  for (const row of rows) {
+    try {
+      if (!(await processes.holders('session', row.id, pool)).length) free.push(row);
+    } catch (err) {
+      log.warn('sessions', 'Could not read who holds a headless run; leaving it for the next pass', { sessionId: row.id, err: err.message });
+    }
+  }
+  if (free.length < rows.length && !minIdleMs) {
+    log.info('sessions', 'Leaving headless runs live processes still carry', {
+      sessionIds: rows.filter((r) => !free.includes(r)).map((r) => r.id),
+    });
+  }
+  rows = free;
   if (!rows.length) return;
   log.info('sessions', 'Resuming headless runs after restart', {
     count: rows.length, sessionIds: rows.map((r) => r.id),
@@ -8572,7 +8674,7 @@ async function resumeOneHeadlessRun(args) {
   // the auto-pause / staging-GC sweepers see the session as busy for the
   // full recovery (journal tail + staging + wrap-up) — mirrors
   // resumeDetachedTurn in server.js (pause-proof finalization).
-  activeWorkers.add(args.session.id);
+  await activeWorkers.enter(args.session.id);
   try {
     return await resumeOneHeadlessRunInner(args);
   } catch (err) {
@@ -8742,6 +8844,10 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       // post-restart switched calls accumulate on top of pre-restart ones.
       byokCentsSoFar: Number(activeTurn.byokCents || 0),
       onProgress: onRecoveredProgress,
+      // The registry state execInWorker kept for this turn (worker.js).
+      mode: activeTurn.mode || null,
+      branchName: session.branch_name || null,
+      stopRequestedAt: turnLifecycle.stopRequestOf(activeTurn)?.atMs || null,
     });
     let recoveryActiveTurn = activeTurn;
     try {
@@ -8901,63 +9007,23 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
         // restart-resumed run reaches the same committed-and-pushed state, so
         // it must emit the same marker; without it, a proposal interrupted by
         // a platform restart silently loses its card even though the branch
-        // has a reviewable commit. Build best-effort and persist the marker
-        // whether or not staging succeeds, exactly like the live path.
-        const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
-        let stagingResult = null;
-        let stagingErr = null;
-        // #461: pend the checks for the NEW commit before the build, so the
-        // previous commit's verdict (e.g. a stale 'passing') can't satisfy
-        // the merge gate while this build runs — or after it fails.
-        await visuals.setChecksPending(pool, session.id, result.sha, 'building', 'commit-push')
-          .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
-        try {
-          stagingResult = await staging.buildAndDeployStaging(config, session, app, result.sha);
-        } catch (e) {
-          stagingErr = e;
-        }
-        if (stagingResult) {
-          await pool.query(
-            'UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3',
-            [stagingResult.containerId, stagingResult.stagingUrl, session.id]
-          ).catch(() => {});
-          await staging.verifyStagingEdge(session, stagingResult.hostname, stagingResult.stagingUrl).catch(() => {});
-          await pool.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-             VALUES ($1, 'system', $2, $3)`,
-            [session.id, 'Staging preview built',
-              JSON.stringify({ stagingUrl: stagingResult.stagingUrl, changesReady: true, prNumber: null })]
-          ).catch(() => {});
-          // Before/after visuals: best-effort, never throws. There is no turn
-          // to stream to on a resumed run, so pass no `send`: the notifiers
-          // then publish to the bus and the global socket for open pages.
-          visuals.captureForSession(config, session, app, result.sha, stagingResult, { send: null, trigger: 'commit-push' })
-            .catch((err) => log.warn('visuals', 'Resumed headless capture failed (non-fatal)', { sessionId: session.id, err: err.message }));
-          dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}, and a staging preview was built. `
-            + 'Headless mode: no PR was opened (it is created on a clone at propose time).'
-            + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
-            + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
-        } else {
-          const { errMsg, errName, missingKeys } = describeStagingFailure(stagingErr);
-          await pool.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-             VALUES ($1, 'system', $2, $3)`,
-            [session.id, 'Staging build failed',
-              JSON.stringify({ error: errMsg, changesReady: true, stagingFailed: true, stagingErrorName: errName, stagingMissingKeys: missingKeys, prNumber: null })]
-          ).catch(() => {});
-          // #461: record the failure as a terminal 'error' checks verdict
-          // (with reason + once-per-streak owner nudge) instead of leaving
-          // the pending state to look "still running" forever.
-          await stagingRecovery.recordStagingBootFailure({ config, pool, session, commitHash: result.sha, err: stagingErr })
-            .catch((e) => log.warn('staging', 'recordStagingBootFailure failed (non-fatal)', { sessionId: session.id, err: e.message }));
-          log.warn('staging', 'Resumed headless staging build failed (non-fatal — commit pushed)', {
-            sessionId: session.id, errName, err: errMsg, missingKeys,
-          });
-          dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}. `
-            + 'Headless mode: no PR was opened. The staging preview could not be built, but the commit is reviewable: the "Changes ready" card still appears on a clone.'
-            + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
-            + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
-        }
+        // has a reviewable commit. The preview machine builds and checks it
+        // (a failed hand-off is logged, not the run's failure: recovery hands
+        // a missing preview over later); the card says it is building, and
+        // the machine's own record of the build follows it.
+        await previewWorkflow.revision({
+          pool, session, head: result.sha, source: 'turn', trigger: 'commit-push',
+        }).catch((err) => log.warn('sessions', 'Preview hand-off failed', { sessionId: session.id, err: err.message }));
+        await pool.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', $2, $3)`,
+          [session.id, 'Building staging preview...',
+            JSON.stringify({ changesReady: true, stagingBuild: 'running', prNumber: null })]
+        ).catch(() => {});
+        dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}; the staging preview is building. `
+          + 'Headless mode: no PR was opened (it is created on a clone at propose time).'
+          + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
+          + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
       } else {
         outcome = session.spec_md ? 'spec' : 'question';
         dispatchSummary = (result.fatalError
@@ -9327,7 +9393,7 @@ async function runScoutTool({
   deferTurnCleanup = false,
   beforeTurnCleanup = null,
 }) {
-  activeWorkers.add(session.id);
+  await activeWorkers.enter(session.id);
   // #50: wall-clock start for the durationMs persisted on terminal
   // statuses, so the dev-chat "(took Xm Ys)" suffix survives reloads.
   const turnStartedMs = Date.now();
@@ -9712,6 +9778,8 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       if (stopHandle) stopHandle.localTurnId = String(turnId);
       let announcedAccepted = false;
       const { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
+        // This process is the turn's waiter (see dispatchLocalBuild).
+        waiterId: queued.waiterId,
         onProgress: (row) => {
           if (!announcedAccepted && row.status !== 'queued' && row.status !== 'offered') {
             announcedAccepted = true;
@@ -9722,6 +9790,12 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
           seenScoutLines = Math.max(seenScoutLines, lines.length);
         },
       });
+      if (outcome === 'adopted') {
+        // Restart recovery took the turn over and publishes its spec itself.
+        const adopted = new Error(`${lease.label}'s scout turn is being finished by restart recovery`);
+        adopted.code = 'local_turn_adopted';
+        throw adopted;
+      }
       recordLocalCodingInvocation(pool, {
         session,
         turnId,
@@ -9732,33 +9806,9 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         correlationId: localScoutCorrelationId,
         startedAt: telemetryStartedAt,
       });
-      const explain = {
-        declined: `${lease.label} declined this turn`,
-        abandoned: `${lease.label} disconnected before finishing this turn`,
-        stopped: 'Stopped',
-        missing: 'The local turn record disappeared',
-        aborted: `${lease.label} was interrupted`,
-      }[outcome] || null;
-      const detail = finished?.error_detail ? `: ${finished.error_detail}` : '';
-      return {
-        exitCode: outcome === 'completed' ? 0 : 1,
-        ccIsError: outcome !== 'completed',
-        fatalError: explain ? `${explain}${detail}` : null,
-        // The spec IS the result text here. spec_md is the column the local
-        // agent posts its drafted document into; `summary` carries the
-        // runtime's own closing words, which for a scout run are the spec
-        // again, so prefer the explicit field.
-        lastResultText: finished?.spec_md || finished?.summary || '',
-        rawStderr: finished?.error_detail || '',
-        // A local run has no cost to the platform. Leaving costUsd absent is
-        // what makes the zero-cost accounting below a no-op rather than a
-        // special case: no llm_usage row, no settleTurnSpend, no usage event.
-        sessionId: null,
-        initSessionId: null,
-        markerlessCause: null,
-        localTurnId: String(turnId),
-        localOutcome: outcome,
-      };
+      // Shaped and worded as restart recovery shapes a recovered one
+      // (localAgent.buildTurnResult): the spec is the result text.
+      return localAgent.buildTurnResult({ turn: finished, outcome, label: lease.label, mode: 'scout' });
     };
 
     let result;
@@ -10217,6 +10267,10 @@ async function runCodexAttemptLoop({
   resumeThreadId, resolveRuntime, dispatchOnce, retryPredicate,
   sendStatus, waitForStopped, prepareRetry, classifyAttemptStatus,
   containerName, mode = 'build', telemetryComponent = null,
+  // The work item that runs the turn, when workflow work started it: on
+  // every attempt's record (startCodexAttempt) and handed to the dispatch
+  // (execInWorker's `owner`).
+  owner = null,
 }) {
   // One logical turn id per coding-tool invocation (plan 7.1); attempt 1
   // gets attempt_number=1, a retry gets attempt_number=2.
@@ -10249,6 +10303,10 @@ async function runCodexAttemptLoop({
       // The upstream provider OpenRouter named for the turn's requests, when
       // the Claude Code listener saw one (worker.js observeCodingProviderResult).
       routedProvider: result?.routedProvider || null,
+      // Run seven (14 Oct 2026): and every one it used, with how many of its
+      // requests left the shortlist, for the row's metadata.
+      routedProviders: result?.routedProviders || null,
+      shortlistFallbacks: result?.shortlistFallbacks ?? null,
       telemetryComponent: result?.providerDispatched === true
         ? (telemetryComponent
           || (mode === 'scout' ? 'coding_agent_scout' : 'coding_agent_build'))
@@ -10308,6 +10366,7 @@ async function runCodexAttemptLoop({
         runtimeContext,
         allowRetryPending: allowRetryPendingForAttempt,
         mode,
+        owner,
         telemetryComponent: telemetryComponent
           || (mode === 'scout' ? 'coding_agent_scout' : 'coding_agent_build'),
       });
@@ -10343,6 +10402,7 @@ async function runCodexAttemptLoop({
         // tail_pending until startCodexAttempt atomically installs attempt
         // two's dispatch intent. Persistence stays mandatory at this boundary.
         requireActiveTurnPersistence: allowRetryPendingForAttempt,
+        ...(owner ? { owner } : {}),
       });
     } catch (err) {
       lastError = err;
@@ -10459,6 +10519,11 @@ const CODEX_LEDGER_ERROR_CODES = {
   credential_failure: 'credential_failure',
 };
 function codexLedgerErrorCode(result) {
+  // 17 Oct 2026: a turn whose worker went from under it (OOM-killed, its
+  // container gone) is the worker's failure, not the provider's: without a
+  // code its row read error_class 'provider'. Why is in its telemetry
+  // (markerless_cause).
+  if (result?.markerlessCause) return 'worker_lost';
   return CODEX_LEDGER_ERROR_CODES[result?.agentErrorCode] || null;
 }
 
@@ -10505,7 +10570,7 @@ const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 // receives an HTTP-shaped result with common ownership, durable intent and
 // confirmation. Agent conversations request immediate hard cancellation;
 // classic sessions retain their existing stop/force escalation policy.
-async function requestSessionStop({ pool, sessionId, user, force = false, immediate = false, expectedTurnId = null, scheduleInteractiveRecovery = null }) {
+async function requestSessionStop({ pool, sessionId, user, force = false, immediate = false, expectedTurnId = null, scheduleInteractiveRecovery = null, forwarded = false }) {
     // #1378: owner OR an admin who is allowed to WRITE. GET
     // /api/sessions/:id is admin-readable and GET .../status has no
     // ownership guard at all, so an admin could already watch someone
@@ -10536,6 +10601,19 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
       return { status: 500, body: { error: 'Internal server error' } };
     }
 
+    // A turn the platform runs on this session (a sync with main, the shots
+    // agent, the Homeroom bot's build, read or fix), starting or running,
+    // in whichever process: the Stop is an event to the machine whose work
+    // runs it, which records it as stopped by this person, ends its work
+    // and stops that turn (Q1 of the bot-loop step). No bus forward and no
+    // stop handle: the machine's instance is where it lands, the turn
+    // being spun up included.
+    if (!forwarded) {
+      const platform = require('../workflow/platform.ts');
+      const owned = await platform.stopWorkflowTurn({ sessionId: Number(sessionId), by: user.username, expectedTurnId });
+      if (owned) return owned;
+    }
+
     // #937: In classic sessions, `{ force: true }` is offered after a
     // normal stop has visibly failed to land (its 40s rung). Strictly
     // second-order: it is only honoured once a stop is already pending for
@@ -10544,6 +10622,26 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
     const forceRequested = force === true;
 
     const handle = stopRegistry.get(sessionId);
+    // docs/plans/draining-releases.md: the turn may run in another platform
+    // process (one finishing its work after a release, or the one that
+    // replaced it), which holds the session. The process with the turn's
+    // handle does what this one would with it, told over the bus
+    // (receiveSessionStop); this one still takes its own durable path below
+    // (the stamp, and the kill inside the worker, which reach the turn from
+    // any process), but never answers "nothing to stop" or clears the
+    // bookkeeping of a turn it handed on. A forwarded stop is never forwarded
+    // again.
+    let handedOn = false;
+    if (!handle && !forwarded && require('../services/processes').heldElsewhere('session', Number(sessionId))) {
+      require('../services/ws-bus').publish('session_stop', null, {
+        sessionId: Number(sessionId),
+        user: { id: user.id, username: user.username, canAdminWrite: user.canAdminWrite === true },
+        force: force === true, immediate: immediate === true, expectedTurnId: expectedTurnId || null,
+      });
+      handedOn = true;
+      log.info('sessions', 'Stop forwarded to the process running the turn', { sessionId, by: user.username });
+    }
+    const stoppingThere = { status: 202, body: { ok: true, stopped: true, stopping: true, phase: null } };
     if (expectedTurnId) {
       const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
       if (turnLifecycle.turnIdentity(current) !== expectedTurnId) {
@@ -10556,6 +10654,7 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
       ? (handle?.phase === 'mayor2' ? 'wrap_up_not_stoppable' : handle ? 'force' : 'force_orphan')
       : stopPolicy.classifyStopRequest({ handle, force: forceRequested });
 
+    if (handedOn && (action === 'force_orphan' || action === 'force_without_stop')) return stoppingThere;
     if (immediate && action !== 'wrap_up_not_stoppable') {
       const durable = await turnLifecycle.loadActiveTurn(pool, sessionId);
       if (expectedTurnId && turnLifecycle.turnIdentity(durable) !== expectedTurnId) {
@@ -10600,6 +10699,7 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
       try {
         hasDurableTurn = !!(await turnLifecycle.loadActiveTurn(pool, sessionId));
       } catch {}
+      if (handedOn) return stoppingThere;
       log.warn('sessions', 'Stop request had no active turn', {
         sessionId,
         busy: isSessionBusy(sessionId),
@@ -10775,6 +10875,31 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
     }
 
     return { status: 200, body: { ok: true, stopped: true, phase: handle.phase } };
+}
+
+// The bus's `session_stop` (services/ws.js): another process was asked to
+// stop a turn this one may be running. The sender checked the stop's user;
+// requestSessionStop checks them again here, against the same rows.
+async function receiveSessionStop(payload) {
+  const sessionId = Number(payload?.sessionId);
+  const user = payload?.user;
+  if (!forwardedStopDeps || !Number.isInteger(sessionId) || !user || !Number.isInteger(Number(user.id))) return null;
+  // Only where the turn's handle is: a process that merely holds the session
+  // (a hand-off, a retained recovery) has nothing of the turn to stop, and
+  // the sender's own durable path already reached the worker.
+  if (!stopRegistry.get(sessionId)) return null;
+  const result = await requestSessionStop({
+    pool: forwardedStopDeps.pool,
+    scheduleInteractiveRecovery: forwardedStopDeps.scheduleInteractiveRecovery,
+    sessionId,
+    user: { id: Number(user.id), username: String(user.username || ''), canAdminWrite: user.canAdminWrite === true },
+    force: payload.force === true,
+    immediate: payload.immediate === true,
+    expectedTurnId: payload.expectedTurnId || null,
+    forwarded: true,
+  });
+  log.info('sessions', 'Ran a stop another process forwarded', { sessionId, status: result?.status });
+  return result;
 }
 
 async function confirmStopLanded(sessionId, handle) {
@@ -11097,6 +11222,92 @@ function describeStagingFailure(stagingErr) {
   const errMsg = (stagingErr && stagingErr.message) || 'Unknown staging failure (no error thrown but no result returned)';
   const errName = (stagingErr && stagingErr.name) || 'Error';
   return { fix, missingKeys, errMsg, errName };
+}
+
+// ── Steps the live build tail and its restart recovery share ───────────
+//
+// runClaudeCodeTool's tail (below) and server.js finalizeRecoveredTurn both
+// end a build turn, and a restart can land between any two of their steps,
+// so the recovered tail repeats whatever the live one had not finished. The
+// two steps here are the ones that must read the same from either side.
+
+// The staging outcome card ("Staging deployed!" / "Staging build failed"),
+// written once per durable turn whichever tail gets there first. The card,
+// its tail checkpoint and the receipt commit together, under one receipt
+// key for both tails: a restart after the live card was written finds the
+// receipt and writes no second one. `turnId` null (a legacy record, a local
+// agent's turn) writes the row without a receipt. `tailIdentity` names the
+// held record the checkpoint merges into (turnLifecycle.cleanupArgs), or is
+// null when there is none. Resolves { applied, outcome, metadata, failure,
+// checkpoint }: what the receipt holds when it was already written.
+async function publishStagingOutcome({
+  pool, sessionId, turnId = null, tailIdentity = null,
+  outcome, metadata, failure = null,
+}) {
+  // 'building': the preview machine (WF_PREVIEWS_ENABLED) builds it; the
+  // card says so, and its Preview button comes with the machine's
+  // staging_ready.
+  const succeeded = outcome === 'success' || outcome === 'building';
+  const content = outcome === 'building' ? 'Building staging preview...'
+    : succeeded ? 'Staging deployed!' : 'Staging build failed';
+  const checkpoint = succeeded
+    ? { stagingPublished: true }
+    : { stagingPublished: true, stagingFailed: failure || { errMsg: metadata?.error || 'Staging build failed' } };
+  const persist = async (client) => {
+    await client.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3)`,
+      [sessionId, content, JSON.stringify(metadata || {})],
+    );
+    if (tailIdentity) {
+      await turnLifecycle.mergeTailMilestones(client, {
+        sessionId, ...tailIdentity, milestones: checkpoint,
+      });
+    }
+    return { outcome, metadata, failure, checkpoint };
+  };
+  if (!turnId) return { applied: true, content, ...(await persist(pool)) };
+  const receipt = await turnEffects.runDbEffect({
+    pool,
+    turnId,
+    effectKey: turnEffects.EFFECT_KEYS.RECOVERED_STAGING_PUBLICATION,
+    sessionId,
+    run: persist,
+  });
+  return {
+    applied: receipt.applied,
+    content,
+    ...(receipt.value || { outcome, metadata, failure, checkpoint }),
+  };
+}
+
+// A promoted proposal's new commit, once its preview is up: the votes cast
+// on the old version stop counting (retired, not deleted: services/
+// vote-revision.js), dapp.json's admins are re-read, and the proposal's own
+// thread is told. The caller stamps its votesResetFor milestone BEFORE
+// calling, so a resumed tail never re-announces a reset. The line goes to
+// the proposal's thread and nowhere else: a platform line names its thread
+// or is not written (ws.sendSystemMessage writes nothing without one).
+async function retireVotesForNewCommit({ pool, session, sessionId = session.id, commitHash }) {
+  // #788: the new commit may have added or removed a name in dapp.json's
+  // `admins` block. Best-effort (swallows GitHub failures) and re-verified
+  // authoritatively in evaluateMergeGate.
+  await require('../services/app-admins').refreshExplicitApproval(pool, session, session);
+  const { sendSystemMessage, pushVoteUpdate } = require('../services/ws');
+  return require('../services/vote-revision').retireAndRecheck(
+    pool, { ...session, id: sessionId }, commitHash,
+    {
+      announce: async ({ retired: dropped }) => {
+        pushVoteUpdate({ sessionId, appSlug: session.app_slug, merged: false });
+        const resetMsg = `An update was pushed to PR #${session.pr_number || sessionId} (commit ${commitHash.substring(0, 8)}). Earlier votes were on the old version, so take another look.`;
+        await sendSystemMessage(pool, session.app_id, resetMsg, 'system',
+          null, { type: 'session', ref: sessionId }).catch(() => {});
+        log.info('sessions', 'Retired PR votes after new commit', {
+          sessionId, commitHash: commitHash.substring(0, 8), votesRetired: dropped,
+        });
+      },
+    },
+  );
 }
 
 // Local Claude and Codex/OpenRouter do not have hosted Claude's independently
@@ -11440,7 +11651,7 @@ async function runClaudeCodeTool({
   stopHandle,
   userApiKey,
   // #155/#183: headless auto sessions may commit + push their branch and
-  // deliberately build a staging preview, but must NOT open a PR — that
+  // deliberately hand it to the preview machine, but must NOT open a PR — that
   // happens later, lazily, when a dev chat cloned off the auto session is
   // proposed to the group. Swaps the success-path tail for the headless
   // variant (staging, no PR); everything else (worker exec, push
@@ -11454,7 +11665,7 @@ async function runClaudeCodeTool({
   deferTurnCleanup = false,
   beforeTurnCleanup = null,
 }) {
-  activeWorkers.add(session.id);
+  await activeWorkers.enter(session.id);
   // #50: wall-clock start for the durationMs persisted on terminal
   // statuses, so the dev-chat "(took Xm Ys)" suffix survives reloads.
   const turnStartedMs = Date.now();
@@ -12289,6 +12500,10 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
       if (stopHandle) stopHandle.localTurnId = String(turnId);
       let announcedAccepted = false;
       const { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
+        // This process is the turn's waiter: it keeps the turn from being
+        // taken over by restart recovery while it waits, and claims the
+        // tail below under this id (services/local-agent-recovery.js).
+        waiterId: queued.waiterId,
         onProgress: (row) => {
           if (!announcedAccepted && row.status !== 'queued' && row.status !== 'offered') {
             announcedAccepted = true;
@@ -12299,6 +12514,15 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
           seenLocalLines = Math.max(seenLocalLines, lines.length);
         },
       });
+      if (outcome === 'adopted') {
+        // Restart recovery took this turn over while this process looked
+        // dead (it stopped renewing for longer than WAITER_STALE_SECONDS),
+        // and runs its tail itself. Running it here too would post every
+        // card twice.
+        const adopted = new Error(`${lease.label}'s turn is being finished by restart recovery`);
+        adopted.code = 'local_turn_adopted';
+        throw adopted;
+      }
       recordLocalCodingInvocation(pool, {
         session,
         turnId,
@@ -12309,43 +12533,14 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         correlationId: localBuildCorrelationId,
         startedAt: telemetryStartedAt,
       });
-      const headSha = finished?.head_sha || null;
-      // 'declined' and 'abandoned' are the two outcomes that are nobody's
-      // fault: the checkout was dirty / on the wrong commit, or the laptop
-      // went away mid-turn. Both are reported as an honest error rather than
-      // as a silent no-op, because the user is sitting in front of the
-      // machine that just refused and can act on the reason.
-      //
       // The full set awaitTurnResult can return is completed / failed /
-      // declined / stopped / abandoned / missing / aborted. 'completed' needs
-      // no explanation and 'failed' already carries the runtime's own words
-      // in error_detail, so both are left to the shared tail.
-      const explain = {
-        declined: `${lease.label} declined this turn`,
-        abandoned: `${lease.label} disconnected before finishing this turn`,
-        stopped: 'Stopped',
-        missing: 'The local turn record disappeared',
-        aborted: `${lease.label} was interrupted`,
-      }[outcome] || null;
-      const detail = finished?.error_detail ? `: ${finished.error_detail}` : '';
-      return {
-        sha: headSha,
-        ahead: headSha ? 1 : 0,
-        // Nothing local was fetched, so the platform's existing count is the
-        // best answer; do not let a local turn reset it to zero.
-        behind: session.behind_main || 0,
-        pushOk: true,
-        exitCode: outcome === 'completed' ? 0 : 1,
-        ccIsError: outcome !== 'completed',
-        fatalError: explain ? `${explain}${detail}` : null,
-        lastResultText: finished?.summary || '',
-        rawStderr: finished?.error_detail || '',
-        sessionId: null,
-        initSessionId: null,
-        markerlessCause: null,
-        localTurnId: String(turnId),
-        localOutcome: outcome,
-      };
+      // declined / stopped / abandoned / missing / aborted; the shape and the
+      // words for each are shared with restart recovery
+      // (localAgent.buildTurnResult), so a recovered local turn reaches the
+      // tail exactly as this one does.
+      return localAgent.buildTurnResult({
+        turn: finished, outcome, label: lease.label, behind: session.behind_main || 0, mode: 'build',
+      });
     };
 
     let result;
@@ -12781,94 +12976,14 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
       }
       await sendStatus('Changes committed and pushed (headless). Building staging preview (no PR yet)...');
 
-      const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
-      let stagingResult = null;
-      let stagingErr = null;
-      // #461: pend the checks for the NEW commit before the build starts, so
-      // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
-      // the merge gate while this build runs — or after it fails.
-      await visuals.setChecksPending(pool, session.id, commitHash, 'building')
-        .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
-      try {
-        stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
-      } catch (e) {
-        stagingErr = e;
-      }
-
-      if (stagingResult) {
-        await pool.query(
-          `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
-          [stagingResult.containerId, stagingResult.stagingUrl, session.id]
-        );
-        // Same edge verification as the interactive tail: persist
-        // staging_url first, then make the first real request through the
-        // edge before revealing the preview anywhere.
-        await staging.verifyStagingEdge(session, stagingResult.hostname, stagingResult.stagingUrl);
-        stagingUrl = stagingResult.stagingUrl;
-        // The stagingUrl metadata is what makes this row render as the
-        // "Changes ready" staging card (Preview / Test / Propose buttons)
-        // in every dev chat later cloned from this auto session. The
-        // explicit `changesReady: true` flag is what now DRIVES the card
-        // (rather than incidentally `stagingUrl`), so the card renders the
-        // same whether or not staging succeeded — see the failure branch.
-        await sendStatus('Staging preview built', { stagingUrl, changesReady: true, prNumber: null });
-        send('staging_ready', {
-          url: stagingUrl,
-          changesReady: true,
-          testingMd: session.testing_md || null,
-          testingPath: session.testing_path || null,
-        });
-        summaryParts.push(`Staging preview deployed: ${stagingUrl}`);
-
-        // #195: before/after visuals. Fire-and-forget AFTER staging_ready
-        // so the preview button is never delayed; captureForSession owns
-        // the UI-affecting heuristic and swallows every failure. No PR
-        // exists on the headless path — the stored artifacts surface in
-        // the PR body later via applyPrMetadata at promote time.
-        visuals.captureForSession(config, session, app, commitHash, stagingResult, { send, trigger: 'commit-push' })
-          .catch((err) => log.warn('visuals', 'Headless capture failed (non-fatal)', {
-            sessionId: session.id, err: err.message,
-          }));
-      } else {
-        // Non-fatal (#183): the pushed commit is this run's deliverable; a
-        // missing preview only degrades the review experience. Same
-        // tailored remediation as the interactive tail so manifest/secret
-        // problems surface in the Mayor's wrap-up summary — but isError
-        // stays false and the run's outcome is unchanged.
-        const { fix, missingKeys, errMsg, errName } = describeStagingFailure(stagingErr);
-        // The commit IS pushed and reviewable — `changesReady: true` makes
-        // the "Changes ready" card render (with a disabled Preview button +
-        // missing-secret hint) on any clone, exactly as the success branch
-        // does, instead of leaving a card-less "build failed" line. Headless
-        // never opens a PR, so prNumber/prUrl are null.
-        await sendStatus('Staging build failed', {
-          error: errMsg,
-          changesReady: true,
-          stagingFailed: true,
-          stagingErrorName: errName,
-          stagingMissingKeys: missingKeys,
-          prNumber: null,
-        });
-        send('staging_failed', {
-          error: errMsg,
-          errorName: errName,
-          missingKeys,
-          changesReady: true,
-          prNumber: null,
-        });
-        summaryParts.push(
-          `Staging preview failed to build (non-fatal: commit ${commitHash.substring(0, 8)} is pushed; `
-          + `a preview can be built from a cloned session).\n\n${fix}`
-        );
-        // #461: record the failure as a terminal 'error' checks verdict
-        // (with reason + once-per-streak owner nudge) instead of leaving
-        // the pending state to look "still running" forever.
-        await stagingRecovery.recordStagingBootFailure({ config, pool, session, commitHash, err: stagingErr })
-          .catch((e) => log.warn('staging', 'recordStagingBootFailure failed (non-fatal)', { sessionId: session.id, err: e.message }));
-        log.error('staging', 'Headless staging build failed (non-fatal)', {
-          sessionId: session.id, slug: app.slug, errName, err: errMsg, missingKeys,
-        });
-      }
+      // The preview machine builds and checks it (a failed hand-off is
+      // logged, not the run's failure); the card says it is building, and
+      // the machine's own record of the build follows it.
+      await previewWorkflow.revision({
+        pool, session, head: commitHash, source: 'turn', trigger: 'commit-push',
+      }).catch((err) => log.warn('sessions', 'Preview hand-off failed', { sessionId: session.id, err: err.message }));
+      await sendStatus('Building staging preview...', { changesReady: true, stagingBuild: 'running', prNumber: null });
+      summaryParts.push('The staging preview is building; its checks run once it is up.');
 
       summaryParts.push(
         'Headless mode: no PR was opened. A user can start a dev-chat session from this auto session '
@@ -12996,9 +13111,13 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         summaryParts.push(`Opened PR #${prResult.prNumber}: ${prResult.prUrl}`);
         // Tail milestone: a resume must not open a second PR-opened event
         // (applyPrMetadata itself is update-safe once pr_number is set).
-        await worker.noteTailMilestone(session.id, {
-          prNumber: prResult.prNumber, prOpenedEventRecorded: true,
-        }, { turnId: durableTurnId });
+        // Only a turn with a durable record has one to stamp: a local
+        // agent's turn has none, and a stamp without an owner throws.
+        if (durableTurnId) {
+          await worker.noteTailMilestone(session.id, {
+            prNumber: prResult.prNumber, prOpenedEventRecorded: true,
+          }, { turnId: durableTurnId });
+        }
       } else if (session.pr_number && !wasNewPR) {
         summaryParts.push(`Pushed to existing PR #${session.pr_number}.`);
       }
@@ -13006,211 +13125,65 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
       await sendStatus('Building staging preview...');
       const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
 
-      // Staging build is a recoverable failure point: the commit + push +
-      // PR creation above already landed real-world artefacts, but the
-      // preview container can still fail to come up — most commonly when
-      // `dapp.json` is missing a `staging_default` for a private secret
-      // (`PrivateSecretMissingStagingDefaultError`) or when a required
-      // secret hasn't been set in Settings → Secrets
-      // (`MissingSecretsError`). Both are user-actionable: the first is a
-      // manifest edit the agent itself can apply; the second needs an
-      // admin to set the value in the platform UI.
-      //
-      // We catch here (rather than letting the throw escape to the
-      // generic chat-handler `catch`) so the failure flows back to the
-      // Mayor as a `tool_result` with `is_error: true`. That's what lets
-      // the wrap-up turn explain the fix to the user — and, when the
-      // user nudges the agent to retry, lets the next `dispatch_claude_code`
-      // see the failure context in chat history. Without this, the Mayor
-      // never finds out anything went wrong; the user sees a generic
-      // "Chat error" toast and has no breadcrumb to follow.
-      let stagingResult = null;
-      let stagingErr = null;
-      // #461: pend the checks for the NEW commit before the build starts, so
-      // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
-      // the merge gate while this build runs — or after it fails.
-      await visuals.setChecksPending(pool, session.id, commitHash, 'building')
-        .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
-      try {
-        stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
-      } catch (e) {
-        stagingErr = e;
-      }
-
-      if (stagingResult) {
-        await pool.query(
-          `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
-          [stagingResult.containerId, stagingResult.stagingUrl, session.id]
-        );
-        // Tail milestone: the preview for THIS commit exists. A resumed
-        // tail re-checks its liveness before deciding to rebuild, so a
-        // healthy container is left alone rather than rebuilt for another
-        // ~5 minutes.
-        await worker.noteTailMilestone(session.id, {
-          stagingUrl: stagingResult.stagingUrl,
-        }, { turnId: durableTurnId });
-
-        // Make one real end-to-end request through the edge now that
-        // staging_url is persisted and BEFORE emitting `staging_ready`
-        // (which reveals the preview button), so the reviewer's click
-        // doesn't pay the container's cold first request — and so a preview
-        // the edge can't actually route to is visible in the platform log
-        // rather than only to whoever clicks it. Bounded; never blocks the
-        // deploy.
-        await staging.verifyStagingEdge(session, stagingResult.hostname, stagingResult.stagingUrl);
-
-        stagingUrl = stagingResult.stagingUrl;
-        // `changesReady: true` is now what drives the "Changes ready" card
-        // (rather than incidentally `stagingUrl`), so the same card renders
-        // on the staging-failed branch below. prNumber/prUrl ride along so
-        // the card header + "View on GitHub" survive a reload from metadata.
-        await sendStatus('Staging deployed!', {
-          stagingUrl,
-          changesReady: true,
-          prNumber: session.pr_number || null,
-          prUrl: session.pr_url || null,
-        });
-        // #127: ship the session's testing guidance (this turn's block, or
-        // the kept-previous one off the session row) alongside the staging
-        // URL so the client can offer "Test this change" without a refetch.
-        send('staging_ready', {
-          url: stagingUrl,
-          changesReady: true,
-          testingMd: session.testing_md || null,
-          testingPath: session.testing_path || null,
-        });
-        summaryParts.push(`Staging redeployed: ${stagingUrl}`);
-
-        // #195: before/after visuals. Fire-and-forget AFTER staging_ready
-        // so the preview button is never delayed. When the capture lands
-        // it patches the PR body's "Before / after" block directly and
-        // emits visuals_ready (via this turn's send → SSE/WS/bus) so the
-        // staging card upgrades in place.
-        visuals.captureForSession(config, session, app, commitHash, stagingResult, { send, trigger: 'commit-push' })
-          .catch((err) => log.warn('visuals', 'Capture failed (non-fatal)', {
-            sessionId: session.id, err: err.message,
-          }));
-
-        if (session.status === 'promoted') {
-          // Tail milestone BEFORE the work, not after: the vote reset is
-          // the one tail step that is not idempotent in what it SAYS (it
-          // announces itself and asks people back). A resumed tail must not
-          // re-announce a reset for a commit whose votes are already retired,
-          // so claim it up front — a crash between the stamp and the retire
-          // leaves at worst an unannounced reset, which the next push redoes
-          // anyway.
+      // A promoted proposal's votes were on the previous version.
+      const retireVotesForCommit = async () => {
+        if (session.status !== 'promoted') return;
+        // Tail milestone BEFORE the work, not after: the vote reset is
+        // the one tail step that is not idempotent in what it SAYS (it
+        // announces itself and asks people back). A resumed tail must not
+        // re-announce a reset for a commit whose votes are already retired,
+        // so claim it up front — a crash between the stamp and the retire
+        // leaves at worst an unannounced reset, which the next push redoes
+        // anyway.
+        if (durableTurnId) {
           await worker.noteTailMilestone(
             session.id,
             { votesResetFor: commitHash },
             { turnId: durableTurnId },
           );
-          // #788: the new commit may have added or removed a name in
-          // dapp.json's `admins` block, so re-classify alongside the
-          // vote reset. Best-effort (swallows GitHub failures) and
-          // re-verified authoritatively in checkAndMerge.
-          await require('../services/app-admins')
-            .refreshExplicitApproval(pool, session, session);
-          // #1688: the votes are RETIRED, not deleted — the session's approval
-          // epoch moves on and the rows stay as the record of who was on
-          // board, which is what asks the prior Yes voters back with one tap
-          // (services/vote-revision.js).
-          const { sendSystemMessage, pushVoteUpdate } = require('../services/ws');
-          const retired = await require('../services/vote-revision').retireAndRecheck(
-            pool, session, commitHash,
-            {
-              announce: async ({ retired: dropped }) => {
-                pushVoteUpdate({
-                  sessionId: session.id,
-                  appSlug: session.app_slug,
-                  merged: false,
-                });
-                const resetMsg = `An update was pushed to PR #${session.pr_number || session.id} (commit ${commitHash.substring(0, 8)}). Earlier votes were on the old version, so take another look.`;
-                // Into the proposal's thread (lifecycle in context).
-                await sendSystemMessage(pool, session.app_id, resetMsg, 'system',
-                  null, { type: 'session', ref: session.id }).catch(() => {});
-                log.info('sessions', 'Retired PR votes after new commit', {
-                  sessionId: session.id, commitHash: commitHash.substring(0, 8), votesRetired: dropped,
-                });
-              },
-            },
-          );
-          if (retired.retired > 0) {
-            summaryParts.push('Group-chat votes were reset for the new commit.');
-          }
         }
-
-        if (session.pr_number && repoOwner && repoName) {
-          try {
-            const pat = process.env.GITHUB_BOT_TOKEN;
-            if (pat) {
-              // The bot token's client from services/github.js, so the
-              // request is recorded and counted against the hourly budget.
-              const ok = await github.getOctokit(repoOwner);
-              // #127: append the "How to test" section so the guidance is
-              // visible right where reviewers find the staging link.
-              const testingComment = prMetadata.buildTestingBlock(session.testing_md, session.testing_path);
-              await ok.rest.issues.createComment({
-                owner: repoOwner, repo: repoName,
-                issue_number: session.pr_number,
-                body: github.safeMention(`**Staging deployed!**\n\n${stagingResult.stagingUrl}\n\nCommit: ${commitHash.substring(0, 8)}${testingComment ? `\n\n${testingComment}` : ''}`),
-              });
-            }
-          } catch (commentErr) {
-            log.warn('sessions', 'Failed to comment on PR', { err: commentErr.message });
-          }
+        // #1688: the votes are RETIRED, not deleted — the session's approval
+        // epoch moves on and the rows stay as the record of who was on
+        // board, which is what asks the prior Yes voters back with one tap.
+        // The same step the recovered tail takes (retireVotesForNewCommit).
+        const retired = await retireVotesForNewCommit({ pool, session, commitHash });
+        if (retired.retired > 0) {
+          summaryParts.push('Group-chat votes were reset for the new commit.');
         }
+      };
 
-        log.info('sessions', 'Full dev cycle complete', { sessionId: session.id, commitHash: commitHash.substring(0, 8) });
+      // The preview machine builds and checks the commit; the turn ends
+      // without waiting for it, and the page hears staging_ready and the
+      // verdict over the WebSocket bus. A promoted proposal's reviewed head
+      // moves to the commit first: it is the pin the machine checks a
+      // revision against.
+      await retireVotesForCommit();
+      // Non-fatal: the commit is pushed, and recovery hands a preview that is
+      // missing to the machine later.
+      await previewWorkflow.revision({
+        pool, session, head: commitHash, source: 'turn', trigger: 'commit-push',
+      }).catch((err) => log.warn('sessions', 'Preview hand-off failed', { sessionId: session.id, err: err.message }));
+      // The "Changes ready" card renders from changesReady; its Preview
+      // button appears when the machine's staging_ready arrives. Behind the
+      // receipt the recovered tail writes this card under, as the other
+      // outcomes are.
+      const buildingCard = {
+        changesReady: true,
+        stagingBuild: 'running',
+        prNumber: session.pr_number || null,
+        prUrl: session.pr_url || null,
+      };
+      if (durableTurnId) {
+        const published = await publishStagingOutcome({
+          pool, sessionId: session.id, turnId: durableTurnId,
+          tailIdentity: { turnId: durableTurnId }, outcome: 'building', metadata: buildingCard,
+        });
+        if (published.applied) send('status', { text: published.content, ...buildingCard });
       } else {
-        isError = true;
-
-        const { fix, missingKeys, errMsg, errName } = describeStagingFailure(stagingErr);
-
-        const message =
-          `Staging build failed.\n\n` +
-          `What still happened: commit ${commitHash.substring(0, 8)} was pushed to ${session.branch_name}` +
-          (session.pr_number ? ` and PR #${session.pr_number} was created/updated` : '') +
-          `. Only the staging preview container is missing, so there is no preview URL for this commit.\n\n` +
-          fix;
-
-        // The commit (and PR, if any) already landed — `changesReady: true`
-        // keeps the "Changes ready" card + Propose button on screen (with a
-        // disabled Preview button and the missing-secret hint), so a failed
-        // preview no longer hides a perfectly proposable change. Propose
-        // rebuilds staging itself (routes/votes.js), so this stays usable.
-        await sendStatus('Staging build failed', {
-          error: errMsg,
-          changesReady: true,
-          stagingFailed: true,
-          stagingErrorName: errName,
-          stagingMissingKeys: missingKeys,
-          prNumber: session.pr_number || null,
-          prUrl: session.pr_url || null,
-        });
-        send('staging_failed', {
-          error: errMsg,
-          errorName: errName,
-          missingKeys,
-          changesReady: true,
-          prNumber: session.pr_number || null,
-          prUrl: session.pr_url || null,
-        });
-        summaryParts.push(message);
-
-        // #461: record the failure as a terminal 'error' checks verdict
-        // (with reason + once-per-streak owner nudge) instead of leaving
-        // the pending state to look "still running" forever.
-        await stagingRecovery.recordStagingBootFailure({ config, pool, session, commitHash, err: stagingErr })
-          .catch((e) => log.warn('staging', 'recordStagingBootFailure failed (non-fatal)', { sessionId: session.id, err: e.message }));
-
-        log.error('staging', 'Staging build failed (surfaced to Mayor)', {
-          sessionId: session.id,
-          slug: app.slug,
-          errName,
-          err: errMsg,
-          missingKeys,
-        });
+        await sendStatus('Building staging preview...', buildingCard);
       }
+      summaryParts.push('The staging preview is building; its checks run once it is up.');
+      log.info('sessions', 'Full dev cycle complete', { sessionId: session.id, commitHash: commitHash.substring(0, 8) });
     }
 
     // Debit the daily ledger for whatever Claude Code spent — even when
@@ -13315,11 +13288,13 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
       // Tail milestone: the agent's own summary card is on the transcript.
       // A resumed tail must not post a second one (finalizeRecoveredTurn's
       // persistCompletionRow is otherwise unconditional).
-      await worker.noteTailMilestone(
-        session.id,
-        { completionRowPosted: true },
-        { turnId: durableTurnId },
-      );
+      if (durableTurnId) {
+        await worker.noteTailMilestone(
+          session.id,
+          { completionRowPosted: true },
+          { turnId: durableTurnId },
+        );
+      }
       // Prepend CC's own description so the Mayor leads with what was
       // actually built, with our outcome bullets as supplementary context.
       summaryParts.unshift(directChatReply ? ccText : `What the agent did:\n${ccText}`);
@@ -13469,111 +13444,6 @@ function parseFileChanges(text) {
   return files;
 }
 
-async function buildStagingFromFiles(config, session, app, fileChanges, hash) {
-  const fs = require('fs');
-  const path = require('path');
-  const dbManager = require('../services/db-manager');
-
-  const containerName = `usernode-staging-${app.slug}--${session.id}`;
-  const imageName = `usernode-staging-${app.slug}-${session.id}:${hash.substring(0, 6)}`;
-
-  log.info('sessions', 'Building staging from chat files', { sessionId: session.id });
-
-  // Get the current production app's files as a base
-  const prodContainer = `usernode-app-${app.slug}`;
-  const tempDir = `/tmp/usernode-staging-build-${session.id}`;
-
-  await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
-  fs.mkdirSync(tempDir, { recursive: true });
-
-  // Copy files from production container as a base
-  try {
-    await docker.execFileAsync('docker', ['cp', `${prodContainer}:/app/.`, tempDir], { timeout: 30000 });
-  } catch (err) {
-    log.warn('sessions', 'Could not copy from production container, using empty base', { err: err.message });
-  }
-
-  // Remove node_modules from copy (we'll npm install fresh)
-  await docker.execFileAsync('rm', ['-rf', path.join(tempDir, 'node_modules')]).catch(() => {});
-
-  // Apply the AI's file changes on top
-  for (const file of fileChanges) {
-    const filePath = path.join(tempDir, file.path);
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, file.content);
-  }
-
-  // Ensure Dockerfile exists.
-  //
-  // This is the platform emitting a Dockerfile on an app's behalf, so it owes
-  // the same contract the app template does (services/template.js): a NUMERIC
-  // non-zero USER, and ownership of the copied tree. Kubernetes runs app and
-  // preview pods with runAsNonRoot and no runAsUser, so an image that names no
-  // user runs as root and the kubelet refuses to start it —
-  // `CreateContainerConfigError: container has runAsNonRoot and image will run
-  // as root`. This path builds for the Docker runtime, where that is not
-  // enforced, which is exactly why it drifted: it kept emitting the old shape
-  // long after the template stopped. `tests/generated-dockerfile-user.test.js`
-  // holds every generator here to the same rule so the two cannot diverge
-  // again (#2302).
-  if (!fs.existsSync(path.join(tempDir, 'Dockerfile'))) {
-    fs.writeFileSync(path.join(tempDir, 'Dockerfile'), `FROM node:22-alpine
-WORKDIR /app
-COPY --chown=1000:1000 package.json ./
-RUN npm install --production
-COPY --chown=1000:1000 . .
-EXPOSE 3000
-USER 1000:1000
-CMD ["node", "server.js"]
-`);
-  }
-
-  // Build
-  await docker.buildImage(tempDir, imageName);
-  await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
-
-  // Clone DB. cloneDatabase mints a fresh per-clone postgres role —
-  // see staging.js for the rationale (one-shot password, dropped on
-  // teardown, never persisted on the platform).
-  const prodDbName = dbManager.appDbName(app.slug);
-  const stagingDbName = dbManager.stagingDbName(app.slug, `s${session.id}`, hash);
-  const { password: stagingDbPassword } = await dbManager.cloneDatabase(prodDbName, stagingDbName);
-  const stagingDbUrl = dbManager.connectionUrl(stagingDbName, stagingDbPassword);
-
-  // Stop old staging
-  await docker.stopAndRemove(containerName).catch(() => {});
-
-  // Run
-  const containerId = await docker.runContainer(containerName, {
-    image: imageName,
-    env: {
-      DATABASE_URL: stagingDbUrl,
-      ...appIdentityEnv(app, config),
-      PORT: '3000',
-    },
-    port: 3000,
-  });
-
-  await docker.waitForHealthy(containerName, 3000, '/health');
-
-  // Get the host port for local dev access
-  const hostPort = await docker.getHostPort(containerName, 3000);
-  // No Caddy route to register — the wildcard site maps this hostname to
-  // `containerName` (usernode-staging-<slug>--<id>) and issues TLS
-  // on-demand. See Caddyfile + services/caddy.js.
-  const hostname = caddy.stagingHostname(app.slug, `s${session.id}`);
-
-  const stagingUrl = hostPort
-    ? `http://localhost:${hostPort}`
-    : `https://${hostname}`;
-
-  // Edge verification happens in the caller (staging.verifyStagingEdge)
-  // AFTER the session's staging_url is persisted — that persist is what
-  // makes the hostname a referenceable preview. See staging.js for the full
-  // ordering rationale.
-
-  return { containerId, stagingUrl, hostname };
-}
 
 // The routes/sessions.js helpers a Mayor turn calls (services/mayor/turn.js,
 // #2779). Handed over rather than required from there, which would be a
@@ -13598,7 +13468,7 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { requestSessionStop, changePlanFor, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, receiveSessionStop, changePlanFor, attachChangePlans, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
 // #4524: the topic page's fast open asks GET /api/apps/:slug/proposals/:id
 // for its item beside the board load, and production serves an active or
 // paused session there when it is the viewer's own or shared. The demo rows

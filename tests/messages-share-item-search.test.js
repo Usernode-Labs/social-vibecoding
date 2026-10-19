@@ -19,6 +19,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -50,9 +51,38 @@ test('the search narrows the apps by name or short name, every word in any order
   assert.deepEqual(ids(filterAppChoices(APPS, { query: 'zebra' })), []);
 });
 
+test('an exact name or short name leads the matched list, even ahead of the own projects (#4793)', () => {
+  const { filterAppChoices } = mod();
+  // The report: typing an app's full name put it below own projects that
+  // only share a word with it.
+  const GARDEN = [
+    { id: 1, slug: 'garden-planner-pro', name: 'Garden Planner Pro', mine: true },
+    { id: 2, slug: 'garden-swap', name: 'Garden Swap', mine: true },
+    { id: 3, slug: 'garden', name: 'Garden', mine: false },
+    { id: 4, slug: 'rose-garden', name: 'Rose Garden', mine: false },
+  ];
+  assert.deepEqual(ids(filterAppChoices(GARDEN, { query: 'garden' })), [3, 1, 2, 4], 'exact leads, own projects after');
+  assert.deepEqual(ids(filterAppChoices(GARDEN, { query: ' GARDEN ' })), [3, 1, 2, 4], 'in any case, with padding');
+  assert.deepEqual(ids(filterAppChoices(GARDEN, { query: 'rose-garden' })), [4], 'a short name as the query leads too');
+  assert.deepEqual(ids(filterAppChoices(GARDEN, { query: 'swap' })), [2], 'a partial-only query keeps the usual order');
+  assert.deepEqual(ids(filterAppChoices(GARDEN, { group: 'mine', query: 'garden' })), [1, 2], 'the chip limits the pool first, so the exact match outside it is not shown');
+  // Several exact matches keep their order among themselves.
+  const TWINS = [
+    { id: 5, slug: 'chores-board', name: 'Chores', mine: true },
+    { id: 6, slug: 'chores', name: 'Chores', mine: false },
+  ];
+  assert.deepEqual(ids(filterAppChoices(TWINS, { query: 'chores' })), [5, 6], 'two exact matches, in the list\'s own order');
+  assert.deepEqual(ids(filterAppChoices(TWINS, { query: 'chores' })), filterAppChoices(TWINS, { query: 'Chores ' }).map((r) => r.id), 'the same list whatever the padding');
+  // Extra spaces between words break neither exact match.
+  assert.deepEqual(ids(filterAppChoices([
+    { id: 7, slug: 'flat-4b-chores-e98ecd', name: 'Flat 4B Chores', mine: true },
+  ], { query: 'flat  4b  chores' })), [7], 'extra spaces between words still exact');
+});
+
 test('the group chips filter the list, and combine with the search', () => {
   const { filterAppChoices, offersAppGroups, APP_GROUPS } = mod();
-  assert.deepEqual(APP_GROUPS.map((g) => [g.value, g.label]), [
+  assert.equal(message('messages:shareItem.group.all'), 'All');
+  assert.deepEqual(APP_GROUPS.map((g) => [g.value, message(g.label)]), [
     ['all', 'All'], ['mine', 'Your projects'], ['others', 'Other projects'],
   ], 'All first, then the dropdown’s two option groups');
   assert.deepEqual(ids(filterAppChoices(APPS, { group: 'all' })), [2, 4, 1, 3]);
@@ -71,7 +101,7 @@ test('the group chips filter the list, and combine with the search', () => {
 test('the item types are the dropdown’s, as chips, App first', () => {
   const { SHARE_TYPES } = mod();
   assert.deepEqual(SHARE_TYPES.map((t) => t.value), ['app', 'issue', 'proposal', 'governance', 'spec']);
-  assert.deepEqual(SHARE_TYPES.map((t) => t.label), ['App', 'GitHub issue', 'Code proposal', 'Governance proposal', 'Plan version']);
+  assert.deepEqual(SHARE_TYPES.map((t) => message(t.label)), ['App', 'GitHub issue', 'Code proposal', 'Governance proposal', 'Plan version']);
 });
 
 test('the prerendered dialog leads with the search box, then the type chips, and no dropdown', () => {
@@ -127,7 +157,8 @@ test('Enter in the search box attaches nothing, and attaching is unchanged', () 
   const source = src();
   assert.match(source, /onKeyDown=\{\(event\) => \{ if \(event\.key === 'Enter'\) event\.preventDefault\(\); \}\}/);
   assert.ok(!/<form\b/.test(source), 'no form for Enter to submit');
-  assert.match(source, /<Button type="button" disabled=\{!canAttach\} onClick=\{attach\}>Attach item<\/Button>/,
+  assert.equal(message('messages:shareItem.attach'), 'Attach item');
+  assert.match(source, /<Button type="button" disabled=\{!canAttach\} onClick=\{attach\}>\{t\('messages:shareItem\.attach'\)\}<\/Button>/,
     'Attach item stays the only way to attach');
   assert.match(source, /window\.dispatchEvent\(new CustomEvent\('usernode:messages-object-selected', \{ detail: reference \}\)\);/);
   // Pressing the chosen type again keeps the number already typed.

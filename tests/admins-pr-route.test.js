@@ -241,6 +241,16 @@ test('success stamps requires_explicit_approval = true / reason = admins on the 
   assert.deepEqual(stamp.params, [5151, true, 'admins']);
 });
 
+test('the manifest session is stamped source = settings (#5379)', async () => {
+  const res = await propose({ admins: ['alice'] });
+  assert.equal(res.status, 201);
+  const insert = sqlCalls.find((c) => /INSERT INTO chat_sessions/.test(c.sql));
+  assert.ok(insert, 'the session INSERT was issued');
+  assert.match(insert.sql, /source/);
+  assert.match(insert.sql, /'settings'/,
+    'createManifestPR marks the proposal as a settings change, not agent work');
+});
+
 test('an empty array succeeds when the current roster is non-empty (revocation stays expressible)', async () => {
   appRow.admin_usernames = ['alice', 'bob'];
   const res = await propose({ admins: [] });

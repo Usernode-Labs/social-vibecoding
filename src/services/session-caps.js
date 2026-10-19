@@ -23,9 +23,10 @@
 // everyone including full admins. The resource being protected is host
 // memory, not a policy privilege.
 //
-// Deliberately dependency-free (no pool, no requires) so every call site
-// can resolve caps synchronously from the request it already has, and so
-// the rule is unit-testable in isolation.
+// Deliberately dependency-free (no requires) so every call site can resolve
+// caps synchronously from the request it already has, and so the rule is
+// unit-testable in isolation. The platform-wide count at the end takes the
+// caller's pool.
 
 // Fallbacks for a partial/absent config. Route tests mount routers with
 // `sessionRoutes({})`, and the caps ride the /api/me/active-sessions
@@ -72,7 +73,29 @@ function effectiveSessionCaps(config, user) {
   };
 }
 
+// ── The platform-wide count ─────────────────────────────────────────────
+//
+// What spends config.maxGlobalSessions: active and promoted sessions, except
+// an imported pull request's (it was produced elsewhere and owns no
+// Homeroom worker). Synthetic accounts' sessions count: the Homeroom bot's
+// proposals hold preview pods like anyone's, and the cap is sized from them.
+// Every start, resume and reopen asks this count, and so does the admins'
+// capacity alert (services/platform-limit-alerts.js). On 12 Oct 2026 the
+// native proposal start (routes/proposal-handoff.js) had its own copy that
+// disagreed with the others; there is one count now.
+const GLOBAL_SESSIONS_SQL = `SELECT COUNT(*)::int AS cnt FROM chat_sessions
+  WHERE status IN ('active', 'promoted')
+    AND source IS DISTINCT FROM 'imported'`;
+
+/** The sessions spending the platform-wide budget, as a number. */
+async function countGlobalSessions(pool) {
+  const { rows } = await pool.query(GLOBAL_SESSIONS_SQL);
+  return Number(rows[0] && rows[0].cnt) || 0;
+}
+
 module.exports = {
+  GLOBAL_SESSIONS_SQL,
+  countGlobalSessions,
   effectiveSessionCaps,
   BOT_PROMOTED_CEILING,
   DEFAULT_USER_SESSIONS,

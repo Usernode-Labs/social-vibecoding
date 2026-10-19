@@ -22,6 +22,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
+const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 
 const ROOT = path.join(__dirname, '..');
 const LIB = path.join(ROOT, 'worker', 'session-branch.sh');
@@ -148,13 +149,58 @@ test('nothing fetches later history from inside a turn', (t) => {
   assert.equal(git(ws, 'config', '--get-all', 'remote.origin.fetch'), `+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}`);
 });
 
+// The repository's AGENTS.md tells an agent to check its checkout against
+// the canonical repository by URL, and six platform builds in runs 206 and
+// 208 did: they found the request merged on today's main and stopped. The
+// fixture's "GitHub" is its bare origin, so its URL is the clone URL.
+test('the freshness check AGENTS.md asks for answers "current" from a stand-in, and fetches nothing later', async (t) => {
+  const fx = fixture(t);
+  const canonical = fx.origin.replace(/\.git$/, '');
+  const control = path.join(fx.dir, 'plain-control');
+  git(fx.dir, 'clone', '-q', '--single-branch', fx.origin, control);
+  git(control, 'checkout', '-q', '-b', BRANCH, fx.base);
+  git(control, 'fetch', '-q', canonical, 'main');
+  assert.equal(git(control, 'rev-parse', 'FETCH_HEAD'), fx.fix, 'control: unsealed, the check reads today\'s main');
+  assert.equal(gitOk(control, 'merge-base', '--is-ancestor', 'FETCH_HEAD', 'HEAD'), false, 'and says behind');
+
+  const { ws, code, out } = sealedClone(t, fx);
+  assert.equal(code, 0, out);
+  for (const url of [canonical, `${canonical}.git`, `${canonical}/`]) {
+    git(ws, 'fetch', '-q', url, 'main');
+    assert.equal(git(ws, 'rev-parse', 'FETCH_HEAD'), fx.base, `git fetch ${url} main reaches the base`);
+    assert.equal(gitOk(ws, 'merge-base', '--is-ancestor', 'FETCH_HEAD', 'HEAD'), true, 'so the check says current');
+  }
+  assert.equal(git(ws, 'ls-remote', canonical), `${fx.base}\tHEAD\n${fx.base}\trefs/heads/main`);
+  assert.equal(gitOk(ws, 'fetch', '-q', canonical, 'refs/tags/v2'), false, 'no tag');
+  assert.equal(gitOk(ws, 'fetch', '-q', canonical, 'dev/other'), false, 'no other branch');
+  assert.equal(hasObject(ws, fx.fix), false);
+  const { checkDrift } = require('../.agents/hooks/upstream-drift');
+  assert.equal((await checkDrift({ cwd: ws, repo: canonical })).state, 'current', 'the session-start hook agrees');
+
+  // The stand-in borrows the checkout's objects rather than copying them.
+  const standin = path.join(ws, '.git', 'usernode-sealed-upstream');
+  assert.equal(fs.readFileSync(path.join(standin, 'objects', 'info', 'alternates'), 'utf8').trim(), path.join(ws, '.git', 'objects'));
+  assert.equal(git(standin, 'count-objects'), '0 objects, 0 kilobytes');
+  assert.equal(git(ws, 'status', '--porcelain'), '', 'and is no part of the worktree');
+
+  // A turn that pushes into it is put back by the next turn's re-seal.
+  git(ws, 'push', '-q', canonical, `${fx.base}:refs/heads/later`);
+  assert.equal(sh(ws, 'usernode_fetch_session_refs; echo "rc=$?"', { USERNODE_PINNED_BASE: fx.base }).out.trim(), 'rc=0');
+  assert.equal(git(ws, 'ls-remote', canonical), `${fx.base}\tHEAD\n${fx.base}\trefs/heads/main`);
+});
+
 test('the build still lands: the platform\'s push reaches GitHub\'s copy of the trial branch', (t) => {
   const fx = fixture(t);
   const { ws, code, out } = sealedClone(t, fx);
   assert.equal(code, 0, out);
+  assert.equal(git(ws, 'remote', 'get-url', '--push', 'origin'), fx.origin, 'pushes go to GitHub, past the stand-in');
   const built = commitFile(ws, 'pins.js', 'pinned\n', 'Homeroom benchmark: trial 44');
+  // Even where push negotiation is on, which would ask the stand-in what
+  // GitHub has.
+  const globalConfig = path.join(fx.dir, 'gitconfig');
+  fs.writeFileSync(globalConfig, '[push]\n\tnegotiate = true\n');
   const r = spawnSync('bash', ['-c', worker.buildPushScript({ workspace: ws })], {
-    env: { ...GIT_ENV, BRANCH, PAT: 'unused-for-a-local-origin' }, encoding: 'utf8',
+    env: { ...GIT_ENV, BRANCH, PAT: 'unused-for-a-local-origin', GIT_CONFIG_GLOBAL: globalConfig }, encoding: 'utf8',
   });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.trim().split('\n').pop(), built);
@@ -191,7 +237,7 @@ exit 0
     ...GIT_ENV,
     PATH: `${bin}:${process.env.PATH}`, HOME: dir,
     PROMPT_FILE: prompt, BRANCH, MODE: 'build', USERNODE_PINNED_BASE: fx.base,
-    WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://127.0.0.1:9',
+    ...RUNNER_TEST_ENV, WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://127.0.0.1:9',
     OPENROUTER_API_KEY: 'sk-or-v1-test', OPENROUTER_API_BASE: 'https://openrouter.ai/api/v1',
     AGENT_MODEL: 'z-ai/glm-5.3-flash',
     WORKSPACE_DIR: ws, CODEX_HOME: path.join(dir, 'codex-home'),

@@ -1,8 +1,9 @@
 // Test-harness preload (loaded via --require in the npm test script; the
 // node test runner spawns each test file with the parent's execArgv, so
-// every test process gets this automatically). Two patches, one shared
-// goal: kill the rare, random `TypeError: fetch failed` flakes that hit a
-// different test file every few full-suite runs.
+// every test process gets this automatically). Three patches: the first two
+// kill the rare, random `TypeError: fetch failed` flakes that hit a
+// different test file every few full-suite runs, and the third keeps a
+// Postgres connection dropped while idle from failing a whole test file.
 //
 // ── Patch 1: test servers bind IPv4 loopback ──────────────────────────
 //
@@ -100,3 +101,36 @@ globalThis.fetch = async function fetchWithLocalRetry(input, init) {
     }
   }
 };
+
+// ── Patch 3: a pg Pool with no 'error' listener loses an idle client ───
+//
+// pg-pool emits 'error' on the pool when the server drops one of its idle
+// clients (57P01: a test's own `DROP DATABASE ... WITH (FORCE)` can reach a
+// connection `pool.end()` has handed its end but whose socket is still
+// closing; a parallel file's pg_terminate_backend reaches one the same way).
+// With no listener the EventEmitter throw becomes an uncaughtException,
+// which node:test attributes to whichever test happens to be running (the
+// flake behind issue #5421). 39 sibling postgres test files already carry
+// `pool.on('error', () => {})` by hand (tests/username-invite-join-
+// postgres.test.js:44-50 carries the note); this steps in for any that
+// doesn't, writes one stderr line so the loss stays visible, and lets the
+// run continue. A failing `pool.query` still rejects its promise, so no
+// assertion changes. Pools that already listen are untouched.
+try {
+  // pg is pg-pool's only consumer, so npm hoists it; `pg`'s BoundPool is
+  // this Pool's subclass, and the prototype is shared.
+  const mod = require('pg-pool');
+  const Pool = mod.Pool || mod; // 3.x exports the class directly.
+  const realEmit = Pool.prototype.emit;
+  Pool.prototype.emit = function emit(event, ...rest) {
+    if (event === 'error' && this.listenerCount('error') === 0) {
+      const err = rest[0];
+      const message = err && err.message ? err.message : String(err);
+      process.stderr.write(`pg-pool: idle connection lost with no 'error' listener: ${message}\n`);
+      return false;
+    }
+    return realEmit.call(this, event, ...rest);
+  };
+} catch {
+  // pg-pool not resolvable: nothing here constructs a real one. Skip.
+}

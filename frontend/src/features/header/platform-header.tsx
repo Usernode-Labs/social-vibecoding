@@ -37,6 +37,7 @@ import {
   XIcon,
 } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useVisibility } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
@@ -45,10 +46,14 @@ import { ChromelessPill } from './chromeless-pill';
 import { useCommunityHeaderTint } from './community-tint';
 import { HeaderTitle } from './header-title';
 import { PlatformMark } from './platform-mark';
+import { InAppActions } from './in-app-actions';
 import { SidebarToggle } from '../nav/sidebar-toggle';
 import { improveStore, topicBackHref } from '../improve/improve-store.js';
 import { useHeaderLayout } from './use-header-layout';
 import { nativeBackEnabled, useNativeBackNavigation } from './native-back-navigation';
+import { useDismissibleOpen } from '../../lib/back-stack';
+import { HeaderPlace } from '../dev-board/workshop/place-bar';
+import { DrawerBack, DrawerUntint, useDrawerMode } from '../nav-drawer/header-drawer';
 // ── The bundle's boot seam ────────────────────────────────────────────
 //
 // These six imports and the four inits below rode on the hamburger drawer's
@@ -206,6 +211,7 @@ function appRouteUpHref(
 }
 
 export function PlatformHeader() {
+  const t = useMessages();
   // The four elements the centering measurement needs. Passing them as refs
   // replaces the classic script's document.querySelector('header') +
   // previousElementSibling / nextElementSibling walk.
@@ -230,7 +236,7 @@ export function PlatformHeader() {
   // sites agreeing by convention.
   const {
     slug: backSlug, tab: backTab, subTab: backSubTab,
-    sessionOrigin, boardView, topicOrigin,
+    sessionOrigin, boardView, topicOrigin, name: appName,
   } = useStoreState(improveStore);
   const routeUp = appRouteUpHref(backSlug, backTab, backSubTab, sessionOrigin);
   // #2916: on a Workshop topic the back control is the "‹ Workshop" chip at
@@ -276,12 +282,14 @@ export function PlatformHeader() {
   // its place; App.setChromeless publishes the flag, this reads it.
   const visible = useVisibility('platform-header', true);
   useHiddenClass(headerRef, !visible);
+  const dialogOpen = useDismissibleOpen();
+  // The phone's Communities drawer: its pan is the swipe back.
+  const drawerOn = useDrawerMode() === 'communities';
   // The swipe follows whichever control is the page's back: this bar's
   // arrow, or on a Workshop topic the in-pane chip (#2916), which is a back
   // with a destination even though the bar shows nothing.
   useNativeBackNavigation(nativeBackEnabled({
-    visible, mode, href: resolvedBackHref, slug: backSlug, tab: backTab,
-    paneHref: paneBack,
+    visible, mode, href: resolvedBackHref, paneHref: paneBack, dialogOpen, drawerOn,
   }));
 
   return (
@@ -406,6 +414,10 @@ export function PlatformHeader() {
         className={'un-safe-top-extend relative z-10 flex items-center gap-4 px-4 pt-2 pb-4 shrink-0'
           + ' bg-zinc-200 dark:bg-zinc-900 rounded-b-2xl -mb-2'}
       >
+        {/* The bar as it is off a community, faded out with the drawer's
+            depth (../nav-drawer/header-drawer.tsx DrawerUntint): only while
+            the phone's drawer applies, so never in the prerender. */}
+        <DrawerUntint />
         {/*
             The LEFT group: the back chevron when there is somewhere to go
             back to, then the chip. Nothing else, and NO RESERVED SLOT.
@@ -502,7 +514,7 @@ export function PlatformHeader() {
           <a
             id="back-btn"
             className={BACK_BTN_CLASS + (mode === 'none' ? ' hidden' : '')}
-            aria-label={backArrow ? 'Back' : backClose ? 'Close app' : 'Home'}
+            aria-label={backArrow ? t('core:header.back') : backClose ? t('core:header.closeApp') : t('core:header.home')}
             {...(resolvedBackHref ? { href: resolvedBackHref } : {})}
           >
             {/*
@@ -535,6 +547,25 @@ export function PlatformHeader() {
               className={backClose ? 'w-5 h-5' : 'hidden w-5 h-5'}
             />
           </a>
+          {/*
+              #4703: THE MERGED HEADER'S PLACES BUTTON, on a phone. A project
+              page under 768px carries its place bar's contents here — this
+              button, then the place's name after the switcher — and the
+              second coloured row is gone. The page owns the tray and
+              published the toggle (place-store.ts); this only draws the
+              button and calls it. Nothing renders until the phone flag is
+              settled in an effect and a page for this project is mounted, so
+              the prerender and the first client render are untouched, and on
+              a wide window the bar draws none at all.
+          */}
+          <HeaderPlace slug={backSlug} name={appName || ''} />
+          {/*
+              THE PHONE'S DRAWER'S ARROW (../nav-drawer/header-drawer.tsx),
+              in the places button's seat while the drawer applies: up one
+              level, fading in with depth. Nothing until then, so the
+              prerender and the first client render are untouched.
+          */}
+          <DrawerBack />
         </div>
         {/*
             The screen's only h1 — a NAME, not a control, since #2718. It was
@@ -556,6 +587,14 @@ export function PlatformHeader() {
             screen. It was measured with Improve between them and holds
             without it: the gap is between neighbours, not across the group. */}
         <div ref={rightGroupRef} className="ml-auto shrink-0 flex items-center gap-2.5">
+          {/*
+              #3702: Suggest, the running app's door, FIRST in the group,
+              before the bell. It is about the app on screen, so it leads;
+              it ships nothing at rest (see ./in-app-actions.tsx), so the
+              prerendered document is untouched. The "N to vote" pill that
+              stood beside it is gone (#5419).
+          */}
+          <InAppActions />
           {/*
               HEADER SLIM-DOWN: the fork label, the platform + app build pills
               and the kudos-budget badge used to live here as four inline
@@ -688,7 +727,7 @@ export function PlatformHeader() {
             id="notifications-btn"
             href="#notifications"
             className="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target border border-transparent text-[color:var(--brand-ink)] transition-colors hover:bg-[color:var(--brand-tint)] hover:border-[color:var(--brand-line)]"
-            aria-label="Notifications"
+            aria-label={t('core:header.notifications')}
             aria-haspopup="dialog"
             onClick={(event) => {
               if ((window as any).NavLink?.isNativeClick?.(event)) return;
@@ -710,7 +749,7 @@ export function PlatformHeader() {
               */
               data-session-done="0"
               className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-600 text-white text-[0.65rem] font-bold flex items-center justify-center"
-              aria-label="Unread notifications"
+              aria-label={t('core:header.unreadNotifications')}
             >
             </span>
           </a>

@@ -38,6 +38,14 @@ spec:
               kubernetes.io/metadata.name: {{ . | quote }}
         {{- end }}
       ports: [{protocol: TCP, port: 3000}]
+    {{- if and .Values.monitoring.enabled .Values.platform.conductor.enabled .Values.platform.conductor.metricsPort }}
+    # Prometheus scrapes the conductor's workflow metrics (src/workflow/metrics.ts).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoring.namespace | quote }}
+      ports: [{protocol: TCP, port: {{ .Values.platform.conductor.metricsPort | int64 }}}]
+    {{- end }}
   egress:
     # Runtime health probes use generated app/preview Services directly.
     - to:
@@ -63,6 +71,24 @@ spec:
               {{- include "social-vibecoding-platform.postgresqlPodSelector" . | nindent 14 }}
           {{- end }}
       ports: [{protocol: TCP, port: {{ .Values.postgresql.port }}}]
+    {{- if .Values.previewPostgresql.enabled }}
+    # The preview database server: the platform builds, redacts and drops
+    # every preview database there.
+    - to:
+        - {{- if .Values.previewPostgresql.namespace }}
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.previewPostgresql.namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.previewPostgresql.podSelector | nindent 14 }}
+          {{- else }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.previewPostgresql.podSelector | nindent 14 }}
+          {{- end }}
+      ports: [{protocol: TCP, port: {{ .Values.previewPostgresql.port }}}]
+    {{- end }}
     {{- if .Values.networkPolicy.nodeRpc.enabled }}
     - to:
         - namespaceSelector:

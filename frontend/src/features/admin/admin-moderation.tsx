@@ -9,7 +9,10 @@ const LABELS: Record<string,string> = {
   hide_message: 'Hide message', restore_message: 'Restore message', suspend_app: 'Suspend app', restore_app: 'Restore app',
   suspend_user: 'Suspend user',
   hide_profile: 'Hide profile', restore_profile: 'Restore profile', restrict_user: 'Restrict participation', restore_user: 'Restore participation',
+  release_evidence: 'Release preserved evidence',
 };
+// #5102: child safety is first in the reason filter, as in the report dialog.
+const REASONS = ['child_safety','spam','scam','harassment','hate','threats','sexual_content','impersonation','unsafe_avatar','unsafe_content','other'];
 const EFFECTS: Record<string,string> = {
   hide_message: 'Replace this message with “Removed by moderation” and block access to its attachments.',
   restore_message: 'Make the original message and its attachments visible again.',
@@ -23,6 +26,7 @@ const EFFECTS: Record<string,string> = {
   resolve: 'Close this case and notify its reporters that review is complete. Existing restrictions remain.',
   dismiss: 'Close this case without taking moderation action and notify its reporters that it was dismissed.',
   reopen: 'Return this case to the review queue. Existing restrictions remain.',
+  release_evidence: 'Let the normal retention period apply again: this case’s evidence is cleared 180 days after it closes, and its reports and history after a year. This is recorded in the action history.',
 };
 async function request(url: string, init?: RequestInit) {
   const response = await fetch(url, init); const body = await response.json();
@@ -52,10 +56,24 @@ function targetState(t: any) {
   const states = [t.moderation_hidden_at && 'Message hidden', t.moderation_suspended_at && 'App suspended', t.profile_disabled_at && 'Public profile hidden', t.participation_restricted_at && 'Participation restricted'].filter(Boolean);
   return states.length ? states.join(' · ') : 'No active moderation restriction';
 }
+// Sub-hash (#admin/reports/<caseId>), the campaigns pattern: the address
+// follows the case you pick, so a link to a case can be copied and, on a
+// report's compliance email, opens the case already selected. Read before
+// first paint (lazy initial state) and written with replaceState so picking
+// a case pushes no history entry.
+function readCaseId(): number | null {
+  const m = String(location.hash || '').match(/^#admin\/reports\/(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+function writeCaseHash(id: number | null): void {
+  if (!String(location.hash || '').startsWith('#admin/reports')) return;
+  const target = id ? `#admin/reports/${id}` : '#admin/reports';
+  if (location.hash !== target) history.replaceState(null, '', target);
+}
 export function ModerationSection() {
   const [filters,setFilters] = useState({ status: 'new', type: '', reason: '', since: '' });
   const [rows,setRows] = useState<any[]>([]), [next,setNext] = useState<string | null>(null);
-  const [selected,setSelected] = useState<number | null>(null), [detail,setDetail] = useState<any>(null);
+  const [selected,setSelected] = useState<number | null>(() => readCaseId()), [detail,setDetail] = useState<any>(null);
   const [canWrite,setCanWrite] = useState(false), [error,setError] = useState('');
   const [loading,setLoading] = useState(false), [busy,setBusy] = useState(false), [version,setVersion] = useState(0);
   const [pendingAction,setPendingAction] = useState(''), [reason,setReason] = useState('');
@@ -72,6 +90,7 @@ export function ModerationSection() {
     finally { if (run === seq.current) setLoading(false); }
   }
   useEffect(() => { void load(); return () => { seq.current++; }; }, [filters,version]);
+  useEffect(() => { writeCaseHash(selected); }, [selected]);
   useEffect(() => { setReason(''); }, [selected]);
   useEffect(() => {
     setDetail(null);
@@ -115,23 +134,24 @@ export function ModerationSection() {
     <div className="grid gap-3 sm:grid-cols-4">
       <label className={AdminUI.label}>Status<select className={AdminUI.select} value={filters.status} onChange={e=>setFilters({...filters,status:e.target.value})}>{['new','in_review','resolved','dismissed','all'].map(k=><option key={k} value={k}>{LABELS[k] || 'All'}</option>)}</select></label>
       <label className={AdminUI.label}>Target<select className={AdminUI.select} value={filters.type} onChange={e=>setFilters({...filters,type:e.target.value})}><option value="">All targets</option>{['app','user','app_message','conversation_message'].map(k=><option key={k} value={k}>{LABELS[k]}</option>)}</select></label>
-      <label className={AdminUI.label}>Reason<select className={AdminUI.select} value={filters.reason} onChange={e=>setFilters({...filters,reason:e.target.value})}><option value="">All reasons</option>{['spam','scam','harassment','hate','threats','sexual_content','impersonation','unsafe_avatar','unsafe_content','other'].map(k=><option key={k} value={k}>{k.replace(/_/g,' ')}</option>)}</select></label>
+      <label className={AdminUI.label}>Reason<select className={AdminUI.select} value={filters.reason} onChange={e=>setFilters({...filters,reason:e.target.value})}><option value="">All reasons</option>{REASONS.map(k=><option key={k} value={k}>{k.replace(/_/g,' ')}</option>)}</select></label>
       <label className={AdminUI.label}>Reported since<input className={AdminUI.input} type="date" value={filters.since} onChange={e=>setFilters({...filters,since:e.target.value})}/></label>
     </div>
     {error ? <p role="alert" className="text-sm text-red-700 dark:text-red-400">{error} <button className={AdminUI.btn.link} onClick={()=>setVersion(v=>v+1)}>Refresh</button></p> : null}
     <div className="grid gap-4 lg:grid-cols-2"><div className={`${AdminUI.card} min-w-0 p-4`}>
       {loading ? <p className={AdminUI.loading}>Loading reports…</p> : !rows.length ? <p className={AdminUI.muted}>No reports match these filters.</p> : null}
-      <div className="divide-y divide-zinc-200 dark:divide-zinc-800">{rows.map(c=><button key={c.id} type="button" className="block w-full py-3 text-left" aria-pressed={Number(selected)===Number(c.id)} onClick={()=>setSelected(c.id)}><strong className="break-words">{c.target_label}</strong><div className={AdminUI.muted}>{LABELS[c.target_type]} · {c.report_count} reports · {LABELS[c.status]}</div><div className={AdminUI.muted}>{new Date(c.created_at).toLocaleString()} · {(c.reasons || []).join(', ')}</div></button>)}</div>
+      <div className="divide-y divide-zinc-200 dark:divide-zinc-800">{rows.map(c=><button key={c.id} type="button" className="block w-full py-3 text-left" aria-pressed={Number(selected)===Number(c.id)} onClick={()=>setSelected(c.id)} data-child-safety={c.child_safety ? '' : undefined}>{c.child_safety || c.preserve_evidence ? <span className="mb-1 flex flex-wrap gap-2">{c.child_safety ? <span className={AdminUI.badge.destructive}>Child safety</span> : null}{c.preserve_evidence ? <span className={AdminUI.badge.warn}>Evidence preserved</span> : null}</span> : null}<strong className="break-words">{c.target_label}</strong><div className={AdminUI.muted}>{LABELS[c.target_type]} · {c.report_count} reports · {LABELS[c.status]}</div><div className={AdminUI.muted}>{new Date(c.created_at).toLocaleString()} · {(c.reasons || []).join(', ')}</div></button>)}</div>
       {next ? <button className={AdminUI.btn.outlineSm} disabled={loading} onClick={()=>void load(next)}>Load more</button> : null}
     </div><div className={`${AdminUI.card} min-w-0 p-4`}>
       {!selected ? <p className={AdminUI.muted}>Select a report to review its evidence and history.</p> : !detail ? <p className={AdminUI.loading}>Loading case…</p> : <div className="space-y-4">
         <h3 className={`${AdminUI.cardTitle} break-words`}>{detail.case.target_label}</h3>
         <p className={AdminUI.muted}>{`${LABELS[detail.case.status]} · ${targetState(detail.target)}`}</p>
         <p className={AdminUI.muted}>{`Target owner: ${detail.case.target_username ? '@'+detail.case.target_username : 'Deleted user'}`}</p>
+        {detail.case.preserve_evidence ? <p className="flex flex-wrap items-center gap-2" data-preserve-evidence=""><span className={AdminUI.badge.warn}>Evidence preserved</span><span className={AdminUI.muted}>Kept past the 180-day retention period until a full administrator releases it.</span></p> : null}
         {detail.reports.map((r:any)=><section key={r.id} className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-800"><strong>Report #{r.id} · {r.reason.replace(/_/g,' ')}</strong><p className={AdminUI.muted}>From @{r.reporter || 'Deleted user'} · {new Date(r.created_at).toLocaleString()}</p><p className="whitespace-pre-wrap break-words">{r.detail}</p>{r.evidence ? <Evidence value={r.evidence}/> : <p className={AdminUI.muted}>Evidence retention period ended.</p>}{detail.files.filter((f:any)=>f.report_id===r.id).map((f:any)=><a key={f.id} className={AdminUI.btn.link} href={`/api/admin/moderation/${selected}/files/${f.id}`} download>{f.filename}</a>)}</section>)}
         {detail.reportsNext ? <button className={AdminUI.btn.outlineSm} disabled={busy} onClick={()=>void loadMore('reports')}>Older reports</button> : null}
         <section aria-label="Moderation actions" className="space-y-3">
-          {canWrite && detail.canWrite && !closed ? <label className={`block ${AdminUI.label}`}>Reason<textarea className={AdminUI.textarea} maxLength={1000} value={reason} onChange={e=>setReason(e.target.value)}/></label> : null}
+          {canWrite && detail.canWrite && (!closed || detail.case.preserve_evidence) ? <label className={`block ${AdminUI.label}`}>Reason<textarea className={AdminUI.textarea} maxLength={1000} value={reason} onChange={e=>setReason(e.target.value)}/></label> : null}
           {actionRows.map(row=><div key={row.action} className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
             <div className="flex items-center justify-between gap-3">
               <p className="flex min-w-0 items-center gap-2 font-medium">{row.completed ? <svg role="img" aria-label="Completed" className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 4 4L19 6"/></svg> : null}{LABELS[row.action]}</p>
@@ -139,6 +159,13 @@ export function ModerationSection() {
             </div>
             <p className={AdminUI.muted}>{row.unavailable || EFFECTS[row.action]}</p>
           </div>)}
+          {detail.case.preserve_evidence ? <div className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+            <div className="flex items-center justify-between gap-3">
+              <p className="min-w-0 font-medium">{LABELS.release_evidence}</p>
+              <button type="button" className={`${AdminUI.btn.outlineSm} shrink-0 disabled:cursor-default disabled:opacity-50`} disabled={busy || !canWrite || !detail.canWrite || !reason.trim()} onClick={()=>void act('release_evidence')}>{pendingAction === 'release_evidence' ? 'Saving…' : 'Release'}</button>
+            </div>
+            <p className={AdminUI.muted}>{EFFECTS.release_evidence}</p>
+          </div> : null}
           {!canWrite || !detail.canWrite ? <p className={AdminUI.muted}>View-only access.</p> : null}
         </section>
         <h4 className={AdminUI.cardTitle}>Action history</h4>{detail.actions.map((a:any)=><div key={a.id}><strong>{LABELS[a.action] || a.action}</strong><p className={AdminUI.muted}>@{a.actor || 'Deleted user'} · {new Date(a.created_at).toLocaleString()}</p><p className="whitespace-pre-wrap break-words">{a.reason}</p></div>)}

@@ -14,10 +14,12 @@
  * request, or the activity card's `data-bot-activity-request`.
  */
 
+import { useMessages } from '../../lib/i18n/react';
 import { issueRefHref } from './channels';
 import { ObjectCard } from './format';
 import { pageOf, type HomeroomLink } from './homeroom-links';
 import { linkCardAnswered, useLinkCards } from './link-cards';
+import { centreInScroller } from './stick-to-bottom';
 import type { SharedObjectCard } from './types';
 
 /** How long the found card's message stays lit: app.css `.messages-message-focus`. */
@@ -51,7 +53,10 @@ export function findRequestCard(from: Element, appSlug: string, n: number): HTML
 /** Bring a found card into view and light the message it hangs on. */
 export function revealCard(card: HTMLElement): void {
   const still = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  card.scrollIntoView?.({ behavior: still ? 'auto' : 'smooth', block: 'center' });
+  // #5050: the conversation's own scroller, never the screen around it.
+  const scroller = card.closest<HTMLElement>('.messages-thread-scroll');
+  if (scroller) centreInScroller(scroller, card, still ? 'auto' : 'smooth');
+  else card.scrollIntoView?.({ behavior: still ? 'auto' : 'smooth', block: 'nearest' });
   if (card.tabIndex >= 0) card.focus({ preventScroll: true });
   const lit = (card.closest('article') as HTMLElement | null) || card;
   lit.classList.remove('messages-message-focus');
@@ -65,6 +70,7 @@ export function revealCard(card: HTMLElement): void {
 export function RefCards({ appSlug, numbers }: { appSlug: string; numbers: readonly number[] }) {
   const links = numbers.map((n) => pageOf(`app/${appSlug}/dev/issues/${n}`)).filter((link): link is HomeroomLink => !!link);
   const read = useLinkCards(links);
+  const t = useMessages('messages');
   if (!links.length) return null;
   return (
     <div className="messages-object-list mt-1 max-w-[480px]" data-ref-cards="">
@@ -75,7 +81,7 @@ export function RefCards({ appSlug, numbers }: { appSlug: string; numbers: reado
         // request by its number alone: it still opens the request's page.
         const card: SharedObjectCard = found || {
           type: 'issue', available: true, appSlug, issueNumber: link.issueNumber,
-          title: answered ? 'Open this request' : 'Loading…',
+          title: answered ? t('messages:refCard.open') : t('core:common.loading'),
         };
         return (
           <div key={link.key} data-ref-card={link.issueNumber} aria-busy={!found && !answered ? true : undefined}>

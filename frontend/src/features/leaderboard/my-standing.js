@@ -1,14 +1,20 @@
-// The viewer's own standing in the active season — the card at the top of
-// the Challenges tab (./your-standing.tsx).
+// The viewer's own standing — the card at the top of the Challenges tab
+// (./your-standing.tsx): "#22 of 161 ranked".
 //
-// These four numbers used to lead the Me screen: points, rank, the
-// per-event breakdown and the token allocation. The navigation prototype's
-// Me is a compact card with three stat cards and a "More" list, and its
-// "Challenges & standings" row lands on a Challenges page whose FIRST card
-// is exactly this one ("Season 3 · #3 · 9 pts · you"). So the numbers moved
-// with the row that leads to them, and the reads moved with the numbers:
-// the same two session-scoped /challenges-api reads Profile made, scoped to
-// the active season by the server (`season_id=active`, #2777).
+// The rank and the token allocation used to lead the Me screen. The
+// navigation prototype's Me is a compact card with three stat cards and a
+// "More" list, and its "Challenges & standings" row lands on a Challenges
+// page whose FIRST card is this one. So the numbers moved with the row that
+// leads to them, and the read moved with the numbers: the session-scoped
+// /challenges-api ranking Profile made, scoped to the active season by the
+// server (`season_id=active`, #2777).
+//
+// The Semi design (2026-10-16) took the season out of the card: no season
+// name, no note on how often the standings update, and no points by event
+// (so no breakdown read). What is left is where the viewer stands and among
+// how many people. #5473 put the update note back on the card
+// (./your-standing.tsx draws it), because people could not tell why their
+// rank moved with no activity of their own.
 //
 // The token figure keeps its one-time "Reveal" acknowledgement under the
 // SAME storage key the profile used, so nobody who already revealed it is
@@ -16,23 +22,15 @@
 'use strict';
 
 import { createStore } from '../../lib/plain-store.js';
-import { breakdownRows, tokenView } from '../profile/profile-store.js';
+import { t } from '../../lib/i18n/runtime';
+import { tokenView } from '../profile/profile-store.js';
 
 export const REVEAL_KEY = 'sv:profile_tokens_revealed';
-
-// Standings are read from leaderboard snapshots, which the challenge scorer
-// rebuilds on a timer (CHALLENGE_SCORER_AGGREGATE_HOURS, six hours by
-// default), while a challenge credits its points the moment it is done. The
-// interval is server config the client never sees, hence "every few hours".
-// The standings pane's empty hint says the same sentence.
-export const STANDINGS_UPDATE_NOTE =
-  'Standings update every few hours; points from challenges you just finished appear at the next update.';
 
 export const myStandingStore = createStore({
   /** 'idle' | 'loading' | 'ready' | 'none' — `none` is signed out or no season. */
   status: 'idle',
   ranking: null,
-  breakdown: null,
   /** Challenge points credited to the viewer that the standings do not show yet. */
   pending: 0,
   revealed: false,
@@ -77,32 +75,27 @@ export function ledgerPoints(challenges) {
 
 /**
  * The card's view, or null for "draw nothing": before the first answer, for
- * a signed-out visitor, and for a season the viewer has no row in AND no
- * points — a card reading "#– · 0 pts" says nothing a newcomer needs. The
- * exception is someone who HAS earned challenge points the standings have
- * not caught up with (#3187): for them "no card" read as "0 points, no
- * rank", so the card stays and says when the points will count.
+ * a signed-out visitor, and for a viewer with no row in the standings AND no
+ * points — a card reading "#–" says nothing a newcomer needs. The exception
+ * is someone who HAS earned challenge points the standings have not caught
+ * up with (#3187): for them "no card" read as "0 points, no rank", so the
+ * card stays and says the points are not in the standings yet.
+ *
+ * `rank` and `people` are numbers (null and 0 when unknown); the card spells
+ * them as one message, "#22 of 161 ranked".
  */
 export function standingView(state) {
   if (state.status !== 'ready' || !state.ranking) return null;
   const r = state.ranking;
-  const points = Number(r.total_points || 0);
   const pending = standingIsEmpty(r) ? Number(state.pending || 0) : 0;
   if (standingIsEmpty(r) && pending <= 0) return null;
+  const rank = Number(r.rank);
+  const people = Number(r.total_participants);
   return {
-    season: r.season_name || 'This season',
-    sub: r.total_participants
-      ? `${Number(r.total_participants).toLocaleString()} taking part`
-      : 'Your standing',
-    rank: r.rank ? `#${Number(r.rank)}` : '–',
-    detail: `${points.toLocaleString()} pts · you`,
-    pending: pending > 0 ? `${pending.toLocaleString()} pts earned, not in the standings yet` : null,
-    note: STANDINGS_UPDATE_NOTE,
-    breakdown: breakdownRows(state.breakdown).map((row, i) => ({
-      key: `${row.label}:${i}`,
-      label: row.label,
-      points: `${Number(row.points || 0).toLocaleString()} pts`,
-    })),
+    rank: Number.isInteger(rank) && rank > 0 ? rank : null,
+    people: Number.isFinite(people) && people > 0 ? Math.floor(people) : 0,
+    pending: pending > 0
+      ? t('leaderboard:standing.pending', { count: pending, points: pending.toLocaleString() }) : null,
     token: tokenView(r, state.revealed),
   };
 }
@@ -114,11 +107,7 @@ const MyStanding = {
     const token = ++MyStanding._token;
     if (myStandingStore.get().status === 'idle') myStandingStore.set({ status: 'loading' });
     try {
-      const [ranking, breakdown] = await Promise.all([
-        fetchData('/challenges-api/me/ranking?season_id=active'),
-        fetchData('/challenges-api/me/breakdown?season_id=active&include_activity=0&include_progress=0')
-          .catch(() => null),
-      ]);
+      const ranking = await fetchData('/challenges-api/me/ranking?season_id=active');
       // Only when the standings have nothing for the viewer: ask the ledger
       // whether challenge points are waiting for the next snapshot. An
       // existing read, scoped to the season the ranking resolved.
@@ -130,12 +119,12 @@ const MyStanding = {
         pending = ledgerPoints(challenges);
       }
       if (token !== MyStanding._token) return;
-      myStandingStore.set({ status: 'ready', ranking, breakdown, pending, revealed: readRevealed() });
+      myStandingStore.set({ status: 'ready', ranking, pending, revealed: readRevealed() });
     } catch (_) {
       if (token !== MyStanding._token) return;
       // Signed out (401), no season, or a network fault: the card is an
       // addition to the tab, so it simply is not drawn.
-      myStandingStore.set({ status: 'none', ranking: null, breakdown: null, pending: 0 });
+      myStandingStore.set({ status: 'none', ranking: null, pending: 0 });
     }
   },
 

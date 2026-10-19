@@ -21,6 +21,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -41,7 +42,7 @@ function appView() {
     setTimeout, clearTimeout, setInterval, clearInterval,
     location: { search: '', hash: '' }, URLSearchParams,
     // What main.tsx publishes for the classic scripts.
-    ReleaseEta: words };
+    ReleaseEta: words, PlatformI18n: englishPlatformI18n() };
   c.window = c;
   vm.createContext(c);
   for (const p of ['public/js/merge-status.js', 'public/js/app-view.js']) vm.runInContext(read(p), c);
@@ -165,17 +166,11 @@ test('an agent session\'s change: the drawer says when, the rows say it short', 
   assert.match(child, />Going live<\/span>/);
   assert.doesNotMatch(child, /data-agent-session-release|next release/);
 
-  // Messages' agent rows and the Homeroom menu's Agent chats read the same words.
+  // Messages' agent rows read the same words.
   const messages = read('frontend/src/features/messages/index.tsx');
   const row = messages.slice(messages.indexOf('function MayorSessionRow('), messages.indexOf('function AgentChatThread('));
-  assert.match(row, /\$\{changeRowWords\(change\)\}/);
-  const model = loadTsx('frontend/src/features/app-context/continue-model.ts');
-  const listed = (activeChange) => ({
-    id: 7, title: 'Say when', status: 'open', lastActivityAt: new Date(now).toISOString(), focusApp: null, activeChange,
-  });
-  assert.equal(model.continueRows([listed({ ...HOMEROOM_CHANGE, release })], 5, now).rows[0].sub,
-    'Homeroom · goes live in about 8 minutes');
-  assert.equal(model.continueRows([listed(HOMEROOM_CHANGE)], 5, now).rows[0].sub, 'Homeroom · going live');
+  // The change's name, then where it stands, as two facts on one line (bot-shared dotText).
+  assert.match(row, /dotText\(\[\s*change\.title \|\|[^\n]*\n\s*changeRowWords\(change\),\s*\]\)/);
 });
 
 // ── The Homeroom bot's DM: the ready card, the activity card, the tray ──
@@ -214,32 +209,29 @@ test('the activity card: "Built it." and then when', () => {
   };
   const html = renderToHtml(createElement(BotActivityCardView, { meta: META, loaded: true, now: NOW, card: { ...card, release: release8 } }));
   assert.match(html, new RegExp(`<span role="status">Built it\\. ${SENTENCE.replace(/[()]/g, '\\$&')}</span>`));
+  // One request, one story: a child app's merge reads "Approved · going
+  // live" on the card; a Homeroom merge still says when its release comes.
   const child = renderToHtml(createElement(BotActivityCardView, { meta: META, loaded: true, now: NOW, card }));
-  assert.match(child, /<span role="status">Built it\. Going live now<\/span>/);
+  assert.match(child, /data-bot-activity-eyebrow="">Approved<[\s\S]*<span role="status">Going live<\/span>/);
 });
 
-test('the tray: Now, History and the status line say when for a Homeroom merge', () => {
-  const { trayStatus, BotWorkPanelView } = loadTsx('frontend/src/features/messages/bot-work.tsx');
+test('the strip: a Homeroom merge going live reads "going live", with no timing', () => {
+  // One request, one story: the tray's panel and the header's status line,
+  // which said when the next release carries a Homeroom merge, are gone.
+  // The activity drawer says no timings (its rows open the request's
+  // thread, whose card still counts down to the release, tested above).
+  const { stripGroups } = loadTsx('frontend/src/features/messages/bot-strip.tsx');
   const job = (extra) => ({
     key: 'usernode-2d5619#12', appSlug: 'usernode-2d5619', appName: 'Homeroom', iconUrl: null, iconEmoji: null,
     issueNumber: 12, title: 'Say when', firstVersion: false, href: null, links: { request: null, proposal: null, project: null }, earlier: [], ...extra,
   });
-  const merging = job({ phase: 'merging', step: null, of: null, stepName: null, doing: null, since: null });
-  const work = (extra) => ({ now: [], needsYou: [], history: [], ...extra });
-  assert.equal(trayStatus(work({ now: [{ ...merging, release: release8 }] }), NOW).long, 'Working on Homeroom #12 · goes live in about 8 minutes');
-  assert.equal(trayStatus(work({ now: [merging] }), NOW).long, 'Working on Homeroom #12 · going live');
-  const went = job({ id: 3, outcome: 'going_live', doing: null, at: new Date(NOW.getTime() - 2 * MIN).toISOString() });
-  assert.match(trayStatus(work({ history: [{ ...went, release: release8 }] }), NOW).long, /^Last: Homeroom #12 goes live in about 8 minutes · /);
-  assert.match(trayStatus(work({ history: [went] }), NOW).long, /^Last: Homeroom #12 going live · /);
-
-  const panel = renderToHtml(createElement(BotWorkPanelView, {
-    now: NOW, work: work({ now: [{ ...merging, release: release8 }], history: [{ ...went, release: release8 }] }), historyOpen: true,
-  }));
-  assert.ok(panel.includes(SENTENCE), 'Now says the sentence');
-  assert.ok(panel.includes(`Built it. ${SENTENCE}`), 'History says it as the card does');
-  const plain = renderToHtml(createElement(BotWorkPanelView, { now: NOW, work: work({ now: [merging], history: [went] }), historyOpen: true }));
-  assert.ok(!plain.includes('next release'));
-  assert.ok(plain.includes('Making the approved change live'));
+  const merging = job({ phase: 'merging', step: null, of: null, stepName: null, doing: null, since: null, release: release8 });
+  const went = job({ id: 3, outcome: 'going_live', doing: null, at: new Date(NOW.getTime() - 2 * MIN).toISOString(), release: release8 });
+  const progress = stripGroups({ now: [merging], needsYou: [], history: [] }, NOW).progress;
+  assert.deepEqual(progress.map((row) => row.state), ['going live']);
+  const done = stripGroups({ now: [], needsYou: [], history: [went] }, NOW).done;
+  assert.deepEqual(done.map((row) => row.state), ['Live']);
+  assert.ok(!progress.some((row) => row.state.includes(SENTENCE)));
 });
 
 test('the bot\'s reads keep `release` only where it belongs', () => {
@@ -281,7 +273,11 @@ test('the request card in a project\'s chat: approved and merged into Homeroom s
 // ── The leaderboard's badge ─────────────────────────────────────────────
 
 test('the leaderboard\'s "going live" badge says when on hover, for a Homeroom merge only', () => {
-  const ctx = { console, document: { getElementById: () => null }, location: { hash: '' }, ReleaseEta: words };
+  // The module reads its words through the language runtime's global, as the
+  // shell publishes it; the release sentence is closed by its own entry.
+  const { englishPlatformI18n: lbI18n } = require('./lib/platform-i18n');
+  const ctx = { console, document: { getElementById: () => null }, location: { hash: '' }, ReleaseEta: words,
+    PlatformI18n: lbI18n() };
   ctx.window = ctx;
   vm.createContext(ctx);
   vm.runInContext(`${read('frontend/src/features/leaderboard/leaderboard.js').replace(/^export .*$/gm, '')}\n;globalThis.__lb = Leaderboard;`, ctx);
@@ -298,5 +294,6 @@ test('the leaderboard\'s "going live" badge says when on hover, for a Homeroom m
 // ── What is left as it was, on purpose ─────────────────────────────────
 
 test('a child app\'s first version keeps its "Going live" step; the creation dialog is not a platform release', () => {
-  assert.match(read('frontend/src/features/dialogs/creation-progress-store.js'), /\{ key: 'deploy', label: 'Going live' \}/);
+  assert.match(read('frontend/src/features/dialogs/creation-progress-store.js'), /\{ key: 'deploy', label: 'dialogs:createProgress\.step\.deploy' \}/);
+  assert.equal(englishPlatformI18n().t('dialogs:createProgress.step.deploy'), 'Going live');
 });

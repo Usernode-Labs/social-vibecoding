@@ -17,10 +17,14 @@
  *    controls inside it silently stop firing. React re-rendering one of these
  *    subtrees would be the same failure, so every component here is STATIC:
  *    no state, no props, no effects. They render once, at hydration, and are
- *    never reconciled again. ThemeSection and ProfileSection are the
- *    exceptions, and they earn it the same way: settings.js binds nothing
- *    inside them, so React is the only writer there. See ./theme.tsx and
- *    ./profile.tsx.
+ *    never reconciled again. ThemeSection, AccessibilitySection and
+ *    ProfileSection are the exceptions, and they earn it the same way:
+ *    settings.js binds nothing inside them, so React is the only writer
+ *    there. See ./theme.tsx, ./accessibility.tsx and ./profile.tsx.
+ *    The one thing every pane does subscribe to is the language
+ *    (`useMessages`): a new language re-renders the pane, and React then
+ *    patches only the text nodes whose words changed. The elements, their
+ *    ids, classes and listeners stay the nodes settings.js bound.
  *  - each wrapper ships `hidden`, exactly as the hand-written shell did, and
  *    the router unhides the wrappers of exactly one page. That is the
  *    SECTION-ROUTING hidden.
@@ -35,6 +39,7 @@
 import { useIsomorphicLayoutEffect } from '../../../lib/legacy-dom';
 
 import { AboutSection } from './about';
+import { AccessibilitySection } from './accessibility';
 import { AdminPreviewSection } from './admin-preview';
 import { AgentFilesSection } from './agent-files';
 import { AlertsSection } from './alerts';
@@ -92,16 +97,23 @@ export function SettingsSections() {
       <GlobalChatSettingsSection />
       <ExperimentalSection />
       {/* ── Preferences ── THE UI OVERHAUL moved Theme out of the hamburger
-          drawer; see ./theme.tsx for why it is a stateful pane. The console
-          switch and the admins-only preview share its Appearance page. */}
+          drawer; see ./theme.tsx for why it is a stateful pane. Appearance
+          is the theme and the desktop sidebar switch; #5285 moved the
+          console switch and the admins-only preview to Developer, below. */}
       <ThemeSection />
-      <DevConsoleSection />
-      <AdminPreviewSection />
+      {/* ── #3969: text size and high contrast, the other reading controls,
+          as their own page right after Appearance. Stateful like Theme;
+          see ./accessibility.tsx. */}
+      <AccessibilitySection />
       <LanguageSection />
       <AlertsSection />
       <AppPermissionsSection />
       <AppAiSection />
       <BlockedAppsSection />
+      {/* ── #5285: Developer, the last page of Preferences. The console
+          switch (everyone) and Admin preview (real admins only). */}
+      <DevConsoleSection />
+      <AdminPreviewSection />
       {/* ── Help & about ── The way back to Home's welcome tour, then the
           native app's diagnostics and the version rows: panes you read or
           replay rather than configure. See ./tour.tsx and ./about.tsx. */}

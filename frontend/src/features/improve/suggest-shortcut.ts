@@ -27,15 +27,16 @@
  * after the key, so every handler on the page has run by then, wherever and
  * whenever it was registered.
  *
- * ── From inside an app ──────────────────────────────────────────────────
+ * ── From inside an app or a preview ─────────────────────────────────────
  *
  * While a person works in an app, its document has the keyboard and the shell
- * never sees the key. The bridge every app loads watches for the same unused
- * C in there and tells the shell (`__usernode_shortcut`, the
+ * never sees the key. The bridge every app and preview loads watches for the
+ * same unused C in there and tells the shell (`__usernode_shortcut`, the
  * __USERNODE_SHORTCUTS_ block of public/usernode-bridge/v1/bridge.js). The
- * shell takes that message only from the running app's own frame, and only
- * while that frame holds focus: a frame without focus cannot have had a key
- * pressed in it, so a message from one is not a person pressing C.
+ * shell takes that message only from the running app's own frame or the
+ * change preview's frame (`#staging-iframe`), and only while that frame holds
+ * focus: a frame without focus cannot have had a key pressed in it, so a
+ * message from one is not a person pressing C.
  *
  * ── Where the pointer is ────────────────────────────────────────────────
  *
@@ -143,7 +144,7 @@ interface ElementLike {
   getClientRects?: () => { length: number };
 }
 
-interface DocLike {
+export interface DocLike {
   activeElement?: unknown;
   documentElement?: { classList?: { contains(name: string): boolean } } | null;
   getElementById(id: string): unknown;
@@ -195,8 +196,9 @@ function onScreen(el: ElementLike | null): boolean {
 /**
  * Anything presenting itself as a dialog: the kit's modals and sheets
  * (`aria-modal`), and the shell's own dialogs and menus (`role="dialog"`).
+ * ⌘K reads it too (../workshop/community-shortcut.ts).
  */
-function dialogShowing(doc: DocLike): boolean {
+export function dialogShowing(doc: DocLike): boolean {
   let nodes: ArrayLike<unknown>;
   try {
     nodes = doc.querySelectorAll('[aria-modal="true"], [role="dialog"]');
@@ -263,11 +265,19 @@ export function installSuggestShortcut(deps: SuggestShortcutDeps): void {
   win.addEventListener('message', (e: { data?: unknown; source?: unknown }) => {
     const data = (e ? e.data : null) as Record<string, unknown> | null | undefined;
     if (!data || typeof data !== 'object' || data[SHORTCUT_MESSAGE_KEY] !== 'suggest') return;
-    const frame = doc.getElementById('app-iframe') as {
+    // The app's frame and the change preview's frame both carry the bridge.
+    // The message counts only from the one that is on screen, checked
+    // staging first: it sits over the app, so when both are up it is the
+    // one showing.
+    const frames = [
+      doc.getElementById('staging-iframe'),
+      doc.getElementById('app-iframe'),
+    ] as Array<{
       contentWindow?: unknown;
       getBoundingClientRect?: () => { left: number; top: number; width: number; height: number };
-    } | null;
-    if (!frame || !e.source || e.source !== frame.contentWindow) return;
+    } | null>;
+    const frame = frames.find((f) => f && e.source && f.contentWindow === e.source) || null;
+    if (!frame) return;
     if (doc.activeElement !== frame) return;
     if (!ready()) return;
     open(framePoint(frame, finitePoint(data.x, data.y)));
@@ -302,6 +312,47 @@ function toggleComment(_point: Point | null): void {
   import('../comment-pin/comment-pin')
     .then((m) => m.toggleCommentMode({ via: 'key' }))
     .catch(() => openSuggest());
+}
+
+/** How long after the page has loaded comment mode's code and library are fetched (ms). */
+export const WARM_DELAY_MS = 3000;
+let warmed = false;
+
+/**
+ * Comment mode's code and its drawing library, fetched ahead of time where
+ * the switch is on: a few seconds after the page loads, and when the switch
+ * is turned on. Without it the first picture of a session waited on both
+ * downloads (about 250 KB for the library), and a quick tap on "Suggest an
+ * improvement" right after the app opened sat on a still screen for over a
+ * second (iPhone 17 simulator, production, 12 Oct 2026). Once per page;
+ * nothing is drawn, and nothing at all where the switch is off.
+ */
+export function warmComment(): void {
+  if (warmed || !suggestOpensComment()) return;
+  warmed = true;
+  import('../comment-pin/comment-pin')
+    .then((m) => m.warmCommentMode())
+    .catch(() => { warmed = false; });
+}
+
+/** Run `warmComment` once the page has loaded and settled, out of the way of the first paint. */
+export function scheduleWarmComment(win: Pick<Window, 'setTimeout' | 'addEventListener'> & { document?: { readyState?: string } }): void {
+  const later = () => { win.setTimeout(() => warmComment(), WARM_DELAY_MS); };
+  if (win.document?.readyState === 'complete') later();
+  else win.addEventListener('load', later, { once: true });
+}
+
+/**
+ * The Homeroom menu or the form has opened, and comment mode is one tap
+ * away: load its code and draw the page now, while it sits still under the
+ * sheet, so the mode opens on it at once (comment-pin.tsx
+ * `prepareCommentView`). Nothing at all where the switch is off.
+ */
+export function prepareComment(): void {
+  if (!suggestOpensComment()) return;
+  import('../comment-pin/comment-pin')
+    .then((m) => m.prepareCommentView())
+    .catch(() => { /* the mode loads when it opens, as before */ });
 }
 
 /**
@@ -373,9 +424,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   // feedback dialog's controller asks where "Suggest an improvement" goes;
   // both are classic code there and cannot import.
   const bridge = ((window as unknown as { UsernodeReact?: Record<string, unknown> }).UsernodeReact ||= {});
+  scheduleWarmComment(window);
   bridge.suggestShortcut = {
     enabled: () => suggestShortcutEnabled(),
-    setEnabled: (on: boolean) => setSuggestShortcutEnabled(!!on),
+    setEnabled: (on: boolean) => {
+      setSuggestShortcutEnabled(!!on);
+      if (on) warmComment();
+    },
     opensComment: () => suggestOpensComment(),
     openComment: (opts?: OpenOptions) => openCommentMode(opts || {}),
   };

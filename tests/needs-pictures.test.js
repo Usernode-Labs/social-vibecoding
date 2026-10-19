@@ -23,7 +23,7 @@ test('the card shows shots first, then the diagram, the legacy pair, "What it to
   const src = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   const at = src.indexOf('{shots && row.visuals ? <ShotsPicture');
   assert.ok(at > 0, 'the picture slot');
-  const slot = src.slice(at, src.indexOf('<div className="dev-ws-item-caption">', at));
+  const slot = src.slice(at, src.indexOf('<span className="dev-ws-item-scrim" aria-hidden="true" />', at));
   const order = ['<ShotsPicture', "picture.kind === 'diagram'", '<BeforeAfter', "picture.kind === 'touches'", 'dev-ws-item-spacer'];
   let last = -1;
   for (const mark of order) {
@@ -35,11 +35,16 @@ test('the card shows shots first, then the diagram, the legacy pair, "What it to
   assert.match(src, /function usePicture\(row: QueueRow, shots: boolean\): Picture \{[\s\S]*?if \(shots\) return \{ kind: 'none' \};/);
   // A Mermaid diagram that cannot be drawn drops to "What it touches".
   assert.match(src, /if \(d && !failed\) return \{ kind: 'diagram'[\s\S]*?return touches \? \{ kind: 'touches', t: touches \} : \{ kind: 'none' \};/);
-  // The summary keeps its place above the picture, clamped shorter.
-  assert.match(src, /picture\.kind === 'diagram' \|\| picture\.kind === 'touches' \? 'dev-ws-item-summary dev-ws-item-summary-short'/);
-  assert.match(read('public/css/app.css'), /\.dev-ws-item-summary\.dev-ws-item-summary-short \{ -webkit-line-clamp: 3; \}/);
-  // A far card's Mermaid diagram waits until the reader is near it.
-  assert.match(src, /defer=\{!near\}/);
+  // The picture fills the card, and the summary is the caption's over it,
+  // two lines whatever the picture is.
+  assert.ok(src.indexOf('<span className="dev-ws-item-scrim"', at) < src.indexOf('<div className="dev-ws-item-caption">', at), 'the caption follows the picture');
+  assert.doesNotMatch(src, /dev-ws-item-summary-short/);
+  // A far card's Mermaid diagram waits until the reader is near it, and it
+  // follows the page's theme (#5394): the card is no longer a dark scheme of
+  // its own, so Diagram falls back to isDark() itself.
+  assert.match(src, /defer=\{!near\} className="dev-ws-media-diagram"/);
+  assert.doesNotMatch(src, /defer=\{!near\} dark /);
+  assert.match(read('frontend/src/lib/diagram/diagram.tsx'), /renderMermaid\(source, dark \|\| isDark\(\)\)/);
 });
 
 test('each fixed kind renders as text, with its label and where it came from', () => {
@@ -103,6 +108,8 @@ test('"What it touches" lists the four main areas, dims the empty ones and says 
   assert.match(html, />Server<[\s\S]*?>2 files</);
   assert.doesNotMatch(html, />Docs</, 'an empty minor area is left out');
   assert.match(html, /Nothing on screen changes · drawn from the change’s files/);
+  assert.match(html, /aria-label="What it touches\. Server, 2 files; Tests, 1 file\. Nothing on screen changes\."/,
+    'said aloud as it always was, from whole messages');
 });
 
 test('Mermaid is the vendored copy, loaded on demand under strict settings and cleaned before it is shown', () => {
@@ -201,8 +208,22 @@ test('staging holds each picture under ?demo=1, and ?shot= opens the feed on it'
   for (const it of demo) if (it.diagram) assert.ok(diagram.storedDiagram(it.diagram), `${it.title}: a valid record`);
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(ws, /shot === 'needs-diagram' \? 'diagram' : shot === 'needs-touches' \? 'touches'/);
-  const check = require('../dapp.json').tests.find((t) => /author's diagram under that sentence/.test(t.name));
+  const check = require('../dapp.json').tests.find((t) => /author's diagram as that picture/.test(t.name));
   assert.ok(check, 'folded into the existing Needs-you item check');
-  assert.match(check.expectSelector, /:has\(\.dev-ws-item-summary \+ \[data-ws-diagram=rename\]\)/);
+  assert.match(check.expectSelector, /:has\(\[data-ws-diagram=rename\] ~ \.dev-ws-item-caption\)/, 'the rename is the picture the caption lies over');
   assert.ok(check.expectSelector.length <= 256, "the runner clips selectors at 256 characters");
+});
+
+test('#5039: an area\'s name stays whole, and the columns size to their longest entry', () => {
+  const css = read('public/css/app.css');
+  // A long name overflows its column rather than breaking mid-word ("Databas"
+  // / "e", the reporter's phone at larger text).
+  assert.match(css, /\.dev-ws-touches-row > \.dev-ws-diagram-what \{ font-size: 15px; overflow-wrap: normal; \}/);
+  // Where the browser can subgrid, the name and count columns are as wide as
+  // the longest entry in any row, so the bars stay aligned.
+  const at = css.indexOf('@supports (grid-template-columns: subgrid)');
+  assert.ok(at > 0, 'the subgrid block is there');
+  const block = css.slice(at, css.indexOf('\n}', at));
+  assert.match(block, /\.dev-ws-touches > \.dev-ws-diagram-rows \{ display: grid; grid-template-columns: max-content minmax\(0, 1fr\) max-content; \}/);
+  assert.match(block, /\.dev-ws-touches-row \{ grid-column: 1 \/ -1; grid-template-columns: subgrid; \}/);
 });

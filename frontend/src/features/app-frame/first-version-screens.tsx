@@ -12,34 +12,48 @@
  * The images are the server's, read by the project's members only
  * (public/js/app-view.js _firstVersionScreens names them); this draws
  * pictures and nothing else. A picture that will not load is left out, and
- * with none left the thumbnail is drawn as it was (`onEmpty`). Only on the
- * App tab: the made screen, the invite page, Home and the hub keep the
+ * with none left the thumbnail is drawn as it was (`onEmpty`). The made
+ * screen, the tour and the hub draw the first look themselves
+ * (../first-session/first-look.tsx); the invite page and Home keep the
  * thumbnail.
+ *
+ * 15 Oct 2026 (newcomer run nine): a first look whose picture is not saved
+ * yet is its drawn screen, framed so that it runs and loads nothing
+ * (../first-session/drawn-look.tsx), in the same phone; the App tab
+ * (./app-status.tsx) swaps the picture in once it is loaded (useLookSwap).
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
+import { DrawnLook, isDrawnLook } from '../first-session/drawn-look';
 
 /** What the band draws (AppView._firstVersionScreens). */
 export interface FirstVersionScreens {
   kind: 'first_look' | 'real';
   /** When the real screens were taken (ISO), for the pill. */
   at: string | null;
+  /** Each picture's URL; a first look not pictured yet is its drawn screen's (isDrawnLook). */
   images: string[];
 }
 
-export const FIRST_LOOK_PILL = 'First look · drawn from the plan';
+/** The first look's pill, as its message id. */
+export const FIRST_LOOK_PILL = 'agent:appFrame.screens.pill.firstLook';
 
 /** "Real screen · 4 min ago" (a minute at least; hours past the hour). Pure. */
 export function realScreenPill(at: string | null, now: number = Date.now()): string {
   const t = at ? Date.parse(at) : NaN;
-  if (!Number.isFinite(t)) return 'Real screen';
+  if (!Number.isFinite(t)) return translate('agent:appFrame.screens.pill.real');
   const minutes = Math.max(1, Math.floor((now - t) / 60000));
-  return minutes < 60 ? `Real screen · ${minutes} min ago` : `Real screen · ${Math.floor(minutes / 60)} h ago`;
+  return minutes < 60
+    ? translate('agent:appFrame.screens.pill.realMinutes', { count: minutes })
+    : translate('agent:appFrame.screens.pill.realHours', { count: Math.floor(minutes / 60) });
 }
 
 /** The pill's words for what the band shows. Pure. */
 export function screensPill(screens: Pick<FirstVersionScreens, 'kind' | 'at'>, now?: number): string {
-  return screens.kind === 'first_look' ? FIRST_LOOK_PILL : realScreenPill(screens.at, now);
+  return screens.kind === 'first_look' ? translate(FIRST_LOOK_PILL) : realScreenPill(screens.at, now);
 }
 
 /** Whether a band has anything to draw. Pure. */
@@ -63,6 +77,8 @@ function useMinute(): number {
 const FRAME = 'relative h-[270px] w-[125px] shrink-0 overflow-hidden rounded-[22px] bg-white shadow-[0_10px_28px_rgba(0,0,0,0.22),0_0_0_4px_rgba(17,17,20,0.9)]';
 
 export function ScreensBand({ screens, name, onEmpty }: { screens: FirstVersionScreens; name: string; onEmpty: () => void }): ReactNode {
+  // Subscribed: the pill's words (screensPill) are read in the language on screen.
+  const t = useMessages('agent');
   const now = useMinute();
   const [failed, setFailed] = useState<ReadonlySet<string>>(() => new Set());
   const [at, setAt] = useState(0);
@@ -92,15 +108,19 @@ export function ScreensBand({ screens, name, onEmpty }: { screens: FirstVersionS
         {shown.map((src, i) => (
           <div key={src} className="flex h-full w-full shrink-0 snap-center items-end justify-center pb-6">
             <div className={FRAME}>
-              <img
-                src={src}
-                alt={screens.kind === 'first_look'
-                  ? `A first look at ${name}, drawn from the plan`
-                  : `${name}, real screen ${i + 1} of ${shown.length}`}
-                className="h-full w-full object-cover object-top"
-                draggable={false}
-                onError={() => setFailed((prev) => new Set(prev).add(src))}
-              />
+              {isDrawnLook(src) ? (
+                <DrawnLook src={src} label={t('agent:appFrame.screens.alt.firstLook', { project: name })} width={125} />
+              ) : (
+                <img
+                  src={src}
+                  alt={screens.kind === 'first_look'
+                    ? t('agent:appFrame.screens.alt.firstLook', { project: name })
+                    : t('agent:appFrame.screens.alt.real', { project: name, number: i + 1, total: shown.length })}
+                  className="h-full w-full object-cover object-top"
+                  draggable={false}
+                  onError={() => setFailed((prev) => new Set(prev).add(src))}
+                />
+              )}
             </div>
           </div>
         ))}
@@ -117,7 +137,7 @@ export function ScreensBand({ screens, name, onEmpty }: { screens: FirstVersionS
             <button
               key={src}
               type="button"
-              aria-label={`Screen ${i + 1} of ${shown.length}`}
+              aria-label={t('agent:appFrame.screens.dot', { number: i + 1, total: shown.length })}
               aria-current={i === page ? 'true' : undefined}
               onClick={() => go(i)}
               className="flex h-6 w-6 items-center justify-center"

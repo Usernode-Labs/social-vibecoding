@@ -177,10 +177,11 @@ test('a vote credit names what was voted on, and is dated when it was cast', asy
   assert.equal(out[0].activityAt, iso(NOW - HOUR));
 });
 
-// evan, 2026-10-01: with nothing up for a vote in any community a newcomer is
-// in, the Getting started card's Vote step is a look at the Workshop, which
-// the server records only then. VOTE_CAST counts that look as it counts a
-// vote: the same window, one credit a person, whichever came first.
+// evan, 2026-10-01: with nothing up for a vote in any community a newcomer was
+// in, the Getting started card's Vote step was a look at the Workshop, which
+// the server recorded only then. VOTE_CAST counts that look as it counts a
+// vote: the same window, one credit a person, whichever came first. The card
+// is gone (#4635) and nothing records a look now; one recorded before counts.
 test('a look at the Workshop when nothing was up for a vote counts for VOTE_CAST, and the admin is told so', () => {
   const sql = flat(scorer.MEASURE_SQL.VOTE_CAST);
   assert.match(sql, /SELECT w\.user_id, 'workshop' AS kind, w\.user_id AS ref_id, w\.created_at, NULL AS app_id/);
@@ -389,8 +390,12 @@ test('every vote door counts the vote before it answers', () => {
   assert.match(issues, /require\('\.\.\/services\/topochain\/challenge-scorer'\)/);
   assert.match(issueBody, /pushIssueUpdate\(\{ action: 'voted', appSlug: issue\.app_slug, appId: issue\.app_id, issueId: issue\.id, vote \}\);\s*(?:\/\/[^\n]*\n\s*)*await challengeScorer\.scoreOnVote\(pool, config\);/,
     'a request vote: after the broadcast, before the apply');
-  assert.ok(issueBody.indexOf('scoreOnVote') > issueBody.indexOf('return res.json({ ok: true, toggled: true });'),
+  assert.ok(issueBody.lastIndexOf('scoreOnVote') > issueBody.indexOf('return res.json({ ok: true, toggled: true });'),
     'taking a vote back is not casting one');
+  // A governance vote is the governance machine's: the route credits it
+  // once the machine accepted it, never a take-back or one still pending.
+  assert.match(issueBody, /if \(reply\.status === 200 && reply\.body\?\.ok && !reply\.body\.toggled\) await challengeScorer\.scoreOnVote\(pool, config\);\s*return res\.status\(reply\.status\)\.json\(reply\.body\);/,
+    'a governance vote: credited before the voter is answered, a cast only');
 });
 
 test('a report counts before the person is answered, on both targets', () => {

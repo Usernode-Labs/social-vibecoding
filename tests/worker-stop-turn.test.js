@@ -43,7 +43,12 @@ function stub(id, exports) {
 // simulate a stop landing DURING the dispatch round-trip. `opts.journal`
 // installs a fake `child_process.spawn` so _consumeJournal's `tail -f`
 // resolves immediately off canned lines instead of shelling out.
-function loadWorker({ onExec = null, journalLines = null } = {}) {
+// `opts.onPromptWrite` and `opts.onActiveTurnRead` run while the dispatch
+// writes its prompt and reads chat_sessions.active_turn, so a test can land
+// another turn's claim at either point of the race.
+function loadWorker({
+  onExec = null, journalLines = null, onPromptWrite = null, onActiveTurnRead = null, queryAnswer = null,
+} = {}) {
   const ids = {
     docker: require.resolve('../src/services/docker'),
     logger: require.resolve('../src/services/logger'),
@@ -62,12 +67,14 @@ function loadWorker({ onExec = null, journalLines = null } = {}) {
     ...realDocker,
     execFileAsync: async (cmd, args, opts) => {
       calls.push({ cmd, args, opts });
-      if (onExec) await onExec({ cmd, args, opts });
-      return { stdout: '', stderr: '' };
+      // A test's onExec may answer for the container (a stop's confirmation).
+      const answer = onExec ? await onExec({ cmd, args, opts }) : null;
+      return answer || { stdout: '', stderr: '' };
     },
     // execInWorker writes the turn prompt through this one.
     execShellStdin: async (runtimeName, script, opts) => {
       stdinCalls.push({ runtimeName, script, opts });
+      if (onPromptWrite) await onPromptWrite({ runtimeName, script, opts });
       return { stdout: '', stderr: '' };
     },
   });
@@ -85,6 +92,7 @@ function loadWorker({ onExec = null, journalLines = null } = {}) {
         const text = String(sql);
         const sessionId = Number(params[0]);
         if (/SELECT active_turn FROM chat_sessions/i.test(text)) {
+          if (onActiveTurnRead) await onActiveTurnRead(sessionId);
           return { rows: [{ active_turn: activeTurns.get(sessionId) || null }], rowCount: 1 };
         }
         if (/SET active_turn = \$2::jsonb/i.test(text)) {
@@ -100,6 +108,8 @@ function loadWorker({ onExec = null, journalLines = null } = {}) {
           activeTurns.set(sessionId, next);
           return { rows: [{ active_turn: next }], rowCount: 1 };
         }
+        const answered = queryAnswer ? queryAnswer(text, params) : null;
+        if (answered) return answered;
         if (/SET active_turn = NULL/i.test(text)) {
           if (!activeTurns.has(sessionId)) return { rows: [], rowCount: 0 };
           activeTurns.delete(sessionId);
@@ -848,6 +858,55 @@ test('a dispatch that loses the session to another turn says why, and leaves the
   } finally { restore(); }
 });
 
+// Session 8599: a sync-on-resume and a build turn dispatched on the same
+// worker together. The build claimed the session; the sync, backing out,
+// wrote `inFlight: false` over the build's registry entry, and the idle
+// sweep (which skips only in-flight workers) evicted the worker five minutes
+// later with the build still running. The loser may back out after the
+// winner's claim landed on the registry before its own, or after.
+function raceTwoDispatches(sessionId, winnerClaims) {
+  const winner = { turnId: 'build-turn-1', phase: 'executing', mode: 'build',
+    journal: '/home/node/.claude/turn-build-turn-1.log' };
+  let worker = null;
+  let activeTurns = null;
+  let claimed = false;
+  const claim = () => {
+    if (claimed) return;
+    claimed = true;
+    activeTurns.set(sessionId, winner);
+    worker._registryUpsertForTests(sessionId, {
+      inFlight: true, activeTurnMode: 'build', journal: winner.journal, activeTurnId: winner.turnId,
+    });
+  };
+  const loaded = loadWorker({
+    journalLines: ['__USERNODE_EXIT__ 0'],
+    // Before the loser's own registry claim...
+    onPromptWrite: winnerClaims === 'before' ? claim : null,
+    // ...or between it and the loser's active_turn read.
+    onActiveTurnRead: winnerClaims === 'after' ? claim : null,
+  });
+  ({ worker, activeTurns } = loaded);
+  return { ...loaded, winner };
+}
+
+for (const winnerClaims of ['before', 'after']) {
+  test(`a dispatch that loses the session leaves the running turn in flight (winner claims ${winnerClaims})`, async () => {
+    const { worker, activeTurns, winner, restore } = raceTwoDispatches(8599, winnerClaims);
+    try {
+      warmSession(worker, 8599);
+      await assert.rejects(
+        () => worker.execInWorker(8599, { ...DISPATCH_ARGS, mode: 'sync', logicalTurnId: 'sync-turn-1' }),
+        (err) => err.sessionBusy === true,
+      );
+      assert.deepEqual(activeTurns.get(8599), winner, 'the winner keeps the session');
+      assert.equal(worker.isInFlight(8599), true, 'the running turn is still in flight');
+      const [meta] = worker.warmRegistrySnapshot().filter((m) => m.sessionId === 8599);
+      assert.equal(meta.inFlight, true, 'so the idle sweep leaves its worker alone');
+      assert.equal(worker.getActiveTurnMode(8599), 'build');
+    } finally { restore(); }
+  });
+}
+
 test('concurrent turns on one session write their prompts to different files', () => {
   const worker = require('../src/services/worker');
   const a = worker.turnPromptPaths('11111111-1111-4111-8111-111111111111');
@@ -862,4 +921,152 @@ test('concurrent turns on one session write their prompts to different files', (
   }
   // An id that is not path-safe falls back to the fixed paths.
   assert.equal(worker.turnPromptPaths('../x').prompt, worker.TURN_PROMPT_PATH);
+});
+
+// ── Stopping a turn workflow work started (src/workflow/turn-stop.ts) ───
+// A machine's turn.stop kills the turn by its journal, so it can run in any
+// process (the registry entry is only the web process's). The fence is what
+// makes that safe: a kill that arrives after the turn ended, and another
+// turn began on the same worker, finds a newer journal and stops nothing.
+
+const JOURNAL = '/home/node/.claude/turn-owned-1.log';
+const ownedTurn = (o = {}) => ({
+  turnId: 'owned-1', phase: 'executing', mode: 'build', journal: JOURNAL,
+  owner: { machine: 'proposal', key: 'session:8400', kind: 'branch.sync', workKey: 'sync:1', workId: 7 }, ...o,
+});
+
+test('a stop by journal is fenced on the newest journal in the worker, and says what it found', async () => {
+  let stdout = '__USERNODE_STOP_CONFIRMED__';
+  const { worker, calls, restore } = loadWorker({ onExec: async () => ({ stdout, stderr: '' }) });
+  try {
+    await assert.rejects(worker.stopTurnByJournal(8400, null), /journal path is required/);
+    await assert.rejects(worker.stopTurnByJournal(8400, "/home/node/.claude/turn-x.log'; rm -rf /"), /journal path is required/);
+    assert.equal(calls.length, 0, 'nothing is run without a journal path it can quote');
+
+    assert.equal(await worker.stopTurnByJournal(8400, JOURNAL), 'stopped');
+    const script = calls[0].args[4];
+    assert.match(script, /ls -t \/home\/node\/\.claude\/turn-\*\.log/);
+    assert.ok(script.indexOf(`[ "$N" = '${JOURNAL}' ]`) < script.indexOf('kill -KILL'), 'the fence comes before any kill');
+
+    stdout = '__USERNODE_STOP_NOT_CURRENT__';
+    assert.equal(await worker.stopTurnByJournal(8400, JOURNAL), 'not_current');
+    stdout = '';
+    await assert.rejects(worker.stopTurnByJournal(8400, JOURNAL), (err) => err.code === 'stop_unconfirmed');
+  } finally { restore(); }
+});
+
+test('a stop by journal on a session with no worker stops nothing, and does not fail', async () => {
+  const { worker, restore } = loadWorker({ onExec: async () => { throw new Error('Error: No such container: usernode-worker-8401'); } });
+  try {
+    assert.equal(await worker.stopTurnByJournal(8401, JOURNAL), 'not_current');
+  } finally { restore(); }
+});
+
+test('a machine stops only its own turn: another machine\'s, a person\'s or another kind is left alone', async () => {
+  const { worker, calls, dbCalls, activeTurns, restore } = loadWorker();
+  try {
+    const stop = (o = {}) => worker.stopOwnedTurn(require('../src/db/pool').getPool(),
+      { sessionId: 8402, machine: 'proposal', key: 'session:8400', kinds: ['branch.sync'], by: 'ana', ...o });
+    assert.deepEqual(await stop(), { stopped: false, reason: 'no_turn' });
+    activeTurns.set(8402, ownedTurn({ owner: undefined }));
+    assert.deepEqual(await stop(), { stopped: false, reason: 'not_this_turn' }, 'a person\'s own turn');
+    activeTurns.set(8402, ownedTurn({ owner: { ...ownedTurn().owner, machine: 'shots' } }));
+    assert.deepEqual(await stop(), { stopped: false, reason: 'not_this_turn' }, 'another machine\'s');
+    activeTurns.set(8402, ownedTurn({ owner: { ...ownedTurn().owner, key: 'session:1' } }));
+    assert.deepEqual(await stop(), { stopped: false, reason: 'not_this_turn' }, 'another instance\'s');
+    activeTurns.set(8402, ownedTurn());
+    assert.deepEqual(await stop({ kinds: ['shots.agent'] }), { stopped: false, reason: 'not_this_turn' }, 'another kind of work');
+    assert.deepEqual(await stop({ workKey: 'sync:2' }), { stopped: false, reason: 'not_this_turn' },
+      'the instance\'s next sync: a stop retried after its own item ended');
+    assert.equal(calls.length, 0, 'nothing killed');
+    assert.ok(!dbCalls.some((c) => /stopRequestedAt/.test(c.sql)), 'nothing stamped');
+    assert.equal(activeTurns.get(8402).stopRequestedAt, undefined);
+  } finally { restore(); }
+});
+
+test('a machine\'s own turn is stamped stopped by the person, then killed by its journal', async () => {
+  const { worker, calls, activeTurns, restore } = loadWorker({ onExec: async () => ({ stdout: '__USERNODE_STOP_CONFIRMED__', stderr: '' }) });
+  try {
+    activeTurns.set(8403, ownedTurn());
+    const out = await worker.stopOwnedTurn(require('../src/db/pool').getPool(),
+      { sessionId: 8403, machine: 'proposal', key: 'session:8400', kinds: ['branch.sync'], by: 'ana', release: false });
+    assert.deepEqual(out, { stopped: true, reason: 'stopped', turnId: 'owned-1', released: false });
+    assert.equal(activeTurns.get(8403).stopRequestedBy, 'ana', 'durable-turn reads it back as stopped by them');
+    assert.ok(activeTurns.get(8403).stopRequestedAt);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].args[4], new RegExp(`"\\$N" = '${JOURNAL.replace(/[.]/g, '\\.')}'`));
+  } finally { restore(); }
+});
+
+test('a turn\'s own clock kills it without recording that anybody stopped it', async () => {
+  const { worker, calls, activeTurns, restore } = loadWorker({ onExec: async () => ({ stdout: '__USERNODE_STOP_CONFIRMED__', stderr: '' }) });
+  try {
+    activeTurns.set(8404, ownedTurn());
+    const out = await worker.stopOwnedTurn(require('../src/db/pool').getPool(),
+      { sessionId: 8404, machine: 'proposal', key: 'session:8400', stamp: false, release: false });
+    assert.equal(out.stopped, true);
+    assert.equal(activeTurns.get(8404).stopRequestedAt, undefined);
+    assert.equal(calls.length, 1);
+  } finally { restore(); }
+});
+
+// A machine's turn.stop that lands while `docker exec -d` is in flight finds
+// no journal to kill and releases the record it stamped. The exec then
+// starts a turn with no record and no clock; execInWorker reads the record
+// right after the exec, and a held workflow turn whose record is gone (or is
+// another turn's) is killed by its own journal.
+const isJournalStop = (c) => typeof c.args?.[4] === 'string' && c.args[4].includes('ls -t /home/node/.claude/turn-*.log');
+const OWNED = { machine: 'bot-request', key: 'request:7:3', kind: 'bot.look', workKey: 'look:1', workId: '7b0c2f52-1d3e-4c55-9a8e-2f6d1c0e9a11' };
+
+test('a workflow turn whose record a Stop released while its exec was in flight is killed by its journal', async () => {
+  let activeTurns;
+  const { worker, calls, restore, activeTurns: at } = loadWorker({
+    journalLines: ['__USERNODE_EXIT__ 137'],
+    onExec: async ({ args }) => {
+      if (args[0] === 'exec' && args[1] === '-d') activeTurns.delete(8500);
+      if (isJournalStop({ args })) return { stdout: '__USERNODE_STOP_CONFIRMED__', stderr: '' };
+      return null;
+    },
+  });
+  activeTurns = at;
+  try {
+    warmSession(worker, 8500);
+    await worker.execInWorker(8500, { ...DISPATCH_ARGS, owner: OWNED, holdTurnRecord: true, onTurnRecord: async () => {} });
+    const dispatchIdx = calls.findIndex(isDispatch);
+    assert.ok(dispatchIdx >= 0);
+    const kills = calls.slice(dispatchIdx + 1).filter(isJournalStop);
+    assert.equal(kills.length, 1, 'killed once, by its journal');
+    assert.match(kills[0].args[4], /\[ "\$N" = '\/home\/node\/\.claude\/turn-[A-Za-z0-9-]+\.log' \]/);
+  } finally { restore(); }
+});
+
+test('a workflow turn whose record is still its own and unstamped after the exec is left to run', async () => {
+  const { worker, calls, restore } = loadWorker({ journalLines: ['__USERNODE_EXIT__ 0'] });
+  try {
+    warmSession(worker, 8501);
+    await worker.execInWorker(8501, { ...DISPATCH_ARGS, owner: OWNED, holdTurnRecord: true, onTurnRecord: async () => {} });
+    assert.ok(calls.some(isDispatch));
+    assert.ok(!calls.some(isJournalStop), 'nothing kills a healthy turn');
+  } finally { restore(); }
+});
+
+// A Stop that lands before the turn's record exists cancels its work item;
+// the record the dispatch then writes has no next owner (the item is
+// settled), so the refused checkpoint releases it at once. A lost lease
+// leaves it for the next attempt, which follows the turn.
+test('a workflow turn whose item was cancelled before it dispatched releases its record; a lost lease keeps it', async () => {
+  for (const [status, kept] of [['settled', false], ['running', true]]) {
+    const { worker, calls, activeTurns, restore } = loadWorker({
+      queryAnswer: (sql) => (/FROM wf_work WHERE id::text = \$1/.test(sql) ? { rows: [{ status }], rowCount: 1 } : null),
+    });
+    try {
+      warmSession(worker, 8600);
+      await assert.rejects(worker.execInWorker(8600, {
+        ...DISPATCH_ARGS, owner: OWNED, holdTurnRecord: true,
+        onTurnRecord: async () => { throw Object.assign(new Error('stopped'), { code: 'steps_stopped', stopped: true }); },
+      }), /stopped/);
+      assert.ok(!calls.some(isDispatch), 'nothing dispatched');
+      assert.equal(activeTurns.has(8600), kept, status === 'settled' ? 'released' : 'kept for the next attempt');
+    } finally { restore(); }
+  }
 });

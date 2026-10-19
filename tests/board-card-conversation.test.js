@@ -26,6 +26,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -71,6 +72,7 @@ function makeAppView({ search = '' } = {}) {
     location: { search, hash: '', href: `http://localhost/${search}` }, URLSearchParams,
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -270,7 +272,8 @@ test('the three controls #1884 names are the same three on every surface', () =>
   // which screen drew the card.
   assert.ok(!/OpenMode|expand[?:]|'inline'/.test(FOLD),
     'no open mode: "Open card" is the item\u2019s page, whichever surface drew it');
-  assert.match(FOLD, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a>/);
+  assert.match(FOLD, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>\{t\('project:card\.fold\.openCard'\)\}<\/a>/);
+  assert.equal(message('project:card.fold.openCard'), 'Open card');
   // The reply box and the comment tail are the ROW's to carry, and both
   // surfaces build rows through the one helper (asserted above).
   assert.match(FOLD, /\{row\.commentsFor != null \? \(/);

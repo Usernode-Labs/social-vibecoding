@@ -24,6 +24,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -47,6 +48,7 @@ const { KIND_TO_CATEGORY } = require('../src/services/mobile-push-preferences');
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const TASKS_SRC = read('src/services/external-agent-tasks.js');
 const NOTIF_SRC = read('src/services/notifications.js');
+const RULES_SRC = read('src/workflow/rules/proposal-notifications.ts');
 const SCHEMA = read('src/db/schema.sql');
 const FE_SRC = read('frontend/src/features/notifications/notifications.js');
 
@@ -102,8 +104,12 @@ test('it aims at the task owner — the inverse of the pr_proposed rule', () => 
   // assumption: the proposer is an agent, and the human may be anywhere.
   assert.match(NOTIF_SRC, /The proposer is always excluded/,
     'the rule this inverts is still stated where it applies');
-  const fn = NOTIF_SRC.match(
-    /async function createConnectorSubmittedNotification[\s\S]*?\n\}/
+  // The one copy is the proposal machine's rule (it writes the row in the
+  // move into review); notifications.js delegates to it.
+  assert.match(NOTIF_SRC, /function createConnectorSubmittedNotification\(pool, \{ userId, appId, sessionId, detail \}\) \{\n  return proposalNotifications\.createConnectorSubmittedNotification\(/,
+    'notifications.js delegates to the rule');
+  const fn = RULES_SRC.match(
+    /export async function createConnectorSubmittedNotification[\s\S]*?\n\}/
   );
   assert.ok(fn, 'the creator exists');
   assert.match(fn[0], /\$1, \$2, \$3, NULL, 'connector_submitted'/,
@@ -188,6 +194,9 @@ test('ONE-SHOT — a fired wait is never reconsidered', () => {
   // Stamped in the SAME statement that selects, so two overlapping sweeps
   // cannot both send one wait.
   assert.match(fn, /UPDATE connector_input_waits[\s\S]*?SET fired_at[\s\S]*?WHERE id IN \(/);
+  // ...and only because the outer WHERE checks again: Postgres re-reads a row
+  // another sweep stamped against the outer condition, never the subquery's.
+  assert.match(fn, /FOR UPDATE SKIP LOCKED\s*\)\s*AND cleared_at IS NULL AND fired_at IS NULL/);
   assert.match(SCHEMA, /connector_input_waits_live_idx[\s\S]*?WHERE cleared_at IS NULL AND fired_at IS NULL/,
     'and the database holds one live wait per user, so arming twice cannot stack');
 });
@@ -276,7 +285,9 @@ test('the drawer renders both, and its waiting row uses the same safe wording', 
   assert.match(FE_SRC, /n\.kind === 'agent_awaiting_input'/);
   const block = FE_SRC.slice(FE_SRC.indexOf("n.kind === 'agent_awaiting_input'"));
   const row = block.slice(0, block.indexOf('#161'));
-  assert.match(row, /asked you something/i);
+  assert.match(row, /headline\(t\('notifications:row\.agentAsked'\), n\.sessionTitle \|\| null\)/);
+  assert.match(message('notifications:row.agentAsked'), /asked you something/i);
+  assert.doesNotMatch(message('notifications:row.agentAsked'), /is waiting (on|for) you/i);
   assert.doesNotMatch(row, /is waiting (on|for) you/i,
     'the row and the push must not disagree about what is being claimed');
 });

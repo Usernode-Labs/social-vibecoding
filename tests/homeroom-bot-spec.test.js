@@ -3,8 +3,9 @@
 // that session's spec doc, then handed to the build as authoritative. On a
 // live app the spec is posted on the issue as soon as it is written (a
 // GitHub comment and a spec card in the thread) and on the proposal once it
-// is up. For reference only: the build never waits on it. A shadow build
-// writes one too, and shows it to nobody but the dashboard.
+// is up. For reference only: the build never waits on it. A build that is
+// not proposed (the benchmark's, `propose: false`) writes one too, and
+// shows it to nobody.
 //
 // Run with: node --test tests/homeroom-bot-spec.test.js
 
@@ -16,6 +17,7 @@ const express = require('express');
 
 const bot = require('../src/services/homeroom-bot');
 const live = require('../src/services/homeroom-bot-live');
+const { firstPerson } = require('../src/services/homeroom-bot-words');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
@@ -34,11 +36,20 @@ const SPEC = [
   'Schedule the poller in `server/poller.js`.',
 ].join('\n');
 
-function harness({ spec = SPEC, specHang = false, onSpecThrows = false } = {}) {
-  const calls = { order: [], published: [], stopped: [], ensured: 0, prompts: {}, loops: {}, promoted: [] };
+function harness({ spec = SPEC, specHang = false, onSpecThrows = false, recorded = true } = {}) {
+  const calls = {
+    order: [], published: [], stopped: [], stoppedJournals: [], stamped: [], ensured: 0, prompts: {}, loops: {}, promoted: [],
+  };
+  // The turn on the session, as execInWorker records it (chat_sessions.
+  // active_turn): its id and its journal. `recorded: false` is a turn whose
+  // record was not written yet.
+  let activeTurn = null;
   const pool = {
-    async query(sql) {
-      if (/INSERT INTO chat_sessions/.test(String(sql))) return { rows: [{ id: 5001, app_id: APP.id, user_id: BOT.id }] };
+    async query(sql, params) {
+      const s = String(sql);
+      if (/INSERT INTO chat_sessions/.test(s)) return { rows: [{ id: 5001, app_id: APP.id, user_id: BOT.id }] };
+      if (/SELECT active_turn FROM chat_sessions/.test(s)) return { rows: [{ active_turn: activeTurn }] };
+      if (/SET active_turn = jsonb_set\(active_turn/.test(s)) { calls.stamped.push(params); return { rows: [{ id: params[0] }], rowCount: 1 }; }
       return { rows: [] };
     },
   };
@@ -47,24 +58,28 @@ function harness({ spec = SPEC, specHang = false, onSpecThrows = false } = {}) {
   calls.release = () => release();
   const router = express.Router();
   router.post('/api/sessions/:id/promote', (req, res) => { calls.promoted.push(req.params.id); res.json({ ok: true, prNumber: 42 }); });
-  // Like the real worker (#937): a stop stays pending on the session, and
-  // every dispatch is skipped, exit 143 and no work, until it is cleared.
+  // Like the real worker (#937): a stop by session (stopTurn) stays pending
+  // on it, and a dispatch no work item owns is skipped, exit 143 and no
+  // work, while it is. A stop by journal (stopTurnByJournal) kills only
+  // that turn and leaves no flag behind.
   let pendingStop = false;
   const deps = {
     worker: {
       async ensureWorkerImage() {},
       async ensureWorker() { calls.ensured += 1; return 'usernode-worker-5001'; },
       async execInWorker(_id, opts) {
-        if (pendingStop) {
+        if (pendingStop && !opts.owner) {
           calls.order.push(`skipped:${opts.mode}`);
           return { exitCode: 143 };
         }
         calls.order.push(`exec:${opts.mode}`);
         calls.prompts[opts.mode] = opts.prompt;
+        if (recorded) activeTurn = { turnId: `turn-${opts.mode}`, journal: `/home/node/.claude/turn-${opts.mode}.log`, mode: opts.mode };
         if (opts.mode === 'scout') opts.onProgress('Waiting on a command for 40s: rg -n poller');
         return opts.mode === 'scout' ? { lastResultText: spec } : { pushOk: true, ahead: 1, sha: 'a'.repeat(40) };
       },
       stopTurn(id) { calls.stopped.push(id); pendingStop = true; release(); return Promise.resolve(); },
+      async stopTurnByJournal(id, journal) { calls.stopped.push(id); calls.stoppedJournals.push(journal); release(); return 'stopped'; },
       clearPendingStop(id) { calls.order.push(`clear:${id}`); pendingStop = false; },
     },
     sessions: {
@@ -78,7 +93,6 @@ function harness({ spec = SPEC, specHang = false, onSpecThrows = false } = {}) {
     },
     agentTurn: { async resolveCodexRuntimeContext() { return {}; } },
     sessionLifecycle: { async ensureSessionBranch({ sessionId }) { return { branchName: `homeroom_bot/s${sessionId}` }; } },
-    activeWorkers: new Set(),
     votesRouter: router,
   };
   const onSpec = async (s) => {
@@ -184,6 +198,14 @@ test('the spec has a clock of its own, shorter than the build\'s; a stopped spec
   if (!h.calls.stopped.length) h.calls.release();
   const out = await running;
   assert.deepEqual(h.calls.stopped, [5001], 'stopped at ten minutes, not the build\'s twenty');
+  // Only the spec's own turn, by its journal: a turn started after it is
+  // never the one ended, and no stop is left pending on the session.
+  assert.deepEqual(h.calls.stoppedJournals, ['/home/node/.claude/turn-scout.log']);
+  // Why is saved on the turn's record first, so restart recovery reads the
+  // 143 as the time-out it was (live.botStopOf).
+  assert.equal(h.calls.stamped.length, 1);
+  assert.deepEqual(h.calls.stamped[0].slice(0, 3), [5001, 'turn-scout', 'botStop']);
+  assert.equal(JSON.parse(h.calls.stamped[0][3]).why, 'time_limit');
   assert.equal(h.calls.ensured, 2, 'stopping a turn takes its container, so the build gets a new one');
   assert.equal(out.ok, true);
   assert.equal(out.specMd, undefined);
@@ -192,6 +214,24 @@ test('the spec has a clock of its own, shorter than the build\'s; a stopped spec
   assert.equal(out.specNote,
     'no spec (the spec ran past its time limit; last activity: Waiting on a command for 40s: rg -n poller); the build worked from the plan',
     'why there was no spec, and what it was doing');
+});
+
+test('a spec stopped before its turn was recorded is stopped by its session, and the build still goes on', async (t) => {
+  const h = harness({ specHang: true, recorded: false });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const running = live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS, onSpec: h.onSpec });
+  for (let i = 0; i < 200 && !h.calls.order.includes('exec:scout'); i += 1) await new Promise((r) => setImmediate(r));
+  t.mock.timers.tick(live.SPEC_TURN_MAX_MS);
+  for (let i = 0; i < 20; i += 1) await new Promise((r) => setImmediate(r));
+  if (!h.calls.stopped.length) h.calls.release();
+  const out = await running;
+  assert.deepEqual(h.calls.stopped, [5001]);
+  assert.deepEqual(h.calls.stoppedJournals, [], 'no journal to stop it by');
+  assert.deepEqual(h.calls.stamped, [], 'no record to save why on');
+  // The stop by session leaves a stop pending on it (#937), cleared before
+  // the build's turn so it is not skipped (#3396).
+  assert.deepEqual(h.calls.order, ['exec:scout', 'clear:5001', 'exec:build'], 'the build is dispatched, not skipped');
+  assert.equal(out.ok, true);
 });
 
 test('a longer spec clock is honoured: the platform\'s spec runs to its own cap (#3396)', async (t) => {
@@ -241,7 +281,7 @@ test('a spec a recovered spec turn wrote is built from as it is: no second spec 
   const h = harness();
   const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS, propose: false, presetSpec: SPEC });
   assert.deepEqual(h.calls.order, ['clear:5001', 'exec:build'], 'no spec turn');
-  assert.deepEqual(h.calls.published, [], 'a shadow build stores nothing');
+  assert.deepEqual(h.calls.published, [], 'a build that is not proposed stores nothing');
   assert.ok(h.calls.prompts.build.includes(`==== SPEC (written for this request just before this build; authoritative for what to build) ====\n\n${SPEC}\n\n==== END SPEC ====`));
   assert.equal(out.specMd, SPEC, 'the run still records the spec it was built from');
 });
@@ -265,7 +305,7 @@ test('readSpec reads a spec turn\'s message the way the build does', () => {
   assert.deepEqual(live.readSpec('  '), { ok: false, error: 'the spec turn returned nothing' });
 });
 
-test('a shadow build writes its spec too, and posts it nowhere', async () => {
+test('a build that is not proposed (the benchmark\'s) writes its spec too, and posts it nowhere', async () => {
   const h = harness();
   const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS, propose: false });
   assert.equal(out.ok, true);
@@ -293,7 +333,9 @@ test('a failed build still says what it meant to build', async () => {
 test('the GitHub comment says what the spec is for and folds the document away', () => {
   const text = live.specCommentText(SPEC);
   // B6: no approval talk while it builds.
-  assert.match(text, /^Homeroom bot wrote a plan for this request and is building it now\. The change will be linked here when it's ready to try\.\n/);
+  // And no promise of a link later (nothing posts one there).
+  assert.match(text, /^Homeroom bot wrote a plan for this request and is building it now\.\n/);
+  assert.doesNotMatch(text, /linked here/);
   assert.ok(!/approve|proposal/i.test(text.split('<details>')[0]));
   assert.ok(text.includes(`<details><summary>The plan</summary>\n\n${SPEC}\n\n</details>`));
   const long = live.specCommentText('x'.repeat(70_000));
@@ -310,17 +352,19 @@ test('the thread card is the same spec card a person\'s Share posts', () => {
     snippet: SPEC.split('\n').slice(2).join('\n'),
     totalChars: SPEC.length,
     sharedBy: { id: 77, username: 'homeroom_bot' },
+    // One request, one story: the request page draws the bot's sentence.
+    botNote: 'building',
   });
-  assert.match(card.content, /Homeroom bot's plan for this request: "Hourly feed refresh"\. It is building it now\.$/);
-  assert.match(live.specCard({ sessionId: 5001, version: 3, spec: SPEC, bot: BOT, proposed: true }).content,
-    /The plan this proposal was built from: "Hourly feed refresh"/);
+  assert.equal(card.content, '📋 Plan v3: Hourly feed refresh. I\'m building it now.');
+  assert.equal(live.specCard({ sessionId: 5001, version: 3, spec: SPEC, bot: BOT, proposed: true }).content,
+    '📋 Plan v3: Hourly feed refresh.');
   assert.equal(live.specTitle('## Only a section\n# Real title'), 'Real title');
   assert.equal(live.specTitle('no title'), null);
 });
 
 test('#4612: an updated plan\'s card says so, and its metadata is the same card a Share posts', () => {
   const revised = live.specCard({ sessionId: 5001, version: 2, spec: SPEC, bot: BOT, proposed: true, revised: true });
-  assert.match(revised.content, /^📋 The plan, updated for this change \(version 2\): "Hourly feed refresh"\.$/);
+  assert.equal(revised.content, '📋 Plan v2: Hourly feed refresh, updated for this change.');
   const first = live.specCard({ sessionId: 5001, version: 2, spec: SPEC, bot: BOT, proposed: true });
   assert.deepEqual(revised.metadata.specShare, first.metadata.specShare, 'the transcript shows the same card, as v2');
   assert.doesNotMatch(first.content, /updated/, 'the first card says what it always said');
@@ -362,10 +406,14 @@ test('live.post puts the card in the thread and the full spec on GitHub', async 
   assert.equal(out.githubCreatedAt, '2026-09-28T10:00:00Z', 'so the bot does not read its own comment as a change');
   assert.equal(comments[0].body, live.specCommentText(SPEC));
   assert.deepEqual(sent, [{
-    appId: 9, user: BOT, content: card.content, metadata: card.metadata,
+    // In Homeroom the card is the bot's own words (homeroom-bot-words.js).
+    // With the post's mark, so a retry finds it (homeroom-bot-live.js threadMessageOf).
+    appId: 9, user: BOT, content: firstPerson(card.content), metadata: { ...card.metadata, hrbotPost: '1' },
     thread: { type: 'issue', ref: 12 }, msgType: 'spec_share',
   }]);
-  assert.equal(live.tagsPoster('spec'), true, 'whoever filed it and took part are tagged on the spec');
+  assert.equal(sent[0].content, '📋 Plan v3: Hourly feed refresh. I\'m building it now.');
+  // Progress is said untagged; a tag means the bot is asking you something.
+  assert.equal(live.tagsPoster('spec'), false);
 });
 
 function actHarness() {
@@ -446,128 +494,57 @@ test('live: no spec, no spec posts; a build that fails still records the spec it
 
 // ── Recorded and shown ──────────────────────────────────────────────────
 
-// A shadow build happens only where nothing is live: outside a staging copy
-// every app but a paused one is (live.liveScope). These tests stand on one.
-function onStagingCopy(t) {
-  const prev = process.env.USERNODE_ENV;
-  process.env.USERNODE_ENV = 'staging';
-  t.after(() => {
-    if (prev === undefined) delete process.env.USERNODE_ENV;
-    else process.env.USERNODE_ENV = prev;
-  });
-}
-
-test('a shadow build records the spec on its run', async (t) => {
-  bot._resetForTests();
-  onStagingCopy(t);
-  const queries = [];
-  const pool = {
-    async query(sql, params) {
-      queries.push({ sql: String(sql), params });
-      if (/FROM apps WHERE id = \$1/.test(String(sql))) return { rows: [APP] };
-      return { rows: [], rowCount: 1 };
-    },
-  };
+test('a live build records its spec, or why it had none, on its run, and the platform gets longer clocks (#3396)', async (t) => {
+  const h = actHarness();
+  const realPost = live.post;
   const realBuild = live.buildAndPropose;
-  t.after(() => { live.buildAndPropose = realBuild; });
-  live.buildAndPropose = async (args) => {
-    assert.equal(args.onSpec, undefined, 'nowhere to post it');
-    return { ok: true, sessionId: 6001, branchName: 'dev/b', sha: 'c'.repeat(40), commits: 1, costUsd: 0.02, specMd: SPEC, specVersion: 1 };
-  };
-  const deps = {
-    github: {
-      isEnabled: () => true, getBotUsername: async () => 'usernode-bot',
-      async fetchPublicIssue() { return { issue: { number: 12, title: 't', state: 'open' } }; },
-      async fetchIssueComments() { return { comments: [] }; },
-    },
-    limits: { async recordSpend() {} },
-    threadContext: { async loadIssueThread() { return { messages: [] }; } },
-    managedOpenRouter: { async usesIncludedKey() { return false; } },
-    sessions: { buildHeadlessSeed: () => 'seed' },
-    worker: {}, agentTurn: {}, activeWorkers: new Set(), sessionLifecycle: {},
-  };
-  const settings = { mode: 'shadow', pausedApps: [], shadowBuilds: true, turnSeconds: 1200 };
-  assert.equal(await bot.runQueuedBuild(pool, {}, {
-    bot: BOT, claim: { id: 900, app_id: 9, issue_number: 12, build_note: 'x' }, settings, deps,
-  }), 'shadow_built');
-  const rec = queries.find((q) => /SET build_ok = \$2/.test(q.sql));
-  assert.match(rec.sql, /build_spec_md = \$9/);
-  assert.equal(rec.params[8], SPEC);
-});
-
-test('a shadow build records a failed spec on its run, and the platform gets longer clocks (#3396)', async (t) => {
-  bot._resetForTests();
-  onStagingCopy(t);
-  const queries = [];
-  const apps = {
-    9: APP,
-    10: { id: 10, slug: 'homeroom', name: 'Homeroom', repo_url: 'https://github.com/Usernode-Labs/social-vibecoding' },
-  };
-  const pool = {
-    async query(sql, params) {
-      queries.push({ sql: String(sql), params });
-      if (/FROM apps WHERE id = \$1/.test(String(sql))) return { rows: [apps[params[0]]] };
-      return { rows: [], rowCount: 1 };
-    },
-  };
-  const realBuild = live.buildAndPropose;
-  t.after(() => { live.buildAndPropose = realBuild; });
+  t.after(() => { live.post = realPost; live.buildAndPropose = realBuild; });
+  live.post = async () => ({});
+  const PLATFORM = { id: 10, slug: 'homeroom', name: 'Homeroom', repo_url: 'https://github.com/Usernode-Labs/social-vibecoding' };
+  const PLATFORM_REPO = { owner: 'Usernode-Labs', repo: 'social-vibecoding' };
   const seen = [];
   let outcome;
   live.buildAndPropose = async (args) => {
-    seen.push({ slug: args.app.slug, turnBudgetMs: args.turnBudgetMs, specBudgetMs: args.specBudgetMs, platformRepo: args.platformRepo });
+    seen.push({
+      slug: args.app.slug, turnBudgetMs: args.turnBudgetMs, specBudgetMs: args.specBudgetMs,
+      platformRepo: args.platformRepo, presetSpec: args.presetSpec,
+    });
     return outcome;
   };
-  const deps = {
-    github: {
-      isEnabled: () => true, getBotUsername: async () => 'usernode-bot',
-      async fetchPublicIssue() { return { issue: { number: 12, title: 't', state: 'open' } }; },
-      async fetchIssueComments() { return { comments: [] }; },
-    },
-    limits: { async recordSpend() {} },
-    threadContext: { async loadIssueThread() { return { messages: [] }; } },
-    managedOpenRouter: { async usesIncludedKey() { return false; } },
-    sessions: { buildHeadlessSeed: () => 'seed' },
-    worker: {}, agentTurn: {}, activeWorkers: new Set(), sessionLifecycle: {},
-  };
-  const settings = {
-    mode: 'shadow', pausedApps: [], shadowBuilds: true, shadowBuildPlatform: true, turnSeconds: 1200,
-  };
+  const build = (over = {}) => bot.buildLive({
+    pool: h.pool, config: {}, bot: BOT, app: APP, repo: REPO, issueNumber: 12, issue: { title: 'x' },
+    parsed: { verdict: 'ready', buildNote: 'x' }, capSuppressed: null, runId: 900, seed: 'seed',
+    seedReadAt: '2026-09-28T09:59:00Z', postedAt: [], turnBudgetMs: 1200 * 1000, model: 'm', deps: h.deps, ...over,
+  });
   const note = 'no spec (the spec ran past its time limit; last activity: rg -n x); the build worked from the plan';
-  const record = () => queries.filter((q) => /SET build_ok = \$2/.test(q.sql)).pop();
+  const record = () => h.queries.filter((q) => /SET build_ok = \$2, build_error = \$3/.test(q.sql)).pop();
 
-  outcome = { ok: true, sessionId: 6001, branchName: 'dev/b', sha: 'c'.repeat(40), commits: 1, costUsd: 0.02, specNote: note };
-  assert.equal(await bot.runQueuedBuild(pool, {}, {
-    bot: BOT, claim: { id: 900, app_id: 9, issue_number: 12, build_note: 'x' }, settings, deps,
-  }), 'shadow_built');
+  outcome = { ok: true, sessionId: 6001, prNumber: 42, branchName: 'dev/b', sha: 'c'.repeat(40), commits: 1, costUsd: 0.02, specMd: SPEC, specVersion: 1 };
+  await build();
   assert.equal(record().params[1], true);
-  assert.equal(record().params[5], note, 'built from the plan, and the run says why');
-  assert.deepEqual(seen.pop(), { slug: APP.slug, turnBudgetMs: 1200 * 1000, specBudgetMs: live.SPEC_TURN_MAX_MS, platformRepo: false }, 'an app keeps its clocks');
-
-  outcome = { ok: false, sessionId: 6002, costUsd: null, error: 'the build produced no change to propose', specNote: note };
-  assert.equal(await bot.runQueuedBuild(pool, {}, {
-    bot: BOT, claim: { id: 901, app_id: 10, issue_number: 13, build_note: 'x' }, settings, deps,
-  }), 'shadow_failed');
-  assert.equal(record().params[5], `the build produced no change to propose; ${note}`, 'the failure first, then why there was no spec');
+  assert.equal(record().params[2], null, 'a build with its spec records no note');
+  assert.equal(record().params[8], SPEC, 'the spec it was built from');
   assert.deepEqual(seen.pop(), {
-    slug: 'homeroom', turnBudgetMs: 3 * 1200 * 1000, specBudgetMs: 3 * live.SPEC_TURN_MAX_MS, platformRepo: true,
+    slug: APP.slug, turnBudgetMs: 1200 * 1000, specBudgetMs: live.SPEC_TURN_MAX_MS, platformRepo: false, presetSpec: null,
+  }, 'an app keeps its clocks');
+
+  outcome = { ok: true, sessionId: 6002, prNumber: 43, branchName: 'dev/c', sha: 'd'.repeat(40), commits: 1, costUsd: 0.02, specNote: note };
+  await build({ runId: 901 });
+  assert.equal(record().params[2], note, 'built from the plan, and the run says why');
+
+  outcome = { ok: false, sessionId: 6003, costUsd: null, error: 'the build produced no change to propose', specNote: note };
+  assert.equal(await build({ app: PLATFORM, repo: PLATFORM_REPO, issueNumber: 13, runId: 902 }), 'build_failed');
+  assert.equal(record().params[2], `the build produced no change to propose; ${note}`, 'the failure first, then why there was no spec');
+  assert.deepEqual(seen.pop(), {
+    slug: 'homeroom', turnBudgetMs: 3 * 1200 * 1000, specBudgetMs: 3 * live.SPEC_TURN_MAX_MS, platformRepo: true, presetSpec: null,
   }, 'the platform gets three times both clocks (2026-10-02: at double, half its builds ran out of time), and its test note');
 
-  outcome = { ok: true, sessionId: 6003, branchName: 'dev/c', sha: 'd'.repeat(40), commits: 1, costUsd: 0.02, specMd: SPEC };
-  await bot.runQueuedBuild(pool, {}, { bot: BOT, claim: { id: 902, app_id: 9, issue_number: 14, build_note: 'x' }, settings, deps });
-  assert.equal(record().params[5], null, 'a build with its spec records no note');
+  // A run whose spec a recovered spec turn kept builds from it (#3401).
+  outcome = { ok: true, sessionId: 6004, prNumber: 44, branchName: 'dev/d', sha: 'e'.repeat(40), commits: 1, costUsd: 0.02, specMd: SPEC };
+  await build({ runId: 903, presetSpec: SPEC });
+  assert.equal(seen.pop().presetSpec, SPEC);
 
-  let passed;
-  live.buildAndPropose = async (args) => { passed = args; await args.onSession({ id: 6100 }); return outcome; };
-  outcome = { ok: true, sessionId: 6100, branchName: 'dev/d', sha: 'e'.repeat(40), commits: 1, costUsd: 0.02, specMd: SPEC };
-  await bot.runQueuedBuild(pool, {}, {
-    bot: BOT, claim: { id: 903, app_id: 9, issue_number: 15, build_note: 'x', build_spec_md: SPEC }, settings, deps,
-  });
-  assert.equal(passed.presetSpec, SPEC, 'a run whose spec a recovered spec turn kept builds from it (#3401)');
-  const link = queries.find((q) => /SET build_session_id = \$2 WHERE id = \$1/.test(q.sql));
-  assert.deepEqual(link.params, [903, 6100], 'the session is linked to the run as soon as it exists');
-
-  assert.deepEqual(bot.buildBudgets(apps[10], {}, 60_000), { turnBudgetMs: 180_000, specBudgetMs: 3 * live.SPEC_TURN_MAX_MS });
+  assert.deepEqual(bot.buildBudgets(PLATFORM, {}, 60_000), { turnBudgetMs: 180_000, specBudgetMs: 3 * live.SPEC_TURN_MAX_MS });
   assert.deepEqual(bot.buildBudgets(APP, {}, 60_000), { turnBudgetMs: 60_000, specBudgetMs: live.SPEC_TURN_MAX_MS });
 });
 

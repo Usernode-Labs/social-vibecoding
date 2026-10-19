@@ -6,9 +6,10 @@ import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
 // Workflows: what the workflow machines (src/workflow/) are doing and what
-// needs a person. Problems come first: a faulted or stalled instance, held
-// events, a deadline that did not fire, work that ran out of retries or is
-// running long, and writes to a machine's columns from outside it. Below
+// needs a person. Problems come first: which processes run the workflow,
+// an event nobody decides, work nobody takes, a faulted or stalled instance,
+// held events, a deadline that did not fire, work that ran out of retries or
+// is running long. Below
 // them, the instances by state, and one instance's timeline: every event
 // with its source, result, reason and what it emitted, linked to its cause.
 // Actions are events on that timeline (routes/admin-workflow.js), never row
@@ -30,23 +31,22 @@ type Work = {
   id: string; kind: string; workKey: string; status: string; attemptCount: number; lastError: any;
   result: any; dueAt: string; attempts: { number: number; outcome: string; service_id: string }[];
 };
+type Runner = { id: string; role: string; release: string | null; host: string | null; state: string; startedAt: string };
 type Overview = {
   running: boolean;
+  runners?: Runner[];
   actions: Record<string, string[]>;
   counts: { machine: string; state: string; count: number }[];
   problems: {
     flagged: Instance[];
     overdueDeadlines: Instance[];
     work: (Work & { machine: string; key: string })[];
-    ownershipViolations: { table_name: string; column_path: string; count: number; last_at: string }[];
-    ownershipViolationRows?: Violation[];
+    waiting?: (Instance & { says: string | null })[];
+    unclaimed?: { id: string; machine: string; key: string; kind: string; workKey: string; waitedSeconds: number }[];
+    pendingOldestSeconds?: number;
   };
 };
 type Ref = { machine: string; key: string };
-type Violation = {
-  id: number; table: string; column: string; row: Record<string, unknown> | null;
-  application: string | null; query: string | null; createdAt: string;
-};
 
 const RESULT_BADGE = new Map([
   ['accepted', AdminUI.badge.success],
@@ -75,14 +75,38 @@ function InstanceLink({ r, onOpen }: { r: Ref; onOpen: (r: Ref) => void }) {
 
 function Problems({ overview, onOpen }: { overview: Overview; onOpen: (r: Ref) => void }) {
   const p = overview.problems;
-  const none = !p.flagged.length && !p.overdueDeadlines.length && !p.work.length && !p.ownershipViolations.length;
+  const waiting = p.waiting || [];
+  const unclaimed = p.unclaimed || [];
+  // An event waiting over two minutes to be decided: no process decides.
+  const slow = (p.pendingOldestSeconds || 0) > 120;
+  const none = !p.flagged.length && !p.overdueDeadlines.length && !p.work.length && !waiting.length && !unclaimed.length && !slow;
+  const runners = overview.runners || [];
   return (
     <div id="admin-wf-problems" className={`${AdminUI.card} p-4 mb-4`}>
       <div className={AdminUI.cardHeader}>
         <h2 className={AdminUI.cardTitle}>Needs a person</h2>
       </div>
+      <p id="admin-wf-runners" className={`${AdminUI.muted} mb-2`}>
+        {runners.length
+          ? `Run by ${runners.map((r) => `${r.host || r.id}${r.state === 'draining' ? ' (draining)' : ''}`).join(', ')}`
+          : 'No process runs the workflow.'}
+      </p>
       {none ? <p className={AdminUI.muted}>Nothing is stuck.</p> : null}
       <ul className="space-y-2">
+        {slow ? (
+          <li data-wf-problem="pending" className="flex flex-wrap items-center gap-2">
+            <span className={AdminUI.badge.destructive}>not decided</span>
+            <span className={AdminUI.muted}>{`An event has waited ${Math.round(p.pendingOldestSeconds || 0)} s to be decided`}</span>
+          </li>
+        ) : null}
+        {unclaimed.map((w) => (
+          <li key={`u:${w.id}`} data-wf-problem="unclaimed" className="flex flex-wrap items-center gap-2">
+            <span className={AdminUI.badge.destructive}>nobody takes it</span>
+            <code className="text-xs">{`${w.kind} ${w.workKey}`}</code>
+            <InstanceLink r={w} onOpen={onOpen} />
+            <span className={AdminUI.muted}>{`waited ${Math.round(w.waitedSeconds / 60)} min`}</span>
+          </li>
+        ))}
         {p.flagged.map((i) => (
           <li key={`f:${i.machine}:${i.key}`} data-wf-problem="flagged" className="flex flex-wrap items-center gap-2">
             <span className={FLAG_BADGE.get(i.flag || '') || AdminUI.badge.default}>{i.flag}</span>
@@ -110,35 +134,15 @@ function Problems({ overview, onOpen }: { overview: Overview; onOpen: (r: Ref) =
             <span className={AdminUI.muted}>{w.lastError?.message || ''}</span>
           </li>
         ))}
-        {p.ownershipViolations.map((v) => (
-          <li key={`o:${v.table_name}.${v.column_path}`} data-wf-problem="ownership">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={AdminUI.badge.warn}>written outside its machine</span>
-              <code className="text-xs">{`${v.table_name}.${v.column_path}`}</code>
-              <span className={AdminUI.muted}>{`${v.count} times, last ${when(v.last_at)}`}</span>
-            </div>
-            <ViolationRows rows={(p.ownershipViolationRows || []).filter((r) => r.table === v.table_name && r.column === v.column_path)} />
+        {waiting.map((i) => (
+          <li key={`a:${i.machine}:${i.key}`} data-wf-problem="waiting" className="flex flex-wrap items-center gap-2">
+            <span className={AdminUI.badge.warn}>{i.state}</span>
+            <InstanceLink r={i} onOpen={onOpen} />
+            <span className={AdminUI.muted}>{i.says || ''}</span>
           </li>
         ))}
       </ul>
     </div>
-  );
-}
-
-// The latest writes of one column: which row, from which application
-// (the connection's application_name), and the statement that wrote it.
-function ViolationRows({ rows }: { rows: Violation[] }) {
-  if (!rows.length) return null;
-  return (
-    <ul className="mt-1 ml-4 space-y-1">
-      {rows.map((r) => (
-        <li key={r.id} data-wf-violation={r.id} className="text-xs">
-          <span className="font-mono">{`row ${r.row ? JSON.stringify(r.row) : '?'}`}</span>
-          <span className={AdminUI.muted}>{` by ${r.application || 'an unnamed connection'}, ${when(r.createdAt)}`}</span>
-          {r.query ? <code className={`block ${AdminUI.muted} truncate`} title={r.query}>{r.query}</code> : null}
-        </li>
-      ))}
-    </ul>
   );
 }
 
@@ -313,6 +317,34 @@ function InstanceView({ at, actions, onOpen, onBack }: {
               <button type="button" disabled={busy} className={AdminUI.btn.primarySm}
                 onClick={() => act('Retry delivery', ...event('RetryDelivery'))}>Retry delivery</button>
             ) : null}
+            {actions.includes('AdminRetry') && ['failed', 'settled', 'deferred', 'retiring'].includes(inst.state) ? (
+              <button type="button" disabled={busy} className={AdminUI.btn.primarySm}
+                onClick={() => act('Retry the preview', ...event('AdminRetry'),
+                  'Builds the preview again if nothing serves its head, else runs its checks again (or retries a retirement that did not close).')}>
+                Retry preview
+              </button>
+            ) : null}
+            {actions.includes('AdminEnd') && ['preparing', 'checking'].includes(inst.state) ? (
+              <button type="button" disabled={busy} className={AdminUI.btn.outlineSm}
+                onClick={() => act('End the build or run', ...event('AdminEnd'),
+                  'Ends a build or checks run that never answers: it is recorded as an error, and its late result is ignored.')}>
+                End build or run
+              </button>
+            ) : null}
+            {actions.includes('AdminRetire') && !['retiring', 'retired', 'detached'].includes(inst.state) ? (
+              <button type="button" disabled={busy} className={AdminUI.btn.destructiveSm}
+                onClick={() => act('Retire the preview', ...event('AdminRetire'),
+                  'Deletes the preview and every database it built, and stops its checks. The next revision builds a new one.')}>
+                Retire preview
+              </button>
+            ) : null}
+            {actions.includes('RunNow') && ['waiting', 'running'].includes(inst.state) ? (
+              <button type="button" disabled={busy} className={AdminUI.btn.outlineSm}
+                onClick={() => act('Run now', ...event('RunNow'),
+                  'Runs the scheduled job now (once more right after the run under way, if there is one); its next run is due an interval after.')}>
+                Run now
+              </button>
+            ) : null}
             {actions.includes('AdminApply') && inst.state === 'open' ? (
               <button type="button" disabled={busy} className={AdminUI.btn.destructiveSm}
                 onClick={() => act('Apply now', ...event('AdminApply'),
@@ -387,7 +419,7 @@ function WorkflowsSection() {
     <div>
       {!overview.running ? (
         <p id="admin-wf-off" className={`${AdminUI.muted} mb-4`}>
-          No workflow runs in this process (WF_GOVERNANCE_ENABLED is off). What is recorded is still shown.
+          The workflow runtime is not running in this process: it did not start (see the log). The bot's builds run unkept until it does. What is recorded is still shown.
         </p>
       ) : null}
       <Problems overview={overview} onOpen={setAt} />

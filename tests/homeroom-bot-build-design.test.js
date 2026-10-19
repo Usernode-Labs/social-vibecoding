@@ -66,6 +66,33 @@ test('the build carries the dev chat\'s in-loop browser block and the bot\'s exp
   assert.match(text, /Boot the app, then\n  walk each changed screen through its accessibility snapshot \(`browser_snapshot`; you read text, not images\)\n/);
 });
 
+test('with a reviewer, the build checks its main flow once at one width and leaves the visual sweep to the review', () => {
+  for (const readsImages of [true, false]) {
+    const without = live.buildPrompt({ seed: 'ISSUE', buildNote: 'plan', readsImages, firstVersion: true });
+    const p = live.buildPrompt({ seed: 'ISSUE', buildNote: 'plan', readsImages, firstVersion: true, reviewed: true });
+    assert.ok(p.includes(IN_LOOP_BROWSER_GUIDANCE));
+    assert.match(p, /- For you, the Homeroom bot, one check is EXPECTED, not optional: boot the app and, at 390x844 only, do its main\n  thing once \(below\), enough to know it runs and its main flow works, and fix what that shows is broken\./);
+    assert.match(p, /Do not\n  check other widths, both looks, or the empty and error states: a reviewer captures and checks every screen at\n  both widths and in both looks once your turn is over, and you fix what it finds\./);
+    assert.match(p, /- A page that renders is not a button that works\./, 'the main-flow check stays');
+    assert.doesNotMatch(p, /at a desktop width, in both looks/);
+    assert.doesNotMatch(p, /Boot the app, then\n  (take screenshots|walk each changed screen)/);
+    // Without a reviewer, today's sweep, unchanged.
+    assert.match(without, /at 390x844 and at a desktop width, in both looks/);
+    assert.doesNotMatch(without, /one check is EXPECTED/);
+    assert.equal(without, live.buildPrompt({ seed: 'ISSUE', buildNote: 'plan', readsImages, firstVersion: true, reviewed: false }));
+  }
+  const clocked = live.buildPrompt({
+    seed: 'ISSUE', buildNote: 'plan', firstVersion: true, reviewed: true, clock: { startedAt: Date.now(), budgetMs: 40 * 60000 },
+  });
+  assert.match(clocked, /the reviewer checks sizes, looks, and empty and error states/);
+  assert.match(clocked, /Do it in the order, and by the time, the TIME section above sets\./);
+});
+
+test('the build is told it has a reviewer exactly when its configuration has one', () => {
+  const src = read('src/services/homeroom-bot-live.js');
+  assert.match(src, /reviewed: Boolean\(review\?\.reviewer\),/);
+});
+
 test('the dev chat\'s browser guidance is left as it was', () => {
   const sessions = read('src/routes/sessions.js');
   assert.match(sessions, /browserGuidance: IN_LOOP_BROWSER_GUIDANCE,/);
@@ -105,7 +132,7 @@ test('a first version\'s spec decides its colours, signature element, layout and
   // A screen for doing has its one primary action; one for reading keeps its actions quiet.
   assert.match(brief, /the main screen's one job, and what a person does most on it: when that is an action \(adding, logging, calculating\), its one primary action; when it is reading, browsing or comparing, say so, keep the actions quiet and give the content the room \(a screen for reading needs no big filled button\);/);
   // (e) Its colours: neutrals, an action colour and the subject's own set.
-  assert.match(brief, /its colours, chosen for this app and each a kit token with a light and a dark value: the neutrals, one action colour for the primary action \(ink is fine when the subject's own colours carry the screen\), and any set of colours the subject itself uses/);
+  assert.match(brief, /its colours, chosen for this app and each a kit token with a light and a dark value \(the dark one in the light one's hue\): the neutrals, one action colour for the primary action \(ink is fine when the subject's own colours carry the screen\), and any set of colours the subject itself uses/);
   assert.match(brief, /which fit the subject rather than being a cliché to avoid \(not the starter's default palette, unless you choose it on purpose and say why\)/);
   assert.match(brief, /a visual language drawn from the app's subject: its signature element \(something a generic app would not have\) and the consistent details that carry the subject through the whole screen, such as a small drawn icon for each kind of thing, the subject's own colours and materials, or a typeface that suits it;/);
   assert.doesNotMatch(brief, /ONE signature element/);
@@ -116,7 +143,7 @@ test('a first version\'s spec decides its colours, signature element, layout and
   // (b) The populated demo, from the viewer's own seat.
   assert.match(brief, /what the populated demo shows, the staging preview opened with \?demo=1, which is how this first version is first seen: the viewer's own data and not only other people's/);
   // Labelled once, not on every row (every row's pill cluttered all nine test drawings).
-  assert.match(brief, /varied and realistic rows filling about a screen and a half at phone width, and every control the real populated screen has \(a view-only demo that hides actions is not a populated screen\), labelled "Staging demo" once, plainly and visibly, in a banner or a line at the top of the screen or in the name of the list or collection its rows belong to, rather than on each row, with the rows themselves still obviously made up \(no real people and no real private data\);/);
+  assert.match(brief, /varied and realistic rows filling about a screen and a half at phone width, and every control the real populated screen has \(a view-only demo that hides actions is not a populated screen\), labelled "Staging demo" once, plainly and visibly, in a banner or a line of its own at the top of the screen \(never the app's name, nor in place of its tagline\) or in the name of the list or collection its rows belong to, rather than on each row, with the rows themselves still obviously made up \(no real people and no real private data\), and the element that carries the label marked with the attribute `data-usernode-demo-note` \(in a list's name, a span around the label's own words\) so Homeroom can hide it where it shows the app with its sample data;/);
   assert.doesNotMatch(brief, /every demo row labelled/);
   assert.match(brief, /on staging and with \?demo=1 only, idempotent, either added to those responses or written once for the viewing account on its first \?demo=1 request \(the platform conventions' "Staging mock data"/);
   assert.match(brief, /records it in the app's CLAUDE\.md/);
@@ -157,7 +184,8 @@ test('a first version\'s spec owns its design and scope; what its creator approv
     assert.match(flat, /It is a new project's FIRST VERSION, and this is the triage's plan for it, a first sketch written before anyone looked closely: A plant log\./);
     assert.match(flat, /- Yours to design\. The plan's look, layout and scope are the triage's first sketch: keep what is good in it, replace what a careful senior product designer would do better, and say under Assumptions what you replaced and why\. What binds you is the request itself and what its creator approved, above\./);
     // ...but what its creator approved under it binds the spec.
-    assert.match(flat, /WHAT ITS CREATOR APPROVED, below, binds the spec as the request does: never contradict it\. Approved by the creator, who tapped Build it under this plan: - See each plant and when it was last watered - Get a reminder when one is due The creator chose, from the plan they were shown: - Reminders\? Phone alert/);
+    // Newcomer run seven: and where one of its lines and an answer differ, the answer wins.
+    assert.match(flat, /WHAT ITS CREATOR APPROVED, below, binds the spec as the request does: never contradict it\. Where a plan line, even an approved one, and one of the creator's answers differ, the answer wins: never add an option or a behaviour an answer ruled out\. Approved by the creator, who tapped Build it under this plan: - See each plant and when it was last watered - Get a reminder when one is due The creator chose, from the plan they were shown: - Reminders\? Phone alert/);
     // The scope: a complete first version, not "as small as the request".
     assert.match(flat, /- A complete first version of what the request asks for, done fully and well, including the small touches that make it feel finished\. Not a new feature, screen or setting the request does not imply\./);
     assert.doesNotMatch(first, /As small as the request/);
@@ -172,6 +200,29 @@ test('a first version\'s spec owns its design and scope; what its creator approv
   assert.match(live.specPrompt({ seed: 'ISSUE', buildNote: long, firstVersion: true }), /under this plan:\n- Keep this bullet/);
   assert.match(live.buildPrompt({ seed: 'ISSUE', buildNote: long, firstVersion: true }), /under this plan:\n- Keep this bullet/);
   assert.doesNotMatch(live.buildPrompt({ seed: 'ISSUE', buildNote: long }), /Keep this bullet/, 'a later build clips its note as before');
+});
+
+test('a first version\'s spec is sized for about 25 of its build\'s 40 minutes and ranks its work; its build follows that order', () => {
+  // The build's clock this aims inside: twice the default turn budget.
+  assert.equal(bot.FIRST_VERSION_BUILD_TIME_FACTOR, 2);
+  for (const html of [false, true]) {
+    const first = live.specPrompt({ seed: 'ISSUE', buildNote: 'plan', firstVersion: true, html }).replace(/\s+/g, ' ');
+    const other = live.specPrompt({ seed: 'ISSUE', buildNote: 'plan', html });
+    assert.match(first, /- Sized for the build that follows: it has about 40 minutes, so plan about 25 minutes of its work, which leaves it time to look at the result and fix it\. This is a size to aim for, not a cut: nothing the request needs is dropped to fit, and what may not fit goes last in the order below\./);
+    assert.match(first, /End the technical half with a "Build order" subsection of two short lists\. "Must-haves first": the main action working end to end; honest loading, empty and error states \(never a blank loading screen, a made-up zero or a raw server error\); the phone layout \(nothing covering or cutting off content, the tab you are on marked\); demo data that shows the app's core idea; and the signature element on the first screen\. Then "Nice-to-haves": everything else, most valuable first\./);
+    // Gentle: the complete first version is still asked for.
+    assert.match(first, /- A complete first version of what the request asks for, done fully and well/);
+    assert.doesNotMatch(other, /Build order|25 minutes|Must-haves first/, 'a later change is as it was');
+  }
+  for (const line of live.FIRST_VERSION_SIZE_LINES) assert.ok(!/—/.test(line), line);
+  const order = live.FIRST_VERSION_ORDER_LINES.join('\n');
+  assert.match(order.replace(/\s+/g, ' '), /Build in the order the spec's "Build order" gives: every must-have first, working, then the nice-to-haves, most valuable first, only while time is left\./);
+  for (const spec of [null, '# Spec']) {
+    const first = live.buildPrompt({ seed: 'ISSUE', buildNote: 'plan', spec, firstVersion: true });
+    assert.ok(first.includes(order));
+    assert.ok(first.indexOf(order) < first.indexOf('Make exactly that change, and nothing else:'));
+    assert.ok(!live.buildPrompt({ seed: 'ISSUE', buildNote: 'plan', spec }).includes('Build order'), 'a later build is as it was');
+  }
 });
 
 test('a first version\'s HTML spec draws its finished screens within a budget; a markdown spec and every later spec do not', () => {
@@ -208,7 +259,7 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
   const flat = lines.replace(/\s+/g, ' ');
   // #3737 Rec2: the kit every new app's stylesheet carries
   // (tests/template-design-kit.test.js), re-pointed rather than reinvented.
-  assert.match(flat, /Build it with the starter's design kit \(`styles\/tailwind-input\.css`\): set its colour tokens to this app's palette \(its neutrals, its action colour and any set of colours its subject uses, adding a token for a colour the kit has no name for\), a light and a dark value each, unless the app keeps one fixed look; every text pair at 4\.5:1 or more\./);
+  assert.match(flat, /Build it with the starter's design kit \(`styles\/tailwind-input\.css`\): set its colour tokens to this app's palette \(its neutrals, its action colour and any set of colours its subject uses, adding a token for a colour the kit has no name for\), a light and a dark value each, the dark one in the light one's hue, unless the app keeps one fixed look; every text pair at 4\.5:1 or more\./);
   assert.match(flat, /Use only those tokens and the kit's components, its loading, empty and error states included/);
   assert.match(flat, /the design guidance's "no new colours" means none beyond them, and every token the spec defines is one of them\./,
     'the colours it defines are the app\'s own palette, not the kind the guidance bans');
@@ -217,12 +268,18 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
   assert.match(flat, /When the spec draws screens \(its "### Screen markup"\), they are your visual target: reproduce them, reusing their markup structure, inline SVG icons, proportions, spacing and type choices, translated onto the kit's tokens and components rather than re-invented\./);
   assert.match(flat, /In your look-and-fix rounds, compare your screenshots with the drawn screens and fix what differs\. Where a drawing and the spec's words disagree, the words decide what the app does and the drawing decides how it looks\./);
   // The populated demo (b).
-  assert.match(flat, /Build the populated demo the spec describes, the staging preview opened with `\?demo=1`: the viewer's own data as well as other people's, varied realistic rows filling about a screen and a half at phone width, every control the real screen has \(never a view-only demo\), labelled "Staging demo" once, plainly, as a banner or a line at the top of the screen or in the name of its list, not on each row, with every row still obviously made up\. On staging and with `\?demo=1` only, and idempotent/);
+  assert.match(flat, /Build the populated demo the spec describes, the staging preview opened with `\?demo=1`: the viewer's own data as well as other people's, varied realistic rows filling about a screen and a half at phone width, every control the real screen has \(never a view-only demo\), and the app's main result already there \(the scores added up, the schedule filled in, the totals worked out\), not only what goes into it\. It is labelled "Staging demo" once, plainly, as a banner or a line of its own at the top of the screen \(never the app's name, nor in place of its tagline\) or in the name of its list, not on each row, and rows the app seeds on boot carry no label of their own either; every row stays obviously made up\. On staging and with `\?demo=1` only, and idempotent/);
+  // Run 196's blind grades: an empty or error screen filled two buttons.
+  assert.match(flat, /The empty and error screens fill one button at most, the empty state's own action or Retry: a pinned or floating primary button is hidden on both\./);
+  // Newcomer run seven: the label's element is marked, so Homeroom can hide it.
+  assert.match(flat, /The element that carries the "Staging demo" label gets the attribute `data-usernode-demo-note` \(the banner or the line itself; in a list's name, a `<span data-usernode-demo-note>` around the label's own words, so the name stays\), so Homeroom can hide it where it shows the app with its sample data\./);
   assert.doesNotMatch(flat, /each row labelled/);
   assert.doesNotMatch(flat, BENCH_SUBJECTS);
   // The record: the starter's "## Design" section, which a starter other
   // than Empty does not have yet.
   assert.match(flat, /Then fill in the "## Design" section of the app's `CLAUDE\.md` \(add it if it is missing\): the palette by name, the signature element, the type scale, and the one fixed look if the app keeps one\. Every later change follows it\./);
+  // Run five (13 Oct 2026, fix 7): the header's mark is the project's icon, or none.
+  assert.match(flat, /If the app's header shows its own mark, show the project's icon there \(the emoji in `dapp\.json`'s `icon` block\), or leave the mark out: never an empty tile, and never `brand\/icon\.png`, which the app does not serve\./);
   assert.doesNotMatch(flat, /zinc|violet|`Design:` note/, 'nothing left of the old starter\'s palette or note');
   for (const line of live.FIRST_VERSION_DESIGN_LINES) assert.ok(!/—/.test(line), line);
 
@@ -239,13 +296,20 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
     const progress = live.FIRST_VERSION_PROGRESS_LINES.join('\n');
     assert.ok(first.includes(progress) && !other.includes('usernode-progress'));
     // #4487: and a later change is asked to declare its visible changes.
-    const declare = live.BUILD_VISIBLE_CHANGES_LINES.join('\n');
+    const declare = live.buildVisibleChangesLines(null).join('\n');
     assert.ok(other.includes(declare) && !first.includes('declare_visible_changes'));
     // The copies have no model key, so no declared step waits for the bot (PR 4536).
     assert.match(declare.replace(/\n/g, ' '), /The before and after copies have no model key, so nothing on them answers with a model: Homeroom bot only says it cannot reach its model there/);
     assert.match(declare.replace(/\n/g, ' '), /Never make a step ask Homeroom bot \(or any AI feature\) for something and wait for its reply\./);
-    assert.equal(first.replace(`${lines}\n`, '').replace(`${progress}\n`, '').replace(`${pack4}\n`, ''), other.replace(`${declare}\n`, ''),
-      'the record, the progress phrases, the skill\'s nudge, the look-and-fix loop and the declaration are the only differences');
+    // A state new in the change is seeded in it: the after copy is the side
+    // that needs it (22 failed runs and 13 skipped changes, 2026-10-09 to 10-12).
+    assert.match(declare.replace(/\n/g, ' '), /add an idempotent, obviously fake staging seed for it in this same change: it reaches the after copy, which is the side a new state needs\./);
+    assert.match(declare.replace(/\n/g, ' '), /fake people, never a signal your code reads to decide something, and a reply as the stored message, never asked for\./);
+    assert.match(declare.replace(/\n/g, ' '), /A change to a state that already existed needs it on both copies, which a seed in this change cannot give/);
+    // And the order its spec ranked the work in.
+    const order = live.FIRST_VERSION_ORDER_LINES.join('\n');
+    assert.equal(first.replace(`${lines}\n`, '').replace(`${progress}\n`, '').replace(`${order}\n`, '').replace(`${pack4}\n`, ''), other.replace(`${declare}\n`, ''),
+      'the record, the progress phrases, the build order, the skill\'s nudge, the look-and-fix loop and the declaration are the only differences');
     // Every build, a later one included, reads the note through the guidance.
     for (const p of [first, other]) {
       assert.match(p, /If the app's `CLAUDE\.md` has a "## Design" section \(or a `Design:` note under "App-specific conventions"\), that is this app's look/);

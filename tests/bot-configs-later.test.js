@@ -1,22 +1,26 @@
 'use strict';
 
 // The `later` scope of the Homeroom bot's configurations
-// (src/services/bot-configs.js): every build that is not a first version,
-// live or shadow, follows the later scope's current version.
+// (src/services/bot-configs.js): every live build that is not a first
+// version follows the later scope's current version.
 //
 //   - the seed: an Opus spec and a GLM build, current, beside all GLM;
-//   - ROUTING: a later live build and a later shadow build take their spec
+//   - ROUTING: a later live build takes its spec
 //     and build models, the CLI each runs in and the spec's effort from the
 //     current later version, name it on the run, queue its side versions
 //     and record its result; with no current later version (or one the
 //     catalog cannot run, or a lookup that fails) they are built exactly as
-//     before; a first version is untouched, and so is a first version's
-//     shadow build;
+//     before; a first version is untouched;
 //   - a SIDE BUILD of a later change replays the run's plan at its commit,
 //     in its own worker on a `bench/` branch, never proposed and never
 //     pushed anywhere else, with the later spec prompt and no capture; it
 //     follows the shadow builds' rule for the platform's own repository; and
-//     after a restart it goes on from the spec or the build it kept;
+//     after a restart it goes on from the last step it saved: a kept spec is
+//     built from, a build that landed is its result;
+//   - a side whose recipe PLANS ALIKE (the live recipe's spec model, pack and
+//     tweaks) waits for the live build's spec and builds from it, with no
+//     spec of its own; one whose live build stopped at its plan builds
+//     nothing; any other writes its own spec, as every side did before;
 //   - its side builds take only the build slots live builds leave free;
 //   - a later pair is left out only when a side did not build (or is known
 //     not to boot) or both are one commit; the live proposals' outcomes.
@@ -32,6 +36,7 @@ const bot = require('../src/services/homeroom-bot');
 const live = require('../src/services/homeroom-bot-live');
 const runner = require('../src/services/bench/runner');
 const configs = require('../src/services/bot-configs');
+const durableSteps = require('../src/services/durable-steps');
 
 const OPUS = 'anthropic/claude-opus-5.5';
 const GLM = 'z-ai/glm-5.3-flash';
@@ -51,7 +56,6 @@ const PLATFORM = { id: 1, slug: 'usernode-2d5619', name: 'Homeroom', repo_url: '
 const REAL = Object.fromEntries(['currentVersion', 'laterVersion', 'spawnSideBuilds', 'finishLive', 'recipeGuidance', 'abandonSideBuilds']
   .map((n) => [n, configs[n]]));
 const REAL_LIVE = { buildAndPropose: live.buildAndPropose, post: live.post };
-const ENV_BEFORE = process.env.USERNODE_ENV;
 
 /** Stub the configurations' doors the bot reaches for; what each was asked is kept. */
 function stubConfigs(t, { later = LATER, first = FIRST } = {}) {
@@ -199,98 +203,6 @@ test('the platform\'s own repository: a later change\'s side builds follow the s
   assert.match(seen.spawned[0].skipReason, /platform's own repository/);
 });
 
-// ── A later shadow build ────────────────────────────────────────────────
-
-function lane({ firstVersion = false } = {}) {
-  const calls = { queries: [], builds: [] };
-  const pool = {
-    async query(sql, params) {
-      const s = String(sql);
-      calls.queries.push({ s, params });
-      if (/FROM apps WHERE id = \$1/.test(s)) return { rows: [APP] };
-      if (/SELECT first_version FROM homeroom_bot_requesters/.test(s)) return { rows: firstVersion ? [{ first_version: true }] : [] };
-      if (/INSERT INTO homeroom_bot_run_snapshots/.test(s)) return { rows: [{ id: 654 }] };
-      return { rows: [], rowCount: 1 };
-    },
-  };
-  const deps = {
-    github: {
-      isEnabled: () => true,
-      getBotUsername: async () => 'usernode-bot',
-      async fetchPublicIssue() { return { issue: { number: 12, title: 'Refresh feeds', body: 'hourly', state: 'open' } }; },
-      async fetchIssueComments() { return { comments: [] }; },
-    },
-    limits: { async checkBudget() { return { ok: true }; }, async recordSpend() {} },
-    threadContext: { async loadIssueThread() { return { messages: [] }; } },
-    managedOpenRouter: { async usesIncludedKey() { return false; } },
-    sessions: { buildHeadlessSeed: (n) => `ISSUE #${n}` },
-    worker: {}, agentTurn: {}, activeWorkers: new Set(), sessionLifecycle: {},
-  };
-  return { pool, deps, calls };
-}
-
-async function shadowWith(t, h, outcome) {
-  t.after(() => Object.assign(live, REAL_LIVE));
-  // A shadow build happens only where nothing is live: outside a staging
-  // copy every app but a paused one is (live.liveScope).
-  process.env.USERNODE_ENV = 'staging';
-  t.after(() => { if (ENV_BEFORE === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = ENV_BEFORE; });
-  live.buildAndPropose = async (args) => { h.calls.builds.push(args); return outcome; };
-  bot._resetForTests();
-  return bot.runQueuedBuild(h.pool, {}, {
-    bot: { id: 77, username: 'homeroom_bot' },
-    claim: { id: 901, app_id: APP.id, issue_number: 12, build_note: 'Add an hourly refresh.' },
-    settings: { mode: 'shadow', pausedApps: [], shadowBuilds: true, buildConcurrency: 2, shadowBuildPlatform: false, turnSeconds: 1200 },
-    deps: h.deps,
-  });
-}
-
-const BUILT = { ok: true, sessionId: 6001, branchName: 'dev/homeroom_bot-s6001', sha: 'c'.repeat(40), commits: 2, costUsd: 0.7 };
-
-test('a later shadow build is built by the later version too: never proposed, its side builds queued, its result recorded', async (t) => {
-  const seen = stubConfigs(t);
-  const h = lane();
-  assert.equal(await shadowWith(t, h, BUILT), 'shadow_built');
-  const a = h.calls.builds[0];
-  assert.equal(a.propose, false, 'never proposed');
-  assert.equal(a.model, GLM);
-  assert.equal(a.specModel, OPUS);
-  assert.equal(a.harnessOf, live.recipeHarness);
-  assert.equal(a.firstVersion, false);
-  assert.deepEqual(seen.spawned.map((s) => [s.botRunId, s.scope, s.snapshotId, s.skipReason]), [[901, 'later', 654, null]]);
-  assert.equal(seen.finished.length, 1);
-  assert.equal(seen.finished[0].built, BUILT);
-  const recorded = h.calls.queries.find((q) => /SET build_ok = \$2/.test(q.s));
-  assert.equal(recorded.params[9], GLM, 'the run records the model that built it');
-  assert.ok(h.calls.queries.some((q) => /SET bot_config_version_id = \$2/.test(q.s) && q.params[1] === 21));
-});
-
-test('a later shadow build with no current later version, and a first version\'s shadow build, are built as before', async (t) => {
-  let seen = stubConfigs(t, { later: null });
-  let h = lane();
-  await shadowWith(t, h, BUILT);
-  assert.equal(h.calls.builds[0].model, null, 'the stage setting (none in this config)');
-  assert.equal(h.calls.builds[0].harnessOf, undefined);
-  assert.deepEqual(seen.spawned, []);
-  assert.deepEqual(seen.finished, []);
-
-  seen = stubConfigs(t);
-  h = lane({ firstVersion: true });
-  await shadowWith(t, h, BUILT);
-  assert.equal(seen.laterAsked, 0, 'a first version\'s shadow build reads no configuration, as before');
-  assert.equal(h.calls.builds[0].firstVersion, true);
-  assert.equal(h.calls.builds[0].harnessOf, undefined);
-  assert.deepEqual(seen.spawned, []);
-});
-
-test('a platform fault hands a later shadow build back without recording a result; its retry spawns nothing twice', async (t) => {
-  const seen = stubConfigs(t);
-  const h = lane();
-  assert.equal(await shadowWith(t, h, { ok: false, sessionId: 6001, error: 'the worker would not start: quota', costUsd: null }), 'infra');
-  assert.deepEqual(seen.finished, [], 'no result for a build the platform could not run');
-  assert.equal(seen.spawned.length, 1, 'its side builds wait for the retry (spawnSideBuilds is idempotent per run)');
-});
-
 // ── Fail open ───────────────────────────────────────────────────────────
 
 function catalogPool({ current = LATER, catalog = [{ id: GLM }, { id: OPUS }], throwOn = null } = {}) {
@@ -328,6 +240,8 @@ function sideHarness() {
   const pool = {
     async query(sql, params) {
       if (/INSERT INTO chat_sessions/.test(String(sql))) return { rows: [{ id: 7001, branch_name: params[2] ?? null, agent_model: params[4] }] };
+      // A session an earlier attempt opened, read back.
+      if (/SELECT \* FROM chat_sessions WHERE id = \$1/.test(String(sql))) return { rows: [{ id: Number(params[0]), branch_name: null, agent_model: null }] };
       return { rows: [], rowCount: 1 };
     },
   };
@@ -396,9 +310,9 @@ test('a later side build replays the run\'s plan at its commit on a bench branch
   assert.equal(out.capture, undefined);
   assert.deepEqual(h.calls.pushed, [], 'nothing posted, nothing opened');
   assert.equal(args.propose, false, 'never proposed');
-  // Its spec is posted nowhere: onSpec only keeps it on the trial, for a
-  // restart to go on from (it was null until side builds went on, 7 Oct 2026).
-  assert.equal(typeof args.onSpec, 'function');
+  // Its spec is posted nowhere: it is the build's own step, kept for a
+  // restart to go on from.
+  assert.equal(args.onSpec, null);
   assert.equal(args.review, undefined, 'no review');
   assert.equal(args.firstVersion, false);
   assert.equal(args.seed, snapshot.texts.seed, 'the same request seed');
@@ -419,13 +333,12 @@ test('a later side build replays the run\'s plan at its commit on a bench branch
   });
   assert.equal(missing.status, 'infra_fail');
   assert.match(missing.error, /no build snapshot to replay/);
-  // A restart follows its spec turn and its build turn, as a first
-  // version's side build's (until 7 Oct 2026 it ran the side build again).
-  assert.equal(runner.resumableTurn('build', { mode: 'scout' }, { side: true }), true, 'its spec turn too, which a benchmark build\'s is not');
-  assert.equal(runner.resumableTurn('build', { mode: 'scout' }), false);
 });
 
-test('a later side build goes on after a restart from what its last claim kept: a spec is built from, a build is its result', async (t) => {
+// Until 7 Oct 2026 a restart ran a side build again from the start. It runs
+// as a durable build now, as every trial does (services/build-runs.js): a
+// restart's next attempt goes on from the last step it saved.
+test('a later side build goes on after a restart from the last step it saved: a spec is built from, a build is its result', async (t) => {
   let args = null;
   live.buildAndPropose = async (a) => { args = a; return REAL_LIVE.buildAndPropose(a); };
   t.after(() => Object.assign(live, REAL_LIVE));
@@ -433,45 +346,202 @@ test('a later side build goes on after a restart from what its last claim kept: 
     id: 654, stage: 'build', issueNumber: 12, baseSha: BASE,
     texts: { seed: 'Issue #12: Dark mode', build_note: 'Add a dark look.' }, extra: { firstVersion: false },
   };
-  const stage = (h, checkpoint, kept = []) => runner.runStage({
-    pool: h.pool, config: {}, stage: 'build', task: { id: 5, stage: 'build', reference: {} }, snapshot,
-    model: GLM, user: { id: 501, username: 'homeroom_bench' }, app: { id: 9, slug: 'todo', name: 'Todo', repo_url: APP.repo_url },
-    repo: { owner: 'usernode-bot', repo: 'todo' }, trial: { id: 46, run_id: 3, attempt: 1 }, deps: h.deps,
-    budgets: { turnMs: 60_000, buildMs: 60_000, specMs: 30_000 },
-    title: 't', stageModels: { triage: GLM, spec: OPUS, build: GLM }, sideBuild: { botRunId: 901, versionId: 22 },
-    harnessOf: live.recipeHarness, checkpoint, onCheckpoint: async (part) => { kept.push(part); },
-  });
+  // Every state the stage saves is kept, as the workflow kernel keeps it, so
+  // a later attempt can resume from one of them.
+  const stage = (h, resumeFrom = null) => {
+    const saves = [];
+    const durable = durableSteps.durable({ resumeFrom, lostAttempts: resumeFrom ? 1 : 0, checkpoint: async (state) => { saves.push(state); } });
+    return runner.runStage({
+      pool: h.pool, config: {}, stage: 'build', task: { id: 5, stage: 'build', reference: {} }, snapshot,
+      model: GLM, user: { id: 501, username: 'homeroom_bench' }, app: { id: 9, slug: 'todo', name: 'Todo', repo_url: APP.repo_url },
+      repo: { owner: 'usernode-bot', repo: 'todo' }, trial: { id: 46, run_id: 3, attempt: 1 }, deps: { ...h.deps, durable },
+      budgets: { turnMs: 60_000, buildMs: 60_000, specMs: 30_000 },
+      title: 't', stageModels: { triage: GLM, spec: OPUS, build: GLM }, sideBuild: { botRunId: 901, versionId: 22 },
+      harnessOf: live.recipeHarness,
+    }).then((out) => ({ out, saves }));
+  };
+  const first = await stage(sideHarness());
+  assert.equal(first.out.status, 'ok', first.out.error);
 
+  // A restart just after its spec was saved: the spec is built from.
   const h = sideHarness();
-  const kept = [];
-  const fromSpec = await stage(h, { sessions: [6001], spec: { sessionId: 6001, specMd: '# Dark mode\n\nA dark look.' }, handBacks: 1 }, kept);
+  const { out: fromSpec } = await stage(h, first.saves.find((s) => 'build/spec' in s));
   assert.equal(fromSpec.status, 'ok', fromSpec.error);
   assert.deepEqual(h.calls.prompts.map((p) => p.mode), ['build'], 'no spec turn: the kept spec is built from');
-  assert.equal(args.presetSpec, '# Dark mode\n\nA dark look.');
-  assert.deepEqual(h.calls.deleted, ['bench/r3-t46']);
-  assert.deepEqual(h.calls.pinned, [{ branch: 'bench/r3-t46', sha: BASE }]);
-  assert.equal(fromSpec.parsed.resumedAfterRestart, 1);
-  assert.equal(kept.find((p) => p.build)?.build.sha, 'c'.repeat(40), 'its build kept as it landed');
+  assert.equal('presetSpec' in args, false, 'nothing handed in from outside: the build reads its own step');
+  assert.equal(fromSpec.parsed.spec, '# Dark mode\n\n## User-facing changes\nA dark look.');
+  assert.deepEqual(h.calls.deleted, [], 'its branch is not cut again');
+  assert.deepEqual(h.calls.pinned, []);
+  assert.equal(fromSpec.build_sha, 'c'.repeat(40));
 
+  // A restart just after its build turn's result was saved: the build is its result.
   const h2 = sideHarness();
-  const fromBuild = await stage(h2, { sessions: [6001], spec: { sessionId: 6001, specMd: '# Dark mode' }, build: { ok: true, sessionId: 6001, sha: 'd'.repeat(40), commits: 1, specMd: '# Dark mode' } });
+  const { out: fromBuild } = await stage(h2, first.saves.find((s) => s['build/turn:build']?.phase === 'done'));
   assert.equal(fromBuild.status, 'ok', fromBuild.error);
   assert.deepEqual(h2.calls.prompts, [], 'nothing runs again');
   assert.deepEqual(h2.calls.deleted, [], 'its branch keeps the build');
-  assert.equal(fromBuild.build_sha, 'd'.repeat(40));
-  assert.equal(fromBuild.parsed.spec, '# Dark mode', 'its spec, which its pair shows');
+  assert.deepEqual(h2.calls.pinned, []);
+  assert.equal(fromBuild.build_sha, 'c'.repeat(40));
+  assert.equal(fromBuild.parsed.spec, '# Dark mode\n\n## User-facing changes\nA dark look.', 'its spec, which its pair shows');
   assert.deepEqual(fromBuild.changed_files.files, [{ filename: 'app.js', additions: 4, deletions: 1 }]);
   assert.equal(h2.calls.captured, 0, 'a later change has no screenshot step');
   assert.deepEqual(fromBuild.parsed.side, { botRunId: 901 });
+  assert.deepEqual(fromBuild.session_ids, [7001], 'the session the first attempt opened');
 });
 
-test('a later change\'s side builds take only the live slots live work leaves free', () => {
+// 19 Oct 2026: each side build wrote an Opus spec of its own, about 93% of
+// what it cost, and its pair compared two plans as well as two builds. A
+// side whose recipe plans as the live one does builds from the live build's.
+
+const DS = 'deepseek/deepseek-v4.1-flash-1017';
+const LIVE_SPEC = '# Dark mode\n\n## User-facing changes\nThe live build\'s own plan.';
+// Its polls, without the clock.
+const NO_WAIT = { pollMs: 1, sleep: async () => {} };
+
+test('a later side plans alike when its spec model, pack and tweaks are the live recipe\'s: its triage and build may differ', () => {
+  const current = LATER.recipe;
+  assert.equal(configs.plansAlike(current, { ...current, models: { ...current.models, build: DS } }), true);
+  assert.equal(configs.plansAlike(current, { ...current, models: { triage: DS, spec: OPUS, build: DS } }), true, 'its triage is the live run\'s, replayed');
+  assert.equal(configs.plansAlike(current, { ...current, models: { ...current.models, spec: GLM } }), false, 'All GLM writes its own');
+  assert.equal(configs.plansAlike(current, { ...current, pack: 3 }), false, 'a pack guides the spec');
+  assert.equal(configs.plansAlike(current, { ...current, tweaks: ['lean_plan'] }), false);
+  assert.equal(configs.plansAlike(current, { models: {} }), false, 'a recipe that does not validate');
+});
+
+/**
+ * A side build's harness whose pool answers the live run's plan
+ * (bot-configs.js liveSpecState) from `states`, one row per look (the last
+ * one repeated), and the live spec's text.
+ */
+function livePlanHarness(states) {
+  const h = sideHarness();
+  const looks = [];
+  const base = h.pool.query.bind(h.pool);
+  h.pool.query = async (sql, params) => {
+    const text = String(sql);
+    if (/FROM homeroom_bot_runs r\s+JOIN bot_config_versions cv/.test(text)) {
+      looks.push(params);
+      const row = states[Math.min(looks.length, states.length) - 1];
+      return { rows: row ? [row] : [] };
+    }
+    if (/SELECT content, content_html FROM chat_session_specs/.test(text)) {
+      return { rows: Number(params[0]) === 8100 && Number(params[1]) === 1 ? [{ content: LIVE_SPEC, content_html: null }] : [] };
+    }
+    return base(sql, params);
+  };
+  return { ...h, looks };
+}
+
+function liveRow(over = {}) {
+  return {
+    current_recipe: LATER.recipe, side_recipe: { ...LATER.recipe, models: { ...LATER.recipe.models, build: DS } },
+    build_ok: null, build_error: null, session_id: null, version: null, ...over,
+  };
+}
+
+function laterSide(h, over = {}) {
+  return runner.runStage({
+    pool: h.pool, config: {}, stage: 'build', task: { id: 5, stage: 'build', reference: {} },
+    snapshot: {
+      id: 654, stage: 'build', issueNumber: 12, baseSha: BASE,
+      texts: { seed: 'Issue #12: Dark mode', build_note: 'Add a dark look.' }, extra: { firstVersion: false },
+    },
+    model: DS, user: { id: 501, username: 'homeroom_bench' }, app: { id: 9, slug: 'todo', name: 'Todo', repo_url: APP.repo_url },
+    repo: { owner: 'usernode-bot', repo: 'todo' }, trial: { id: 47, run_id: 3, attempt: 1 },
+    deps: { ...h.deps, livePlanWait: NO_WAIT },
+    budgets: { turnMs: 60_000, buildMs: 60_000, specMs: 30_000 },
+    title: 't', stageModels: { triage: GLM, spec: OPUS, build: DS }, sideBuild: { botRunId: 901, versionId: 23 },
+    harnessOf: live.recipeHarness,
+    ...over,
+  });
+}
+
+test('a later side that plans alike waits for the live build\'s spec and builds from it: no spec of its own', async (t) => {
+  let args = null;
+  live.buildAndPropose = async (a) => { args = a; return REAL_LIVE.buildAndPropose(a); };
+  t.after(() => Object.assign(live, REAL_LIVE));
+  const h = livePlanHarness([liveRow(), liveRow(), liveRow({ session_id: 8100, version: 1 })]);
+  const out = await laterSide(h);
+  assert.equal(out.status, 'ok', out.error);
+  assert.equal(h.looks.length, 3, 'it looked until the live spec was written');
+  assert.deepEqual(h.looks[0], [901, 23], 'the live run and its own version');
+  assert.deepEqual(h.calls.prompts.map((p) => [p.mode, p.model]), [['build', DS]], 'no spec turn: only its build');
+  assert.equal(args.presetSpec, LIVE_SPEC, 'built from the live build\'s spec as it is');
+  assert.equal(out.parsed.spec, LIVE_SPEC, 'which its pair shows on both sides');
+  assert.deepEqual(out.parsed.livePlan, { sessionId: 8100, version: 1 }, 'named for its result\'s cost');
+  assert.deepEqual(out.parsed.side, { botRunId: 901 });
+  assert.equal(args.propose, false, 'never proposed');
+  assert.deepEqual(h.calls.pushed, []);
+});
+
+test('a later side whose live plan stopped at its plan builds nothing; any other side writes its own spec as before', async () => {
+  // The live plan found the request already done: nothing to compare.
+  const blocked = livePlanHarness([liveRow({ build_ok: false, build_error: 'blocked: The fix is already on main (#5457).' })]);
+  const stopped = await laterSide(blocked);
+  assert.equal(stopped.status, 'not_applicable', 'recorded skipped, never as a build that failed');
+  assert.match(stopped.error, /^the live build stopped at its plan: blocked: The fix is already on main \(#5457\)\.$/);
+  assert.deepEqual(blocked.calls.prompts, [], 'no turn, no spend');
+  assert.equal(stopped.parsed.built, false);
+
+  const ownSpec = async (h, over) => {
+    const out = await laterSide(h, over);
+    assert.equal(out.status, 'ok', out.error);
+    assert.deepEqual(h.calls.prompts.map((p) => [p.mode, p.model]), [['scout', OPUS], ['build', DS]], 'its own spec, then its build');
+    assert.equal(out.parsed.livePlan, undefined);
+    return out;
+  };
+  // A recipe that plans differently, looked at once.
+  const differs = livePlanHarness([liveRow({ side_recipe: { ...LATER.recipe, models: { triage: GLM, spec: GLM, build: GLM } } })]);
+  await ownSpec(differs, { stageModels: { triage: GLM, spec: OPUS, build: DS } });
+  assert.equal(differs.looks.length, 1);
+  // A run that names no configuration (or is gone): no row.
+  await ownSpec(livePlanHarness([]));
+  // The live build ended without a spec for another reason.
+  await ownSpec(livePlanHarness([liveRow({ build_ok: false, build_error: 'the spec turn failed (timeout)' })]));
+  // None came in time.
+  const late = livePlanHarness([liveRow()]);
+  await ownSpec(late, { deps: { ...late.deps, livePlanWait: { ...NO_WAIT, waitMs: 0 } } });
+  // Its text is gone.
+  await ownSpec(livePlanHarness([liveRow({ session_id: 8100, version: 2 })]));
+  // A database error while it looks.
+  const broken = livePlanHarness([liveRow()]);
+  const query = broken.pool.query;
+  broken.pool.query = async (sql, params) => {
+    if (/FROM homeroom_bot_runs r\s+JOIN bot_config_versions cv/.test(String(sql))) throw new Error('connection reset');
+    return query(sql, params);
+  };
+  await ownSpec(broken);
+
+  // An admin's cancel while it waits.
+  const waiting = livePlanHarness([liveRow()]);
+  const cancelled = await laterSide(waiting, { skipCheck: async () => 'cancelled by an admin' });
+  assert.deepEqual([cancelled.status, cancelled.error], ['cancelled', 'cancelled by an admin']);
+  assert.deepEqual(waiting.calls.prompts, []);
+});
+
+test('a later side that plans alike goes on after a restart from the live spec it found, without looking again', async () => {
+  const saves = [];
+  const durable = durableSteps.durable({ resumeFrom: null, lostAttempts: 0, checkpoint: async (state) => { saves.push(state); } });
+  const h = livePlanHarness([liveRow({ session_id: 8100, version: 1 })]);
+  assert.equal((await laterSide(h, { deps: { ...h.deps, durable, livePlanWait: NO_WAIT } })).status, 'ok');
+  const kept = saves.find((s) => 'live_plan' in s && !('build/spec' in s));
+  assert.deepEqual(kept.live_plan, { spec: { sessionId: 8100, version: 1 } }, 'the spec it found, not its text');
+  const again = livePlanHarness([liveRow()]);
+  const resumed = durableSteps.durable({ resumeFrom: kept, lostAttempts: 1, checkpoint: async () => {} });
+  const out = await laterSide(again, { deps: { ...again.deps, durable: resumed, livePlanWait: NO_WAIT } });
+  assert.equal(out.status, 'ok', out.error);
+  assert.equal(again.looks.length, 0, 'not looked for again');
+  assert.equal(out.parsed.spec, LIVE_SPEC);
+  assert.deepEqual(again.calls.prompts.map((p) => p.mode), ['build']);
+});
+
+test('a later change\'s side builds take only the live slots live work leaves free', async () => {
   const settings = { buildConcurrency: 2, liveAtOnce: 12 };
-  assert.equal(bot.isLiveLaneSaturated(settings, { live: 2, besides: 1 }), false, 'two live builds no longer hold side builds back');
-  assert.equal(bot.isLiveLaneSaturated(settings, { live: 9, besides: 2 }), false);
-  assert.equal(bot.isLiveLaneSaturated(settings, { live: 9, besides: 3 }), true, 'live work and side builds fill the twelve slots');
-  assert.equal(bot.isLiveLaneSaturated(settings, { live: 0, besides: 11 }), false);
-  assert.equal(bot.isLiveLaneSaturated(settings, { live: 12 }), true, 'live work never waits for side builds: they are not counted against it');
+  assert.equal(await bot.isLiveLaneSaturated(settings, { live: 2, besides: 1 }), false, 'two live builds no longer hold side builds back');
+  assert.equal(await bot.isLiveLaneSaturated(settings, { live: 9, besides: 2 }), false);
+  assert.equal(await bot.isLiveLaneSaturated(settings, { live: 9, besides: 3 }), true, 'live work and side builds fill the twelve slots');
+  assert.equal(await bot.isLiveLaneSaturated(settings, { live: 0, besides: 11 }), false);
+  assert.equal(await bot.isLiveLaneSaturated(settings, { live: 12 }), true, 'live work never waits for side builds: they are not counted against it');
   const src = require('node:fs').readFileSync(require.resolve('../src/services/bench/lane'), 'utf8');
   assert.match(src, /if \(run\.kind === LATER_SIDE_RUN_KIND\) \{\n\s+const besides = \[\.\.\.inFlight\.values\(\)\]\.filter\(\(f\) => f\.laterSide\)\.length;/);
   assert.match(src, /laterSide: run\.kind === LATER_SIDE_RUN_KIND,/);

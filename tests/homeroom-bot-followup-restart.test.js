@@ -1,5 +1,5 @@
-// #4533: a checks fix keeps its time limit across a restart, its outcome
-// reaches the bot's ledger, and a busy session is a wait.
+// #4533: a checks fix keeps its time limit across a restart, and a busy
+// session is a wait.
 //
 // PR #4533 (change 7428, request #4524), 9 Oct 2026. The bot's checks fix on
 // its PROMOTED proposal ran 38 minutes against its 20: its clock was a timer
@@ -12,13 +12,16 @@
 // paused the bot on every project, and every later retry hit session_busy
 // and backed off in silence for up to an hour.
 //
-// These pin, without a database: the busy session answered before any
-// worker is asked for, and read as a refusal (never a fault); the turn
-// record's mark and deadline; the recovery deadline and who it binds; the
-// recovered outcome recorded through the same runChecksFix / runFollowUp a
-// live turn ends in; and the wait shown on the console's queue, the
-// connector's and get_change. tests/homeroom-bot-followup-restart-postgres
-// .test.js drives the restart itself through server.js.
+// A follow-up's turn is now a durable step of its look (bot-request's
+// bot.look work, services/durable-turn.js): a restart follows it on its own
+// saved deadline, and the look records its outcome as a live turn's. So
+// what is left to pin here, without a database: the busy session answered
+// before any worker is asked for, and read as a wait (never a fault), from
+// the durable record of every kind of work on the session; the fix turn
+// dispatched as its look's work item; and the wait shown on the console's
+// queue, the connector's and get_change.
+// tests/homeroom-bot-followup-restart-postgres.test.js drives the turn's
+// durable step against the full schema.
 //
 // Run with: node --test tests/homeroom-bot-followup-restart.test.js
 
@@ -58,10 +61,11 @@ function checksRow(extra = {}) {
 }
 
 // runTriage down the checks path, as tests/homeroom-bot-checks-fix.test.js
-// drives it, with what holds the session (`activeTurn` on its row) and what
-// the worker answers (`ensureWorker`) up to each test.
-function harness({ activeTurn = null, ensureWorker = null } = {}) {
-  const calls = { queries: [], ensured: 0, exec: [], stamps: [] };
+// drives it, with whether somebody else works on the session (`taken`: the
+// answer of followup.sessionTakenElsewhere's read) and what the worker
+// answers (`ensureWorker`) up to each test.
+function harness({ taken = false, ensureWorker = null } = {}) {
+  const calls = { queries: [], ensured: 0, exec: [], taken: [] };
   const pool = {
     async query(sql, params) {
       const s = String(sql);
@@ -72,8 +76,7 @@ function harness({ activeTurn = null, ensureWorker = null } = {}) {
       if (/SELECT cs\.\*, a\.slug AS app_slug/.test(s)) {
         return { rows: [{ id: 5001, user_id: 77, app_id: 9, status: 'promoted', branch_name: 'dev/homeroom_bot-5001', pr_number: 82, reviewed_head_sha: HEAD, app_slug: APP.slug, repo_url: APP.repo_url }] };
       }
-      if (/SELECT active_turn FROM chat_sessions WHERE id = \$1/.test(s)) return { rows: [{ active_turn: activeTurn }] };
-      if (/jsonb_set\(active_turn, ARRAY\[\$3::text\]/.test(s)) { calls.stamps.push(params); return { rows: [{ id: 5001 }], rowCount: 1 }; }
+      if (/AS busy\s+FROM chat_sessions cs WHERE cs\.id = \$1/.test(s)) { calls.taken.push(params); return { rows: [{ busy: taken }] }; }
       if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(s)) return { rows: [{ n: 0 }] };
       if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 901 }] };
       if (/FROM platform_settings/.test(s)) return { rows: [{ key: 'homeroom_bot_mode', value: 'shadow' }] };
@@ -122,7 +125,10 @@ function harness({ activeTurn = null, ensureWorker = null } = {}) {
   return { pool, deps, calls };
 }
 
-async function triage(t, h) {
+// The look a test runs the triage in, as bot-request's bot.look runs it.
+const OWNER = Object.freeze({ machine: 'bot-request', key: 'request:9:50', kind: 'bot.look' });
+
+async function triage(t, h, look = bot._newLookForTests({ owner: OWNER })) {
   const real = { post: live.post, seen: live.advanceSeen, onProposal: live.postOnProposal, targets: live.mentionTargets };
   t.after(() => {
     Object.assign(live, { post: real.post, advanceSeen: real.seen, postOnProposal: real.onProposal, mentionTargets: real.targets });
@@ -133,59 +139,60 @@ async function triage(t, h) {
   live.advanceSeen = async () => ({ advanced: true });
   live.mentionTargets = async () => [];
   bot._resetForTests();
-  return bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings: SETTINGS, deps: h.deps });
+  const out = await bot._runInLookForTests(look, () => bot.runTriage(h.pool, {}, {
+    bot: BOT, app: APP, item: { ...ITEM, followUp: true }, mode: 'shadow', settings: SETTINGS, deps: h.deps,
+  }));
+  return { ...out, look };
 }
 
-const waitWrite = (h) => h.calls.queries.find((q) => /UPDATE homeroom_bot_queue SET wait_reason = \$2, wait_until = \$3 WHERE id = \$1/.test(q.s));
+const insertedRun = (h) => h.calls.queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
 
-// ── 3. A busy session is a wait, never a fault ──────────────────────────
+// ── A busy session is a wait, never a fault ─────────────────────────────
 
-test('a turn already running on the proposal: the fix waits before asking for a worker, and only it waits', async (t) => {
-  // The 16:26 sync with main: a turn record on the proposal's row.
-  const h = harness({ activeTurn: { turnId: 't-sync', mode: 'sync', startedAt: '2026-10-09T16:20:00Z' } });
+test('somebody else working on the proposal: the fix waits before asking for a worker, and only it waits', async (t) => {
+  // The 16:26 sync with main, read off its durable record.
+  const h = harness({ taken: true });
   const out = await triage(t, h);
   assert.equal(out.reason, 'refused', 'the ordinary busy refusal');
   assert.equal(out.detail, 'session_busy');
   assert.equal(out.followUp, true, 'a follow-up\'s own wait, not its app\'s');
+  assert.deepEqual(h.calls.taken, [[5001, OWNER.machine, OWNER.key]],
+    'asked of the proposal\'s session, with the look\'s own work item, whose turn is never somebody else\'s');
   assert.equal(h.calls.ensured, 0, 'no worker asked for a storage it cannot have under a running turn');
   assert.equal(h.calls.exec.length, 0);
-  assert.equal(bot.faultBackoff(), null, 'nothing pauses the bot');
-  assert.deepEqual(bot.followUpsBackedOff(), ['9:50']);
-  assert.ok(!h.calls.queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)), 'a wait writes no failed run');
-  const wait = waitWrite(h);
-  assert.ok(wait, 'the row says why it waits');
-  assert.equal(wait.params[0], ITEM.id);
-  assert.equal(wait.params[1], 'session_busy');
-  const until = Date.parse(wait.params[2]);
-  assert.ok(until > Date.now() + 60_000 && until <= Date.now() + 2 * 60_000 + 1000, 'and until when: the first backoff, two minutes');
+  assert.ok(!insertedRun(h), 'a wait writes no failed run');
+  // The look says it waits; its request's instance backs it off and its row
+  // says why (queueWait), and nothing pauses the whole bot.
+  assert.equal(out.look.out.queue, 'busy');
+  assert.equal(out.look.out.error, 'session_busy');
+  assert.equal(out.look.out.fix, null, 'and no round on the head is reported as having ended');
 });
 
-// #4575: before & after shots hold the proposal from their first build, but
-// write no turn record until their agent starts, minutes later. A follow-up
-// that started in that gap took the session, and the shots failed with
-// "durable active turn could not be persisted".
-test('a before & after shots run under way on the proposal: the follow-up waits for it, as for a turn', async (t) => {
-  const orchestrator = require('../src/services/shots-orchestrator');
-  const realRunFor = orchestrator.inFlightRunFor;
-  t.after(() => { orchestrator.inFlightRunFor = realRunFor; });
-  orchestrator.inFlightRunFor = (id) => (Number(id) === 5001 ? new Promise(() => {}) : null);
-  const h = harness();
-  const out = await triage(t, h);
-  assert.equal(out.reason, 'refused');
-  assert.equal(out.detail, 'session_busy');
-  assert.equal(h.calls.ensured, 0, 'no worker asked for while the shots hold the session');
-  assert.equal(h.calls.exec.length, 0);
-  assert.equal(bot.faultBackoff(), null, 'a wait, never a fault');
-  assert.ok(waitWrite(h), 'and the row says it waits');
-  // turnRunningOn reads the shots run for the session's own id.
+test('sessionTakenElsewhere: every kind of work on the session, from its durable record, except the look\'s own turn', async () => {
+  const sw = require('../src/workflow/session-work.ts');
   const asked = [];
-  const running = await followup.turnRunningOn({
-    pool: { async query() { return { rows: [{ active_turn: null }] }; } },
-    session: { id: 5001 }, worker: { isInFlight: () => false }, activeWorkers: new Set(),
-    shotsRunFor: (id) => { asked.push(id); return null; },
-  });
-  assert.equal(running, false, 'no shots run and no turn: free');
-  assert.deepEqual(asked, [5001]);
+  const pool = (busy) => ({ async query(sql, params) { asked.push({ sql: String(sql), params }); return { rows: [{ busy }] }; } });
+  assert.equal(await followup.sessionTakenElsewhere(pool(false), 5001, OWNER), false);
+  assert.equal(await followup.sessionTakenElsewhere(pool(true), 5001, OWNER), true);
+  assert.deepEqual(asked[0].params, [5001, OWNER.machine, OWNER.key]);
+  const sql = asked[0].sql;
+  // A turn on the session is somebody else's unless its record names this
+  // look's work item.
+  assert.match(sql, /cs\.active_turn IS NOT NULL\s+AND NOT \(cs\.active_turn->'owner'->>'machine' IS NOT DISTINCT FROM \$2\s+AND cs\.active_turn->'owner'->>'key' IS NOT DISTINCT FROM \$3\)/);
+  assert.match(sql, /FROM local_agent_turns t/, 'a turn on a local agent');
+  // #4575: before & after shots hold the proposal from their first build,
+  // but wrote no turn record until their agent started, minutes later. A
+  // follow-up that started in that gap took the session, and the shots
+  // failed with "durable active turn could not be persisted".
+  assert.ok(sql.includes(sw.shotsRunningSql('cs.id')), 'a before & after shots run under way');
+  assert.ok(sql.includes(sw.operationsLiveSql('cs.id')), 'an operation an old flow holds');
+  assert.ok(sql.includes(sw.syncWorkingSql('cs.id')), 'a sync with main');
+  assert.ok(sql.includes(sw.buildHoldSql('cs')), 'a durable build');
+  assert.equal(await followup.sessionTakenElsewhere(pool(false), 5001, null), false);
+  assert.deepEqual(asked.at(-1).params, [5001, null, null], 'with no owner, any turn on the session is somebody else\'s');
+  const down = { async query() { throw new Error('db down'); } };
+  assert.equal(await followup.sessionTakenElsewhere(down, 5001, OWNER), false,
+    'an unreadable row is no reason to wait: the turn\'s own start still refuses a busy session');
 });
 
 test('the worker refusing to change its storage under a running turn is the same wait, not a platform fault', async (t) => {
@@ -194,14 +201,15 @@ test('the worker refusing to change its storage under a running turn is the same
   const refused = await triage(t, busy);
   assert.equal(refused.reason, 'refused');
   assert.equal(refused.detail, 'session_busy');
-  assert.equal(bot.faultBackoff(), null);
-  assert.ok(!busy.calls.queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)), 'no "worker:" run in the ledger');
-  assert.ok(waitWrite(busy), 'and the row says it waits');
+  assert.equal(refused.look.out.queue, 'busy', 'a wait for this request alone');
+  assert.ok(!insertedRun(busy), 'no "worker:" run in the ledger');
   // Any other worker failure is still the platform's.
   const h = harness({ ensureWorker: () => { throw new Error('exceeded quota: persistentvolumeclaims'); } });
   const out = await triage(t, h);
   assert.equal(out.reason, 'infra');
   assert.match(out.detail, /^worker: exceeded quota/);
+  assert.equal(out.look.out.queue, 'fault', 'the lane pauses on the platform\'s fault');
+  assert.ok(!insertedRun(h), 'a platform fault writes no failed run either');
   // worker.js keeps its own guard, now saying what it is.
   assert.match(read('src/services/worker.js'),
     /throw Object\.assign\(new Error\('Cannot change worker storage while a turn is running'\), \{ code: 'session_busy' \}\);/);
@@ -230,67 +238,43 @@ test('a read refused its worker\'s storage under a running turn waits too, rathe
     worker: {
       async ensureWorkerImage() {},
       async ensureWorker() { throw Object.assign(new Error('Cannot change worker storage while a turn is running'), { code: 'session_busy' }); },
-      isInFlight: () => false,
     },
     agentTurn: {},
     limits: { async checkBudget() { return { ok: true }; } },
     threadContext: { async loadIssueThread() { return { messages: [] }; } },
     managedOpenRouter: { async usesIncludedKey() { return false; } },
     sessions: { buildHeadlessSeed: () => 'SEED' },
-    activeWorkers: new Set(),
   };
   const app = { ...APP, slug: 'todo' };
-  const out = await bot.runTriage(pool, {}, {
+  const look = bot._newLookForTests({ owner: { machine: 'bot-request', key: 'request:9:12', kind: 'bot.look' } });
+  const out = await bot._runInLookForTests(look, () => bot.runTriage(pool, {}, {
     bot: BOT, app, item: { id: 32, app_id: 9, issue_number: 12, priority: 1, reason: 'new', thread_seen_at: null },
     mode: 'shadow', settings: { ...SETTINGS, pausedApps: ['todo'] }, deps,
-  });
+  }));
   assert.equal(out.reason, 'refused');
   assert.equal(out.detail, 'session_busy');
-  assert.equal(bot.faultBackoff(), null);
+  assert.equal(look.out.queue, 'busy', 'a wait, never the lane\'s fault pause');
   assert.ok(!queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)));
 });
 
-test('turnRunningOn: whatever holds the session in this process, its executing worker, or a turn on its row', async () => {
-  const pool = (activeTurn) => ({ async query() { return { rows: [{ active_turn: activeTurn }] }; } });
-  const worker = (inFlight) => ({ isInFlight: () => inFlight });
-  const session = { id: 5001 };
-  assert.equal(await followup.turnRunningOn({ pool: pool(null), session, worker: worker(false), activeWorkers: new Set() }), false);
-  assert.equal(await followup.turnRunningOn({ pool: pool(null), session, worker: worker(false), activeWorkers: new Set([5001]) }), true);
-  assert.equal(await followup.turnRunningOn({ pool: pool(null), session, worker: worker(true), activeWorkers: new Set() }), true);
-  assert.equal(await followup.turnRunningOn({ pool: pool({ turnId: 'x' }), session, worker: worker(false), activeWorkers: new Set() }), true);
-  const release = require('../src/services/active-workers').beginSessionOperation(5001);
-  try {
-    assert.equal(await followup.turnRunningOn({ pool: pool(null), session, worker: worker(false), activeWorkers: new Set() }), true,
-      'a sync with main holds its session as an operation before it asks for its worker');
-  } finally { release(); }
-  const down = { async query() { throw new Error('db down'); } };
-  assert.equal(await followup.turnRunningOn({ pool: down, session, worker: worker(false), activeWorkers: new Set() }), false,
-    'an unreadable row is no reason to wait: the turn\'s own start still refuses a busy session');
-});
+// ── The fix turn is its look's ──────────────────────────────────────────
 
-// ── 1. The turn's record carries its deadline ───────────────────────────
-
-test('a fix turn marks its record as the bot\'s, with its deadline and what recovery needs, before the agent starts', async (t) => {
+test('a fix turn is dispatched as its look\'s work item, on its own clock, and its outcome is the look\'s', async (t) => {
   const h = harness();
-  const before = Date.now();
   const out = await triage(t, h);
   assert.equal(out.verdict, 'revise');
-  assert.equal(h.calls.stamps.length, 1, 'stamped once, on the attempt\'s record');
-  const stampAt = h.calls.queries.findIndex((q) => /jsonb_set\(active_turn, ARRAY\[\$3::text\]/.test(q.s));
-  assert.ok(stampAt >= 0 && h.calls.exec.length === 1, 'and the agent ran after it');
-  const [sessionId, turnId, key, value] = h.calls.stamps[0];
-  assert.deepEqual([sessionId, turnId, key], [5001, TURN_ID, followup.TURN_MARK]);
-  const mark = JSON.parse(value);
-  const deadline = Date.parse(mark.deadlineAt);
-  assert.ok(deadline >= before + SETTINGS.turnSeconds * 1000 && deadline <= Date.now() + SETTINGS.turnSeconds * 1000,
-    'its deadline is its live clock\'s: start plus the turn budget');
-  assert.equal(mark.followUp, 'checks_fix');
-  assert.deepEqual([mark.appId, mark.issueNumber, mark.queueId, mark.reason], [9, 50, 31, bot.CHECKS_REASON]);
-  assert.equal(mark.reviewedHeadSha, HEAD, 'the head it started from');
-  assert.deepEqual(mark.checks, { head: HEAD, total: 85, failing: 1, broken: [] });
-  assert.equal(mark.threadSeenAt, SEEN);
-  assert.equal(mark.runMode, 'live', 'recorded as the live run it is');
-  assert.ok(followup.turnMarkOf({ [followup.TURN_MARK]: mark }), 'and it reads back as the bot\'s mark');
+  assert.equal(h.calls.exec.length, 1, 'one turn');
+  assert.deepEqual(h.calls.exec[0].opts.owner, OWNER,
+    'its record names the look (a restart follows it by that, and a Stop reaches its machine)');
+  assert.equal(h.calls.exec[0].opts.mode, 'build');
+  assert.equal(out.look.out.queue, 'consume', 'the look\'s end consumes its debt');
+  assert.deepEqual(out.look.out.fix, { outcome: 'looked' }, 'and tells the change machine the round looked at the head');
+  // No record mark of the bot's own: the turn's deadline is the durable
+  // step's (durable-turn.js), not a field the bot stamps on the record.
+  assert.ok(!h.calls.queries.some((q) => /jsonb_set\(active_turn/.test(q.s)));
+  assert.equal(followup.TURN_MARK, undefined);
+  assert.equal(bot.finishRecoveredFollowUp, undefined);
+  assert.equal(bot.recoveryDeadline, undefined);
 });
 
 test('stampTurn writes one owner key on the exact turn and never a field the lifecycle owns', async () => {
@@ -308,234 +292,6 @@ test('stampTurn writes one owner key on the exact turn and never a field the lif
     'a turn that no longer holds the session is not stamped');
 });
 
-test('the recovery deadline is the mark\'s, given back the time restarts cost it; only the bot\'s own follow-up has one', async () => {
-  const deadlineAt = '2026-10-09T15:48:00.000Z';
-  const mark = { followUp: 'checks_fix', deadlineAt, appId: 9, issueNumber: 50 };
-  const turn = { turnId: TURN_ID, mode: 'build', startedAt: '2026-10-09T15:28:00.000Z', [followup.TURN_MARK]: mark };
-  const pool = { async query() { throw new Error('a follow-up\'s deadline needs no lookup'); } };
-  assert.equal(await bot.recoveryDeadline(pool, {}, { id: 5001 }, turn), Date.parse(deadlineAt));
-  assert.equal(await bot.recoveryDeadline(pool, {}, { id: 5001 }, { ...turn, restarts: 3 }), Date.parse(deadlineAt) + 3 * bot.RESTART_ALLOWANCE_MS);
-
-  const botSession = { username: 'homeroom_bot', user_is_synthetic: true, status: 'promoted', active_turn: turn };
-  assert.equal(bot.isRecoveredBotFollowUp(botSession), true);
-  assert.equal(bot.isRecoveredBotSession(botSession), false, 'still the person\'s tail: a promoted proposal\'s PR and staging move on');
-  const { [followup.TURN_MARK]: _mark, ...unmarked } = turn;
-  assert.equal(bot.isRecoveredBotFollowUp({ ...botSession, active_turn: unmarked }), false,
-    'a person\'s turn on the bot\'s proposal carries no mark, so the bot\'s clock never stops it');
-  assert.equal(bot.isRecoveredBotFollowUp({ ...botSession, username: 'ada', user_is_synthetic: false }), false,
-    'and a person\'s own proposal never is the bot\'s');
-  assert.equal(bot.isRecoveredBotFollowUp({ ...botSession, active_turn: { ...turn, [followup.TURN_MARK]: { ...mark, deadlineAt: 'soon' } } }), false);
-  assert.equal(followup.turnMarkOf({ [followup.TURN_MARK]: { ...mark, followUp: 'build' } }), null);
-  assert.equal(followup.turnMarkOf(null), null);
-});
-
-test('server.js re-arms the clock for a marked follow-up and records it after the person\'s tail', () => {
-  const server = read('server.js');
-  assert.match(server, /const botFollowUp = !benchTurn && !botTurn && homeroomBotRecovery\(\)\.isRecoveredBotFollowUp\(session, activeTurn\);/);
-  assert.match(server, /if \(botTurn \|\| benchTurn \|\| botFollowUp\) \{\n\s+const restarts = await turnLifecycle\.noteRestart/);
-  // Recorded once the tail has moved the proposal on, before the wrap-up.
-  const tail = server.indexOf('const { outcome: finalizeOutcome, summary } = await finalizeRecoveredTurn({');
-  const record = server.indexOf('await homeroomBotRecovery().finishRecoveredFollowUp({');
-  const wrapUp = server.indexOf('// #896: re-issue the Mayor\'s phase-2 wrap-up.');
-  assert.ok(tail > 0 && record > tail && wrapUp > record);
-  assert.match(server.slice(record, record + 200), /pool, config, session, activeTurn, result, timedOut: botTimedOut,/);
-  // A read-only follow-up's answer is never published as the proposal's spec.
-  assert.match(server, /if \(botFollowUp && recoveryActiveTurn\.mode === 'scout'\) \{[\s\S]{0,400}?terminalLine = '\[done\]';\n\s+\} else if \(recoveryActiveTurn\.mode === 'scout'\) \{/);
-});
-
-// ── 2. A recovered follow-up's outcome reaches the ledger ───────────────
-
-function recoveryPool({ effectState = null, reviewedHead = NEW_HEAD, retried = false } = {}) {
-  const calls = { queries: [], inserted: [], effects: [] };
-  const pool = {
-    async query(sql, params) {
-      const s = String(sql);
-      calls.queries.push({ s, params });
-      if (/INSERT INTO turn_effects/.test(s)) {
-        calls.effects.push(params);
-        return effectState ? { rows: [], rowCount: 0 } : { rows: [{ state: 'pending' }], rowCount: 1 };
-      }
-      if (/SELECT state, result FROM turn_effects/.test(s)) return { rows: [{ state: effectState, result: null }] };
-      if (/SELECT 1 FROM homeroom_bot_runs WHERE proposal_session_id = \$1 AND error = \$2/.test(s)) return { rows: retried ? [{}] : [] };
-      if (/UPDATE turn_effects/.test(s)) return { rows: [{ result: params[2] }], rowCount: 1 };
-      if (/FROM apps WHERE id = \$1/.test(s)) return { rows: [APP] };
-      if (/FROM agent_turns WHERE logical_turn_id = \$1::uuid/.test(s)) return { rows: [{ cost: 0.31, input_tokens: 41000, output_tokens: 2100 }] };
-      if (/SELECT cs\.\*, a\.slug AS app_slug/.test(s)) {
-        // The person's tail has made the push the reviewed head already.
-        return { rows: [{ id: 5001, user_id: 77, app_id: 9, status: 'promoted', branch_name: 'dev/homeroom_bot-5001', pr_number: 82, reviewed_head_sha: reviewedHead, app_slug: APP.slug, repo_url: APP.repo_url }] };
-      }
-      if (/SELECT id, thread_seen_at FROM homeroom_bot_runs/.test(s)) return { rows: [{ id: 800, thread_seen_at: SEEN }] };
-      if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(s)) return { rows: [{ n: 0 }] };
-      if (/INSERT INTO homeroom_bot_runs/.test(s)) { calls.inserted.push(params); return { rows: [{ id: 902 }] }; }
-      return { rows: [] };
-    },
-  };
-  return { pool, calls };
-}
-
-function recoveredTurn(kind = 'checks_fix', extra = {}) {
-  return {
-    turnId: TURN_ID, logicalTurnId: TURN_ID, mode: 'build', startedAt: '2026-10-09T15:28:00.000Z',
-    [followup.TURN_MARK]: {
-      followUp: kind, deadlineAt: '2026-10-09T15:48:00.000Z', appId: 9, issueNumber: 50, queueId: 31,
-      reason: kind === 'checks_fix' ? bot.CHECKS_REASON : 'changed', payerUserId: null, changedBy: null,
-      runMode: 'live', model: 'z-ai/glm-5.3', startedAt: '2026-10-09T15:28:00.000Z',
-      seedReadAt: '2026-10-09T15:27:59.000Z', threadSeenAt: SEEN, reviewedHeadSha: HEAD,
-      ...(kind === 'checks_fix' ? { checks: { head: HEAD, total: 85, failing: 1, broken: [] } } : { onProposal: true }),
-      ...extra,
-    },
-  };
-}
-
-function recoveryDeps(calls) {
-  calls.reconciled = [];
-  calls.posts = [];
-  calls.onProposal = [];
-  return {
-    github: {
-      async fetchPublicIssue() { return { issue: { number: 50, title: 'Bigger text', state: 'open' } }; },
-      async fetchIssueComments() { return { comments: [] }; },
-      getBotUsername: async () => 'usernode-bot',
-    },
-    threadContext: { async loadIssueThread() { return { messages: [] }; }, async loadProposalThread() { return { messages: [] }; } },
-    limits: { async recordSpend(_p, _id, cents) { calls.spend = cents; } },
-    managedOpenRouter: { async usesIncludedKey() { return true; } },
-    agentTurn: { estimateRequestedModelCost: () => ({ estimatedCostUsd: null }) },
-    votes: { async reconcileNativeReviewedHead(args) { calls.reconciled.push(args); } },
-    ws: {}, sessionLifecycle: {}, domain: 'app.onhomeroom.com',
-  };
-}
-
-async function withPosts(t, calls, fn) {
-  const real = { post: live.post, seen: live.advanceSeen, onProposal: live.postOnProposal, targets: live.mentionTargets, login: live.botUsernameOf };
-  t.after(() => Object.assign(live, {
-    post: real.post, advanceSeen: real.seen, postOnProposal: real.onProposal, mentionTargets: real.targets, botUsernameOf: real.login,
-  }));
-  live.post = async (args) => { calls.posts.push(args); return { githubCreatedAt: '2026-10-09T16:00:00Z' }; };
-  live.postOnProposal = async (args) => { calls.onProposal.push(args); return { postId: 1 }; };
-  live.advanceSeen = async () => ({ advanced: true });
-  live.mentionTargets = async () => [];
-  live.botUsernameOf = async () => 'usernode-bot';
-  return fn();
-}
-
-const SESSION = { id: 5001, user_id: 77, username: 'homeroom_bot', user_is_synthetic: true, status: 'promoted' };
-
-test('a recovered fix that pushed is a revise run on the head it looked at, with its cost, said where a live one is', async (t) => {
-  const { pool, calls } = recoveryPool();
-  const deps = recoveryDeps(calls);
-  const out = await withPosts(t, calls, () => bot.finishRecoveredFollowUp({
-    pool, session: SESSION, activeTurn: recoveredTurn(), timedOut: false, deps,
-    result: {
-      lastResultText: '```json\n{"action":"revise","reply":"Renamed the control.","summary":"The text-size button now says \\"Text size\\"."}\n```',
-      pushOk: true, sha: NEW_HEAD, ahead: 1,
-    },
-  }));
-  assert.equal(out, 'checks_revise');
-  assert.equal(calls.inserted.length, 1, 'one run');
-  const run = calls.inserted[0];
-  assert.equal(run[4], 'revise', 'counted toward MAX_REVISIONS like any revision');
-  assert.equal(run[20], 5001, 'on its proposal');
-  assert.equal(run[21], HEAD, 'the failing head it looked at, so it is not looked at again');
-  assert.ok(Math.abs(run[14] - 0.31) < 1e-9, 'what its own attempts cost, from the ledger');
-  assert.deepEqual([run[15], run[16]], [41000, 2100]);
-  assert.equal(run[12], SEEN, 'what it had seen of the issue when it began');
-  assert.equal(run[3], 'live');
-  assert.equal(calls.spend, 31, 'debited from the bot\'s allowance as a live turn is');
-  assert.equal(calls.onProposal.length, 1);
-  assert.equal(calls.onProposal[0].kind, 'checks_revise');
-  assert.match(calls.onProposal[0].text, /fixed the failing checks on this change: The text-size button now says "Text size"\./);
-  assert.equal(calls.reconciled.length, 0, 'the person\'s tail reset the votes and rebuilt staging already');
-  assert.ok(calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31), 'its queue row is spent');
-  assert.ok(calls.queries.some((q) => /UPDATE homeroom_bot_queue SET wait_reason = NULL, wait_until = NULL WHERE app_id = \$1 AND issue_number = \$2/.test(q.s)));
-  assert.deepEqual(calls.effects[0].slice(0, 3), [TURN_ID, bot.RECOVERED_FOLLOWUP_EFFECT, 5001], 'claimed for this turn');
-  assert.ok(calls.queries.some((q) => /UPDATE turn_effects/.test(q.s)), 'and settled');
-});
-
-test('#4572: a recovered fix its clock stopped is tried once more, and the head is not marked looked at', async (t) => {
-  const { pool, calls } = recoveryPool({ reviewedHead: HEAD });
-  const deps = recoveryDeps(calls);
-  const out = await withPosts(t, calls, () => bot.finishRecoveredFollowUp({
-    pool, session: SESSION, activeTurn: recoveredTurn(), timedOut: true, deps,
-    result: { exitCode: 143, pushOk: false, ahead: 0 },
-  }));
-  assert.equal(out, 'checks_retry');
-  const run = calls.inserted[0];
-  assert.equal(run[4], 'failed', 'never a revision, so never one of MAX_REVISIONS');
-  assert.equal(run[18], `checks: ran out of time on ${HEAD}, trying once more`);
-  assert.equal(run[19], 'wall clock');
-  assert.equal(run[21], null, 'the head is still due');
-  assert.equal(calls.posts.length, 0, 'nobody is asked to take it over yet');
-  assert.equal(calls.onProposal.length, 1);
-  assert.equal(calls.onProposal[0].kind, 'checks_retry');
-  assert.match(calls.onProposal[0].text, /ran out of time fixing the failing checks on this change\. It is trying once more\./);
-});
-
-test('a recovered fix its clock stopped a second time is handed to a person as having run out of time, on the head it looked at', async (t) => {
-  const { pool, calls } = recoveryPool({ reviewedHead: HEAD, retried: true });
-  const deps = recoveryDeps(calls);
-  const out = await withPosts(t, calls, () => bot.finishRecoveredFollowUp({
-    pool, session: SESSION, activeTurn: recoveredTurn(), timedOut: true, deps,
-    result: { exitCode: 143, pushOk: false, ahead: 0 },
-  }));
-  assert.equal(out, 'checks_person');
-  const run = calls.inserted[0];
-  assert.equal(run[4], 'failed');
-  assert.equal(run[18], 'checks: its attempt to fix them ran out of time');
-  assert.equal(run[19], 'wall clock');
-  assert.equal(run[21], HEAD);
-  assert.equal(calls.posts.length, 1);
-  assert.equal(calls.posts[0].kind, 'followup_person');
-  assert.match(calls.posts[0].text, /can't get this change past its checks on its own: 1 check is still failing/);
-});
-
-test('a fix that finished before the restart is not one that ran out of time, though its re-armed clock fired', async (t) => {
-  const { pool, calls } = recoveryPool();
-  const deps = recoveryDeps(calls);
-  // Its journal ended on its own exit 0; the clock, past its deadline by
-  // the time the new server read it, fired at once anyway.
-  const out = await withPosts(t, calls, () => bot.finishRecoveredFollowUp({
-    pool, session: SESSION, activeTurn: recoveredTurn(), timedOut: true, deps,
-    result: {
-      exitCode: 0, pushOk: true, sha: NEW_HEAD, ahead: 1,
-      lastResultText: '```json\n{"action":"revise","reply":"Renamed.","summary":"It says Text size."}\n```',
-    },
-  }));
-  assert.equal(out, 'checks_revise');
-  assert.equal(calls.inserted[0][4], 'revise');
-  assert.equal(calls.inserted[0][19], null, 'no budget stop');
-});
-
-test('a recovered answer to replies is answered where they were, and recorded as the answer it is', async (t) => {
-  const { pool, calls } = recoveryPool({ reviewedHead: HEAD });
-  const deps = recoveryDeps(calls);
-  const out = await withPosts(t, calls, () => bot.finishRecoveredFollowUp({
-    pool, session: SESSION, activeTurn: recoveredTurn('reply'), timedOut: false, deps,
-    result: { lastResultText: '```json\n{"action":"answer","reply":"It keeps your list."}\n```', pushOk: true, sha: HEAD },
-  }));
-  assert.equal(out, 'followup_answer');
-  assert.equal(calls.inserted[0][4], 'answer');
-  assert.equal(calls.inserted[0][21], null, 'an answer looked at no failing head');
-  assert.equal(calls.posts.length, 1);
-  assert.equal(calls.posts[0].proposalSessionId, 5001, 'in the proposal\'s discussion, where they asked');
-  assert.match(calls.posts[0].text, /It keeps your list\./);
-});
-
-test('a recovered follow-up is recorded once, however often its recovery is replayed, and never throws', async (t) => {
-  const { pool, calls } = recoveryPool({ effectState: 'completed' });
-  const deps = recoveryDeps(calls);
-  const out = await withPosts(t, calls, () => bot.finishRecoveredFollowUp({
-    pool, session: SESSION, activeTurn: recoveredTurn(), result: { pushOk: true, sha: NEW_HEAD }, deps,
-  }));
-  assert.equal(out, 'already_recorded');
-  assert.equal(calls.inserted.length, 0);
-  assert.equal(calls.posts.length + calls.onProposal.length, 0);
-  assert.equal(await bot.finishRecoveredFollowUp({ pool, session: SESSION, activeTurn: { turnId: TURN_ID, mode: 'build' } }), null,
-    'a turn without the bot\'s mark is not the bot\'s to record');
-  const broken = { async query() { throw new Error('db down'); } };
-  assert.equal(await bot.finishRecoveredFollowUp({ pool: broken, session: SESSION, activeTurn: recoveredTurn(), deps }), 'error');
-});
-
 // ── 4. The wait, where people look ──────────────────────────────────────
 
 test('queueWait: its own refusal, then its payer\'s week, then the bot\'s fault pause; a wait that is over is none', () => {
@@ -549,8 +305,17 @@ test('queueWait: its own refusal, then its payer\'s week, then the bot\'s fault 
   assert.deepEqual(bot.queueWait({}, { now, fault: { until: Date.parse(later) } }), { reason: 'platform_fault', until: later });
   assert.equal(bot.queueWait({}, { now }), null);
   const src = read('src/services/homeroom-bot.js');
-  assert.match(src, /q\.held_until, q\.wait_reason, q\.wait_until,\n\s+a\.slug AS app_slug/);
-  assert.match(src, /const queueRows = queued\.map\(\(q\) => \(\{ \.\.\.q, waiting: queueWait\(q, \{ fault \}\) \}\)\);/);
+  assert.match(src, /q\.held_until, q\.wait_reason, q\.wait_until, q\.waiting_total, q\.running_total,\n\s+a\.slug AS app_slug/);
+  assert.match(src, /const items = rows\.map\(\(\{ waiting_total: _w, running_total: _r, \.\.\.q \}\) => \(\{ \.\.\.q, waiting: queueWait\(q, ctx\) \}\)\);/);
+  // The fault pause from the bot's lane instance (bot-lane), read from
+  // Postgres: the same answer in every process (loopMemory).
+  assert.match(src, /fault: mem\.fault, now, off: settings\.mode === 'off'/);
+  assert.match(src, /async function loopMemory\(pool, now = Date\.now\(\)\) \{/);
+  assert.match(src, /if \(d\.fault && until\(d\.fault\.until\) > now\) out\.fault = /);
+  // The row's own wait is the backoff its request's instance keeps, written
+  // by its projection (bot-request), and cleared while it looks.
+  assert.match(read('src/workflow/bot-request/machine.ts'),
+    /looking \? null : d\.backoff\?\.reason \?\? null, looking \? null : d\.backoff\?\.until \?\? null\]/);
   assert.match(read('src/db/schema.sql'), /ALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS wait_reason TEXT;\nALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS wait_until TIMESTAMPTZ;/);
 });
 
@@ -610,28 +375,62 @@ test('get_change says when the running turn started and what kind it is', async 
   assert.deepEqual(shape({ busy: true, turn: { startedAt: 'never', kind: 'Not a code' } }).runningTurn, { startedAt: null, kind: null });
   assert.equal(shape({ busy: false, turn: null }).runningTurn, null);
   assert.equal(shape(null).runningTurn, null);
+  assert.deepEqual(shape({ busy: true, turn: { startedAt: '2026-10-09T16:20:00Z', kind: 'homeroom_bot_follow_up' } }).runningTurn,
+    { startedAt: '2026-10-09T16:20:00.000Z', kind: 'homeroom_bot_follow_up' });
+  // The bot's follow-up is known by its record's owner: a turn its request's
+  // look runs (bot-request).
   const sessions = read('src/routes/sessions.js');
-  assert.match(sessions, /const mark = require\('\.\.\/services\/homeroom-bot-followup'\)\.turnMarkOf\(durableTurn\);\n\s+turn = \{\n\s+startedAt: durableTurn\.startedAt \|\| null,\n\s+kind: mark \? `homeroom_bot_\$\{mark\.followUp\}` : \(durableTurn\.mode \|\| null\),/);
+  assert.match(sessions, /const own = turnLifecycle\.ownerOf\(durableTurn\);\n\s+turn = \{\n\s+startedAt: durableTurn\.startedAt \|\| null,\n\s+kind: own\?\.machine === 'bot-request' \? 'homeroom_bot_follow_up' : \(durableTurn\.mode \|\| null\),/);
   assert.match(sessions, /busy, progress, phase, stopping, stopRequestedAt, stoppable, estimate, turn,/);
 });
 
 // #4575: the bot's build and review-fix turns on a session wait for a
 // before & after shots run under way there, bounded, as the Mayor's do.
 test('a bot turn waits out the shots run on its session, at most its bound', async () => {
-  assert.equal(await live.waitOutShotsRun(5001, { shotsRunFor: () => null }), 'idle');
-  let finish;
-  const run = new Promise((resolve) => { finish = resolve; });
-  const waiting = live.waitOutShotsRun(5001, { shotsRunFor: () => run, shotsWaitMs: 60_000 });
-  finish();
-  assert.equal(await waiting, 'finished');
-  // A failed run is over too.
+  // Whether a run is under way, and the wait for its end, are the shots
+  // machine's state (services/shots-state.js shotsRunning, waitForShotsRun).
+  const waits = [];
+  assert.equal(await live.waitOutShotsRun(5001, { shotsRunning: async () => false }), 'idle');
   assert.equal(await live.waitOutShotsRun(5001, {
-    shotsRunFor: () => Promise.reject(new Error('shots failed')), shotsWaitMs: 60_000,
+    shotsRunning: async () => true,
+    shotsWait: async (id, o) => { waits.push([id, o.timeoutMs]); return 'finished'; },
+    shotsWaitMs: 60_000,
   }), 'finished');
+  assert.deepEqual(waits, [[5001, 60_000]]);
   assert.equal(await live.waitOutShotsRun(5001, {
-    shotsRunFor: () => new Promise(() => {}), shotsWaitMs: 5,
+    shotsRunning: async () => true, shotsWait: async () => 'timeout', shotsWaitMs: 5,
   }), 'timeout');
-  // The runner calls it before its turn's clock starts.
-  assert.match(read('src/services/homeroom-bot-live.js'),
-    /await waitOutShotsRun\(session\.id, deps\);\n {4}let turnStopped = false;/);
+  // A read that fails does not hold the turn back.
+  assert.equal(await live.waitOutShotsRun(5001, { shotsRunning: async () => { throw new Error('db'); } }), 'idle');
+
+  // The runner waits it out before its turn's clock starts: a shots run
+  // that outlasts the turn's whole budget costs the turn none of it. The
+  // clock is durable-turn.js runTurn's, armed before it dispatches.
+  const stops = [];
+  const dispatched = [];
+  let shotsDone;
+  const shots = new Promise((resolve) => { shotsDone = resolve; });
+  const runTurn = live.buildTurnRunner({
+    pool: { async query() { return { rows: [] }; } },
+    config: {}, bot: BOT, session: { id: 5001, app_id: APP.id, repo_url: APP.repo_url },
+    model: 'z-ai/glm-5.3-flash', branchName: 'dev/homeroom_bot-5001', containerName: 'sv-worker-s5001',
+    deps: {
+      worker: { async stopTurn(id) { stops.push(id); return true; } },
+      sessions: { async runCodexAttemptLoop() { dispatched.push(Date.now()); return { result: { pushOk: true, ahead: 1, sha: NEW_HEAD } }; } },
+      agentTurn: {},
+      activeWorkers: { add() {}, delete() {} },
+      shotsRunning: async (id) => id === 5001,
+      shotsWait: async () => { await shots; return 'finished'; },
+      shotsWaitMs: 60_000,
+    },
+  });
+  const turn = runTurn({ prompt: 'Fix the failing check.', budgetMs: 200, commitMsg: 'Fix', progress: { note() {} } });
+  await new Promise((r) => { setTimeout(r, 400); });
+  assert.deepEqual(dispatched, [], 'not dispatched while the shots run is under way');
+  shotsDone();
+  const out = await turn;
+  assert.equal(dispatched.length, 1, 'dispatched once it is over');
+  assert.deepEqual(stops, [], 'the wait is not charged to the turn\'s own clock');
+  assert.equal(out.stopped, false);
+  assert.equal(out.routed.result.sha, NEW_HEAD);
 });

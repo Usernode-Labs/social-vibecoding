@@ -4,6 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { englishPlatformI18n } = require('./lib/platform-i18n');
+
 const settingsSource = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'),
   'utf8'
@@ -33,6 +35,8 @@ function loadSettings({ nativeTerminal = true, nativeFailure, nativePending = fa
   const stored = new Map();
 
   const sandbox = {
+    // The screen's words come from the English catalog, as they do in the shell.
+    PlatformI18n: englishPlatformI18n(),
     console: { log() {}, warn() {}, error() {} },
     document: {
       addEventListener() {},

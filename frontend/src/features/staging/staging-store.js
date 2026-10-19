@@ -34,9 +34,9 @@ import { createStore } from '../../lib/plain-store.js';
  * @typedef {{
  *   open: boolean, mode: string, dockRect: DockRect | null, urlLabel: string, background: string, solo: boolean,
  *   clockLabel: string, clockAsNow: boolean,
- *   loaderVisible: boolean, loaderTitle: string, loaderSub: string, loaderRetry: boolean, loaderRetryLabel: string,
+ *   loaderVisible: boolean, loaderTitle: string | null, loaderSub: string, loaderRetry: boolean, loaderRetryLabel: string | null,
  *   testBtnHidden: boolean, testBtnTitle: string, testPanelHidden: boolean,
- *   testHtml: string, fsBtnHidden: boolean, fsBtnText: string, fsBtnTitle: string,
+ *   testHtml: string, fsBtnHidden: boolean, fsBtnText: string | null, fsBtnTitle: string,
  * }} StagingState
  * @typedef {{ open: boolean, openedAt: number, label: string, bodyHtml: string }} VisualCompareState
  */
@@ -72,18 +72,24 @@ export const stagingStore = createStore(/** @type {StagingState} */ ({
   clockLabel: '',
   clockAsNow: false,
   loaderVisible: false,
-  loaderTitle: 'Opening preview…',
+  // `null` is the shipped wording, which the overlay reads from the catalog
+  // when it renders (devchat:staging.loader.opening, .retrySignIn and
+  // devchat:staging.fullScreen); a caller's own text replaces it.
+  /** @type {string | null} */
+  loaderTitle: null,
   loaderSub: '',
   loaderRetry: false,
   /** #3413: "Retry preview" after a failed build; the shipped markup's text otherwise. */
-  loaderRetryLabel: 'Retry sign-in',
+  /** @type {string | null} */
+  loaderRetryLabel: null,
   testBtnHidden: true,
   testBtnTitle: '',
   testPanelHidden: true,
   /** Sanitized markdown from DevChat.renderMarkdown, or escaped plain text. */
   testHtml: '',
   fsBtnHidden: true,
-  fsBtnText: 'Full screen',
+  /** @type {string | null} */
+  fsBtnText: null,
   fsBtnTitle: '',
 }));
 

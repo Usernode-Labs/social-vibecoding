@@ -31,6 +31,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -212,7 +213,10 @@ test('the transcript fills new vote rows itself', () => {
   assert.match(tsx, /controller\(\)\?\.refreshVoteControls\?\.\(\)/);
   // Keyed on which vote rows are present, not on every render.
   assert.match(tsx, /\}, \[voteRows\]\)/);
-  assert.match(tsx, /\.filter\(\(m\) => m\.kind === 'vote'\)/);
+  // #5458: a vote row, or an ordinary message whose metadata names the
+  // proposal — both carry the controls host, and either can be the row
+  // that arrives after the snapshot landed.
+  assert.match(tsx, /\.filter\(\(m\) => m\.kind === 'vote' \|\| m\.voteRef\)/);
 });
 
 // ── The quoted reply ──────────────────────────────────────────────────
@@ -299,6 +303,7 @@ function loadGroupChat() {
     body: { appendChild() {} },
   };
   const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
     location: { search: '', protocol: 'http:', host: 'localhost' },
     URLSearchParams,
     document,

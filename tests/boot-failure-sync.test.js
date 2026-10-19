@@ -148,76 +148,9 @@ test('a measurement that fails, or reads another head, never syncs and never thr
   assert.equal((await subject.plan({ pool: makePool(), sessionId: 6912, commitHash: HEAD }, deps)).why, 'head_moved');
 });
 
-// ── run: wait, claim, sync, start the new head's run ─────────────────────
-
-test('the sync claims the head, runs as the platform, and starts the new head\'s run', async () => {
-  const pool = makePool();
-  const { deps, calls } = makeDeps();
-  const out = await subject.run({ config: { c: 1 }, pool, sessionId: 6912, commitHash: HEAD }, deps);
-  assert.deepEqual(out, { synced: true, why: null, sha: NEW_HEAD });
-  const claim = pool.queries.find((q) => /SET boot_failure_sync_head = \$2/.test(q.sql));
-  assert.ok(claim, 'the head is claimed before the sync');
-  assert.match(claim.sql, /status = 'promoted'/);
-  assert.match(claim.sql, /checks_commit_sha = \$2/, 'only while the row still describes the failed head');
-  assert.match(claim.sql, /boot_failure_sync_head IS DISTINCT FROM \$2/, 'once per head');
-  assert.deepEqual(claim.params, [6912, HEAD]);
-  assert.equal(calls.sync.length, 1);
-  assert.equal(calls.sync[0].opts.trigger, 'boot_failure');
-  assert.equal(calls.sync[0].opts.sessionRow.behind_main, 2,
-    'the measured count, so the sync narrates in the timeline');
-  assert.equal(calls.reconcile.length, 1, 'the merge queue\'s own follow-up: re-pin and run');
-  assert.equal(calls.reconcile[0].fresh, true);
-  assert.equal(calls.reconcile[0].notify, false);
-  assert.equal(calls.measure.length, 2, 'measured before the claim and again for the pushed head');
-});
-
-test('a session in the middle of a turn is waited for, not interrupted', async () => {
-  const pool = makePool();
-  const { deps, calls } = makeDeps({ busy: (_id, c) => c.sleeps < 3 });
-  const out = await subject.run({ config: {}, pool, sessionId: 6912, commitHash: HEAD }, deps);
-  assert.equal(out.synced, true);
-  assert.equal(calls.sleeps, 3);
-  const never = makeDeps({ busy: () => true });
-  const gaveUp = await subject.run({ config: {}, pool: makePool(), sessionId: 6912, commitHash: HEAD }, never.deps);
-  assert.deepEqual(gaveUp, { synced: false, why: 'busy' });
-  assert.equal(never.calls.sync.length, 0);
-  assert.equal(never.calls.sleeps, Math.ceil(subject.IDLE_WAIT_MS / subject.IDLE_POLL_MS));
-});
-
-test('no sync when the merge queue holds it, the claim is lost, or the head moved while it waited', async () => {
-  let r = makeDeps({ integrating: true });
-  assert.deepEqual(await subject.run({ config: {}, pool: makePool(), sessionId: 6912, commitHash: HEAD }, r.deps),
-    { synced: false, why: 'integrating' });
-  assert.equal(r.calls.sync.length, 0);
-
-  r = makeDeps();
-  assert.deepEqual(await subject.run({ config: {}, pool: makePool({ claimWins: false }), sessionId: 6912, commitHash: HEAD }, r.deps),
-    { synced: false, why: 'claimed' });
-  assert.equal(r.calls.sync.length, 0);
-
-  r = makeDeps();
-  const pool = makePool({ current: row({ checks_commit_sha: NEW_HEAD }) });
-  assert.deepEqual(await subject.run({ config: {}, pool, sessionId: 6912, commitHash: HEAD }, r.deps),
-    { synced: false, why: 'head_moved' });
-  assert.ok(!pool.queries.some((q) => /boot_failure_sync_head = \$2/.test(q.sql)), 'nothing claimed');
-});
-
-test('a sync that pushes nothing, or throws, starts no run', async () => {
-  for (const syncResult of [
-    { ok: false, syncResult: 'conflict', pushOk: false },
-    { ok: true, syncResult: 'already_synced', pushOk: false },
-    { ok: true, syncResult: 'clean', pushOk: false },
-  ]) {
-    const { deps, calls } = makeDeps({ syncResult });
-    const out = await subject.run({ config: {}, pool: makePool(), sessionId: 6912, commitHash: HEAD }, deps);
-    assert.equal(out.synced, false, syncResult.syncResult);
-    assert.equal(calls.reconcile.length, 0);
-  }
-  const { deps, calls } = makeDeps({ syncThrows: new Error('system token budget exhausted') });
-  assert.deepEqual(await subject.run({ config: {}, pool: makePool(), sessionId: 6912, commitHash: HEAD }, deps),
-    { synced: false, why: 'sync_threw' });
-  assert.equal(calls.reconcile.length, 0);
-});
+// The sync itself (its once-per-head record written with its own work, the
+// wait for nobody working on the session, the new head's run) is the
+// proposal machine's: tests/workflow-merge-postgres.test.js M8.
 
 // ── afterBootFailure: the entry staging-recovery calls ───────────────────
 
@@ -234,31 +167,15 @@ test('only a preview that failed to START is considered, never a failed build', 
   assert.equal(calls.measure.length, 0);
 });
 
-test('a start failure that applies returns the plan at once and syncs in the background', async () => {
+test('a start failure that applies returns the plan, and starts nothing itself', async () => {
   const pool = makePool();
-  let release;
-  const gate = new Promise((resolve) => { release = resolve; });
   const { deps, calls } = makeDeps();
-  deps.syncMain.runSyncMain = async (config, p, id, opts) => {
-    calls.sync.push({ id, opts });
-    await gate;
-    return { ok: true, syncResult: 'clean', pushOk: true, sha: NEW_HEAD };
-  };
   const found = await subject.afterBootFailure({
     config: {}, pool, session: row(), commitHash: HEAD, err: { healthcheckFailed: true },
   }, deps);
   assert.deepEqual(found, { sync: true, why: null, behindBy: 2 }, 'the row stays inside the module');
-  // A backoff retry while the first is still going does not start a second.
-  await subject.afterBootFailure({
-    config: {}, pool, session: row(), commitHash: HEAD, err: { healthcheckFailed: true },
-  }, deps);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(calls.sync.length, 1);
-  assert.ok(subject._pending.has(6912));
-  release();
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.ok(!subject._pending.has(6912));
-  assert.equal(calls.reconcile.length, 1);
+  assert.equal(calls.sync.length, 0, 'the preview machine asks the proposal machine for the sync');
+  assert.ok(!pool.queries.some((q) => /boot_failure_sync_head = \$2/.test(q.sql)), 'nothing claimed here');
 });
 
 // ── what the author reads ────────────────────────────────────────────────
@@ -275,68 +192,93 @@ test('the note says what main has to do with it, in words', () => {
   assert.equal(subject.explain(null), '');
 });
 
-function loadRecovery(plan) {
+// The preview machine is the caller: its prepare work (WORK.prepare in
+// src/workflow/preview/services.ts) asks for the plan when an attempt fails
+// and returns it with the failure, and its prepareFailed domain write
+// (src/workflow/preview/machine.ts) posts the once-per-streak note. Both
+// halves run here, the build and the platform modules stubbed.
+function loadPrepare(plan) {
   const paths = {
+    staging: require.resolve('../src/services/staging'),
     visuals: require.resolve('../src/services/visuals'),
-    ws: require.resolve('../src/services/ws'),
-    dm: require.resolve('../src/services/homeroom-bot-dm'),
-    notifications: require.resolve('../src/services/notifications'),
     sync: require.resolve('../src/services/boot-failure-sync'),
-    subject: require.resolve('../src/services/staging-recovery'),
   };
   const asked = [];
+  const build = { err: null };
   const originals = [
-    [paths.visuals, stubModule(paths.visuals, {
-      storeChecks: async () => true,
-      summarizeBootFailure: () => '[not_ready] could not create unique index "idx_bot_config_versions_one_current"',
+    [paths.staging, stubModule(paths.staging, {
+      prepareAttempt: async () => { throw build.err; },
     })],
-    [paths.ws, stubModule(paths.ws, { broadcastGlobal: () => {}, pushSessionUpdate: () => {}, sendSystemMessage: async () => {} })],
-    [paths.dm, stubModule(paths.dm, { noteChangeStopped: async () => null })],
-    [paths.notifications, stubModule(paths.notifications, {
-      createCheckFailedNotification: async () => [], hydrateAndPush: async () => {},
+    [paths.visuals, stubModule(paths.visuals, {
+      summarizeBootFailure: () => '[not_ready] could not create unique index "idx_bot_config_versions_one_current"',
     })],
     [paths.sync, stubModule(paths.sync, {
       afterBootFailure: async (args) => { asked.push(args); return plan; },
       explain: subject.explain,
     })],
   ];
-  delete require.cache[paths.subject];
-  const recovery = require('../src/services/staging-recovery');
+  const { previewServices } = require('../src/workflow/preview/services.ts');
+  const { preview, WORK } = require('../src/workflow/preview/machine.ts');
+  const pool = { async query(sql) {
+    if (/FROM chat_sessions cs JOIN apps/.test(String(sql))) return { rows: [row({ app_id: 10, user_id: 3, pr_number: 4186 })] };
+    if (/FROM apps WHERE id/.test(String(sql))) return { rows: [{ id: 10, slug: 'usernode-2d5619' }] };
+    return { rows: [] };
+  } };
+  const prepare = previewServices({ config: {}, pool })[WORK.prepare];
+  const prepareFailed = preview({ maxRetries: 5, retireAfterMs: 60000 }).writes.get('prepareFailed');
+  // One failed attempt, the way the machine sees it: the work's result,
+  // then the domain write its transition makes of it (machine.ts).
+  const fail = async (err, tx) => {
+    build.err = err;
+    const r = await prepare.run({
+      input: { sessionId: 6912, appId: 10, n: 1, head: HEAD, db: 'app_usernode_2d5619_staging_s6912_aaaaaa' },
+      key: 'prepare:1', attempt: 1, resumeFrom: null, signal: new AbortController().signal, checkpoint: async () => {},
+    });
+    assert.equal(r.ok, false);
+    if (tx) {
+      await prepareFailed(tx, {
+        type: 'prepareFailed', sessionId: 6912, appId: 10, userId: 3, head: HEAD,
+        detail: r.detail, infrastructure: r.infrastructure, platformFault: r.platformFault,
+        aboutMain: r.aboutMain, sync: r.sync, source: 'cli_handoff', prNumber: 4186,
+      }, { push: () => {} });
+    }
+    return r;
+  };
   const restore = () => {
     for (const [id, original] of originals) {
       if (original) require.cache[id] = original; else delete require.cache[id];
     }
-    delete require.cache[paths.subject];
   };
-  return { recovery, asked, restore };
+  return { fail, asked, restore };
 }
 
-function streakPool() {
+// The verdict is stored and this is the streak's first note.
+function streakTx() {
   const queries = [];
   return {
     queries,
     async query(sql, params) {
-      queries.push({ sql: String(sql), params });
-      if (/SELECT user_id, app_id, pr_number/.test(String(sql))) {
-        return { rows: [{ user_id: 3, app_id: 10, pr_number: 4186, consecutive_check_failures: 1, check_error_notified_at: null }] };
-      }
-      return { rows: [], rowCount: 1 };
+      const text = String(sql);
+      queries.push({ sql: text, params });
+      if (/SET check_error_notified_at = NOW\(\)/.test(text)) return { rows: [{ id: 6912 }], rowCount: 1 };
+      if (/UPDATE chat_sessions/.test(text)) return { rows: [], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
     },
   };
 }
 
-const posted = (pool) => String(pool.queries.find((q) => /INSERT INTO chat_session_messages/.test(q.sql)).params[1]);
+const posted = (tx) => String(tx.queries.find((q) => /INSERT INTO chat_session_messages/.test(q.sql)).params[1]);
 
 test('#4186: the thread says main is being merged in, not that the build needs fixing', async () => {
-  const { recovery, asked, restore } = loadRecovery({ sync: true, why: null, behindBy: 2 });
-  const pool = streakPool();
+  const { fail, asked, restore } = loadPrepare({ sync: true, why: null, behindBy: 2 });
+  const tx = streakTx();
   try {
     const err = Object.assign(new Error('not ready'), { healthcheckFailed: true });
-    await recovery.recordStagingBootFailure({ config: {}, pool, session: row(), commitHash: HEAD, err });
+    await fail(err, tx);
     assert.equal(asked.length, 1);
     assert.equal(asked[0].commitHash, HEAD);
     assert.equal(asked[0].err, err);
-    const text = posted(pool);
+    const text = posted(tx);
     assert.match(text, /^⚠️ Staging preview failed to start\. This proposal is 2 commits behind main/);
     assert.match(text, /Homeroom is merging main into it and will build the preview again\. Reason: \[not_ready\]/);
     assert.doesNotMatch(text, /can't merge yet/);
@@ -344,13 +286,11 @@ test('#4186: the thread says main is being merged in, not that the build needs f
 });
 
 test('a proposal level with main is told the cause is its own', async () => {
-  const { recovery, restore } = loadRecovery({ sync: false, why: 'level', behindBy: 0 });
-  const pool = streakPool();
+  const { fail, restore } = loadPrepare({ sync: false, why: 'level', behindBy: 0 });
+  const tx = streakTx();
   try {
-    await recovery.recordStagingBootFailure({
-      config: {}, pool, session: row(), commitHash: HEAD, err: { healthcheckFailed: true, message: 'x' },
-    });
-    assert.equal(posted(pool),
+    await fail(Object.assign(new Error('x'), { healthcheckFailed: true }), tx);
+    assert.equal(posted(tx),
       '⚠️ Staging preview failed to start, so automated checks can\'t run and this proposal can\'t merge yet. '
       + 'It already includes everything on main, so the cause is in this change. '
       + 'Reason: [not_ready] could not create unique index "idx_bot_config_versions_one_current"');
@@ -358,26 +298,24 @@ test('a proposal level with main is told the cause is its own', async () => {
 });
 
 test('no plan leaves the note as it always read', async () => {
-  const { recovery, restore } = loadRecovery(null);
-  const pool = streakPool();
+  const { fail, restore } = loadPrepare(null);
+  const tx = streakTx();
   try {
-    await recovery.recordStagingBootFailure({
-      config: {}, pool, session: row(), commitHash: HEAD, err: new Error('Build failed'),
-    });
-    assert.equal(posted(pool),
+    await fail(new Error('Build failed'), tx);
+    assert.equal(posted(tx),
       '⚠️ Staging preview failed to start, so automated checks can\'t run and this proposal can\'t merge yet. '
       + 'Reason: [not_ready] could not create unique index "idx_bot_config_versions_one_current"');
   } finally { restore(); }
 });
 
 test('the fleet\'s own infrastructure failure is never a reason to sync', async () => {
-  const { recovery, asked, restore } = loadRecovery({ sync: true, why: null, behindBy: 2 });
+  const { fail, asked, restore } = loadPrepare({ sync: true, why: null, behindBy: 2 });
   try {
-    await recovery.recordStagingBootFailure({
-      config: {}, pool: streakPool(), session: row(), commitHash: HEAD,
-      err: { healthcheckFailed: true, containerLogs: 'FATAL: sorry, too many clients already' },
-    });
+    const r = await fail(Object.assign(new Error('not ready'),
+      { healthcheckFailed: true, containerLogs: 'FATAL: sorry, too many clients already' }));
     assert.equal(asked.length, 0);
+    assert.equal(r.infrastructure, true);
+    assert.equal(r.sync, false);
   } finally { restore(); }
 });
 

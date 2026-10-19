@@ -26,10 +26,10 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const DIR = 'frontend/src/features/first-session';
 
-const { cardPosition, SAFE_TOP, SAFE_BOTTOM, MIN_CARD_ROOM, CARD_GAP } = loadTsx(`${DIR}/card-placement.ts`);
-const { footTop } = loadTsx(`${DIR}/index.tsx`);
+const { cardPosition, clearOf, SAFE_TOP, SAFE_BOTTOM, MIN_CARD_ROOM, CARD_GAP } = loadTsx(`${DIR}/card-placement.ts`);
+const { footTop, surfaceBox } = loadTsx(`${DIR}/index.tsx`);
 const { VIEWPORT_MARGIN } = loadTsx('frontend/src/features/home/tour/spotlight.ts');
-const { makerSteps, invitedSteps, privateSteps, lookAroundSteps, BOTTOM_BARS } = loadTsx(`${DIR}/tour-steps.ts`);
+const { homeWalkSteps, lookAroundSteps, BOTTOM_BARS, APP_MENU, SCREEN_HEADER } = loadTsx(`${DIR}/tour-steps.ts`);
 
 // ./index.tsx PAD, the hole's padding round its target.
 const PAD = 6;
@@ -163,13 +163,18 @@ test('the other placements, and none can start above the screen or run off its f
 
 test('every tour card, on every desktop and phone size, is whole on the screen', () => {
   const steps = [
-    ...makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 }),
-    ...invitedSteps({ slug: 'film', name: 'Friday Film Crew' }),
-    ...privateSteps({ slug: 'film', name: 'Friday Film Crew' }),
+    ...homeWalkSteps({ slug: 'film' }),
+    ...homeWalkSteps({ slug: 'film', privateMember: true }),
     ...lookAroundSteps(),
+    // No tour places a card any other way since the walk replaced the tours
+    // that walked through the app, its menu, the hub and #general (15 Oct
+    // 2026); the engine still places one each way, and each still holds.
+    { title: 'a screen whole, its card at the foot', target: '#app-view', alongside: SCREEN_HEADER, place: 'bottom' },
+    { title: 'a card above the composer', target: '#gc-messages, #gc-form', place: { above: '#gc-form' } },
+    { title: 'a card clear of the menu', target: '#improve-row-feedback', inMenu: true, place: { clear: APP_MENU } },
+    { title: 'a card under a header', place: { below: '#platform-header' } },
   ];
-  assert.ok(steps.some((s) => s.place === 'bottom'), 'the hub and app steps sit at the foot');
-  assert.ok(steps.some((s) => s.place && typeof s.place === 'object' && 'below' in s.place), 'the bot step sits under its header');
+  assert.ok(steps.some((s) => s.place === 'bottom'), 'a step at the foot');
 
   const sizes = [
     { width: 1280, height: 800 }, { width: 1024, height: 700 }, { width: 768, height: 1024 }, { width: 1440, height: 900 },
@@ -198,14 +203,27 @@ test('every tour card, on every desktop and phone size, is whole on the screen',
       const place = step.place;
       const isBelow = place && typeof place === 'object' && 'below' in place;
       const isAbove = place && typeof place === 'object' && 'above' in place;
+      const isClear = place && typeof place === 'object' && 'clear' in place;
+      // The surfaces a `{ clear }` card keeps off: none drawn, a sheet along
+      // the foot, a popover under the header, one the whole screen tall, and
+      // one still sliding in below the screen.
+      const surfaces = isClear ? [
+        null,
+        { left: 0, top: viewport.height - 380, width: viewport.width, height: 380 },
+        { left: Math.max(0, viewport.width - 360), top: 56, width: Math.min(340, viewport.width), height: 420 },
+        { left: 0, top: 40, width: viewport.width, height: viewport.height - 40 },
+        { left: 0, top: viewport.height + 10, width: viewport.width, height: 380 },
+      ] : [null];
       for (const box of boxes) {
         for (const belowBottom of isBelow ? [null, 100, 169, viewport.height - 30] : [null]) {
           for (const aboveTop of isAbove ? [null, 200, viewport.height - 70, -50] : [null]) {
-            const style = cardPosition(box, place, viewport, { foot, aboveTop, belowBottom, pad: PAD });
-            for (const height of [150, 230, 400]) {
-              for (const [safeTop, safeBottom] of [[0, 0], [47, 34]]) {
-                assertWhole(style, viewport, height, `${viewport.width}x${viewport.height} ${step.title}`, safeTop, safeBottom);
-                drawn += 1;
+            for (const clear of surfaces) {
+              const style = cardPosition(box, place, viewport, { foot, aboveTop, belowBottom, clear, pad: PAD });
+              for (const height of [150, 230, 400]) {
+                for (const [safeTop, safeBottom] of [[0, 0], [47, 34]]) {
+                  assertWhole(style, viewport, height, `${viewport.width}x${viewport.height} ${step.title}`, safeTop, safeBottom);
+                  drawn += 1;
+                }
               }
             }
           }
@@ -214,6 +232,67 @@ test('every tour card, on every desktop and phone size, is whole on the screen',
     }
   }
   assert.ok(drawn > 1000);
+});
+
+// Newcomer run six (14 Oct 2026, iPhone 17 Safari): the card on "Suggest an
+// improvement" was hung just over the button, partway down the Homeroom
+// menu's sheet, and covered the sheet's top: its grabber, its rounded
+// corners and the app's name in small caps showed as a clipped sliver under
+// the card. Now the card stands clear of the whole sheet, with a gap.
+test('run six: a card clear of the menu stands over the whole menu sheet, with a clear gap', () => {
+  // Safari on a phone: no tab bar under an open app, the menu a kit sheet
+  // along the foot, the button a third of the way down it.
+  const safari = { width: 402, height: 678 };
+  const sheet = { left: 0, top: 318, width: 402, height: 360 };
+  const button = { left: 16, top: 372, width: 370, height: 50 };
+  const style = cardPosition(button, { clear: APP_MENU }, safari, anchors([], safari, { clear: sheet }));
+  assert.equal(style.bottom, safari.height - sheet.top + CARD_GAP, 'its foot CARD_GAP over the sheet\'s top edge');
+  for (const height of [140, 190]) {
+    const at = edges(style, safari, height);
+    assert.ok(at.bottom <= sheet.top - CARD_GAP, `a ${height}px card ends clear of the sheet`);
+    assert.ok(at.top >= VIEWPORT_MARGIN, 'and starts on screen');
+  }
+  // What it was: hung by the button, its foot inside the sheet's top.
+  const before = cardPosition(button, undefined, safari, anchors([], safari));
+  assert.ok(safari.height - before.bottom > sheet.top, 'the old card ran over the sheet\'s top');
+  // In the app the status bar comes off the room over the sheet.
+  assertWhole(style, safari, 160, 'in the app', 47, 34);
+
+  // A wide window: the menu is a popover under the mark, at the top. No
+  // room over it, so the card goes under it, CARD_GAP clear.
+  const popover = { left: 920, top: 60, width: 340, height: 420 };
+  const wide = cardPosition({ left: 932, top: 120, width: 316, height: 44 }, { clear: APP_MENU }, laptop, anchors([rail], laptop, { clear: popover }));
+  assert.equal(wide.top, `max(${popover.top + popover.height + CARD_GAP}px, calc(${VIEWPORT_MARGIN}px + ${SAFE_TOP}))`);
+  // A menu that leaves room neither over nor under it, or none drawn yet:
+  // the card goes where `auto` puts it, clear of the button.
+  const tall = { left: 0, top: 40, width: 390, height: 804 };
+  const target = { left: 16, top: 500, width: 358, height: 50 };
+  assert.equal(clearOf(tall, phone.height), null);
+  assert.deepEqual(cardPosition(target, { clear: APP_MENU }, phone, anchors([], phone, { clear: tall })),
+    cardPosition(target, undefined, phone, anchors([], phone)));
+  assert.deepEqual(cardPosition(target, { clear: APP_MENU }, phone, anchors([], phone)),
+    cardPosition(target, undefined, phone, anchors([], phone)));
+  // Room over it needs room for a whole card: MIN_CARD_ROOM and the gaps.
+  const edge = MIN_CARD_ROOM + CARD_GAP + VIEWPORT_MARGIN;
+  assert.ok(clearOf({ left: 0, top: edge, width: 390, height: 300 }, phone.height).bottom !== undefined, 'over it');
+  assert.ok(clearOf({ left: 0, top: edge - 1, width: 390, height: 300 }, phone.height).top !== undefined, 'under it');
+});
+
+test('run six: the surface is the kit\'s sheet the menu is presented in, else the menu itself', () => {
+  const rect = (r) => () => ({ ...r, right: r.left + r.width, bottom: r.top + r.height });
+  const kit = { getBoundingClientRect: rect({ left: 0, top: 300, width: 390, height: 380 }) };
+  const inKit = { closest: (sel) => (sel === '.un-sheet' ? kit : null), getBoundingClientRect: rect({ left: 0, top: 318, width: 390, height: 362 }) };
+  assert.deepEqual(surfaceBox(APP_MENU, { querySelectorAll: () => [inKit] }), { left: 0, top: 300, width: 390, height: 380 },
+    'the grabber and the rounded top are the kit sheet\'s, above the menu\'s own box');
+  const own = { closest: () => null, getBoundingClientRect: rect({ left: 920, top: 60, width: 340, height: 420 }) };
+  assert.deepEqual(surfaceBox(APP_MENU, { querySelectorAll: () => [own] }), { left: 920, top: 60, width: 340, height: 420 });
+  const closed = { closest: () => null, getBoundingClientRect: rect({ left: 0, top: 0, width: 0, height: 0 }) };
+  assert.equal(surfaceBox(APP_MENU, { querySelectorAll: () => [closed] }), null);
+  assert.equal(surfaceBox(APP_MENU, { querySelectorAll: () => [] }), null);
+  // The tour measures it for a `{ clear }` step and hands it to the arithmetic.
+  const src = read(`${DIR}/index.tsx`);
+  assert.match(src, /const clear = place && typeof place === 'object' && 'clear' in place \? surfaceBox\(place\.clear\) : null;/);
+  assert.match(src, /belowBottom: below \? below\.top \+ below\.height : null,\s+clear,/);
 });
 
 test('the tour measures the foot by footTop, and draws the card where cardPosition says', () => {
@@ -228,7 +307,7 @@ test('the tour measures the foot by footTop, and draws the card where cardPositi
   // The tour's first frame on a 1280x800 laptop, with the rail: no target
   // measured yet, so the card is at the foot of the window.
   const { Tour } = loadTsx(`${DIR}/index.tsx`);
-  const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
+  const steps = homeWalkSteps({ slug: 'film' });
   const railEl = { getBoundingClientRect: () => ({ ...rail, right: rail.left + rail.width, bottom: rail.top + rail.height }) };
   const had = { window: Object.hasOwn(globalThis, 'window'), document: Object.hasOwn(globalThis, 'document') };
   const before = { window: globalThis.window, document: globalThis.document };

@@ -9,6 +9,7 @@ const { announceIssueCreated, findAppByRepo } = require('../services/issue-annou
 const appAccess = require('../services/app-access');
 const communities = require('../services/communities');
 const { placeBounty } = require('../services/bounties');
+const { kudosParked } = require('../services/kudos-parked');
 const { getPool } = require('../db/pool');
 const { sniffImageType, sniffVideoType } = require('../services/attachments');
 const { feedbackTitleLimiter, feedbackSubmitLimiter, issueScreenshotLimiter, feedbackVideoLimiter } = require('../middleware/rate-limits');
@@ -19,6 +20,8 @@ const { parseGitHubRepo, createPlatformIssue, recordFeedbackReport } = require('
 // #4194: the description may be as long as a GitHub issue body allows, less
 // the room the lines this route adds around it need.
 const { GITHUB_ISSUE_BODY_MAX, FEEDBACK_DESCRIPTION_MAX } = require('../services/issue-body-limit');
+const { editInfo, readEditInfo, saveFeedbackEdit } = require('../services/feedback-edit');
+const { pushIssueUpdate } = require('../services/ws');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -294,6 +297,16 @@ function bodyTooLong(res, body) {
   });
 }
 
+// The issue is already filed. Losing the optional edit metadata must never
+// turn a successful submission into an error that invites a duplicate.
+async function filedEditInfo(pool, report, userId) {
+  try { return await readEditInfo(pool, report?.id, userId); }
+  catch (err) {
+    log.warn('feedback', 'Filed request edit metadata unavailable', { message: err.message });
+    return null;
+  }
+}
+
 // Pure (exported for tests): the collapsed <details> suffix appended to
 // the issue body for an app-provided state snapshot. Four-backtick fence
 // so snapshot content containing ``` can't break out of the block.
@@ -428,7 +441,10 @@ const MY_FEEDBACK_LIMIT = 50;
 
 const MY_FEEDBACK_SQL = `
   SELECT fr.id, fr.target, fr.title, fr.issue_owner, fr.issue_repo, fr.issue_number,
-         fr.created_at, a.slug AS app_slug, a.name AS app_name,
+         fr.created_at, fr.description, fr.source, fr.edit_version,
+         (fr.body_prefix IS NOT NULL AND fr.body_suffix IS NOT NULL) AS has_body,
+         GREATEST(0, EXTRACT(EPOCH FROM fr.created_at + INTERVAL '5 minutes' - clock_timestamp())) AS seconds_left,
+         a.slug AS app_slug, a.name AS app_name,
          cr.points AS credited_points,
          COUNT(*) OVER () AS total_sent,
          COUNT(cr.source_key) OVER () AS total_counted
@@ -485,6 +501,7 @@ function shapeMyFeedback(rows, selfApp) {
       createdAt: r.created_at ? new Date(r.created_at).toISOString() : null,
       status: counted ? 'counted' : 'received',
       points: counted ? Number(r.credited_points) || 0 : null,
+      edit: editInfo(r),
     };
   });
   const sent = Number(first.total_sent) || 0;
@@ -568,6 +585,9 @@ function feedbackRoutes(config) {
   const router = Router();
   const pool = getPool(config);
   const { owner: feedbackOwner, repo: feedbackRepo } = parseGitHubRepo(config.platformRepoUrl);
+  // #5249: a submit asking for a kudos bounty files without one while kudos
+  // is parked (services/kudos-parked.js).
+  const bountiesParked = kudosParked(config);
 
   // Feedback titles are small calls, but they are still billable. Resolve
   // the payer before every generation so neither the preview endpoint nor
@@ -793,7 +813,10 @@ function feedbackRoutes(config) {
     if (req.body.bounty !== undefined && typeof req.body.bounty !== 'boolean') {
       return res.status(400).json({ error: 'bounty must be a boolean' });
     }
-    const wantsBounty = req.body.bounty === true;
+    // #5249: while kudos is parked the flag is accepted and ignored: the
+    // feedback is filed as usual, with no bounty and no `bounty` field in the
+    // answer. A request saved offline before parking still carries it.
+    const wantsBounty = req.body.bounty === true && !bountiesParked;
 
     // Normalise the feedback target. Anything other than the explicit
     // 'app' opt-in falls back to platform feedback (today's behaviour).
@@ -983,7 +1006,8 @@ function feedbackRoutes(config) {
         // #1054: the "written while offline" line sits with the other header
         // lines, above the description — it is context for reading the report,
         // not part of it.
-        const fixedBody = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n${queuedLine}\n${description.trim()}${screenshotSuffix}${videoSuffix}`;
+        const bodyPrefix = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n${queuedLine}\n`;
+        const fixedBody = `${bodyPrefix}${description.trim()}${screenshotSuffix}${videoSuffix}`;
         // #4194: the snapshot gets whatever room the report leaves it.
         const body = fixedBody + fitPageState(fixedBody, pageState, pageStateTruncated);
         if (body.length > GITHUB_ISSUE_BODY_MAX) return bodyTooLong(res, body);
@@ -1019,9 +1043,10 @@ function feedbackRoutes(config) {
             issueNumber: issue.number, user: req.user,
           })
           : null;
-        await recordFeedbackReport(pool, {
+        const report = await recordFeedbackReport(pool, {
           user: req.user, app: appContext, owner: issueOwner, repo: issueRepo,
           issueNumber: issue.number, title, description: description.trim(),
+          bodyPrefix, bodySuffix: body.slice(bodyPrefix.length + description.trim().length),
         });
         // "Suggest an improvement" counts the report just recorded, now
         // rather than on the rule's next pass: #3568 was this step still
@@ -1049,6 +1074,7 @@ function feedbackRoutes(config) {
         }
         return res.json({
           url: issue.html_url, title, titleFallback,
+          edit: await filedEditInfo(pool, report, req.user?.id),
           ...(bounty ? { bounty } : {}),
           ...(firstFeedback ? { firstFeedback } : {}),
           ...(homeroomBot ? { homeroomBot } : {}),
@@ -1058,7 +1084,8 @@ function feedbackRoutes(config) {
       // The platform repo, with the bot's token (services/feedback-reports.js
       // createPlatformIssue): a hand-rolled call that applies safeMention to
       // the user-typed title and description itself (#723).
-      const platformBody = `**Source:** ${source}\n${queuedLine}\n${description.trim()}${screenshotSuffix}${videoSuffix}`;
+      const bodyPrefix = `**Source:** ${source}\n${queuedLine}\n`;
+      const platformBody = `${bodyPrefix}${description.trim()}${screenshotSuffix}${videoSuffix}`;
       if (platformBody.length > GITHUB_ISSUE_BODY_MAX) return bodyTooLong(res, platformBody);
       const created = await createPlatformIssue({
         owner: issueOwner,
@@ -1096,9 +1123,10 @@ function feedbackRoutes(config) {
           issueNumber: issue.number, user: req.user,
         })
         : null;
-      await recordFeedbackReport(pool, {
+      const report = await recordFeedbackReport(pool, {
         user: req.user, app: null, owner: issueOwner, repo: issueRepo,
         issueNumber: issue.number, title, description: description.trim(),
+        bodyPrefix, bodySuffix: screenshotSuffix + videoSuffix,
       });
       // The same count for platform feedback (#3568).
       await challengeScorer.scoreOnFeedback(pool, config);
@@ -1107,12 +1135,55 @@ function feedbackRoutes(config) {
       });
       res.json({
         url: issue.html_url, title, titleFallback,
+        edit: await filedEditInfo(pool, report, req.user?.id),
         ...(bounty ? { bounty } : {}),
         ...(firstFeedback ? { firstFeedback } : {}),
       });
     } catch (err) {
       log.error('feedback', 'Error filing issue', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #4803: the author can correct the title and words for five minutes.
+  // Attachments, the destination and attribution are exclusively server-owned.
+  router.patch('/api/feedback/:id', feedbackSubmitLimiter, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user?.id) return res.status(401).json({ error: 'Sign in to edit feedback' });
+    const id = /^\d+$/.test(req.params.id) ? Number(req.params.id) : NaN;
+    if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid feedback id' });
+    const { title, description, version } = req.body || {};
+    if (typeof title !== 'string' || !title.trim() || title.trim().length > 200) {
+      return res.status(400).json({ error: 'Title is required (max 200 chars)' });
+    }
+    if (typeof description !== 'string' || !description.trim() || description.trim().length > FEEDBACK_DESCRIPTION_MAX) {
+      return res.status(400).json({ error: `Description is required (max ${FEEDBACK_DESCRIPTION_MAX} chars)` });
+    }
+    if (!Number.isSafeInteger(version) || version < 0) {
+      return res.status(400).json({ error: 'Invalid feedback version' });
+    }
+    try {
+      const result = await saveFeedbackEdit(pool, id, req.user.id,
+        { title: title.trim(), description: description.trim(), version });
+      if (result.code === 'body_too_long') return bodyTooLong(res, { length: result.length });
+      if (result.status !== 200) return res.status(result.status).json({ code: result.code });
+      if (result.target) {
+        const fr = result.target;
+        // The save has committed. A failed refresh never turns that success
+        // into an error which could encourage another submission.
+        try {
+          github.invalidateIssuesCache(fr.issue_owner, fr.issue_repo);
+          const app = await findAppByRepo(pool, fr.issue_owner, fr.issue_repo);
+          if (app) pushIssueUpdate({ action: 'updated', source: 'github',
+            appSlug: app.slug, appId: app.id, issueNumber: fr.issue_number });
+        } catch (err) {
+          log.warn('feedback', 'Edited request refresh failed', { id, message: err.message });
+        }
+      }
+      return res.json({ ok: true, ...(result.unchanged ? { unchanged: true } : {}), edit: result.edit });
+    } catch (err) {
+      log.warn('feedback', 'Feedback edit failed', { id, message: err.message });
+      return res.status(502).json({ error: "Couldn't save the request. Try again in a moment." });
     }
   });
 

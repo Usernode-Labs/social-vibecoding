@@ -282,6 +282,119 @@ async function galleryStats(pool, query = {}) {
   return { stats: rows[0] || {} };
 }
 
+// ── The current shots, over a recent window ─────────────────────────────
+//
+// The counters above are the console strip's: the retired route-capture
+// pipeline's problems (missing_recording, root_only, unknown_state, …) over
+// every merged proposal there has ever been, so they say nothing about the
+// before & after shots today. These are what the admin connector's
+// list_recent_shots reports instead: for proposals merged in the last `days`
+// days (one app, or all), how each one's shots ended (chat_sessions'
+// shots slot), how its current run's declared changes came out (that run's
+// verdict, an unchanged change apart from a ready one, as
+// shots-files.resultStatus reads it), whether the problems the shots agent
+// noted are also on the before build, and why failed runs failed.
+// Only a verified run, or one failed because a change failed, keeps a
+// verdict; a run that stopped before it saved anything has none to count.
+const DEFAULT_STATS_DAYS = 7;
+const MAX_STATS_DAYS = 90;
+const SHOTS_STATS_SQL = `
+  WITH recent AS (
+    SELECT cs.shots_state AS state,
+           cs.shots_detail->>'failureCode' AS failure_code,
+           CASE WHEN jsonb_typeof(cs.shots_detail->'claims') = 'array'
+                THEN jsonb_array_length(cs.shots_detail->'claims') ELSE 0 END AS declared,
+           r.state AS run_state,
+           CASE WHEN r.state IN ('verified', 'failed') AND r.hard_verdict->>'mode' = 'shots'
+                THEN r.hard_verdict END AS verdict
+      FROM chat_sessions cs
+      LEFT JOIN apps a ON a.id = cs.app_id
+      LEFT JOIN shot_runs r ON r.id = cs.shots_run_id
+     WHERE cs.status = 'merged' AND cs.merged_at IS NOT NULL
+       AND cs.merged_at >= $1::timestamptz
+       AND ($2::int IS NULL OR cs.app_id = $2::int)
+       AND ($3::text IS NULL OR a.slug = $3::text)
+  ), results AS (
+    SELECT CASE WHEN s.story->>'status' = 'ready' AND s.story->>'unchanged' = 'true' THEN 'unchanged'
+                WHEN s.story->>'status' IN ('ready', 'failed') THEN s.story->>'status'
+                ELSE 'skipped' END AS status
+      FROM recent
+     CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(recent.verdict->'stories') = 'array'
+                                                  THEN recent.verdict->'stories' ELSE '[]'::jsonb END) AS s(story)
+  ), notices AS (
+    SELECT CASE WHEN n.notice->>'alsoBefore' IN ('true', 'false') THEN n.notice->>'alsoBefore'
+                ELSE 'unknown' END AS also_before
+      FROM recent
+     CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN recent.run_state = 'verified'
+                                                       AND jsonb_typeof(recent.verdict->'notices') = 'array'
+                                                  THEN recent.verdict->'notices' ELSE '[]'::jsonb END) AS n(notice)
+  )
+  SELECT (SELECT COUNT(*) FROM recent)::int AS proposals,
+         (SELECT COALESCE(SUM(declared), 0) FROM recent)::int AS declared,
+         (SELECT COALESCE(jsonb_object_agg(state, n), '{}'::jsonb)
+            FROM (SELECT COALESCE(state, 'none') AS state, COUNT(*)::int AS n
+                    FROM recent GROUP BY 1) states) AS states,
+         (SELECT COALESCE(jsonb_object_agg(status, n), '{}'::jsonb)
+            FROM (SELECT status, COUNT(*)::int AS n FROM results GROUP BY 1) statuses) AS results,
+         (SELECT COALESCE(jsonb_object_agg(also_before, n), '{}'::jsonb)
+            FROM (SELECT also_before, COUNT(*)::int AS n FROM notices GROUP BY 1) seen) AS notices,
+         (SELECT COALESCE(jsonb_object_agg(failure_code, n), '{}'::jsonb)
+            FROM (SELECT failure_code, COUNT(*)::int AS n FROM recent
+                   WHERE state = 'failed' AND failure_code IS NOT NULL
+                   GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 10) codes) AS failure_codes`;
+const IN_FLIGHT_SHOTS = ['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'];
+
+// The window in whole days: the default for anything that is not a positive
+// number, clamped to MAX_STATS_DAYS.
+function resolveDays(raw) {
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_STATS_DAYS;
+  return Math.min(n, MAX_STATS_DAYS);
+}
+
+async function shotsStats(pool, query = {}, { now = Date.now() } = {}) {
+  const days = resolveDays(query.days);
+  const since = new Date(now - days * 24 * 60 * 60 * 1000).toISOString();
+  // The same app filter as buildWhere: a numeric id or a slug.
+  const app = query.app == null ? '' : String(query.app);
+  const appId = /^\d+$/.test(app) ? parseInt(app, 10) : null;
+  const appSlug = app && appId == null ? app : null;
+  const { rows: [row = {}] } = await pool.query(SHOTS_STATS_SQL, [since, appId, appSlug]);
+  const count = (map, key) => (map && Number.isFinite(Number(map[key])) ? Number(map[key]) : 0);
+  const states = row.states || {};
+  const results = row.results || {};
+  const seen = row.notices || {};
+  return {
+    window: { days, since },
+    proposals: Number(row.proposals) || 0,
+    // How each merged proposal's shots ended. `none`: it never had any.
+    shots: {
+      verified: count(states, 'verified'),
+      failed: count(states, 'failed'),
+      notRequired: count(states, 'not_required'),
+      overridden: count(states, 'overridden'),
+      cancelled: count(states, 'cancelled'),
+      stale: count(states, 'stale'),
+      inFlight: IN_FLIGHT_SHOTS.reduce((sum, state) => sum + count(states, state), 0),
+      none: count(states, 'none'),
+    },
+    changes: {
+      declared: Number(row.declared) || 0,
+      ready: count(results, 'ready'),
+      unchanged: count(results, 'unchanged'),
+      skipped: count(results, 'skipped'),
+      failed: count(results, 'failed'),
+    },
+    notices: {
+      total: count(seen, 'true') + count(seen, 'false') + count(seen, 'unknown'),
+      alsoBefore: count(seen, 'true'),
+      notBefore: count(seen, 'false'),
+      unknown: count(seen, 'unknown'),
+    },
+    failureCodes: row.failure_codes && typeof row.failure_codes === 'object' ? row.failure_codes : {},
+  };
+}
+
 function galleryRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -352,12 +465,16 @@ module.exports = {
   galleryRoutes,
   listProposals,
   galleryStats,
+  shotsStats,
   // Exported for unit tests (pure helpers, no DB).
   resolveLimit,
   resolveCursor,
   resolveProblem,
+  resolveDays,
   buildWhere,
   PROBLEM_FILTERS,
   DEFAULT_LIMIT,
   MAX_LIMIT,
+  DEFAULT_STATS_DAYS,
+  MAX_STATS_DAYS,
 };

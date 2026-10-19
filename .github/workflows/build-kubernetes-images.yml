@@ -119,11 +119,64 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - uses: azure/setup-helm@v4
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          version: v3.19.0
+
+      # Runs on main are queued one at a time, and a run whose commit is no
+      # longer main's tip builds all three images and then, in "Check branch
+      # tip before publishing", almost always skips: in a burst of merges the
+      # run that will release waits behind builds nobody uses. So a run that
+      # is already behind the tip when it starts, and that the publish step
+      # could not let release ahead of the tip, builds nothing. That is when
+      # the newest release already contains it, or when that release's
+      # revision was merged less than RELEASE_EVERY_MINUTES before it. Runs
+      # are queued one at a time, so the newest release cannot change between
+      # here and the publish step, and main's tip only moves on. Anything that
+      # cannot be read builds, as before; the tip always builds.
+      - name: Check whether this run can release
+        id: behind
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_EVERY_MINUTES: '15'
+        run: |
+          set -uo pipefail
+          build() { echo "skip=false" >> "$GITHUB_OUTPUT"; exit 0; }
+          skip() {
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "reason=$1" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          tip="$(git ls-remote --exit-code origin "$GITHUB_REF" | cut -f1)"
+          [[ "$tip" =~ ^[a-f0-9]{40}$ ]] || build
+          [ "$tip" != "$GITHUB_SHA" ] || build
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          chart="$(helm show chart "oci://ghcr.io/$owner/charts/social-vibecoding-platform" --version '0.1.*' 2>/dev/null || true)"
+          published_sha="$(printf '%s\n' "$chart" | sed -n 's/^appVersion: *//p' | tr -d '"' | head -n 1)"
+          [[ "$published_sha" =~ ^[a-f0-9]{40}$ ]] || build
+          status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$published_sha...$GITHUB_SHA" --jq .status 2>/dev/null || echo unknown)"
+          case "$status" in
+            behind|identical) skip "No build: main is at $tip, and the newest release ($published_sha) already contains $GITHUB_SHA." ;;
+            ahead) ;;
+            *) build ;;
+          esac
+          merged_at() { gh api "repos/$GITHUB_REPOSITORY/commits/$1" --jq '.commit.committer.date | fromdateiso8601' 2>/dev/null || echo; }
+          this_at="$(merged_at "$GITHUB_SHA")"
+          published_at="$(merged_at "$published_sha")"
+          [[ "$this_at" =~ ^[0-9]+$ && "$published_at" =~ ^[0-9]+$ ]] || build
+          [ $(( this_at - published_at )) -lt $(( RELEASE_EVERY_MINUTES * 60 )) ] || build
+          skip "No build: main is at $tip, whose run releases $GITHUB_SHA, and the newest release ($published_sha) is under $RELEASE_EVERY_MINUTES minutes older, so this run could not release ahead of the tip."
+
       - name: Select release work
         id: release
         env:
           SCHEDULED_WORKER_DIGEST: ${{ steps.scheduled_worker.outputs.digest }}
           CLAUDE_CODE_VERSION: ${{ steps.claude.outputs.version }}
+          BEHIND_SKIP: ${{ steps.behind.outputs.skip }}
+          BEHIND_REASON: ${{ steps.behind.outputs.reason }}
         shell: bash
         run: |
           if [ "$GITHUB_EVENT_NAME" = schedule ]; then
@@ -137,8 +190,13 @@ jobs:
             fi
           else
             echo 'matrix={"include":[{"component":"platform","context":".","dockerfile":"Dockerfile.kubernetes"},{"component":"worker","context":"worker","dockerfile":"worker/Dockerfile"},{"component":"capture","context":".","dockerfile":"capture/Dockerfile"}]}' >> "$GITHUB_OUTPUT"
-            echo 'should_release=true' >> "$GITHUB_OUTPUT"
-            reason="Normal source release."
+            if [ "${BEHIND_SKIP:-}" = true ]; then
+              echo 'should_release=false' >> "$GITHUB_OUTPUT"
+              reason="$BEHIND_REASON"
+            else
+              echo 'should_release=true' >> "$GITHUB_OUTPUT"
+              reason="Normal source release."
+            fi
           fi
           printf '### Kubernetes image plan\n\n- Claude Code: `%s`\n- %s\n' \
             "$CLAUDE_CODE_VERSION" "$reason" >> "$GITHUB_STEP_SUMMARY"
@@ -469,6 +527,14 @@ jobs:
       # it did before. Feature-branch candidates and dispatched runs never
       # wait.
       #
+      # Ten minutes became four on 10 October. A merge read "Going live" for
+      # a median of 5.6 minutes and up to 16 that day, most of it this wait,
+      # while what a restart cost had shrunk since 7 October: a checks run in
+      # flight is collected by the harvest rather than run again (none was in
+      # that day's eight restarts), and a bot turn resumes. What was left, a
+      # boot rebuilding every preview that keeps failing, now waits out each
+      # preview's own retry backoff (server.js recoverSessions).
+      #
       # To release at once (an urgent fix), run this workflow on main by hand:
       #   gh workflow run build-kubernetes-images.yml --ref main
       # A dispatched run never waits, and a run waiting here when one is
@@ -486,7 +552,7 @@ jobs:
           CHART_VERSION: ${{ steps.chart.outputs.chart_version }}
           CHART_REF: oci://ghcr.io/${{ steps.chart.outputs.registry_owner }}/charts/social-vibecoding-platform
           RELEASE_EVERY_MINUTES: '15'
-          RELEASE_MIN_GAP_MINUTES: '10'
+          RELEASE_MIN_GAP_MINUTES: '4'
         run: |
           set -euo pipefail
           branch_tip() { git ls-remote --exit-code origin "$GITHUB_REF" | cut -f1; }

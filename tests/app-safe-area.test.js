@@ -92,16 +92,19 @@ test('every #app-content mount point declares its surface', () => {
   const platformCalls = APP_VIEW.match(/_setSurface\('platform'\)/g) || [];
   // app: beginLaunch, showLaunchCoverShot, the source-less settled-launch,
   // app-tone (#1945) and offline screenshots, renderAppTab's adopt
-  // early-exit, its iframe path, and _resumeAppFrame (#2902) — a kept app
-  // brought back is an app frame on screen again.
-  assert.equal(appCalls.length, 8,
-    `expected 8 app-surface call sites, found ${appCalls.length}`);
+  // early-exit, its iframe path, _resumeAppFrame (#2902) — a kept app
+  // brought back is an app frame on screen again — and the launch-failed
+  // screenshot (#4813), which mounts the frame with its "Couldn't open this
+  // app" card up.
+  assert.equal(appCalls.length, 9,
+    `expected 9 app-surface call sites, found ${appCalls.length}`);
   // platform: renderAppTab's status, offline and unsafe-origin branches, plus
   // renderDevView; and since #15, renderAppTab's first-version branch (the
   // shell's own screen while the Homeroom bot builds a first version) and
-  // its screenshot state.
-  assert.equal(platformCalls.length, 6,
-    `expected 6 platform-surface call sites, found ${platformCalls.length}`);
+  // its screenshot state; and since N6, that screen updated in place on its
+  // recheck (_repaintFirstVersion), which owns the host as the branch does.
+  assert.equal(platformCalls.length, 7,
+    `expected 7 platform-surface call sites, found ${platformCalls.length}`);
 });
 
 test('the keep/adopt early-exit still asserts the app surface', () => {

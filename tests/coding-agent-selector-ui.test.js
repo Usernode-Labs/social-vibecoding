@@ -12,6 +12,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
@@ -63,6 +64,7 @@ function makeHarness() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   return {
@@ -141,7 +143,8 @@ test('an OpenRouter task opens on favorites without replacing an uncommon curren
   assert.equal(h.DevChat._openRouterFavoritesOnlyByDefault(models, 'missing'), false);
   assert.match(SRC, /id="dc-agent-choice-model-search"/);
   assert.match(SRC, /id="dc-agent-choice-favorites-only"/);
-  assert.match(SRC, /Platform recommendations start in Favorites/);
+  assert.match(SRC, /PlatformI18n\.htmlText\('devchat:agentChoice\.catalogNote'\)/);
+  assert.match(message('devchat:agentChoice.catalogNote'), /Platform recommendations start in Favorites/);
 });
 
 test('the simplified proposal picker ships through a fresh shell cache', () => {

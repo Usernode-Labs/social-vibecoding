@@ -187,7 +187,9 @@ test('a run writes at most three diagnostics, however many groups start over', a
   const { frames, diags } = read();
   assert.equal(frames.filter((f) => f.retryOf == null).length, 6);
   assert.ok(frames.every((f) => f.status === 'pass'), 'every group started over and passed');
-  assert.equal(diags.length, 3);
+  assert.equal(diags.filter((d) => d.kind === 'network-changed').length, 3);
+  assert.equal(diags.filter((d) => d.kind === 'checks-timing').length, 1,
+    'and the run\'s own timing line still gets out, past the cap');
 });
 
 // ── The retry pass ───────────────────────────────────────────────────────
@@ -280,6 +282,7 @@ test('the platform reads diagnostics and skips anything malformed', () => {
 test('settlement logs each diagnostic for the session it ran for', () => {
   const src = require('node:fs').readFileSync(require.resolve('../src/services/visuals'), 'utf8');
   const settle = src.slice(src.indexOf('async function settleCaptureRun('));
-  assert.match(settle, /for \(const diag of parseDiagnostics\(stdout\)\) \{\s*log\.warn\('visuals'/);
+  assert.match(settle, /for \(const diag of parseDiagnostics\(stdout\)\) \{/);
   assert.match(settle, /sessionId: session\.id, commitHash: commitHash \|\| null, kind: diag\.kind/);
+  assert.match(settle, /log\.warn\('visuals', diag\.kind === 'network-changed'/);
 });

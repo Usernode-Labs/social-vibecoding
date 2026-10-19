@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const source = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dialogs/feedback-controller.js'), 'utf8')
   .replace(/^import .*$/gm, '').replace(/^export /gm, '') + '\nglobalThis.Feedback = Feedback;';
 const moment = { userId: 7, appSlug: 'filed-app', issueNumber: 41, canFix: true };
@@ -22,18 +23,30 @@ function element(id) {
     querySelectorAll() { return []; },
   };
 }
-function harness({ response = { firstFeedback: moment }, ok = true } = {}) {
-  const els = new Map(), timers = new Map(), calls = [], fixes = [], nav = [], toasts = [], closes = [];
-  let id = 0, queueHooks, failedReads = 0;
+function harness({ response = { firstFeedback: moment }, ok = true, patchResult } = {}) {
+  const els = new Map(), timers = new Map(), intervals = new Map(), calls = [], fixes = [], nav = [], toasts = [], closes = [];
+  let id = 0, queueHooks, failedReads = 0, clock = 0;
   const el = id => { if (!els.has(id)) els.set(id, element(id)); return els.get(id); };
   const sandbox = {
+    // The binding the controller's i18n import gives it (the import line is stripped above).
+    t: englishPlatformI18n().t,
+    // The controller's KUDOS_PARKED import, stripped above too: these suites
+    // drive the bounty row with the switch off (#5249). The parked state is
+    // pinned in tests/feedback-bounty-ui.test.js.
+    KUDOS_PARKED: false,
     console, URLSearchParams, location: { search: '', hash: '', pathname: '/' },
+    performance: { now: () => clock },
     document: { getElementById: el, querySelector: () => null, querySelectorAll: () => [], createElement: element, addEventListener() {}, body: { appendChild() {} } },
     localStorage: { getItem() { return null; }, setItem() {} }, sessionStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
     setTimeout(fn, ms) { timers.set(++id, { fn, ms }); return id; }, clearTimeout: id => timers.delete(id),
-    setInterval() {}, clearInterval() {}, addEventListener() {}, publishVisibility() {},
+    setInterval(fn, ms) { intervals.set(++id, { fn, ms }); return id; }, clearInterval: id => intervals.delete(id),
+    addEventListener() {}, publishVisibility() {},
     fetch: async (url, options) => {
       calls.push({ url, options });
+      if (options?.method === 'PATCH') {
+        const result = typeof patchResult === 'function' ? await patchResult(JSON.parse(options.body)) : patchResult;
+        return { ok: result.status === 200, status: result.status, json: async () => result.body };
+      }
       return { ok, json: async () => typeof response === 'function' ? response() : response };
     },
     App: { user: { id: 7 }, currentApp: 'other-app', currentTab: 'app', async navigateToApp(...args) {
@@ -63,6 +76,7 @@ function harness({ response = { firstFeedback: moment }, ok = true } = {}) {
   return {
     sandbox, el, timers, calls, fixes, nav, toasts, closes,
     failedReads: () => failedReads,
+    advance(ms) { clock += ms; },
     // #2707: this harness opens with an app on screen, so BOTH destinations
     // are real and none is preselected — a submit refuses until one is tapped.
     // Every test below is about what happens AFTER a submit, so the tap is
@@ -74,6 +88,7 @@ function harness({ response = { firstFeedback: moment }, ok = true } = {}) {
       await settle();
     },
     async fireTimers(ms) { for (const [key, timer] of [...timers]) if (timer.ms === ms) { timers.delete(key); timer.fn(); } await settle(); },
+    async fireIntervals(ms) { for (const timer of intervals.values()) if (timer.ms === ms) timer.fn(); await settle(); },
     flush(result = moment) { queueHooks.onFlushed({ sent: 1, filed: [{ target: 'platform', firstFeedback: result }] }); },
     shown: () => !el('feedback-first-success').classList.contains('hidden'),
   };
@@ -190,6 +205,18 @@ test('the first-request moment offers Your requests too, and replaces a sent con
   q.flush();
   assert.ok(q.shown());
   assert.ok(q.el('feedback-sent').classList.contains('hidden'), 'one confirmation at a time');
+});
+// #4680: the form carries the same way to Your requests, under the intro
+// line, so what is already asked for is readable before a new one is written.
+// The route is written before the close, the same as the confirmations' links.
+test('the form itself offers Your requests before anything is typed', async () => {
+  const h = harness();
+  h.sandbox.App.openFeedbackModal();
+  assert.equal(h.el('feedback-form').classList.contains('hidden'), false, 'the form, not a confirmation');
+  h.el('feedback-form-mine').click();
+  assert.ok(h.el('feedback-modal').classList.contains('hidden'));
+  assert.equal(h.sandbox.location.hash, '#profile/your-requests');
+  assert.deepEqual(h.calls.filter((c) => c.url === '/api/feedback').length, 0, 'nothing filed by the look');
 });
 test('a rejected submission never congratulates the user', async () => {
   const h = harness({ ok: false, response: { error: 'Try again' } }); await h.submit();
@@ -347,4 +374,124 @@ test('B8: no link for somebody who could not build it, and the ordinary words wh
   assert.equal(shot.el('feedback-sent-title').textContent, BOT_TITLE);
   assert.ok(shot.el('feedback-sent-first').classList.contains('hidden'));
   assert.equal(shot.calls.filter((c) => c.url === '/api/feedback').length, 0);
+});
+
+// #4803: the actual controller, with network responses and a monotonic clock.
+const EDIT = { reportId: 12, version: 0, title: 'Original title', description: 'Original words', secondsLeft: 300 };
+test('a just-filed request offers the same editor on both confirmations; Cancel keeps the request', async () => {
+  for (const firstFeedback of [moment, undefined]) {
+    const h = harness({ response: { firstFeedback, edit: EDIT } });
+    await h.submit();
+    const button = firstFeedback ? 'feedback-first-edit' : 'feedback-sent-edit';
+    assert.equal(h.el(button).classList.contains('hidden'), false);
+    h.el(button).click();
+    assert.equal(h.el('feedback-edit').classList.contains('hidden'), false);
+    assert.equal(h.el('feedback-edit-title').value, EDIT.title);
+    assert.equal(h.el('feedback-edit-text').value, EDIT.description);
+    h.el('feedback-edit-text').value = 'Unsent correction';
+    h.el('feedback-edit-cancel').click();
+    assert.equal(h.el('feedback-edit').classList.contains('hidden'), true);
+    assert.equal(h.calls.filter(c => c.options?.method === 'PATCH').length, 0);
+    h.el(button).click();
+    assert.equal(h.el('feedback-edit-text').value, EDIT.description);
+  }
+});
+test('Save corrects the same request and returns to its confirmation with the saved notice', async () => {
+  const saved = { ...EDIT, title: 'Correct title', description: 'Correct words', version: 1, secondsLeft: 280 };
+  const h = harness({ response: { edit: EDIT }, patchResult: { status: 200, body: { ok: true, edit: saved } } });
+  await h.submit(); h.el('feedback-sent-edit').click();
+  h.el('feedback-edit-title').value = '  Correct title  ';
+  h.el('feedback-edit-text').value = '  Correct words  ';
+  h.el('feedback-edit-save').click(); await settle();
+  const call = h.calls.find(c => c.options?.method === 'PATCH');
+  assert.equal(call.url, '/api/feedback/12');
+  assert.deepEqual(JSON.parse(call.options.body), { title: 'Correct title', description: 'Correct words', version: 0 });
+  assert.match(h.el('feedback-sent-notice').textContent, /Changes saved/);
+  assert.equal(h.el('feedback-sent').classList.contains('hidden'), false);
+  h.el('feedback-sent-edit').click();
+  assert.equal(h.el('feedback-edit-title').value, saved.title);
+  assert.equal(h.el('feedback-edit-text').value, saved.description);
+});
+test('blank corrections are refused without a request', async () => {
+  const h = harness({ response: { edit: EDIT } }); await h.submit();
+  h.el('feedback-sent-edit').click(); h.el('feedback-edit-text').value = ' ';
+  h.el('feedback-edit-save').click(); await settle();
+  assert.match(h.el('feedback-edit-status').textContent, /Fill in both/);
+  assert.equal(h.calls.filter(c => c.options?.method === 'PATCH').length, 0);
+});
+test('expiration hides Edit and preserves words when it happens inside the editor', async () => {
+  const h = harness({ response: { edit: EDIT } }); await h.submit();
+  h.el('feedback-sent-edit').click(); h.el('feedback-edit-text').value = 'Keep these words';
+  h.advance(300000); await h.fireTimers(300000);
+  assert.equal(h.el('feedback-sent-edit').classList.contains('hidden'), true);
+  assert.equal(h.el('feedback-edit-save').disabled, true);
+  assert.equal(h.el('feedback-edit-text').value, 'Keep these words');
+  assert.match(h.el('feedback-edit-status').textContent, /5 minutes.*passed/);
+});
+test('server expiry and competing edits preserve corrections and stop another stale save', async () => {
+  for (const code of ['edit_window_closed', 'edit_conflict']) {
+    const h = harness({ response: { edit: EDIT }, patchResult: { status: 409, body: { code } } });
+    await h.submit(); h.el('feedback-sent-edit').click(); h.el('feedback-edit-text').value = 'Keep this';
+    h.el('feedback-edit-save').click(); await settle();
+    assert.equal(h.el('feedback-edit-text').value, 'Keep this');
+    assert.equal(h.el('feedback-edit-save').disabled, true);
+    assert.equal(h.el('feedback-edit-cancel').disabled, false);
+    assert.ok(h.el('feedback-edit-status').textContent);
+    h.advance(1000); await h.fireIntervals(1000);
+    assert.equal(h.el('feedback-edit-window').textContent, '');
+    h.el('feedback-edit-cancel').click();
+    assert.equal(h.el('feedback-sent-edit').classList.contains('hidden'), true);
+  }
+});
+test('a failed save keeps the corrections and enables a retry', async () => {
+  for (const patchResult of [{ status: 502, body: {} }, async () => { throw new Error('offline'); }]) {
+    const h = harness({ response: { edit: EDIT }, patchResult }); await h.submit();
+    h.el('feedback-sent-edit').click(); h.el('feedback-edit-text').value = 'Keep this';
+    h.el('feedback-edit-save').click(); await settle();
+    assert.equal(h.el('feedback-edit-text').value, 'Keep this');
+    assert.equal(h.el('feedback-edit-save').disabled, false);
+    assert.equal(h.el('feedback-edit-text').readOnly, false);
+    assert.match(h.el('feedback-edit-status').textContent, /could not be saved/);
+  }
+});
+test('profile editing skips drafts, the outbox and the comment shortcut, then refreshes after saving', async () => {
+  let refreshed = 0, shortcut = 0;
+  const h = harness({ patchResult: { status: 200, body: { edit: { ...EDIT, version: 1 } } } });
+  h.el('feedback-cancel').click();
+  const reads = h.failedReads();
+  h.sandbox.UsernodeReact.suggestShortcut = { opensComment: () => true, openComment() { shortcut++; } };
+  h.sandbox.App.openFeedbackModal({ edit: EDIT, onEditSaved() { refreshed++; } });
+  await settle();
+  assert.equal(h.failedReads(), reads);
+  assert.equal(shortcut, 0);
+  assert.equal(h.el('feedback-edit').classList.contains('hidden'), false);
+  h.el('feedback-edit-text').value = 'Corrected'; h.el('feedback-edit-save').click(); await settle();
+  assert.equal(refreshed, 1);
+  assert.deepEqual(h.toasts, ['Changes saved']);
+  assert.equal(h.el('feedback-modal').classList.contains('hidden'), true);
+});
+test('an edit response cannot change a reopened dialog or a different account', async () => {
+  for (const differentUser of [false, true]) {
+    let finish;
+    const h = harness({ response: { edit: EDIT }, patchResult: () => new Promise(resolve => { finish = resolve; }) });
+    await h.submit(); h.el('feedback-sent-edit').click(); h.el('feedback-edit-save').click(); await settle();
+    h.el('feedback-cancel').click();
+    if (differentUser) h.sandbox.App.user = { id: 8 };
+    h.sandbox.App.openFeedbackModal();
+    h.el('feedback-text').value = 'New draft';
+    finish({ status: 200, body: { edit: { ...EDIT, version: 1 } } }); await settle();
+    assert.equal(h.el('feedback-text').value, 'New draft');
+    assert.equal(h.el('feedback-sent').classList.contains('hidden'), true);
+    assert.equal(h.toasts.length, 0);
+  }
+});
+
+test('the editor countdown follows elapsed time and does not reset after Cancel', async () => {
+  const h = harness({ response: { edit: EDIT } }); await h.submit();
+  h.el('feedback-sent-edit').click();
+  h.advance(61000); await h.fireIntervals(1000);
+  assert.match(h.el('feedback-edit-window').textContent, /4 more minutes/);
+  h.el('feedback-edit-cancel').click();
+  h.advance(240000); await h.fireTimers(239000);
+  assert.equal(h.el('feedback-sent-edit').classList.contains('hidden'), true);
 });

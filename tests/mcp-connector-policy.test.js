@@ -348,9 +348,9 @@ test('resume is on the list only because the route is owner-scoped', () => {
   // Same reasoning again: submit_work's `propose: true` reopens a paused
   // session before promoting it (an external update usually lands on one).
   // What makes the entry safe is the handler — its ownership probe answers
-  // before any platform-wide bookkeeping runs, and the resuming UPDATE
-  // itself matches (id, user_id, 'paused'). If either loosens, this entry
-  // has to come back off.
+  // before any platform-wide bookkeeping runs, and the resume itself (the
+  // proposal machine's Resume) is guarded on the owner and on 'paused'. If
+  // either loosens, this entry has to come back off.
   const SESSIONS_SRC = fs.readFileSync(
     path.join(__dirname, '../src/routes/sessions.js'), 'utf8'
   );
@@ -367,11 +367,18 @@ test('resume is on the list only because the route is owner-scoped', () => {
     /WHERE id = \$1 AND user_id = \$2/,
     'the ownership probe answers first'
   );
+  // The resume itself is the proposal machine's: asked for the caller, from
+  // the paused status the probe read, and its guard refuses anyone but the
+  // owner (and anything no longer paused) under the proposal's lock.
   assert.match(
     handler.slice(0, 4200),
-    /WHERE id = \$1 AND user_id = \$2 AND status = 'paused'/,
-    'the resuming UPDATE is owner-scoped too'
+    /platform\.resumeProposal\(\{\s*sessionId: Number\(sessionId\), appId: own\.app_id, from: 'paused', userId: user\.id,/,
+    'the resume is asked for the caller, from what the probe read'
   );
+  const MACHINE_SRC = fs.readFileSync(path.join(__dirname, '../src/workflow/proposal/machine.ts'), 'utf8');
+  const guard = MACHINE_SRC.slice(MACHINE_SRC.indexOf("['Resume', (s, e, f) => all("));
+  assert.match(guard.slice(0, guard.indexOf(')],')), /\(\) => read\(s, e\),\s*\(\) => owner\(e, f\),/,
+    'the resuming move is owner-scoped too');
 });
 
 test('the promoted-session cap the import route lacks is applied by the connector', () => {
@@ -388,12 +395,18 @@ test('the promoted-session cap the import route lacks is applied by the connecto
   // B10a: "waiting for approval", the browser's words and the connector's.
   const wording = /You already have \$\{caps\.promotedSessions\} changes waiting for approval\./;
   assert.match(LIMITS_SRC, wording, 'the connector says what the browser says');
-  assert.match(VOTES_SRC, /You already have \$\{caps\.promotedSessions\} changes waiting for approval/);
-  // Both count the same rows: promoted + merging, headless excluded.
+  // The promote path's words are the proposal machine's refusal now
+  // (platform.ts), quoting the cap the route handed it.
+  const PLATFORM_SRC = fs.readFileSync(path.join(__dirname, '../src/workflow/platform.ts'), 'utf8');
+  assert.match(PLATFORM_SRC, /You already have \$\{cap\} changes waiting for approval\./);
+  // Both count the same rows: promoted + merging, headless excluded (the
+  // machine also counts one of the owner's going up for a vote right now).
   assert.match(
     LIMITS_SRC,
     /status IN \('promoted', 'merging'\) AND is_headless = FALSE/
   );
+  const FACTS_SRC = fs.readFileSync(path.join(__dirname, '../src/workflow/proposal/facts.ts'), 'utf8');
+  assert.match(FACTS_SRC, /cs\.user_id = \$1 AND cs\.is_headless = FALSE\s+AND \(cs\.status IN \('promoted', 'merging'\)/);
   // A limiter that cannot run refuses rather than waving the write through.
   assert.match(LIMITS_SRC, /if \(count === null\) return UNAVAILABLE;/);
 });
@@ -545,12 +558,12 @@ test('the demo routes are on the list only because every one of them is gated on
   assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/recipe-box/demo/reset'), true);
 });
 
-// #3654: the Homeroom bot benchmark's judge, and its runs. Eight routes
+// #3654: the Homeroom bot benchmark's judge, and its runs. Nine routes
 // outside /api/admin (which a connector can never reach), allowed because
 // every handler refuses anybody who is not a full platform admin before it
 // reads a thing: the judge's hand out tasks from every app, private ones
 // included, and a launch spends the platform's money.
-test('the benchmark\'s eight connector routes are allowed, and every one is full-admin gated', () => {
+test('the benchmark\'s nine connector routes are allowed, and every one is full-admin gated', () => {
   for (const [method, target] of [
     ['GET', '/api/bot-bench/queue'],
     ['GET', '/api/bot-bench/items/abcdefgh12345678'],
@@ -560,6 +573,7 @@ test('the benchmark\'s eight connector routes are allowed, and every one is full
     ['GET', '/api/bot-bench/runs/12'],
     ['POST', '/api/bot-bench/runs'],
     ['POST', '/api/bot-bench/runs/12/cancel'],
+    ['POST', '/api/bot-bench/runs/12/regrade'],
   ]) {
     assert.equal(policy.isConnectorApiRequest(method, target), true, `${method} ${target}`);
   }
@@ -571,6 +585,7 @@ test('the benchmark\'s eight connector routes are allowed, and every one is full
     ['POST', '/api/bot-bench/runs/12'],
     ['GET', '/api/bot-bench/runs/12/trials.csv'],
     ['GET', '/api/bot-bench/runs/12/review'],
+    ['GET', '/api/bot-bench/runs/12/regrade'],
     ['GET', '/api/admin/homeroom-bot/bench/runs'],
     ['POST', '/api/admin/homeroom-bot/bench/trials/1/grade'],
   ]) {
@@ -578,14 +593,14 @@ test('the benchmark\'s eight connector routes are allowed, and every one is full
   }
   const src = fs.readFileSync(path.join(__dirname, '../src/routes/homeroom-bench.js'), 'utf8');
   const routes = [...src.matchAll(/router\.(get|post)\('(\/api\/bot-bench\/[^']+)', ([a-zA-Z]+)/g)];
-  assert.equal(routes.length, 8);
+  assert.equal(routes.length, 9);
   for (const [, method, route, gate] of routes) {
     assert.equal(gate, 'requireAdminWrite', `${method.toUpperCase()} ${route} is full-admin gated first`);
   }
   // Every write is rate-limited per user (admins are not exempt: only
   // admins can call them at all), and guarded after the limiter.
   const writes = [...src.matchAll(/router\.post\('(\/api\/bot-bench\/[^']+)', ([^(]+)handler\(/g)];
-  assert.equal(writes.length, 4);
+  assert.equal(writes.length, 5);
   for (const [, route, chain] of writes) {
     const limiter = route.startsWith('/api/bot-bench/runs') ? 'benchRunLimiter' : 'benchGradingLimiter';
     assert.match(chain, new RegExp(`requireAdminWrite, ${limiter}, sameOriginBrowserOnly,`), `${route} is limited, then guarded`);
@@ -598,7 +613,7 @@ test('the benchmark\'s eight connector routes are allowed, and every one is full
 // refuses anybody who is not a full platform admin before it reads a thing.
 // They read builds, tasks and screenshots of every app, private ones
 // included, and a launch spends the platform's money.
-test('the studio\'s twenty-three connector routes are allowed, and every one is full-admin gated first', () => {
+test('the studio\'s twenty-four connector routes are allowed, and every one is full-admin gated first', () => {
   for (const [method, target] of [
     ['GET', '/api/bot-studio'],
     ['GET', '/api/bot-studio/gallery'],
@@ -619,6 +634,7 @@ test('the studio\'s twenty-three connector routes are allowed, and every one is 
     ['POST', '/api/bot-studio/tasks/9/taste'],
     ['GET', '/api/bot-studio/runs/12/trials'],
     ['GET', '/api/bot-studio/trials/3'],
+    ['GET', '/api/bot-studio/trials/3/transcript'],
     ['GET', '/api/bot-studio/bot'],
     ['POST', '/api/bot-studio/bot/runs/5/rating'],
     ['GET', '/api/bot-studio/shots'],
@@ -642,7 +658,7 @@ test('the studio\'s twenty-three connector routes are allowed, and every one is 
   }
   const src = fs.readFileSync(path.join(__dirname, '../src/routes/bench-studio.js'), 'utf8');
   const routes = [...src.matchAll(/router\.(get|post)\('(\/api\/bot-studio[^']*)', ([a-zA-Z]+)/g)];
-  assert.equal(routes.length, 23);
+  assert.equal(routes.length, 24);
   for (const [, method, route, gate] of routes) {
     assert.equal(gate, 'requireAdminWrite', `${method.toUpperCase()} ${route} is full-admin gated first`);
   }
@@ -656,21 +672,22 @@ test('the studio\'s twenty-three connector routes are allowed, and every one is 
   }
 });
 
-// Test accounts for first-run testing (routes/test-accounts.js). Five routes
+// Test accounts for first-run testing (routes/test-accounts.js). Six routes
 // outside /api/admin and /api/auth (which a connector can never reach),
 // allowed because every handler refuses anybody who is not a full platform
 // admin before anything else runs: they mint a new sign-in, send the
-// waitlist's release mail to a test address, list accounts, and delete one
-// with the apps it made. The gate comes first, then the per-admin limiter,
+// waitlist's release mail to a test address, list accounts, delete one
+// with the apps it made, and read a test project's run report. The gate comes first, then the per-admin limiter,
 // then the same-origin browser guard, on all of them; and no path carries a
 // `password` segment, which the canonical-target wall would refuse anyway.
-test('the five test-account routes are allowed, full-admin gated first, limited, and never under /password', () => {
+test('the six test-account routes are allowed, full-admin gated first, limited, and never under /password', () => {
   for (const [method, target] of [
     ['POST', '/api/test-accounts'],
     ['GET', '/api/test-accounts'],
     ['POST', '/api/test-accounts/12/retire'],
     ['POST', '/api/test-accounts/phone-sign-ins'],
     ['POST', '/api/test-accounts/release-emails'],
+    ['GET', '/api/test-accounts/run-report'],
   ]) {
     assert.equal(policy.isConnectorApiRequest(method, target), true, `${method} ${target}`);
   }
@@ -688,6 +705,8 @@ test('the five test-account routes are allowed, full-admin gated first, limited,
     ['DELETE', '/api/test-accounts/phone-sign-ins'],
     ['GET', '/api/test-accounts/release-emails'],
     ['POST', '/api/test-accounts/release-emails/12'],
+    ['POST', '/api/test-accounts/run-report'],
+    ['GET', '/api/test-accounts/run-report/12'],
     // The admin console's own user routes stay out of reach.
     ['POST', '/api/admin/users'],
     ['POST', '/api/v4/admin/users'],
@@ -699,6 +718,7 @@ test('the five test-account routes are allowed, full-admin gated first, limited,
   const routes = [...src.matchAll(/router\.(get|post|put|patch|delete)\('(\/api\/test-accounts[^']*)', ([^(]+)handler\(/g)];
   assert.deepEqual(routes.map(([, method, route]) => `${method.toUpperCase()} ${route}`).sort(), [
     'GET /api/test-accounts',
+    'GET /api/test-accounts/run-report',
     'POST /api/test-accounts',
     'POST /api/test-accounts/:id/retire',
     'POST /api/test-accounts/phone-sign-ins',
@@ -710,5 +730,94 @@ test('the five test-account routes are allowed, full-admin gated first, limited,
     assert.doesNotMatch(route, /password|credentials|secrets/, `${route} carries no credential segment`);
   }
   // Nothing else in the file registers a route.
-  assert.equal((src.match(/router\.(get|post|put|patch|delete|use|all)\(/g) || []).length, 5);
+  assert.equal((src.match(/router\.(get|post|put|patch|delete|use|all)\(/g) || []).length, 6);
+});
+
+// The programme's challenges (routes/challenge-admin.js). Twenty-two doors
+// outside /api/v4 (which a connector can never reach), allowed because every
+// one refuses anybody who is not a full platform admin before anything else
+// runs, reads included; every write is then limited per person and refused to
+// a browser on another origin. Each door hands the request to the console's
+// own route at the same path under /api/v4/admin, and only the doors listed:
+// deleting a whole event, the CSV export, users and the SQL console stay out.
+test('the challenge doors are allowed, full-admin gated first, and each opens onto the console route at the same path', () => {
+  const doors = [
+    ['GET', '/api/challenge-admin/season-events'],
+    ['POST', '/api/challenge-admin/season-events'],
+    ['GET', '/api/challenge-admin/season-events/7'],
+    ['PATCH', '/api/challenge-admin/season-events/7'],
+    ['GET', '/api/challenge-admin/season-events/7/challenges'],
+    ['POST', '/api/challenge-admin/season-events/7/challenges'],
+    ['GET', '/api/challenge-admin/season-events/7/challenges/available-activity-types'],
+    ['PATCH', '/api/challenge-admin/season-events/7/challenges/update-display-orders'],
+    ['PUT', '/api/challenge-admin/season-events/7/challenges/41'],
+    ['DELETE', '/api/challenge-admin/season-events/7/challenges/41'],
+    ['PATCH', '/api/challenge-admin/season-events/7/challenges/41/move'],
+    ['GET', '/api/challenge-admin/challenge-templates'],
+    ['POST', '/api/challenge-admin/challenge-templates'],
+    ['GET', '/api/challenge-admin/challenge-templates/categories'],
+    ['GET', '/api/challenge-admin/challenge-templates/12'],
+    ['PATCH', '/api/challenge-admin/challenge-templates/12'],
+    ['DELETE', '/api/challenge-admin/challenge-templates/12'],
+    ['GET', '/api/challenge-admin/challenge-scoring'],
+    ['POST', '/api/challenge-admin/challenge-scoring/rules'],
+    ['PUT', '/api/challenge-admin/challenge-scoring/rules/3'],
+    ['DELETE', '/api/challenge-admin/challenge-scoring/rules/3'],
+    ['POST', '/api/challenge-admin/challenge-scoring/run'],
+  ];
+  for (const [method, target] of doors) {
+    assert.equal(policy.isConnectorApiRequest(method, target), true, `${method} ${target}`);
+  }
+  for (const [method, target] of [
+    // A whole event, and everything in it, is deleted only in the console.
+    ['DELETE', '/api/challenge-admin/season-events/7'],
+    ['PUT', '/api/challenge-admin/season-events/7'],
+    ['PATCH', '/api/challenge-admin/season-events/7/challenges/41/toggle-enabled'],
+    ['PATCH', '/api/challenge-admin/season-events/7/challenges/41'],
+    ['GET', '/api/challenge-admin/season-events/7/challenges/41'],
+    ['PUT', '/api/challenge-admin/challenge-templates/12'],
+    ['GET', '/api/challenge-admin/challenge-scoring/anatomy'],
+    ['GET', '/api/challenge-admin/challenge-scoring/rules'],
+    ['GET', '/api/challenge-admin/programme/export.csv'],
+    ['GET', '/api/challenge-admin/users'],
+    ['POST', '/api/challenge-admin/sql-query/execute'],
+    ['POST', '/api/challenge-admin/challenge-illustrations'],
+    // The console's own routes stay out of reach.
+    ['GET', '/api/v4/admin/season-events'],
+    ['POST', '/api/v4/admin/challenge-templates'],
+  ]) {
+    assert.equal(policy.isConnectorApiRequest(method, target), false, `${method} ${target} is refused`);
+  }
+
+  const src = fs.readFileSync(path.join(__dirname, '../src/routes/challenge-admin.js'), 'utf8');
+  const routes = [...src.matchAll(/router\.(get|post|put|patch|delete)\('(\/api\/challenge-admin[^']*)', ([^)]*?)toConsole\)/g)];
+  assert.equal(routes.length, 22);
+  assert.equal((src.match(/router\.(get|post|put|patch|delete|use|all)\(/g) || []).length, 22, 'nothing else in the file is a route');
+  // The doors and the allowlist agree both ways: every door is allowed, and
+  // every allowed pattern is a door (GET .../categories rides on .../:id).
+  const shape = (p) => p.split('/').map((seg) => (seg.startsWith(':') ? ':x' : seg)).join('/');
+  const doorShapes = new Set(routes.map(([, m, route]) => `${m.toUpperCase()} ${shape(route)}`));
+  for (const [, m, route] of routes) {
+    assert.equal(policy.isConnectorApiRequest(m, route.replace(/:[a-zA-Z]+/g, '7')), true, `${m.toUpperCase()} ${route} is allowed`);
+  }
+  for (const r of policy.CONNECTOR_ALLOWED_ROUTES.filter((x) => x.pattern.startsWith('/api/challenge-admin/'))) {
+    assert.ok(doorShapes.has(`${r.method} ${shape(r.pattern)}`), `${r.method} ${r.pattern} is a door`);
+  }
+
+  const consoleSrc = ['season-events', 'challenge-templates', 'challenges', 'challenge-scoring']
+    .map((f) => fs.readFileSync(path.join(__dirname, `../src/routes/topochain/admin/${f}.js`), 'utf8')).join('\n');
+  const consoleRoutes = new Set([...consoleSrc.matchAll(/router\.(get|post|put|patch|delete)\('(\/api\/v4\/admin\/[^']+)'/g)]
+    .map(([, m, route]) => `${m.toUpperCase()} ${shape(route)}`));
+  for (const [, method, route, chain] of routes) {
+    const name = `${method.toUpperCase()} ${route}`;
+    const onto = `${method.toUpperCase()} ${shape(route.replace('/api/challenge-admin/', '/api/v4/admin/'))}`;
+    assert.ok(consoleRoutes.has(onto), `${name} opens onto the console's ${onto}`);
+    assert.doesNotMatch(route, /password|credentials|secrets/, `${route} carries no credential segment`);
+    if (method === 'get') {
+      assert.equal(chain, 'requireAdminWrite, ', `${name} is full-admin gated`);
+    } else {
+      assert.equal(chain, 'requireAdminWrite, challengeAdminLimiter, sameOriginBrowserOnly, ',
+        `${name} is full-admin gated, then limited, then guarded`);
+    }
+  }
 });

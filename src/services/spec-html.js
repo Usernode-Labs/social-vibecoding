@@ -352,8 +352,22 @@ function specHtmlToMarkdown(html) {
       if (name === 'pre') { blank(); pre = ''; continue; }
       if (name === 'br') { if (cell !== null) cell += ' '; else flush(); continue; }
       if (name === 'hr') { blank(); out.push('---', ''); continue; }
-      if (name === 'ul' || name === 'ol') { if (!listStack.length) blank(); else flush(); listStack.push({ ordered: name === 'ol', n: 0 }); continue; }
+      // #4662: a list inside a table cell is written into the cell, one
+      // item after another ('1. a 2. b'), because a markdown cell cannot
+      // hold line breaks. Outside a cell, as before.
+      if (name === 'ul' || name === 'ol') {
+        if (cell !== null) { listStack.push({ ordered: name === 'ol', n: 0 }); continue; }
+        if (!listStack.length) blank(); else flush();
+        listStack.push({ ordered: name === 'ol', n: 0 });
+        continue;
+      }
       if (name === 'li') {
+        if (cell !== null) {
+          const top = listStack[listStack.length - 1] || { ordered: false, n: 0 };
+          top.n += 1;
+          cell += (cell.trim() ? ' ' : '') + (top.ordered ? `${top.n}. ` : '- ');
+          continue;
+        }
         flush();
         const top = listStack[listStack.length - 1] || { ordered: false, n: 0 };
         top.n += 1;
@@ -389,8 +403,13 @@ function specHtmlToMarkdown(html) {
     }
     if (name === 'ol' && inChanges && !listStack.length) { inChanges -= 1; blank(); continue; }
     if (/^h[1-6]$/.test(name)) { blank(); continue; }
-    if (name === 'ul' || name === 'ol') { listStack.pop(); if (!listStack.length) blank(); else flush(); continue; }
-    if (name === 'li') { flush(); continue; }
+    if (name === 'ul' || name === 'ol') {
+      if (cell !== null) { listStack.pop(); continue; }
+      listStack.pop();
+      if (!listStack.length) blank(); else flush();
+      continue;
+    }
+    if (name === 'li') { if (cell !== null) continue; flush(); continue; }
     if ((name === 'td' || name === 'th') && row && cell !== null) { row.push(escapeCell(cleanInline(cell))); cell = null; continue; }
     if (name === 'tr' && table && row) { table.push(row); row = null; continue; }
     if (name === 'table' && table) {

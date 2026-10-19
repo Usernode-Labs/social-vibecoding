@@ -2,8 +2,8 @@
  * The project page's Discussion tab: the community's channel, whole, in
  * place.
  *
- * The hub shows the discussion's last two messages and a way in
- * (./hub-cards.tsx ChannelCard, compact). The way in used to leave the page
+ * The hub shows the discussion's last line and a way in (./hub-cards.tsx
+ * ForYouCard, its Discussion row). The way in used to leave the page
  * for `#messages/app/<slug>`; it is a tab of the page now, so a person
  * reading the hub and a person talking in the room are on the same page with
  * the same coloured header, and Back is the tab strip rather than a screen
@@ -77,15 +77,18 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { XIcon } from '@/components/ui/icons';
 import { type CommunityPayload, type PlaceChannel } from './community-card';
-import { AppReplyThreadPane, EmbeddedConversation } from '../../messages';
+import { AppReplyThreadPane, ChannelLoading, EmbeddedConversation } from '../../messages';
 import { closeThread, embeddedThreadOpen } from '../../messages/store';
 import { navStore } from '../../nav/nav-store.js';
 import { registerLevel } from '../../workshop/tab-ladder';
+import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { devWorkshopStore } from '../card/cards-store';
 import type { TranscriptMarker } from '../../group-chat/transcript-store';
 import { channelPlace, channelsOf, findChannel, mergedInto, type PlaceKey } from './places';
 import { TopicHead } from './topic-head';
+import { TopicFigures } from './topic-figures';
+import { TopicSignals } from './topic-signals';
 
 type Channel = NonNullable<CommunityPayload['channel']>;
 
@@ -159,6 +162,7 @@ function GeneralChannel({ slug, name, data }: {
   name: string;
   data: CommunityPayload | null;
 }): ReactNode {
+  const t = useMessages('project');
   const host = useRef<HTMLDivElement | null>(null);
   const channel = data?.channel || null;
   const mountable = embeddable(channel);
@@ -266,21 +270,23 @@ function GeneralChannel({ slug, name, data }: {
     };
   }, [slug, known, room, mountable]);
 
-  if (!data) return null;
+  // Until the record says which room it is, the room's own loading row: the
+  // channel opens in the one state it then keeps until its messages are in.
+  if (!data) return <ChannelLoading />;
   if (room) {
     return (
       <section
         className="dev-ws-discussion"
         data-ws-discussion=""
         data-ws-discussion-room={channel?.handle || ''}
-        aria-label={`${name} discussion`}
+        aria-label={t('project:discussion.label', { project: name })}
       >
         <EmbeddedConversation conversationId={room} active={onShow} at={roomAt} />
       </section>
     );
   }
   if (!mountable) {
-    return <p className="dev-ws-week-note" data-ws-discussion-none="">This project has no discussion you can read.</p>;
+    return <p className="dev-ws-week-note" data-ws-discussion-none="">{t('project:discussion.none')}</p>;
   }
   // The section's class says whether a thread is beside the room; the
   // host's own never changes, and its subtree stays the group chat's.
@@ -292,7 +298,7 @@ function GeneralChannel({ slug, name, data }: {
       className={`dev-ws-discussion${thread ? ' dev-ws-discussion-threaded' : ''}`}
       data-ws-discussion=""
       data-discussion-app={slug}
-      aria-label={`${name} discussion`}
+      aria-label={t('project:discussion.label', { project: name })}
     >
       <div ref={host} className="dev-ws-discussion-host" />
       {thread ? (
@@ -307,8 +313,8 @@ function GeneralChannel({ slug, name, data }: {
             <button
               type="button"
               className="messages-thread-action"
-              aria-label="Close thread"
-              title="Close thread"
+              aria-label={t('project:discussion.closeThread')}
+              title={t('project:discussion.closeThread')}
               onClick={() => setThread(null)}
             >
               <XIcon aria-hidden="true" />
@@ -332,12 +338,13 @@ function TopicChannelPlace({ slug, name, data, handle, onPlace }: {
   handle: string;
   onPlace?: (key: PlaceKey) => void;
 }): ReactNode {
-  if (!data) return null;
+  const t = useMessages('project');
+  if (!data) return <ChannelLoading />;
   const topic = findChannel(data.places, handle);
   if (!topic || topic.kind !== 'topic' || topic.id == null) {
     return (
       <p className="dev-ws-week-note" data-ws-discussion-none="">
-        {`This project has no #${handle} channel.`}
+        {t('project:discussion.topic.none', { handle })}
       </p>
     );
   }
@@ -355,6 +362,7 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
   readOnly: boolean;
   onPlace?: (key: PlaceKey) => void;
 }): ReactNode {
+  const t = useMessages('project');
   const host = useRef<HTMLDivElement | null>(null);
   const ref = Number(topic.id);
   const closed = topic.state !== 'live';
@@ -373,9 +381,11 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
   markersRef.current = markers;
   const notice = closed
     ? (topic.state === 'merged'
-      ? `#${topic.handle} was merged into ${survivor ? `#${survivor.handle}` : 'another topic'}. Its history stays here to read.`
-      : `#${topic.handle} is archived. Its history stays here to read.`)
-    : 'Join this community to post here.';
+      ? (survivor
+        ? t('project:discussion.topic.mergedInto', { handle: topic.handle, into: survivor.handle })
+        : t('project:discussion.topic.mergedIntoAnother', { handle: topic.handle }))
+      : t('project:discussion.topic.archived', { handle: topic.handle }))
+    : t('project:discussion.topic.joinToPost');
   // The reply thread open beside the channel, as beside #general: `key`
   // makes the same thread asked for again (a second notification) a fresh
   // mount.
@@ -409,7 +419,7 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
         readOnly: readOnly || closed,
         archived: false,
         channel: { type: 'category', ref, markers: markersRef.current },
-        placeholder: `Message #${topic.handle}`,
+        placeholder: t('project:discussion.topic.placeholder', { handle: topic.handle }),
         notice,
       });
     }, 0);
@@ -501,6 +511,12 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
         onRequests={openRequests}
         onSurvivor={survivor && onPlace ? () => onPlace(channelPlace(survivor.handle)) : undefined}
       />
+      {/* The numbers this topic names in dapp.json, between its line and
+          its room (topic-figures.tsx); nothing for a topic with none. */}
+      <TopicFigures slug={slug} topic={topic} />
+      {/* What the platform found wrong in this topic and filed as requests,
+          under its figures (topic-signals.tsx); nothing when there is none. */}
+      <TopicSignals slug={slug} topic={topic} />
       {/* The host's class string is constant and its subtree is the group
           chat's: the one-owner rule, satisfied at this boundary. */}
       <div ref={host} className="dev-ws-discussion-host dev-ws-topic-host" data-topic-channel={topic.id} />
@@ -516,8 +532,8 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
             <button
               type="button"
               className="messages-thread-action"
-              aria-label="Close thread"
-              title="Close thread"
+              aria-label={t('project:discussion.closeThread')}
+              title={t('project:discussion.closeThread')}
               onClick={() => setThread(null)}
             >
               <XIcon aria-hidden="true" />

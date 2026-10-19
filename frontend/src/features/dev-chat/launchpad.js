@@ -80,12 +80,12 @@
     if (resume) {
       return ''
         + '<div class="dc-launchpad-resume" data-launchpad-resume="continue">'
-        + '<div class="dc-launchpad-resume-title">Continuing this session’s branch</div>'
-        + '<div class="dc-launchpad-resume-detail">There is work on <code>'
-        + escapeHtml(resume.branch) + '</code> already. The instructions below tell your '
-        + 'agent to start from its current commit, so nothing done here is lost. Copy them '
-        + 'as they are: an agent that starts from the app’s default branch instead would '
-        + 'rebuild this from scratch.</div>'
+        + '<div class="dc-launchpad-resume-title">'
+        + PlatformI18n.htmlText('devchat:launchpad.resume.continueTitle') + '</div>'
+        + '<div class="dc-launchpad-resume-detail">'
+        + PlatformI18n.htmlRich('devchat:launchpad.resume.continueDetail', { branch: resume.branch },
+          [function (inner) { return '<code>' + inner + '</code>'; }])
+        + '</div>'
         + '</div>';
     }
     // A session with no branch yet is the normal case for a hand-off made
@@ -94,10 +94,10 @@
     if (String(s.targetKind || '') === 'new') {
       return ''
         + '<div class="dc-launchpad-resume" data-launchpad-resume="new">'
-        + '<div class="dc-launchpad-resume-title">Starting new work</div>'
-        + '<div class="dc-launchpad-resume-detail">Nothing has been built in this session '
-        + 'yet, so there is nothing to resume. Your agent starts from the app’s current '
-        + 'code, implements and tests the change locally, then submits the result to Homeroom.</div>'
+        + '<div class="dc-launchpad-resume-title">'
+        + PlatformI18n.htmlText('devchat:launchpad.resume.newTitle') + '</div>'
+        + '<div class="dc-launchpad-resume-detail">'
+        + PlatformI18n.htmlText('devchat:launchpad.resume.newDetail') + '</div>'
         + '</div>';
     }
     return '';

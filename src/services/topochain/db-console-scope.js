@@ -165,6 +165,12 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   'global_chat_threads',
   'global_chat_messages',
   'global_chat_tool_runs',
+  // Private requests (#5048): admin-only confidential requests and their
+  // comments, kept off GitHub. Every admin can already read them in the
+  // Workshop, and no column holds a credential; the automated debug role
+  // stays denied.
+  'private_requests',
+  'private_request_comments',
 ]);
 
 // The per-column replacement for the old table-level denials — one entry
@@ -210,6 +216,8 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   mobile_otp_codes: ['code_hash'],
   // Account email proof and the password snapshot are both offline-guessable.
   account_email_verifications: ['code_hash', 'password_hash'],
+  // #5281: the username-change proof, the same two secrets as the row above.
+  account_username_codes: ['code_hash', 'password_hash'],
   web_signup_sessions: ['token_hash'],
   // Apple and Google sign-in (services/sign-in-providers.js). The provider
   // settings' secret is a client secret or a private key; the round trip's
@@ -219,6 +227,10 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // identity (user_oauth_identities), which is what "I cannot sign in with
   // Google" needs.
   sign_in_providers: ['secret_enc'],
+  // The read-only roles the leader sets up (services/debug-access.js): the
+  // prod-debug role's password, encrypted. Whether each setup succeeded,
+  // when and on which release stay readable.
+  platform_db_roles: ['secret_enc'],
   oauth_sign_in_states: ['state_hash', 'binder_hash', 'nonce', 'code_verifier'],
   oauth_signup_sessions: ['token_hash'],
   // A spent native sign-in's ID token, hashed: nothing to read in it, and

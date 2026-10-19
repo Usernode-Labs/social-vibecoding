@@ -21,6 +21,12 @@ const PUBLIC_PATHS = [
   // Email-code signup uses an HttpOnly continuation and creates the ordinary
   // web session only after password setup; all three steps are pre-login.
   '/api/auth/otp/',
+  // The waitlist release mail one-time sign-in link (#4594,
+  // services/release-links.js) stands in for that code and is pre-login by
+  // the same definition: the page that spends it is signed out, and the link
+  // is the only credential. Missing here, every signed-out visitor got 401
+  // and the sign-in sheet fell back to emailing a code.
+  '/api/auth/release-link',
   '/api/auth/wallet-check',
   '/api/auth/wallet-verify',
   // Self-service wallet password reset is pre-login by definition — the
@@ -197,11 +203,15 @@ const GATE_OPEN_PATHS = [
 // already serves. Keep this narrower than the catch-all so an unrelated typo
 // retains the existing redirect-to-root behaviour.
 // An invite link (`/invite/<token>`, routes/community-invites.js) is one
-// too: a visitor with no account is exactly who it is for.
+// too: a visitor with no account is exactly who it is for. Any one segment
+// after /invite/, not only a token's shape (#5263): a link cut short or
+// mistyped opens the page that says it does not work, instead of bouncing
+// to `/` and the plain landing. The route answers every such path the way
+// it answers an unknown token, so this discloses nothing.
 function isSpaDocumentPath(pathname) {
   return pathname === '/' || pathname === '/index.html'
     || /^\/app\/[a-z0-9][a-z0-9-]{0,254}(?:\/.*)?$/.test(pathname)
-    || /^\/invite\/[A-Za-z0-9_-]{22}$/.test(pathname);
+    || /^\/invite\/[^/]+$/.test(pathname);
 }
 
 /**

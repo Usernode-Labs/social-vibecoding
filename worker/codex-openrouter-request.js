@@ -15,6 +15,8 @@ const { pipeline } = require('node:stream/promises');
 const { StringDecoder } = require('node:string_decoder');
 const { constants: { signals } } = require('node:os');
 const { performance } = require('node:perf_hooks');
+// Copied beside this script in the worker image (worker/Dockerfile).
+const { noTrainingProvider, withNoTraining } = require('./openrouter-privacy');
 
 const MAX_REQUEST_BYTES = 64 * 1024 * 1024;
 const MAX_KEY_RESPONSE_BYTES = 32 * 1024;
@@ -45,6 +47,92 @@ const PROVIDER_PREFERENCES = Object.freeze({
   preferred_max_latency: Object.freeze({ p90: 15 }),
   preferred_min_throughput: Object.freeze({ p50: 30 }),
 });
+
+// Which hosts a model's coding turns may use, per model (13 Oct 2026). The
+// preferences above only reorder, and OpenRouter's default then weighs the
+// rest by 1/price², so GLM 5.3 Flash builds mostly landed on its cheapest
+// host: run four's 33-minute first version spent 31 of them waiting on
+// InferenceNet at 12 s a call. Over the 14 days to 13 Oct, seconds per model
+// call on GLM build-sized turns were Relace 1.6, Fireworks 2.7, Parasail 3.1,
+// Together 3.2 and Baseten 4.4, against InferenceNet's 6.6; Wafer and
+// GMICloud finished only 70% and 78% of their builds. So a GLM turn names
+// that shortlist (`only`, OpenRouter's base slugs, each matching every one
+// of the host's endpoints: `parasail` is parasail/fp4 and parasail/fast,
+// `baseten` is baseten/fp8), fastest first (`sort: 'throughput'`, which also
+// turns off price balancing), and may fall back within it.
+//
+// DeepSeek V4.1 Flash 1017 (17 Oct 2026) names Parasail and InferenceNet.
+// DeepSeek's own host is not one: the platform's OpenRouter account excludes
+// endpoints that may train on prompts, so a pin to it was refused (404, "Paid
+// model training violation") and every request was sent again to every host;
+// bench run 206's builds landed on these two, a round trip lost per call. Of
+// the hosts left, both passed what 1017 needs, measured on 17 Oct: its
+// thinking survives a tool call (4 of 4 recalled it, 0 of 6 without it), the
+// same three effort levels (low, then high and xhigh alike, then max), and
+// Parasail ran 130-150 tokens/s and 3.1 s a call in a build. InferenceNet's
+// window is 262k, so a longer prompt goes to Parasail alone. Cloudflare was
+// rate-limited in bursts and recalled 2 of 3; DeepInfra's base slug includes
+// its slow flex tier (40-80 tokens/s).
+//
+// The shortlist can never leave a request with no host: it is not sent with
+// a request that brings routing of its own (`only`, `order`, `ignore`,
+// `sort` or `require_parameters`, whose filter it could intersect to nothing,
+// the parallel_tool_calls trap of tests/openrouter-parallel-tool-calls.test.js),
+// and a request it refuses (no host left: 404, or every host on it busy or
+// failing: 429, 502, 503) is sent once more with the plain preferences above,
+// to every host (sendRouted). AGENT_PROVIDER_SHORTLIST, set per turn by the
+// platform (config.openrouterProviderShortlists, env
+// OPENROUTER_PROVIDER_SHORTLISTS), replaces the list for the turn's model, and
+// `none` turns it off. Kept in step with the other OpenRouter listener (tests
+// pin it).
+const PROVIDER_ROUTING_BY_MODEL = Object.freeze({
+  'z-ai/glm-5.3-flash': Object.freeze({
+    only: Object.freeze(['relace', 'fireworks', 'parasail', 'together', 'baseten']),
+    sort: 'throughput',
+  }),
+  'deepseek/deepseek-v4.1-flash-1017': Object.freeze({
+    only: Object.freeze(['parasail', 'inference-net']),
+    sort: 'throughput',
+  }),
+});
+const PROVIDER_SLUG = /^[a-z0-9][a-z0-9._-]{0,40}(?:\/[a-z0-9._-]{1,40})?$/;
+const MAX_SHORTLIST = 16;
+const ROUTING_FIELDS = ['only', 'order', 'ignore', 'sort', 'require_parameters'];
+const SHORTLIST_FALLBACK_STATUSES = new Set([404, 429, 502, 503]);
+
+// The shortlist override as the platform sent it: a list of slugs, [] for
+// `none`, or null for none sent (or one that names no valid slug).
+function parseShortlist(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  if (value.trim().toLowerCase() === 'none') return [];
+  const slugs = [...new Set(value.split(',').map(s => s.trim().toLowerCase()).filter(s => PROVIDER_SLUG.test(s)))];
+  return slugs.length ? slugs.slice(0, MAX_SHORTLIST) : null;
+}
+
+// What a request asks of OpenRouter's routing: the preferences above, the
+// model's shortlist when it has one and the request brings no routing of its
+// own, then the request's own preferences. Pure. `shortlist` is
+// parseShortlist's answer for the turn.
+function providerRoutingFor(model, asked = {}, { shortlist = null } = {}) {
+  const own = asked && typeof asked === 'object' && !Array.isArray(asked) ? asked : {};
+  const base = PROVIDER_ROUTING_BY_MODEL[String(model || '')] || null;
+  const only = shortlist != null ? shortlist : (base ? [...base.only] : []);
+  const brings = ROUTING_FIELDS.some(field => own[field] != null);
+  const routed = only.length && !brings
+    ? { only: [...only], sort: base?.sort || 'throughput', allow_fallbacks: true }
+    : {};
+  // #5123: and never a host that trains on or keeps the prompt.
+  return noTrainingProvider({ ...PROVIDER_PREFERENCES, ...routed, ...own });
+}
+
+// The same request without the shortlist: the plain preferences and the
+// request's own, for every host. Null when there was no shortlist to drop.
+function withoutShortlist(provider, asked = {}) {
+  if (!provider || !Array.isArray(provider.only)) return null;
+  const own = asked && typeof asked === 'object' && !Array.isArray(asked) ? asked : {};
+  if (own.only != null) return null;
+  return noTrainingProvider({ ...PROVIDER_PREFERENCES, ...own });
+}
 
 async function readBounded(stream, limit) {
   const chunks = [];
@@ -186,7 +274,7 @@ async function readKeyAllowance(base, apiKey, fetchImpl, signal) {
 
 async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
   onRequest = () => {}, onTiming = null, onUsage = null, timingIntervalMs = 15_000,
-  fetchImpl = fetch }) {
+  fetchImpl = fetch, providerShortlist = null }) {
   const base = new URL(baseUrl);
   if (!['https:', 'http:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
     throw new Error('invalid_provider_url');
@@ -241,11 +329,12 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         return;
       }
       body.max_output_tokens = Math.min(maxOutputTokens, incomingCap ?? maxOutputTokens);
-      // Prefer hosts that answer promptly; any preference Codex sent is kept.
+      // Prefer hosts that answer promptly, on the model's shortlist when it
+      // has one; any preference Codex sent is kept.
       const askedProvider = body.provider && typeof body.provider === 'object' && !Array.isArray(body.provider)
-        ? body.provider : {};
-      body.provider = { ...PROVIDER_PREFERENCES, ...askedProvider };
-      const serializedBody = JSON.stringify(body);
+        ? { ...body.provider } : {};
+      body.provider = providerRoutingFor(model, askedProvider, { shortlist: providerShortlist });
+      const serializedBody = JSON.stringify(withNoTraining(body));
       const payloadBytes = Buffer.byteLength(serializedBody);
       const inputBytes = body.input == null ? 0 : Buffer.byteLength(JSON.stringify(body.input));
       if (onTiming) {
@@ -283,9 +372,21 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
       }
       headers['content-type'] = 'application/json';
       headers['accept-encoding'] = 'identity';
-      const response = await fetchImpl(`${upstreamBase}/responses`, {
+      let response = await fetchImpl(`${upstreamBase}/responses`, {
         method: 'POST', headers, body: serializedBody, redirect: 'error', signal: controller.signal,
       });
+      // The shortlist's safety net (PROVIDER_ROUTING_BY_MODEL): a request it
+      // refuses is sent once more without it, to every host.
+      const plain = withoutShortlist(body.provider, askedProvider);
+      let shortlistFallback = false;
+      if (plain && SHORTLIST_FALLBACK_STATUSES.has(response.status)) {
+        try { await response.body?.cancel(); } catch { /* the refusal is not forwarded */ }
+        body.provider = plain;
+        shortlistFallback = true;
+        response = await fetchImpl(`${upstreamBase}/responses`, {
+          method: 'POST', headers, body: JSON.stringify(withNoTraining(body)), redirect: 'error', signal: controller.signal,
+        });
+      }
       if (timing) {
         timing.status = response.status;
         timing.stage = 'await_first_byte';
@@ -314,7 +415,16 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         const limitSource = ['openrouter_credits', 'openrouter_key_limit', 'openrouter_in_flight_budget']
           .includes(metadata?.limit_source) ? metadata.limit_source : null;
         const paymentError = response.status === 402 || Number(error.code) === 402 || limitSource;
-        if (!paymentError) return;
+        if (!paymentError) {
+          // The host a refusal came from, for the turn's ledger row (run four,
+          // 13 Oct 2026: a failed turn recorded no host at all).
+          const host = metadata?.provider_name;
+          if (typeof host === 'string' && /^[a-zA-Z0-9 ._:/()-]{1,80}$/.test(host) && !diagnostic.providerName) {
+            diagnostic.providerName = host;
+            onRequest({ ...diagnostic });
+          }
+          return;
+        }
         diagnostic.providerErrorStatus = 402;
         if (limitSource) diagnostic.limitSource = limitSource;
         if (['in_flight_budget_exhausted', 'weight_exceeds_budget'].includes(metadata?.reason)) {
@@ -327,7 +437,12 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         onRequest({ ...diagnostic });
       };
       if (response.status === 402) Object.assign(diagnostic, await getKeyAllowance());
-      onRequest(diagnostic);
+      // Whether the request left its shortlist is said on its first line
+      // only, the one every request writes: a refusal reported again with
+      // its host (recordError) is the same request, and the platform counts
+      // the lines that say so per turn (run seven, 14 Oct 2026; in step with
+      // the Claude Code listener's provider_request_result).
+      onRequest(shortlistFallback ? { ...diagnostic, shortlistFallback: true } : diagnostic);
       const responseHeaders = {};
       const responseConnectionHeaders = new Set(String(response.headers.get('connection') || '').toLowerCase().split(',').map(s => s.trim()));
       for (const [name, value] of response.headers) {
@@ -340,7 +455,7 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         const isEventStream = response.headers.get('content-type')?.includes('text/event-stream');
         const bodyStream = isEventStream
           ? Readable.from(observeEventStream(response.body, recordError, onUsage))
-          : response.status === 402
+          : response.status >= 400
             ? Readable.from(observeErrorBody(response.body, recordError))
             : Readable.fromWeb(response.body);
         if (timing) {
@@ -403,6 +518,7 @@ async function runCodex(args, env = process.env) {
     apiKey: env.OPENROUTER_API_KEY,
     model: env.AGENT_MODEL,
     maxOutputTokens: selected?.max_output_tokens,
+    providerShortlist: parseShortlist(env.AGENT_PROVIDER_SHORTLIST),
     onRequest: diagnostic => process.stdout.write(`${JSON.stringify({ type: 'usernode.openrouter.request', diagnostic })}\n`),
     // #3038: each request's usage the moment it finishes, not once at the
     // end of the turn. Codex reports usage only at turn.completed, so a turn
@@ -472,4 +588,7 @@ if (require.main === module) {
   });
 }
 
-module.exports = { startRequestAdapter, runCodex, PROVIDER_PREFERENCES };
+module.exports = {
+  startRequestAdapter, runCodex, PROVIDER_PREFERENCES, PROVIDER_ROUTING_BY_MODEL, providerRoutingFor, withoutShortlist,
+  parseShortlist, SHORTLIST_FALLBACK_STATUSES,
+};

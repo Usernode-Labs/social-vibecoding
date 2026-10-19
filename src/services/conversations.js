@@ -2,6 +2,7 @@
 
 const sharedObjects = require('./shared-objects');
 const messageBookmarks = require('./message-bookmarks');
+const log = require('./logger');
 
 const MAX_ID = 2147483647;
 const MAX_MESSAGE_LENGTH = 8000;
@@ -31,6 +32,24 @@ function normalizeTitle(raw) {
   if (typeof raw !== 'string') return null;
   const title = raw.trim().replace(/\s+/g, ' ');
   return title && title.length <= 80 ? title : null;
+}
+
+// #3228: the short note an inviter writes when creating a group or adding
+// people, shown on the invited person's invitation card. undefined, null or
+// a blank string is no note at all (NULL on the row); any other string is
+// trimmed with its whitespace — newlines included — collapsed to one space.
+// A non-string, or a line longer than 140 characters after that, is invalid,
+// told apart from "no note" by the `false` sentinel so the caller can refuse
+// the invitation the way it refuses a bad title rather than silently
+// dropping the note.
+const MAX_INVITE_NOTE = 140;
+
+function normalizeInviteNote(raw) {
+  if (raw == null) return null;
+  if (typeof raw !== 'string') return false;
+  const note = raw.trim().replace(/\s+/g, ' ');
+  if (!note) return null;
+  return note.length <= MAX_INVITE_NOTE ? note : false;
 }
 
 function normalizeContent(raw, { allowEmpty = false } = {}) {
@@ -145,6 +164,34 @@ async function canDirectInteract(db, membership, userId) {
   if (membership.kind !== 'direct') return true;
   const otherId = await loadDirectPeer(db, membership.id, userId, { forShare: true });
   return !!otherId && !(await blockedEitherWay(db, userId, otherId));
+}
+
+// The Homeroom bot's account (homeroom-bot-dm.js BOT_USERNAME).
+const HOMEROOM_BOT_USERNAME = 'homeroom_bot';
+
+/**
+ * Whether a conversation is a person's direct chat with the Homeroom bot:
+ * the one direct conversation with reply threads, one per request (the
+ * request's card is the thread's first message). Other direct chats keep
+ * none. The client reads the same off a conversation's `homeroomBot` flag
+ * (frontend/src/features/messages threadsAllowed).
+ */
+async function isHomeroomBotDirect(db, conversationId) {
+  const { rows } = await db.query(
+    `SELECT 1 FROM conversation_direct_pairs p
+       JOIN users u ON u.id IN (p.user_low_id, p.user_high_id)
+      WHERE p.conversation_id = $1 AND u.is_synthetic IS TRUE AND u.username = $2
+      LIMIT 1`,
+    [conversationId, HOMEROOM_BOT_USERNAME]
+  );
+  return rows.length > 0;
+}
+
+/** Whether a membership's conversation has reply threads (#2387): every room, and the bot's chat. */
+async function threadsAllowed(db, membership) {
+  if (!membership) return false;
+  if (membership.kind !== 'direct') return true;
+  return isHomeroomBotDirect(db, membership.id);
 }
 
 // Deleted-peer archives are only marked for accepted, unblocked members
@@ -352,9 +399,37 @@ async function threadSummaries(db, user, rootIds) {
   }]));
 }
 
-async function hydrateMessages(db, user, rows) {
+/**
+ * The chat with the Homeroom bot draws the bot's news about a request as one
+ * short row (frontend/src/features/messages/bot-request.ts isBotNews, which
+ * this mirrors: keep the two in step), never the request's card under it;
+ * the card is drawn in the request's story, whose read fills it. So its main
+ * stream sends those rows without their cards: each one was a live GitHub
+ * read for a closed request, one after another, before the page could answer.
+ */
+const BOT_CONVERSATION_KINDS = new Set([
+  'chat', 'ack', 'reply', 'confirm', 'hello', 'welcome', 'tour', 'joiner', 'maker', 'member', 'general',
+  'hello_welcome', 'hello_tour', 'hello_joiner', 'hello_maker', 'filed', 'withdraw_proposal', 'close_request', 'move_request', 'unknown',
+]);
+function isBotNewsRow(row) {
+  if (!row.sender_is_synthetic || row.msg_type === 'system' || row.deleted_at || row.moderation_hidden_at) return false;
+  const meta = row.metadata && typeof row.metadata === 'object' ? row.metadata[BOT_METADATA_KEY] : null;
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return false;
+  if (meta.moment === 'reply' || BOT_CONVERSATION_KINDS.has(meta.kind)) return false;
+  return Number(meta.issueNumber) > 0 || !!meta.firstVersion || meta.kind === 'activity';
+}
+
+/** The cards a main-stream page of this conversation carries: all of them, but in the chat with the bot. */
+async function mainStreamCards(db, membership) {
+  return membership.kind === 'direct' && (await threadsAllowed(db, membership)) ? (row) => !isBotNewsRow(row) : null;
+}
+
+// `cards`, when given, says which rows get their cards filled; the others
+// are sent with none (`mainStreamCards`).
+async function hydrateMessages(db, user, rows, { cards = null } = {}) {
   if (!rows.length) return [];
   const ids = rows.map((row) => row.id);
+  const cardIds = cards ? rows.filter(cards).map((row) => row.id) : ids;
   const replyAuthors = [...new Set(rows.map((row) => row.reply_sender_id).filter(Boolean))];
   const rootIds = rows.filter((row) => row.thread_root_id == null).map((row) => row.id);
   const [reactionResult, attachmentResult, objects, savedIds, blockResult, threads] = await Promise.all([
@@ -375,7 +450,7 @@ async function hydrateMessages(db, user, rows) {
         ORDER BY created_at, id`,
       [ids]
     ),
-    sharedObjects.hydrateForMessages(db, user, ids),
+    sharedObjects.hydrateForMessages(db, user, cardIds),
     // Which of these the viewer has saved, so the row's bookmark renders
     // already filled rather than flashing empty and correcting itself. It
     // rides this Promise.all for the same reason the other three do — one
@@ -508,11 +583,22 @@ function pageLimit(limit) {
 // direction is its own fully static statement rather than one with an
 // optional bound, so the SQL linter validates all three and each keeps its
 // index-ordered plan.
+//
+// One story per request: in the chat with the Homeroom bot (the one direct
+// conversation with threads, threadsAllowed) a request's thread holds its
+// whole story, and the main stream shows only the replies the bot marks
+// `alsoInChat` (the four moments that ring), drawn there whole, with their
+// buttons. A person's own replies and the bot's quiet lines stay in the
+// thread.
+const ALSO_IN_CHAT = `(m.metadata->'homeroomBot'->>'alsoInChat') = 'true'`;
 const MAIN_STREAM_ROW = `(m.thread_root_id IS NULL OR (
           m.deleted_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM conversation_messages hidden_root
                             JOIN user_blocks hb ON hb.blocked_user_id = hidden_root.sender_id
-                           WHERE hidden_root.id = m.thread_root_id AND hb.blocker_id = $2)))`;
+                           WHERE hidden_root.id = m.thread_root_id AND hb.blocker_id = $2)
+          AND (${ALSO_IN_CHAT}
+               OR NOT EXISTS (SELECT 1 FROM conversations dc
+                               WHERE dc.id = m.conversation_id AND dc.kind = 'direct'))))`;
 async function mainStreamBefore(db, user, conversationId, before, count) {
   if (before) {
     return (await db.query(
@@ -564,7 +650,7 @@ async function visibleMessageRef(db, user, conversationId, messageId) {
 // A thread reply is shown where its thread lives — the window centres on its
 // root and `focus.threadRootId` tells the client to open that thread. A reply
 // whose root the viewer cannot see is as invisible as the thread itself.
-async function messagesAround(db, user, conversationId, targetId, limit) {
+async function messagesAround(db, user, conversationId, targetId, limit, { cards = null } = {}) {
   const target = await visibleMessageRef(db, user, conversationId, targetId);
   if (!target) return null;
   const anchorId = target.thread_root_id || target.id;
@@ -583,7 +669,7 @@ async function messagesAround(db, user, conversationId, targetId, limit) {
   const olderPage = older.slice(0, olderCount).reverse();
   const newerPage = newer.slice(0, newerCount);
   const page = [...olderPage, ...anchor.rows, ...newerPage];
-  const messages = await hydrateMessages(db, user, page);
+  const messages = await hydrateMessages(db, user, page, { cards });
   return {
     messages,
     nextBefore: older.length > olderCount && page.length ? page[0].id : null,
@@ -598,33 +684,114 @@ async function listMessages(pool, user, conversationId, {
   const membership = await loadMembership(pool, conversationId, user.id, { allowDeletedPeer: true });
   if (!membership || !(await canReadConversation(pool, membership, user.id))) return null;
   const safeLimit = pageLimit(limit);
-  if (around) return messagesAround(pool, user, conversationId, around, safeLimit);
+  const cards = await mainStreamCards(pool, membership);
+  if (around) return messagesAround(pool, user, conversationId, around, safeLimit, { cards });
   if (after) {
     // Catching up from a permalink window: ascending, oldest first.
     const rows = await mainStreamAfter(pool, user, conversationId, after, safeLimit + 1);
     const page = rows.slice(0, safeLimit);
     return {
-      messages: await hydrateMessages(pool, user, page),
+      messages: await hydrateMessages(pool, user, page, { cards }),
       nextAfter: rows.length > safeLimit && page.length ? page[page.length - 1].id : null,
     };
   }
   const rows = await mainStreamBefore(pool, user, conversationId, before, safeLimit + 1);
   const hasMore = rows.length > safeLimit;
   const page = rows.slice(0, safeLimit).reverse();
-  const messages = await hydrateMessages(pool, user, page);
+  const messages = await hydrateMessages(pool, user, page, { cards });
   return {
     messages,
     nextBefore: hasMore && page.length ? page[0].id : null,
   };
 }
 
+// #5219: the request's public discussion behind a bot card's thread. The
+// same messages the request page shows (chat_messages, thread_type 'issue'),
+// people only — the bot's notes and Homeroom's status lines are left out,
+// because the thread already tells those — read only when the viewer can view
+// that project. The person's own DM answers that were copied to the request
+// ("… in a chat with Homeroom bot.") are left out too: their reply is shown
+// in the thread itself. Never throws: a discussion that cannot be read is
+// simply not shown.
+const REQUEST_DISCUSSION_LIMIT = 50;
+
+async function requestDiscussion(pool, user, root) {
+  try {
+    const meta = root?.sender?.bot ? root.metadata?.[BOT_METADATA_KEY] : null;
+    const appSlug = typeof meta?.appSlug === 'string' && meta.appSlug ? meta.appSlug : null;
+    const issueNumber = Number(meta?.issueNumber);
+    if (!appSlug || !Number.isInteger(issueNumber) || issueNumber <= 0) return null;
+    const access = require('./app-access');
+    // ACCESS_COLUMNS, not a trimmed projection: checkAppAccess reads the
+    // visibility column and throws without it — a throw this function's own
+    // catch would swallow and turn into "no discussion".
+    const app = await access.getAppForUser(pool, appSlug, user, 'view', access.ACCESS_COLUMNS);
+    if (!app) return null;
+    const fromChat = require('./homeroom-bot-dm').MIRRORED_FROM_DM;
+    const { rows } = await pool.query(
+      `SELECT m.id, m.user_id, m.content, m.created_at, m.edited_at,
+              u.username, ua.id AS avatar_id
+         FROM chat_messages m
+         JOIN users u ON u.id = m.user_id
+         LEFT JOIN user_avatars ua ON ua.user_id = u.id
+        WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = $2
+          AND m.msg_type = 'message'
+          AND m.deleted_at IS NULL AND m.moderation_hidden_at IS NULL
+          AND u.is_synthetic IS NOT TRUE
+          AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                           WHERE b.blocker_id = $3 AND b.blocked_user_id = m.user_id)
+          AND NOT (m.user_id = $3 AND m.content LIKE '%' || $4)
+        ORDER BY m.id DESC LIMIT $5`,
+      [app.id, issueNumber, user.id, fromChat, REQUEST_DISCUSSION_LIMIT + 1]
+    );
+    const more = rows.length > REQUEST_DISCUSSION_LIMIT;
+    const messages = rows.slice(0, REQUEST_DISCUSSION_LIMIT).reverse().map((row) => ({
+      id: row.id,
+      source: 'discussion',
+      sender: {
+        id: row.user_id,
+        username: row.username || 'Deleted user',
+        avatarUrl: row.avatar_id ? `/avatars/${row.avatar_id}` : null,
+      },
+      content: row.content,
+      createdAt: row.created_at,
+      editedAt: row.edited_at,
+    }));
+    return { appSlug: app.slug || appSlug, issueNumber, more, messages };
+  } catch (err) {
+    log.warn('conversations', 'Could not read a request\'s discussion for its thread', { err: err.message });
+    return null;
+  }
+}
+
+// The bot's "… replied on the request's discussion: …" note in the DM
+// (homeroom-bot-dm.js noteRequestReply) repeats a discussion message this
+// response now shows in full: drop it. One keyed read over the page.
+function dropMirroredReplies(pool, messages, pageIds, discussionIds) {
+  if (!discussionIds.size || !messages.length) return messages;
+  return pool.query(
+    `SELECT id, idempotency_key FROM conversation_messages
+      WHERE id = ANY($1::int[]) AND idempotency_key LIKE 'hrbot-replied-%'`,
+    [pageIds]
+  ).then(({ rows }) => {
+    const drop = new Set(rows.flatMap((row) => {
+      const m = /^hrbot-replied-(\d+)$/.exec(row.idempotency_key || '');
+      return m && discussionIds.has(Number(m[1])) ? [row.id] : [];
+    }));
+    return drop.size ? messages.filter((message) => !drop.has(message.id)) : messages;
+  });
+}
+
 // GET /api/conversations/:id/threads/:rootId (#2387). The root plus a page of
 // its replies, oldest first, paged backwards with `before` exactly like the
-// main stream. Direct conversations have no threads.
+// main stream. Direct conversations have no threads, apart from the chat
+// with the Homeroom bot (threadsAllowed). On a thread rooted on one of the
+// bot's request cards (#5219), the request's public discussion rides along
+// (`discussion`); the client merges the two by time.
 async function listThread(pool, user, conversationId, rootId, { before = null, limit = 50 } = {}) {
   const membership = await loadMembership(pool, conversationId, user.id, { allowDeletedPeer: true });
   if (!membership || !(await canReadConversation(pool, membership, user.id))) return null;
-  if (membership.kind === 'direct') return { error: 'threads_not_supported' };
+  if (!(await threadsAllowed(pool, membership))) return { error: 'threads_not_supported' };
   const root = await pool.query(
     `${MESSAGE_SELECT}
       WHERE m.id = $1 AND m.conversation_id = $2 AND m.thread_root_id IS NULL
@@ -648,10 +815,27 @@ async function listThread(pool, user, conversationId, rootId, { before = null, l
     hydrateMessages(pool, user, root.rows),
     hydrateMessages(pool, user, page),
   ]);
+  let discussion = null;
+  // #5219: when the discussion came back, the page may still hold the bot's
+  // quiet note about a reply it mirrored; the reply is shown in full here, so
+  // the note goes. The page itself is never touched — a later page carries
+  // no discussion and no keyed read.
+  let shown = messages;
+  if (before == null) {
+    discussion = await requestDiscussion(pool, user, hydratedRoot[0]);
+    if (discussion?.messages.length) {
+      shown = await dropMirroredReplies(pool,
+        messages,
+        page.map((row) => row.id),
+        new Set(discussion.messages.map((message) => message.id)),
+      );
+    }
+  }
   return {
     root: hydratedRoot[0],
-    messages,
+    messages: shown,
     nextBefore: rows.length > safeLimit && page.length ? page[0].id : null,
+    discussion,
   };
 }
 
@@ -754,6 +938,7 @@ async function conversationRow(db, user, conversationId) {
     `SELECT c.id, c.kind, c.title, c.status, c.created_by, c.created_at, c.updated_at, c.deleted_peer,
             c.channel_key,
             me.role AS my_role, me.status AS membership_status, me.invited_by,
+            me.invite_note,
             me.last_read_message_id,
             inviter.username AS requester_username,
             inviter_avatar.id AS requester_avatar_id,
@@ -782,10 +967,11 @@ async function conversationRow(db, user, conversationId) {
        LEFT JOIN user_avatars peer_avatar ON peer_avatar.user_id = peer.user_id
        LEFT JOIN LATERAL (
          -- #2387: the list's latest message is the main stream's latest
-         -- message anyone still has: thread replies and deletions skip.
+         -- message anyone still has: thread replies and deletions skip,
+         -- apart from a bot moment shown in the main chat too.
          SELECT id FROM conversation_messages m
           WHERE m.conversation_id = c.id
-            AND m.thread_root_id IS NULL AND m.deleted_at IS NULL
+            AND (m.thread_root_id IS NULL OR ${ALSO_IN_CHAT}) AND m.deleted_at IS NULL
             AND NOT EXISTS (SELECT 1 FROM user_blocks b
                              WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sender_id)
           ORDER BY id DESC LIMIT 1
@@ -799,12 +985,14 @@ async function conversationRow(db, user, conversationId) {
 
 // The unread count behind a cursor (#2387): main stream only, other people's
 // messages only, and neither a deleted message nor one from someone the
-// viewer blocked counts. Shared by the list and by markUnread's answer.
+// viewer blocked counts. Shared by the list and by markUnread's answer. A bot
+// moment shown in the main chat as well as its thread (ALSO_IN_CHAT) counts
+// once, here; the bot's quiet lines in a thread do not.
 async function countUnread(db, conversationId, userId, cursor) {
   const result = await db.query(
     `SELECT COUNT(*)::int AS count FROM conversation_messages m
       WHERE m.conversation_id = $1 AND m.id > COALESCE($2, 0)
-        AND m.thread_root_id IS NULL AND m.deleted_at IS NULL
+        AND (m.thread_root_id IS NULL OR ${ALSO_IN_CHAT}) AND m.deleted_at IS NULL
         AND m.msg_type = 'message'
         AND m.sender_id IS DISTINCT FROM $3
         AND NOT EXISTS (SELECT 1 FROM user_blocks b
@@ -822,6 +1010,16 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
   // renders thousands of member rows.
   const members = accepted && includeMembers && !channel ? await loadMembers(db, row.id) : [];
   const channelMemberCount = accepted && channel
+    ? (await db.query(
+      `SELECT COUNT(*)::int AS count FROM conversation_members
+        WHERE conversation_id = $1 AND status = 'member'`,
+      [row.id]
+    )).rows[0]?.count || 0
+    : 0;
+  // #3228: an invited person sees how many people have already accepted the
+  // group — the count only, never the roster, which stays hidden until they
+  // answer the invitation.
+  const invitedGroupMemberCount = !accepted && row.kind === 'group'
     ? (await db.query(
       `SELECT COUNT(*)::int AS count FROM conversation_members
         WHERE conversation_id = $1 AND status = 'member'`,
@@ -877,10 +1075,14 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     members,
     memberCount: channel
       ? channelMemberCount
-      : (accepted ? members.filter((member) => member.status === 'member').length : 0),
+      : (accepted ? members.filter((member) => member.status === 'member').length
+        : (row.kind === 'group' ? invitedGroupMemberCount : 0)),
     channelKey: channel ? row.channel_key : null,
     membershipStatus: row.membership_status,
     myRole: row.my_role,
+    // #3228: the inviter's note rides the invitation only. After it is
+    // answered (or on any other membership) it is nobody's business.
+    inviteNote: row.membership_status === 'invited' ? (row.invite_note || null) : null,
     requester,
     peer,
     latestMessage: latest,
@@ -1085,10 +1287,11 @@ async function ensureEligibleInvitees(db, inviterId, ids) {
   return true;
 }
 
-async function createGroup(pool, user, title, memberIds) {
+async function createGroup(pool, user, title, memberIds, inviteNote) {
   const safeTitle = normalizeTitle(title);
   const ids = strictIds(memberIds);
-  if (!safeTitle || !ids) return null;
+  const safeNote = normalizeInviteNote(inviteNote);
+  if (!safeTitle || !ids || safeNote === false) return null;
   const invitees = ids.filter((id) => id !== user.id);
   if (invitees.length + 1 > MAX_GROUP_MEMBERS) return null;
   const result = await transaction(pool, async (db) => {
@@ -1113,9 +1316,9 @@ async function createGroup(pool, user, title, memberIds) {
     for (const inviteeId of invitees) {
       await db.query(
         `INSERT INTO conversation_members
-           (conversation_id, user_id, role, status, invited_by)
-         VALUES ($1, $2, 'member', 'invited', $3)`,
-        [conversationId, inviteeId, user.id]
+           (conversation_id, user_id, role, status, invited_by, invite_note)
+         VALUES ($1, $2, 'member', 'invited', $3, $4)`,
+        [conversationId, inviteeId, user.id, safeNote]
       );
       notifications.push(await insertNotification(db, {
         userId: inviteeId, conversationId, sourceUserId: user.id, kind: 'conversation_invite',
@@ -1317,9 +1520,10 @@ async function respond(pool, user, conversationId, action) {
   };
 }
 
-async function addMembers(pool, user, conversationId, rawIds) {
+async function addMembers(pool, user, conversationId, rawIds, inviteNote) {
   const ids = strictIds(rawIds);
-  if (!ids?.length) return null;
+  const safeNote = normalizeInviteNote(inviteNote);
+  if (!ids?.length || safeNote === false) return null;
   const result = await transaction(pool, async (db) => {
     const preflight = await loadMembership(db, conversationId, user.id);
     if (!preflight || preflight.kind !== 'group') return null;
@@ -1345,19 +1549,22 @@ async function addMembers(pool, user, conversationId, rawIds) {
     const notifications = [];
     for (const id of inviteIds) {
       if (statuses.has(id)) {
+        // A re-invite replaces the old note, or clears it when the new
+        // invite carries none (#3228).
         await db.query(
           `UPDATE conversation_members
               SET status = 'invited', role = 'member', invited_by = $3,
+                  invite_note = $4,
                   responded_at = NULL, joined_at = NULL, left_at = NULL
             WHERE conversation_id = $1 AND user_id = $2`,
-          [conversationId, id, user.id]
+          [conversationId, id, user.id, safeNote]
         );
       } else {
         await db.query(
           `INSERT INTO conversation_members
-             (conversation_id, user_id, role, status, invited_by)
-           VALUES ($1, $2, 'member', 'invited', $3)`,
-          [conversationId, id, user.id]
+             (conversation_id, user_id, role, status, invited_by, invite_note)
+           VALUES ($1, $2, 'member', 'invited', $3, $4)`,
+          [conversationId, id, user.id, safeNote]
         );
       }
       notifications.push(await insertNotification(db, {
@@ -1483,6 +1690,13 @@ function mentionsUsername(content, username) {
 // notifications.CONVERSATION_NOTIFICATION_KINDS. A group or channel ignores it.
 async function sendMessage(pool, user, conversationId, input, {
   metadata = null, notify = true, notificationDetail = null, notificationKind = null,
+  // Inside the message's own transaction, for what must commit with it or
+  // not at all (the Homeroom bot's hello, homeroom-bot-dm.js sendDm; a DM to
+  // the bot heard by its workflow machine, routes/conversations.js):
+  // `prepare(db)` before the insert may answer { content, metadata } to send
+  // instead, or { refuse: true } to send nothing; `afterInsert(db, { messageId,
+  // membership, memberIds })` after it.
+  prepare = null, afterInsert = null,
 } = {}) {
   const attachmentIds = normalizeAttachmentIds(input.attachment_ids ?? input.attachmentIds);
   const refsRaw = input.objects ?? (input.object ? [input.object] : []);
@@ -1511,14 +1725,15 @@ async function sendMessage(pool, user, conversationId, input, {
         return { messageId: existing.rows[0].id, memberIds: await activeMemberIds(db, conversationId), notifications: [], duplicate: true };
       }
     }
-    // #2387: threads live in groups and channels only, and one level deep —
+    // #2387: threads live in groups and channels (and the chat with the
+    // Homeroom bot, threadsAllowed) only, and one level deep —
     // the root is a main-stream message of this conversation that the sender
     // can see. FOR SHARE holds it against a concurrent delete, so a first
     // reply and the root's deletion serialize: a deleted message cannot start
     // a new thread, but a thread that already has replies stays open.
     let threadRoot = null;
     if (threadRootId) {
-      if (membership.kind === 'direct') return { error: 'threads_not_supported' };
+      if (!(await threadsAllowed(db, membership))) return { error: 'threads_not_supported' };
       const root = await db.query(
         `SELECT m.id, m.sender_id, m.deleted_at,
                 EXISTS (SELECT 1 FROM conversation_messages r
@@ -1579,12 +1794,20 @@ async function sendMessage(pool, user, conversationId, input, {
     }
     // #3624: `metadata` is the platform's (the Homeroom bot's questions),
     // passed beside the input rather than in it, so no request body sets it.
+    let sendContent = content;
+    let sendMetadata = metadata;
+    if (typeof prepare === 'function') {
+      const instead = await prepare(db);
+      if (instead?.refuse) return null;
+      if (instead && typeof instead.content === 'string') sendContent = instead.content;
+      if (instead && 'metadata' in instead) sendMetadata = instead.metadata;
+    }
     const inserted = await db.query(
       `INSERT INTO conversation_messages
          (conversation_id, sender_id, content, reply_to_id, idempotency_key, thread_root_id, metadata)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
-      [conversationId, user.id, content, replyId, key, threadRootId, JSON.stringify(metadata || {})]
+      [conversationId, user.id, sendContent, replyId, key, threadRootId, JSON.stringify(sendMetadata || {})]
     );
     const messageId = inserted.rows[0].id;
     if (attachmentIds.length) {
@@ -1655,10 +1878,13 @@ async function sendMessage(pool, user, conversationId, input, {
         if (!blockedBySender.has(row.sender_id)) threadParticipants.add(row.sender_id);
       }
     }
+    if (typeof afterInsert === 'function') {
+      await afterInsert(db, { messageId, membership, memberIds: members.rows.map((row) => row.user_id) });
+    }
     const notifications = [];
     for (const member of members.rows) {
       if (!notify) break;
-      const mentioned = mentionsUsername(content, member.username);
+      const mentioned = mentionsUsername(sendContent, member.username);
       let kind = 'conversation_message';
       if (membership.kind === 'direct' && notificationKind) kind = notificationKind;
       else if (membership.kind === 'channel') {
@@ -1670,7 +1896,10 @@ async function sendMessage(pool, user, conversationId, input, {
         kind = 'conversation_mention';
       } else if (member.user_id === replyAuthorId) kind = 'conversation_reply';
       else if (mentioned) kind = 'conversation_mention';
-      else if (threadRoot) {
+      else if (threadRoot && membership.kind !== 'direct') {
+        // In the chat with the Homeroom bot (the one direct chat with
+        // threads) a message that rings is for the one other person in it,
+        // in a thread or not: it rings as a message, as the main chat's do.
         // One row per person: a quote or an @mention above outranks this.
         if (!threadParticipants.has(member.user_id)) continue;
         kind = 'conversation_thread_reply';
@@ -1856,12 +2085,15 @@ async function markRead(pool, user, conversationId, messageId) {
     const membership = await lockInteractionMembership(db, conversationId, user.id);
     if (!membership) return null;
     const message = await db.query(
-      `SELECT id, thread_root_id FROM conversation_messages WHERE id = $1 AND conversation_id = $2`,
+      `SELECT m.id, m.thread_root_id, ${ALSO_IN_CHAT} AS also_in_chat
+         FROM conversation_messages m WHERE m.id = $1 AND m.conversation_id = $2`,
       [messageId, conversationId]
     );
     if (!message.rows.length) return null;
     const current = membership.last_read_message_id || 0;
-    const threadRootId = message.rows[0].thread_root_id;
+    // A bot moment shown in the main chat is read where it is shown: it is
+    // a main-stream position, as its unread count says (countUnread).
+    const threadRootId = message.rows[0].also_in_chat ? null : message.rows[0].thread_root_id;
     if (threadRootId) {
       // #2387: reading a THREAD up to a reply clears that thread's alerts up
       // to it. The main-stream cursor is not a thread position — ids of the
@@ -1896,7 +2128,8 @@ async function markRead(pool, user, conversationId, messageId) {
                OR (n.conversation_message_id <= $3
                    AND NOT EXISTS (SELECT 1 FROM conversation_messages m
                                     WHERE m.id = n.conversation_message_id
-                                      AND m.thread_root_id IS NOT NULL)))`,
+                                      AND m.thread_root_id IS NOT NULL
+                                      AND ${ALSO_IN_CHAT} IS NOT TRUE)))`,
       [user.id, conversationId, cursor]
     );
     return { messageId: cursor, threadRootId: null, memberIds: await activeMemberIds(db, conversationId) };
@@ -2195,6 +2428,11 @@ module.exports = {
   openAdmittedDirect,
   setMessageMetadata,
   publicMetadata,
+  isHomeroomBotDirect,
+  threadsAllowed,
+  isBotNewsRow,
+  BOT_CONVERSATION_KINDS,
+  ALSO_IN_CHAT,
   BOT_METADATA_KEY,
   updateTitle,
   respond,

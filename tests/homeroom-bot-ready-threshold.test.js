@@ -110,7 +110,7 @@ test('plain words, and the count travels with the card to every device', () => {
   const said = [
     words.waitingWords({ you: true, names: ['priya_t1006', 'mo_t1006'], missing: 2, needed: 2 }),
     words.waitingWords({ names: ['priya_t1006', 'mo_t1006'], missing: 1, needed: 2 }),
-    words.afterYesWords({ missing: 1, names: ['priya_t1006', 'mo_t1006'] }),
+    readyCard.approvedLine({ soon: false, at: null, missing: 1, waitingOn: ['priya_t1006', 'mo_t1006'], more: 0 }),
     chatCard.approvalWords({ stage: 'proposed', missing: 0 }),
   ];
   for (const s of said) assert.doesNotMatch(s, /propos|merg|vote|\bPR\b|staging|—/i, s);
@@ -123,7 +123,7 @@ test('plain words, and the count travels with the card to every device', () => {
     assert.equal('missing' in ready({ group: true, waitingOn: ['ada'], missing: bad }), false, String(bad));
   }
   // Both cards word it in one place.
-  assert.match(read('frontend/src/features/messages/bot-ready.tsx'), /import \{ afterYesWords, countOf, waitingWords \} from '\.\/approval-words';/);
+  assert.match(read('frontend/src/features/messages/bot-ready.tsx'), /import \{ afterYesWords, countOf, waitingWords, type AfterYes \} from '\.\/approval-words';/);
   assert.match(read('frontend/src/features/group-chat/bot-request.tsx'), /import \{ waitingWords \} from '\.\.\/messages\/approval-words';/);
 });
 
@@ -148,6 +148,11 @@ test('Page Turners: two of three must approve, against the full PostgreSQL schem
   });
   await pool.query(read('src/db/schema.sql'));
   const dm = require('../src/services/homeroom-bot-dm');
+  // The bot's change machine decided the change is ready to try
+  // (src/workflow/bot-change/): its card, for the epoch it is on now.
+  const tellReadyNow = async (pool, id, deps) => dm.tellReady(pool, id, {
+    epoch: (await pool.query('SELECT approval_epoch FROM chat_sessions WHERE id = $1', [id])).rows[0].approval_epoch, deps,
+  });
   const botChat = require('../src/services/homeroom-bot-chat');
   const governance = require('../src/services/governance');
   const user = async (username, synthetic = false) => (await pool.query(
@@ -219,7 +224,7 @@ test('Page Turners: two of three must approve, against the full PostgreSQL schem
     const state = await dm.approvalState(pool, { sessionId: s.id, userId: alex.id });
     assert.deepEqual([state.audience, state.needed, state.have, state.missing, state.last], ['invited', 2, 0, 2, false]);
 
-    await dm.noteChangeReady(pool, s.id, { bot: homeroomBot, domain: 'app.example.test' });
+    await tellReadyNow(pool, s.id, { bot: homeroomBot, domain: 'app.example.test' });
     const meta = await card(alex.id, s.id);
     assert.deepEqual({ ...meta.ready, waitingOn: [...meta.ready.waitingOn].sort() },
       { group: true, last: false, waitingOn: ['mo_t1006', 'priya_t1006'], missing: 2, needed: 2 });
@@ -254,7 +259,7 @@ test('Page Turners: two of three must approve, against the full PostgreSQL schem
   await t.test('two members, both needed: "Waiting for approval from you and @ada", as before', async () => {
     const club = await project('supper-club', 'Supper Club', { members: [ben, ada] });
     const s = await change(club, ben, 1);
-    await dm.noteChangeReady(pool, s.id, { bot: homeroomBot, domain: 'app.example.test' });
+    await tellReadyNow(pool, s.id, { bot: homeroomBot, domain: 'app.example.test' });
     const meta = await card(ben.id, s.id);
     assert.deepEqual(meta.ready, { group: true, last: false, waitingOn: ['ada'], missing: 2, needed: 2 });
     assert.ok(viewOf(meta).includes('data-bot-ready-waiting="">Waiting for approval from you and @ada<'));
@@ -272,7 +277,7 @@ test('Page Turners: two of three must approve, against the full PostgreSQL schem
     const s = await change(town, ben, 1);
     const state = await dm.approvalState(pool, { sessionId: s.id, userId: ben.id });
     assert.deepEqual([state.audience, state.missing], ['open', 2]);
-    await dm.noteChangeReady(pool, s.id, { bot: homeroomBot, domain: 'app.example.test' });
+    await tellReadyNow(pool, s.id, { bot: homeroomBot, domain: 'app.example.test' });
     const meta = await card(ben.id, s.id);
     assert.deepEqual(meta.ready, { group: true, last: false, waitingOn: [], missing: 2, needed: 2 });
     assert.ok(viewOf(meta).includes('data-bot-ready-waiting="">Waiting for approval from you<'));

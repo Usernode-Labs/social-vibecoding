@@ -45,7 +45,9 @@ function pool(answer) {
   };
 }
 
-const EXPECTED = () => ({ state: 'next', etaAt: new Date(NOW + 8 * MIN).toISOString() });
+// Released 3 minutes ago, merged 1 minute ago: the release gap (4 minutes)
+// is past by the time the merge's image is built (5), so 5 minutes off.
+const EXPECTED = () => ({ state: 'next', etaAt: new Date(NOW + 5 * MIN).toISOString() });
 const APP = (over = {}) => ({
   id: 3, slug: 'usernode-2d5619', name: 'Homeroom', created_by: 1, self_hosted: true,
   collab_visibility: 'public', view_visibility: 'public', moderation_suspended_at: null, ...over,

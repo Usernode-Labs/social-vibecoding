@@ -18,7 +18,10 @@
 import { type ReactNode } from 'react';
 
 import { ArrowPathIcon, SpinnerArcIcon } from '@/components/ui/icons';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
+import { owedHomeWalk } from '../app-context/about-data';
+import { useFirstSessionVisit } from '../first-session/tour-running';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
 
@@ -63,10 +66,10 @@ function QuickAction({ id, label, onClick }: {
  * and differed in who does the work. So the button asks for the change (the
  * same dialog, headed "Suggest an improvement", which posts a request members
  * can see, vote on and pick up), and building it yourself is "Build it
- * yourself", leading the list's Agent chats below, which shows once the
- * viewer has had an agent session (../app-context/app-context-sheet.tsx
- * AgentChats). Until then this button is the menu's one way to change the
- * app, which is the point for a first-time user.
+ * now", Messages' "+" choice, in the Agents list that is agent chats' one
+ * home (#4729: it also led the Homeroom menu's Agent chats section, which
+ * has since left the menu whole). Until then this button is the menu's one
+ * way to change the app, which is the point for a first-time user.
  *
  * It said "Ask for a change" until the first-session run-through (5 Oct
  * 2026), which asked for words a first-time user would use.
@@ -78,6 +81,7 @@ function QuickAction({ id, label, onClick }: {
  * self-hosted row (#1367), and so can this: on Home it asks Homeroom itself.
  */
 export function ImproveQuickActions(): ReactNode {
+  const t = useMessages('agent');
   return (
     <div
       id="improve-quick-actions"
@@ -85,7 +89,7 @@ export function ImproveQuickActions(): ReactNode {
     >
       <QuickAction
         id="improve-row-feedback"
-        label="Suggest an improvement"
+        label={t('agent:menu.suggestImprovement')}
         onClick={() => Improve.giveFeedback()}
       />
     </div>
@@ -121,46 +125,42 @@ export function ImproveQuickActions(): ReactNode {
  * App.renderPlatformVersionPill; `deploying` is this app's own. They are
  * separate facts with one presentation here, because "something is being
  * built" is what the viewer is asking, and which of the two it is shows in
- * the wording.
+ * the wording. Each line names what it is about, Homeroom or the app by its
+ * name: right under the app's name at the top of this menu, "There is a new
+ * version available" read as the app having changed, a minute after
+ * somebody signed up (Evan, sign-up test, 19 Oct 2026). The row is a button
+ * on a phone and with a mouse, so the words say what it does, not "Click".
+ *
+ * NOT FOR A NEWCOMER. Somebody who has not reached Homeroom yet (the first
+ * session's walk on Home still owed on this device, or a first-session visit
+ * under way: ../first-session/) is told nothing about Homeroom's own
+ * updates. The new build is still fetched, so their next launch lands on it;
+ * the reload on the next launch, not mid-use, is unchanged
+ * (public/js/app.js's fresh-shell rules). Their app's own lines stay.
  */
 function UpdateStatus(): ReactNode {
+  const t = useMessages('agent');
   const { versionState, deploying, appUpdateReady } = useStoreState(improveStore);
-  const platformBusy = versionState === 'deploying' || versionState === 'downloading';
-  const ready = versionState === 'ready' || versionState === 'failed';
+  const { name } = useStoreState(improveStore);
+  const firstVisit = useFirstSessionVisit();
+  const newcomer = firstVisit || owedHomeWalk();
+  const platformBusy = !newcomer && (versionState === 'deploying' || versionState === 'downloading');
+  const ready = !newcomer && (versionState === 'ready' || versionState === 'failed');
+  const app = (name || '').trim();
 
   if (ready) {
     return (
-      <button
-        id="improve-update-ready"
-        type="button"
-        className={'flex w-full items-center gap-3 px-4 py-3 text-left '
-          + 'text-sm font-medium text-violet-600 dark:text-violet-400 '
-          + 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60 un-touch-target'}
-        onClick={() => window.location.reload()}
-      >
-        <ArrowPathIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
-        <span className="min-w-0 flex-1">
-          There is a new version available. Click here to get the new version.
-        </span>
-      </button>
+      <UpdateReadyRow id="improve-update-ready" onUpdate={() => window.location.reload()}>
+        {t('agent:menu.update.platformReady')}
+      </UpdateReadyRow>
     );
   }
 
   if (appUpdateReady) {
     return (
-      <button
-        id="improve-app-update-ready"
-        type="button"
-        className={'flex w-full items-center gap-3 px-4 py-3 text-left '
-          + 'text-sm font-medium text-violet-600 dark:text-violet-400 '
-          + 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60 un-touch-target'}
-        onClick={() => Improve.reloadApp()}
-      >
-        <ArrowPathIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
-        <span className="min-w-0 flex-1">
-          This app has a new version. Click here to reload it.
-        </span>
-      </button>
+      <UpdateReadyRow id="improve-app-update-ready" onUpdate={() => Improve.reloadApp()}>
+        {app ? t('agent:menu.update.appReady', { app }) : t('agent:menu.update.appReadyUnnamed')}
+      </UpdateReadyRow>
     );
   }
 
@@ -169,9 +169,9 @@ function UpdateStatus(): ReactNode {
     // says the more surprising of the two.
     const line = platformBusy
       ? (versionState === 'downloading'
-        ? 'A new version of the platform is downloading. The reload appears once it is ready.'
-        : 'A new version of the platform is being built.')
-      : 'A new version of this app is being built.';
+        ? t('agent:menu.update.platformDownloading')
+        : t('agent:menu.update.platformBuilding'))
+      : (app ? t('agent:menu.update.appBuilding', { app }) : t('agent:menu.update.appBuildingUnnamed'));
     return (
       <div
         id="improve-update-note"
@@ -184,6 +184,34 @@ function UpdateStatus(): ReactNode {
   }
 
   return null;
+}
+
+/**
+ * A new build is ready: a short line naming what has the update (#5577),
+ * then "Reload" at the row's end (polish N4). It read "There is a new
+ * version available. Click here to get the new version." in link blue, a run
+ * of text with nothing on a phone to tap but the words. The whole row is
+ * still the one button, so the target is the row's full height, and the pill
+ * is what says it does something.
+ */
+function UpdateReadyRow({ id, onUpdate, children }: { id: string; onUpdate: () => void; children: ReactNode }): ReactNode {
+  const t = useMessages('agent');
+  return (
+    <button
+      id={id}
+      type="button"
+      className={'flex w-full items-center gap-3 px-4 py-3 text-left '
+        + 'text-sm font-medium text-zinc-900 dark:text-zinc-100 '
+        + 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60 un-touch-target'}
+      onClick={onUpdate}
+    >
+      <ArrowPathIcon className="w-5 h-5 shrink-0 text-violet-600 dark:text-violet-400" aria-hidden="true" />
+      <span className="min-w-0 flex-1">{children}</span>
+      <span className="shrink-0 rounded-full bg-violet-600 px-3 py-1 text-[13px] font-semibold text-white">
+        {t('agent:menu.update.action')}
+      </span>
+    </button>
+  );
 }
 
 export { UpdateStatus };

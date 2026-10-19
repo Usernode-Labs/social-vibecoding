@@ -23,7 +23,7 @@
 //
 // 1. The write credential is resolved PAT-FIRST — `GITHUB_BOT_TOKEN`, then
 //    an App installation token, matching services/github.js getOctokit. This
-//    is not cosmetic: services/conflict-resolver.js records that the
+//    is not cosmetic: the conflict resolver (now gone) recorded that the
 //    installation path THROWS for `Usernode-Labs` (the self-app's owner has
 //    no installation), and `getInstallationToken` has no other caller in the
 //    tree. An installation-first helper would break on the platform's own

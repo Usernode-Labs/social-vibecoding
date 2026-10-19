@@ -40,9 +40,10 @@
 // kanban-tabs pattern, #814) made sixteen ungrouped sections a thumb-swipe
 // scavenger hunt. Phones now get a real two-level nav instead:
 //
-//   level 1 (#admin)        the grouped section menu, one tappable row per
-//                           section under the same Operations / People /
-//                           Insights / Platform headings as the sidebar;
+//   level 1 (#admin)        Overview's numbers, then the grouped section
+//                           menu (#5286), one tappable row per section
+//                           under the same Operations / People / Insights /
+//                           Platform headings as the sidebar;
 //   level 2 (#admin/<key>)  that one section, full width, with the platform
 //                           header's back button flipped to an arrow and
 //                           its title set to the section label.
@@ -245,6 +246,15 @@ const AdminConsole = {
   // View Transition has captured the page the viewer is leaving.
   _chromeSuspended: false,
 
+  // Where the console's Exit goes (#5286). _lastOutside is the newest
+  // address this tab showed that was not the console, kept current by the
+  // listener at the foot of this file; open() copies it into _returnTo, so a
+  // move inside the console never changes where Exit leads. Null means the
+  // console was the first thing this tab showed, and Exit falls back to the
+  // Me tab, the console's way in.
+  _lastOutside: null,
+  _returnTo: null,
+
   // The single source of truth in JS for where the sidebar layout starts.
   // Must stay in step with the `md:` classes in _renderShell (Tailwind's
   // md breakpoint IS 768px) — same discipline as AppView's
@@ -322,6 +332,11 @@ const AdminConsole = {
     // periods (the mobile app is the delegation actor; admins only look).
     { key: 'delegations', label: 'Delegations', group: 'People' },
 
+    // Apps & usage: every app with its members, contributors and activity
+    // (features/admin/admin-apps-usage.tsx, services/admin-apps-usage.js).
+    // First under Insights: it is the one-screen answer to "what exists and
+    // what is being used". Read-only; view-only admins read it.
+    { key: 'apps', label: 'Apps & usage', group: 'Insights' },
     // Journey (#3369): the user journey and the North Star, active groups.
     // Its own definitions and routes (/api/admin/journey/*); Analytics is
     // deliberately left as it is. See features/admin/admin-journey.tsx.
@@ -415,6 +430,7 @@ const AdminConsole = {
     'reports': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18m0-16.5h13.5l-1.5 3 1.5 3H3"/></svg>',
     'codes': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z"/></svg>',
     'limits': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
+    'apps': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 6.878V6a2.25 2.25 0 012.25-2.25h7.5A2.25 2.25 0 0118 6v.878m-12 0c.235-.083.487-.128.75-.128h10.5c.263 0 .515.045.75.128m-12 0A2.25 2.25 0 004.5 9v.878m13.5-3A2.25 2.25 0 0119.5 9v.878m0 0a2.246 2.246 0 00-.75-.128H5.25c-.263 0-.515.045-.75.128m15 0A2.25 2.25 0 0121 12v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6c0-.98.626-1.813 1.5-2.122"/></svg>',
     'journey': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498l4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 00-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0z"/></svg>',
     'analytics': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/></svg>',
     'estimator': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75"/></svg>',
@@ -531,6 +547,7 @@ const AdminConsole = {
     AdminConsole._pushedFromMenu = false;
     AdminConsole._chromeSuspended = !!(opts && opts.chrome === false);
     AdminConsole._menuScrollTop = 0;
+    AdminConsole._returnTo = AdminConsole._lastOutside;
     AdminConsole._ensureMediaListener();
     section = AdminConsole._canonicalSection(section);
     const visible = AdminConsole._visibleSections();
@@ -563,6 +580,12 @@ const AdminConsole = {
     // Runs after app.js's own setHeaderTitle, so on a mobile deep link the
     // header ends up showing the section's name rather than the console's.
     AdminConsole._syncChrome();
+  },
+
+  // The address the band's Exit leads to: where the console was entered
+  // from, else the Me tab. Read by features/admin/index.tsx on the press.
+  exitTarget() {
+    return AdminConsole._returnTo || '#profile';
   },
 
   close() {
@@ -1067,6 +1090,11 @@ const AdminConsole = {
     // and its class attribute must be written once at hydration and then
     // only ever toggled from here (the useHiddenClass contract).
     if (banner) banner.classList.toggle('hidden', !viewOnly);
+    // The console's own band (#5286), same classList contract as the banner.
+    // A non-admin on a public section is not in the admin console, so it
+    // stays hidden for them.
+    const bar = document.getElementById('admin-console-bar');
+    if (bar) bar.classList.toggle('hidden', AdminConsole._publicMode());
   },
 
   // Every [data-admin-section] control routes through here. On mobile a
@@ -1188,6 +1216,7 @@ const AdminConsole = {
     status: 'AdminStatus',
     incidents: 'AdminIncidents',
     node: 'AdminNode',
+    apps: 'AdminAppsUsage',
     journey: 'AdminJourney',
     analytics: 'AdminAnalytics',
     estimator: 'AdminEstimator',
@@ -1251,10 +1280,27 @@ const AdminConsole = {
     AdminConsole._markRouted();
   },
 
+  // Level 1 on a phone opens on the numbers (#5286): the Overview section,
+  // then every section under an "All sections" heading. It used to be the
+  // section list alone, forty rows with no summary before them. Overview
+  // renders into a sub-host of its own through the same _renderModule
+  // seam (so _teardownActiveSection still stops it), and the menu follows
+  // it in the same innerHTML write. Public mode has no Overview to show,
+  // so a non-admin keeps the bare list. #admin/overview is still Overview
+  // alone, as a level-2 section.
   _renderMobileMenu(host) {
-    host.innerHTML = AdminConsole._mobileMenuHtml();
+    host.innerHTML = AdminConsole._levelOneHtml();
     AdminConsole._wireSectionButtons(host);
     AdminConsole._wireGroupToggles(host);
+    const sub = document.getElementById('admin-mobile-overview');
+    if (sub) AdminConsole._renderModule(sub, 'AdminOverview', 'overview');
+  },
+
+  _levelOneHtml() {
+    if (AdminConsole._publicMode()) return AdminConsole._mobileMenuHtml();
+    return `<div id="admin-mobile-overview" class="mb-6"></div>
+      <h2 class="${AdminUI.sectionTitle} mb-3">All sections</h2>
+      ${AdminConsole._mobileMenuHtml()}`;
   },
 
   _renderSection() {
@@ -1352,9 +1398,12 @@ const AdminConsole = {
       const pending = AdminConsole._ensureSections();
       if (pending) {
         host.innerHTML = `<p class="${AdminUI.loading} p-4">Loading…</p>`;
+        // Through _renderContent rather than _renderSection: on a phone's
+        // level 1 the host passed here is the Overview sub-host under the
+        // menu (#5286), and a bare section render would wipe the menu.
         pending.then(() => {
           const live = document.getElementById('admin-section-content');
-          if (live && AdminConsole._open) AdminConsole._renderSection();
+          if (live && AdminConsole._open) AdminConsole._renderContent();
         });
         return;
       }
@@ -1453,3 +1502,21 @@ const AdminConsole = {
 // section modules through window[modName], so the global publication stays.
 // Guarded: the prerender pass evaluates this module in Node.
 if (typeof window !== 'undefined') window.AdminConsole = AdminConsole;
+
+// Remember the newest address that was not the console (#5286), for Exit.
+// popstate and hashchange both, because a history traversal can route on
+// popstate before hashchange fires; replaceState fires neither, so a screen
+// that rewrites its own tail leaves the address it was entered at, which is
+// still that screen. Registered when the module evaluates, before app.js's
+// router, so the address is recorded before the console can open on it.
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  const remember = () => {
+    try {
+      const h = location.hash || '#';
+      if (!/^#admin(\/|$)/.test(h)) AdminConsole._lastOutside = h;
+    } catch { /* no location: nothing to remember */ }
+  };
+  remember();
+  window.addEventListener('hashchange', remember);
+  window.addEventListener('popstate', remember);
+}

@@ -3,10 +3,12 @@
 // #3654: grading the benchmark against the FULL PostgreSQL schema and the
 // real routes. The judge's doors refuse anybody but a full platform admin;
 // an item is blind (no trial id, no run, no model, model names masked); the
-// queue offers only what a rule could not settle and nobody judged yet; a
-// grade needs its critique; a person's grade overrides the judge's and the
-// two are compared; labelling a task grades its trials again, and a frozen
-// suite's task cannot be labelled.
+// queue offers only what a rule could not settle and nobody judged yet (an
+// edited pre-existing test among it, the judge's to weigh); a run graded
+// again sends what the rules now leave to the judge to the queue; a grade
+// needs its critique; a person's grade overrides the judge's and the two are
+// compared; labelling a task grades its trials again, and a frozen suite's
+// task cannot be labelled.
 //
 // Skips when no database is reachable, unless TEST_DATABASE_URL insists.
 
@@ -145,12 +147,49 @@ test('benchmark grading against the full PostgreSQL schema and its routes', { ti
     assert.equal((await det(wrong.id)).pass, false, 'the wrong verdict is failed by the rule');
     assert.equal((await det(right.id)).needsJudge, true);
     assert.equal((await det(built.id)).needsJudge, true);
-    assert.equal((await det(scopeBreak.id)).pass, false, 'editing a pre-existing test fails the diff-scope rule');
+    // Editing a pre-existing test is the judge's call, not the rule's: the
+    // criterion and the note stay, and the item carries what it touched.
+    const scoped = await det(scopeBreak.id);
+    assert.deepEqual([scoped.pass, scoped.needsJudge, scoped.criteria.diff_scope], [null, true, false]);
+    assert.deepEqual(scoped.scope.files, ['tests/app.test.js']);
     assert.equal((await det(waiting.id)).pass, null, 'no reference yet');
     const q = await call('GET', '/api/bot-bench/queue', { connector: true });
     assert.equal(q.status, 200);
-    assert.deepEqual(q.body.items.map((i) => i.itemId).sort(), [right.item_token, built.item_token].sort());
+    assert.deepEqual(q.body.items.map((i) => i.itemId).sort(), [right.item_token, built.item_token, scopeBreak.item_token].sort());
     assert.ok(q.body.items.every((i) => Object.keys(i).sort().join() === 'itemId,kind,stage'), 'opaque ids and stages only');
+    // One run's items: every arm's, as opaque as the whole queue.
+    const mine = await call('GET', `/api/bot-bench/queue?runId=${run.id}`, { connector: true });
+    assert.equal(mine.status, 200);
+    assert.deepEqual(mine.body.items.map((i) => i.itemId).sort(), [right.item_token, built.item_token, scopeBreak.item_token].sort());
+    const scopeItem = (await call('GET', `/api/bot-bench/items/${scopeBreak.item_token}`, { connector: true })).body.item;
+    assert.deepEqual(scopeItem.signals.diffScope, { ok: false, violations: ['modified tests/app.test.js'] });
+    assert.deepEqual(scopeItem.signals.testEdits, { hunks: null, missing: ['tests/app.test.js'] }, 'a hunk the stored diff lacks is named');
+    assert.equal((await call('GET', `/api/bot-bench/queue?runId=${run.id + 1000}`, { connector: true })).body.total, 0, 'another run waits on nothing');
+    const bad = await call('GET', '/api/bot-bench/queue?runId=abc', { connector: true });
+    assert.equal(bad.status, 400);
+    assert.match(bad.body.error, /runId/);
+  });
+
+  await t.test('a run graded again: what the rules now leave to the judge joins the queue, behind the full-admin gate', async () => {
+    // As the old rule stored it: a fail no judge would see.
+    await pool.query(
+      `UPDATE bench_trials SET deterministic = '{"pass": false, "needsJudge": false, "criteria": {"diff_scope": false}}'::jsonb WHERE id = $1`,
+      [scopeBreak.id],
+    );
+    const before = await call('GET', `/api/bot-bench/queue?runId=${run.id}`, { connector: true });
+    assert.equal(before.body.total, 2);
+    for (const who of ['member', 'viewer', 'nobody']) {
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal((await call('POST', `/api/bot-bench/runs/${run.id}/regrade`, { who, connector: true })).status, 403, who);
+    }
+    assert.equal((await call('POST', `/api/bot-bench/runs/${run.id + 1000}/regrade`, { connector: true })).status, 404);
+    const r = await call('POST', `/api/bot-bench/runs/${run.id}/regrade`, { connector: true });
+    assert.equal(r.status, 200);
+    assert.deepEqual([r.body.runId, r.body.trials, r.body.changed, r.body.waitingForJudge], [run.id, 5, 1, 3]);
+    const after = await call('GET', `/api/bot-bench/queue?runId=${run.id}`, { connector: true });
+    assert.deepEqual(after.body.items.map((i) => i.itemId).sort(), [right.item_token, built.item_token, scopeBreak.item_token].sort());
+    const { rows: [w] } = await pool.query('SELECT deterministic FROM bench_trials WHERE id = $1', [wrong.id]);
+    assert.equal(w.deterministic.pass, false, 'a wrong verdict stays failed');
   });
 
   await t.test('an item is blind: no trial id, no run, no model, model names masked in the candidate', async () => {
@@ -175,6 +214,43 @@ test('benchmark grading against the full PostgreSQL schema and its routes', { ti
     assert.ok(item.rubric.criteria.length >= 3);
   });
 
+  await t.test('a large diff comes in parts, each as blind as the item, and what the stored diff left out is named', async (st) => {
+    const file = (name) => `diff --git a/${name} b/${name}\n@@ -0,0 +1,900 @@\n${'+// written by glm-5.3-flash for the pins\n'.repeat(600)}`;
+    const big = file('public/a.js') + file('public/b.js') + file('public/c.js');
+    const { rows: [was] } = await pool.query('SELECT diff, changed_files FROM bench_trials WHERE id = $1', [built.id]);
+    await pool.query('UPDATE bench_trials SET diff = $2, changed_files = $3::jsonb WHERE id = $1', [built.id, big, JSON.stringify({
+      files: ['public/a.js', 'public/b.js', 'public/c.js', 'public/d.js'].map((filename) => ({ filename, status: 'added' })),
+    })]);
+    st.after(() => pool.query('UPDATE bench_trials SET diff = $2, changed_files = $3::jsonb WHERE id = $1', [built.id, was.diff, JSON.stringify(was.changed_files)]));
+
+    const item = (await call('GET', `/api/bot-bench/items/${built.item_token}`, { connector: true })).body.item;
+    assert.equal(item.candidate.diffParts, 3, 'one file a part');
+    assert.deepEqual(item.candidate.diffLeftOut, ['public/d.js']);
+    assert.match(item.candidate.diff, /^diff --git a\/public\/a\.js b\/public\/a\.js\n/);
+    assert.doesNotMatch(item.candidate.diff, /public\/b\.js|\[truncated\]/);
+    assert.match(item.instructions, /read every other part \(get_bench_item with this itemId and diffPart 2, 3 and on\)/);
+    assert.match(item.instructions, /CANDIDATE\.diffLeftOut names changed files the stored diff does not hold/);
+
+    const part = await call('GET', `/api/bot-bench/items/${built.item_token}?diffPart=2`, { connector: true });
+    assert.equal(part.status, 200);
+    assert.deepEqual(Object.keys(part.body.item).sort(), ['candidate', 'diffPart', 'diffParts', 'itemId', 'kind', 'stage']);
+    assert.deepEqual([part.body.item.diffPart, part.body.item.diffParts, part.body.item.stage], [2, 3, 'build']);
+    assert.match(part.body.item.candidate.diff, /^diff --git a\/public\/b\.js b\/public\/b\.js\n/);
+    assert.doesNotMatch(JSON.stringify(part.body.item).toLowerCase(), /glm/, 'scrubbed as the item is');
+    assert.match(part.body.item.candidate.diff, /written by \[model\] for the pins/);
+
+    for (const [query, pattern] of [['diffPart=4', /has 3 parts/], ['diffPart=0', /from 1/], ['diffPart=two', /from 1/]]) {
+      // eslint-disable-next-line no-await-in-loop
+      const r = await call('GET', `/api/bot-bench/items/${built.item_token}?${query}`, { connector: true });
+      assert.equal(r.status, 400, query);
+      assert.match(r.body.error, pattern);
+    }
+    const label = await call('GET', `/api/bot-bench/items/${(await pool.query('SELECT label_token FROM bench_tasks WHERE id = $1', [unlabelled])).rows[0].label_token}?diffPart=2`, { connector: true });
+    assert.equal(label.status, 400);
+    assert.equal((await call('GET', '/api/bot-bench/items/zzzzzzzzzzzzzzzz?diffPart=2', { connector: true })).status, 404);
+    assert.equal((await call('GET', `/api/bot-bench/items/${built.item_token}?diffPart=2`, { who: 'viewer' })).status, 403);
+  });
+
   await t.test('a grade needs its critique; a person overrides the judge, and agreement is measured', async () => {
     const short = await call('POST', `/api/bot-bench/items/${right.item_token}/grade`, { connector: true, body: { verdict: 'pass', critique: 'ok' } });
     assert.equal(short.status, 400);
@@ -189,7 +265,7 @@ test('benchmark grading against the full PostgreSQL schema and its routes', { ti
     assert.deepEqual(stored.criteria, { real_blocker: true }, 'only the rubric\'s criteria');
     await call('POST', `/api/bot-bench/items/${built.item_token}/grade`, { connector: true, body: { verdict: 'pass', critique: 'Does what was asked and nothing else.' } });
     const q = await call('GET', '/api/bot-bench/queue', { connector: true });
-    assert.equal(q.body.total, 0, 'judged items leave the queue');
+    assert.deepEqual(q.body.items.map((i) => i.itemId), [scopeBreak.item_token], 'judged items leave the queue');
 
     const override = await call('POST', `/api/admin/homeroom-bot/bench/trials/${built.id}/grade`, { body: { verdict: 'fail', critique: 'It breaks the mobile layout.' } });
     assert.equal(override.status, 200);

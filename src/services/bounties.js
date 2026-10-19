@@ -2,8 +2,9 @@
 //
 // A "bounty" is a symbolic off-chain pledge (no tokens) that debits the
 // giver's SHARED weekly kudos allowance. When a merged PR closes the issue,
-// the open bounty is awarded to that PR's author (routes/votes.js
-// resolveIssueBounty) and counts as kudos everywhere kudos are counted.
+// the open bounty is awarded to that PR's author (the merge-followups
+// machine's bounties write, src/workflow/rules/bounties.ts resolveIssueBounty)
+// and counts as kudos everywhere kudos are counted.
 //
 // Two surfaces create one:
 //   1. POST /api/apps/:slug/issues/:number/bounty (src/routes/issues.js) —
@@ -58,7 +59,7 @@ async function countWeeklyKudosUsed(pool, userId, weekStart) {
 // A pledged bounty normally keeps consuming its slot whatever its outcome
 // (open → awarded), but a VOIDED bounty is refunded: it no longer counts
 // against the limit. The only thing that voids a bounty is the self-kudos
-// guard at merge time (routes/votes.js resolveIssueBounty) — when a user
+// guard at merge time (src/workflow/rules/bounties.ts resolveIssueBounty) — when a user
 // pledged on an issue their own PR then closed. That void is a system-imposed
 // outcome the pledger can't avoid, so the slot is returned for them to spend
 // on someone else's PR. Hence the `status <> 'voided'` filter below.

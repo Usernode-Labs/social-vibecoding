@@ -6,7 +6,7 @@
 // for nobody; such a change is the person's who asked for it, recorded in
 // homeroom_bot_requesters for the request it was built from, else whoever
 // filed that request on Homeroom (the same join as
-// topochain/challenge-scorer.js and homeroom-bot.js liveCandidates). A bot
+// topochain/challenge-scorer.js and rules/bot-loop.ts READ_CANDIDATES_SQL). A bot
 // build with neither is NULL, and still counts for nobody.
 //
 // One definition, read by the Journey page (services/journey.js), the admin

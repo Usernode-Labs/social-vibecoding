@@ -43,9 +43,13 @@ test('the prompt keeps the model to the tools, plain words and Homeroom\'s conte
   // The welcome and the maker's hello both offer "How do I invite friends?".
   assert.match(prompt, /- To invite friends to a project, they open its page and tap Invite \(or Invite people under Share it\)\. It\n  makes a link to share, and anybody who opens it joins the project, somebody new to Homeroom included\./);
   const card = read('frontend/src/features/dev-board/workshop/community-card.tsx');
-  assert.match(card, /onClick=\{openInviteLinks\}\s*>\s*Invite\s*<\/Button>/, 'the buttons it names are called that');
-  assert.match(card, /onClick=\{openInviteLinks\}\s*>\s*Invite people\s*<\/Button>/);
-  assert.match(card, /<span className="dev-ws-head-title">Share it<\/span>/);
+  assert.match(card, /onClick=\{openInviteLinks\}\s*>\s*\{t\('project:communityCard\.invite\.button'\)\}\s*<\/Button>/,
+    'the buttons it names are called that');
+  assert.equal(require('./lib/platform-i18n').message('project:communityCard.invite.button'), 'Invite');
+  assert.match(card, /onClick=\{openInviteLinks\}\s*>\s*\{t\('project:communityCard\.share\.invite'\)\}\s*<\/Button>/);
+  assert.equal(require('./lib/platform-i18n').message('project:communityCard.share.invite'), 'Invite people');
+  assert.match(card, /<span className="dev-ws-head-title">\{t\('project:communityCard\.share\.title'\)\}<\/span>/);
+  assert.equal(require('./lib/platform-i18n').message('project:communityCard.share.title'), 'Share it');
   assert.doesNotMatch(prompt, /an admin has turned you on for/);
   assert.match(prompt, /suggestive or mature themes, nudity, weapons, simulated gambling and loot boxes too/);
   assert.match(prompt, /To read what a request says, use get_request; what people said about it, get_discussion/);
@@ -191,12 +195,17 @@ test('a request\'s status, in the words the model repeats', () => {
   assert.equal(mayor.statusOf({}), 'looked at; nothing new since');
 });
 
-test('it is wired after the send, never into it, and files a request the way the route does', () => {
+test('it hears the send in its own transaction, never into the answer, and files a request the way the route does', () => {
   const dm = read('src/services/homeroom-bot-dm.js');
   assert.match(dm, /const decided = await mayor\.decideOffer\(pool, config, \{ bot, user, settings, conversationId, message, deps \}\);/);
   assert.match(dm, /if \(settings\.dmChat !== false\) \{\n    return mayor\.runDmTurn\(/);
+  // The person's DM machine hears it in the message's own transaction
+  // (src/workflow/bot-dm/), and its work answers: nothing floats after the
+  // response.
   const route = read('src/routes/conversations.js');
-  assert.match(route, /setImmediate\(\(\) => \{\n\s+require\('\.\.\/services\/homeroom-bot-dm'\)\.noteUserMessage\(/);
+  assert.match(route, /afterInsert: \(db, sent\) => require\('\.\.\/services\/homeroom-bot-dm'\)\.heardInDm\(db, \{/);
+  assert.doesNotMatch(route, /setImmediate|noteUserMessage/);
+  assert.match(dm, /await require\('\.\.\/workflow\/platform\.ts'\)\.dmWritten\(db, \{/);
   const src = read('src/services/homeroom-bot-mayor.js');
   assert.match(src, /INSERT INTO issues \(app_id, github_issue_number, title, description, kind, payload, created_by\)/);
   // #4271: the new-request row and the mentions, in one call (notifications.js).
@@ -209,10 +218,12 @@ test('#3707: everything the DM model sends answers one of her messages, and quot
   // send from leaving its quote off.
   const src = read('src/services/homeroom-bot-mayor.js');
   const sends = src.match(/dm\.sendDm\(pool, \{[\s\S]*?\}\);/g) || [];
-  assert.equal(sends.length, 3, 'a turn\'s answer, its offer and the answer to a tap');
+  assert.equal(sends.length, 4, 'a turn\'s answer, its offer, the answer to a tap, and a tap whose act failed for good');
   // B3: the answer to a tap (settleOffer) quotes what was typed or quoted
   // when there was one; a button's tap has no message of hers to quote.
-  for (const send of sends) assert.match(send, /replyToId: message\.id|replyToId, \.\.\.extra/);
+  // One story: a tap with nothing typed is answered where its offer is (the
+  // offer's own message, never quoted, names its thread).
+  for (const send of sends) assert.match(send, /replyToId: message\.id|replyToId, \.\.\.extra|replyToId: replyToId \|\| action\.message_id \|\| null, \.\.\.extra|replyToId: action\.message_id \|\| null,/);
   assert.match(src, /settleOffer\(pool, config, \{\s*bot, user, settings, action, yes, deps, replyToId: message\.id,/);
 });
 
@@ -229,17 +240,18 @@ test('#3740: a change to one of its own proposals is a tool, used only on a clea
 
 test('#3734, #3740: the prompt never lets the bot promise what no tool started, and has it offer when unsure', () => {
   const prompt = mayor.systemPrompt({ username: 'ada', perPerson: 2 });
-  assert.match(prompt, /- Change one of your own proposals that is up for a vote when they clearly ask you to \(revise_proposal\)/);
-  assert.match(prompt, /When it is not clear what they want changed, or which proposal, ask them, or\n  offer it \("Want me to change the proposal to \.\.\.\?"\), and call revise_proposal once they say yes\./);
+  // One story: the prompt says "change", never "proposal" (its tools keep their names).
+  assert.match(prompt, /- Change one of your own changes that is up for a vote when they clearly ask you to \(revise_proposal\)/);
+  assert.match(prompt, /When it is not clear what they want changed, or which change, ask them, or\n  offer it \("Want me to update the change to \.\.\.\?"\), and call revise_proposal once they say yes\./);
   // #11 (WP3): and never a promise to come back to it later, nor "the team
   // has been told" or "it was withdrawn" with nothing behind it.
   assert.match(prompt, /- Never say you will do something \(revise, change, build, post, file, withdraw, report, look at it again\)\n  unless a tool you called in this turn started it and its result says so, or progress or my_work shows it\n  under way\./);
   assert.match(prompt, /Never promise to follow up, look into, sort out, investigate or get back to them later: nothing\n  brings you back to it\./);
-  assert.match(prompt, /Never say the team has been told, or that a proposal was withdrawn or closed, unless\n  report_problem or withdraw_proposal did it in this turn\./);
-  assert.match(prompt, /When you cannot do something, say so plainly, and what they can do instead: leave it, vote\n  No on the proposal, comment on the request, or use Send feedback\./);
+  assert.match(prompt, /Never say the team has been told, or that a change was withdrawn or closed, unless\n  report_problem or withdraw_proposal did it in this turn\./);
+  assert.match(prompt, /When you cannot do something, say so plainly, and what they can do instead: leave it, vote\n  No on the change, comment on the request, or use Send feedback\./);
   assert.match(prompt, /If a tool refused, say plainly why, and that\n  nothing was done\./);
   assert.match(prompt, /When you have not started something you\n  can do, offer to do it instead of promising it\./);
-  assert.match(prompt, /or change anybody else's\n  proposal\. Changes happen through requests and their proposals, and to your own proposals through\n  revise_proposal\./);
+  assert.match(prompt, /or change anybody else's\n  change\. Changes come from requests, and your own changes are updated through\n  revise_proposal\./);
   assert.doesNotMatch(prompt, /From this chat you cannot build, merge, vote, close requests or change settings\. Changes happen/,
     'the old rule, which told it it could not change its own proposals either, is gone');
   assert.doesNotMatch(prompt.slice(0, prompt.indexOf('PLATFORM RULES')), /—/);
@@ -285,8 +297,10 @@ test('#3772: a later try is promised only for a provider\'s failure, three times
   assert.doesNotMatch(mayor.DEFERRED_TEXT, /try again/i);
   assert.match(mayor.DEFERRED_TEXT, /you don't need to send it again/);
   assert.doesNotMatch(`${mayor.DEFERRED_TEXT} ${mayor.DEFERRED_GAVE_UP_TEXT}`, /—|lookups/);
-  // A process that is gone picks them up when the bot starts.
-  assert.match(read('src/services/homeroom-bot.js'), /require\('\.\/homeroom-bot-mayor'\)\.resumeDeferred\(getPool\(config\), config\)/);
+  // The person's DM machine's timer asks them, so a process that is gone
+  // leaves nothing to pick up; an older release's are adopted once per
+  // release, by the release machine's work (workflow/platform.ts ADOPTIONS).
+  assert.match(read('src/workflow/platform.ts'), /\['deferredDms', \(\) => adoptDeferredDms\(\)\]/);
 });
 
 test('#3769: a reply never opens with a bracketed note, and the history no longer teaches one', () => {
@@ -438,8 +452,8 @@ test('#11 (WP3): a promise to come back later, "the team was told" and "I withdr
 
 test('#11 (WP3): withdrawing a proposal and telling the team are tools, described precisely', () => {
   const prompt = mayor.systemPrompt({ username: 'ada' });
-  assert.match(prompt, /- Withdraw one of your own proposals that is still open when the person who asked for its request, or the\n  project's owner, asks you to \(withdraw_proposal\)\. It is withdrawn only once they tap Withdraw it under your\n  message, so ask them to\./);
-  assert.match(prompt, /The one exception: a second proposal for a request that already has one approved\n  or up for a vote is withdrawn straight away, and you say so\./);
+  assert.match(prompt, /- Withdraw one of your own changes that is still open when the person who asked for its request, or the\n  project's owner, asks you to \(withdraw_proposal\)\. It is withdrawn only once they tap Withdraw it under your\n  message, so ask them to\./);
+  assert.match(prompt, /The one exception: a second change for a request that already has one approved\n  or up for a vote is withdrawn straight away, and you say so\./);
   assert.match(prompt, /\(report_problem\)\. It is filed as a report from them where the team tracks problems, which\n  anyone can read; the last few messages of this chat go only to the team, privately\. Say so\./);
   assert.doesNotMatch(prompt.slice(0, prompt.indexOf('PLATFORM RULES')), /—/);
 
@@ -467,13 +481,15 @@ test('#11 (WP3): withdrawing a proposal and telling the team are tools, describe
 });
 
 test('#11 (WP3): what a withdrawal leaves on its request, and what a report carries', () => {
+  // One request, one story: a neutral line in Homeroom's words, the change
+  // by its title, never "Homeroom bot … its proposal (PR #12)".
   const session = { id: 6191, title: 'Watering reminders', pr_number: 12 };
-  assert.equal(mayor.withdrawNote({ session, duplicateOf: { id: 6190, status: 'merged', pr_number: 11 } }, { reason: 'superseded', username: 'ada' }),
-    'Homeroom bot withdrew its proposal "Watering reminders" (PR #12) for this request: it repeated PR #11, which was already approved.');
+  assert.equal(mayor.withdrawNote({ session, duplicateOf: { id: 6190, status: 'merged', pr_number: 11, title: 'Watering' } }, { reason: 'superseded', username: 'ada' }),
+    '“Watering reminders” was withdrawn: it repeated “Watering”, which was already approved.');
   assert.equal(mayor.withdrawNote({ session, duplicateOf: { id: 6190, status: 'promoted' } }, { reason: 'superseded', username: 'ada' }),
-    'Homeroom bot withdrew its proposal "Watering reminders" (PR #12) for this request: it repeated another of its proposals, which is already up for a vote.');
+    '“Watering reminders” was withdrawn: it repeated another change for this request, which is already up for a vote.');
   assert.equal(mayor.withdrawNote({ session: { id: 5 } }, { reason: 'withdrawn', username: 'ada' }),
-    'Homeroom bot withdrew its proposal for this request, at ada\'s request.');
+    'Homeroom bot\'s change for this request was withdrawn at ada\'s request.');
   // The PUBLIC issue: what happened, the request, the bot's records, and the
   // project only when it is public. Never the chat.
   const about = { app: { id: 2034, slug: 'plant-pal', name: 'Plant Pal', view_visibility: 'public' }, issueNumber: 3, runs: [779, 778], proposals: [6193, 6192] };
@@ -536,6 +552,26 @@ test('WP1: request_detail says a build is in progress, and a build that was not 
   assert.equal(words({ build_ok: false, build_error: 'the build ran past its time limit' }), 'could not build: the build ran past its time limit');
   assert.equal(mayor.buildWords({ verdict: 'question' }), undefined, 'a look that built nothing says nothing about a build');
   assert.equal(mayor.buildWords({ verdict: 'revise', build_ok: true }), 'built');
+});
+
+// Papote #3 (18 Oct 2026): "status?" on a request whose plan had waited
+// three days for its requester's Build it was told "building now".
+test('papote #3: request_detail says a plan waits for Build it, and whom it waits on', () => {
+  const words = (r, opts) => mayor.buildWords({ verdict: 'ready', ...r }, opts);
+  const waiting = { awaiting_go_at: '2026-10-15T11:54:25Z', complicated: true, planned: true };
+  assert.equal(words(waiting, { waitingFor: 'them' }),
+    'not building: its plan is written and waits for them to say Build it, and nothing is built until then');
+  assert.equal(words(waiting, { waitingFor: 'snait' }),
+    'not building: its plan is written and waits for @snait to say Build it, and nothing is built until then');
+  assert.equal(words(waiting),
+    'not building: its plan is written and waits for the person who asked for it to say Build it, and nothing is built until then');
+  assert.equal(words({ ...waiting, build_ok: false, build_error: 'skipped: the request was read again' }),
+    'stopped before it was built: the request was read again', 'a plan a new look replaced');
+  // A complicated change's plan being drafted waits in the build lane too.
+  assert.equal(words({ complicated: true, planned: false, live_build_waiting_at: '2026-10-18T17:09:00Z' }),
+    'writing the plan its requester checks before anything is built');
+  assert.equal(words({ complicated: true, planned: true, live_build_waiting_at: '2026-10-18T17:09:00Z' }),
+    'waiting its turn to be built', 'and once Build it went ahead, its build waits its turn');
 });
 
 test('WP1: the model reads what each activity card shows now, beside the card\'s own words', async () => {
@@ -641,7 +677,7 @@ test('#4239: moving a request about Homeroom itself, as the model and the person
   const move = require('../src/services/homeroom-bot-move');
   const tool = mayor.TOOLS.find((t) => t.function.name === 'offer_move_request').function;
   assert.deepEqual(tool.parameters.required, ['project', 'number', 'reason']);
-  assert.match(tool.description, /Only a request they filed or asked for\./);
+  assert.match(tool.description, /Only a request they filed or asked for, or one on a project they made or are an admin of\./);
   assert.match(tool.description, /nothing moves unless they tap Move it to Homeroom/);
   assert.match(tool.description, /the original is closed, or put to its group's vote when anybody else took part in it/);
   const prompt = mayor.systemPrompt({ username: 'ada' });

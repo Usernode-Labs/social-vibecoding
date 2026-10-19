@@ -217,6 +217,15 @@ const CLONE_BACKOFF_MS = Object.freeze([2_000, 6_000]);
 
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
+// A step the platform runs for the copies, failed past its own retries:
+// nothing in it is about the proposal. The kind rides on the error so the
+// run's trace records it and the recovery sweep takes the run again once
+// (shots-orchestrator.platformFault, shots-gc.retryPlatformFaults).
+function platformFaultError(error, kind) {
+  if (error && typeof error === 'object' && !error.shotsPlatformFault) error.shotsPlatformFault = kind;
+  return error;
+}
+
 async function cloneWithRetry(cloneUrl, checkoutDir, {
   attempts = CLONE_ATTEMPTS, backoffMs = CLONE_BACKOFF_MS, wait = sleep,
 } = {}) {
@@ -241,7 +250,7 @@ async function cloneWithRetry(cloneUrl, checkoutDir, {
       }
     }
   }
-  throw lastError;
+  throw platformFaultError(lastError, 'clone');
 }
 
 async function checkoutExactRevision({ app, session, sha, side, parentDir }) {
@@ -376,7 +385,12 @@ async function deployShotsRuntime(config, params, deploy = applicationRuntime.de
   }
 }
 
-async function preparePair(config, { pool = getPool(config), run, session, app, onProgress = null }) {
+// `images`: both sides' images a previous attempt of the same run already
+// built (the shots machine's checkpoint), taken as they are; `onImages`
+// hears them once built, before anything else is done with them.
+async function preparePair(config, {
+  pool = getPool(config), run, session, app, onProgress = null, images = null, onImages = null,
+}) {
   if (!run?.id) throw new ShotsEnvironmentError('invalid_shots_run', 'Shots run is required.');
   const baseSha = exactSha(run.base_sha || run.baseSha, 'base SHA');
   const headSha = exactSha(run.head_sha || run.headSha, 'head SHA');
@@ -399,16 +413,18 @@ async function preparePair(config, { pool = getPool(config), run, session, app, 
     stage('prepare_fixture');
     const source = await dbManager.prepareStagingCloneSource(
       dbManager.appDbName(app.slug), { sourceId: run.id }
-    );
+    ).catch((error) => { throw platformFaultError(error, 'database'); });
     prepared = source;
     stage('build_revisions');
-    const [baseImage, headImage] = await allSettledValues([
-      buildRevision(config, { app, session, checkout: baseCheckout, onProgress }),
-      buildRevision(config, {
-        app, session, checkout: headCheckout,
-        reuseImageRef: session.staging_image_ref || null, onProgress,
-      }),
-    ]);
+    const [baseImage, headImage] = images?.base && images?.head ? [images.base, images.head]
+      : await allSettledValues([
+        buildRevision(config, { app, session, checkout: baseCheckout, onProgress }),
+        buildRevision(config, {
+          app, session, checkout: headCheckout,
+          reuseImageRef: session.staging_image_ref || null, onProgress,
+        }),
+      ]);
+    if (typeof onImages === 'function') await onImages({ base: baseImage, head: headImage });
     const kind = applicationRuntime.mode(config);
     return {
       runId: run.id,
@@ -482,7 +498,7 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
       const spec = pair.sides[side];
       const cloned = await dbManager.cloneFromPreparedSource(pair.preparedSource, spec.dbName, {
         onProgress: (phase) => onProgress?.({ stage: `clone_${side}_${phase}` }),
-      });
+      }).catch((error) => { throw platformFaultError(error, 'database'); });
       clones.push([side, cloned]);
     }
     const cloneBySide = Object.fromEntries(clones);
@@ -508,7 +524,7 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
         runtimeName: spec.runtimeName,
         internalOnly: true,
         env: {
-          DATABASE_URL: dbManager.connectionUrl(spec.dbName, cloneBySide[side].password),
+          DATABASE_URL: dbManager.connectionUrl(spec.dbName, cloneBySide[side].password, { server: cloneBySide[side].server }),
           ...spec.env,
           ...shotsEnv,
           ...shotsPhoneSignInEnv(config, pair.app, phoneTestCode),
@@ -533,7 +549,7 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
       // here, never by either side's own clock (shots-fixtures.pairMoment).
       const at = shotsFixtures.pairMoment();
       const fixtureInputs = Object.fromEntries(['base', 'head'].map((side) => [side, {
-        databaseUrl: dbManager.connectionUrl(pair.sides[side].dbName, cloneBySide[side].password),
+        databaseUrl: dbManager.connectionUrl(pair.sides[side].dbName, cloneBySide[side].password, { server: cloneBySide[side].server }),
         slug: pair.app.slug, runId: pair.runId, side, at,
       }]));
       onProgress?.({ stage: 'seed_shots_identities' });
@@ -547,6 +563,29 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
         shotsFixtures.ensureHostedAppFixture(fixtureInputs[side])));
       fixtureProfiles.push(`${shotsFixtures.HOSTED_APP_PROFILE}@${pair.hostedFixtureImageDigest}`);
       availableFixtures.push(hostedApps[0]);
+      // The invited-member fixtures (#4437): a private project with a
+      // sketch, its two invited members and a live invite link. Left out of
+      // BOTH sides when either revision cannot hold them, and never thrown
+      // over: they widen what shots can show, they do not gate the run.
+      onProgress?.({ stage: 'seed_invited_fixtures' });
+      const invitedReady = await allSettledValues(['base', 'head'].map((side) =>
+        shotsFixtures.canInstallInvitedFixtures({
+          ...fixtureInputs[side], selfAppSlug: config.selfAppSlug,
+        })));
+      if (invitedReady.every(Boolean)) {
+        try {
+          const invited = await allSettledValues(['base', 'head'].map((side) =>
+            shotsFixtures.ensureInvitedFixtures({
+              ...fixtureInputs[side], selfAppSlug: config.selfAppSlug,
+            })));
+          availableFixtures.push(...invited[0]);
+          fixtureProfiles.push(...invited[0].map((entry) => entry.id));
+        } catch (error) {
+          log.warn('shots', 'Invited-member fixtures left out of a pair', {
+            runId: pair.runId, error: error?.message || String(error),
+          });
+        }
+      }
       onProgress?.({ stage: 'inspect_shots_fixtures' });
       const ready = await allSettledValues(['base', 'head'].map((side) =>
         shotsFixtures.canCopyMemberAgentSession(fixtureInputs[side])));
@@ -667,6 +706,7 @@ module.exports = {
   ensureHostedFixtureRuntime,
   CLONE_ATTEMPTS,
   cloneWithRetry,
+  platformFaultError,
   SHOTS_FALLBACK_UID,
   deployShotsRuntime,
   checkoutExactRevision,

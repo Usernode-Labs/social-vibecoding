@@ -1,7 +1,7 @@
 'use strict';
 
-// A Homeroom bot follow-up clears a stop left pending by an earlier turn
-// before it dispatches (#937's pending stop; #4579 did the same for reads).
+// A stop left pending by an earlier turn never skips a Homeroom bot
+// follow-up (#937's pending stop; #4579 did the same for reads).
 //
 // Change 7490 (9 Oct 2026): a person wrote to the bot twice. The first
 // follow-up ran out its 20-minute budget and was stopped; the stop stayed
@@ -10,6 +10,13 @@
 // requested during spin-up"). Its record was then left behind as well
 // (worker.releaseSkippedDispatch, tests/worker-stop-turn.test.js), and the
 // proposal read as running for good.
+//
+// The follow-up used to clear that flag itself before it dispatched. Its
+// turn is now a durable step of its look, and its dispatch names the work
+// item that runs it (`owner`). For such a turn the worker never reads this
+// process's pending-stop flag (worker.execInWorker): a Stop is an event to
+// its machine, stamped on the durable record. So the follow-up clears
+// nothing, and the flag cannot skip it.
 //
 // Run with: node --test tests/homeroom-bot-followup-pending-stop.test.js
 
@@ -24,20 +31,20 @@ const noop = () => {};
 stub(require.resolve('../src/services/logger'), { info: noop, warn: noop, error: noop, debug: noop });
 const followup = require('../src/services/homeroom-bot-followup');
 
-function harness({ inFlight = false } = {}) {
+const OWNER = Object.freeze({ machine: 'bot-request', key: 'request:1:4554', kind: 'bot.look' });
+
+function harness({ taken = false } = {}) {
   const order = [];
   const worker = {
     async ensureWorkerImage() {},
     async ensureWorker() { return 'usernode-worker-7490'; },
-    isInFlight: () => inFlight,
     clearPendingStop: (id) => order.push(['clear', id]),
-    async execInWorker(id) { order.push(['exec', id]); return { exitCode: 0, execExitSeen: true }; },
+    async execInWorker(id, opts) { order.push(['exec', id, opts.owner || null]); return { exitCode: 0, execExitSeen: true }; },
     async stopTurn() {},
   };
   const deps = {
     worker,
-    activeWorkers: new Set(),
-    shotsRunFor: () => null,
+    sessionTaken: async () => taken,
     agentTurn: { resolveCodexRuntimeContext: async () => ({}) },
     sessions: {
       async runCodexAttemptLoop({ dispatchOnce }) {
@@ -51,21 +58,22 @@ function harness({ inFlight = false } = {}) {
     pool, config: {}, bot: { id: 1 }, repo: { owner: 'o', repo: 'r' },
     session: { id: 7490, branch_name: 'dev/homeroom_bot-7490', agent_model: 'glm' },
     prompt: 'answer them', mode: 'build', issueNumber: 4554, turnBudgetMs: 60_000, model: 'glm', deps,
+    owner: OWNER,
   });
   return { order, run };
 }
 
-test('a follow-up clears a leftover stop before it dispatches', async () => {
+test('a follow-up dispatches as its look\'s work item, so no leftover stop can skip it, and it clears nothing', async () => {
   const { order, run } = harness();
   const out = await run();
   assert.ok(!out.routed?.error, JSON.stringify(out.routed));
-  assert.deepEqual(order, [['clear', 7490], ['exec', 7490]],
-    'the stop pending from the turn before is cleared first, so this turn is not skipped');
+  assert.deepEqual(order, [['exec', 7490, OWNER]],
+    'the dispatch names its owner (the worker reads no pending-stop flag for it), and no flag is touched');
 });
 
-test('a follow-up waits, and clears nothing, while a turn runs on the proposal', async () => {
-  const { order, run } = harness({ inFlight: true });
+test('a follow-up waits, and clears nothing, while somebody else works on the proposal', async () => {
+  const { order, run } = harness({ taken: true });
   const out = await run();
   assert.equal(out.routed?.error, 'session_busy');
-  assert.deepEqual(order, [], 'a stop aimed at the running turn is left alone');
+  assert.deepEqual(order, [], 'nothing is dispatched and a stop aimed at the running turn is left alone');
 });

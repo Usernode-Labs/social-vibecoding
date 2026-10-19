@@ -74,6 +74,12 @@ const REQUIRED_LIFECYCLE_PROD = [
 const MIN_HMAC_BYTES = 32;
 
 const IS_STAGING = () => process.env.USERNODE_ENV === 'staging';
+// Whether this process runs the workflow's loops (services/process-role.js).
+// A role that names nothing is server.js's to refuse at boot; read as 'all' here.
+const RUNS_WORKFLOW = () => {
+  const role = require('./services/process-role');
+  try { return role.runsWorkflow(role.processRole()); } catch { return true; }
+};
 
 // The platform's own staging clone runs platform code with no platform
 // keys. It still needs A data key: migrate.js seeds an encrypted fixture
@@ -214,6 +220,37 @@ function canonicalNativeSessionV2Network(value) {
   } catch {
     return null;
   }
+}
+
+// Per-model overrides of the hosts an OpenRouter coding turn may use (run
+// four, 13 Oct 2026). The default shortlists live with the worker's request
+// listeners (worker/*-openrouter-request.js PROVIDER_ROUTING_BY_MODEL: GLM 5.3
+// Flash on relace, fireworks, parasail, together and baseten); this replaces
+// one model's for every turn the platform dispatches, through the turn's
+// AGENT_PROVIDER_SHORTLIST. OPENROUTER_PROVIDER_SHORTLISTS is a JSON object of
+// model slug to a list of OpenRouter provider slugs, or "none" to send that
+// model's turns to every host by OpenRouter's own weighting, for example
+// {"z-ai/glm-5.3-flash":["fireworks","together"]}. Unset, or anything that is
+// not such an object, is no override.
+const PROVIDER_SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,40}(?:\/[a-z0-9._-]{1,40})?$/;
+const MODEL_SLUG_RE = /^[a-z0-9~][a-z0-9._:/-]{0,120}$/i;
+function openRouterProviderShortlists(value) {
+  if (typeof value !== 'string' || !value.trim()) return {};
+  let parsed;
+  try { parsed = JSON.parse(value); } catch {
+    console.log('[config] [warn] OPENROUTER_PROVIDER_SHORTLISTS is not JSON; ignored');
+    return {};
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  const out = {};
+  for (const [model, list] of Object.entries(parsed)) {
+    if (!MODEL_SLUG_RE.test(model)) continue;
+    if (list === 'none') { out[model] = 'none'; continue; }
+    if (!Array.isArray(list)) continue;
+    const slugs = [...new Set(list.map((s) => String(s).trim().toLowerCase()).filter((s) => PROVIDER_SLUG_RE.test(s)))].slice(0, 16);
+    if (slugs.length) out[model] = slugs.join(',');
+  }
+  return out;
 }
 
 function load() {
@@ -389,18 +426,22 @@ function load() {
     // one emergency switch. The deploy workflow still writes the verified-
     // identity variable; nothing reads it, exactly as with
     // OPENROUTER_MANAGED_DAILY_LIMIT_USD.
-    // #2819 reviewed MiMo-V2.6-Pro as a replacement on 2026-09-23 and kept
-    // GLM 5.3 Flash; docs/coding-agent-defaults.md has the evidence and
-    // what would change the answer.
-    openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3-flash',
+    // DeepSeek V4.1 Flash 1017 replaced GLM 5.3 Flash on 2026-10-19 (Homeroom
+    // bot bench runs 210-217 and App bench run 216);
+    // docs/coding-agent-defaults.md has the evidence. Production takes its
+    // value from the deploy (the Platform variables panel, else the
+    // workflow's repository variable), not from this fallback.
+    openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'deepseek/deepseek-v4.1-flash-1017',
     // #3296: which CLI runs each OpenRouter model — `claude` (Claude Code
     // against OpenRouter's Anthropic-compatible endpoint) or `codex`. GLM 5.3
-    // Flash does better in Claude Code and DeepSeek v4.1 Flash in Codex; a
-    // model not listed here stays on Codex. The name above predates this and
-    // still means "the default OpenRouter coding model", whichever CLI runs it.
+    // Flash does better in Claude Code and DeepSeek v4.1 Flash in Codex;
+    // DeepSeek V4.1 Flash 1017 runs in Claude Code, where DeepSeek measured
+    // it (docs/coding-agent-defaults.md); a model not listed here stays on
+    // Codex. The name above predates this and still means "the default
+    // OpenRouter coding model", whichever CLI runs it.
     openrouterModelHarnesses: parseOpenRouterHarnessMap(
       process.env.OPENROUTER_MODEL_HARNESSES === undefined
-        ? 'z-ai/glm-5.3-flash=claude,deepseek/deepseek-v4.1-flash=codex'
+        ? 'z-ai/glm-5.3-flash=claude,deepseek/deepseek-v4.1-flash=codex,deepseek/deepseek-v4.1-flash-1017=claude'
         : process.env.OPENROUTER_MODEL_HARNESSES,
     ),
     // The effort a coding turn runs at when the session carries no explicit
@@ -423,19 +464,24 @@ function load() {
     // #2569 cut this from five to two. The picker is one flat list of five
     // starting models now, and the other three are Anthropic's, so five
     // curated OpenRouter ids made a list of eight that nobody asked for.
-    // GLM leads because openrouterDefaultCodexModel above is GLM; the list
-    // order is what the picker shows after it.
+    // DeepSeek V4.1 Flash 1017 leads because openrouterDefaultCodexModel
+    // above is 1017, and GLM 5.3 Flash, the default before it, follows; the
+    // list order is what the picker shows after it.
     openrouterRecommendedModels: (() => {
       const configured = process.env.OPENROUTER_RECOMMENDED_MODELS === undefined
         ? [
+          'deepseek/deepseek-v4.1-flash-1017',
           'z-ai/glm-5.3-flash',
-          'deepseek/deepseek-v4.1-flash',
         ].join(',')
         : String(process.env.OPENROUTER_RECOMMENDED_MODELS);
       if (configured.trim().toLowerCase() === 'none') return [];
       return configured.split(',').map((s) => s.trim()).filter(Boolean);
     })(),
     openrouterApiBase,
+    dictationModel: process.env.DICTATION_MODEL || 'openai/whisper-large-v3-turbo',
+    // Per-model host shortlists for coding turns (openRouterProviderShortlists
+    // above): { model: 'slug,slug' | 'none' }, empty for the listeners' own.
+    openrouterProviderShortlists: openRouterProviderShortlists(process.env.OPENROUTER_PROVIDER_SHORTLISTS),
     openrouterAllowInsecureBase: String(process.env.OPENROUTER_ALLOW_INSECURE_BASE || 'false') === 'true',
     openrouterOrigin: process.env.OPENROUTER_ORIGIN || 'https://usernode.dev',
     // Management credentials stay in the platform process only. They create
@@ -529,7 +575,9 @@ function load() {
     // without a code deploy. See the scaling notes in README / SPEC.
     //   - maxGlobalSessions: platform-wide active+promoted coding-worker
     //     ceiling. Externally produced imported PRs own no worker and are
-    //     excluded from it.
+    //     excluded from it. The DEFAULT only: a full admin can override it
+    //     in Admin → Limits, so every reader resolves the cap through
+    //     services/session-limit.js, never this value directly.
     //   - maxUserSessions:   per-user ceiling on 'active'-status sessions
     //     only (#193). Promoted sessions are exempt: they're un-pausable
     //     while their PR is up for a merge vote, so counting them would
@@ -548,6 +596,9 @@ function load() {
     //     per-requester by services/session-caps.js — never read these
     //     directly at a call site.
     maxGlobalSessions: parseInt(process.env.MAX_GLOBAL_SESSIONS || '25', 10),
+    // How many of one maintenance campaign's proposals may be up for a vote
+    // at once (src/workflow/campaign/machine.ts CampaignDeps.maxOpen).
+    campaignMaxOpen: parseInt(process.env.CAMPAIGN_MAX_OPEN || '10', 10),
     maxUserSessions: parseInt(process.env.MAX_USER_SESSIONS || '3', 10),
     maxUserPromotedSessions: parseInt(process.env.MAX_USER_PROMOTED_SESSIONS || '5', 10),
     maxAdminUserSessions: parseInt(process.env.MAX_ADMIN_USER_SESSIONS || '5', 10),
@@ -556,6 +607,9 @@ function load() {
     // by src/services/worker.js. Defaults preserve historical behavior;
     // shrink them in prod to fit more concurrent warm workers on one box.
     workerMemory: process.env.WORKER_MEMORY || '2g',
+    // A worker on the platform's own repository, which boots the whole
+    // platform and a browser beside its agent (worker.js workerMemoryFor).
+    workerMemoryPlatformRepo: process.env.WORKER_MEMORY_PLATFORM_REPO || '4g',
     workerCpus: process.env.WORKER_CPUS || '2',
     // Runtime selection is explicit and intentionally defaults to the
     // existing single-server Docker implementation. Kubernetes never
@@ -637,8 +691,20 @@ function load() {
       // it on only once the app namespace's network policy lets the gate's
       // pods reach app pods and the platform.
       appGate: (process.env.APP_GATE || 'off').trim().toLowerCase() === 'on' ? 'on' : 'off',
+      // `serving` (default): an app deploy whose shared asset backend (or
+      // app gate) already serves is routed to it at once, and the backend's
+      // reconcile, 20-30 s the first time in a process, goes on behind it
+      // (services/kubernetes.js sharedBackendForDeploy). `always`: every
+      // deploy waits for that reconcile, as before.
+      assetBackendWait: (process.env.KUBERNETES_ASSET_BACKEND_WAIT || 'serving').trim().toLowerCase() === 'always'
+        ? 'always' : 'serving',
       workerImage: process.env.KUBERNETES_WORKER_IMAGE || '',
       captureImage: process.env.KUBERNETES_CAPTURE_IMAGE || '',
+      // The dedicated node pool check Jobs prefer, as the pool nodes' label
+      // `key=value` (for example `usernodelabs.org/node-pool=cpu-heavy`).
+      // Empty spreads checks over every node (services/kubernetes.js,
+      // checkPlacement).
+      checkNodePool: (process.env.CHECK_NODE_POOL || '').trim(),
       workerStorageClass: process.env.WORKER_STORAGE_CLASS || '',
       workerStorageSize: process.env.WORKER_STORAGE_SIZE || '5Gi',
       // Which builder produces app images (see services/kubernetes-buildkit.js
@@ -663,6 +729,15 @@ function load() {
       // repositories. Empty means the registry accepts anonymous pushes
       // (an in-cluster registry).
       buildkitRegistrySecret: process.env.BUILDKIT_REGISTRY_SECRET || '',
+      // Docker Hub's images (every FROM without a registry, node:22-alpine
+      // among them) are pulled through this mirror first, and from Docker
+      // Hub only when it does not have one. Every build is a fresh daemon
+      // with no image store, so without it each build is one more
+      // anonymous Docker Hub pull: on 19 Oct 2026, 65 deploys at once met
+      // Docker Hub's 429, and 44 of them, with every preview build after
+      // them, failed until its allowance came back. A host[:port]; empty
+      // switches it off.
+      buildkitDockerHubMirror: process.env.BUILDKIT_DOCKERHUB_MIRROR ?? 'mirror.gcr.io',
       // The image and cache registries speak plain HTTP (in-cluster, no TLS).
       buildkitInsecureRegistry: process.env.BUILDKIT_INSECURE_REGISTRY === '1',
       // Dockerfile candidates, in order of preference, relative to the source
@@ -673,6 +748,24 @@ function load() {
         .split(',').map((name) => name.trim()).filter(Boolean),
       buildkitSuccessRetentionHours: Number(process.env.BUILDKIT_SUCCESS_RETENTION_HOURS
         || process.env.KPACK_SUCCESS_RETENTION_HOURS || '48'),
+      // `auto` (default): a build uploads the registry layer cache only when
+      // it rebuilt something a later build can reuse. `always`: after every
+      // build, as before the choice existed.
+      buildkitCacheUpload: process.env.BUILDKIT_CACHE_UPLOAD || 'auto',
+      // `on` (default): an app made from a starter (ready-made, a game, or
+      // the empty scaffold) also imports the shared layer cache of its
+      // package files, and the app's first build, the starter as created,
+      // uploads to it. `off` (or 0/false): every app has its own cache only,
+      // as before.
+      buildkitStarterCache: !['off', '0', 'false'].includes(
+        String(process.env.BUILDKIT_STARTER_CACHE || 'on').trim().toLowerCase()),
+      // `on` (default): the platform takes a build's image as soon as the
+      // Job says it is pushed (its `[buildkit] image …` line), and the Job
+      // uploads the layer cache after that on its own. `off` (or 0/false):
+      // the build waits for the Job to finish, cache upload and all, as
+      // before.
+      buildkitEarlyImage: !['off', '0', 'false'].includes(
+        String(process.env.BUILDKIT_EARLY_IMAGE || 'on').trim().toLowerCase()),
     },
     // Postgres connection pool size (pg `Pool.max`). pg's built-in default
     // is 10, which can bottleneck under many concurrent SSE turns + staging
@@ -746,36 +839,22 @@ function load() {
     // The Workshop theme sweep (services/workshop-themes.js): re-checks every
     // app opened in the last week, re-drafting themes at most daily.
     workshopSweepIntervalMs: parseInt(process.env.WORKSHOP_THEMES_SWEEP_INTERVAL_MS || String(60 * 60 * 1000), 10),
-    // #1010: how often the FAST governance-apply ticker runs. The hourly
-    // sweeper above also applies window-elapsed governance proposals, but an
-    // hour of dead air after a close proposal's countdown reaches zero is
-    // exactly the "did my vote do anything?" confusion this ticker removes —
-    // and it is what makes the client's derived "Closing issue…" spinner
-    // honest rather than a promise nothing keeps. Deliberately gate-first and
-    // DB-only (no GitHub traffic for rows that aren't ready), and on its own
-    // knob so it can't be silently disabled along with the stale-PR sweeper.
-    // Default 60s; set to 0 to disable (the hourly catch-all still runs).
-    governanceApplyTickMs: parseInt(process.env.GOVERNANCE_APPLY_TICK_MS || String(60 * 1000), 10),
-    // Workflow foundation (src/workflow/): with WF_GOVERNANCE_ENABLED on,
-    // the governance-proposal machine decides governance proposals and the
-    // ticker above and the sweeper's Pass 0b leave them alone. Off by default.
-    wfGovernanceEnabled: ['1', 'true'].includes(process.env.WF_GOVERNANCE_ENABLED),
-    // With WF_MERGE_FOLLOWUPS_ENABLED on, a merge hands what follows it
-    // (delivery, preview teardown, included changes, closing requests, the
-    // announcements) to the merge-followups machine, and a change reads
-    // live only once production runs it. Off by default.
-    wfMergeFollowupsEnabled: ['1', 'true'].includes(process.env.WF_MERGE_FOLLOWUPS_ENABLED),
+    // How many 'error' verdicts in a row the checks' error lane re-runs on
+    // its own (staging-recovery.checkMaxAutoRetries, CHECK_MAX_AUTO_RETRIES).
+    checkMaxAutoRetries: (() => {
+      const n = Number.parseInt(process.env.CHECK_MAX_AUTO_RETRIES || '6', 10);
+      return Number.isFinite(n) ? n : 6;
+    })(),
     // Its own pool, so pipeline slots and the outcome listener never take
-    // request connections, and how many slots each process runs. A staging
-    // preview shares one Postgres server with the fleet: one slot, and a
-    // pool of two (the outcome listener and one working connection).
-    wfPoolMax: parseInt(process.env.WF_POOL_MAX || (IS_STAGING() ? '2' : '6'), 10),
-    wfSlots: parseInt(process.env.WF_SLOTS || (IS_STAGING() ? '1' : '4'), 10),
-    // What a write to a machine-owned column outside the pipeline does:
-    // 'raise' everywhere but production, where it is logged to
-    // wf_ownership_violations until no legacy writer is left.
-    wfOwnershipMode: process.env.WF_OWNERSHIP_MODE
-      || ((process.env.NODE_ENV === 'production' && !IS_STAGING()) ? 'log' : 'raise'),
+    // request connections, and how many slots each process runs, by role
+    // (services/process-role.js runsWorkflow). A process that runs the
+    // workflow (a conductor, or 'all') runs four slots, and its pool holds
+    // them, the work's claims and lease renewals; a web process only
+    // appends and waits for outcomes: no slot, and a pool of two (the
+    // outcome listener and one working connection). A staging preview
+    // shares one Postgres server with the fleet: one slot, and a pool of two.
+    wfPoolMax: parseInt(process.env.WF_POOL_MAX || (IS_STAGING() ? '2' : RUNS_WORKFLOW() ? '10' : '2'), 10),
+    wfSlots: parseInt(process.env.WF_SLOTS || (IS_STAGING() ? '1' : RUNS_WORKFLOW() ? '4' : '0'), 10),
     // Demand-driven global-cap eviction. When a new session is needed but
     // the platform is at maxGlobalSessions, we pause the globally least-
     // recently-active session that has been idle longer than this grace
@@ -915,6 +994,10 @@ function load() {
         topochainMailTransport: chosen.transport,
       };
     })(),
+    // Where new content reports are mailed (services/moderation.js
+    // submitReport). Optional, like every mail key: the platform's own
+    // compliance inbox is the default.
+    complianceEmail: (process.env.PLATFORM_COMPLIANCE_EMAIL || '').trim() || 'compliance@usernodelabs.org',
   };
 
   for (const [name, value] of [
@@ -996,7 +1079,7 @@ function load() {
   if (config.maxAdminUserPromotedSessions < config.maxUserPromotedSessions) {
     console.log(`  [warn] MAX_ADMIN_USER_PROMOTED_SESSIONS (${config.maxAdminUserPromotedSessions}) is below MAX_USER_PROMOTED_SESSIONS (${config.maxUserPromotedSessions}) — admins get a LOWER proposal cap than regular users`);
   }
-  console.log(`  WORKER_MEMORY=${config.workerMemory} WORKER_CPUS=${config.workerCpus}`);
+  console.log(`  WORKER_MEMORY=${config.workerMemory} WORKER_MEMORY_PLATFORM_REPO=${config.workerMemoryPlatformRepo} WORKER_CPUS=${config.workerCpus}`);
   console.log(`  APP_RUNTIME=${config.appRuntime} WORKER_RUNTIME=${config.workerRuntime} CAPTURE_RUNTIME=${config.captureRuntime}`);
   console.log(`  SHOTS_V2=collect:${config.shots.collect} execute:${config.shots.execute} present:${config.shots.present} enforce:${config.shots.enforce}`);
   console.log(`  DB_POOL_MAX=${config.dbPoolMax}`);
@@ -1060,10 +1143,13 @@ function usesMockGithubForImports() {
 
 // #1771: cluster maintenance is not a staging preview's job.
 //
-// server.becomeLeader() is where every fleet-wide duty lives — role
-// bootstraps, container cleanup, backfills, the pollers, and nine sweepers.
-// It is gated to ONE leader so the two blue-green colors never double-run
-// it. A preview is neither color: it is a throwaway clone with its own
+// server.becomeLeader() is where the fleet-wide duties still under the
+// leader live — recovery, container cleanup, the pollers and the sweepers —
+// and the workflow's scheduled jobs (src/workflow/clock/) are the rest; the
+// release's work arms those only where this answers true, and the read-only
+// database roles are set up with the schema only then (services/db-roles.js).
+// becomeLeader is gated to ONE leader so the two blue-green colors never
+// double-run it. A preview is neither color: it is a throwaway clone with its own
 // database, so it wins its own advisory lock instantly and runs the whole
 // suite against a copy of production's rows.
 //
@@ -1094,6 +1180,7 @@ module.exports = {
   runsClusterMaintenance,
   canonicalCliOrigin,
   canonicalOpenRouterApiBase,
+  openRouterProviderShortlists,
   canonicalNativeSessionV2Network,
   isLoopbackOrigin,
   phoneTestCodeFrom,

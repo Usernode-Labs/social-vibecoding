@@ -1,8 +1,10 @@
 // Tests for maintenance campaigns (#853's generalization):
 // - the `maintenance_campaign` governance kind in src/routes/issues.js
-//   (creation validation, vote-apply helper, admin force-apply gating),
-// - the campaign engine in src/services/fleet-maintenance.js (per-app
-//   AI tool loop, sequential fan-out, merge-green drain, retry),
+//   (creation validation, admin force-apply gating; the governance machine
+//   applies it: tests/workflow-governance-postgres.test.js),
+// - the campaign's I/O in src/services/fleet-maintenance.js (the per-app
+//   AI tool loop, the push and the pull request its work makes; the campaign
+//   machine itself: tests/workflow-campaign-postgres.test.js),
 // - the dashboard API gating in src/routes/campaigns.js.
 //
 // Like the sibling suites (close-issue-proposal.test.js), collaborators
@@ -48,7 +50,7 @@ const CHILD_APP = {
 };
 
 // ── Load routes/issues with stubbed collaborators ────────────────────────
-function loadIssues(pool, { gh = {}, active = 2, app = SELF_APP, gate = {}, runCampaign } = {}) {
+function loadIssues(pool, { gh = {}, active = 2, app = SELF_APP, gate = {} } = {}) {
   const realActiveUsers = require('../src/services/active-users');
   const ids = {
     pool: require.resolve('../src/db/pool'),
@@ -58,13 +60,13 @@ function loadIssues(pool, { gh = {}, active = 2, app = SELF_APP, gate = {}, runC
     activeUsers: require.resolve('../src/services/active-users'),
     adminApproval: require.resolve('../src/services/admin-approval'),
     governance: require.resolve('../src/services/governance'),
-    fleet: require.resolve('../src/services/fleet-maintenance'),
+    workflow: require.resolve('../src/workflow/platform.ts'),
     subject: require.resolve('../src/routes/issues'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
-  const spies = { systemMessages: [], issueUpdates: [], ghCalls: [], campaignRuns: [] };
+  const spies = { systemMessages: [], issueUpdates: [], ghCalls: [], adminApplied: [] };
   const stub = (id, exports) => {
     require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
   };
@@ -100,9 +102,15 @@ function loadIssues(pool, { gh = {}, active = 2, app = SELF_APP, gate = {}, runC
     ...realActiveUsers,
     getActiveUserStats: async () => ({ active, majority: Math.floor(active / 2) + 1 }),
   });
-  stub(ids.adminApproval, { isAppLocked: async () => false, hasAdminUpVote: async () => true });
-  // The apply helper resolves the vote through governedGate; script it
-  // directly (the gate's own math has its own suite).
+  stub(ids.adminApproval, { isAppLocked: async () => false });
+  stub(ids.workflow, {
+    async fileProposal() {},
+    async adminApplyProposal(issue, user) {
+      spies.adminApplied.push([issue.id, user.username]);
+      return { status: 200, body: { ok: true, applied: { applied: true, campaignId: 34 }, secretChanged: null } };
+    },
+  });
+  // Any read of the gate is scripted directly (its math has its own suite).
   const realGovernance = orig.governance ? orig.governance.exports : require('../src/services/governance');
   stub(ids.governance, {
     ...realGovernance,
@@ -112,13 +120,6 @@ function loadIssues(pool, { gh = {}, active = 2, app = SELF_APP, gate = {}, runC
       ...gate,
     }),
   });
-  stub(ids.fleet, {
-    runCampaign: async (...args) => {
-      spies.campaignRuns.push(args);
-      if (runCampaign) return runCampaign(...args);
-    },
-  });
-
   delete require.cache[ids.subject];
   const subject = require('../src/routes/issues');
   const router = subject.issueRoutes({ databaseUrl: 'postgres://test', jwtSecret: 's' });
@@ -263,120 +264,32 @@ test('create: rejected without full admin (403) and without instructions (400)',
   } finally { restore(); }
 });
 
-// ── Vote apply (maybeApplyMaintenanceCampaignProposal) ───────────────────
-
-function applyPool({ lockedRow } = {}) {
-  return makePool([
-    [/SELECT \* FROM issues WHERE id = \$1 FOR UPDATE/, [lockedRow]],
-    [/INSERT INTO maintenance_campaigns/, [{ id: 33 }]],
-    [/UPDATE issues SET status = 'closed'/, []],
-  ]);
-}
-
-test('apply: passing gate creates the campaign row, closes the issue, starts the engine', async () => {
-  const proposal = CAMPAIGN_PROPOSAL();
-  const pool = applyPool({ lockedRow: proposal });
-  const { subject, spies, restore } = loadIssues(pool);
-  try {
-    const r = await subject.maybeApplyMaintenanceCampaignProposal(
-      { databaseUrl: 'postgres://test' }, pool, proposal
-    );
-    assert.equal(r.applied, true);
-    assert.equal(r.campaignId, 33);
-
-    const camp = pool.issued(/INSERT INTO maintenance_campaigns/);
-    assert.ok(camp, 'campaign row inserted');
-    assert.equal(camp.params[0], 71, 'linked to the proposal');
-    assert.equal(camp.params[1], 'Switch JWT verification to RS256', 'raw payload title');
-    assert.match(camp.params[2], /USERNODE_JWT_PUBLIC_KEY/);
-    assert.equal(camp.params[3], null, 'no target filter → whole fleet');
-
-    const upd = pool.issued(/UPDATE issues SET status = 'closed'/);
-    const audit = JSON.parse(upd.params[1]);
-    assert.equal(audit.campaignId, 33);
-    assert.equal(audit.appliedBy, 'vote');
-
-    // Engine kicked with the new campaign id.
-    assert.equal(spies.campaignRuns.length, 1);
-    assert.equal(spies.campaignRuns[0][2], 33);
-
-    // The governance thread only; a channel carries no activity.
-    assert.equal(spies.systemMessages.length, 1);
-    assert.match(spies.systemMessages[0][2], /approved by group vote/);
-  } finally { restore(); }
-});
-
-test('apply: below the gate leaves the proposal open (no campaign, no engine)', async () => {
-  const proposal = CAMPAIGN_PROPOSAL({ created_at: new Date().toISOString() });
-  const pool = applyPool({ lockedRow: proposal });
-  const { subject, spies, restore } = loadIssues(pool, {
-    gate: { mergeable: false, thresholdMet: false, qualifiedYes: 1, required: 5 },
-  });
-  try {
-    const r = await subject.maybeApplyMaintenanceCampaignProposal(
-      { databaseUrl: 'postgres://test' }, pool, proposal
-    );
-    assert.equal(r.applied, false);
-    assert.equal(r.required, 5);
-    assert.ok(!pool.issued(/INSERT INTO maintenance_campaigns/));
-    assert.equal(spies.campaignRuns.length, 0);
-  } finally { restore(); }
-});
-
-test('apply: already-closed row is a harmless no-op (race with a parallel apply)', async () => {
-  const proposal = CAMPAIGN_PROPOSAL();
-  const pool = applyPool({ lockedRow: { ...proposal, status: 'closed' } });
-  const { subject, spies, restore } = loadIssues(pool);
-  try {
-    const r = await subject.maybeApplyMaintenanceCampaignProposal(
-      { databaseUrl: 'postgres://test' }, pool, proposal
-    );
-    assert.equal(r.applied, false);
-    assert.ok(!pool.issued(/INSERT INTO maintenance_campaigns/));
-    assert.equal(spies.campaignRuns.length, 0);
-  } finally { restore(); }
-});
-
 // ── Admin force-apply route ───────────────────────────────────────────────
 
-test('admin-apply: full admin forces a campaign; view-only admin 403', async () => {
+test('admin-apply: a full admin\'s force goes to the machine; a view-only admin is refused', async () => {
   const proposal = CAMPAIGN_PROPOSAL({ created_at: new Date().toISOString() });
-  const pool = makePool([
-    [/SELECT i\.\*, a\.slug AS app_slug/, [proposal]],
-    [/SELECT \* FROM issues WHERE id = \$1 FOR UPDATE/, [proposal]],
-    [/INSERT INTO maintenance_campaigns/, [{ id: 34 }]],
-    [/UPDATE issues SET status = 'closed'/, []],
-  ]);
-  const { router, spies, restore } = loadIssues(pool, {
-    // Zero-vote gate: force must bypass it entirely.
-    gate: { mergeable: false, qualifiedYes: 0, required: 5, thresholdMet: false },
-  });
+  const pool = makePool([[/SELECT i\.\*, a\.slug AS app_slug/, [proposal]]]);
+  const { router, spies, restore } = loadIssues(pool);
   try {
     const handler = routeHandler(router, '/api/issues/:id/admin-apply');
-
     const denied = mockRes();
     await handler({
       params: { id: '71' },
       user: { id: 8, username: 'watcher', isAdmin: true, canAdminWrite: false },
     }, denied);
     assert.equal(denied.statusCode, 403, 'view-only admin blocked for this kind');
-    assert.ok(!pool.issued(/INSERT INTO maintenance_campaigns/));
+    assert.deepEqual(spies.adminApplied, []);
 
     const res = mockRes();
     await handler({
       params: { id: '71' },
       user: { id: 2, username: 'boss', isAdmin: true, canAdminWrite: true },
+      get: () => undefined,
     }, res);
     assert.equal(res.statusCode, 200);
-    assert.equal(res.body.ok, true);
-    assert.equal(res.body.applied.applied, true, 'force applied with zero votes');
     assert.equal(res.body.applied.campaignId, 34);
-    assert.equal(res.body.secretChanged, null, 'BC alias null for campaigns');
-
-    const upd = pool.issued(/UPDATE issues SET status = 'closed'/);
-    const audit = JSON.parse(upd.params[1]);
-    assert.equal(audit.appliedBy, 'admin:boss');
-    assert.equal(spies.campaignRuns.length, 1);
+    assert.deepEqual(spies.adminApplied, [[71, 'boss']]);
+    assert.ok(!pool.issued(/INSERT INTO maintenance_campaigns/), 'the route writes nothing itself');
   } finally { restore(); }
 });
 
@@ -390,30 +303,18 @@ test('shouldCreateGithubTwin: false for maintenance_campaign', () => {
 
 // ═══ Engine (services/fleet-maintenance.js) ═══════════════════════════════
 
-// Load the engine with github/llm and every promote-path collaborator
-// stubbed via require.cache.
-function loadFleet({ llmScript = [], files = {}, gh = {}, checkAndMerge } = {}) {
+// Load the campaign's I/O with github and the model stubbed via
+// require.cache.
+function loadFleet({ llmScript = [], files = {}, gh = {} } = {}) {
   const ids = {
     github: require.resolve('../src/services/github'),
     llm: require.resolve('../src/services/llm'),
-    ws: require.resolve('../src/services/ws'),
-    notifications: require.resolve('../src/services/notifications'),
-    events: require.resolve('../src/services/events'),
-    activeUsers: require.resolve('../src/services/active-users'),
-    limits: require.resolve('../src/services/limits'),
-    visuals: require.resolve('../src/services/visuals'),
-    staging: require.resolve('../src/services/staging'),
-    stagingRecovery: require.resolve('../src/services/staging-recovery'),
-    votes: require.resolve('../src/routes/votes'),
     subject: require.resolve('../src/services/fleet-maintenance'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
-  const spies = {
-    llmCalls: [], ghCalls: [], systemMessages: [], voteUpdates: [],
-    merges: [],
-  };
+  const spies = { llmCalls: [], ghCalls: [] };
   const stub = (id, exports) => {
     require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
   };
@@ -443,47 +344,20 @@ function loadFleet({ llmScript = [], files = {}, gh = {}, checkAndMerge } = {}) 
     createBranch: async (owner, repo, branch) => {
       spies.ghCalls.push({ type: 'createBranch', owner, repo, branch });
     },
+    getBranchSha: async () => 'a'.repeat(40),
+    forceBranchToSha: async (owner, repo, branch, sha) => {
+      spies.ghCalls.push({ type: 'forceBranchToSha', branch, sha });
+    },
     pushFiles: async (owner, repo, pushed, opts) => {
       spies.ghCalls.push({ type: 'pushFiles', owner, repo, files: pushed, opts });
+      return { sha: 'B'.repeat(40) };
     },
+    findOpenPrByBranch: async () => null,
     createPR: async (owner, repo, opts) => {
       spies.ghCalls.push({ type: 'createPR', owner, repo, opts });
-      return { number: 88, html_url: `https://github.com/${owner}/${repo}/pull/88` };
+      return { number: 88, html_url: `https://github.com/${owner}/${repo}/pull/88`, title: opts.title };
     },
     ...gh,
-  });
-  stub(ids.ws, {
-    sendSystemMessage: async (...args) => { spies.systemMessages.push(args); },
-    pushVoteUpdate: (data) => { spies.voteUpdates.push(data); },
-    pushNotificationToUser: () => {},
-  });
-  stub(ids.notifications, {
-    createPrProposedNotifications: async () => [],
-    serialize: (r) => r,
-  });
-  stub(ids.events, {
-    record: () => {},
-    EVENT_TYPES: { PR_PROMOTED: 'pr_promoted' },
-  });
-  stub(ids.activeUsers, {
-    getActiveUserStats: async () => ({ active: 3, majority: 2 }),
-  });
-  stub(ids.limits, { recordSpend: async () => {} });
-  stub(ids.visuals, {
-    setChecksPending: async () => {},
-    notifyChecksPending: () => {},
-    captureForSession: async () => {},
-  });
-  stub(ids.staging, {
-    buildAndDeployStaging: async () => ({ containerId: 'c1', stagingUrl: 'https://s', hostname: 'h' }),
-    verifyStagingEdge: async () => {},
-  });
-  stub(ids.stagingRecovery, { recordStagingBootFailure: async () => {} });
-  stub(ids.votes, {
-    checkAndMerge: async (config, pool, session, opts) => {
-      spies.merges.push({ session, opts });
-      return checkAndMerge ? checkAndMerge(session) : { merged: true };
-    },
   });
 
   delete require.cache[ids.subject];
@@ -693,166 +567,75 @@ test('runAppChange: budget exhaustion error carries the tool-call trace', async 
   } finally { restore(); }
 });
 
-// ── runCampaign (sequential fan-out) ──────────────────────────────────────
+// ── The change on GitHub (the campaign machine's work) ───────────────────
 
-test('runCampaign: fans out sequentially — one PR opened, one skipped, campaign done', async () => {
-  const pendingPicks = [
-    [{ row_id: 101, app_id: 9, slug: 'cool-app', name: 'Cool App', repo_url: CHILD_APP.repo_url }],
-    [{ row_id: 102, app_id: 10, slug: 'other-app', name: 'Other App', repo_url: 'https://github.com/acme/other-app' }],
-    [],
-  ];
-  let pick = 0;
-  const pool = makePool([
-    [/SELECT \* FROM maintenance_campaigns WHERE id = \$1/, [CAMPAIGN]],
-    [/SELECT id FROM users WHERE username = \$1/, [{ id: 99 }]],
-    [/state = 'pending'\s+ORDER BY mca\.id\s+LIMIT 1/, () => pendingPicks[pick++] || []],
-    [/INSERT INTO chat_sessions/, [{ id: 501 }]],
-    [/SELECT state, COUNT\(\*\)::int AS n/, [{ state: 'pr_open', n: 1 }, { state: 'skipped', n: 1 }]],
-    [/SELECT app_id FROM issues WHERE id = \$1/, [{ app_id: 1 }]],
-  ]);
-  const { subject, spies, restore } = loadFleet({
-    files: { 'server.js': 'const s = process.env.JWT_SECRET;\n' },
-    llmScript: [
-      // App 1: read → edit → finish.
-      { toolUses: [{ id: 't1', name: 'read_file', input: { path: 'server.js' } }] },
-      { toolUses: [{ id: 't2', name: 'edit_file', input: {
-        path: 'server.js', old_string: 'JWT_SECRET', new_string: 'USERNODE_JWT_PUBLIC_KEY',
-      } }] },
-      { toolUses: [{ id: 't3', name: 'finish', input: { summary: 'Swapped env var in server.js.' } }] },
-      // App 2: skip.
-      { toolUses: [{ id: 't4', name: 'skip_app', input: { reason: 'No JWT here.' } }] },
-    ],
-  });
-  try {
-    await subject.runCampaign({ databaseUrl: 'postgres://test' }, pool, 5);
-    // Let kickChecks' fire-and-forget IIFE settle.
-    await new Promise((r) => setTimeout(r, 50));
-
-    // Seeding targeted the whole fleet (no slug filter in the INSERT…SELECT).
-    const seed = pool.issued(/INSERT INTO maintenance_campaign_apps/);
-    assert.ok(seed, 'targets seeded');
-    assert.ok(!/ANY\(\$2\)/.test(seed.sql), 'no slug filter for a fleet-wide campaign');
-
-    // App 1: branch + push + PR + promoted session with source='maintenance'.
-    const branch = spies.ghCalls.find((c) => c.type === 'createBranch');
-    assert.match(branch.branch, /^maint\/c5\/cool-app-/);
-    const push = spies.ghCalls.find((c) => c.type === 'pushFiles');
-    assert.equal(push.files.length, 1);
-    assert.match(push.files[0].content, /USERNODE_JWT_PUBLIC_KEY/);
-    const pr = spies.ghCalls.find((c) => c.type === 'createPR');
-    assert.equal(pr.opts.title, CAMPAIGN.title);
-    assert.match(pr.opts.body, /maintenance campaign #5/i);
-    const sess = pool.issued(/INSERT INTO chat_sessions/);
-    assert.match(sess.sql, /'maintenance'/, 'session row marked source=maintenance');
-    assert.equal(sess.params[1], 99, 'attributed to the platform user');
-
-    const prOpen = pool.issued(/SET state = 'pr_open'/);
-    assert.deepEqual(prOpen.params, [101, 501]);
-
-    // App 2 skipped with the model's reason.
-    const skipped = pool.issued(/SET state = 'skipped'/);
-    assert.deepEqual(skipped.params, [102, 'No JWT here.']);
-
-    // Campaign closed out + completion note in the platform chat.
-    assert.ok(pool.issued(/SET status = 'done'/), 'campaign marked done');
-    const done = spies.systemMessages.find((m) => /finished fanning out/.test(m[2]));
-    assert.ok(done, 'completion chat message sent');
-    assert.match(done[2], /1 PRs opened, 1 skipped, 0 failed/);
-
-    // Vote message + panel push for the opened proposal.
-    assert.ok(spies.systemMessages.find((m) => /opened PR #88/.test(m[2])));
-    assert.equal(spies.voteUpdates[0].sessionId, 501);
-  } finally { restore(); }
-});
-
-test('runCampaign: an app failure is recorded and the loop continues', async () => {
-  const pendingPicks = [
-    [{ row_id: 101, app_id: 9, slug: 'cool-app', name: 'Cool App', repo_url: CHILD_APP.repo_url }],
-    [{ row_id: 102, app_id: 10, slug: 'other-app', name: 'Other App', repo_url: 'https://github.com/acme/other-app' }],
-    [],
-  ];
-  let pick = 0;
-  const pool = makePool([
-    [/SELECT \* FROM maintenance_campaigns WHERE id = \$1/, [CAMPAIGN]],
-    [/SELECT id FROM users WHERE username = \$1/, [{ id: 99 }]],
-    [/state = 'pending'\s+ORDER BY mca\.id\s+LIMIT 1/, () => pendingPicks[pick++] || []],
-    [/SELECT state, COUNT\(\*\)::int AS n/, [{ state: 'failed', n: 1 }, { state: 'skipped', n: 1 }]],
-    [/SELECT app_id FROM issues WHERE id = \$1/, [{ app_id: 1 }]],
-  ]);
-  const { subject, restore } = loadFleet({
-    llmScript: [
-      // App 1: model wanders into a hard failure (truncation).
-      { toolUses: [], stopReason: 'max_tokens' },
-      // App 2 still runs: skip.
-      { toolUses: [{ id: 't1', name: 'skip_app', input: { reason: 'n/a' } }] },
-    ],
-  });
-  try {
-    await subject.runCampaign({ databaseUrl: 'postgres://test' }, pool, 5);
-    const failed = pool.issued(/SET state = 'failed'/);
-    assert.equal(failed.params[0], 101);
-    assert.match(failed.params[1], /truncated/);
-    const skipped = pool.issued(/SET state = 'skipped'/);
-    assert.equal(skipped.params[0], 102, 'second app still processed');
-    assert.ok(pool.issued(/SET status = 'done'/));
-  } finally { restore(); }
-});
-
-// ── mergeGreen + retry ────────────────────────────────────────────────────
-
-test('mergeGreen: force-merges green sessions sequentially, records merged state', async () => {
-  const sessions = [
-    { row_id: 101, id: 501, app_slug: 'cool-app', pr_number: 88, status: 'promoted', check_state: 'passing' },
-  ];
-  const pool = makePool([
-    [/FROM maintenance_campaign_apps mca\s+JOIN chat_sessions/, sessions],
-  ]);
+test('pushChange: the campaign\'s branch for the app, at main, then one commit; an earlier attempt\'s branch is moved back to main', async () => {
   const { subject, spies, restore } = loadFleet({});
+  const repo = { owner: 'acme', repo: 'cool-app' };
+  const files = new Map([['server.js', 'x']]);
   try {
-    const results = await subject.mergeGreen({ databaseUrl: 'postgres://test' }, pool, 5, {
-      forceBy: { id: 2, username: 'boss' },
-    });
-    assert.deepEqual(results, [{ slug: 'cool-app', prNumber: 88, merged: true }]);
-    assert.equal(spies.merges.length, 1);
-    assert.equal(spies.merges[0].opts.force, true, 'platform vote is the authority');
-    assert.equal(spies.merges[0].opts.forceBy.username, 'boss');
-    const upd = pool.issued(/SET state = 'merged'/);
-    assert.deepEqual(upd.params, [101]);
+    const head = await subject.pushChange({ repo, branch: 'maint/c5/cool-app', files, message: 'Maintenance: T' });
+    assert.equal(head, 'b'.repeat(40));
+    assert.deepEqual(spies.ghCalls.map((c) => c.type), ['createBranch', 'pushFiles']);
+    assert.equal(spies.ghCalls[0].branch, 'maint/c5/cool-app', 'one name per app: a retry finds it (bug 1)');
   } finally { restore(); }
+  const exists = loadFleet({ gh: { createBranch: async () => { throw Object.assign(new Error('Reference already exists'), { status: 422 }); } } });
+  try {
+    await exists.subject.pushChange({ repo, branch: 'maint/c5/cool-app', files, message: 'M' });
+    assert.deepEqual(exists.spies.ghCalls.map((c) => c.type), ['forceBranchToSha', 'pushFiles']);
+    assert.equal(exists.spies.ghCalls[0].sha, 'a'.repeat(40), 'back on main before the change is pushed again');
+  } finally { exists.restore(); }
 });
 
-test('retryCampaignApp: resets a failed row to pending and re-enters the loop; no-op otherwise', async () => {
-  // makePool has no rowCount plumbing — extend query for this one test.
-  const base = makePool([]);
-  let updated = 1;
-  const pool = {
-    ...base,
-    query: async (sql, params) => {
-      base.calls.push({ sql, params });
-      if (/SET state = 'pending'/.test(sql)) return { rows: [], rowCount: updated };
-      return { rows: [], rowCount: 0 };
-    },
-    issued: (re) => base.calls.find((c) => re.test(c.sql)),
-  };
-  const { subject, restore } = loadFleet({});
+test('openChangePr: the pull request GitHub already has for the branch is used, never a second one (bug 1)', async () => {
+  const campaign = { id: 5, title: 'Switch JWT verification to RS256' };
+  const repo = { owner: 'acme', repo: 'cool-app' };
+  const fresh = loadFleet({});
   try {
-    const ok = await subject.retryCampaignApp({ databaseUrl: 'postgres://test' }, pool, 5, 9);
-    assert.equal(ok, true);
-    assert.ok(pool.issued(/SET status = 'running', completed_at = NULL/),
-      'a done campaign flips back to running');
+    const pr = await fresh.subject.openChangePr({ repo, branch: 'maint/c5/cool-app', campaign, summary: 'Swapped it.' });
+    assert.deepEqual(pr, { number: 88, url: 'https://github.com/acme/cool-app/pull/88', title: campaign.title });
+    const created = fresh.spies.ghCalls.find((c) => c.type === 'createPR');
+    assert.match(created.opts.body, /maintenance campaign #5/i);
+    assert.match(created.opts.body, /Swapped it\./);
+  } finally { fresh.restore(); }
+  const found = loadFleet({ gh: { findOpenPrByBranch: async () => ({ number: 41, html_url: 'u41', title: 'Earlier' }) } });
+  try {
+    const pr = await found.subject.openChangePr({ repo, branch: 'maint/c5/cool-app', campaign, summary: '' });
+    assert.deepEqual(pr, { number: 41, url: 'u41', title: 'Earlier' });
+    assert.equal(found.spies.ghCalls.filter((c) => c.type === 'createPR').length, 0);
+  } finally { found.restore(); }
+  // Lost the race with an earlier attempt's create: its pull request is the one.
+  let looked = 0;
+  const raced = loadFleet({ gh: {
+    findOpenPrByBranch: async () => (looked++ ? { number: 42, html_url: 'u42', title: 'T' } : null),
+    createPR: async () => { throw Object.assign(new Error('A pull request already exists'), { code: 'pr_exists' }); },
+  } });
+  try {
+    assert.equal((await raced.subject.openChangePr({ repo, branch: 'b', campaign, summary: '' })).number, 42);
+  } finally { raced.restore(); }
+});
 
-    updated = 0;
-    const noop = await subject.retryCampaignApp({ databaseUrl: 'postgres://test' }, pool, 5, 9);
-    assert.equal(noop, false, 'non-retryable state refuses');
+test('runAppChange: a change too big or a model gone astray fails at once (permanent); GitHub\'s error is retried', async () => {
+  const { subject, restore } = loadFleet({ llmScript: [{ toolUses: [], stopReason: 'max_tokens' }] });
+  try {
+    await assert.rejects(subject.runAppChange({ campaign: CAMPAIGN, app: CHILD_APP }), (err) => err.permanent === true);
   } finally { restore(); }
+  const gh = loadFleet({
+    llmScript: [{ toolUses: [{ id: 't1', name: 'read_file', input: { path: 'server.js' } }] }],
+    gh: { getFileContent: async () => { throw Object.assign(new Error('Bad gateway'), { status: 502 }); } },
+  });
+  try {
+    await assert.rejects(gh.subject.runAppChange({ campaign: CAMPAIGN, app: CHILD_APP }), (err) => !err.permanent && /Bad gateway/.test(err.message));
+  } finally { gh.restore(); }
 });
 
 // ═══ Dashboard routes (routes/campaigns.js) ═══════════════════════════════
 
-function loadCampaignRoutes(pool) {
+function loadCampaignRoutes(pool, { answer = () => ({ status: 'accepted', reply: { state: 'running', asked: [501] } }) } = {}) {
   const ids = {
     pool: require.resolve('../src/db/pool'),
     fleet: require.resolve('../src/services/fleet-maintenance'),
+    workflow: require.resolve('../src/workflow/platform.ts'),
     subject: require.resolve('../src/routes/campaigns'),
   };
   const orig = {};
@@ -860,13 +643,15 @@ function loadCampaignRoutes(pool) {
   const stub = (id, exports) => {
     require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
   };
-  const spies = { mergeGreens: [], retries: [] };
+  const spies = { events: [] };
   stub(ids.pool, { getPool: () => pool });
   stub(ids.fleet, {
     campaignStatus: async (p, id) => (String(id) === '5'
       ? { id: 5, title: 'T', status: 'running', counts: {}, apps: [] } : null),
-    mergeGreen: async (config, p, id, opts) => { spies.mergeGreens.push({ id, opts }); return []; },
-    retryCampaignApp: async (config, p, id, appId) => { spies.retries.push({ id, appId }); return true; },
+  });
+  // Every move is an event on the campaign machine.
+  stub(ids.workflow, {
+    async campaignEvent(id, type, payload, user) { spies.events.push({ id, type, payload, user: user.username }); return answer(type); },
   });
   delete require.cache[ids.subject];
   const { campaignRoutes } = require('../src/routes/campaigns');
@@ -880,9 +665,10 @@ function loadCampaignRoutes(pool) {
   return { router, spies, restore };
 }
 
-test('campaign routes: meta and merge-green are admin-gated; retry hits the engine', async () => {
+test('campaign routes: meta, merge-green, retry and stop are admin-gated; each is the machine\'s event', async () => {
   const pool = makePool([
     [/SELECT slug FROM apps WHERE self_hosted/, [{ slug: 'usernode-social' }]],
+    [/SELECT 1 FROM maintenance_campaigns WHERE id = \$1/, (params) => (params[0] === 5 ? [{ '?column?': 1 }] : [])],
   ]);
   const { router, spies, restore } = loadCampaignRoutes(pool);
   try {
@@ -902,8 +688,8 @@ test('campaign routes: meta and merge-green are admin-gated; retry hits the engi
     const mgOk = mockRes();
     await mg({ params: { id: '5' }, user: { id: 2, username: 'boss', isAdmin: true, canAdminWrite: true } }, mgOk);
     assert.equal(mgOk.statusCode, 200);
-    assert.equal(spies.mergeGreens.length, 1);
-    assert.equal(spies.mergeGreens[0].opts.forceBy.username, 'boss');
+    assert.deepEqual(mgOk.body, { ok: true, forced: [501] }, 'answered at once with what it forced (bug 7)');
+    assert.deepEqual(spies.events, [{ id: 5, type: 'MergeGreen', payload: {}, user: 'boss' }]);
 
     const missing = mockRes();
     await mg({ params: { id: '6' }, user: { id: 2, username: 'boss', canAdminWrite: true } }, missing);
@@ -913,11 +699,44 @@ test('campaign routes: meta and merge-green are admin-gated; retry hits the engi
     const rOk = mockRes();
     await retry({ params: { id: '5', appId: '9' }, user: { id: 2, canAdminWrite: true } }, rOk);
     assert.equal(rOk.statusCode, 200);
-    assert.deepEqual(spies.retries, [{ id: 5, appId: 9 }]);
+    assert.deepEqual(spies.events.at(-1), { id: 5, type: 'RetryApp', payload: { appId: 9 }, user: undefined });
     const rBad = mockRes();
     await retry({ params: { id: '5', appId: 'x' }, user: { id: 2, canAdminWrite: true } }, rBad);
     assert.equal(rBad.statusCode, 404);
-    assert.equal(spies.retries.length, 1, 'a non-numeric app id never reaches the engine');
+    assert.equal(spies.events.length, 2, 'a non-numeric app id never reaches the machine');
+
+    const rMissing = mockRes();
+    await retry({ params: { id: '6', appId: '9' }, user: { id: 2, canAdminWrite: true } }, rMissing);
+    assert.equal(rMissing.statusCode, 404, 'a campaign that does not exist is 404, never "being taken over"');
+
+    const stop = routeHandler(router, '/api/campaigns/:id/stop', 'post');
+    const sDenied = mockRes();
+    await stop({ params: { id: '5' }, user: { id: 8, isAdmin: true, canAdminWrite: false } }, sDenied);
+    assert.equal(sDenied.statusCode, 403);
+    const sOk = mockRes();
+    await stop({ params: { id: '5' }, user: { id: 2, username: 'boss', canAdminWrite: true } }, sOk);
+    assert.equal(sOk.statusCode, 200);
+    assert.equal(spies.events.at(-1).type, 'Stop');
+  } finally { restore(); }
+});
+
+test('campaign routes: the machine\'s refusals answer what an admin can act on', async () => {
+  const reasons = new Map([['RetryApp', 'not_retryable'], ['Stop', 'stopped']]);
+  const { router, restore } = loadCampaignRoutes(makePool([[/SELECT 1 FROM maintenance_campaigns/, [{ '?column?': 1 }]]]),
+    { answer: (type) => ({ status: type === 'MergeGreen' ? 'faulted' : 'rejected', reason: reasons.get(type) }) });
+  try {
+    const retry = routeHandler(router, '/api/campaigns/:id/apps/:appId/retry', 'post');
+    const r = mockRes();
+    await retry({ params: { id: '5', appId: '9' }, user: { id: 2, canAdminWrite: true } }, r);
+    assert.deepEqual([r.statusCode, r.body.error], [409, 'App is not in a retryable state (failed/skipped)']);
+    const stop = routeHandler(router, '/api/campaigns/:id/stop', 'post');
+    const st = mockRes();
+    await stop({ params: { id: '5' }, user: { id: 2, canAdminWrite: true } }, st);
+    assert.deepEqual([st.statusCode, st.body.reason], [409, 'stopped']);
+    const mg = routeHandler(router, '/api/campaigns/:id/merge-green', 'post');
+    const broken = mockRes();
+    await mg({ params: { id: '5' }, user: { id: 2, canAdminWrite: true } }, broken);
+    assert.equal(broken.statusCode, 500, 'a faulted campaign is an error, not a refusal');
   } finally { restore(); }
 });
 

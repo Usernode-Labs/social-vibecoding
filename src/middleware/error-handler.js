@@ -1,6 +1,7 @@
 'use strict';
 
 const log = require('../services/logger');
+const { errorFacts } = require('../services/server-error-counts');
 
 // #2508: the platform had NO express error-handling middleware at all, so an
 // error thrown out of any route fell through to EXPRESS'S OWN default
@@ -96,6 +97,12 @@ function errorHandler(err, req, res, _next) {
     errType: err?.type || err?.name || undefined,
     stack: status >= 500 ? err?.stack : undefined,
   });
+
+  // For the server-error counts (middleware/request-counts.js records the
+  // response as it finishes): what was thrown, as a type and the first
+  // frame of this repository's own code, and its message, which is
+  // scrubbed there and kept private. The answer itself is unchanged.
+  if (status >= 500 && res.locals) res.locals.serverError = errorFacts(err);
 
   res.status(status).json({
     error: clientStatus ? clientMessageFor(status) : 'Internal server error',

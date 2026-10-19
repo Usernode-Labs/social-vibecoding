@@ -86,6 +86,7 @@ const log = require('./logger');
 const appAccess = require('./app-access');
 const { HOMEROOM_BOT_CARDS_LOCK } = require('./advisory-locks');
 const { changeHref } = require('./change-destination');
+const { firstVersionSql } = require('./first-version-rule');
 
 const KIND = 'activity';
 // The most cards one read answers for, newest first. An older card keeps
@@ -131,9 +132,9 @@ function proposalHref(slug, sessionId, prNumber = null) {
 // live says it waits for (cardText).
 const FIRST_VERSION_WAIT_WORDS = 'Waiting for the first version to go live. I\'ll start on this as soon as it does.';
 
-/** #4392: what the bot says once its creator has answered a first version's plan. */
-function thanksText(appName) {
-  return `Thanks for answering about the plan. I'll let you know when ${appName} is ready to try.`;
+/** #4392: what the bot says once its creator has answered a plan (one story: no thanks, what is next). */
+function thanksText() {
+  return 'Building it now. I\'ll tell you when it\'s ready to try.';
 }
 
 /**
@@ -194,30 +195,38 @@ async function sendCard(pool, {
     firstVersion: !!requester.firstVersion,
   };
   const words = cardText(context, dm, { joined: !!startedAt, filed, queued, lowAllowance, waitsForFirstVersion, go });
+  const metadata = {
+    kind: KIND,
+    appSlug: app.slug,
+    appName: context.appName,
+    issueNumber,
+    ...(context.issueTitle ? { issueTitle: context.issueTitle } : {}),
+    ...(context.firstVersion ? { firstVersion: true } : {}),
+    // B4: what they asked for, in their own words, which the card leads with.
+    ...(typeof dm.askedLine === 'function' && dm.askedLine(requester.askedText)
+      ? { askedText: dm.askedLine(requester.askedText) } : {}),
+    // B3: a reply to it stays in the DM, for the bot to read: a card is
+    // progress, not a question (homeroom-bot-dm.js MIRRORED_KINDS).
+    ...(startedAt ? { startedAt } : {}),
+    ...(lookAt ? { lookAt } : {}),
+    // #4392: the thanks under a plan, drawn with its thumbnail row; the
+    // project's icon, when it has one, is the row's tile.
+    ...(go ? { thanks: true, ...(app.icon_emoji ? { appEmoji: String(app.icon_emoji) } : {}) } : {}),
+  };
   return dm.sendDm(pool, {
     bot,
     userId: requester.userId,
-    // B5: their hello leads the card it introduces, with its prompts under it.
-    content: hello ? `${hello}\n\n${words}` : words,
-    metadata: {
-      ...(hello ? { hello, actions: dm.promptActions(dm.MEMBER_PROMPTS), status: 'open' } : {}),
-      kind: KIND,
-      appSlug: app.slug,
-      appName: context.appName,
-      issueNumber,
-      ...(context.issueTitle ? { issueTitle: context.issueTitle } : {}),
-      ...(context.firstVersion ? { firstVersion: true } : {}),
-      // B4: what they asked for, in their own words, which the card leads with.
-      ...(typeof dm.askedLine === 'function' && dm.askedLine(requester.askedText)
-        ? { askedText: dm.askedLine(requester.askedText) } : {}),
-      // B3: a reply to it stays in the DM, for the bot to read: a card is
-      // progress, not a question (homeroom-bot-dm.js MIRRORED_KINDS).
-      ...(startedAt ? { startedAt } : {}),
-      ...(lookAt ? { lookAt } : {}),
-      // #4392: the thanks under a plan, drawn with its thumbnail row; the
-      // project's icon, when it has one, is the row's tile.
-      ...(go ? { thanks: true, ...(app.icon_emoji ? { appEmoji: String(app.icon_emoji) } : {}) } : {}),
-    },
+    content: words,
+    metadata,
+    // B5: the person's hello, when this card is where they have it (their
+    // first request on somebody else's project): it leads the card, with its
+    // prompts under it, decided in the card's own transaction.
+    ...(hello ? {
+      hello: {
+        kind: 'member', content: `${hello}\n\n${words}`,
+        metadata: { ...metadata, hello, actions: dm.promptActions(dm.MEMBER_PROMPTS), status: 'open' },
+      },
+    } : {}),
     idempotencyKey: key,
     // #3707: news about a request they started in the DM points back at it.
     replyToId: await dm.requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
@@ -300,7 +309,10 @@ async function continueCard(pool, card, { userId, lookAt = null, dm }) {
  * throws: a card that could not be sent costs the work nothing. Resolves
  * what sendDm did, or null.
  */
-async function startCard(pool, { app, issueNumber, requester, bot, jobKey, settings = null, filed = false, queued = false, deps = {} }) {
+async function startCard(pool, {
+  app, issueNumber, requester, bot, jobKey, settings = null, filed = false, queued = false, inDm = false, reason = null, origin = null,
+  deps = {},
+}) {
   try {
     const n = Number(issueNumber);
     if (!app?.id || !bot?.id || !requester?.userId || !Number.isInteger(n) || n <= 0 || !jobKey) return null;
@@ -308,6 +320,17 @@ async function startCard(pool, { app, issueNumber, requester, bot, jobKey, setti
     const s = settings || await settingsModule(deps).readSettings(pool);
     if (!dm.hasBot(s, requester)) return null;
     const existing = await requestCard(pool, { userId: requester.userId, appId: app.id, issueNumber: n });
+    // One story per request: every request gets a card, however it was
+    // asked (the chat with the bot, Suggest an improvement, the request's
+    // page, the board, a project's chat). The card is the root of the
+    // request's thread, where everything about it is said; the main chat
+    // shows only the four moments that ring. (Until then a request filed
+    // anywhere but the chat was followed in the tray alone: on 9 October
+    // 2026 one person's DM got 45 cards in an afternoon, each saying
+    // everything in the main chat.)
+    // A look at the request starts now (not a card sent when it was filed
+    // or queued): its thread says so, quietly.
+    const reading = !filed && !queued;
     if (existing) {
       // WP1 (#9): a build still waiting its turn or running is what the card
       // follows until it ends, whatever look began after it.
@@ -315,14 +338,15 @@ async function startCard(pool, { app, issueNumber, requester, bot, jobKey, setti
       if (row && !outcomeOf(row) && buildUnderWay(row)) {
         return { messageId: existing.messageId, conversationId: existing.conversationId, duplicate: true, continued: true };
       }
+      if (reading) await noteReading(pool, { app, issueNumber: n, requester, bot, jobKey, card: existing, reason, dm });
       return await continueCard(pool, existing, { userId: requester.userId, dm });
     }
     const lowAllowance = typeof dm.allowanceLow === 'function'
       ? await dm.allowanceLow(pool, s, requester.userId).catch(() => false) : false;
     // B5: somebody's first request on a project they did not make is where
     // the bot says hello to them, once.
-    const hello = typeof dm.claimHello === 'function' && await madeBySomebodyElse(pool, app, requester.userId)
-      && await dm.claimHello(pool, { userId: requester.userId, botId: bot.id, kind: 'member' })
+    // B5: offered as their hello; sendDm says it only when it is theirs.
+    const hello = await madeBySomebodyElse(pool, app, requester.userId)
       ? dm.memberHello(app.name || app.slug) : null;
     // 2026-10-05: a request filed or queued while the project's first
     // version is not live waits for it, and its card says so.
@@ -332,17 +356,71 @@ async function startCard(pool, { app, issueNumber, requester, bot, jobKey, setti
       app, issueNumber: n, requester, bot, key: jobCardKey(jobKey), filed, queued, lowAllowance, dm, hello,
       waitsForFirstVersion: waits,
     });
-    if (hello) await dm.noteHelloSent(pool, requester.userId, sent?.messageId);
     if (!sent?.messageId || sent.duplicate) return sent || null;
     await recordCard(pool, sent, { userId: requester.userId, appId: app.id, issueNumber: n });
     log.info('homeroom-bot-activity', 'Started an activity card', {
       app: app.slug, issueNumber: n, userId: requester.userId, filed, queued, ...(waits ? { waitsForFirstVersion: true } : {}),
     });
+    // One story: the thread's first lines say where the request came from,
+    // and that the bot is reading it when it is.
+    const card = { messageId: Number(sent.messageId), conversationId: Number(sent.conversationId) || null };
+    if (!requester.firstVersion && typeof dm.noteStep === 'function') {
+      await dm.noteStep(pool, {
+        bot, userId: requester.userId, app, issueNumber: n, step: 'origin', key: `hrbot-step-origin-${sent.messageId}`,
+        content: originText({ origin: origin || (inDm ? 'dm' : 'page'), appName: app.name || app.slug, issueNumber: n }),
+      });
+    }
+    if (reading) await noteReading(pool, { app, issueNumber: n, requester, bot, jobKey, card, reason, dm, first: true });
     return sent;
   } catch (err) {
     log.warn('homeroom-bot-activity', 'Could not start an activity card', {
       app: app?.slug, issueNumber, userId: requester?.userId, err: err.message,
     });
+    return null;
+  }
+}
+
+/**
+ * Pure (one story): the first line of a request's thread, where it came
+ * from: `origin` 'dm' (asked in this chat), 'chat' (a project's chat), or
+ * anything else (its page: Suggest an improvement, the board).
+ */
+function originText({ origin, appName, issueNumber }) {
+  if (origin === 'dm') return 'Filed from our chat.';
+  if (origin === 'chat') return `You asked for this in ${appName}'s chat. It's request #${Number(issueNumber)}.`;
+  return `You suggested this on ${appName}'s page. It's request #${Number(issueNumber)}.`;
+}
+
+// Why a look at a request began, when it began because the person answered.
+const ANSWER_REASONS = new Set(['dm_answer', 'thread', 'plan_change', 'dm_comment']);
+
+/**
+ * One story: a look at a request begins, said quietly in its thread:
+ * "Reading it." for the first, "Reading it again with your answer." after
+ * they answered, "Reading it again." otherwise. Once per queue row (its
+ * key). Never throws.
+ */
+async function noteReading(pool, { app, issueNumber, requester, bot, jobKey, card, reason = null, dm, first = false }) {
+  try {
+    if (typeof dm.noteStep !== 'function' || !card?.messageId) return null;
+    let again = !first;
+    if (again) {
+      // A card sent when the request was filed or queued has had no look yet.
+      const { rows: [looked] = [] } = await pool.query(
+        `SELECT EXISTS (SELECT 1 FROM homeroom_bot_runs r JOIN conversation_messages m ON m.id = $3
+                         WHERE r.app_id = $1 AND r.issue_number = $2 AND r.mode = 'live'
+                           AND r.created_at >= m.created_at) AS any`,
+        [app.id, issueNumber, card.messageId],
+      );
+      again = !!looked?.any;
+    }
+    const content = !again ? 'Reading it.'
+      : ANSWER_REASONS.has(reason) ? 'Reading it again with your answer.' : 'Reading it again.';
+    return await dm.noteStep(pool, {
+      bot, userId: requester.userId, app, issueNumber, step: 'reading', content, key: `hrbot-step-read-${jobKey}`,
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-activity', 'Could not say a look began', { app: app?.slug, issueNumber, err: err.message });
     return null;
   }
 }
@@ -366,6 +444,22 @@ async function cardUnderPlan(pool, { app, issueNumber, runId, planMessageId, req
     const existing = await requestCard(pool, { userId: requester.userId, appId: app.id, issueNumber: n });
     if (existing && existing.messageId > Number(planMessageId)) {
       return { messageId: existing.messageId, conversationId: existing.conversationId, duplicate: true, continued: true };
+    }
+    // One story: a plan said in its request's thread is answered there. The
+    // card stays the thread's first message; the thread says what is next.
+    if (existing) {
+      const { rows: [plan] = [] } = await pool.query(
+        'SELECT thread_root_id FROM conversation_messages WHERE id = $1', [Number(planMessageId)],
+      );
+      if (plan && Number(plan.thread_root_id) === existing.messageId) {
+        if (typeof dm.noteStep === 'function') {
+          await dm.noteStep(pool, {
+            bot, userId: requester.userId, app, issueNumber: n, step: 'go', content: thanksText(),
+            key: `hrbot-step-go-${run}`,
+          });
+        }
+        return { messageId: existing.messageId, conversationId: existing.conversationId, duplicate: true, continued: true };
+      }
     }
     // Read from the look that wrote the plan: its run is the build's.
     const { rows: [planned] = [] } = await pool.query(
@@ -406,7 +500,7 @@ async function cardUnderPlan(pool, { app, issueNumber, runId, planMessageId, req
  *
  * #4242: built is not yet "waiting for approval". Its requester hears it is
  * ready to try only once its checks and its before & after shots let it
- * (homeroom-bot-dm.js noteChangeReady), and the card used to say "Waiting
+ * (the bot's change machine: homeroom-bot-dm.js tellReady), and the card used to say "Waiting
  * for approval" long before that, with no message and no push behind it.
  * Until the proposal's news has gone out (`told`, false: cardRows) it is
  * `checking`; when nothing will go out without a person (`needs_look`, the
@@ -428,7 +522,9 @@ function outcomeOf(row) {
         // reads as closed, never as still up for a vote.
         if (row.proposal_status === 'closed' || row.proposal_status === 'archived') return 'closed';
         if (row.told === false) return row.needs_look ? 'needs_look' : 'checking';
-        return 'proposed';
+        // D1: a project's first version goes live without a vote once its
+        // checks pass, so it is never waiting for anyone's approval.
+        return row.first_version === true ? 'going_live' : 'proposed';
       }
       // Built, with no proposal recorded (yet): never "waiting for approval".
       if (row.build_ok === true) return row.needs_look ? 'needs_look' : 'checking';
@@ -631,7 +727,16 @@ function cardOf(row, entry, { firstVersion = null } = {}) {
   // A newer card on the same request began without this one coming to
   // anything recorded, or nothing about it is in progress any more.
   if (!outcome && (row.next_at || !entry)) outcome = 'stopped';
-  if (outcome) return { ...base, state: 'done', outcome, endedAt: endedAt(row, outcome) };
+  if (outcome) {
+    return {
+      ...base, state: 'done', outcome, endedAt: endedAt(row, outcome),
+      // One story: the card's state line says why it stopped ("Stopped ·
+      // it took longer than I'm allowed"), and what holds it ("Waiting ·
+      // I'll start when one of my changes on {project} is voted in or closed").
+      ...(outcome === 'build_failed' ? { stopCause: require('./homeroom-bot-dm').buildFailedCause(row.build_error).cause } : {}),
+      ...(outcome === 'held' && row.cap_suppressed ? { heldBy: String(row.cap_suppressed) } : {}),
+    };
+  }
   return {
     ...base,
     state: 'working',
@@ -709,7 +814,9 @@ async function cardRows(pool, userId, limit = MAX_CARDS) {
               SELECT 1 FROM homeroom_bot_dm_messages t
                WHERE t.user_id = $1 AND t.app_id = c.app_id AND t.issue_number = c.issue_number
                  AND t.kind = 'needs_look' AND t.created_at >= c.began
-            ) AS needs_look
+            ) AS needs_look,
+            -- D1: the project's first version merges without a vote.
+            CASE WHEN cs.id IS NOT NULL THEN ${firstVersionSql('cs')} ELSE FALSE END AS first_version
        FROM cards c
        JOIN apps a ON a.id = c.app_id
        LEFT JOIN LATERAL (
@@ -1080,6 +1187,9 @@ const DEMO_CARD_KEYS = Object.freeze({
   underWay: 'staging-hrbot-activity-under-way',
   plan: 'staging-hrbot-activity-plan',
   building: 'staging-hrbot-activity-building',
+  // One story: a request whose card is the root of its thread, waiting on
+  // the viewer's answer to a question in it (staging-messages.js).
+  thread: 'staging-hrbot-activity-thread',
 });
 // The demo's work already under way: the plan for request #15, begun before
 // its card was there (the tray's demo lists it too, homeroom-bot-tray.js).
@@ -1088,21 +1198,23 @@ const DEMO_UNDER_WAY = Object.freeze({
 });
 
 /** Pure: the demo cards' state, for the fixture's message ids. Times are relative to `now`. */
-function demoState({ working = null, done = null, underWay = null, plan = null, building = null }, now = Date.now()) {
+function demoState({
+  working = null, done = null, underWay = null, plan = null, building = null, thread = null,
+}, now = Date.now()) {
   const ago = (minutes) => new Date(now - minutes * 60 * 1000).toISOString();
   const links = { request: null, proposal: null };
   const cards = [];
   if (underWay) {
     cards.push({
       messageId: underWay, startedAt: ago(DEMO_UNDER_WAY.startedMinutesAgo), links, state: 'working', stage: 'planning',
-      step: 2, of: 6, stepName: 'Write a plan', doing: 'writing the plan for the build', stepSince: ago(7), stepLimitMinutes: 20,
+      step: 2, of: 6, stepName: 'Planning', doing: 'writing the plan for the build', stepSince: ago(7), stepLimitMinutes: 20,
       typicalMinutes: { from: 3, to: 8 },
     });
   }
   if (working) {
     cards.push({
       messageId: working, startedAt: ago(9), links, state: 'working', stage: 'building',
-      step: 3, of: 6, stepName: 'Build it', doing: 'building it', stepSince: ago(4), stepLimitMinutes: 30,
+      step: 3, of: 6, stepName: 'Building', doing: 'building it', stepSince: ago(4), stepLimitMinutes: 30,
       typicalMinutes: { from: 10, to: 25 },
     });
   }
@@ -1125,6 +1237,9 @@ function demoState({ working = null, done = null, underWay = null, plan = null, 
       typicalMinutes: { from: 10, to: 25 },
     });
   }
+  if (thread) {
+    cards.push({ messageId: thread, startedAt: ago(31), links, state: 'done', outcome: 'question', endedAt: ago(3) });
+  }
   return { cards };
 }
 
@@ -1141,7 +1256,7 @@ async function demoCards(pool, user, now = Date.now()) {
   const id = (key) => Number(rows.find((row) => row.idempotency_key === key)?.id) || null;
   return demoState({
     working: id(DEMO_CARD_KEYS.working), done: id(DEMO_CARD_KEYS.done), underWay: id(DEMO_CARD_KEYS.underWay),
-    plan: id(DEMO_CARD_KEYS.plan), building: id(DEMO_CARD_KEYS.building),
+    plan: id(DEMO_CARD_KEYS.plan), building: id(DEMO_CARD_KEYS.building), thread: id(DEMO_CARD_KEYS.thread),
   }, now);
 }
 

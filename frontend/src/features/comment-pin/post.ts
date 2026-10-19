@@ -30,6 +30,8 @@
  * in the box itself, with their words still in it.
  */
 
+import { t } from '../../lib/i18n/runtime';
+import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import type { ElementInfo } from './picture';
 import { noteFor } from './pin-data';
 
@@ -84,32 +86,51 @@ export function describeTarget(info: ElementInfo | null): string {
  * picks the request up: the screen (the shell's route, or the app's path)
  * and the element under the pin.
  */
-export function whereLine(opts: { inApp: boolean; screen: string; at: ElementInfo | null }): string {
-  const place = opts.inApp
+export function whereLine(
+  opts: { inApp: boolean; screen: string; at: ElementInfo | null; preview?: number | null },
+  previewSlug?: string | null,
+): string {
+  const on = describeTarget(opts.at);
+  return `Pinned with C ${placeWords(opts)}${on ? `, ${on}` : ''}.${changeLink(opts.preview, previewSlug)}`;
+}
+
+/**
+ * Where a comment was pinned, in words: in the preview of the change it was
+ * taken in, in the app, or on Homeroom, at its screen.
+ */
+function placeWords(opts: { inApp: boolean; screen: string; preview?: number | null }): string {
+  if (opts.inApp && opts.preview) return `in the preview of change ${opts.preview} at ${opts.screen || '/'}`;
+  return opts.inApp
     ? `in the app at ${opts.screen || '/'}`
     : `on Homeroom at ${opts.screen || '#home'}`;
-  const on = describeTarget(opts.at);
-  return `Pinned with C ${place}${on ? `, ${on}` : ''}.`;
+}
+
+/** ` Change: #app/<slug>/dev/sessions/<id>`, once, after the sentence: where the preview came from. */
+function changeLink(preview: number | null | undefined, slug: string | null | undefined): string {
+  if (!preview || !slug) return '';
+  return ` Change: #app/${slug}/dev/sessions/${preview}`;
 }
 
 /** Where one comment was pinned, for `whereLines`. */
-export interface Spot { inApp: boolean; screen: string; at: ElementInfo | null }
+export interface Spot { inApp: boolean; screen: string; at: ElementInfo | null; preview?: number | null }
 
 /**
  * The where line for several comments, numbered as their words are: one
- * place said once when they share it, else each comment's own.
+ * place said once when they share it, else each comment's own. The change
+ * link, when any comment was pinned in a preview, is added once at the end.
  */
-export function whereLines(spots: Spot[]): string {
-  if (spots.length === 1) return whereLine(spots[0]);
-  const place = (s: Spot) => (s.inApp ? `in the app at ${s.screen || '/'}` : `on Homeroom at ${s.screen || '#home'}`);
+export function whereLines(spots: Spot[], previewSlug?: string | null): string {
+  if (spots.length === 1) return whereLine(spots[0], previewSlug);
+  const place = (s: Spot) => placeWords(s);
   const places = new Set(spots.map(place));
+  const link = changeLink(spots.find((s) => s.preview)?.preview ?? null, previewSlug);
   if (places.size === 1) {
-    return `Pinned with C ${place(spots[0])}: ${spots.map((s, i) => `${i + 1} ${describeTarget(s.at) || 'on the page'}`).join('; ')}.`;
+    return `Pinned with C ${place(spots[0])}: ${spots.map((s, i) => `${i + 1} ${describeTarget(s.at) || 'on the page'}`).join('; ')}.${link}`;
   }
   return `Pinned with C: ${spots.map((s, i) => {
     const on = describeTarget(s.at);
     return `${i + 1} ${place(s)}${on ? `, ${on}` : ''}`;
-  }).join('; ')}.`;
+  }).join('; ')}.${link}`;
 }
 
 /** Several comments' words, numbered, a paragraph each; one comment's, as they are. */
@@ -192,7 +213,8 @@ export async function postComment(post: CommentPost): Promise<PostOutcome> {
   if (post.target === 'app' && post.appSlug) body.appSlug = post.appSlug;
   const title = String(post.title || '').trim();
   if (title) body.title = title.slice(0, 200);
-  if (post.bounty) body.bounty = true;
+  // #5249: never while kudos is parked, whatever a restored draft held.
+  if (post.bounty && !KUDOS_PARKED) body.bounty = true;
   if (ids.length) body.screenshotIds = ids;
   if (pins.length) {
     body.screenshotPins = pins.slice(0, MAX_COMMENTS).map((p) => {
@@ -221,11 +243,11 @@ export async function postComment(post: CommentPost): Promise<PostOutcome> {
       botWillBuild: !!bot?.botWillBuild,
       url: typeof data.url === 'string' ? data.url : '',
       title: typeof data.title === 'string' ? data.title : title,
-      bounty: b && typeof b === 'object' ? { placed: !!b.placed, remaining: b.remaining, error: b.error } : null,
+      bounty: !KUDOS_PARKED && b && typeof b === 'object' ? { placed: !!b.placed, remaining: b.remaining, error: b.error } : null,
     };
   }
   if (res.status >= 500) return { ok: false, handover: true };
-  const reason = typeof data.error === 'string' && data.error ? data.error : "That couldn't be posted.";
+  const reason = typeof data.error === 'string' && data.error ? data.error : t('devchat:commentPin.postFailed');
   return { ok: false, handover: false, error: reason };
 }
 
@@ -248,7 +270,7 @@ export function handOverOptions(post: CommentPost): Record<string, unknown> {
   if (screenshots.length) opts.screenshots = screenshots.slice(0, MAX_PICTURES);
   const title = String(post.title || '').trim();
   if (title) opts.title = title;
-  if (post.bounty) opts.bounty = true;
+  if (post.bounty && !KUDOS_PARKED) opts.bounty = true;
   return opts;
 }
 

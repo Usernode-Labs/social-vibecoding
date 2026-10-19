@@ -192,6 +192,7 @@ test('another user\'s id reads as not found', async () => {
 test('archiving parks the active change and never withdraws it', async () => {
   const pool = recordingPool({
     "UPDATE agent_sessions SET status = 'archived'": () => ({ rows: [{ active_change_id: 50 }] }),
+    'SELECT status FROM chat_sessions WHERE id': () => ({ rows: [{ status: 'active' }] }),
   });
   const parked = [];
   const lifecycle = require('../src/services/session-lifecycle');
@@ -202,7 +203,9 @@ test('archiving parks the active change and never withdraws it', async () => {
   } finally {
     lifecycle.pauseSession = original;
   }
-  assert.deepEqual(parked.map((p) => [p.sessionId, p.userId, p.reason]), [[50, 7, 'agent-session-archived']]);
+  // A park is the proposal machine's pause (reason 'park'), from the status
+  // read just before it; why it parked ('agent-session-archived') is the log's.
+  assert.deepEqual(parked.map((p) => [p.sessionId, p.userId, p.reason, p.from]), [[50, 7, 'park', 'active']]);
   assert.ok(!pool.calls.some((c) => /status = 'archived'[\s\S]*chat_sessions|UPDATE chat_sessions/.test(c.sql)),
     'the change itself is not archived');
 });
@@ -216,6 +219,7 @@ test('a new change parks the previous one, then becomes the active change', asyn
   lifecycle.pauseSession = async (args) => { parked.push(args.sessionId); return { paused: true }; };
   const pool = recordingPool({
     'SELECT id, active_change_id FROM agent_sessions': () => ({ rows: [{ id: 5, active_change_id: 40 }] }),
+    'SELECT status FROM chat_sessions WHERE id': () => ({ rows: [{ status: 'active' }] }),
     'UPDATE chat_sessions SET agent_session_id': () => ({ rows: [{ id: 50, app_id: 3 }] }),
   });
   try {
@@ -316,18 +320,27 @@ test('the create route links a Mayor\'s change to its session, and only then', (
   // slot is reclaimed so a choice that cannot run has no side effects.
   assert.match(create, /!explicitAgent && agentSessionId\s*\? await agentSessions\.getAgentChoice\(pool, agentSessionId\)/);
   assert.match(create, /resolveExplicitAgentPreference\(pool, req\.user\.id, config, conversationChoice\)/);
-  assert.ok(create.indexOf('conversationChoice') < create.indexOf('sessionLifecycle.freeGlobalSlot'));
+  assert.ok(create.indexOf('sessionLifecycle.claimGlobalSlot') > 0, 'the platform-wide gate is in the create route');
+  assert.ok(create.indexOf('conversationChoice') < create.indexOf('sessionLifecycle.claimGlobalSlot'));
 });
 
 test('the merge and archive paths tell the parent session', () => {
-  const votes = read('src/routes/votes.js');
-  const merge = votes.slice(votes.indexOf('async function finalizeMerge('));
-  const note = merge.indexOf("noteChangeClosed(pool, { change: session, outcome: 'merged' })");
-  assert.ok(note > 0 && note > merge.indexOf("SET status = 'merged'"), 'after the change is marked merged');
-  assert.match(merge.slice(note - 200, note + 300), /try \{[\s\S]*catch \(err\)/, 'and it can never fail the merge');
-  const lifecycle = read('src/services/session-lifecycle.js');
-  const archive = lifecycle.slice(lifecycle.indexOf('async function finalizeArchivedSession('));
-  assert.match(archive, /noteChangeClosed\(pool, \{\s*change: session,\s*outcome: require\('\.\/agent-sessions'\)\.outcomeForArchiveReason\(reason\)/);
+  // The merge: the merge-followups machine's agentNote write, in the
+  // transaction that marks the change merged.
+  const machine = read('src/workflow/merge-followups/machine.ts');
+  assert.match(machine, /\{ type: 'agentNote', sessionId: d\.sessionId, agentSessionId: s\.agentSessionId, prNumber: d\.prNumber \}/);
+  assert.match(machine, /agentNote: async \(tx, w\) => \{[\s\S]*?changeClosed\(tx,[\s\S]*?outcome: 'merged' \}\);/);
+  // The close: the proposal machine's `closed` write, in the transaction
+  // that closes the change, worded by the close's reason as
+  // agent-sessions.outcomeForArchiveReason words it.
+  const proposal = read('src/workflow/proposal/machine.ts');
+  assert.match(proposal, /outcome: OUTCOMES\.get\(reason\) \|\| 'closed', agentSessionId: row\.agentSessionId, prNumber: row\.prNumber \}/);
+  assert.match(proposal, /closed: async \(tx: Tx, w: any, ctx: WriteContext\) => \{[\s\S]*?if \(w\.agentSessionId\) \{\s*await changeClosed\(tx, \{ change: \{ id: w\.sessionId, agent_session_id: w\.agentSessionId, pr_number: w\.prNumber \?\? null \}, outcome: w\.outcome \}\);/);
+  for (const reason of ['auto-rejected', 'proposal-replaced', 'manual', 'stale-pr']) {
+    const word = agentSessions.outcomeForArchiveReason(reason);
+    const pinned = word === 'closed' ? null : proposal.match(new RegExp(`\\['${reason}', '([a-z]+)'\\]`));
+    assert.equal(pinned ? pinned[1] : 'closed', word, `the machine words a ${reason} close as the conversation always did`);
+  }
 });
 
 test('deleting an account removes its conversation-only rows first', () => {

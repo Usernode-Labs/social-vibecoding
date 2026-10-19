@@ -1,24 +1,18 @@
 'use strict';
 
-// services/main-watch — the safety net under direct merges.
+// services/main-watch: the run and the record under the safety net beneath
+// direct merges.
 //
 // Proposals merge as they stand once approved and clean, so nobody has run
 // the checks against the merged tree AS A WHOLE. After each merge the repo's
 // unit suite runs once on the merge commit; red pauses the app's merges
-// until a fix lands or an admin resumes them. Every write is compare-and-
-// swap on the merge sha, so a slow run for an older merge cannot overwrite
-// the verdict for a newer one.
-//
-// Three refinements, each from a pause that should not have happened or
-// should not have been felt (the afternoon a flaky test paused the
-// platform's own merges while main was fine):
-//
-//   * a first red is provisional — the suite re-runs once on the same commit
-//     before anyone is told main is broken;
-//   * the pause is its own column (main_check_paused_sha), cleared only by a
-//     green verdict or an admin's resume — a run that could not happen
-//     leaves it alone;
-//   * the messages name the failing test, not just "is failing".
+// until a fix lands or an admin resumes them. What follows from a verdict
+// (the provisional first red, the pause and its end, the rechecks, a run a
+// restart interrupted) is the main-check machine's, pinned against
+// PostgreSQL in tests/workflow-main-check-postgres.test.js. Pinned here is
+// what main-watch still does: one run of the suite (runMainSuite, and the
+// dead run's Jobs it adopts), the verdict it reads from it (classify), and
+// the pause as the gate and the API read it (describe, mergePause).
 //
 // The level-and-green pass-through the pause makes room for is the gate's
 // business: tests/votes-integration-gate.test.js.
@@ -28,59 +22,34 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 
 process.env.NODE_ENV = 'test';
-delete process.env.MAIN_WATCH_ENABLED;
-delete process.env.MAIN_WATCH_CONFIRM;
-
-// The two lazily-required collaborators, stubbed before main-watch can load
-// them: the group message and the queue kick are the observable outcomes.
-const posted = [];
-const enqueued = [];
-require.cache[require.resolve('../src/services/ws')] = {
-  id: 'ws', filename: 'ws', loaded: true,
-  exports: {
-    sendSystemMessage: async (pool, appId, content) => { posted.push({ appId, content }); },
-    pushSessionUpdate: () => {},
-  },
-};
-require.cache[require.resolve('../src/services/merge-queue')] = {
-  id: 'merge-queue', filename: 'merge-queue', loaded: true,
-  exports: { enqueue: (config, appId) => { enqueued.push(appId); } },
-};
 
 const unitSuite = require('../src/services/unit-suite');
 const mainWatch = require('../src/services/main-watch');
-const checkRuns = require('../src/services/check-runs');
+const checksQueue = require('../src/services/checks-queue');
+const kubernetes = require('../src/services/kubernetes');
 
 const SHA = 'c'.repeat(40);
 const OLD = 'd'.repeat(40);
 const APP = { id: 12, slug: 'demo', repo_url: 'https://github.com/org/demo' };
 const config = { workerRuntime: 'docker' };
+const KUBE = { workerRuntime: 'kubernetes', kubernetes: { workerNamespace: 'workers' } };
 
-// A pool that answers the statements main-watch issues, and records them.
-// `claim` is what the CTE's prev block returns; `verdictRows` is the row
-// count of each CAS write (a number for all of them, or an array consumed
-// in order — the held 'confirming' write, then the verdict).
-function fakePool({ claim = { was_state: null, was_sha: null, was_paused_sha: null }, verdictRows = 1, resumeRow = null } = {}) {
+// A pool that records the statements main-watch issues and answers the
+// checks queue's: `queueRow` is the check_runs row a resumed run id names
+// (null: none admitted), `claimed` whether taking it over from its owner
+// succeeds.
+function fakePool({ queueRow = null, claimed = true } = {}) {
   const calls = [];
-  const rowCounts = Array.isArray(verdictRows) ? [...verdictRows] : null;
   return {
     calls,
-    // The state writes, in order, as [state, detail, clearPause, setPause].
-    writes() {
-      return calls.filter((c) => /SET main_check_state = \$3/.test(c.sql))
-        .map((c) => [c.params[2], JSON.parse(c.params[3]), c.params[4], c.params[5]]);
-    },
     async query(sql, params) {
       calls.push({ sql, params });
-      if (/main_check_state = 'running'/.test(sql)) return { rows: [claim], rowCount: 1 };
-      if (/SET main_check_state = \$3/.test(sql)) {
-        const n = rowCounts ? (rowCounts.length ? rowCounts.shift() : 1) : verdictRows;
-        return { rows: [], rowCount: n };
+      if (/SELECT owner FROM check_runs WHERE run_id = \$1 AND admitted_at IS NOT NULL/.test(sql)) {
+        return { rows: queueRow ? [queueRow] : [], rowCount: queueRow ? 1 : 0 };
       }
-      if (/SET main_check_resumed_sha = main_check_paused_sha/.test(sql)) {
-        return { rows: resumeRow ? [resumeRow] : [], rowCount: resumeRow ? 1 : 0 };
-      }
-      if (/SELECT main_check_state/.test(sql)) return { rows: [claim.row || {}], rowCount: 1 };
+      if (/UPDATE check_runs SET owner = \$2, heartbeat_at = NOW\(\)/.test(sql)) return { rows: [], rowCount: claimed ? 1 : 0 };
+      if (/DELETE FROM check_runs WHERE run_id = \$1/.test(sql)) return { rows: [], rowCount: 1 };
+      if (/SELECT main_check_state/.test(sql)) return { rows: [{}], rowCount: 1 };
       return { rows: [], rowCount: 0 };
     },
   };
@@ -93,23 +62,11 @@ function stubSuite(fn) {
   return { calls, restore: () => { unitSuite.maybeRunUnitSuite = real; } };
 }
 
-// A stub that answers from a script, one entry per run.
-function scripted(...answers) {
-  return stubSuite(async () => {
-    const next = answers.shift();
-    if (next instanceof Error) throw next;
-    return next;
-  });
-}
-
 const pass = { row: { status: 'pass', failureReason: '', summary: { tests: 40, pass: 40, fail: 0 } } };
 const fail = (reason) => ({ row: { status: 'fail', failureReason: reason, summary: { tests: 40, pass: 39, fail: 1 } } });
 // The shape services/unit-suite.js failureDetail actually produces: the TAP
 // `not ok` lines, then the summary, joined with ` | `.
 const TAP_RED = 'not ok 6972 - shared-sessions returns linked_issues per row | # tests 7010 | # pass 7009 | # fail 1';
-const run = (pool, extra = {}) => mainWatch.afterMerge(config, pool, { app: APP, session: { id: 3, pr_number: 41 }, mergeSha: SHA, ...extra });
-
-test.beforeEach(() => { posted.length = 0; enqueued.length = 0; delete process.env.MAIN_WATCH_CONFIRM; });
 
 // ── describe ─────────────────────────────────────────────────────────────
 
@@ -199,6 +156,7 @@ test('classify: a suite that never ran is an error, whatever its reason now says
   assert.equal(empty.row.couldNotRun, true);
   assert.doesNotMatch(empty.row.failureReason, /^Suite setup failed/);
   assert.equal(mainWatch.classify(empty).state, 'error');
+  assert.match(mainWatch.classify(empty).detail.failureReason, /^The unit suite stopped before any test ran: /);
 
   const github = require('../src/services/github');
   const kubernetes = require('../src/services/kubernetes');
@@ -230,241 +188,257 @@ test('classify: a suite that never ran is an error, whatever its reason now says
   assert.equal(mainWatch.classify(fail(TAP_RED)).state, 'failing');
 });
 
-test('afterMerge: a suite that never ran records error, is not re-run to confirm, and pauses nothing', async () => {
-  const notRun = await unitSuite.outcomeFromLog({ pool: null, appId: 12, sessionId: 'main-12', succeeded: false, stdout: '', stderr: 'BackoffLimitExceeded: Error', graduated: true });
-  const pool = fakePool();
-  const suite = stubSuite(async () => notRun);
-  try {
-    const out = await run(pool);
-    assert.equal(out.state, 'error');
-    assert.equal(suite.calls.length, 1, 'only a red is asked again');
-    assert.deepEqual(pool.writes().map(([state, , clear, set]) => [state, clear, set]), [['error', false, false]]);
-    assert.match(out.detail.failureReason, /^The unit suite stopped before any test ran: /);
-  } finally { suite.restore(); }
-});
+// ── runMainSuite ─────────────────────────────────────────────────────────
+//
+// One run of the suite on a commit, for the main-check machine's main.suite
+// work (src/workflow/main-check/services.ts).
 
-// ── afterMerge ───────────────────────────────────────────────────────────
-
-test('afterMerge: a green run records passing, clears the pause column, and tells nobody', async () => {
+test('runMainSuite: one run on the commit, named for the app rather than a proposal', async () => {
   const pool = fakePool();
   const suite = stubSuite(async () => pass);
+  const told = [];
   try {
-    const out = await run(pool);
+    const out = await mainWatch.runMainSuite(config, pool, { app: APP, sha: SHA, onRunId: (id) => told.push(id) });
     assert.equal(out.state, 'passing');
-    assert.equal(out.sha, SHA);
-    // The run is named for the app, not a session, so a session's own
-    // cleanup cannot take it down; and it runs the merge commit itself.
-    assert.equal(suite.calls.length, 1, 'green needs no second opinion');
+    // Named for the app, so a session's own cleanup cannot take it down;
+    // and it runs the commit itself.
+    assert.equal(suite.calls.length, 1);
     assert.equal(suite.calls[0].sessionId, 'main-12');
     assert.equal(suite.calls[0].ref, SHA);
     assert.equal(suite.calls[0].repoOwner, 'org');
     assert.equal(suite.calls[0].repoName, 'demo');
     assert.equal(suite.calls[0].prNumber, null, 'not a PR run');
-    // Claim, then CAS write for the same sha.
-    assert.match(pool.calls[0].sql, /main_check_state = 'running', main_check_sha = \$2/);
-    assert.doesNotMatch(pool.calls[0].sql, /main_check_paused_sha =/, 'a new merge is a new question, not an answer to the old one');
-    assert.deepEqual(pool.calls[0].params.slice(0, 2), [12, SHA]);
-    assert.match(pool.calls[1].sql, /WHERE id = \$1 AND main_check_sha = \$2/);
-    assert.deepEqual(pool.writes().map(([state, , clear, set]) => [state, clear, set]),
-      [['passing', true, false]], 'green clears the pause; nothing sets it');
-    assert.equal(posted.length, 0, 'green is the common case; nobody is told');
-    assert.equal(enqueued.length, 0);
+    assert.deepEqual(told, [], 'no queue row outside the cluster, so no run id to keep');
   } finally { suite.restore(); }
 });
 
-test('afterMerge: a concurrent or completed claim for the same SHA does not run the suite again', async () => {
-  const pool = fakePool({ claim: null });
-  const suite = stubSuite(async () => pass);
-  try {
-    assert.equal(await run(pool), null);
-    assert.equal(suite.calls.length, 0);
-    assert.match(pool.calls[0].sql, /main_check_sha IS DISTINCT FROM \$2/);
-    assert.equal(pool.calls[0].params[3], false);
-  } finally { suite.restore(); }
-});
-
-test('afterMerge: a first red is provisional — it holds the pause (the banner says so) and re-runs once', async () => {
-  const pool = fakePool();
-  const suite = scripted(fail(TAP_RED), fail(TAP_RED));
-  try {
-    const out = await run(pool);
-    assert.equal(suite.calls.length, 2, 'the suite ran twice');
-    assert.equal(suite.calls[1].ref, SHA, 'on the same commit');
-    assert.equal(suite.calls[1].sessionId, 'main-12');
-    const writes = pool.writes();
-    assert.equal(writes.length, 2, 'the held state, then the verdict');
-    // Held: 'confirming' pauses (unless already resumed for this sha) and
-    // says it is a first run.
-    assert.equal(writes[0][0], 'confirming');
-    assert.equal(writes[0][1].confirming, true);
-    assert.deepEqual(writes[0].slice(2), [false, true]);
-    // Verdict: confirmed red, with the first run kept for the record.
-    assert.equal(out.state, 'failing');
-    assert.equal(writes[1][0], 'failing');
-    assert.equal(writes[1][1].confirmed, true);
-    assert.equal(writes[1][1].firstRun.failureReason, TAP_RED);
-    assert.deepEqual(writes[1].slice(2), [false, true]);
-    assert.equal(posted.length, 0, 'a channel carries no activity: the board banner says it');
-    assert.equal(enqueued.length, 0, 'red kicks nothing');
-  } finally { suite.restore(); }
-});
-
-test('afterMerge: red then green is a flake — recorded as passing, the pause lifts, the queue goes', async () => {
-  const pool = fakePool();
-  const suite = scripted(fail(TAP_RED), pass);
-  try {
-    const out = await run(pool);
-    assert.equal(suite.calls.length, 2);
-    assert.equal(out.state, 'passing');
-    const writes = pool.writes();
-    assert.deepEqual(writes.map(([state, , clear, set]) => [state, clear, set]),
-      [['confirming', false, true], ['passing', true, false]]);
-    assert.equal(writes[1][1].flake.failureReason, TAP_RED, 'the failure that did not repeat is kept');
-    assert.equal(posted.length, 0, 'a channel carries no activity: the board banner says it');
-    assert.deepEqual(enqueued, [12], 'whatever waited out the re-run can go');
-  } finally { suite.restore(); }
-});
-
-test('afterMerge: a re-run that could not happen neither confirms nor clears — the first red stands', async () => {
-  const pool = fakePool();
-  const suite = scripted(fail(TAP_RED), new Error('docker daemon unreachable'));
-  try {
-    const out = await run(pool);
-    assert.equal(out.state, 'failing');
-    const writes = pool.writes();
-    assert.equal(writes[1][0], 'failing');
-    assert.equal(writes[1][1].confirmed, false);
-    assert.match(writes[1][1].confirmation.failureReason, /docker daemon unreachable/);
-    assert.equal(writes[1][1].failureReason, TAP_RED, 'the verdict is the first run');
-    assert.equal(enqueued.length, 0);
-  } finally { suite.restore(); }
-});
-
-test('afterMerge: MAIN_WATCH_CONFIRM=0 takes the first red at its word', async () => {
-  process.env.MAIN_WATCH_CONFIRM = '0';
-  const pool = fakePool();
-  const suite = stubSuite(async () => fail('1 of 40 tests failed: votes › tally'));
-  try {
-    assert.equal(mainWatch.confirmEnabled(), false);
-    const out = await run(pool);
-    assert.equal(out.state, 'failing');
-    assert.equal(suite.calls.length, 1, 'no re-run');
-    assert.deepEqual(pool.writes().map(([state]) => state), ['failing']);
-    assert.equal(posted.length, 0, 'a channel carries no activity: the board banner says it');
-  } finally { suite.restore(); }
-});
-
-test('afterMerge: green after red lifts the pause and lets the queue go', async () => {
-  // The claim's prev block says what this run supersedes: a pause.
-  const pool = fakePool({ claim: { was_state: 'failing', was_sha: OLD, was_paused_sha: OLD } });
-  const suite = stubSuite(async () => pass);
-  try {
-    await run(pool, { session: { id: 4, pr_number: 42 } });
-    assert.equal(posted.length, 0, 'a channel carries no activity: the board banner says it');
-    assert.deepEqual(enqueued, [12], 'whatever was approved during the pause can merge now');
-  } finally { suite.restore(); }
-});
-
-test('afterMerge: green after a pause the state no longer shows still lets the queue go', async () => {
-  // A red, then a merge whose run errored: state 'error', pause column still
-  // set. The green that follows is a recovery, and is announced as one.
-  const pool = fakePool({ claim: { was_state: 'error', was_sha: OLD, was_paused_sha: 'e'.repeat(40) } });
-  const suite = stubSuite(async () => pass);
-  try {
-    await run(pool);
-    assert.equal(posted.length, 0, 'a channel carries no activity: the board banner says it');
-    assert.deepEqual(enqueued, [12]);
-  } finally { suite.restore(); }
-});
-
-test('afterMerge: a verdict for a superseded merge is discarded, not written', async () => {
-  // A newer merge re-claimed the row while this run was going: the CAS
-  // write matches no row, and the stale verdict must not become the answer.
-  const pool = fakePool({ verdictRows: 0 });
-  const suite = stubSuite(async () => fail('boom'));
-  try {
-    const out = await run(pool, { mergeSha: OLD, session: null });
-    assert.equal(out, null);
-    assert.equal(suite.calls.length, 1, 'a superseded first red is not worth a second run');
-    assert.equal(posted.length, 0, 'a discarded verdict pauses nothing and tells nobody');
-  } finally { suite.restore(); }
-});
-
-test('afterMerge: a merge that supersedes the row mid-confirmation discards the verdict', async () => {
-  // The held write landed; the verdict write did not.
-  const pool = fakePool({ verdictRows: [1, 0] });
-  const suite = scripted(fail(TAP_RED), fail(TAP_RED));
-  try {
-    const out = await run(pool);
-    assert.equal(out, null);
-    assert.equal(posted.length, 0, 'a channel carries no activity: the board banner says it');
-  } finally { suite.restore(); }
-});
-
-test('afterMerge: a run that could not happen records error and leaves the pause as it was', async () => {
-  const pool = fakePool();
+test('runMainSuite: a runner that could not be reached is an error verdict; no repository runs nothing', async () => {
   const suite = stubSuite(async () => { throw new Error('docker daemon unreachable'); });
   try {
-    const out = await run(pool, { session: null });
+    const out = await mainWatch.runMainSuite(config, fakePool(), { app: APP, sha: SHA });
     assert.equal(out.state, 'error');
     assert.match(out.detail.failureReason, /docker daemon unreachable/);
-    assert.deepEqual(pool.writes().map(([state, , clear, set]) => [state, clear, set]),
-      [['error', false, false]], 'neither clears nor sets: a run that says nothing about main cannot lift a pause');
-    assert.equal(posted.length, 0);
+    assert.equal((await mainWatch.runMainSuite(config, fakePool(), { app: { id: 1, repo_url: 'not-github' }, sha: SHA })).state, 'skipped');
+    assert.equal(suite.calls.length, 1);
   } finally { suite.restore(); }
 });
 
-test('afterMerge: nothing runs without a repo, a sha, or the switch on', async () => {
+// The cluster's checks queue, granting the slot at once.
+function grantingQueue(t) {
+  const enqueued = [];
+  t.mock.method(checksQueue, 'isEnabled', () => true);
+  t.mock.method(checksQueue, 'enqueue', async (pool, row) => { enqueued.push(row); return { position: 1 }; });
+  t.mock.method(checksQueue, 'waitForSlot', async () => ({ outcome: 'granted', waitedMs: 0 }));
+  return enqueued;
+}
+
+test('runMainSuite: the queue row\'s run id is told before the suite runs, and labels its Jobs', async (t) => {
+  const enqueued = grantingQueue(t);
   const pool = fakePool();
+  const order = [];
+  const suite = stubSuite(async (args) => { order.push(['suite', args.previewRunId]); return pass; });
+  try {
+    const out = await mainWatch.runMainSuite(KUBE, pool, {
+      app: APP, sha: SHA, onRunId: async (id) => { order.push(['told', id]); },
+    });
+    assert.equal(out.state, 'passing');
+    assert.equal(enqueued.length, 1);
+    const runId = enqueued[0].runId;
+    assert.deepEqual([enqueued[0].kind, enqueued[0].appId, enqueued[0].commitSha], ['main', 12, SHA]);
+    assert.deepEqual(order, [['told', runId], ['suite', runId]], 'kept before the Jobs exist, so an attempt after a crash finds them');
+    assert.ok(pool.calls.some((c) => /DELETE FROM check_runs WHERE run_id = \$1/.test(c.sql) && c.params[0] === runId),
+      'the slot is given back after the run');
+  } finally { suite.restore(); }
+});
+
+// A merge that lands a tree whose suite already passed (the proposal head it
+// squashed) copies that pass when the machine allows it (`reuse`): no queue
+// slot, no Jobs, a verdict at once that says where it came from. Anything
+// else runs the suite. The lookup itself: tests/unit-suite-reuse.test.js.
+function stubTreePass(fn) {
+  const real = unitSuite.reusableTreePass;
+  const calls = [];
+  unitSuite.reusableTreePass = async (args) => { calls.push(args); return fn(args); };
+  return { calls, restore: () => { unitSuite.reusableTreePass = real; } };
+}
+const FROM = { runId: 'run-p', sessionId: 8726, passedAt: '2026-10-16T08:15:46.000Z', commitSha: OLD, treeSha: 'e'.repeat(40) };
+const copiedPass = { row: { status: 'pass', failureReason: '', summary: { tests: 40, pass: 40, fail: 0 }, reused: FROM }, history: null, reused: FROM };
+
+test('runMainSuite: a first run whose tree already passed copies the pass, takes no slot and runs no Jobs', async (t) => {
+  const enqueued = grantingQueue(t);
+  const tree = stubTreePass(async () => copiedPass);
+  const suite = stubSuite(async () => assert.fail('the suite must not run'));
+  const told = [];
+  try {
+    const out = await mainWatch.runMainSuite(KUBE, fakePool(), { app: APP, sha: SHA, reuse: true, onRunId: (id) => told.push(id) });
+    assert.equal(out.state, 'passing');
+    assert.deepEqual(out.detail.reused, FROM, 'the verdict says it was copied, and from which commit and run');
+    assert.deepEqual(out.detail.summary, copiedPass.row.summary);
+    assert.equal(tree.calls.length, 1);
+    assert.deepEqual([tree.calls[0].appId, tree.calls[0].appSlug, tree.calls[0].repoOwner, tree.calls[0].repoName, tree.calls[0].commitSha],
+      [12, 'demo', 'org', 'demo', SHA], 'the app, so only the platform\'s own may copy by tree');
+    assert.deepEqual([suite.calls.length, enqueued.length, told.length], [0, 0, 0]);
+  } finally { tree.restore(); suite.restore(); }
+});
+
+test('runMainSuite: without the machine\'s leave, or with no pass of the tree, the suite runs', async (t) => {
+  grantingQueue(t);
+  for (const [why, opts, answer] of [
+    ['no leave (a confirmation, a recheck, a paused main)', {}, copiedPass],
+    ['leave that is not exactly true', { reuse: 'yes' }, copiedPass],
+    ['no pass of that tree, or a lookup that failed', { reuse: true }, null],
+  ]) {
+    const tree = stubTreePass(async () => answer);
+    const suite = stubSuite(async () => pass);
+    try {
+      const out = await mainWatch.runMainSuite(KUBE, fakePool(), { app: APP, sha: SHA, ...opts });
+      assert.equal(out.state, 'passing', why);
+      assert.equal(out.detail.reused, undefined, `${why}: not a copy`);
+      assert.equal(suite.calls.length, 1, `${why}: the suite ran`);
+      assert.equal(tree.calls.length, opts.reuse === true ? 1 : 0, `${why}: asked only with leave`);
+    } finally { tree.restore(); suite.restore(); }
+  }
+  // A lookup that throws is a run of the suite, not an error verdict.
+  const tree = stubTreePass(async () => { throw new Error('boom'); });
   const suite = stubSuite(async () => pass);
   try {
-    assert.equal(await mainWatch.afterMerge(config, pool, { app: { id: 1, repo_url: 'not-github' }, mergeSha: SHA }), null);
-    assert.equal(await mainWatch.afterMerge(config, pool, { app: APP, mergeSha: null }), null);
-    assert.equal(await mainWatch.afterMerge(config, null, { app: APP, mergeSha: SHA }), null);
-    process.env.MAIN_WATCH_ENABLED = '0';
-    try {
-      assert.equal(mainWatch.isEnabled(), false);
-      assert.equal(await mainWatch.afterMerge(config, pool, { app: APP, mergeSha: SHA }), null);
-    } finally { delete process.env.MAIN_WATCH_ENABLED; }
-    assert.equal(suite.calls.length, 0);
-    assert.equal(pool.calls.length, 0, 'no claim is written for a run that will not happen');
-  } finally { suite.restore(); }
+    const out = await mainWatch.runMainSuite(KUBE, fakePool(), { app: APP, sha: SHA, reuse: true });
+    assert.equal(out.state, 'passing');
+    assert.equal(suite.calls.length, 1, 'fails closed: the suite ran');
+  } finally { tree.restore(); suite.restore(); }
 });
 
-test('the pause write is the same CASE for every verdict, keyed on the sha it is about', () => {
-  // Pinned as source: green clears, red/confirming sets unless an admin
-  // already resumed THIS sha, anything else leaves the column alone. The
-  // fake pool cannot evaluate SQL, so the shape is what stands in for it.
-  const fs = require('node:fs');
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'main-watch.js'), 'utf8');
-  const write = src.slice(src.indexOf('async function writeState'), src.indexOf('async function afterMerge'));
-  assert.match(write, /main_check_paused_sha = CASE\s+WHEN \$5::boolean THEN NULL\s+WHEN \$6::boolean AND lower\(coalesce\(main_check_resumed_sha, ''\)\) <> lower\(\$2::text\) THEN \$2::text\s+ELSE main_check_paused_sha\s+END/);
-  assert.match(write, /WHERE id = \$1 AND main_check_sha = \$2::text/);
-  assert.match(write, /state === 'passing', state === 'failing' \|\| state === 'confirming'/);
+// The real lookup, for the platform's own app, against a GitHub that never
+// answers: the run neither waits on it past its deadline nor after it is
+// cancelled, and the suite runs.
+test('runMainSuite: a GitHub that never answers costs the copy, never the run', async (t) => {
+  const github = require('../src/services/github');
+  const reuse = require('../src/services/unit-suite-reuse');
+  reuse._clearTreeCache();
+  grantingQueue(t);
+  t.mock.method(github, 'isEnabled', () => true);
+  t.mock.method(github, 'getCommitTree', () => new Promise(() => {}));
+  const PLATFORM = { id: 10, slug: 'usernode-2d5619', repo_url: 'https://github.com/Usernode-Labs/social-vibecoding' };
+  const cfg = { ...KUBE, selfAppSlug: 'usernode-2d5619', kubernetes: { ...KUBE.kubernetes, workerImage: `r/w@sha256:${'c'.repeat(64)}` } };
+  const before = process.env.UNIT_SUITE_TREE_LOOKUP_MS;
+  const suite = stubSuite(async () => pass);
+  try {
+    process.env.UNIT_SUITE_TREE_LOOKUP_MS = '50';
+    let started = Date.now();
+    assert.equal((await mainWatch.runMainSuite(cfg, fakePool(), { app: PLATFORM, sha: SHA, reuse: true })).state, 'passing');
+    assert.equal(suite.calls.length, 1, 'past the deadline the suite ran');
+    assert.ok(Date.now() - started < 2000);
+    process.env.UNIT_SUITE_TREE_LOOKUP_MS = '600000';
+    const ac = new AbortController();
+    started = Date.now();
+    const out = mainWatch.runMainSuite(cfg, fakePool(), { app: PLATFORM, sha: SHA, reuse: true, signal: ac.signal });
+    setTimeout(() => ac.abort(), 20);
+    await out;
+    assert.ok(Date.now() - started < 2000, 'a cancelled run is not held by the lookup');
+    assert.equal(github.getCommitTree.mock.callCount(), 2, 'an unanswered read is not remembered: each run asks, and neither waits');
+  } finally {
+    suite.restore();
+    if (before === undefined) delete process.env.UNIT_SUITE_TREE_LOOKUP_MS; else process.env.UNIT_SUITE_TREE_LOOKUP_MS = before;
+  }
 });
 
-// ── resume ───────────────────────────────────────────────────────────────
+// 12 Oct 2026: a release restarted the platform while main was confirming a
+// red, and main stayed held until the run was 12 minutes stale and ran from
+// the start. The run's Jobs were still on the cluster. Now the next attempt
+// of the machine's work passes the dead run's id back, and its Jobs are read.
+const DEAD = { runId: '0f0e0d0c-0b0a-4908-8706-050403020100', owner: 'platform-old-pod' };
 
-test('resume: lifts the pause, remembers its sha, and kicks the queue', async () => {
-  const row = {
-    main_check_state: 'failing', main_check_sha: SHA, main_check_at: new Date(), main_check_detail: {},
-    main_check_resumed_sha: SHA, main_check_paused_sha: null,
+function adoptStubs({ jobs = [{ name: 'sv-unit-suite-smain-12-0f0e0d0c', state: 'running' }], result = { state: 'succeeded' }, outcome = pass } = {}) {
+  const real = {
+    find: kubernetes.findCheckJobs, collect: kubernetes.collectCheckJob,
+    del: kubernetes.deleteSettledCheckJobs, read: unitSuite.outcomeFromLog,
   };
-  const pool = fakePool({ resumeRow: row });
-  const out = await mainWatch.resume(config, pool, 12, { by: { username: 'evan' } });
-  assert.equal(out.paused, false, 'the column is cleared');
-  assert.equal(out.resumedSha, SHA, 'and remembered, so a red still in flight for this sha cannot re-pause');
-  assert.match(pool.calls[0].sql, /SET main_check_resumed_sha = main_check_paused_sha, main_check_paused_sha = NULL/);
-  assert.match(pool.calls[0].sql, /WHERE id = \$1 AND main_check_paused_sha IS NOT NULL/);
-  assert.equal(posted.length, 0, 'a channel carries no activity: the board banner says it');
-  assert.deepEqual(enqueued, [12]);
+  const seen = { find: [], collect: [], deleted: [], read: [] };
+  kubernetes.findCheckJobs = async (cfg, args) => {
+    seen.find.push(args);
+    return { unitSuites: jobs, unitSuite: jobs[0] || null, unitShards: 1, captures: [], capture: null };
+  };
+  kubernetes.collectCheckJob = async (cfg, args) => { seen.collect.push(args); return { stdout: '', stderr: '', exitCode: 0, timedOut: false, ...result }; };
+  kubernetes.deleteSettledCheckJobs = async (cfg, args) => { seen.deleted.push(args); return 1; };
+  unitSuite.outcomeFromLog = async (args) => { seen.read.push(args); return outcome; };
+  return {
+    seen,
+    restore() {
+      kubernetes.findCheckJobs = real.find; kubernetes.collectCheckJob = real.collect;
+      kubernetes.deleteSettledCheckJobs = real.del; unitSuite.outcomeFromLog = real.read;
+    },
+  };
+}
+
+test('runMainSuite: a resumed run whose queue row was admitted is adopted: its Jobs read rather than run again', async () => {
+  const pool = fakePool({ queueRow: { owner: DEAD.owner } });
+  const stubs = adoptStubs({ outcome: fail(TAP_RED) });
+  const suite = stubSuite(async () => assert.fail('no new run'));
+  const told = [];
+  try {
+    const out = await mainWatch.runMainSuite(KUBE, pool, { app: APP, sha: SHA, resumeRunId: DEAD.runId, onRunId: (id) => told.push(id) });
+    assert.equal(out.state, 'failing', 'the dead run\'s own verdict');
+    assert.equal(suite.calls.length, 0);
+    assert.deepEqual(told, [], 'no new queue row');
+    assert.deepEqual(stubs.seen.find, [{ sessionId: 'main-12', previewRunId: DEAD.runId }]);
+    assert.equal(stubs.seen.collect.length, 1);
+    assert.equal(stubs.seen.read[0].sessionId, 'main-12');
+    const claim = pool.calls.find((c) => /UPDATE check_runs SET owner = \$2/.test(c.sql));
+    assert.deepEqual([claim.params[0], claim.params[2]], [DEAD.runId, DEAD.owner], 'claimed from the owner it was seen with');
+    assert.ok(pool.calls.some((c) => /DELETE FROM check_runs WHERE run_id = \$1/.test(c.sql) && c.params[0] === DEAD.runId),
+      'its queue row is cleared');
+    assert.deepEqual(stubs.seen.deleted, [{ sessionId: 'main-12', previewRunId: DEAD.runId }], 'and its read-out Jobs deleted');
+  } finally { suite.restore(); stubs.restore(); }
 });
 
-test('resume: nothing to resume when merges are not paused', async () => {
-  const pool = fakePool({ resumeRow: null });
-  assert.equal(await mainWatch.resume(config, pool, 12, { by: { username: 'evan' } }), null);
-  assert.equal(posted.length, 0);
-  assert.equal(enqueued.length, 0);
+test('runMainSuite: a resumed run with no admitted row, or no Jobs left, runs the suite; one another process holds is left to it', async (t) => {
+  grantingQueue(t);
+  // Never admitted (it was still waiting for its slot): no Jobs to read.
+  let pool = fakePool();
+  let stubs = adoptStubs();
+  let suite = stubSuite(async () => pass);
+  try {
+    assert.equal((await mainWatch.runMainSuite(KUBE, pool, { app: APP, sha: SHA, resumeRunId: DEAD.runId })).state, 'passing');
+    assert.equal(stubs.seen.find.length, 0);
+    assert.equal(suite.calls.length, 1, 'the suite runs again');
+    assert.ok(!pool.calls.some((c) => /UPDATE check_runs SET owner/.test(c.sql)));
+  } finally { suite.restore(); stubs.restore(); }
+
+  // Admitted, but its Jobs are gone.
+  pool = fakePool({ queueRow: { owner: DEAD.owner } });
+  stubs = adoptStubs({ jobs: [] });
+  suite = stubSuite(async () => pass);
+  try {
+    await mainWatch.runMainSuite(KUBE, pool, { app: APP, sha: SHA, resumeRunId: DEAD.runId });
+    assert.equal(suite.calls.length, 1, 'no Jobs to read: the suite runs again');
+    assert.ok(pool.calls.some((c) => /DELETE FROM check_runs/.test(c.sql) && c.params[0] === DEAD.runId), 'the dead row is let go');
+  } finally { suite.restore(); stubs.restore(); }
+
+  // Taken over by another process first: only the one that claimed it
+  // reads it and clears its queue row.
+  pool = fakePool({ queueRow: { owner: DEAD.owner }, claimed: false });
+  stubs = adoptStubs();
+  suite = stubSuite(async () => pass);
+  try {
+    assert.equal((await mainWatch.runMainSuite(KUBE, pool, { app: APP, sha: SHA, resumeRunId: DEAD.runId })).state, 'superseded');
+    assert.equal(stubs.seen.find.length, 0);
+    assert.equal(suite.calls.length, 0);
+    assert.ok(!pool.calls.some((c) => /DELETE FROM check_runs WHERE run_id = \$1/.test(c.sql) && c.params[0] === DEAD.runId),
+      'the row the other process heartbeats is left alone');
+  } finally { suite.restore(); stubs.restore(); }
+});
+
+// ── mergePause ───────────────────────────────────────────────────────────
+
+test('runMainSuite: a resumed run is adopted before any copy is looked for', async () => {
+  const pool = fakePool({ queueRow: { owner: DEAD.owner } });
+  const stubs = adoptStubs({ outcome: fail(TAP_RED) });
+  const tree = stubTreePass(async () => assert.fail('the dead run\'s own Jobs answer'));
+  try {
+    const out = await mainWatch.runMainSuite(KUBE, pool, { app: APP, sha: SHA, resumeRunId: DEAD.runId, reuse: true });
+    assert.equal(out.state, 'failing');
+    assert.equal(tree.calls.length, 0);
+  } finally { stubs.restore(); tree.restore(); }
 });
 
 test('mergePause: an unreadable row does not wedge every merge on the app', async () => {
@@ -481,155 +455,59 @@ test('mergePause: reads the pause column with the rest', async () => {
   assert.match(pool.calls[0].sql, /main_check_resumed_sha, main_check_paused_sha\s+FROM apps WHERE id = \$1/);
 });
 
-// ── resumeInterrupted ────────────────────────────────────────────────────
-//
-// afterMerge is fire-and-forget from the process that merged, and for the
-// platform's own app that process is replaced by the deploy of the merge it
-// is testing. A row left at 'running' read "checking the last merge" forever;
-// one left at 'confirming' is paused with no verdict coming and no Resume
-// verb (a provisional red hides it). The leader re-drives both.
-
-// A pool for the sweep: answers the interrupted-rows SELECT from `rows`, and
-// everything afterwards like fakePool (each re-driven app shares one pool
-// here; the claim answers the same for all).
-function sweepPool(rows, { claim } = {}) {
-  const inner = fakePool({ claim: claim || { was_state: rows[0] && rows[0].main_check_state, was_sha: SHA, was_paused_sha: SHA } });
-  const pool = {
-    calls: inner.calls,
-    writes: inner.writes,
-    async query(sql, params) {
-      if (/FROM apps\s+WHERE main_check_state IN \('running', 'confirming'\)/.test(sql)) {
-        inner.calls.push({ sql, params });
-        return { rows, rowCount: rows.length };
-      }
-      return inner.query(sql, params);
-    },
-  };
-  return pool;
-}
-
-const INTERRUPTED_CONFIRMING = {
-  id: 12, slug: 'demo', repo_url: 'https://github.com/org/demo',
-  main_check_state: 'confirming', main_check_sha: SHA,
-  main_check_detail: { prNumber: 41, sessionId: 3, confirming: true, failureReason: TAP_RED, summary: { tests: 40, pass: 39, fail: 1 } },
-};
-
-test('resumeInterrupted: an interrupted confirmation resumes at the re-run, with the first red carried over', async () => {
-  const pool = sweepPool([INTERRUPTED_CONFIRMING]);
-  const suite = scripted(pass);
-  try {
-    const out = await mainWatch.resumeInterrupted(config, { pool, olderThanMs: 1000 });
-    assert.deepEqual(out.resumed, [{ appId: 12, sha: SHA, was: 'confirming' }]);
-    await out.done;
-    // Only the rows a live run could not still be stamping.
-    const sel = pool.calls.find((c) => /main_check_state IN \('running', 'confirming'\)/.test(c.sql));
-    assert.match(sel.sql, /main_check_at < NOW\(\) - \(\$1::int \* interval '1 millisecond'\)/);
-    assert.deepEqual(sel.params, [1000, checkRuns.ORPHAN_MS]);
-    assert.equal(suite.calls.length, 1, 'ONE run: the confirmation, not the first run again');
-    assert.equal(suite.calls[0].ref, SHA);
-    assert.equal(suite.calls[0].sessionId, 'main-12');
-    const writes = pool.writes();
-    assert.deepEqual(writes.map(([state, , clear, set]) => [state, clear, set]),
-      [['confirming', false, true], ['passing', true, false]]);
-    assert.equal(writes[0][1].failureReason, TAP_RED, 'the held state is the recorded first red');
-    assert.equal(writes[0][1].prNumber, 41, 'with the merge it was about');
-    assert.equal(writes[1][1].flake.failureReason, TAP_RED, 'green on the re-run: a flake, like an uninterrupted one');
-    // The group heard about the first red before the restart; it hears the
-    // outcome, not the restart.
-    assert.equal(posted.length, 0, 'a channel carries no activity: the board banner says it');
-    assert.deepEqual(enqueued, [12]);
-  } finally { suite.restore(); }
+test('a main run labels its Jobs with its queue row, so a successor can find them', () => {
+  const src = require('node:fs').readFileSync(path.join(__dirname, '..', 'src/services/main-watch.js'), 'utf8');
+  assert.match(src, /\.\.\.\(slot\.runId \? \{ previewRunId: slot\.runId \} : \{\}\)/);
+  // The names a UUID run id gives an app's split suite, at the longest app
+  // ids: each Job and each input Secret its own, within the 63-character
+  // limit (the 10 Oct 2026 outage was shards sharing one Secret).
+  const runId = 'ffffffff-ffff-4fff-bfff-ffffffffffff';
+  const run = kubernetes.checkJobRunName('unit-suite', 'main-99999', runId);
+  const names = [run, ...['u2', 'u3'].map((sfx) => kubernetes.withSuffix(run, sfx))];
+  const secrets = [kubernetes.withSuffix(run, 'input'), ...['u2', 'u3'].map((sfx) => kubernetes.withSuffix(run, `${sfx}-input`))];
+  for (const n of [...names, ...secrets]) assert.ok(n.length <= 63, n);
+  assert.equal(new Set(names.map((n) => n.slice(0, 63))).size, 3);
+  assert.equal(new Set(secrets).size, 3);
+  assert.ok(names.every((n) => n.startsWith('sv-unit-suite-smain-99999-')), 'found by findCheckJobs\' name prefix');
 });
 
-test('resumeInterrupted: an interrupted confirmation that fails again is a confirmed red', async () => {
-  const pool = sweepPool([INTERRUPTED_CONFIRMING]);
-  const suite = scripted(fail(TAP_RED));
-  try {
-    const out = await mainWatch.resumeInterrupted(config, { pool, olderThanMs: 1000 });
-    await out.done;
-    assert.equal(suite.calls.length, 1);
-    const writes = pool.writes();
-    assert.equal(writes[1][0], 'failing');
-    assert.equal(writes[1][1].confirmed, true);
-    assert.equal(writes[1][1].firstRun.failureReason, TAP_RED);
-    assert.equal(posted.length, 0, 'a channel carries no activity: the board banner says it');
-  } finally { suite.restore(); }
-});
-
-test('resumeInterrupted: an interrupted first run runs the suite again for that sha', async () => {
-  const pool = sweepPool([{
-    ...INTERRUPTED_CONFIRMING, main_check_state: 'running',
-    main_check_detail: { prNumber: 41, sessionId: 3 },
-  }], { claim: { was_state: 'running', was_sha: SHA, was_paused_sha: null } });
-  const suite = scripted(pass);
-  try {
-    const out = await mainWatch.resumeInterrupted(config, { pool, olderThanMs: 1000 });
-    assert.deepEqual(out.resumed, [{ appId: 12, sha: SHA, was: 'running' }]);
-    await out.done;
-    assert.equal(suite.calls.length, 1);
-    assert.deepEqual(pool.writes().map(([state]) => state), ['passing']);
-    assert.equal(posted.length, 0, 'green after nothing: nobody is told');
-  } finally { suite.restore(); }
-});
-
-test('resumeInterrupted: nothing interrupted, nothing runs; the switch off, no query', async () => {
-  const pool = sweepPool([]);
-  const suite = scripted();
-  try {
-    const out = await mainWatch.resumeInterrupted(config, { pool });
-    assert.deepEqual(out.resumed, []);
-    assert.deepEqual(await out.done, []);
-    assert.equal(suite.calls.length, 0);
-    // The default window is a whole run plus a margin: a live run somewhere
-    // else in the cluster is stamped within it.
-    assert.equal(mainWatch.staleMs(), unitSuite.UNIT_SUITE_TIMEOUT_MS + 120000);
-    const sel = pool.calls.find((c) => /main_check_state IN \('running', 'confirming'\)/.test(c.sql));
-    assert.deepEqual(sel.params, [mainWatch.staleMs(), checkRuns.ORPHAN_MS]);
-
-    process.env.MAIN_WATCH_ENABLED = '0';
-    const off = await mainWatch.resumeInterrupted(config, { pool });
-    assert.deepEqual(off.resumed, []);
-    assert.equal(pool.calls.filter((c) => /IN \('running', 'confirming'\)/.test(c.sql)).length, 1, 'no second query');
-  } finally { suite.restore(); delete process.env.MAIN_WATCH_ENABLED; }
-});
-
-test('resumeInterrupted: a failing list is non-fatal', async () => {
-  const pool = { query: async () => { throw new Error('connection reset'); } };
-  const out = await mainWatch.resumeInterrupted(config, { pool });
-  assert.deepEqual(out.resumed, []);
-});
-
-test('the leader re-drives at boot and on a timer', () => {
+test('the route, the gate and the machine read the same module', () => {
+  // The admin resume route and checkAndMerge's main_healthy gate both read
+  // the pause through main-watch, and the machine's suite is its run; pin
+  // the files so a rename cannot leave one behind.
   const fs = require('node:fs');
-  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  const lead = server.slice(server.indexOf('async function becomeLeader()'));
-  assert.match(lead, /\.then\(\(\) => mainWatch\.resumeInterrupted\(config\)\)/, 'in the boot recovery chain');
-  assert.match(lead, /checkHarvest\.start\(config\);\s*mainWatch\.start\(config\);/, 'beside the harvest ticker');
-  const stop = mainWatch.start(config, { intervalMs: 60 * 60 * 1000 });
-  assert.equal(typeof stop, 'function');
-  stop();
-});
-
-test('the route and the gate read the same module', () => {
-  // The admin resume route and checkAndMerge's main_healthy gate both go
-  // through main-watch; pin the file so a rename cannot leave one behind.
-  const fs = require('node:fs');
-  const apps = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'apps.js'), 'utf8');
-  const votes = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'votes.js'), 'utf8');
+  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', ...rel.split('/')), 'utf8');
+  const apps = read('src/routes/apps.js');
   assert.match(apps, /main-check\/resume/);
-  assert.match(apps, /mainWatch\.resume\(/);
-  assert.match(votes, /mergePause\(/);
-  assert.match(votes, /afterMerge\(/);
+  assert.match(apps, /\.resumeMainCheck\(rows\[0\]\.id, req\.user\)/);
+  assert.match(apps, /mainWatch\.mergePause\(pool, rows\[0\]\.id\)/);
+  assert.match(read('src/routes/votes.js'), /mergePause\(/);
+  assert.match(read('src/workflow/main-check/services.ts'), /watch\(\)\.runMainSuite\(config, pool, \{/);
 });
 
 test('the schema carries the pause column and the backfill for the derived pauses', () => {
   const fs = require('node:fs');
   const schema = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'schema.sql'), 'utf8');
   assert.match(schema, /ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_paused_sha VARCHAR\(40\);/);
-  // Idempotent: red, not resumed for that red, and not yet carrying the
-  // column. Runs at every boot without moving anything twice.
-  assert.match(schema, /UPDATE apps\s+SET main_check_paused_sha = main_check_sha\s+WHERE main_check_state = 'failing'\s+AND main_check_sha IS NOT NULL\s+AND main_check_paused_sha IS NULL\s+AND lower\(coalesce\(main_check_resumed_sha, ''\)\) <> lower\(main_check_sha\);/);
+  // Idempotent: red, not resumed for that red, not a red of known flakes
+  // alone (which pauses nothing on purpose), and not yet carrying the
+  // column, on rows the main-check machine does not hold (it owns the
+  // column there; so the backfill comes after its guard and wf_holds).
+  // Runs at every boot without moving anything twice.
+  assert.match(schema, /UPDATE apps\s+SET main_check_paused_sha = main_check_sha\s+WHERE main_check_state = 'failing'\s+AND main_check_sha IS NOT NULL\s+AND main_check_paused_sha IS NULL\s+AND lower\(coalesce\(main_check_resumed_sha, ''\)\) <> lower\(main_check_sha\)\s+AND \(main_check_detail -> 'flakesOnly'\) IS NULL\s+AND NOT wf_holds\('main-check', 'app:' \|\| id\);/);
+  assert.ok(schema.indexOf('UPDATE apps\n   SET main_check_paused_sha') > schema.indexOf('CREATE OR REPLACE FUNCTION wf_holds('), 'after wf_holds is defined');
   // The API serializes the column with its siblings.
   const access = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'app-access.js'), 'utf8');
   assert.match(access, /'main_check_resumed_sha', 'main_check_paused_sha',/);
+});
+
+// The suite's run reads the repository as the main-check machine's claim
+// does (rules/github-url.ts): an app the machine claims is never stored as
+// having no repository (review, 2026-10-17).
+test('parseRepo: the rules\' one parser, the ssh form and a trailing slash included', () => {
+  const { parseRepo } = require('../src/services/main-watch');
+  for (const url of ['https://github.com/acme/shop', 'https://github.com/acme/shop/', 'https://www.github.com/acme/shop.git', 'git@github.com:acme/shop.git']) {
+    assert.deepEqual(parseRepo(url), { owner: 'acme', repo: 'shop' }, url);
+  }
+  assert.equal(parseRepo('https://gitlab.com/acme/shop'), null);
 });

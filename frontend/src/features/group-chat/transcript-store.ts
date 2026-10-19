@@ -114,6 +114,19 @@ export interface BotRequestChip {
 }
 
 /**
+ * 10 October: what Homeroom bot offered to do in its reply in a thread
+ * (homeroom-bot-voice.js): file a request, withdraw one of its changes, or
+ * open a vote on closing a request. Nothing happens until the person it was
+ * offered to (`forMe`) taps Yes; once decided, `status` is no longer
+ * 'open' and the buttons go, for everybody.
+ */
+export interface BotOfferView {
+  status: 'open' | 'deciding' | 'done' | 'declined' | 'failed';
+  forMe: boolean;
+  actions: { id: 'yes' | 'no'; label: string; primary: boolean }[];
+}
+
+/**
  * Where a card's request (or fix) stands now, read from the platform's
  * records whenever the card is (homeroom-bot-chat.js cardsOf, CARD_STAGES).
  * `waitingOn` and `youApprove` say who still has to approve a built change,
@@ -130,6 +143,8 @@ export interface BotRequestState {
   more?: number;
   missing?: number;
   needed?: number;
+  /** A project's first version, which goes live without a vote (13 Oct 2026, D1). */
+  noVote?: boolean;
   /**
    * `approved`, on a merge of the platform's own app that is not live yet:
    * when the platform's next release carries it (services/release-watch.js),
@@ -260,6 +275,8 @@ export interface Attachment {
   kind: string;
   /** The filename, as a text child — never interpolated into an attribute. */
   name: string;
+  /** The file has no name; `name` is a stand-in label and the tooltips use their unnamed wording. */
+  unnamed?: boolean;
   url: string;
   /** Pre-formatted by the module: "2 KB", "3.0 MB". */
   size: string;
@@ -272,7 +289,8 @@ export interface ThreadSummaryView {
   lastReplyAt: string | null;
   participants: string[];
   /** The newest reply, which the card under the message shows (#2387 follow-up). */
-  lastReply?: { name: string; text: string } | null;
+  /** `unnamed`: nobody to name; `name` is the stand-in shown where a name would be. */
+  lastReply?: { name: string; unnamed?: boolean; text: string } | null;
 }
 
 /**
@@ -291,6 +309,8 @@ export interface TranscriptMessage {
   id: number | null;
   kind: MessageKind;
   username: string;
+  /** No author came with the row; `username` is a stand-in and sentences use their own wording. */
+  usernameMissing?: boolean;
   senderId?: number | null;
   /**
    * Rendered stamp — formatted by the module, whose locale rules these are.
@@ -362,6 +382,8 @@ export interface TranscriptMessage {
    * version" message in a project's channel. Absent or null on every other row.
    */
   openApp?: { label: string; target: string } | null;
+  /** 10 October: the buttons under Homeroom bot's offer in a thread. Absent or null on every other row. */
+  botOffer?: BotOfferView | null;
   /**
    * #4455: a system row that announces the preview build, from its metadata:
    * `started` (a change's page leaves it out: its Testing card says so) or
@@ -433,11 +455,21 @@ export interface SpecShareView {
   /** The header the panel shows while the fetch is in flight. */
   previewTitle: string;
   sharedBy: string;
+  /** `sharedBy` is a stand-in word, not an account's name: sentences use their unnamed wording. */
+  sharedByUnknown?: boolean;
   version: number;
   /** Formatted build time, or null when the share carried none. */
   built: string | null;
   prNumber: number | null;
   sessionId: number | null;
+  /**
+   * Homeroom bot's plan, in its sentence on a request's page: `building`
+   * ("I'm building it now.") or `waiting` (for `waitingFor` to say Build
+   * it), and once it stopped waiting (papote #3), `replaced` by a newer
+   * plan or `stopped`. Absent on a person's share and on older rows.
+   */
+  botNote?: 'building' | 'waiting' | 'replaced' | 'stopped' | null;
+  waitingFor?: string | null;
   snippetHtml: string | null;
   snippetText: string | null;
 }
@@ -486,9 +518,11 @@ export interface TranscriptLead {
   /**
    * #4455: a change's page. `loaded` once its thread's history has answered;
    * `closed` is what the page says instead of a stream while nobody else can
-   * see the change (its thread is not read then).
+   * see the change (its thread is not read then). #5007: `issue` is the
+   * request the change was built for — the pointer above the replies opens
+   * its page, where the conversation about the change lives.
    */
-  change?: { loaded: boolean; closed: string | null } | null;
+  change?: { loaded: boolean; closed: string | null; issue?: { n: number; href: string } | null } | null;
   /**
    * The general chat only: where the reader's reading stood when the
    * channel opened (`GroupChat._takeUnreadMark`), the newest message read

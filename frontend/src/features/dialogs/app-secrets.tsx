@@ -35,8 +35,10 @@
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { XIcon } from '@/components/ui/icons';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { Secrets, init as initSecrets } from './app-secrets-controller';
+import { ControllerText } from './controller-text';
 import { useDialog } from './use-dialog';
 
 interface OpenPayload {
@@ -45,6 +47,9 @@ interface OpenPayload {
 }
 
 export function AppSecretsDialog() {
+  // Text only React writes follows the language here. The title, which
+  // Secrets.render() rewrites by scope, starts from <ControllerText>.
+  const t = useMessages('dialogs');
   const dialog = useDialog<OpenPayload>('appSecrets', {
     onOpen: (payload) => {
       if (payload?.slug) void Secrets._load(payload.slug, payload.opts || {});
@@ -70,7 +75,7 @@ export function AppSecretsDialog() {
         <button
           id="app-secrets-close"
           className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors"
-          aria-label="Close"
+          aria-label={t('core:common.close')}
           onClick={() => Secrets.close()}
         >
           <XIcon className="w-5 h-5" />
@@ -81,14 +86,10 @@ export function AppSecretsDialog() {
             platform's own row, where a change lands on the next deploy.
         */}
         <h2 id="app-secrets-title" className="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">
-          App secrets
+          <ControllerText id="dialogs:secrets.title.app" />
         </h2>
         <p id="app-secrets-subtitle" className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
-          Environment variables this app declares in
-          <code className="text-xs">
-            dapp.json
-          </code>
-          .
+          <RichMessage id="dialogs:secrets.subtitle.initial" components={[<code className="text-xs" />]} />
         </p>
         {/*
             One scroll container for the rows AND the "New variable" form:
@@ -115,11 +116,12 @@ export function AppSecretsDialog() {
           id="app-secrets-footer"
           className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 dark:text-zinc-400 hidden"
         >
-          Changes apply on the next deploy. Admins can
-          <button id="app-secrets-redeploy" className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400">
-            redeploy now
-          </button>
-          .
+          <RichMessage
+            id="dialogs:secrets.footer"
+            components={[
+              <button id="app-secrets-redeploy" className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400" />,
+            ]}
+          />
         </div>
       </DialogCard>
     </DialogRoot>

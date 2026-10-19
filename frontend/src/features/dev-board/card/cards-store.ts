@@ -34,6 +34,7 @@ export const EMPTY_WORKSHOP_VIEW: DevWorkshopView = {
   emptyNote: null,
   votes: { count: 0, rows: [] },
   since: null,
+  week: null,
   dashboard: null,
   nextUp: null,
   discussion: null,
@@ -78,6 +79,51 @@ export function publishVoteSending(key: string, side: 'yes' | 'no' | null): void
     if (!(key in cur)) return cur;
     const next = { ...cur };
     delete next[key];
+    return next;
+  });
+}
+
+/**
+ * #5463: a vote the server SAVED, by session id. castVote publishes it once,
+ * from its ok branch only — never on a refusal, a network failure, an
+ * `identity_required` retry or a cancelled No — so every Needs you surface
+ * that did not cast the vote can mark its card anyway: the Communities feed's
+ * kept store copy and its counts (features/workshop), and a board read from
+ * before the vote (app-view.js `_overlayPendingVote` fills it from the page's
+ * own record). A card voted elsewhere must read exactly like a card voted in
+ * the feed, without waiting for the next read.
+ */
+export interface VoteSavedEntry {
+  vote: 'yes' | 'no';
+  /** The approval epoch the vote was saved at; null when the row had none. */
+  epoch: number | null;
+  /** Rises with each publish, so a re-vote is seen even of the same side. */
+  seq: number;
+}
+
+/** How many entries the map keeps, newest first — a page's owed votes. */
+export const VOTE_SAVED_MAX = 200;
+
+export const voteSavedStore = createStore<Record<string, VoteSavedEntry>>({});
+
+let voteSavedSeq = 0;
+
+export function publishVoteSaved(sessionId: number, vote: 'yes' | 'no', epoch: number | null): void {
+  const id = Number(sessionId);
+  if (!Number.isInteger(id) || id <= 0) return;
+  if (vote !== 'yes' && vote !== 'no') return;
+  const e = epoch == null ? null : Number(epoch);
+  voteSavedStore.set((cur: Record<string, VoteSavedEntry>) => {
+    const next: Record<string, VoteSavedEntry> = { ...cur };
+    // Re-add at the end, so "newest" is the map's own order.
+    delete next[String(id)];
+    next[String(id)] = {
+      vote,
+      epoch: e == null || !Number.isFinite(e) ? null : e,
+      seq: ++voteSavedSeq,
+    };
+    const keys = Object.keys(next);
+    for (const k of keys.slice(0, Math.max(0, keys.length - VOTE_SAVED_MAX))) delete next[k];
     return next;
   });
 }

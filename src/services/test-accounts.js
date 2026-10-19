@@ -6,7 +6,7 @@
 //
 // Why a new account rather than "Reset first run" on an old one: a reset
 // brings back the join screen and the tour but keeps memberships, votes and
-// history, so Getting started shows progress a newcomer would not have. A test
+// history, so the First challenges show progress a newcomer would not have. A test
 // account is a REAL account — it signs in through the ordinary form (username
 // and a generated password is the one method that works on the web and in the
 // iOS app, against local, staging and production alike), auto-joins the
@@ -18,8 +18,11 @@
 //     (counts_toward_outcome in schema.sql; D1).
 //   * Leaderboards (exclude_podium) and the Journey page (a 'test' left-out
 //     entry) do not see it.
-//   * No welcome DM unless the creator asked; never a season wallet on a
-//     native sign-in (native-session-protocol.js; D2).
+//   * No welcome DM unless the creator asked (test_account_welcome_dm: it
+//     puts staff into a group with the account); never a season wallet on a
+//     native sign-in (native-session-protocol.js; D2). Homeroom bot's hellos
+//     (the tour's, a maker's, a joiner's, a member's) are not fenced: they
+//     reach it as they reach a newcomer, however it was made (#4897).
 //   * At most MAX_LIVE at once, so app slots, the wallet pool and the bot's 50
 //     DM places cannot be drained by a loop.
 //
@@ -32,6 +35,7 @@ const log = require('./logger');
 const usernames = require('./usernames');
 const waitlist = require('./waitlist');
 const journeyLeftOut = require('./journey-left-out');
+const runReport = require('./run-report');
 const { withTransaction } = require('./cli-auth');
 
 const MAX_LIVE = 25;
@@ -126,7 +130,7 @@ async function create(pool, body, { actorId, config = {} } = {}) {
       }
       const username = input.username || usernames.placeholderUsername();
       // terms consent and tour_done_at stay unset, so the terms, the
-      // community picker, the tour and Getting started all come up as they do
+      // community picker, the tour and the First challenges all come up as they do
       // for a real newcomer. With no username the account wears a
       // placeholder and needs_username_choice, so the tester picks a handle
       // in the real first-run step (frontend/src/features/auth/
@@ -223,9 +227,11 @@ async function list(pool) {
 
 /**
  * Retire one test account as full admin `actorId`: take down every app it
- * created (the same teardown DELETE /api/apps/:slug runs), then delete the
- * account through the ordinary admin deletion, which anonymises the row,
- * revokes its sessions and native credentials and withdraws its open votes.
+ * created (the same teardown DELETE /api/apps/:slug runs), each after its
+ * run report is kept (`reportsKept`, the slugs whose report was), then
+ * delete the account through the ordinary admin deletion, which anonymises
+ * the row, revokes its sessions and native credentials and withdraws its
+ * open votes.
  *
  * Refuses any account that is not a test account. If an app cannot be taken
  * down it stops there and reports what it had removed: the account is never
@@ -252,7 +258,13 @@ async function retire(pool, { userId, confirmation }, { actorId, config = {} } =
   );
   const { teardownApp } = require('./app-teardown');
   const removedApps = [];
+  const reportsKept = [];
   for (const app of apps) {
+    // What its first version left behind goes with the app (its runs,
+    // sessions, turns and screens cascade), so its run report is kept first
+    // (services/run-report.js). That never throws: a report that cannot be
+    // kept is logged, and the app is taken down all the same.
+    if (await runReport.keep(pool, { app, testUser: user })) reportsKept.push(app.slug);
     try {
       await teardownApp(pool, config, app);
       removedApps.push(app.slug);
@@ -289,7 +301,51 @@ async function retire(pool, { userId, confirmation }, { actorId, config = {} } =
     userId,
     username: user.username,
     appsDeleted: removedApps,
+    reportsKept,
     deletionId: deletion.deletionId,
+  };
+}
+
+const REPORT_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+// A deleted account's username is deleted-user-<id>, hence the hyphen.
+const REPORT_USERNAME_RE = /^[a-z0-9_-]{1,64}$/;
+
+/**
+ * A test project's run report (services/run-report.js), for
+ * get_run_report. With `slug`: the app's report built now while it is live,
+ * or once it is gone the newest one retire kept. With `username`: that test
+ * account's kept reports, newest first, and (with no slug) the newest one in
+ * full. Returns { source: 'live' | 'saved' | null, savedAt, slug, report,
+ * saved: [{ slug, appName, savedAt }] }.
+ */
+async function runReportFor(pool, { slug, username } = {}) {
+  const s = slug == null ? '' : String(slug).trim().toLowerCase();
+  const u = username == null ? '' : String(username).trim().replace(/^@/, '').toLowerCase();
+  if (!s && !u) fail(400, 'invalid_request', 'Name an app slug, a test account\'s username, or both.');
+  if (s && !REPORT_SLUG_RE.test(s)) fail(400, 'invalid_slug', 'That is not an app slug.', { field: 'slug' });
+  if (u && !REPORT_USERNAME_RE.test(u)) fail(400, 'invalid_username', 'That is not a username.', { field: 'username' });
+
+  const saved = u ? await runReport.keptFor(pool, u) : [];
+  let found = null;
+  if (s) {
+    const live = await runReport.build(pool, { slug: s });
+    if (live) {
+      found = { source: 'live', savedAt: null, slug: s, report: live };
+    } else {
+      const k = await runReport.kept(pool, { slug: s });
+      if (!k) fail(404, 'no_report', `No app ${s} is live, and no report was kept for one.`, { field: 'slug' });
+      found = { source: 'saved', savedAt: k.savedAt, slug: k.slug, report: k.report };
+    }
+  } else if (saved.length) {
+    const k = await runReport.kept(pool, { id: saved[0].id });
+    if (k) found = { source: 'saved', savedAt: k.savedAt, slug: k.slug, report: k.report };
+  }
+  return {
+    source: found ? found.source : null,
+    savedAt: found ? found.savedAt : null,
+    slug: found ? found.slug : (s || null),
+    report: found ? found.report : null,
+    saved: saved.map((r) => ({ slug: r.slug, appName: r.appName, savedAt: r.savedAt })),
   };
 }
 
@@ -769,6 +825,7 @@ module.exports = {
   create,
   list,
   retire,
+  runReportFor,
   generatePassword,
   onFirstRun,
   mintPhoneSignIn,

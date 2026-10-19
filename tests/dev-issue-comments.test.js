@@ -23,6 +23,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -132,7 +133,10 @@ test('#3490: Homeroom bot\'s spec comment splits into its sentence and the spec'
   assert.match(rows, /githubSpec: spec \? \{ title: spec\.title, markdown: spec\.body, html: renderSpec\(spec\.body\) \} : null,/);
   const feed = code.match(/_feedCommentsHtml\(comments\) \{([\s\S]*?)\n {2}\},/)[1];
   assert.match(feed, /const spec = AppView\._botSpecOf\(c\);/);
-  assert.match(feed, /escapeHtml\(spec\.title \? `The plan: \$\{spec\.title\}` : 'The plan'\)/);
+  // htmlText escapes the whole line, the title included.
+  assert.match(feed, /spec\.title \? PlatformI18n\.htmlText\('changes:feed\.comment\.specTitled', \{ title: spec\.title \}\) : PlatformI18n\.htmlText\('changes:feed\.comment\.spec'\)/);
+  assert.equal(message('changes:feed.comment.specTitled', { title: 'Fix the banner' }), 'The plan: Fix the banner');
+  assert.equal(message('changes:feed.comment.spec'), 'The plan');
 });
 
 test('#3693: a spec the comments route clipped is still a spec, not raw markers', () => {

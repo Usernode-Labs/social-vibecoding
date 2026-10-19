@@ -1,4 +1,5 @@
-import type { ConversationMessage, HomeroomBotActivityOutcome, HomeroomBotJob } from './types';
+import { t } from '../../lib/i18n/runtime';
+import type { ConversationMessage, HomeroomBotActivityOutcome, HomeroomBotJob, HomeroomBotMeta, HomeroomBotWork } from './types';
 
 /*
  * What the Homeroom bot's activity tray (./bot-work.tsx), its activity cards
@@ -6,9 +7,83 @@ import type { ConversationMessage, HomeroomBotActivityOutcome, HomeroomBotJob } 
  * blocks (#4564, ./index.tsx) all need: how a piece of work is named, the
  * window event that says the bot's work moved on, and the request a bot
  * message is about. A module of its own so they can share it without
- * importing each other. It imports types only, and reads a message's
- * metadata inline — the other modules' own rule.
+ * importing each other. It imports types and the message runtime only, and
+ * reads a message's metadata inline — the other modules' own rule.
  */
+
+/*
+ * ── Threads in the chat with Homeroom bot ──────────────────────────────
+ * Every request the bot works on for someone has one story: an activity
+ * card in their chat with the bot, which is the root of that request's own
+ * reply thread (services/homeroom-bot-activity.js). Its quiet step lines,
+ * questions, plan, answers and ending are replies in that thread, and the
+ * four moments that ring (needs you, ready to try, stopped, live) are also
+ * listed in the main chat (`alsoInChat`), drawn there as the full message
+ * under a "↳ in {request} · {project}" label that opens the thread.
+ *
+ * A direct chat between people keeps no threads (#2387): a thread is how a
+ * room keeps a side conversation out of everyone's way, and a DM has no one
+ * else in it. The chat with the bot is the one exception, because there each
+ * request is its own conversation. `threadsAllowed` is the one place that
+ * says so on the client (the row's thread menu, the composer, the store).
+ */
+
+/** Whether a conversation can carry reply threads: a room, or the viewer's chat with Homeroom bot. */
+export function threadsAllowed(conversation: { kind?: string; homeroomBot?: boolean } | null | undefined): boolean {
+  if (!conversation) return false;
+  return conversation.kind !== 'direct' || conversation.homeroomBot === true;
+}
+
+/** A thread reply the bot also lists in the main chat: one of the four moments that ring. */
+export function alsoInChat(message: { threadRootId?: number | null; metadata?: { homeroomBot?: { alsoInChat?: boolean } | null } | null }): boolean {
+  return !!message.threadRootId && message.metadata?.homeroomBot?.alsoInChat === true;
+}
+
+/**
+ * Whether a message is a position in the main stream, as the server counts
+ * unread and moves the read cursor: a message of the conversation itself, or
+ * a thread reply it also lists there (`alsoInChat`).
+ */
+export function inMainStream(message: { threadRootId?: number | null; metadata?: { homeroomBot?: { alsoInChat?: boolean } | null } | null }): boolean {
+  return !message.threadRootId || alsoInChat(message);
+}
+
+/** What a request's thread is called, from any of its messages' metadata. */
+export interface BotRequestNames {
+  /** The project's name (or the stand-in for one nobody can name). */
+  project: string;
+  /** The request's own title, when it has one; null for a first version. */
+  title: string | null;
+  /** Its number on the project's board, when known. */
+  number: number | null;
+  firstVersion: boolean;
+}
+
+type RequestMeta = Pick<HomeroomBotMeta, 'appName' | 'appSlug' | 'issueNumber' | 'issueTitle' | 'firstVersion' | 'requestTitle'>;
+
+/** Pure: the names a request's thread goes by, from a bot message's metadata. */
+export function botRequestNames(meta: RequestMeta | null | undefined): BotRequestNames {
+  const project = meta?.appName || meta?.appSlug || t('messages:bot.job.unnamedProject');
+  const firstVersion = !!meta?.firstVersion;
+  const title = firstVersion ? null : (meta?.requestTitle || meta?.issueTitle || null);
+  const number = meta?.issueNumber && meta.issueNumber > 0 ? meta.issueNumber : null;
+  return { project, title, number, firstVersion };
+}
+
+/** "Dark mode", "Plant Pal first version", "Request #12": a request's thread by its own name. */
+export function botThreadTitle(names: BotRequestNames): string {
+  if (names.firstVersion) return t('messages:bot.job.firstVersion', { project: names.project });
+  if (names.title) return names.title;
+  return names.number ? t('messages:bot.activity.requestNumber', { number: String(names.number) }) : names.project;
+}
+
+/** "↳ in Dark mode · Plant Pal": the label over a moment the main chat also shows. */
+export function botThreadLabel(names: BotRequestNames): string {
+  if (names.firstVersion) return t('messages:row.botThread.inFirstVersion', { project: names.project });
+  if (names.title) return t('messages:row.botThread.in', { request: names.title, project: names.project });
+  if (names.number) return t('messages:row.botThread.inNumbered', { number: String(names.number), project: names.project });
+  return t('messages:row.botThread.inProject', { project: names.project });
+}
 
 /** public/js/app.js dispatches this on `homeroom_bot_work_changed` and on a socket reconnect. */
 export const WORK_CHANGED_EVENT = 'homeroom-bot-work-changed';
@@ -20,18 +95,44 @@ export const WORK_CHANGED_EVENT = 'homeroom-bot-work-changed';
  */
 export const SPINNING_OUTCOMES: ReadonlySet<HomeroomBotActivityOutcome> = new Set(['checking', 'going_live']);
 
-type Named = Pick<HomeroomBotJob, 'appName' | 'issueNumber' | 'title' | 'firstVersion'>;
+/**
+ * `appUnnamed`: `appName` is the stand-in for a project nobody can name. The
+ * names below then use their unnamed wording, and never take the stand-in as
+ * a project's name.
+ */
+type Named = Pick<HomeroomBotJob, 'appName' | 'appUnnamed' | 'issueNumber' | 'title' | 'firstVersion'>;
 
 /** "Ear Trainer first version", "Ear Trainer #12": what the header's status line names. */
 export function jobName(job: Named): string {
-  if (job.firstVersion) return `${job.appName} first version`;
-  return job.issueNumber ? `${job.appName} #${job.issueNumber}` : job.appName;
+  if (job.appUnnamed) {
+    if (job.firstVersion) return t('messages:bot.job.firstVersionUnnamed');
+    return job.issueNumber ? t('messages:bot.job.requestUnnamed', { number: job.issueNumber }) : job.appName;
+  }
+  if (job.firstVersion) return t('messages:bot.job.firstVersion', { project: job.appName });
+  return job.issueNumber ? t('messages:bot.job.request', { project: job.appName, number: job.issueNumber }) : job.appName;
+}
+
+/**
+ * Short independent facts on one status line ("Building · 5m so far"). Each
+ * part is a whole message already; what joins two of them is a message too.
+ */
+export function dotText(parts: readonly (string | null | undefined | false)[]): string {
+  const said = parts.filter((part): part is string => typeof part === 'string' && part !== '');
+  if (!said.length) return '';
+  return said.reduce((first, second) => t('messages:list.dot', { first, second }));
 }
 
 /** A tile's or a card's title: the name, and the request's own title when it has one. */
 export function jobTitle(job: Named): string {
-  const name = jobName(job);
-  return !job.firstVersion && job.title ? `${name}: ${job.title}` : name;
+  if (job.firstVersion || !job.title) return jobName(job);
+  if (job.appUnnamed) {
+    return job.issueNumber
+      ? t('messages:bot.job.requestTitledUnnamed', { number: job.issueNumber, title: job.title })
+      : t('messages:bot.job.titledUnnamed', { title: job.title });
+  }
+  return job.issueNumber
+    ? t('messages:bot.job.requestTitled', { project: job.appName, number: job.issueNumber, title: job.title })
+    : t('messages:bot.job.titled', { project: job.appName, title: job.title });
 }
 
 /**
@@ -116,6 +217,15 @@ export function changeKey(message: ConversationMessage): string | null {
   return app ? `${app}#${n}` : null;
 }
 
+/**
+ * Whether a message belongs to a reply thread: a reply in one, or the root
+ * one hangs off. Its thread says which request it is about (#4564 retired
+ * for these, changeBlocks).
+ */
+export function threaded(message: ConversationMessage): boolean {
+  return !!message.threadRootId || !!message.thread;
+}
+
 /** How a row is drawn inside its change's block: alone, or where it sits in the run. */
 export type ChangeBlockPart = 'only' | 'first' | 'middle' | 'last';
 
@@ -157,15 +267,21 @@ export interface ChangeBlocksOptions {
  * by message id, for the rows it groups. Messages keep their order and are
  * grouped only where they are already adjacent: a run continues while each
  * next drawn message is the bot's message about the same request
- * (`changeKey`), is not a thread reply (`threadRootId`, drawn by its own
- * row) and `together` still holds; a day divider, the "New" line, a reply,
- * anything someone else says and a bot message about another change each
- * end it. A message with no key — those and a hidden one — is not in the map.
+ * (`changeKey`), is not threaded (`threaded`) and `together` still holds;
+ * a day divider, the "New" line, a reply, anything someone else says and a
+ * bot message about another change each end it. A message with no key —
+ * those and a hidden one — is not in the map.
  *
  * `repeat` is true on a row when an earlier row of its run `showsRequest`:
  * its request card would say for a second time what the top of the block
- * already shows. The keyless and the thread rows end a run; they never
+ * already shows. The keyless and the threaded rows end a run; they never
  * carry one.
+ *
+ * RETIRED FOR THREADS (one request, one story). A request's story is its
+ * thread now: its card is the thread's root, and what the bot says about it
+ * is in that thread, so a threaded row (a reply, or a root with replies)
+ * needs no outline to say which request it belongs to. Blocks still draw
+ * the chat's history from before threads, where nothing is threaded.
  */
 export function changeBlocks(
   messages: readonly ConversationMessage[],
@@ -192,10 +308,29 @@ export function changeBlocks(
     if (hidden(message)) continue;
     const key = changeKey(message);
     const previous = run[run.length - 1];
-    const joins = !!key && !!previous && changeKey(previous) === key && !message.threadRootId && together(previous, message);
+    const blocked = !!key && !threaded(message);
+    const joins = blocked && !!previous && changeKey(previous) === key && together(previous, message);
     if (!joins) close();
-    if (key && !message.threadRootId) run.push(message);
+    if (blocked) run.push(message);
   }
   close();
   return blocks;
+}
+
+/**
+ * Pure: the project's icon as the strip has it. A bot message names its
+ * project but carries no artwork, so a line (./bot-news-line.tsx) and a
+ * project's card at the head of a message (./bot-head-card.tsx) take the
+ * tray's, and the strip and the chat show the same icon; with none, a line
+ * draws the project's initial and a card its glyph.
+ */
+export function newsIcon(work: HomeroomBotWork | null, slug: string | null | undefined, name: string | null | undefined = null): { iconUrl: string | null; iconEmoji: string | null } {
+  if (work && (slug || name)) {
+    for (const job of [...work.needsYou, ...work.now, ...work.history]) {
+      // A project with no slug (the staging demo's) is known by its name.
+      const same = slug ? job.appSlug === slug : !job.appSlug && job.appName === name;
+      if (same && (job.iconUrl || job.iconEmoji)) return { iconUrl: job.iconUrl, iconEmoji: job.iconEmoji };
+    }
+  }
+  return { iconUrl: null, iconEmoji: null };
 }

@@ -22,6 +22,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { getTemplateFiles } = require('../src/services/template');
+const { message } = require('./lib/platform-i18n');
 
 function files() {
   return getTemplateFiles('My App', 'my-app-123', 'pg://x');
@@ -88,7 +89,7 @@ test('the thumbnail tile falls back to the name when no icon is known', () => {
     'no emoji: the tile shows the first letter, muted, like the home tile');
   // No emoji to show, so dapp.json stays without an icon block, exactly as
   // it always was.
-  assert.deepEqual(JSON.parse(file(files(), 'dapp.json')), { secrets: [] });
+  assert.deepEqual(JSON.parse(file(files(), 'dapp.json')), { secrets: [], tests: [] });
 
   // The repo heal's emoji (#4047): the tile shows it, and dapp.json's icon
   // block carries the same emoji, so the first deploy's icon reconcile
@@ -98,7 +99,7 @@ test('the thumbnail tile falls back to the name when no icon is known', () => {
   const withEmoji = withEmojiFiles.find((f) => f.path === 'public/index.html').content;
   assert.match(withEmoji, /text-title">🏃<\/div>/, 'an emoji icon fills the tile itself');
   assert.deepEqual(JSON.parse(withEmojiFiles.find((f) => f.path === 'dapp.json').content),
-    { icon: { emoji: '🏃' }, secrets: [] },
+    { icon: { emoji: '🏃' }, secrets: [], tests: [] },
     'the caller emoji stands in dapp.json so the deploy keeps it');
 });
 
@@ -131,13 +132,14 @@ test('the starter copy names the row the Homeroom mark\'s menu really has', () =
   const path = require('node:path');
   const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  // B8: the menu leads with Suggest an improvement; making it yourself is its own row.
-  assert.match(read('frontend/src/features/improve/actions.tsx'), /id="improve-row-feedback"\s+label="Suggest an improvement"/,
+  // B8: the menu leads with Suggest an improvement. #4729 took the menu's
+  // Build it now row to Messages (the Agents list, the "+" there), so the
+  // copy's one named row is the one the menu still has.
+  assert.match(read('frontend/src/features/improve/actions.tsx'), /id="improve-row-feedback"\s+label=\{t\('agent:menu\.suggestImprovement'\)\}/,
     'the menu still has Suggest an improvement');
-  assert.match(sheet, /id="improve-row-new-session"[\s\S]{0,600}label="Build it now"/,
-    'and the agent-session row is called Build it now');
-  assert.match(read('frontend/src/features/header/platform-mark.tsx'), /aria-label="Homeroom menu"/,
-    'the header control is still the Homeroom mark');
+  assert.doesNotMatch(sheet, /improve-row-new-session/, 'and no Build it now row any more');
+  assert.match(read('frontend/src/features/header/platform-mark.tsx'), /aria-label=\{t\('core:header\.homeroomMenu'\)\}/);
+  assert.equal(message('core:header.homeroomMenu'), 'Homeroom menu', 'the header control is still the Homeroom mark');
 });
 
 test('CLAUDE.md instructs the agent to remove the template wholesale', () => {

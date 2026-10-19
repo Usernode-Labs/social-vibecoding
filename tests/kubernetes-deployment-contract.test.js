@@ -148,7 +148,14 @@ test('Kubernetes platform image keeps the npm download cache out of both depende
 test('Docker keeps boot migrations while Kubernetes can delegate them to a Job', () => {
   const source = read('server.js');
   assert.match(source, /RUN_MIGRATIONS_ON_STARTUP !== 'false'/);
-  assert.match(source, /migration = await withMigrationLock\(getPool\(config\), \(\) => migrate\(config\)\)/);
+  assert.match(source, /migration = await withMigrationLock\(getPool\(config\), async \(\) => \{\n\s*const result = await migrate\(config\);/);
+  // The read-only database roles go with the schema, by the new build,
+  // before any Pod of the release: the Job does both (services/db-roles.js).
+  const job = read('scripts/migrate-kubernetes.js');
+  assert.ok(job.indexOf('await migrate(config)') < job.indexOf("require('../src/services/db-roles').ensureRoles(config)"),
+    'the migration Job sets the roles up after the schema');
+  assert.ok(!/ensureRole\(|ensureConsoleRole\(/.test(source.slice(source.indexOf('async function becomeLeader()'), source.indexOf('async function start()'))),
+    'and no leader does at its election');
 });
 
 test('startup diagnostics expose coarse public-safe phases through health', () => {
@@ -220,15 +227,13 @@ test('Kubernetes enables before & after shots by default with one explicit kill 
     'Helm default treats boolean false as empty and would defeat the kill switch');
 });
 
-test('Kubernetes passes the workflow flags through, off by default', () => {
+test('Kubernetes passes no workflow flag: every machine is the only path for what it decides', () => {
   const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
   const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
-  assert.match(values, /workflowGovernanceEnabled: false/);
-  assert.match(platform,
-    /name: WF_GOVERNANCE_ENABLED, value: \{\{ \.Values\.platform\.workflowGovernanceEnabled \| quote \}\}/);
-  assert.match(values, /workflowMergeFollowupsEnabled: false/);
-  assert.match(platform,
-    /name: WF_MERGE_FOLLOWUPS_ENABLED, value: \{\{ \.Values\.platform\.workflowMergeFollowupsEnabled \| quote \}\}/);
+  assert.doesNotMatch(platform, /WF_GOVERNANCE_ENABLED|WF_PREVIEWS_ENABLED|PREVIEW_LIFECYCLE_ENABLED/);
+  assert.doesNotMatch(platform, /WF_MERGE_FOLLOWUPS_ENABLED|WF_APP_DELIVERY_ENABLED|WF_OWNERSHIP_MODE/);
+  assert.doesNotMatch(values, /workflowPreviewsEnabled|previewLifecycleEnabled|workflowGovernanceEnabled/);
+  assert.doesNotMatch(values, /workflowMergeFollowupsEnabled|workflowAppDeliveryEnabled/);
 });
 
 test('Kubernetes workflow resolves all three images before publishing a release', () => {
@@ -310,7 +315,7 @@ test('Kubernetes workflow retains queued releases, publishes the tip, and never 
   // The tip too (7 October: four rollouts in sixteen minutes) goes out no
   // sooner than RELEASE_MIN_GAP_MINUTES after the release before it: it waits
   // in the step, re-reading the branch, and a dispatched run never waits.
-  assert.match(release, /RELEASE_MIN_GAP_MINUTES: '10'/);
+  assert.match(release, /RELEASE_MIN_GAP_MINUTES: '4'/);
   assert.match(release, /\[ "\$GITHUB_EVENT_NAME" != workflow_dispatch \] \\\n\s+\|\| decide true/,
     'a run dispatched by hand is the way to release at once');
   assert.match(release, /sleep \$\(\( wait_until - now < 30 \? wait_until - now : 30 \)\)\n\s+current_sha="\$\(branch_tip\)"/,

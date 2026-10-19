@@ -58,6 +58,7 @@ const COUNTS = Symbol('counts');
 const REVIEWED_REFERENCES = Symbol('reviewed client references');
 
 const FILE_EXEMPTIONS = new Map([
+  ['src/routes/adult-attestation.js', 'the person\'s own answer to "Are you 18 or older?" (#5095), given in its sheet; an assistant never gives it for them'],
   ['src/routes/anthropic-proxy.js', 'provider proxy used by development agents, not a Classic control'],
   ['src/routes/app-llm-proxy.js', 'child-app provider proxy, not a Classic control'],
   ['src/routes/app-platform-api.js', 'child-app platform API authenticated by app grants'],
@@ -66,6 +67,8 @@ const FILE_EXEMPTIONS = new Map([
   ['src/routes/cli-agent.js', 'local coding-agent protocol, represented by CLI Settings and development capabilities'],
   ['src/routes/external-agent-patch-upload.js', 'coding-agent patch upload authenticated by a one-time work-order token (#4264), never a signed-in Classic control'],
   ['src/routes/internal.js', 'platform-to-worker/internal service protocol'],
+  ['src/routes/private-requests.js', 'admin-only confidential and security requests (#5048), kept off GitHub; their words are not handed to an assistant or its model provider'],
+  ['src/routes/languages.js', 'the shell\'s own language list and packs, read by its language runtime as it boots, never a model-visible control'],
   ['src/routes/public-api.js', 'anonymous public integration and waitlist surface'],
   ['src/routes/topochain/ingest.js', 'authenticated partner ingestion protocol'],
   ['src/routes/topochain/partner.js', 'partner service protocol'],
@@ -87,6 +90,10 @@ const PATH_EXEMPTIONS = [
 // handing the model a credential-mint, OAuth callback, or arbitrary binary
 // response would be both misleading and unsafe.
 const REVIEWED_ROUTE_EXEMPTIONS = [
+  {
+    matches: (route) => route.source === 'src/routes/dictation.js',
+    reason: 'audio upload transport after a deliberate microphone action; the browser inserts editable text before a person sends it',
+  },
   {
     matches: (route) => route.source === 'src/routes/apps.js'
       && route.method === 'POST' && route.path === '/api/apps/:slug/openings',
@@ -133,6 +140,31 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     matches: (route) => route.source === 'server.js'
       && route.method === 'GET' && route.path === '/usernode-bridge/v1/platform.json',
     reason: 'bridge asset: where the platform is, read by the app-host Homeroom button, never a model-visible capability',
+  },
+  {
+    // #5249: kudos is parked. Members can no longer give, retract or pledge
+    // kudos, see who gave them or read their allowance anywhere in the
+    // shell, so no assistant offers that either. A person's page and Your
+    // votes stay. The routes themselves are unchanged, and so is everything
+    // they wrote. Remove this entry when
+    // frontend/src/features/leaderboard/kudos-parked.ts goes back to false.
+    matches: (route) => (route.source === 'src/routes/kudos.js'
+        && (route.path === '/api/sessions/:id/kudos'
+          || (route.method === 'GET' && route.path === '/api/me/kudos-budget')))
+      || (route.source === 'src/routes/issues.js'
+        && route.method === 'POST' && route.path === '/api/apps/:slug/issues/:number/bounty'),
+    reason: 'kudos is parked (#5249): giving, retracting and pledging kudos, its givers and its allowance are off for members, so no assistant offers them',
+  },
+  {
+    // #5249: the kudos boards (who received kudos, which changes were
+    // thanked, and a person's thanked changes), read through these three.
+    // The shell's person page (#leaderboard/users/<name>) still reads the
+    // last one directly; no assistant offers them. Global Chat's "View
+    // leaderboard" reads the Standings ranking (GET /api/v4/leaderboard)
+    // instead. Remove this entry with the one above.
+    matches: (route) => route.source === 'src/routes/kudos.js' && route.method === 'GET'
+      && ['/api/leaderboard/prs', '/api/leaderboard/users', '/api/leaderboard/users/:username/prs'].includes(route.path),
+    reason: 'kudos is parked (#5249): the kudos boards are not shown to members, so no assistant offers them; Global Chat\'s leaderboard is the Standings ranking',
   },
   {
     matches: (route) => route.path === '/api/iframe-token',
@@ -643,12 +675,22 @@ function discoverSettings() {
   // One entry per PART (a [data-settings-section] wrapper). `page` groups
   // parts into one nav row; every part's own #settings/<key> still resolves,
   // so each part stays an inspectable settings group of its own.
+  // The registry names each part and its group by message id
+  // (`settings:nav.part.profile`); the inventory records the English.
+  const english = JSON.parse(fs.readFileSync(
+    path.join(ROOT, 'frontend', 'locales', 'en', 'settings.json'), 'utf8',
+  ));
+  const said = (id) => {
+    const entry = english[id.replace(/^settings:/, '')];
+    if (!entry) throw new Error(`No English text for ${id}`);
+    return entry.text;
+  };
   return [...sectionBlock[1].matchAll(
     /\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)',\s*group:\s*'([^']+)'(?:,\s*page:\s*'([^']+)')?(?:,\s*gate:\s*'([^']+)')?\s*\}/g,
   )].map((match) => ({
     key: match[1],
-    label: match[2],
-    group: match[3],
+    label: said(match[2]),
+    group: said(match[3]),
     gate: match[5] || null,
     capabilityId: `settings.open.${match[1].replace(/[^a-z0-9]+/g, '_')}`,
     classicPath: `#settings/${match[1]}`,

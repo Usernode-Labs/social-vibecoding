@@ -52,6 +52,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -112,7 +113,8 @@ test('a run in flight offers neither a clone nor a re-run', () => {
   const model = AppView._issueCardModel(issue({ status: 'generating', sessionId: 93 }));
   const html = cardHtml(model);
   assert.equal(primaryCount(model), 1);
-  assert.match(html, /disabled[^>]*>Generating proposal/);
+  // Homeroom's words: a change, never a proposal.
+  assert.match(html, /disabled[^>]*>Drafting a change…/);
   assert.ok(!menuLabels(AppView, model).some((l) => /^Generate proposal$/.test(l)),
     'nothing to generate while one is already running');
 });

@@ -249,7 +249,7 @@
           TermsFirstRun._answered = true;
           if (payload.consent && payload.consent.earlier_accepted === true
               && window.PlatformUI && typeof window.PlatformUI.toast === 'function') {
-            window.PlatformUI.toast('We updated our terms. By continuing to use Homeroom, you agree to them.');
+            window.PlatformUI.toast(PlatformI18n.t('onboarding:terms.updatedToast'));
           }
         }
       } catch (err) {

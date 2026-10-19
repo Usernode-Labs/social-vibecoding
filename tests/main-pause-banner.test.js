@@ -55,15 +55,14 @@ function bannerHtml(state) {
 test('the sentence names the test and says who may end the pause', () => {
   const { mainPauseText } = mod();
   assert.equal(mainPauseText(PAUSED),
-    'Merges are paused: main’s unit suite is failing since fffffff: shared-sessions returns linked_issues per row. '
-    + 'They resume when a fix lands or an admin resumes them; a proposal already level with main whose own checks passed still merges.');
+    'Merges are paused: main’s tests have failed since fffffff: shared-sessions returns linked_issues per row. '
+    + 'They resume once a fix lands or an admin resumes them.');
   assert.equal(mainPauseText({ ...PAUSED, confirming: true }),
-    'Main’s unit suite failed once since fffffff: shared-sessions returns linked_issues per row. Re-running to confirm. '
-    + 'Merges are paused meanwhile, except for proposals already level with main whose own checks passed.');
+    'Main’s tests failed once since fffffff: shared-sessions returns linked_issues per row. Re-running to confirm. '
+    + 'Merges are paused meanwhile.');
   // A run that named no test (a setup failure, a killed run) still reads.
   assert.equal(mainPauseText({ confirming: false, sha: null, failingTest: null }),
-    'Merges are paused: main’s unit suite is failing. They resume when a fix lands or an admin resumes them; '
-    + 'a proposal already level with main whose own checks passed still merges.');
+    'Merges are paused: main’s tests are failing. They resume once a fix lands or an admin resumes them.');
 });
 
 test('the initial render is the hidden, empty slot the shell shipped', () => {
@@ -93,7 +92,7 @@ test('paused: amber, above the cards, the test named, no button for a non-admin'
 test('an admin gets the Resume verb — once the red is confirmed, not during the re-run', () => {
   const confirmed = bannerHtml({ ...PAUSED, canResume: true });
   assert.match(confirmed, /<button[^>]*>Resume merges<\/button>/);
-  assert.match(confirmed, /title="Resume merges on this app while main’s unit suite is red\./);
+  assert.match(confirmed, /title="Merge again while main’s tests fail\./);
 
   const confirming = bannerHtml({ ...PAUSED, canResume: true, confirming: true });
   assert.match(confirming, /data-main-pause="confirming"/);
@@ -108,6 +107,20 @@ test('the button resolves to the one resume path the per-card ledger uses', () =
   assert.match(FRAME_SRC, /window\.AppView\?\.resumeMainMerges\?\.\(s\.slug, btnRef\.current\)/);
   assert.match(APP_VIEW_SRC, /async resumeMainMerges\(slug, btn\)/, 'the legacy side still owns the call');
   assert.match(APP_VIEW_SRC, /\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/main-check\/resume/);
+});
+
+test('a resume Homeroom has recorded but not applied yet is a 202, and the toast says it is resuming', () => {
+  // The main-check machine decides in its own process. A resume it has not
+  // applied within the wait is applied once it is: the route answers 202
+  // without the pause read now (still the old one), and the client says it
+  // is resuming, not done, and refreshes.
+  const apps = read('src', 'routes', 'apps.js');
+  const route = apps.slice(apps.indexOf("router.post('/api/apps/:slug/main-check/resume'"));
+  assert.match(route, /if \(resumed === 'pending'\) return res\.status\(202\)\.json\(\{ ok: true, pending: true \}\);\n\s*const mainWatch = require/);
+  assert.match(route, /res\.json\(\{ ok: true, mainCheck: \(await mainWatch\.mergePause\(pool, rows\[0\]\.id\)\) \}\);/);
+  assert.match(APP_VIEW_SRC, /PlatformUI\.toast\(PlatformI18n\.t\(data\.pending \? 'changes:step\.resume\.pending' : 'changes:step\.resume\.done'\)\);\n\s*AppView\.refreshDevData\('main-check-resume'\);/);
+  const { message } = require('./lib/platform-i18n');
+  assert.match(message('changes:step.resume.pending'), /^Resuming merges\./);
 });
 
 test('the store is published from the promoted list on the server\'s admin rule', () => {

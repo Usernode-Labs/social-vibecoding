@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const { withResourceUse } = require('./build-retention-guard');
-const { STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK } = require('./advisory-locks');
+const { withBuildUse, withResourceUse } = require('./build-retention-guard');
+const { PRODUCTION_BUILD_LOCK } = require('./advisory-locks');
 const log = require('./logger');
 const docker = require('./docker');
 const applicationRuntime = require('./application-runtime');
@@ -29,6 +29,19 @@ class MissingSecretsError extends Error {
   }
 }
 
+// A production rebuild of the commit whose image was already refused for
+// running as root (deploy-failure.js waitsForNewCommit): building and rolling
+// it out again can only end the same way, so it stops after the clone, with
+// the original failure left on the row. A new commit, or a deploy asked for
+// by hand (options.retrySameCommit), goes ahead.
+class WaitsForNewCommitError extends Error {
+  constructor(sha) {
+    super(`Not deploying ${String(sha).slice(0, 7)} again: its image runs as root, so it waits for a commit that changes the Dockerfile`);
+    this.name = 'WaitsForNewCommitError';
+    this.sha = sha;
+  }
+}
+
 // Distinct error for the staging-specific case where a `required + private`
 // secret has no manifest-committed `staging_default` (or `default`). Surfaces
 // with a different message because the remediation is different from
@@ -53,68 +66,19 @@ class PrivateSecretMissingStagingDefaultError extends Error {
 // public/js/dev-host.js — this keeps laptop + phone-on-LAN working without
 // any env-var config.
 
-// Per-session staging-build serialization + same-commit coalescing.
-//
-// Staging builds for one session are triggered from several independent
-// places — a worker push, the startup/interval recovery sweeper, the
-// stale-pending vote kick, the manual deploy button — and nothing used to
-// stop two of them running concurrently. The failure mode is nasty
-// because a build's slowest step is cloning the prod DB (pg_dump |
-// pg_restore, minutes for big apps) and a build BEGINS by dropping any
-// prior clone via pg_terminate_backend: build B's teardown kills build
-// A's in-flight pg_restore mid-COPY ("server closed the connection
-// unexpectedly"), A dies loudly, records a checks 'error', and posts a
-// scary ⚠ to the session chat — for a failure that was pure friendly
-// fire (session 2258, 2026-07-14). The two builds also share the
-// /tmp/usernode-staging-<id> checkout dir, so B's rm -rf could yank A's
-// tree mid-build.
-//
-// The local chain coalesces requests within this process. Kubernetes also
-// takes a database advisory lock for the entire build: old and new platform
-// Pods both serve HTTP during a rollout. Different sessions remain parallel.
-// As a bonus,
-// a caller requesting the SAME commit as the in-flight/queued build joins
-// it and shares the result instead of rebuilding an identical image+clone
-// back-to-back ('latest' never coalesces — it can point at different
-// content at different times).
-const _stagingBuilds = new Map(); // sessionId -> { commitHash, promise, tail }
-
-// Is a staging build currently in flight (or queued) for this session?
-// Consumed by staging-reap's orphan-DB sweep: a build's clone DB exists
-// before the session row's staging_url points at it, so without this
-// check the sweep could classify a mid-build clone as orphaned and drop
-// it out from under pg_restore — the exact friendly-fire failure the
-// per-session build serialization above exists to prevent.
-function hasInFlightBuild(sessionId) {
-  return _stagingBuilds.has(Number(sessionId));
-}
-
-// Every session with a staging build in flight (or queued) in this process.
-// For the shutdown path (server.js cleanup): a build dies with its process,
-// and nothing on the cluster outlives it to be harvested.
-function inFlightBuildSessionIds() {
-  return [..._stagingBuilds.keys()].map(Number);
-}
-
 // #866 — display-only preview state for a proposal row, derived on read.
 //
 // An imported PR is promoted the instant it's imported, so its card exists
 // for minutes before its preview does. With nothing but `staging_url` to go
 // on the client can't tell "still building" from "will never build", and a
 // row with no Preview button reads as a bug either way. These two derived
-// fields close that gap WITHOUT a persisted staging_state column: the
-// building flag is the in-memory build map above, the error is the reason
-// the checks pass already captured in check_error_detail.
-//
-// Deliberate limitation of the in-memory flag: a platform restart mid-build
-// loses it, so the card falls back to "unavailable" until the staging-heal
-// sweep (server.js Pass 3) re-arms a build and the next refresh flips it
-// back to building. Sub-optimal for a few minutes after a restart, versus a
-// schema change plus a write path that has to be correct on every crash —
-// the trade the spec picks on purpose.
+// fields close that gap WITHOUT a persisted staging_state column: building
+// is the row's own phase, which the preview machine writes when it starts a
+// build (every Pod sees it, and it survives a restart); the error is the
+// reason the checks pass already captured in check_error_detail.
 function previewDisplayState(row) {
   const missing = !row.staging_url;
-  const stagingBuilding = !!(missing && hasInFlightBuild(row.id));
+  const stagingBuilding = !!(missing && row.check_state === 'pending' && row.check_phase === 'building');
   const stagingError = (missing && row.check_state === 'error' && row.check_error_detail)
     ? row.check_error_detail
     : null;
@@ -127,58 +91,6 @@ function previewDisplayState(row) {
   };
 }
 
-async function buildAndDeployStaging(config, session, app, commitHash) {
-  const lifecycle = require('./preview-lifecycle');
-  if (lifecycle.enabled(config) && !lifecycle.current()) {
-    return lifecycle.run(config, session, commitHash, 'build', async (operation, fresh) => {
-      // Initial fleet/manual previews may not have a checks pin yet. Persist
-      // the resolved SHA while owning the session, before building or capture.
-      if (!fresh.checks_commit_sha) {
-        await require('./visuals').setChecksPending(operation.pool, session.id, operation.revision, 'building');
-      }
-      return buildAndDeployStaging(config, fresh, app, operation.revision);
-    }, { onError: async (err, pool, operation) => {
-      // Preserve boot-failure backoff/notifications while still owning this
-      // run. Callers must not republish it after a same-SHA retry takes over.
-      try {
-        await require('./staging-recovery').recordStagingBootFailure({
-          config, pool, session, commitHash: operation.revision, err,
-        });
-      } finally { err.previewFailureHandled = true; }
-    }, resolveRevision: async fresh => {
-      const [, owner, repo] = app.repo_url?.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-      return owner && repo && fresh?.branch_name ? github.getBranchSha(owner, repo, fresh.branch_name) : null;
-    } });
-  }
-  const key = session.id;
-  const current = _stagingBuilds.get(key);
-  if (current && commitHash && commitHash !== 'latest' && current.commitHash === commitHash) {
-    log.info('staging', 'Joining in-flight staging build for same commit', {
-      sessionId: key, commitHash,
-    });
-    return current.promise;
-  }
-  const prevTail = current ? current.tail : Promise.resolve();
-  // Run after the predecessor settles either way — a failed build must
-  // not block the next one (it's often exactly the retry that heals it).
-  const promise = prevTail.then(
-    () => withResourceUse(config, STAGING_BUILD_LOCK, key, () => buildAndDeployStagingInner(config, session, app, commitHash)),
-    () => withResourceUse(config, STAGING_BUILD_LOCK, key, () => buildAndDeployStagingInner(config, session, app, commitHash))
-  );
-  // The stored tail never rejects, so waiters always run and no unhandled
-  // rejection is parked on the chain; callers still get the real result
-  // or the real error via `promise`.
-  const tail = promise.then(() => {}, () => {});
-  const entry = { commitHash, promise, tail };
-  _stagingBuilds.set(key, entry);
-  tail.then(() => {
-    // Self-clean once we're the last link so idle sessions don't leak
-    // entries. Identity-guarded so a newer queued build isn't dropped.
-    if (_stagingBuilds.get(key) === entry) _stagingBuilds.delete(key);
-  });
-  return promise;
-}
-
 // Publish which build step a preview is on (and how long the finished
 // ones took) so "Preview building…" can say what it is doing. Rides the
 // checks progress row and event (services/visuals.js). Best-effort and
@@ -186,8 +98,6 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
 // and visuals requires this module at load.
 function reportBuildStep(config, session, step, timings, startedAt, image = null) {
   try {
-    const operation = require('./preview-lifecycle').current();
-    if (operation?.signal.aborted) return;
     const visuals = require('./visuals');
     const build = {
       step,
@@ -196,16 +106,8 @@ function reportBuildStep(config, session, step, timings, startedAt, image = null
       ...(image ? { image } : {}),
       ...(Number.isFinite(timings.totalMs) ? { totalMs: Math.round(timings.totalMs) } : {}),
     };
-    const write = visuals.setChecksBuildProgress(getPool(config), session.id, build);
-    if (operation) {
-      write.then(async () => {
-        await operation.check();
-        visuals.notifyChecksBuildProgress(session.id, build);
-      }).catch(() => {});
-    } else {
-      write.catch(() => {});
-      visuals.notifyChecksBuildProgress(session.id, build);
-    }
+    visuals.setChecksBuildProgress(getPool(config), session.id, build).catch(() => {});
+    visuals.notifyChecksBuildProgress(session.id, build);
   } catch { /* status only */ }
 }
 
@@ -297,7 +199,14 @@ function rootHasDanglingLink(dir) {
   }
 }
 
-async function buildAndDeployStagingInner(config, session, app, commitHash) {
+// `attempt` (the workflow's preview machine, preview.prepare): build attempt
+// `n` into its own checkout and database `dbName`, deploy it with its own
+// env Secret and the attempt fence (restoring attempt `servingN`'s template
+// if the rollout fails), call `checkpoint()` before each thing it
+// creates (it throws once the attempt is cancelled), and record nothing on
+// the row: the machine publishes the receipt. Reached only through
+// prepareAttempt.
+async function buildAndDeployStagingInner(config, session, app, commitHash, { attempt }) {
   const containerName = `usernode-staging-${app.slug}--${session.id}`;
   const imageName = `usernode-staging-${app.slug}-${session.id}:${commitHash.substring(0, 6)}`;
 
@@ -307,7 +216,10 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
   // persisted how long any of this took, which is why diagnosing the
   // proposal-checks slowdown meant reading a container log tail.
   const buildStartedAt = Date.now();
-  const timings = {};
+  // startedAt: when this build began. The checks run that follows starts its
+  // clock here (visuals.captureForSession), so its time to a verdict counts
+  // the build as well as the checks (#4696).
+  const timings = { startedAt: buildStartedAt };
   reportBuildStep(config, session, 'source_fetch', timings, buildStartedAt);
 
   try {
@@ -316,7 +228,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     if (!owner || !repo) throw new Error('Could not parse repo URL');
 
     const cloneUrl = await github.getCloneUrl(owner, repo);
-    const cloneDir = `/tmp/usernode-staging-${session.id}`;
+    // One checkout per claim of an attempt: a claim that lost its lease may
+    // still be using its own when the next one starts.
+    const cloneDir = `/tmp/usernode-preview-${session.id}-a${attempt.n}-c${attempt.claim || 0}`;
 
     // Whether the caller pinned a concrete commit. 'latest' (and any falsy
     // value) keeps the historical "build the current branch tip" behaviour
@@ -529,7 +443,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     ], { timeout: 5000 });
     const resolvedRevision = (revisionOut || '').trim();
     const prodDbName = dbManager.appDbName(app.slug);
-    const stagingDbNameStr = dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash);
+    const stagingDbNameStr = attempt.dbName;
     // Retries may address the database of a still-serving preview. Only
     // overlap a clone when its target is confirmed absent; otherwise keep
     // the old image-before-clone ordering. A failed lookup is not absence.
@@ -566,6 +480,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       }
     };
     const cloneDatabase = async () => {
+      await attempt.checkpoint({ step: 'clone', db: stagingDbNameStr });
       cloneStartedAt = Date.now();
       if (imageFinished) reportBuildStep(config, session, 'clone', timings, cloneStartedAt);
       try {
@@ -587,12 +502,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
         // neither a late clone nor a build using cloneDir may outlive us.
         const [imageResult, cloneResult] = await Promise.allSettled([buildImage(), cloneDatabase()]);
         const failed = [imageResult, cloneResult].find(result => result.status === 'rejected');
-        if (failed) {
-          await dbManager.dropDatabase(stagingDbNameStr, { strict: true }).catch(err => {
-            log.warn('staging', 'Failed preparation clone cleanup failed', { sessionId: session.id, err: err.message });
-          });
-          throw failed.reason;
-        }
+        // An attempt's database is the preview machine's to retire: a claim
+        // that lost its lease shares it with the retry now using it.
+        if (failed) throw failed.reason;
         build = imageResult.value;
         cloned = cloneResult.value;
       } else {
@@ -602,32 +514,16 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     } finally {
       await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
     }
-    const stagingDbUrl = dbManager.connectionUrl(stagingDbNameStr, cloned.password);
+    // The clone says which server it was made on (the preview server when
+    // STAGING_DB_ADMIN_URL names one). The container keeps this URL for its
+    // whole life, so it goes on reaching that server whatever the setting
+    // says later.
+    const stagingDbUrl = dbManager.connectionUrl(stagingDbNameStr, cloned.password, { server: cloned.server });
 
-    // 4. Stop existing staging container if any. Short grace: a preview
-    // being replaced has nothing worth draining (#767).
-    //
-    // Best-effort by design, unlike teardownStaging: the runtime name is
-    // deterministic and the deploy below reconciles it. But it is no longer
-    // SILENT (#851) — a resource that resists removal is still worth surfacing.
-    await require('./preview-lifecycle').current()?.check();
-    if (applicationRuntime.mode(config) === 'docker' && (session.staging_runtime_name || session.staging_container_id)) {
-      const runtimeName = session.staging_runtime_name || session.staging_container_id;
-      const stopped = await applicationRuntime.remove(config, {
-        runtimeKind: session.staging_runtime_kind || 'docker',
-        runtimeName,
-      }, {
-        stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC,
-      }).then((result) => result || { removed: true })
-        .catch((err) => ({ removed: false, error: err.message }));
-      // Only an EXPLICIT false is a failure — see teardownStaging below for
-      // why the absence of the flag is not treated as one.
-      if (stopped.removed === false) {
-        log.warn('staging', 'Previous preview runtime did not remove; relying on deploy-time reconciliation', {
-          sessionId: session.id, runtimeName, err: stopped.error || null,
-        });
-      }
-    }
+    // 4. Still this machine's attempt? The replacement of what serves is the
+    // deploy's, after its fence (an older attempt never removes a newer
+    // one's container).
+    await attempt.checkpoint({ step: 'deploy', db: stagingDbNameStr });
 
     // 5. Run staging container
     //
@@ -675,23 +571,20 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       cpus: docker.STAGING_CPUS,
       labels: {
         [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint(platformEnv),
+        // Which database this runtime was given, and on which server: what
+        // the heal pass checks when a preview database server can be wiped
+        // or drained. Empty, so nothing is added, without such a server.
+        ...(dbManager.previewDatabaseLabels?.(stagingDbNameStr, cloned.server) || {}),
       },
+      attempt: attempt.n, servingAttempt: attempt.servingN ?? null, claim: attempt.claim || 0,
     });
     timings.healthMs = Date.now() - healthStartedAt;
     const { hostname, url: stagingUrl } = deployed;
-    await getPool(config).query(
-      `UPDATE chat_sessions SET staging_image_ref = $1, staging_build_ref = $2,
-         staging_runtime_kind = $3, staging_runtime_name = $4,
-         staging_commit_sha = $6 WHERE id = $5`,
-      [build.imageRef, build.buildRef, deployed.runtimeKind, deployed.runtimeName, session.id,
-       resolvedRevision || null]
-    );
 
     // NOTE: the edge verification intentionally does NOT happen here. The
-    // caller persists staging_url after this function returns, and that is
-    // the point at which the URL becomes referenceable at all — so the
-    // caller runs verifyStagingEdge() right after the persist and before
-    // revealing the preview button.
+    // machine records the receipt (its `published` write) when this returns,
+    // and that is the point at which the URL becomes referenceable at all;
+    // the prepare handler verifies the edge right after.
 
     timings.totalMs = Date.now() - buildStartedAt;
     // The container is up, but the checks are not yet running: the caller
@@ -720,29 +613,33 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       runtimeName: deployed.runtimeName,
       imageRef: build.imageRef,
       buildRef: build.buildRef,
-      // The commit this preview is of, as recorded on the row above; the
-      // recheck path compares it to the head before trusting the preview.
+      // The commit this preview is of; the recheck path compares it to the
+      // head before trusting the preview.
       commitSha: resolvedRevision || null,
       stagingUrl,
       hostname,
       timings,
     };
   } catch (err) {
-    if (require('./preview-lifecycle').isCancelled(err)) throw err;
     log.error('staging', 'Staging build failed', { sessionId: session.id, err: err.message });
     // Cleanup on failure — short grace, this container is being discarded.
     // Best-effort (the build already failed; nothing downstream forgets this
     // container, and the by-name sweeper is the backstop) but logged rather
     // than swallowed, same reasoning as step 4 above (#851).
     // Kubernetes deploys reconcile deterministic resource names on retry;
-    // Docker needs an explicit by-name cleanup after a partial start.
-    if (applicationRuntime.mode(config) === 'docker') {
-      const cleaned = await docker.stopAndRemove(containerName, {
+    // Docker needs an explicit by-name cleanup after a partial start. An
+    // attempt removes only the container it started, by its id: one that
+    // failed before its deploy step started nothing (the container by that
+    // name still serves), and by name a superseded attempt failing late
+    // would remove its successor.
+    const failedContainer = err.servingRemoved && err.containerId;
+    if (applicationRuntime.mode(config) === 'docker' && failedContainer) {
+      const cleaned = await docker.stopAndRemove(failedContainer, {
         stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC,
       }).catch((e) => ({ removed: false, error: e.message })) || {};
       if (cleaned.removed === false) {
         log.warn('staging', 'Failed-build cleanup left a container behind', {
-          sessionId: session.id, containerName, err: cleaned.error || null,
+          sessionId: session.id, container: failedContainer, err: cleaned.error || null,
         });
       }
     }
@@ -804,127 +701,38 @@ async function verifyStagingEdge(session, hostname, stagingUrl) {
 // Deprecated alias (#816). Kept so any caller still on the old name keeps
 // working; new code calls verifyStagingEdge. Remove once no references
 // remain.
-const warmStagingCert = verifyStagingEdge;
 
-// Tear down a session's staging preview: stop+remove the container, drop the
-// cloned staging database, and stop vouching for the hostname. The single
-// chokepoint every teardown caller (merge, archive, idle-reclaim, the
-// stale-preview sweeper) funnels through.
+// Tear down a session's preview: the single chokepoint every teardown caller
+// (a merge, idle reclaim, the stale-preview sweeper, a bench preview that
+// expired) funnels through. The preview machine retires it, by identity (one
+// it does not hold yet is adopted from the row first). Only the moves that
+// end a proposal retire it for good (`terminal`: a merge, a deleted session;
+// a close is the proposal machine's own message): every other retirement is
+// an idle reclaim, which the machine refuses while someone works on the
+// session or while the proposal is under review. The caller says which; when
+// it does not, only a proposal that has ended is (one being merged is not).
 //
-// Returns { removed, leaked }. `leaked: true` means the container is STILL
-// RUNNING and this session's row deliberately still names it.
-//
-// #851 — WHY THE ORDER AND THE RETURN VALUE MATTER. This function used to
-// swallow the stopAndRemove result and null the staging_* columns
-// unconditionally. When a removal failed (and stopAndRemove could not even
-// report that it had), the container kept running while the only record
-// pointing at it was erased: ten merged sessions in production ended up that
-// way, discoverable only by enumerating docker and joining back to the DB.
-//
-// So nothing is forgotten before removal is CONFIRMED:
-//   - the DB drop is skipped on a leak — dropDatabase's
-//     pg_terminate_backend would kill the live container's connections and
-//     leave it running against a dropped database, which is strictly worse
-//     than a preview that still works;
-//   - both columns are kept on a leak, so the row stays a truthful pointer.
-//     staging-reap's `linked` branch re-enters this same function on the next
-//     automatic pass and finishes the job; keeping staging_url populated for
-//     that window is correct precisely because the container IS still
-//     serving that hostname.
-async function teardownStaging(session, app) {
-  const lifecycle = require('./preview-lifecycle');
-  const config = { appRuntime: session.staging_runtime_kind, databaseUrl: process.env.DATABASE_URL,
-    kubernetes: { workerNamespace: process.env.WORKER_NAMESPACE || 'social-workers' } };
-  return lifecycle.teardown(config, session, fresh => teardownStagingInner(fresh, app));
+// Returns { removed: false, handedOff: true } when the machine took it (its
+// retirement removes the runtime, then the databases and Secrets, then the
+// row's pointers), or { removed: false, leaked: true, busy: true, refused }
+// when it refused: the preview is left as it is, and the row still names it.
+async function teardownStaging(session, app, { terminal = null, reason = null } = {}) {
+  const { rows: [row] } = await getPool().query('SELECT app_id, status FROM chat_sessions WHERE id = $1', [session.id]);
+  // Unsaid, only a proposal that has ended (deleted, closed, merged) is
+  // retired for good; one being merged is not ended yet.
+  const final = terminal == null ? (!row || row.status === 'archived' || row.status === 'merged') : !!terminal;
+  const out = await require('./preview-workflow').retire({
+    session: { id: session.id, app_id: row?.app_id ?? session.app_id ?? app?.id },
+    reason: reason || (final ? (row ? 'closed' : 'deleted') : 'idle'), terminal: final,
+  });
+  return out.taken ? { removed: false, handedOff: true } : { removed: false, leaked: true, busy: true, refused: out.reason };
 }
 
-async function teardownStagingInner(session, app) {
-  log.info('staging', 'Tearing down staging', { sessionId: session.id });
-
-  // Short grace: the preview is going away for good, so there is nothing
-  // to drain. Before #767 this step alone cost a flat ~10.9s on every
-  // merge, purely waiting out a SIGTERM the container never received.
-  if (session.staging_runtime_name || session.staging_container_id) {
-    const runtimeKind = session.staging_runtime_kind || 'docker';
-    const runtimeName = session.staging_runtime_name || session.staging_container_id;
-    const teardownConfig = {
-      appRuntime: runtimeKind,
-      kubernetes: { appNamespace: process.env.APP_NAMESPACE || 'social-apps' },
-    };
-    const result = await applicationRuntime.remove(teardownConfig, {
-      runtimeKind,
-      runtimeName,
-    }, {
-      stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC,
-    }).then((value) => value || { removed: true })
-      .catch((err) => ({ removed: false, error: err.message }));
-
-    // An EXPLICIT `removed: false` is the leak. A result with no flag at all
-    // means the removal reported nothing either way, and the pre-#851
-    // behaviour (proceed) is the right answer there: refusing to null on
-    // "unknown" would strand every row behind any caller or wrapper that
-    // doesn't carry the flag. docker.stopAndRemove always sets it.
-    if (result.removed === false) {
-      log.error('staging', 'Staging teardown LEAKED a runtime — keeping the DB link so it can be retried', {
-        sessionId: session.id,
-        runtimeKind,
-        runtimeName,
-        err: result.error || null,
-      });
-      // The only durable trace: the job that noticed is in-memory, and the
-      // session row looks untouched by design. Best-effort like every
-      // events.record.
-      events.record(getPool(), {
-        type: events.EVENT_TYPES.STAGING_TEARDOWN_LEAKED,
-        metadata: {
-          sessionId: session.id,
-          containerId: runtimeKind === 'docker' ? runtimeName : null,
-          runtimeKind,
-          runtimeName,
-          appSlug: app ? app.slug : null,
-          error: result.error || null,
-        },
-      });
-      return { removed: false, leaked: true };
-    }
-  }
-
-  // Drop staging database. Derive the name from the still-in-memory
-  // staging_url *before* we null the column below. Only reached once the
-  // container is confirmed gone, so there is nothing left connected to it.
-  if (app) {
-    const commitHash = session.staging_commit_sha || session.staging_url?.match(/--(\w{6})\./)?.[1] || '000000';
-    const stagingDbNameStr = dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash);
-    await dbManager.dropDatabase(stagingDbNameStr).catch(() => {});
-  }
-
-  // Stop vouching for the now-dead hostname. Caddy's on-demand `ask` gate
-  // (routes/internal.js isKnownHost) approves a staging host iff
-  // chat_sessions.staging_url still equals it. Leaving it populated after the
-  // container is gone makes Caddy keep (re)issuing/renewing certs for a dead
-  // upstream and lets stale preview links resolve to a 502 instead of a clean
-  // refusal. Nulling it here — the single chokepoint every teardown caller
-  // (merge, archive, idle-reclaim) funnels through — frees those certs from
-  // renewal churn and makes the gate refuse the host. (No Caddy route to
-  // remove: the wildcard site maps hostnames to container names dynamically,
-  // so stopping the container is what takes the preview offline; the cached
-  // cert expires on its own.)
-  await getPool().query(
-    `UPDATE chat_sessions SET staging_url = NULL, staging_container_id = NULL,
-       staging_image_ref = NULL, staging_build_ref = NULL,
-       staging_runtime_kind = NULL, staging_runtime_name = NULL,
-       staging_commit_sha = NULL WHERE id = $1`,
-    [session.id]
-  ).catch((err) => log.warn('staging', 'Failed to clear staging_url on teardown', { sessionId: session.id, err: err.message }));
-
-  log.info('staging', 'Staging torn down', { sessionId: session.id });
-  return { removed: true, leaked: false };
-}
-
-// Per-app rebuild serialization. Every prod-rebuild caller (dev-chat
-// merge, post-merge sibling sweep, drift poller, manual check-updates,
-// issues auto-fix) funnels through rebuildProduction. When two of them
-// fire for the SAME app close together — e.g. PR #25 and #26 both
+// Per-app rebuild serialization. Every production deploy is the
+// app-delivery machine's (deployProduction), which runs one deploy of an
+// app at a time; rollover's respawn of an existing image is the other
+// writer of an app's runtime. When two deploys of the SAME app ran close
+// together (before app delivery) — e.g. PR #25 and #26 both
 // merging within a minute, each kicking off its own rebuild — their
 // `stopAndRemove(name)` / `runContainer(name)` calls interleave and the
 // second `docker run` 405s with "container name is already in use"
@@ -963,24 +771,19 @@ function serializeRebuild(slug, fn) {
 // Job to schedule, a daemon to start and a push. What it costs is that the
 // image's baked GIT_SHA names `fromSha` (the commit whose code it is) rather
 // than the commit main now points at, so the caller has to be one for which
-// that is true and harmless. Today that is demo mode, and routes/votes.js
-// gates it there; a general "deploy the artifact the checks ran against"
+// that is true and harmless. Today that is demo mode, and the
+// merge-followups machine gates it there (machine.ts reuseOf); a general "deploy the artifact the checks ran against"
 // needs that difference resolved rather than tolerated.
-async function rebuildProduction(config, app, options = {}) {
-  const result = await serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug,
+//
+// Every production deploy, for the app-delivery workflow machine
+// (src/workflow/app-delivery/), which owns the "deploying" state
+// (apps.deploy_state, with its pushes), writes the result columns and tells
+// whoever asked. The machine runs one deploy of an app at a time; the chain
+// still orders it against rollover's respawn in this process, which is all
+// that orders anything on Docker, where the lock is not taken.
+function deployProduction(config, app, options = {}) {
+  return serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug,
     () => rebuildProductionInner(config, app, options)));
-  // Every deploy that succeeds, whoever asked for it (a merge, the drift
-  // poller, "Check for updates", a heal): merges of this app still waiting
-  // to go live hear which build now runs, and check whether it contains them
-  // (the merge-followups workflow machine). Never a reason the deploy fails.
-  if (result?.sha) {
-    try {
-      await require('../workflow/platform.ts').productionDeployed(app.id, result.sha);
-    } catch (err) {
-      log.warn('staging', 'Could not report the deploy to waiting merges', { app: app.slug, err: err.message });
-    }
-  }
-  return result;
 }
 
 // Whether an offered image is of the tree that was just cloned, and so the
@@ -1038,15 +841,6 @@ async function rebuildProductionInner(config, app, options = {}) {
 
   log.info('staging', 'Rebuilding production', { app: app.slug });
 
-  // Single chokepoint for "this app is being rebuilt right now": every
-  // caller (dev-chat merge, drift-poller, manual check-updates) ends up
-  // here, so wrapping the body once means the version-pill UI flips to
-  // its deploying state regardless of who triggered the rebuild.
-  const appDeployStatus = require('./app-deploy-status');
-  appDeployStatus.markStart(app.slug, { fromSha: app.main_sha || null });
-  let succeeded = false;
-  let resultSha = null;
-  let missingSecretsFromErr = null;
   // Hoisted out of the try so the catch can stamp the failed commit
   // onto the apps.last_failure record (#416).
   let mainSha = null;
@@ -1085,6 +879,14 @@ async function rebuildProductionInner(config, app, options = {}) {
       mainSha = (stdout || '').trim() || null;
     } catch (err) {
       log.warn('staging', 'Failed to capture main SHA', { app: app.slug, err: err.message });
+    }
+
+    if (!options.retrySameCommit && mainSha) {
+      const { rows: [current] } = await getPool(config).query('SELECT last_failure FROM apps WHERE id = $1', [app.id]);
+      if (require('./deploy-failure').waitsForNewCommit(current?.last_failure, mainSha)) {
+        await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
+        throw new WaitsForNewCommitError(mainSha);
+      }
     }
 
     // Read manifest from the cloned working tree. Snapshot it onto
@@ -1192,7 +994,7 @@ async function rebuildProductionInner(config, app, options = {}) {
     const appDbPassword = dbPwdRows[0]?.db_password;
     if (!appDbPassword) {
       throw new Error(
-        `rebuildProduction: app ${app.slug} has no db_password — ` +
+        `deployProduction: app ${app.slug} has no db_password — ` +
         `migrateAppDbsToPerRole should have populated it at platform boot.`
       );
     }
@@ -1241,8 +1043,6 @@ async function rebuildProductionInner(config, app, options = {}) {
     ).catch((e) => log.warn('staging', 'Failed to clear last_failure', { app: app.slug, err: e.message }));
 
     log.info('staging', 'Production rebuilt', { app: app.slug, sha: mainSha });
-    succeeded = true;
-    resultSha = mainSha;
     return {
       containerId: deployed.runtimeKind === 'docker' ? deployed.runtimeName : null,
       runtimeKind: deployed.runtimeKind,
@@ -1253,8 +1053,12 @@ async function rebuildProductionInner(config, app, options = {}) {
       sha: mainSha,
     };
   } catch (err) {
-    if (err instanceof MissingSecretsError) {
-      missingSecretsFromErr = err.missingSecrets;
+    if (err instanceof WaitsForNewCommitError) {
+      // The row already says why and which commit; nobody needs telling again.
+      log.info('staging', 'Production rebuild skipped: this commit\'s image runs as root', {
+        app: app.slug, sha: err.sha,
+      });
+    } else if (err instanceof MissingSecretsError) {
       log.warn('staging', 'Production rebuild blocked — missing required secrets', {
         app: app.slug, missing: err.missingSecrets,
       });
@@ -1333,26 +1137,28 @@ async function rebuildProductionInner(config, app, options = {}) {
       }
     }
     throw err;
-  } finally {
-    appDeployStatus.markEnd(app.slug, {
-      toSha: resultSha,
-      failed: !succeeded,
-      missingSecrets: missingSecretsFromErr,
-    });
   }
+}
+
+// One attempt of the preview machine (src/workflow/preview/services.ts):
+// no per-process queue, no lifecycle run, no row writes.
+// The preview machine's build of attempt n. It holds the shared
+// build-retention lock for the whole build, as every build does: the image
+// pruner (build-retention.js) takes that lock exclusively before deleting an
+// unreferenced Build, so it never removes this one between its build and its
+// deploy. The machine serialises a session's attempts itself.
+function prepareAttempt(config, session, app, head, attempt) {
+  return withBuildUse(config, () => buildAndDeployStagingInner(config, session, app, head, { attempt }));
 }
 
 module.exports = {
   _makeImageProgressReporterForTest: makeImageProgressReporter,
   _imageStepLabelForTest: imageStepLabel,
-  buildAndDeployStaging,
-  hasInFlightBuild,
-  inFlightBuildSessionIds,
+  prepareAttempt,
   previewDisplayState,
   verifyStagingEdge,
-  warmStagingCert,
   teardownStaging,
-  rebuildProduction,
+  deployProduction,
   // The image-reuse decision and the tree read behind it, unit-tested
   // directly: the decision IS the guarantee, and rebuildProductionInner
   // around it is a clone, a database and a cluster.
@@ -1360,13 +1166,13 @@ module.exports = {
   treeShaOf,
   // Exported for services/app-rollover.js: its cheap respawn path
   // (appRespawn.runExistingImage) does its own stopAndRemove +
-  // runContainer without going through rebuildProduction, so it has to
-  // take the same per-slug lock or it can interleave with a
-  // merge-triggered rebuild of the same app — the exact "container name is
-  // already in use" race the comment above documents. Do NOT call it from
-  // inside a function that rebuildProduction already wraps: the chain is
-  // not re-entrant.
+  // runContainer without going through deployProduction, so it has to
+  // take the same per-slug lock or it can interleave with a deploy of the
+  // same app — the exact "container name is already in use" race the
+  // comment above documents. Do NOT call it from inside a function that
+  // deployProduction already wraps: the chain is not re-entrant.
   serializeRebuild,
   MissingSecretsError,
+  WaitsForNewCommitError,
   PrivateSecretMissingStagingDefaultError,
 };

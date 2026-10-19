@@ -131,11 +131,11 @@ test('the three records: a first run once, a preview once per viewer, a change l
   assert.deepEqual([row.user_id, row.app_id, row.session_id, row.created_at.getTime()], [bot, project, built, at.getTime()],
     'recorded at the merge, not after the health reading');
 
-  // A change somebody made themselves, on Homeroom's own project (no
-  // deploy here, so not read as live).
+  // A change somebody made themselves, on Homeroom's own project: recorded
+  // when production runs it (the merge-followups machine asks only then).
   const own = await session(project, ben, { created_from_issue_number: 9 });
   const mine = await journeyEvents.recordChangeLive(pool, { session: { id: own, app_id: project, user_id: ben, created_from_issue_number: 9 } });
-  assert.deepEqual(mine, { sessionId: own, requesterIds: [ben], firstVersion: false, live: false, sha: null });
+  assert.deepEqual(mine, { sessionId: own, requesterIds: [ben], firstVersion: false, live: true, sha: null });
   assert.deepEqual(journeyEvents.requestNumbers({ linked_issues: [3, '3', 0, null], created_from_issue_number: 7 }), [3, 7]);
   assert.equal(await journeyEvents.recordChangeLive({ query: async () => { throw new Error('down'); } }, {
     session: { id: own, app_id: project, user_id: ben },
@@ -192,8 +192,27 @@ test('the creation path: people per step, times from creation, targets, and what
   await app('homeroom', ana, '2026-09-30T09:00:00Z', true);
   const eveOne = await app('eve-one', eve, '2026-10-02T09:00:00Z');
   await pool.query('UPDATE apps SET first_running_at = $2 WHERE id = $1', [eveOne, plus('2026-10-02T09:00:00Z', 30)]);
+  // #4895: where each one's time to running went. Ana's first failed once
+  // before it ran; the attempt that ran is the one read. Ben's was a Retry
+  // on a repository that already existed, which the medians leave out.
+  const timed = (appId, at, outcome, kind, totalMs, build) => event('app_creation_timed', {
+    userId: ana, appId, at, metadata: { outcome, kind, totalMs, stages: { database: 900, repository: 4000, build, rollout: 9000 } },
+  });
+  await timed(anaOne, plus(A1, 20), 'error', 'new_repo', 20000, 15000);
+  await timed(anaOne, plus(A1, 85), 'running', 'new_repo', 45000, 30000);
+  await timed(anaOne, plus(A1, 300), 'running', 'existing_repo', 99000, 90000);
+  await timed(anaTwo, plus(A2, 55), 'running', 'new_repo', 35000, 20000);
+  await timed(benOne, plus(B1, 110), 'running', 'existing_repo', 60000, 45000);
 
   const path = await journey.creationPath(pool, { week, now, leftOutIds: [eve] });
+  assert.deepEqual(path.timing, {
+    from: plus(A1, 20), of: 2, totalMs: 40000, pod: null,
+    stages: [
+      { key: 'database', medianMs: 900 }, { key: 'repository', medianMs: 4000 },
+      { key: 'build', medianMs: 25000 }, { key: 'rollout', medianMs: 9000 },
+    ],
+  }, 'the first attempt that ran, per project made from a starter');
+  assert.deepEqual(path.examples.map((e) => e.timing && e.timing.totalMs), [null, 60000, 35000, 45000]);
   assert.equal(path.week, '2026-09-28');
   assert.equal(path.finished, true);
   assert.deepEqual(path.steps.map((s) => [s.key, s.reached, s.of, s.medianSeconds, s.targetSeconds, s.withinTarget]), [

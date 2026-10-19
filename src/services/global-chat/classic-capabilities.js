@@ -57,7 +57,7 @@ const SETTINGS_READ_PATHS = Object.freeze({
     '/api/me/credentials/openrouter',
     '/api/me/credentials/openrouter/allowance',
   ],
-  usage: ['/api/me/ai-budget'],
+  usage: ['/api/me/ai-budget', '/api/me/building-time'],
   'api-key': ['/api/auth/me', '/api/me/ai-budget'],
   connectors: ['/api/me/connectors'],
   'linked-accounts': ['/api/me/social-identities', '/api/me/github'],

@@ -136,8 +136,43 @@ async function enqueue(pool, {
     log.warn('checks-queue', 'Could not join the checks queue; running without it', {
       runId, kind, sessionId, appId, err: err.message,
     });
+    // It goes ahead without a slot, which the status page counts. The row
+    // may have been refused for naming a session or app that is gone, which
+    // would refuse the event's foreign keys too: the metadata names them.
+    recordSlotGranted(pool, { runId, kind, sessionId, appId, waitedMs: 0, failedOpen: true, attribute: false });
     return null;
   }
+}
+
+const CLASS_NAME = { 1: 'main', 2: 'promoted', 3: 'handoff', 4: 'draft' };
+
+// Note that a run got its slot, or went ahead without one (`failedOpen`),
+// in the events log (CHECKS_SLOT_GRANTED). A run's check_runs row goes when
+// it settles, so this is all the queue remembers of a wait once it is over;
+// Admin → Health & status reads the last day of them. A wait that ended
+// without a slot (superseded) records nothing. Fire-and-forget:
+// events.record never rejects, and the run never waits on it. `attribute:
+// false` leaves the event's app and session columns (foreign keys) empty.
+function recordSlotGranted(pool, {
+  runId = null, kind = 'proposal', cls = null, sessionId = null, appId = null,
+  waitedMs = 0, failedOpen = false, attribute = true,
+} = {}) {
+  const events = require('./events');
+  const app = appId == null ? null : Number(appId);
+  const session = sessionId == null ? null : Number(sessionId);
+  events.record(pool, {
+    type: events.EVENT_TYPES.CHECKS_SLOT_GRANTED,
+    appId: attribute ? app : null,
+    sessionId: attribute ? session : null,
+    metadata: {
+      runId,
+      kind: kind === 'main' ? 'main' : 'proposal',
+      class: cls == null ? null : (CLASS_NAME[Number(cls)] || null),
+      waitedMs: Math.max(0, Math.round(Number(waitedMs) || 0)),
+      failedOpen: !!failedOpen,
+      ...(attribute ? {} : { sessionId: session, appId: app }),
+    },
+  });
 }
 
 // Every run that holds or wants a slot, in the order slots go to them. The
@@ -146,7 +181,7 @@ async function enqueue(pool, {
 // waiting on proposal_submit_build), so "submitted" means one thing.
 const QUEUE_SQL = `
   SELECT cr.run_id, cr.kind, cr.session_id, cr.app_id, cr.commit_sha, cr.owner,
-         cr.queued_at, cr.admitted_at,
+         cr.queued_at, cr.admitted_at, cr.heartbeat_at,
          (cr.heartbeat_at >= NOW() - ($1::int * INTERVAL '1 millisecond')) AS alive,
          (cr.admitted_at IS NOT NULL
            AND cr.admitted_at >= NOW() - ($2::int * INTERVAL '1 millisecond')) AS within_deadline,
@@ -318,12 +353,24 @@ function nap(ms, signal) {
 // under the preview lifecycle that is a newer revision taking the session.
 // `onPosition({ ahead, queuedAt })` hears each change of place in line,
 // including the first, for the card. A pass that fails lets the run go.
+// Every admitted ending, failed-open ones included, is noted in the events
+// log for the status page (recordSlotGranted).
 async function waitForSlot(pool, {
   runId, signal = null, stillWanted = async () => true, onPosition = null, pollMs = POLL_MS,
   cap = undefined,
 } = {}) {
   const startedAt = Date.now();
   let last;
+  // The run as the last pass saw it, for the event.
+  let seen = null;
+  const granted = (extra = {}) => {
+    const waitedMs = Date.now() - startedAt;
+    recordSlotGranted(pool, {
+      runId, kind: seen?.kind, cls: seen?.class, sessionId: seen?.sessionId, appId: seen?.appId,
+      waitedMs, failedOpen: extra.failedOpen === true,
+    });
+    return { outcome: 'admitted', waitedMs, ahead: last ?? null, ...extra };
+  };
   for (;;) {
     signal?.throwIfAborted();
     let wanted = true;
@@ -336,15 +383,16 @@ async function waitForSlot(pool, {
     } catch (err) {
       log.warn('checks-queue', 'Admission pass failed; letting the run go', { runId, err: err.message });
       await markAdmitted(pool, runId);
-      return { outcome: 'admitted', waitedMs: Date.now() - startedAt, ahead: last ?? null, failedOpen: true };
+      return granted({ failedOpen: true });
     }
     signal?.throwIfAborted();
     const mine = plan.byRun.get(runId);
     if (!mine) {
       log.warn('checks-queue', 'The run is not in the checks queue; letting it go', { runId });
-      return { outcome: 'admitted', waitedMs: Date.now() - startedAt, ahead: last ?? null, failedOpen: true };
+      return granted({ failedOpen: true });
     }
-    if (mine.admitted) return { outcome: 'admitted', waitedMs: Date.now() - startedAt, ahead: last ?? null };
+    seen = mine;
+    if (mine.admitted) return granted();
     if (mine.ahead !== last) {
       last = mine.ahead;
       if (typeof onPosition === 'function') {
@@ -352,6 +400,138 @@ async function waitForSlot(pool, {
       }
     }
     await nap(pollMs, signal);
+  }
+}
+
+// ── The status page's view of the queue (Admin → Health & status) ────────
+
+const CLASS_LABEL = { main: 'main', promoted: 'up for a vote', handoff: 'CLI hand-off', draft: 'draft' };
+
+// QUEUE_SQL's own rows, so the page and the admission pass cannot read the
+// queue two ways, with what a person needs to recognise each run.
+const SNAPSHOT_SQL = `
+  SELECT q.*, cs.pr_number, a.slug AS app_slug
+    FROM (${QUEUE_SQL}) q
+    LEFT JOIN chat_sessions cs ON cs.id = q.session_id
+    LEFT JOIN apps a ON a.id = COALESCE(cs.app_id, q.app_id)
+   ORDER BY q.class, q.queued_at, q.run_id`;
+
+// The last day of CHECKS_SLOT_GRANTED events. A run "waited" when it waited
+// at least one queue poll; a shorter wait is a run admitted at its first ask.
+const LAST_DAY_SQL = `
+  WITH granted AS (
+    SELECT CASE WHEN metadata->>'waitedMs' ~ '^[0-9]+$' THEN (metadata->>'waitedMs')::bigint END AS waited_ms,
+           metadata->>'failedOpen' = 'true' AS failed_open
+      FROM events
+     WHERE event_type = $1 AND created_at > NOW() - INTERVAL '24 hours'
+  )
+  SELECT COUNT(*)::int AS runs,
+         COUNT(*) FILTER (WHERE waited_ms >= $2)::int AS waited,
+         percentile_cont(0.5) WITHIN GROUP (ORDER BY waited_ms) FILTER (WHERE waited_ms >= $2) AS median_wait_ms,
+         MAX(waited_ms) FILTER (WHERE waited_ms >= $2) AS longest_wait_ms,
+         COUNT(*) FILTER (WHERE failed_open)::int AS failed_open
+    FROM granted`;
+
+function isoOrNull(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isFinite(d.getTime()) ? d.toISOString() : null;
+}
+
+// Pure: SNAPSHOT_SQL's rows as the status page shows them. A row is
+//   holding  admitted, and its owner is alive or its Jobs may still run;
+//   waiting  in line, its owner alive (`place` 1 is next);
+//   stale    neither: in line with its owner gone (the harvest re-drives it
+//            in its place), or admitted and past its Jobs' deadlines with
+//            its owner gone. Listed last, so an admin sees what the harvest
+//            has not cleared yet.
+// Runs a pass would admit now are still waiting here, at the head of the
+// line: nothing has admitted them. Slots are counted as planAdmission counts
+// them: the first main-watch run has its own, every other run uses the
+// shared CHECKS_MAX_CONCURRENT_RUNS (`sharedUsed`).
+function describeQueue(rows, { cap = maxConcurrentRuns(), now = Date.now() } = {}) {
+  const live = [];
+  const stale = [];
+  let place = 0;
+  let oldestWaiting = null;
+  let mains = 0;
+  let proposals = 0;
+  for (const row of rows || []) {
+    const admitted = !!row.admitted_at;
+    const alive = row.alive === true;
+    const state = admitted
+      ? (alive || row.within_deadline === true ? 'holding' : 'stale')
+      : (alive ? 'waiting' : 'stale');
+    const kind = row.kind === 'main' ? 'main' : 'proposal';
+    if (state === 'holding') {
+      if (kind === 'main') mains += 1; else proposals += 1;
+    }
+    const queuedAt = isoOrNull(row.queued_at);
+    if (state === 'waiting' && queuedAt && (!oldestWaiting || queuedAt < oldestWaiting)) {
+      oldestWaiting = queuedAt;
+    }
+    const cls = CLASS_NAME[Number(row.class)] || 'draft';
+    (state === 'stale' ? stale : live).push({
+      runId: row.run_id,
+      kind,
+      class: cls,
+      classLabel: CLASS_LABEL[cls],
+      app: row.app_slug || null,
+      prNumber: row.pr_number == null ? null : Number(row.pr_number),
+      sessionId: row.session_id == null ? null : Number(row.session_id),
+      state,
+      place: state === 'waiting' ? ++place : null,
+      queuedAt,
+      admittedAt: isoOrNull(row.admitted_at),
+      ownerAlive: alive,
+      heartbeatAt: isoOrNull(row.heartbeat_at),
+    });
+  }
+  return {
+    enabled: cap > 0,
+    cap,
+    slots: { proposal: proposals, main: mains, sharedUsed: proposals + Math.max(0, mains - 1) },
+    waiting: place,
+    oldestWaitMs: oldestWaiting ? Math.max(0, now - new Date(oldestWaiting).getTime()) : null,
+    runs: live.concat(stale),
+  };
+}
+
+function lastDayFrom(row) {
+  const num = (v) => (v == null ? null : Math.round(Number(v)));
+  return {
+    runs: num(row?.runs) || 0,
+    waited: num(row?.waited) || 0,
+    medianWaitMs: num(row?.median_wait_ms),
+    longestWaitMs: num(row?.longest_wait_ms),
+    failedOpen: num(row?.failed_open) || 0,
+  };
+}
+
+// The queue as Admin → Health & status shows it: the live rows and the last
+// day's slots. Read-only, without CHECKS_QUEUE_LOCK, so it can never hold up
+// an admission pass, and it may lag one pass behind. Never rejects: null
+// when the queue cannot be read (the page says so), `last24h: null` when
+// only the history cannot. With the queue off there is no line to read.
+async function snapshot(pool, { cap = maxConcurrentRuns() } = {}) {
+  if (!pool) return null;
+  let last24h = null;
+  try {
+    const events = require('./events');
+    const { rows: [row] } = await pool.query(LAST_DAY_SQL,
+      [events.EVENT_TYPES.CHECKS_SLOT_GRANTED, POLL_MS]);
+    last24h = lastDayFrom(row);
+  } catch (err) {
+    log.warn('checks-queue', 'Could not read the last day of checks slots for the status page', { err: err.message });
+  }
+  if (cap <= 0) return { ...describeQueue([], { cap: 0 }), last24h };
+  try {
+    const { rows } = await pool.query(SNAPSHOT_SQL,
+      [Math.round(checkRuns.ORPHAN_MS), Math.round(jobHoldMs()), MAIN_ROW_RETENTION_MS]);
+    return { ...describeQueue(rows, { cap }), last24h };
+  } catch (err) {
+    log.warn('checks-queue', 'Could not read the checks queue for the status page', { err: err.message });
+    return null;
   }
 }
 
@@ -377,4 +557,6 @@ module.exports = {
   waitForSlot,
   slotFreed,
   isWaitingRow,
+  describeQueue,
+  snapshot,
 };

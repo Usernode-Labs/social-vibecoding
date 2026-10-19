@@ -542,6 +542,10 @@ test('the release mail promises the code only on the arm that sends one (#1548)'
   // The figure must track OTP_TTL_MS, so pin it rather than the sentence.
   assert.match(fresh.text, /expires in 10 minutes/);
   assert.match(fresh.html, /emails you a 6-digit code/);
+  // The code goes to the address the link names, so the mail does not ask
+  // which address they joined with.
+  assert.doesNotMatch(fresh.text, /joined the waitlist with/);
+  assert.doesNotMatch(fresh.html, /joined the waitlist with/);
 
   // Somebody who already has an account is sent to #login and never asked
   // for a code, so promising one there would be a plain lie.
@@ -552,18 +556,21 @@ test('the release mail promises the code only on the arm that sends one (#1548)'
   assert.doesNotMatch(returning.html, /6-digit code/);
 });
 
-test('the release mail with a one-time sign-in link says so, and tracking leaves that link alone (#4594)', () => {
+test('the release mail with a one-time sign-in link explains nothing, and tracking leaves that link alone (#4594)', () => {
   const linked = templates.buildMessage('waitlist_released', {
     url: 'https://x.invalid/?signup=1&t=tok&key=k', hasAccount: false, signInLink: true,
   });
+  // The button signs them in, and the screen its fallback opens says itself
+  // that a code was sent, so no note under it. The link is bound to the
+  // released address, so no line asking which address they joined with.
   for (const part of [linked.text, linked.html]) {
-    assert.match(part, /signs you in once/);
-    // The figure must track RELEASE_LINK_TTL_MS in services/release-links.js.
-    assert.match(part, /works for 7 days/);
-    assert.match(part, /emails you a 6-digit code/, 'and says what happens after');
+    assert.doesNotMatch(part, /signs you in once|works for 7 days/);
+    assert.doesNotMatch(part, /6-digit code/);
+    assert.doesNotMatch(part, /joined the waitlist with/);
   }
-  const { RELEASE_LINK_TTL_MS } = require('../src/services/release-links');
-  assert.equal(RELEASE_LINK_TTL_MS, 7 * 24 * 60 * 60 * 1000);
+  assert.match(linked.html, />Create my account<\/a>/);
+  // The text part has no button, so it names the action over the link.
+  assert.ok(linked.text.includes('Create my account:\nhttps://x.invalid/?signup=1&t=tok&key=k'));
 
   // Click tracking stores each destination URL; one carrying a sign-in
   // credential is never rewritten, so its token is never stored.
@@ -596,6 +603,8 @@ test('the release mail is the "you\'re in" welcome, with its list and sign-off',
     assert.match(part, /Make an app for your group/);
     assert.match(part, /Suggest, preview and vote on changes/);
     assert.match(part, /Evan from Homeroom/);
+    // Three points, not four (Evan, 10 Oct 2026): no challenges line.
+    assert.doesNotMatch(part, /challenges/i);
   }
   assert.ok(m.text.includes('https://x.invalid/?signup=1&t=tok'), 'the link is in the text part');
   // The preview line is hidden and comes before the logo, whose alt text
@@ -661,6 +670,7 @@ test('every kind renders subject, text and html with no leaked undefined', () =>
   const payloads = {
     otp: { code: '123456' },
     account_email: { code: '123456' },
+    username_change: { code: '123456' },
     waitlist_joined: { url: 'https://x.invalid/#more/aa', confirmUrl: 'https://x.invalid/c/aa' },
     // The no-account arm, because that is the one that grew copy in #1548.
     waitlist_released: { url: 'https://x.invalid/#signup/a%40b.invalid', hasAccount: false },
@@ -668,6 +678,12 @@ test('every kind renders subject, text and html with no leaked undefined', () =>
     admin_test: {
       provider: 'gmail', from: 'Homeroom <no-reply@x.invalid>',
       sentAt: '2026-01-01T00:00:00.000Z', reference: 'abcd1234',
+    },
+    content_report: {
+      caseId: 312, reportId: 977, reason: 'harassment',
+      detail: 'Keeps posting the same insult under my requests.',
+      targetType: 'app_message', targetLabel: 'App message #48213',
+      reporter: 'sam', url: 'https://x.invalid/#admin/reports/312',
     },
     project_invite: { inviter: 'ada', project: 'Book club', url: 'https://x.invalid/waitlist' },
   };
@@ -1124,6 +1140,11 @@ test('the admin_test body carries nothing an attacker could use', () => {
   assert.doesNotMatch(m.text, /\b\d{6}\b/, 'no OTP-shaped value');
   assert.doesNotMatch(m.text, /https?:\/\//, 'no link to follow');
   assert.match(m.text, /no action is needed/i);
+  // #5068: the welcome hero's eyebrow and headline, and the details as rows
+  // of one box. Still nothing to act on: no anchor anywhere.
+  assert.doesNotMatch(m.html, /<a /, 'no link in the test mail either');
+  assert.match(m.html, /letter-spacing:0\.8px[^>]*>Test email</, 'the eyebrow');
+  assert.match(m.html, /<code>abcd1234<\/code>/);
 });
 
 test('admin_test has its own per-recipient throttle rule', () => {
@@ -1150,6 +1171,11 @@ test('a project invite names who sent it and where, and links only to the waitli
   assert.match(m.text, /Join the waitlist with this email address\. Once you are in, the invite will be waiting for you\./);
   assert.match(m.text, /https:\/\/onhomeroom\.test\/waitlist/, 'the link is in the text part too');
   assert.match(m.html, /Join the waitlist<\/a>/);
+  // #5068: the welcome hero. The invitee line is the headline, the round
+  // pill carries the waitlist link, and the eyebrow is the invite.
+  assert.match(m.html, /font-weight:800[^>]*>@ada invited you to Book club\.</, 'the headline');
+  assert.match(m.html, /letter-spacing:0\.8px[^>]*>You're invited</, 'the eyebrow');
+  assert.match(m.html, /border-radius:999px/, 'the round pill');
   const bare = templates.buildMessage('project_invite', {});
   assert.equal(bare.subject, 'Someone invited you to a project on Homeroom', 'renders with nothing to go on');
   assert.doesNotMatch(bare.html, /<a /, 'and no button without a link');

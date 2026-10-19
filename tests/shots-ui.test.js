@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const AppView = require('../public/js/app-view.js');
 
 const id = (char) => char.repeat(32);
@@ -343,6 +344,47 @@ test('absence is labelled only when the author explicitly declared a new before 
   assert.match(absent, /shots-flip-chip-before">Before · not there yet</);
 });
 
+// A project's first version (services/shots-starter.js): its before build was
+// the starter template's placeholder, so only the after side was taken. The
+// card says so, where it opens and where a before would be, instead of
+// showing a missing shot.
+test('a first version\'s card says New app: nothing before, and shows its after shots', () => {
+  const afterOnly = (overrides = {}) => shots({
+    afterOnly: true,
+    artifacts: shots().artifacts.filter((artifact) => artifact.side !== 'base'),
+    ...overrides,
+  });
+  const html = AppView.shotsHtml(afterOnly(), { sessionId: 42 });
+  assert.match(html, /data-shots-state="verified" aria-label="Before &amp; after" class="space-y-3" data-shots-after-only="1"/);
+  assert.match(html, /<p class="text-xs text-zinc-600 dark:text-zinc-400">New app: nothing before\. This proposal builds the app’s first real screens, so these are its after shots only\./);
+  assert.match(html, /<span class="shots-flip-side shots-flip-before shots-flip-missing">New app: nothing before<\/span>/);
+  assert.match(html, new RegExp(`<img src="${url('4')}"`), 'the after screen is shown');
+  assert.doesNotMatch(html, /No shot|not there yet|Taken on the exact before and after builds/);
+  // Even when the author declared the feature absent before, the card names the app as new.
+  const declaredAbsent = afterOnly();
+  declaredAbsent.claims = [{ ...declaredAbsent.claims[0], baseState: 'not_present' }];
+  assert.doesNotMatch(AppView.shotsHtml(declaredAbsent, { sessionId: 42 }), /not there yet/);
+
+  // The change page's Before and after card says the same where the before would be.
+  const thread = AppView.shotsHtml(afterOnly(), { sessionId: 42, thread: true });
+  assert.match(thread, /class="dev-change-shots-body" data-shots-after-only="1"/);
+  assert.match(thread, /shots-flip-missing">New app: nothing before</);
+
+  // A motion change plays its after clip alone, with no empty before player.
+  const motion = afterOnly({
+    artifacts: [...afterOnly().artifacts, ...clipArtifacts().filter((artifact) => artifact.side === 'head')],
+  });
+  motion.claims = [{ ...motion.claims[0], animation: 'motion' }];
+  const clips = AppView.shotsHtml(motion, { sessionId: 42 });
+  assert.match(clips, /these are its after shots and clips only/);
+  assert.match(clips, new RegExp(`<video src="${url('8')}"`));
+  assert.doesNotMatch(clips, /No clip|Before clip/);
+
+  // An ordinary run is unchanged.
+  const ordinary = AppView.shotsHtml(shots(), { sessionId: 42 });
+  assert.doesNotMatch(ordinary, /New app|data-shots-after-only/);
+});
+
 test('a skipped change shows its reason and no media, beside a ready one', () => {
   const value = shots({
     claims: [
@@ -398,6 +440,55 @@ test('a ready change shows the shots agent\'s note on what its shots leave out, 
   ]) {
     assert.doesNotMatch(AppView.shotsHtml(shots({ shotResults }), { sessionId: 42 }), /data-shots-shot-note/);
   }
+});
+
+// An unchanged change (its before and after came out the same) is shown as
+// a ready one was before it had its own status: its shots, then its note,
+// then what the shots agent did to both builds to reach it.
+test('an unchanged change shows its shots and the note that they came out the same, as a ready one', () => {
+  const note = 'any visible difference. The before and after screens came out the same, so these shots cannot show this change.';
+  const conditions = [{ kind: 'request_failed', request: '/api/items' }];
+  const unchanged = AppView.shotsHtml(shots({
+    shotResults: [{ id: 'dialog', status: 'unchanged', reason: null, note, conditions }],
+  }), { sessionId: 42 });
+  const ready = AppView.shotsHtml(shots({
+    shotResults: [{ id: 'dialog', status: 'ready', reason: null, note, conditions }],
+  }), { sessionId: 42 });
+  assert.equal(unchanged, ready, 'the card reads it exactly as a ready change with that note');
+  assert.match(unchanged, /<p data-shots-shot-note="1"[^>]*>.*Not in these shots:<\/span> any visible difference\. The before and after screens came out the same/);
+  assert.match(unchanged, /<p data-shots-condition="request_failed"[^>]*>.*Controlled test:<\/span> the shots agent made GET \/api\/items fail on both builds/);
+  assert.match(unchanged, new RegExp(`<img src="${url('3')}"`));
+  assert.doesNotMatch(unchanged, /data-shots-shot-status="skipped"|>Skipped</);
+});
+
+// control_request and upload_file: a loading or error state the shots agent
+// caused, or a file it chose, is said beside the shots, so nobody takes it
+// for the app's own.
+test('a ready change says what the shots agent did to both builds to reach it, as text', () => {
+  const html = AppView.shotsHtml(shots({
+    shotResults: [{ id: 'dialog', status: 'ready', reason: null, note: 'The fold needs a hidden app.', conditions: [
+      { kind: 'request_held', request: '/api/items?q=<b>' },
+      { kind: 'request_failed', request: '/api/items' },
+      { kind: 'sample_file', files: ['landscape.png', 'table.csv'] },
+      { kind: 'evaluate', request: '/api/items' },
+      { kind: 'sample_file', files: [] },
+    ] }],
+  }), { sessionId: 42 });
+  const change = /<li class="shots-change" data-shots-n="1" data-shots-change="dialog">[\s\S]*?<\/li>/.exec(html)[0];
+  assert.deepEqual([...change.matchAll(/data-shots-condition="([a-z_]+)"/g)].map((match) => match[1]),
+    ['request_held', 'request_failed', 'sample_file']);
+  assert.match(change, /Controlled test:<\/span> the shots agent kept GET \/api\/items\?q=&lt;b&gt; waiting on both builds, to show it loading\./);
+  assert.match(change, /Controlled test:<\/span> the shots agent made GET \/api\/items fail on both builds, to show what happens when it does\./);
+  assert.match(change, /Sample file:<\/span> the shots agent uploaded landscape\.png(?:, | and )table\.csv on both builds, from Homeroom&#39;s own sample files\./);
+  assert.ok(change.indexOf('data-shots-shot-note') < change.indexOf('data-shots-condition'), 'after what the shots leave out');
+  // None recorded, or a change that is not ready: nothing is said.
+  assert.doesNotMatch(AppView.shotsHtml(shots(), { sessionId: 42 }), /data-shots-condition/);
+  const skipped = AppView.shotsHtml(shots({
+    claims: [...shots().claims, { ...shots().claims[0], id: 'other', claim: 'Another change.' }],
+    shotResults: [{ id: 'dialog', status: 'ready', reason: null },
+      { id: 'other', status: 'skipped', reason: 'Not reached.', conditions: [{ kind: 'request_held', request: '/api/items' }] }],
+  }), { sessionId: 42 });
+  assert.doesNotMatch(skipped, /data-shots-condition/);
 });
 
 // The shots agent's notes on clear problems it saw on the after build
@@ -583,5 +674,201 @@ test('no state of the card says "Visual change preview"', () => {
       const html = AppView.shotsHtml(shots({ state, ...extra }), { sessionId: 42 });
       assert.doesNotMatch(html, /visual change preview/i, `${state} ${JSON.stringify(extra)}`);
     }
+  }
+});
+
+// #5063: the change page's side-by-side view crops both sides to the
+// screen's declared changes (the numbered outlines, with a margin), and a
+// crop wider than it is tall stacks the sides, before above after. The
+// proposal card has no side-by-side view, so it never crops.
+test('the change page\'s side-by-side view crops to the declared changes and stacks a wide crop', () => {
+  const value = shots({
+    screens: [{
+      viewport: 'desktop', shot: 'dialog', stories: ['dialog'],
+      width: 1000, heightBefore: 500, heightAfter: 500,
+      regions: [{ story: 'dialog', b: [100, 50, 200, 40], a: [100, 50, 250, 40], bMark: null, aMark: null }],
+    }],
+  });
+  const card = AppView.shotsHtml(value, { sessionId: 42 });
+  assert.doesNotMatch(card, /shots-crop|data-shots-stack/, 'the proposal card does not crop');
+  const thread = AppView.shotsHtml(value, { sessionId: 42, thread: true });
+  assert.match(thread, /<div class="shots-stage" data-shots-stack="1">/, 'the crop is wider than it is tall: before above after');
+  const styleOf = (which) => new RegExp(`<span class="shots-flip-side shots-flip-${which}" data-shots-crop="1" style="([^"]*)"`).exec(thread)[1];
+  // The crop is never below half the screen's width nor a fifth of it tall,
+  // so a small change keeps its surroundings; both sides read the same part.
+  for (const which of ['after', 'before']) {
+    assert.equal(styleOf(which),
+      '--shots-shape:1000 / 500;--shots-crop-shape:500 / 200;--shots-crop-x:0.000%;--shots-crop-y:0.000%;--shots-crop-w:200.000%;--shots-crop-h:250.000%',
+      `${which}: centred on the change, at the shared size`);
+  }
+  const after = /<span class="shots-flip-side shots-flip-after" data-shots-crop="1"[^>]*>([\s\S]*?)<\/span>\s*<span class="shots-flip-side shots-flip-before"/.exec(thread)[1];
+  assert.match(after, /<span class="shots-crop"><img /, 'the img and the outlines move together in a crop wrapper');
+  assert.match(after, /class="shots-box-n">1<\/span>/, 'the numbered outline is still there');
+  // The markup keeps --shots-shape first, so a repaint renders the same
+  // whole-screen fallback for screens without a crop.
+  assert.match(thread, /<div class="shots-stage" data-shots-stack="1">[\s\S]*?<span class="shots-flip-side shots-flip-after" data-shots-crop="1"/);
+});
+
+test('a crop taller than it is wide stays side by side, only zoomed in', () => {
+  const value = shots({
+    claims: [{ ...shots().claims[0], viewports: ['phone'] }],
+    artifacts: [
+      { id: id('3'), storyId: 'dialog', viewport: 'phone', side: 'base', variant: 'context', media: 'png', url: url('3') },
+      { id: id('4'), storyId: 'dialog', viewport: 'phone', side: 'head', variant: 'context', media: 'png', url: url('4') },
+    ],
+    screens: [{
+      viewport: 'phone', shot: 'dialog', stories: ['dialog'],
+      width: 390, heightBefore: 844, heightAfter: 844,
+      regions: [{ story: 'dialog', b: [0, 100, 390, 400], a: [0, 100, 390, 400], bMark: null, aMark: null }],
+    }],
+  });
+  const thread = AppView.shotsHtml(value, { sessionId: 42, thread: true });
+  assert.match(thread, /data-shots-crop="1"/);
+  assert.match(thread, /--shots-crop-shape:390 \/ 448;/);
+  assert.doesNotMatch(thread, /data-shots-stack/, 'a tall crop stays beside each other');
+  assert.match(thread, /<div class="shots-stage">/, 'the stage keeps its plain markup');
+});
+
+test('a screen with no declared outline, or a crop that covers it, keeps the whole-screen layout', () => {
+  const withRegions = (regions) => shots({
+    screens: [{
+      viewport: 'desktop', shot: 'dialog', stories: ['dialog'],
+      width: 1000, heightBefore: 500, heightAfter: 500, regions,
+    }],
+  });
+  const cases = [
+    ['no screens at all', shots()],
+    ['no regions', withRegions([])],
+    ['only differences no declared change accounts for',
+      withRegions([{ story: null, b: [0, 0, 1000, 20], a: [0, 0, 1000, 10], bMark: null, aMark: null }])],
+    ['a region that covers most of the screen',
+      withRegions([{ story: 'dialog', b: [0, 0, 1000, 400], a: [0, 0, 1000, 400], bMark: null, aMark: null }])],
+  ];
+  for (const [name, value] of cases) {
+    const thread = AppView.shotsHtml(value, { sessionId: 42, thread: true });
+    assert.doesNotMatch(thread, /shots-crop|data-shots-stack/, name);
+  }
+  // A first version's after-only shots have no before to crop.
+  const newApp = shots({
+    afterOnly: true,
+    artifacts: shots().artifacts.filter((artifact) => artifact.side !== 'base'),
+    screens: [{
+      viewport: 'desktop', shot: 'dialog', stories: ['dialog'],
+      width: 1000, heightBefore: 500, heightAfter: 500,
+      regions: [{ story: 'dialog', b: [100, 50, 200, 40], a: [100, 50, 250, 40], bMark: null, aMark: null }],
+    }],
+  });
+  assert.doesNotMatch(AppView.shotsHtml(newApp, { sessionId: 42, thread: true }), /shots-crop|data-shots-stack/, 'after only: no crop');
+});
+
+// The dark shots (#4459) reach the card as one more image beside each
+// light one, with a round moon/sun label and a pair of hidden radios: no
+// script, like the side and screen switches.
+test('a run with no dark shots draws no theme switch at all', () => {
+  const html = AppView.shotsHtml(shots(), { sessionId: 42 });
+  assert.doesNotMatch(html, /shots-theme-pick|shots-theme-flip|shots-img-dark/);
+  // Older runs' artifacts, with no theme on them, read as light.
+  assert.doesNotMatch(AppView.shotsHtml(shots({
+    artifacts: shots().artifacts.map((artifact) => ({ ...artifact, theme: undefined })),
+  }), { sessionId: 42 }), /shots-theme/);
+});
+
+test('with dark shots, both images and the flip switch render, and the pick follows the page and the remembered mode', () => {
+  const value = shots({
+    artifacts: [
+      ...shots().artifacts,
+      { id: id('9'), storyId: 'dialog', viewport: 'desktop', side: 'base', variant: 'context', media: 'png', url: url('9'), theme: 'dark' },
+      { id: id('0'), storyId: 'dialog', viewport: 'desktop', side: 'head', variant: 'context', media: 'png', url: url('0'), theme: 'dark' },
+    ],
+  });
+  const html = AppView.shotsHtml(value, { sessionId: 42 });
+  // Each side of the screen carries its light image and its dark one.
+  const after = /<span class="shots-flip-side shots-flip-after"[^>]*>([\s\S]*?)<\/span>\s*<span class="shots-flip-side shots-flip-before"/.exec(html)[1];
+  const before = /<span class="shots-flip-side shots-flip-before"[^>]*>([\s\S]*?)<label /.exec(html)[1];
+  for (const [span, lightId, darkId] of [[after, '4', '0'], [before, '3', '9']]) {
+    assert.match(span, new RegExp(`<img src="${url(lightId)}" [^>]*class="shots-img-light"`));
+    assert.match(span, new RegExp(`<img src="${url(darkId)}" [^>]*class="shots-img-dark"`));
+  }
+  // The flip is two round labels at the bar's right end; the one naming the
+  // mode already showing is hidden by the pick.
+  assert.match(html, /<label for="shots-42-theme-dark" class="shots-theme-flip shots-theme-to-dark" title="Show in dark mode"><svg/);
+  assert.match(html, /<label for="shots-42-theme-light" class="shots-theme-flip shots-theme-to-light" title="Show in light mode"><svg/);
+  // One pair of radios holds the mode for every screen. With no page and no
+  // remembered pick, it starts in light (the tests have no document).
+  const picks = html.match(/<input type="radio" class="shots-theme-pick[^>]*>/g) || [];
+  assert.equal(picks.length, 2);
+  assert.match(picks[0], /class="shots-theme-pick shots-theme-light" name="shots-42-theme" id="shots-42-theme-light" aria-label="Show in light mode" checked onchange="AppView\._shotsThemePick\('42', this\)">$/);
+  assert.match(picks[1], /class="shots-theme-pick shots-theme-dark" name="shots-42-theme" id="shots-42-theme-dark" aria-label="Show in dark mode" onchange="AppView\._shotsThemePick\('42', this\)">$/);
+  // The catalog entry is what the switch says, in English here.
+  assert.equal(PlatformI18n.t('changes:shots.viewer.showDark'), 'Show in dark mode');
+  assert.equal(PlatformI18n.t('changes:shots.viewer.showLight'), 'Show in light mode');
+
+  // A pick is remembered for the viewer while the page is open.
+  AppView._shotsThemePicks.clear();
+  AppView._shotsThemePicks.set('42', 'dark');
+  const remembered = AppView.shotsHtml(value, { sessionId: 42 });
+  assert.match(remembered, /class="shots-theme-pick shots-theme-dark" name="shots-42-theme" id="shots-42-theme-dark" aria-label="Show in dark mode" checked/);
+  assert.doesNotMatch(remembered, /shots-theme-light"[^>]*checked/);
+  // Another viewer starts in light still.
+  assert.match(AppView.shotsHtml(value, {}), /shots-theme-light"[^>]*checked/);
+  AppView._shotsThemePicks.clear();
+
+  // The checked one follows the mode the page is drawn in.
+  const hadDocument = Object.hasOwn(globalThis, 'document');
+  globalThis.document = { documentElement: { classList: { contains: (name) => name === 'dark' } } };
+  try {
+    const darkPage = AppView.shotsHtml(value, { sessionId: 42 });
+    assert.match(darkPage, /class="shots-theme-pick shots-theme-dark" name="shots-42-theme" id="shots-42-theme-dark" aria-label="Show in dark mode" checked/);
+    assert.doesNotMatch(darkPage, /shots-theme-light"[^>]*checked/, 'only one radio starts checked');
+  } finally {
+    if (!hadDocument) delete globalThis.document;
+  }
+});
+
+test('a side with no dark shot keeps its light one in both modes', () => {
+  const value = shots({
+    artifacts: [
+      ...shots().artifacts,
+      { id: id('0'), storyId: 'dialog', viewport: 'desktop', side: 'head', variant: 'context', media: 'png', url: url('0'), theme: 'dark' },
+    ],
+  });
+  const html = AppView.shotsHtml(value, { sessionId: 42 });
+  const after = /<span class="shots-flip-side shots-flip-after"[^>]*>([\s\S]*?)<\/span>\s*<span class="shots-flip-side shots-flip-before"/.exec(html)[1];
+  const before = /<span class="shots-flip-side shots-flip-before"[^>]*>([\s\S]*?)<label /.exec(html)[1];
+  assert.match(after, /class="shots-img-dark"/);
+  assert.doesNotMatch(before, /class="shots-img-dark"/);
+  // The switch is still there: the after side has a dark shot to show.
+  assert.match(html, /shots-theme-flip/);
+});
+
+test('the theme switch is CSS: the pick swaps the images and keeps the arrows beside the button', () => {
+  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
+  const rule = (selector) => new RegExp(`\\n${selector.replace(/[.]/g, '\\.')} \\{([^}]*)\\}`).exec(css)?.[1] || '';
+  const flip = rule('.shots-theme-flip');
+  for (const part of ['width: 30px', 'height: 30px', 'border-radius: 999px', 'margin-left: auto']) {
+    assert.ok(flip.includes(part), `the switch is a small round disc at the bar's end: ${part}`);
+  }
+  assert.match(css, /\.shots-theme-flip ~ \.shots-screen-nav \{ margin-left: 0; \}/,
+    'the stepping arrows sit beside the switch, not the bar\'s far end');
+  assert.match(css, /\.shots-viewer:has\(\.shots-theme-dark:checked\) \.shots-theme-to-dark,\n\.shots-viewer:has\(\.shots-theme-light:checked\) \.shots-theme-to-light \{ display: none; \}/,
+    'the label naming the mode already showing is hidden');
+  assert.match(css, /\.shots-viewer:has\(\.shots-theme-dark:checked\) \.shots-flip-side:has\(\.shots-img-dark\) \.shots-img-light,\n\.shots-viewer:has\(\.shots-theme-light:checked\) \.shots-img-dark \{ display: none; \}/,
+    'a dark pick swaps the image on the sides that have one');
+});
+
+test('the crop is CSS: it applies while both sides show, stacked or beside each other', () => {
+  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
+  assert.match(css, /\.shots-crop \{ position: absolute; inset: 0; display: block; \}/,
+    'a cropped side shows the whole screen on a Before or After pick');
+  assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage > \.shots-flip-side\[data-shots-crop\] \{ overflow: hidden; aspect-ratio: var\(--shots-crop-shape, 16 \/ 10\); width: min\(calc\(50cqw - 6px\), calc\(100cqh \* \(var\(--shots-crop-shape, 16 \/ 10\)\)\)\); \}/);
+  assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-flip-side\[data-shots-crop\] > \.shots-crop \{ inset: auto; left: var\(--shots-crop-x, 0\); top: var\(--shots-crop-y, 0\); width: var\(--shots-crop-w, 100%\); height: auto; aspect-ratio: var\(--shots-shape, 16 \/ 10\); \}/);
+  assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage\[data-shots-stack\] \{ grid-template-columns: minmax\(0, 1fr\); grid-template-rows: minmax\(0, 1fr\) minmax\(0, 1fr\); column-gap: 0; row-gap: 12px; \}/);
+  assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage\[data-shots-stack\] > \.shots-flip-after \{ grid-area: 2 \/ 1; \}/);
+  assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage\[data-shots-stack\] \.shots-flip-chip-after \{ left: 10px; top: calc\(50% \+ 16px\); \}/);
+  for (const [viewport, width] of [['phone', 420], ['desktop', 720]]) {
+    assert.match(css, new RegExp(`@container \\(min-width: ${width}px\\) \\{[^@]*?\\.shots-viewer:has\\(\\.shots-side-auto:checked\\) \\.shots-view\\[data-shots-viewport="${viewport}"\\] \\.shots-stage > \\.shots-flip-side\\[data-shots-crop\\]`),
+      `${viewport}: the automatic side by side crops too`);
+    assert.match(css, new RegExp(`\\.shots-viewer:has\\(\\.shots-side-auto:checked\\) \\.shots-view\\[data-shots-viewport="${viewport}"\\] \\.shots-stage\\[data-shots-stack\\] \\{ grid-template-columns`),
+      `${viewport}: the automatic side by side stacks a wide crop`);
   }
 });

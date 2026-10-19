@@ -74,6 +74,7 @@ function makeAppView(opts) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${MERGE_STATUS_SRC}\n${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -478,6 +479,35 @@ test('tier 5 — needs your vote absorbs the pulsing "Vote" badge', () => {
   assert.equal(s.tone, 'progress');
   assert.ok(s.dot, 'the pulsing dot moved INSIDE the pill');
   assert.ok(s.fill);
+});
+
+// Club Votes, 12 to 13 Oct 2026 (D1): a project's first version is not put
+// to a vote, so nothing on its card asks for one: no "Vote", no "Waiting for
+// your approval", no Yes or No.
+test('D1: a first version\'s pill says no vote is needed, and its card offers none', () => {
+  const AppView = makeAppView();
+  const first = PR({ first_version: true, check_state: 'pending', votes_required: 0 });
+  const s = AppView.statusPillState(first);
+  assert.equal(s.key, 'no_vote');
+  assert.equal(s.label, 'No vote needed');
+  assert.equal(s.title, 'A project’s first version goes live without a vote once testing passes.');
+  assert.equal(s.tone, 'ok');
+  assert.ok(!s.dot, 'nothing pulses for a vote');
+  assert.match(pillHtml(AppView, first), /No vote needed/);
+  assert.equal(AppView._cardVoteButtonSpecs(first).length, 0, 'no Yes, no No');
+  assert.equal(AppView._waitingWords(first), 'Goes live without a vote');
+  assert.equal(AppView._yesPutsItLive(first), false);
+  // Just you: a later change is still the maker's to approve; the first is not.
+  AppView.appData = { slug: 'x', audience: 'solo', can_collaborate: true };
+  assert.equal(AppView._approveSolo(first), false);
+  const later = PR({ check_state: 'passing', votes_required: 1 });
+  assert.equal(AppView._approveSolo(later), true);
+  assert.equal(AppView._waitingWords(later), 'Waiting for your approval');
+  assert.equal(AppView.statusPillState(later).key, 'needs_vote');
+  assert.equal(AppView._cardVoteButtonSpecs(later).length, 2);
+  // Its tags still say what is wrong: a failing check is not hidden by it.
+  const failing = PR({ first_version: true, check_state: 'failing', test_results: [{ name: 'a', status: 'fail' }] });
+  assert.ok(AppView.statusTagSpecs(failing, {}).some((t) => /Checks failing/.test(t.label)));
 });
 
 test('tier 5 is skipped for a read-only viewer (they cannot vote)', () => {
@@ -908,6 +938,7 @@ function stagingRows() {
   }
   const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL: '' };
   ctx.globalThis = ctx;
+  ctx.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(ctx);
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
   // What /promoted actually serves: every row passes through readIntegration

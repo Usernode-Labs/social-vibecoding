@@ -230,6 +230,8 @@ declare global {
       resumeMainMerges?(slug: string, btn?: HTMLButtonElement | null): Promise<boolean | undefined>;
       /** The "Proposal checks" dialog for one change: its checks, Refresh and Re-run. */
       openSessionChecks?(sessionId: number): void;
+      /** The Members dialog (features/dialogs/members-controller.js). */
+      openMembersModal?(opts?: { focus?: 'approvals' }): void;
       /** POST /api/sessions/:id/recheck, with the platform's own toasts; true once it started. */
       castRecheck?(sessionId: number): Promise<boolean | undefined>;
       /**
@@ -368,6 +370,16 @@ declare global {
       set(mode: string): void;
       apply(): void;
       onChange(fn: (mode: string) => void): void;
+    };
+    /** The inline head-blocking display module in src/head.html (#3969):
+     *  text size and high contrast, as data-* attributes on <html>. */
+    Display?: {
+      getTextSize(): 'normal' | 'large' | 'larger';
+      setTextSize(size: string): void;
+      getContrast(): boolean;
+      setContrast(on: boolean): void;
+      apply(): void;
+      onChange(fn: () => void): void;
     };
   }
 }

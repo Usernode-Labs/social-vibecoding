@@ -43,11 +43,13 @@ import { createStore } from '../../lib/plain-store.js';
  * `services/app-creation-phase.js` validates against — keep the two in
  * sync.
  */
+// `label` is a message id (frontend/locales/en/dialogs.json), read when the
+// steps render.
 export const CREATION_STEPS = [
-  { key: 'database', label: 'Setting up your database' },
-  { key: 'repository', label: 'Preparing the repository' },
-  { key: 'build', label: 'Building your app' },
-  { key: 'deploy', label: 'Going live' },
+  { key: 'database', label: 'dialogs:createProgress.step.database' },
+  { key: 'repository', label: 'dialogs:createProgress.step.repository' },
+  { key: 'build', label: 'dialogs:createProgress.step.build' },
+  { key: 'deploy', label: 'dialogs:createProgress.step.deploy' },
 ];
 
 export const INITIAL_CREATION_PROGRESS = /** @type {CreationProgressState} */ ({

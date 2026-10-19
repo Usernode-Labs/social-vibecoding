@@ -15,15 +15,18 @@ const {
   otpRequestLimiter,
   otpRequestEmailLimiter,
   otpVerifyLimiter,
+  usernameCheckLimiter,
   releaseLinkLimiter,
   passwordResetRequestLimiter,
   passwordResetRequestEmailLimiter,
   passwordResetConfirmLimiter,
   walletAuthLimiter,
   walletCheckLimiter,
+  waitlistAnswersLimiter,
 } = require('../middleware/rate-limits');
 const genesisAccounts = require('../services/genesis-accounts');
 const waitlist = require('../services/waitlist');
+const waitlistQuestions = require('../services/waitlist-questions');
 const firstSession = require('../services/first-session');
 const communityInvites = require('../services/community-invites');
 const phoneAuth = require('../services/firebase-phone-auth');
@@ -61,6 +64,7 @@ const { getPlatformApp } = require('../services/platform-app');
 // swap sendPasswordResetMail on the module object.
 const mail = require('../services/mail');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const { requireAdultAttestation } = require('../services/adult-attestation');
 
 // The idle lease a freshly-minted browser session starts with. This matches
 // SESSION_IDLE_DAYS in middleware/auth.js, which renews active sessions and
@@ -492,9 +496,17 @@ function authRoutes(config) {
   // (expired, used, unknown), and the page falls back to the code. The raw
   // token is never logged. Rate-limited per source on failures, like the
   // code it stands in for.
+  //
+  // `newAccountOnly: true` is the page's spend as it opens, before any tap
+  // (features/auth/landing.tsx): it answers only `set-password`, and refuses
+  // an account already set up with `account_set_up`, the link unspent and
+  // no session made, so that account waits for the person's own tap.
   router.post('/api/auth/release-link', releaseLinkLimiter, async (req, res) => {
     try {
-      const verified = await releaseLinks.spend(pool, req.body?.token, { createSession });
+      const verified = await releaseLinks.spend(pool, req.body?.token, {
+        createSession,
+        newAccountOnly: req.body?.newAccountOnly === true,
+      });
       // The welcome names the address; only somebody holding the mailbox's
       // link reaches this line.
       return await answerProvenEmail(req, res, verified, { via: 'link', extra: { email: verified.email } });
@@ -507,13 +519,38 @@ function authRoutes(config) {
     }
   });
 
+  // The sign-in sheet's account step asks this as the person types (#5255):
+  // the handle's rules, then whether anybody holds it, live or retired, in
+  // the same words a refusal would use. Read-only, and answered only to a
+  // person mid-sign-up: the signup cookie set-password spends, unexpired,
+  // for an account that still has to choose its handle. Anyone else gets
+  // 401, so it is no oracle for handles a public profile would not show.
+  router.get('/api/auth/username-available', usernameCheckLimiter, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      const userId = await emailSignup.pendingUsernameChoice(pool, req.cookies?.[SIGNUP_COOKIE]);
+      if (!userId) return res.status(401).json({ error: 'Your signup session expired. Request a new code.', code: 'invalid_signup_session' });
+      const check = usernames.validateUsername(typeof req.query.username === 'string' ? req.query.username : '');
+      if (!check.ok) return res.json({ ok: true, available: false, error: check.error });
+      const free = await usernames.checkAvailability(pool, check.value, userId);
+      return res.json({ ok: true, available: free.available === true, ...(free.available ? {} : { error: free.error }) });
+    } catch (error) {
+      log.error('auth', 'Username availability check failed', { message: error.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.post('/api/auth/otp/set-password', otpVerifyLimiter, async (req, res) => {
-    // #4595: the password is optional ("Skip for now"). Absent or empty in
-    // both fields means none; the service holds a password that IS sent to
-    // the usual rule.
+    // #4595: the password is optional ("Skip for now"). Absent or empty
+    // means none; the service holds a password that IS sent to the usual
+    // rule. The confirmation is checked only when a client asks for one: the
+    // sign-in sheet asks for the password once (a mistyped one is reset by
+    // email) and sends no `passwordConfirmation`; the sign-in screen still
+    // asks twice and sends both.
     const blank = (v) => (v === undefined || v === null || v === '' ? null : v);
     const password = blank(req.body?.password);
-    if (password !== blank(req.body?.passwordConfirmation)) {
+    if (req.body?.passwordConfirmation !== undefined
+        && password !== blank(req.body.passwordConfirmation)) {
       return res.status(422).json({ error: 'Passwords do not match.', code: 'password_mismatch' });
     }
     try {
@@ -628,9 +665,8 @@ function authRoutes(config) {
         ({ userId, codeId } = await withTransaction(pool, async (client) => {
           // needs_communities_choice: an account made with a code is asked
           // which communities to join, like an email sign-up (communities,
-          // stage 5; src/services/onboarding.js). getting_started_gate: and,
-          // being new, starts on the Getting started list that gates the
-          // season, like an email sign-up (src/db/schema.sql).
+          // stage 5; src/services/onboarding.js). getting_started_gate: and
+          // is marked as new, like an email sign-up (src/db/schema.sql).
           const { rows: userRows } = await client.query(
             'INSERT INTO users (username, password, needs_communities_choice, getting_started_gate) VALUES ($1, $2, TRUE, TRUE) RETURNING id',
             [username.trim(), hash]
@@ -728,6 +764,60 @@ function authRoutes(config) {
     res.json({ ok: true });
   });
 
+  // The waiting room's account line (#5256): which account was just made
+  // and where the "you're in" mail goes. Under /api/auth/ so an account
+  // without platform access can read it (middleware/auth.js
+  // GATE_OPEN_PATHS); /api/me/email stays behind the gate, since its
+  // prefix also covers changing the address. Only the caller's own row.
+  router.get('/api/auth/waiting', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const { rows } = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
+      res.set('Cache-Control', 'no-store');
+      return res.json({ username: req.user.username || null, email: rows[0]?.email || null });
+    } catch (err) {
+      log.warn('auth', 'Waiting room account lookup failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The waiting room's two optional questions (#5261), which the retired
+  // in-app join form (#waitlist) asked: where you are and how you found us.
+  // Asked of the account now, after it is made, and saved on its own
+  // waitlist row in the keys the form wrote (services/waitlist.js
+  // saveAccountAnswers). Under /api/auth/ for the same reason as the line
+  // above: a waiting account may call it. Only the caller's own row, and
+  // only the values the public join validates (validateStage1).
+  router.get('/api/auth/waiting/about', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const about = await waitlist.accountAnswers(pool, req.user.id);
+      res.set('Cache-Control', 'no-store');
+      return res.json({ listed: !!about, country: about?.country || null, discovery: about?.discovery || null });
+    } catch (err) {
+      log.warn('auth', 'Waiting room answers lookup failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/auth/waiting/about', waitlistAnswersLimiter, sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const checked = waitlistQuestions.validateStage1(req.body || {});
+    if (!checked.ok) return res.status(422).json({ error: checked.error });
+    try {
+      const about = await waitlist.saveAccountAnswers(pool, {
+        userId: req.user.id,
+        answers: checked.value,
+        inviteCode: typeof req.body?.invite_code === 'string' ? req.body.invite_code : null,
+      });
+      if (!about) return res.status(404).json({ error: 'This account has no spot on the waitlist.', code: 'not_listed' });
+      return res.json({ ok: true, listed: true, country: about.country, discovery: about.discovery });
+    } catch (err) {
+      log.error('auth', 'Saving the waiting room answers failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.get('/api/auth/me', async (req, res) => {
     if (!req.user) {
       return res.status(401).json({ error: 'Not authenticated' });
@@ -777,14 +867,11 @@ function authRoutes(config) {
     // (frontend/src/features/auth/username-first-run.js askForPublic).
     let usernameProvisional = false;
     // Communities, stage 5 (src/services/onboarding.js): the join screen a
-    // new account answers after its username and the terms, and the
-    // Getting started card, for every account made since that card became
-    // the First challenges (`getting_started_gate`), however it signed up
-    // (#4601). Same
-    // failure direction as the flag above: unreadable means no blocking step
-    // and no card.
+    // new account answers after its username and the terms. Same failure
+    // direction as the flag above: unreadable means no blocking step. (The
+    // flag beside it that drew Home's Getting started card went with the
+    // card, #4635; an older cached client reads it missing as "no card".)
     let needsCommunitiesChoice = false;
-    let showGettingStarted = false;
     // Has this account finished (or skipped) the welcome tour, on any
     // device? The tour ORs it with its own per-browser flag, so the failure
     // direction here is the one it had before the server kept it: the
@@ -812,6 +899,10 @@ function authRoutes(config) {
     // credits) and Home's "Verify your account" card follow up on it.
     // Unreadable means not held to it.
     let identityNeeded = false;
+    // "Are you 18 or older?" answered yes (#5095,
+    // services/adult-attestation.js). The shell asks before a wallet,
+    // staking, node or passport feature opens while this is false.
+    let adultAttested = false;
     try {
       const { rows } = await pool.query(
         `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
@@ -820,10 +911,9 @@ function authRoutes(config) {
                 u.needs_communities_choice,
                 u.password_set,
                 (u.username_provisional_since IS NOT NULL) AS username_provisional,
-                (u.getting_started_closed_at IS NULL
-                  AND u.getting_started_gate) AS show_getting_started,
                 (u.tour_done_at IS NOT NULL) AS tour_done,
                 identity_needed(u.id) AS identity_needed,
+                (u.adult_attested_at IS NOT NULL) AS adult_attested,
                 EXISTS (
                   SELECT 1 FROM credentials.user_ai_credentials credential
                    WHERE credential.user_id = u.id
@@ -850,8 +940,8 @@ function authRoutes(config) {
       hasPassword = rows[0]?.password_set !== false;
       usernameProvisional = rows[0]?.username_provisional === true;
       needsCommunitiesChoice = rows[0]?.needs_communities_choice === true;
-      showGettingStarted = rows[0]?.show_getting_started === true;
       tourDone = rows[0]?.tour_done === true;
+      adultAttested = rows[0]?.adult_attested === true;
       // A member let in (not a private member, who waits for that).
       identityNeeded = rows[0]?.identity_needed === true && !!req.user.hasPlatformAccess;
       if (needsCommunitiesChoice) storyFirstSession = await firstSession.asksWhatToMake(pool, req.user.id);
@@ -966,12 +1056,10 @@ function authRoutes(config) {
         // Only alongside storyFirstSession: the waitlist answer "What should
         // it do?" opens with (frontend/src/features/first-session/make.tsx).
         waitlistIdea,
-        // The Getting started card on Home: shown to every new account
-        // (getting_started_gate), however it signed up (#4601), until it is
-        // closed.
-        showGettingStarted,
         // The verified-identity rule holds this member to it (see above).
         identityNeeded,
+        // Said yes to "Are you 18 or older?" (see above).
+        adultAttested,
         // The welcome tour was finished or skipped on this account, on any
         // device (POST /api/me/tour-done; cleared by Reset first run). The
         // tour counts it done when this OR the browser's own flag says so
@@ -1083,6 +1171,30 @@ function authRoutes(config) {
       res.json(await limits.getBudgetSnapshot(pool, req.user.id));
     } catch (err) {
       log.error('limits', 'ai-budget read failed', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // --------------------------------------------------------------
+  // GET /api/me/building-time: Settings' "Homeroom bot building time"
+  // card. The viewer's own week of the bot's building time, as shares of
+  // the week and never money, and the requests that used it
+  // (services/building-time.js). Me-scoped like /api/me/ai-budget, so it
+  // stays out of PUBLIC_PATHS.
+  // --------------------------------------------------------------
+  router.get('/api/me/building-time', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const buildingTime = require('../services/building-time');
+    res.set('Cache-Control', 'private, no-store');
+    // Staging has none of the bot's runs to read: `?demo=1` answers with a
+    // fixed, obviously fake week, marked as a demo.
+    if (IS_STAGING && req.query.demo === '1') {
+      return res.json(buildingTime.demoWeek(require('../services/limits').weeklyResetAt()));
+    }
+    try {
+      res.json(await buildingTime.weekFor(pool, req.user.id));
+    } catch (err) {
+      log.error('homeroom-bot', 'building-time read failed', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -1302,7 +1414,9 @@ function authRoutes(config) {
   // ── Wallet linking ───────────────────────────────────────────────
   const LINK_TOKEN_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-  router.post('/api/me/wallet-link', sameOriginBrowserOnly, async (req, res) => {
+  // Linking a wallet is for adults (#5095): refused until the account said
+  // it is 18 or older. Unlinking (DELETE below) is never refused.
+  router.post('/api/me/wallet-link', sameOriginBrowserOnly, requireAdultAttestation(pool), async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     if (!config.usernodeAppPubkey) {
       return res.status(503).json({ error: 'Wallet linking not configured' });
@@ -1852,7 +1966,7 @@ function authRoutes(config) {
 
       // needs_communities_choice: asked which communities to join, like
       // every other new account (communities, stage 5); getting_started_gate:
-      // and starts on the Getting started list, like every other new one.
+      // and marked as new, like every other new one.
       const { rows } = await pool.query(
         `INSERT INTO users (username, password, usernode_pubkey, wallet_link_token, wallet_link_expires_at,
                             needs_communities_choice, getting_started_gate)

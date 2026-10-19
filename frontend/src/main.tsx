@@ -67,8 +67,11 @@ import './lib/overlay-scrim-bridge';
 import { bootStep } from './lib/boot-guard';
 import { initOffline } from './lib/offline';
 import { registerServiceWorker } from './lib/service-worker';
-import { applyShellSnapshot } from './lib/shell-snapshot-apply';
+import { applyNavSnapshot, applyShellSnapshot } from './lib/shell-snapshot-apply';
+import { installFirstPaintReserve } from './lib/first-paint-reserve';
 import { installJoinRequired } from './lib/join-required';
+import { installAdultGate } from './features/auth/adult-gate';
+import { installSessionRenewalRetry } from './lib/session-renewal-retry';
 // Publishes window.UsernodeReact.devBoard at module scope. Imported for the
 // side effect, and imported HERE (rather than reached from a Shell island)
 // because the Dev surfaces are runtime-injected into an empty #app-content and
@@ -202,6 +205,14 @@ bootStep('initOffline', initOffline);
 // refused with `join_required` becomes a Join prompt and a retry
 // (./lib/join-required.ts), for every caller in both bundles.
 bootStep('installJoinRequired', () => installJoinRequired());
+// Same seam for the 18+ check (#5095): a wallet, staking, node or passport
+// write refused `adult_attestation_required` asks "Are you 18 or older?"
+// and is sent again on a yes (./features/auth/adult-gate.tsx).
+bootStep('installAdultGate', () => installAdultGate());
+// Before app.js's init (DOMContentLoaded) sends the boot's first reads: in the
+// mobile app a request refused 401 while the native bridge renewed the web
+// session is sent again once it lands (./lib/session-renewal-retry.ts, #5049).
+bootStep('installSessionRenewalRetry', () => installSessionRenewalRetry());
 
 // document.body is the hydration container, not a wrapper <div>, because the
 // body element itself is the flex column the layout depends on
@@ -239,3 +250,17 @@ bootStep('hydrate', () => {
 // on screen in between. See ./lib/shell-snapshot.ts for the storage contract
 // and why it is display-only.
 bootStep('applyShellSnapshot', applyShellSnapshot);
+// …and the tab bar's: the viewer's name from the session snapshot, and the
+// list of their communities the desktop sidebar draws its rows from. Same
+// reasoning, same moment. flushSync commits it before this task ends, so the
+// first frame after hydration already has both. (A frame painted BEFORE
+// hydration still shows the prerender; in the app the launch cover hides
+// those, and lifts on what is drawn here: public/js/native-chrome.js,
+// `shellPainted`.)
+bootStep('applyNavSnapshot', () => {
+  flushSync(applyNavSnapshot);
+});
+// What this device draws Home's areas and the sidebar's community rows at,
+// kept for the next cold load, whose head script holds their skeletons at
+// those heights (./lib/first-paint-reserve.ts).
+bootStep('installFirstPaintReserve', installFirstPaintReserve);

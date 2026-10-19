@@ -21,6 +21,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -120,7 +121,7 @@ test('route fall-through branch pushes notifications_changed when rows cleared',
   // Isolate the code between the markRead call and the response — the
   // single-id / mark-all fall-through branch of POST /api/notifications/read.
   const m = ROUTE_SRC.match(
-    /const cleared = await notifications\.markRead\([\s\S]*?res\.json\(\{ unread, cleared \}\)/
+    /const cleared = await notifications\.markRead\([\s\S]*?res\.json\(\{ unread, messageUnread, cleared \}\)/
   );
   assert.ok(m, 'fall-through branch captures cleared and returns it');
   assert.match(m[0], /if \(cleared > 0\)/, 'fan-out is gated on rows actually clearing');
@@ -153,11 +154,14 @@ const SESSION_KINDS = new Set(['session_done', 'auto_solve_done', 'stale_pr', 'c
 const isSessionNotifStub = (n) => !!n && SESSION_KINDS.has(n.kind);
 
 function buildMarkAllRead(body) {
-  return new Function(
-    'Notifications', 'fetch', 'window', 'console',
+  // The method reads its toast through the module's `t`; here that is the
+  // English runtime's.
+  const run = new Function(
+    't', 'Notifications', 'fetch', 'window', 'console',
     'SESSION_NOTIF_KINDS', 'isSessionNotif',
     `return (async () => {${body}})();`
   );
+  return (...args) => run(englishPlatformI18n().t, ...args);
 }
 
 test('markAllRead marks every item read, re-renders, and reconciles chat dots', async () => {

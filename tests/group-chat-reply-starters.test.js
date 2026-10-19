@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -54,9 +55,10 @@ test('they ask only when "never posted" is knowable, and only someone who can po
 
 test('three chips, in the words the plan chose', () => {
   const { REPLY_STARTERS } = loadTsx(SRC);
-  assert.deepEqual(REPLY_STARTERS.map((s) => s.label), ['\u{1F44B} Hi!', 'Love it!', 'Could it also…']);
+  // The table holds message ids; the catalog holds the words.
+  assert.deepEqual(REPLY_STARTERS.map((s) => message(s.label)), ['\u{1F44B} Hi!', 'Love it!', 'Could it also…']);
   // "Could it also…" is a start: the caret waits after the space.
-  assert.deepEqual(REPLY_STARTERS.map((s) => s.text), ['\u{1F44B} Hi!', 'Love it!', 'Could it also ']);
+  assert.deepEqual(REPLY_STARTERS.map((s) => (s.open ? `${message(s.text)} ` : message(s.text))), ['\u{1F44B} Hi!', 'Love it!', 'Could it also ']);
   const html = renderComponent(SRC, 'ReplyStartersView', { onPick: () => {} });
   assert.match(html, /^<div role="group" aria-label="Start a reply" class="[^"]*" data-gc-reply-starters="">/);
   assert.equal((html.match(/<button type="button"/g) || []).length, 3, 'buttons, so a tap cannot submit the form');

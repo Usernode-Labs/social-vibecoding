@@ -1,7 +1,7 @@
-// Leaderboard screen — the Kudos leaderboard, the Topochain standings, the
-// season's challenges and the past seasons, behind one entry point with a
-// four-tab strip: Challenges, Kudos, Standings, History (the navigation
-// prototype's Challenges page). The screen has no heading of its own any
+// Leaderboard screen — the challenges, the Topochain standings and the Kudos
+// leaderboard, behind one entry point with a three-tab strip: Challenges,
+// Standings, Kudos (the navigation prototype's Challenges page; the History
+// tab of past seasons retired with the Semi design, 2026-10-16). The screen has no heading of its own any
 // more: the platform bar names the TAB (Leaderboard._syncTitle).
 //
 // The contract that's easy to break later:
@@ -11,8 +11,9 @@
 //   - the Topochain standings, which the tab strip labels "Standings", are
 //     addressed by name — #leaderboard/topochain — and the home widget's
 //     fill links there explicitly;
-//   - History is #leaderboard/seasons (NOT #leaderboard/history, which is
-//     the Kudos pane's "My history" and keeps meaning that);
+//   - the retired History tab's #leaderboard/seasons lands on Challenges
+//     (#leaderboard/history is the Kudos pane's "My history" and keeps
+//     meaning that);
 //   - the kudos board is still all there, one tab over, named "Kudos";
 //   - every existing #leaderboard/<sub> deep link (prs / users / history /
 //     users/<name>) still resolves to a Kudos sub-tab;
@@ -33,6 +34,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -82,7 +84,7 @@ function tabsConstant(name) {
 
 // ─── Shell ───────────────────────────────────────────────────────────────
 
-test('the Leaderboard screen hosts a tab strip, an event bar and all four panes', () => {
+test('the Leaderboard screen hosts a tab strip, an event bar and three panes', () => {
   const start = html.indexOf('<main id="leaderboard-screen"');
   const end = html.indexOf('</main>', start);
   assert.ok(start > -1, '#leaderboard-screen exists');
@@ -98,8 +100,7 @@ test('the Leaderboard screen hosts a tab strip, an event bar and all four panes'
   assert.ok(screen.includes('id="leaderboard-root"'), 'it hosts the Kudos pane');
   assert.ok(screen.includes('id="topochain-leaderboard-root"'), 'it hosts the Topochain pane');
   assert.ok(screen.includes('id="challenges-root"'), 'it hosts the Challenges pane');
-  assert.match(screen, /<div id="leaderboard-history-root" class="hidden w-full"><\/div>/,
-    'and the History pane, shipped empty and hidden like the other non-default panes');
+  assert.ok(!screen.includes('leaderboard-history-root'), 'the History pane is gone with its tab');
   // Wide enough for the Topochain table; the Kudos lists keep their
   // narrower reading column, centered on its own (#2921) rather than
   // left-pinned inside the wider frame.
@@ -156,7 +157,7 @@ test('the strip lines up with the pane under it, and the column holds still acro
     'the strip wrapper takes the Kudos column only while Kudos shows');
   assert.match(src, /id="leaderboard-root" className=\{`hidden \$\{KUDOS_COLUMN\}`\}/,
     'from the same constant as the Kudos root, so the two cannot drift');
-  // Kudos and Standings scroll, Challenges and History do not: without a
+  // Kudos and Standings scroll, Challenges often does not: without a
   // reserved gutter a classic scrollbar re-centers the column on the long tabs.
   const main = (html.match(/<main id="leaderboard-screen" class="([^"]*)"/) || [])[1] || '';
   assert.ok(main.split(/\s+/).includes('[scrollbar-gutter:stable]'),
@@ -202,20 +203,17 @@ test('Leaderboard.section defaults to Challenges (#2374)', () => {
 // and keys are asserted where they now live. `_renderSectionTabs` is still the
 // entry point and is checked to have become a publish rather than a write, so
 // the two halves can't drift back into both rendering.
-test('the tab strip reads Challenges, Kudos, Standings, History (#1917, the prototype)', () => {
+test('the tab strip reads Challenges, Standings, Kudos (the prototype, the Semi design)', () => {
   const list = island.slice(island.indexOf('const SECTION_TABS = ['), island.indexOf('];', island.indexOf('const SECTION_TABS = [')));
   assert.ok(list.length > 0, 'SECTION_TABS located in the island');
   const labels = [...list.matchAll(/\{ key: '([a-z]+)', label: '([^']+)' \}/g)]
     .map((m) => [m[1], m[2]]);
-  assert.deepEqual(labels, [
+  assert.deepEqual(labels.map(([key, id]) => [key, message(id)]), [
     ['challenges', 'Challenges'],
-    ['kudos', 'Kudos'],
     ['topochain', 'Standings'],
-    ['seasons', 'History'],
-  ], 'what you can do first, then the ranking, then the rankings that are over; '
-    + 'the prototype\'s words, Standings and History');
-  // Four labels have to fit a 390px column: the triggers tighten below `sm`.
-  // QA 2026-09-24 Q21: px-2 (was px-2.5), so the four fit a 390px column.
+    ['kudos', 'Kudos'],
+  ], 'what you can do first, then the ranking it feeds, then Kudos; no History of past seasons');
+  // The triggers tighten below `sm`, so the labels fit a 390px column.
   assert.match(island, /const STRIP_TAB = 'inline-flex items-center justify-center h-8 px-2 sm:px-4 /,
     'a phone-width trigger padding, restored from sm up');
   // And where they still do not fit, the strip says it scrolls.
@@ -348,8 +346,8 @@ test('_setSection validates its input and syncs the hash', () => {
   assert.ok(fn.length > 0, '_setSection located');
   assert.match(fn, /if \(!Leaderboard\.SECTIONS\.includes\(section\)\) return;/,
     'garbage sections are a no-op, mirroring _setSub');
-  assert.match(lbJs, /SECTIONS: \['topochain', 'kudos', 'challenges', 'seasons'\],/,
-    'all four sections are declared in one place');
+  assert.match(lbJs, /SECTIONS: \['topochain', 'kudos', 'challenges'\],/,
+    'all three sections are declared in one place, History gone');
   assert.match(lbJs, /EVENT_SECTIONS: \['topochain', 'challenges'\],/,
     'the two event-scoped sections are declared in one place');
   assert.match(fn, /Leaderboard\._syncHash\(\);/, 'the hash follows the tab');
@@ -405,6 +403,20 @@ test('navigateToLeaderboard routes every section segment to the section', () => 
     fn.indexOf('Leaderboard.openProfile(profileUser)')
       < fn.indexOf('Leaderboard._setSection(sub)'),
     'the profile drill-in is checked first');
+});
+
+test('the retired History address lands on Challenges, rewritten in place', () => {
+  const branch = appJs.slice(
+    appJs.indexOf("if (parts[0] === 'leaderboard') {"),
+    appJs.indexOf("if (parts[0] === 'challenges') {")
+  );
+  assert.ok(branch.length > 0, 'the #leaderboard branch located');
+  const seasons = branch.slice(branch.indexOf("if (parts[1] === 'seasons') {"));
+  assert.match(seasons, /^if \(parts\[1\] === 'seasons'\) \{\s*try \{\s*history\.replaceState\(null, '', '#leaderboard\/challenges'\);/,
+    'the address heals to Challenges before anything renders');
+  assert.match(seasons, /App\.navigateToLeaderboard\('challenges', null, null\);\s*return;/, 'then Challenges opens');
+  assert.ok(branch.indexOf("parts[1] === 'seasons'") < branch.indexOf('App.navigateToLeaderboard(parts[1]'),
+    'before the generic hand-off could pass `seasons` along');
 });
 
 test('the legacy #topochain hashes self-heal to the canonical form', () => {
@@ -536,7 +548,8 @@ test('the bar is drawn only for a viewer the server gives the season history', (
     'the default season is the one the screen opens on, not the calendar\'s');
   assert.match(ctxJs, /_history = data\.viewer\?\.history === true;/, 'the context takes the verdict from the list');
   assert.match(barStore, /history: false,/, 'the store ships without it');
-  assert.match(barTsx, /if \(!mounted \|\| !history\) return null;/, 'and the component renders nothing without it');
+  assert.match(barTsx, /if \(!mounted \|\| !history \|\| section === 'challenges'\) return null;/,
+    'and the component renders nothing without it (nor on the Challenges tab, which has no event to pick)');
   // Every screenshot signs as usernode-capture, a member with no trace
   // outside the running season, so captures of this screen show the
   // new-member state; the checks identity is an admin and sees the picker
@@ -633,13 +646,15 @@ test('the challenges pane reads `completed` from the PUBLIC row, not just the pe
     'the personalization row is only a fallback, checked after the public one');
 });
 
-test('the challenges grid sorts unfinished challenges ahead of completed ones', () => {
-  const fn = chJs.slice(chJs.indexOf('  _ordered() {'), chJs.indexOf('  _renderGrid() {'));
-  assert.match(fn, /_isDone\(a\.c\)/);
-  assert.match(fn, /_isDone\(b\.c\)/);
-  // The completed split is the FIRST key, ahead of the featured lift.
-  assert.ok(fn.indexOf('ad !== bd') < fn.indexOf('af !== bf'),
-    'not-completed must outrank featured, or a featured finished challenge leads the grid');
+test('the challenges grid sorts every finished challenge into Done, last', () => {
+  const fn = chJs.slice(chJs.indexOf('  _groupOf(c) {'), chJs.indexOf('  _renderGrid() {'));
+  assert.match(fn, /if \(TopochainChallenges\._isDone\(c\)\) return groups\.done;/,
+    'done is decided first, whatever the category');
+  assert.match(chJs, /done: \{ key: 'done', heading: 'leaderboard:challenges\.heading\.done', order: 2 \}/,
+    'and Done ranks last');
+  // The group is the FIRST sort key, ahead of the featured lift.
+  assert.ok(fn.indexOf('a.g !== b.g') < fn.indexOf('af !== bf'),
+    'the group must outrank featured, or a featured finished challenge leads the grid');
 });
 
 test('the challenges grid summarises and groups the completed set', () => {
@@ -648,28 +663,19 @@ test('the challenges grid summarises and groups the completed set', () => {
   // declared dapp.json check lose its anchor.
   assert.match(chTsx, /id="tc-se-challenge-summary"/,
     'the summary line carries a stable id the dapp.json check anchors on');
-  // ITERATION 03 moved the tally into the shared season progress
-  // ("3/9 done in this event" over one segment per challenge) rather than
-  // "3 of 9 challenges completed". This pin moved with it, deliberately.
-  // QA 2026-09-24 Q17: an event's tally says it is an event's; the event's
-  // own name stays out of the words (issue #4528).
-  assert.match(chJs, /caption: name \? 'done in this event' : 'done'/, 'and states the tally in words');
-  // #4565: the tally also carries the points figures, so the shaping call
-  // hands it the challenge list its scope is made of.
-  assert.match(chJs, /progress: TopochainChallenges\._progressView\(doneCount, ordered\.length, null, ordered\)/,
-    'which is what the summary line carries');
+  // The Semi design (2026-10-16): one line, "3,500 pts · 4 of 11 done",
+  // over one bar, naming no season and no event.
+  assert.match(chJs, /progress: TopochainChallenges\._summaryView\(ordered\)/,
+    'the summary is composed from the whole grid');
+  assert.doesNotMatch(chJs, /scope: 'event'|scope: 'first'/, 'and names no scope');
+  assert.equal(message('leaderboard:progress.summary', { points: '3,500 pts', done: 4, count: 11 }),
+    '<0>3,500 pts</0> · 4 of 11 done');
+  assert.equal(message('leaderboard:progress.plainLabel', { done: 3, count: 9 }), '3 of 9 done');
   assert.match(chTsx, /<SeasonProgress id="tc-se-challenge-summary"/,
-    'drawn by the component Home shares');
-  assert.match(chTsx, /\{g\.heading\}/,
-    'the grouping subheading renders');
-  assert.match(chJs, /heading: 'Completed'/,
-    'and the module is what names it');
-  // Suppressed when everything (or nothing) is finished — every public event
-  // in production is currently 100% completed, where the heading says nothing.
-  const fn = chJs.slice(chJs.indexOf('  gridView(ordered) {'), chJs.indexOf('  cardView(c, i) {'));
-  assert.ok(fn.length > 0, 'gridView located');
-  assert.match(fn, /firstDone > 0 && doneCount > 0/,
-    'the subheading is gated on BOTH groups being non-empty');
+    'drawn by the summary component');
+  assert.match(chTsx, /\{g\.heading\}/, 'each group’s heading renders');
+  assert.equal(message('leaderboard:challenges.heading.done'), 'Done');
+  assert.match(chJs, /heading: 'leaderboard:challenges\.heading\.done'/, 'and the module is what names it');
   assert.match(chJs, /done: TopochainChallenges\._isDone\(c\)/,
     'the card descriptor carries the completed flag');
   // ITERATION 03 retired the dimming: a finished card is marked on its
@@ -679,7 +685,8 @@ test('the challenges grid summarises and groups the completed set', () => {
   assert.match(chCardTsx,
     /done: 'bg-emerald-500\/10 text-emerald-700 dark:text-emerald-400'/,
     'completed cards carry the done rail instead');
-  assert.match(chJs, /state: 'done', stateLabel: 'Done'/,
+  assert.equal(message('leaderboard:challenges.state.done'), 'Done');
+  assert.match(chJs, /state: 'done', stateLabel: PlatformI18n\.t\('leaderboard:challenges\.state\.done'\)/,
     'and the rail names the state in the board\'s word for it');
 });
 
@@ -775,6 +782,37 @@ test('a standings row the server could not name reads "Anonymous", never just it
   assert.equal(TL.drillView().displayName, 'Anonymous', 'and so does its drill-down header');
 });
 
+// #3200: the challenge grader writes a short reason into an activity's
+// metadata.grade, and the drill-down carries it through to the row so the
+// renderer can draw the "Why:" line. Ungraded point sources (no grade, empty
+// metadata, a non-string reason) carry null, so nothing is drawn for them.
+test('the drill-down activities carry the grader\'s reason, or null when there is none', () => {
+  const { TL } = loadStandings();
+  TL._drillRow = SEASON_ROW;
+  TL._drillActivities = {
+    loading: false, error: null,
+    data: [
+      { description: 'Reported a reproducible bug.', points: 250,
+        activity_at: '2026-10-02T16:32:00.000Z', activity_time_precision: 'instant',
+        metadata: { grade: { score: 250, reason: 'Says what broke, where, and what was expected.' } } },
+      { description: 'Sent a testnet transaction.', points: 100,
+        activity_at: '2026-10-02T10:00:00.000Z' },
+      { description: 'Empty metadata.', points: 5,
+        activity_at: '2026-10-02T10:00:00.000Z', metadata: {} },
+      { description: 'Non-string reason.', points: 5,
+        activity_at: '2026-10-02T10:00:00.000Z', metadata: { grade: { score: 5, reason: 42 } } },
+    ],
+  };
+  TL._drillEpoch = { loading: false, error: null, data: null };
+  TL._drillProfile = { loading: false, error: null, data: null };
+  const items = TL.drillView().activities.items;
+  assert.equal(items[0].reason, 'Says what broke, where, and what was expected.',
+    'the reason the grader stored rides along');
+  assert.equal(items[1].reason, null, 'no grade at all -> null');
+  assert.equal(items[2].reason, null, 'empty metadata -> null');
+  assert.equal(items[3].reason, null, 'a non-string reason -> null');
+});
+
 // ─── #3887: non-podium rows hidden by default, chip to show them grayed ──
 //
 // The server filters by default now and answers `non_podium_count` over the
@@ -851,7 +889,8 @@ test('#3887: a board whose every scorer is excluded reads as the filter working,
   // does — the declared check accepts "table or this hint".
   assert.match(standingsTsx, /id="tc-lb-non-podium-toggle"/, 'the chip has its id');
   assert.match(standingsTsx, /aria-pressed=\{toggle\.on\}/, 'and publishes its on-state');
-  assert.match(standingsTsx, /Everyone with a score on this board is excluded from the ranking\./);
+  assert.match(standingsTsx, /\{t\('leaderboard:standings\.allExcluded'\)\}/);
+  assert.equal(message('leaderboard:standings.allExcluded'), 'Everyone with a score on this board is excluded from the ranking.');
   assert.match(standingsTsx,
     /state === 'allexcluded'[\s\S]{0,600}?data-tc-lb-empty/,
     'the all-excluded hint keeps the declared-check contract');
@@ -893,49 +932,44 @@ test('#3887: the chip goes through the module handler, which restarts at page 1'
     'the fetch carries the ask only while the chip is on');
 });
 
-test('the standings table drops the Success rate column on a season board', () => {
+test('the standings table is rank, name and points on a season board (#5275)', () => {
   const view = renderStandings({
     event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
     leaderboard: [SEASON_ROW],
   });
   assert.equal(view.state, 'table');
-  assert.ok(!view.columns.includes('success'),
-    'the season aggregate has no per-event success rate to report, so the '
-    + 'column does not exist — it cannot print the hard-coded 0 as if measured');
-  // The points and blocks columns are real on both paths and must survive.
-  assert.deepEqual(view.columns, ['rank', 'user', 'points', 'blocks']);
-  assert.equal(view.rows[0].points, '67973.66', 'the season total is the headline number');
-  assert.equal(view.headers.blocks, 'Blocks produced', 'blocks IS a real season-wide sum');
+  // A phone cut the four-column table at "10…"; blocks, the "+" figure and
+  // the success rate moved to the row's details (drillView's figures).
+  assert.deepEqual(view.columns, ['rank', 'user', 'points']);
+  assert.equal(view.rows[0].points, '67,974', 'whole points, grouped');
   assert.equal(view.headers.points, 'Season points', 'the column says which total it is');
   assert.equal(view.isSeason, true);
+  for (const gone of ['extra', 'blocks', 'success']) {
+    assert.ok(!(gone in view.rows[0]), `a row carries no ${gone} figure any more`);
+  }
 });
 
-test('the standings table keeps the Success rate column on a per-event board', () => {
+test('the standings table is rank, name and points on a per-event board too (#5275)', () => {
   const view = renderStandings({
     event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
-    leaderboard: [{ ...SEASON_ROW, total_points: 1900, event_success_rate: 80 }],
+    leaderboard: [{ ...SEASON_ROW, total_points: 10823, event_success_rate: 80 }],
   });
-  assert.equal(view.state, 'table');
-  assert.deepEqual(view.columns, ['rank', 'user', 'points', 'blocks', 'success'],
-    'a single event measures it');
-  assert.equal(view.headers.success, 'Success rate');
-  assert.equal(view.rows[0].success, '80');
+  assert.deepEqual(view.columns, ['rank', 'user', 'points']);
+  assert.equal(view.rows[0].points, '10,823');
   assert.equal(view.headers.points, 'Points', 'and the points column is unqualified');
   assert.equal(view.isSeason, false);
 });
 
-test('the season board and the per-event board stay column-aligned', () => {
+test('the head and the body read the one column list', () => {
   // This used to count <th> against <td> in the rendered HTML, because the
   // string renderer dropped the success cell with TWO independent
   // conditionals and one could be edited without the other. The descriptor
   // makes that unrepresentable: there is a single `columns` list, and the
-  // renderer maps over it once for the header row and once per body row. The
-  // assertion is therefore structural — both maps read the same list.
+  // renderer maps over it once for the header row and once per body row.
   const view = renderStandings({
     event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
     leaderboard: [SEASON_ROW],
   });
-  assert.equal(view.columns.length, 4, 'rank, user, season points, blocks');
   for (const c of view.columns) {
     assert.ok(view.headers[c], `every rendered column has a header (${c})`);
   }
@@ -943,6 +977,96 @@ test('the season board and the per-event board stay column-aligned', () => {
   assert.equal(maps, 2,
     'exactly two maps over the one column list — the header row and the body row; '
     + 'a third source of truth is how the table skewed before');
+});
+
+test('#5275: a masked address is never shown as a name', () => {
+  const masked = { ...SEASON_ROW, rank: 22, discord: null, display_name: 'sed***@***.com', identifier: 'sed***@***.com' };
+  const view = renderStandings({
+    event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
+    leaderboard: [
+      { ...masked, username: 'sedna' },
+      { ...masked, rank: 23, username: null },
+      SEASON_ROW,
+    ],
+  });
+  assert.equal(view.rows[0].user, 'sedna', 'the public username, when there is one');
+  assert.equal(view.rows[1].user, 'Member #23', 'else a neutral stand-in that names no address');
+  assert.equal(view.rows[1].anonymous, false, 'which is a name the row sentence can carry');
+  assert.equal(view.rows[2].user, 'Ocank14', 'a real name is untouched');
+  assert.equal(message('leaderboard:standings.member'), 'Member #{{rank}}');
+
+  const { TL } = loadStandings();
+  TL._drillRow = { ...masked, username: null };
+  TL._drillActivities = { loading: false, error: null, data: null };
+  TL._drillEpoch = { loading: false, error: null, data: null };
+  TL._drillProfile = { loading: false, error: null, data: null };
+  assert.equal(TL.drillView().displayName, 'Member #22', 'and the details header says the same');
+});
+
+test('#5275: the viewer\'s own place is pinned above the table', () => {
+  const view = renderStandings({
+    event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
+    leaderboard: [SEASON_ROW],
+    viewer_row: { ...SEASON_ROW, rank: 22, total_points: 10823, is_viewer: true },
+  });
+  assert.deepEqual(view.you, { rank: '22', points: '10,823', count: 10823 });
+  assert.equal(message('leaderboard:standings.you_other'), 'You · #{{rank}} · {{points}} points');
+
+  const guest = renderStandings({
+    event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
+    leaderboard: [SEASON_ROW],
+  });
+  assert.equal(guest.you, null, 'a guest, or a viewer with no row, gets no line');
+
+  const excluded = renderStandings({
+    event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
+    leaderboard: [SEASON_ROW],
+    viewer_row: { ...NON_PODIUM_ROW, is_viewer: true },
+  });
+  assert.equal(excluded.you, null, 'nor does a viewer outside the ranking, who has no rank to show');
+
+  assert.match(standingsTsx, /id="tc-lb-you"[\s\S]{0,400}?_openViewerRow\(\)/,
+    'pressing it opens their details');
+});
+
+test('#5275: the row\'s details carry the figures that left the table, only when they say something', () => {
+  function figuresFor(row, type = 'regular') {
+    const { TL } = loadStandings();
+    TL._data = { event: { id: 8, display_leaderboard: true, type }, leaderboard: [row] };
+    TL._drillRow = row;
+    TL._drillActivities = { loading: false, error: null, data: null };
+    TL._drillEpoch = { loading: false, error: null, data: null };
+    TL._drillProfile = { loading: false, error: null, data: null };
+    const view = TL.drillView();
+    assert.equal(view.index, 0, 'opened under its own row');
+    return Object.fromEntries(view.figures.map((f) => [f.key, f.value]));
+  }
+  assert.deepEqual(
+    figuresFor({ ...SEASON_ROW, total_points: 10823, extra_points: 10823, event_total_produced_blocks: 0, event_success_rate: 0 }),
+    {}, 'zero blocks, no rate, and challenge points equal to the total: nothing to add');
+  assert.deepEqual(
+    figuresFor({ ...SEASON_ROW, total_points: 1900, extra_points: 400, event_total_produced_blocks: 1200, event_success_rate: 80 }),
+    { blocks: '1,200', challenges: '400', success: '80%' });
+  assert.deepEqual(
+    figuresFor({ ...SEASON_ROW, total_points: 1900, extra_points: 400, event_total_produced_blocks: 42 }, 'season'),
+    { blocks: '42', challenges: '400' }, 'the season aggregate measures no success rate');
+});
+
+test('#5275: a row\'s details open under it, and pressing it again folds them', () => {
+  const { TL } = loadStandings();
+  TL._open = true;
+  TL._data = {
+    event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
+    leaderboard: [SEASON_ROW, { ...SEASON_ROW, rank: 2, display_name: 'Second' }],
+  };
+  TL.fetchJson = () => new Promise(() => {});
+  TL._openRowAt(1);
+  assert.equal(TL._drillRow.display_name, 'Second');
+  TL._openRowAt(1);
+  assert.equal(TL._drillRow, null, 'the same row closes them');
+  assert.match(standingsTsx, /openIndex === row\.index && drill \?[\s\S]{0,200}?<DrillPanel view=\{drill\} \/>/,
+    'the panel is drawn in a row of its own right under the opened one');
+  assert.match(standingsTsx, /aria-expanded=\{openIndex === row\.index\}/);
 });
 
 test('a standings row opens from the keyboard, and says what it opens', () => {
@@ -966,7 +1090,7 @@ test('a standings row opens from the keyboard, and says what it opens', () => {
   assert.doesNotMatch(tr[0], /role=/, 'it stays a table row');
   assert.match(tr[0], /focus-visible:outline-violet-500/, 'with a visible focus ring');
 
-  const row = standingsTsx.slice(standingsTsx.indexOf('<tr\n              key={row.index}'));
+  const row = standingsTsx.slice(standingsTsx.indexOf('<Fragment key={row.index}>'));
   assert.match(row,
     /onKeyDown=\{\(e\) => \{\s*if \(e\.key === 'Enter' \|\| e\.key === ' '\) \{\s*e\.preventDefault\(\);\s*controller\(\)\?\._openRowAt\(row\.index\);/,
     'Enter and Space open the same details a click does');
@@ -992,8 +1116,10 @@ test('the season caption replaces the "nothing is running" caption', () => {
   assert.ok(!/_seasonDefault/.test(ctxJs),
     'the default-pick flag is gone — the selection is the single source of truth');
   // The picker and the hero must not label the season event "(past)".
-  assert.match(ctxJs, /if \(isSeason\) return ' \(season\)';/, 'the option reads (season)');
-  assert.match(ctxJs, /const statusLabel = isSeason \? 'season'/, 'so does the hero badge');
+  assert.match(ctxJs, /if \(isSeason\) return t\('leaderboard:eventBar\.option\.season', \{ event \}\);/, 'the option reads (season)');
+  assert.equal(message('leaderboard:eventBar.option.season', { event: 'Season 1' }), 'Season 1 (season)');
+  assert.match(ctxJs, /const statusLabel = isSeason \? t\('leaderboard:eventBar\.status\.season'\)/, 'so does the hero badge');
+  assert.equal(message('leaderboard:eventBar.status.season'), 'season');
 });
 
 test('both #981 checks are declared and the reader keeps them', () => {
@@ -1077,7 +1203,7 @@ test('dapp.json checks the canonical routes and every legacy alias', () => {
   const entryPoint = tests.find(
     (t) => typeof t.expectSelector === 'string'
       && t.expectSelector.includes('#home-challenges-section')
-      && t.expectSelector.includes('home-panel-lb-browse')
+      && t.expectSelector.includes('home-panel-see-all')
   );
   assert.ok(entryPoint, 'a check asserts the Challenges area\'s leaderboard link renders');
   assert.ok(!tests.some((t) => typeof t.expectSelector === 'string'
@@ -1112,8 +1238,9 @@ test('the standings tally counts the viewer\'s progress, in the word Home uses',
     'the organiser\'s closed flag is not the viewer\'s progress');
   assert.match(load, /c\.progress && c\.progress\.done === true/,
     'the tally counts done-ness per row');
-  assert.match(standingsTsx, /challenges done/,
+  assert.match(message('leaderboard:standings.challengesDone', { done: 3, count: 9 }), /^3 of 9 challenges done /,
     'and says "done", the word Home uses for this same number');
+  assert.doesNotMatch(message('leaderboard:standings.challengesDone', { done: 3, count: 9 }), /completed/);
   assert.doesNotMatch(standingsTsx, /challenges completed/,
     'never "completed", which on a challenge row means the organiser closed it');
 });
@@ -1124,7 +1251,7 @@ test('a signed-out reader gets the cross-link without a tally that is not theirs
   assert.match(load, /const signedIn = data\.data\.some\(\(c\) => c && c\.progress\)/,
     'progress rides along per row for a signed-in viewer only, which is the signal');
   assert.match(load, /done: signedIn/, 'so the tally is null when nobody is signed in');
-  assert.match(standingsTsx, /line\.done == null \? null :/,
+  assert.match(standingsTsx, /id=\{line\.done == null \? 'leaderboard:standings\.viewChallenges' : 'leaderboard:standings\.challengesDone'\}/,
     'and the line renders the link alone rather than a zero read as the reader\'s own');
   // The declared check anchors on the link INSIDE the paragraph, so the
   // paragraph must survive a null tally.
@@ -1201,4 +1328,53 @@ test('the empty standings say how often they update (#3187)', () => {
   assert.match(out,
     /data-tc-lb-empty="">No leaderboard entries yet\. Standings update every few hours; points from challenges you just finished appear at the next update\.<\/p>/,
     'the same sentence as the standing card, after the words the declared checks read');
+});
+
+// #4782: someone watched their rank jump six places with no activity of
+// their own and nothing on screen said why — ranks move when OTHER people
+// earn kudos, and the Kudos tab now says so under its ranked lists.
+test('the Kudos ranked lists say ranks move when other people act (#4782)', () => {
+  const render = (body) => {
+    const state = { mounted: true, chrome: null, body };
+    const mod = loadTsx('frontend/src/features/leaderboard/kudos-pane.tsx', {
+      stubs: {
+        './kudos-pane-store.js': {
+          kudosPaneStore: { get: () => state, subscribe: () => () => {} },
+        },
+      },
+    });
+    return renderToHtml(createElement(mod.KudosPane, {}));
+  };
+
+  const note = message('leaderboard:kudos.rankNote');
+  assert.equal(note,
+    'Ranks update live as people give kudos and changes go live, so yours can move even when you did nothing.');
+
+  const rows = [
+    { key: 'a', rank: 1, who: 'maya', initial: 'M', meta: [], unmergedNote: null, mergedKudos: 41 },
+    { key: 'b', rank: 2, who: 'jo', initial: 'J', meta: [], unmergedNote: null, mergedKudos: 33 },
+  ];
+  const out = render({ kind: 'users', rows });
+  const body = out.slice(out.indexOf('id="leaderboard-body"'));
+  assert.ok(body.includes(`>${note}</p>`), 'the note follows the Top users rows');
+  assert.ok(body.lastIndexOf('data-lb-user=') < body.indexOf(`>${note}</p>`),
+    'the note is under the rows, not before them');
+  // Two fixes for the same request (#4782, #4786) once drew it twice.
+  assert.equal(body.split(note).length - 1, 1, 'the list carries the note once');
+  assert.match(body, /class="mt-3 text-xs text-zinc-500 dark:text-zinc-400"/,
+    'the standing card\'s small grey note style');
+
+  const prOut = render({ kind: 'prs', rows: [] });
+  const prBody = prOut.slice(prOut.indexOf('id="leaderboard-body"'));
+  assert.ok(prBody.includes(`>${note}</p>`), 'the note shows on Top changes too');
+
+  // No ranks on screen, nothing to explain.
+  assert.ok(!render({ kind: 'empty', message: 'No kudos yet.' }).includes(note),
+    'an empty list carries no note');
+  assert.ok(!render({
+    kind: 'history',
+    chips: [{ key: 'given', label: 'Given', on: true }],
+    list: { kind: 'empty', message: 'Nothing yet.' },
+    more: null,
+  }).includes(note), 'My history is not a ranking and carries no note');
 });

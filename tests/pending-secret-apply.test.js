@@ -1,17 +1,18 @@
-// The merge-time half of the declare-a-new-variable flow: where
-// routes/votes.js finalizeMerge() applies the value a proposal carried,
-// and how the staging build and the pre-merge check treat a value that
-// hasn't landed yet.
+// The merge-time half of the declare-a-new-variable flow: where the
+// merge-followups machine (src/workflow/merge-followups/machine.ts) applies
+// the value a proposal carried, and how the staging build and the pre-merge
+// check treat a value that hasn't landed yet.
 //
 // ORDER IS THE WHOLE POINT of the first test. A child app's newly
-// `required` secret must be in `app_secrets` BEFORE
-// staging.rebuildProduction runs mergeForDeploy — otherwise the merge
-// throws MissingSecretsError and parks the app in `awaiting_secrets` over
-// its own change, which looks exactly like a broken feature.
+// `required` secret must be in `app_secrets` BEFORE app-delivery's deploy
+// runs mergeForDeploy, otherwise the deploy throws MissingSecretsError and
+// parks the app in `awaiting_secrets` over its own change, which looks
+// exactly like a broken feature.
 //
-// finalizeMerge needs a live pool, a GitHub merge and the whole
-// broadcast fan-out to run, so this is text-pinning like
-// tests/platform-env-vote.test.js.
+// The machine's behaviour against PostgreSQL (the values written, the lines
+// said, a refused value discarded) is in
+// tests/workflow-merge-followups-postgres.test.js; this file pins the shape
+// of the source like tests/platform-env-vote.test.js.
 //
 // Run with: node --test tests/pending-secret-apply.test.js
 
@@ -21,59 +22,63 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.join(__dirname, '..');
-const votesJs = fs.readFileSync(path.join(root, 'src/routes/votes.js'), 'utf8');
+const machineTs = fs.readFileSync(path.join(root, 'src/workflow/merge-followups/machine.ts'), 'utf8');
 const stagingJs = fs.readFileSync(path.join(root, 'src/services/staging.js'), 'utf8');
-const lifecycleJs = fs.readFileSync(path.join(root, 'src/services/session-lifecycle.js'), 'utf8');
+const proposalTs = fs.readFileSync(path.join(root, 'src/workflow/proposal/machine.ts'), 'utf8');
 
-const finalizeMerge = (() => {
-  const start = votesJs.indexOf('async function finalizeMerge(');
-  assert.notStrictEqual(start, -1, 'finalizeMerge not found');
-  const end = votesJs.indexOf('\nasync function checkAndMerge(', start);
-  assert.notStrictEqual(end, -1, 'end of finalizeMerge not found');
-  return votesJs.slice(start, end);
-})();
+const slice = (src, from, to) => {
+  const start = src.indexOf(from);
+  assert.notStrictEqual(start, -1, `${from} not found`);
+  const end = src.indexOf(to, start + from.length);
+  assert.notStrictEqual(end, -1, `end of ${from} not found`);
+  return src.slice(start, end);
+};
 
-test('the pending value is applied BEFORE the production rebuild', () => {
-  const applyAt = finalizeMerge.indexOf('pendingSecrets.applyForSession');
-  const rebuildAt = finalizeMerge.indexOf('staging.rebuildProduction');
-  assert.ok(applyAt > 0, 'finalizeMerge must apply pending declarations');
-  assert.ok(rebuildAt > 0, 'and still rebuild production');
-  assert.ok(applyAt < rebuildAt,
-    'a newly required secret must exist before mergeForDeploy looks for it');
+// The transition that marks a change merged, and the write that applies its
+// declared values.
+const merged = slice(machineTs, 'function merged(', '\n}\n');
+const writeSecrets = slice(machineTs, 'async function writeSecrets(', '\n}\n');
+
+test('the pending value is applied in the transition that asks for the deploy', () => {
+  assert.match(machineTs, /secrets: \(tx, w, ctx\) => writeSecrets\(tx, w, deps\.dataKey, ctx\)/,
+    'the secrets write is the machine\'s own domain write');
+  assert.match(writeSecrets, /applyInTransaction\(tx, \{ sessionId: w\.sessionId, dataKey \}\)/,
+    'applied inside the transition\'s transaction');
+  // The deploy is a message to app-delivery, sent by the outbox only once
+  // the transition (and so the values) has committed.
+  assert.match(merged, /writes: \[\{ type: 'secrets', eventId: e\.id, sessionId: d\.sessionId, appId: d\.appId \}/);
+  // The proposal machine hears it merged, and the app's merge queue goes
+  // on, in the same outcome.
+  assert.match(merged, /const messages = \[toProposal\(d\), \.\.\.\(d\.delivery \? \[deliveryRequest\(d, reuse\)\] : \[\]\), toQueue\(d, 'merged'\)\]/);
+  assert.match(merged, /work, messages, push,/, 'the same outcome carries both');
 });
 
-test('the apply is best-effort — a failure never breaks a merge that already happened', () => {
-  const block = finalizeMerge.slice(
-    finalizeMerge.indexOf('pendingSecrets.applyForSession') - 400,
-    finalizeMerge.indexOf('staging.rebuildProduction')
-  );
-  assert.match(block, /try \{/);
-  assert.match(block, /catch \(err\) \{/);
-  assert.match(block, /log\.error\('votes', 'Pending secret-declaration apply failed'/);
+test('a value that cannot be written is said in the thread, not swallowed', () => {
+  assert.match(writeSecrets, /for \(const r of refused\)/);
+  assert.match(writeSecrets, /Couldn't apply the value declared with this proposal for \$\{r\.key\}: \$\{r\.reason\}/);
 });
 
 test('the chat wording tells the truth about when each scope takes effect', () => {
   // Promising a redeploy the platform path deliberately never performs is
   // how someone concludes the feature is broken while watching for an
   // immediate change.
-  assert.match(finalizeMerge, /takes effect on the platform's next deploy/);
-  assert.match(finalizeMerge, /was declared and set by this proposal; redeploying…/);
+  assert.match(writeSecrets, /takes effect on the platform's next deploy/);
+  assert.match(writeSecrets, /was declared and set by this proposal; redeploying…/);
 });
 
 test('a platform apply records the platform-env event with its own appliedBy', () => {
-  assert.match(finalizeMerge, /EVENT_TYPES\.PLATFORM_ENV_CHANGED/);
-  assert.match(finalizeMerge, /appliedBy: 'declaration-proposal'/,
+  assert.match(writeSecrets, /'platform_env_changed'/);
+  assert.match(writeSecrets, /appliedBy: 'declaration-proposal'/,
     'so the audit trail distinguishes it from admin-direct and group-vote');
-  const eventBlock = finalizeMerge.slice(finalizeMerge.indexOf("appliedBy: 'declaration-proposal'") - 400,
-    finalizeMerge.indexOf("appliedBy: 'declaration-proposal'") + 60);
+  const eventBlock = writeSecrets.slice(writeSecrets.indexOf("'platform_env_changed'"),
+    writeSecrets.indexOf("appliedBy: 'declaration-proposal'") + 60);
   assert.ok(!/value/.test(eventBlock.replace(/valueApplied|hadValue/g, '')),
-    'the event carries the key and its privacy flag — never the value');
+    'the event carries the key and its privacy flag, never the value');
 });
 
-test('only the platform branch skips the rebuild (unchanged behaviour)', () => {
-  assert.match(finalizeMerge, /if \(!app\.self_hosted\) \{/);
-  const selfHostedNote = finalizeMerge.slice(finalizeMerge.indexOf('} else {'), finalizeMerge.indexOf('} else {') + 400);
-  assert.match(selfHostedNote, /host deployer will roll/);
+test('only the platform\'s own app is not delivered by app-delivery (unchanged behaviour)', () => {
+  assert.match(merged, /\.\.\.\(!app\.selfHosted \? \{ delivery: DELIVERY \} : \{\}\)/);
+  assert.match(merged, /app\.selfHosted \? \[\{ kind: WORK\.nudge/, 'the host deployer is nudged instead');
 });
 
 test('staging injects pending NON-private values into the proposal\'s own preview', () => {
@@ -91,12 +96,12 @@ test('staging injects pending NON-private values into the proposal\'s own previe
 });
 
 test('a withdrawn proposal discards its held value', () => {
-  const archive = lifecycleJs.slice(
-    lifecycleJs.indexOf('async function archiveSession('),
-    lifecycleJs.indexOf('// Reverse an archive')
-  );
-  assert.match(archive, /discardForSession\(pool, sessionId\)/);
-  assert.match(archive, /catch/, 'and never fails the archive itself');
+  // A close is the proposal machine's (src/workflow/proposal/machine.ts):
+  // the held value is discarded in the close's own transaction, so it
+  // cannot outlive the proposal and cannot fail the close half-way.
+  const closed = slice(proposalTs, '  closed: async (tx: Tx, w: any, ctx: WriteContext) => {', '\n  },\n');
+  assert.match(closed, /UPDATE pending_secret_declarations SET status = 'discarded', value_enc = NULL\s+WHERE session_id = \$1 AND status = 'pending'/);
+  assert.match(closed, /\[w\.sessionId\]/, 'scoped to THIS proposal');
 });
 
 test('the pre-merge check counts a value carried by THIS session', () => {

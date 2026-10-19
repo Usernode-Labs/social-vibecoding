@@ -630,6 +630,103 @@ test('a per-test excerpt clips at its cap rather than growing unbounded', () => 
   assert.match(details[0].excerpt, /…$/);
 });
 
+// A test that failed because its subtests did says "2 subtests failed" in
+// its own block and nothing else. node:test prints the subtests above it,
+// indented, each with its own block; the excerpt names them and shows
+// their errors (16 October 2026: a red row that named only the parent sent
+// the fix turn back to re-run the file).
+const nestedFail = (name, file) => [
+  `# Subtest: ${name}`,
+  '    # Subtest: passes',
+  '    ok 1 - passes',
+  '      ---',
+  '      duration_ms: 0.5',
+  '      ...',
+  '    # Subtest: keeps the count',
+  '    not ok 2 - keeps the count',
+  '      ---',
+  '      duration_ms: 1.4',
+  "      type: 'test'",
+  `      location: '${WS}/${file}:6:11'`,
+  "      failureType: 'testCodeFailure'",
+  "      error: '41 !== 42'",
+  "      code: 'ERR_ASSERTION'",
+  '      expected: 42',
+  '      actual: 41',
+  '      stack: |-',
+  ...Array.from({ length: 6 }, (_, i) => `        frame${i} (${WS}/${file}:${6 + i}:3)`),
+  '      ...',
+  '    # Subtest: renames',
+  '        # Subtest: quotes TAP in its message',
+  '        not ok 1 - quotes TAP in its message',
+  '          ---',
+  `          location: '${WS}/${file}:9:14'`,
+  "          failureType: 'testCodeFailure'",
+  '          error: |-',
+  '            expected the log to read',
+  '                not ok 7 - a test that is not one',
+  '          ...',
+  '        # Subtest: later',
+  '        not ok 2 - later # SKIP',
+  '          ---',
+  '          ...',
+  '        1..2',
+  '    not ok 3 - renames',
+  '      ---',
+  `      location: '${WS}/${file}:8:11'`,
+  "      failureType: 'subtestsFailed'",
+  "      error: '1 subtest failed'",
+  '      ...',
+  '    1..3',
+  `not ok 1 - ${name}`,
+  '  ---',
+  `  location: '${WS}/${file}:4:1'`,
+  "  failureType: 'subtestsFailed'",
+  "  error: '2 subtests failed'",
+  "  code: 'ERR_TEST_FAILURE'",
+  '  ...',
+].join('\n');
+
+test('a test whose subtests failed names them and shows their errors first', () => {
+  const stdout = tapRun([nestedFail('kudos', 'tests/kudos.test.js'), tapFail(2, 'plain', 'tests/plain.test.js')], { fail: 4 });
+  const { reason, named, details } = unitSuite.failureOutcomeParts(stdout, '');
+  // The reason and the names main-watch reads are the top-level tests'.
+  assert.match(reason, /^tests\/kudos\.test\.js \(1\): kudos \| tests\/plain\.test\.js \(1\): plain \| /);
+  assert.deepEqual(named.tests.map((t) => t.test), ['kudos', 'plain']);
+  const ex = details[0].excerpt;
+  // A parent that failed only because its subtests did is not named, nor is
+  // a skipped one, nor a line an error message quotes.
+  assert.equal(ex.split('\n')[0], 'Failing subtests (2): keeps the count; renames › quotes TAP in its message');
+  assert.match(ex, /— keeps the count —\n {2}location: 'tests\/kudos\.test\.js:6:11'\n/, 'its location, relative');
+  assert.match(ex, /error: '41 !== 42'\n {2}code: 'ERR_ASSERTION'\n {2}expected: 42\n {2}actual: 41/);
+  assert.match(ex, /frame2 \(tests\/kudos\.test\.js:8:3\)\n {2}… 3 more stack lines/, 'a shorter stack');
+  assert.doesNotMatch(ex, /duration_ms: 1\.4/, 'no timing');
+  assert.match(ex, /— renames › quotes TAP in its message —\n[^]*not ok 7 - a test that is not one/);
+  assert.match(ex, /— the test itself —\n[^]*error: '2 subtests failed'/);
+  assert.doesNotMatch(ex, /later/);
+  // get_proposal previews an excerpt's first characters: they say which
+  // subtest broke and how.
+  const preview = ex.slice(0, unitSuiteRow.MAX_INLINE_EXCERPT_CHARS);
+  assert.match(preview, /keeps the count[^]*41 !== 42/);
+  // A test without subtests reads as it always did.
+  assert.match(details[1].excerpt, /^ {2}duration_ms: 1\.25\n/);
+  assert.doesNotMatch(details[1].excerpt, /Failing subtests/);
+});
+
+test('a test with many failing subtests names the first ten and counts the rest', () => {
+  const subs = Array.from({ length: 13 }, (_, i) => [
+    `    not ok ${i + 1} - case ${i + 1}`,
+    '      ---',
+    `      error: 'case ${i + 1} broke'`,
+    '      ...',
+  ]).flat();
+  const stdout = ['# Subtest: table', ...subs, 'not ok 1 - table', '  ---', "  error: '13 subtests failed'", '  ...'].join('\n');
+  const { details } = unitSuite.failureOutcomeParts(stdout, '');
+  const first = details[0].excerpt.split('\n')[0];
+  assert.match(first, /^Failing subtests \(13\): case 1; case 2;[^]*; case 10; \+3 more$/);
+  assert.ok(details[0].excerpt.length <= unitSuiteRow.MAX_TEST_EXCERPT_CHARS);
+});
+
 test('a failing run with no readable blocks still answers an empty inventory', () => {
   assert.deepEqual(unitSuite.unitFailureDetails([]), { details: [], truncated: false });
 });
@@ -683,4 +780,27 @@ test('a harvested Job outcome keeps the same excerpts', async () => {
   assert.equal(out.row.failureDetails[0].file, 'tests/harvested.test.js');
   assert.equal(out.row.failureDetails[0].test, 'harvested regression');
   assert.match(out.row.failureDetails[0].excerpt, /error: 'boom'/);
+});
+
+// ── strict (the preview machine's checks runs) ─────────────────────────
+
+function strictRun(t, { pkg = async () => '{"scripts":{"test":"node --test"}}', graduated = false }) {
+  const github = require('../src/services/github');
+  const history = require('../src/services/check-history');
+  t.mock.method(github, 'isEnabled', () => true);
+  t.mock.method(github, 'getFileContent', pkg);
+  t.mock.method(history, 'loadGraduated', async () => new Set(graduated
+    ? [require('../src/services/app-manifest').checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH)] : []));
+  return unitSuite.maybeRunUnitSuite({ config: {}, pool: { query: async () => ({ rows: [] }) }, appId: 10, sessionId: 7,
+    repoOwner: 'example', repoName: 'repo', ref: 'a'.repeat(40), strict: true });
+}
+
+test('strict: only an absent package.json exempts the suite; a read error is a suite that could not run', async (t) => {
+  assert.equal(await strictRun(t, { pkg: async () => null }), null, 'verifiably absent: nothing to run');
+  t.mock.restoreAll();
+  const out = await strictRun(t, { graduated: true, pkg: async () => { throw Object.assign(new Error('Bad gateway'), { status: 502 }); } });
+  assert.equal(out.row.couldNotRun, true);
+  assert.equal(out.row.advisory, false, 'a suite that blocks merges, so the run is an error rather than a pass without it');
+  assert.match(out.row.failureReason, /package\.json could not be read \(Bad gateway\)/);
+  assert.equal(out.history, null, 'a suite that never ran records nothing');
 });

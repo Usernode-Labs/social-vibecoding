@@ -12,6 +12,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
@@ -27,46 +28,51 @@ let bell = null;
 function loadBell() {
   if (bell) return bell;
   if (!globalThis.window) globalThis.window = globalThis;
+  globalThis.PlatformI18n = englishPlatformI18n();
   loadTsx('frontend/src/features/notifications/notifications.js');
   bell = globalThis.window.Notifications;
   return bell;
 }
 
 const AT = new Date(Date.now() - 60 * 1000).toISOString();
+const notifyCopy = require('../src/services/homeroom-bot-notify-copy');
+// "One story" (section 2.2): what each moment says, from the metadata the
+// bot's message carries: [metadata, push title, push body, bell label, bell
+// subject]. The full table of variants is tests/homeroom-bot-notify-copy.test.js.
+const D = (metadata) => notifyCopy.botNotificationDetail({ appName: 'Plant Pal', requestTitle: 'Dark mode', ...metadata });
 const MOMENT_WORDS = [
-  ['hrbot:question:Plant Pal', 'Plant Pal: I have a question'],
-  ['hrbot:ready:Plant Pal', 'Plant Pal is ready to try'],
-  ['hrbot:ready_group:Supper Club', 'Your change to Supper Club is ready to try'],
-  // Built, but its before & after shots show part of it failing: never "ready to try".
-  ['hrbot:ready_broken:Flat 4B Chores', 'Flat 4B Chores is built, but not everything works yet'],
-  // WP-F: a stop says which one, and what is next; never a bare "didn't finish".
-  ['hrbot:stopped:Plant Pal', 'Plant Pal: your change stopped. I said why in our chat'],
-  // 5 Oct 2026: what the DM it opens ends with. Never "A person can pick it up".
-  ['hrbot:stopped_build:Plant Pal', 'Plant Pal: I couldn\'t finish building it. Reply and I\'ll try again'],
-  ['hrbot:stopped_build:', 'I couldn\'t finish building it. Reply and I\'ll try again'],
-  ['hrbot:stopped_blocked:Plant Pal', 'Plant Pal: I can\'t build it as written. Tell me more'],
-  ['hrbot:stopped_person:Plant Pal', 'Plant Pal: this needs a person to decide'],
-  ['hrbot:stopped_empty:Plant Pal', 'Plant Pal: I couldn\'t find anything to build. Tell me more'],
-  ['hrbot:stopped_first:Plant Pal', 'Plant Pal: I couldn\'t start building it. You can still post a request'],
-  ['hrbot:stopped_preview:Plant Pal', 'Plant Pal: the preview didn\'t start. I\'m trying again'],
-  ['hrbot:stopped_look:Plant Pal', 'Plant Pal: it\'s built, but it needs a look before you can try it'],
-  ['hrbot:held:Plant Pal', 'Plant Pal: I\'ll start it on Monday'],
-  ['hrbot:held:', 'I\'ve paused until Monday'],
-  ['hrbot:live:Plant Pal', 'Your change to Plant Pal is live'],
-  ['hrbot:live_first:Plant Pal', 'Plant Pal is live'],
-  // WP-F: "live" only once the app answers on it.
-  ['hrbot:live_soon:Plant Pal', 'Your change to Plant Pal is going live'],
-  ['hrbot:live_first_soon:Plant Pal', 'Plant Pal is going live'],
+  // 16 Oct 2026: a needs-you is headed by what it asks for.
+  [D({ moment: 'needs_you', said: 'question' }), 'Dark mode · Plant Pal', 'I have a question before I build it.', 'Question for you', 'Dark mode'],
+  [D({ moment: 'needs_you', said: 'plan' }), 'Dark mode · Plant Pal', 'My plan is ready. Tap Build it if it looks right.', 'Plan to approve', 'Dark mode'],
+  [D({ moment: 'ready', said: 'ready' }), 'Dark mode · Plant Pal', 'Ready to try. Try it, and approve it if you\'re happy.', 'Ready to try', 'Dark mode'],
+  [D({ moment: 'ready', said: 'ready_group', appName: 'Supper Club', waiting: 'you and @ada' }), 'Dark mode · Supper Club',
+    'Ready to try. It goes live once you and @ada say yes.', 'Ready to try', 'Dark mode'],
+  // Built, but its before & after shots show part of it failing: never just "ready to try".
+  [D({ moment: 'ready', said: 'ready_broken', appName: 'Flat 4B Chores', ready: { broken: ['Rota'] } }), 'Dark mode · Flat 4B Chores',
+    'Built, but one thing isn\'t working yet. Try it to see.', 'Ready to try', 'Dark mode'],
+  // A stop says which one, and what is next; never "A person can pick it up".
+  [D({ moment: 'stopped', said: 'build_other' }), 'Dark mode · Plant Pal', 'Stopped: something went wrong while I was building. Tap Try again.', 'Stopped', 'Dark mode'],
+  [D({ moment: 'stopped', said: 'needs_look' }), 'Dark mode · Plant Pal', 'Stopped: it\'s built, but a person needs to look at it before you can try it.', 'Stopped', 'Dark mode'],
+  [D({ moment: 'on_hold', said: 'allowance', count: 2 }), '2 requests on hold', 'On hold until Monday: your building time for this week is used up.', 'On hold', '2 requests on hold'],
+  [D({ moment: 'live', said: 'live' }), 'Dark mode · Plant Pal', 'It\'s live. Open Plant Pal to see it.', 'Live', 'Dark mode'],
+  [D({ moment: 'live', said: 'live_first', firstVersion: true }), 'Plant Pal', 'Your first version is live. Open Plant Pal to try it.', 'Live', 'Plant Pal first version'],
+  // A message that said it before the change was live keeps its words.
+  [D({ moment: 'live', said: 'live_soon' }), 'Dark mode · Plant Pal', 'It\'s going live now. Open Plant Pal in a few minutes to see it.', 'Live', 'Dark mode'],
+  // A row written before "one story" keeps reading, as the moment it is.
+  ['hrbot:question:Plant Pal', 'Plant Pal', 'I have a question before I build it.', 'Needs you', 'Plant Pal'],
+  ['hrbot:stopped_build:Plant Pal', 'Plant Pal', 'Stopped: something went wrong while I was building. Tap Try again.', 'Stopped', 'Plant Pal'],
+  ['hrbot:held:', 'Homeroom bot', 'On hold until Monday: I\'ve used my budget for this week.', 'On hold', 'Homeroom bot'],
+  ['hrbot:live_first:Plant Pal', 'Plant Pal', 'Your first version is live. Open Plant Pal to try it.', 'Live', 'Plant Pal first version'],
 ];
 
-test('B4: each moment\'s push is from Homeroom bot and says what happened, in plain words', () => {
-  for (const [detail, body] of MOMENT_WORDS) {
-    for (const kind of ['conversation_message', 'conversation_reply']) {
+test('B4: each moment\'s push names the request and its project and says what happened, in plain words', () => {
+  for (const [detail, title, body] of MOMENT_WORDS) {
+    for (const kind of ['conversation_message', 'conversation_reply', 'build_ready', 'build_stopped']) {
       const copy = policy.buildNotificationCopy(kind, {
         sourceUsername: 'homeroom_bot', sourceIsSynthetic: true, detail,
         messageContent: '**Plant Pal** · request #4: Sort by date\n\nIt\'s built.',
       });
-      assert.deepEqual(copy, { title: 'Homeroom bot', body }, `${kind} ${detail}`);
+      assert.deepEqual(copy, { title, body }, `${kind} ${detail}`);
     }
   }
   // Its answer to what somebody wrote is its words, without their markdown.
@@ -79,6 +85,8 @@ test('B4: each moment\'s push is from Homeroom bot and says what happened, in pl
     const copy = policy.buildNotificationCopy('conversation_message', { sourceIsSynthetic: true, sourceUsername: 'homeroom_bot', detail });
     assert.ok(!/[*`]|@homeroom_bot/.test(`${copy.title} ${copy.body}`), detail);
   }
+  // A build moment with no detail at all still says which moment it is.
+  assert.deepEqual(policy.buildNotificationCopy('build_live', {}), { title: 'Homeroom bot', body: 'It\'s live.' });
 });
 
 test('B4: only the platform\'s own account words a message by its moment; a person\'s message is theirs', () => {
@@ -92,41 +100,96 @@ test('B4: only the platform\'s own account words a message by its moment; a pers
   assert.deepEqual(unknown, { title: '@homeroom_bot replied to you', body: 'Hello' }, 'a moment this build cannot read says what it said');
 });
 
-test('B4: the bell words each moment as the push does, under the bot\'s name, and never folds them', () => {
+test('B4: the bell heads each moment as the push names it, under the project and the bot, and never folds them', () => {
   const N = loadBell();
-  for (const [detail, body] of MOMENT_WORDS) {
-    const view = N._rowView({
-      id: 1, createdAt: AT, readAt: null, kind: 'conversation_reply', detail, conversationId: 7,
-      conversationKind: 'direct', sourceUsername: 'homeroom_bot', messageContent: '**Plant Pal** · request #4',
-    });
-    assert.equal(view.label, 'Homeroom bot', detail);
-    assert.deepEqual(view.segments.map((s) => s.v), [body], detail);
-    assert.equal(view.by, null, 'the name leads; no "by @homeroom_bot" under it');
-    assert.equal(view.conversation, true, 'still a Messages row');
+  for (const [detail, , , label, subject] of MOMENT_WORDS) {
+    for (const kind of ['conversation_reply', 'build_ready']) {
+      const view = N._rowView({
+        id: 1, createdAt: AT, readAt: null, kind, detail, conversationId: 7,
+        conversationKind: 'direct', sourceUsername: 'homeroom_bot', messageContent: '**Plant Pal** · request #4',
+      });
+      assert.equal(view.label, label, detail);
+      assert.deepEqual(view.segments.map((s) => s.v), [subject], detail);
+      const app = notifyCopy.parseBotDetail(detail).appName;
+      assert.equal(view.appLine, app ? `${app} · Homeroom bot` : 'Homeroom bot', `${detail}: the project, then who it is from`);
+      assert.equal(view.by, null, 'no "by @homeroom_bot" under it');
+      assert.equal(view.conversation, true, 'still a Messages row');
+    }
   }
   const reply = N._rowView({
     id: 2, createdAt: AT, readAt: null, kind: 'conversation_reply', detail: 'hrbot:reply:', conversationId: 7,
     conversationKind: 'direct', sourceUsername: 'homeroom_bot', messageContent: 'Yes, **Pin notes** is up.',
   });
   assert.deepEqual([reply.label, reply.segments[0].v], ['Homeroom bot', 'Yes, Pin notes is up.']);
+  // A build row without a detail is its moment, from Homeroom bot.
+  const bare = N._rowView({ id: 4, createdAt: AT, readAt: null, kind: 'build_stopped', detail: null, conversationId: 7, conversationKind: 'direct' });
+  assert.deepEqual([bare.label, bare.segments[0].v], ['Stopped', 'Homeroom bot']);
   const views = N._screenViews([
-    { id: 3, createdAt: AT, kind: 'conversation_message', detail: 'hrbot:live:Plant Pal', conversationId: 7, conversationKind: 'direct' },
+    { id: 3, createdAt: AT, kind: 'conversation_message', detail: D({ moment: 'live', said: 'live' }), conversationId: 7, conversationKind: 'direct' },
     { id: 2, createdAt: AT, kind: 'conversation_message', detail: 'hrbot:question:Plant Pal', conversationId: 7, conversationKind: 'direct' },
     { id: 1, createdAt: AT, kind: 'conversation_message', detail: null, conversationId: 7, conversationKind: 'direct', sourceUsername: 'ada', messageContent: 'a' },
     { id: 0, createdAt: AT, kind: 'conversation_message', detail: null, conversationId: 7, conversationKind: 'direct', sourceUsername: 'ada', messageContent: 'b' },
   ]);
-  assert.deepEqual(views.map((v) => v.count || 1), [1, 1, 2], '"is live" does not hide "I have a question"; a person\'s run still folds');
+  assert.deepEqual(views.map((v) => v.count || 1), [1, 1, 2], '"is live" does not hide "needs you"; a person\'s run still folds');
+});
+
+test('16 Oct 2026: a bot row names its request by title, else by number, with the number beside the project', () => {
+  const N = loadBell();
+  const view = (meta) => N._rowView({
+    id: 1, createdAt: AT, readAt: null, kind: 'build_needs_you', detail: notifyCopy.botNotificationDetail({ appName: 'Homeroom', ...meta }),
+    conversationId: 7, conversationKind: 'direct',
+  });
+  const titled = view({ moment: 'needs_you', said: 'question', requestTitle: 'Show slots by state', issueNumber: 5308 });
+  assert.deepEqual([titled.label, titled.segments[0].v, titled.appLine],
+    ['Question for you', 'Show slots by state', 'Homeroom · #5308 · Homeroom bot']);
+  const untitled = view({ moment: 'needs_you', said: 'decide', issueNumber: 5308 });
+  assert.deepEqual([untitled.label, untitled.segments[0].v, untitled.appLine], ['Your decision', 'Request #5308', 'Homeroom · Homeroom bot'],
+    'never "Needs you / Homeroom / Homeroom · Homeroom bot"');
+  const waiting = view({ moment: 'needs_you', said: 'decide_others', deciders: ['ada'], requestTitle: 'Dark mode', issueNumber: 4 });
+  assert.equal(waiting.label, 'Waiting on @ada');
+  // Each ask is the push module's word for it.
+  for (const [said, words] of Object.entries(notifyCopy.NEEDS_YOU_ASKS)) {
+    assert.equal(view({ moment: 'needs_you', said, requestTitle: 'Dark mode' }).label, words, said);
+  }
+});
+
+test('one story: a bell row or push tap opens the request\'s thread in the chat with the bot', () => {
+  const N = loadBell();
+  const row = (extra) => ({ id: 1, createdAt: AT, conversationId: 9, conversationKind: 'direct', ...extra });
+  // The thread its message is in.
+  assert.equal(N._conversationHref(row({ kind: 'build_ready', conversationMessageId: 80, conversationThreadRootId: 77, detail: D({ moment: 'ready' }) })),
+    '#messages/9/thread/77');
+  // Or the card the detail names.
+  assert.equal(N._conversationHref(row({ kind: 'build_needs_you', conversationMessageId: 80, detail: D({ moment: 'needs_you', threadRootId: 76 }) })),
+    '#messages/9/thread/76');
+  // Or the message itself (the chat opens its thread from it).
+  assert.equal(N._conversationHref(row({ kind: 'build_live', conversationMessageId: 80, detail: 'hrbot:live:Plant Pal' })), '#messages/9/m/80');
+  assert.equal(N._conversationHref(row({ kind: 'build_live', detail: null })), '#messages/9');
+  // A moment that rang as a message (an older row) lands the same way; a person's message still opens the chat.
+  assert.equal(N._conversationHref(row({ kind: 'conversation_message', conversationMessageId: 80, detail: 'hrbot:question:Plant Pal' })), '#messages/9/m/80');
+  assert.equal(N._conversationHref(row({ kind: 'conversation_message', conversationMessageId: 80, detail: null })), '#messages/9');
 });
 
 test('B4: the push and the bell keep one copy of the words', () => {
-  const server = fs.readFileSync(require.resolve('../src/services/mobile-push-policy.js'), 'utf8');
-  const client = fs.readFileSync(require.resolve('../frontend/src/features/notifications/notifications.js'), 'utf8');
-  const words = (src) => {
-    const body = src.slice(src.indexOf('const words = {'), src.indexOf('}[m[1]]'));
-    return body.split('\n').map((l) => l.trim()).filter((l) => /^[a-z_]+: app \?/.test(l));
-  };
-  assert.equal(words(server).length, 17);
-  assert.deepEqual(words(client), words(server));
+  const N = loadBell();
+  // The bell's moment labels are catalog entries (notifications:row.bot.label.*):
+  // each says exactly what the push module's label says.
+  const ids = { needs_you: 'needsYou', ready: 'ready', stopped: 'stopped', on_hold: 'onHold', live: 'live', done_elsewhere: 'doneElsewhere' };
+  for (const [moment, label] of Object.entries(notifyCopy.BELL_LABELS)) {
+    assert.equal(message(`notifications:row.bot.label.${ids[moment]}`), label, moment);
+  }
+  assert.equal(message('notifications:row.bot.subject.firstVersion', { project: 'Plant Pal' }), 'Plant Pal first version');
+  assert.equal(message('notifications:row.bot.meta', { project: 'Plant Pal' }), 'Plant Pal · Homeroom bot');
+  // And every variant's row is headed and titled as the push module heads it.
+  for (const [moment, saids] of Object.entries(notifyCopy.SAID_BY_MOMENT)) {
+    for (const said of saids) {
+      const first = /first/.test(said);
+      const detail = D({ moment, said, firstVersion: first, count: moment === 'on_hold' ? 3 : undefined });
+      const server = notifyCopy.botMomentCopy(detail);
+      const view = N._rowView({ id: 1, createdAt: AT, kind: 'build_ready', detail, conversationId: 7, conversationKind: 'direct' });
+      assert.deepEqual([view.label, view.segments[0].v, view.appLine], [server.bellLabel, server.bellSubject, server.bellMeta], `${moment}/${said}`);
+    }
+  }
 });
 
 test('B4: which of the bot\'s messages ring, by kind', () => {
@@ -197,8 +260,12 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
   const { rows: rang } = await pool.query(
     'SELECT kind, detail FROM notifications WHERE user_id = $1 ORDER BY id', [maya.id],
   );
-  assert.deepEqual(rang.map((r) => r.detail), [
-    'hrbot:question:Plant Pal', 'hrbot:ready:Plant Pal', 'hrbot:live_first:Plant Pal',
+  const moments = (rows) => rows.map((r) => {
+    const d = notifyCopy.parseBotDetail(r.detail);
+    return d ? `${d.moment}/${d.said}:${d.appName}` : r.detail;
+  });
+  assert.deepEqual(moments(rang), [
+    'needs_you/question:Plant Pal', 'ready/ready_first:Plant Pal', 'live/live_first:Plant Pal',
   ], 'needs your answer, ready, live: nothing else');
   // WP-E: each as its build moment's own kind, in the "Your builds" category.
   assert.deepEqual(rang.map((r) => r.kind), ['build_needs_you', 'build_ready', 'build_live']);
@@ -220,7 +287,7 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
     metadata: { kind: 'merged', appSlug: supper.slug, appName: supper.name, issueNumber: 4 },
   });
   const { rows: benRang } = await pool.query('SELECT detail FROM notifications WHERE user_id = $1 ORDER BY id', [ben.id]);
-  assert.deepEqual(benRang.map((r) => r.detail), ['hrbot:ready_group:Supper Club', 'hrbot:live:Supper Club']);
+  assert.deepEqual(moments(benRang), ['ready/ready_group:Supper Club', 'live/live:Supper Club']);
 
   await t.test('"it\'s built" waits until the change is ready to try, and is said once per approval round', async () => {
     const { rows: [app] } = await pool.query('SELECT id, slug, name FROM apps WHERE slug = $1', [plantPal.slug]);
@@ -247,54 +314,144 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
       'the change went up with its checks still running: nothing yet');
     assert.equal(await dm.untaggedRequester(pool, { appId: app.id, issueNumber: 9, bot, told }), maya.username,
       'and the post on the request does not tag her instead');
-    assert.equal(await dm.noteChangeReady(pool, change.id, { bot, domain: 'x' }), null, 'still pending: not ready');
+    // Whether it is ready is the bot's change machine's to decide, from the
+    // row (src/workflow/bot-change/, rules/bot-readiness.ts); the card is
+    // tellReady's to send once it has.
+    const rules = require('../src/workflow/rules/bot-readiness.ts');
+    const rowOf = async () => (await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [change.id])).rows[0];
+    assert.equal(rules.readiness(await rowOf(), Date.now()).ready, false, 'still pending: not ready');
 
     await pool.query(`UPDATE chat_sessions SET check_state = 'passing' WHERE id = $1`, [change.id]);
-    const ready = await dm.noteChangeReady(pool, change.id, { bot, domain: 'x' });
+    assert.equal(rules.readiness(await rowOf(), Date.now()).ready, true);
+    const ready = await dm.tellReady(pool, change.id, { epoch: 0, deps: { bot, domain: 'x' } });
     assert.ok(ready?.messageId, 'checks passed: ready to try');
     const { rows: [msg] } = await pool.query('SELECT idempotency_key, metadata FROM conversation_messages WHERE id = $1', [ready.messageId]);
     assert.equal(msg.idempotency_key, `hrbot-ready-${change.id}-0`);
     assert.equal(msg.metadata.homeroomBot.kind, 'proposal');
-    const again = await dm.noteChangeReady(pool, change.id, { bot, domain: 'x' });
+    const again = await dm.tellReady(pool, change.id, { epoch: 0, deps: { bot, domain: 'x' } });
     assert.equal(again.duplicate, true, 'a second verdict on the same round says nothing new');
+    // trace-bot-notes bug 1: the DM went out and its process ended before
+    // it was recorded. The retry finds it sent and records it now (the
+    // activity card reads the record), saying nothing new.
+    const recorded = () => pool.query(`SELECT 1 FROM homeroom_bot_dm_messages WHERE message_id = $1 AND kind = 'proposal'`, [ready.messageId]);
+    assert.equal((await recorded()).rowCount, 1);
+    await pool.query('DELETE FROM homeroom_bot_dm_messages WHERE message_id = $1', [ready.messageId]);
+    const retried = await dm.tellReady(pool, change.id, { epoch: 0, deps: { bot, domain: 'x' } });
+    assert.deepEqual([retried.duplicate, retried.messageId], [true, ready.messageId]);
+    assert.equal((await recorded()).rowCount, 1, 'recorded by the retry');
     const { rows: rang } = await pool.query('SELECT detail FROM notifications WHERE user_id = $1 ORDER BY id OFFSET $2', [maya.id, before]);
-    assert.deepEqual(rang.map((r) => r.detail), ['hrbot:ready:Plant Pal'], 'one ring, when it was ready');
+    assert.deepEqual(moments(rang), ['ready/ready:Plant Pal'], 'one ring, when it was ready');
 
     // Approvals were cleared (it changed): ready again is news again.
     await pool.query('UPDATE chat_sessions SET approval_epoch = approval_epoch + 1 WHERE id = $1', [change.id]);
-    const next = await dm.noteChangeReady(pool, change.id, { bot, domain: 'x' });
+    assert.deepEqual(await dm.tellReady(pool, change.id, { epoch: 0, deps: { bot, domain: 'x' } }), { stale: true, notUp: true },
+      'the epoch it was decided for moved on: nothing sent, and the machine decides again');
+    const next = await dm.tellReady(pool, change.id, { epoch: 1, deps: { bot, domain: 'x' } });
     assert.ok(next?.messageId && !next.duplicate && next.messageId !== ready.messageId);
+    // A retry (or an admin's) after it merged or closed says nothing: no
+    // ready card, no Approve, the chip not moved back from Live.
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', live_at = COALESCE(merged_at, NOW()) WHERE id = $1`, [change.id]);
+    assert.deepEqual(await dm.tellReady(pool, change.id, { epoch: 1, deps: { bot, domain: 'x' } }), { stale: true, notUp: true });
+    await pool.query(`UPDATE chat_sessions SET status = 'promoted' WHERE id = $1`, [change.id]);
 
-    // Its preview will not start: she hears that once, never "ready".
+    // Its preview will not start: while it is tried again that is quiet (one
+    // story: no bell, no push), and never "ready".
     await pool.query(`UPDATE chat_sessions SET check_state = 'error' WHERE id = $1`, [change.id]);
-    assert.equal(await dm.noteChangeReady(pool, change.id, { bot, domain: 'x' }), null);
+    assert.equal(rules.readiness(await rowOf(), Date.now()).ready, false);
     const stuck = await dm.noteChangeStopped(pool, change.id, { deps: { bot } });
     const { rows: [stuckMsg] } = await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [stuck.messageId]);
     assert.match(stuckMsg.content, /its preview didn't start, so it isn't ready to try yet/);
-    const { rows: [last] } = await pool.query('SELECT detail FROM notifications WHERE user_id = $1 ORDER BY id DESC LIMIT 1', [maya.id]);
-    assert.equal(last.detail, 'hrbot:stopped_preview:Plant Pal', 'WP-F: which stop it was, so it can say what is next');
+    const { rows: quiet } = await pool.query('SELECT 1 FROM notifications WHERE conversation_message_id = $1', [stuck.messageId]);
+    assert.equal(quiet.length, 0, 'a retry is quiet: only a give-up rings');
+  });
+
+  await t.test('#5582: a plan names its request, from the requester row or Homeroom\'s copy', async () => {
+    const { rows: [app] } = await pool.query('SELECT id, slug, name FROM apps WHERE slug = $1', [plantPal.slug]);
+    // A requester row that kept no title, and Homeroom's own copy of the
+    // request it falls back to.
+    await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES ($1, 11, $2)', [app.id, maya.id]);
+    await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, created_by) VALUES ($1, 11, 'Show who was active this week on the hub', $2)`,
+      [app.id, maya.id],
+    );
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 11, 'live', 'ready') RETURNING id`,
+      [app.id],
+    );
+    const N = loadBell();
+    const rowView = (detail) => N._rowView({
+      id: 1, createdAt: AT, readAt: null, kind: 'build_needs_you', detail,
+      conversationId: 7, conversationKind: 'direct', sourceUsername: 'homeroom_bot',
+    });
+    const sent = await dm.sendPlanCard(pool, {
+      app: { id: app.id, slug: app.slug, name: app.name }, issueNumber: 11, runId: run.id, bot,
+      plan: { bullets: ['Add a who-was-active panel to the hub', 'Keep it to members'], complicated: true },
+    });
+    assert.ok(sent?.messageId, 'the plan went out');
+    const { rows: [msg] } = await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [sent.messageId]);
+    assert.equal(msg.metadata.homeroomBot.requestTitle, 'Show who was active this week on the hub',
+      'the title Homeroom stores reached the message through sendDm\'s lookup');
+    const { rows: [ring] } = await pool.query(
+      'SELECT detail FROM notifications WHERE user_id = $1 ORDER BY id DESC LIMIT 1', [maya.id],
+    );
+    const detail = notifyCopy.parseBotDetail(ring.detail);
+    assert.deepEqual([detail.moment, detail.said, detail.requestTitle],
+      ['needs_you', 'plan', 'Show who was active this week on the hub']);
+    const view = rowView(ring.detail);
+    assert.deepEqual([view.label, view.segments[0].v, view.appLine],
+      ['Plan to approve', 'Show who was active this week on the hub', 'Plant Pal · #11 · Homeroom bot'],
+      'the bell names the request, with the number beside the project under it');
+
+    // No title anywhere, not even on GitHub (no repo): the row still reads
+    // "Request #N", and the send is not blocked.
+    await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES ($1, 12, $2)', [app.id, maya.id]);
+    const bare = await dm.sendDm(pool, {
+      bot, userId: maya.id, content: 'My plan is ready. Tap Build it if it looks right.', idempotencyKey: '#5582-bare',
+      metadata: { kind: 'plan', appSlug: app.slug, appName: app.name, issueNumber: 12, firstVersion: false },
+    });
+    assert.ok(bare?.messageId);
+    const { rows: [bareRing] } = await pool.query(
+      'SELECT detail FROM notifications WHERE user_id = $1 ORDER BY id DESC LIMIT 1', [maya.id],
+    );
+    assert.equal(notifyCopy.parseBotDetail(bareRing.detail).requestTitle, '');
+    const bareView = rowView(bareRing.detail);
+    assert.deepEqual([bareView.segments[0].v, bareView.appLine], ['Request #12', 'Plant Pal · Homeroom bot'],
+      'untitled, as the number said');
   });
 });
 
-test('WP-F: a merged change is "live" only once the app answers on it, and a stop says which one', async () => {
+test('WP-F: a merged change is "live" when the machine says it is, and a stop says which one', async () => {
   const pool = { async query() { return { rows: [] }; } };
-  const detail = (moment, metadata) => dm.notificationDetail(pool, moment, { appName: 'Plant Pal', ...metadata });
-  assert.equal(await detail('live', { live: true }), 'hrbot:live:Plant Pal');
-  assert.equal(await detail('live', { live: false }), 'hrbot:live_soon:Plant Pal');
-  assert.equal(await detail('live', { live: true, firstVersion: true }), 'hrbot:live_first:Plant Pal');
-  assert.equal(await detail('live', { live: false, firstVersion: true }), 'hrbot:live_first_soon:Plant Pal');
-  assert.equal(await detail('live', {}), 'hrbot:live:Plant Pal', 'a message from before the field keeps its words');
-  for (const [kind, said] of [['build_failed', 'stopped_build'], ['blocked', 'stopped_blocked'], ['person', 'stopped_person'],
-    ['empty', 'stopped_empty'], ['first_version_failed', 'stopped_first'], ['preview_failed', 'stopped_preview'],
-    ['needs_look', 'stopped_look']]) {
+  const said = async (moment, metadata) => {
+    const d = notifyCopy.parseBotDetail(await dm.notificationDetail(pool, moment, { appName: 'Plant Pal', ...metadata }));
+    return `${d.moment}/${d.said}`;
+  };
+  assert.equal(await said('live', { live: true }), 'live/live');
+  assert.equal(await said('live', { live: false }), 'live/live_soon');
+  assert.equal(await said('live', { live: true, firstVersion: true }), 'live/live_first');
+  assert.equal(await said('live', { live: false, firstVersion: true }), 'live/live_first_soon');
+  assert.equal(await said('live', {}), 'live/live', 'a message from before the field keeps its words');
+  for (const [kind, moment] of [['build_failed', 'stopped/build_other'], ['blocked', 'needs_you/blocked'], ['person', 'needs_you/decide'],
+    ['empty', 'needs_you/empty'], ['first_version_failed', 'stopped/first_failed'], ['preview_failed', 'stopped/needs_look'],
+    ['needs_look', 'stopped/needs_look']]) {
     assert.equal(dm.momentOf({ kind }), 'stopped', kind);
-    assert.equal(await detail('stopped', { kind }), `hrbot:${said}:Plant Pal`, kind);
+    assert.equal(await said('stopped', { kind }), moment, kind);
   }
-  // Every token fits the detail's shape, which both readers parse.
-  for (const [token] of MOMENT_WORDS) assert.match(token, /^hrbot:[a-z_]{1,20}:/);
-  // The chat chip moves to Live after the app answers, not on the merge.
+  // A sender that names the variant is taken at its word.
+  assert.equal(await said('stopped', { kind: 'build_failed', said: 'build_time' }), 'stopped/build_time');
+  // Every moment rings as its kind, by its new name or its old one.
+  assert.deepEqual(['needs_you', 'question', 'ready', 'stopped', 'on_hold', 'held', 'live'].map((m) => dm.BUILD_KINDS[m]),
+    ['build_needs_you', 'build_needs_you', 'build_ready', 'build_stopped', 'build_stopped', 'build_stopped', 'build_live']);
+  // The chat chip moves to Live when the change is live, not on the merge:
+  // the merge-followups machine tells the bot's change machine only once it
+  // is live (machine.ts toLive's write), whose work asks for the DM, so the
+  // DM says live and marks the chat live at once.
   const src = fs.readFileSync(require.resolve('../src/services/homeroom-bot-dm.js'), 'utf8');
   const merged = src.slice(src.indexOf('async function noteProposalMerged('), src.indexOf('// ── A person writing to the bot'));
-  assert.ok(merged.indexOf('const live = await liveAfterMerge(') < merged.indexOf('noteChatLive(pool, run)'));
-  assert.match(merged, /if \(live \|\| platform\) await noteChatLive\(pool, run\);\n {2}else laterChatLive\(pool, run, \{ config, sha, deps \}\);/);
+  assert.match(merged, /const live = true;\n {2}\/\/ B9: [^\n]*\n {2}await noteChatLive\(pool, run, deps\);/);
+  const machine = fs.readFileSync(require.resolve('../src/workflow/merge-followups/machine.ts'), 'utf8');
+  const toLive = machine.slice(machine.indexOf('function toLive('), machine.indexOf('function lineInput('));
+  assert.match(toLive, /writes\.push\(toBotChange\(d\.sessionId, 'Live'\)\);/);
+  const services = fs.readFileSync(require.resolve('../src/workflow/bot-change/services.ts'), 'utf8');
+  assert.match(services, /\[WORK\.liveDm\]: \{[\s\S]*?legacy\('services\/homeroom-bot-dm'\)\.noteProposalMerged\(pool, \{ id: Number\(input\.sessionId\) \}/);
 });

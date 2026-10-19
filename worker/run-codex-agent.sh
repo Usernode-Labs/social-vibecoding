@@ -23,7 +23,10 @@
 #   AGENT_MODEL_NAME, AGENT_MODEL_CONTEXT_WINDOW,
 #   AGENT_MODEL_SUPPORTS_REASONING, AGENT_MODEL_REASONING_EFFORTS,
 #   AGENT_MODEL_SUPPORTS_IMAGES (read by build-codex-model-catalog.js),
-#   COMMIT_MSG, TURN_UUID, OPENROUTER_API_BASE, WORKER_JWT (build-only)
+#   COMMIT_MSG, TURN_UUID, OPENROUTER_API_BASE, WORKER_JWT (build-only),
+#   AGENT_PROVIDER_SHORTLIST (read by codex-openrouter-request.js),
+#   BUILD_PROFILE (first_version: no visible_changes server, and the
+#   Homeroom read tools narrowed to get_platform_conventions, as run-cc.sh)
 
 set -u
 
@@ -51,6 +54,11 @@ die() {
 : "${TURN_UUID:=}"
 : "${WORKER_JWT:=}"
 : "${BRANCH:=}"
+: "${BUILD_PROFILE:=}"
+FIRST_VERSION_BUILD=""
+if [ "$MODE" = "build" ] && [ "$BUILD_PROFILE" = "first_version" ]; then
+  FIRST_VERSION_BUILD=1
+fi
 case "$MODE" in
   build|scout) ;;
   shots) die "shots turns run on Claude Code (run-cc.sh)" ;;
@@ -71,6 +79,8 @@ cd "$WORKSPACE_DIR" || die "no workspace: $WORKSPACE_DIR"
 
 # Session-branch integrity helpers, shared with run-cc.sh.
 . "$(dirname "$0")/session-branch.sh"
+# The container's memory, for the result line (mem_peak_mib and the rest).
+. "$(dirname "$0")/memory-fields.sh"
 
 # Pre-exec hygiene: start from a known-good tree (same as run-cc.sh): main
 # and this session's branch only, the turn on the session branch, and for a
@@ -219,6 +229,11 @@ TOML
     cat <<'TOML'
 startup_timeout_sec = 30
 tool_timeout_sec = 60
+TOML
+    # A first version declares no visible changes (homeroom-bot-live.js
+    # buildPrompt), and every tool loaded rides on every model request.
+    if [ -z "$FIRST_VERSION_BUILD" ]; then
+      cat <<'TOML'
 
 [mcp_servers.visible_changes]
 command = "node"
@@ -228,6 +243,7 @@ enabled_tools = ["declare_visible_changes", "declare_diagram"]
 startup_timeout_sec = 15
 tool_timeout_sec = 30
 TOML
+    fi
   fi
   # #2779: the coding agent's read-only Homeroom tools, for a build or scout
   # turn the platform issued a grant to. The bridge receives the grant from
@@ -240,7 +256,14 @@ TOML
 command = "node"
 args = ["/usr/local/bin/homeroom-read-mcp.js"]
 env_vars = ["HOMEROOM_MCP_TOKEN", "PLATFORM_URL"]
-enabled_tools = ["get_platform_conventions", "get_app", "list_requests", "get_request", "get_proposal", "get_change"]
+TOML
+    # A brand-new app has nothing but the conventions to read.
+    if [ -z "$FIRST_VERSION_BUILD" ]; then
+      echo 'enabled_tools = ["get_platform_conventions", "get_app", "list_requests", "get_request", "get_proposal", "get_change"]'
+    else
+      echo 'enabled_tools = ["get_platform_conventions"]'
+    fi
+    cat <<'TOML'
 startup_timeout_sec = 15
 tool_timeout_sec = 30
 TOML
@@ -395,7 +418,7 @@ if [ -n "$AGENT_THREAD_ID" ]; then
       echo "__USERNODE_WARN__ codex thread missing (exit $CODEX_RUN_EXIT); requesting fresh retry"
       rm -f "$TMP_STATUS" "$TMP_JSONL" 2>/dev/null
       restore_scout_tree
-      echo "__USERNODE_RESULT__ cc_exit=$CODEX_RUN_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id= agent_exit=$CODEX_RUN_EXIT agent_retry_fresh=1"
+      echo "__USERNODE_RESULT__ cc_exit=$CODEX_RUN_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id= agent_exit=$CODEX_RUN_EXIT agent_retry_fresh=1$(usernode_memory_fields)"
       exit "$CODEX_RUN_EXIT"
     else
       echo "__USERNODE_WARN__ codex resume failed (exit $CODEX_RUN_EXIT); NOT retrying fresh"
@@ -404,7 +427,7 @@ if [ -n "$AGENT_THREAD_ID" ]; then
       restore_scout_tree
       # The failed resume's output was already streamed live; emit a
       # terminal result so the host doesn't wait forever, then bail.
-      echo "__USERNODE_RESULT__ cc_exit=$CODEX_RUN_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id= agent_exit=$CODEX_RUN_EXIT"
+      echo "__USERNODE_RESULT__ cc_exit=$CODEX_RUN_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id= agent_exit=$CODEX_RUN_EXIT$(usernode_memory_fields)"
       exit "$CODEX_RUN_EXIT"
     fi
   fi
@@ -414,6 +437,8 @@ else
 fi
 CODEX_EXIT=$CODEX_RUN_EXIT
 rm -f "$TMP_STATUS" 2>/dev/null
+# Read once the agent is done: the most the container used by then.
+MEMORY_FIELDS=$(usernode_memory_fields)
 
 # Extract the thread id from thread.started for resume on the next turn.
 if [ -z "$AGENT_THREAD_OUT" ]; then
@@ -427,7 +452,7 @@ rm -f "$TMP_JSONL" 2>/dev/null
 if [ "$MODE" = "scout" ]; then
   restore_scout_tree
   echo "__USERNODE_PHASE__ done"
-  echo "__USERNODE_RESULT__ cc_exit=$CODEX_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id=$AGENT_THREAD_OUT agent_exit=$CODEX_EXIT"
+  echo "__USERNODE_RESULT__ cc_exit=$CODEX_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id=$AGENT_THREAD_OUT agent_exit=$CODEX_EXIT$MEMORY_FIELDS"
   exit "$CODEX_EXIT"
 fi
 
@@ -436,7 +461,7 @@ fi
 if [ "$CODEX_EXIT" -ne 0 ]; then
   echo "__USERNODE_WARN__ codex exited non-zero ($CODEX_EXIT); skipping commit/push"
   echo "__USERNODE_PHASE__ done"
-  echo "__USERNODE_RESULT__ cc_exit=$CODEX_EXIT ahead=0 behind=0 sha= push_ok=0 mode=build agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id=$AGENT_THREAD_OUT agent_exit=$CODEX_EXIT"
+  echo "__USERNODE_RESULT__ cc_exit=$CODEX_EXIT ahead=0 behind=0 sha= push_ok=0 mode=build agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id=$AGENT_THREAD_OUT agent_exit=$CODEX_EXIT$MEMORY_FIELDS"
   exit "$CODEX_EXIT"
 fi
 
@@ -474,5 +499,5 @@ if [ "$PUSH_OK" = "1" ]; then
 else
   echo "__USERNODE_PHASE__ push_failed"
 fi
-echo "__USERNODE_RESULT__ cc_exit=$CODEX_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id=$AGENT_THREAD_OUT agent_exit=$CODEX_EXIT$BRANCH_MISMATCH_FIELD"
+echo "__USERNODE_RESULT__ cc_exit=$CODEX_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id=$AGENT_THREAD_OUT agent_exit=$CODEX_EXIT$BRANCH_MISMATCH_FIELD$MEMORY_FIELDS"
 exit "$CODEX_EXIT"

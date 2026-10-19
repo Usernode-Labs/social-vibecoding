@@ -9,7 +9,7 @@
 // actually asks:
 //
 //   - `mergeable` is computed lazily and returns `null` while it thinks, so
-//     services/conflict-resolver.js polls it twice — up to 6 reads over 10s
+//     the conflict resolver (since replaced by the merge-queue machine) polled it twice — up to 6 reads over 10s
 //     to decide whether a sync is needed, then up to 8 more over 17.5s (plus
 //     a 2s settling delay) before it dares call pulls.merge. Three env vars
 //     tune that, and a 405 recovery path exists because the window can still
@@ -122,8 +122,8 @@ function text(buf) {
 
 // One in-flight ensure per repository. Several proposals on the same app are
 // measured together, and without this each would start its own fetch of the
-// same refs. Process-local, matching the single-flight registries in
-// services/conflict-resolver.js and services/proposal-freshness.js.
+// same refs. Process-local, matching the single-flight registry in
+// services/proposal-freshness.js.
 const _inFlight = new Map();
 
 async function ensureMirrorInner(owner, repo, { refs = [] } = {}) {
@@ -398,6 +398,27 @@ async function hasCommit(dir, committish) {
   return r.code === 0;
 }
 
+/**
+ * The commits `head` added on its own line over `base`, newest first: who
+ * committed each and its subject ([{ committer, subject }]). First parents
+ * only and no merges, so a merge of main brings none of main's in. Null when
+ * git cannot say, or when there are more than `limit` (an answer about some
+ * of them would be an answer about none).
+ */
+async function commitsBetween(dir, base, head, { limit = 50 } = {}) {
+  const r = await git(dir, [
+    'log', '--first-parent', '--no-merges', `--max-count=${limit + 1}`,
+    '--format=%ce%x1f%s%x1e', `${safeSha(base)}..${safeSha(head)}`,
+  ], { allowFail: true });
+  if (r.code !== 0) return null;
+  const commits = text(r.stdout).split('\x1e').map((line) => line.trim()).filter(Boolean)
+    .map((line) => {
+      const [committer, subject] = line.split('\x1f');
+      return { committer: String(committer || '').toLowerCase(), subject: subject || '' };
+    });
+  return commits.length > limit ? null : commits;
+}
+
 module.exports = {
   ensureMirror,
   mirrorPath,
@@ -411,6 +432,7 @@ module.exports = {
   changedPaths,
   resolveBranch,
   hasCommit,
+  commitsBetween,
   // Exported for the unit tests, which drive the plumbing against a real
   // temporary repository rather than a mock — the whole point of this module
   // is that the answers are git's, so stubbing git would test nothing.

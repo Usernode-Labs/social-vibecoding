@@ -3,7 +3,7 @@
 // challenges, as three top-level sections of one screen.
 //
 // Two levels of tabs:
-//   1. SECTION (Challenges | Kudos | Standings | History), rendered into
+//   1. SECTION (Challenges | Standings | Kudos), rendered into
 //      #standings-tabs by this module. 'challenges' — the one a fresh visit
 //      opens on (#2374) — reveals #challenges-root and hands off to
 //      TopochainChallenges; 'topochain', labelled "Standings" (it was
@@ -12,12 +12,10 @@
 //      TopochainLeaderboard module. Both are Topochain-domain
 //      views of one EVENT, so they also share the screen-level event bar
 //      (#leaderboard-event-bar, owned by TopochainEventContext) — hidden
-//      on Kudos, which has no event dimension. 'seasons', labelled
-//      "History", reveals #leaderboard-history-root: the seasons that have
-//      ENDED, their winners and each event's winner (./history.js). It
-//      spans seasons, so the one-event bar is hidden there too.
-//      Everything below this point is the Kudos pane and is unchanged by
-//      the merge.
+//      on Kudos, which has no event dimension. The History section
+//      ('seasons') is retired (2026-10-16): the router sends
+//      #leaderboard/seasons to Challenges. Everything below this point is
+//      the Kudos pane and is unchanged by the merge.
 //   2. Within Kudos: three sub-views (Top PRs, Top Users, My history)
 //      and — for the two leaderboard tabs — two window tabs.
 //
@@ -65,6 +63,17 @@
 // through `window` rather than importing it.
 const LEADERBOARD_SECTION_STORE_KEY = '__usernodeLeaderboardSection';
 
+// #5249: whether kudos is parked. ./kudos.js publishes `window.Kudos` only
+// while it is not (./kudos-parked.ts), and this file takes no import (see
+// ./kudos-pane-store.js), so it reads the switch the way the classic scripts
+// do. Parked, the Kudos tab and its sub-views (Top changes, Top users, My
+// history) are gone and every road to them lands on Challenges; the section
+// stays only for a person's page, which is drawn in its pane without the
+// kudos figures.
+function kudosParked() {
+  return !(typeof window !== 'undefined' && window.Kudos);
+}
+
 function leaderboardSectionStore() {
   let store = window[LEADERBOARD_SECTION_STORE_KEY];
   if (!store) {
@@ -88,7 +97,7 @@ const Leaderboard = {
   // re-opening the screen lands where you left it; a fresh page load
   // starts on Challenges (#2374) — the first tab of the strip, what you
   // can do next ahead of the ranking it feeds.
-  section: 'challenges',  // 'topochain' | 'kudos' | 'challenges' | 'seasons'
+  section: 'challenges',  // 'topochain' | 'kudos' | 'challenges'
   // Whether TopochainLeaderboard.open() / TopochainChallenges.open() have
   // run for this screen mount — each Topochain-domain pane loads lazily,
   // only once its tab is first shown, and so does the shared event bar
@@ -96,7 +105,6 @@ const Leaderboard = {
   _topoMounted: false,
   _challengesMounted: false,
   _eventBarMounted: false,
-  _historyMounted: false,
   sub: 'prs',           // 'prs' | 'users' | 'history'
   window: 'all',         // 'all' | 'week'
   // (#60) Profile drill-in from the Top-users tab. Non-null = the
@@ -148,13 +156,9 @@ const Leaderboard = {
     if (Leaderboard._eventBarMounted && window.TopochainEventContext?.close) {
       TopochainEventContext.close();
     }
-    if (Leaderboard._historyMounted && window.LeaderboardHistory?.close) {
-      LeaderboardHistory.close();
-    }
     Leaderboard._topoMounted = false;
     Leaderboard._challengesMounted = false;
     Leaderboard._eventBarMounted = false;
-    Leaderboard._historyMounted = false;
   },
 
   // ── Section (Kudos | Topochain | Challenges) ─────────────────────
@@ -162,7 +166,7 @@ const Leaderboard = {
   // Every section. The strip's ORDER lives in the island's SECTION_TABS
   // (./index.tsx), Challenges first since #1917. The two that live in the Topochain event domain (i.e. the ones the shared
   // event bar applies to) are declared separately below.
-  SECTIONS: ['topochain', 'kudos', 'challenges', 'seasons'],
+  SECTIONS: ['topochain', 'kudos', 'challenges'],
   EVENT_SECTIONS: ['topochain', 'challenges'],
 
   // Switch the screen's top-level section. Mirrors _setSub's contract:
@@ -171,6 +175,8 @@ const Leaderboard = {
   // open()).
   _setSection(section) {
     if (!Leaderboard.SECTIONS.includes(section)) return;
+    // Parked, the Kudos section is a person's page or nothing.
+    if (section === 'kudos' && kudosParked() && !Leaderboard.profileUser) section = 'challenges';
     if (Leaderboard.section === section && Leaderboard._open) return;
     Leaderboard.section = section;
     // Leaving Kudos abandons the profile drill-in — otherwise coming
@@ -199,7 +205,6 @@ const Leaderboard = {
       'leaderboard-root': Leaderboard.section === 'kudos',
       'topochain-leaderboard-root': Leaderboard.section === 'topochain',
       'challenges-root': Leaderboard.section === 'challenges',
-      'leaderboard-history-root': Leaderboard.section === 'seasons',
     };
     for (const [id, visible] of Object.entries(panes)) {
       const el = document.getElementById(id);
@@ -222,11 +227,6 @@ const Leaderboard = {
         && window.TopochainChallenges?.open) {
       Leaderboard._challengesMounted = true;
       TopochainChallenges.open();
-    }
-    if (Leaderboard.section === 'seasons' && !Leaderboard._historyMounted
-        && window.LeaderboardHistory?.open) {
-      Leaderboard._historyMounted = true;
-      LeaderboardHistory.open();
     }
   },
 
@@ -323,6 +323,11 @@ const Leaderboard = {
 
   _setSub(sub) {
     if (sub !== 'prs' && sub !== 'users' && sub !== 'history') return;
+    if (kudosParked()) {
+      Leaderboard.profileUser = null;
+      Leaderboard._setSection('challenges');
+      return;
+    }
     Leaderboard.sub = sub;
     // A Kudos sub-tab implies the Kudos section — a deep link straight to
     // #leaderboard/history must not land on a Topochain tab left over
@@ -365,8 +370,8 @@ const Leaderboard = {
   // route mid-navigation).
   //
   // #3620: A PRESS IS A PAGE, A ROUTER PASS IS NOT. A tab press on the open
-  // screen (the strip, Kudos' own Top changes | Top users | History, the
-  // event bar's way to History) PUSHES, so Back from Kudos is Challenges
+  // screen (the strip, Kudos' own Top changes | Top users | History)
+  // PUSHES, so Back from Kudos is Challenges
   // again rather than the Profile screen the leaderboard was opened from.
   // Everything the router does — a deep link healing to its canonical tab,
   // Back or Forward arriving on one — runs inside restoreFromHash
@@ -386,11 +391,9 @@ const Leaderboard = {
       ? '#leaderboard/topochain'
       : Leaderboard.section === 'challenges'
         ? '#leaderboard/challenges'
-        : Leaderboard.section === 'seasons'
-          ? '#leaderboard/seasons'
-          : Leaderboard.profileUser
-            ? `#leaderboard/users/${encodeURIComponent(Leaderboard.profileUser)}`
-            : `#leaderboard/${Leaderboard.sub}`;
+        : Leaderboard.profileUser
+          ? `#leaderboard/users/${encodeURIComponent(Leaderboard.profileUser)}`
+          : `#leaderboard/${Leaderboard.sub}`;
     if (location.hash.startsWith('#leaderboard') && location.hash !== target) {
       const pressed = Leaderboard._open
         && !(typeof App !== 'undefined' && App && App._isRestoring);
@@ -417,12 +420,6 @@ const Leaderboard = {
   },
 
   async _load() {
-    // Pull-to-refresh lands here for every section it does not name itself
-    // (App._refreshLeaderboard); on History that is the past seasons, which
-    // ./history.js loads, not a Kudos pane nobody is looking at.
-    if (Leaderboard.section === 'seasons') {
-      return window.LeaderboardHistory?.refresh?.();
-    }
     const key = Leaderboard._key(Leaderboard.sub, Leaderboard.window);
     if (Leaderboard._cache.has(key)) {
       Leaderboard._renderBody();
@@ -525,32 +522,38 @@ const Leaderboard = {
         who,
         initial: (who[0] || '?').toUpperCase(),
         canMessage: Leaderboard._canMessage(who),
+        // The way back is to Top users, which is gone while kudos is parked;
+        // the platform bar's own back is the way out then.
+        back: !kudosParked(),
       };
     }
     const isHistory = Leaderboard.sub === 'history';
     const subTabs = ['prs', 'users', 'history'].map((s) => ({
       key: s,
       active: s === Leaderboard.sub,
-      label: s === 'prs' ? 'Top changes' : s === 'users' ? 'Top users' : 'My history',
+      label: s === 'prs' ? PlatformI18n.t('leaderboard:kudos.tab.changes')
+        : s === 'users' ? PlatformI18n.t('leaderboard:kudos.tab.users') : PlatformI18n.t('leaderboard:kudos.tab.history'),
     }));
     // The All-time / This week pills only apply to the leaderboard
     // tabs — history is always everything, newest first.
     const winTabs = isHistory ? [] : ['all', 'week'].map((w) => ({
       key: w,
       active: w === Leaderboard.window,
-      label: w === 'all' ? 'All-time' : 'This week',
+      label: w === 'all' ? PlatformI18n.t('leaderboard:kudos.window.all') : PlatformI18n.t('leaderboard:kudos.window.week'),
     }));
 
     const subtitle = isHistory
-      ? 'Everything you’ve given: kudos, bounty pledges, and votes, newest first. Only you can see this.'
+      ? PlatformI18n.t('leaderboard:kudos.historySubtitle')
       // #964: read the cap from the budget the badge already fetched rather
       // than hardcoding it here, so raising WEEKLY_KUDOS_LIMIT server-side
       // can never leave this subtitle quoting a stale number again. The
       // fallback matches the server constant for the brief window before
       // /api/me/kudos-budget lands (or when it failed).
       // #3230: the weekly reset is named in the viewer's own clock.
-      : `${window.Kudos?.Budget?.state?.limit || 20} kudos per week, resets ${
-        window.ResetTime ? window.ResetTime.resetWhen('weekly') : 'Monday 00:00 UTC'}. Give them to changes you appreciate.`;
+      : (window.ResetTime
+        ? PlatformI18n.t('leaderboard:kudos.subtitle',
+          { count: Number(window.Kudos?.Budget?.state?.limit || 20), ...window.ResetTime.resetMoment('weekly') })
+        : PlatformI18n.t('leaderboard:kudos.subtitleUtc', { count: Number(window.Kudos?.Budget?.state?.limit || 20) }));
 
     // No <h2> of our own: the Leaderboard screen shell already titles the
     // page and the section tab above says "Kudos". The subtitle stays —
@@ -574,7 +577,7 @@ const Leaderboard = {
 
     if (!data) return { kind: 'loading' };
     if (data.error) {
-      return { kind: 'error', message: 'Couldn’t load leaderboard. Try again later.' };
+      return { kind: 'error', message: PlatformI18n.t('leaderboard:kudos.loadFailed') };
     }
     const items = Array.isArray(data.items) ? data.items : [];
     if (!items.length) {
@@ -582,10 +585,11 @@ const Leaderboard = {
       // stay next to the sentence they belong to.
       return {
         kind: 'empty',
-        message: `No kudos ${Leaderboard.window === 'week' ? 'this week ' : ''}yet. `
-          + (Leaderboard.sub === 'prs'
-            ? 'When someone gives a change kudos, it shows up here.'
-            : 'When someone gets kudos on a change they made, they show up here.'),
+        message: Leaderboard.sub === 'prs'
+          ? (Leaderboard.window === 'week'
+            ? PlatformI18n.t('leaderboard:kudos.empty.changesWeek') : PlatformI18n.t('leaderboard:kudos.empty.changes'))
+          : (Leaderboard.window === 'week'
+            ? PlatformI18n.t('leaderboard:kudos.empty.usersWeek') : PlatformI18n.t('leaderboard:kudos.empty.users')),
       };
     }
     return Leaderboard.sub === 'prs'
@@ -602,19 +606,25 @@ const Leaderboard = {
     if (!data) return { kind: 'loading' };
     if (data.error) {
       return data.notFound
-        ? { kind: 'empty', message: 'User not found.' }
-        : { kind: 'error', message: 'Couldn’t load this profile. Try again later.' };
+        ? { kind: 'empty', message: PlatformI18n.t('leaderboard:kudos.person.notFound') }
+        : { kind: 'error', message: PlatformI18n.t('leaderboard:kudos.person.loadFailed') };
     }
 
     const s = data.stats || {};
     const prsTotal = s.prs_total || 0;
     const stats = {
-      kudosMerged: `${s.kudos_merged || 0} on live changes`,
+      // Null while kudos is parked: the page keeps the person's changes and
+      // drops what they were thanked with.
+      kudosMerged: kudosParked() ? null
+        : PlatformI18n.t('leaderboard:kudos.person.onLive', { count: Number(s.kudos_merged || 0) }),
       chips: [
-        { label: `${s.prs_merged || 0} live`, title: 'Their changes that went live' },
         {
-          label: `${prsTotal} change${prsTotal === 1 ? '' : 's'} made`,
-          title: 'Everything they put up for the group, including open and closed changes',
+          label: PlatformI18n.t('leaderboard:kudos.person.live', { count: Number(s.prs_merged || 0) }),
+          title: PlatformI18n.t('leaderboard:kudos.person.liveTip'),
+        },
+        {
+          label: PlatformI18n.t('leaderboard:kudos.person.made', { count: Number(prsTotal) }),
+          title: PlatformI18n.t('leaderboard:kudos.person.madeTip'),
         },
       ],
     };
@@ -640,8 +650,8 @@ const Leaderboard = {
   profilePrRowViews(items) {
     return items.map((row, i) => ({
       key: `${row.app_slug}|${row.session_id}|${i}`,
-      title: row.pr_title || 'Untitled change',
-      appName: row.app_name || row.app_slug || 'app',
+      title: row.pr_title || PlatformI18n.t('leaderboard:kudos.untitledChange'),
+      appName: row.app_name || row.app_slug || PlatformI18n.t('leaderboard:kudos.unnamedApp'),
       badge: Leaderboard._statusBadge(row.status, row.release),
       when: Leaderboard._fmtDate(row.created_at),
       // External GitHub link, when the PR has one. The row itself is a
@@ -650,7 +660,7 @@ const Leaderboard = {
       extUrl: row.pr_url || null,
       slug: row.app_slug,
       sessionId: row.session_id,
-      kudos: row.kudos_count,
+      kudos: kudosParked() ? null : row.kudos_count,
     }));
   },
 
@@ -663,16 +673,20 @@ const Leaderboard = {
   // platform's next release; the badge's title says when, in the one
   // sentence every surface uses (frontend/src/lib/release-eta.ts, published
   // as window.ReleaseEta): "Merged; goes live in the next release (about 8
-  // minutes)". Any other change going live has no title.
+  // minutes)", closed by its own entry's full stop. Any other change going
+  // live has no title.
   _statusBadge(status, release = null) {
-    if (status === 'merged') return { tone: 'emerald', label: 'live' };
+    if (status === 'merged') return { tone: 'emerald', label: PlatformI18n.t('leaderboard:kudos.status.live') };
     if (status === 'merging') {
+      const label = PlatformI18n.t('leaderboard:kudos.status.goingLive');
       const words = release && typeof window !== 'undefined' && window.ReleaseEta
         ? window.ReleaseEta.releaseSentence(release) : null;
-      return words ? { tone: 'amber', label: 'going live', title: `${words}.` } : { tone: 'amber', label: 'going live' };
+      return words
+        ? { tone: 'amber', label, title: PlatformI18n.t('leaderboard:kudos.status.goingLiveTitle', { release: words }) }
+        : { tone: 'amber', label };
     }
-    if (status === 'archived') return { tone: 'zinc', label: 'closed' };
-    return { tone: 'violet', label: 'open' };
+    if (status === 'archived') return { tone: 'zinc', label: PlatformI18n.t('leaderboard:kudos.status.closed') };
+    return { tone: 'violet', label: PlatformI18n.t('leaderboard:kudos.status.open') };
   },
 
   // Whether this person page draws the prototype's "Message" button: someone
@@ -702,8 +716,8 @@ const Leaderboard = {
     const view = {
       kind: 'history',
       chips: [
-        { key: 'kudos', label: '\u{1F44F} Kudos', on: Leaderboard._histKudos },
-        { key: 'votes', label: '\u{1F5F3}️ Votes', on: Leaderboard._histVotes },
+        { key: 'kudos', label: PlatformI18n.t('leaderboard:kudos.history.filterKudos'), on: Leaderboard._histKudos },
+        { key: 'votes', label: PlatformI18n.t('leaderboard:kudos.history.filterVotes'), on: Leaderboard._histVotes },
       ],
       list: null,
       more: null,
@@ -712,13 +726,13 @@ const Leaderboard = {
     if (!data) {
       view.list = { kind: 'loading' };
     } else if (data.error) {
-      view.list = { kind: 'error', message: 'Couldn’t load your history. Try again later.' };
+      view.list = { kind: 'error', message: PlatformI18n.t('leaderboard:kudos.history.loadFailed') };
     } else {
       const items = Array.isArray(data.items) ? data.items : [];
       if (!items.length) {
         view.list = {
           kind: 'empty',
-          message: 'Nothing here yet. Kudos, bounty pledges, and votes you give will appear here.',
+          message: PlatformI18n.t('leaderboard:kudos.history.empty'),
         };
       } else {
         view.list = { kind: 'rows', rows: Leaderboard.historyRowViews(items) };
@@ -736,45 +750,54 @@ const Leaderboard = {
       let marker = null;
       let title = '';
       const metaBits = [];
-      const appName = it.app?.name || it.app?.slug || 'app';
+      const appName = it.app?.name || it.app?.slug || PlatformI18n.t('leaderboard:kudos.unnamedApp');
+      // "by @ada", or its own message when the author's account is gone.
+      const by = (author) => (author
+        ? PlatformI18n.t('leaderboard:kudos.row.by', { username: author }) : PlatformI18n.t('leaderboard:kudos.row.byDeleted'));
 
       if (it.type === 'kudos') {
         marker = { kind: 'kudos' };
-        title = it.pr?.title || 'Untitled change';
-        metaBits.push({ kind: 'text', text: `by @${it.pr?.author || 'deleted user'}` });
+        title = it.pr?.title || PlatformI18n.t('leaderboard:kudos.untitledChange');
+        metaBits.push({ kind: 'text', text: by(it.pr?.author) });
         metaBits.push({ kind: 'text', text: appName });
       } else if (it.type === 'bounty') {
         marker = { kind: 'bounty' };
-        title = `Pledged kudos on issue #${it.issue?.number ?? '?'}`;
+        title = PlatformI18n.t('leaderboard:kudos.history.pledged', { number: it.issue?.number ?? '?' });
         metaBits.push({ kind: 'text', text: appName });
         if (it.status === 'awarded') {
-          const to = it.awarded?.username ? `@${it.awarded.username}` : 'deleted user';
-          const at = it.awarded?.at ? ` ${Leaderboard._fmtDate(it.awarded.at)}` : '';
-          metaBits.push({ kind: 'badge', tone: 'emerald', text: `awarded to ${to}${at}` });
+          const username = it.awarded?.username || '';
+          const date = it.awarded?.at ? Leaderboard._fmtDate(it.awarded.at) : '';
+          // One whole message per case: who it went to, and whether the date is known.
+          const awarded = username
+            ? (it.awarded?.at ? PlatformI18n.t('leaderboard:kudos.history.awardedTo', { username, date })
+              : PlatformI18n.t('leaderboard:kudos.history.awardedToUndated', { username }))
+            : (it.awarded?.at ? PlatformI18n.t('leaderboard:kudos.history.awardedToDeleted', { date })
+              : PlatformI18n.t('leaderboard:kudos.history.awardedToDeletedUndated'));
+          metaBits.push({ kind: 'badge', tone: 'emerald', text: awarded });
         } else if (it.status === 'voided') {
           metaBits.push({
-            kind: 'badge', tone: 'zinc', text: 'voided',
-            title: 'Your own change closed this request, so the pledge went back to your weekly allowance',
+            kind: 'badge', tone: 'zinc', text: PlatformI18n.t('leaderboard:kudos.history.voided'),
+            title: PlatformI18n.t('leaderboard:kudos.history.voidedTip'),
           });
         } else {
-          metaBits.push({ kind: 'badge', tone: 'violet', text: 'open' });
+          metaBits.push({ kind: 'badge', tone: 'violet', text: PlatformI18n.t('leaderboard:kudos.history.open') });
         }
       } else if (it.type === 'pr_vote') {
         marker = { kind: 'pr_vote', yes: it.vote === 'yes' };
-        title = it.pr?.title || 'Untitled change';
-        metaBits.push({ kind: 'text', text: `by @${it.pr?.author || 'deleted user'}` });
+        title = it.pr?.title || PlatformI18n.t('leaderboard:kudos.untitledChange');
+        metaBits.push({ kind: 'text', text: by(it.pr?.author) });
         metaBits.push({ kind: 'text', text: appName });
         // pr_votes keeps only the standing vote; the timestamp is the
         // last cast/flip, not the first.
-        metaBits.push({ kind: 'italic', text: 'current vote' });
+        metaBits.push({ kind: 'italic', text: PlatformI18n.t('leaderboard:kudos.history.currentVote') });
       } else if (it.type === 'proposal_vote') {
         marker = { kind: 'proposal_vote', up: it.vote === 'up' };
-        title = it.issue?.title || `Request #${it.issue?.number ?? '?'}`;
+        title = it.issue?.title || PlatformI18n.t('leaderboard:kudos.history.request', { number: it.issue?.number ?? '?' });
         if (it.issue?.kind && it.issue.kind !== 'general') {
           metaBits.push({ kind: 'badge', tone: 'sky', text: Leaderboard._kindLabel(it.issue.kind) });
         }
         metaBits.push({ kind: 'text', text: appName });
-        metaBits.push({ kind: 'italic', text: 'current vote' });
+        metaBits.push({ kind: 'italic', text: PlatformI18n.t('leaderboard:kudos.history.currentVote') });
       } else {
         // An unknown row type rendered as the empty string before, i.e. it
         // took up no space in the list. null is the descriptor spelling of
@@ -792,17 +815,17 @@ const Leaderboard = {
   // of their own; anything newer falls back to the value with its
   // underscores spaced out and the first letter raised, never the raw token.
   _KIND_LABELS: Object.freeze({
-    secret_change: 'Secret change',
-    rename: 'Rename',
-    close_issue: 'Close issue',
-    maintenance_campaign: 'Maintenance campaign',
-    featured_illustration: 'Featured illustration',
+    secret_change: 'leaderboard:kudos.history.kind.secretChange',
+    rename: 'leaderboard:kudos.history.kind.rename',
+    close_issue: 'leaderboard:kudos.history.kind.closeIssue',
+    maintenance_campaign: 'leaderboard:kudos.history.kind.maintenance',
+    featured_illustration: 'leaderboard:kudos.history.kind.featuredIllustration',
   }),
 
   _kindLabel(kind) {
     const key = String(kind || '');
     if (Object.prototype.hasOwnProperty.call(Leaderboard._KIND_LABELS, key)) {
-      return Leaderboard._KIND_LABELS[key];
+      return PlatformI18n.t(Leaderboard._KIND_LABELS[key]);
     }
     const words = key.replace(/[_-]+/g, ' ').trim();
     return words ? words.charAt(0).toUpperCase() + words.slice(1) : key;
@@ -834,9 +857,10 @@ const Leaderboard = {
     return items.map((row, i) => ({
       key: `${row.app_slug}|${row.session_id}|${i}`,
       rank: i + 1,
-      title: row.pr_title || 'Untitled change',
-      author: row.author_username || 'unknown',
-      appName: row.app_name || row.app_slug || 'app',
+      title: row.pr_title || PlatformI18n.t('leaderboard:kudos.untitledChange'),
+      author: row.author_username || PlatformI18n.t('leaderboard:kudos.unknownUser'),
+      authorUnknown: !row.author_username,
+      appName: row.app_name || row.app_slug || PlatformI18n.t('leaderboard:kudos.unnamedApp'),
       // The Top-PRs strip has no 'archived' case — an archived PR is not on
       // this board at all — so it reads the same table minus that row.
       badge: Leaderboard._statusBadge(row.status === 'merged' || row.status === 'merging'
@@ -849,26 +873,26 @@ const Leaderboard = {
 
   userRowViews(items) {
     return items.map((row, i) => {
-      const who = row.username || 'unknown';
+      const who = row.username || PlatformI18n.t('leaderboard:kudos.unknownUser');
       const prsMerged = row.prs_merged || 0;
       const kudosOnUnmerged = row.kudos_received_prs_unmerged || 0;
       // The detail line is a list of bits with a "·" between them, so the
       // separators can't drift out of step with the bits they separate.
       // First bit is unconditional; each later one carries its own.
-      const meta = [{ text: `${row.prs_kudosed} change${row.prs_kudosed === 1 ? '' : 's'} given kudos` }];
+      const meta = [{ text: PlatformI18n.t('leaderboard:kudos.user.changesKudosed', { count: Number(row.prs_kudosed) }) }];
       // prs_merged is all-time (no merge timestamp to window by), so only
       // show it in the all-time view to avoid implying a weekly figure.
       // Kept as a secondary detail now that ranking is by kudos, not
       // merge count.
       if (Leaderboard.window === 'all' && prsMerged > 0) {
-        meta.push({ text: `${prsMerged} live` });
+        meta.push({ text: PlatformI18n.t('leaderboard:kudos.user.live', { count: prsMerged }) });
       }
       // Issues this user filed (issues.created_by). Correctly windowed by
       // created_at, so — unlike prs_merged — it's shown in both windows.
       // Hidden at 0 to match the other optional detail chips.
       const issuesCreated = row.issues_created || 0;
       if (issuesCreated > 0) {
-        meta.push({ text: `${issuesCreated} issue${issuesCreated === 1 ? '' : 's'}` });
+        meta.push({ text: PlatformI18n.t('leaderboard:kudos.user.issues', { count: issuesCreated }) });
       }
       // Apps this user is currently active on (active_apps: [{slug, name}]).
       // Show a count chip with the app names on hover; hidden at 0 to match
@@ -877,11 +901,12 @@ const Leaderboard = {
       const activeApps = Array.isArray(row.active_apps) ? row.active_apps : [];
       if (activeApps.length > 0) {
         meta.push({
-          text: `active on ${activeApps.length} app${activeApps.length === 1 ? '' : 's'}`,
-          title: 'Active on: ' + activeApps
-            .map((a) => (a && a.name) ? a.name : (a && a.slug) || '')
-            .filter(Boolean)
-            .join(', '),
+          text: PlatformI18n.t('leaderboard:kudos.user.activeOn', { count: activeApps.length }),
+          title: PlatformI18n.t('leaderboard:kudos.user.activeOnTip', {
+            apps: PlatformI18n.listText(activeApps
+              .map((a) => (a && a.name) ? a.name : (a && a.slug) || '')
+              .filter(Boolean)),
+          }),
         });
       }
       return {
@@ -893,7 +918,8 @@ const Leaderboard = {
         // Footnote on the kudos badge: how many additional kudos sit on
         // PRs that haven't landed yet (and so don't count toward the
         // ranking score). Only meaningful when > 0.
-        unmergedNote: kudosOnUnmerged > 0 ? `+${kudosOnUnmerged} not live yet` : null,
+        unmergedNote: kudosOnUnmerged > 0
+          ? PlatformI18n.t('leaderboard:kudos.user.notLiveYet', { count: kudosOnUnmerged }) : null,
         // Headline score = kudos earned on MERGED PRs. This is what the
         // leaderboard now ranks by (issue #59), so the big badge shows it
         // rather than total kudos across all PRs.
@@ -921,3 +947,11 @@ const Leaderboard = {
 // frontend/scripts/build-shell.mjs evaluates the island's whole module graph
 // in Node, where there is no window.
 if (typeof window !== 'undefined') window.Leaderboard = Leaderboard;
+
+// The Kudos tab's views hold their words, so a new language builds them again
+// from what is already loaded.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => {
+    if (Leaderboard._open && Leaderboard.section === 'kudos') Leaderboard._render();
+  });
+}

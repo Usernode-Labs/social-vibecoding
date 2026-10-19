@@ -25,6 +25,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -65,6 +66,7 @@ function makeAppView({ search = '' } = {}) {
     location: { search, hash: '', href: `http://localhost/${search}` }, URLSearchParams,
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -217,14 +219,16 @@ test('the board unfolds nothing in place: ?cards=open draws the fold’s open sh
   // so there is no mode to pass and no branch to take — one anchor, one
   // label, whichever screen the card was reached from.
   assert.ok(!/OpenMode|expand[?:]/.test(FOLD), 'no open mode left to choose');
-  assert.match(FOLD, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a>\s*: undefined;/);
+  assert.match(FOLD, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>\{t\('project:card\.fold\.openCard'\)\}<\/a>\s*: undefined;/);
+  assert.equal(message('project:card.fold.openCard'), 'Open card');
   // #1886: no page link under the sheet any more. The one line the sheet
   // still draws is #1887's, on a card about the viewer's OWN session.
   assert.ok(!/>Open on its own page/.test(FOLD), 'no "Open on its own page" line under the sheet');
   assert.ok(!/href=\{href\} className="dev-ws-link"/.test(FOLD), 'the page href rides no link under the sheet');
   assert.equal(count(FOLD, /dev-ws-sheet-actions/g), 1, 'one line under the sheet, and it is the session\u2019s');
-  assert.match(FOLD, /\{session && sessionLink \? \((?:\s*\/\/[^\n]*)*\s*<div className="dev-ws-sheet-actions">\s*<a href=\{session\} className="dev-ws-link" data-ws-open-session=\{row\.key\}>Open session ›<\/a>\s*<\/div>\s*\) : null\}/,
+  assert.match(FOLD, /\{session && sessionLink \? \((?:\s*\/\/[^\n]*)*\s*<div className="dev-ws-sheet-actions">\s*<a href=\{session\} className="dev-ws-link" data-ws-open-session=\{row\.key\}>\{t\('project:card\.fold\.openSession'\)\}<\/a>\s*<\/div>\s*\) : null\}/,
     'the session link, on the Workshop, and nothing beside it');
+  assert.equal(message('project:card.fold.openSession'), 'Open session ›');
   const unfolded = FOLD.slice(FOLD.indexOf('export function UnfoldedRow'), FOLD.indexOf('export function voteSpecs'));
   assert.ok(!/\{'Open page ›'\}|'Close card' : 'Open card'/.test(unfolded),
     'and no second step: the pill is the page link on its first tap');
@@ -243,7 +247,8 @@ test('the board unfolds nothing in place: ?cards=open draws the fold’s open sh
   assert.match(LIST_ROWS, /: <DevCard model=\{row\.card\} \/>/);
   // The Workshop's By category draws the board's rows (#4486), so it no
   // longer imports the fold's row at all; `openHref` rides the same import
-  // since the Needs-you feed.
+  // since the Needs-you feed, and `voteSpecs` since Your work's rows carry
+  // a change's own Vote (After-Workshop-B).
   assert.match(WORKSHOP, /import \{ callAppView, openHref \} from '\.\.\/card\/fold';/);
   assert.ok(!/CardRowView/.test(WORKSHOP), 'By category unfolds nothing in place');
   for (const fn of ['function FoldedRow', 'function UnfoldedRow', 'function CardRowView', 'function RowBand']) {
@@ -1336,8 +1341,9 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //
   // 818 → 820: +2 (communities, stage 5): a new account's first run. The
   // join screen ("What communities do you want to join?", ?shot=join-
-  // communities) and Home's Getting started card (?shot=getting-started),
-  // two new routes with nothing already declared on them to fold into.
+  // communities) and Home's Getting started card (?shot=getting-started,
+  // whose check #4635 retired with the card), two new routes with nothing
+  // already declared on them to fold into.
   // 820 leaves exactly the 20-slot floor against MAX_DECLARED_TESTS (840):
   // the next proposal to add a check folds into an existing one or raises
   // the cap, as tests/lib/check-cap.js says.
@@ -1607,14 +1613,55 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //
   // 736 + (−4) → 732: both changes land together; 732 leaves 148 slots.
   //
+  // 732 → 729: −3 (#4729): the mark menu's Agent chats section left the menu
+  // whole, and its Build it now row's three checks went with it — Build it
+  // now opens from Messages' Agents list now, which the rewritten menu check
+  // covers. 729 leaves 151 slots.
+  //
   // 732 → 733: +1 (#4309 follow-up): a change merged into Homeroom itself
   // says on its page when the next release carries it ("Merged; goes live in
   // the next release (about 8 minutes)"), on the ?demo=1 mock 9100035, a
   // state no other check's route reaches. 733 leaves 147 slots.
   //
+  // 733 → 732: −1 (#4635): Home's Getting started card is retired, and its
+  // check (home.getting-started-card on ?shot=getting-started) with it. A new
+  // account's First challenges are ordinary Challenges cards now, which the
+  // checks on Home's Challenges block already read. 732 leaves 148 slots.
+  //
+  // 729 → 730: +1 (#4772): the Workshop tab's What's happening files the
+  // viewer's work in sections (Waiting on you, Yours, up for a vote, Going
+  // live), on the ?demo=1 mocks. Folding it into the Overview check on the
+  // same route took that selector past the runner's 256 characters. 730
+  // leaves 150 slots.
+  //
+  // 730 → 731: +1: the admin console's Apps & usage section (#admin/apps),
+  // a route no other check reaches. 731 leaves 149 slots.
+  //
+  // 731 → 732: +1 (#5048): the Workshop's Private requests section, which
+  // only platform admins see (the checker is a view-only admin) and only
+  // when there is one: the staging seed writes one. 732 leaves 148 slots.
+  //
+  // 732 → 733: +1 (#5072): the Moderation deep link opens the linked case
+  // already selected (#admin/reports/1, the staging fixture's fake report),
+  // a route no other check reaches. 733 leaves 147 slots.
+  //
+  // 733 → 735: +2 (16 Oct 2026, one track per request): a request's page
+  // says where Homeroom bot's work on it is (/dev/issues/900018, the
+  // staging mock it is building), and the bot's slots page under the
+  // Workshop (?ws=bot); two routes no other check reaches. 735 leaves 145
+  // slots.
+  //
+  // 735 → 734: −1 (#5391): the Workshop overview's "Most open work is in"
+  // chips are gone, and with them the check that selected one. 734 leaves
+  // 146 slots.
+  //
+  // 734 → 735: +1 (#3969): the Accessibility settings page ships text size
+  // and high contrast controls (?demo=1#settings/accessibility), a route no
+  // other check reaches. 735 leaves 145 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 733);
+  checkCap.assertPinned(DAPP.tests.length, 735);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
@@ -1701,12 +1748,14 @@ test('the open card is the fold’s sheet, and never picks up the Needs-you deck
     'the deck’s dialogs are the fixed, full-screen thing');
   assert.ok(!/^\.dev-ws-sheet \{/m.test(CSS),
     'and nothing is keyed on the bare name, which is one open card sitting in its row');
-  for (const kind of ['vote', 'ask', 'comments']) {
+  // Two dialogs since the reel redesign: the vote, and the one sheet whose
+  // two tabs are Comments and Ask.
+  for (const kind of ['vote', 'talk']) {
     assert.match(WORKSHOP, new RegExp(`className="dev-ws-sheet-modal dev-ws-sheet-${kind}"`),
       `the ${kind} dialog carries the deck’s base class`);
   }
   assert.ok(!/className="dev-ws-sheet dev-ws-sheet-/.test(WORKSHOP),
-    'and none of the three carries the fold’s');
+    'and neither carries the fold’s');
   // The open card keeps the bare name, because two declared checks select it
   // that way — which is also why the deck is the side that moved.
   assert.match(FOLD, /<div className="dev-feed-entry dev-ws-sheet" data-ws-sheet=\{row\.key\}>/);
@@ -1895,7 +1944,7 @@ test('the declared checks follow the two rows and the row’s last line', () => 
   // the title, then the sentence, then the caption) with the same `+`/`~`
   // direction.
   assert.match(byName(/Needs-you tab is a feed of one decision per screen/).expectSelector, /\[data-ws-needs\] > \[data-ws-rail\] > button\[data-ws-rail-btn="vote"\]/);
-  assert.match(byName(/leads with who and when, then its title, then the sentence a voter reads/).expectSelector, /> \.dev-ws-item-by \+ \.dev-ws-item-title \+ \.dev-ws-item-summary ~ \.dev-ws-item-caption"?$/);
+  assert.match(byName(/leads with who and when, then its title, then the sentence a voter reads/).expectSelector, /> \.dev-ws-item-caption > \.dev-ws-item-by \+ \.dev-ws-item-title \+ \.dev-ws-item-summary"?$/);
   assert.match(byName(/Closes-#N rides the meta line as a tag/).expectSelector, /\.dev-card-meta > \.dev-badge\[data-issue-chip\]/);
   assert.match(byName(/facts are a row of their own under the status row/).expectSelector, /\.dev-card-status ~ \.dev-card-badges\.dev-card-facts > \.dev-badge/);
   assert.match(byName(/a card title wraps in full/).expectSelector, /\.dev-card-title:not\(\.dev-card-title-clamp\):not\(\[title\]\)/);

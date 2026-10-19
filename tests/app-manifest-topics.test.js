@@ -43,10 +43,28 @@ const FOUR = [
   { id: 'infra', handle: 'infra', name: 'Infra', icon: '\u{1F6E0}️', about: 'Builds, staging, deploys and the servers the apps run on' },
 ];
 
-// Homeroom's own topics: the four it started with, then #project-workflows
-// (from #4417's discussion: how work moves before it is a proposal).
+// The figures each of the four shows above its room (services/topic-figures.js).
+const HOMEROOM_FIGURES = {
+  onboarding: ['onboarding.sign-up', 'onboarding.first-project', 'onboarding.first-change', 'onboarding.found-project', 'onboarding.sign-in-errors'],
+  'homeroom-bot': [
+    'bot.answered', 'bot.reply-cost', 'bot.reply-time', 'bot.merged', 'bot.merged-cost', 'bot.request-to-proposal',
+    'bot.builds-proposed', 'bot.first-versions', 'bot.failed-spend', 'bot.paused', 'bot.turns-lost',
+  ],
+  'proposal-pipeline': [
+    'pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged', 'pipeline.main-paused',
+    'pipeline.reds-rerun', 'pipeline.not-the-change', 'pipeline.stuck-work',
+  ],
+  infra: [
+    'infra.merge-to-live', 'infra.deploys-failed', 'infra.apps-up', 'infra.restarts', 'infra.limits-filled', 'infra.turned-away',
+    'infra.homeroom-stalls', 'infra.homeroom-crashes', 'infra.alerts', 'infra.server-errors', 'infra.page-errors',
+  ],
+};
+
+// Homeroom's own topics: the four it started with, each with its figures,
+// then #project-workflows (from #4417's discussion: how work moves before
+// it is a proposal), which names none.
 const HOMEROOM = [
-  ...FOUR,
+  ...FOUR.map((t) => ({ ...t, figures: HOMEROOM_FIGURES[t.id] })),
   { id: 'project-workflows', handle: 'project-workflows', name: 'Project workflows', icon: '\u{1F9ED}', about: 'How work moves before it\'s a proposal: request types, triage, discussion and decisions' },
 ];
 

@@ -50,9 +50,15 @@ const explicitApproval = require('./explicit-approval');
 const ADMIN_CACHE_TTL_MS = 10 * 1000;
 const adminCache = new Map(); // appId -> { at, ids: number[] }
 
-function invalidateAppAdmins(appId) {
+function invalidateAppAdminsHere(appId) {
   if (appId != null) adminCache.delete(Number(appId));
   else adminCache.clear();
+}
+
+// Here and in every other process (access-change.js).
+function invalidateAppAdmins(appId) {
+  invalidateAppAdminsHere(appId);
+  require('./access-change').shareAccessChange(appId ?? null);
 }
 
 // Resolved app-admin user ids for one app. TTL-cached.
@@ -149,6 +155,18 @@ function parseManifestSource(raw) {
 
 const byKey = (a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 
+// A rules value (governance-rules.js) in a form that differs only when what
+// it decides differs: people case-folded and sorted, groups by name.
+function canonicalRules(value) {
+  return {
+    preset: value.preset || null,
+    groups: (value.groups || [])
+      .map((g) => ({ name: String(g.name).toLowerCase(), people: (g.people || []).map((p) => String(p).toLowerCase()).sort() }))
+      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
+    rules: (value.rules || []).map((r) => `${r.group}:${r.kind}:${r.n ?? ''}`).sort(),
+  };
+}
+
 // The five protected blocks of one dapp.json source, each in a canonical
 // form so only a change that MEANS something reads as one: through the
 // same readers the deploy uses (app-manifest.js), with ordering, casing
@@ -167,8 +185,14 @@ function explicitApprovalBlocks(raw) {
   const secrets = appManifest.readSecrets(parsed, { platformEnv });
   return {
     admins: normalizeAdmins(appManifest.readAdmins(parsed) || []),
+    // #4666: the rules a block sets, canonical, so a change to a group's
+    // people or to a rule reads as a change to how changes are approved.
     governance: governance
-      ? { approvers: governance.approvers, approvals: governance.approvals } : null,
+      ? {
+        approvers: governance.approvers,
+        approvals: governance.approvals,
+        ...(governance.rules ? { rules: canonicalRules(governance.rules) } : {}),
+      } : null,
     visibility: visibility ? { build: visibility.build, view: visibility.view } : null,
     platform_env: platformEnv
       .map((e) => ({ key: e.key, required: e.required, private: e.private, default: e.default }))
@@ -223,7 +247,7 @@ function pickBlocks(blocks, reasons) {
 // force-merge.
 //
 // A GitHub TRANSPORT failure throws instead, so the caller can pick its
-// own fallback explicitly (checkAndMerge keeps the stored column).
+// own fallback explicitly (evaluateMergeGate keeps the stored column).
 async function detectExplicitApprovalChange(app, { headRef } = {}) {
   // eslint-disable-next-line global-require
   const github = require('./github');
@@ -269,7 +293,7 @@ async function detectExplicitApprovalChange(app, { headRef } = {}) {
 }
 
 // Persist the flag and its primary reason on a session row. Best-effort
-// at every stamping point except checkAndMerge's authoritative
+// at every stamping point except evaluateMergeGate's authoritative
 // re-verify — a failure to record it must never break a promote or a
 // push. An unknown reason is stored as NULL rather than invented; every
 // surface then says the generic sentence.
@@ -289,7 +313,7 @@ async function stampExplicitApproval(pool, sessionId, changed, reason = null) {
 
 // The ref detectExplicitApprovalChange should diff for a given session row: the
 // imported-PR head sha for imported proposals, the branch name for
-// native ones. Shared by refreshExplicitApproval, checkAndMerge's live
+// native ones. Shared by refreshExplicitApproval, evaluateMergeGate's live
 // re-verify, and the sweeper's stale-flag re-check.
 function headRefForSession(session) {
   return session?.source === 'imported'
@@ -320,7 +344,7 @@ async function refreshExplicitApproval(pool, app, session) {
 // The stale-PR sweeper's re-verify (server.js Pass 0). Re-detects rows
 // whose stored flag is NULL (never classified — the original backfill)
 // or TRUE (may have gone stale: main moved, a sync rewrote the branch —
-// a below-threshold flagged row never reaches checkAndMerge's live
+// a below-threshold flagged row never reaches evaluateMergeGate's live
 // re-check, so without this it stays flagged forever). FALSE rows are
 // skipped with no GitHub call: they're the bulk of a sweep page, and a
 // head change re-stamps them on its own paths — this keeps the
@@ -357,6 +381,7 @@ async function sweepExplicitApproval(pool, session) {
 
 module.exports = {
   invalidateAppAdmins,
+  invalidateAppAdminsHere,
   getAppAdminIds,
   isAppAdmin,
   canManageApp,

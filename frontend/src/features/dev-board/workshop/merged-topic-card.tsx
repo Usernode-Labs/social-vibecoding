@@ -23,6 +23,7 @@
 
 import type { MouseEvent, ReactNode } from 'react';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { channelPlace, placeHref } from './places';
 import { openPlace } from './place-store';
 
@@ -37,6 +38,7 @@ export function MergedTopicCard({ from, at, slug = null }: {
   at: string;
   slug?: string | null;
 }): ReactNode {
+  const t = useMessages('project');
   const project = slug || (typeof window !== 'undefined' ? currentSlug() : null);
   const place = channelPlace(from.handle);
   const href = project ? placeHref(project, place) : '#';
@@ -50,9 +52,9 @@ export function MergedTopicCard({ from, at, slug = null }: {
   };
   return (
     <div className="dev-ws-merged-card" data-merged-topic={from.handle} data-merged-at={at} role="note">
-      <span className="dev-ws-merged-card-text">{`#${from.handle} was merged into this topic`}</span>
+      <span className="dev-ws-merged-card-text">{t('project:places.mergedCard.text', { channel: from.handle })}</span>
       <a className="dev-ws-merged-card-link" href={href} onClick={open} data-merged-topic-link={from.handle}>
-        {`Read #${from.handle} ›`}
+        {t('project:places.mergedCard.read', { channel: from.handle })}
       </a>
     </div>
   );

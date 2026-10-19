@@ -36,11 +36,13 @@ const vm = require('node:vm');
 
 const { HOME_SRC, PANELS_SRC } = require('./helpers/home-modules');
 const { installPanelsStore } = require('./helpers/home-grid-store');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const JOIN_ID = 41;
 
 // GET /api/home-panels with the First challenges' "Join a community" in it,
-// done or not.
+// done or not, and "Try an app" still to do, so the block keeps showing its
+// First challenges (the Semi design) and the joined card stays in place.
 function panelsPayload(joined) {
   return {
     registry: [{ key: 'challenges', title: 'Challenges', removable: false }],
@@ -49,12 +51,13 @@ function panelsPayload(joined) {
       key: 'challenges',
       title: 'Challenges',
       season: { id: 2, name: 'Season 2' },
-      total: 1,
+      total: 2,
       done: joined ? 1 : 0,
-      points_remaining: joined ? 0 : 500,
+      points_remaining: joined ? 100 : 600,
       challenges: [{
         id: JOIN_ID,
-        label: 'First challenges',
+        label: 'ONBOARDING',
+        display_order: 0,
         goal: 'Join a community',
         task: 'Find people to build with.',
         reward: '500 pts',
@@ -62,6 +65,17 @@ function panelsPayload(joined) {
         metric: null,
         progress: { done: joined, current: null, target: null },
         earned_points: joined ? 500 : 0,
+      }, {
+        id: JOIN_ID + 1,
+        label: 'ONBOARDING',
+        display_order: 1,
+        goal: 'Try an app',
+        task: 'Open any app.',
+        reward: '100 pts',
+        cta: null,
+        metric: null,
+        progress: { done: false, current: null, target: null },
+        earned_points: 0,
       }],
     }],
   };
@@ -136,6 +150,7 @@ function makeHome({ joinOk = true, holdPanels = false } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   installPanelsStore(sandbox);
   vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
@@ -148,7 +163,9 @@ function makeHome({ joinOk = true, holdPanels = false } = {}) {
   Home.load = async () => { counts.load += 1; };
   bus.addEventListener('sv:membership-changed', (e) => events.push(e.detail));
 
-  // Home has drawn the block once, a moment ago: inside its minute.
+  // Home has drawn the block once, a moment ago: inside its minute. Its
+  // apps are in too, which the block's first paint waits for (#10).
+  Home._appsLoaded = true;
   HP._data = panelsPayload(false);
   HP._fetchedAt = Date.now();
   HP.render();
@@ -185,7 +202,7 @@ test('a join ticks "Join a community" on Home at once, inside the block\'s minut
   ], 'the block reads again after the join answered, and tells the worker first');
   assert.equal(h.joinCard().done, true);
   assert.equal(h.joinCard().state, 'done');
-  assert.equal(h.joinCard().earned, 'Earned 500 pts');
+  assert.equal(h.joinCard().earned, '500 pts');
 });
 
 test('the join says so on document once it lands: sv:membership-changed, with the slug', async () => {

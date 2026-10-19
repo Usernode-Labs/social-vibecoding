@@ -21,6 +21,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const CONTROLLER_TEXT = fs.readFileSync(
@@ -96,6 +97,12 @@ function makeHarness({
   const els = new Map();
   const fetchCalls = [];
   const sandbox = {
+    // The binding the controller's i18n import gives it (the import line is stripped above).
+    t: englishPlatformI18n().t,
+    // The controller's KUDOS_PARKED import, stripped above too: these suites
+    // drive the bounty row with the switch off (#5249). The parked state is
+    // pinned in tests/feedback-bounty-ui.test.js.
+    KUDOS_PARKED: false,
     console: { ...console, warn: () => {}, debug: () => {} },
     URLSearchParams,
     location: { search, hash: '', pathname: '/' },

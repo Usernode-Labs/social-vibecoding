@@ -3,18 +3,10 @@
 // #21 helpers: deriving the "version currently live on prod" for an app.
 //
 // The source of truth is `apps.main_sha` (populated by app-creator and
-// staging.rebuildProduction). This module provides:
-//   - getAppVersion(pool, slug): join with chat_sessions for PR context
-//     so the UI can show a tooltip like "PR #42 · Add leaderboard · @evan".
-//   - backfillMainShas(pool): one-shot at server boot to fill in nulls
-//     for apps created before this column existed.
-
-const { execFile } = require('child_process');
-const { promisify } = require('util');
-const execFileAsync = promisify(execFile);
-
-const log = require('./logger');
-const github = require('./github');
+// staging.deployProduction, and by the drift poller for a row that has
+// none). This module provides getAppVersion(pool, slug): a join with
+// chat_sessions for PR context, so the UI can show a tooltip like
+// "PR #42 · Add leaderboard · @evan".
 
 async function getAppVersion(pool, slug) {
   const { rows } = await pool.query(
@@ -67,45 +59,4 @@ async function getAppVersion(pool, slug) {
   };
 }
 
-// For apps that existed before #21 added `main_sha`, hit the remote
-// default branch and record its tip. We skip apps already in a
-// terminal error state or with no repo_url — nothing to pin there.
-//
-// Runs best-effort: a single failing repo logs a warning and the
-// loop keeps going, so a revoked token or deleted repo can't block
-// the whole backfill.
-async function backfillMainShas(pool) {
-  if (!github.isEnabled()) return;
-
-  const { rows } = await pool.query(
-    `SELECT id, slug, repo_url FROM apps
-      WHERE main_sha IS NULL
-        AND repo_url IS NOT NULL
-        AND status IN ('running', 'creating')`
-  );
-  if (!rows.length) return;
-
-  log.info('app-version', 'Backfilling main_sha', { count: rows.length });
-  for (const app of rows) {
-    const [, owner, repo] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-    if (!owner || !repo) continue;
-    try {
-      const cloneUrl = await github.getCloneUrl(owner, repo);
-      // `git ls-remote HEAD` gives us the tip SHA of the remote's
-      // default branch without needing a working copy. Much faster
-      // than cloning.
-      const { stdout } = await execFileAsync('git', ['ls-remote', cloneUrl, 'HEAD'], {
-        timeout: 15000,
-      });
-      const sha = (stdout || '').split(/\s+/)[0]?.trim();
-      if (sha && /^[0-9a-f]{40}$/i.test(sha)) {
-        await pool.query('UPDATE apps SET main_sha = $1 WHERE id = $2 AND main_sha IS NULL', [sha, app.id]);
-      }
-    } catch (err) {
-      log.warn('app-version', 'ls-remote failed', { slug: app.slug, err: err.message });
-    }
-  }
-  log.info('app-version', 'Backfill complete');
-}
-
-module.exports = { getAppVersion, backfillMainShas };
+module.exports = { getAppVersion };

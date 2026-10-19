@@ -16,6 +16,8 @@
 import type { KeyboardEvent, ReactNode } from 'react';
 
 import { sourceWords } from '../../../lib/diagram/diagram';
+import { useMessages } from '../../../lib/i18n/react';
+import { t as translate } from '../../../lib/i18n/runtime';
 
 export type Touches = {
   version: 1;
@@ -43,8 +45,37 @@ export function readTouches(v: unknown): Touches | null {
 }
 
 function filesWords(n: number): string {
-  if (!n) return 'none';
-  return n === 1 ? '1 file' : `${n} files`;
+  if (!n) return translate('project:touches.files.none');
+  return translate('project:touches.files.count', { count: n });
+}
+
+// The areas the server names (src/services/proposal-touches.js), by key, so
+// the picture names them in the reader's language; an area this version does
+// not know keeps the server's own label.
+const AREA_IDS: Record<string, string> = {
+  screens: 'project:touches.area.screens',
+  server: 'project:touches.area.server',
+  database: 'project:touches.area.database',
+  tests: 'project:touches.area.tests',
+  docs: 'project:touches.area.docs',
+  other: 'project:touches.area.other',
+};
+const areaName = (a: { key: string; label: string }) => (AREA_IDS[a.key] ? translate(AREA_IDS[a.key]) : a.label);
+
+/**
+ * The picture in words, from whole messages: what a screen reader says for
+ * it ("What it touches. Server, 2 files; Tests, 1 file."), and the line a
+ * Needs-you caption's "more" shows under the summary. Said the same way in
+ * both, so the two cannot drift.
+ */
+export function touchesSaid(t: Touches, nothingVisible = false): string {
+  const touched = t.areas.filter((a) => a.files > 0)
+    .map((a) => translate('project:touches.area.withFiles', { area: areaName(a), files: filesWords(a.files) }));
+  if (!touched.length) return '';
+  // The areas are joined the way the picture's own sentence joins them.
+  const areas = touched.reduce((first, second) => translate('project:touches.areas.pair', { first, second }));
+  const said = translate('project:touches.label', { areas });
+  return nothingVisible ? translate('project:touches.labelNothingVisible', { said }) : said;
 }
 
 export function TouchesPicture({ t, nothingVisible, onOpen }: {
@@ -53,9 +84,9 @@ export function TouchesPicture({ t, nothingVisible, onOpen }: {
   nothingVisible?: boolean;
   onOpen?: () => void;
 }): ReactNode {
+  const tr = useMessages('project');
   const shown = t.areas.filter((a) => ALWAYS.has(a.key) || a.files > 0);
   const max = Math.max(1, ...shown.map((a) => a.lines || a.files));
-  const touched = shown.filter((a) => a.files > 0).map((a) => `${a.label}, ${filesWords(a.files)}`);
   const door = onOpen ? {
     role: 'button' as const,
     tabIndex: 0,
@@ -70,21 +101,21 @@ export function TouchesPicture({ t, nothingVisible, onOpen }: {
       className="dev-ws-diagram dev-ws-touches"
       data-ws-touches=""
       data-diagram-source="files"
-      aria-label={`What it touches. ${touched.join('; ')}.${nothingVisible ? ' Nothing on screen changes.' : ''}`}
+      aria-label={touchesSaid(t, nothingVisible)}
       {...door}
     >
-      <span className="dev-ws-diagram-kicker" aria-hidden="true">What it touches</span>
+      <span className="dev-ws-diagram-kicker" aria-hidden="true">{tr('project:touches.kicker')}</span>
       <ul className="dev-ws-diagram-rows" aria-hidden="true">
         {shown.map((a) => (
           <li key={a.key} className="dev-ws-touches-row" data-touched={a.files > 0 ? '' : undefined}>
-            <span className="dev-ws-diagram-what">{a.label}</span>
+            <span className="dev-ws-diagram-what">{areaName(a)}</span>
             <span className="dev-ws-diagram-bar"><i style={{ width: a.files ? `${Math.max(4, Math.round(((a.lines || a.files) / max) * 100))}%` : '0%' }} /></span>
             <span className="dev-ws-touches-n">{filesWords(a.files)}</span>
           </li>
         ))}
       </ul>
       <p className="dev-ws-diagram-src">
-        {nothingVisible ? `Nothing on screen changes · ${foot.charAt(0).toLowerCase()}${foot.slice(1)}` : foot}
+        {nothingVisible ? tr('project:touches.footNothingVisible') : foot}
       </p>
     </div>
   );

@@ -21,6 +21,7 @@
 //      a measurement taken after the draw.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
@@ -78,6 +79,29 @@ test('isNearBottom: at the bottom, or within about two lines of it', () => {
   assert.equal(at(600), false, 'reading history');
   assert.equal(isNearBottom({ scrollHeight: 300, clientHeight: 600, scrollTop: 0 }), true, 'nothing to scroll');
   assert.equal(isNearBottom({ scrollHeight: 2000, clientHeight: 600, scrollTop: 1300 }, 40), false, 'a slack of its own');
+});
+
+// ── 1b. #5019: the allowance at the top ─────────────────────────────────
+
+test('isNearTop: at the top, or within the load-older allowance of it', () => {
+  const { isNearTop, LOAD_OLDER_SLACK_PX } = loadTsx(MODULE);
+  assert.equal(LOAD_OLDER_SLACK_PX, 200);
+  const at = (scrollTop) => isNearTop({ scrollHeight: 2000, clientHeight: 600, scrollTop });
+  assert.equal(at(0), true, 'exactly at the top');
+  assert.equal(at(200), true, 'the edge of the allowance');
+  assert.equal(at(201), false, 'past it');
+  assert.equal(at(1400), false, 'reading the middle');
+  assert.equal(isNearTop({ scrollHeight: 2000, clientHeight: 600, scrollTop: 100 }, 40), false, 'a slack of its own');
+});
+
+test('needsMoreHistory: whether what is drawn fills the scroller', () => {
+  const { needsMoreHistory } = loadTsx(MODULE);
+  const at = (scrollHeight) => needsMoreHistory({ scrollHeight, clientHeight: 600, scrollTop: 0 });
+  assert.equal(at(600), true, 'exactly one screen: nothing to scroll');
+  assert.equal(at(750), true, 'within the allowance');
+  assert.equal(at(801), false, 'a full screen plus the allowance');
+  assert.equal(at(2000), false, 'a long thread');
+  assert.equal(needsMoreHistory({ scrollHeight: 750, clientHeight: 600, scrollTop: 0 }, 40), false, 'a slack of its own');
 });
 
 // ── 2. The module, executed ─────────────────────────────────────────────
@@ -254,7 +278,7 @@ test('useStickToBottom follows the scroller React draws, and the present with it
 // ── 3. The conversation uses it ─────────────────────────────────────────
 
 test('the conversation follows a reader who was at the bottom before the message arrived', () => {
-  assert.match(THREAD, /import \{ useStickToBottom \} from '\.\/stick-to-bottom';/);
+  assert.match(THREAD, /import \{ centreInScroller, isNearTop, needsMoreHistory, useStickToBottom \} from '\.\/stick-to-bottom';/);
   assert.match(THREAD, /const pinned = useStickToBottom\(scroller, !snap\.nextAfter\);/,
     'the thread scroller is watched, and a linked window is not the present');
   assert.match(THREAD, /if \(previousLast\.current === null \|\| sentNow \|\| pinned\.current\) \{\s*(?:\/\/[^\n]*\n\s*)*pinned\.current = sentNow \|\| !snap\.nextAfter;\s*el\.scrollTop = el\.scrollHeight;/,
@@ -268,7 +292,8 @@ test('the conversation follows a reader who was at the bottom before the message
     'another conversation opens at its newest line');
   assert.match(THREAD, /shownFocus\.current = focusId;\s*previousLast\.current = last;\s*pinned\.current = false;/,
     'a message link lands on its message, and late growth does not take it to the bottom');
-  assert.match(THREAD, /onClick=\{\(\) => \{ pinned\.current = true; jumpToPresent\(\); \}\}>Jump to present</);
+  assert.equal(message('messages:thread.jumpToPresent'), 'Jump to present');
+  assert.match(THREAD, /onClick=\{\(\) => \{ pinned\.current = true; jumpToPresent\(\); \}\}>\{t\('messages:thread\.jumpToPresent'\)\}</);
 });
 
 // ── 4. #4511: your own send follows you only from the bottom ────────────
@@ -290,4 +315,43 @@ test('#4511/#4513: a Messages reply thread follows only a pinned reader, and hol
   assert.match(panel, /if \(el && n !== count\.current && pinned\.current\) el\.scrollTop = el\.scrollHeight;/);
   assert.doesNotMatch(panel, /requestAnimationFrame\(\(\) => \{ el\.scrollTop = el\.scrollHeight; \}\)/,
     'no unconditional jump on every reply');
+});
+
+// ── 5. #5050: a message link moves its own scroller, never the screen ───
+
+test('#5050: centreInScroller centres a row by scrolling its scroller alone, clamped to the content', () => {
+  const { centreInScroller } = loadTsx(MODULE);
+  // The transcript: 600px tall, 2000px of rows, its top 100px down the page.
+  const scroller = (scrollTop) => {
+    const calls = [];
+    return {
+      calls, scrollTop, scrollHeight: 2000, clientHeight: 600,
+      getBoundingClientRect: () => ({ top: 100, height: 600 }),
+      scrollTo: (options) => calls.push(options),
+    };
+  };
+  const row = (top) => ({ getBoundingClientRect: () => ({ top, height: 80 }) });
+
+  const middle = scroller(400);
+  centreInScroller(middle, row(600));
+  assert.deepEqual(middle.calls, [{ top: 640, behavior: 'auto' }], 'row 900px into the content, centred: 900 - (600 - 80) / 2');
+
+  const last = scroller(1400);
+  centreInScroller(last, row(620), 'smooth');
+  assert.deepEqual(last.calls, [{ top: 1400, behavior: 'smooth' }],
+    'a row near the bottom cannot be centred: the scroller stops at its end, and nothing else is asked to make up the rest');
+
+  const first = scroller(0);
+  centreInScroller(first, row(110));
+  assert.deepEqual(first.calls, [{ top: 0, behavior: 'auto' }], 'nor above its start');
+});
+
+test('#5050: Messages centres a linked message in its own scroller, never with scrollIntoView', () => {
+  const REF_CARDS = fs.readFileSync(path.join(ROOT, 'frontend/src/features/messages/ref-cards.tsx'), 'utf8');
+  assert.doesNotMatch(THREAD, /scrollIntoView\(\{ block: 'center' \}\)/,
+    'scrollIntoView scrolls #messages-screen too, which left the layout 85px up');
+  assert.equal(THREAD.match(/requestAnimationFrame\(\(\) => centreInScroller\(el, row\)\);/g).length, 2,
+    'the conversation and the reply thread each centre in their own scroller');
+  assert.match(REF_CARDS, /const scroller = card\.closest<HTMLElement>\('\.messages-thread-scroll'\);\s*if \(scroller\) centreInScroller\(scroller, card, still \? 'auto' : 'smooth'\);/);
+  assert.doesNotMatch(REF_CARDS, /block: 'center'/);
 });

@@ -7,7 +7,13 @@
  * Text only. Every field is a string or a number React prints as text; the
  * Mermaid kind's source is turned into SVG by the vendored library under
  * strict settings and cleaned by DOMPurify (./mermaid.ts).
+ *
+ * The record's own words are its author's and stay as written; the words
+ * Homeroom puts around them (the kind's label, the line a screen reader
+ * hears) are `project:diagram.*` messages, read when they are drawn.
  */
+
+import { listText, t } from '../i18n/runtime';
 
 export type DiagramOp = 'added' | 'changed' | 'removed';
 
@@ -22,13 +28,13 @@ export type DiagramRecord = RenameDiagram | FlowDiagram | ChangesDiagram | Numbe
 /** Who supplied a picture, as its foot says. */
 export type DiagramSource = 'author' | 'decision' | 'files';
 
-/** The label over a diagram is its kind. */
+/** The label over a diagram is its kind: a message id, read with `t` when it is drawn. */
 export const DIAGRAM_LABELS: Record<DiagramRecord['kind'], string> = {
-  rename: 'Rename',
-  flow: 'Before → after',
-  changes: 'What changes',
-  numbers: 'Numbers',
-  mermaid: 'Diagram',
+  rename: 'project:diagram.kind.rename',
+  flow: 'project:diagram.kind.flow',
+  changes: 'project:diagram.kind.changes',
+  numbers: 'project:diagram.kind.numbers',
+  mermaid: 'project:diagram.kind.mermaid',
 };
 
 const MAX_TEXT = 60;
@@ -101,16 +107,41 @@ export function figure(n: number, unit?: string): string {
   return unit ? `${s} ${unit}` : s;
 }
 
+/** One sentence of a change row, per kind of change, with and without its detail. */
+const CHANGE_TEXT: Record<DiagramOp, { plain: string; detail: string }> = {
+  added: { plain: 'project:diagram.text.added', detail: 'project:diagram.text.addedDetail' },
+  changed: { plain: 'project:diagram.text.changed', detail: 'project:diagram.text.changedDetail' },
+  removed: { plain: 'project:diagram.text.removed', detail: 'project:diagram.text.removedDetail' },
+};
+
+/** Whole sentences, one after another, as the label reads them. */
+function sentences(parts: readonly string[]): string {
+  if (!parts.length) return '';
+  return parts.reduce((first, second) => t('project:diagram.text.sentences', { first, second }));
+}
+
+/** A flow's steps in order: "Vote, then Checks, then Closes". */
+function steps(list: readonly string[]): string {
+  if (!list.length) return '';
+  return list.reduce((first, second) => t('project:diagram.text.then', { first, second }));
+}
+
 /**
  * A diagram as a line of text, for a screen reader's label and anywhere that
  * cannot draw one.
  */
 export function diagramText(d: DiagramRecord): string {
   switch (d.kind) {
-    case 'rename': return `Rename: ${d.from} becomes ${d.to}${d.places ? `, in ${d.places.join(', ')}` : ''}.`;
-    case 'flow': return `Before: ${d.before.join(', then ')}. After: ${d.after.join(', then ')}.`;
-    case 'changes': return d.rows.map((r) => `${r.op[0].toUpperCase()}${r.op.slice(1)}: ${r.what}${r.detail ? ` (${r.detail})` : ''}.`).join(' ');
-    case 'numbers': return d.rows.map((r) => `${r.label}: ${figure(r.before, d.unit)} before, ${figure(r.after, d.unit)} after.`).join(' ');
-    default: return 'A diagram drawn from its author’s text.';
+    case 'rename': return d.places
+      ? t('project:diagram.text.renameIn', { from: d.from, to: d.to, places: listText(d.places) })
+      : t('project:diagram.text.rename', { from: d.from, to: d.to });
+    case 'flow': return t('project:diagram.text.flow', { before: steps(d.before), after: steps(d.after) });
+    case 'changes': return sentences(d.rows.map((r) => (r.detail
+      ? t(CHANGE_TEXT[r.op].detail, { what: r.what, detail: r.detail })
+      : t(CHANGE_TEXT[r.op].plain, { what: r.what }))));
+    case 'numbers': return sentences(d.rows.map((r) => t('project:diagram.text.numbers', {
+      label: r.label, before: figure(r.before, d.unit), after: figure(r.after, d.unit),
+    })));
+    default: return t('project:diagram.text.mermaid');
   }
 }

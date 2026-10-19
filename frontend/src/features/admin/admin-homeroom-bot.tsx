@@ -68,15 +68,26 @@ interface Settings {
   buildConcurrency: number;
   shadowBuildPlatform: boolean;
   // #3624: what each person's requests may cost the platform in a week
-  // (cents; 0 for no limit).
+  // (cents; 0 for no limit). An admin's own, in place of it.
   userWeeklyCents: number;
+  adminWeeklyCents: number;
   // #3654: the model each stage runs on; blank is the platform default.
   models?: Record<ModelStage, string>;
+  // The platform default itself (services/default-model.js); blank is the
+  // deployment's OPENROUTER_DEFAULT_CODEX_MODEL.
+  defaultModel?: string;
+  // What the helper calls ask first (services/helper-model.js); blank is
+  // the built-in GLM 5.3 Flash.
+  helperModel?: string;
   // #3624 stage 2: live work at once across the platform and per person,
   // and whether a DM to the bot is read by its model.
   liveAtOnce: number;
   perPerson: number;
   dmChat: boolean;
+  // Its voice outside the DM (homeroom-bot-voice.js), one switch per place.
+  voiceSession?: boolean;
+  voiceIssue?: boolean;
+  voiceChat?: boolean;
   // Whether reading a request again continues the conversation that read it
   // last, rather than starting from the repository again.
   continueReads?: boolean;
@@ -120,6 +131,66 @@ const MODEL_STAGES: { key: ModelStage; label: string }[] = [
   { key: 'build', label: 'Build' },
   { key: 'followup', label: 'Follow-ups and check fixes' },
 ];
+// The current bot configurations' models (Admin → Bot configurations): a
+// first version's triage, plan and build, and a later change's plan and
+// build. Each decides over the stage's own setting while it is current.
+interface ConfiguredModels {
+  id: number;
+  key: string;
+  label: string;
+  version: number;
+  models: Partial<Record<ModelStage, string | null>>;
+}
+interface Configurations {
+  firstVersion: ConfiguredModels | null;
+  later: ConfiguredModels | null;
+}
+
+const CONFIGURED_VERB: Partial<Record<ModelStage, string>> = { spec: 'plan', build: 'build' };
+
+/**
+ * What a stage's row says runs while a bot configuration is current, or ''
+ * when its picker decides. Plan and Build: each scope with a current
+ * configuration, and who the picker below is still for. Triage: only a
+ * project's first version (a later change's triage is the picker's).
+ * Follow-ups: always the picker's. Pure.
+ */
+export function configuredLine(stage: ModelStage, c: Configurations | null | undefined, nameOf: (id: string) => string = (id) => id): string {
+  const first = c?.firstVersion?.models?.[stage] || null;
+  if (stage === 'triage') {
+    return first ? `A project's first version is triaged on ${nameOf(first)}, as its bot configuration says. Every other request uses the picker below.` : '';
+  }
+  const verb = CONFIGURED_VERB[stage];
+  if (!verb) return '';
+  const later = c?.later?.models?.[stage] || null;
+  if (!first && !later) return '';
+  const parts = [
+    first ? `first versions ${verb} on ${nameOf(first)}` : '',
+    later ? `later changes ${verb} on ${nameOf(later)}` : '',
+  ].filter(Boolean).join(' and ');
+  const rest = first && later
+    ? 'The picker below applies only when no configuration is current.'
+    : `${first ? 'Later changes' : 'First versions'} use the picker below.`;
+  return `${parts.charAt(0).toUpperCase()}${parts.slice(1)}, as the current bot configurations say. ${rest}`;
+}
+
+/**
+ * The model each stage runs on for the Benchmark's "In use": the stage's
+ * setting, with a later change's plan and build taken from its current
+ * configuration, since the benchmark's spec and build tasks are later
+ * changes. Pure.
+ */
+export function modelsInUse(p: Pick<Payload, 'bot' | 'configurations'> | null | undefined): Partial<Record<ModelStage, string | null>> | null {
+  const stages = p?.bot?.models;
+  if (!stages) return null;
+  const later = p?.configurations?.later?.models || null;
+  return {
+    ...stages,
+    ...(later?.spec ? { spec: later.spec } : {}),
+    ...(later?.build ? { build: later.build } : {}),
+  };
+}
+
 // The server's own rule (MODEL_ID_RE in services/homeroom-bot.js).
 const MODEL_ID_RE = /^[a-z0-9][a-z0-9._-]{0,60}\/[a-z0-9][a-z0-9._:-]{0,100}$/i;
 
@@ -163,7 +234,9 @@ interface QueueItem {
 
 interface QueueWait {
   reason: string;
-  until: string;
+  until: string | null;
+  // first_version_pending: the first version's own request, once it is filed.
+  firstVersionIssue?: number | null;
 }
 
 interface Run {
@@ -180,6 +253,9 @@ interface Run {
   reason: string | null;
   cap_suppressed: string | null;
   budget_stop: string | null;
+  // A held ready verdict acted on again with no read of its own: the run it
+  // reused (homeroom-bot.js reuseHeldVerdict).
+  reused_run_id?: number | null;
   rating: 'yes' | 'no' | null;
   rating_note: string | null;
   rated_at: string | null;
@@ -188,6 +264,8 @@ interface Run {
   cost_usd: number | null;
   duration_ms: number | null;
   error: string | null;
+  // A reply whose verdict could not be read (homeroom-bot.js keptReply).
+  unreadable_reply?: UnreadableReply | null;
   created_at: string;
   // #3146: the proposal a live `ready` run opened.
   proposal_session_id: number | null;
@@ -199,6 +277,9 @@ interface Run {
   build_cost_usd: number | null;
   build_at: string | null;
   build_queued_at: string | null;
+  // A live build's own session: linked when it starts, so a build with one
+  // and no outcome yet is building (its review included).
+  build_session_id?: number | null;
   // The spec the bot wrote before building, live or shadow.
   build_spec_md: string | null;
   // A build turn that changed nothing, and its nudge (NoChangeNote).
@@ -213,6 +294,16 @@ interface Run {
   app_slug: string;
   app_name: string;
   issueUrl: string | null;
+}
+
+interface KeptReply {
+  text: string;
+  chars: number;
+}
+
+interface UnreadableReply {
+  reply?: KeptReply | null;
+  repair?: KeptReply | null;
 }
 
 /** One build turn of a build that changed nothing (homeroom-bot-live.js turnFacts), and what it said last. */
@@ -274,13 +365,26 @@ function retryAt(loop: LastPass): string {
 interface Payload {
   settings: Settings;
   modes: string[];
+  // The platform default in force, and the deployment's own, which a blank
+  // setting goes back to.
   defaultModel?: string | null;
+  deploymentDefaultModel?: string | null;
+  // The model a blank helper model setting asks.
+  helperBuiltInModel?: string | null;
+  // What builds run on while a bot configuration is current (homeroom-bot.js
+  // currentConfigurations), over the stage settings; a scope with none is null.
+  configurations?: Configurations | null;
   bot: Bot | null;
   loop: LastPass | null;
   totals: Totals;
   // `buildsWaiting`: live builds waiting their turn, which wait on their
   // runs rather than in the queue.
-  queue: { depth: number; items: QueueItem[]; buildsWaiting?: number };
+  // One snapshot (homeroom-bot.js queueSnapshot): `depth` waiting and
+  // `running` running, and the rows listed from that same set.
+  queue: {
+    depth: number; running?: number; items: QueueItem[]; buildsWaiting?: number;
+    listedWaiting?: number; listedRunning?: number;
+  };
   runs: Run[];
   apps: { slug: string; name: string }[];
   caps: { proposalsPerApp: number; proposalsTotal: number; questionsPerAppPerDay: number };
@@ -292,6 +396,21 @@ interface Payload {
   // The configurations' pairs waiting for a pick, per scope (bot-configs.js
   // pairsWaitingByScope); null when they could not be counted.
   pairsWaiting?: PairsWaiting | null;
+  // Requests about Homeroom itself: the last week's move offers
+  // (homeroom-bot-move.js moveOfferSummary).
+  moveOffers?: MoveOffers | null;
+}
+
+export interface MoveOffers {
+  days: number;
+  sent: number;
+  moved: number;
+  kept: number;
+  open: number;
+  failed: number;
+  notOffered: number;
+  notOfferedByWhy: Record<string, number>;
+  notOfferedRecent?: { runId: number; app: string; issueNumber: number; why: string; at: string }[];
 }
 
 interface PairsWaiting { first_version?: number; later?: number }
@@ -358,11 +477,19 @@ function ProposalLink({ run, children }: { run: Run; children: string }) {
   );
 }
 
-const CAP_LABEL: Record<string, string> = {
-  proposals_per_app: 'would be held: 5 bot proposals already open on this app',
-  proposals_total: 'would be held: the bot is at its ceiling of proposals open across Homeroom',
-  question_tripwire: 'would be held: question tripwire for this app tripped today',
-};
+/**
+ * Why a cap held a run, with the cap's own limit (the payload's caps), as
+ * get_homeroom_bot says it (connector-data.js heldWords). The caps act now:
+ * a held run is held, not one that would have been. Pure.
+ */
+export function heldLine(cap: string | null | undefined, caps?: Partial<Payload['caps']> | null): string {
+  if (!cap) return '';
+  const n = (v: unknown) => (Number.isInteger(v) ? `${v} ` : '');
+  if (cap === 'proposals_per_app') return `held: ${n(caps?.proposalsPerApp)}proposals open on this app`;
+  if (cap === 'proposals_total') return `held: the bot's ceiling of ${n(caps?.proposalsTotal)}proposals open across Homeroom`;
+  if (cap === 'question_tripwire') return `held: ${n(caps?.questionsPerAppPerDay)}questions asked on this app today`;
+  return `held: ${cap.replace(/_/g, ' ')}`;
+}
 
 /**
  * A shadow build of a ready verdict: the branch it left on the app's
@@ -413,7 +540,13 @@ function ShadowBuild({ run }: { run: Run }) {
  * why it did not become a proposal, or why it worked without a spec.
  */
 function LiveBuild({ run }: { run: Run }) {
-  if (run.build_ok == null) return null;
+  if (run.build_ok == null) {
+    // Under way: linked to its session, no outcome yet. Run 1746, a first
+    // version, read as no build at all while it built and was reviewed.
+    return run.build_session_id
+      ? <p className={AdminUI.muted} data-live-build="building">Building now.</p>
+      : null;
+  }
   if (!run.build_ok) {
     const why = run.build_error || 'no reason recorded';
     // WP1: a build that was not needed (its request already had a proposal,
@@ -615,7 +748,29 @@ function VerdictBody({ run }: { run: Run }) {
       </div>
     );
   }
-  return <p className="text-sm text-red-400 break-words">{run.error || 'The run failed before it produced a verdict.'}</p>;
+  return (
+    <div className="space-y-1">
+      <p className="text-sm text-red-400 break-words">{run.error || 'The run failed before it produced a verdict.'}</p>
+      <UnreadableReplyText label="Its reply" kept={run.unreadable_reply?.reply} />
+      <UnreadableReplyText label="Its reply when asked for the JSON block" kept={run.unreadable_reply?.repair} />
+    </div>
+  );
+}
+
+/**
+ * A reply whose verdict could not be read, folded away: its first 4 KB and
+ * last 12 KB as the run kept them. Plain text, as the rest of this table is.
+ */
+function UnreadableReplyText({ label, kept }: { label: string; kept?: KeptReply | null }) {
+  if (!kept?.text) return null;
+  return (
+    <details className="text-sm" data-unreadable-reply>
+      <summary className={`${AdminUI.muted} cursor-pointer`}>
+        {`${label} (${Number(kept.chars || kept.text.length).toLocaleString()} characters)`}
+      </summary>
+      <p className="mt-1 max-h-96 overflow-y-auto whitespace-pre-wrap break-words">{kept.text}</p>
+    </details>
+  );
 }
 
 /** The build lane in one line: what is waiting, running, done, and why it idles. */
@@ -764,17 +919,67 @@ export function waitingFor(depth: number, buildsWaiting: number): string {
 // #4533: a queued row a refusal left where it was looked like one next in
 // line; a checks fix backing off for up to an hour behind a busy proposal
 // said nothing at all.
+// And the rows the loop passes over without a refusal (homeroom-bot.js
+// queueWait), which read as next in line: type-racer-battle's #2, #5 and #6
+// waited days behind a first version still up for a vote, saying nothing.
 const WAIT_WORDS: Record<string, string> = {
   session_busy: 'a turn is running on its session',
   allowance: 'its payer\'s week is used up',
   platform_fault: 'the bot is backing off a platform fault',
+  bot_paused: 'the bot is off or its weekly budget is spent',
+  app_paused: 'its app is paused',
+  first_version_pending: 'the project\'s first version is not live yet',
+  build_pending: 'a build of this request is waiting or under way',
+  per_person: 'its person already has as much running as they may',
+  settling: 'somebody is still writing on it',
 };
 
 /** Why a queued row waits, and until when, in words; empty when it does not. Pure. */
 export function waitLine(waiting: QueueWait | null | undefined): string {
   if (!waiting || !waiting.reason) return '';
-  const until = when(waiting.until);
-  return `waiting: ${WAIT_WORDS[waiting.reason] || waiting.reason.replace(/_/g, ' ')}${until ? `, until ${until}` : ''}`;
+  const until = waiting.until ? when(waiting.until) : '';
+  const words = waiting.reason === 'first_version_pending' && Number.isInteger(waiting.firstVersionIssue)
+    ? `the project's first version (#${waiting.firstVersionIssue}) is not live yet`
+    : WAIT_WORDS[waiting.reason] || waiting.reason.replace(/_/g, ' ');
+  return `waiting: ${words}${until ? `, until ${until}` : ''}`;
+}
+
+/** The queue's header: how many wait and how many run, from one snapshot. Pure. */
+export function queueCountLine(queue: Payload['queue'] | null | undefined): string {
+  if (!queue) return '';
+  return `${queue.depth} waiting, ${queue.running || 0} running`;
+}
+
+/** Under the queue's list, when it shows only the first of those waiting. Pure. */
+export function queueMoreLine(queue: Payload['queue'] | null | undefined): string {
+  if (!queue || queue.listedWaiting == null) return '';
+  const more = queue.depth - queue.listedWaiting;
+  return more > 0 ? `Showing the first ${queue.listedWaiting} of ${queue.depth} waiting, in the order they are read.` : '';
+}
+
+// Why a request about Homeroom itself was offered no move (homeroom-bot-move.js).
+const NOT_OFFERED_WORDS: Record<string, string> = {
+  no_requester: 'nobody is known to have asked for it',
+  no_bot: 'its requester does not have the bot',
+  repeat_held: 'the note was not repeated',
+  already_offered: 'already offered',
+  not_sent: 'the message did not go out',
+  unrecorded: 'not recorded',
+};
+
+/**
+ * The move offers in one line: sent, and how they were decided, then the
+ * verdicts about Homeroom that sent none, with why. Empty when there were
+ * neither. Pure.
+ */
+export function moveOffersLine(m: MoveOffers | null | undefined): string {
+  if (!m || (!m.sent && !m.notOffered)) return '';
+  const decided = countsLine([[m.moved, 'moved'], [m.kept, 'kept'], [m.open, 'not answered yet'], [m.failed, 'failed']]);
+  const sent = `${m.sent} offer${m.sent === 1 ? '' : 's'} to move a request to Homeroom in the last ${m.days || 7} days${decided ? ` (${decided})` : ''}`;
+  if (!m.notOffered) return `${sent}.`;
+  const why = Object.entries(m.notOfferedByWhy || {}).filter(([, n]) => n > 0)
+    .map(([k, n]) => `${n} ${NOT_OFFERED_WORDS[k] || k.replace(/_/g, ' ')}`).join(', ');
+  return `${sent}; ${m.notOffered} about Homeroom with no offer${why ? ` (${why})` : ''}.`;
 }
 
 /**
@@ -839,7 +1044,10 @@ function WorkingNow({ items }: { items: Working[] }) {
   );
 }
 
-/** The queue, one line each: what put it there, the app and request, and why it waits, when it does. */
+/**
+ * The queue, one line each, the running rows first: what put it there, the
+ * app and request, and why it waits, when it does.
+ */
 function QueueItems({ items }: { items: QueueItem[] }) {
   if (!items.length) {
     return <p className={AdminUI.muted}>Nothing queued. The queue refreshes from open requests every five minutes while the bot is on.</p>;
@@ -974,11 +1182,14 @@ export function benchHint(best: Best | null, stage: ModelStage, modelId: string 
 
 /**
  * One stage's model: the platform default, a model from the benchmark's
- * catalog (with its price), or any other OpenRouter id typed in.
+ * catalog (with its price), or any other OpenRouter id typed in. The
+ * platform default's own picker (`stage` "default") offers the
+ * deployment's default in that first place, and has no benchmark line; so
+ * does the helper calls' (`stage` "helper"), with the built-in model there.
  */
-function ModelPicker({ stage, label, value, defaultModel, models, best, canWrite, onChange }: {
-  stage: ModelStage; label: string; value: string; defaultModel: string | null;
-  models: BenchModel[] | null; best: Best | null; canWrite: boolean; onChange: (id: string) => void;
+function ModelPicker({ stage, label, value, defaultModel, blankLabel = 'Platform default', models, best, canWrite, configurations = null, onChange }: {
+  stage: ModelStage | 'default' | 'helper'; label: string; value: string; defaultModel: string | null; blankLabel?: string;
+  models: BenchModel[] | null; best: Best | null; canWrite: boolean; configurations?: Configurations | null; onChange: (id: string) => void;
 }) {
   const listed = !value || (models || []).some((m) => m.id === value);
   const [typing, setTyping] = useState(!listed);
@@ -986,9 +1197,16 @@ function ModelPicker({ stage, label, value, defaultModel, models, best, canWrite
   const nameOf = (id: string) => (models || []).find((m) => m.id === id)?.label || id;
   const price = (m: BenchModel) => (m.inputPerMillion != null && m.outputPerMillion != null
     ? ` · $${m.inputPerMillion.toFixed(2)} / $${m.outputPerMillion.toFixed(2)}` : '');
+  const configured = stage === 'default' || stage === 'helper' ? '' : configuredLine(stage, configurations, nameOf);
   return (
     <div data-model-stage={stage}>
       <label className={AdminUI.label} htmlFor={`admin-homeroom-bot-model-${stage}`}>{label}</label>
+      {configured ? (
+        <p className="text-sm mt-1 mb-2" id={`admin-homeroom-bot-model-${stage}-configured`} data-model-configured={stage}>
+          {`${configured} `}
+          <a className={AdminUI.btn.link} href="#admin/bot-configs">Bot configurations</a>
+        </p>
+      ) : null}
       <select
         id={`admin-homeroom-bot-model-${stage}`}
         className={`${AdminUI.select} mt-1`}
@@ -1000,7 +1218,7 @@ function ModelPicker({ stage, label, value, defaultModel, models, best, canWrite
           onChange(e.target.value);
         }}
       >
-        <option value="">{`Platform default${defaultModel ? ` (${nameOf(defaultModel)})` : ''}`}</option>
+        <option value="">{`${blankLabel}${defaultModel ? ` (${nameOf(defaultModel)})` : ''}`}</option>
         {(models || []).map((m) => <option key={m.id} value={m.id}>{`${m.label}${price(m)}`}</option>)}
         <option value="__other">Another OpenRouter model…</option>
       </select>
@@ -1016,7 +1234,9 @@ function ModelPicker({ stage, label, value, defaultModel, models, best, canWrite
           onChange={(e) => onChange(e.target.value.trim())}
         />
       ) : null}
-      <p className={`${AdminUI.muted} mt-1`} data-model-hint={stage}>{benchHint(best, stage, value || defaultModel)}</p>
+      {stage === 'default' || stage === 'helper' ? null : (
+        <p className={`${AdminUI.muted} mt-1`} data-model-hint={stage}>{benchHint(best, stage, value || defaultModel)}</p>
+      )}
     </div>
   );
 }
@@ -1028,9 +1248,15 @@ interface Form {
   mode: 'off' | 'shadow';
   pausedApps: string[];
   models: Record<ModelStage, string>;
+  defaultModel: string;
+  helperModel: string;
   botCap: string;
   userCap: string;
+  adminCap: string;
   dmChat: boolean;
+  voiceSession: boolean;
+  voiceIssue: boolean;
+  voiceChat: boolean;
   continueReads: boolean;
   liveBuildStream: boolean;
   shadowBuildPlatform: boolean;
@@ -1048,9 +1274,15 @@ const FIELD_LABEL: Record<FormKey, string> = {
   mode: 'on or off',
   pausedApps: 'where it works',
   models: 'models',
+  defaultModel: 'the platform default model',
+  helperModel: 'the helper calls\' model',
   botCap: "the bot's weekly budget",
   userCap: 'the budget per person',
+  adminCap: 'the budget per admin',
   dmChat: 'reading DMs',
+  voiceSession: 'answering on its changes',
+  voiceIssue: 'answering on requests',
+  voiceChat: 'answering in chats',
   continueReads: 'continuing its last read',
   liveBuildStream: 'Live while a first version builds',
   shadowBuildPlatform: 'side builds of Homeroom',
@@ -1072,9 +1304,15 @@ export function savedForm(p: Pick<Payload, 'settings' | 'bot'>): Form {
     models: {
       triage: s.models?.triage || '', spec: s.models?.spec || '', build: s.models?.build || '', followup: s.models?.followup || '',
     },
+    defaultModel: s.defaultModel || '',
+    helperModel: s.helperModel || '',
     botCap: p.bot ? (p.bot.weeklyLimitCents / 100).toFixed(2) : '',
     userCap: ((s.userWeeklyCents ?? 5000) / 100).toFixed(2),
+    adminCap: ((s.adminWeeklyCents ?? 10000) / 100).toFixed(2),
     dmChat: s.dmChat !== false,
+    voiceSession: s.voiceSession !== false,
+    voiceIssue: s.voiceIssue !== false,
+    voiceChat: s.voiceChat !== false,
     continueReads: s.continueReads !== false,
     liveBuildStream: s.liveBuildStream !== false,
     shadowBuildPlatform: !!s.shadowBuildPlatform,
@@ -1124,7 +1362,8 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
   for (const key of dirty) {
     if (key === 'mode') patch.mode = form.mode;
     else if (key === 'pausedApps') patch.pausedApps = [...new Set(form.pausedApps.filter(Boolean))];
-    else if (key === 'dmChat' || key === 'continueReads' || key === 'liveBuildStream' || key === 'shadowBuildPlatform') patch[key] = form[key];
+    else if (key === 'dmChat' || key === 'continueReads' || key === 'liveBuildStream' || key === 'shadowBuildPlatform'
+      || key === 'voiceSession' || key === 'voiceIssue' || key === 'voiceChat') patch[key] = form[key];
     else if (key === 'models') {
       const changed: Record<string, string> = {};
       for (const m of MODEL_STAGES) {
@@ -1134,8 +1373,17 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
         changed[m.key] = id;
       }
       if (Object.keys(changed).length) patch.models = changed;
+    } else if (key === 'defaultModel') {
+      const id = String(form.defaultModel || '').trim();
+      if (id && !MODEL_ID_RE.test(id)) errors.push('Platform default: a model is an OpenRouter id such as deepseek/deepseek-v4.1-flash-1017, or the deployment default.');
+      patch.defaultModel = id;
+    } else if (key === 'helperModel') {
+      const id = String(form.helperModel || '').trim();
+      if (id && !MODEL_ID_RE.test(id)) errors.push('Helper calls: a model is an OpenRouter id such as deepseek/deepseek-v4.1-flash-1017, or the built-in model.');
+      patch.helperModel = id;
     } else if (key === 'botCap') patch.weeklyLimitCents = dollars('botCap', "The bot's weekly budget", '');
     else if (key === 'userCap') patch.userWeeklyCents = dollars('userCap', 'The budget per person', ' (0 for no limit)');
+    else if (key === 'adminCap') patch.adminWeeklyCents = dollars('adminCap', 'The budget per admin', ' (0 for no limit)');
     else if (key === 'buildConcurrency') patch.buildConcurrency = whole(key, 1, 4, 'Shadow builds at once');
     else if (key === 'liveAtOnce') patch.liveAtOnce = whole(key, 1, 24, 'Live requests at once');
     else if (key === 'perPerson') patch.perPerson = whole(key, 1, 6, 'Per person at once');
@@ -1380,13 +1628,16 @@ function HomeroomBotSection() {
     setModel(stage, id);
     showTab('settings');
     const name = MODEL_STAGES.find((m) => m.key === stage)?.label || stage;
-    setStatus({ text: `${name} is set to ${id} in the form below. Nothing changes until you press Save changes.`, tone: 'ok' });
+    // A plan or build a configuration decides: the picker is its fallback.
+    const fallback = configuredLine(stage, payload?.configurations) ? ' Builds use it only where no bot configuration is current.' : '';
+    setStatus({ text: `${name} is set to ${id} in the form below.${fallback} Nothing changes until you press Save changes.`, tone: 'ok' });
     try { window.requestAnimationFrame(() => document.getElementById('admin-homeroom-bot-models')?.scrollIntoView({ block: 'center' })); } catch { /* non-fatal */ }
   };
 
   const chip = health(settings, payload?.loop);
   const working = payload?.workingNow || [];
   const pairsLine = pairsWaitingLine(payload?.pairsWaiting);
+  const movesLine = moveOffersLine(payload?.moveOffers);
 
   const tile = (label: string, value: string, id: string, sub?: string) => (
     <div className="rounded-xl bg-zinc-100 dark:bg-zinc-800 p-3" id={id}>
@@ -1459,6 +1710,7 @@ function HomeroomBotSection() {
               : ''}
           </p>
           <p className={pairsLine ? `${AdminUI.muted} mt-1` : 'hidden'} id="admin-homeroom-bot-pairs-waiting">{pairsLine}</p>
+          <p className={movesLine ? `${AdminUI.muted} mt-1` : 'hidden'} id="admin-homeroom-bot-move-offers">{movesLine}</p>
 
           <details className="mt-3" id="admin-homeroom-bot-health-details">
             <summary className={`${AdminUI.muted} cursor-pointer`}>How the loop is doing</summary>
@@ -1507,10 +1759,13 @@ function HomeroomBotSection() {
               <div className={AdminUI.cardHeader}>
                 <h3 className={AdminUI.cardTitle}>Queue</h3>
                 <span className={AdminUI.cardDescription} id="admin-homeroom-bot-queue-depth">
-                  {payload ? `${payload.queue.depth} waiting` : ''}
+                  {queueCountLine(payload?.queue)}
                 </span>
               </div>
               <QueueItems items={payload?.queue.items || []} />
+              <p className={queueMoreLine(payload?.queue) ? `${AdminUI.muted} mt-1` : 'hidden'} id="admin-homeroom-bot-queue-more">
+                {queueMoreLine(payload?.queue)}
+              </p>
             </div>
           </div>
           {canWrite ? (
@@ -1625,6 +1880,7 @@ function HomeroomBotSection() {
                             {run.budget_stop ? `Stopped: ${run.budget_stop}` : VERDICT_LABEL[run.verdict]}
                           </span>
                           {run.cap_suppressed ? <span className={`${AdminUI.badge.outline} ml-1`}>held</span> : null}
+                          {run.reused_run_id ? <span className={`${AdminUI.badge.outline} ml-1`} data-homeroom-bot-reused={run.reused_run_id}>reused</span> : null}
                           {isFollowUp(run) ? <span className={`${AdminUI.badge.outline} ml-1`}>follow-up</span> : null}
                           <span className={`${AdminUI.muted} ml-2`}>{isOpen ? 'hide' : 'show'}</span>
                         </button>
@@ -1673,7 +1929,8 @@ function HomeroomBotSection() {
                               {run.mode === 'live' ? <span>live: acted on the issue</span> : null}
                               <span>determined: {run.determined == null ? '–' : run.determined ? 'yes' : 'no'}</span>
                               {run.missing_fact ? <span>missing: {run.missing_fact}</span> : null}
-                              {run.cap_suppressed ? <span>{CAP_LABEL[run.cap_suppressed] || run.cap_suppressed}</span> : null}
+                              {run.cap_suppressed ? <span data-run-held={run.cap_suppressed}>{heldLine(run.cap_suppressed, payload?.caps)}</span> : null}
+                              {run.reused_run_id ? <span>{`reused run #${run.reused_run_id}'s verdict: the request had not changed`}</span> : null}
                               {run.model ? <span>{run.model}</span> : null}
                               {run.build_model && run.build_model !== run.model ? <span>{`built on ${run.build_model}`}</span> : null}
                               {run.duration_ms != null ? <span>{Math.round(run.duration_ms / 1000)}s</span> : null}
@@ -1788,6 +2045,18 @@ function HomeroomBotSection() {
                   />
                   <p className={`${AdminUI.muted} mt-1`}>What one person&apos;s requests may cost the platform, apart from their own agent allowance. 0 for no limit.</p>
                 </div>
+                <div>
+                  <label className={AdminUI.label} htmlFor="admin-homeroom-bot-admin-cap">Per admin, per week</label>
+                  <input
+                    id="admin-homeroom-bot-admin-cap"
+                    type="number" min="0" step="1" inputMode="decimal"
+                    className={`${AdminUI.input} mt-1`}
+                    value={form.adminCap}
+                    disabled={!canWrite}
+                    onChange={(e) => setField('adminCap', e.target.value)}
+                  />
+                  <p className={`${AdminUI.muted} mt-1`}>Used for admins in place of the budget per person. 0 for no limit.</p>
+                </div>
               </div>
             </div>
 
@@ -1824,21 +2093,60 @@ function HomeroomBotSection() {
                 <button type="button" className={`${AdminUI.btn.link} text-sm`} onClick={() => showTab('benchmark')}>Compare them on the benchmark</button>
               </div>
               <div className="grid gap-4 md:grid-cols-2">
+                <ModelPicker
+                  key={`default-${formRound}`}
+                  stage="default" label="Platform default"
+                  value={form.defaultModel}
+                  defaultModel={payload?.deploymentDefaultModel || null}
+                  blankLabel="Deployment default"
+                  models={bench ? bench.models : null}
+                  best={null}
+                  canWrite={canWrite}
+                  onChange={(id) => setField('defaultModel', id)}
+                />
+              </div>
+              <p className={`${AdminUI.muted} mt-1 mb-4`} id="admin-homeroom-bot-default-model-note">
+                What every stage below left on the platform default runs on (plans and builds only where no bot configuration is
+                current), the bot&apos;s answers in DMs and chats, and a new agent chat for anyone who has not picked a model. Every
+                server follows a change within 10 seconds, with no deploy.
+              </p>
+              <div className="grid gap-4 md:grid-cols-2">
                 {MODEL_STAGES.map((m) => (
                   <ModelPicker
                     key={`${m.key}-${formRound}`}
                     stage={m.key} label={m.label}
                     value={form.models[m.key] || ''}
-                    defaultModel={payload?.defaultModel || bench?.defaultModel || null}
+                    defaultModel={form.defaultModel || payload?.deploymentDefaultModel || payload?.defaultModel || bench?.defaultModel || null}
                     models={bench ? bench.models : null}
                     best={bench?.best || null}
                     canWrite={canWrite}
+                    configurations={payload?.configurations || null}
                     onChange={(id) => setModel(m.key, id)}
                   />
                 ))}
               </div>
               <p className={`${AdminUI.muted} mt-3`} id="admin-homeroom-bot-models-note">
-                {`The platform default${payload?.defaultModel ? ` is ${payload.defaultModel}` : ' is the deployment\'s OpenRouter default'}. A change applies from the next turn, and each run records the model it ran on.`}
+                {`A stage on the platform default runs on ${payload?.defaultModel || 'the deployment\'s OpenRouter default'} now. A change applies from the next turn, and each run records the model it ran on.`}
+              </p>
+              <div className="grid gap-4 md:grid-cols-2 mt-4">
+                <ModelPicker
+                  key={`helper-${formRound}`}
+                  stage="helper" label="Helper calls"
+                  value={form.helperModel}
+                  defaultModel={payload?.helperBuiltInModel || null}
+                  blankLabel="Built-in"
+                  models={bench ? bench.models : null}
+                  best={null}
+                  canWrite={canWrite}
+                  onChange={(id) => setField('helperModel', id)}
+                />
+              </div>
+              <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-helper-model-note">
+                The short calls with a time limit: titles, the one-line description, the sketch card, the plan at Make it, reads of
+                a chat message to the bot, quick replies, the progress guess, report summaries, the ask box, the content review,
+                challenge grades and the small-change tag. A model other than GLM is asked with its thinking off. When it is late or
+                its answer cannot be used, Haiku 5.5 answers instead, except on the small-change tag, which is tried again on the
+                next checks run. Every server follows a change within 10 seconds.
               </p>
             </div>
 
@@ -1863,6 +2171,32 @@ function HomeroomBotSection() {
                   : ''}
                 It brings each of their requests&apos; questions (with answers to tap) and its progress to their DM, can file a
                 new request when they tap File it, and builds a project they create from a description.
+              </p>
+            </div>
+
+            <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bot-voice">
+              <div className={AdminUI.cardHeader}>
+                <h3 className={AdminUI.cardTitle}>Talking outside DMs</h3>
+                <span className={AdminUI.cardDescription}>It answers in its own words, where it was asked.</span>
+              </div>
+              {([
+                ['voiceSession', 'admin-homeroom-bot-voice-session', 'On its own changes: answer whoever writes there'],
+                ['voiceIssue', 'admin-homeroom-bot-voice-issue', 'On requests: answer a mention or a reply to it'],
+                ['voiceChat', 'admin-homeroom-bot-voice-chat', 'In project chats, topics and #general: answer a mention or a reply to it'],
+              ] as const).map(([key, id, label]) => (
+                <label key={key} className="flex items-center gap-2 mt-3 text-sm" htmlFor={id}>
+                  <input
+                    id={id} type="checkbox"
+                    className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
+                    checked={form[key]}
+                    disabled={!canWrite}
+                    onChange={(e) => setField(key, e.target.checked)}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+              <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-voice-note">
+                Off, a place goes back to the fixed notes it had before. Its coding work is the same either way.
               </p>
             </div>
 
@@ -1971,7 +2305,7 @@ function HomeroomBotSection() {
       {/* ── Benchmark ────────────────────────────────────────────────── */}
       <div id="admin-homeroom-bot-panel-benchmark" role="tabpanel" aria-labelledby="admin-homeroom-bot-tab-benchmark" hidden={tab !== 'benchmark'}>
         {benchSeen ? (
-          <BenchmarkArea canWrite={canWrite} active={tab === 'benchmark'} inUse={payload?.bot?.models || null}
+          <BenchmarkArea canWrite={canWrite} active={tab === 'benchmark'} inUse={modelsInUse(payload)}
             defaultModel={payload?.defaultModel || null} onUseModel={applyBenchModel} />
         ) : null}
       </div>

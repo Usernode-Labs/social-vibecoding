@@ -242,7 +242,18 @@ async function deleteAccount(pool, { userId, actorId, mode, confirmation, passwo
       agent_thread_id = NULL, error_detail = NULL, metadata = '{}',
       status = CASE WHEN completed_at IS NULL THEN 'cancelled' ELSE status END,
       completed_at = COALESCE(completed_at, NOW()) WHERE user_id = $1`, [userId]);
-    await db.query(`UPDATE chat_sessions SET status = CASE WHEN status = 'active' THEN 'paused' ELSE status END,
+    // Their sessions holding a slot give it back: the proposal machine pauses
+    // each, asked in this transaction (their proposals up for a vote stay up
+    // for the group to decide).
+    const holding = await db.query(
+      `SELECT id, app_id FROM chat_sessions WHERE user_id = $1 AND status = 'active' AND source IS DISTINCT FROM 'imported'`, [userId]);
+    for (const row of holding.rows) {
+      await require('../workflow/platform.ts').pauseProposal({
+        sessionId: Number(row.id), appId: row.app_id, reason: 'account-deletion', from: 'active', db,
+        requestKey: `account-deletion:${deletionId}:${row.id}`, source: { kind: 'system', name: 'account-deletion' },
+      });
+    }
+    await db.query(`UPDATE chat_sessions SET
       active_turn = NULL, cc_session_id = NULL, agent_thread_id = NULL,
       headless_status = CASE WHEN headless_status = 'generating' THEN 'failed' ELSE headless_status END WHERE user_id = $1`, [userId]);
     // A proposal/spec may be public while its assistant transcript is not.

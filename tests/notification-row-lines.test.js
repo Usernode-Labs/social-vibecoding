@@ -41,6 +41,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
@@ -59,6 +60,7 @@ let rowView = null;
 async function load() {
   if (rowView) return rowView;
   if (!globalThis.window) globalThis.window = globalThis;
+  globalThis.PlatformI18n = englishPlatformI18n();
   loadTsx('frontend/src/features/notifications/notifications.js');
   rowView = globalThis.window.Notifications._rowView;
   assert.equal(typeof rowView, 'function', 'the controller publishes _rowView');
@@ -132,6 +134,8 @@ test('every kind names itself the same way for every row of that kind', async ()
       'Session stopped before finishing', 'Kanban filters'],
     [{ kind: 'stale_pr', sourceUsername: null, prTitle: 'Add a dark mode toggle' },
       'Needs votes', 'Add a dark mode toggle'],
+    [{ kind: 'stale_pr', sourceUsername: null, prTitle: 'Add a dark mode toggle', detail: 'blocked' },
+      'Approved, can\'t go live yet', 'Add a dark mode toggle'],
     [{ kind: 'check_failed', sourceUsername: null, prTitle: 'Rework the board' },
       'Testing couldn\'t run', 'Rework the board'],
     [{ kind: 'kudos', prTitle: 'Fix the bell badge' }, 'Kudos', 'Fix the bell badge'],
@@ -214,6 +218,23 @@ test('a direct message is headed by who sent it, not by "Messages" (QA 2026-09-2
     conversationTitle: null, sourceUsername: null, messageContent: 'hi',
   });
   assert.equal(anonymous.label, 'Messages');
+});
+
+// #3228: a group invitation row carries the inviter's note after the
+// group's name, so the bell says why too; without a note the row is
+// unchanged.
+test('a group invitation row carries the inviter\'s note after the group', async () => {
+  const withNote = await lines({
+    kind: 'conversation_invite', appName: null, conversationId: 7, conversationKind: 'group',
+    conversationTitle: 'Friday demo crew', conversationInviteNote: 'Planning the Friday demo',
+  });
+  assert.equal(withNote.label, 'Invite');
+  assert.equal(withNote.subject, 'Friday demo crew · Planning the Friday demo');
+  const withoutNote = await lines({
+    kind: 'conversation_invite', appName: null, conversationId: 7, conversationKind: 'group',
+    conversationTitle: 'Friday demo crew',
+  });
+  assert.equal(withoutNote.subject, 'Friday demo crew');
 });
 
 test('the three conversation verbs lost their trailing preposition', async () => {
@@ -313,7 +334,7 @@ test('platform limit rows say which cap, how full, and what happens next', async
   const sessionsFull = await lines({ kind: 'platform_limit', detail: 'sessions_full:75:75',
     appName: null, sourceUsername: null });
   assert.equal(sessionsFull.label, 'Session limit reached');
-  assert.match(sessionsFull.subject, /MAX_GLOBAL_SESSIONS/);
+  assert.match(sessionsFull.subject, /until the session limit is raised in Admin → Limits/);
 
   // GitHub's hourly budget, the bot token's and the App's.
   const github = await lines({ kind: 'platform_limit', detail: 'github_warn:4000:5000',
@@ -467,4 +488,38 @@ test('the kudos row button opens the Kudos leaderboard', async () => {
     N._dismissSheetForNav = saved.dismiss;
     globalThis.window.location = saved.location;
   }
+});
+
+// #5249: while kudos is parked (no window.Kudos) a kudos row is not drawn at
+// all: every way a row enters the list asks Notifications._shown, and a live
+// one arriving over the socket is dropped before it counts as unread. The
+// row stays in the database.
+test('parked, a kudos row never enters the list', async () => {
+  await load();
+  const N = globalThis.window.Notifications;
+  assert.equal(globalThis.window.Kudos, undefined, 'kudos is parked here');
+  assert.equal(N._shown({ ...ROW, kind: 'kudos' }), false);
+  assert.equal(N._shown({ ...ROW, kind: 'pr_proposed' }), true);
+  globalThis.window.Kudos = {};
+  try {
+    assert.equal(N._shown({ ...ROW, kind: 'kudos' }), true, 'with kudos on, it is drawn as before');
+  } finally {
+    delete globalThis.window.Kudos;
+  }
+  const saved = { items: N.items, unread: N.unread };
+  N.items = [];
+  N.unread = 0;
+  try {
+    N.handleIncoming({ ...ROW, id: 78, kind: 'kudos', readAt: null });
+    assert.equal(N.items.length, 0, 'a live kudos row is dropped');
+    assert.equal(N.unread, 0, 'and does not count as unread');
+  } finally {
+    N.items = saved.items;
+    N.unread = saved.unread;
+  }
+  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/notifications/notifications.js'), 'utf8');
+  assert.match(src, /Notifications\.items = Array\.isArray\(data\.notifications\)\s*\? data\.notifications\.filter\(Notifications\._shown\) : \[\];/,
+    'the first page is filtered');
+  assert.equal((src.match(/data\.notifications\.filter\(Notifications\._shown\)/g) || []).length, 4,
+    'and so are the three older-page loads (All, Messages, and #5527 Unread)');
 });

@@ -58,6 +58,7 @@ require('../src/db/pool').getPool = () => pool;
 const bot = require('../src/services/homeroom-bot');
 const progress = require('../src/services/homeroom-bot-progress');
 const { appRoutes } = require('../src/routes/apps');
+const { tapsNow } = require('./lib/bot-replies');
 
 test('the made screen reads the waiting plan off the real GET /api/apps/:slug, for its creator', { timeout: 180000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
@@ -196,7 +197,7 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
 
   await t.test('Build it, tapped anywhere: the next read has no plan to draw', async () => {
     const mayor = require('../src/services/homeroom-bot-mayor');
-    const tapped = await mayor.decideOfferTap(pool, {}, { user: alex, actionId: card.meta.actionId, choice: 'build', answers: [] });
+    const tapped = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: alex, actionId: card.meta.actionId, choice: 'build', answers: [] });
     assert.deepEqual(tapped, { ok: true, choice: 'build', label: 'Build it' });
     const read = madeAppOf(await get());
     assert.equal(read.firstVersion.plan, undefined);
@@ -209,7 +210,7 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
     const { rightNow } = await progress.progressFor(pool, { userId: alex.id, facts: false });
     const mine = rightNow.find((e) => e.firstVersion);
     assert.ok(mine, 'the first version is in progress');
-    assert.deepEqual([mine.step, mine.stepName], [4, 'Building it'], 'Step 4 of 7 · Building it, in the chat');
+    assert.deepEqual([mine.step, mine.stepName], [4, 'Building'], 'Step 4 of 7 · Building, in the chat (one story: the steps are named in a word)');
     assert.doesNotMatch(String(mine.doing), /plan/);
   });
 });

@@ -26,6 +26,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
@@ -45,7 +46,8 @@ test('a second pre-acceptance send is a 409 awaiting_acceptance, not a 404', () 
   assert.match(ROUTE, /const AWAITING_ACCEPTANCE = Object\.freeze\(\{ error: 'awaiting_acceptance' \}\);/);
   assert.match(ROUTE, /if \(error === 'awaiting_acceptance'\) return res\.status\(409\)\.json\(AWAITING_ACCEPTANCE\);/);
   // The send route reads the service's error before its null → 404.
-  assert.match(ROUTE, /conversations\.sendMessage\(pool, req\.user, id, input\);\s*if \(result\?\.error\) return sendMessageError\(res, result\.error\);\s*if \(!result\) return sendNotFound\(res\);/);
+  // (Its options hand a DM to the Homeroom bot's machine, in the send's own transaction.)
+  assert.match(ROUTE, /conversations\.sendMessage\(pool, req\.user, id, input, \{[\s\S]*?\}\);\s*if \(result\?\.error\) return sendMessageError\(res, result\.error\);\s*if \(!result\) return sendNotFound\(res\);/);
 });
 
 test('the conversation says it is waiting, and canSend turns false once the opening message is spent', () => {
@@ -98,7 +100,7 @@ function snapshot(active, messages = []) {
 test('before the opening message: the composer, and one line saying what it will be', () => {
   const html = composerHtml(snapshot(pendingDirect()));
   assert.match(html, /<textarea[^>]*aria-label="Message"/, 'the opening message can still be written');
-  assert.match(html, /class="messages-composer-hint"[^>]*>@usernode-capture gets your first message as a message request\. You can send more once they accept\./);
+  assert.match(html, /class="messages-composer-hint"[^>]*>usernode-capture gets your first message as a message request\. You can send more once they accept\./);
   assert.doesNotMatch(html, /Waiting for/);
 });
 
@@ -113,7 +115,7 @@ test('after the opening message: no composer, and the thread says who it is wait
     assert.doesNotMatch(html, /<textarea/, 'no box whose sends would all fail');
     assert.match(html, /data-awaiting-acceptance=""/);
     assert.match(html, /<strong>Message request sent<\/strong>/);
-    assert.match(html, /Waiting for @usernode-capture to accept your message request\. You can send more once they do\./);
+    assert.match(html, /Waiting for usernode-capture to accept your message request\. You can send more once they do\./);
     assert.doesNotMatch(html, /You can’t send messages in this conversation/);
   }
 });
@@ -176,15 +178,21 @@ test('an unanswered direct request is named by its requester in the row and the 
   assert.match(row, /title=\{peer\?\.username \|\| conversation\.title\}/, 'the tile is theirs, not "DM"');
   const header = SCREEN.slice(SCREEN.indexOf('function ThreadHeader('), SCREEN.indexOf('/** The day a message was sent'));
   assert.match(header, /const person = directPerson\(active\);/);
-  // B5: named as senderName names it, the @handle for a person.
-  assert.match(header, /active\.kind === 'direct' && person \? senderName\(person\)/);
+  // B5: named as senderName names it; in a direct message, bare (#4655).
+  assert.match(header, /active\.kind === 'direct' && person \? senderName\(person, \{ bare: true \}\)/);
   // The sender's own side of a request says it is pending too.
-  assert.match(header, /active\.awaitingAcceptance \? 'Request pending' : 'Direct message'/);
+  assert.equal(message('messages:header.subtitle.requestPending'), 'Request pending');
+  assert.equal(message('messages:header.subtitle.direct'), 'Direct message');
+  assert.match(header, /active\.awaitingAcceptance \? t\('messages:header\.subtitle\.requestPending'\) : t\('messages:header\.subtitle\.direct'\)/);
 });
 
-test('the phone bar over an unanswered request names its requester too', () => {
+test('the phone bar over an open conversation says Messages', () => {
   const STORE = read('frontend/src/features/messages/store.ts');
-  assert.match(STORE, /: state\.route\.agent \? 'Messages' : chromeTitle\(state\.active\)\)/);
+  assert.equal(message('messages:store.header.messages'), 'Messages');
+  // #5383: the bar over an open conversation keeps saying "Messages"; the
+  // conversation's own header is the one place its name appears.
+  assert.match(STORE, /app\.setBackIcon\?\.\(thread \? 'arrow' : 'none', thread \? '#messages' : undefined\);/);
+  assert.match(STORE, /app\.setHeaderTitle\?\.\(t\('messages:store\.header\.messages'\)\);/);
   const helper = STORE.slice(STORE.indexOf('function chromeTitle('));
   assert.match(helper, /active\.kind === 'direct' && active\.membershipStatus === 'invited' && active\.requester\?\.username\)\s*\{\s*return active\.requester\.username;/);
 });

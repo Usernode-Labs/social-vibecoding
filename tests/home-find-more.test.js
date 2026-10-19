@@ -27,7 +27,8 @@ const { installAppCard } = require('./helpers/app-card');
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const { HOME_SRC, PANELS_SRC } = require('./helpers/home-modules');
 const { installPanelsStore } = require('./helpers/home-grid-store');
-const { renderComponent } = require('./lib/render-tsx');
+const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 // The panel RENDERERS moved to frontend/src/features/home/panels/*.tsx when
 // the three sections became React (#1191); home-panels.js keeps the data and
 // the view models. Assertions about markup read the components, assertions
@@ -70,6 +71,7 @@ function makePanels({ canCreate = true, featured = [] } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   // home-panels.js imports its view-model store; ./helpers/home-modules strips
   // the line so the source runs as classic script text, and this supplies the
@@ -117,6 +119,7 @@ function makeHome({ search = '', canCreateApps = true } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   // home.js delegates iconTileFor / renderAppPillsHtml to window.AppCard
   // (frontend/src/features/apps/app-card.js) since #1083 chunk F.
@@ -155,9 +158,13 @@ const discoveryCandidates = () => [
   })),
 ];
 
-test('popular requires a current review and a real icon, not just popularity', () => {
+// Polish N3: a review ranks a community first but is not required. It
+// expires on every merge, and with none current the lane was always empty
+// while Discover listed dozens to join. Demo and broken reviews still keep
+// an app out, as no icon and not running do.
+test('popular puts reviewed communities first, offers unreviewed ones, and never a demo or broken one', () => {
   const Home = makeHome();
-  assert.deepEqual(Home.popularApps(discoveryCandidates()).map((a) => a.slug), ['ready']);
+  assert.deepEqual(Home.popularApps(discoveryCandidates()).map((a) => a.slug), ['ready', 'unreviewed', 'outdated']);
   assert.equal(Home.isDiscoveryReady(app({ demo: true })), true, 'staging inertness is not an editorial demo classification');
   assert.equal(Home.isDiscoveryReady(app({ directory: { state: 'outdated', tier: 'unreviewed' } })), false,
     'an expired review is not a current one');
@@ -241,51 +248,96 @@ test('featuredApps: ?shot=discover-empty still wins over a kept slug', () => {
   assert.equal(Home.featuredApps(apps).length, 0);
 });
 
+// ── discoverMetaLine: the card's fallback facts line (#4937) ─────────
+//
+// A card with no manifest description still says more than "N contributors":
+// who is using the app and how recently it changed, in the SAME WORDS the
+// Discover directory's rows use (discover:row.meta.*), so the two surfaces
+// never disagree about one app. Pure: no fetch, no state.
+test('discoverMetaLine composes the facts line from the words the Discover rows use', () => {
+  const Home = makeHome();
+  const threeDaysAgo = new Date(Date.now() - 3 * 86400 * 1000).toISOString();
+  assert.equal(
+    Home.discoverMetaLine({ active_users: 12, last_deploy_at: threeDaysAgo }),
+    '12 users · Updated 3d ago',
+  );
+  // A singular count, and created_at standing in while nothing has shipped.
+  assert.equal(
+    Home.discoverMetaLine({ active_users: 1, created_at: threeDaysAgo }),
+    '1 user · Updated 3d ago',
+  );
+  // A zero count says nothing, exactly as the directory's own rows (polish
+  // N12: "0 users · Joined"); with no date either there is no line at all.
+  assert.equal(Home.discoverMetaLine({ active_users: 0, last_deploy_at: threeDaysAgo }), 'Updated 3d ago');
+  assert.equal(Home.discoverMetaLine({}), null);
+  assert.equal(Home.discoverMetaLine(null), null);
+});
+
 test('_wireDiscoveryCards binds each badge once, however often the lane re-runs it', () => {
   const Home = makeHome();
-  let toggles = 0;
-  Home.toggleAdded = () => { toggles += 1; };
-  // BY TYPE, since #1763: the badge carries two listeners now — its click,
-  // and the pointerdown guard that keeps a press on ⊕ from arming the lane's
-  // drag recognizer. Both are bound through the same WeakSet, so both are the
-  // claim this test makes.
-  const mkBtn = (cls, slug) => {
+  const calls = { joins: [], leaves: [], toggles: [] };
+  Home.setMembership = (slug, desired) => { calls[desired ? 'joins' : 'leaves'].push(slug); };
+  Home.toggleAdded = (slug, desired) => { calls.toggles.push([slug, desired]); };
+  // BY TYPE, since #1763: the pill carries two listeners now — its click,
+  // and the pointerdown guard that keeps a press on it from arming the
+  // lane's drag recognizer. Both are bound through the same WeakSet, so both
+  // are the claim this test makes.
+  const mkBtn = (cls, slug, join) => {
     const handlers = {};
     return {
       className: cls,
-      dataset: { slug, added: 'false' },
+      dataset: { slug, added: 'false', join },
       addEventListener: (t, fn) => { (handlers[t] || (handlers[t] = [])).push(fn); },
       handlers,
     };
   };
-  const badge = mkBtn('card-add-btn', 'fresh');
-  const card = {
-    dataset: { slug: 'fresh', status: 'running' },
-    addEventListener: () => {},
+  const laneFor = (badge) => {
+    const card = {
+      dataset: { slug: badge.dataset.slug, status: 'running' },
+      addEventListener: () => {},
+    };
+    return {
+      querySelectorAll: (sel) => {
+        if (sel === '.app-card') return [card];
+        if (sel === '.card-add-btn') return [badge];
+        return [];
+      },
+    };
   };
-  const lane = {
-    querySelectorAll: (sel) => {
-      if (sel === '.app-card') return [card];
-      if (sel === '.card-add-btn') return [badge];
-      return [];
-    },
-  };
-  // Twice, which is what really happens now: the badge flipping to "added"
+  const badge = mkBtn('card-add-btn', 'fresh', 'join');
+  const lane = laneFor(badge);
+  // Twice, which is what really happens now: the pill flipping to "joined"
   // changes the effect's key while React keeps the very same element.
   Home._wireDiscoveryCards(lane);
   Home._wireDiscoveryCards(lane);
   assert.equal(badge.handlers.click.length, 1, 'one listener, not two');
   assert.equal(badge.handlers.pointerdown.length, 1, 'and one guard, not two');
+
+  // JOIN: the real membership write, and the slug lands in _discoverKeep or
+  // the rail repaints without the card (popularApps drops joined apps).
   badge.handlers.click[0]({ stopPropagation: () => {} });
-  assert.equal(toggles, 1, 'so one tap is one toggle');
+  assert.deepEqual(calls.joins, ['fresh'], 'one tap is one join');
+  assert.ok(Home._discoverKeep.has('fresh'), 'the joined card keeps its place in the rail');
+
+  // JOINED: the tap asks the leave confirm and then writes the leave.
+  const joined = mkBtn('card-add-btn', 'fresh', 'joined');
+  Home._wireDiscoveryCards(laneFor(joined));
+  joined.handlers.click[0]({ stopPropagation: () => {} });
+  assert.deepEqual(calls.leaves, ['fresh']);
+
+  // ADD: a member whose community is not on Home yet is pinned, not joined.
+  const add = mkBtn('card-add-btn', 'fresh', 'add');
+  Home._wireDiscoveryCards(laneFor(add));
+  add.handlers.click[0]({ stopPropagation: () => {} });
+  assert.deepEqual(calls.toggles, [['fresh', true]]);
 
   // The guard's whole job: the kit's recognizer listens for pointerdown on the
   // LANE and takes the first card that contains the target, so a press on the
-  // badge is a press on the card unless the event stops here (#1763). On
+  // pill is a press on the card unless the event stops here (#1763). On
   // desktop it arms after 6px, which is inside the slop of an ordinary click.
   let stopped = 0;
   badge.handlers.pointerdown[0]({ stopPropagation: () => { stopped += 1; } });
-  assert.equal(stopped, 1, 'a press on ⊕ never reaches the lane');
+  assert.equal(stopped, 1, 'a press on the pill never reaches the lane');
 });
 
 test('featuredApps: a hidden member app IS offered again (#618)', () => {
@@ -452,13 +504,14 @@ test('the Discover widget swaps its tile row for a note, never an empty box', ()
   // category is empty rather than when the curated half is.
   assert.match(src, /tiles\.length \?/);
   assert.doesNotMatch(src, /view\.featured\.length \?/);
-  assert.match(src, /Nothing to discover right now/);
+  assert.match(src, /\{t\('home:discover\.empty\.title'\)\}/);
+  assert.equal(message('home:discover.empty.title'), 'No communities to suggest right now');
   // The browse control always renders: it is THE discovery path, so it must
   // not depend on curation existing. It lives in the SECTION HEADING now, not
   // in the card at all — see the block test below — so it does not even
   // depend on the block having rendered.
   assert.match(PANEL_SRC.ui, /home-browse-btn/);
-  assert.match(PANEL_SRC.ui, /Browse all apps/);
+  assert.match(PANEL_SRC.ui, /t\('home:discover\.browseAll\.text'\)/);
   assert.match(PANEL_SRC.sections, /<BrowseLink \/>/);
   // ...and the widget derives its tiles from the SAME per-viewer flags the
   // old row did, rather than issuing a second query.
@@ -564,8 +617,9 @@ test('the apps grid is four columns at every width, two rows by default', () => 
   assert.match(HOME_SRC, /chromeStore\.set\(\{\s*moreCount: count \|\| 0,/);
   assert.match(
     read('frontend/src/features/home/apps-more.tsx'),
-    /`Show all \$\{moreCount\} apps`/
+    /\{t\('home:grid\.showAll', \{ count: moreCount \}\)\}/
   );
+  assert.equal(message('home:grid.showAll', { count: 9 }), 'Show all 9 apps');
   assert.equal(INDEX.indexOf('id="home-apps-more"') > 0, true,
     'the expander has a host outside #app-list');
 });
@@ -716,9 +770,10 @@ test('Create an app is the launcher grid\'s trailing tile, for every account', (
   // there.
   assert.doesNotMatch(PANELS_SRC, /createView\(panel\) \{/, 'the panels no longer build it');
   assert.doesNotMatch(PANELS_SRC, /create: 'home-create-section'/, 'and it has no section host');
-  // The only thing that withholds it is a collapsed grid it would add a row
-  // to (#3047) — and there it is behind "Show all N apps", not gone.
-  assert.match(HOME_SRC, /create = createHidden \? null : \{\n\s+enabled: canCreate,/,
+  // The only thing that withholds the tile is a collapsed grid it would add
+  // a row to (#3047) — and there it is not gone: the view is still built, and
+  // the Show-all line draws the compact New project entry for it (#4757).
+  assert.match(HOME_SRC, /create = \{\n\s+enabled: canCreate,\n\s+hint: message\(Home\.CREATE_DISABLED_HINT\),\n\s+heldBack: createHidden,/,
     'Home.render() builds it on the grid paint, from the same canCreate');
   assert.doesNotMatch(HOME_SRC, /data-panel-slot="/,
     'and the grid still plants no widget slots: the tile is a component, not a slot');
@@ -733,7 +788,8 @@ test('Create an app is the launcher grid\'s trailing tile, for every account', (
 test('a viewer with no quota can open the dialog to inspect it', () => {
   // The compact locked state carries the shared hint in its tooltip;
   // tapping opens the detailed used-of-limit row.
-  assert.match(HOME_SRC, /CREATE_DISABLED_HINT: 'View your app allowance or request more slots\.'/);
+  assert.match(HOME_SRC, /CREATE_DISABLED_HINT: 'home:create\.disabledHint'/);
+  assert.equal(message('home:create.disabledHint'), 'View your app allowance or request more slots.');
   const btn = TILE_SRC.slice(TILE_SRC.indexOf('onClick={'));
   assert.match(btn, /App\?\.showCreateModal\?\.\(\)/,
     'both enabled and locked tiles open the create modal');
@@ -865,4 +921,66 @@ test('staging discovery fixtures never write outside staging', async () => {
   for (const env of ['production', 'local', undefined]) {
     await stagingFeaturedSeed(env === undefined ? '' : env)({ query() { assert.fail(`seed ran in ${env}`); } });
   }
+});
+
+// ── the Add apps sheet's lists (#4669) ───────────────────────────────
+//
+// Edit mode's trailing tile opens a sheet with two lists, and the decision
+// of what goes in them lives in addSheetLists — pure, so it is read here as
+// data against a real Home from the harness above rather than through sheet
+// markup. The sheet module reads `window.Home` at call time, the way every
+// consumer outside home.js does.
+
+const SHEET_SRC = 'frontend/src/features/home/add-apps-sheet.tsx';
+const { addSheetLists } = loadTsx(SHEET_SRC, {});
+
+// The module resolves `window` against the Node global at call time; the
+// sandboxed Home is a vm object, and property reads cross realms fine.
+function withHome(Home, fn) {
+  const saved = globalThis.window;
+  globalThis.window = { Home };
+  try {
+    return fn();
+  } finally {
+    if (saved === undefined) delete globalThis.window;
+    else globalThis.window = saved;
+  }
+}
+
+test('the sheet lists joined-but-untiled apps first, popular second, never twice', () => {
+  const Home = makeHome();
+  const apps = [
+    app({ slug: 'tile', is_favorited: true, is_member: true }),
+    app({ slug: 'joined', is_member: true }),
+    // A collaborator who hid their tile: not "yours" as isYours reads it,
+    // not "joined" as popularApps reads it — so it reaches BOTH lists, and
+    // the sheet may show it once.
+    app({ slug: 'collab-hidden', is_collaborator: true, your_apps_hidden: true }),
+    app({ slug: 'open', active_users: 5 }),
+    app({ slug: 'demo', demo: true, active_users: 50 }),
+  ];
+  const lists = withHome(Home, () => addSheetLists(apps));
+  assert.deepEqual(lists.yours.map((a) => a.slug), ['joined', 'collab-hidden'],
+    '"Your other apps": the viewer belongs to them and keeps no tile');
+  assert.deepEqual(lists.popular.map((a) => a.slug), ['open'],
+    '"Popular" is popularApps\' answer minus the first list, and minus demo tiles');
+});
+
+test('a demo tile is offered by neither list, and no Home means no lists', () => {
+  // popularApps itself does not screen demo tiles out — the Discover rails
+  // want them — but the sheet's Add button on one would be a silent no-op:
+  // toggleAdded returns early for staging ?demo=1 tiles with no DB row.
+  const Home = makeHome();
+  const lists = withHome(Home, () => addSheetLists([app({ slug: 'demo', demo: true })]));
+  assert.deepEqual(lists, { yours: [], popular: [] });
+  // No window.Home (a sheet opened where the module never loaded): empty
+  // lists, never a throw — the empty sheet is a real state ("Nothing to add
+  // right now" and the browse link).
+  assert.deepEqual(withHome(null, () => addSheetLists([app({})])), { yours: [], popular: [] });
+  assert.deepEqual(withHome(null, () => addSheetLists('not-a-list')), { yours: [], popular: [] });
+});
+
+test('the sheet\'s Add press is the same toggleAdded(true) the rails run', () => {
+  assert.match(read(SHEET_SRC), /home\(\)\?\.toggleAdded\?\.\(slug, true\)/,
+    'one write path: flip the flag, repaint the grid, POST /favorite');
 });

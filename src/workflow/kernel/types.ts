@@ -15,9 +15,12 @@ export interface PoolClient extends Queryable {
   release(destroy?: Error | boolean): void;
   on?(event: 'notification', listener: (msg: { channel: string; payload?: string }) => void): unknown;
   on?(event: 'error', listener: (err: Error) => void): unknown;
+  removeListener?(event: 'notification', listener: (msg: { channel: string; payload?: string }) => void): unknown;
   removeListener?(event: 'error', listener: (err: Error) => void): unknown;
 }
 export interface Pool extends Queryable { connect(): Promise<PoolClient> }
+
+import type { Steps } from './steps.ts';
 
 export interface Logger {
   info(scope: string, message: string, meta?: object): void;
@@ -67,13 +70,14 @@ export interface WorkRequest {
   // item starts from that item's last checkpoint (a retry keeps the progress).
   continues?: string;
 }
+// A work item of this instance, by its identity.
+export interface WorkRef { kind: string; key: string }
 export interface MessageRequest {
   to: { machine: string; key: string };
   event: { type: string; payload: Json };
   appId?: number | null;
 }
 export interface TimerRequest { at: Date; event: { type: string; payload?: Json } }
-export interface Notification { type: string; [field: string]: unknown }
 
 // What browsers should hear. Pushes are published inside the transition's
 // transaction (RuntimeOptions.publish) and reach them only if it commits:
@@ -85,10 +89,15 @@ export interface Outcome<S extends State = State> {
   next: S;
   writes?: DomainWrite[];
   work?: WorkRequest[];
+  // Outstanding items of this instance that the event made obsolete. They
+  // settle as cancelled in its transaction: a queued item never runs, a
+  // running one loses its claim (its signal aborts at the next renewal) and
+  // a reported result is refused as work_cancelled. Cleanup outside the
+  // database is the machine's own work.
+  cancel?: WorkRef[];
   messages?: MessageRequest[];
   timer?: TimerRequest | null;   // undefined keeps the deadline, null clears it
   push?: Push[];
-  notify?: Notification[];
 }
 
 // Guards and authorisation return true to pass or a rejection.
@@ -110,10 +119,11 @@ export interface Tx {
 
 export type Decoder = (payload: unknown) => unknown;
 export type Authorize<S extends State, F> = (event: Event<any>, facts: F, state: S) => Check;
-// A domain write may add what browsers should hear about the rows it wrote.
-export interface WriteContext extends TransitionContext { push(p: Push): void }
+// A domain write may add what browsers should hear about the rows it wrote,
+// and a message for an instance whose key only the write knows (a row it has
+// just inserted): committed with the event, as the outcome's own messages are.
+export interface WriteContext extends TransitionContext { push(p: Push): void; message(m: MessageRequest): void }
 export type WriteHandler = (tx: Tx, write: any, ctx: WriteContext) => Promise<unknown>;
-export type Notifier = (notification: any) => void | Promise<void>;
 
 // What a machine module writes. Plain objects are authoring syntax only:
 // defineMachine converts every table to a Map once, and the kernel reads
@@ -140,7 +150,14 @@ export interface MachineDefinition<S extends State = State, F = unknown> {
   // are the ones the transition decided on, so an answer they already hold
   // (was this vote a retraction?) needs no query.
   reply?: (tx: Tx, event: Event<any>, after: S, ctx: TransitionContext, facts: F) => Promise<Json | undefined>;
-  notifiers?: Record<string, Notifier>;
+  // States in which an instance waits on something nobody inside the
+  // platform can hurry, each with the words Admin → Workflows shows beside
+  // it under "Needs a person" (a merge GitHub has not answered).
+  attention?: Record<string, string>;
+  // Days its processed events, settled work and receipts are kept, when fewer
+  // than the runtime's (a machine whose history is mostly a clock's ticks; its
+  // request keys must not come back after that long).
+  retainDays?: number;
 }
 
 export interface WorkContext {
@@ -149,17 +166,30 @@ export interface WorkContext {
   key: string;
   input: any;
   attempt: number;
+  lostAttempts?: number;                 // attempts that ended with their process
   resumeFrom: Json | null;               // the last checkpoint, if any
   checkpoint(value: Json): Promise<void>; // throws LeaseLost if the claim is gone
   signal: AbortSignal;
+  // The handler's steps, kept in the checkpoint (steps.ts): `owner` names
+  // them, `triesLeft` is how many more tries a failure here leaves.
+  steps(o?: { owner?: string | null; triesLeft?: number }): Steps;
 }
 
 export interface WorkHandler {
   run(ctx: WorkContext): Promise<Json | void>;
   maxAttempts?: number;                   // default 5; an error with `permanent: true` is not retried
   backoffMs?: (attempt: number) => number;
-  concurrency?: number;                   // per kind, in this process
+  concurrency?: number;                   // per kind, across every process (default 4)
   leaseMs?: number;
+  // Carries its work on from its checkpoint: attempts lost with their process
+  // do not count against maxAttempts, only against maxLostAttempts (default 100).
+  resumable?: boolean;
+  maxLostAttempts?: number;
+  // Claimed only by a process of the release its input names
+  // (`input.release`, the runtime's `release` option): work that must run
+  // the code of the build that asked for it (release/machine.ts), never an
+  // older build's still running during a rollout.
+  ownRelease?: boolean;
 }
 
 // What a producer gets back for an event.

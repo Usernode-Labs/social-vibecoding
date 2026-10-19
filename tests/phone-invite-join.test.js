@@ -15,6 +15,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
@@ -93,9 +94,9 @@ test('the invite\'s Join sheet starts with a phone number when the server offers
   assert.match(bare, /data-recaptcha-line=""/);
   // Google's notice, for the badge the sheet hides, is its own quieter line
   // under the terms (#4379).
-  assert.match(phone, /data-terms-notice="recaptcha"[^>]*>By continuing, you agree to Homeroom&#x27;s (<!-- -->)?terms(<!-- -->)?\.<\/p><p data-recaptcha-line=""[^>]*class="[^"]*text-\[12px\][^"]*text-zinc-400[^"]*">Protected by reCAPTCHA · Google (<!-- -->)?<a href="https:\/\/policies\.google\.com\/privacy"[^>]*>Privacy<\/a>(<!-- -->)? · (<!-- -->)?<a href="https:\/\/policies\.google\.com\/terms"[^>]*>Terms<\/a><\/p>/);
+  assert.match(phone, /data-terms-notice="recaptcha"[^>]*>By continuing, you agree to Homeroom&#x27;s (<!-- -->)?terms(<!-- -->)? and acknowledge the (<!-- -->)?privacy notice(<!-- -->)?\.<\/p><p data-recaptcha-line=""[^>]*class="[^"]*text-\[12px\][^"]*text-zinc-400[^"]*">Protected by reCAPTCHA · Google (<!-- -->)?<a href="https:\/\/policies\.google\.com\/privacy"[^>]*>Privacy<\/a>(<!-- -->)? · (<!-- -->)?<a href="https:\/\/policies\.google\.com\/terms"[^>]*>Terms<\/a><\/p>/);
   assert.doesNotMatch(phone, /Privacy Policy|Terms of Service|\(reCAPTCHA\)/);
-  assert.doesNotMatch(phone, /Sign in with a password|This makes your account/, 'the password is a step on from the email way');
+  assert.doesNotMatch(phone, /Use a password|This makes your account/, 'the password is a step on from the email way');
   assert.ok(phone.indexOf('sign-in-sheet-phone"') < phone.indexOf('Continue with Apple'), 'the phone stays first');
   assert.doesNotMatch(phone, /—/);
   // Without the offer it is the sheet it was.
@@ -122,13 +123,17 @@ test('the sheet\'s phone steps: the code, then the username on the phone\'s own 
   const verify = src.slice(src.indexOf('const verifyPhone = useCallback'), src.indexOf('const finishAccount = useCallback'));
   assert.match(verify, /fetchSessionMint\('\/api\/auth\/phone\/verify'/);
   assert.match(verify, /sessionInfo: phoneSession\.current,\s+code,\s+\.\.\.\(phoneName\.current \? \{ name: phoneName\.current \} : \{\}\),\s+\.\.\.\(followInvite \? \{ followInvite: true \} : \{\}\),/);
-  assert.match(src, /if \(!name\) \{ setError\('Enter your name\.'\);/);
+  assert.match(src, /if \(!name\) \{ setError\(translate\('auth:signInSheet\.phone\.nameMissing'\)\);/);
+  assert.equal(message('auth:signInSheet.phone.nameMissing'), 'Enter your name.');
   assert.match(verify, /if \(data\.next === 'signed-in'\) \{\s+await finish\(data\.created === true \? 'new' : 'existing'\);/);
   assert.match(verify, /setUsernameVia\('phone'\);\s+setStep\('username'\);/);
   assert.match(src, /fetchSessionMint\(usernameVia === 'phone' \? '\/api\/auth\/phone\/finish' : '\/api\/auth\/oauth\/finish'/);
-  assert.match(src, /'Check your texts'/);
-  assert.match(src, /`We sent a 6-digit code to the number ending \$\{phoneNumber\.slice\(-4\)\}\.`/);
-  assert.match(src, /The code fills itself in on most phones\./);
+  assert.match(src, /t\('auth:signInSheet\.phoneCode\.title'\)/);
+  assert.equal(message('auth:signInSheet.phoneCode.title'), 'Check your texts');
+  assert.match(src, /t\('auth:signInSheet\.phoneCode\.lead', \{ lastDigits: phoneNumber\.slice\(-4\) \}\)/);
+  assert.equal(message('auth:signInSheet.phoneCode.lead', { lastDigits: '0123' }), 'We sent a 6-digit code to the number ending 0123.');
+  assert.match(src, /\{t\('auth:signInSheet\.phoneCode\.autofill'\)\}/);
+  assert.equal(message('auth:signInSheet.phoneCode.autofill'), 'The code fills itself in on most phones.');
   // The landing hands the offer to the invite's sheet only.
   const landing = read('frontend/src/features/auth/landing.tsx');
   assert.match(landing, /const phoneSignIn = waitlistPayload\?\.phone_sign_in === true;/);
@@ -159,8 +164,9 @@ test('one tap on a step\'s main button submits with the keyboard up (#4214)', ()
   // (the code step's "Send a new code" asks again), and on no other.
   assert.match(src, /<TermsNotice className="mt-3" recaptcha=\{step === 'phone' \|\| step === 'phone-code' \? RECAPTCHA_LINE : null\} \/>/);
   const email = renderToHtml(createElement(SignInSheet, {
-    open: true, title: 'Sign in', intro: 'x', from: 'signin', onClose() {}, primaryClass: 'pill',
+    open: true, title: 'Join Best brunch spots', intro: 'x', from: 'invite', onClose() {}, primaryClass: 'pill',
   }));
+  // An invite's email step only makes an account, so it says the terms (#5257).
   assert.match(email, /By continuing, you agree to Homeroom/);
   assert.doesNotMatch(email, /reCAPTCHA|policies\.google\.com/);
 });
@@ -304,9 +310,13 @@ test('a provisional handle: private groups see it, public places ask for a usern
   assert.match(read('frontend/src/features/home/home.js'), /const res = desired && retry \? await retry\(write\) : await write\(\);/);
   assert.match(read('frontend/src/features/dev-board/workshop/invite-offer.ts'), /if \(result\.reason === 'username_required'\) \{/);
   const gate = read('frontend/src/features/auth/username-first-run.js');
-  assert.match(gate, /forPublic \? 'Pick a username' : 'Choose your username'/);
-  assert.match(gate, /'Public apps show this, not your name\. Letters, numbers and '/);
-  assert.match(gate, /'Not now'\);/);
+  const { message } = require('./lib/platform-i18n');
+  assert.match(gate, /forPublic \? PlatformI18n\.t\('onboarding:username\.titleForPublic'\) : PlatformI18n\.t\('onboarding:username\.title'\)/);
+  assert.deepEqual([message('onboarding:username.titleForPublic'), message('onboarding:username.title')], ['Pick a username', 'Choose your username']);
+  assert.match(gate, /\? PlatformI18n\.t\('onboarding:username\.introForPublic'\)/);
+  assert.equal(message('onboarding:username.introForPublic'), 'Public apps show this, not your name. Letters, numbers and underscores, 3 to 32 characters.');
+  assert.match(gate, /PlatformI18n\.t\('onboarding:username\.notNow'\)\);/);
+  assert.equal(message('onboarding:username.notNow'), 'Not now');
   assert.match(gate, /sheet = PlatformUI\.modal\(\{ contentEl: panel, dismissible: forPublic, onDismiss \}\);/);
   assert.match(gate, /if \(body\.code !== 'username_required'\) return res;/);
 });

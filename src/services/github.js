@@ -112,7 +112,7 @@ async function patOctokit(pat) {
 // ceiling bounds worst-case work for a repo with thousands of issues.
 //
 // Freshness on the "Open Issues" panel doesn't rely on this TTL: when a PR
-// merges through the platform (routes/votes.js checkAndMerge) the closed
+// merges through the platform (the merge-followups machine) the closed
 // issues are known from session.linked_issues, so the merge path busts this
 // entry via invalidateIssuesCache() and broadcasts a refresh; when an issue
 // is created through the platform, noteIssueCreated records it in the
@@ -120,8 +120,33 @@ async function patOctokit(pat) {
 // immediately (#192). The TTL — plus the panel's throttled manual refresh
 // (refreshPublicIssues) — is the backstop for creates/closes that happen
 // directly on GitHub.
+//
+// An entry whose list came back as ONE page also keeps that answer's ETag,
+// and the read after its TTL asks with If-None-Match. On 19 Oct 2026 the
+// Homeroom bot's five-minute refresh of every project's list was the largest
+// steady GitHub cost, about 1,500 requests an hour, and a 304 is free. The
+// ETag lives in the entry itself, so it is kept and dropped with it: one
+// entry per repository, as before. A list of more pages keeps none (each
+// page would need its own), and an entry whose list was changed here
+// (recordCreatedHere) or expired on purpose drops it.
 const issuesCache = new Map();
 const ISSUES_CACHE_TTL_MS = 5 * 60 * 1000;
+// One issue read on its own (fetchPublicIssue), for an issue the open-issues
+// list does not hold: a closed one, mostly, whose card a chat draws. Its
+// answer is kept as long as the list's, and a failure for a minute, so a page
+// of cards (and the next person to open it) does not ask GitHub again. A
+// `fresh` read always asks, and refreshes what is kept.
+const singleIssueCache = new Map();
+const singleIssueReads = new Map();
+const SINGLE_ISSUE_TTL_MS = ISSUES_CACHE_TTL_MS;
+const SINGLE_ISSUE_FAILURE_TTL_MS = 60 * 1000;
+const SINGLE_ISSUE_CACHE_MAX = 2000;
+function keepSingleIssue(key, result) {
+  const failed = !result.issue && (result.note === 'fetch failed' || result.note === 'rate limited');
+  if (singleIssueCache.size >= SINGLE_ISSUE_CACHE_MAX) singleIssueCache.delete(singleIssueCache.keys().next().value);
+  singleIssueCache.set(key, { result, expiresAt: Date.now() + (failed ? SINGLE_ISSUE_FAILURE_TTL_MS : SINGLE_ISSUE_TTL_MS) });
+  return result;
+}
 // #2261: a cache entry outlives its TTL as the FALLBACK. An expired entry
 // (or one invalidateIssuesCache has expired on purpose) is refetched on the
 // next read, and when that refetch cannot get a list out of GitHub — rate
@@ -373,7 +398,7 @@ function invalidateActionsSecretsCache(owner, repo) {
 // linked_issues, optimistically — GitHub reliably closes them, just
 // late) and from the issue-close watcher (with observed closes).
 // Returns how many numbers were recorded.
-function noteIssuesClosed(owner, repo, numbers, ttlMs = ISSUES_CLOSED_SUPPRESS_TTL_MS) {
+function noteIssuesClosedHere(owner, repo, numbers, ttlMs = ISSUES_CLOSED_SUPPRESS_TTL_MS) {
   if (!owner || !repo || !Array.isArray(numbers) || !numbers.length) return 0;
   const key = normRepoKey(owner, repo);
   let entry = closedIssueSuppressions.get(key);
@@ -401,7 +426,7 @@ function noteIssuesClosed(owner, repo, numbers, ttlMs = ISSUES_CLOSED_SUPPRESS_T
 // numbers that turned out to still be open after its polling gave up,
 // so a `Closes #N` GitHub didn't honor doesn't hide a live issue for
 // the full suppression TTL. Returns how many entries were removed.
-function unsuppressIssues(owner, repo, numbers) {
+function unsuppressIssuesHere(owner, repo, numbers) {
   if (!owner || !repo || !Array.isArray(numbers) || !numbers.length) return 0;
   const entry = closedIssueSuppressions.get(normRepoKey(owner, repo));
   if (!entry) return 0;
@@ -607,7 +632,10 @@ async function createRepo(owner, name, { description = '', adoptExisting = false
       throw err;
     }
     log.info('github', 'Adopting existing repo', { repo: data.full_name });
-    return data;
+    // `adopted`: its main may hold more than a fresh repository's one README,
+    // so a caller cannot take what it pushes next for the whole tree
+    // (services/app-creator.js clones it back instead).
+    return { ...data, adopted: true };
   }
 }
 
@@ -844,11 +872,13 @@ async function installationReadHeaders(owner) {
 // One raw GET for the public read paths: through the installation when the
 // rule says so, again with publicFetchHeaders() (the bot token, or
 // anonymous) when that is refused, as the Octokit reads do. Returns the
-// fetch Response the caller would have had.
-async function publicReadFetch(owner, url, { signal } = {}) {
+// fetch Response the caller would have had. `headers` (optional) go out
+// with both attempts: a conditional read's If-None-Match has to reach
+// whichever credential answers it.
+async function publicReadFetch(owner, url, { signal, headers: extra = null } = {}) {
   const viaApp = await installationReadHeaders(owner);
   if (viaApp) {
-    const resp = await fetch(url, { headers: viaApp.headers, signal });
+    const resp = await fetch(url, { headers: { ...viaApp.headers, ...extra }, signal });
     recordFetchResponse(viaApp.credential, resp, { url });
     const refused = READ_FALLBACK_STATUSES.has(resp.status);
     if (!refused) {
@@ -857,7 +887,7 @@ async function publicReadFetch(owner, url, { signal } = {}) {
     }
     budget.noteRead('pat', `status_${resp.status}`);
   }
-  const resp = await fetch(url, { headers: publicFetchHeaders(), signal });
+  const resp = await fetch(url, { headers: { ...publicFetchHeaders(), ...extra }, signal });
   recordFetchResponse(publicFetchCredential(), resp, { url });
   return resp;
 }
@@ -938,12 +968,21 @@ async function listRepoFiles(owner, repo, ref) {
     const { data } = await octokit.rest.git.getTree({ owner, repo, tree_sha: ref || 'HEAD', recursive: 'true' });
     const files = (data.tree || [])
       .filter((entry) => entry.type === 'blob')
-      .map((entry) => ({ path: entry.path, size: entry.size || 0 }));
+      .map((entry) => ({ path: entry.path, size: entry.size || 0, sha: entry.sha }));
     return { files, truncated: data.truncated === true };
   } catch (err) {
     if (err.status === 404 || err.status === 409) return null;
     throw err;
   }
+}
+
+// One blob's decoded text, by its sha (listRepoFiles gives each file's). The
+// contents API stops returning a file's bytes at 1 MB; the blob API does not,
+// which is what a large generated file needs (services/language-sync-runner.js).
+async function getBlobContent(owner, repo, sha) {
+  const octokit = await getReadOctokit(owner);
+  const { data } = await octokit.rest.git.getBlob({ owner, repo, file_sha: sha });
+  return Buffer.from(data.content || '', data.encoding || 'base64').toString('utf-8');
 }
 
 // `fromBranch` (default 'main') lets callers fork off an arbitrary existing
@@ -1045,7 +1084,7 @@ async function compareCommitAncestry(owner, repo, baseSha, headSha) {
 // its head that its base did not have. GitHub keeps the list after a squash
 // merge, so for a merged pull request it is what the change brought to main,
 // and an open change whose head is on it was built on (included in) this one
-// (services/included-changes.js). GitHub lists at most 250, so `complete` is
+// (workflow/merge-followups/facts.ts). GitHub lists at most 250, so `complete` is
 // false when the list may be short. Lowercase SHAs. Throws on transport
 // errors.
 const PR_COMMITS_CAP = 250;
@@ -1198,14 +1237,17 @@ async function advanceBranchToSha(owner, repo, branchName, sha) {
 // Move a branch to an exact commit whether or not that is a fast-forward.
 //
 // This is deliberately not the module's general ref-update path. It exists
-// for two callers. Demo mode's reset (routes/demo-mode.js) puts a demo
+// for three callers. Demo mode's reset (routes/demo-mode.js) puts a demo
 // app's main back to where it stood before a recorded take. That app is in
 // demo mode, its creator asked, and the commits being discarded are the
 // partner's own demo proposals — the one situation where rewinding main is
 // the point rather than an accident. And the Homeroom bot's first-version
 // review (homeroom-bot-live.js rollbackReviewBranch) puts the bot's own
 // session branch, never a default branch, back on the last commit that
-// booted when a review fix broke the app, before anything is proposed.
+// booted when a review fix broke the app, before anything is proposed. And
+// a maintenance campaign (fleet-maintenance.pushChange) puts its own branch
+// for an app back on main before it pushes the change again, when an
+// attempt that pushed was lost before it opened a pull request.
 async function forceBranchToSha(owner, repo, branchName, sha) {
   const octokit = await getOctokit(owner);
   const { data: ref } = await octokit.request(
@@ -1917,11 +1959,6 @@ async function deleteBenchBranch(owner, repo, branchName) {
   }
 }
 
-// Close an issue. Goes through getOctokit (PAT-preferred) so we get a
-// real @octokit/rest instance with `.rest.issues.update`. Used by the
-// rename-issue → rename-PR migration to retire the legacy issue once its
-// PR is open (mirrors how maybeApplyRenameProposal closes the issue when
-// a rename vote lands).
 // Retitle an existing issue. Used by the title-heal sweeper
 // (services/title-heal.js) when a feedback issue was filed with the
 // LLM-unavailable fallback title and a real title has now been generated.
@@ -1999,12 +2036,52 @@ async function patchIssueBody(owner, repo, issueNumber, body) {
   await updateIssueBody(owner, repo, issueNumber, safeBody);
 }
 
-async function closeIssue(owner, repo, issueNumber) {
+// #4803: a correction saves both fields in one remote write. Two independent
+// PATCHes could save the words and then fail to save the title.
+async function patchIssueContent(owner, repo, issueNumber, { title, body }) {
+  const content = { title: safeMention(title), body: safeMention(body) };
+  const pat = process.env.GITHUB_BOT_TOKEN;
+  if (pat) {
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `token ${pat}`,
+        'User-Agent': 'usernode-social-vibecoding',
+      },
+      body: JSON.stringify(content),
+    });
+    recordFetchResponse('pat', res, { method: 'PATCH', url: `/repos/${owner}/${repo}/issues/${issueNumber}` });
+    if (res.ok) return;
+    log.warn('github', 'PAT issue correction failed; trying installation token', {
+      repo: `${owner}/${repo}`, issueNumber, status: res.status,
+    });
+  }
+  const octokit = await getOctokit(owner);
+  await octokit.rest.issues.update({ owner, repo, issue_number: issueNumber, ...content });
+}
+
+// `reason`: GitHub's state_reason, 'completed' or 'not_planned' (a problem
+// that stopped by itself, services/platform-signals.js). Left out, GitHub
+// records 'completed', as every caller before it did.
+async function closeIssue(owner, repo, issueNumber, { reason = null } = {}) {
   const octokit = await getOctokit(owner);
   const { data } = await octokit.rest.issues.update({
     owner, repo, issue_number: issueNumber, state: 'closed',
+    ...(reason === 'completed' || reason === 'not_planned' ? { state_reason: reason } : {}),
   });
-  log.info('github', 'Issue closed', { repo: `${owner}/${repo}`, issue: issueNumber });
+  log.info('github', 'Issue closed', { repo: `${owner}/${repo}`, issue: issueNumber, reason });
+  return data;
+}
+
+// Open a closed issue again: a problem the platform closed came back within
+// a week (services/platform-signals.js).
+async function reopenIssue(owner, repo, issueNumber) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.issues.update({
+    owner, repo, issue_number: issueNumber, state: 'open',
+  });
+  log.info('github', 'Issue reopened', { repo: `${owner}/${repo}`, issue: issueNumber });
   return data;
 }
 
@@ -2062,39 +2139,10 @@ async function getCloneUrl(owner, repo) {
 // existing apps go through createRepo/pushFiles unchanged.
 // ---------------------------------------------------------------------------
 
-// Parse the variants we want to accept from the user. Returns
-// { owner, repo } or null. We deliberately don't accept arbitrary git
-// hosts: this is GitHub-specific to match the rest of the platform.
-function parseGithubUrl(input) {
-  if (typeof input !== 'string') return null;
-  const s = input.trim();
-  if (!s) return null;
-
-  // Match the create-app field's helpful default on the server so direct or
-  // stale clients get the same result. Preserve explicit schemes so invalid
-  // protocols remain invalid, and preserve the long-supported SSH spelling.
-  const hasScheme = /^[a-z][a-z\d+.-]*:/i.test(s);
-  const normalized = !hasScheme && !/^git@github\.com:/i.test(s)
-    ? `https://${s}`
-    : s;
-
-  // Strip an optional .git suffix and any trailing slash so all four URL
-  // shapes (https, https/, https.git, ssh) collapse to "owner/repo".
-  const cleaned = normalized.replace(/\.git$/i, '').replace(/\/+$/, '');
-
-  // https://github.com/owner/repo
-  let m = cleaned.match(/^https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/]+)(?:\/.*)?$/i);
-  if (!m) {
-    // git@github.com:owner/repo
-    m = cleaned.match(/^git@github\.com:([^/]+)\/([^/]+)$/i);
-  }
-  if (!m) return null;
-  const owner = m[1];
-  const repo = m[2];
-  // Guard against query strings or fragments leaking into the repo name.
-  if (!/^[\w.\-]+$/.test(owner) || !/^[\w.\-]+$/.test(repo)) return null;
-  return { owner, repo };
-}
+// Parse the variants we want to accept from the user: { owner, repo } or
+// null (src/workflow/rules/github-url.ts, which the workflow machines read
+// repositories with).
+const { parseGithubUrl } = require('../workflow/rules/github-url.ts');
 
 // The bot's own PAT client for the import pre-flight. The test seam
 // (_setOctokitFactoryForTests) stands in for it so the invitation and
@@ -2269,7 +2317,10 @@ async function checkRepoPublic(owner, repo) {
     // GitHub's own "API rate limit exceeded for user ID ..." told a person
     // nothing about what to do. Say it in plain words, with when it resets.
     const notice = budget.rateLimitNotice(err);
-    if (notice) return { ok: false, code: 'rate_limited', message: notice };
+    if (notice) {
+      const retryAfterSeconds = budget.rateLimitRetryAfterSeconds(err);
+      return { ok: false, code: 'rate_limited', message: notice, ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
+    }
     return { ok: false, code: 'github_error', message: err.message };
   }
 }
@@ -2463,17 +2514,31 @@ async function fetchPublicIssues(owner, repo, { force = false } = {}) {
   const collected = [];
   let page = 0;
   let truncatedList = false;
+  // The ETag the cached list was answered with, only ever one page's (see
+  // issuesCache): asked with on page one, and a 304 means that list stands.
+  const sentEtag = cached && cached.etag ? cached.etag : null;
+  let etag = null;
 
   try {
     while (url && page < ISSUES_MAX_PAGES) {
       page += 1;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), ISSUES_FETCH_TIMEOUT_MS);
+      const conditional = page === 1 && sentEtag ? { 'If-None-Match': sentEtag } : null;
       let resp;
       try {
-        resp = await publicReadFetch(owner, url, { signal: controller.signal });
+        resp = await publicReadFetch(owner, url, { signal: controller.signal, headers: conditional });
       } finally {
         clearTimeout(timer);
+      }
+
+      // Not modified: the cached list is still GitHub's list. Before the
+      // !resp.ok branch below, which would take a 304 for a failure. Served
+      // the way a cache hit is; confirmCreatedIssues is not run, because
+      // nothing new was read to confirm anything with.
+      if (resp.status === 304 && conditional) {
+        issuesCache.set(cacheKey, { result: cached.result, etag: sentEtag, expiresAt: Date.now() + ISSUES_CACHE_TTL_MS });
+        return applyIssueOverlays(owner, repo, cached.result);
       }
 
       // Rate limited: anonymous quota is per-IP and shared across all apps
@@ -2507,13 +2572,15 @@ async function fetchPublicIssues(owner, repo, { force = false } = {}) {
         if (item) collected.push(normalizeIssue(item));
       }
       url = parseNextLink(resp.headers.get('link'));
+      // The whole list in one page: its ETag names all of it.
+      if (page === 1 && !url) etag = resp.headers.get('etag') || null;
     }
     // We stopped with a next page still pending → repo has more open issues
     // than our ceiling; flag the list as partial.
     if (url) truncatedList = true;
 
     const result = { issues: collected, truncatedList };
-    issuesCache.set(cacheKey, { result, expiresAt: Date.now() + ISSUES_CACHE_TTL_MS });
+    issuesCache.set(cacheKey, { result, ...(etag ? { etag } : {}), expiresAt: Date.now() + ISSUES_CACHE_TTL_MS });
     // A successful fresh fetch is proof GitHub's list now serves any
     // overlaid issue it contains — drop those overlay entries early.
     confirmCreatedIssues(owner, repo, collected);
@@ -2599,6 +2666,25 @@ async function fetchPublicIssue(owner, repo, number, { fresh = false } = {}) {
   const overlayHit = overlay && overlay.get(n);
   if (overlayHit) return { issue: overlayHit.issue };
 
+  // Asked a moment ago: the same answer, unless it said open and the merge
+  // path has since recorded it closed.
+  const singleKey = `${cacheKey.toLowerCase()}#${n}`;
+  const kept = fresh ? null : singleIssueCache.get(singleKey);
+  if (kept && kept.expiresAt > Date.now() && !(knownClosed && kept.result.issue && kept.result.issue.state !== 'closed')) {
+    return kept.result;
+  }
+  // Asked twice at once (a story's card and its replies' read side by
+  // side): one read answers both.
+  if (!fresh && singleIssueReads.has(singleKey)) return singleIssueReads.get(singleKey);
+  const read = readSingleIssue(owner, repo, n, { cacheKey, fresh })
+    .then((result) => keepSingleIssue(singleKey, result))
+    .finally(() => { if (singleIssueReads.get(singleKey) === read) singleIssueReads.delete(singleKey); });
+  singleIssueReads.set(singleKey, read);
+  return read;
+}
+
+/** fetchPublicIssue's GitHub read itself. Never throws. */
+async function readSingleIssue(owner, repo, n, { cacheKey, fresh }) {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), ISSUES_FETCH_TIMEOUT_MS);
@@ -2760,16 +2846,19 @@ function clipIssueComments(comments, { max = ISSUE_COMMENTS_KEEP, bodyMax = ISSU
 }
 
 // Expire the cached open-issues list for a repo so the next fetchPublicIssues
-// call re-reads from GitHub. Called from the merge path (routes/votes.js
-// checkAndMerge) when a PR that closed one or more issues lands, so the
+// call re-reads from GitHub. Called from the merge path (the
+// merge-followups machine) when a PR that closed one or more issues lands, so the
 // "Open Issues" panel reflects the change on the next refresh instead of
 // waiting out ISSUES_CACHE_TTL_MS. Case-insensitive match on owner/repo
 // because GitHub treats those as case-insensitive while the cache key
 // preserves whatever casing the caller passed. No-op when the repo has no
 // cache entry. Returns true if an entry was expired.
-function invalidateIssuesCache(owner, repo) {
+function invalidateIssuesCacheHere(owner, repo) {
   if (!owner || !repo) return false;
   const target = `${owner}/${repo}`.toLowerCase();
+  // Single reads of the repo's issues go too: the merge that closed them is
+  // exactly when a card's state changes.
+  for (const key of [...singleIssueCache.keys()]) if (key.startsWith(`${target}#`)) singleIssueCache.delete(key);
   for (const key of issuesCache.keys()) {
     if (key.toLowerCase() === target) {
       // Expire, don't delete (#2261). The entry doubles as the fallback a
@@ -2777,7 +2866,8 @@ function invalidateIssuesCache(owner, repo) {
       // merge — left the next read with nothing to fall back to: one slow
       // or refused GitHub answer, and the board painted "no open issues".
       // A fresh object also drops any failure backoff, so the read after
-      // an invalidation always goes to GitHub.
+      // an invalidation always goes to GitHub, and its ETag, so that read
+      // is a full one rather than a 304 for the list held here.
       const entry = issuesCache.get(key);
       issuesCache.set(key, { result: entry.result, expiresAt: 0 });
       log.debug('github', 'Invalidated open-issues cache', { repo: key });
@@ -2785,6 +2875,78 @@ function invalidateIssuesCache(owner, repo) {
     }
   }
   return false;
+}
+
+// Every repo's open-issues list and single reads expire here (kept as the
+// fallback a failed refetch serves, #2261): this process's bus listener came
+// back, and what it missed meanwhile (a merge's issues_closed) is read again
+// from GitHub instead of trusted (ws.js _onBusListening).
+function expireIssuesCachesHere() {
+  singleIssueCache.clear();
+  // Its failure backoff kept (#2261): a reconnect during a rate limit does
+  // not send every repo's next read to GitHub at once. Its ETag is dropped,
+  // as an invalidation drops it: the next read is a full one.
+  for (const [key, { etag: _dropped, ...entry }] of issuesCache) issuesCache.set(key, { ...entry, expiresAt: 0 });
+}
+
+// The open-issues copy, its closed-issue suppressions and its single-issue
+// reads are this process's own; what one process learns about a repo's
+// issues, the others hear over the bus (ws.js 'issues_cache', applied with
+// applyIssuesChange, which publishes nothing). A merge, a heal or a close a
+// leader sweep made reaches the lists a web process serves at once, as it
+// did when one process did both (docs/plans/web-and-conductor.md).
+function shareIssuesChange(owner, repo, data) {
+  try { require('./ws-bus').publish('issues_cache', { owner, repo }, data); } catch { /* the TTL still bounds it */ }
+}
+
+function noteIssuesClosed(owner, repo, numbers, ttlMs = ISSUES_CLOSED_SUPPRESS_TTL_MS) {
+  const recorded = noteIssuesClosedHere(owner, repo, numbers, ttlMs);
+  if (recorded) {
+    shareIssuesChange(owner, repo, {
+      closed: numbers.map(Number).filter((n) => Number.isInteger(n) && n > 0),
+      ...(ttlMs !== ISSUES_CLOSED_SUPPRESS_TTL_MS ? { ttlMs } : {}),
+    });
+  }
+  return recorded;
+}
+
+function unsuppressIssues(owner, repo, numbers) {
+  const removed = unsuppressIssuesHere(owner, repo, numbers);
+  if (owner && repo && Array.isArray(numbers) && numbers.length) {
+    shareIssuesChange(owner, repo, { open: numbers.map(Number).filter((n) => Number.isInteger(n) && n > 0) });
+  }
+  return removed;
+}
+
+function invalidateIssuesCache(owner, repo) {
+  const expired = invalidateIssuesCacheHere(owner, repo);
+  if (owner && repo) shareIssuesChange(owner, repo, { invalidate: true });
+  return expired;
+}
+
+/** What another process shared (shareIssuesChange), applied here only. */
+function applyIssuesChange(owner, repo, data = {}) {
+  if (!owner || !repo || !data) return;
+  const numbers = (list) => (Array.isArray(list) ? list.map(Number).filter((n) => Number.isInteger(n) && n > 0) : []);
+  const closed = numbers(data.closed);
+  if (closed.length) {
+    const ttl = Number(data.ttlMs);
+    noteIssuesClosedHere(owner, repo, closed, Number.isFinite(ttl) && ttl > 0 ? ttl : ISSUES_CLOSED_SUPPRESS_TTL_MS);
+  }
+  const open = numbers(data.open);
+  if (open.length) unsuppressIssuesHere(owner, repo, open);
+  if (data.invalidate || closed.length || open.length) invalidateIssuesCacheHere(owner, repo);
+  // An issue another process filed (noteIssueCreated): into this process's
+  // overlay, as if it had filed it here. One too big to carry is read from
+  // GitHub, once, by its number.
+  const createdTtl = Number(data.createdTtlMs);
+  const ttlMs = Number.isFinite(createdTtl) && createdTtl > 0 ? createdTtl : ISSUES_CREATED_OVERLAY_TTL_MS;
+  const created = createdFromShare(data.created);
+  if (created) {
+    recordCreatedHere(owner, repo, created, ttlMs);
+  } else if (Number.isInteger(Number(data.createdNumber)) && Number(data.createdNumber) > 0) {
+    void readCreatedHere(owner, repo, Number(data.createdNumber), ttlMs);
+  }
 }
 
 // Record a just-created issue so every fetchPublicIssues result includes
@@ -2806,9 +2968,67 @@ function invalidateIssuesCache(owner, repo) {
 // (mirrors how repo_url parsing can capture it). Dedupes by issue number.
 // Returns true whenever the issue was recorded (i.e. for any valid
 // input, cache entry or not); false only on malformed input.
+//
+// Newcomer run nine (15 Oct 2026): and every other process hears of it
+// (shareIssuesChange, applied by applyIssuesChange). A web process files a
+// project's first version, and the conductor, whose loop reads the request,
+// had only its own copy of the list: the request was there for it once
+// GitHub's list had it, up to ISSUES_CACHE_TTL_MS later when it had read the
+// repository's list just before, and the other web processes' boards did not
+// show it either. The issue rides the bus whole when it fits in a NOTIFY
+// (CREATED_SHARE_MAX_BYTES), else its number does, and each process reads it.
 function noteIssueCreated(owner, repo, rawIssue, ttlMs = ISSUES_CREATED_OVERLAY_TTL_MS) {
   if (!owner || !repo || !rawIssue || rawIssue.number == null) return false;
   const normalized = normalizeIssue(rawIssue);
+  recordCreatedHere(owner, repo, normalized, ttlMs);
+  shareIssuesChange(owner, repo, {
+    ...createdShare(normalized),
+    ...(ttlMs !== ISSUES_CREATED_OVERLAY_TTL_MS ? { createdTtlMs: ttlMs } : {}),
+  });
+  return true;
+}
+
+// The most of a NOTIFY a created issue may take on the bus: its envelope
+// (ws-bus.js MAX_PAYLOAD_BYTES, 7000) carries the instance, the kind and the
+// repository besides.
+const CREATED_SHARE_MAX_BYTES = 6000;
+
+/** Pure: what noteIssueCreated shares of a normalized issue: it whole, or its number. */
+function createdShare(issue) {
+  try {
+    if (Buffer.byteLength(JSON.stringify({ created: issue }), 'utf8') <= CREATED_SHARE_MAX_BYTES) return { created: issue };
+  } catch { /* its number, below */ }
+  return { createdNumber: issue.number };
+}
+
+/** Pure: a created issue another process shared, in the shape normalizeIssue makes, or null. */
+function createdFromShare(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const number = Number(raw.number);
+  if (!Number.isInteger(number) || number <= 0) return null;
+  const text = (v) => (typeof v === 'string' ? v : null);
+  return {
+    number,
+    title: text(raw.title) || '',
+    body: text(raw.body) || '',
+    labels: Array.isArray(raw.labels) ? raw.labels.filter((l) => typeof l === 'string' && l) : [],
+    createdAt: text(raw.createdAt),
+    updatedAt: text(raw.updatedAt),
+    htmlUrl: text(raw.htmlUrl),
+    user: text(raw.user),
+    state: 'open',
+    closedAt: null,
+  };
+}
+
+/** A created issue too big for the bus, read here by its number. Never throws. */
+async function readCreatedHere(owner, repo, number, ttlMs) {
+  const { issue } = await fetchPublicIssue(owner, repo, number, { fresh: true }).catch(() => ({ issue: null }));
+  if (issue && issue.state !== 'closed') recordCreatedHere(owner, repo, issue, ttlMs);
+}
+
+/** noteIssueCreated's own half, for a normalized issue: this process's overlay and cache. */
+function recordCreatedHere(owner, repo, normalized, ttlMs = ISSUES_CREATED_OVERLAY_TTL_MS) {
   const target = normRepoKey(owner, repo);
 
   let overlay = recentIssueCreations.get(target);
@@ -2821,7 +3041,10 @@ function noteIssueCreated(owner, repo, rawIssue, ttlMs = ISSUES_CREATED_OVERLAY_
 
   for (const key of issuesCache.keys()) {
     if (key.toLowerCase().replace(/\.git$/, '') !== target) continue;
-    const entry = issuesCache.get(key);
+    // Without its ETag: the seeded list is no longer the one GitHub's ETag
+    // names, and a 304 against it would keep this issue listed as open after
+    // it was closed on GitHub, until some other issue changed.
+    const { etag: _dropped, ...entry } = issuesCache.get(key);
     const issues = [
       normalized,
       ...entry.result.issues.filter((i) => i.number !== normalized.number),
@@ -2834,6 +3057,7 @@ function noteIssueCreated(owner, repo, rawIssue, ttlMs = ISSUES_CREATED_OVERLAY_
 }
 
 module.exports = {
+  expireIssuesCachesHere,
   init,
   isEnabled,
   getBotUsername,
@@ -2851,6 +3075,7 @@ module.exports = {
   createRootCommit,
   getFileContent,
   listRepoFiles,
+  getBlobContent,
   createBranch,
   ensureBranchAtSha,
   compareCommitAncestry,
@@ -2890,7 +3115,9 @@ module.exports = {
   patchIssueTitle,
   updateIssueBody,
   patchIssueBody,
+  patchIssueContent,
   closeIssue,
+  reopenIssue,
   getCloneUrl,
   safeMention,
   parseGithubUrl,
@@ -2910,11 +3137,13 @@ module.exports = {
   _instrumentForTests: instrument,
   fetchPublicIssues,
   fetchPublicIssue,
+  _resetSingleIssueCache: () => singleIssueCache.clear(),
   fetchIssueComments,
   clipIssueComments,
   refreshPublicIssues,
   truncateIssueBodies,
   invalidateIssuesCache,
+  applyIssuesChange,
   noteIssueCreated,
   noteIssuesClosed,
   unsuppressIssues,

@@ -23,6 +23,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const FRAME = fs.readFileSync(
@@ -60,8 +61,12 @@ test('every action row has a glyph, and every glyph is decoration', () => {
   // menu of a read-only viewer, who has no settings. #4405: Custom domain,
   // under App settings, for whoever manages the project. #4417: Topics,
   // after the display name, the other change that is a proposal to dapp.json.
+  // #4666: "Make it public" and "Make it private" became one row, "Who can
+  // see & change it", which opens the sheet that sets both who can see it and
+  // how its changes are approved. 18 Oct 2026: Pin to sidebar, a member's,
+  // after "Import a pull request".
   assert.equal(rows.length, 18,
-    'new-change, issue, import-pr, settings, make-public, make-private, leave, app-settings, domain, featured-illustration, members x2, rename, topics, secrets, suggest-back, fork x2');
+    'new-change, issue, import-pr, pin, settings, who-decides, leave, app-settings, domain, featured-illustration, members x2, rename, topics, secrets, suggest-back, fork x2');
   const icons = menu.match(/icon=\{<([A-Za-z]+Icon) className=\{PLUS_ICON_CLS\} aria-hidden="true" \/>\}/g) || [];
   assert.equal(icons.length, rows.length, 'one glyph per row, all aria-hidden');
   // No <button data-plus> survives outside the shared shell — a hand-written
@@ -71,18 +76,26 @@ test('every action row has a glyph, and every glyph is decoration', () => {
 
 test('the subtitles survive: this is not the chip menu’s one-line row', () => {
   const menu = FRAME.slice(FRAME.indexOf('id="dev-plus-menu"'));
-  assert.match(menu, /Renames are proposals, applied once voted in/);
-  assert.match(menu, /Report a problem or idea without building it yourself/);
-  assert.match(menu, /Your computer &middot; your own tools\. You have already built it/);
-  assert.match(menu, /title="Remix"\s+sub="Make your own copy"/);
+  // Each subtitle is a catalog entry now: the row wires its id, and the
+  // English catalog holds the words.
+  assert.match(menu, /data-plus="rename"[\s\S]{0,160}sub=\{t\('project:menu\.rename\.sub'\)\}/);
+  assert.equal(message('project:menu.rename.sub'), 'Renames are proposals, applied once voted in');
+  assert.match(menu, /data-plus="issue"[\s\S]{0,240}sub=\{t\('project:menu\.suggest\.sub'\)\}/);
+  assert.equal(message('project:menu.suggest.sub'), 'Report a problem or idea without building it yourself');
+  assert.match(menu, /data-plus="import-pr"[\s\S]{0,240}sub=\{t\('project:menu\.importPr\.sub'\)\}/);
+  assert.match(message('project:menu.importPr.sub'), /^Your computer · your own tools\. You have already built it/);
+  assert.match(menu, /title=\{t\('project:menu\.remix\.title'\)\}\s+sub=\{t\('project:menu\.remix\.sub'\)\}/);
+  assert.deepEqual([message('project:menu.remix.title'), message('project:menu.remix.sub')], ['Remix', 'Make your own copy']);
   assert.match(FRAME, /const PLUS_SUB_CLS = 'block text-xs/);
 });
 
 test('App settings is an access surface for app managers, not only deleters (#2304)', () => {
   const settings = FRAME.slice(FRAME.indexOf('data-plus="app-settings"') - 300);
   assert.match(settings.slice(0, 700), /appData\?\.can_manage && !selfHosted/);
-  assert.match(settings.slice(0, 900), /Manage who can use and build this app/);
-  assert.match(FRAME, /title="Members &amp; approvals"/);
+  assert.match(settings.slice(0, 900), /sub=\{t\('project:menu\.appSettings\.sub'\)\}/);
+  assert.equal(message('project:menu.appSettings.sub'), 'Manage who can use and build this app');
+  assert.match(FRAME, /title=\{t\('project:menu\.members\.title'\)\}/);
+  assert.equal(message('project:menu.members.title'), 'Members & approvals');
   assert.doesNotMatch(FRAME, /title="Members &amp; visibility"/);
 });
 

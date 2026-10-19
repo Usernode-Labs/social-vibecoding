@@ -108,9 +108,9 @@ test('the two advisory-lock keys are distinct', () => {
 
 // ── server.js: leader/instance split ──────────────────────────────────
 
-test('server.js runs migrations under the migration lock', () => {
-  assert.match(serverJs, /await withMigrationLock\(getPool\(config\), \(\) => migrate\(config\)\)/,
-    'two booting colors must never run DDL concurrently');
+test('server.js runs migrations under the migration lock, and the read-only roles with them', () => {
+  assert.match(serverJs, /await withMigrationLock\(getPool\(config\), async \(\) => \{\n\s*const result = await migrate\(config\);\n\s*await require\('\.\/src\/services\/db-roles'\)\.ensureRoles\(config\);/,
+    'two booting colors must never run DDL concurrently, nor set the roles up at once');
 });
 
 test('singleton background work lives in becomeLeader(), not start()', () => {
@@ -129,22 +129,24 @@ test('singleton background work lives in becomeLeader(), not start()', () => {
   for (const singleton of [
     'recoverActiveWorkers(config)',
     'resumeHeadlessRuns',
-    'recoverStuckMerges(config)',
+    'observeMergedOnGithub(config)',
+    'reconcileStuckChecks(config)',
     'recoverSessions(config)',
-    'startIdleEvictionSweeper()',
     'startSessionAutoPauseSweeper(config)',
     'startStalePrSweeper(config)',
-    'startEligibleMergeSweeper(config)',
-    'startTitleHealSweeper(config)',
-    'resumeIssueCloseWatches(config)',
-    'resumeRunningCampaigns(config',
+    'startStuckChecksSweeper(config)',
     "require('./src/services/main-drift-poller').start(config)",
     "require('./src/services/app-heal').start(config)",
-    "require('./src/services/check-retention').start(config)",
-    'mobilePush.start()',
   ]) {
     assert.ok(becomeLeaderBody.includes(singleton), `becomeLeader() must own: ${singleton}`);
     assert.ok(!startBody.includes(singleton), `start() must NOT run singleton work: ${singleton}`);
+  }
+
+  // The platform's scheduled jobs are no leader work at all: each is a clock
+  // of the workflow (src/workflow/clock/), one run at a time wherever it runs.
+  for (const gone of ['mobilePush.start()', 'check-retention', 'startTitleHealSweeper', 'auditExistingRepoPrivacy',
+    'vote-digest', 'welcome-dm', 'challenge-scorer']) {
+    assert.ok(!serverJs.includes(gone), `no leader runs ${gone}`);
   }
 
   // Per-instance services every color needs to serve traffic.
@@ -157,6 +159,30 @@ test('singleton background work lives in becomeLeader(), not start()', () => {
   ]) {
     assert.ok(startBody.includes(perInstance), `start() must run per-instance: ${perInstance}`);
   }
+});
+
+test('each process sweeps its own warm workers, whether or not it leads', () => {
+  // A web process never leads (docs/plans/web-and-conductor.md), and the
+  // workers of the turns it ran are in its registry alone.
+  const duties = serverJs.slice(
+    serverJs.indexOf('function startProcessDuties()'),
+    serverJs.indexOf('async function becomeLeader()')
+  );
+  assert.ok(duties.includes('startIdleEvictionSweeper()'), 'startProcessDuties() owns the idle eviction');
+  const startBody = serverJs.slice(
+    serverJs.indexOf('async function start()'),
+    serverJs.indexOf('// Boot only when run as the entry point')
+  );
+  assert.match(startBody, /if \(runsClusterMaintenance\(\)\) startProcessDuties\(\);/,
+    'every process that maintains the cluster runs them; a staging preview does not');
+  const becomeLeaderBody = serverJs.slice(
+    serverJs.indexOf('async function becomeLeader()'),
+    serverJs.indexOf('async function start()')
+  );
+  assert.ok(!becomeLeaderBody.includes('startIdleEvictionSweeper()'), 'not only on the leader');
+  // A session busy anywhere is left alone: its worker may be in use there.
+  const sweeper = serverJs.slice(serverJs.indexOf('function startIdleEvictionSweeper()'));
+  assert.match(sweeper.slice(0, 2000), /isSessionBusyElsewhere\(meta\.sessionId\)\) continue;/);
 });
 
 test('cleanup releases leadership after the drain so the standby promotes cleanly', () => {

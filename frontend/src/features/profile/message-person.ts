@@ -28,6 +28,7 @@
  * Returns rather than throws, so the button owns its own error line.
  */
 
+import { t } from '../../lib/i18n/runtime';
 import * as api from '../messages/api';
 import { createDirect } from '../messages/store';
 
@@ -42,20 +43,20 @@ export function exactMatch<T extends { username: string }>(users: T[], handle: s
 
 export async function messagePerson(username: string): Promise<MessagePersonResult> {
   const handle = String(username || '').trim().replace(/^@/, '');
-  if (!handle) return { ok: false, message: 'There is nobody here to message.' };
+  if (!handle) return { ok: false, message: t('profile:message.nobody') };
   let user: { id: number; username: string } | null = null;
   try {
     user = exactMatch(await api.searchUsers(handle), handle);
   } catch {
-    return { ok: false, message: 'Couldn’t reach Messages. Check your connection and try again.' };
+    return { ok: false, message: t('profile:message.unreachable') };
   }
-  if (!user || !user.id) return { ok: false, message: `You can’t message @${handle}.` };
+  if (!user || !user.id) return { ok: false, message: t('profile:message.cannot', { username: handle }) };
   try {
     await createDirect(user.id);
     return { ok: true };
   } catch (err) {
     const status = (err as { status?: number } | null)?.status;
-    if (status === 404) return { ok: false, message: `You can’t message @${handle} right now.` };
-    return { ok: false, message: 'Couldn’t start this conversation. Try again.' };
+    if (status === 404) return { ok: false, message: t('profile:message.cannotNow', { username: handle }) };
+    return { ok: false, message: t('profile:message.startFailed') };
   }
 }

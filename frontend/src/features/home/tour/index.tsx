@@ -127,10 +127,10 @@
  *
  * Only when somebody asks (#3240). It used to open by itself on the first
  * sign-in that reached Home, straight after "What communities do you want to
- * join?", and the two screens said the same things back to back. Now the
- * first row of Home's Getting started card, "Take the 1-minute tour"
- * (../getting-started.tsx), and Settings' "Replay the tour" are the ways in,
- * and both ask through ./tour-request.ts. That path ignores whether the
+ * join?", and the two screens said the same things back to back. Settings'
+ * "Replay the tour" is the way in (Home's Getting started card offered it
+ * too, until #4635 retired the card), and it asks through ./tour-request.ts.
+ * That path ignores whether the
  * tour was finished before and waits only for Home to be on screen, which is
  * where every step points. Nothing opens it on the `?shot=`, `?demo=` and
  * `?token=` routes except a press, so the platform's declared checks never
@@ -148,8 +148,8 @@
  * that stands on its own.
  *
  * Finish and Skip record "done" in this browser and on the account
- * (./tour-done.ts), which ticks the card's row. A browser that finished the
- * tour before the account kept the answer copies it there once.
+ * (./tour-done.ts). A browser that finished the tour before the account
+ * kept the answer copies it there once.
  *
  * ── A reload is not a restart ──────────────────────────────────────────
  *
@@ -171,6 +171,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../../lib/legacy-dom';
 import { isEmbeddedPanel } from '../../../lib/side-panel-mode';
 import { readVisibility, useVisibility } from '../../../lib/visibility-store';
@@ -443,6 +444,19 @@ function backToTopOfHome(): void {
 }
 
 /**
+ * #5528: Finish ends the tour ON the Communities page, the one its first card
+ * pointed at. The same address the Communities tab opens (`tab-bar.tsx`, and
+ * `outer-level.tsx` navigates the same way): a plain hash assignment, which
+ * pushes a history entry, so Back returns to Home. Not the community-scope
+ * setter (`goToCommunity` with null), which would reset the tab's chosen
+ * community scope and forget the resumable Workshop view; the tour changes
+ * neither.
+ */
+function goToCommunities(): void {
+  if (window.location.hash !== '#communities') window.location.hash = '#communities';
+}
+
+/**
  * Is a CSS transition or animation still moving the target, or a box it sits
  * in (#3240)? The desktop menu scales in over 140ms with an ease-out, whose
  * last frames move less than a pixel each, so two frames that measure the
@@ -501,6 +515,9 @@ export function OnboardingTour() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [otherSurface, setOtherSurface] = useState(false);
 
+  // The card's words (the step's are message ids; the counter reads the
+  // runtime), in the language on screen.
+  const t = useMessages('onboarding');
   const step = stepAt(index);
   const last = isLastStep(index);
 
@@ -644,7 +661,7 @@ export function OnboardingTour() {
     return () => { cancelled = true; };
   }, [start]);
 
-  // ── Asked for: Getting started's first row, or Settings' Replay ──────
+  // ── Asked for: Settings' Replay ──────────────────────────────────────
   const request = useTourRequest();
   const seenRequest = useRef(0);
   useEffect(() => {
@@ -940,12 +957,15 @@ export function OnboardingTour() {
 
   // `ended` says how (#3369): Next on the last step, or Skip. The account
   // keeps it with the furthest step reached, the first time only.
+  // #5528: Finish ends the tour ON the Communities page, the one its first
+  // card pointed at; Skip stays where the tour found you, Home.
   const finish = useCallback((ended: 'finish' | 'skip' = 'finish') => {
     // The screenshot route writes nothing, here or on the account.
     if (isTourShot()) {
       setConfirming(false);
       setOpen(false);
-      backToTopOfHome();
+      if (ended === 'finish') goToCommunities();
+      else backToTopOfHome();
       return;
     }
     writeDone(userId);
@@ -956,6 +976,13 @@ export function OnboardingTour() {
     clearStep(userId);
     setConfirming(false);
     setOpen(false);
+    // #5528: Finish's landing is the Communities page, and the hash change
+    // reports that screen itself; reporting Home first would log a
+    // navigation that did not happen.
+    if (ended === 'finish') {
+      goToCommunities();
+      return;
+    }
     // The steps may have scrolled Home; hand the viewer back the top of the
     // page they started on.
     backToTopOfHome();
@@ -1051,10 +1078,10 @@ export function OnboardingTour() {
             id="home-tour-title"
             className="mt-1 text-sm font-semibold text-zinc-900 dark:text-zinc-100"
           >
-            {step.title}
+            {t(step.title)}
           </h2>
           <p id="home-tour-text" className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-            {step.body}
+            {t(step.body)}
           </p>
           <div className="mt-4 flex items-center gap-2">
             <Button
@@ -1066,7 +1093,7 @@ export function OnboardingTour() {
               className="rounded px-1 py-1"
               onClick={() => setConfirming(true)}
             >
-              Skip
+              {t('onboarding:tour.skip')}
             </Button>
             <div className="ml-auto flex items-center gap-2">
               <Button
@@ -1079,7 +1106,7 @@ export function OnboardingTour() {
                 disabled={index === 0}
                 onClick={goBack}
               >
-                Back
+                {t('core:common.back')}
               </Button>
               {/*
                   On every step. On the menu step it opens the menu rather
@@ -1092,7 +1119,7 @@ export function OnboardingTour() {
                 size="sm"
                 onClick={goNext}
               >
-                {last ? 'Finish' : 'Next'}
+                {last ? t('onboarding:tour.finish') : t('onboarding:tour.next')}
               </Button>
             </div>
           </div>
@@ -1108,7 +1135,7 @@ export function OnboardingTour() {
             id="home-tour-confirm-text"
             className="text-sm text-zinc-700 dark:text-zinc-200"
           >
-            Are you sure? You can reopen this from Settings.
+            {t('onboarding:tour.confirm.text')}
           </p>
           <div className="mt-4 flex items-center justify-end gap-2">
             <Button
@@ -1119,7 +1146,7 @@ export function OnboardingTour() {
               ink="muted"
               onClick={() => setConfirming(false)}
             >
-              Keep going
+              {t('onboarding:tour.confirm.keepGoing')}
             </Button>
             <Button
               id="home-tour-confirm-skip"
@@ -1127,7 +1154,7 @@ export function OnboardingTour() {
               size="sm"
               onClick={() => finish('skip')}
             >
-              Skip the tour
+              {t('onboarding:tour.confirm.skip')}
             </Button>
           </div>
         </div>

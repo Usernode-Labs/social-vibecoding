@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const {
-  buildMessage, recipientBinding, RECIPIENT_CONTEXT, isPushEnvironment,
+  buildMessage, buildNotificationCopy, isPushParked, recipientBinding, RECIPIENT_CONTEXT, isPushEnvironment,
 } = require('../src/services/mobile-push-policy');
 const {
   classifyError, parseServiceAccount,
@@ -67,6 +67,20 @@ test('a notification collapses to one alert per id on both platforms', () => {
   assert.equal(message.android.ttl, 60_000);
   assert.equal(message.apns.headers['apns-expiration'],
     String(Math.floor((now.getTime() + 60_000) / 1000)));
+});
+
+// #5249: kudos is parked. Its copy is kept for when it comes back, but no
+// push is built for it, and the worker settles its deliveries unsent.
+test('a parked kind keeps its copy but builds no push', () => {
+  assert.equal(isPushParked('kudos'), true);
+  assert.equal(isPushParked('reaction'), false);
+  assert.deepEqual(buildNotificationCopy('kudos', {
+    sourceUsername: 'alice', appName: 'MyPage', sessionTitle: 'Fix login redirect loop',
+  }), {
+    title: '@alice gave you kudos for "Fix login redirect loop" · MyPage',
+    body: 'Your work is getting noticed',
+  });
+  assert.throws(() => buildMessage({ ...INPUT, kind: 'kudos' }), /kind_not_allowed/);
 });
 
 test('reviewed interaction kinds build and unknown kinds stay closed', () => {
@@ -152,9 +166,6 @@ test('each kind renders its own title and body from send-time context', () => {
     ['reaction', { ...CONTEXT, detail: '👍' },
       '@alice reacted 👍 to your message · MyPage',
       'You said: hey can you look at the header'],
-    ['kudos', CONTEXT,
-      '@alice gave you kudos for "Fix login redirect loop" · MyPage',
-      'Your work is getting noticed'],
     ['collab_invite', CONTEXT,
       '@alice wants to build MyPage with you',
       'Join them to build it. Accept or decline in the app'],
@@ -205,6 +216,10 @@ test('each kind renders its own title and body from send-time context', () => {
     ['stale_pr', CONTEXT,
       '"Fix login redirect loop" is waiting for approval · MyPage',
       'Share the preview or ask a friend to try it'],
+    // Its votes are met and its merge stands still (a conflict, red checks).
+    ['stale_pr', { ...CONTEXT, detail: 'blocked' },
+      '"Fix login redirect loop" is approved but can\'t go live · MyPage',
+      'It needs a fix before it can go live, or it will be set aside'],
   ];
   for (const [kind, context, title, body] of cases) {
     const message = buildMessage({ ...INPUT, kind, context });
@@ -461,7 +476,7 @@ test('platform limit alerts name the cap, how full it is, and the lever', () => 
     body: '60 of 75 coding sessions are running. At the limit, idle sessions are paused to make room',
   });
   assert.equal(copy('sessions_full:75:75').title, 'Session limit reached');
-  assert.match(copy('sessions_full:75:75').body, /MAX_GLOBAL_SESSIONS/);
+  assert.match(copy('sessions_full:75:75').body, /raised in Admin → Limits/);
   // GitHub's hourly budget (services/github-budget.js).
   assert.deepEqual(copy('github_warn:4000:5000'), {
     title: 'GitHub requests running low',

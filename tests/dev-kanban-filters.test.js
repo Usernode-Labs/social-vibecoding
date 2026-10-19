@@ -14,6 +14,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { renderComponent } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 const { kanbanHtml } = require('./lib/dev-card-html');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
@@ -61,6 +62,7 @@ function makeCtx(over) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return sandbox;
@@ -84,7 +86,8 @@ function makeAppView() {
 }
 
 // Default (empty) filters — the fast-path that must match everything.
-const none = { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false };
+// #5369: `stage` (the Overview figures' filter) is part of the model too.
+const none = { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false, stage: null };
 
 const issue = (over) => ({
   number: 42, title: 'Dark mode toggle resets', created_by_username: 'evan',
@@ -651,7 +654,7 @@ test('_saveKanbanFilters round-trips through _loadKanbanFilters under the slug',
   AppView._kanbanFilters = { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true };
   AppView._saveKanbanFilters('my-app');
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')),
-    { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true, theme: null, assignedToMe: false, createdByMe: false });
+    { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true, theme: null, assignedToMe: false, createdByMe: false, stage: null });
 });
 
 test('_saveKanbanFilters clears the key when filters are at defaults', () => {
@@ -684,7 +687,7 @@ test('_loadKanbanFilters merges over defaults for a partial stored object', () =
   store.setItem(`${AppView.KANBAN_FILTERS_KEY}:my-app`, JSON.stringify({ q: 'hi' }));
   // Missing fields fall back to their defaults rather than becoming undefined.
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')),
-    { q: 'hi', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false });
+    { q: 'hi', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false, stage: null });
 });
 
 test('_loadKanbanFilters yields defaults on corrupt stored JSON', () => {
@@ -924,11 +927,13 @@ test('the second column reads "Underway" but keeps its inprogress key and id', (
   assert.ok(tab && /Underway/.test(tab[0]), 'the mobile tab is retitled too');
   // One-line hover explanation on the column's step (#4486: the steps are
   // the column heads) — the name alone still cannot say what the five
-  // underway states have in common.
+  // underway states have in common: a person or an agent is on each (#5210
+  // shortened it; the card's chip names the state).
   const head = html.match(/id="dev-kanban-tab-inprogress"[^>]*class="dev-kanban-step" title="([^"]+)"/);
   assert.ok(head, 'the column head carries a title attribute');
-  assert.match(head[1], /auto-solving/i);
-  assert.match(head[1], /paused/i);
+  assert.equal(head[1], message('changes:board.column.underwayHint'));
+  assert.match(head[1], /person/i);
+  assert.match(head[1], /agent/i);
   // …and only that column has one, so the other three heads are unchanged.
   assert.equal((html.match(/class="dev-kanban-step" title="/g) || []).length, 1);
 });
@@ -1335,4 +1340,149 @@ test('a declared check reading the filter bar asks for the All-items sub-view (w
   }
   assert.deepEqual(offenders.join('\n'), '',
     'these workshop-route checks read All-items nodes without ws=all');
+});
+
+// ── #5369: the Overview figures' stage filter ──────────────────────────
+//
+// Tapping "open items", "nobody on them" or "live this week" on the
+// Workshop sets `stage` on the shared filter model. These pin the model
+// side: the defaults, the active test, the chip, the dismissal and the
+// opening itself, plus `_devCardInStage` — the helper the narrowing and the
+// figures share.
+test('the defaults carry stage: null, and an unknown value is not a filter', () => {
+  const AppView = makeAppView();
+  assert.equal(AppView._defaultKanbanFilters().stage, null);
+  assert.equal(AppView._kanbanStageValue('open'), 'open');
+  assert.equal(AppView._kanbanStageValue('unclaimed'), 'unclaimed');
+  assert.equal(AppView._kanbanStageValue('shipped'), 'shipped');
+  assert.equal(AppView._kanbanStageValue('bogus'), null, 'an older tab\'s stored value degrades to null');
+  assert.equal(AppView._kanbanStageValue(undefined), null);
+});
+
+test('a set stage is an active filter, and the chip names the figure', () => {
+  const AppView = makeAppView();
+  AppView._kanbanFilters = { ...none, stage: 'open' };
+  assert.equal(AppView._kanbanFiltersActive(), true, 'stage alone is active');
+  assert.equal(AppView._kanbanBackfillWorthIt(), true, 'it is worth back-filling Done history for');
+  const chips = AppView._kanbanActiveChips();
+  assert.equal(chips.length, 1);
+  assert.equal(chips[0].key, 'stage');
+  assert.equal(chips[0].label, message('changes:board.filterChip.stageOpen'));
+  AppView._kanbanFilters = { ...none, stage: 'unclaimed' };
+  assert.equal(AppView._kanbanActiveChips()[0].label, message('changes:board.filterChip.stageUnclaimed'));
+  AppView._kanbanFilters = { ...none, stage: 'shipped' };
+  assert.equal(AppView._kanbanActiveChips()[0].label, message('changes:board.filterChip.stageShipped'));
+  AppView._kanbanFilters = { ...none, stage: 'bogus' };
+  assert.equal(AppView._kanbanFiltersActive(), false);
+  assert.equal(AppView._kanbanActiveChips().length, 0, 'an unknown stage draws no chip');
+  // Not the dialog's to count, the way a search is not.
+  assert.equal(AppView._kanbanFilterCount(), 0, 'stage never counts on Filters (n)');
+});
+
+test('the stage chip\'s × clears it like any other filter', () => {
+  const AppView = makeAppView();
+  let repainted = 0;
+  AppView._repaintBoardSurface = () => { repainted += 1; };
+  AppView._kanbanFilters = { ...none, stage: 'shipped' };
+  AppView._dismissKanbanFilter('stage');
+  assert.equal(AppView._kanbanFilters.stage, null);
+  assert.equal(repainted, 1);
+});
+
+test('openWorkshopStage replaces the other filters, empties the search and repaints', () => {
+  const AppView = makeAppView();
+  AppView.__sandbox.App.currentApp = 'demo-app';
+  let repainted = 0;
+  AppView._repaintBoardSurface = () => { repainted += 1; };
+  AppView._kanbanFilters = { ...none, q: 'ripple', priority: 'high', assignedToMe: true };
+  AppView.openWorkshopStage('open');
+  const f = AppView._kanbanFilters;
+  assert.equal(f.stage, 'open');
+  assert.equal(f.q, '', 'an old search cannot hide a counted item');
+  assert.equal(f.priority, null);
+  assert.equal(f.assignedToMe, false);
+  assert.equal(AppView._kanbanFiltersSlug, 'demo-app', 'the set is this app\'s now');
+  assert.equal(AppView._kanbanFilterSeq, 1, 'a new seq empties the search field');
+  assert.equal(repainted, 1);
+  // An unknown value does nothing at all.
+  const before = AppView._kanbanFilters;
+  AppView.openWorkshopStage('bogus');
+  assert.equal(AppView._kanbanFilters, before, 'and no repaint is scheduled');
+});
+
+test('applyKanbanFilters keeps the stage through the dialog\'s Done', () => {
+  const AppView = makeAppView();
+  AppView._repaintBoardSurface = () => {};
+  AppView._kanbanFilters = { ...none, stage: 'unclaimed' };
+  AppView.applyKanbanFilters({ priority: 'low', category: null, assignee: null, needsVote: false });
+  assert.equal(AppView._kanbanFilters.stage, 'unclaimed', 'stage is not the dialog\'s to clear');
+  assert.equal(AppView._kanbanFilters.priority, 'low');
+});
+
+test('_devCardInStage answers the figures\' own predicates', () => {
+  const AppView = makeAppView();
+  const ws = AppView._weekStart(Date.now());
+  const liveThisWeek = merged({ live_at: new Date(ws + 3600000).toISOString(), merged_at: new Date(ws + 3600000).toISOString() });
+  const liveBeforeMonday = merged({ live_at: new Date(ws - 86400000).toISOString(), merged_at: new Date(ws - 86400000).toISOString() });
+  const stillGoingLive = merged({ live_at: null, merged_at: new Date(ws + 3600000).toISOString() });
+  // 'open': anything not already gone live — an open request, an underway
+  // session, a waiting proposal.
+  assert.equal(AppView._devCardInStage('open', 'open', 'issue', issue({})), true);
+  assert.equal(AppView._devCardInStage('open', 'underway', 'session', { id: 9, session_title: 'Working', status: 'active' }), true,
+    'an underway session counts as open');
+  assert.equal(AppView._devCardInStage('open', 'review', 'proposal', prop({})), true);
+  assert.equal(AppView._devCardInStage('open', 'shipped', 'merged', liveThisWeek), false);
+  assert.equal(AppView._devCardInStage('open', 'done', 'merged', liveBeforeMonday), false);
+  // 'unclaimed': the OPEN lane's requests nobody has taken, and nothing else.
+  assert.equal(AppView._devCardInStage('unclaimed', 'open', 'issue', issue({})), true);
+  assert.equal(AppView._devCardInStage('unclaimed', 'open', 'issue', issue({ assignee: { top: 'sam' } })), false,
+    'a claimed issue is not unclaimed');
+  assert.equal(AppView._devCardInStage('unclaimed', 'underway', 'issue', issue({})), false,
+    'an issue somebody is working on has been picked up');
+  assert.equal(AppView._devCardInStage('unclaimed', 'underway', 'session', { id: 9, session_title: 'Working', status: 'active' }), false);
+  assert.equal(AppView._devCardInStage('unclaimed', 'review', 'proposal', prop({})), false);
+  // 'shipped': a live merge from this week, decided by date — not the lane.
+  assert.equal(AppView._devCardInStage('shipped', 'done', 'merged', liveThisWeek), true);
+  assert.equal(AppView._devCardInStage('shipped', 'shipped', 'merged', liveThisWeek), true);
+  assert.equal(AppView._devCardInStage('shipped', 'done', 'merged', liveBeforeMonday), false,
+    'a merge from before Monday is not live this week');
+  assert.equal(AppView._devCardInStage('shipped', 'done', 'merged', stillGoingLive), false,
+    'a merge still going live is left out');
+  assert.equal(AppView._devCardInStage('shipped', 'open', 'issue', issue({})), false);
+  // No stage — or an unknown one — matches everything.
+  assert.equal(AppView._devCardInStage(null, 'done', 'merged', liveBeforeMonday), true);
+  assert.equal(AppView._devCardInStage(undefined, 'done', 'merged', liveBeforeMonday), true);
+  assert.equal(AppView._devCardInStage('bogus', 'done', 'merged', liveBeforeMonday), true);
+});
+
+test('a stage filter narrows every kanban column by its own lane', () => {
+  const a = makeAppView();
+  a.appData = { slug: 'first-app' };
+  const ws = a._weekStart(Date.now());
+  a._ghIssues = [issue({ number: 1, title: 'Untouched request' }), issue({ number: 2, title: 'Taken request', assignee: { top: 'sam' } })];
+  a._envIssueNumbers = new Set();
+  a._proposals = [prop({ id: 91, pr_title: 'Waiting change' })];
+  a._govProposals = [];
+  a._merged = [merged({ id: 80, pr_title: 'Landed Monday', merged_at: new Date(ws + 3600000).toISOString(), live_at: new Date(ws + 3600000).toISOString() }), merged({ id: 81, pr_title: 'Landed long ago', created_at: '2026-09-01' })];
+  a._mySessions = [];
+  a._sharedSessions = [];
+  a._kanbanFilters = { ...none, stage: 'open' };
+  let view = a._kanbanView();
+  const titles = (key) => view.cols.find((c) => c.key === key).rows.map((r) => r.key);
+  assert.equal(view.cols.find((c) => c.key === 'issues').count, 2, 'both requests are open');
+  assert.equal(view.cols.find((c) => c.key === 'inprogress').count, 0, 'nothing is underway on this board');
+  assert.equal(view.cols.find((c) => c.key === 'inreview').count, 1, 'the waiting change is open');
+  assert.equal(view.cols.find((c) => c.key === 'done').count, 0, 'nothing already live is open');
+  assert.ok(!titles('done').length);
+
+  a._kanbanFilters = { ...none, stage: 'shipped' };
+  view = a._kanbanView();
+  assert.equal(view.cols.find((c) => c.key === 'issues').count, 0);
+  assert.equal(view.cols.find((c) => c.key === 'inreview').count, 0);
+  assert.equal(view.cols.find((c) => c.key === 'done').count, 1, 'only this week\'s live merge');
+
+  a._kanbanFilters = { ...none, stage: 'unclaimed' };
+  view = a._kanbanView();
+  assert.equal(view.cols.find((c) => c.key === 'issues').count, 1, 'only the untouched request');
+  assert.equal(view.cols.find((c) => c.key === 'inreview').count, 0);
 });

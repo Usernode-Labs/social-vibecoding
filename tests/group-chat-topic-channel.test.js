@@ -35,6 +35,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { loadTsx } = require('./lib/render-tsx');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const SRC = read('public/js/group-chat.js');
@@ -72,6 +73,7 @@ function setup({ pane = null, rows = new Map() } = {}) {
       },
     },
     URLSearchParams, location, Date, Number, JSON, App,
+    PlatformI18n: englishPlatformI18n(),
     AppView: { _stashDiscussionTarget: (slug, t) => stashed.push([slug, JSON.parse(JSON.stringify(t))]) },
     document: {
       visibilityState: 'visible',
@@ -219,7 +221,7 @@ test('reading a topic\'s channel moves its own cursor, past its replies, and its
   assert.deepEqual(fetches.at(-1), ['/api/apps/homeroom/messages/unread', { message_id: 60, thread_type: 'category', thread_ref: TOPIC }]);
   assert.deepEqual(channelReads.at(-1), ['homeroom', TOPIC, true]);
   assert.equal(gc._unreadHold, 'homeroom');
-  // #general's read names no channel.
+  // #general's read names no channel, and its count is the record's too now.
   gc._channel = null;
   gc._unreadHold = null;
   gc._readUpTo = 0;
@@ -227,6 +229,13 @@ test('reading a topic\'s channel moves its own cursor, past its replies, and its
   await gc.markRead();
   assert.deepEqual(fetches.at(-1), ['/api/apps/homeroom/messages/read', { message_id: 70 }]);
   assert.equal(refreshes.length, 1);
+  assert.deepEqual(channelReads.at(-1), ['homeroom', null]);
+  // "Mark unread" in #general asks for its count back, and refreshes too.
+  await gc.markUnread(70);
+  assert.deepEqual(fetches.at(-1), ['/api/apps/homeroom/messages/unread', { message_id: 70 }]);
+  assert.deepEqual(channelReads.at(-1), ['homeroom', null, true]);
+  assert.equal(gc._unreadHold, 'homeroom');
+  assert.equal(refreshes.length, 2);
 });
 
 // ── 4. Its reply threads ────────────────────────────────────────────────
@@ -334,7 +343,8 @@ test('a reply in a topic message\'s thread, named by a link, opens that thread b
 test('the topic\'s place mounts #general\'s pane, scoped to the topic, with its reply thread beside it', () => {
   const channel = PD.slice(PD.indexOf('function TopicChannel('));
   // The pane is #general's (AppView.renderGroupChatTab), named for the topic.
-  assert.match(channel, /view\?\.renderGroupChatTab\?\.\(\{[\s\S]*?channel: \{ type: 'category', ref, markers: markersRef\.current \},[\s\S]*?placeholder: `Message #\$\{topic\.handle\}`,/);
+  assert.match(channel, /view\?\.renderGroupChatTab\?\.\(\{[\s\S]*?channel: \{ type: 'category', ref, markers: markersRef\.current \},[\s\S]*?placeholder: t\('project:discussion\.topic\.placeholder', \{ handle: topic\.handle \}\),/);
+  assert.equal(englishPlatformI18n().t('project:discussion.topic.placeholder', { handle: 'ideas' }), 'Message #ideas');
   assert.doesNotMatch(channel, /mountThread/, 'no longer a thread mount: the one thread slot is its reply thread\'s');
   // Held only while the page is the screen on show (one general pane).
   assert.match(channel, /const onShow = screen === 'app-view' && !!tab;/);

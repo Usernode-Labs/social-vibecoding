@@ -629,6 +629,11 @@ async function createMessageWithTelemetry({
 // HELPER_MODEL=haiku in the root dapp.json's platform_env sends every helper
 // back to Haiku without a deploy of code.
 //
+// HELPER_MODEL below is the built-in model and the name a caller passes for
+// "the helper model". Which model that is now is an admin setting (Admin →
+// Homeroom bot → Settings → Models, services/helper-model.js), read per call
+// through a 10-second cache; blank keeps GLM.
+//
 // Telemetry: the GLM attempt is recorded as attempt 1 of the call and a Haiku
 // fallback as attempt 2 under the same correlation id, so the admin report
 // counts one logical run and shows how often the fallback served it.
@@ -646,6 +651,15 @@ const HELPER_TOOL = 'answer';
 // ceiling gets this much room on top of it.
 const HELPER_REASONING_TOKENS = 1500;
 const HELPER_MAX_OUTPUT_TOKENS = 4096;
+// A lower ceiling on GLM's output for a helper whose maker is waiting on a
+// short answer, so a runaway fails in seconds and Haiku still has time.
+const HELPER_OUTPUT_LIMIT = Object.freeze({
+  // The plan at Make it (13 Oct replay, 30 calls): usable answers took 268
+  // to 705 output tokens, reasoning included; one ran away to the 3,500
+  // ceiling and failed after 19 of the plan's 45 seconds. 1,200 leaves room
+  // for a plan written in a language that takes more tokens.
+  first_version_plan: 1200,
+});
 // How long the bot's key is reused before it is read again (one query and a
 // decrypt per minute rather than per call; the title preview fires as people
 // type).
@@ -662,6 +676,10 @@ const HELPER_TIME_LIMIT_MS = Object.freeze({
   // The sketch card waits up to 15s for its model (app-sketch.js
   // MODEL_WAIT_MS); Haiku gets what is left.
   app_sketch: 8000,
+  // A first version's plan at Make it (first-version-plan.js): its maker
+  // waits on the made screen for its questions, while the project is set
+  // up (about 40 seconds), and it is a longer answer than the card's.
+  first_version_plan: 20000,
   // Nobody is waiting.
   session_title: 8000,
   progress_estimate: 10000,
@@ -676,6 +694,13 @@ let helperTestDeps = null;
 /** 'glm' when helpers try GLM first, 'haiku' when HELPER_MODEL says so. */
 function helperRoute() {
   return String(process.env.HELPER_MODEL ?? '').trim().toLowerCase() === 'haiku' ? 'haiku' : 'glm';
+}
+
+// The model a helper call asks first: the admin's helper model, else
+// HELPER_MODEL (services/helper-model.js). Never throws.
+async function helperModelNow() {
+  if (helperTestDeps) return helperTestDeps.model || HELPER_MODEL;
+  return require('./helper-model').current(helperConfig);
 }
 
 // The Homeroom bot's included OpenRouter key, or null (no bot yet, no key,
@@ -736,19 +761,113 @@ function helperAnswer(toolCalls) {
 }
 
 /**
+ * Pure: what an answer looked like, for a log line, never what it said: each
+ * top-level key with its value's type, a string's or an array's length and
+ * an array's item types, as in
+ *   { plan: 'string(212)', build_note: 'array(4: string)' }
+ * Run five's plan was refused with nothing kept to say why.
+ */
+function answerShape(answer) {
+  if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return { answer: typeOf(answer) };
+  const keys = Object.keys(answer);
+  const shape = {};
+  for (const key of keys.slice(0, 16)) {
+    const value = answer[key];
+    const items = Array.isArray(value) ? [...new Set(value.map(typeOf))].join(', ') : '';
+    shape[key.slice(0, 40)] = Array.isArray(value) ? `array(${value.length}${items ? `: ${items}` : ''})`
+      : typeof value === 'string' ? `string(${value.length})`
+        : typeOf(value) === 'object' ? `object(${Object.keys(value).length})`
+          : typeOf(value);
+  }
+  if (keys.length > 16) shape['…'] = `${keys.length - 16} more`;
+  return shape;
+}
+
+function typeOf(value) {
+  if (value === null) return 'null';
+  return Array.isArray(value) ? 'array' : typeof value;
+}
+
+/**
+ * Pure: the JSON object a reply's text holds, or null. GLM sometimes writes
+ * its answer as text beside a near-empty tool call (1 of 30 plans in the 13
+ * Oct replay, 1,533 characters of it).
+ */
+function helperTextAnswer(content) {
+  const text = typeof content === 'string' ? content : '';
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first === -1 || last <= first) return null;
+  try {
+    const obj = JSON.parse(text.slice(first, last + 1));
+    return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : null;
+  } catch {
+    return null;
+  }
+}
+
+function acceptedAnswer(answer, validate) {
+  if (!answer) return false;
+  if (typeof validate !== 'function') return true;
+  try { return !!validate(answer); } catch { return false; }
+}
+
+// What Anthropic's structured output refuses in a schema (the SDK's own
+// parse helpers strip the same before sending). minItems is taken at 0 or 1.
+const STRUCTURED_OUTPUT_UNSUPPORTED = new Set([
+  'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
+  'minLength', 'maxLength', 'maxItems', 'uniqueItems',
+]);
+
+/**
+ * Pure: `schema` as Anthropic's structured output takes it, without the
+ * bounds it refuses. A helper's schema can carry them for GLM (a forced
+ * tool's parameters, read as guidance), and the same schema then goes to
+ * its Haiku fallback without them; the caller's parse still holds the line.
+ */
+function structuredOutputSchema(schema) {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return schema;
+  const out = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (STRUCTURED_OUTPUT_UNSUPPORTED.has(key)) continue;
+    if (key === 'minItems' && !(value === 0 || value === 1)) continue;
+    if (key === 'properties' || key === '$defs' || key === 'definitions') {
+      out[key] = Object.fromEntries(Object.entries(value || {}).map(([name, s]) => [name, structuredOutputSchema(s)]));
+    } else if (key === 'items' || key === 'additionalProperties' || key === 'not') {
+      out[key] = structuredOutputSchema(value);
+    } else if (key === 'anyOf' || key === 'allOf' || key === 'oneOf') {
+      out[key] = Array.isArray(value) ? value.map(structuredOutputSchema) : value;
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/**
  * One GLM attempt. Resolves { ok: true, answer, usage, model } or
  * { ok: false, reason }; never throws. `usage` is Anthropic-shaped plus
  * OpenRouter's own figure for the call (cost_usd), which estimateCostCents
- * prefers.
+ * prefers. An answer `validate` refuses is { ok: false, reason: 'unusable',
+ * shape } (answerShape), and its telemetry says so. With `validate`, a tool
+ * call it refuses gives way to JSON in the reply's text that it accepts
+ * (helperTextAnswer); without one there is nothing to check that text by,
+ * so Haiku is asked as before.
  */
 async function askHelperModel({
-  helper, component, system, messages, schema, maxTokens, signal, telemetryContext, correlationId,
+  helper, component, system, messages, schema, maxTokens, signal, telemetryContext, correlationId, validate,
 }) {
   const apiKey = await helperKey();
   if (!apiKey) return { ok: false, reason: 'no_key' };
+  const model = await helperModelNow();
+  const reasoning = require('./helper-model').thinkingFor(model);
   const transport = (helperTestDeps && helperTestDeps.openrouter) || require('./global-chat/openrouter');
   const cfg = (helperTestDeps && helperTestDeps.config) || helperConfig || {};
-  const maxOutputTokens = Math.min(HELPER_MAX_OUTPUT_TOKENS, (Number(maxTokens) || 0) + HELPER_REASONING_TOKENS);
+  const maxOutputTokens = Math.min(
+    HELPER_OUTPUT_LIMIT[helper] || HELPER_MAX_OUTPUT_TOKENS,
+    HELPER_MAX_OUTPUT_TOKENS,
+    (Number(maxTokens) || 0) + HELPER_REASONING_TOKENS,
+  );
   const chatMessages = [
     ...(system ? [{ role: 'system', content: String(system) }] : []),
     ...(Array.isArray(messages) ? messages : []).map((m) => ({ role: m.role, content: String(m.content == null ? '' : m.content) })),
@@ -763,8 +882,8 @@ async function askHelperModel({
       baseUrl: cfg.openrouterApiBase || 'https://openrouter.ai/api/v1',
       origin: cfg.openrouterOrigin,
       signal,
-      model: HELPER_MODEL,
-      reasoning: 'low',
+      model,
+      reasoning,
       temperature: 0,
       maxOutputTokens,
       timeoutMs: HELPER_TIME_LIMIT_MS[helper] || 10000,
@@ -785,7 +904,20 @@ async function askHelperModel({
   } catch (err) {
     error = err;
   }
-  const answer = result ? helperAnswer(result.toolCalls) : null;
+  const toolAnswer = result ? helperAnswer(result.toolCalls) : null;
+  let answer = toolAnswer;
+  let usable = acceptedAnswer(toolAnswer, validate);
+  let textAnswer = null;
+  if (!usable && result && typeof validate === 'function') {
+    textAnswer = helperTextAnswer(result.content);
+    if (acceptedAnswer(textAnswer, validate)) {
+      answer = textAnswer;
+      usable = true;
+      log.info('llm', 'Helper model answered in its text, not its tool call', {
+        helper, toolShape: toolAnswer ? answerShape(toolAnswer) : null,
+      });
+    }
+  }
   const usage = (result && result.usage) || {};
   const costUsd = Number(usage.costUsd);
   const reported = usage.costUsd != null && Number.isFinite(costUsd) && costUsd >= 0;
@@ -796,10 +928,16 @@ async function askHelperModel({
     appId: ctx.appId,
     sessionId: ctx.sessionId,
     provider: 'openrouter',
+    // Which of OpenRouter's providers served it (or refused it), on its own:
+    // `provider` above stays the ledger's 'openrouter' (llm-telemetry.js
+    // routed_provider). Run five's plan at Make it could not say which host
+    // gave the reply it could not use.
+    routedProvider: (result && result.provider) || (error && error.provider) || null,
     backend: 'helper',
     component,
-    requestedModel: HELPER_MODEL,
+    requestedModel: model,
     servedModel: (result && result.servedModel) || null,
+    servedProvider: (result && result.provider) || (error && error.provider) || null,
     billingPath: 'platform',
     inputTokens: usage.inputTokens,
     cacheReadInputTokens: usage.cachedInputTokens,
@@ -808,28 +946,39 @@ async function askHelperModel({
     costUsd: reported ? costUsd : null,
     costSource: reported ? 'provider_reported' : 'unavailable',
     durationMs: Date.now() - startedMs,
-    outcome: error ? (error.code === 'cancelled' ? 'cancelled' : 'error') : (answer ? 'success' : 'error'),
+    outcome: error ? (error.code === 'cancelled' ? 'cancelled' : 'error') : (usable ? 'success' : 'error'),
     stopReason: (result && result.finishReason) || null,
-    errorClass: error ? helperErrorClass(error.code) : (answer ? null : 'unknown'),
+    errorClass: error ? helperErrorClass(error.code) : (usable ? null : 'unknown'),
     attemptNumber: 1,
     correlationId,
     requestMode: 'single',
     requestMessageCount: chatMessages.length,
     toolChoiceMode: 'tool',
     outputFormat: 'tool',
-    reasoningEffort: 'low',
+    reasoningEffort: reasoning,
     maxOutputTokens,
   });
   if (error) return { ok: false, reason: String(error.code || 'failed') };
-  if (!answer) return { ok: false, reason: 'unparseable' };
+  if (!usable) {
+    const seen = toolAnswer || textAnswer;
+    return seen ? { ok: false, reason: 'unusable', shape: answerShape(seen) } : { ok: false, reason: 'unparseable' };
+  }
   return {
     ok: true,
     answer,
-    model: result.servedModel || HELPER_MODEL,
+    model: result.servedModel || model,
     usage: {
       input_tokens: usage.inputTokens || 0,
       output_tokens: usage.outputTokens || 0,
       cost_usd: reported ? costUsd : null,
+    },
+    // The reply's shape, never its words: for a caller that cannot use the
+    // answer and records why (first-version-plan.js replyShape).
+    reply: {
+      finishReason: result.finishReason || null,
+      toolCallCount: Array.isArray(result.toolCalls) ? result.toolCalls.length : 0,
+      textChars: typeof result.content === 'string' ? result.content.length : 0,
+      routedProvider: result.provider || null,
     },
   };
 }
@@ -841,11 +990,14 @@ async function askHelperModel({
  * { response, model, answer }: `response` is Anthropic-shaped either way (a
  * GLM answer is one text block holding its JSON), `model` is the one that
  * answered and `answer` is GLM's parsed object (null from Haiku). A call the
- * caller aborted is not retried on Haiku.
+ * caller aborted is not retried on Haiku. `validate(answer)`, when given,
+ * says whether GLM's answer is one the caller can use: OpenRouter does not
+ * hold a tool call to its schema, so an answer the caller's parse would
+ * refuse is not an answer, and Haiku is asked (run five's plan at Make it).
  */
 async function helperMessage({
   helper, activeClient, params, schema, apiKey, signal, requestOptions,
-  telemetryContext, defaults, model = HELPER_MODEL,
+  telemetryContext, defaults, model = HELPER_MODEL, validate,
 }) {
   const correlationId = (telemetryContext && telemetryContext.correlationId) || crypto.randomUUID();
   let tried = false;
@@ -860,6 +1012,7 @@ async function helperMessage({
       signal,
       telemetryContext,
       correlationId,
+      validate,
     });
     if (glm.ok) {
       return {
@@ -871,6 +1024,7 @@ async function helperMessage({
         },
         model: glm.model,
         answer: glm.answer,
+        reply: glm.reply,
       };
     }
     if (signal && signal.aborted) {
@@ -880,7 +1034,8 @@ async function helperMessage({
     }
     // Without the bot's key nothing was sent, so Haiku's call is the first.
     tried = glm.reason !== 'no_key';
-    if (tried) log.info('llm', 'Helper model did not answer; asking Haiku', { helper, reason: glm.reason });
+    if (glm.reason === 'unusable') log.warn('llm', 'Helper model\'s answer was unusable; asking Haiku', { helper, shape: glm.shape });
+    else if (tried) log.info('llm', 'Helper model did not answer; asking Haiku', { helper, reason: glm.reason });
   }
   const sent = withHelperThinking(model === HELPER_MODEL ? { ...params, model: HELPER_FALLBACK_MODEL } : { ...params, model });
   const response = await createMessageWithTelemetry({
@@ -892,11 +1047,23 @@ async function helperMessage({
     defaults,
     apiKey,
   });
-  return { response, model: sent.model, answer: null };
+  const blocks = Array.isArray(response && response.content) ? response.content : [];
+  return {
+    response,
+    model: sent.model,
+    answer: null,
+    reply: {
+      finishReason: (response && response.stop_reason) || null,
+      toolCallCount: blocks.filter((b) => b && b.type === 'tool_use').length,
+      textChars: blocks.filter((b) => b && b.type === 'text').reduce((n, b) => n + String(b.text || '').length, 0),
+      routedProvider: null,
+    },
+  };
 }
 
-// Test hook: { openrouter, key, config } stand in for the transport, the
-// bot's key and the server config; null restores them. Returns the previous.
+// Test hook: { openrouter, key, config, model } stand in for the transport,
+// the bot's key, the server config and the helper model setting (unset:
+// HELPER_MODEL); null restores them. Returns the previous.
 function _setHelperDepsForTests(deps) {
   const prev = helperTestDeps;
   helperTestDeps = deps || null;
@@ -1394,6 +1561,84 @@ Respond with JSON: {"summary": "..."}.`;
   return { summary, usage: resp.usage, model: served };
 }
 
+// ── The translation step's transport ──────────────────────────────────
+// services/language-sync.js builds every request's params (its model, its
+// schema, its cached system prompt); this sends them on the platform's key
+// and hands back each answer's text by request id. A proposal's few new
+// messages go one by one; a whole language goes as one Message Batch, which
+// costs half as much and may take minutes to hours. Usage is recorded like
+// any platform call (a batch's at the list price, so it reads high).
+
+function catalogAnswer(message) {
+  const text = (message?.content || []).filter((block) => block.type === 'text').map((block) => block.text).join('');
+  const usage = message?.usage || null;
+  if (message?.stop_reason === 'refusal') return { error: 'refusal', usage };
+  if (message?.stop_reason === 'max_tokens') return { error: 'max_tokens', text, usage };
+  return { text, usage };
+}
+
+async function translateCatalogDirect(requests, { concurrency = 4, telemetryContext } = {}) {
+  if (!client) throw new Error('LLM not initialized');
+  const answers = new Map();
+  let next = 0;
+  const lane = async () => {
+    while (next < requests.length) {
+      const request = requests[next++];
+      try {
+        const response = await createMessageWithTelemetry({
+          activeClient: client,
+          params: request.params,
+          telemetryContext,
+          defaults: { backend: 'helper', component: 'language_sync' },
+        });
+        answers.set(request.customId, catalogAnswer(response));
+      } catch (err) {
+        answers.set(request.customId, { error: err?.message || 'request failed' });
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, requests.length) }, lane));
+  return answers;
+}
+
+async function submitCatalogBatch(requests) {
+  if (!client) throw new Error('LLM not initialized');
+  const batch = await client.messages.batches.create({
+    requests: requests.map((request) => ({ custom_id: request.customId, params: request.params })),
+  });
+  return { id: batch.id, status: batch.processing_status };
+}
+
+async function catalogBatchStatus(id) {
+  if (!client) throw new Error('LLM not initialized');
+  const batch = await client.messages.batches.retrieve(id);
+  return { id: batch.id, status: batch.processing_status, counts: batch.request_counts || null };
+}
+
+async function catalogBatchAnswers(id, { telemetryContext } = {}) {
+  if (!client) throw new Error('LLM not initialized');
+  const context = telemetryBase(telemetryContext, { backend: 'helper', component: 'language_sync' });
+  const answers = new Map();
+  for await (const entry of await client.messages.batches.results(id)) {
+    if (entry?.result?.type === 'succeeded') {
+      const message = entry.result.message;
+      recordAnthropicResponse({
+        context, requestedModel: message?.model, response: message,
+        startedAt: new Date(), durationMs: 0, attemptNumber: 1,
+      });
+      answers.set(entry.custom_id, catalogAnswer(message));
+    } else {
+      // An errored request carries the API's own reason (a refused
+      // parameter, an overload); keep it, so a pass that wrote nothing
+      // says why instead of a bare "errored".
+      const result = entry?.result || {};
+      const detail = result.error?.error?.message || result.error?.message || '';
+      answers.set(entry?.custom_id, { error: detail ? `${result.type || 'failed'}: ${detail}` : (result.type || 'failed') });
+    }
+  }
+  return answers;
+}
+
 // Clamp an estimate phrase to something safe to inline in the dev-chat
 // summary line: single line, trimmed, hard-capped at 90 chars. Pure so
 // tests/ai-progress-estimate.test.js can exercise it directly.
@@ -1877,6 +2122,77 @@ async function generateAppSketch({ system, user, schema, model = HELPER_MODEL, m
   });
   const text = (resp.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
   return { text, usage: resp.usage, model: served };
+}
+
+// A new project's first version's plan, at Make it (services/first-version-
+// plan.js owns the prompt, the plan's schema and the parse): what the
+// triage of its first request would plan, from the description alone, so
+// its maker can answer its questions on the made screen while the project
+// is set up. One helper call; hands back the reply's text, the plan's JSON
+// whichever model answered. `validate` is the plan's own parse: a GLM
+// answer it refuses is asked again of Haiku, with the same schema as its
+// structured output (structuredOutputSchema). THROWS with no key or on a
+// provider error; the caller then leaves the plan to the triage, as before.
+async function generateFirstVersionPlan({
+  system, user, schema, model = HELPER_MODEL, maxTokens = 2000, apiKey, telemetryContext, validate,
+}) {
+  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+  if (!activeClient) throw new Error('LLM not initialized');
+  const { response: resp, model: served, reply } = await helperMessage({
+    helper: 'first_version_plan',
+    activeClient,
+    model,
+    params: {
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: 'user', content: String(user || '') }],
+      ...(schema ? { output_config: { format: { type: 'json_schema', schema: structuredOutputSchema(schema) } } } : {}),
+    },
+    schema,
+    validate,
+    telemetryContext,
+    defaults: { backend: 'helper', component: 'first_version_plan' },
+    apiKey,
+  });
+  const text = (resp.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
+  // And how the reply came back (helperMessage `reply`): its finish reason,
+  // tool calls, the model's own text beside them and the routed provider,
+  // for a plan that cannot use it to record its shape.
+  return { text, usage: resp.usage, model: served, reply: reply || null };
+}
+
+// A new project's EARLY first look (services/first-version-early-look.js
+// owns the prompt, the model and the parse): its main screen drawn as one
+// HTML <template> from the plan at Make it, for its maker to see while the
+// project is set up. A Claude model named by the caller, so helperMessage
+// sends it straight to that model (no GLM attempt: a whole screen does not
+// fit its helper ceiling) with the same llm_invocation telemetry. `effort`
+// is the model's output_config effort; `timeoutMs` bounds the request.
+// THROWS with no client or on a provider error; the caller then leaves the
+// first look to the spec, as before.
+async function generateFirstLook({
+  system, user, model, effort = null, maxTokens = 16000, timeoutMs = null, apiKey, telemetryContext,
+}) {
+  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+  if (!activeClient) throw new Error('LLM not initialized');
+  if (!model) throw new Error('generateFirstLook: no model');
+  const { response: resp, model: served } = await helperMessage({
+    helper: 'first_version_look',
+    activeClient,
+    model,
+    params: {
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: 'user', content: String(user || '') }],
+      ...(effort ? { output_config: { effort } } : {}),
+    },
+    ...(timeoutMs ? { requestOptions: { timeout: timeoutMs, maxRetries: 1 } } : {}),
+    telemetryContext,
+    defaults: { backend: 'helper', component: 'first_version_look' },
+    apiKey,
+  });
+  const text = (resp.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
+  return { text, usage: resp.usage, model: served, stopReason: resp.stop_reason || null };
 }
 
 // One graded unit for the challenge scorer (services/topochain/
@@ -3307,6 +3623,7 @@ async function reviewContentRules({ system, diff, telemetryContext, apiKey }) {
 module.exports = {
   init, isEnabled, getSystemPrompt, streamChat, estimateCostCents,
   generatePrMetadata, parsePrMetadataText, generateSessionTitle, generateShortDescription, generateAppSketch,
+  generateFirstVersionPlan, generateFirstLook,
   reviewContentRules,
   // The challenge scorer's one model call (services/topochain/
   // challenge-grader.js owns the rubrics; this owns the transport).
@@ -3342,8 +3659,11 @@ module.exports = {
   detectFallback, sanitizeFallbackContent, fallbackBoundary,
   FABLE_MODEL, FALLBACK_MODE, FALLBACK_BETA, PR_METADATA_MODEL,
   generateSinceSummary, SINCE_SUMMARY_VERSION,
+  // The translation step's transport — see services/language-sync.js.
+  translateCatalogDirect, submitCatalogBatch, catalogBatchStatus, catalogBatchAnswers,
   // The helpers' model: GLM 5.3 Flash first, Haiku behind it.
   HELPER_MODEL, HELPER_FALLBACK_MODEL, HELPER_FALLBACK_THINKING, withHelperThinking, HELPER_TIME_LIMIT_MS, helperRoute, helperAnswer, helperMessage,
+  answerShape, structuredOutputSchema, helperTextAnswer, HELPER_OUTPUT_LIMIT,
   SESSION_TITLE_SCHEMA, SHORT_DESCRIPTION_SCHEMA, WORKSHOP_ASK_SCHEMA,
   _setClientForTests, _setHelperDepsForTests,
 };

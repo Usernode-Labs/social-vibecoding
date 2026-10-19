@@ -25,6 +25,8 @@ import { Fragment } from 'react';
 
 import { CheckIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
 import {
   attrPopoverStore,
@@ -39,6 +41,8 @@ function controller(): any {
 
 /** Exported for tests: the row's click is the whole #1187 toggle rule. */
 export function AttrOptionRow({ option, field }: { option: AttrOptionView; field: string }) {
+  // No hook here: tests call this row as a plain function. Its text comes
+  // from the runtime, and AttrPopoverView, which draws the rows, subscribes.
   return (
     <button
       type="button"
@@ -57,7 +61,7 @@ export function AttrOptionRow({ option, field }: { option: AttrOptionView; field
       // voted for withdraws it. Priority and category keep the idempotent
       // re-vote: their check doubles as "my current pick", and un-picking
       // them was never the reported gap.
-      {...(option.mine && field === 'assignee' ? { title: 'Click again to remove your pick' } : null)}
+      {...(option.mine && field === 'assignee' ? { title: translate('project:attr.assignee.removeHint') } : null)}
       onClick={() => {
         if (field === 'assignee' && option.mine) controller()?._withdrawAttrVote?.();
         else controller()?._castAttrVote?.(option.value);
@@ -78,6 +82,7 @@ export function AttrOptionRow({ option, field }: { option: AttrOptionView; field
 }
 
 function AddBox({ add, suggestions }: { add: AttrAddView; suggestions: string[] }) {
+  const t = useMessages('project');
   const submit = () => controller()?._submitAttrTyped?.();
   return (
     <div className="attr-pop-add">
@@ -115,7 +120,7 @@ function AddBox({ add, suggestions }: { add: AttrAddView; suggestions: string[] 
         </div>
       ) : null}
       <button type="button" id={add.buttonId} className="attr-pop-addbtn" onClick={submit}>
-        Add
+        {t('project:attr.add')}
       </button>
     </div>
   );
@@ -124,12 +129,13 @@ function AddBox({ add, suggestions }: { add: AttrAddView; suggestions: string[] 
 export function AttrPopoverView({
   phase, field, groups, emptyNote, add, suggestions,
 }: AttrPopoverState) {
+  const t = useMessages('project');
   if (phase === 'idle') return null;
   if (phase === 'loading') {
-    return <div className="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">Loading…</div>;
+    return <div className="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">{t('core:common.loading')}</div>;
   }
   if (phase === 'error') {
-    return <div className="px-3 py-2 text-xs text-red-700 dark:text-red-400">Couldn&#39;t load options.</div>;
+    return <div className="px-3 py-2 text-xs text-red-700 dark:text-red-400">{t('project:attr.loadFailed')}</div>;
   }
   return (
     <>

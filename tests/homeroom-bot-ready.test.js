@@ -15,6 +15,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -27,6 +28,11 @@ const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 const dm = require('../src/services/homeroom-bot-dm');
+// The bot's change machine decided the change is ready to try
+// (src/workflow/bot-change/): its card, for the epoch it is on now.
+const tellReadyNow = async (pool, id, deps) => dm.tellReady(pool, id, {
+  epoch: (await pool.query('SELECT approval_epoch FROM chat_sessions WHERE id = $1', [id])).rows[0].approval_epoch, deps,
+});
 
 // ── What the card offers, and says ──
 
@@ -187,8 +193,11 @@ test('B7: the approved line, in words, in the reader\'s own week', () => {
     'names who can give the one Yes it needs, and that either will do');
   assert.equal(line({ missing: 2, waitingOn: [], at: on(2026, 9, 5) }), 'You approved it. It goes live when 2 more people approve, or tomorrow if nobody objects.');
   assert.equal(line({ missing: 0, at: on(2026, 9, 4, 22) }), 'You approved it. It goes live later today if nobody objects.');
-  assert.equal(liveDay(on(2026, 9, 12), sunday, 'en-US'), 'on October 12', 'past the week, its date');
-  assert.equal(liveDay(on(2026, 9, 1), sunday, 'en-US'), 'on October 1', 'a day already past, read later');
+  // The day is a kind and its words; the sentence that holds it is one whole message.
+  assert.deepEqual(liveDay(on(2026, 9, 12), sunday, 'en-US'), { kind: 'date', date: 'October 12' }, 'past the week, its date');
+  assert.equal(line({ missing: 0, at: on(2026, 9, 12) }), 'You approved it. It goes live on October 12 if nobody objects.');
+  assert.deepEqual(liveDay(on(2026, 9, 1), sunday, 'en-US'), { kind: 'date', date: 'October 1' }, 'a day already past, read later');
+  assert.equal(line({ missing: 0, at: on(2026, 9, 1) }), 'You approved it. It goes live on October 1 if nobody objects.');
   assert.equal(liveDay('not a date', sunday, 'en-US'), null);
   assert.deepEqual(goesLiveFromReady({ group: false, last: true, waitingOn: [], more: 0 }), { soon: true, at: null, missing: 0, waitingOn: [], more: 0 });
   assert.deepEqual(goesLiveFromReady({ group: true, last: false, waitingOn: ['ada'], more: 2 }), { soon: false, at: null, missing: 3, waitingOn: ['ada'], more: 2 });
@@ -213,7 +222,7 @@ test('B7: the client reads what happens next from the vote\'s answer and from th
   const api = read('frontend/src/features/messages/api.ts');
   assert.match(api, /if \(response\.ok\) return \{ ok: true, stale: false, epoch, error: null, goesLive: normalizeGoesLive\(pick\(data, 'goesLive'\)\) \};/);
   const card = read('frontend/src/features/messages/bot-ready.tsx');
-  assert.match(card, /if \(out\.ok\) \{ setGoesLive\(out\.goesLive \|\| null\); setApproved\(true\);/);
+  assert.match(card, /if \(out\.ok\) \{ noteApprovedHere\(action\.sessionId, epoch, out\.goesLive \|\| null\); setGoesLive\(out\.goesLive \|\| null\); setApproved\(true\);/);
   // 5 October: what happens next as read now comes first (readyStates).
   assert.match(card, /const next = fresh\?\.goesLive \|\| meta\.goesLive \|\| goesLive \|\| goesLiveFromReady\(meta\.ready\);/);
 });
@@ -226,9 +235,11 @@ test('B7: "ready to try" in the bell and on the phone, on by default', async () 
   assert.ok(push.ALLOWED_KINDS.has('change_ready'));
   const { buildNotificationCopy } = require('../src/services/mobile-push-policy');
   const copy = buildNotificationCopy('change_ready', { sourceUsername: 'ben', appName: 'Supper Club', sessionTitle: 'Sunday host reminder' });
-  assert.equal(copy.title, "@ben's change to Supper Club is ready to try");
-  assert.equal(copy.body, 'Sunday host reminder');
+  // "One story": the change and its project, over who asked and what to do.
+  assert.equal(copy.title, 'Sunday host reminder · Supper Club');
+  assert.equal(copy.body, "@ben's change is ready to try. Try it and vote.");
   if (!globalThis.window) globalThis.window = globalThis;
+  globalThis.PlatformI18n = englishPlatformI18n();
   loadTsx('frontend/src/features/notifications/notifications.js');
   const row = globalThis.window.Notifications._rowView({
     id: 1, kind: 'change_ready', createdAt: new Date().toISOString(), readAt: null,
@@ -332,7 +343,7 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     const id = await change(solo, maya, 2);
     const state = await dm.approvalState(pool, { sessionId: id, userId: maya.id });
     assert.deepEqual([state.audience, state.counts, state.already, state.last], ['solo', true, false, true]);
-    await dm.noteChangeReady(pool, id, { bot: homeroomBot, domain: 'app.example.test' });
+    await tellReadyNow(pool, id, { bot: homeroomBot, domain: 'app.example.test' });
     const sent = await card(maya.id, id);
     assert.equal(sent.meta.ready.group, false);
     assert.equal(sent.meta.ready.last, true);
@@ -358,7 +369,7 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     const state = await dm.approvalState(pool, { sessionId: id, userId: ben.id });
     assert.deepEqual([state.audience, state.counts, state.last, state.needed], ['invited', true, false, 2]);
     assert.deepEqual(await dm.needsYesFrom(pool, state, { except: [ben.id] }), [ada.id]);
-    await dm.noteChangeReady(pool, id, { bot: homeroomBot, domain: 'app.example.test' });
+    await tellReadyNow(pool, id, { bot: homeroomBot, domain: 'app.example.test' });
     const sent = await card(ben.id, id);
     assert.deepEqual(sent.meta.ready, { group: true, last: false, waitingOn: ['ada'], missing: 2, needed: 2 });
     assert.deepEqual(sent.meta.actions.map((a) => a.id), ['try', 'approve', 'change']);
@@ -366,7 +377,7 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     await dm.noteApproversReady(pool, { sessionId: id, epoch: 0, requesterId: ben.id });
     assert.equal((await told(id)).length, 1, 'once per version');
     await pool.query('UPDATE chat_sessions SET approval_epoch = 1 WHERE id = $1', [id]);
-    await dm.noteChangeReady(pool, id, { bot: homeroomBot, domain: 'app.example.test' });
+    await tellReadyNow(pool, id, { bot: homeroomBot, domain: 'app.example.test' });
     assert.deepEqual((await told(id)).map((r) => r.detail).sort(), ['epoch:0', 'epoch:1'], 'a new version asks again');
     const older = (await pool.query(
       `SELECT m.metadata->'homeroomBot' AS meta FROM homeroom_bot_dm_messages d JOIN conversation_messages m ON m.id = d.message_id
@@ -392,6 +403,50 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     assert.deepEqual(await dm.needsYesFrom(pool, await dm.approvalState(pool, { sessionId: id }), { except: [ben.id] }), []);
   });
 
+  // Club Votes, 12 to 13 Oct 2026 (D1): its first version waited all night
+  // for its maker's own Yes. A project's first version goes live without a
+  // vote, so its card offers no Approve, nobody else is asked, and the words
+  // say it goes live; the next change the bot makes asks as before (D2).
+  await t.test('a first version: no Approve, nobody asked, and it says it goes live without a vote', async () => {
+    const club = await project('club-votes', 'Club Votes', { members: [maya, ben, ada] });
+    await active(club, [maya, ben, ada]);
+    await pool.query(
+      `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, status, issue_number)
+       VALUES ($1, $2, 'Votes for the club', 'filed', 1)`,
+      [club.id, maya.id],
+    );
+    const id = await change(club, maya, 1);
+    const state = await dm.approvalState(pool, { sessionId: id, userId: maya.id });
+    assert.equal(state.firstVersion, true);
+    assert.equal(state.gate.mergeable, true, 'no vote needed');
+    assert.deepEqual([state.missing, state.needed, state.last], [0, 0, false]);
+    assert.deepEqual(await dm.needsYesFrom(pool, state, { except: [maya.id] }), [], 'nobody is waited on');
+    await tellReadyNow(pool, id, { bot: homeroomBot, domain: 'app.example.test' });
+    const sent = await card(maya.id, id);
+    assert.deepEqual(sent.meta.actions.map((a) => a.id), ['try', 'change'], 'no Approve');
+    assert.match(sent.content, /It's ready to try\. As the first version, it goes live without a vote in a minute or two\.$/);
+    assert.doesNotMatch(sent.content, /approve/i);
+    assert.deepEqual(await told(id), [], 'nobody else is asked to approve it');
+    // The card under the message it was asked in asks nothing of her either.
+    const chat = await require('../src/services/homeroom-bot-chat').approvalOf(pool, { sessionId: id, viewer: { id: maya.id } });
+    assert.deepEqual([chat.youApprove, chat.missing, chat.waitingOn], [false, 0, []]);
+    // What the App tab reads (firstVersionApproval): the same, for anyone.
+    for (const who of [maya, ben]) {
+      assert.deepEqual(await dm.firstVersionApproval(pool, id, who.id), {
+        sessionId: id, noVote: true, mustApprove: false, approved: false, waitingOn: [], more: 0, missing: 0, goesLiveAt: null, soon: true,
+      });
+    }
+    // It goes live; the next change the bot makes there needs a person's Yes.
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [id]);
+    const later = await change(club, ben, 2);
+    const next = await dm.approvalState(pool, { sessionId: later, userId: ben.id });
+    assert.equal(next.firstVersion, false);
+    assert.equal(next.gate.mergeable, false);
+    await tellReadyNow(pool, later, { bot: homeroomBot, domain: 'app.example.test' });
+    assert.deepEqual((await card(ben.id, later)).meta.actions.map((a) => a.id), ['try', 'approve', 'change']);
+    assert.deepEqual((await told(later)).map((r) => r.username), ['ada', 'maya']);
+  });
+
   await t.test('a public community tells nobody this way, unless it names its approvers', async () => {
     const town = await project('town-square', 'Town Square', { view: 'public', members: [ben, ada, maya] });
     await active(town, [ben, ada, maya]);
@@ -405,7 +460,7 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     const named = await dm.approvalState(pool, { sessionId: id, userId: ben.id });
     assert.equal(named.counts, false, 'only the named approvers\' Yes counts');
     assert.deepEqual(await dm.needsYesFrom(pool, named, { except: [ben.id] }), [ada.id]);
-    await dm.noteChangeReady(pool, id, { bot: homeroomBot, domain: 'app.example.test' });
+    await tellReadyNow(pool, id, { bot: homeroomBot, domain: 'app.example.test' });
     const sent = await card(ben.id, id);
     assert.deepEqual(sent.meta.actions.map((a) => a.id), ['try', 'change'], 'no Approve for a Yes that does not count');
     assert.match(sent.content, /It goes live once it's approved\.$/);

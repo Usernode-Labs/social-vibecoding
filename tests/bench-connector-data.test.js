@@ -54,9 +54,29 @@ test('the bot overview carries the console\'s fields it names, and nothing else'
   assert.equal(out.runs[0].build.ok, true);
   assert.equal(out.runs[0].build.state, 'built');
   assert.equal(out.runs[0].readReason, null, 'a run from before read reasons');
+  assert.equal(out.runs[0].specChars, null, 'a run with no spec has no size');
+  assert.equal(out.runs[0].build_spec_md, undefined, 'the size, not the spec itself');
   assert.equal(out.buildLane, null, 'no lane in the payload, none here');
   assert.equal(out.nextBefore, 9, 'a full page names the next one');
   assert.equal(out.queue.items[0].app, 'bread');
+});
+
+test('botOverview: a run whose verdict could not be read carries its kept reply, and no other run does', async () => {
+  const bot = {
+    adminPayload: async () => ({
+      settings: {}, runs: [
+        { id: 2, verdict: 'failed', error: 'unparseable: Verdict below.', created_at: '2026-10-01T00:00:00Z',
+          unreadable_reply: { reply: { text: 'Reading. Verdict below.', chars: 23 }, repair: { text: 'x'.repeat(20_000), chars: 20_000 } } },
+        { id: 1, verdict: 'failed', error: 'budget: wall clock', created_at: '2026-10-01T00:00:00Z' },
+      ],
+    }),
+  };
+  const out = await data.botOverview(null, {}, {}, { bot });
+  assert.deepEqual(out.runs[0].unreadableReply.reply, { text: 'Reading. Verdict below.', chars: 23 });
+  assert.equal(out.runs[0].unreadableReply.repair.chars, 20_000);
+  assert.ok(out.runs[0].unreadableReply.repair.text.length <= 16 * 1024 + 200, 'bounded however it was stored');
+  assert.equal(out.runs[0].error, 'unparseable: Verdict below.');
+  assert.equal(out.runs[1].unreadableReply, null);
 });
 
 test('a ready verdict that was never built says where it got to and why; a run says what started its read', async () => {
@@ -69,8 +89,20 @@ test('a ready verdict that was never built says where it got to and why; a run s
           queued: 2, building: 1, built: 40, failed: 3,
           lane: { at: '2026-10-09T10:00:00Z', started: 0, inFlight: 2, paused: 'budget', detail: 'weekly limit reached' },
           fault: null,
+          // The live builds beside the lane (homeroom-bot.js buildsNow), and
+          // the live build loop's own last pass (run five, 13 Oct 2026).
+          live: {
+            building: 1, waiting: 2,
+            lastPass: { startedAt: '2026-10-09T10:01:00.000Z', ms: 41, slots: 2, waiting: 3, started: 1, paused: null, extra: 'dropped' },
+          },
         },
         runs: [
+          // Run four (13 Oct 2026): a first version building, its review
+          // included, read as no build at all (`build: null`).
+          run({ id: 10, mode: 'live', build_session_id: 1746 }),
+          run({ id: 9, mode: 'live', live_build_waiting_at: '2026-10-09T09:00:00Z' }),
+          run({ id: 8, mode: 'live', awaiting_go_at: '2026-10-09T09:00:00Z' }),
+          run({ id: 7, mode: 'shadow', build_session_id: 5 }),
           run({ id: 6, build_error: "skipped: the platform's own repository is left out", read_reason: 'changed:github' }),
           run({ id: 5, build_error: 'superseded: a later verdict on the same issue', read_reason: 'new' }),
           run({ id: 4, build_queued_at: '2026-10-09T09:00:00Z', read_reason: 'retry_failed' }),
@@ -81,17 +113,75 @@ test('a ready verdict that was never built says where it got to and why; a run s
       };
     },
   };
-  const out = await data.botOverview(null, {}, {}, { bot });
+  const all = await data.botOverview(null, {}, {}, { bot });
+  assert.deepEqual(all.runs.slice(0, 4).map((r) => r.build && r.build.state), ['building', 'queued', 'awaiting_go', null],
+    'a live build from its session to its outcome, waiting its turn, or its plan waiting for Build it; a shadow run is the lane\'s');
+  assert.equal(all.runs[0].build.sessionId, 1746);
+  const out = { ...all, runs: all.runs.slice(4) };
   assert.deepEqual(out.runs.map((r) => r.build && r.build.state), ['not_built', 'superseded', 'queued', 'building', 'failed', null]);
   assert.match(out.runs[0].build.error, /platform's own repository/);
   assert.equal(out.runs[2].build.queuedAt, '2026-10-09T09:00:00.000Z');
   assert.deepEqual(out.runs.map((r) => r.readReason), ['changed:github', 'new', 'retry_failed', null, null, null],
     'fixed-shape reasons only');
   assert.deepEqual(out.buildLane, {
-    queued: 2, building: 1,
+    // No live loop's pass in the payload: the Pod that answered runs none.
+    queued: 2, building: 1, live: { building: 1, waiting: 2, lastPass: null, passRunningSince: null },
     lastPass: { at: '2026-10-09T10:00:00Z', started: 0, inFlight: 2, paused: 'budget', detail: 'weekly limit reached' },
     fault: null,
   });
+});
+
+test('the voice outside the DM: its switches, its week in counts and codes, and the incidents, never anybody\'s words', async () => {
+  const bot = {
+    async adminPayload() {
+      return {
+        settings: { mode: 'live', voiceSession: true, voiceIssue: false },
+        bot: null, totals: {}, queue: { depth: 0, items: [] }, runs: [],
+        voice: {
+          turns: 12, replied: 9, quiet: 2, fallback: 0, failed: 1, people: 5, costUsd: 0.031,
+          byPlace: { session: { replied: 6, quiet: 1, failed: 1 }, chat: { replied: 3, quiet: 1, words: 'never' }, governance: { replied: 1 } },
+          recentFailures: [{
+            at: '2026-10-10T09:00:00.000Z', app: 'bread', place: 'session', ref: 70, outcome: 'failed',
+            error: 'no_key', failures: ['v1:rate_limited:429', 'Make the header blue please', 'claims:started'], rounds: 2, text: 'never',
+          }],
+          asks: {
+            byStatus: { queued: 1, done: 4, failed: 1, secret: 9 },
+            bySource: { thread: 3, dm: 2, 'Not A Source': 1 },
+            waiting: [{ app: 'bread', change: 70, issueNumber: 12, status: 'queued', asks: 1, since: '2026-10-10T08:00:00.000Z', tries: 1, instruction: 'never' }],
+          },
+          offers: { file_request: { done: 2, declined: 1 }, withdraw_change: { open: 1 }, mystery: { open: 3 } },
+        },
+        incidents: {
+          days: 7, total: 1,
+          items: [{ at: '2026-10-10T09:00:00.000Z', kind: 'checks_not_change', app: 'bread', runId: 5, issueNumber: 12, why: 'w'.repeat(400), outcome: null, detail: 'never' }],
+        },
+      };
+    },
+  };
+  const out = await data.botOverview(null, {}, {}, { bot });
+  assert.deepEqual(
+    [out.settings.voiceSession, out.settings.voiceIssue, out.settings.voiceChat], [true, false, true],
+    'on unless switched off, as the bot reads them',
+  );
+  assert.deepEqual(out.voice.byPlace, { session: { replied: 6, quiet: 1, failed: 1 }, chat: { replied: 3, quiet: 1 } });
+  assert.equal(out.voice.turns, 12);
+  assert.equal(out.voice.people, 5);
+  assert.deepEqual(out.voice.recentFailures, [{
+    at: '2026-10-10T09:00:00.000Z', app: 'bread', place: 'session', ref: 70, outcome: 'failed',
+    error: 'no_key', failures: ['v1:rate_limited:429', 'claims:started'], rounds: 2,
+  }], 'codes only: a message or anybody\'s words never ride along');
+  assert.deepEqual(out.voice.asks.byStatus, { queued: 1, done: 4, failed: 1 });
+  assert.deepEqual(out.voice.asks.bySource, { thread: 3, dm: 2 });
+  assert.deepEqual(out.voice.asks.waiting, [{ app: 'bread', change: 70, issueNumber: 12, status: 'queued', asks: 1, since: '2026-10-10T08:00:00.000Z', tries: 1 }]);
+  assert.deepEqual(out.voice.offers, { file_request: { done: 2, declined: 1 }, withdraw_change: { open: 1 } });
+  assert.equal(out.incidents.items[0].kind, 'checks_not_change');
+  assert.equal(out.incidents.items[0].why.length, 300, 'a reason is clipped');
+  assert.equal(out.incidents.items[0].detail, undefined);
+  assert.doesNotMatch(JSON.stringify(out), /never/);
+
+  const none = await data.botOverview(null, {}, {}, { bot: { async adminPayload() { return { settings: {}, queue: {}, runs: [] }; } } });
+  assert.equal(none.voice, null);
+  assert.equal(none.incidents, null);
 });
 
 test('recent shots page through the gallery\'s own listing and counts, and keep only what they name', async () => {
@@ -115,7 +205,11 @@ test('recent shots page through the gallery\'s own listing and counts, and keep 
         nextCursor: { before: '2026-09-30T00:00:00Z', before_id: 69 },
       };
     },
-    async galleryStats() { return { stats: { total: 3, no_shots: 1 } }; },
+    async shotsStats(_pool, q) {
+      assert.deepEqual(q, { app: 'bread', days: '14' }, 'the window and the app, never the capture problem');
+      return { window: { days: 14 }, proposals: 3 };
+    },
+    async galleryStats() { assert.fail('the retired pipeline\'s counters are the console strip\'s, not the connector\'s'); },
   };
   const out = await data.recentShots(null, { app: 'bread', beforeId: 7 }, { gallery });
   const p = out.proposals[0];
@@ -131,7 +225,48 @@ test('recent shots page through the gallery\'s own listing and counts, and keep 
   assert.equal(p.legacyCaptures, 2);
   assert.equal(p.authorEmail, undefined);
   assert.deepEqual(out.nextCursor, { before: '2026-09-30T00:00:00.000Z', beforeId: 69 });
-  assert.deepEqual((await data.shotStats(null, {}, { gallery })).stats, { total: 3, no_shots: 1 });
+  assert.deepEqual((await data.shotStats(null, { app: 'bread', problem: 'root_only', days: '14' }, { gallery })).stats,
+    { window: { days: 14 }, proposals: 3 });
+});
+
+// A run that shot one change of three (PR 4777) read as a success: the
+// listing gave its state and not its changes.
+test('each run in recent shots says how each declared change came out, and counts them', async () => {
+  const claim = (n) => ({ id: `c${n}`, claim: `Change ${n}` });
+  const gallery = {
+    async listProposals() {
+      return {
+        proposals: [
+          { id: 80, shots: {
+            state: 'verified', artifacts: [], claims: [claim(1), claim(2), claim(3)],
+            shotResults: [
+              { id: 'c1', status: 'ready' }, { id: 'c2', status: 'skipped', reason: 'Needs a wallet.' },
+              { id: 'c3', status: 'skipped', reason: 'Needs a second member.' },
+            ],
+          } },
+          { id: 81, shots: {
+            state: 'verified', artifacts: [], claims: [claim(1), claim(2)],
+            shotResults: [{ id: 'c1', status: 'unchanged', note: 'any visible difference.' }, { id: 'c2', status: 'failed' }],
+          } },
+          // Stopped before it saved anything: no results to count.
+          { id: 82, shots: { state: 'failed', failureCode: 'shots_agent_failed', artifacts: [], claims: [claim(1)], shotResults: [] } },
+          { id: 83, shots: { state: 'verified', artifacts: [], claims: [claim(1)], shotResults: [{ id: 'c1', status: 'published' }] } },
+        ],
+        nextCursor: null,
+      };
+    },
+  };
+  const out = await data.recentShots(null, {}, { gallery });
+  const [partial, unchanged, stopped, odd] = out.proposals.map((p) => p.shots);
+  assert.deepEqual(partial.changes, { declared: 3, ready: 1, unchanged: 0, skipped: 2, failed: 0 });
+  assert.deepEqual(partial.claims.map((c) => c.status), ['ready', 'skipped', 'skipped']);
+  assert.deepEqual(unchanged.changes, { declared: 2, ready: 0, unchanged: 1, skipped: 0, failed: 1 });
+  assert.deepEqual(unchanged.claims, [
+    { id: 'c1', claim: 'Change 1', status: 'unchanged' }, { id: 'c2', claim: 'Change 2', status: 'failed' },
+  ]);
+  assert.deepEqual(stopped.changes, { declared: 1, ready: 0, unchanged: 0, skipped: 0, failed: 0 });
+  assert.equal(stopped.claims[0].status, null);
+  assert.equal(odd.claims[0].status, null, 'a status it does not know is not passed on');
 });
 
 test('one proposal\'s shots: only a verified run\'s stills, focus first, within the count and the bytes', async () => {
@@ -197,4 +332,23 @@ test('a failed run in recent shots carries its code, its reason in full and how 
   // A lookup that fails never fails the listing.
   const broken = { async query() { throw new Error('relation does not exist'); } };
   assert.equal((await data.recentShots(broken, {}, { gallery })).proposals.length, 3);
+});
+
+test('a run carries the size of the spec its build worked from, to read against how the build went', async () => {
+  const bot = {
+    async adminPayload() {
+      return {
+        settings: {}, bot: null, totals: {}, queue: { depth: 0, items: [] },
+        runs: [{
+          id: 3, app_slug: 'bread', issue_number: 1, verdict: 'ready', build_ok: false,
+          build_error: 'the build ran past its time limit', build_spec_md: '# Plan\n'.concat('x'.repeat(9993)),
+          bot_config_version_id: 4, created_at: '2026-10-01T00:00:00Z',
+        }],
+      };
+    },
+  };
+  const [run] = (await data.botOverview(null, {}, {}, { bot })).runs;
+  assert.equal(run.specChars, 10000);
+  assert.equal(run.build.state, 'failed');
+  assert.equal(run.botConfig.versionId, 4);
 });

@@ -17,6 +17,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 
 const github = require('../src/services/github');
+const budget = require('../src/services/github-budget');
 
 function fakeIssue(number, title, updatedAt) {
   return {
@@ -1106,6 +1107,329 @@ test('#2261 nothing cached: a failed fetch is an empty list with a note, never s
     assert.strictEqual(calls.length, 2, 'with nothing to serve there is nothing to back off for');
     assert.deepStrictEqual(second.issues, []);
   } finally {
+    global.fetch = origFetch;
+  }
+});
+
+// ------------------------------------------------------------------
+// An issue read on its own (a closed request's card) is remembered: the
+// chat with Homeroom bot asked GitHub for the same closed issues, one after
+// another, every time it opened.
+// ------------------------------------------------------------------
+
+function stubSingle(state = 'closed', { delayMs = 0, status = 200 } = {}) {
+  const calls = [];
+  global.fetch = async (url) => {
+    calls.push(String(url));
+    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    const n = Number(String(url).split('/').pop());
+    return {
+      ok: status === 200, status, headers: { get: () => null },
+      json: async () => ({ ...fakeIssue(n, `Request ${n}`, '2026-06-09T00:00:00Z'), state }),
+    };
+  };
+  return calls;
+}
+
+test('fetchPublicIssue remembers an issue it read on its own; a fresh read asks again', async () => {
+  const origFetch = global.fetch;
+  try {
+    github._resetSingleIssueCache();
+    const calls = stubSingle('closed');
+    const first = await github.fetchPublicIssue('KeepOwner', 'keep-repo', 40);
+    assert.strictEqual(first.issue.title, 'Request 40');
+    assert.strictEqual((await github.fetchPublicIssue('KeepOwner', 'keep-repo', 40)).issue.title, 'Request 40');
+    assert.strictEqual((await github.fetchPublicIssue('keepowner', 'KEEP-REPO', 40)).issue.title, 'Request 40', 'whatever the casing');
+    assert.strictEqual(calls.length, 1, 'asked GitHub once');
+    await github.fetchPublicIssue('KeepOwner', 'keep-repo', 40, { fresh: true });
+    assert.strictEqual(calls.length, 2, 'a fresh read always asks');
+    await github.fetchPublicIssue('KeepOwner', 'keep-repo', 41);
+    assert.strictEqual(calls.length, 3, 'another issue is its own read');
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('two reads of one issue at once ask GitHub once', async () => {
+  const origFetch = global.fetch;
+  try {
+    github._resetSingleIssueCache();
+    const calls = stubSingle('closed', { delayMs: 20 });
+    const [a, b] = await Promise.all([
+      github.fetchPublicIssue('PairOwner', 'pair-repo', 50),
+      github.fetchPublicIssue('PairOwner', 'pair-repo', 50),
+    ]);
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(a.issue.title, 'Request 50');
+    assert.strictEqual(b.issue.title, 'Request 50');
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('a failed single read is remembered for a minute only; a merge forgets the repo\'s reads', async () => {
+  const origFetch = global.fetch;
+  const realNow = Date.now;
+  try {
+    github._resetSingleIssueCache();
+    let calls = stubSingle('closed', { status: 500 });
+    assert.strictEqual((await github.fetchPublicIssue('FailOwner', 'fail-repo', 60)).note, 'fetch failed');
+    await github.fetchPublicIssue('FailOwner', 'fail-repo', 60);
+    assert.strictEqual(calls.length, 1, 'not asked again at once');
+    const start = realNow();
+    Date.now = () => start + 61 * 1000;
+    calls = stubSingle('closed');
+    assert.strictEqual((await github.fetchPublicIssue('FailOwner', 'fail-repo', 60)).issue.title, 'Request 60', 'asked again after the minute');
+    assert.strictEqual(calls.length, 1);
+    await github.fetchPublicIssue('FailOwner', 'fail-repo', 60);
+    assert.strictEqual(calls.length, 1, 'and that answer is kept');
+    github.invalidateIssuesCache('failowner', 'fail-repo');
+    await github.fetchPublicIssue('FailOwner', 'fail-repo', 60);
+    assert.strictEqual(calls.length, 2, 'the merge path forgets the repo\'s single reads');
+  } finally {
+    Date.now = realNow;
+    global.fetch = origFetch;
+  }
+});
+
+// ------------------------------------------------------------------
+// Conditional reads of the open-issues list. The Homeroom bot refreshes
+// every project's list every five minutes, the cache's own TTL, so each
+// refresh was a full read: about 1,500 GitHub requests an hour on 19 Oct
+// 2026. A list that came back as one page keeps its ETag, the read after
+// the TTL asks with If-None-Match, and GitHub's 304 costs nothing.
+// ------------------------------------------------------------------
+
+// A GitHub for the list endpoint. `answer(call, n)` gives { status, body,
+// etag, next } for the n-th request; every call is kept with the
+// If-None-Match and Authorization it was sent with. Every answer carries
+// rate-limit headers for one fixed window, so the budget records it.
+function etagGithub(answer) {
+  const calls = [];
+  const reset = String(Math.floor(Date.now() / 1000) + 30 * 60);
+  global.fetch = async (url, init = {}) => {
+    const headers = (init && init.headers) || {};
+    const call = {
+      url: String(url),
+      ifNoneMatch: headers['If-None-Match'] || null,
+      auth: headers.Authorization || null,
+    };
+    calls.push(call);
+    const { status = 200, body = [], etag = null, next = null } = answer(call, calls.length) || {};
+    const out = {
+      'content-type': 'application/json',
+      'x-ratelimit-limit': '5000',
+      'x-ratelimit-remaining': '4000',
+      'x-ratelimit-reset': reset,
+      'x-ratelimit-resource': 'core',
+    };
+    if (etag) out.etag = etag;
+    if (next) out.link = `<${next}>; rel="next"`;
+    return new Response(status === 304 ? null : JSON.stringify(body), { status, headers: out });
+  };
+  return calls;
+}
+
+// What the budget counted and what it let through free, over every credential.
+function spent() {
+  let counted = 0;
+  let free = 0;
+  for (const row of budget.snapshot().credentials) {
+    if (!row.spend) continue;
+    counted += row.spend.counted;
+    free += row.spend.free;
+  }
+  return { counted, free };
+}
+
+test('a one-page list keeps its ETag; the read after the TTL asks with it, and a 304 serves the list free', async () => {
+  const origFetch = global.fetch;
+  const clock = fakeClock();
+  budget._resetForTests();
+  try {
+    // Created before anything was cached: the overlay alone carries it.
+    github.noteIssueCreated('EtagOwner', 'etag-repo', fakeIssue(9, 'created here', '2026-06-11T00:00:00Z'));
+    const list = [fakeIssue(1, 'one', '2026-06-09T00:00:00Z'), fakeIssue(2, 'two', '2026-06-08T00:00:00Z')];
+    const calls = etagGithub((call) => (call.ifNoneMatch === 'W/"list-1"'
+      ? { status: 304, etag: 'W/"list-1"' }
+      : { body: list, etag: 'W/"list-1"' }));
+
+    const first = await github.fetchPublicIssues('EtagOwner', 'etag-repo');
+    assert.deepStrictEqual(first.issues.map((i) => i.number), [9, 1, 2]);
+    assert.strictEqual(calls[0].ifNoneMatch, null, 'nothing to revalidate on the first read');
+
+    github.noteIssuesClosed('EtagOwner', 'etag-repo', [2]);
+    clock.tick(CACHE_TTL_MS + 1);
+    const again = await github.fetchPublicIssues('EtagOwner', 'etag-repo');
+    assert.strictEqual(calls.length, 2);
+    assert.strictEqual(calls[1].ifNoneMatch, 'W/"list-1"', 'asked with the ETag it was answered with');
+    assert.deepStrictEqual(again.issues.map((i) => i.number), [9, 1],
+      'the cached list, with the created issue added and the closed one hidden');
+    assert.strictEqual(again.note, undefined);
+    assert.strictEqual(again.stale, undefined, 'a 304 is an answer, not a failure');
+
+    // The 304 re-stamped the entry: the next read inside the TTL asks nobody.
+    clock.tick(CACHE_TTL_MS - 1);
+    await github.fetchPublicIssues('EtagOwner', 'etag-repo');
+    assert.strictEqual(calls.length, 2, 'served from the cache again');
+
+    assert.deepStrictEqual(spent(), { counted: 1, free: 1 }, 'only the first, full read counted against the budget');
+  } finally {
+    github.unsuppressIssues('EtagOwner', 'etag-repo', [2]);
+    budget._resetForTests();
+    clock.restore();
+    global.fetch = origFetch;
+  }
+});
+
+test('a 200 with a new ETag replaces the list, and the next read asks with the new one', async () => {
+  const origFetch = global.fetch;
+  const clock = fakeClock();
+  try {
+    const calls = etagGithub((call, n) => {
+      if (n === 1) return { body: [fakeIssue(1, 'one', '2026-06-09T00:00:00Z')], etag: '"a"' };
+      if (call.ifNoneMatch === '"a"') {
+        return { body: [fakeIssue(3, 'filed on GitHub', '2026-06-10T00:00:00Z'), fakeIssue(1, 'one', '2026-06-09T00:00:00Z')], etag: '"b"' };
+      }
+      return call.ifNoneMatch === '"b"' ? { status: 304, etag: '"b"' } : { body: [] };
+    });
+    await github.fetchPublicIssues('NewTagOwner', 'new-tag-repo');
+    clock.tick(CACHE_TTL_MS + 1);
+    const changed = await github.fetchPublicIssues('NewTagOwner', 'new-tag-repo');
+    assert.strictEqual(calls[1].ifNoneMatch, '"a"');
+    assert.deepStrictEqual(changed.issues.map((i) => i.number), [3, 1], 'the new list');
+
+    clock.tick(CACHE_TTL_MS + 1);
+    const held = await github.fetchPublicIssues('NewTagOwner', 'new-tag-repo');
+    assert.strictEqual(calls[2].ifNoneMatch, '"b"', 'the new ETag replaced the old one');
+    assert.deepStrictEqual(held.issues.map((i) => i.number), [3, 1], 'and its 304 serves the new list');
+  } finally {
+    clock.restore();
+    global.fetch = origFetch;
+  }
+});
+
+test('a list of more than one page keeps no ETag, so nothing is asked with one', async () => {
+  const origFetch = global.fetch;
+  const clock = fakeClock();
+  try {
+    const page2 = 'https://api.github.com/repositories/1/issues?state=open&page=2';
+    // One page with an ETag, then the list grows past a page, then the next read.
+    let grown = false;
+    const calls = etagGithub((call) => {
+      if (!grown) return { body: [fakeIssue(1, 'one', '2026-06-09T00:00:00Z')], etag: '"single"' };
+      if (call.url === page2) return { body: [fakeIssue(1, 'one', '2026-06-09T00:00:00Z')], etag: '"p2"' };
+      return { body: [fakeIssue(4, 'four', '2026-06-10T00:00:00Z')], etag: '"p1"', next: page2 };
+    });
+    await github.fetchPublicIssues('PagesOwner', 'pages-repo');
+    grown = true;
+    clock.tick(CACHE_TTL_MS + 1);
+    const two = await github.fetchPublicIssues('PagesOwner', 'pages-repo');
+    assert.deepStrictEqual(two.issues.map((i) => i.number), [4, 1]);
+    assert.deepStrictEqual(calls.slice(1).map((c) => c.ifNoneMatch), ['"single"', null],
+      'page one asks with the one-page ETag; page two never asks with one');
+
+    clock.tick(CACHE_TTL_MS + 1);
+    await github.fetchPublicIssues('PagesOwner', 'pages-repo');
+    assert.strictEqual(calls.length, 5);
+    assert.deepStrictEqual(calls.slice(3).map((c) => c.ifNoneMatch), [null, null],
+      'a two-page list is read whole, with no If-None-Match');
+  } finally {
+    clock.restore();
+    global.fetch = origFetch;
+  }
+});
+
+test('If-None-Match goes out with the installation read and with the bot-token read it falls back to', async () => {
+  const origFetch = global.fetch;
+  const clock = fakeClock();
+  const priorToken = process.env.GITHUB_BOT_TOKEN;
+  const priorMode = process.env.GITHUB_READS_VIA_APP;
+  process.env.GITHUB_BOT_TOKEN = 'bot-token';
+  process.env.GITHUB_READS_VIA_APP = '';
+  budget._resetForTests();
+  github._setReadClientsForTests({
+    appConfigured: true,
+    installationToken: async (owner) => (owner === 'AppOwner' ? 'inst-token' : null),
+  });
+  try {
+    // The installation cannot see this repository (404), so every read is
+    // asked again with the bot token.
+    const calls = etagGithub((call) => {
+      if (call.auth === 'Bearer inst-token') return { status: 404, body: { message: 'Not Found' } };
+      return call.ifNoneMatch === '"fb"'
+        ? { status: 304, etag: '"fb"' }
+        : { body: [fakeIssue(5, 'five', '2026-06-09T00:00:00Z')], etag: '"fb"' };
+    });
+    await github.fetchPublicIssues('AppOwner', 'fallback-repo');
+    assert.deepStrictEqual(calls.map((c) => c.auth), ['Bearer inst-token', 'Bearer bot-token']);
+
+    clock.tick(CACHE_TTL_MS + 1);
+    const res = await github.fetchPublicIssues('AppOwner', 'fallback-repo');
+    assert.deepStrictEqual(calls.slice(2).map((c) => [c.auth, c.ifNoneMatch]), [
+      ['Bearer inst-token', '"fb"'],
+      ['Bearer bot-token', '"fb"'],
+    ]);
+    assert.deepStrictEqual(res.issues.map((i) => i.number), [5]);
+    assert.strictEqual(res.stale, undefined);
+  } finally {
+    github._setReadClientsForTests(null);
+    budget._resetForTests();
+    if (priorToken === undefined) delete process.env.GITHUB_BOT_TOKEN;
+    else process.env.GITHUB_BOT_TOKEN = priorToken;
+    if (priorMode === undefined) delete process.env.GITHUB_READS_VIA_APP;
+    else process.env.GITHUB_READS_VIA_APP = priorMode;
+    clock.restore();
+    global.fetch = origFetch;
+  }
+});
+
+test('an invalidation, and an expiry of every list, drop the ETag', async () => {
+  const origFetch = global.fetch;
+  try {
+    const calls = etagGithub((call) => (call.ifNoneMatch
+      ? { status: 304, etag: '"inv"' }
+      : { body: [fakeIssue(1, 'one', '2026-06-09T00:00:00Z')], etag: '"inv"' }));
+
+    // The merge path's invalidation (on this process, or heard over the bus).
+    await github.fetchPublicIssues('DropOwner', 'drop-repo');
+    assert.strictEqual(github.invalidateIssuesCache('DropOwner', 'drop-repo'), true);
+    await github.fetchPublicIssues('DropOwner', 'drop-repo');
+    assert.strictEqual(calls[1].ifNoneMatch, null, 'the read after an invalidation is a full one');
+
+    github.applyIssuesChange('DropOwner', 'drop-repo', { invalidate: true });
+    await github.fetchPublicIssues('DropOwner', 'drop-repo');
+    assert.strictEqual(calls[2].ifNoneMatch, null, 'so is the one after an invalidation another process shared');
+
+    // A bus reconnect expires every list.
+    github.expireIssuesCachesHere();
+    await github.fetchPublicIssues('DropOwner', 'drop-repo');
+    assert.strictEqual(calls[3].ifNoneMatch, null, 'and the one after every list was expired');
+    assert.strictEqual(calls.length, 4);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('an issue seeded into the list drops the ETag, so a closed one does not stay listed', async () => {
+  const origFetch = global.fetch;
+  const clock = fakeClock();
+  try {
+    const calls = etagGithub((call) => (call.ifNoneMatch
+      ? { status: 304, etag: '"seed"' }
+      : { body: [fakeIssue(1, 'one', '2026-06-09T00:00:00Z')], etag: '"seed"' }));
+    await github.fetchPublicIssues('SeedTagOwner', 'seed-tag-repo');
+
+    // Filed here (overlay gone at once, so the cached list alone is read),
+    // then closed on GitHub before GitHub's list ever showed it: GitHub's
+    // list is the one the ETag names again.
+    github.noteIssueCreated('SeedTagOwner', 'seed-tag-repo', fakeIssue(2, 'filed, then closed', '2026-06-10T00:00:00Z'), 0);
+    clock.tick(CACHE_TTL_MS + 1);
+    const res = await github.fetchPublicIssues('SeedTagOwner', 'seed-tag-repo');
+    assert.strictEqual(calls[1].ifNoneMatch, null, 'the seeded list is not revalidated');
+    assert.deepStrictEqual(res.issues.map((i) => i.number), [1], 'a 304 would have kept #2 open');
+  } finally {
+    clock.restore();
     global.fetch = origFetch;
   }
 });

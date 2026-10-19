@@ -16,6 +16,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderComponent, createElement, renderToHtml } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -276,8 +277,6 @@ test('sign-in: the password form, every code step and both recovery paths say wh
     ['login-password', 'go'],
     ['otp-email', 'send'],
     ['otp-code', 'go'],
-    ['otp-new-password', 'next'],
-    ['otp-confirm-password', 'go'],
     ['recovery-new-password', 'next'],
     ['recovery-confirm-password', 'go'],
   ]);
@@ -293,7 +292,9 @@ test('sign-in: the password form, every code step and both recovery paths say wh
   assert.match(src, /id="recovery-wallet"[\s\S]{0,200}returnKeyHandler\(\{ submit: \(\) => \{ void onWalletReset\(\); \} \}\)/);
   assert.match(src, /id="recovery-email"[\s\S]{0,200}returnKeyHandler\(\{ submit: \(\) => \{ if \(busy !== 'btn-email-reset'\) void onEmailReset\(\); \} \}\)/);
   // The fields drawn only on demand say it too.
-  assert.match(src, /id="otp-username"[\s\S]{0,200}enterKeyHint="next"/);
+  // The set-password step asks for the username alone (#4891: no password),
+  // so its Return runs the step's button.
+  assert.match(src, /id="otp-username"[\s\S]{0,200}enterKeyHint="go"/);
   assert.match(src, /id="recovery-email-input"[\s\S]{0,120}enterKeyHint="send"/);
   assert.match(src, /id="reset-new-password"[\s\S]{0,80}enterKeyHint="next"/);
   assert.match(src, /id="reset-confirm-password"[\s\S]{0,80}enterKeyHint="go"/);
@@ -338,7 +339,8 @@ test('Suggest an improvement: Return in the title goes on to the description; �
     stubs: { './feedback-controller': { Feedback: {}, init() {} } },
   });
   const html = renderToHtml(createElement(mod.FeedbackDialog));
-  assert.deepEqual(hints(html), [['feedback-title', 'next'], ['feedback-text', null]]);
+  assert.deepEqual(hints(html), [['feedback-title', 'next'], ['feedback-text', null],
+    ['feedback-edit-title', 'next'], ['feedback-edit-text', null]]);
   assert.match(read('frontend/src/features/dialogs/feedback.tsx'), /<div id="feedback-form" onKeyDown=\{returnKeyHandler\(\)\}>/);
   const controller = read('frontend/src/features/dialogs/feedback-controller.js');
   assert.match(controller, /feedbackTitle\.addEventListener\('keydown', \(e\) => \{\s+if \(e\.key === 'Enter' && \(e\.metaKey \|\| e\.ctrlKey\)\)/);
@@ -408,8 +410,10 @@ test('wallet Send: the address goes on to the amount, and the amount sends', () 
   const src = read('frontend/src/features/header/wallet-sheet-body.tsx');
   const form = src.slice(src.indexOf('function SendForm('), src.indexOf('// ── the body'));
   assert.match(form, /onKeyDown=\{returnKeyHandler\(\{ submit: \(\) => \{ if \(!sending\) void submit\(\); \} \}\)\}/);
-  assert.match(form, /aria-label="Recipient address"[\s\S]{0,80}enterKeyHint="next"/);
-  assert.match(form, /aria-label="Amount" inputMode="numeric" enterKeyHint="send"/);
+  assert.match(form, /aria-label=\{t\('wallet:send\.recipientLabel'\)\}[\s\S]{0,80}enterKeyHint="next"/);
+  assert.match(form, /aria-label=\{t\('wallet:send\.amountLabel'\)\} inputMode="numeric" enterKeyHint="send"/);
+  assert.equal(message('wallet:send.recipientLabel'), 'Recipient address');
+  assert.equal(message('wallet:send.amountLabel'), 'Amount');
 });
 
 test('Email & recovery: the address goes on to the password when one is asked for; the last field sends', () => {

@@ -30,7 +30,14 @@
  * module also publishes itself as `window.ReleaseEta`, which they read at
  * call time. The words read the viewer's clock, which the prerender does not
  * have: they are only ever drawn for data loaded after the first render.
+ *
+ * Every line is a whole catalog message (`core:release.*`), one per case and
+ * per form, read in the viewer's language when it is asked for. Several
+ * callers place the sentence in a message of their own as `{{release}}`
+ * ("{{release}}."), so each is a sentence without its full stop.
  */
+
+import { t } from './i18n/runtime';
 
 export type ReleaseState = 'next' | 'rolling' | 'waiting';
 
@@ -69,11 +76,6 @@ export function releaseMinutes(release: unknown, now: number = Date.now()): numb
   return Math.max(1, Math.round((Date.parse(r.etaAt) - now) / 60000));
 }
 
-/** "about 8 minutes" or "in about a minute": the estimate's own words, or null. */
-function when(minutes: number): string {
-  return minutes <= 1 ? 'in about a minute' : `about ${minutes} minutes`;
-}
-
 /**
  * The sentence (see above): "Merged; goes live in the next release (about 8
  * minutes)". Null for anything that is not a release block, so a caller
@@ -82,10 +84,10 @@ function when(minutes: number): string {
 export function releaseSentence(release: unknown, now: number = Date.now()): string | null {
   const r = releaseOf(release);
   if (!r) return null;
-  if (r.state === 'waiting') return 'Merged; waiting for a release';
-  if (isNow(r, now)) return 'Merged; going live now';
+  if (r.state === 'waiting') return t('core:release.sentence.waiting');
+  if (isNow(r, now)) return t('core:release.sentence.now');
   const minutes = releaseMinutes(r, now);
-  return minutes == null ? 'Merged; goes live in the next release' : `Merged; goes live in the next release (${when(minutes)})`;
+  return minutes == null ? t('core:release.sentence.next') : t('core:release.sentence.minutes', { count: minutes });
 }
 
 /**
@@ -96,11 +98,11 @@ export function releaseSentence(release: unknown, now: number = Date.now()): str
 export function releaseShort(release: unknown, now: number = Date.now()): string | null {
   const r = releaseOf(release);
   if (!r) return null;
-  if (r.state === 'waiting') return 'Waiting for a release';
-  if (isNow(r, now)) return 'Going live now';
+  if (r.state === 'waiting') return t('core:release.short.waiting');
+  if (isNow(r, now)) return t('core:release.short.now');
   const minutes = releaseMinutes(r, now);
-  if (minutes == null) return 'Goes live in the next release';
-  return minutes <= 1 ? 'Goes live in about a minute' : `Goes live in about ${minutes} minutes`;
+  if (minutes == null) return t('core:release.short.next');
+  return t('core:release.short.minutes', { count: minutes });
 }
 
 /**
@@ -108,16 +110,19 @@ export function releaseShort(release: unknown, now: number = Date.now()): string
  * changes go live in the next release (about 8 minutes)". They all go in the
  * same release, so one estimate is theirs. Null for anything that is not a
  * release block.
+ *
+ * Two numbers, so two plurals: the line counts the changes, and the estimate
+ * inside it is a message of its own counting the minutes (`{{eta}}`).
  */
 export function releaseCountLine(release: unknown, count: number, now: number = Date.now()): string | null {
   const r = releaseOf(release);
   if (!r) return null;
   const n = Math.max(1, Math.floor(Number(count)) || 1);
-  const what = `${n} merged ${n === 1 ? 'change' : 'changes'}`;
-  if (r.state === 'waiting') return `${what} waiting for a release`;
-  if (isNow(r, now)) return `${what} going live now`;
+  if (r.state === 'waiting') return t('core:release.countLine.waiting', { count: n });
+  if (isNow(r, now)) return t('core:release.countLine.now', { count: n });
   const minutes = releaseMinutes(r, now);
-  return `${what} ${n === 1 ? 'goes' : 'go'} live in the next release${minutes == null ? '' : ` (${when(minutes)})`}`;
+  if (minutes == null) return t('core:release.countLine.next', { count: n });
+  return t('core:release.countLine.estimate', { count: n, eta: t('core:release.countLine.eta', { count: minutes }) });
 }
 
 /** Whether a surface showing it has anything to count down, and so redraws now and then. */

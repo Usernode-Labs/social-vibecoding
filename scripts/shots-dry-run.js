@@ -28,6 +28,11 @@ const PERSONAS = Object.freeze({
   read_only_admin: { dir: 'admin', server: 'browser_admin' },
   full_admin: { dir: 'full_admin', server: 'browser_full_admin' },
   guest: { dir: 'guest', server: 'browser_guest' },
+  // The invited fixtures' personas (#4437): a dry run has no such fixture
+  // account, so these browsers start signed out unless the author drops
+  // their own storage state for one in --state-dir.
+  invited_member: { dir: 'invited_member', server: 'browser_invited_member' },
+  invited_member_listed: { dir: 'invited_member_listed', server: 'browser_invited_member_listed' },
 });
 // A phone screen's browser presents as this device, as a hosted turn's does
 // (worker/write-shots-mcp-config.js); tests/shots-dry-run.test.js pins the pair.
@@ -155,7 +160,9 @@ function localBridge(runtimeDir) {
     .replace("require('./shots-hosted-origins')",
       `require(${JSON.stringify(path.join(ROOT, 'worker', 'shots-hosted-origins.js'))})`)
     .replace("require('./shots-boundary')",
-      `require(${JSON.stringify(path.join(ROOT, 'worker', 'shots-boundary.js'))})`);
+      `require(${JSON.stringify(path.join(ROOT, 'worker', 'shots-boundary.js'))})`)
+    .replace("require('./shots-samples')",
+      `require(${JSON.stringify(path.join(ROOT, 'worker', 'shots-samples.js'))})`);
   const file = path.join(runtimeDir, 'shots-mcp.js');
   fs.writeFileSync(file, source, { mode: 0o600 });
   return file;
@@ -165,7 +172,9 @@ function localBridge(runtimeDir) {
 // screenshots carry the page-site stamps the shots bridge requires before it
 // publishes one (worker/shots-boundary.js). A persona's phone browser has the
 // same sign-in and presents as a phone, saving beside the persona's.
-function browserServer(options, persona, shotsDir, clipSize, { phone = false } = {}) {
+// `control` is where its observer answers the shots bridge's upload_file
+// (worker/shots-browser-observer.js startControl), as a hosted turn's does.
+function browserServer(options, persona, shotsDir, clipSize, { phone = false, control = null } = {}) {
   // The guest is the browser that is not signed in, whatever the directory holds.
   const statePath = options.stateDir && persona !== 'guest'
     ? path.join(options.stateDir, `${persona}.json`) : null;
@@ -191,6 +200,11 @@ function browserServer(options, persona, shotsDir, clipSize, { phone = false } =
       PATH: process.env.PATH || '',
       SHOTS_BROWSER_MCP_COMMAND: JSON.stringify(options.playwrightMcp),
       SHOTS_ALLOWED_ORIGINS: JSON.stringify([options.before, options.after]),
+      ...(control ? {
+        SHOTS_BROWSER_CONTROL_DIR: control.dir,
+        SHOTS_BROWSER_CONTROL_TOKEN: control.token,
+        SHOTS_SAMPLES_DIR: control.samplesDir,
+      } : {}),
     },
   };
 }
@@ -338,6 +352,14 @@ async function main() {
     }
   }
   fs.mkdirSync(path.join(options.out, 'shots'), { recursive: true });
+  // The sample files upload_file may choose, and the observers' sockets: in
+  // the system's temporary directory, since a socket's path is short.
+  const browserControl = {
+    dir: fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'shots-ctl-')),
+    token: crypto.randomBytes(32).toString('hex'),
+    samplesDir: path.join(runtimeDir, 'samples'),
+  };
+  require('../worker/shots-samples').writeSamples(browserControl.samplesDir);
 
   const runId = crypto.randomBytes(16).toString('hex');
   const sessionId = 1;
@@ -379,12 +401,14 @@ async function main() {
         SHOTS_JWT: platformJwt.signShotsToken({ runId, sessionId }),
         SHOTS_DIR: shotsDir,
         SHOTS_HOSTED_ORIGINS_FILE: hostedFile,
+        SHOTS_BROWSER_CONTROL_DIR: browserControl.dir,
+        SHOTS_BROWSER_CONTROL_TOKEN: browserControl.token,
       },
     },
     ...Object.fromEntries(Object.entries(PERSONAS).map(([persona, { server: name }]) =>
-      [name, browserServer(options, persona, shotsDir, clipSize)])),
+      [name, browserServer(options, persona, shotsDir, clipSize, { control: browserControl })])),
     ...Object.fromEntries(phonePersonas.map((persona) => [`${PERSONAS[persona].server}_phone`,
-      browserServer(options, persona, shotsDir, phoneClipSize, { phone: true })])),
+      browserServer(options, persona, shotsDir, phoneClipSize, { phone: true, control: browserControl })])),
   } }, null, 2)}\n`, { mode: 0o600 });
 
   const streamFile = path.join(options.out, 'agent.jsonl');
@@ -468,6 +492,7 @@ async function main() {
     { before: options.before, after: options.after, agentOutcome, agentMs, finalText, toolCounts }));
   registration.unregister();
   server.close();
+  fs.rmSync(browserControl.dir, { recursive: true, force: true });
   process.stdout.write(`${JSON.stringify({ published: result.published, ready: result.readyCount,
     of: intent.stories.length, agent: agentOutcome, seconds: Math.round(agentMs / 1000),
     changes: summary.stories.map((s) => `${s.id}: ${s.status}${s.reason ? ` (${s.reason})` : ''}`),

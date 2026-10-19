@@ -93,7 +93,7 @@ async function createSession({ user, config }) {
       headers: { 'content-type': 'application/json' },
       body: '{}',
     });
-    return { status: res.status, body: await res.json() };
+    return { status: res.status, retryAfter: res.headers.get('retry-after'), body: await res.json() };
   } finally {
     server.close();
   }
@@ -201,5 +201,33 @@ test('at the global cap, an admin is admitted once a slot is reclaimed', async (
     assert.strictEqual(status, 201);
   } finally {
     sessionLifecycle.freeGlobalSlot = realFree;
+  }
+});
+
+// ── a pause Homeroom has not decided yet is not a cap ──────────────────
+// The machine decides in another process: a victim's pause it did not
+// decide in time frees nothing yet, and answering "at capacity" (or waiting
+// out every other victim) would be false. A retryable 503 says so.
+test('a slot Homeroom has not freed in time is a retryable 503, at either cap', async () => {
+  const realUser = sessionLifecycle.freeUserSlot;
+  const realGlobal = sessionLifecycle.freeGlobalSlot;
+  try {
+    sessionLifecycle.freeUserSlot = async () => ({ freed: false, notDecided: true });
+    poolQueryHandler = occupancy({ own: 3, global: 0 });
+    const user = await createSession({ user: USER });
+    assert.strictEqual(user.status, 503);
+    assert.strictEqual(user.retryAfter, '5');
+    assert.deepEqual([user.body.code, user.body.error], ['not_decided', sessionLifecycle.SLOT_NOT_DECIDED]);
+
+    sessionLifecycle.freeUserSlot = realUser;
+    sessionLifecycle.freeGlobalSlot = async () => ({ freed: false, notDecided: true });
+    poolQueryHandler = occupancy({ own: 0, global: 25 });
+    const global = await createSession({ user: USER, config: { maxGlobalSessions: 25, sessionPressureGraceMs: 1000 } });
+    assert.strictEqual(global.status, 503);
+    assert.strictEqual(global.retryAfter, '5');
+    assert.strictEqual(global.body.code, 'not_decided');
+  } finally {
+    sessionLifecycle.freeUserSlot = realUser;
+    sessionLifecycle.freeGlobalSlot = realGlobal;
   }
 });

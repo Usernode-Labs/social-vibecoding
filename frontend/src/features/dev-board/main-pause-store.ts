@@ -16,6 +16,7 @@
  * banner beside it.
  */
 
+import { t } from '../../lib/i18n/runtime';
 import { createStore } from '../../lib/plain-store.js';
 
 export interface MainPauseState {
@@ -39,12 +40,18 @@ export const mainPauseStore = createStore<MainPauseState>({
 
 /** The banner's sentence — one spelling, for the frame and its tests. */
 export function mainPauseText(s: Pick<MainPauseState, 'confirming' | 'sha' | 'failingTest'>): string {
-  const since = s.sha ? ` since ${s.sha}` : '';
-  const test = s.failingTest ? `: ${s.failingTest}` : '';
+  // Each sentence is a whole message: with or without the commit, with or
+  // without the failing test's name. The component that shows it subscribes
+  // (useMessages in ./board-frame.tsx).
+  const values = { commit: s.sha || '', test: s.failingTest || '' };
   if (s.confirming) {
-    return `Main’s unit suite failed once${since}${test}. Re-running to confirm. Merges are paused meanwhile, `
-      + 'except for proposals already level with main whose own checks passed.';
+    if (s.sha && s.failingTest) return t('project:pause.confirming.sinceTest', values);
+    if (s.sha) return t('project:pause.confirming.since', values);
+    if (s.failingTest) return t('project:pause.confirming.test', values);
+    return t('project:pause.confirming.plain');
   }
-  return `Merges are paused: main’s unit suite is failing${since}${test}. They resume when a fix lands `
-    + 'or an admin resumes them; a proposal already level with main whose own checks passed still merges.';
+  if (s.sha && s.failingTest) return t('project:pause.paused.sinceTest', values);
+  if (s.sha) return t('project:pause.paused.since', values);
+  if (s.failingTest) return t('project:pause.paused.test', values);
+  return t('project:pause.paused.plain');
 }

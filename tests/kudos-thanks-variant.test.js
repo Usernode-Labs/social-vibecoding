@@ -31,8 +31,9 @@ globalThis.document = {
 };
 globalThis.App = { user: { id: 1, username: 'alice' } };
 globalThis.AppView = { readOnly: false };
-loadTsx('frontend/src/features/leaderboard/kudos.js');
-const Kudos = globalThis.window.Kudos;
+// #5249: while kudos is parked the module publishes no window.Kudos, so the
+// widget's own logic is read off its export and tested with the switch off.
+const { Kudos } = loadTsx('frontend/src/features/leaderboard/kudos.js');
 
 const fresh = (over) => ({
   id: 9, status: 'promoted', my_vote: null, user_id: 2, username: 'evan',

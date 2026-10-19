@@ -52,9 +52,12 @@ test('invitees are usernames, for a private community only, deduplicated and bou
 
 test('who approves is dapp.json\'s own block, read strictly', () => {
   const gov = (governance, extra = {}) => options.parseCreateOptions({ audience: 'open', governance, ...extra });
-  assert.equal(gov(undefined).governance, null, 'absent is the default rule');
+  // #4666: absent is the default preset, You or the group.
+  assert.equal(gov(undefined).governance.preset, 'you_or_the_group', 'absent is the default preset');
+  assert.equal(gov({ preset: 'open_floor' }).governance.preset, 'open_floor');
+  assert.match(gov({ preset: 'captain' }).error, /preset/);
   assert.equal(gov({ approvers: 'anyone', approvals: 'default' }).governance, null,
-    'the default rule, spelled out, is still the default');
+    'the old default rule, spelled out, is still the old default');
   assert.deepEqual(gov({ approvers: 'invited' }).governance, { approverPolicy: 'invited', approvalsRequired: null });
   assert.deepEqual(gov({ approvers: 'invited', approvals: { atLeast: 2 } }).governance,
     { approverPolicy: 'invited', approvalsRequired: 2 },
@@ -86,12 +89,12 @@ test('invite emails are addresses, for a private community only, lowercased, ded
 test('the new repository\'s dapp.json carries a non-default rule, and only then', () => {
   const dapp = (governance) => JSON.parse(getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, { governance })
     .find((f) => f.path === 'dapp.json').content);
-  assert.deepEqual(dapp(null), { secrets: [] }, 'a default project\'s manifest is unchanged');
-  assert.deepEqual(dapp({ approverPolicy: 'anyone', approvalsRequired: null }), { secrets: [] });
+  assert.deepEqual(dapp(null), { secrets: [], tests: [] }, 'a default project\'s manifest is unchanged');
+  assert.deepEqual(dapp({ approverPolicy: 'anyone', approvalsRequired: null }), { secrets: [], tests: [] });
   assert.deepEqual(dapp({ approverPolicy: 'invited', approvalsRequired: null }),
-    { secrets: [], governance: { approvers: 'invited', approvals: 'default' } });
+    { secrets: [], governance: { approvers: 'invited', approvals: 'default' }, tests: [] });
   assert.deepEqual(dapp({ approverPolicy: 'invited', approvalsRequired: 3 }),
-    { secrets: [], governance: { approvers: 'invited', approvals: { atLeast: 3 } } });
+    { secrets: [], governance: { approvers: 'invited', approvals: { atLeast: 3 } }, tests: [] });
   // What it writes is what the manifest reader reads back.
   const { readGovernance } = require('../src/services/app-manifest');
   assert.deepEqual(readGovernance(dapp({ approverPolicy: 'invited', approvalsRequired: 3 })),
@@ -121,12 +124,12 @@ test('"What is it?" is one optional line, tidied and bounded', () => {
 test('the new repository\'s dapp.json and CLAUDE.md carry the line, and only when there is one', () => {
   const files = (description) => getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, { description });
   const dapp = (description) => JSON.parse(files(description).find((f) => f.path === 'dapp.json').content);
-  assert.deepEqual(dapp(null), { secrets: [] });
-  assert.deepEqual(dapp('Shared notes for the house'), { description: 'Shared notes for the house', secrets: [] });
+  assert.deepEqual(dapp(null), { secrets: [], tests: [] });
+  assert.deepEqual(dapp('Shared notes for the house'), { description: 'Shared notes for the house', secrets: [], tests: [] });
   const both = JSON.parse(getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, {
     description: 'Shared notes', governance: { approverPolicy: 'invited', approvalsRequired: null },
   }).find((f) => f.path === 'dapp.json').content);
-  assert.deepEqual(Object.keys(both), ['description', 'secrets', 'governance']);
+  assert.deepEqual(Object.keys(both), ['description', 'secrets', 'governance', 'tests']);
   const about = (description) => {
     const claude = files(description).find((f) => f.path === 'CLAUDE.md').content;
     return claude.slice(claude.indexOf('## About Notes'), claude.indexOf('## App-specific conventions'));

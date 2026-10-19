@@ -24,6 +24,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -38,6 +39,7 @@ const TRANSCRIPT = 'frontend/src/features/group-chat/transcript.tsx';
  */
 function loadGroupChat(over = {}) {
   const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
     console,
     App: { user: { id: 1, username: 'admin' } },
     document: {
@@ -165,7 +167,9 @@ test('View full plan owns its in-flight state, and the module owns the fetch', (
   // own state now, bracketing the module's promise.
   assert.match(row, /const \[loading, setLoading\] = useState\(false\)/);
   assert.match(row, /disabled=\{loading\}/);
-  assert.match(row, /\{loading \? 'Loading…' : 'View full plan'\}/);
+  assert.match(row, /\{loading \? t\('chat:group\.specCard\.loading'\) : t\('chat:group\.specCard\.view'\)\}/);
+  assert.equal(message('chat:group.specCard.loading'), 'Loading…');
+  assert.equal(message('chat:group.specCard.view'), 'View full plan');
   assert.match(row, /openSharedSpec\?\.\(spec\.sessionId, spec\.version, spec\.previewTitle\)/);
 
   // …and everything that is not markup stayed put: the per-app open state,
@@ -174,9 +178,12 @@ test('View full plan owns its in-flight state, and the module owns the fetch', (
   const open = gc.slice(gc.indexOf('  async openSharedSpec('), gc.indexOf('  _specPanelRaw:'));
   assert.match(open, /_writeSpecPanelOpen\(GroupChat\.appSlug/);
   assert.match(open, /\/api\/sessions\/\$\{sessionId\}\/specs\/\$\{version\}/);
-  assert.match(open, /This plan is no longer available/);
-  assert.match(open, /Failed to load plan \(HTTP \$\{resp\.status\}\)/);
-  assert.match(open, /Error: \$\{err\.message\}/);
+  assert.match(open, /PlatformI18n\.t\('chat:group\.spec\.gone'\)/);
+  assert.match(message('chat:group.spec.gone'), /This plan is no longer available/);
+  assert.match(open, /PlatformI18n\.t\('chat:group\.spec\.loadFailed', \{ status: resp\.status \}\)/);
+  assert.equal(message('chat:group.spec.loadFailed', { status: 500 }), 'Failed to load plan (HTTP 500).');
+  assert.match(open, /PlatformI18n\.t\('chat:group\.spec\.error', \{ message: err\.message \}\)/);
+  assert.equal(message('chat:group.spec.error', { message: 'x' }), 'Error: x');
   // The delegate that used to do all this is gone, along with the DOM
   // round-trip it needed to find the card's title.
   assert.doesNotMatch(gc, /_attachSpecCardHandlers\(/);
@@ -219,6 +226,26 @@ test('the topic frame carries the spec panel slot, as the general chat pane does
   // One slot per frame: the lookup is by id.
   assert.equal(topic.split('id="gc-spec-side-panel"').length, 2);
   assert.equal(topic.split('id="gc-spec-resizer"').length, 2);
+});
+
+// #4875: the Workshop's side panel (workshop/side-panel.tsx) shows the same
+// request page on a wide window, plan card and all, and its Read went dead the
+// same way: the panel had no slot. It carries one now, over the page.
+test('the Workshop side panel carries the spec panel slot over its page', () => {
+  const panel = read('frontend/src/features/dev-board/workshop/side-panel.tsx');
+  assert.match(panel,
+    /<div className="dev-ws-side-body">\s*<div key=\{`\$\{item\.kind\}:\$\{item\.id\}`\} id="dev-topic-thread" className="dev-ws-side-page" \/>[\s\S]*?<div key=\{`spec:\$\{item\.kind\}:\$\{item\.id\}`\} id="gc-spec-side-panel" className="gc-spec-side-panel" \/>\s*<\/div>/,
+    'the slot follows the page inside one body, keyed by the item like the page');
+  assert.equal(panel.split('id="gc-spec-side-panel"').length, 2, 'one slot');
+  // Escape closes an open plan first, the panel only after.
+  assert.match(panel, /if \(document\.querySelector\('\.dev-ws-side \.gc-spec-side-panel-open'\)\) return;\s*onClose\(\);/);
+  assert.match(panel, /window\.addEventListener\('keydown', onKey, true\);/, 'ahead of group-chat.js on document');
+  // The plan closes with the panel, while its slot is still in the document.
+  assert.match(panel, /useLayoutEffect\(\(\) => \(\) => \{\s*const gc = \(window as any\)\.GroupChat;\s*if \(gc && gc\._specPanelRaw != null\) gc\._closeSpecPanel\?\.\(\);\s*\}, \[item\.kind, item\.id\]\);/);
+  // The reader fills the panel below its bar at every width.
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-ws-side-body \{ position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; \}/);
+  assert.match(css, /\.dev-ws-side \.gc-spec-side-panel\.gc-spec-side-panel-open \{\s*position: absolute; inset: 0; z-index: 2;\s*width: auto !important;/);
 });
 
 /** A DOM element with just what the spec panel code touches. */

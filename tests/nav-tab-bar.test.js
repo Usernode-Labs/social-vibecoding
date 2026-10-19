@@ -28,6 +28,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
@@ -102,7 +103,10 @@ test('Home is the one tab addressed as a path, so a modified click opens a tab',
 
 // ── 3. One place decides ──────────────────────────────────────────────
 
-function harness() {
+// A desktop window unless `phone`: a running app keeps the rail beside it
+// there (App._railBesideApp, tests/nav-rail-pinned.test.js), and a phone's
+// app takes the whole screen.
+function harness({ phone = false } = {}) {
   const context = vm.createContext({
     location: new URL('https://homeroom.test/'),
     history: { pushState() {}, replaceState() {} },
@@ -114,6 +118,7 @@ function harness() {
       addEventListener() {},
     },
     addEventListener() {},
+    matchMedia: () => ({ matches: !phone, addEventListener() {} }),
     localStorage: { getItem: () => null },
     PlatformUI: { transition(fn, opts) { fn(); opts?.after?.(); } },
   });
@@ -136,12 +141,16 @@ test('loading app.js with no session hides the bar before React renders', () => 
   assert.equal(shown(), false);
 });
 
-test('the bar is up on a platform screen and down inside an app', () => {
-  const { App, shown } = harness();
+test('the bar is up on a platform screen and down inside an app on a phone', () => {
+  const { App, shown } = harness({ phone: true });
   App._syncPlatformTabs('messages-screen');
   assert.equal(shown(), true);
   App._syncPlatformTabs('app-view');
   assert.equal(shown(), false);
+  // On a desktop the rail stays beside the running app.
+  const desktop = harness();
+  desktop.App._syncPlatformTabs('app-view');
+  assert.equal(desktop.shown(), true);
 });
 
 test('chromeless takes the bar with the header', () => {
@@ -186,7 +195,7 @@ test('the section is published even when the bar is down', () => {
   // publication to know it is inside an app (its left slot becomes a close
   // button, the app's tile appears beside its name). features/nav/mount.ts
   // derives the tab from it; only the signed-out screens publish nothing.
-  const { App, context, lit } = harness();
+  const { App, context, lit } = harness({ phone: true });
   App._syncPlatformTabs('workshop-screen');
   assert.equal(lit.at(-1), 'workshop-screen');
   App._syncPlatformTabs('app-view');
@@ -203,7 +212,8 @@ test('a cold boot into an app or the signed-out shell never paints the bar', () 
     ['#login', '/', false],
     ['', '/app/some-app', true],
   ]) {
-    const { App, shown } = harness();
+    // A phone: an app covers the bar there. The desktop is below.
+    const { App, shown } = harness({ phone: true });
     // The real resolver decides; only the DOM half of the reveal is stubbed,
     // because this harness has no elements for it to toggle.
     const target = App._bootScreenFor(hash, pathname, signedIn);
@@ -224,6 +234,18 @@ test('a cold boot into an app or the signed-out shell never paints the bar', () 
   App._bootScreenFor = () => 'workshop-screen';
   App._applyBootScreen();
   assert.equal(shown(), undefined);
+
+  // ...and so does a cold boot into an app on a DESKTOP, whose rail stays
+  // beside it: hiding it would only have the router bring it back, sliding
+  // the app a rail's width right. The signed-out shell still hides it.
+  for (const [target, left] of [['app-view', true], ['auth-landing', false]]) {
+    const desktop = harness();
+    delete desktop.context.__usernodeVisibility.visible['platform-tabs'];
+    desktop.App._revealBootScreen = () => {};
+    desktop.App._bootScreenFor = () => target;
+    desktop.App._applyBootScreen();
+    assert.equal(desktop.shown(), left ? undefined : false, target);
+  }
 });
 
 // ── The band the bar covers ───────────────────────────────────────────
@@ -279,16 +301,17 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   // the same bar into a left rail, and so does this.
   const at = css.indexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY');
   assert.ok(at > 0, 'the desktop block must exist, at the shell\'s own md breakpoint');
-  const block = css.slice(at, css.indexOf('\n}\n', css.indexOf('.platform-parked-pill {', at)));
+  const block = css.slice(at, css.indexOf('\n}\n', at));
 
   // TWO TOKENS, NOT ONE (#2718 review). `--platform-rail-full` is how wide
   // the rail IS and never changes; `--platform-rail-w` is how much width it
   // RESERVES, and goes to 0 while it is folded or peeking. One number for
   // both drew a 17px sliver — padding and a border around a zero-width
   // column — the first time the rail was peeked over a folded desktop.
-  // #4417: 76px, the strip: the sections as an icon over a label, the five
-  // recent apps, you at the foot; the section's column beside it.
-  assert.match(css, /--platform-rail-full: 76px;/, 'the strip has a width');
+  // #4417: 76px, the strip's; from 768px, every width the rail is drawn at,
+  // the sidebar of rows sets it again (212px, tests/desktop-sidebar-rows).
+  assert.match(css, /--platform-rail-full: 76px;/, 'the rail has a width');
+  assert.match(css, /body \{\n    --platform-rail-full: 212px;\n  \}/, 'which the sidebar sets');
   assert.match(block, /--platform-rail-w: var\(--platform-rail-full\);/,
     'and reserves it while it is up');
   assert.match(block, /--platform-tabs-h: var\(--platform-safe-bottom\);/,
@@ -335,10 +358,10 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   // the answer to that question.
   assert.match(block,
     /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\):not\(\.platform-tabs-folded\)\) #app-view \{\s*padding-left: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter\)\);/);
-  // The parked strip is the rail's footer (hidden on the desktop, where the
-  // strip's apps are the way back), and its pill becomes a caption.
-  assert.match(block, /\.platform-parked \{[\s\S]{0,300}width: var\(--platform-rail-full\);/);
-  assert.match(block, /\.platform-parked-pill \{[\s\S]{0,200}order: -1;/);
+  // The parked strip is not drawn on the desktop: a running app keeps its
+  // App row, with its dot, under its community in the sidebar.
+  assert.match(block, /#platform-parked \{\s*display: none;\s*\}/);
+  assert.doesNotMatch(block, /\.platform-parked(?:-open|-pill)? \{/, 'so nothing styles it there');
 });
 
 test('the folded rail peeks back on hover, and reserves nothing while it does', () => {
@@ -349,8 +372,10 @@ test('the folded rail peeks back on hover, and reserves nothing while it does', 
   // ONE QUESTION decides the zone: the viewer folded a rail the ROUTE has.
   // `visible` is false over a running app, chromeless and signed out alike —
   // places with no rail of their own to bring back.
-  assert.match(bar, /\{visible && !railOpen \? \(/,
-    'it exists only where a rail the route has was folded by hand');
+  assert.match(bar, /\{visible && !railOpen && !runningApp \? \(/,
+    'it exists only where a rail the route has was folded by hand, and never over a running app');
+  assert.match(bar, /const runningApp = screen === 'app-view' && !tab;/,
+    'a running app is the app view with no tab lit; its Workshop lights one');
   // NOT a bare `screen === 'app-view'`: the app view is two screens, and on
   // its Workshop the rail is UP. This strip is `z-index: 39` against the
   // rail's 30, so rendering it there lays an invisible 18px column down the
@@ -379,12 +404,15 @@ test('the folded rail peeks back on hover, and reserves nothing while it does', 
 // #3138: on a desktop with an app open, the pointer drifting to the
 // window's left edge (an app's own menus, lists and scrollbars put it there
 // all the time) brought the rail up over the app. The hot zone is the only
-// thing that starts a peek over a running app — the bar is `hidden` there and
-// app.css hides #sidebar-toggle with it — so with no zone, a hover at x=2
-// cannot open the sidebar. Rendered for real, across every arrangement.
-function renderTabsAt({ screen, visible, railOpen }) {
+// thing at the edge that starts a peek, so with no zone over a running app,
+// a hover at x=2 cannot open the sidebar. That holds now the rail stays
+// beside a running app on the desktop and can be folded there: the way back
+// is #sidebar-toggle in the header. Rendered for real, across every
+// arrangement. `tab` is what the router lights: nothing for a running app,
+// Workshop (or Messages) for the app view's own platform screens.
+function renderTabsAt({ screen, tab = null, visible, railOpen }) {
   const navMod = loadTsx('frontend/src/features/nav/nav-store.js');
-  navMod.navStore.set({ screen, railOpen });
+  navMod.navStore.set({ screen, tab, railOpen });
   const { PlatformTabs } = loadTsx('frontend/src/features/nav/tab-bar.tsx', {
     stubs: {
       './nav-store.js': navMod,
@@ -400,21 +428,27 @@ function renderTabsAt({ screen, visible, railOpen }) {
 
 test('hovering the window\'s left edge over a running app never opens the sidebar (#3138)', () => {
   const zone = /id="platform-rail-peek"/;
-  // A RUNNING APP: the router hides the rail. No hot zone, whether or not the
-  // viewer folded the rail before opening it — `railOpen` outlives the
-  // screen, and a fold made on Home must not bring the zone into the app.
+  // A RUNNING APP whose rail the router hides (a phone, or "Keep sidebar
+  // open in apps" off). No hot zone, whether or not the viewer folded the
+  // rail before opening it — `railOpen` outlives the screen, and a fold made
+  // on Home must not bring the zone into the app.
   assert.doesNotMatch(renderTabsAt({ screen: 'app-view', visible: false, railOpen: true }), zone,
     'a running app has no edge hot zone');
   assert.doesNotMatch(renderTabsAt({ screen: 'app-view', visible: false, railOpen: false }), zone,
     'nor after the rail was folded somewhere else');
+  // A RUNNING APP WITH THE RAIL BESIDE IT (the desktop default): folded,
+  // still no zone. The app has the window and the toggle brings the rail back.
+  assert.doesNotMatch(renderTabsAt({ screen: 'app-view', visible: true, railOpen: false }), zone,
+    'a rail folded beside a running app does not come back from the edge');
   // Chromeless and signed out: no rail behind the edge to bring back.
   assert.doesNotMatch(renderTabsAt({ screen: null, visible: false, railOpen: false }), zone);
   // UNCHANGED ELSEWHERE: a rail folded by hand on a platform screen (or an
   // app's Workshop, where the rail is up) still peeks back from the edge…
-  assert.match(renderTabsAt({ screen: 'home-screen', visible: true, railOpen: false }), zone);
-  assert.match(renderTabsAt({ screen: 'app-view', visible: true, railOpen: false }), zone);
+  assert.match(renderTabsAt({ screen: 'home-screen', tab: 'home', visible: true, railOpen: false }), zone);
+  assert.match(renderTabsAt({ screen: 'app-view', tab: 'workshop', visible: true, railOpen: false }), zone);
   // …and an open rail has nothing to peek, so no strip over its tabs.
-  assert.doesNotMatch(renderTabsAt({ screen: 'home-screen', visible: true, railOpen: true }), zone);
+  assert.doesNotMatch(renderTabsAt({ screen: 'home-screen', tab: 'home', visible: true, railOpen: true }), zone);
+  assert.doesNotMatch(renderTabsAt({ screen: 'app-view', tab: 'workshop', visible: true, railOpen: true }), zone);
   assert.doesNotMatch(renderTabsAt({ screen: 'app-view', visible: true, railOpen: true }), zone);
 });
 
@@ -424,9 +458,12 @@ test('the explicit way to bring the rail back stays the sidebar toggle (#3138)',
   // peeks it when pointed at (it only exists where the route has a rail).
   const toggle = read('frontend/src/features/nav/sidebar-toggle.tsx');
   assert.match(toggle, /navStore\.set\(\{ railOpen: !navStore\.get\(\)\.railOpen, peek: false, peekOut: false \}\);/);
+  // N21 (19 Oct polish board): and the press slides the rail (./rail-slide.ts).
+  assert.match(toggle, /onClick=\{\(\) => slideRail\(\(\) => \{\s*clearPeekTimer\(\);/);
   assert.match(toggle, /onPointerEnter=\{railOpen \? undefined : enterPeekByMouse\}/);
-  // …and the toggle is not drawn over a running app, so hovering it there is
-  // not a second way for the rail to appear under an app's pointer.
+  // …and it is drawn only where the rail is the ROUTE's, never because a
+  // peek took `hidden` off it. Beside a running app on the desktop the rail
+  // is the route's, so the toggle is there in the ✕'s place.
   assert.match(css, /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-route-hidden\)\) \.platform-sidebar-toggle/);
 });
 
@@ -470,7 +507,8 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   assert.match(navStoreSrc, /railOpen: true,/);
   assert.match(toggle, /aria-pressed=\{railOpen \? 'true' : 'false'\}/,
     'the state is on the control, so the label can stay the ACTION');
-  assert.match(toggle, /aria-label=\{railOpen \? 'Hide sidebar' : 'Show sidebar'\}/);
+  assert.match(toggle, /aria-label=\{railOpen \? t\('core:rail\.hideSidebar'\) : t\('core:rail\.showSidebar'\)\}/);
+  assert.deepEqual([message('core:rail.hideSidebar'), message('core:rail.showSidebar')], ['Hide sidebar', 'Show sidebar']);
   assert.match(toggle, /aria-controls="platform-tabs"/);
 
   // IT IS UNSEEN WHERE THE ROUTE HAS NO RAIL — inside an app, chromeless,
@@ -516,7 +554,8 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   assert.ok(css.lastIndexOf('@media (min-width: 768px) {', folded) > 0);
   // …and it is not drawn only while it is not peeking, which is what makes
   // the hot zone at the window's edge the way back from folded.
-  assert.match(css.slice(folded, folded + 120), /:not\(\.platform-tabs-peek\) \{\s*display: none;/);
+  // N21: and drawn while it slides away (`platform-tabs-leaving`).
+  assert.match(css.slice(folded, folded + 140), /:not\(\.platform-tabs-peek\):not\(\.platform-tabs-leaving\) \{\s*display: none;/);
   // The toggle itself is desktop-only by the same mechanism, and the group
   // that holds it goes with it when the back slot is empty — an
   // empty-but-present flex item still reserves the header's own `gap-4`,
@@ -526,9 +565,11 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   assert.match(css, /\.platform-sidebar-toggle \{\n  display: none;\n\}/);
   // All three questions are CSS's, and none is part of hydration: does the
   // rail exist (`#platform-tabs.hidden`), is there room for it (the media
-  // query), and has the group anything in it (`:has(> #back-btn.hidden)`).
+  // query), and has the group anything in it (`:has(> #back-btn.hidden)` —
+  // #4703's merged places button excepted, which is the group's fourth
+  // possible contents).
   assert.match(css,
-    /#platform-header \.platform-header-left:has\(> #back-btn\.hidden\) \{\s*\n\s*display: none;/);
+    /#platform-header \.platform-header-left:has\(> #back-btn\.hidden\):not\(:has\(> \.header-places-btn\)\):not\(:has\(> \.nav-drawer-back\)\) \{\s*\n\s*display: none;/);
   assert.match(css,
     /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-route-hidden\)\) #platform-header\s*\n\s*\.platform-header-left:has\(> #back-btn\.hidden\) \{\s*\n\s*display: flex;/,
     '…unless the toggle is in it, which needs both a rail and the width');
@@ -580,8 +621,8 @@ test('the reservation is keyed off the bar\'s own hidden class', () => {
   // to `--platform-bar-h`.
   assert.match(css, /\nbody \{\n(?:  \/\*[^]*?\*\/\n)?  --platform-bar-h: 0px;/);
   assert.match(css, /--platform-tabs-h: 0px;/);
-  assert.match(css, /--platform-rail-w: 0px;\n(?:  \/\*[^]*?\*\/\n)?  --platform-column-w: 0px;\n  --platform-gutter: 0px;\n\}/,
-    'and the strip costs a phone no width at all, nor its column, nor the gutter beside it');
+  assert.match(css, /--platform-rail-w: 0px;\n  --platform-gutter: 0px;\n\}/,
+    'and the rail costs a phone no width at all, nor the gutter beside it');
   assert.match(css,
     /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\):has\(#platform-parked:not\(\.hidden\)\) \{\s*--platform-tabs-h: calc\(52px \+ 56px \+ var\(--platform-tabs-inset, 0px\)\);/,
     'the strip adds its own band, and only while the bar is there to sit on '
@@ -632,10 +673,9 @@ test('the desktop band tokens are not outranked by the phone\'s', () => {
   // right selector on its own terms: a PEEKING rail reserves nothing.
   assert.match(block, /html:not\(\.un-kb\) body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\) \{\s*\n\s*--platform-bar-h: 0px;\s*\n\s*--platform-tabs-h: var\(--platform-safe-bottom\);/);
   assert.match(block, /:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\):has\(#platform-parked:not\(\.hidden\)\)/);
-  // And the parked strip rests ON the Me row rather than over it, through
-  // one token so the two cannot drift.
-  assert.match(css, /--platform-rail-foot-h: 52px;/);
-  assert.match(css, /\.platform-parked \{\s*\n\s*bottom: calc\(var\(--platform-rail-foot-h\) \+ var\(--platform-safe-bottom, 0px\)\);/);
+  // On the desktop the parked strip is not drawn at all (the sidebar's App
+  // rows are the way back), so nothing rests it on the rail's foot.
+  assert.doesNotMatch(css, /--platform-rail-foot-h/);
 });
 
 test('a tab label has room for its descenders', () => {
@@ -648,11 +688,11 @@ test('a tab label has room for its descenders', () => {
     'a unitless multiplier is the one value correct at both sizes');
 });
 
-test('the Messages count is the quiet one: grey, on the glyph\'s corner on the phone and the strip (#2912, #4417)', () => {
-  // Unread messages are counted in the bell as well, so a second RED count on
-  // the Messages tab said the same thing twice in the loudest colour on the
-  // screen. The bell keeps the red (#notifications-badge is not touched);
-  // this badge used to match it on purpose and now deliberately does not.
+test('the Messages count is the quiet one: grey, on the glyph\'s corner on the phone, at the row\'s end beside it (#2912, #4417)', () => {
+  // Grey is "new to read" (#18, 19 Oct 2026 polish board): this is where an
+  // unread message is counted, and the bell's red no longer counts plain
+  // messages at all (notifications.js _badgeTotal), so one message lights
+  // one number. The bell keeps the red (#notifications-badge is not touched).
   const phone = css.match(/\n\.platform-tab-badge \{[^}]*\}/);
   assert.ok(phone, 'the badge has its base (phone) rule');
   assert.match(phone[0], /background: var\(--text-faint, #8e8e93\);/,
@@ -661,18 +701,16 @@ test('the Messages count is the quiet one: grey, on the glyph\'s corner on the p
   assert.match(phone[0], /position: absolute;\s*top: -3px;\s*left: calc\(100% - 7px\);/,
     'and it keeps its place on the glyph\'s corner');
 
-  // #4417: the desktop strip is an icon over a label, as the phone's bar is,
-  // so the count stays on the glyph's corner there too: the wrapper is its
-  // anchor at every width now (it dissolved into a row on the 224px rail),
-  // nudged a pixel for the strip's tighter cell.
-  const at = css.indexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY');
-  const block = css.slice(at, css.indexOf('\n}\n', css.indexOf('.platform-parked-pill {', at)));
-  assert.doesNotMatch(block, /\n {2}\.platform-tab-mark \{\s*display: contents;\s*\}/,
-    'the wrapper stays the badge\'s anchor on the strip');
-  const strip = block.match(/\n {2}\.platform-tab-badge \{[^}]*\}/);
-  assert.ok(strip, 'the strip places the badge inside the desktop block');
-  assert.match(strip[0], /top: -4px;\s*left: calc\(100% - 9px\);/);
-  assert.doesNotMatch(strip[0], /position: static|margin-left: auto/, 'never a row\'s-end pill');
+  // From 768px the sidebar of rows draws a row, and the count sits at its
+  // far end, the size of a row's other counts (the strip that kept it on
+  // the glyph's corner is gone, and its offsets with it).
+  const at = css.indexOf('@media (min-width: 768px) {\n  /* THE ONE NUMBER THE REST FOLLOWS.');
+  const block = css.slice(at, css.indexOf('\n}\n', at));
+  const row = block.match(/\n {2}\.platform-tab-badge,\n {2}\.platform-tab-votes,\n {2}\.platform-tab-all-votes \{[^}]*\}/);
+  assert.ok(row, 'the sidebar places the badge inside its block');
+  assert.match(row[0], /position: static;\s*order: 2;/);
+  const rail = css.slice(css.indexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY'));
+  assert.doesNotMatch(rail.slice(0, rail.indexOf('\n}\n')), /\n {2}\.platform-tab-badge \{/, 'no corner offsets left over');
 
   // THE MARKUP DOES NOT MOVE, which is what lets the phone keep its anchor
   // and the declared checks keep finding the badge inside the Messages tab.
@@ -834,8 +872,8 @@ test('the marker is the Workshop\'s blue, on the Workshop\'s curve, phone only',
   assert.match(css, /\.platform-tab \{\s*position: relative;\s*z-index: 1;\s*\}/,
     'the tabs sit over the marker');
   // The rail keeps its row fill; the marker is not drawn there.
-  const desktop = css.slice(css.indexOf('.platform-tab[aria-current="page"] {\n    background: var(--lit-tint);'));
-  assert.match(desktop.slice(0, 400), /\.platform-tabs-marker \{\s*display: none;\s*\}/);
+  const desktop = css.slice(css.indexOf('The rail keeps its own fill on the lit row'));
+  assert.match(desktop.slice(0, 200), /\.platform-tabs-marker \{\s*display: none;\s*\}/);
   // The Workshop strip's duration and curve, as an animation now (#3259).
   const { MARKER_SLIDE } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
   assert.deepEqual({ ...MARKER_SLIDE }, { duration: 260, easing: 'cubic-bezier(.32, .72, 0, 1)' });
@@ -867,7 +905,7 @@ test('the slide is transform only, a FLIP from the box it leaves (#3259)', () =>
 
   const src = read('frontend/src/features/nav/tab-bar.tsx');
   const hook = src.slice(src.indexOf('function useTabMarker('), src.indexOf('function goToTab('));
-  assert.match(hook, /slide\.current = el\.animate\(\[\{ transform: start \}, \{ transform: end \}\], \{\s*duration: MARKER_SLIDE\.duration,\s*easing: MARKER_SLIDE\.easing,\s*\}\);/,
+  assert.match(hook, /el\.animate\(\[\{ transform: start \}, \{ transform: end \}\], \{\s*duration: MARKER_SLIDE\.duration,\s*easing: MARKER_SLIDE\.easing,\s*\}\);/,
     'no delay and no fill: a delayed animation was not handed to the compositor');
   assert.match(hook, /if \(!box \|\| !from \|\| !box\.slide \|\| !motionWelcome\(\)\) return;/,
     'only a selection change slides, and reduced motion gets none');
@@ -875,8 +913,11 @@ test('the slide is transform only, a FLIP from the box it leaves (#3259)', () =>
   assert.doesNotMatch(src, /'data-marker-slide'/);
 });
 
-test('a press waits for its slide to run before it navigates (#3259)', async () => {
-  const { schedulePress, SLIDE_START_WAIT_MS, PRESS_SETTLE_MS } = loadTsx('frontend/src/features/nav/tab-press.ts');
+test('a press navigates once the frame that lights the tab is painted, not after the slide starts (#3259, polish #2)', async () => {
+  const { schedulePress, PRESS_SETTLE_MS } = loadTsx('frontend/src/features/nav/tab-press.ts');
+  const src = read('frontend/src/features/nav/tab-press.ts');
+  assert.doesNotMatch(src, /export const SLIDE_START_WAIT_MS|started\(\)|\.then\(/,
+    'polish #2: waiting for the slide held the old screen up for 120 to 205ms');
   const frames = [];
   const raf = (cb) => { frames.push(cb); return frames.length; };
   const caf = (id) => { frames[id - 1] = null; };
@@ -887,66 +928,58 @@ test('a press waits for its slide to run before it navigates (#3259)', async () 
     clear: (id) => { if (timers[id - 1]) timers[id - 1].fn = null; },
   };
   const fire = (ms) => { for (const t of timers) if (t.ms === ms && t.fn) { const fn = t.fn; t.fn = null; fn(); } };
-  const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-  // The slide starts late: nothing navigates until it does, then a frame on.
+  // The press's own frame, then the task after it.
   const holder = { current: null };
   let went = 0;
-  let start;
-  const ready = new Promise((resolve) => { start = resolve; });
-  schedulePress(holder, 'discover', () => { went += 1; }, () => {}, () => ready, raf, caf, clock);
-  assert.equal(went, 0, 'not in the press\'s own task');
+  schedulePress(holder, 'discover', () => { went += 1; }, () => {}, raf, caf, clock);
+  assert.equal(went, 0, 'not in the press\'s own task: the lit tab paints first');
   frame();
-  await flush();
+  assert.equal(went, 0, 'not inside the frame either: that is where #3259 saw the slide shown from its middle');
+  fire(0);
+  assert.equal(went, 1, 'the task after the frame');
   frame();
-  assert.equal(went, 0, 'not two frames out while the slide has not started');
-  start();
-  await flush();
-  assert.equal(went, 0, 'not in the task that learns it started');
-  frame();
-  assert.equal(went, 1, 'a frame after the slide is running');
+  fire(0);
+  assert.equal(went, 1, 'once');
 
-  // A slide that never starts cannot hold the navigation up.
-  const stuck = { current: null };
-  let stuckWent = 0;
-  schedulePress(stuck, 'me', () => { stuckWent += 1; }, () => {}, () => new Promise(() => {}), raf, caf, clock);
-  frame();
-  fire(SLIDE_START_WAIT_MS);
-  frame();
-  assert.equal(stuckWent, 1);
+  // Without frames (a test environment) it goes at once.
+  const bare = { current: null };
+  let bareWent = 0;
+  schedulePress(bare, 'home', () => { bareWent += 1; }, () => {}, undefined, undefined, clock);
+  assert.equal(bareWent, 1);
 
-  // No slide to wait for: two frames, as before.
-  const plain = { current: null };
-  let plainWent = 0;
-  schedulePress(plain, 'home', () => { plainWent += 1; }, () => {}, () => null, raf, caf, clock);
-  frame();
-  assert.equal(plainWent, 0);
-  frame();
-  assert.equal(plainWent, 1);
-
-  // A second press before the first navigates replaces it.
+  // A second press before the first navigates replaces it, frame or task.
   const twice = { current: null };
   const gone = [];
-  schedulePress(twice, 'discover', () => gone.push('discover'), () => {}, () => null, raf, caf, clock);
-  schedulePress(twice, 'me', () => gone.push('me'), () => {}, () => null, raf, caf, clock);
+  schedulePress(twice, 'discover', () => gone.push('discover'), () => {}, raf, caf, clock);
+  schedulePress(twice, 'me', () => gone.push('me'), () => {}, raf, caf, clock);
   frame();
-  frame();
+  fire(0);
   assert.deepEqual(gone, ['me']);
+  const late = { current: null };
+  const lateGone = [];
+  schedulePress(late, 'discover', () => lateGone.push('discover'), () => {}, raf, caf, clock);
+  frame();
+  schedulePress(late, 'me', () => lateGone.push('me'), () => {}, raf, caf, clock);
+  fire(0);
+  frame();
+  fire(0);
+  assert.deepEqual(lateGone, ['me'], 'a press waiting on its task is called off too');
 
   // Unanswered, the bar goes back to the router's tab; answered, it stays.
   const lost = { current: null };
   let settled = 0;
-  schedulePress(lost, 'messages', () => {}, () => { settled += 1; }, () => null, raf, caf, clock);
+  schedulePress(lost, 'messages', () => {}, () => { settled += 1; }, raf, caf, clock);
   frame();
-  frame();
+  fire(0);
   fire(PRESS_SETTLE_MS);
   assert.equal(settled, 1);
   assert.equal(lost.current, null);
   const answered = { current: null };
   let settledAnswered = 0;
-  const entry = schedulePress(answered, 'messages', () => {}, () => { settledAnswered += 1; }, () => null, raf, caf, clock);
+  const entry = schedulePress(answered, 'messages', () => {}, () => { settledAnswered += 1; }, raf, caf, clock);
   frame();
-  frame();
+  fire(0);
   entry.cancel();
   answered.current = null;
   fire(PRESS_SETTLE_MS);
@@ -963,7 +996,7 @@ test('a plain press on another tab lights it and slides first; the router answer
   assert.match(click, /if \(key !== lit && press\(event\.currentTarget, key, \(\) => goToTab\(key, href\)\)\) \{\s*event\.preventDefault\(\);/);
   const press = src.slice(src.indexOf('const press = (el: HTMLElement'), src.indexOf('return { box, lit, markerRef, press };'));
   assert.ok(press.indexOf('place(el, true);') < press.indexOf('schedulePress('), 'the pill moves in the press\'s own task');
-  assert.match(press, /schedulePress\(pending, key, go, \(\) => setPressed\(null\), \(\) => slide\.current\?\.ready \?\? null\);/);
+  assert.match(press, /schedulePress\(pending, key, go, \(\) => setPressed\(null\)\);/);
   // The three roads the clicks take at once, taken late.
   const go = src.slice(src.indexOf('function goToTab('), src.indexOf('export function PlatformTabs()'));
   assert.match(go, /app\.navigateHome\(\{ viaTab: true \}\);/);
@@ -973,76 +1006,139 @@ test('a plain press on another tab lights it and slides first; the router answer
   assert.match(src, /if \(!pending\.current \|\| pending\.current\.key !== tab\) return;\s*pending\.current\.cancel\(\);\s*pending\.current = null;\s*setPressed\(null\);/);
 });
 
-// ── #4417: the desktop strip ────────────────────────────────────────────
+// ── #4417: the desktop strip, and where its apps went ───────────────────
 //
-// The 224px rail of rows and Recents (#2802) is a 76px strip: the four
+// The 224px rail of rows and Recents (#2802) became a 76px strip: the four
 // sections as an icon over a label, a line, the five apps used most
 // recently, then you at the foot. The conversations Recents listed are
-// Messages' own list, which is the section column on Messages. These are
-// the strip's, and the app-ordering cases that moved here from the retired
-// tests/nav-recents.test.js.
+// Messages' own list. From 768px the strip is the sidebar of rows now, and
+// since 18 Oct 2026 each community's app is the first row under it, so the
+// strip's Pinned and Recent apps went: a pin is a community's
+// (frontend/src/features/nav/rail-pinned.tsx) and a running app keeps its
+// App row under its community (rail-communities.tsx,
+// tests/desktop-sidebar-apps.test.js).
 
-const STRIP = 'frontend/src/features/nav/strip-apps.tsx';
-const stripApp = (slug, at, extra = {}) => ({
-  slug, name: slug[0].toUpperCase() + slug.slice(1), iconUrl: null, iconEmoji: null, at, ...extra,
-});
+const PINNED = 'frontend/src/features/nav/rail-pinned.tsx';
+const RAIL = 'frontend/src/features/nav/rail-communities.tsx';
 
-test('the strip: the sections as an icon over a label, the five recent apps, then you at the foot', () => {
-  const at = css.indexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY');
-  const block = css.slice(at, css.indexOf('\n}\n', css.indexOf('.platform-parked-pill {', at)));
+test('the sidebar: the sections as rows, the pinned communities above yours, then you at the foot', () => {
+  // The strip's icon over a label went with the strip: from 768px a section
+  // is a row, its glyph then its name.
+  const rail = css.slice(css.indexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY'));
+  assert.doesNotMatch(rail.slice(0, rail.indexOf('\n}\n')), /\n {2}\.platform-tab \{[^}]*flex-direction: column;/,
+    'no icon over a label left over');
+  const at = css.indexOf('@media (min-width: 768px) {\n  /* THE ONE NUMBER THE REST FOLLOWS.');
+  const block = css.slice(at, css.indexOf('\n}\n', at));
   const tab = block.match(/\n {2}\.platform-tab \{[^}]*\}/)[0];
-  assert.match(tab, /flex-direction: column;/, 'an icon over a label, not a row');
-  assert.match(tab, /height: 58px;/);
-  assert.match(tab, /font-size: 10\.5px;/, 'a label, as on the phone\'s bar');
-  // Recents are gone; the apps sit between the sections and you.
+  assert.match(tab, /flex-direction: row;/, 'a row');
+  assert.match(tab, /height: 36px;/);
+  assert.match(tab, /font-size: 14px;/);
+  // Recents are gone, and so are the strip's apps: the pins sit above your
+  // communities, and nothing lists apps apart from them.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
-  assert.doesNotMatch(bar, /RecentsList|recents-list/);
-  assert.match(bar, /key === 'me' \? <StripApps key="apps" \/> : null,/);
-  for (const gone of ['frontend/src/features/nav/recents.ts', 'frontend/src/features/nav/recents-list.tsx', 'tests/nav-recents.test.js']) {
-    assert.ok(!fs.existsSync(path.join(ROOT, gone)), `${gone} is retired with Recents`);
+  assert.doesNotMatch(bar, /RecentsList|recents-list|StripApps/);
+  assert.match(bar, /key === 'workshop' \? <RailPinned key="pinned" \/> : null,\n[\s\S]*?key === 'workshop' \? <RailCommunities key="communities" shown=\{railShown\} \/> : null,/);
+  for (const gone of [
+    'frontend/src/features/nav/recents.ts', 'frontend/src/features/nav/recents-list.tsx', 'tests/nav-recents.test.js',
+    'frontend/src/features/nav/strip-apps.tsx',
+  ]) {
+    assert.ok(!fs.existsSync(path.join(ROOT, gone)), `${gone} is retired`);
   }
   assert.doesNotMatch(css, /\.platform-recents?\b/, 'and its styles with it');
-  assert.match(block, /\.platform-strip-apps:not\(\.hidden\) \{\s*display: flex;[^}]*border-top: 1px solid var\(--app-sheet-line\);/,
-    'a line between the sections and the apps');
-  // The phone's bar is unchanged: five equal cells, no apps.
-  assert.match(css, /\.platform-strip-apps,\n\.platform-section-column \{\n  display: none;\n\}/);
+  assert.doesNotMatch(css, /\.platform-strip-/, 'and the strip apps\' with theirs');
+  // The phone's bar is unchanged: five equal cells, no pins.
+  assert.match(css, /\.platform-tab-all-votes,\n\.platform-rail-pinned \{\n {2}display: none;\n\}/);
 });
 
-test('five recent apps, newest first, once each; the app on screen leads before it was ever left', () => {
-  const { stripApps, STRIP_APPS } = loadTsx(STRIP);
-  assert.equal(STRIP_APPS, 5);
-  const apps = [
-    stripApp('notes', '2026-09-20T10:00:00Z'), stripApp('chess', '2026-09-20T12:00:00Z'),
-    stripApp('run', '2026-09-20T11:00:00Z'), stripApp('plant', '2026-09-19T10:00:00Z'),
-    stripApp('trade', '2026-09-18T10:00:00Z'), stripApp('old', '2026-09-01T10:00:00Z'),
-  ];
-  assert.deepEqual(stripApps(apps).map((a) => a.slug), ['chess', 'run', 'notes', 'plant', 'trade'],
-    'newest first, cut at five');
-  assert.deepEqual(stripApps(apps, stripApp('fresh', null)).map((a) => a.slug), ['fresh', 'chess', 'run', 'notes', 'plant']);
-  assert.deepEqual(stripApps(apps, apps[3]).map((a) => a.slug), ['plant', 'chess', 'run', 'notes', 'trade'], 'listed once');
-  // The apps still running behind the one on screen come next, whatever
-  // their clock, named by the stored list or else by their slug.
-  assert.deepEqual(stripApps(apps, null, ['old', 'gone']).map((a) => [a.slug, a.name]),
-    [['old', 'Old'], ['gone', 'gone'], ['chess', 'Chess'], ['run', 'Run'], ['notes', 'Notes']]);
-  assert.deepEqual(stripApps([]), []);
+// #5323: the "Pin here" slot is the one row the Pinned section draws while a
+// My apps tile is in the air, after the pins; a refused drop says so in
+// words. It un-hides an empty section so there is somewhere to drop, and it
+// is gone again when the gesture is over.
+test('#5323: the drop row renders only while a drag is up', () => {
+  const src = read(PINNED);
+  assert.match(src, /const \{ drop \} = useStoreState\(pinDropStore\);/,
+    'the slot answers the drag state, never its own guess');
+  assert.match(src, /data-rail-pin-drop=""/);
+  assert.match(src, /data-drop-state=\{drop\}/);
+  assert.match(src, /core:rail\.pin\.here/);
+  assert.match(src, /core:rail\.pin\.already/);
+  assert.match(src, /core:rail\.pin\.full/);
+  // The slot holds an empty section open: hidden only when there are no pins
+  // AND no drop.
+  assert.match(src, /useHiddenClass\(ref, items\.length === 0 && !drop\);/);
+  assert.match(css, /\.platform-rail-pin-drop\[data-drop-state='ok'\]/,
+    'the lit fill is the drop-accepted state');
+  // The refused words are drawn muted, so the slot never looks like an
+  // accepted drop.
+  const dropRule = css.match(/\n {2}\.platform-rail-pin-drop \{[^}]*\}/)[0];
+  assert.match(dropRule, /color: var\(--text-muted\);/);
+  // Home's drag recognizer drops on this section and lands on its slot.
+  const home = read('frontend/src/features/home/home.js');
+  assert.match(home, /const strip = document\.getElementById\('platform-rail-pinned'\);\n\s*if \(!strip \|\| typeof strip\.getBoundingClientRect !== 'function'\) return false;/);
+  assert.match(home, /const drop = strip\.querySelector\('\[data-rail-pin-drop\]'\);/);
+});
+
+// #5323: unpin two ways — the row's right-click menu (any community of
+// yours has it, ./pin-actions.ts), and a mouse drag back out of the sidebar. The ghost is React state only,
+// portaled to the body, so the prerender ships nothing of it; the click a
+// release leaves behind must not open the community.
+test('#5323: a pinned row carries the Unpin menu and the drag-out path', () => {
+  const src = read(PINNED);
+  const row = read(RAIL);
+  assert.match(row, /\{\.\.\.\(yours \? \{\s*onContextMenu: \(event: MouseEvent<HTMLAnchorElement>\) => \{\s*openPinMenu\(event, \{ slug, name, iconUrl: icon\.icon_url, iconEmoji: icon\.icon_emoji \}, href\);/,
+    'the menu opens on the row itself, a pinned one among them');
+  const actions = read('frontend/src/features/nav/pin-actions.ts');
+  assert.match(actions, /kit\.menu\(\{/, 'the kit presents it, as a My apps tile\'s menu is presented');
+  assert.match(actions, /label: isPinned\(target\.slug\) \? t\('core:rail\.pin\.unpin'\) : t\('core:rail\.pin\.add'\)/);
+  assert.match(actions, /label: t\('core:rail\.pin\.newTab'\)/, 'and the link\'s own Open in new tab');
+  assert.match(src, /if \(!insideTabs\(event\.clientX, event\.clientY\)\) unpinApp\(drag\.app\.slug, navStore\.get\(\)\.viewer\);/, 'the drag out unpins');
+  // The drag-out is mouse-only, past a small threshold, with capture.
+  assert.match(src, /event\.pointerType !== 'mouse'/);
+  assert.match(src, /Math\.hypot\(event\.clientX - drag\.startX, event\.clientY - drag\.startY\) <= 6/);
+  assert.match(src, /setPointerCapture\(event\.pointerId\)/);
+  // The ghost follows the pointer, portaled out of the sidebar, and carries
+  // the caption only while it is outside #platform-tabs.
+  assert.match(src, /createPortal\(/);
+  assert.match(src, /data-unpin=\{ghost\.unpin \? 'true' : undefined\}/);
+  assert.match(src, /platform-rail-pin-ghost-caption/);
+  assert.match(src, /document\.body,/);
+  // Escape aborts; the release outside unpins and swallows the click, which
+  // the row asks about before it navigates.
+  assert.match(src, /event\.key !== 'Escape'/);
+  assert.match(src, /swallowClickRef\.current = true/);
+  assert.match(read(RAIL), /if \(pin\?\.swallowClick\(\)\) \{\s*event\.preventDefault\(\);\s*return;\s*\}/);
+  // Ghost and slot are React state and store state with empty initials, so
+  // the prerendered section ships none of it, and it reads no storage during
+  // a render (the stored pins are read in effects and by mount.ts when the
+  // viewer is named).
+  assert.doesNotMatch(src.slice(src.indexOf('export function RailPinned')), /localStorage/);
+  assert.match(css, /\.platform-rail-pin-ghost \{[^}]*pointer-events: none;/,
+    'the ghost never becomes the hit-test');
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.platform-rail-pin-ghost \{ transform: translate\(-50%, -50%\); \}\s*\}/,
+    'no scale on the ghost when motion is reduced');
 });
 
 test('the still-open dot only on the apps kept alive, said aloud; the app on screen lit', () => {
-  const src = read(STRIP);
+  const src = read(RAIL);
   assert.match(src, /const live = useLiveAppSlugs\(\);/, 'read off the frame store\'s kept frames');
-  assert.match(src, /\{running \? <LiveAppDot className="platform-strip-live" \/> : null\}/);
-  assert.match(src, /\{running \? <span className="sr-only">\{`, \$\{LIVE_APP_LABEL\}`\}<\/span> : null\}/);
-  assert.match(src, /aria-current=\{lit \? 'page' : undefined\}/);
-  // Nothing before mount: the prerender ships the root empty and hidden.
-  const html = renderComponent(STRIP, 'StripApps', {});
-  assert.equal(html, '<div id="platform-strip-apps" class="platform-strip-apps hidden" role="group" aria-label="Recent apps"></div>');
-  // A closed app shrinks into its tile, and a resumed one grows out of it.
+  assert.match(src, /\{running \? <LiveAppDot className="platform-rail-live" \/> : null\}/);
+  assert.match(src, /aria-label=\{running \? listText\(\[appName, liveAppLabel\(\)\]\) : appName\}/);
+  assert.equal(message('core:liveApp.stillOpen'), 'still open');
+  assert.equal(message('core:rail.app'), 'App');
+  assert.equal(message('core:rail.appOf', { name: 'Chess' }), 'Chess app');
+  assert.match(src, /aria-current=\{onApp === slug \? 'page' : undefined\}/);
+  // Nothing before mount: the prerender ships the pinned section with its
+  // heading, no rows, and hidden.
+  const html = renderComponent(PINNED, 'RailPinned', {});
+  assert.equal(html, '<div id="platform-rail-pinned" class="platform-rail-pinned hidden" role="group" aria-labelledby="platform-rail-pinned-label">'
+    + '<div class="platform-rail-head"><span id="platform-rail-pinned-label" class="platform-rail-head-label">Pinned</span></div></div>');
+  // A closed app shrinks into its App row, and a resumed one grows out of it.
   const motion = read('frontend/src/features/nav/resume-motion.ts');
-  assert.match(motion, /doc\.querySelectorAll\('#platform-strip-apps a\.platform-strip-app\[data-strip-app\]'\)/);
+  assert.match(motion, /doc\.querySelectorAll\('#platform-tabs a\.platform-rail-app\[data-rail-app\]'\)/);
 });
 
 test('#3096: an app is lit only while it is the screen on show', () => {
-  const { currentAppOnScreen } = loadTsx(STRIP);
+  const { currentAppOnScreen } = loadTsx('frontend/src/features/app-frame/live-apps.tsx');
   const lit = (screen, tab, frameSlug = 'notes') => currentAppOnScreen({ frameSlug, screen, tab });
   assert.equal(lit('app-view', null), 'notes', 'in the app');
   for (const [screen, tab] of [
@@ -1103,11 +1199,11 @@ test('recent apps are remembered per account, and an app appears once, at the fr
   assert.match(mount, /if \(app && app\.slug\) rememberRecentApp\(app, navStore\.get\(\)\.viewer\);/);
 });
 
-test('#2795, #2798: the peeked strip is the frosted one and fades; a blue hover on the tabs and the apps', () => {
+test('#2795, #2798: the peeked strip is the frosted one and fades; a blue hover on the tabs', () => {
   const peek = css.slice(css.indexOf('  .platform-tabs.platform-tabs-peek {'));
   const rule = peek.slice(0, peek.indexOf('}'));
   assert.match(rule, /background-color: var\(--dc-sheet-solid\);/);
   assert.match(rule, /transition: opacity 200ms ease-in;/);
   assert.match(css,
-    /@media \(hover: hover\) \{\s*\.platform-tab:not\(\[aria-current="page"\]\):hover,\s*\.platform-strip-app:not\(\[aria-current="page"\]\):hover \{\s*background: color-mix\(in srgb, var\(--lit-tint\) 55%, transparent\);/);
+    /@media \(hover: hover\) \{\s*\.platform-tab:not\(\[aria-current="page"\]\):hover \{\s*background: color-mix\(in srgb, var\(--lit-tint\) 55%, transparent\);/);
 });

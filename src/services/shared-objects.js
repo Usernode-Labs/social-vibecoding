@@ -90,6 +90,17 @@ function changeStateWords(status, { yours = false } = {}) {
   return Object.prototype.hasOwnProperty.call(CHANGE_STATE_WORDS, status) ? CHANGE_STATE_WORDS[status] : (status || null);
 }
 
+// An app's own icon on its card and its community's (run four, 13 Oct 2026:
+// the bot's card for a new app read "◆"): its image at the platform's own
+// address, else its emoji, as its Home tile draws it. Only what it has, so a
+// card with neither draws the glyph (frontend messages/format.tsx ObjectIcon).
+function appIcon(app) {
+  return {
+    ...(app.icon_image_id ? { iconUrl: `/app-icons/${app.icon_image_id}` } : {}),
+    ...(app.icon_emoji ? { iconEmoji: String(app.icon_emoji) } : {}),
+  };
+}
+
 function unavailable(ref) {
   return {
     type: publicType(ref?.object_type || ref?.type || 'app'),
@@ -165,6 +176,29 @@ async function validateForShare(pool, user, raw, { conversationId = null } = {})
   };
 }
 
+/**
+ * The title Homeroom holds for an app's issue, from its own records: the
+ * request the Homeroom bot worked on, else the issue as the platform filed it.
+ * Null when it holds none.
+ */
+async function storedIssueTitle(pool, appId, issueNumber) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT title FROM (
+         SELECT issue_title AS title, 0 AS rank FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = $2
+         UNION ALL
+         SELECT title, 1 AS rank FROM issues WHERE app_id = $1 AND github_issue_number = $2
+       ) known
+       WHERE title IS NOT NULL AND title <> ''
+       ORDER BY rank LIMIT 1`,
+      [appId, issueNumber],
+    );
+    return rows[0]?.title || null;
+  } catch {
+    return null;
+  }
+}
+
 async function hydrateOne(pool, user, ref) {
   try {
     const normalized = {
@@ -183,7 +217,7 @@ async function hydrateOne(pool, user, ref) {
       appId: app.id, appSlug: app.slug, subtitle: app.name,
     };
     if (ref.object_type === 'app') {
-      return { ...base, title: app.name, state: app.status, href: `#app/${encodeURIComponent(app.slug)}/app` };
+      return { ...base, title: app.name, state: app.status, href: `#app/${encodeURIComponent(app.slug)}/app`, ...appIcon(app) };
     }
     if (ref.object_type === 'github_issue') {
       const repo = parseRepo(app.repo_url);
@@ -191,8 +225,11 @@ async function hydrateOne(pool, user, ref) {
       const result = await github.fetchPublicIssue(repo.owner, repo.repo, ref.object_ref);
       if (!result.issue && !isTransientIssueRead(result)) return unavailable(ref);
       if (!result.issue) {
+        // GitHub could not answer just now: the title Homeroom already holds
+        // for the request beats "Issue #N".
+        const known = await storedIssueTitle(pool, app.id, ref.object_ref);
         return {
-          ...base, issueNumber: ref.object_ref, title: `Issue #${ref.object_ref}`,
+          ...base, issueNumber: ref.object_ref, title: known || `Issue #${ref.object_ref}`,
           state: null, author: null,
           href: `#app/${encodeURIComponent(app.slug)}/dev/issues/${ref.object_ref}`,
         };
@@ -317,16 +354,30 @@ async function hydrateForMessages(pool, user, messageIds) {
   // is), so a page of its DM asked GitHub the same question again and again,
   // one after another. That page was slow enough for the service worker to
   // answer a realtime re-read with its stale copy. A card depends only on
-  // its reference and the viewer, so one answer serves every message.
+  // its reference and the viewer, so one answer serves every message. The
+  // distinct cards are read a few at a time rather than one after another:
+  // 24 closed requests at 300 ms each kept a page waiting 7 s.
+  const keyOf = (ref) => [ref.object_type, ref.app_id, ref.object_ref, ref.object_version ?? ''].join(':');
+  const distinct = new Map();
+  for (const ref of rows) if (!distinct.has(keyOf(ref))) distinct.set(keyOf(ref), ref);
   const cards = new Map();
+  const queue = [...distinct.entries()];
+  const worker = async () => {
+    while (queue.length) {
+      const [key, ref] = queue.shift();
+      cards.set(key, await hydrateOne(pool, user, ref));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CARD_READS_AT_ONCE, queue.length) }, worker));
   for (const ref of rows) {
-    const key = [ref.object_type, ref.app_id, ref.object_ref, ref.object_version ?? ''].join(':');
-    if (!cards.has(key)) cards.set(key, await hydrateOne(pool, user, ref));
     if (!out.has(ref.message_id)) out.set(ref.message_id, []);
-    out.get(ref.message_id).push({ ...cards.get(key) });
+    out.get(ref.message_id).push({ ...cards.get(keyOf(ref)) });
   }
   return out;
 }
+
+/** How many distinct cards of one page are read at once. */
+const CARD_READS_AT_ONCE = 6;
 
 // ── #3660: a Homeroom link in a message, as the card it names ─────────
 //
@@ -392,6 +443,7 @@ async function hydrateLink(pool, user, raw) {
         type: link.type, available: true, appId: app.id, appSlug: app.slug,
         title: app.name, subtitle: null,
         href: link.type === 'hub' ? `#app/${slug}/workshop` : `#app/${slug}/dev/chat`,
+        ...(link.type === 'hub' ? appIcon(app) : {}),
       };
     } catch (_) {
       return { type: link.type, available: false };
