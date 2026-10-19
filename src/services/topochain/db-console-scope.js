@@ -216,6 +216,8 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   mobile_otp_codes: ['code_hash'],
   // Account email proof and the password snapshot are both offline-guessable.
   account_email_verifications: ['code_hash', 'password_hash'],
+  // #5281: the username-change proof, the same two secrets as the row above.
+  account_username_codes: ['code_hash', 'password_hash'],
   web_signup_sessions: ['token_hash'],
   // Apple and Google sign-in (services/sign-in-providers.js). The provider
   // settings' secret is a client secret or a private key; the round trip's

@@ -5,6 +5,7 @@
 //
 //   PATCH  /api/me/profile             display name / bio
 //   POST   /api/me/username            change the @handle
+//   POST   /api/me/username/code       email a code that confirms it (#5281)
 //   POST   /api/me/username/choose      take the FIRST @handle (#2563)
 //   POST   /api/me/avatar              raw image bytes -> user_avatars
 //   DELETE /api/me/avatar              remove the picture
@@ -808,48 +809,102 @@ function profileRoutes(config) {
     }
   );
 
+  // ── POST /api/me/username/code ───────────────────────────────────────
+  //
+  // No body. Emails a six-digit code to the account's own CONFIRMED address,
+  // to confirm a username change on an account that has no password (#5281).
+  // Refused (409) for an account that has a password, an admin account, and
+  // an account with no confirmed address; see requestUsernameCode in
+  // services/account-email.js for the code's bounds. Behind the same
+  // per-user limiter as the address proof's request, and the mail layer's
+  // own per-recipient throttle (`username_change`), and same-origin only.
+  router.post(
+    '/api/me/username/code',
+    requireUser,
+    profileWriteLimiter,
+    // No body, so nothing a cross-site form cannot send: refuse a request a
+    // browser did not make from this origin, as DELETE /api/me/avatar does.
+    sameOriginBrowserOnly,
+    async (req, res) => {
+      try {
+        return res.json(await accountEmail.requestUsernameCode(pool, config, req.user.id));
+      } catch (error) {
+        if (error instanceof accountEmail.AccountEmailError) {
+          return res.status(error.status).json({ error: error.message });
+        }
+        log.error('profile', 'Username code request failed', { userId: req.user.id, err: error.message });
+        return res.status(500).json({ error: 'Could not send a code. Please try again.' });
+      }
+    }
+  );
+
   // ── POST /api/me/username ────────────────────────────────────────────
   //
-  // Body: { username, currentPassword }. Separate from PATCH /api/me/profile
-  // on purpose — see the header. The step order below is a security order,
-  // not a readability one:
+  // Body: { username, currentPassword }, or { username, code } for an
+  // account with NO password (#5281), the code from POST
+  // /api/me/username/code above. Which proof is asked for is decided by the
+  // account, never by the body: an account with a password confirms with
+  // the password whatever else it sends, and a code is worth nothing to it.
+  // Separate from PATCH /api/me/profile on purpose — see the header. The
+  // step order below is a security order, not a readability one:
   //
   //   1. shape         — pure, leaks nothing, costs nothing
-  //   2. password      — BEFORE any availability answer, so a stolen session
-  //                      without the password cannot walk the namespace
-  //                      asking "is @x free?"
+  //   2. proof         — the password, or the emailed code, BEFORE any
+  //                      availability answer, so a stolen session without
+  //                      either cannot walk the namespace asking "is @x
+  //                      free?"
   //   3. service ident — a seeded identity may never move
   //   4. cooldown      — before availability for the same reason: a user in
   //                      cooldown gets no probes either
   //   5. availability  — live table AND retired ledger
-  //   6. rename        — one transaction
+  //   6. rename        — one transaction (a code is spent just before it)
   router.post(
     '/api/me/username',
     requireUser,
     usernameChangeLimiter,
     express.json({ limit: '4kb' }),
     async (req, res) => {
-      const { username: requested, currentPassword } = req.body || {};
+      const { username: requested, currentPassword, code } = req.body || {};
 
       const check = usernames.validateUsername(requested);
       if (!check.ok) return res.status(400).json({ error: check.error });
       const next = check.value;
 
-      if (!currentPassword || typeof currentPassword !== 'string') {
-        return res.status(400).json({ error: 'Current password is required' });
-      }
-
       try {
         const { rows } = await pool.query(
-          'SELECT username, password FROM users WHERE id = $1',
+          'SELECT username, password, password_set FROM users WHERE id = $1',
           [req.user.id]
         );
         if (!rows.length) return res.status(404).json({ error: 'User not found' });
         const { username: current, password: hash } = rows[0];
+        // Only an explicit FALSE is "no password": the column is NOT NULL
+        // DEFAULT TRUE, and anything else keeps the password gate.
+        const passwordless = rows[0].password_set === false;
 
-        const valid = await bcrypt.compare(currentPassword, hash);
-        if (!valid) {
-          return res.status(401).json({ error: 'Current password is incorrect' });
+        // The emailed code's hash, once checked, so step 6 spends that code.
+        let codeProof = null;
+        if (!passwordless) {
+          if (!currentPassword || typeof currentPassword !== 'string') {
+            return res.status(400).json({ error: 'Current password is required' });
+          }
+          const valid = await bcrypt.compare(currentPassword, hash);
+          if (!valid) {
+            return res.status(401).json({ error: 'Current password is incorrect' });
+          }
+        } else {
+          if (!code || typeof code !== 'string') {
+            return res.status(400).json({
+              error: 'Ask for a code by email to confirm this change.', codeRequired: true,
+            });
+          }
+          try {
+            codeProof = await accountEmail.checkUsernameCode(pool, req.user.id, code);
+          } catch (error) {
+            if (error instanceof accountEmail.AccountEmailError) {
+              return res.status(error.status).json({ error: error.message });
+            }
+            throw error;
+          }
         }
 
         // Seeded service accounts (usernode-capture and friends) are found
@@ -879,6 +934,12 @@ function profileRoutes(config) {
         const free = await usernames.checkAvailability(pool, next, req.user.id);
         if (!free.available) {
           return res.status(409).json({ error: free.error });
+        }
+
+        // Spend the code now, and only now: one statement, so of two
+        // submissions racing with the same code exactly one goes on.
+        if (codeProof && !await accountEmail.consumeUsernameCode(pool, req.user.id, codeProof.codeHash)) {
+          return res.status(400).json({ error: 'Invalid or expired code. Request a new code if needed.' });
         }
 
         const result = await usernames.renameUser(pool, req.user.id, next);
