@@ -3998,12 +3998,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // #1442: opening a promoted proposal is the one moment its freshness
       // numbers are about to be READ by a person deciding how to vote, so
       // this is where they are worth re-measuring. TTL-gated (60s) and
-      // single-flighted per session in the service, so the dev chat's
-      // frequent machine refetches and several voters opening the same
-      // proposal at once still cost at most one pair of GitHub calls a
-      // minute. Never throws, and the refreshed block is folded onto the row
-      // that is about to be serialized so the response carries the number it
-      // just measured rather than the one it read a moment earlier.
+      // single-flighted per session in the service. While the leader's own
+      // measurement of this head is under three minutes old it answers, for
+      // no GitHub request; otherwise a refresh costs four to seven, at most
+      // once a minute. Never throws, and the refreshed block is folded onto
+      // the row that is about to be serialized so the response carries the
+      // number it just measured rather than the one it read a moment earlier.
       if (session.status === 'promoted' && session.repo_url) {
         try {
           const freshnessSvc = require('../services/proposal-freshness');
