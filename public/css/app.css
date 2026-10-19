@@ -23259,10 +23259,44 @@ html.un-kb #platform-parked {
     margin-right: 3px;
     box-shadow: none;
   }
+  /* #5525: hovering the dot turns it into the app's close button. The button
+     is the anchor's sibling (a button cannot live inside a link), laid over
+     the dot's place at the row's end, and the dot hides under it so the two
+     are never drawn at once. Keyboard focus reveals it too. */
+  .platform-rail-app-row {
+    position: relative;
+  }
+  .platform-rail-live-stop {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    display: grid;
+    width: 18px;
+    height: 18px;
+    margin-top: -9px;
+    padding: 0;
+    place-items: center;
+    border: 0;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--lit-tint) 55%, transparent);
+    color: var(--text-primary);
+    opacity: 0;
+    cursor: pointer;
+  }
+  .platform-rail-live-stop svg {
+    width: 11px;
+    height: 11px;
+  }
+  .platform-rail-live-stop:is(:hover, :focus-visible) {
+    opacity: 1;
+  }
+  .platform-rail-app-row:has(.platform-rail-live-stop:is(:hover, :focus-visible)) .platform-rail-live {
+    visibility: hidden;
+  }
   .platform-rail-nest .platform-rail-places > .platform-rail-nest-in {
     padding: 0;
   }
-  .platform-rail-nest .platform-rail-app + .platform-rail-places > .platform-rail-nest-in {
+  .platform-rail-nest .platform-rail-app-row + .platform-rail-places > .platform-rail-nest-in {
     padding-top: 1px;
   }
   .platform-rail-nest .platform-rail-places > .platform-rail-nest-in::before {

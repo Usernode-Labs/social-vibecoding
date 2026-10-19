@@ -159,6 +159,14 @@
     "text": "Still open",
     "description": "Tooltip of the small dot on an app that is still loaded and will resume as it was left."
   },
+  "liveApp.close": {
+    "text": "Close {{app}}",
+    "description": "Accessible name of the button that closes an app still open in the background, on its App row in the desktop sidebar. {{app}} is the row's name, such as \"RecipeBot app\"."
+  },
+  "liveApp.closeTitle": {
+    "text": "Close app",
+    "description": "Tooltip of the button that closes an app still open in the background, shown where the green still-open dot was on its App row in the desktop sidebar."
+  },
   "header.back": {
     "text": "Back",
     "description": "Accessible name of the header's back button when it returns to the previous screen."

@@ -64,7 +64,7 @@ test('in its app: the community open, App first and lit with its dot, no place l
   const app = html.indexOf('data-rail-app="chess"');
   const places = html.indexOf('data-places="chess"');
   assert.ok(app > 0 && places > app, 'App, then its places');
-  assert.match(html, /<div class="platform-rail-nest" data-nest="open"><div class="platform-rail-nest-in"><a class="platform-rail-sub platform-rail-app" href="\/app\/chess" data-rail-app="chess" data-live="true" title="Chess app" aria-label="Chess app, still open" aria-current="page">/);
+  assert.match(html, /<div class="platform-rail-nest" data-nest="open"><div class="platform-rail-nest-in"><div class="platform-rail-app-row"><a class="platform-rail-sub platform-rail-app" href="\/app\/chess" data-rail-app="chess" data-live="true" title="Chess app" aria-label="Chess app, still open" aria-current="page">/);
   assert.match(html, /class="platform-rail-sub-glyph"/);
   assert.match(html, new RegExp(`<span class="platform-rail-sub-name">${message('core:rail.app')}</span><span class="app-live-dot platform-rail-live"`));
   assert.match(html, /<div class="platform-rail-nest platform-rail-places" data-nest="open">/, 'the places in a part inside it');
@@ -81,11 +81,50 @@ test('in another community: a running app keeps its App row alone; a stopped one
   assert.doesNotMatch(gone, /platform-rail-nest/, 'no part at all');
   // On its page, App is there without the dot until the app has run.
   const page = drawRow({ onPage: 'chess' }, { info: CHESS });
-  assert.match(page, /<a class="platform-rail-sub platform-rail-app" href="\/app\/chess" data-rail-app="chess" title="Chess app" aria-label="Chess app">/);
+  assert.match(page, /<div class="platform-rail-app-row"><a class="platform-rail-sub platform-rail-app" href="\/app\/chess" data-rail-app="chess" title="Chess app" aria-label="Chess app">/);
   // Homeroom's own community: its places, and no App row.
   const home = drawRow({ onPage: 'home' }, { slug: 'home', info: { home: { slug: 'home', name: 'Homeroom', selfHosted: true } } });
   assert.match(home, /data-places="home"/);
   assert.doesNotMatch(home, /data-rail-app/);
+});
+
+test('a kept app off screen wears a close button over its dot; the app on screen and a stopped one wear none (#5525)', () => {
+  const kept = drawRow({ screen: 'app-view', onPage: 'other', live: ['chess'] }, { info: CHESS });
+  const anchorEnd = kept.indexOf('</a>', kept.indexOf('data-rail-app="chess"'));
+  const dot = kept.indexOf('<span class="app-live-dot platform-rail-live"');
+  const button = kept.indexOf('<button type="button" class="platform-rail-live-stop"');
+  assert.ok(dot > 0 && dot < anchorEnd, 'the dot stays inside the App anchor, where the declared check finds it');
+  assert.ok(button > anchorEnd, 'the button is the anchor\'s sibling, never inside it');
+  assert.match(kept, /<div class="platform-rail-app-row">/);
+  assert.match(kept, /<button type="button" class="platform-rail-live-stop" title="Close app" aria-label="Close Chess app">/);
+  assert.match(kept, /d="M6 18L18 6M6 6l12 12"/, 'the shell\'s X glyph');
+  // On its own page the places are open: the row stays, the X still offered.
+  const page = drawRow({ onPage: 'chess', live: ['chess'] }, { info: CHESS });
+  assert.match(page, /class="platform-rail-live-stop" title="Close app" aria-label="Close Chess app"/);
+  // The app on screen: no way to close the frame you are looking at.
+  const onScreen = drawRow({ onApp: 'chess', live: ['chess'] }, { info: CHESS });
+  assert.doesNotMatch(onScreen, /platform-rail-live-stop/);
+  // Not running: nothing to close.
+  const stopped = drawRow({ onPage: 'chess' }, { info: CHESS });
+  assert.doesNotMatch(stopped, /platform-rail-live-stop/);
+  // The press closes that one app through the frame bridge's eviction.
+  const src = read(RAIL);
+  assert.match(src, /event\.currentTarget\.parentElement\?\.querySelector\('a\.platform-rail-app'\)\?\.focus\(\);/,
+    'focus moves to the row before the button goes');
+  assert.match(src, /closeLiveApp\(slug\);/);
+  const evicted = [];
+  const { closeLiveApp } = loadTsx('frontend/src/features/app-frame/live-apps.tsx', {
+    stubs: { './app-frame-bridge.js': { appFrameBridge: { evict: (slug) => { evicted.push(slug); return true; } } } },
+  });
+  closeLiveApp('chess');
+  assert.deepEqual(evicted, ['chess'], 'the button evicts the app it names');
+  // The reveal, and the dot that hides under it.
+  const css = read('public/css/app.css');
+  assert.match(css, /\.platform-rail-app-row \{\n {4}position: relative;\n {2}\}/);
+  assert.match(css, /\.platform-rail-live-stop \{\n {4}position: absolute;/, 'the X sits where the dot sits');
+  assert.match(css, /\.platform-rail-live-stop:is\(:hover, :focus-visible\) \{\n {4}opacity: 1;\n {2}\}/);
+  assert.match(css, /\.platform-rail-app-row:has\(\.platform-rail-live-stop:is\(:hover, :focus-visible\)\) \.platform-rail-live \{\n {4}visibility: hidden;\n {2}\}/,
+    'the dot and the X never show together');
 });
 
 test('in the app of a community you have not joined: its App row alone, lit, and no record read', () => {
@@ -143,7 +182,7 @@ test('a part inside a part: the inner one opens with the outer, not after it', (
   // The outer part draws the one line and the padding round both.
   const css = read('public/css/app.css');
   assert.match(css, /\.platform-rail-nest \.platform-rail-places > \.platform-rail-nest-in \{\n {4}padding: 0;\n {2}\}/);
-  assert.match(css, /\.platform-rail-nest \.platform-rail-app \+ \.platform-rail-places > \.platform-rail-nest-in \{\n {4}padding-top: 1px;\n {2}\}/);
+  assert.match(css, /\.platform-rail-nest \.platform-rail-app-row \+ \.platform-rail-places > \.platform-rail-nest-in \{\n {4}padding-top: 1px;\n {2}\}/);
   assert.match(css, /\.platform-rail-nest \.platform-rail-places > \.platform-rail-nest-in::before \{\n {4}display: none;\n {2}\}/);
   assert.match(css, /\.platform-rail-nest \.platform-rail-live \{\n {4}width: 8px;\n {4}height: 8px;/, 'the dot at a row\'s size');
 });

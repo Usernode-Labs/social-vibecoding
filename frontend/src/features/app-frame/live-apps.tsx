@@ -7,6 +7,8 @@
  * tile on Home and on its App row in the desktop sidebar
  * (../nav/rail-communities.tsx), and it goes the moment the frame does —
  * evicted as least recently used, dropped for a new build, or at sign-out.
+ * Hovering the sidebar's dot turns it into the close button, which calls
+ * `closeLiveApp` below: the same eviction, asked for by the viewer.
  *
  * Read straight off the frame store, so it can never disagree with what is
  * actually loaded. The store's initial state has no frames, which is also what
@@ -17,6 +19,7 @@
 import { useMessages } from '../../lib/i18n/react';
 import { t } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
+import { appFrameBridge } from './app-frame-bridge.js';
 import { appFrameStore, liveAppSlugs } from './app-frame-store.js';
 
 /** Slugs with a live frame right now. */
@@ -56,6 +59,16 @@ export function currentAppOnScreen(input: {
 }): string | null {
   if (input.screen !== 'app-view' || input.tab) return null;
   return input.frameSlug || null;
+}
+
+/**
+ * Close an app that is still open: its frame is let go, and the dot goes with
+ * it, so its App row folds on its own (#5525). The viewer is never on that
+ * app's screen when this is offered, so the mounted frame it drops is parked
+ * behind its Workshop and the Workshop stays up.
+ */
+export function closeLiveApp(slug: string): void {
+  appFrameBridge.evict(slug);
 }
 
 /** What the dot means, for a row's or a tile's accessible name: one fact
