@@ -64,6 +64,7 @@ import {
   useAuthScreensPatch,
   zoomFx,
 } from './shared';
+import { DeepLinkBackdrop, type DeepLinkPlace, deepLinkPlace, deepLinkReturnTo, deepLinkTitle } from './deep-link-sign-in';
 import { DeadInvite, InviteJoinBar, InvitePending, inviteTokenFrom, MadeForYou, onInviteLink, useInvitePreview } from './invite-card';
 import { type ReleaseAccount, releaseAccountFromToken } from './login';
 import {
@@ -733,6 +734,24 @@ export function LandingScreen() {
   // signs in from the email again, while the account it started is not set
   // up yet (src/services/release-links.js), rather than asking for a code.
   const closeSheet = useCallback(() => { setSheet(null); setResume(null); }, []);
+  // A shared link opened while signed out (#5264, ./deep-link-sign-in.tsx):
+  // the address it was for (remembered for after the sign-in by the router)
+  // and the place it names. Set as the screen shows (landingOnShow), from
+  // AuthScreens.showSignInFor; the sheet titled for that place stands over a
+  // blurred stand-in for the page, in place of the story.
+  const [gate, setGate] = useState<{ target: string; place: DeepLinkPlace } | null>(null);
+  // The project's name, when the link is for a public one: read from the
+  // public directory the screen loads anyway (loadLandingApps).
+  const [gateProject, setGateProject] = useState<string | null>(null);
+  // Closed without signing in: the story, under an address that says so. The
+  // link stays remembered, so a sign-in from the story still lands on it.
+  const closeGate = useCallback(() => {
+    setGate(null);
+    closeSheet();
+    try {
+      history.replaceState(history.state, '', legacy().App?._rootUrl?.('#landing') ?? '/#landing');
+    } catch { /* the address stays the link's */ }
+  }, [closeSheet]);
   // The address a new account's link names, for the story to greet (Evan,
   // 10 Oct 2026: "Welcome to Homeroom" and the email).
   const [releaseEmail, setReleaseEmail] = useState<string | null>(null);
@@ -1130,11 +1149,10 @@ export function LandingScreen() {
       //     still re-checks whether the platform redeployed
       //     (App._refreshOrReload);
       //   * `_loadLandingApps` is one of the nine names the legacy router
-      //     patches over.
-      //
-      // Not, despite the obvious guess, because a `/app/<slug>` deep link
-      // opens here while signed out: app.js:3470 remembers that link and
-      // routes to #login instead, and App._bootScreenFor agrees.
+      //     patches over;
+      //   * a shared link to a public project, opened while signed out,
+      //     titles its sign-in sheet with the project's name, found here
+      //     (#5264, `gateProject`).
       st.appsList = list;
     } catch {
       st.appsList = [];
@@ -1292,6 +1310,17 @@ export function LandingScreen() {
     if (takeStartSheet() && !link) {
       flushSync(() => { setResume(null); setSheet('start'); });
     }
+    // A shared link opened while signed out (#5264): the sheet for the place
+    // it names, up as the screen is, so the story is not seen first. Read
+    // once; any other way here (a Back, #landing, a sign-out) has none, and
+    // takes down one left from before.
+    const host = legacy().AuthScreens as { _deepLinkSignIn?: string } | undefined;
+    const target = typeof host?._deepLinkSignIn === 'string' ? host._deepLinkSignIn : '';
+    if (host) host._deepLinkSignIn = '';
+    flushSync(() => {
+      setGate(target ? { target, place: deepLinkPlace(target) } : null);
+      setGateProject(null);
+    });
     if (!st.appsLoaded) {
       st.appsLoaded = true;
       st.appsReady = loadLandingApps();
@@ -1312,6 +1341,20 @@ export function LandingScreen() {
       void runAnonBackShot();
     }
   }, [loadLandingApps, refreshHeader, runAnonBackShot, st]);
+
+  // The project a shared link names, by its name when it is a public one.
+  // Not found (private, or unknown), the title says "this project".
+  const gateSlug = gate?.place.kind === 'project' ? gate.place.slug : null;
+  useEffect(() => {
+    if (!gateSlug) return undefined;
+    let live = true;
+    void Promise.resolve(st.appsReady).then(() => {
+      if (!live) return;
+      const app = st.appsList.find((a) => a.slug === gateSlug);
+      setGateProject(app?.name ? String(app.name) : null);
+    });
+    return () => { live = false; };
+  }, [gateSlug, st]);
 
   // ── The seam back into public/js/** ────────────────────────────────
   //
@@ -1952,9 +1995,30 @@ export function LandingScreen() {
           primaryClass={PRIMARY_PILL}
         />
       ) : null}
+      {/*
+          A shared link opened while signed out (#5264): the sign-in sheet,
+          titled for where the link leads, over a blurred stand-in for that
+          page. Signing in lands there (AuthScreens.finishLogin restores the
+          link the router remembered); Apple's or Google's trip comes back to
+          it too. Rendered nothing until the screen shows for such a link.
+      */}
+      {gate ? <DeepLinkBackdrop /> : null}
+      {gate ? (
+        <SignInSheet
+          open
+          title={deepLinkTitle(gate.place, gateProject, (id, params) => t(id, params))}
+          providers={providers}
+          native={nativeSignIn}
+          from="signin"
+          returnTo={deepLinkReturnTo(gate.target)}
+          resume={resume}
+          onClose={closeGate}
+          primaryClass={PRIMARY_PILL}
+        />
+      ) : null}
       {storyOn ? (
         <SignInSheet
-          open={sheet === 'start' || sheet === 'signin'}
+          open={!gate && (sheet === 'start' || sheet === 'signin')}
           title={sheet === 'signin' ? t('auth:landing.sheet.signIn') : t('auth:landing.sheet.continue')}
           providers={providers}
           native={nativeSignIn}

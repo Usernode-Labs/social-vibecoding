@@ -148,6 +148,10 @@
     // (`/app/...`). Restored right before the authed boot so the router lands
     // on the exact app instead of the platform home.
     _pendingHash: '',
+    // A shared link opened with no session (#5264): the address, for the
+    // landing to take as it shows (features/auth/landing.tsx), which opens
+    // the sign-in sheet titled for where it leads. Read once.
+    _deepLinkSignIn: '',
     // The token of an invite link an account still waiting opened, kept by
     // showWaiting for the waiting room (features/auth/waiting.tsx).
     _waitingInvite: '',
@@ -174,6 +178,15 @@
       if (!fullHash) return;
       if (AuthScreens.routeFromHash(fullHash.replace('#', ''))) return;
       AuthScreens._pendingHash = fullHash;
+    },
+
+    // A deep link with no session (App.restoreFromHash): remembered for
+    // after the sign-in, and answered with the landing's sign-in sheet,
+    // titled for the place the link names, instead of the full-page form.
+    showSignInFor(fullHash) {
+      AuthScreens.rememberDeepLink(fullHash);
+      AuthScreens._deepLinkSignIn = AuthScreens._pendingHash || '';
+      AuthScreens.show('landing');
     },
 
     // A `return_to` value this platform will actually navigate to, or ''.

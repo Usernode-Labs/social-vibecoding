@@ -367,8 +367,8 @@ test('the bot\'s row says what waits on you, and the headings say what in them a
     'its last message until then — the bot\'s own line first, then a group\'s sender-prefixed one');
   assert.equal(message('messages:inbox.section.working', { count: 1 }), '1 working');
   assert.equal(message('messages:inbox.section.unread', { count: 3 }), '3 unread');
-  assert.match(SCREEN, /people: \{ text: unreadFromPeople \? t\('messages:inbox\.section\.unread', \{ count: unreadFromPeople \}\) : null, ask: true \},/,
-    'a zero says nothing, and the people count is the accent');
+  assert.match(SCREEN, /people: \{ text: unreadFromPeople \? t\('messages:inbox\.section\.unread', \{ count: unreadFromPeople \}\) : null, ask: false \},/,
+    'a zero says nothing, and the people count is grey: new to read, not waiting on you (#18)');
 });
 
 test('#5393: a group row shows its members\' faces and names the person who spoke last', () => {
