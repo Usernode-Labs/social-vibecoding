@@ -2837,11 +2837,11 @@
   },
   "inbox.section.unread_one": {
     "text": "{{count}} unread",
-    "description": "Beside the People heading in the Messages list, in the accent colour, also while the section is folded: how many messages from people the viewer has not read. {{count}} is that number."
+    "description": "Beside the Direct messages heading in the Messages list, in the accent colour: how many conversations with people have something the viewer has not read (conversations, not messages, the same unit as the number on the Messages tab). {{count}} is that number."
   },
   "inbox.section.unread_other": {
     "text": "{{count}} unread",
-    "description": "Beside the People heading in the Messages list, in the accent colour, also while the section is folded: how many messages from people the viewer has not read. {{count}} is that number."
+    "description": "Beside the Direct messages heading in the Messages list, in the accent colour: how many conversations with people have something the viewer has not read (conversations, not messages, the same unit as the number on the Messages tab). {{count}} is that number."
   },
   "inbox.loading": {
     "text": "Loading conversations",
@@ -2906,6 +2906,14 @@
   "inbox.searchEmpty": {
     "text": "No messages match “{{query}}”.",
     "description": "Shown in place of the conversation list when the search finds nothing. {{query}} is what the person typed."
+  },
+  "inbox.unreadOnly": {
+    "text": "Unread",
+    "description": "A toggle button beside the search at the top of the Messages list. Pressed, the list shows only the conversations with something the viewer has not read."
+  },
+  "inbox.unreadEmpty": {
+    "text": "Nothing unread. You are all caught up.",
+    "description": "Shown in place of the Messages list when the Unread toggle is on and no conversation has anything unread."
   },
   "invitation.error.respond": {
     "text": "Couldn’t update this invitation.",

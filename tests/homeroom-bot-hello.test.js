@@ -78,8 +78,9 @@ test('B5: the bot\'s DM is the first row, pinned first in Agents, and a search k
   assert.deepEqual(merged.map((e) => e.section), ['agents', 'people', 'people']);
   assert.equal(merged[0].pinned, true);
   // 16 Oct 2026: a search narrows each section rather than mixing them on
-  // one clock, so the bot's chat is still first under Agents.
-  assert.match(read('frontend/src/features/messages/index.tsx'), /const found = inbox\.filter\(matches\);/);
+  // one clock, so the bot's chat is still first under Agents (and #5268's
+  // Unread toggle narrows the same merged list, in the same order).
+  assert.match(read('frontend/src/features/messages/index.tsx'), /const found = \(unreadOnly \? onlyUnread\(inbox\) : inbox\)\.filter\(matches\);/);
 });
 
 test('B5: prompts to tap keep the suggestion look, and read back as asked', () => {

@@ -11,6 +11,7 @@ import {
   ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronDownIcon, DraftTrashIcon, EllipsisHorizontalIcon, PencilSparklesIcon,
   PlusIcon, SearchIcon, SparklesIcon, UserGroupIcon, XIcon,
 } from '@/components/ui/icons';
+import { Chip } from '@/components/ui/chip';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
@@ -125,7 +126,7 @@ import {
 import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { SessionRow, type SessionRowView } from '../improve/session-row';
-import { INBOX_QUERY_MAX, INBOX_SECTIONS, buildInbox, savedInboxQuery, shownInSection, type AgentChat, type AppDiscussion, type InboxSection } from './inbox';
+import { INBOX_QUERY_MAX, INBOX_SECTIONS, buildInbox, onlyUnread, savedInboxQuery, shownInSection, unreadThreads, type AgentChat, type AppDiscussion, type InboxSection } from './inbox';
 import { publishRailInbox, railConversations, type RailConversation } from './rail-inbox';
 import { useSidebarRows } from '../nav/sidebar-rows';
 import type { ConversationDetail, ConversationMessage, ConversationSummary, DiscussionMessage, MessagesAgentThread } from './types';
@@ -888,6 +889,11 @@ function ConversationList({ drawer = false, litId = null }: {
   // once, and the rows follow in a render React can interrupt with the next
   // one, so typing a word into a long inbox does not wait on it per letter.
   const deferredQuery = useDeferredValue(query);
+  // THE UNREAD TOGGLE (#5268): beside the search, the list narrowed to the
+  // threads with something unread, the ones the tab's badge counts. Not
+  // remembered: a list that opens narrowed to nothing would hide every row
+  // on the next visit for a reason the person has forgotten setting.
+  const [unreadOnly, setUnreadOnly] = useState(false);
   // Two fields of the chat's store, not the whole of it: a turn streaming
   // its progress in the Agents pane is not a reason to redraw this list.
   const chatBootstrap = useGlobalChatSelector((s) => s.bootstrap);
@@ -991,8 +997,10 @@ function ConversationList({ drawer = false, litId = null }: {
     const g = byAgent.get(entry.key.slice('agent:'.length));
     return !!g && inboxMatches(g.title, q);
   };
-  const searching = !!q;
-  const found = inbox.filter(matches);
+  // The search and the Unread toggle both narrow the list, and a narrowed
+  // list draws every match: no fold, no "N older chats", no archive.
+  const searching = !!q || unreadOnly;
+  const found = (unreadOnly ? onlyUnread(inbox) : inbox).filter(matches);
   // The row that is open, so a section showing its newest few keeps it.
   const open = snap.route.agent;
   const isOpen = (entry: { kind: string; key: string }) => {
@@ -1059,12 +1067,12 @@ function ConversationList({ drawer = false, litId = null }: {
   }, [botWork.work]);
 
   // What each section's heading says asks for you: agents at work, and the
-  // messages from people you have not read. A zero says nothing.
+  // conversations with people that have something unread. A zero says
+  // nothing. #5268: the people count is THREADS, the unit of the Messages
+  // tab's badge, not the messages in them (./inbox.ts unreadThreads).
   const working = mayors.filter((item) => item.busy).length + agents.filter((item) => item.busy).length
     + sessions.filter((item) => item.busy).length;
-  const unreadFromPeople = snap.conversations
-    .filter((item) => !item.homeroomBot && item.kind !== 'channel')
-    .reduce((sum, item) => sum + Math.max(0, Number(item.unreadCount) || 0), 0);
+  const unreadFromPeople = unreadThreads(inbox.filter((entry) => entry.section === 'people'));
   const asides: Record<InboxSection, { text: string | null; ask: boolean }> = {
     agents: { text: working ? t('messages:inbox.section.working', { count: working }) : null, ask: false },
     people: { text: unreadFromPeople ? t('messages:inbox.section.unread', { count: unreadFromPeople }) : null, ask: true },
@@ -1117,6 +1125,17 @@ function ConversationList({ drawer = false, litId = null }: {
             onChange={(e) => changeQuery(e.currentTarget.value)}
           />
         </div>
+        {/* #5268: Unread, a toggle rather than a strip of kinds: the
+            sections already say which is which. */}
+        <Chip
+          id="messages-unread-only"
+          size="bar"
+          className="messages-unread-only px-4"
+          selected={unreadOnly}
+          onClick={() => setUnreadOnly(!unreadOnly)}
+        >
+          {t('messages:inbox.unreadOnly')}
+        </Chip>
         <NewMessageButton />
       </div>
       {!snap.online ? <div className="messages-network-banner">{t('messages:inbox.offline')}</div> : null}
@@ -1142,7 +1161,7 @@ function ConversationList({ drawer = false, litId = null }: {
             borrow the empty inbox's offer to start a conversation: the rows
             are there, this one word is what hid them. */}
         {!snap.loadingList && !snap.error && snap.listLoaded && inbox.length && !found.length
-          ? <div id="messages-search-empty" className="messages-state"><p>{t('messages:inbox.searchEmpty', { query: deferredQuery.trim() })}</p></div>
+          ? <div id="messages-search-empty" className="messages-state"><p>{q ? t('messages:inbox.searchEmpty', { query: deferredQuery.trim() }) : t('messages:inbox.unreadEmpty')}</p></div>
           : null}
         {/* TWO SECTIONS, EACH HEADED (16 Oct 2026): Agents, the Homeroom
             bot's chat first, then People (./inbox.ts). Each section's rows

@@ -75,6 +75,18 @@
  * an empty heading. Under it Agents shows at most AGENTS_SHOWN of what was
  * active in the last AGENTS_RECENT_DAYS days, newest first, and whatever
  * asks for you or is open; the rest wait behind "N older chats".
+ *
+ * ── One unread unit: the thread (#5268, 19 Oct 2026) ──────────────────
+ *
+ * The Messages tab's badge counts conversations with something unread
+ * (./store.ts syncTabBadge), while Direct messages' heading added up the
+ * MESSAGES ("3 unread" beside a badge of 1). Both count threads now: an
+ * entry carries its conversation's unread messages (`unread`, which its row
+ * still draws as its own count), and `unreadThreads` is how many entries
+ * have any, the badge's own rule over the same conversations. The Unread
+ * toggle beside the search narrows the list to those entries
+ * (`onlyUnread`), and composes with the search the way the search composes
+ * with the sections.
  */
 
 // `mayor` is an agent session (#2779): a conversation with the Mayor that
@@ -98,6 +110,8 @@ export interface InboxEntry {
   at: string | null;
   /** The Homeroom bot's chat: first in Agents, and always drawn. */
   pinned?: boolean;
+  /** Unread messages in a conversation (#5268). Agents' other rows have none. */
+  unread?: number;
 }
 
 /**
@@ -214,7 +228,7 @@ function byClock(a: InboxEntry, b: InboxEntry): number {
  * is drawn as the DM it is (`kind: 'person'`), pinned first in Agents.
  */
 export function buildInbox(input: {
-  conversations: Array<{ id: number; lastActivityAt: string; kind?: string; homeroomBot?: boolean }>;
+  conversations: Array<{ id: number; lastActivityAt: string; kind?: string; homeroomBot?: boolean; unreadCount?: number }>;
   agents: AgentChat[];
   /** Optional so a caller with no Improve store still merges three kinds. */
   sessions?: AgentSession[];
@@ -228,9 +242,10 @@ export function buildInbox(input: {
     // #general is the Homeroom community's channel, drawn on its hub.
     if (item.kind === 'channel') continue;
     const key = `person:${item.id}`;
+    const unread = Math.max(0, Number(item.unreadCount) || 0);
     const entry: InboxEntry = item.homeroomBot
-      ? { key, kind: 'person', section: 'agents', at: item.lastActivityAt, pinned: true }
-      : { key, kind: 'person', section: 'people', at: item.lastActivityAt };
+      ? { key, kind: 'person', section: 'agents', at: item.lastActivityAt, pinned: true, unread }
+      : { key, kind: 'person', section: 'people', at: item.lastActivityAt, unread };
     (item.homeroomBot ? bot : people).push(entry);
   }
   for (const item of input.agents) {
@@ -285,4 +300,18 @@ export function shownInSection<T extends InboxEntry>(section: InboxSection, entr
     else older.push(entry);
   }
   return { shown, older: older.length, olderShown: expanded ? older : [] };
+}
+
+/**
+ * How many threads have something unread (#5268): the unit the Messages
+ * tab's badge counts, so a heading or a toggle that says a number says the
+ * same one. A thread with three unread messages is one. Pure.
+ */
+export function unreadThreads(entries: ReadonlyArray<{ unread?: number }>): number {
+  return entries.filter((entry) => (entry.unread || 0) > 0).length;
+}
+
+/** The entries the Unread toggle keeps: the threads with something unread. Pure. */
+export function onlyUnread<T extends { unread?: number }>(entries: T[]): T[] {
+  return entries.filter((entry) => (entry.unread || 0) > 0);
 }

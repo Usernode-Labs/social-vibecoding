@@ -443,6 +443,7 @@ const ADDED_IDS = {
   // sections (Homeroom bot, Agents, People), which say which is which, so
   // the strip went. They were only ever ADDED ids, so they simply leave, as
   // #messages-filter-apps did.
+  'messages-unread-only': '#5268: the Unread toggle between the Messages search and its "+" (the kit\'s filter chip, aria-pressed). Pressed, the list shows only the conversations with something unread, the ones the Messages tab\'s badge counts. A toggle by state, not a strip of kinds: the sections still say which is which.',
   'messages-new': '#2718, then #2778: the "+" at the filter strip\'s trailing end, beside the search since the strip went (16 Oct 2026). #2718\'s review took it off the strip because ONE control saying "new" could only mean one of the kinds the inbox holds, and replaced it with a row of compose buttons under the strip (#messages-compose, retired below). #2778 brings it back as a CHOICE: pressing it opens a small popover — the vote picker\'s placement and dismissal, shared through lib/anchor-popover.ts and lib/popover-dismiss.ts — offering a direct message, a group chat or an agent chat, so it no longer has to guess. On touch the choice is the kit\'s action sheet. The popover (#messages-new-menu) renders only once pressed, so it is not in the prerendered document and not in this map.',
   // ── #2718: the Workshop gets a scope, three tabs and a plus ──────
   //

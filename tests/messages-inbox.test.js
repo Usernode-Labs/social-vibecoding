@@ -96,10 +96,11 @@ test('an agent chat falls back to when it was created', () => {
   assert.deepEqual(merged.map((e) => e.key), ['agent:new', 'agent:old']);
 });
 
-test('the sections are Agents and Direct messages, and there are no filter chips', () => {
+test('the sections are Agents and Direct messages, and there are no filter chips by kind', () => {
   assert.deepEqual([...inbox.INBOX_SECTIONS], ['agents', 'people']);
   assert.deepEqual(inbox.INBOX_SECTIONS.map((section) => message(`messages:inbox.section.${section}`)),
     ['Agents', 'Direct messages'], 'People\'s section is headed Direct messages (16 Oct 2026)');
+  // #5268's Unread toggle narrows by state, not by kind, and is pinned below.
   assert.equal(inbox.INBOX_FILTERS, undefined, 'the chips went: the headings say which is which');
   assert.equal(inbox.admits, undefined);
   assert.doesNotMatch(SCREEN, /InboxFilters|setFilter|messages-filter/);
@@ -273,7 +274,7 @@ test('the route is registered after the workshop one', () => {
   assert.match(server, /app\.use\(messagesOverviewRoutes\(config\)\);/);
 });
 
-test('the search and the plus ship in the prerendered document; the filter row is gone', () => {
+test('the search, the Unread toggle and the plus ship in the prerendered document; the filter row is gone', () => {
   for (const id of ['messages-search', 'messages-new']) {
     assert.ok(HTML.includes(`id="${id}"`), `#${id} is in the shipped shell`);
   }
@@ -281,8 +282,8 @@ test('the search and the plus ship in the prerendered document; the filter row i
     'messages-filter-apps', 'messages-filter-channels', 'messages-compose', 'messages-new-agent']) {
     assert.ok(!HTML.includes(`id="${id}"`), `#${id} is retired`);
   }
-  assert.match(HTML, /<div class="messages-toolbar"><div class="messages-search">[\s\S]*?id="messages-search"[^>]*\/><\/div><button[^>]*id="messages-new"/,
-    'the plus is right after the search, on its line');
+  assert.match(HTML, /<div class="messages-toolbar"><div class="messages-search">[\s\S]*?id="messages-search"[^>]*\/><\/div><button(?=[^>]*id="messages-unread-only")(?=[^>]*aria-pressed="false")[^>]*>[^<]*<\/button><button[^>]*id="messages-new"/,
+    'the plus is on the search\'s line, after #5268\'s Unread toggle, which ships off');
   assert.ok(!HTML.includes('id="messages-new-menu"'), 'the popover renders only when pressed');
   assert.ok(!HTML.includes('data-inbox-section'), 'the sections draw once the rows arrive, after mount');
 });
@@ -369,6 +370,37 @@ test('the bot\'s row says what waits on you, and the headings say what in them a
   assert.equal(message('messages:inbox.section.unread', { count: 3 }), '3 unread');
   assert.match(SCREEN, /people: \{ text: unreadFromPeople \? t\('messages:inbox\.section\.unread', \{ count: unreadFromPeople \}\) : null, ask: true \},/,
     'a zero says nothing, and the people count is the accent');
+  // #5268: the count is threads, the tab badge's unit, not messages.
+  assert.match(SCREEN, /const unreadFromPeople = unreadThreads\(inbox\.filter\(\(entry\) => entry\.section === 'people'\)\);/);
+});
+
+test('#5268: one unread unit, the thread, for the tab badge, the heading and the Unread toggle', () => {
+  const merged = inbox.buildInbox({
+    conversations: [
+      { id: 1, lastActivityAt: at('2026-01-04T00:00:00Z'), unreadCount: 3 },
+      { id: 2, lastActivityAt: at('2026-01-03T00:00:00Z'), unreadCount: 0 },
+      { id: 3, kind: 'direct', homeroomBot: true, lastActivityAt: at('2026-01-02T00:00:00Z'), unreadCount: 2 },
+      { id: 4, kind: 'channel', lastActivityAt: at('2026-01-05T00:00:00Z'), unreadCount: 7 },
+    ],
+    agents: [{ id: 'a1', updatedAt: at('2026-01-06T00:00:00Z') }],
+  });
+  assert.deepEqual(merged.map((e) => [e.key, e.unread]), [
+    ['person:3', 2], ['agent:a1', undefined], ['person:1', 3], ['person:2', 0],
+  ]);
+  // Three unread messages in one thread are one.
+  assert.equal(inbox.unreadThreads(merged), 2);
+  assert.equal(inbox.unreadThreads(merged.filter((e) => e.section === 'people')), 1);
+  assert.deepEqual(inbox.onlyUnread(merged).map((e) => e.key), ['person:3', 'person:1']);
+  // The badge counts the same conversations: every one but a channel.
+  assert.match(STORE, /messages: state\.conversations\s*\.filter\(\(item\) => item\.kind !== 'channel' && item\.unreadCount > 0\)\.length,/);
+  // The toggle sits between the search and the "+", off to start, not
+  // remembered, and a narrowed list draws every match as a search does.
+  assert.match(SCREEN, /const \[unreadOnly, setUnreadOnly\] = useState\(false\);/);
+  assert.match(SCREEN, /const searching = !!q \|\| unreadOnly;\n\s*const found = \(unreadOnly \? onlyUnread\(inbox\) : inbox\)\.filter\(matches\);/);
+  assert.match(SCREEN, /<Chip\s*id="messages-unread-only"\s*size="bar"\s*className="messages-unread-only px-4"\s*selected=\{unreadOnly\}\s*onClick=\{\(\) => setUnreadOnly\(!unreadOnly\)\}\s*>\s*\{t\('messages:inbox\.unreadOnly'\)\}\s*<\/Chip>\s*<NewMessageButton \/>/);
+  assert.match(SCREEN, /\{q \? t\('messages:inbox\.searchEmpty', \{ query: deferredQuery\.trim\(\) \}\) : t\('messages:inbox\.unreadEmpty'\)\}/);
+  assert.equal(message('messages:inbox.unreadOnly'), 'Unread');
+  assert.equal(message('messages:inbox.unreadEmpty'), 'Nothing unread. You are all caught up.');
 });
 
 test('#5393: a group row shows its members\' faces and names the person who spoke last', () => {

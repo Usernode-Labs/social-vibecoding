@@ -23497,6 +23497,16 @@ html.un-kb #platform-parked {
   min-width: 0;
   margin: 0;
 }
+/* UNREAD (#5268): the kit's filter chip (@/components/ui/chip.tsx), at the
+   search field's height, and off it wears the field's own fill and hairline
+   so the two read as one row of controls. On, it keeps the chip's solid
+   inversion: selection, not the accent. */
+.messages-toolbar .messages-unread-only { height: 40px; }
+.messages-toolbar .messages-unread-only[aria-pressed="false"] {
+  background: var(--dc-sheet-raise);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+}
 .messages-new-btn {
   flex: 0 0 auto;
   display: inline-flex;

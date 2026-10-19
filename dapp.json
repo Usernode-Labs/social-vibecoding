@@ -3067,9 +3067,9 @@
       "expectSelector": "#messages-screen:not(.hidden):not(:has(#messages-filters)):not(:has([data-inbox-fold=\"people\"])) h3.messages-section-head[data-inbox-section=\"agents\"] > button.messages-section-toggle[data-inbox-fold=\"agents\"][aria-expanded=\"true\"]"
     },
     {
-      "name": "#2778: new message is a plus beside the search, and it opens a menu rather than a dialog",
+      "name": "#2778: new message is a plus beside the search, and it opens a menu rather than a dialog; #5268: between them an Unread toggle, off to start",
       "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-toolbar > .messages-search + button#messages-new[aria-haspopup=\"menu\"][aria-label=\"New message\"]"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-toolbar > .messages-search + button#messages-unread-only[aria-pressed=\"false\"] + button#messages-new[aria-haspopup=\"menu\"][aria-label=\"New message\"]"
     },
     {
       "name": "QA 2026-09-24 Q18: a Skip to navigation link is the first thing Tab reaches, ahead of the header, and the rail it skips to is there",
