@@ -109,6 +109,7 @@ function withApp(fn) {
     // request through.
     app.get('/', (_req, res) => res.send('SPA'));
     app.get('/app/*', (_req, res) => res.send('SPA'));
+    app.get('/invite/*', (_req, res) => res.send('SPA'));
     app.get('/social', (_req, res) => res.send('SPA'));
     app.get('/waiting.html', (_req, res) => res.send('WAITING'));
     app.get('/landing.html', (_req, res) => res.send('LANDING'));
@@ -255,6 +256,20 @@ test('sessionless / serves the SPA shell; deeper paths bounce to it; APIs 401', 
 
     const api = await get(base, '/api/apps');
     assert.equal(api.status, 401);
+  });
+});
+
+test('#5263: sessionless, any one segment after /invite/ reaches its page, so a mistyped link can say it does not work', async () => {
+  await withServer(async (base) => {
+    for (const path of ['/invite/YigKXxtTzBB_TFZVTkjEtg', '/invite/abc', '/invite/YigKXxtTzBB_TFZV']) {
+      const res = await get(base, path);
+      assert.equal(res.status, 200, path);
+      assert.equal(await res.text(), 'SPA', path);
+    }
+    // Two segments are not an invite link: they still bounce to the front door.
+    const deeper = await get(base, '/invite/abc/def');
+    assert.equal(deeper.status, 302);
+    assert.equal(deeper.headers.get('location'), '/');
   });
 });
 

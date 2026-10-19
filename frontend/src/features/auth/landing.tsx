@@ -63,7 +63,7 @@ import {
   useAuthScreensPatch,
   zoomFx,
 } from './shared';
-import { DeadInvite, InviteJoinBar, InvitePending, inviteTokenFrom, MadeForYou, useInvitePreview } from './invite-card';
+import { DeadInvite, InviteJoinBar, InvitePending, inviteTokenFrom, MadeForYou, onInviteLink, useInvitePreview } from './invite-card';
 import { type ReleaseAccount, releaseAccountFromToken } from './login';
 import {
   type AccountStep,
@@ -717,6 +717,9 @@ export function LandingScreen() {
   // the pitch back once that is known.
   const { preview: invite, pending: invitePending } = useInvitePreview();
   const madeForYou = !!invite?.live;
+  // A link that does not work, mistyped ones included, has its own page in
+  // the pitch's place (DeadInvite, #5263).
+  const deadInvite = !!invite && !invite.live;
   // Which sign-in sheet is up (./sign-in-sheet.tsx): an invite's Join, or
   // the story's Make an account or Sign in.
   const [sheet, setSheet] = useState<null | 'join' | 'start' | 'signin'>(null);
@@ -828,9 +831,9 @@ export function LandingScreen() {
   // no reason to flash one. The invite path is read in that first render
   // too, for the same reason; the prerender pass has no location.
   const [onInvitePath, setOnInvitePath] = useState(
-    () => typeof location !== 'undefined' && !!inviteTokenFrom(location.pathname),
+    () => typeof location !== 'undefined' && onInviteLink(location.pathname),
   );
-  useEffect(() => { setOnInvitePath(!!inviteTokenFrom(location.pathname)); }, []);
+  useEffect(() => { setOnInvitePath(onInviteLink(location.pathname)); }, []);
 
   // Non-render state, mirroring the legacy module's fields one for one.
   const st = useRef({
@@ -866,7 +869,7 @@ export function LandingScreen() {
     setSession(hasSession());
   }, []);
   const storyOn = waitlistPayload?.story_landing !== false && !onInvitePath && !session;
-  const pitchHidden = madeForYou || storyOn || invitePending;
+  const pitchHidden = madeForYou || deadInvite || storyOn || invitePending;
   // As the page opens for a new account's link, or over Get started's
   // sheet, the one that carries the link.
   const sheetSigningIn = signingIn && !signingInOverdue && storyOn && sheet === 'start';
@@ -1568,11 +1571,11 @@ export function LandingScreen() {
               below this scroller (InviteJoinBar). Only on
               /invite/<token>, with a placeholder in their place until its
               preview is back — nothing here on any other visit. A dead link
-              says why, above the pitch.
+              (or a mistyped one) has its own page in the pitch's place.
           */}
           {invitePending && !invite ? <InvitePending /> : null}
           {madeForYou ? <MadeForYou preview={invite!} /> : null}
-          {invite && !invite.live ? <DeadInvite preview={invite} /> : null}
+          {deadInvite ? <DeadInvite preview={invite!} primaryClass={PRIMARY_PILL} /> : null}
           {/*
               DECORATIVE, so `alt` is empty: everything it says is said again
               in the words below it, and a screen reader announcing a

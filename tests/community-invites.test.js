@@ -136,7 +136,8 @@ test('the page\'s link preview: a live link names the project and inviter, a dea
 
 test('the paths: the page is a shell document; following from the waiting room is open, making links is not', () => {
   const auth = read('src/middleware/auth.js');
-  assert.match(auth, /\|\| \/\^\\\/invite\\\/\[A-Za-z0-9_-\]\{22\}\$\/\.test\(pathname\)/);
+  // #5263: any one segment, so a mistyped link reaches the page that says it does not work.
+  assert.match(auth, /\|\| \/\^\\\/invite\\\/\[\^\/\]\+\$\/\.test\(pathname\)/);
   assert.match(auth, /'\/api\/invite-links\/by-token\/',\s+'\/api\/invite-links\/queued',(\s+\/\/[^\n]*)+\s+'\/api\/me\/first-session\/started',\s+\];/);
   assert.doesNotMatch(auth, /'\/api\/invite-links\/',/, 'not the whole prefix');
   assert.match(auth, /'\/api\/public\/',/, 'the preview rides the existing anonymous tier');
@@ -430,7 +431,7 @@ test(`a live link's landing is "Made for you"; the pitch stays in the document, 
   const landing = read('frontend/src/features/auth/landing.tsx');
   assert.match(landing, /const \{ preview: invite, pending: invitePending \} = useInvitePreview\(\);/);
   assert.match(landing, /const madeForYou = !!invite\?\.live;/);
-  assert.match(landing, /const pitchHidden = madeForYou \|\| storyOn \|\| invitePending;/);
+  assert.match(landing, /const pitchHidden = madeForYou \|\| deadInvite \|\| storyOn \|\| invitePending;/);
   for (const hidden of [
     "hiddenLast(pitchHidden, 'grow')",
     "hiddenLast(pitchHidden, 'mx-auto mt-6 block h-auto w-[272px] xl:w-[320px] max-w-full')",
