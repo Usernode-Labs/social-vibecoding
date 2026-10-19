@@ -707,6 +707,14 @@
     "text": "Other requests",
     "description": "Last row of the Homeroom bot building time card in Settings: every request past the end of the list, together, with their share at the end."
   },
+  "usage.buildingTime.showAll_one": {
+    "text": "Show all {{count}}",
+    "description": "Button under the five largest requests on the Homeroom bot building time card in Settings: shows the rest of the requests that used building time this week. {{count}} is how many requests there are in all, counting the five already shown."
+  },
+  "usage.buildingTime.showAll_other": {
+    "text": "Show all {{count}}",
+    "description": "Button under the five largest requests on the Homeroom bot building time card in Settings: shows the rest of the requests that used building time this week. {{count}} is how many requests there are in all, counting the five already shown."
+  },
   "usage.buildingTime.explainLimited": {
     "text": "Each request's share of your week. It counts the bot reading, planning and building your requests, and any you asked it to build for someone else.",
     "description": "Small explanation under the Homeroom bot building time card in Settings, for a person with a weekly limit. \"Your week\" is their week of building time."

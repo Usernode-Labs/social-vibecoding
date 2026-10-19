@@ -40,8 +40,18 @@ import { aiBudgetStore } from './ai-budget-store.js';
     });
   }
 
+  // The meter's sentence drops ".00" from a whole amount ("$839.99 of $840
+  // left this week", #5284): an allowance is set in whole dollars, and the
+  // cents on it were noise beside the figure that has them.
+  function wholeMoney(cents) {
+    var n = Math.round(Number(cents));
+    if (!isFinite(n)) return '$0';
+    if (n % 100 === 0) return '$' + (n / 100).toLocaleString('en-US');
+    return money(n);
+  }
+
   // One part of the meter, read as a whole message. The catalog entry marks
-  // each coloured run with a numbered tag ("<0>limit </0><1>{{spent}}</1>…")
+  // each coloured run with a numbered tag ("<0>{{remaining}}</0> of …")
   // and `tones` names the colour for each number, so a translator sees the
   // part as one line and the runs come out exactly as they were. Text a
   // translation leaves outside a tag is drawn dim.
@@ -60,18 +70,17 @@ import { aiBudgetStore } from './ai-budget-store.js';
     return out;
   }
 
-  // The figure is rendered EXACTLY as the dev chat renders its own meter
-  // (see DevChat.renderBudget) — "limit $13.60/$20.00 · your key $129.11"
-  // — so the two places a user reads their AI spend agree glyph for
-  // glyph instead of offering two different mental models of the same
-  // number. No pill: .drawer-meter is nowrap mono text, and the row's
-  // `flex-wrap` drops an over-wide value onto its own line intact rather
-  // than splitting it mid-figure.
+  // The figure is one sentence, "$839.99 of $840 left this week"
+  // (#5284), then "· your key $4.50" when the person's own key was billed.
+  // It used to copy the dev chat's "limit $13.60/$20.00" glyph for glyph,
+  // which read here as a limit of $13.60. No pill: the row's `flex-wrap`
+  // drops an over-wide value onto its own line intact rather than
+  // splitting it mid-figure.
   //
-  // Spend colouring matches the dev chat's thresholds too: >80% of the
-  // daily limit is red, >50% amber, otherwise emerald. The BYOK figure
-  // never takes threshold colouring — no cap applies to it. The THRESHOLDS
-  // are here; the four class strings they resolve to are in
+  // The amount left takes the dev chat's spend thresholds: more than 80% of
+  // the allowance used is red, more than 50% amber, otherwise emerald. The
+  // BYOK figure never takes threshold colouring, since no cap applies to
+  // it. The THRESHOLDS are here; the class strings they resolve to are in
   // ./ai-budget.tsx, because Tailwind's extractor is a regex over source
   // text and a palette carried through the store would compile to nothing.
 
@@ -207,7 +216,7 @@ import { aiBudgetStore } from './ai-budget-store.js';
           return;
         }
 
-        // "limit $spent/$limit" — spend-first, exactly like the dev chat.
+        // How much is used picks the colour of what is left.
         var pct = limit > 0 ? Math.min(100, (spent / limit) * 100) : 0;
         var spentTone = pct > 80 ? 'high' : pct > 50 ? 'mid' : 'low';
 
@@ -242,19 +251,31 @@ import { aiBudgetStore } from './ai-budget-store.js';
           tip = sentences(tip, PlatformI18n.t('wallet:credit.tip.ownKeyToday', { amount: money(byok) }));
         }
 
-        var parts = [{
-          runs: runs('wallet:credit.meter.spend', amounts, ['dim', spentTone]),
-        }];
-        // #593: what is LEFT, rendered rather than tooltip-only. The whole
-        // point of the row is to answer "can I start another dev session?"
-        // before opening one, and a tooltip answers that for nobody on a
-        // phone — which is where the drawer is used most.
-        if (!(exhausted && s.hasByokKey)) {
-          var leftTone = exhausted ? 'high' : (state && state.level === 'low') ? 'mid' : 'dim';
+        // #5284: the allowance as ONE sentence, "$839.99 of $840 left this
+        // week". It was "limit $0.01/$840.00 · $839.99 left", which read as a
+        // limit of one cent. The amount left is the figure the row exists for
+        // (#593: "can I start another dev session?"), so it carries the
+        // threshold colour and the hook a declared check aims at.
+        var parts = [];
+        var brief = { limit: wholeMoney(limit), remaining: wholeMoney(remaining) };
+        if (limit <= 0) {
           parts.push({
             remaining: true,
-            runs: exhausted ? runs('wallet:credit.meter.noneLeft', {}, ['dim', leftTone])
-              : runs('wallet:credit.meter.left', amounts, ['dim', leftTone]),
+            runs: [{ tone: s.hasByokKey ? 'dim' : 'high', text: PlatformI18n.t('wallet:credit.meter.noAllowance') }],
+          });
+        } else if (exhausted && s.hasByokKey) {
+          // Not "$0 left" on a row that can keep going: turns bill to the
+          // key now, and the tooltip says so.
+          parts.push({
+            runs: [{ tone: 'dim', text: PlatformI18n.t(weeklyWindow
+              ? 'wallet:credit.meter.usedAllWeekly' : 'wallet:credit.meter.usedAllToday', brief) }],
+          });
+        } else {
+          var leftTone = exhausted ? 'high' : spentTone;
+          parts.push({
+            remaining: true,
+            runs: runs(weeklyWindow ? 'wallet:credit.meter.leftWeekly' : 'wallet:credit.meter.leftToday',
+              brief, [leftTone]),
           });
         }
         if (byok > 0) {

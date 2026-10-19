@@ -4107,10 +4107,10 @@
       "expectSelector": "#feedback-form #feedback-bounty-row.hidden #feedback-bounty-note:empty"
     },
     {
-      "name": "The AI-credit row shows the remaining allowance (#555, #593)",
+      "name": "The AI-credit row shows the remaining allowance in one sentence (#555, #593, #5284)",
       "path": "/?demo=1#settings/api-key",
       "expectSelector": "[data-settings-section=\"usage\"]:has([data-building-time-request]) #drawer-row-ai-budget .ai-budget-meter [data-credits-remaining]",
-      "expectText": "$36.40 left"
+      "expectText": "$36.40 of $50 left this week"
     },
     {
       "name": "Settings has a Claude & ChatGPT connectors section with the connector URL (#967)",
