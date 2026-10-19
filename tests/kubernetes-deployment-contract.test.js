@@ -27,59 +27,114 @@ test('Kubernetes hosted-app evidence image declares a numeric non-root user', ()
     'the hosted-app fixture must satisfy the same numeric-user contract as ordinary app images');
 });
 
+// The build stages of Dockerfile.kubernetes, by name: what each is FROM, what
+// it copies from another stage, what it mounts, and its instructions.
+function dockerStages(dockerfile) {
+  const stages = [];
+  const instructions = dockerfile.replace(/\\\n/g, ' ').split('\n').filter((line) => line && !line.startsWith('#'));
+  for (const line of instructions) {
+    const from = /^FROM (\S+)(?: AS (\S+))?$/.exec(line);
+    if (from) { stages.push({ base: from[1], name: from[2] || null, lines: [] }); continue; }
+    assert.ok(stages.length, `an instruction before the first FROM: ${line}`);
+    stages.at(-1).lines.push(line);
+  }
+  for (const stage of stages) {
+    stage.copiesFrom = stage.lines.flatMap((l) => [...l.matchAll(/^COPY .*--from=(\S+)/g)].map((m) => m[1]));
+    stage.mounts = stage.lines.flatMap((l) => [...l.matchAll(/--mount=type=bind,from=([^,\s]+)/g)].map((m) => m[1]));
+  }
+  return stages;
+}
+
 test('Kubernetes platform image builds and contains the generated shell assets', () => {
   const dockerfile = read('Dockerfile.kubernetes');
-  assert.match(dockerfile, /FROM node:22-alpine AS asset-deps/);
-  assert.match(dockerfile, /FROM node:22-alpine AS shell/);
-  assert.match(dockerfile, /from=asset-deps[^\n]+node_modules[^\n]+\\\n\s+node frontend\/scripts\/build-shell\.mjs/);
-  assert.match(dockerfile, /from=asset-deps[^\n]+node_modules[^\n]+\\\n\s+node scripts\/build-tailwind\.js/);
-  assert.doesNotMatch(dockerfile, /FROM node:22-alpine AS css/,
-    'a second dependency-bearing asset stage makes rootless BuildKit restore it separately');
+  const stages = dockerStages(dockerfile);
+  const stage = (name) => {
+    const found = stages.filter((s) => s.name === name);
+    assert.equal(found.length, 1, `Dockerfile.kubernetes must have one stage named ${name}`);
+    return found[0];
+  };
+  const deps = stage('asset-deps');
+  const src = stage('shell-src');
+  const bundle = stage('shell-bundle');
+  const prerender = stage('shell-prerender');
+  const css = stage('shell-css');
+  const shell = stage('shell');
+  const runtime = stages.at(-1);
+  assert.equal(deps.base, 'node:22-alpine');
+  assert.equal(src.base, 'node:22-alpine');
+  assert.equal(runtime.name, null, 'the runtime is the last, unnamed stage');
 
-  const shellBuild = dockerfile.indexOf('node frontend/scripts/build-shell.mjs');
-  const publicCopy = dockerfile.indexOf('COPY public ./public');
-  const cssBuild = dockerfile.indexOf('node scripts/build-tailwind.js');
-  assert.ok(shellBuild > -1 && shellBuild < publicCopy && publicCopy < cssBuild,
-    'Tailwind must scan the shell generated earlier in the same stage');
+  // The three expensive steps run at the same time because none of their
+  // stages waits for another: each is FROM the shared sources and takes
+  // nothing from a sibling. Pass 1, pass 2 and Tailwind ran one after another
+  // in a single stage before; built so again, the build is ~6 s slower and no
+  // output differs, so only this can catch it.
+  const run = (s, command) => {
+    const runs = s.lines.filter((l) => /^RUN /.test(l));
+    assert.equal(runs.length, 1, `${s.name} runs one step`);
+    assert.match(runs[0], new RegExp(`--mount=type=bind,from=asset-deps,source=/build/frontend/node_modules,target=/build/frontend/node_modules,rw +${command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`));
+  };
+  run(bundle, 'node frontend/scripts/build-shell.mjs --bundle-only');
+  run(prerender, 'node frontend/scripts/build-shell.mjs --prerender-only');
+  run(css, 'node scripts/build-tailwind.js');
+  for (const s of [bundle, prerender, css]) {
+    assert.equal(s.base, 'shell-src', `${s.name} must be FROM shell-src, so it starts as soon as the sources are in`);
+    assert.deepEqual(s.copiesFrom, [], `${s.name} must take nothing from another stage: that would make it wait`);
+    assert.deepEqual(s.mounts, ['asset-deps'], `${s.name} mounts the dependency tree and nothing else`);
+  }
 
-  const shellStage = dockerfile.slice(
-    dockerfile.indexOf('FROM node:22-alpine AS shell'),
-    dockerfile.lastIndexOf('\nFROM node:22-alpine\n'),
-  );
-  assert.doesNotMatch(shellStage, /RUN npm ci/,
-    'asset dependencies must stay outside the generated-output snapshot');
+  // The dependency tree is mounted, never inherited: a stage FROM asset-deps
+  // would be a second dependency-bearing snapshot for rootless BuildKit to
+  // restore, and its output would carry node_modules into what the runtime
+  // copies.
+  assert.equal(stages.filter((s) => s.base === 'asset-deps').length, 0, 'no stage may be FROM asset-deps');
+  for (const s of stages.slice(1, -1)) {
+    assert.ok(!s.lines.some((l) => /^RUN .*\bnpm ci\b/.test(l)), `${s.name} must not install dependencies`);
+  }
 
-  // The commit id sits BELOW the two expensive steps. A build arg above a RUN
-  // is part of that step's cache key, so with GIT_SHA above them every commit
+  // The last asset stage brings the three outputs together, and only it reads
+  // the commit id.
+  assert.equal(shell.base, 'shell-src');
+  assert.deepEqual([...shell.copiesFrom].sort(), ['shell-bundle', 'shell-css', 'shell-prerender']);
+  assert.ok(shell.lines.includes('COPY --link --from=shell-css /build/public/css/tailwind.css ./public/css/tailwind.css'));
+  assert.ok(shell.lines.includes('COPY --link --from=shell-prerender /build/frontend/.ssr ./frontend/.ssr'));
+  assert.ok(shell.lines.includes('COPY --link --from=shell-bundle /build/public ./public'));
+  assert.ok(shell.lines.includes('COPY --link public ./public'));
+
+  // The commit id sits BELOW the expensive steps. A build arg above a RUN is
+  // part of that step's cache key, so with GIT_SHA above them every commit
   // rebuilt the bundle and the stylesheet whatever it had changed: 167 of 167
   // preview builds in the logs this order was measured against. Nothing above
   // the id may read it, and everything that does comes after it.
-  const order = (needle) => {
-    const at = shellStage.indexOf(needle);
-    assert.ok(at > -1, `the shell stage must contain \`${needle}\``);
-    assert.equal(shellStage.indexOf(needle, at + 1), -1, `the shell stage must contain \`${needle}\` once`);
-    return at;
+  for (const s of stages.slice(0, -1)) {
+    if (s === shell) continue;
+    assert.ok(!s.lines.some((l) => /GIT_SHA/.test(l)), `${s.name} must not read GIT_SHA`);
+  }
+  const at = (needle) => {
+    const index = shell.lines.findIndex((l) => l === needle || l.endsWith(needle));
+    assert.ok(index > -1, `the shell stage must contain \`${needle}\``);
+    assert.equal(shell.lines.filter((l) => l === needle || l.endsWith(needle)).length, 1, `the shell stage must contain \`${needle}\` once`);
+    return index;
   };
-  const bundle = order('node frontend/scripts/build-shell.mjs --keep-prerender');
-  const css = order('node scripts/build-tailwind.js');
-  const commitArg = order('ARG GIT_SHA=dev');
-  const commitEnv = order('ENV GIT_SHA=$GIT_SHA');
-  const document = order('node frontend/scripts/build-shell.mjs --document');
-  const release = order('RUN node scripts/build-shell-release.js');
-  const precompress = order('RUN node scripts/precompress-static-assets.js');
-  assert.ok(bundle < css && css < commitArg,
-    'the Vite passes and Tailwind run before GIT_SHA is declared, so a commit that left their inputs alone can reuse them');
+  const lastCopy = Math.max(...shell.lines.map((l, i) => (/^COPY .*--from=/.test(l) ? i : -1)));
+  const commitArg = at('ARG GIT_SHA=dev');
+  const commitEnv = at('ENV GIT_SHA=$GIT_SHA');
+  const document = at('node frontend/scripts/build-shell.mjs --document');
+  const release = at('RUN node scripts/build-shell-release.js');
+  const precompress = at('RUN node scripts/precompress-static-assets.js');
+  assert.ok(!shell.lines.slice(0, commitArg).some((l) => /GIT_SHA/.test(l)), 'nothing above the ARG reads the id');
+  assert.ok(lastCopy < commitArg, 'the outputs are copied in before the id is declared');
   assert.ok(commitArg < commitEnv && commitEnv < document,
     'the document this build serves is written with the commit id');
   assert.ok(document < release && release < precompress,
     'the release file and the precompressed copies describe that final document');
-  assert.equal(shellStage.split('build-shell.mjs').length - 1, 2,
-    'the shell build runs twice in this stage: the bundle, then the document. A plain third run would redo Vite under the commit id');
-  assert.match(shellStage, /from=asset-deps[^\n]+node_modules[^\n]+\\\n\s+node frontend\/scripts\/build-shell\.mjs --document/,
+  assert.match(shell.lines[document], /^RUN --mount=type=bind,from=asset-deps,source=\/build\/frontend\/node_modules,target=\/build\/frontend\/node_modules +node frontend\/scripts\/build-shell\.mjs --document$/,
     'the document step renders with the prerender bundle, which loads react from the dependency stage');
+  assert.equal(dockerfile.split('build-shell.mjs').length - 1, 3,
+    'the shell build runs three times: the bundle, the prerender, then the document. A plain run would redo Vite under the commit id');
 
-  const runtime = dockerfile.slice(dockerfile.lastIndexOf('\nFROM node:22-alpine\n'));
-  assert.doesNotMatch(runtime, /^COPY --chown=node:node \. \.$/m,
+  const runtimeText = dockerfile.slice(dockerfile.lastIndexOf('\nFROM node:22-alpine\n'));
+  assert.doesNotMatch(runtimeText, /^COPY --chown=node:node \. \.$/m,
     'the runtime image must not ship tests, docs, or builder sources');
   for (const source of [
     'COPY --chown=node:node server.js dapp.json ./',
@@ -89,11 +144,11 @@ test('Kubernetes platform image builds and contains the generated shell assets',
     'COPY --chown=node:node app-templates ./app-templates',
     'COPY --chown=node:node --from=shell /build/public ./public',
   ]) {
-    assert.ok(runtime.includes(source), `${source} must be present in the runtime stage`);
+    assert.ok(runtimeText.includes(source), `${source} must be present in the runtime stage`);
   }
-  assert.doesNotMatch(runtime, /^COPY .*frontend/m);
-  assert.doesNotMatch(runtime, /^COPY .*tests/m);
-  assert.doesNotMatch(runtime, /^COPY .*docs/m);
+  assert.doesNotMatch(runtimeText, /^COPY .*frontend/m);
+  assert.doesNotMatch(runtimeText, /^COPY .*tests/m);
+  assert.doesNotMatch(runtimeText, /^COPY .*docs/m);
 });
 
 test('Kubernetes platform image ships every directory the server reads beside src/', () => {

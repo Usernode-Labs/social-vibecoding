@@ -13,45 +13,68 @@ COPY frontend/package.json frontend/package-lock.json ./
 # it again. So it goes to a named directory that the same RUN removes.
 RUN npm ci --ignore-scripts --cache /tmp/npm-cache && rm -rf /tmp/npm-cache
 
-# Build every generated browser asset in a lightweight output stage. The
+# Build every generated browser asset in lightweight output stages. The
 # outputs are intentionally excluded from the build context, so every
 # Kubernetes image must create them itself.
 #
-# GIT_SHA is NOT declared yet, on purpose. Neither Vite pass reads the commit
-# id and Tailwind only needs a document to scan, so the two expensive steps
-# below are keyed by their inputs alone and BuildKit can answer them from its
-# layer cache for any commit that left frontend/, public/ and the Tailwind
-# config untouched. Declared above them, as it was, the id made every commit
-# rebuild all three. This run therefore writes a `dev` document, and keeps the
-# prerender bundle so the document can be written again once the id is known.
-FROM node:22-alpine AS shell
+# Three steps make them, and none needs another's output: Vite's browser
+# bundle (pass 1), its prerender bundle (pass 2) and the Tailwind compile,
+# which scans the shell's sources and never the generated document
+# (tailwind.config.js says why; tests/tailwind-build.test.js holds that the
+# document adds nothing). Each runs in a stage of its own, all FROM the one
+# stage below, so BuildKit runs the three at the same time; in one stage they
+# ran one after another. The `shell` stage after them copies the three
+# outputs together and writes the document.
+#
+# GIT_SHA is NOT declared until that last stage, on purpose. Neither Vite pass
+# reads the commit id and Tailwind reads no document at all, so the three
+# expensive steps are keyed by their inputs alone and BuildKit can answer them
+# from its layer cache for any commit that left frontend/, public/ and the
+# Tailwind config untouched. Declared above them, as it once was, the id made
+# every commit rebuild all three.
+#
+# The sources are copied with --link: a linked copy is made on its own layer,
+# without the base image under it, so it runs while node:22-alpine is still
+# being downloaded and unpacked (every build: the daemon's store starts empty)
+# instead of after.
+FROM node:22-alpine AS shell-src
 WORKDIR /build
-COPY frontend ./frontend
-COPY scripts/shell-stamp.js ./scripts/shell-stamp.js
-COPY scripts/language-packs.js ./scripts/language-packs.js
-COPY src/services/countries.json ./src/services/countries.json
-RUN --mount=type=bind,from=asset-deps,source=/build/frontend/node_modules,target=/build/frontend/node_modules,rw \
-    node frontend/scripts/build-shell.mjs --keep-prerender
+COPY --link frontend ./frontend
+COPY --link scripts/shell-stamp.js ./scripts/shell-stamp.js
+COPY --link scripts/language-packs.js ./scripts/language-packs.js
+COPY --link src/services/countries.json ./src/services/countries.json
 
-# Compile Tailwind in the same stage, only after the current shell has been
-# prerendered because public/index.html is one of the compiler's content
-# sources. Generated files are excluded by .dockerignore, so merging public/
-# here cannot replace the shell output produced above. The document it scans
-# differs from the final one only by the commit id in a <meta> and in a
-# /b/<sha>/ path prefix, neither of which is a class
-# (tests/tailwind-build.test.js holds that).
-WORKDIR /build
-COPY tailwind.config.js ./
-COPY styles ./styles
-COPY scripts/build-tailwind.js ./scripts/build-tailwind.js
-COPY public ./public
+FROM shell-src AS shell-bundle
+RUN --mount=type=bind,from=asset-deps,source=/build/frontend/node_modules,target=/build/frontend/node_modules,rw \
+    node frontend/scripts/build-shell.mjs --bundle-only
+
+FROM shell-src AS shell-prerender
+RUN --mount=type=bind,from=asset-deps,source=/build/frontend/node_modules,target=/build/frontend/node_modules,rw \
+    node frontend/scripts/build-shell.mjs --prerender-only
+
+FROM shell-src AS shell-css
+COPY --link tailwind.config.js ./
+COPY --link styles ./styles
+COPY --link scripts/build-tailwind.js ./scripts/build-tailwind.js
+COPY --link public ./public
 RUN --mount=type=bind,from=asset-deps,source=/build/frontend/node_modules,target=/build/frontend/node_modules,rw \
     node scripts/build-tailwind.js
 
+# Bring the three outputs together over the public sources. Generated files
+# are excluded by .dockerignore, so the public/ copy carries none of them, and
+# shell-bundle's public/ holds only what pass 1 and the language packs wrote
+# (shell/assets/ and locales/). The copies are ordered by when their stage
+# usually finishes, Tailwind first and the browser bundle last.
+FROM shell-src AS shell
+COPY --link public ./public
+COPY --link --from=shell-css /build/public/css/tailwind.css ./public/css/tailwind.css
+COPY --link --from=shell-prerender /build/frontend/.ssr ./frontend/.ssr
+COPY --link --from=shell-bundle /build/public ./public
+
 # Everything from here down belongs to one commit. Write the document this
-# build actually serves: the same render, with the id in its <meta> and on
-# every asset URL. The release file and the precompressed copies follow it
-# because both read that id.
+# build actually serves, with the id in its <meta> and on every asset URL. The
+# release file and the precompressed copies follow it because both read that
+# id.
 ARG GIT_SHA=dev
 ENV GIT_SHA=$GIT_SHA
 RUN --mount=type=bind,from=asset-deps,source=/build/frontend/node_modules,target=/build/frontend/node_modules \

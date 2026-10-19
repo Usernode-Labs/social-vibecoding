@@ -20,20 +20,27 @@
 // run `npm run build:css`; tests/tailwind-build.test.js also performs a fresh
 // compile into a temporary directory and validates the result.
 module.exports = {
-  // Every surface that gets its utilities from the compiled stylesheet.
-  // index.html + the shell's JS (which builds markup as template strings)
-  // + the usernode-native kit's demo page, which also loads
-  // /css/tailwind.css now.
+  // Every surface that gets its utilities from the compiled stylesheet: the
+  // shell's SOURCES (its <head>, its React tree, and the legacy JS that builds
+  // markup as template strings) + the usernode-native kit's demo page, which
+  // also loads /css/tailwind.css now.
+  //
+  // Never the generated public/index.html. Everything in it comes from the
+  // files below (frontend/src/head.html and the tree rendered from
+  // frontend/src), so scanning it added nothing, and leaving it out is what
+  // lets Dockerfile.kubernetes compile the stylesheet at the same time as the
+  // Vite passes instead of after them. tests/tailwind-build.test.js compiles
+  // the stylesheet with the document added and requires the same bytes; a
+  // class that only the document carries fails there.
   content: [
-    './public/index.html',
+    './frontend/src/head.html',
     './public/js/**/*.js',
     './public/usernode-native/v1/demo.html',
-    // The React chassis. public/index.html is generated FROM these sources
-    // now, so scanning it alone would still find every class in the shell —
-    // but shadcn primitives under frontend/@/components/ui hold classes in
+    // The React chassis. public/index.html is generated FROM these sources,
+    // and shadcn primitives under frontend/@/components/ui hold classes in
     // `cva` variant tables that only some call sites use, and a step-2
     // component will hold classes that appear in no static markup at all.
-    // Scan the source, not just the artifact.
+    // Scan the source, never the artifact.
     './frontend/src/**/*.{ts,tsx}',
     './frontend/@/**/*.{ts,tsx}',
     // The legacy modules step 2 has MOVED into that tree (features/settings/

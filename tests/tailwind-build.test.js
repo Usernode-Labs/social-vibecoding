@@ -104,47 +104,49 @@ test('Dockerfile compiles Tailwind in a builder and copies only the output into 
   assert.doesNotMatch(runtime, /npm run build:css/, 'the runtime must not compile assets');
 });
 
-test('a commit id in the document adds no rule to the stylesheet', async () => {
-  // Dockerfile.kubernetes compiles this stylesheet against a `dev` document and
-  // only then writes the document the build serves, so that a commit which
-  // left the frontend alone can reuse the compile (the GIT_SHA note in that
-  // file). That is sound only while the two documents give Tailwind the same
-  // classes. They differ in exactly two things, the id in
-  // <meta name="platform-build"> and the /b/<id> prefix on every local script
-  // and stylesheet URL, and the extractor reads those as candidates like any
-  // other text. So: compile the tags that differ, both ways, and expect
-  // nothing from either. Candidates never span a quote or an angle bracket,
-  // which is why the tags alone stand for the whole document.
-  const postcss = require('postcss');
-  const tailwind = require('tailwindcss');
+test('the stylesheet is the same with or without the generated document', () => {
+  // Dockerfile.kubernetes compiles the stylesheet at the same time as the two
+  // Vite passes, in a stage that has no public/index.html, and only then
+  // writes the document the build serves (the GIT_SHA note in that file).
+  // That is sound only while the document gives Tailwind nothing its sources
+  // do not: its <head> is frontend/src/head.html, its body the tree rendered
+  // from frontend/src, both scanned. A class that reaches the document any
+  // other way (written into build-shell.mjs, say) would be missing from every
+  // image while a local build, which still had a document on disk, looked
+  // fine. So: compile again with the document added, as built for the tests
+  // and as scoped under a commit id, and require the same bytes.
   const config = require('../tailwind.config.js');
   const stamp = require('../scripts/shell-stamp');
-  const inputFile = path.join(ROOT, 'styles', 'tailwind-input.css');
-  const input = fs.readFileSync(inputFile, 'utf8');
-  const compile = async (raw) => (await postcss([
-    tailwind({ ...config, content: [{ raw, extension: 'html' }] }),
-  ]).process(input, { from: inputFile })).css;
+  assert.ok(!config.content.some((entry) => typeof entry === 'string' && /public\/index\.html$/.test(entry)),
+    'the generated document is not a content source; its sources are');
+  assert.ok(config.content.includes('./frontend/src/head.html'), "the document's <head> is scanned from its source");
 
-  // The suite's own document may have been built under an id; take that off
-  // first so every variant below starts from the same plain tags.
   const built = stamp.readBuildMeta(indexHtml);
   const plain = built && built !== 'dev' ? indexHtml.split(`/b/${built}`).join('') : indexHtml;
-  const tags = plain.match(/<(?:script|link)\b[^>]*?\s(?:src|href)="\/[^"]*"[^>]*>/g) || [];
-  assert.ok(tags.length >= 30, `only ${tags.length} local script and stylesheet tags found in index.html`);
+  const id = '0205380668653afb4b844ae55546df26b3d27814';
+  const scoped = stamp.prefixShellAssetUrls(plain, id).replace(stamp.formatBuildMeta('dev'), stamp.formatBuildMeta(id));
+  assert.ok(scoped.split(`/b/${id}/`).length - 1 >= 30, 'the scoped copy carries the id on its asset URLs');
+  fs.writeFileSync(path.join(BUILD_DIR, 'document.html'), plain);
+  fs.writeFileSync(path.join(BUILD_DIR, 'document-scoped.html'), scoped);
+  const configFile = path.join(BUILD_DIR, 'with-document.config.js');
+  fs.writeFileSync(configFile, `const base = require(${JSON.stringify(path.join(ROOT, 'tailwind.config.js'))});\n`
+    + `module.exports = { ...base, content: [...base.content, ${JSON.stringify(path.join(BUILD_DIR, 'document.html'))}, `
+    + `${JSON.stringify(path.join(BUILD_DIR, 'document-scoped.html'))}] };\n`);
 
-  // One real class in every variant: an empty scan makes Tailwind warn, and
-  // the second compile shows this comparison can tell a new rule when it sees one.
-  const anchor = '<p class="hidden"></p>';
-  const nothing = await compile(anchor);
-  assert.notEqual(await compile(`${anchor}<p class="flex"></p>`), nothing);
-  assert.equal(await compile(`${anchor}\n${tags.join('\n')}`), nothing, 'a plain asset URL compiled to a rule');
-  // A full id, the short form, and ids that spell words out of hex letters.
-  for (const id of ['0205380668653afb4b844ae55546df26b3d27814', '1234567', 'deadbeef', 'facade0', 'feedface', 'accede0']) {
-    const scoped = stamp.prefixShellAssetUrls(tags.join('\n'), id);
-    assert.equal(scoped.split(`/b/${id}/`).length - 1 >= 30, true, `the tags were not scoped for ${id}`);
-    assert.equal(await compile(`${anchor}\n${stamp.formatBuildMeta(id)}\n${scoped}`), nothing,
-      `the commit id ${id} compiled to a rule: the stylesheet would differ between the document Tailwind `
-      + 'scanned and the one the image serves');
+  const pkgJson = require.resolve('tailwindcss/package.json', { paths: [ROOT, path.join(ROOT, 'frontend')] });
+  const pkg = JSON.parse(fs.readFileSync(pkgJson, 'utf8'));
+  const cli = path.join(path.dirname(pkgJson), typeof pkg.bin === 'string' ? pkg.bin : pkg.bin.tailwindcss);
+  const withDocument = path.join(BUILD_DIR, 'with-document.css');
+  execFileSync(process.execPath, [cli, '--config', configFile, '--input', path.join(ROOT, 'styles', 'tailwind-input.css'),
+    '--output', withDocument, '--minify'], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+  const other = fs.readFileSync(withDocument, 'utf8');
+  if (other !== css) {
+    const rules = (text) => new Set(text.split('}').map((r) => r.trim()).filter(Boolean));
+    const ours = rules(css);
+    const extra = [...rules(other)].filter((r) => !ours.has(r)).slice(0, 5);
+    assert.fail(`the generated document adds ${extra.length ? 'rules' : 'bytes'} the sources do not: `
+      + `${extra.join('} ') || `${other.length} vs ${css.length} bytes`}. Put the class in a scanned source `
+      + '(frontend/src, frontend/src/head.html) rather than only in what build-shell.mjs writes.');
   }
 });
 

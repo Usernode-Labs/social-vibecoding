@@ -204,19 +204,23 @@ test('every file the shell bundle imports from outside frontend/ is copied into 
   };
   walk(path.join(ROOT, 'frontend'));
 
-  for (const [name, source] of [
-    ['Dockerfile', dockerfile],
-    ['Dockerfile.kubernetes', kubernetesDockerfile],
+  // Dockerfile builds the shell in its `shell` stage; Dockerfile.kubernetes
+  // runs both Vite passes in stages FROM `shell-src`, which is where the
+  // sources they read are copied.
+  for (const [name, source, stageName] of [
+    ['Dockerfile', dockerfile, 'shell'],
+    ['Dockerfile.kubernetes', kubernetesDockerfile, 'shell-src'],
   ]) {
-    const shellStart = source.indexOf('FROM node:22-alpine AS shell');
-    const shellEnd = source.indexOf('\nFROM node:22-alpine', shellStart + 1);
-    assert.ok(shellStart > -1 && shellEnd > shellStart, `${name} must keep its shell builder stage`);
+    const shellStart = source.indexOf(`FROM node:22-alpine AS ${stageName}\n`);
+    const shellEnd = source.indexOf('\nFROM ', shellStart + 1);
+    assert.ok(shellStart > -1 && shellEnd > shellStart, `${name} must keep its ${stageName} builder stage`);
     const shellStage = source.slice(shellStart, shellEnd);
 
     for (const e of escapes) {
-      // The path as the stage would have to name it, with either COPY spelling.
+      // The path as the stage would have to name it, with either COPY spelling,
+      // linked or not.
       const copied = new RegExp(
-        `COPY\\s+${e.resolved.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s`,
+        `COPY\\s+(?:--link\\s+)?${e.resolved.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s`,
       ).test(shellStage);
       assert.ok(copied,
         `${e.file} imports '${e.spec}', which resolves to ${e.resolved} — outside ${name}'s `

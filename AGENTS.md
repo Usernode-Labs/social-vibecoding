@@ -388,30 +388,38 @@ is no replay plan to write and nothing to verify locally.
   `frontend/`); `npm test`, `npm start`, and `npm run dev` ensure the ignored
   outputs they need automatically. `tests/shell-build.test.js` pins that
   lifecycle instead of comparing a committed fixture.
-- `npm run ensure:shell` generates the shell and then its CSS in the required
-  order. If invoking the low-level commands directly, **run `build:shell`
-  FIRST, then `build:css`.**
-  `public/index.html` is a Tailwind content source *and* a shell-build output,
-  so compiling the stylesheet first scans the previous document. The Docker
-  image build enforces the same ordering: its shell builder prerenders the
-  current `index.html`, then the CSS builder scans that generated document.
-  There is no loop — `tailwind.css` is not a shell input.
-- **In `Dockerfile.kubernetes` the commit id comes after the bundle and the
-  stylesheet, and nothing above it may read it.** A build arg above a `RUN`
-  is part of that step's cache key. With `GIT_SHA` above the Vite step, every
-  commit rebuilt the bundle and the stylesheet whatever it had changed (167
-  of 167 preview builds in the logs that prompted the move). So the shell
-  stage runs `build-shell.mjs --keep-prerender` and the Tailwind compile
-  first, declares `ARG GIT_SHA`, and only then runs
-  `build-shell.mjs --document`, the release file and the precompressed
-  copies. `--document` runs no Vite: it renders again with the prerender
-  bundle the first run kept and rewrites `public/index.html` alone. The id
-  may reach the document and nothing else. Read it in either Vite pass, or
-  move a step that needs it above the `ARG`, and the reuse is gone with no
-  test of the output failing. Tailwind therefore scans a `dev` document;
-  `tests/tailwind-build.test.js` holds that an id adds no class, and
-  `tests/kubernetes-deployment-contract.test.js` pins the order. Run with no
-  flag, as every local flow does, the script still does everything in one go.
+- `npm run ensure:shell` generates the shell, its CSS and then the release
+  file. **The stylesheet scans the shell's sources, never the generated
+  `public/index.html`** (`frontend/src/head.html` and the tree under
+  `frontend/src` are what the document is made from), so `build:shell` and
+  `build:css` may run in either order or at once. Only
+  `build-shell-release.js` must come after both, because it hashes both.
+  `tests/tailwind-build.test.js` compiles the stylesheet again with the
+  document added, as built and as scoped under a commit id, and requires the
+  same bytes; a class that reaches the document without being in a scanned
+  source fails there. Put it in the source; do not add the document back to
+  `content`.
+- **In `Dockerfile.kubernetes` the three expensive steps run in parallel
+  stages, the commit id comes after them, and nothing above it may read it.**
+  Vite's browser bundle (`build-shell.mjs --bundle-only`, stage
+  `shell-bundle`), its prerender bundle (`--prerender-only`,
+  `shell-prerender`) and the Tailwind compile (`shell-css`) are each FROM the
+  shared `shell-src` stage and take nothing from one another, so BuildKit
+  runs the three at once (in one stage they ran one after another, about 6 s
+  longer on a preview build). The `shell` stage copies the three outputs in,
+  then declares `ARG GIT_SHA`, and only then runs `build-shell.mjs
+  --document`, the release file and the precompressed copies. `--document`
+  runs no Vite: it renders with the kept prerender bundle and rewrites
+  `public/index.html` alone. A build arg above a `RUN` is part of that step's
+  cache key: with `GIT_SHA` above the Vite step, every commit rebuilt the
+  bundle and the stylesheet whatever it had changed (167 of 167 preview
+  builds in the logs that prompted the move). The id may reach the document
+  and nothing else. Read it in either Vite pass, move a step that needs it
+  above the `ARG`, or make one of the three stages wait on another, and the
+  reuse or the parallelism is gone with no test of the output failing;
+  `tests/kubernetes-deployment-contract.test.js` pins the stages and the
+  order. Run with no flag, as every local flow does, the script still does
+  everything in one go.
 - **`Shell.tsx` is now hand-maintained; resolve conflicts in it directly.** The
   one-time generators that derived it from the hand-written document
   (`html-to-jsx.cjs`, `apply-step1-edits.cjs`) and the pre-migration fixture
@@ -682,8 +690,9 @@ Two behaviours are easy to lose to React's defaults and are worth naming:
   after the shell and CSS builds and writes ignored `public/shell/release.json`
   and `public/shell/worker.js`. The fixed `/sw.js` URL serves this generated
   worker. Its asset hashes change automatically with the built interface,
-  including lazy chunks; do not bump `SW_VERSION` for UI changes. Keep all
-  image paths and `ensure:shell` in the same shell → CSS → release order.
+  including lazy chunks; do not bump `SW_VERSION` for UI changes. In every
+  image path and in `ensure:shell` the release comes after both the shell
+  and the CSS (those two may run in either order or at once).
   Hosted images must carry their exact `GIT_SHA` through build and runtime.
   Test updates with an existing cache as well as a fresh browser. The stable
   API cache and assets used by open tabs must survive a shell upgrade.
@@ -697,9 +706,10 @@ Two behaviours are easy to lose to React's defaults and are worth naming:
   context. **Never add or commit it.** For local browser work, run
   `npm run build:css` (or `npm run watch:css`); the ignored output is only a
   convenience for that checkout.
-- The compiler scans `public/index.html`, `public/js/**`, the usernode-native
-  demo, and `frontend/**`. The frontend tree is scanned because shadcn variant
-  tables hold classes that appear in no static markup.
+- The compiler scans the shell's sources: `frontend/src/head.html`,
+  `public/js/**`, the usernode-native demo, and `frontend/**`, never the
+  generated `public/index.html`. The frontend tree is scanned because shadcn
+  variant tables hold classes that appear in no static markup.
 - Tailwind stays pinned at **v3.4.17**. v4 changes utility semantics (default
   border colour, ring width, opacity utilities, the `space-*` selector) and
   would silently restyle the whole shell — it is a deliberate later decision

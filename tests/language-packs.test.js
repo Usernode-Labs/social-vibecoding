@@ -302,7 +302,7 @@ test('the build, the images and the server all know where the catalogs and packs
   }
   for (const dockerfile of ['Dockerfile', 'Dockerfile.kubernetes']) {
     const text = read(dockerfile);
-    const copy = text.indexOf('COPY scripts/language-packs.js ./scripts/language-packs.js');
+    const copy = text.search(/^COPY (?:--link )?scripts\/language-packs\.js \.\/scripts\/language-packs\.js$/m);
     assert.ok(copy > -1 && copy < text.indexOf('node frontend/scripts/build-shell.mjs'),
       `${dockerfile} gives the shell stage the builder before it runs`);
   }

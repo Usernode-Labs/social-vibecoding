@@ -29,10 +29,12 @@
 //   (no flag)          both passes, the document for this GIT_SHA and the
 //                      stamped bundle. `npm run build:shell` and the local
 //                      runtime preflight run this.
-//   --keep-prerender   the same, but leaves the pass-2 bundle (frontend/.ssr)
-//                      in place for a later --document run.
-//   --document         no Vite at all: renders again with the kept pass-2
-//                      bundle and rewrites public/index.html only.
+//   --bundle-only      pass 1 alone: the stamped bundle, and no document.
+//   --prerender-only   pass 2 alone: the prerender bundle (frontend/.ssr),
+//                      kept for a later --document run, and no document.
+//   --document         no Vite at all: renders with the kept pass-2 bundle,
+//                      checks the pass-1 bundle's stamp, and writes
+//                      public/index.html only.
 //   --no-bundle        pass 2 and the document, without pass 1. The bundle on
 //                      disk, if any, is left as it is, stale stamp included.
 //
@@ -41,13 +43,16 @@
 // that serves the shell may use it. The local runtime preflight checks the
 // bundle's own stamp, so it still rebuilds one this mode left behind.
 //
-// The middle two exist for Dockerfile.kubernetes. A commit id reaches this
-// script in exactly one place, the document (its <meta name="platform-build">
-// and the /b/<sha>/ prefix on every asset URL); neither Vite pass reads it. So
-// that image runs `--keep-prerender` and Tailwind BEFORE it declares GIT_SHA,
-// and `--document` after. BuildKit can then answer the two Vite passes and the
-// Tailwind compile from its layer cache for any commit that left their inputs
-// alone, where a GIT_SHA above them made every commit rebuild all three.
+// --bundle-only, --prerender-only and --document exist for
+// Dockerfile.kubernetes. A commit id reaches this script in exactly one place,
+// the document (its <meta name="platform-build"> and the /b/<sha>/ prefix on
+// every asset URL); neither Vite pass reads it. So that image runs the two
+// passes BEFORE it declares GIT_SHA, each in a stage of its own so that
+// BuildKit runs them at the same time as each other and as the Tailwind
+// compile, and runs `--document` after, once both outputs are copied into one
+// stage. BuildKit can then answer either pass from its layer cache for any
+// commit that left its inputs alone, where a GIT_SHA above them made every
+// commit rebuild both.
 
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -84,23 +89,27 @@ function resolveViteCli() {
   return path.join(path.dirname(pkgJson), binRel);
 }
 
-const FLAGS = ['--keep-prerender', '--document', '--no-bundle'];
-const unknownArgs = process.argv.slice(2).filter((arg) => !FLAGS.includes(arg));
+const MODES = ['--bundle-only', '--prerender-only', '--document', '--no-bundle'];
+const unknownArgs = process.argv.slice(2).filter((arg) => !MODES.includes(arg));
 // A misspelt --document would otherwise run both Vite passes again and pass.
-if (unknownArgs.length) fail(`unknown argument ${unknownArgs.join(' ')}; this script takes ${FLAGS.join(', ')}`);
-const keepPrerender = process.argv.includes('--keep-prerender');
-const documentOnly = process.argv.includes('--document');
-const noBundle = process.argv.includes('--no-bundle');
-// --document renders with a bundle it has checked; --no-bundle promises none.
-if (documentOnly && noBundle) fail('--document and --no-bundle cannot be combined');
+if (unknownArgs.length) fail(`unknown argument ${unknownArgs.join(' ')}; this script takes one of ${MODES.join(', ')}`);
+const modes = MODES.filter((mode) => process.argv.includes(mode));
+// Each mode leaves out part of the build, so two of them together would leave
+// out more than either says (--document renders with a bundle it has checked;
+// --no-bundle promises none).
+if (modes.length > 1) fail(`${modes.join(' and ')} cannot be combined`);
+const bundleOnly = modes[0] === '--bundle-only';
+const prerenderOnly = modes[0] === '--prerender-only';
+const documentOnly = modes[0] === '--document';
+const noBundle = modes[0] === '--no-bundle';
 
 // The bundled English catalog (src/lib/i18n/catalogs.generated.json) and the
 // hashed language packs are inputs of the bundle below. Only a mistake in the
 // English source can fail this; a translation never does. See
 // frontend/locales/README.md. A --document run builds no bundle: the
-// --keep-prerender run before it built the packs from these same sources, in
-// the same image stage, and the stamp check below refuses a bundle that did
-// not see them. A --no-bundle run still builds them: the prerender imports
+// --bundle-only run before it built the packs from these same sources, and
+// the stamp check below refuses a bundle that did not see them. A
+// --prerender-only run builds them as well: the prerender imports the catalog. A --no-bundle run still builds them: the prerender imports
 // the catalog, and so do the tests that load the language runtime.
 if (!documentOnly) require(path.join(ROOT, 'scripts/language-packs.js')).buildLanguagePacks(ROOT);
 
@@ -125,25 +134,8 @@ function buildPrerender() {
 
 const { stamp, files } = expectedStamp();
 
-if (documentOnly) {
-  // The bundle and the pass-2 module this run renders with were built by an
-  // earlier --keep-prerender run. The stamp says whether that run saw these
-  // sources; without it a stale bundle would be shipped under a fresh document.
-  console.log('[build-shell] document only: rendering with the kept prerender bundle');
-  const builtStamp = fs.existsSync(jsPath) ? readJsStamp(fs.readFileSync(jsPath, 'utf8')) : null;
-  if (builtStamp !== stamp) {
-    fail(`--document needs ${JS_OUTPUT} built from these sources `
-      + `(${builtStamp ? 'it carries another stamp' : 'it is missing or unstamped'}). `
-      + 'Run this script with --keep-prerender first.');
-  }
-  if (!fs.existsSync(ssrEntry)) {
-    fail(`--document needs ${path.relative(ROOT, ssrEntry)}. Run this script with --keep-prerender first.`);
-  }
-} else if (noBundle) {
-  console.log('[build-shell] no bundle: pass 2 and the document only');
-  buildPrerender();
-} else {
-  // ── Pass 1: the browser bundle ───────────────────────────────────────
+// ── Pass 1: the browser bundle ─────────────────────────────────────────
+function buildBundle() {
   console.log('[build-shell] pass 1/2 — client bundle');
   runVite(['build']);
 
@@ -165,6 +157,52 @@ if (documentOnly) {
       + 'note in frontend/src/head.html.',
     );
   }
+}
+
+// Stamp the JS too so a running image can identify the exact source set that
+// produced it, and so a --document run can tell the bundle was built from the
+// sources it renders.
+function stampBundle() {
+  const js = fs.readFileSync(jsPath, 'utf8').replace(/^﻿/, '');
+  fs.writeFileSync(jsPath, `${formatJsStamp(stamp)}\n${js}`);
+  return js.length;
+}
+
+if (bundleOnly) {
+  buildBundle();
+  const bytes = stampBundle();
+  console.log(`[build-shell] wrote ${JS_OUTPUT} (${bytes} bytes) and no document (--bundle-only)`);
+  console.log(`[build-shell] stamped ${stamp.slice(0, 16)}… over ${files.length} input files`);
+  process.exit(0);
+}
+
+if (prerenderOnly) {
+  console.log('[build-shell] pass 2/2 — SSG prerender (--prerender-only)');
+  buildPrerender();
+  console.log(`[build-shell] kept ${path.relative(ROOT, ssrEntry)} for --document and wrote no document (--prerender-only)`);
+  process.exit(0);
+}
+
+if (documentOnly) {
+  // The bundle and the pass-2 module this run renders with were built by
+  // earlier --bundle-only and --prerender-only runs. The stamp says whether
+  // the bundle saw these sources; without it a stale bundle would be shipped
+  // under a fresh document.
+  console.log('[build-shell] document only: rendering with the kept prerender bundle');
+  const builtStamp = fs.existsSync(jsPath) ? readJsStamp(fs.readFileSync(jsPath, 'utf8')) : null;
+  if (builtStamp !== stamp) {
+    fail(`--document needs ${JS_OUTPUT} built from these sources `
+      + `(${builtStamp ? 'it carries another stamp' : 'it is missing or unstamped'}). `
+      + 'Run this script with --bundle-only first.');
+  }
+  if (!fs.existsSync(ssrEntry)) {
+    fail(`--document needs ${path.relative(ROOT, ssrEntry)}. Run this script with --prerender-only first.`);
+  }
+} else if (noBundle) {
+  console.log('[build-shell] no bundle: pass 2 and the document only');
+  buildPrerender();
+} else {
+  buildBundle();
 
   // ── Pass 2: prerender the shell tree ─────────────────────────────────
   console.log('[build-shell] pass 2/2 — SSG prerender');
@@ -288,14 +326,11 @@ if (documentOnly) {
 } else if (noBundle) {
   console.log(`[build-shell] wrote ${HTML_OUTPUT} (${html.length} bytes); ${JS_OUTPUT} was not built`);
 } else {
-  // Stamp the JS too so a running image can identify the exact source set that
-  // produced it. The image copies HTML and JS from this same builder invocation.
-  const js = fs.readFileSync(jsPath, 'utf8').replace(/^﻿/, '');
-  fs.writeFileSync(jsPath, `${formatJsStamp(stamp)}\n${js}`);
-  console.log(`[build-shell] wrote ${HTML_OUTPUT} (${html.length} bytes) and ${JS_OUTPUT} (${js.length} bytes)`);
+  const bytes = stampBundle();
+  console.log(`[build-shell] wrote ${HTML_OUTPUT} (${html.length} bytes) and ${JS_OUTPUT} (${bytes} bytes)`);
 }
 
-if (!keepPrerender) fs.rmSync(ssrDir, { recursive: true, force: true });
+fs.rmSync(ssrDir, { recursive: true, force: true });
 
 console.log(`[build-shell] stamped ${stamp.slice(0, 16)}… over ${files.length} input files`);
 console.log(`[build-shell] platform build id: ${buildSha}${buildSha === 'dev' ? ' (plain asset paths)' : ' (assets scoped under /b/<sha>/)'}`);

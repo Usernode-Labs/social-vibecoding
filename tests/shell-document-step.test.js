@@ -1,22 +1,22 @@
 'use strict';
 
-// frontend/scripts/build-shell.mjs --keep-prerender and --document.
+// frontend/scripts/build-shell.mjs --bundle-only, --prerender-only and
+// --document.
 //
-// Dockerfile.kubernetes builds the shell in two runs. The first has no commit
-// id: both Vite passes, a `dev` document for Tailwind to scan, and the
-// prerender bundle left in place. The second runs after GIT_SHA is declared
-// and writes only the document. The split is what lets BuildKit reuse the
-// Vite and Tailwind steps for a commit that left their inputs alone
-// (tests/kubernetes-deployment-contract.test.js pins the order).
+// Dockerfile.kubernetes builds the shell in three runs. Two have no commit id
+// and run at the same time, each in a stage of its own: the browser bundle
+// (pass 1) and the prerender bundle (pass 2), which is kept. The third runs
+// after GIT_SHA is declared, in the stage that copies both in, and writes only
+// the document. The split is what lets BuildKit run the two passes and
+// Tailwind at once, and reuse them for a commit that left their inputs alone
+// (tests/kubernetes-deployment-contract.test.js pins the stages).
 //
-// The second run is what these tests exercise, on a small copy of the tree:
-// the real script and the real stamp logic, a stand-in prerender bundle that
-// reads GIT_SHA the way frontend/src/lib/asset-url.ts does, and no Vite. The
-// first run needs the frontend workspace and is what every image build and
-// `npm run ensure:shell` already run for real.
-//
-// --no-bundle, the test preflight's mode, is exercised the same way at the
-// end of this file, with a stand-in for the Vite CLI that records each pass.
+// The document run is what most of these tests exercise, on a small copy of
+// the tree: the real script and the real stamp logic, a stand-in prerender
+// bundle that reads GIT_SHA the way frontend/src/lib/asset-url.ts does, and no
+// Vite. The runs that build, and --no-bundle (the test preflight's mode), are
+// exercised further down with a stand-in for the Vite CLI that records each
+// pass.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -102,30 +102,13 @@ test('--document writes the document for the commit id and leaves the bundle alo
   assert.equal(fs.existsSync(path.join(f.root, 'public/locales')), false, 'the language packs are not built again');
 });
 
-test('the dev document and the commit document differ by the id and nothing else', (t) => {
-  const f = fixture(t);
-  assert.equal(f.run(['--document', '--keep-prerender'], undefined).status, 0);
-  const dev = f.html();
-  assert.equal(f.stamp.readBuildMeta(dev), 'dev');
-  assert.ok(!dev.includes('/b/'), 'a dev document keeps the plain paths');
-  assert.notEqual(f.read('frontend/.ssr/prerender.js'), null, '--keep-prerender leaves the bundle for the next run');
-
-  assert.equal(f.run(['--document'], SHA).status, 0);
-  const built = f.html();
-  assert.equal(
-    built.split(`/b/${SHA}`).join('').replace(f.stamp.formatBuildMeta(SHA), f.stamp.formatBuildMeta('dev')),
-    dev,
-    'take the id out of the commit document and it is the document Tailwind was given',
-  );
-});
-
 test('--document refuses a bundle that was not built from these sources', (t) => {
   const f = fixture(t);
   f.put('frontend/src/main.tsx', 'export const changed = true;\n');
   const res = f.run(['--document'], SHA);
   assert.equal(res.status, 1);
   assert.match(res.stderr, /--document needs public\/shell\/assets\/shell\.js built from these sources \(it carries another stamp\)/);
-  assert.match(res.stderr, /--keep-prerender first/);
+  assert.match(res.stderr, /--bundle-only first/);
   assert.equal(f.html(), null, 'no document is written over a stale bundle');
 });
 
@@ -140,7 +123,7 @@ test('--document refuses to run without the bundle or without the kept prerender
   fs.rmSync(path.join(dropped.root, 'frontend/.ssr'), { recursive: true });
   const second = dropped.run(['--document'], SHA);
   assert.equal(second.status, 1);
-  assert.match(second.stderr, /--document needs frontend\/\.ssr\/prerender\.js/);
+  assert.match(second.stderr, /--document needs frontend\/\.ssr\/prerender\.js\. Run this script with --prerender-only first/);
   assert.equal(dropped.html(), null);
 });
 
@@ -158,14 +141,17 @@ test('an unknown argument stops the script before it builds anything', (t) => {
 test('the script still runs both passes when no flag asks otherwise', () => {
   const script = fs.readFileSync(path.join(ROOT, 'frontend/scripts/build-shell.mjs'), 'utf8');
   // `npm run build:shell` and the runtime preflight call it bare.
-  assert.match(script, /const documentOnly = process\.argv\.includes\('--document'\);/);
-  assert.match(script, /const noBundle = process\.argv\.includes\('--no-bundle'\);/);
-  assert.match(script, /if \(documentOnly\) \{[\s\S]+?\} else if \(noBundle\) \{[\s\S]+?\} else \{[\s\S]+?runVite\(\['build'\]\);[\s\S]+?buildPrerender\(\);\n\}/,
+  assert.match(script, /const MODES = \['--bundle-only', '--prerender-only', '--document', '--no-bundle'\];/);
+  assert.match(script, /const documentOnly = modes\[0\] === '--document';/);
+  assert.match(script, /const noBundle = modes\[0\] === '--no-bundle';/);
+  assert.match(script, /if \(documentOnly\) \{[\s\S]+?\} else if \(noBundle\) \{[\s\S]+?\} else \{\n  buildBundle\(\);[\s\S]+?buildPrerender\(\);\n\}/,
     'pass 1 is skipped only for --document and --no-bundle, pass 2 only for --document');
+  assert.match(script, /if \(bundleOnly\) \{[\s\S]+?process\.exit\(0\);\n\}\n\nif \(prerenderOnly\) \{[\s\S]+?process\.exit\(0\);\n\}\n\nif \(documentOnly\) \{/,
+    'the two single-pass modes stop before the document; every other run reaches it');
   assert.match(script, /if \(!documentOnly\) require\(path\.join\(ROOT, 'scripts\/language-packs\.js'\)\)\.buildLanguagePacks\(ROOT\);/,
-    'the language packs, an input of the bundle, are built by every run that builds it');
-  assert.match(script, /if \(!keepPrerender\) fs\.rmSync\(ssrDir, \{ recursive: true, force: true \}\);/,
-    'and the prerender bundle is still removed unless a later run was asked to reuse it');
+    'the language packs, an input of both bundles, are built by every run that builds one');
+  assert.match(script, /\nfs\.rmSync\(ssrDir, \{ recursive: true, force: true \}\);\n/,
+    'and every run that writes the document removes the prerender bundle after it');
   const ensure = fs.readFileSync(path.join(ROOT, 'scripts/ensure-shell-artifacts.js'), 'utf8');
   assert.match(ensure, /runNode\('frontend\/scripts\/build-shell\.mjs', htmlOnly \? \['--no-bundle'\] : \[\]\);/,
     'the runtime preflight runs the whole build; only the test preflight leaves the bundle out');
@@ -251,6 +237,57 @@ test('--no-bundle and --document cannot be combined', (t) => {
   const res = f.run(['--document', '--no-bundle'], SHA);
   assert.equal(res.status, 1);
   assert.match(res.stderr, /--document and --no-bundle cannot be combined/);
+  assert.deepEqual(f.passes(), []);
+  assert.equal(f.html(), null);
+});
+
+test('--bundle-only runs pass 1 alone and stamps the bundle, with no document', (t) => {
+  const f = buildable(t);
+  const res = f.run(['--bundle-only'], SHA);
+  assert.equal(res.status, 0, res.stderr);
+  assert.deepEqual(f.passes(), ['bundle'], 'pass 2 did not run');
+  assert.equal(f.stamp.readJsStamp(f.js()), f.current(), 'the bundle is stamped for these sources');
+  assert.match(f.js(), /rebuilt/);
+  assert.equal(f.html(), null, 'no document: this run has no say in it');
+  assert.equal(f.read('frontend/.ssr/prerender.js'), null);
+  assert.notEqual(f.read('frontend/src/lib/i18n/catalogs.generated.json'), null, 'the language packs the bundle imports are built');
+});
+
+test('--prerender-only runs pass 2 alone and keeps its bundle, with no document', (t) => {
+  const f = buildable(t);
+  const res = f.run(['--prerender-only'], SHA);
+  assert.equal(res.status, 0, res.stderr);
+  assert.deepEqual(f.passes(), ['prerender'], 'pass 1 did not run');
+  assert.notEqual(f.read('frontend/.ssr/prerender.js'), null, 'the prerender bundle is kept for --document');
+  assert.equal(f.html(), null);
+  assert.equal(f.js(), f.bundle, 'the browser bundle is left as it was');
+  assert.notEqual(f.read('frontend/src/lib/i18n/catalogs.generated.json'), null, 'the language packs the prerender imports are built');
+});
+
+test('the image order: both passes on their own, then --document under the commit id', (t) => {
+  // In the image the two passes run in separate stages over the same sources
+  // and their outputs are copied into one; on one tree the order of the two
+  // runs does not matter, so run them the other way round from the image.
+  const f = buildable(t);
+  assert.equal(f.run(['--prerender-only'], undefined).status, 0);
+  assert.equal(f.run(['--bundle-only'], undefined).status, 0);
+  const bundle = f.js();
+  const res = f.run(['--document'], SHA);
+  assert.equal(res.status, 0, res.stderr);
+  assert.deepEqual(f.passes(), ['prerender', 'bundle'], 'the document run started no Vite pass');
+  assert.equal(f.stamp.readBuildMeta(f.html()), SHA);
+  assert.equal(f.stamp.readHtmlStamp(f.html()), f.current());
+  assert.equal(f.js(), bundle, 'the bundle is the one --bundle-only stamped');
+  assert.equal(f.read('frontend/.ssr/prerender.js'), null, 'the prerender bundle is removed once the document is final');
+});
+
+test('two modes cannot be combined', (t) => {
+  const f = buildable(t);
+  for (const pair of [['--bundle-only', '--prerender-only'], ['--bundle-only', '--document'], ['--prerender-only', '--no-bundle']]) {
+    const res = f.run(pair, SHA);
+    assert.equal(res.status, 1, pair.join(' '));
+    assert.match(res.stderr, new RegExp(`${pair[0]} and ${pair[1]} cannot be combined`));
+  }
   assert.deepEqual(f.passes(), []);
   assert.equal(f.html(), null);
 });
