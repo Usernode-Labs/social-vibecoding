@@ -393,11 +393,18 @@ async function listOpenRouterModels({ pool, credentialRevision, apiKey, config, 
     };
   }
   const built = await sharedCatalog({ pool, config, forceRefresh });
+  // The platform default an admin picked (services/default-model.js) is
+  // read here, not baked into the held catalog, so a change applies without
+  // rebuilding it. One the catalog does not list leaves the built choice.
+  const preferred = await require('./default-model').effective(pool, config);
+  const recommendedModelId = preferred && built.models.some((m) => m.id === preferred)
+    ? preferred
+    : built.recommendedModelId;
   return {
     backend: 'codex_openrouter',
     credentialRevision,
     refreshedAt: built.refreshedAt,
-    recommendedModelId: built.recommendedModelId,
+    recommendedModelId,
     models: built.models,
   };
 }

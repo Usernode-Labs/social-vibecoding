@@ -234,7 +234,11 @@ test('default-open managed provisioning stores the key internally and returns on
   assert.equal(stored.apiKey, 'sk-or-v1-issued-once');
   assert.equal(stored.metadata.source, 'usernode_managed');
   assert.equal(stored.metadata.managedKeyId, 17);
-  assert.equal(defaultModel, 'z-ai/glm-5.3-flash');
+  // The preference stores no model: the account follows the platform
+  // default (services/default-model.js) until its person picks one. The
+  // first session still runs on the model chosen now.
+  assert.equal(defaultModel, null, 'provisioning stores "follow the platform default", not the default of the day');
+  assert.equal(result.defaultModel, 'z-ai/glm-5.3-flash');
   assert.equal(result.apiKey, undefined, 'the provisioning result must not expose the credential');
   assert.equal(result.last4, undefined, 'the claim response does not need credential-shaped data');
   assert.equal(JSON.stringify(result).includes('sk-or-v1-issued-once'), false);
@@ -812,7 +816,10 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
     (item) => item.key === 'OPENROUTER_DEFAULT_CODEX_MODEL',
   );
   assert.equal(modelDeclaration.default, 'deepseek/deepseek-v4.1-flash-1017');
-  assert.match(modelDeclaration.description, /deploy workflow's own fallback is still z-ai\/glm-5\.3-flash, so set this variable/);
+  // The admin setting (services/default-model.js) wins, and the Kubernetes
+  // deploy does not apply the panel's value: the description says both.
+  assert.match(modelDeclaration.description, /Admin → Homeroom bot → Settings → Models, which wins over this variable/);
+  assert.match(modelDeclaration.description, /Kubernetes deploy does not apply this panel's value/);
   const recommendedDeclaration = manifest.platform_env.find(
     (item) => item.key === 'OPENROUTER_RECOMMENDED_MODELS',
   );
@@ -888,6 +895,19 @@ test('configured GLM 5.3 Flash is preferred without filtering the remaining mode
   assert.deepEqual(catalog.models.map((model) => model.id), [
     'vendor/cheap', 'z-ai/glm-5.3-flash', 'vendor/other',
   ]);
+
+  // The admin's platform default wins over the deploy's, read at each call
+  // rather than baked into the held catalog; one the catalog does not list
+  // leaves the deploy's.
+  const withSetting = (value) => ({
+    query: async (sql) => (/FROM platform_settings/.test(String(sql)) ? { rows: [{ value }] } : { rows: [] }),
+  });
+  const ask = (pool) => agentModels.listOpenRouterModels({
+    pool, userId: 'managed-default-test', credentialRevision: 1, apiKey: 'sk-or-v1-test',
+    config: { openrouterDefaultCodexModel: 'z-ai/glm-5.3-flash' },
+  });
+  assert.equal((await ask(withSetting('vendor/other'))).recommendedModelId, 'vendor/other');
+  assert.equal((await ask(withSetting('vendor/not-listed'))).recommendedModelId, 'z-ai/glm-5.3-flash');
 });
 
 // QA 2026-09-24: "Start work" toasted "Ask an administrator to check

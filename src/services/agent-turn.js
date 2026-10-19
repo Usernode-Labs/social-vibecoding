@@ -213,7 +213,7 @@ async function resolveCodexRuntimeContext({
     }
   }
 
-  const resolvedModel = session.agent_model || config.openrouterDefaultCodexModel || null;
+  const resolvedModel = session.agent_model || await require('./default-model').effective(pool, config);
   if (!resolvedModel) {
     return { error: 'model_required' };
   }

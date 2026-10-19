@@ -1633,9 +1633,11 @@ async function resolveDefaultAgentPreference(client, userId, config) {
   }
 
   let modelId = pref?.model_id
-    || (config && config.openrouterDefaultCodexModel)
-    || null;
+    || await require('../services/default-model').effective(client, config);
 
+  // A preference with no model follows the platform default
+  // (services/default-model.js; provisioning stores it that way), which an
+  // admin's save has already checked against the catalog.
   // Accounts with a usable key but no preference predate the
   // OpenRouter-default migration. Resolve their first new session against
   // the live key-visible catalog so a configured future model can fall back
