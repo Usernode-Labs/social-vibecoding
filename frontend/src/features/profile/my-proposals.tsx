@@ -38,6 +38,7 @@ import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-lis
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { createStore } from '../../lib/plain-store.js';
 import { useMessages } from '../../lib/i18n/react';
+import { FRESH, watch } from '../../lib/live-reads';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { proposalsView, requestsView, votesView } from './profile-store.js';
@@ -259,16 +260,55 @@ export function ProfileProposalsScreen(): ReactNode {
  * vote can hold its POST for seconds). If the votes view is up, read again;
  * if not, drop the cached list so the next open loads, and never paints the
  * list from before the vote.
+ *
+ * `reload` asks for a fresh answer and the open view is registered with
+ * live-reads (#5457): on a slow connection the service worker used to answer
+ * the read from its saved copy (public/sw.js, API_TIMEOUT_MS), taken before
+ * the vote, and the `api-updated` correction it posts later never reached
+ * this screen — it is on no list in app.js refreshActiveScreen and registers
+ * no watcher — so the vote stayed missing until a refresh. FRESH
+ * (`cache: 'no-cache'`) makes the worker wait for the network instead, and
+ * the watcher re-reads the view that is up when a correction, a socket
+ * reconnect or the tab coming back arrives, then stops at close().
  */
 let readSeq = 0;
+
+/**
+ * The view that is up reads one URL; a correction to it re-reads that view,
+ * and a correction to another view's URL (or to another screen's) wakes
+ * nothing. The read is a root-relative path, so any absolute base parses it.
+ */
+function ownsRead(url: URL): boolean {
+  const kind = (profileProposalsStore.get() as WorkState).kind;
+  try {
+    const read = new URL(READS[kind], 'http://localhost');
+    if (url.pathname !== read.pathname) return false;
+    for (const [name, value] of read.searchParams) {
+      if (url.searchParams.get(name) !== value) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The live-reads registration, for as long as any view is up (#5457). */
+let unwatch: (() => void) | null = null;
 
 export const profileProposalsController = {
   open(kind?: unknown) {
     profileProposalsStore.set({ open: true, kind: workKind(kind), error: false });
+    // Registered once for as long as any view is up (repeated open() —
+    // switching views, re-navigation — must not stack watchers); close()
+    // stops it. The re-read reads whichever view is up then (reload() takes
+    // the kind from the store), and ownsRead keeps a correction to another
+    // view's URL from waking it.
+    if (!unwatch) unwatch = watch(() => profileProposalsController.reload(), { reads: ownsRead });
     return profileProposalsController.reload();
   },
   close() {
     profileProposalsStore.set({ open: false });
+    if (unwatch) { const stop = unwatch; unwatch = null; stop(); }
   },
   isOpen(kind?: unknown) {
     const state = profileProposalsStore.get() as WorkState;
@@ -294,7 +334,9 @@ export const profileProposalsController = {
     profileProposalsStore.set({ error: false });
     let data: unknown = null;
     try {
-      const res = await fetch(demoQuery(READS[kind]), { credentials: 'same-origin' });
+      // FRESH: the service worker waits for the network instead of answering
+      // from the saved copy that predates the vote (#5457).
+      const res = await fetch(demoQuery(READS[kind]), { ...FRESH, credentials: 'same-origin' });
       if (res.ok) data = await res.json();
     } catch {
       data = null;
