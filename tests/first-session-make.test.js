@@ -175,6 +175,9 @@ test('the story: label, headline, "For example" and the three examples, then one
   assert.doesNotMatch(html, /Already have an account|Get started|data-landing-story-waves|in waves/);
   // In a phone browser too, the story fills the screen and its foot is at the foot.
   const css = read('public/css/app.css');
+  // Polish N10: one level-1 heading. The covered platform header leaves the
+  // accessibility tree while the landing shows (its own bar is not an h1).
+  assert.match(css, /body:has\(#auth-landing-screen:not\(\.hidden\)\) #platform-header \{\s*visibility: hidden;\s*\}/);
   assert.match(css, /html\[data-browser-scroller="auth-landing-scroll"\] #auth-landing-scroll:has\(> \* > \[data-landing-story\]\) \{\s+flex: 1 0 auto;\s+display: flex;\s+flex-direction: column;\s+\}/);
   assert.match(css, /html\[data-browser-scroller="auth-landing-scroll"\] #auth-landing-scroll > :has\(> \[data-landing-story\]\) \{\s+flex: 1 0 auto;\s+width: 100%;\s+\}/);
   for (const gone of [/Make an account/, /spot on the waitlist/, /Anyone using an app/, /What groups make/, /What communities make/]) {

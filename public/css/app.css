@@ -3865,6 +3865,13 @@ html[data-browser-scroller^="auth-"] :is(
 ) {
   display: none;
 }
+/* UNDER THE SIGNED-OUT LANDING the platform header is covered (the landing
+   is a fixed overlay with its own bar) but was still read out: an empty
+   level-1 heading beside the page's own on a desktop (polish N10). In a
+   phone browser the rule above already takes it out of the layout. */
+body:has(#auth-landing-screen:not(.hidden)) #platform-header {
+  visibility: hidden;
+}
 /* IN BROWSER-SCROLLER MODE the document is the scroller and this bar is
    sticky over it, so it has to hide the content sliding under it rather than
    letting it read through — which is why it takes a near-opaque wash of the
