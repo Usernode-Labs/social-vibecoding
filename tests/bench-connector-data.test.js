@@ -352,3 +352,53 @@ test('a run carries the size of the spec its build worked from, to read against 
   assert.equal(run.build.state, 'failed');
   assert.equal(run.botConfig.versionId, 4);
 });
+
+// ── A connector's save of the bot's settings ────────────────────────────
+
+test('the settings a connector may save are exactly the fields the console\'s Save validates', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/services/homeroom-bot.js'), 'utf8');
+  const start = src.indexOf('function validateSettingsPatch(');
+  const fn = src.slice(start, src.indexOf('\n}\n', start));
+  const named = new Set([...fn.matchAll(/body\.([a-zA-Z]+)/g)].map((m) => m[1]));
+  for (const m of fn.matchAll(/\['([a-zA-Z]+)', KEY_[A-Z_]+\]/g)) named.add(m[1]);
+  assert.deepEqual([...data.SETTINGS_FIELDS].sort(), [...named].sort(),
+    'a field the console can save and a connector cannot, or the reverse, is a drift');
+});
+
+test('saveSettings: the console\'s writeSettings, under the caller, then the settings as get_homeroom_bot reads them', async () => {
+  const calls = [];
+  const bot = {
+    async writeSettings(pool, patch, actorId, config) {
+      calls.push({ patch, actorId, config });
+      if (patch.helperModel === 'vendor/not-listed') return { ok: false, error: 'Not in the OpenRouter catalog: vendor/not-listed.' };
+      return { ok: true };
+    },
+    async adminPayload() {
+      return {
+        settings: { mode: 'shadow', helperModel: 'deepseek/deepseek-v4.1-flash-1017', batchSize: 25, liveBuildStream: false },
+        bot: { models: { triage: '' }, weeklyLimitCents: 20000, apiKey: 'sk-never' },
+        helperBuiltInModel: 'z-ai/glm-5.3-flash',
+      };
+    },
+  };
+  const config = { databaseUrl: 'postgres://x' };
+  const out = await data.saveSettings(null, config, { patch: { helperModel: 'deepseek/deepseek-v4.1-flash-1017' }, actorId: 7 }, { bot });
+  assert.equal(out.ok, true);
+  assert.deepEqual(calls[0], { patch: { helperModel: 'deepseek/deepseek-v4.1-flash-1017' }, actorId: 7, config });
+  assert.deepEqual(out.changed, ['helperModel']);
+  assert.equal(out.settings.helperModel, 'deepseek/deepseek-v4.1-flash-1017');
+  assert.equal(out.settings.modeLabel, 'on');
+  assert.equal(out.settings.batchSize, 25, 'every field it can change reads back');
+  assert.equal(out.settings.liveBuildStream, false);
+  assert.equal(out.weeklyLimitCents, 20000);
+  assert.equal(JSON.stringify(out).includes('sk-never'), false);
+
+  const refused = await data.saveSettings(null, config, { patch: { helperModel: 'vendor/not-listed' }, actorId: 7 }, { bot });
+  assert.deepEqual(refused, { ok: false, status: 400, error: 'Not in the OpenRouter catalog: vendor/not-listed.' });
+  const unknown = await data.saveSettings(null, config, { patch: { helperModel: 'a/b', apiKey: 'x' }, actorId: 7 }, { bot });
+  assert.equal(unknown.status, 400);
+  assert.match(unknown.error, /^Not a setting: apiKey/);
+  assert.equal(calls.length, 2, 'a field that is not a setting writes nothing');
+});
