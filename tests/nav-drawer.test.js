@@ -69,25 +69,27 @@ test('the header at a depth: colour, arrow, and the titles moving the drawer\'s 
   const slot = 44;
   const at0 = math.headerFrame(0, slot);
   assert.equal(at0.tint, 0, 'untinted on your communities');
-  assert.equal(at0.back.opacity, 0, 'no arrow on the outermost level');
-  assert.equal(at0.back.live, false);
-  assert.equal(at0.back.x, 8, 'it waits 8px to the right');
-  assert.deepEqual(at0.outer, { opacity: 1, x: -slot, y: 7 }, '"Communities" where the arrow is not');
+  assert.deepEqual(at0.back, { opacity: 1, x: 0, live: true }, 'the arrow on the outermost level too (#5610)');
+  assert.deepEqual(at0.outer, { opacity: 1, x: 0, y: 7 }, '"Communities" beside the arrow, not in its seat');
+  assert.equal(math.headerFrame(0, 0).outer.x, 0, 'no slot: the title cannot be clipped');
+  assert.equal(math.headerFrame(0, 999).outer.x, 0, 'a wide slot is not read on this level either');
   assert.equal(at0.inner.opacity, 0);
   assert.equal(at0.inner.x, 24, 'the name waits 24px to the right');
 
   const half = math.headerFrame(0.5, slot);
   assert.equal(half.tint, 0.5);
+  assert.equal(half.back.opacity, 1, 'the arrow stays on the way in');
+  assert.equal(half.back.x, 0);
   assert.equal(half.outer.opacity, 0.5);
-  assert.equal(half.outer.x, -slot - 6, 'going in, "Communities" drifts left');
+  assert.equal(half.outer.x, -6, 'going in, "Communities" drifts left');
   assert.equal(half.inner.x, 12, 'and the name arrives from the right');
-  assert.equal(half.back.x, 4);
 
   const at1 = math.headerFrame(1, slot);
   assert.equal(at1.tint, 1);
   assert.equal(at1.back.opacity, 1);
   assert.equal(at1.back.live, true);
   assert.equal(at1.outer.opacity, 0);
+  assert.equal(at1.outer.x, -12, 'faded out, it has drifted its −12');
   assert.deepEqual(at1.inner, { opacity: 1, x: 0, y: 7, subOpacity: 0, subX: 24, subY: -7 }, 'the name alone, centred');
 
   const mid = math.headerFrame(1.5, slot);
@@ -100,9 +102,9 @@ test('the header at a depth: colour, arrow, and the titles moving the drawer\'s 
   assert.deepEqual(at2.inner, { opacity: 1, x: 0, y: 0, subOpacity: math.SUB_OPACITY, subX: 0, subY: 0 });
 
   const calm = math.headerFrame(0.5, slot, true);
-  assert.equal(calm.outer.x, -slot, 'Reduce Motion: crossfades in place');
+  assert.equal(calm.outer.x, 0, 'Reduce Motion: crossfades in place, and no slot to drop into');
   assert.equal(calm.inner.x, 0);
-  assert.equal(calm.back.x, 0);
+  assert.deepEqual(calm.back, { opacity: 1, x: 0, live: true }, 'the arrow simply always shows');
   assert.equal(calm.outer.opacity, 0.5, 'the fades stay');
 });
 
@@ -156,6 +158,34 @@ test('the store: one level at a time, the search first, nothing while it does no
     'turned off, it starts again on the page',
   );
   assert.equal(store.liveDepth(), 2);
+});
+
+test('the arrow on your communities returns to the page, as the device\'s Back does (#5610)', () => {
+  const store = loadTsx(`${DIR}/drawer-store.ts`);
+  const placed = [];
+  store.registerSurface({ place: (level, cut) => placed.push([level, cut]), outerList: () => null });
+  store.setOn(true);
+  store.go(0, { cut: true });
+  store.back();
+  assert.equal(store.drawerStore.get().level, 2, 'level 0: it lands on the page');
+  assert.deepEqual(placed.at(-1), [2, false], 'it slides there, like a press on the page cover');
+  store.go(0, { cut: true });
+  store.setSearching(true);
+  store.back();
+  assert.equal(store.drawerStore.get().searching, false, 'with the search on, it narrows first');
+  assert.equal(store.drawerStore.get().level, 0);
+  store.back();
+  assert.equal(store.drawerStore.get().level, 2, 'and the next press returns to the page');
+  store.go(1, { cut: true });
+  store.back();
+  assert.equal(store.drawerStore.get().level, 0, 'on the places it still goes up one level');
+  // The bar over the page cannot be left drawing the outermost level: when
+  // the strip settles, a live depth the slide never carried there is cut.
+  store.go(2);
+  store.setDepth(0);
+  store.setMoving(false);
+  assert.equal(store.liveDepth(), 2, 'settling cuts the header to the resting frame');
+  store.setOn(false);
 });
 
 test('while it is off the page it holds a Back record, and a navigating press leaves it', () => {
@@ -232,6 +262,11 @@ test('the header takes the drawer\'s arrow and titles only while it applies', ()
   const drawer = read(`${DIR}/header-drawer.tsx`);
   assert.match(drawer, /<button ref=\{ref\} type="button"/, 'a button: an href\'d arrow would turn on WebKit\'s history swipe');
   assert.doesNotMatch(drawer, /href=/);
+  assert.match(drawer, /level === 1 \? t\('core:header\.drawer\.toCommunities'\) : t\('core:header\.back'\)/,
+    'on your communities the arrow says Back: it returns to the page (#5610)');
+  const island = read(`${DIR}/nav-drawer.tsx`);
+  assert.doesNotMatch(island, /data-nav-drawer-back/,
+    'no level-0 focus move off the arrow: it is live on that level now');
   // Off, none of it renders: the prerendered header is untouched.
   const ui = loadTsx(`${DIR}/header-drawer.tsx`);
   assert.equal(renderToHtml(createElement(ui.DrawerBack)), '');

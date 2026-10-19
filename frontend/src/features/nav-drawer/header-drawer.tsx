@@ -93,7 +93,11 @@ export function DrawerBack(): ReactNode {
   const { level, shown } = useStoreState(drawerStore);
   if (mode === 'messages') return <BackDisc mode={mode} label={t('core:header.drawer.toMessages')} onBack={messagesBack} />;
   if (mode !== 'communities') return null;
-  return <BackDisc mode={mode} label={level === 2 ? t('core:header.drawer.toPlaces', { community: shown.name }) : t('core:header.drawer.toCommunities')} onBack={back} />;
+  // On your communities the arrow returns to the page, so it says so (#5610);
+  // on the places and the page it goes up a level, as it always did.
+  return <BackDisc mode={mode} label={level === 2
+    ? t('core:header.drawer.toPlaces', { community: shown.name })
+    : level === 1 ? t('core:header.drawer.toCommunities') : t('core:header.back')} onBack={back} />;
 }
 
 function BackDisc({ mode, label, onBack }: { mode: Mode; label: string; onBack: () => void }): ReactNode {

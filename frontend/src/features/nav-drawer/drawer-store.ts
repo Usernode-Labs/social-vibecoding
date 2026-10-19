@@ -243,7 +243,12 @@ export function go(to: number, opts: GoOptions = {}): void {
   else communitiesDepth.slide(level);
 }
 
-/** The header's arrow: up one level. A widened search narrows first. */
+/**
+ * The header's arrow: up one level. On your communities it returns to the
+ * page instead, as a press on the page cover does — `go(2)` releases the
+ * held Back record, so it lands where the device's Back lands (#5610).
+ * A widened search narrows first.
+ */
 export function back(): void {
   const s = drawerStore.get();
   if (!s.on) return;
@@ -251,7 +256,11 @@ export function back(): void {
     setSearching(false);
     return;
   }
-  if (s.level > 0) go(s.level - 1);
+  if (s.level === 0) {
+    go(2);
+    return;
+  }
+  go(s.level - 1);
 }
 
 /**
@@ -289,9 +298,17 @@ export function setSearching(searching: boolean): void {
   surface?.place(s.level, reducedMotion());
 }
 
-/** The strip is out of its rest (a pan), or back in it (a slide ended). */
+/**
+ * The strip is out of its rest (a pan), or back in it (a slide ended). On
+ * settling, the header is cut to the resting frame if its own animation
+ * never reached it: the bar over the page must not be left drawing the
+ * outermost level's titles (#5610).
+ */
 export function setMoving(moving: boolean): void {
-  if (drawerStore.get().moving !== moving) drawerStore.set({ moving });
+  const s = drawerStore.get();
+  if (s.moving === moving) return;
+  drawerStore.set({ moving });
+  if (!moving && communitiesDepth.live() !== s.level) communitiesDepth.cut(s.level);
 }
 
 export function setPending(pending: Pending | null): void {

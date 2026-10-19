@@ -169,7 +169,7 @@
   },
   "header.back": {
     "text": "Back",
-    "description": "Accessible name of the header's back button when it returns to the previous screen."
+    "description": "Accessible name of the header's back button when it returns to the previous screen; on a phone, also of the Communities list's back arrow, which returns to the community's page the list was opened over."
   },
   "header.closeApp": {
     "text": "Close app",

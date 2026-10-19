@@ -124,7 +124,7 @@ import { communityScopeStore } from './community-scope';
 import { NeedsReel, type NeedsFeedItem } from './needs-reel';
 import { unseenNeeds, useNeedsSeen } from './needs-seen';
 import {
-  matchRows, orderRows, SECTION_LIMIT, SECTIONS, sectionFold, type Audience,
+  matchRows, orderRows, SECTION_LIMIT, SECTIONS, sectionCount, sectionFold, type Audience,
 } from './sections';
 import { workshopStore } from './workshop-store.js';
 

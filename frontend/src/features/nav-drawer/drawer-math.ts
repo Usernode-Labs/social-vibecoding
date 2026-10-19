@@ -113,16 +113,18 @@ export function landingIn(stops: readonly number[], from: number, offset: number
  *
  *   - the community's colour blends in with depth: none on your communities,
  *     all of it on the places and the page;
- *   - the back arrow fades in and arrives from the right (8px) as the strip
- *     leaves level 0; level 0 is the outermost, and has none;
- *   - "Communities" drifts left (−12px) as it fades, and the community's
- *     name arrives from the right (+24px) into its place beside the arrow;
+ *   - the back arrow is drawn on every level, level 0's returning to the
+ *     page, as the device's Back does there (issue #5610);
+ *   - "Communities" drifts left (−12px) as it fades, beside the arrow now,
+ *     and the community's name arrives from the right (+24px) into its
+ *     place;
  *   - from the places to the page the name stays, rising 7px to make room,
  *     and only the page's name slides in under it, from the right, without
  *     rising (it cancels the name's rise), and back out to the right.
  *
  * `slot` is how far left of the community's name the bar's own left edge
- * is (the arrow and its gap), where "Communities" sits with no arrow.
+ * is (the arrow and its gap). Only Messages' frame still moves its title
+ * into it; Communities' sits beside the arrow at every depth.
  * Reduce Motion keeps the fades and drops every movement.
  *
  * MESSAGES (`messages`): two levels, the list and a conversation, and no
@@ -155,12 +157,14 @@ export function headerFrame(f: number, slot: number, reduced = false, messages =
   }
   const frame: HeaderFrame = {
     tint: b,
-    back: { opacity: b, x: 8 * (1 - b) * move, live: b > 0.5 },
-    outer: { opacity: 0, x: -slot, y: ALONE_Y },
+    back: { opacity: 1, x: 0, live: true },
+    outer: { opacity: 0, x: -12 * move, y: ALONE_Y },
     inner: { opacity: 1, x: 0, y: ALONE_Y, subOpacity: 0, subX: 24 * move, subY: -ALONE_Y },
   };
   if (d <= 1) {
-    frame.outer = { opacity: 1 - d, x: -slot - 12 * d * move, y: ALONE_Y };
+    // `|| 0`: at level 0 the drift is 0, not −0, so the title rests exactly
+    // at its seat beside the arrow.
+    frame.outer = { opacity: 1 - d, x: -12 * d * move || 0, y: ALONE_Y };
     frame.inner = { opacity: d, x: 24 * (1 - d) * move, y: ALONE_Y, subOpacity: 0, subX: 24 * move, subY: -ALONE_Y };
     return frame;
   }
