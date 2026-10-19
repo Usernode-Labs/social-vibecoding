@@ -5,9 +5,18 @@
  * under the Homeroom mark in the app's header, pointing up at it.
  *
  *   maker    "Welcome to your app" / "Tap [H] to suggest a change, or to go
- *            to the community and Homeroom."
+ *            to Homeroom."
  *   invited  "Welcome to <app>" / "<inviter> invited you. Tap [H] to ..."
  *            ("Tap [H] ..." alone when who sent it is not known).
+ *
+ * "or to go to Homeroom" while the mark's menu offers "Go to Homeroom" in
+ * place of "Go to community": the walk on Home still owed to them, or a
+ * private member who has not been Home yet (../app-context/about-data.ts).
+ * That is nearly every newcomer, and the menu's one way on is Homeroom,
+ * where the walk runs (Evan, sign-up test, 19 Oct 2026). Otherwise (a maker
+ * whose first version was still being built, whose walk ran on Home first;
+ * somebody who had an account before the invite) the menu has both, and the
+ * line says "or to go to the community and Homeroom".
  *
  * [H] is the mark itself, the header's own artwork at the size of the text
  * (MarkGlyph), named for a screen reader by the mark button's own label.
@@ -29,6 +38,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { XIcon } from '@/components/ui/icons';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { offeringGoToHomeroom, owedHomeWalk } from '../app-context/about-data';
 import type { TipRecord } from './first-visit';
 
 /** The mark's own artwork, and its button (../header/platform-mark.tsx). */
@@ -59,20 +69,37 @@ export function tipPlacement(mark: TipBox, viewport: { width: number; height: nu
   return { top: mark.top + mark.height + TIP_GAP, left, width, pointer };
 }
 
-/** The tip's words, as message ids and their values: the maker's, or an invited person's with or without who sent it. */
-export function tipWords(tip: Pick<TipRecord, 'who' | 'name' | 'inviter'>): {
+/**
+ * The tip's words, as message ids and their values: the maker's, or an
+ * invited person's with or without who sent it. `homeroomOnly`: the mark's
+ * menu offers "Go to Homeroom" and not "Go to community" (homeroomOnlyNow),
+ * so the line names Homeroom alone.
+ */
+export function tipWords(tip: Pick<TipRecord, 'who' | 'name' | 'inviter'>, homeroomOnly = false): {
   title: string; titleValues: Record<string, string>; line: string; lineValues: Record<string, string>;
 } {
+  const line = homeroomOnly ? 'onboarding:firstSession.tip.lineHomeroom' : 'onboarding:firstSession.tip.line';
   if (tip.who !== 'invited') {
-    return { title: 'onboarding:firstSession.tip.title', titleValues: {}, line: 'onboarding:firstSession.tip.line', lineValues: {} };
+    return { title: 'onboarding:firstSession.tip.title', titleValues: {}, line, lineValues: {} };
   }
   const inviter = (tip.inviter || '').trim();
+  const lineInvited = homeroomOnly ? 'onboarding:firstSession.tip.lineInvitedHomeroom' : 'onboarding:firstSession.tip.lineInvited';
   return {
     title: 'onboarding:firstSession.tip.titleInvited',
     titleValues: { app: tip.name },
-    line: inviter ? 'onboarding:firstSession.tip.lineInvited' : 'onboarding:firstSession.tip.line',
+    line: inviter ? lineInvited : line,
     lineValues: inviter ? { inviter } : {},
   };
+}
+
+/**
+ * Whether the mark's menu offers "Go to Homeroom" in place of "Go to
+ * community" now, as ../app-context/app-context-sheet.tsx decides it: the
+ * walk on Home owed to this person, or a private member not yet Home.
+ */
+export function homeroomOnlyNow(): boolean {
+  const app = typeof window === 'undefined' ? null : (window as unknown as { App?: { user?: { privateMember?: boolean } | null } }).App;
+  return owedHomeWalk() || offeringGoToHomeroom(!!app?.user?.privateMember);
 }
 
 /** The Homeroom mark at the size of the text around it. */
@@ -112,6 +139,8 @@ export function AppTip({ tip, onClose }: { tip: TipRecord; onClose: () => void }
   // the tip goes with it.
   const [mark, setMark] = useState<TipBox | null>(() => { try { return markBox(); } catch { return null; } });
   const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }));
+  // Read once, as it shows: the walk it names Homeroom for is still owed.
+  const [homeroomOnly] = useState(homeroomOnlyNow);
   const closed = useRef(false);
   const close = useCallback(() => {
     if (closed.current) return;
@@ -177,7 +206,7 @@ export function AppTip({ tip, onClose }: { tip: TipRecord; onClose: () => void }
 
   if (!mark) return null;
   const place = tipPlacement(mark, viewport);
-  const words = tipWords(tip);
+  const words = tipWords(tip, homeroomOnly);
   return (
     <div
       ref={rootRef}

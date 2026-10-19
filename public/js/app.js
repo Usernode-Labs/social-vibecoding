@@ -1343,6 +1343,11 @@ const App = {
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'app-updating' && shot !== 'app-update-ready') return;
     const ready = shot === 'app-update-ready';
+    // The frame this shot opens loads the build that is live, which is what
+    // withdraws a real offer (AppView.renderAppTab). Pinned while the shot
+    // is on screen, as _platformUpdateShot pins the platform's row; nothing
+    // else reads this flag.
+    App._appUpdateShot = true;
     App._openImproveShot(() => {
       // `update()` no-ops without a slug, and the menu opens before the app
       // fetch lands — see Improve.hasTarget()'s note. Keep waiting.
@@ -2901,8 +2906,15 @@ const App = {
       } else {
         // A failed build leaves nothing new to load onto, and a frame let go
         // above loads the new build when the app is next opened, so offering
-        // a reload too would load it twice more.
-        window.Improve.update({ deploying: false, appUpdateReady: !data.failed && !evicted });
+        // a reload too would load it twice more. Nor is there anything to
+        // reload unless the build before this one is on screen
+        // (AppView.frameShowing): Homeroom bot's first version going live,
+        // with no frame ever shown, is the version they are about to see, and
+        // the menu said "This app has a new version" about it (sign-up test,
+        // 19 Oct 2026).
+        const showing = !data.failed && !evicted
+          && typeof AppView !== 'undefined' && !!AppView.frameShowing?.(slug);
+        window.Improve.update({ deploying: false, appUpdateReady: showing });
       }
     }
   },

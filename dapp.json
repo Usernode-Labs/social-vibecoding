@@ -2862,7 +2862,7 @@
       "name": "Once the new build is cached, the menu offers the reload",
       "path": "/?shot=platform-update-ready&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open]:not(:has(#improve-update-note)) button#improve-update-ready",
-      "expectText": "new version available"
+      "expectText": "Homeroom has an update"
     },
     {
       "name": "Once the open app's build has landed, the menu offers to reload the app",

@@ -35,7 +35,7 @@ export function requestKey(item: { appSlug?: string | null; appName?: string | n
 /** The bot's own messages that are conversation, never news: they stay messages. */
 const CONVERSATION_KINDS = new Set([
   'chat', 'ack', 'reply', 'confirm', 'hello', 'welcome', 'tour', 'joiner', 'maker', 'member', 'general',
-  'hello_welcome', 'hello_tour', 'hello_joiner', 'filed', 'withdraw_proposal', 'close_request', 'move_request', 'unknown',
+  'hello_welcome', 'hello_tour', 'hello_joiner', 'hello_maker', 'filed', 'withdraw_proposal', 'close_request', 'move_request', 'unknown',
 ]);
 
 /** Pure: whether a message in the chat with the bot is news about a request, drawn as one line. */
