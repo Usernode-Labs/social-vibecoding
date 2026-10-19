@@ -1666,13 +1666,16 @@ async function start() {
   shutdownPool = getPool(config);
 
   ws.attach(server, config);
-  chainPoller.start(config);
-  genesisAccounts.start();
-  nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
-  // Warm the /api/status cache so the first dashboard load doesn't have
-  // to wait 1-2s on `docker stats`. Subsequent loads are served from
-  // cache via stale-while-revalidate (see services/status.js).
-  statusService.start(config);
+  // The caches people's requests read: a conductor serves nobody's.
+  if (processRole.servesRequests(ownRole)) {
+    chainPoller.start(config);
+    genesisAccounts.start();
+    nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
+    // Warm the /api/status cache so the first dashboard load doesn't have
+    // to wait 1-2s on `docker stats`. Subsequent loads are served from
+    // cache via stale-while-revalidate (see services/status.js).
+    statusService.start(config);
+  }
 
   // ── The workflow's loops ─────────────────────────────────────────────
   // A conductor (any number of replicas) or an 'all' runs every machine's
@@ -1756,6 +1759,9 @@ module.exports = {
   // order but not listening, so a test can drive the headers production
   // sends with a shell asset (tests/spec-frame-styles.test.js).
   app,
+  // The boot itself: the two-process tests' workflow side runs it as a
+  // conductor (tests/lib/workflow-child.js), so it is what production runs.
+  start,
   adoptOrphanWorker,
   // docs/plans/draining-releases.md: the leader's sweep for turns their
   // process left behind.

@@ -134,7 +134,7 @@ export async function publishPushes(q: Queryable, pushes: Push[], { badges = fal
 // within about 40 s, and a transaction left open by a client that stopped
 // talking ends after 30 s (a transition never waits outside the database
 // inside one: docs/workflows.md).
-function deadPeerOptions() {
+export function deadPeerOptions() {
   const { KEEPALIVE_INITIAL_DELAY_MS, SERVER_KEEPALIVE } = legacy('services/leadership');
   const settings = { ...SERVER_KEEPALIVE, idle_in_transaction_session_timeout: 30000 };
   return {

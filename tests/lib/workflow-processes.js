@@ -18,7 +18,9 @@
 // child there.
 
 const { fork } = require('node:child_process');
+const net = require('node:net');
 const path = require('node:path');
+const { Client } = require('pg');
 
 const CHILD = path.join(__dirname, 'workflow-child.js');
 
@@ -26,18 +28,42 @@ const HARNESS_SQL = `
   CREATE TABLE IF NOT EXISTS wf_test_effects (
     id BIGSERIAL PRIMARY KEY, kind TEXT NOT NULL, data JSONB NOT NULL DEFAULT '{}', pid INT, at TIMESTAMPTZ NOT NULL DEFAULT now());
   CREATE TABLE IF NOT EXISTS wf_test_pauses (
-    name TEXT PRIMARY KEY, reached_at TIMESTAMPTZ, released BOOLEAN NOT NULL DEFAULT FALSE);`;
+    name TEXT PRIMARY KEY, reached_at TIMESTAMPTZ, released BOOLEAN NOT NULL DEFAULT FALSE, pid INT);`;
 
 async function prepare(pool) {
   await pool.query(HARNESS_SQL);
 }
 
-// Start the workflow side. `config` is what server.js would build (the
-// flags, the data key); the child adds the database URL.
-function startWorkflowProcess({ databaseUrl, config, fixture, env = {} }) {
+// A port nobody listens on, for a workflow process's own listener.
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const s = net.createServer();
+    s.once('error', reject);
+    s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); });
+  });
+}
+
+// The test holds the leader lock (services/leadership.js), so a workflow
+// process it starts stands for leader and never leads: the workflow needs no
+// leader, and the leader's remaining work is not what these tests run.
+async function holdLeadership(databaseUrl) {
+  const { LEADER_LOCK_KEY } = require('../../src/services/leadership');
+  const client = new Client({ connectionString: databaseUrl });
+  client.on('error', () => {});
+  await client.connect();
+  await client.query('SELECT pg_advisory_lock($1)', [LEADER_LOCK_KEY]);
+  return client;
+}
+
+// Start the workflow side: server.js booted as a conductor. `env` is what the
+// chart would set for it (the data key, the workflow's slots and pool, the
+// shots and phone-push switches); the child adds the database URL, and this
+// adds its own port.
+async function startWorkflowProcess({ databaseUrl, fixture, env = {} }) {
   let stderr = '';
+  const port = await freePort();
   const child = fork(CHILD, [], {
-    env: { ...process.env, ...env, WF_TEST_CHILD: JSON.stringify({ databaseUrl, config, fixture }) },
+    env: { ...process.env, WF_TEST_CHILD: JSON.stringify({ databaseUrl, env: { ...env, PORT: String(port) }, fixture }) },
     execArgv: [],
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
@@ -50,6 +76,7 @@ function startWorkflowProcess({ databaseUrl, config, fixture, env = {} }) {
   });
   return {
     pid: child.pid,
+    port,
     ready,
     exited,
     // A crash: nothing is flushed, nothing is stopped.
@@ -57,11 +84,11 @@ function startWorkflowProcess({ databaseUrl, config, fixture, env = {} }) {
       child.kill('SIGKILL');
       await exited;
     },
-    // A clean stop, as a release's SIGTERM gives one.
+    // A clean stop, as a release's SIGTERM gives one (server.js cleanup).
     async stop() {
       if (child.exitCode !== null || child.signalCode !== null) return;
-      child.send({ stop: true });
-      const t = setTimeout(() => child.kill('SIGKILL'), 20000);
+      child.kill('SIGTERM');
+      const t = setTimeout(() => child.kill('SIGKILL'), 30000);
       await exited;
       clearTimeout(t);
     },
@@ -81,9 +108,14 @@ async function arm(pool, name) {
     `INSERT INTO wf_test_pauses (name) VALUES ($1)
      ON CONFLICT (name) DO UPDATE SET reached_at = NULL, released = FALSE`, [name]);
 }
+// Resolves the pid of the process that reached it (with two running, the
+// one to kill).
 async function reached(pool, name, timeoutMs = 20000) {
-  await until(async () => (await pool.query('SELECT reached_at FROM wf_test_pauses WHERE name = $1', [name])).rows[0]?.reached_at,
-    `the workflow process to reach ${name}`, timeoutMs);
+  const row = await until(async () => {
+    const { rows: [r] } = await pool.query('SELECT reached_at, pid FROM wf_test_pauses WHERE name = $1', [name]);
+    return r?.reached_at ? r : null;
+  }, `the workflow process to reach ${name}`, timeoutMs);
+  return row.pid;
 }
 async function release(pool, name) {
   await pool.query('UPDATE wf_test_pauses SET released = TRUE WHERE name = $1', [name]);
@@ -105,4 +137,4 @@ async function until(check, what, timeoutMs = 20000) {
   }
 }
 
-module.exports = { prepare, startWorkflowProcess, expireLeases, arm, reached, release, effects, until };
+module.exports = { prepare, holdLeadership, startWorkflowProcess, expireLeases, arm, reached, release, effects, until };
