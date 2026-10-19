@@ -192,6 +192,12 @@ function normalizeItem(item) {
  */
 function decide(row, { now, def, modeName, allowed, held = {}, capFull = false, budgetOk = true }) {
   const t = (v) => (v ? new Date(v).getTime() : 0);
+  // Ages by the database's clock when the row carries them (ROWS_TO_ACT_SQL):
+  // first_seen_at and cleared_at are the database's NOW(), and a process
+  // whose clock runs a little behind would otherwise read a row raised this
+  // pass as not yet due.
+  const age = row.age_ms != null ? Number(row.age_ms) : now - t(row.first_seen_at);
+  const clearedFor = row.cleared_ms != null ? Number(row.cleared_ms) : now - t(row.cleared_at);
   const countedOnly = row.subject?.noFile === true;
   // Recorded while filing was off (shadow), and filing is on now: it files.
   const unfiled = row.state === 'pending'
@@ -199,7 +205,7 @@ function decide(row, { now, def, modeName, allowed, held = {}, capFull = false, 
   if (unfiled) {
     if (row.muted_until && t(row.muted_until) > now) return 'wait';
     const fileAfter = Number.isFinite(row.subject?.fileAfterMs) ? row.subject.fileAfterMs : def.fileAfterMs;
-    if (now - t(row.first_seen_at) < fileAfter) return 'wait';
+    if (age < fileAfter) return 'wait';
     if (modeName === 'shadow' || countedOnly) return row.state === 'pending' ? 'record' : 'keep';
     if (allowed && !allowed.has(row.kind)) return 'wait';
     if (held.release || capFull || !budgetOk) return 'wait';
@@ -207,7 +213,7 @@ function decide(row, { now, def, modeName, allowed, held = {}, capFull = false, 
     return 'file';
   }
   if (row.state === 'clearing') {
-    if (now - t(row.cleared_at) < def.quietMs) return 'keep';
+    if (clearedFor < def.quietMs) return 'keep';
     if (held.proposal || held.person) return 'keep';
     return 'close';
   }
@@ -325,7 +331,10 @@ function parseRepo(url) {
 
 const ROWS_TO_ACT_SQL = `
   SELECT ps.*, a.slug AS app_slug, a.repo_url AS app_repo_url,
-         i.status AS issue_status
+         i.status AS issue_status,
+         (EXTRACT(EPOCH FROM (NOW() - ps.first_seen_at)) * 1000)::bigint AS age_ms,
+         (EXTRACT(EPOCH FROM (NOW() - ps.cleared_at)) * 1000)::bigint AS cleared_ms,
+         (EXTRACT(EPOCH FROM (NOW() - ps.last_seen_at)) * 1000)::bigint AS quiet_ms
     FROM platform_signals ps
     LEFT JOIN apps a ON a.id = ps.app_id
     LEFT JOIN LATERAL (
@@ -342,7 +351,7 @@ const FILED_RECENTLY_SQL = `
     FROM platform_signals WHERE filed_at IS NOT NULL`;
 
 const LAST_BOOT_SQL = `
-  SELECT MAX(created_at) AS at FROM events
+  SELECT (EXTRACT(EPOCH FROM (NOW() - MAX(created_at))) * 1000)::bigint AS ago_ms FROM events
    WHERE event_type = 'platform_booted' AND created_at > NOW() - interval '1 hour'`;
 
 const HELD_OPEN_SQL = `
@@ -543,7 +552,6 @@ async function sweepLocked(pool, config, { deps, now, modeName }) {
   for (const row of rows) {
     const def = KINDS[row.kind];
     if (!def) continue;
-    const t = (v) => (v ? new Date(v).getTime() : 0);
     if (row.issue_number && row.issue_status === 'closed' && row.state !== 'pending') {
       await closeRow(pool, row, deps, { reason: 'closed', comment: false });
       out.closed += 1;
@@ -552,10 +560,10 @@ async function sweepLocked(pool, config, { deps, now, modeName }) {
     }
     const gone = def.source === 'poll'
       ? ok.has(row.kind) && !seen.has(row.fingerprint)
-      : now - t(row.last_seen_at) > PUSH_STALE_MS;
+      : Number(row.quiet_ms) > PUSH_STALE_MS;
     if (gone && (row.state === 'pending' || row.state === 'open')) {
       const c = await clear(pool, row.fingerprint);
-      if (c) { out.cleared += 1; row.state = c.state; row.cleared_at = new Date(now).toISOString(); }
+      if (c) { out.cleared += 1; row.state = c.state; row.cleared_ms = 0; }
     }
   }
 
@@ -566,7 +574,7 @@ async function sweepLocked(pool, config, { deps, now, modeName }) {
   ]);
   let filedHour = Number(filed?.hour) || 0;
   let filedDay = Number(filed?.day) || 0;
-  const release = !!(boot?.at && now - new Date(boot.at).getTime() < RELEASE_HOLD_MS);
+  const release = boot?.ago_ms != null && Number(boot.ago_ms) < RELEASE_HOLD_MS;
   const budgetOk = deps.budget.budgetAllows('background');
   for (const row of rows) {
     if (row.state === 'closed') continue;
