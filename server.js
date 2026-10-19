@@ -245,6 +245,10 @@ app.use(explorerProxyRoutes(config));
 // no secret is configured. src/routes/github-webhook.js carries the rest.
 app.use(githubWebhookRoutes(config));
 app.use(require('./src/routes/mail-webhooks').mailWebhookRoutes(config));
+// Alertmanager's webhook (src/routes/alerts-webhook.js): HERE for the same
+// second reason, a caller with no session, authenticated by its own token.
+// It parses its own JSON body.
+app.use(require('./src/routes/alerts-webhook').alertsWebhookRoutes(config));
 
 // ── Work-order patch uploads (#4264) ───────────────────────────────────────
 // A coding agent's one-time upload of a large patch for a connector work
@@ -1523,6 +1527,16 @@ async function becomeLeader() {
   // #4296: a daily digest of errors that should not happen, and an alert
   // when one kind piles up within an hour, for the full admins.
   startPlatformIncidentAlertSweeper(config);
+
+  // Platform signals (services/platform-signals.js): every problem the
+  // platform detects in itself files one request, or updates it, and closes
+  // it once the problem has stopped. Shadow mode (the default) only keeps
+  // the rows the topic pages and figures read.
+  {
+    const platformSignals = require('./src/services/platform-signals');
+    leaderTimers.every('platform-signals', () => platformSignals.sweep(getPool(config), config),
+      platformSignals.SWEEP_INTERVAL_MS, { firstDelayMs: 60 * 1000 });
+  }
 
   // #907: release local coding-agent leases whose machine stopped
   // heartbeating, and fail the turn they were holding.

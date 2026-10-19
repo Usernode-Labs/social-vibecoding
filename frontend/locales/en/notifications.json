@@ -531,6 +531,14 @@
     "text": "something that should not happen did",
     "description": "Second line of the \"Unexpected events\" notification to an administrator, when its details cannot be read. Lower case, as a note under the heading."
   },
+  "row.incident.signal.label": {
+    "text": "A platform problem needs a person",
+    "description": "First line of a notification to an administrator: Homeroom found a problem in itself that its bot cannot fix, and filed a request for a person."
+  },
+  "row.incident.signal.body": {
+    "text": "Homeroom filed request #{{number}} on its own board from its own records.",
+    "description": "Second line of the \"A platform problem needs a person\" notification to an administrator. {{number}} is the request's number on Homeroom's own board."
+  },
   "row.kudos.label": {
     "text": "Kudos",
     "description": "First line of a notification: another member gave the viewer kudos (a thank-you that counts on a leaderboard) for a change. \"Kudos\" is the feature's name."
