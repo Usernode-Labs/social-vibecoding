@@ -297,6 +297,14 @@ const BUILD_SCRIPT = [
   'umask 022',
   'say() { printf \'[buildkit] %s\\n\' "$*"; }',
   'mkdir -p /workspace/repo /workspace/src',
+  // Docker Hub's images through a mirror (dockerHubMirror): the daemon
+  // tries it first and Docker Hub when it misses. buildctl-daemonless.sh
+  // starts the daemon with BUILDKITD_FLAGS, at the preflight and each build.
+  'if [ -n "${DOCKERHUB_MIRROR:-}" ]; then',
+  '  printf \'[registry."docker.io"]\\n  mirrors = ["%s"]\\n\' "$DOCKERHUB_MIRROR" > /workspace/buildkitd.toml',
+  '  BUILDKITD_FLAGS="${BUILDKITD_FLAGS:-} --config /workspace/buildkitd.toml"',
+  '  export BUILDKITD_FLAGS',
+  'fi',
   // Can the daemon run on this node at all? Under RootlessKit that is
   // "can uid 1000 create a user namespace" (user.max_user_namespaces),
   // which is a property of the node, not of the Dockerfile. A distinct
@@ -472,6 +480,18 @@ function starterCache(cfg, runtime, app) {
   return { id, ref: `${cfg.cacheRepositoryPrefix}/${repository}:buildkit-cache` };
 }
 
+// The Docker Hub mirror a build pulls through (config.js
+// buildkitDockerHubMirror), or '' for none. A host and an optional port
+// only: it is written into the daemon's TOML, so anything else is refused.
+const MIRROR_RE = /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?(?::\d{1,5})?$/i;
+function dockerHubMirror(cfg) {
+  const host = String(cfg.buildkitDockerHubMirror ?? '').trim();
+  if (!host) return '';
+  if (MIRROR_RE.test(host)) return host;
+  log.warn('buildkit', 'Ignoring a Docker Hub mirror that is not a host[:port]', { mirror: host.slice(0, 80) });
+  return '';
+}
+
 function jobManifest(cfg, runtime, {
   app, revision, environment, sessionId, dockerfile, name, tag, cacheRef, recipe, inputSecretName,
   settledSteps = [], starterCacheRef = null, starterExport = false,
@@ -503,6 +523,7 @@ function jobManifest(cfg, runtime, {
     // documented trade for it (examples/kubernetes/job.rootless.yaml). As
     // root the daemon can build its process sandbox, so it keeps it.
     { name: 'BUILDKITD_FLAGS', value: rootless ? '--oci-worker-no-process-sandbox' : '' },
+    { name: 'DOCKERHUB_MIRROR', value: dockerHubMirror(cfg) },
   ];
   const volumeMounts = [
     { name: 'workspace', mountPath: '/workspace' },
@@ -1077,7 +1098,7 @@ module.exports = {
   noteUnavailable,
   _forTest: {
     BUILD_SCRIPT, PREFLIGHT_EXIT, UNAVAILABLE_MEMO_MS, jobManifest, recipeOf, progressFromLine, stepClock, digestFromPod, exitCodeFromPod,
-    repoOwnerAndName, requireConfig,
+    repoOwnerAndName, requireConfig, dockerHubMirror,
     STEPS_AWK, CACHE_STEPS_ANNOTATION, CACHE_CHANCES, CACHE_CHANCE_WINDOW_MS, CACHE_MAX_STEPS,
     cacheReport, cacheReportText, settledCacheSteps, starterCache,
     resetUnavailable() { _unavailable = null; },
