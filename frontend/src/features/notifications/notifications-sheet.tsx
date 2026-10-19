@@ -740,9 +740,25 @@ export function NotificationsSheetView() {
   const [olderShown, setOlderShown] = useState(false);
   // #5405: what the search field holds. It narrows the tab that is open —
   // all three tabs — and a tab change keeps it. It starts '' so the
-  // prerendered markup is an empty field, and the close effect below clears
-  // it when the sheet closes, so the next visit opens unfiltered.
+  // prerendered markup is an empty field; the restore effect below reads
+  // the remembered value back after mount (#5460), so the field still holds
+  // what you typed when you come back — opening a row closes the sheet, and
+  // a query wiped on close was lost on every round trip to a proposal.
   const [query, setQuery] = useState('');
+  // #5460: every write to the query goes through this one helper. A
+  // non-empty query is remembered for the browser tab's session — the scope
+  // AppView.KANBAN_FILTERS_KEY uses for the board's filters: it survives
+  // leaving the screen and a reload, and goes away when the tab closes —
+  // and an empty one forgets it, so a cleared field stays cleared. Storage
+  // that is unavailable (private mode, blocked) changes nothing: the search
+  // then just behaves as it did before, within the page.
+  const rememberQuery = useCallback((next: string) => {
+    setQuery(next);
+    try {
+      if (next) window.sessionStorage.setItem('usernode:notifications-search', next);
+      else window.sessionStorage.removeItem('usernode:notifications-search');
+    } catch { /* storage unavailable */ }
+  }, []);
   const t = useMessages('notifications');
 
   // `?shot=notifications-messages` lands on the Messages tab, so the capture
@@ -763,12 +779,26 @@ export function NotificationsSheetView() {
     if (shot === 'notifications-messages') setTab('messages');
   }, []);
 
+  // #5460: the remembered search comes back after mount, not in the initial
+  // state — the SSG pass renders this island in Node with no sessionStorage,
+  // and the prerendered field has to stay empty so hydration matches (the
+  // reason the deep-link effect above spells out). An empty or missing value
+  // restores nothing, so a search you cleared stays cleared.
+  useEffect(() => {
+    try {
+      const remembered = window.sessionStorage.getItem('usernode:notifications-search');
+      if (remembered) setQuery(remembered.slice(0, 100));
+    } catch { /* storage unavailable */ }
+  }, []);
+
   // The expanded Unread view is forgotten when the sheet closes or you leave
   // the tab, so each visit to Unread starts collapsed again (see the state
-  // above). An effect, not the initial state, for the hydration reason the
-  // deep link above spells out.
+  // above). The query is NOT: it is remembered for the tab session (#5460),
+  // because opening a row closes the sheet, and clearing it here made every
+  // round trip to a proposal re-widen the list. An effect, not the initial
+  // state, for the hydration reason the deep link above spells out.
   useEffect(() => {
-    if (!open) { setOlderShown(false); setQuery(''); }
+    if (!open) setOlderShown(false);
     else if (tab !== 'unread') setOlderShown(false);
   }, [open, tab]);
 
@@ -962,12 +992,12 @@ export function NotificationsSheetView() {
             id="notifications-search-input"
             type="search"
             value={query}
-            onChange={(event) => setQuery(event.currentTarget.value.slice(0, 100))}
+            onChange={(event) => rememberQuery(event.currentTarget.value.slice(0, 100))}
             onKeyDown={(event) => {
               if (event.key === 'Escape' && event.currentTarget.value) {
                 event.preventDefault();
                 event.stopPropagation();
-                setQuery('');
+                rememberQuery('');
               }
             }}
             placeholder={t('notifications:sheet.search.placeholder')}

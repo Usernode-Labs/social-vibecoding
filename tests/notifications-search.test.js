@@ -112,14 +112,54 @@ test('the search field renders between the title row and the tab strip', () => {
   assert.ok(SHEET_SRC.includes('type="search"'), 'the field is a search input');
 });
 
-test('the query starts empty and is cleared when the sheet closes', () => {
+test('the query starts empty and is kept when the sheet closes (#5460)', () => {
   assert.ok(
     SHEET_SRC.includes("[query, setQuery] = useState('')"),
     'the query state starts empty so the prerender is an empty field'
   );
   assert.ok(
-    SHEET_SRC.includes("if (!open) { setOlderShown(false); setQuery(''); }"),
-    'the close effect clears the query when the sheet closes'
+    SHEET_SRC.includes("if (!open) setOlderShown(false);\n    else if (tab !== 'unread') setOlderShown(false);"),
+    'the close effect still collapses the older-rows reveal'
+  );
+  assert.ok(
+    !SHEET_SRC.includes("setQuery('')"),
+    'nothing wipes the query when the sheet closes — it is remembered now'
+  );
+});
+
+test('the remembered search is restored after mount, not during render (#5460)', () => {
+  const at = SHEET_SRC.indexOf("sessionStorage.getItem('usernode:notifications-search')");
+  assert.ok(at > 0, 'the restore reads the remembered query from sessionStorage');
+  const effect = SHEET_SRC.lastIndexOf('useEffect', at);
+  assert.ok(
+    effect > SHEET_SRC.indexOf("[query, setQuery] = useState('')"),
+    'the read happens in an effect after the state is declared'
+  );
+  // The restore is capped like the field itself, so a stored value edited by
+  // hand cannot exceed it.
+  assert.ok(
+    SHEET_SRC.includes('remembered.slice(0, 100)'),
+    'a restored value is cut to the field 100-character cap'
+  );
+});
+
+test('the query is written to the session key when set and removed when cleared (#5460)', () => {
+  assert.ok(
+    SHEET_SRC.includes("sessionStorage.setItem('usernode:notifications-search'"),
+    'a non-empty query is remembered for the tab session'
+  );
+  assert.ok(
+    SHEET_SRC.includes("sessionStorage.removeItem('usernode:notifications-search')"),
+    'an empty query forgets the remembered search'
+  );
+  // Every write routes through rememberQuery, so the Escape clear and the
+  // native search clear (an onChange with '') both reach the storage.
+  const helper = SHEET_SRC.indexOf('const rememberQuery');
+  assert.ok(helper > 0, 'the sheet routes writes through one persisting setter');
+  assert.ok(
+    SHEET_SRC.includes('onChange={(event) => rememberQuery(')
+      && SHEET_SRC.includes("rememberQuery('')"),
+    'typing and clearing both go through rememberQuery'
   );
 });
 
