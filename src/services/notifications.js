@@ -1551,15 +1551,18 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
   // the bell marks these rows read; they are not in DECIDED_ASK_SETTLED_SQL,
   // so there is no derived read state for them. cs.status = 'merged' also
   // covers a change still going live ('merging' is only derived in
-  // LIVE_ROW_COLUMNS_SQL). Unread rows are listed and still count, so the
-  // voter is still told; saved rows stay in the Saved section; the exact
-  // lookup (a push opened) is not filtered.
+  // LIVE_ROW_COLUMNS_SQL). #5471: an unread one is listed for a day after
+  // the change went live, then leaves like a read one — a note nobody
+  // opened does not sit in the bell for as long as it takes them to notice.
+  // Fresh news still shows for that day, unread and counted; saved rows
+  // stay in the Saved section; the exact lookup (a push opened) is not
+  // filtered.
   let mergedHiddenClause = '';
   if (!savedOnly) {
     params.push(MERGED_HIDDEN_KINDS);
     mergedHiddenClause = `AND NOT (n.kind = ANY($${params.length}::text[]) AND cs.status IS NOT DISTINCT FROM 'merged')`;
     params.push(MERGED_READ_HIDDEN_KINDS);
-    mergedHiddenClause += ` AND NOT (n.kind = ANY($${params.length}::text[]) AND n.read_at IS NOT NULL
+    mergedHiddenClause += ` AND NOT (n.kind = ANY($${params.length}::text[]) AND (n.read_at IS NOT NULL OR ${MERGED_NEWS_STALE_SQL})
               AND cs.status IS NOT DISTINCT FROM 'merged')`;
   }
   params.push(limit);
@@ -1711,8 +1714,14 @@ async function countUnread(pool, userId) {
         AND ${PARKED_KINDS_SQL}
         AND NOT (n.kind = ANY($2::text[]) AND EXISTS (
               SELECT 1 FROM chat_sessions s
-               WHERE s.id = n.session_id AND s.status = 'merged'))`,
-    [userId, MERGED_HIDDEN_KINDS]
+               WHERE s.id = n.session_id AND s.status = 'merged'))
+        -- #5471: a stale unread went-live row leaves the count with the list.
+        -- Inside the subquery n.created_at reads the outer row.
+        AND NOT (n.kind = ANY($3::text[]) AND EXISTS (
+              SELECT 1 FROM chat_sessions cs
+               WHERE cs.id = n.session_id AND cs.status = 'merged'
+                 AND ${MERGED_NEWS_STALE_SQL}))`,
+    [userId, MERGED_HIDDEN_KINDS, MERGED_READ_HIDDEN_KINDS]
   );
   return rows[0]?.c || 0;
 }
@@ -1833,8 +1842,9 @@ const { settleVoteDigests } = changeNotifications;
 // It is every ask the decision settles plus "ready to try" itself: a merged
 // change is decided, so the vote it asked for is already in. The rows that
 // say the change went live (pr_merged to its author, voted_change_merged to
-// its voters) are not asks; they stay until read (MERGED_READ_HIDDEN_KINDS
-// below). A closed change keeps its rows in the
+// its voters) are not asks; they stay until read, or a day after the change
+// went live while unread (MERGED_READ_HIDDEN_KINDS and
+// MERGED_NEWS_LISTED_FOR below). A closed change keeps its rows in the
 // list, where "ready to try" reads Closed.
 // "One story": the requester's own "ready to try" from Homeroom bot
 // (build_ready) too, once settleDecidedChange has linked it to its change.
@@ -1842,11 +1852,22 @@ const MERGED_HIDDEN_KINDS = Object.freeze([...DECIDED_ASK_KINDS, 'change_ready',
 
 // #5461: the news that a change went live is listed until it is read, then
 // leaves the bell's list like the asks above did — a read note somebody
-// taps hours later only opens a merged page again. Unread rows are listed
-// and counted, so the voter is still told it went live; the Saved section
-// and the exact lookup skip the filter, so a saved row and a push-opened
-// one still resolve.
+// taps hours later only opens a merged page again. #5471: an unread row is
+// listed for a day after the change went live (MERGED_NEWS_LISTED_FOR
+// below), then leaves like a read one — Maztrilover voted on two proposals
+// that merged in the morning and were still in their inbox at night, taps
+// opening only the merged page. The Saved section and the exact lookup
+// skip the filter, so a saved row and a push-opened one still resolve.
 const MERGED_READ_HIDDEN_KINDS = Object.freeze(['pr_merged', 'voted_change_merged']);
+
+// #5471: an unread went-live row is listed for a day after the change went
+// live (or merged, while live_at is NULL), then leaves like a read one.
+// COALESCE ends at n.created_at so a merged row with no merged_at compares
+// to a date rather than NULL, which the NOT would turn into a dropped row.
+// The list and the count read this one fragment, so the badge agrees.
+const MERGED_NEWS_LISTED_FOR = '1 day';
+const MERGED_NEWS_STALE_SQL = `COALESCE(cs.live_at, cs.merged_at, n.created_at)
+  < NOW() - INTERVAL '${MERGED_NEWS_LISTED_FOR}'`;
 
 async function settleDecidedChange(pool, sessionId, { status = null, push = true } = {}) {
   const touched = await changeNotifications.settleDecidedChange(pool, sessionId, { status });

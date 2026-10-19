@@ -88,6 +88,8 @@ const READY_STATES = Object.freeze([
     ['member', 'read_only_admin']],
   ['shots-demo-member-voted-change-live-v1', 'a change you voted on that went live, with its row in your bell',
     ['member']],
+  ['shots-demo-member-voted-change-live-stale-v1', 'a change you voted on that went live over a day ago, its note out of your bell',
+    ['member']],
   ['shots-demo-member-bot-built-proposal-v1', 'a change Homeroom bot built from your request, up for a vote',
     ['member', 'read_only_admin', 'full_admin']],
   ['shots-demo-member-checks-part-way-v1', 'a change of yours whose checks are part-way through',

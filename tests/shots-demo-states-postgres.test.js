@@ -215,8 +215,10 @@ test('demo states go into both shots copies or neither, once', { timeout: 180000
   const headReady = await demoStates.inspectDemoStates(head.input);
   assert.ok(!headReady.includes('shots-demo-member-friend-request-v1'));
   assert.ok(!headReady.includes('shots-demo-member-voted-change-live-v1'));
+  assert.ok(!headReady.includes('shots-demo-member-voted-change-live-stale-v1'),
+    'the stale one writes the same kind of row');
   const both = demoStates.STATE_IDS.filter((id) => headReady.includes(id));
-  assert.equal(both.length, demoStates.STATE_IDS.length - 2);
+  assert.equal(both.length, demoStates.STATE_IDS.length - 3);
 
   // A state that fails on one side while being written is left out of both.
   await head.pool.query(
@@ -258,7 +260,7 @@ test('demo states go into both shots copies or neither, once', { timeout: 180000
   // refused.
   assert.deepEqual(await demoStates.inspectDemoStates(base.input),
     ['shots-demo-homeroom-bot-verdict-v1', 'shots-demo-member-friend-request-v1',
-      'shots-demo-member-voted-change-live-v1']);
+      'shots-demo-member-voted-change-live-v1', 'shots-demo-member-voted-change-live-stale-v1']);
   assert.deepEqual(await demoStates.inspectDemoStates(head.input), ['shots-demo-homeroom-bot-verdict-v1']);
 
   // Every row is in the reserved block or marked as the fixture's.
@@ -491,12 +493,15 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   const chat = chats.find((conversation) => conversation.id === demoStates.IDS.botConversation);
   assert.equal(chat.homeroomBot, true);
   assert.equal(chat.unreadCount, 0);
-  // The rows in the bell are the voted-live state's and the bot's three
-  // rings. The voted-live row is unread (#5461: seeded unread so the All tab
-  // shows it); the bot's three rings are read.
+  // The rows in the bell are the two voted-live states' and the bot's three
+  // rings. The voted-live rows are unread (#5461: seeded unread so the All
+  // tab shows them; #5471's stale one is the change that went live over a
+  // day ago, whose row the bell stops listing); the bot's three rings are
+  // read.
   const { rows: bellRows } = await pool.query('SELECT kind, read_at FROM notifications ORDER BY id');
   assert.deepEqual(bellRows.map((row) => [row.kind, !!row.read_at]),
-    [['voted_change_merged', false], ['build_needs_you', true], ['build_needs_you', true], ['build_needs_you', true]]);
+    [['voted_change_merged', false], ['voted_change_merged', false],
+      ['build_needs_you', true], ['build_needs_you', true], ['build_needs_you', true]]);
 
   // After them in the same chat, the plan for the member's new project,
   // answered with Build it, and the bot's thanks under it: the card Build

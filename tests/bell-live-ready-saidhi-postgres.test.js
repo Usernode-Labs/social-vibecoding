@@ -12,7 +12,8 @@
 //     list as well (listForUser hides them for a merged change, and
 //     countUnread leaves them out), while the rows that say it went live —
 //     pr_merged to the author, voted_change_merged to the voters — stay
-//     until read (#5461): a read one leaves the list too.
+//     until read (#5461): a read one leaves the list too, and an unread
+//     one a day after the change went live (#5471).
 //     Nothing is re-opened unread: the news rides its own rows.
 //   - The bell reads the change's status, a digest's live count and the
 //     request a first message became, with the row (listForUser, getForUser).
@@ -248,6 +249,87 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     await pool.query(`INSERT INTO notification_bookmarks (user_id, notification_id) VALUES ($1, $2)`, [priya.id, priyaRead]);
     const saved = await notifications.listSavedForUser(pool, priya.id);
     assert.ok(saved.some((r) => r.id === priyaRead), 'a saved read row stays in Saved');
+  });
+
+  // #5471: an unread went-live note is listed for a day after the change
+  // went live, then leaves the bell's list and its count like a read one —
+  // Maztrilover's two merged proposals still sat in the inbox that night.
+  // Fresh news still shows for that first day; saved the stale row stays in
+  // Saved, and a push still opens it.
+  await t.test('#5471: an unread went-live note leaves the list a day after the change went live', async () => {
+    const basePriya = await notifications.countUnread(pool, priya.id);
+    const baseMo = await notifications.countUnread(pool, mo.id);
+
+    // Unread, live over a day ago: off the list, and not counted.
+    const staleLive = await change('Gone live two days ago');
+    await pool.query(
+      `UPDATE chat_sessions SET status = 'merged',
+         merged_at = NOW() - INTERVAL '25 hours', live_at = NOW() - INTERVAL '25 hours' WHERE id = $1`,
+      [staleLive],
+    );
+    const priyaStale = await notify(priya.id, 'voted_change_merged', { sessionId: staleLive, source: null });
+    const moStale = await notify(mo.id, 'pr_merged', { sessionId: staleLive, source: null });
+    assert.equal(await listed(priya.id, priyaStale), null, 'the stale unread news is off the list');
+    assert.equal(await listed(mo.id, moStale), null, 'for the author too');
+    assert.equal(await notifications.countUnread(pool, priya.id), basePriya, 'and it does not count');
+    assert.equal(await notifications.countUnread(pool, mo.id), baseMo);
+
+    // Unread, live under a day ago: listed, and counted — the fresh news
+    // still tells the voter it went live.
+    const freshLive = await change('Gone live yesterday evening');
+    await pool.query(
+      `UPDATE chat_sessions SET status = 'merged',
+         merged_at = NOW() - INTERVAL '23 hours', live_at = NOW() - INTERVAL '23 hours' WHERE id = $1`,
+      [freshLive],
+    );
+    const priyaFresh = await notify(priya.id, 'voted_change_merged', { sessionId: freshLive, source: null });
+    const moFresh = await notify(mo.id, 'pr_merged', { sessionId: freshLive, source: null });
+    assert.ok(await listed(priya.id, priyaFresh), 'fresh news still shows');
+    assert.ok(await listed(mo.id, moFresh));
+    assert.equal(await notifications.countUnread(pool, priya.id), basePriya + 1);
+    assert.equal(await notifications.countUnread(pool, mo.id), baseMo + 1);
+
+    // Merged over a day ago and still going live (live_at NULL): hidden,
+    // the clock running from merged_at.
+    const noLive = await change('Merged, still going live');
+    await pool.query(
+      `UPDATE chat_sessions SET status = 'merged',
+         merged_at = NOW() - INTERVAL '25 hours', live_at = NULL WHERE id = $1`,
+      [noLive],
+    );
+    const priyaNoLive = await notify(priya.id, 'voted_change_merged', { sessionId: noLive, source: null });
+    assert.equal(await listed(priya.id, priyaNoLive), null, 'hidden once the merge is a day old');
+    assert.equal(await notifications.countUnread(pool, priya.id), basePriya + 1, 'the count agrees with the list');
+
+    // Merged with neither merged_at nor live_at: the clock falls back to the
+    // row's own created_at, so a fresh row is listed and never dropped by a
+    // NULL comparison.
+    const noDates = await change('Merged with no dates');
+    await pool.query(
+      `UPDATE chat_sessions SET status = 'merged', merged_at = NULL, live_at = NULL WHERE id = $1`,
+      [noDates],
+    );
+    const priyaNoDates = await notify(priya.id, 'voted_change_merged', { sessionId: noDates, source: null });
+    assert.ok(await listed(priya.id, priyaNoDates), 'a fresh row on a dateless change is listed');
+    assert.equal(await notifications.countUnread(pool, priya.id), basePriya + 2);
+
+    // The stale unread row, saved: stays in Saved, and a push still opens it.
+    await pool.query(`INSERT INTO notification_bookmarks (user_id, notification_id) VALUES ($1, $2)`, [priya.id, priyaStale]);
+    const saved = await notifications.listSavedForUser(pool, priya.id);
+    assert.ok(saved.some((r) => r.id === priyaStale), 'a saved stale unread row stays in Saved');
+    const exact = notifications.serialize(await notifications.getForUser(pool, priya.id, priyaStale));
+    assert.equal(exact.sessionStatus, 'merged');
+    assert.equal(exact.readAt, null, 'the exact lookup still resolves the stale unread row');
+
+    // A closed change keeps its unread news in the list, however old.
+    const closedOld = await change('A change that was closed a day ago');
+    await pool.query(
+      `UPDATE chat_sessions SET status = 'archived', archived_at = NOW() - INTERVAL '25 hours' WHERE id = $1`,
+      [closedOld],
+    );
+    const closedOldNews = await notify(priya.id, 'voted_change_merged', { sessionId: closedOld, source: null });
+    assert.ok(await listed(priya.id, closedOldNews), 'a closed change keeps its unread news listed');
+    assert.equal(await notifications.countUnread(pool, priya.id), basePriya + 3);
   });
 
   // #4778: settleDecidedChange runs best-effort at every call site, so the
