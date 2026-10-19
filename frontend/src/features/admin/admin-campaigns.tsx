@@ -95,6 +95,8 @@ interface CampaignDetail extends Campaign {
   instructions?: string;
   apps?: CampaignApp[];
   held?: CampaignHold | null;
+  // Merging each of its proposals as soon as its checks pass: since when, by whom.
+  autoMerge?: { at: string | null; by: string | null } | null;
 }
 
 const canWrite = () => !!(typeof window !== 'undefined'
@@ -258,6 +260,7 @@ function CampaignRow({
   const [merging, setMerging] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [resuming, setResuming] = useState(false);
+  const [autoSaving, setAutoSaving] = useState(false);
   const [recheckingAll, setRecheckingAll] = useState(false);
   const [status, setStatus] = useState('');
   const alive = useRef(true);
@@ -374,6 +377,36 @@ function CampaignRow({
     onReloadList();
   };
 
+  // Auto-merge: the campaign merges each of its proposals as soon as its
+  // checks pass (src/workflow/campaign/machine.ts autoMerged), so a long one
+  // runs through without anyone pressing "Merge all green" again.
+  const openCount = apps.filter((a) => a.state === 'pr_open').length;
+  const autoOn = !!detail?.autoMerge;
+  const setAutoMerge = async (on: boolean) => {
+    if (on) {
+      const ok = await confirmMsg({
+        title: 'Auto-merge green proposals?',
+        message: 'Each of this campaign\'s proposals is merged as soon as its checks pass, without waiting for its vote, '
+          + 'until you turn this off. It is the same merge as "Merge all green", in your name.',
+        confirmLabel: 'Turn on auto-merge',
+      });
+      if (!ok) return;
+    }
+    setAutoSaving(true);
+    try {
+      const res = await fetch(`/api/campaigns/${c.id}/auto-merge`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    } catch (err: any) {
+      alertMsg(`Auto-merge failed: ${err.message}`);
+    }
+    if (!alive.current) return;
+    setAutoSaving(false);
+    refresh();
+  };
+
   const statusCls = c.status === 'running' ? 'text-violet-700 dark:text-violet-400'
     : c.status === 'done' ? 'text-green-800 dark:text-green-400' : 'text-zinc-500 dark:text-zinc-400';
 
@@ -410,6 +443,11 @@ function CampaignRow({
                 {detail.instructions || ''}
               </pre>
             </details>
+            {autoOn ? (
+              <p className="campaign-auto-merge-on text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+                {`Auto-merge is on${detail.autoMerge?.by ? ` (turned on by ${detail.autoMerge.by})` : ''}: each proposal merges as soon as its checks pass.`}
+              </p>
+            ) : null}
             {detail.status === 'running' && detail.held ? (
               <p className="campaign-held text-xs text-amber-800 dark:text-amber-400 mb-2">
                 {detail.held.reason === 'platform'
@@ -442,6 +480,12 @@ function CampaignRow({
                 <button type="button" className={`campaign-resume-btn ${AdminUI.btn.primarySm}`}
                   disabled={resuming} onClick={resume}>
                   {resuming ? 'Resuming…' : `Resume campaign (${notReached} not reached)`}
+                </button>
+              ) : null}
+              {write && (autoOn || openCount > 0 || detail.status === 'running') ? (
+                <button type="button" className={`campaign-auto-merge-btn ${autoOn ? AdminUI.btn.outlineSm : AdminUI.btn.primarySm}`}
+                  disabled={autoSaving} onClick={() => setAutoMerge(!autoOn)}>
+                  {autoSaving ? 'Saving…' : autoOn ? 'Turn off auto-merge' : 'Auto-merge green'}
                 </button>
               ) : null}
               {write && green > 0 ? (

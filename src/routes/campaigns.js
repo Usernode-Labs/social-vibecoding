@@ -20,6 +20,9 @@
  * - POST /api/campaigns/:id/resume           — admin: a stopped campaign
  *                                              goes on with the apps it
  *                                              never reached
+ * - POST /api/campaigns/:id/auto-merge       — admin: { on } merge each
+ *                                              campaign proposal as soon
+ *                                              as its checks pass
  *
  * Campaign CREATION is not here — a campaign starts life as a
  * kind='maintenance_campaign' governance proposal on the self-hosted app
@@ -206,6 +209,29 @@ function campaignRoutes(config) {
       res.json({ ok: true });
     } catch (err) {
       log.error('campaigns', 'Resume failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Auto-merge: { on: true } and the campaign merges each of its proposals
+  // whose checks pass as they come in (every check, and at once), in this
+  // admin's name; { on: false } stops that.
+  router.post('/api/campaigns/:id/auto-merge', sameOriginBrowserOnly, async (req, res) => {
+    try {
+      if (!req.user?.canAdminWrite) {
+        return res.status(403).json({ error: 'Full admin access required' });
+      }
+      const id = positiveId(req.params.id);
+      if (!id || !(await exists(id))) return res.status(404).json({ error: 'Campaign not found' });
+      const on = req.body && req.body.on;
+      if (typeof on !== 'boolean') return res.status(400).json({ error: 'Provide on: true or false.' });
+      log.info('campaigns', 'Auto-merge set', { campaignId: id, on, by: req.user.username });
+      const outcome = await platform().campaignEvent(id, 'AutoMerge', { on }, req.user);
+      if (outcome.status === 'pending') return res.status(202).json({ ok: true, pending: true });
+      if (!settled(outcome)) return refused(res, outcome);
+      res.json({ ok: true, on });
+    } catch (err) {
+      log.error('campaigns', 'Auto-merge failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

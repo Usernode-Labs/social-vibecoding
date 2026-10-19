@@ -4803,6 +4803,21 @@
       "classicPath": "#apps"
     },
     {
+      "source": "src/routes/campaigns.js",
+      "method": "POST",
+      "path": "/api/campaigns/:id/auto-merge",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.campaigns.item.auto.merge.58a15ce3",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
       "source": "src/routes/challenge-admin.js",
       "method": "GET",
       "path": "/api/challenge-admin/season-events",

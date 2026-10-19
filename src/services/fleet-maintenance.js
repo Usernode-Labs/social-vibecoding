@@ -473,10 +473,13 @@ async function campaignStatus(pool, campaignId) {
   // Waiting for room to change its next app (campaign/machine.ts holdFor):
   // the instance's own record, null when it is not.
   const { rows: inst } = await pool.query(
-    `SELECT data->'held' AS held FROM wf_instances WHERE machine = 'campaign' AND key = $1`,
+    `SELECT data->'held' AS held, data->'autoMerge' AS auto_merge FROM wf_instances WHERE machine = 'campaign' AND key = $1`,
     [`campaign:${campaignId}`]
   );
   const held = inst[0] && inst[0].held && typeof inst[0].held === 'object' ? inst[0].held : null;
+  // Merging its green proposals as they come in: since when, and who said so.
+  const am = inst[0] && inst[0].auto_merge && typeof inst[0].auto_merge === 'object' ? inst[0].auto_merge : null;
+  const autoMerge = am ? { at: am.at || null, by: am.by || null } : null;
   return {
     id: campaign.id,
     issueId: campaign.issue_id,
@@ -488,6 +491,7 @@ async function campaignStatus(pool, campaignId) {
     counts: Object.fromEntries(counts),
     apps: rows,
     held,
+    autoMerge,
   };
 }
 
