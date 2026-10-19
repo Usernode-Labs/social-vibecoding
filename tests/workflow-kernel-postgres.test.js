@@ -723,57 +723,72 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.deepEqual((await inst('k7x')).data.results.map((x) => x.slice(0, 2)), [['exhausted', 'k7x-w']]);
   });
 
-  await t.test('K7 an item whose process died on each of its last three attempts is quarantined', async () => {
+  await t.test('K7 a lease that lapses is recorded as such and ends nothing; a stop and a cancel say so otherwise', async () => {
     const gone = (ctx) => new Promise((resolve, reject) => {
       if (ctx.signal.aborted) { reject(ctx.signal.reason); return; }
       ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason), { once: true });
     });
     const r = make({ services: { 'kt.echo': { ...echo, resumable: true } } });
     // Its process dies (no stop recorded): the lease just lapses.
-    const died = (workKey) => pool.query(
+    const lapse = (workKey) => pool.query(
       `UPDATE wf_work SET lease_until = now() - interval '1 second' WHERE work_key = $1`, [workKey]);
-    const until = async (workKey, done) => {
-      while (!done((await pool.query(`SELECT status FROM wf_work WHERE work_key = $1`, [workKey])).rows[0])) {
-        await r.runServices();
-        await sleep(50);
-      }
-    };
-
     await create('k7q');
-    let tries = 0;
-    handlers['k7q-w'] = async (ctx) => { tries += 1; await gone(ctx); };
+    let runs = 0;
+    handlers['k7q-w'] = async (ctx) => { runs += 1; if (runs <= 3) await gone(ctx); return { ran: runs }; };
     await route('k7q', 'Work', { workKey: 'k7q-w' });
     await rt.drain();
     for (let i = 0; i < 3; i++) {
-      while (tries < i + 1) { void r.runServices(); await sleep(50); }
-      await died('k7q-w');
-    }
-    await until('k7q-w', (w) => w.status !== 'running');
-    await rt.drain();
-    assert.equal(tries, 3, 'the fourth claim does not run it');
-    const item = (await pool.query(`SELECT * FROM wf_work WHERE work_key = 'k7q-w'`)).rows[0];
-    assert.equal(item.status, 'settled');
-    assert.equal(item.last_error.code, 'lost_repeatedly');
-    assert.deepEqual((await inst('k7q')).data.results.map((x) => x.slice(0, 2)), [['exhausted', 'k7q-w']]);
-
-    // A stop between deaths breaks the run: two deaths, a stop, two deaths, and it still runs.
-    await create('k7d');
-    let runs = 0;
-    handlers['k7d-w'] = async (ctx) => { runs += 1; if (runs <= 4) await gone(ctx); return { ran: runs }; };
-    await route('k7d', 'Work', { workKey: 'k7d-w' });
-    await rt.drain();
-    const ends = [died, died, (k) => pool.query(
-      `WITH w AS (UPDATE wf_work SET lease_until = now() - interval '1 second' WHERE work_key = $1 RETURNING claim_id)
-       UPDATE wf_work_attempts SET outcome = 'lost', finished_at = now(), error = '{"code": "stopped"}'::jsonb
-        WHERE id = (SELECT claim_id FROM w) AND outcome = 'running'`, [k]), died];
-    for (let i = 0; i < ends.length; i++) {
       while (runs < i + 1) { void r.runServices(); await sleep(50); }
-      await ends[i]('k7d-w');
+      await lapse('k7q-w');
     }
-    await until('k7d-w', (w) => w.status === 'reported');
+    while ((await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7q-w'`)).rows[0].status !== 'reported') {
+      await r.runServices();
+      await sleep(50);
+    }
     await rt.drain();
-    assert.equal(runs, 5);
-    assert.deepEqual((await inst('k7d')).data.results.map((x) => x.slice(0, 2)), [['ok', 'k7d-w']]);
+    assert.equal(runs, 4, 'three lapses in a row, and it still runs');
+    assert.deepEqual((await inst('k7q')).data.results.map((x) => x.slice(0, 2)), [['ok', 'k7q-w']]);
+    const { rows } = await pool.query(
+      `SELECT a.outcome, a.error->>'code' AS code FROM wf_work_attempts a JOIN wf_work w ON w.id = a.work_id
+        WHERE w.work_key = 'k7q-w' ORDER BY a.number`);
+    assert.deepEqual(rows.map((x) => [x.outcome, x.code]),
+      [['lost', 'lapsed'], ['lost', 'lapsed'], ['lost', 'lapsed'], ['succeeded', null]]);
+    // What the metrics report: the most lapses of one item in the hour.
+    const h = await inspect.health(pool, { limits: new Map([['kt.echo', 4]]), versions: new Map([['kt-counter', 1]]) });
+    assert.ok(h.lapsedMostLastHour >= 3);
+  });
+
+  await t.test('K7 a process that cannot renew its lease stops the handler before the lease lapses', async () => {
+    let failRenew = false;
+    const flaky = {
+      connect: () => pool.connect(),
+      query: (text, ...rest) => (failRenew && /SET lease_until = now\(\) \+/.test(text)
+        ? Promise.reject(Object.assign(new Error('connection lost'), { code: 'ECONNRESET' }))
+        : pool.query(text, ...rest)),
+    };
+    const r = make({ pool: flaky, services: { 'kt.echo': { ...echo, leaseMs: 800 } } });
+    await create('k7f');
+    let aborted = null;
+    handlers['k7f-w'] = (ctx) => new Promise((resolve, reject) => {
+      ctx.signal.addEventListener('abort', () => { aborted = Date.now(); reject(ctx.signal.reason); }, { once: true });
+    });
+    await route('k7f', 'Work', { workKey: 'k7f-w' });
+    await rt.drain();
+    const running = r.runServices();
+    while (!(await pool.query(`SELECT 1 FROM wf_work WHERE work_key = 'k7f-w' AND status = 'running'`)).rows.length) await sleep(20);
+    await sleep(250);
+    failRenew = true;
+    const { rows: [{ lease_until: until }] } = await pool.query(`SELECT lease_until FROM wf_work WHERE work_key = 'k7f-w'`);
+    await running;
+    assert.ok(aborted, 'stopped by its own process');
+    assert.ok(aborted < new Date(until).getTime(), 'before another process could claim it');
+    failRenew = false;
+    // Its item is the next claim's (the attempt reported nothing).
+    handlers['k7f-w'] = async () => ({ done: true });
+    await pool.query(`UPDATE wf_work SET lease_until = now() - interval '1 second' WHERE work_key = 'k7f-w'`);
+    await rt.runServices();
+    await rt.drain();
+    assert.deepEqual((await inst('k7f')).data.results.map((x) => x.slice(0, 2)), [['ok', 'k7f-w']]);
   });
 
   await t.test('K7 a work item that continues an earlier one starts from its checkpoint', async () => {

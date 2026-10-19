@@ -34,9 +34,9 @@ export function render(h: Health): string {
     [[null, h.deadlinesOverdue]]);
   gauge(out, 'homeroom_workflow_work_exhausted_last_hour', 'Work items that ran out of tries in the last hour.',
     [[null, h.exhaustedLastHour]]);
-  gauge(out, 'homeroom_workflow_work_quarantined_last_hour',
-    'Work items taken off in the last hour because their process died on each of their last attempts.',
-    [[null, h.quarantinedLastHour]]);
+  gauge(out, 'homeroom_workflow_work_lapsed_most_last_hour',
+    'The most times one work item\'s lease lapsed (its process died, hung or lost the database) in the last hour.',
+    [[null, h.lapsedMostLastHour]]);
   gauge(out, 'homeroom_workflow_work_running', 'Work items running on a live lease, by kind.',
     [...h.running].map(([kind, n]) => [{ kind }, n] as [Record<string, string>, number]));
   gauge(out, 'homeroom_workflow_decision_seconds_p95',
@@ -58,6 +58,8 @@ export function serveMetrics(port: number, read: () => Promise<Health>, log: { w
       res.writeHead(503).end();
     });
   });
+  // A port it cannot have costs the metrics, never the process.
+  server.on('error', (err: Error) => log.warn('workflow', 'Workflow metrics are not served', { port, message: err.message }));
   server.listen(port);
   server.unref();
   return server;

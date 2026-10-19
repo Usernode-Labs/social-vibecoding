@@ -246,18 +246,23 @@ function bootRelease(): string {
 // booting waits for none of it.
 export async function startWorkflowLoops(): Promise<void> {
   if (!runtime) return;
-  await runtime.start({ loops: true });
+  // Owed before any work is claimed: a failure here ends the process with
+  // nothing of its own running.
   const release = bootRelease();
   await runtime.append(RELEASE, releaseKey(release), { type: 'Booted', payload: { release } },
     { requestKey: `booted:${release}`, source: { kind: 'system', name: 'boot' } });
+  await runtime.start({ loops: true });
+  loopsHere = true;
 }
 
 // What a new build owes what an older one left, in order (release/services.ts):
-// open governance rows no instance holds, the sessions the proposal machine
-// does not hold, waits with no clock, the merge queues, deferred DM answers,
-// main checks mid-run, the bot's queue rows, the platform's own faults, and
-// the bot lane's clock.
+// the bot lane's clock, open governance rows no instance holds, the sessions
+// the proposal machine does not hold, waits with no clock, the merge queues,
+// deferred DM answers, main checks mid-run, the bot's queue rows, and the
+// platform's own faults.
 const ADOPTIONS: readonly Adoption[] = Object.freeze([
+  // First: the bot's whole loop waits on its clock.
+  ['botLane', (release: string) => startLaneClock(release)],
   ['governance', () => enrollGovernance()],
   ['proposals', () => adoptProposals()],
   ['waitingProposals', () => rearmWaitingProposals()],
@@ -266,7 +271,6 @@ const ADOPTIONS: readonly Adoption[] = Object.freeze([
   ['mainChecks', () => adoptMainChecks()],
   ['botQueue', () => adoptBotQueue()],
   ['platformFaults', () => retryPlatformFaults()],
-  ['botLane', (release: string) => startLaneClock(release)],
 ] as Adoption[]);
 
 // Every open governance row the machine does not hold yet is filed with it.
@@ -762,9 +766,11 @@ function running(): Runtime {
   return runtime;
 }
 
-// Whether the runtime runs in this process (the admin console's reads say so).
+// Whether this process runs the workflow's loops (the admin console's reads
+// say so; `runners` there lists every process that does).
+let loopsHere = false;
 export function workflowRunning(): boolean {
-  return runtime !== null;
+  return runtime !== null && loopsHere;
 }
 
 // Each kind's limit across every process, and the machine versions this
@@ -773,10 +779,23 @@ export function workLimits(): { limits: Map<string, number>; versions: Map<strin
   return runtime ? runtime.workLimits() : {};
 }
 
-// The workflow's health in numbers, for its metrics (metrics.ts).
+// The workflow's health in numbers, for its metrics (metrics.ts): its reads
+// one after another on one connection, read-only and bounded, so a scrape
+// never takes more than one of the runtime's connections nor holds it long.
 export async function workflowHealth() {
   const r = running();
-  return inspect.health(kernelPool!, r.workLimits());
+  const client = await kernelPool!.connect();
+  try {
+    await client.query("BEGIN READ ONLY; SET LOCAL statement_timeout = '5s'");
+    const health = await inspect.health(client, r.workLimits());
+    await client.query('COMMIT');
+    return health;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 type Source = { kind: 'route' | 'system' | 'admin'; name?: string };

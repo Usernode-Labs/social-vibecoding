@@ -90,6 +90,9 @@ export class Signals {
   #sleepers = new Map<string, Set<(payload: string | null) => void>>();
   #kept = new Map<string, number>();
   #watches = new Set<{ seen: Set<string>; wake: (() => void) | null }>();
+  // Told of every notification on a channel, asleep or not (a loop busy in
+  // its body would otherwise not hear a kind's slot come free).
+  #observers = new Map<string, Set<(payload: string) => void>>();
   #stopped = false;
 
   constructor(pool: Pool, log: Logger) { this.#pool = pool; this.#log = log; }
@@ -158,7 +161,14 @@ export class Signals {
     for (const w of this.#watches) w.wake?.();
   }
 
+  observe(channel: string, fn: (payload: string) => void): void {
+    let set = this.#observers.get(channel);
+    if (!set) this.#observers.set(channel, set = new Set());
+    set.add(fn);
+  }
+
   wake(channel: string, payload?: string): void {
+    for (const fn of this.#observers.get(channel) ?? []) fn(payload ?? '');
     if (channel === 'wf_outcome') {
       for (const w of this.#watches) { w.seen.add(payload ?? ''); w.wake?.(); }
     }

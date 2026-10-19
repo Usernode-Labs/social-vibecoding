@@ -131,38 +131,44 @@ export interface Health {
   flagged: Map<string, number>;
   deadlinesOverdue: number;
   exhaustedLastHour: number;
-  quarantinedLastHour: number;
+  // The most times one item's lease lapsed (its process died, hung or lost
+  // the database) in the last hour: an item that keeps taking its process
+  // down shows here.
+  lapsedMostLastHour: number;
   running: Map<string, number>;
   decisionP95Seconds: Map<string, number>;
 }
 
 export async function health(db: Queryable, o: WorkLimits & { overdueMs?: number }): Promise<Health> {
-  const [unclaimed, pending, flagged, overdue, settled, running, decisions] = await Promise.all([
-    db.query(`SELECT COALESCE(max(waited), 0)::float8 AS s FROM (${UNCLAIMED_SQL}) u`, unclaimedArgs(o, 1)),
-    db.query(PENDING_OLDEST_SQL),
-    db.query(`SELECT flag, count(*)::int AS n FROM wf_instances WHERE flag IS NOT NULL GROUP BY flag`),
-    db.query(`SELECT count(*)::int AS n FROM wf_instances
-               WHERE deadline_at < now() - make_interval(secs => $1::float8 / 1000)`, [o.overdueMs ?? 60000]),
-    db.query(`SELECT count(*) FILTER (WHERE result->>'outcome' = 'exhausted')::int AS exhausted,
-                     count(*) FILTER (WHERE last_error->>'code' = 'lost_repeatedly')::int AS quarantined
-                FROM wf_work WHERE status = 'settled' AND settled_at > now() - interval '1 hour'`),
-    db.query(`SELECT kind, count(*)::int AS n FROM wf_work
-               WHERE status = 'running' AND lease_until > now() GROUP BY kind`),
-    // How long people's events waited for their decision (a route's, an
-    // admin's), per machine, over the last quarter hour.
-    db.query(`SELECT machine, percentile_cont(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM processed_at - created_at))::float8 AS p95
+  // One after another: the caller may hand one connection (platform.ts).
+  const unclaimed = await db.query(`SELECT COALESCE(max(waited), 0)::float8 AS s FROM (${UNCLAIMED_SQL}) u`, unclaimedArgs(o, 1));
+  const pending = await db.query(PENDING_OLDEST_SQL);
+  const flagged = await db.query(`SELECT flag, count(*)::int AS n FROM wf_instances WHERE flag IS NOT NULL GROUP BY flag`);
+  const overdue = await db.query(`SELECT count(*)::int AS n FROM wf_instances
+               WHERE deadline_at < now() - make_interval(secs => $1::float8 / 1000)`, [o.overdueMs ?? 60000]);
+  const settled = await db.query(`SELECT
+       (SELECT count(*)::int FROM wf_work
+         WHERE status = 'settled' AND settled_at > now() - interval '1 hour' AND result->>'outcome' = 'exhausted') AS exhausted,
+       (SELECT COALESCE(max(n), 0)::int FROM (
+          SELECT count(*) AS n FROM wf_work_attempts
+           WHERE outcome = 'lost' AND finished_at > now() - interval '1 hour' AND error->>'code' = 'lapsed'
+           GROUP BY work_id) l) AS lapsed`);
+  const running = await db.query(`SELECT kind, count(*)::int AS n FROM wf_work
+               WHERE status = 'running' AND lease_until > now() GROUP BY kind`);
+  // How long people's events waited for their decision (a route's, an
+  // admin's), per machine, over the last quarter hour.
+  const decisions = await db.query(`SELECT machine, percentile_cont(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM processed_at - created_at))::float8 AS p95
                 FROM wf_events
                WHERE status = 'processed' AND processed_at > now() - interval '15 minutes'
                  AND source->>'kind' IN ('route', 'admin')
-               GROUP BY machine`),
-  ]);
+               GROUP BY machine`);
   return {
     unclaimedOldestSeconds: Number(unclaimed.rows[0]?.s ?? 0),
     pendingOldestSeconds: Number(pending.rows[0]?.s ?? 0),
     flagged: new Map(flagged.rows.map((r) => [String(r.flag), Number(r.n)])),
     deadlinesOverdue: Number(overdue.rows[0]?.n ?? 0),
     exhaustedLastHour: Number(settled.rows[0]?.exhausted ?? 0),
-    quarantinedLastHour: Number(settled.rows[0]?.quarantined ?? 0),
+    lapsedMostLastHour: Number(settled.rows[0]?.lapsed ?? 0),
     running: new Map(running.rows.map((r) => [String(r.kind), Number(r.n)])),
     decisionP95Seconds: new Map(decisions.rows.map((r) => [String(r.machine), Number(r.p95)])),
   };

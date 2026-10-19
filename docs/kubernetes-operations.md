@@ -163,8 +163,9 @@ over as it always did). On `SIGTERM` it:
    runs, deletes its row and exits.
 
 It waits at most `platform.drainMinutes` (`PLATFORM_DRAIN_TIMEOUT_MS`), and
-ends early when `platform.drainingMax` (`PLATFORM_DRAINING_MAX`) newer Pods are
-draining too. The log says what it is still finishing every minute
+ends early when `platform.drainingMax` (`PLATFORM_DRAINING_MAX`) newer releases
+are draining too: counted by release, since one release drains every conductor
+replica (a `rollout restart` of the same build is no newer release). The log says what it is still finishing every minute
 (`Still finishing work before exiting`), and how it ended: `Finished this
 process's work`, or `Drain deadline passed` / `Newer processes are draining
 too`, with what it handed over. What it hands over is adopted by the leader's
@@ -721,8 +722,8 @@ for the leader's remaining work (docs/plans/web-and-conductor.md).
 - **Its own database pool** is `platform.conductor.dbPoolMax` (30), beside the
   runtime's `WF_POOL_MAX` (10). A web Pod's runtime pool is 2.
 - **What a release owes** an older one (the boot adoptions) runs once per release, as the
-  `release` machine's work; Admin → Workflows shows `release / release:<sha>`, and a
-  release whose adoptions failed under "Needs a person".
+  `release` machine's work; Admin → Workflows shows `release / release:<sha>` and what each
+  adoption did (an adoption that kept failing, its error; the others still ran).
 - **Verify after a release.** Both conductors log `Workflow runtime started`; Admin →
   Workflows names them under "Needs a person" ("Run by …"), and `release:<sha>` reaches
   `done`.
@@ -730,9 +731,11 @@ for the leader's remaining work (docs/plans/web-and-conductor.md).
 ### Workflow alerts
 
 The conductors serve the workflow's metrics on `platform.conductor.metricsPort` (9464,
-`GET /metrics`, not exposed by the Service), read from Postgres on each scrape. The chart's
-PodMonitor (`<fullname>-conductor-workflow`) has Prometheus scrape them, admitted by the
-platform's network policy from `monitoring.namespace`, and its PrometheusRule alerts:
+`GET /metrics`, not exposed by the Service), read from Postgres on each scrape, on one
+connection with a 5-second limit. The chart's PodMonitor (`<fullname>-conductor-workflow`)
+has Prometheus scrape them, admitted by the platform's network policy from
+`monitoring.namespace`, and its PrometheusRule alerts. Both render only on a cluster with
+the Prometheus Operator's kinds (`monitoring.coreos.com/v1`, which Argo CD passes to Helm):
 
 | Alert | When | Severity |
 |---|---|---|
@@ -741,7 +744,7 @@ platform's network policy from `monitoring.namespace`, and its PrometheusRule al
 | `SocialWorkflowConductorRestarting` | more than three restarts in 30 minutes | warning |
 | `SocialWorkflowWorkNobodyTakes` | work a conductor could take has waited over 5 minutes, for 5 minutes | critical |
 | `SocialWorkflowEventsNotDecided` | an event has waited over 2 minutes to be decided, for 5 minutes | critical |
-| `SocialWorkflowPoisonWork` | an item was quarantined in the last hour | warning |
+| `SocialWorkflowWorkKeepsLapsing` | one item's lease lapsed three times in an hour (its process died, hung or lost the database) | warning |
 | `SocialWorkflowInstancesFlagged` | instances faulted or stalled for 15 minutes | warning |
 | `SocialWorkflowDeadlinesOverdue` | deadlines passed without firing, 10 minutes | warning |
 | `SocialWorkflowSlowDecisions` | people's events take over 5 s to be decided (p95), 15 minutes | warning |

@@ -34,10 +34,13 @@ const DEFAULTS = { maxAttempts: 5, leaseMs: 60000, maxLostAttempts: 100, concurr
 // takes (PURGE_LOCK, 0).
 export const CLAIM_LOCKS = 0x57464b43;
 export const PURGE_LOCK = 0x57465055;
-// An item whose process died on each of its last this many attempts is
-// taken off: it is ended exhausted (`lost_repeatedly`) and its machine
-// decides, rather than have it take every process that claims it down.
-const DEATHS_TO_QUARANTINE = 3;
+// The error an attempt is closed with when its item is claimed again on a
+// lease that lapsed with no word from its process: the process died, hung or
+// lost the database (a stop, a cancel and a lost claim say so otherwise).
+// Nothing ends an item for it: the lapse already held it back a whole lease,
+// `maxLostAttempts` bounds it, and Admin → Workflows and the alerts show an
+// item whose lease keeps lapsing (inspect.ts health).
+const LAPSED = '{"message": "its lease lapsed with no word from its process", "code": "lapsed"}';
 
 export function concurrencyOf(h: WorkHandler): number {
   return h.concurrency ?? DEFAULTS.concurrency;
@@ -51,10 +54,7 @@ function errorJson(err: unknown): { message: string; code: string | null } {
 }
 
 interface Claimed { id: string; machine: string; key: string; kind: string;
-  work_key: string; input: Json; checkpoint: Json | null; attempt_count: number; lost_attempts: number; claim_id: string;
-  // How many of its last attempts, in a row, ended with their process dead
-  // (claimed again on a lapsed lease), up to DEATHS_TO_QUARANTINE.
-  deaths: number }
+  work_key: string; input: Json; checkpoint: Json | null; attempt_count: number; lost_attempts: number; claim_id: string }
 
 export interface ClaimResult {
   items: Claimed[];
@@ -119,19 +119,13 @@ export async function claim(opts: ServiceOptions, kind: string, room: number): P
                  w.attempt_count, w.lost_attempts, w.claim_id, due.claim_id AS previous_claim`,
       [kind, take, leaseMs, [...opts.versions.keys()], [...opts.versions.values()]]);
     for (const r of rows) {
-      r.deaths = 0;
       if (r.previous_claim) {
-        // An attempt still 'running' when its item is claimed again ended
-        // with its process: a death. One that stopped gracefully, or was
+        // An attempt still 'running' when its item is claimed again lapsed
+        // with no word from its process. One that stopped gracefully, or was
         // cancelled, already says so.
         await client.query(
-          `UPDATE wf_work_attempts SET outcome = 'lost', finished_at = now() WHERE id = $1 AND outcome = 'running'`,
-          [r.previous_claim]);
-        const { rows: [d] } = await client.query<{ deaths: number }>(
-          `SELECT count(*) FILTER (WHERE outcome = 'lost' AND error IS NULL)::int AS deaths
-             FROM (SELECT outcome, error FROM wf_work_attempts WHERE work_id = $1 ORDER BY number DESC LIMIT $2) t`,
-          [r.id, DEATHS_TO_QUARANTINE]);
-        r.deaths = d!.deaths;
+          `UPDATE wf_work_attempts SET outcome = 'lost', finished_at = now(), error = '${LAPSED}'::jsonb
+            WHERE id = $1 AND outcome = 'running'`, [r.previous_claim]);
       }
       await client.query(
         `INSERT INTO wf_work_attempts (id, work_id, service_id, number) VALUES ($1, $2, $3, $4)`,
@@ -165,11 +159,18 @@ export async function dueKinds(opts: Pick<ServiceOptions, 'pool' | 'versions'>, 
 
 // Milliseconds until the next item of these kinds is due (queued, or a
 // lease that runs out), or null when there is none. New work notifies.
-export async function nextDueMs(pool: Pool, kinds: string[]): Promise<number | null> {
+export async function nextDueMs(opts: Pick<ServiceOptions, 'pool' | 'versions'>, kinds: string[]): Promise<number | null> {
   if (!kinds.length) return null;
-  const { rows: [r] } = await pool.query(
-    `SELECT (EXTRACT(EPOCH FROM min(CASE WHEN status = 'queued' THEN due_at ELSE lease_until END) - now()) * 1000)::float8 AS ms
-       FROM wf_work WHERE kind = ANY($1::text[]) AND status IN ('queued', 'running')`, [kinds]);
+  // What this process may claim (the mixed-version rule, as in claim()): an
+  // item a newer machine version's process must run is never due here.
+  const { rows: [r] } = await opts.pool.query(
+    `SELECT (EXTRACT(EPOCH FROM min(CASE WHEN w.status = 'queued' THEN w.due_at ELSE w.lease_until END) - now()) * 1000)::float8 AS ms
+       FROM wf_work w
+       LEFT JOIN wf_instances i ON i.machine = w.machine AND i.key = w.key
+       LEFT JOIN unnest($2::text[], $3::int[]) AS m(machine, version) ON m.machine = w.machine
+      WHERE w.kind = ANY($1::text[]) AND w.status IN ('queued', 'running')
+        AND (i.machine_version IS NULL OR m.version IS NULL OR i.machine_version <= m.version)`,
+    [kinds, [...opts.versions.keys()], [...opts.versions.values()]]);
   return r?.ms == null ? null : Number(r.ms);
 }
 
@@ -247,13 +248,6 @@ export async function execute(opts: ServiceOptions, w: Claimed, stopping?: Abort
   const leaseMs = h.leaseMs ?? DEFAULTS.leaseMs;
   const lost = Number(w.lost_attempts) || 0;
   const tries = h.resumable ? w.attempt_count - lost : w.attempt_count;
-  if (w.deaths >= DEATHS_TO_QUARANTINE) {
-    // Its process died on each of its last attempts: whatever it does takes
-    // the process with it, so no process runs it again.
-    await finish(opts, w, { outcome: 'exhausted', error: {
-      message: `its process died on each of its last ${DEATHS_TO_QUARANTINE} attempts`, code: 'lost_repeatedly' } });
-    return;
-  }
   if (h.resumable ? lost > (h.maxLostAttempts ?? DEFAULTS.maxLostAttempts) : w.attempt_count > maxAttempts) {
     // Only a lease that kept expiring gets here: the process running it died.
     await finish(opts, w, { outcome: 'exhausted', error: { message: 'lease lost on every attempt', code: 'lease_lost' } });
@@ -264,14 +258,24 @@ export async function execute(opts: ServiceOptions, w: Claimed, stopping?: Abort
   stopping?.addEventListener('abort', onStop, { once: true });
   const live = `id = $1 AND claim_id = $2 AND status = 'running' AND lease_until > now()`;
   let leaseLost = false;
+  const lose = () => { leaseLost = true; abort.abort(new LeaseLost()); };
+  // When the lease was last renewed, by this process's own clock: a process
+  // that cannot reach the database cannot tell whether its lease still holds,
+  // and another process claims the item once it lapses, so it stops the
+  // handler itself before then rather than run beside that one.
+  let renewedAt = Date.now();
   const renew = async (sql: string, values: unknown[]) => {
     const { rowCount } = await opts.pool.query(sql, values);
-    if (!rowCount) { leaseLost = true; abort.abort(new LeaseLost()); throw new LeaseLost(); }
+    if (!rowCount) { lose(); throw new LeaseLost(); }
+    renewedAt = Date.now();
   };
+  // Renewed every quarter lease; three renewals missed in a row (three
+  // quarters of a lease with no word from the database) stop it.
   const heartbeat = setInterval(() => {
+    if (!leaseLost && Date.now() - renewedAt >= Math.floor((leaseMs * 3) / 4)) lose();
     renew(`UPDATE wf_work SET lease_until = now() + make_interval(secs => $3::float8 / 1000) WHERE ${live}`,
       [w.id, w.claim_id, leaseMs]).catch(() => {});
-  }, Math.max(50, Math.floor(leaseMs / 3)));
+  }, Math.max(50, Math.floor(leaseMs / 4)));
   let report: Report | null;
   try {
     const checkpoint = async (v: Json) => {

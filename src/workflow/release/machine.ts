@@ -36,12 +36,11 @@ export function releaseMachine() {
     version: 1,
     events: { Booted: release },
     create: ['Booted'],
-    terminal: ['done'],
+    terminal: ['done', 'failed'],
     decode: (row) => (row.state === NONE ? { name: NONE, data: null } : { name: row.state as Name, data: row.data as Data }),
     authorize: {
       Booted: (e) => (e.source.kind === 'system' ? ok() : reject('system_only')),
     },
-    attention: { failed: 'Its boot adoptions failed; the next release runs them again' },
     transitions: {
       [NONE]: {
         Booted: {

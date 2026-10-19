@@ -360,8 +360,10 @@ const CANCEL_WORK = `
   cancelled AS (
     UPDATE wf_work w SET status = 'settled', claim_id = NULL, lease_until = NULL, settled_at = now(),
            result = COALESCE(w.result, '{}'::jsonb) || '{"cancelled": true}'::jsonb
-      FROM target t WHERE w.id = t.id RETURNING w.id)
-  SELECT id FROM cancelled`;
+      FROM target t WHERE w.id = t.id RETURNING w.id, w.kind)
+  -- A running item no longer counts against its kind's limit: every process
+  -- with room hears it (services.ts claim).
+  SELECT id, pg_notify('wf_work', kind) FROM cancelled`;
 
 const json = (v: Json | undefined) => (v == null ? null : JSON.stringify(v));
 

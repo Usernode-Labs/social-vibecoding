@@ -96,7 +96,7 @@ test('a release\'s adoptions run once, between all its processes, and a failed s
     await r.stop();
   });
 
-  await t.test('adoptions that keep failing end the release failed, for a person to see', async () => {
+  await t.test('an adoption that keeps failing is kept as its error; the others still run', async () => {
     ran.length = 0;
     failNext = 100;
     const r = createRuntime({
@@ -106,11 +106,9 @@ test('a release\'s adoptions run once, between all its processes, and a failed s
     runtimes.push(r);
     await booted(r, 'sha-3');
     await r.start({ loops: true });
-    await until(async () => (await instance('sha-3'))?.state === 'failed', 'the release failed');
-    assert.equal((await instance('sha-3')).data.error, 'the database blinked');
-    const { inspect } = require('../src/workflow/kernel/index.ts');
-    const p = await inspect.problems(pool, { attention: [{ machine: MACHINE, state: 'failed', says: 'x' }] });
-    assert.ok(p.waiting.some((i) => i.key === releaseKey('sha-3')));
+    await until(async () => (await instance('sha-3'))?.state === 'done', 'the release adopted what it could');
+    assert.deepEqual((await instance('sha-3')).data.adopted, { first: 1, second: { error: 'the database blinked' } });
+    assert.deepEqual(ran, [['first', 'sha-3']], 'the first step ran once, through every retry of the second');
     await r.stop();
     failNext = 0;
   });

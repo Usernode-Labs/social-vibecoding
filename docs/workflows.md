@@ -213,9 +213,14 @@ A service is a `WorkHandler` registered for a kind:
 - **Concurrency.** A handler's `concurrency` (default 4) is how many items of its kind run
   at once **across every process**, counted under the kind's claim lock: replicas add
   failover, not more at once (Running it).
-- **Quarantine.** An item whose process died on each of its last three attempts (claimed
-  again on a lapsed lease; a graceful stop or a cancel says so and is no death) is ended
-  `WorkExhausted` with `lost_repeatedly` rather than run again.
+- **A lapsed lease.** An attempt whose item is claimed again on a lease that ran out with
+  no word from its process is closed `lost` with code `lapsed`; a graceful stop (`stopped`)
+  and a cancel (`cancelled`) say so. A process that cannot renew stops the handler itself
+  three quarters of a lease after its last renewal.
+- **A move nobody decided in time.** An event its caller stopped waiting for can be
+  refused at once (`refuseIfPending`, under the event's row lock, so one a slot is deciding
+  keeps its answer): platform.ts does so for every move with a deadline, so a route that
+  says "nothing changed" is right, and the move is never applied after that.
 - **Report.** The service appends a result event to the owning instance, with `workId`,
   `kind`, `workKey`, `attempt` and the result or error:
   - `WorkSucceeded` when the handler returns;
@@ -472,9 +477,14 @@ does both.
   at most the rest. A full kind costs no claims until an item of it ends (`finish`
   notifies `wf_work` with its kind) or its earliest lease end. Replicas therefore add
   failover, not concurrency. The retention purge runs in one process at a time.
-- **A work item that keeps killing its process** (its process died on each of its last
-  three attempts, a graceful stop not counted) is ended exhausted with `lost_repeatedly`,
-  so its machine decides; it shows in Admin → Workflows.
+- **A work item that keeps taking its process down** is held back by its own lease: a
+  lease that lapses with no word from its process (it died, hung or lost the database) is
+  claimed again only once it has run out, and the attempt is recorded as `lapsed` (a stop
+  or a cancel says so instead). Nothing ends an item for it beyond `maxLostAttempts`; the
+  metrics report the most lapses of one item in the hour, and an alert fires at three.
+- **A process that cannot reach the database** stops its own running work once three
+  quarters of a lease pass without a renewal, before another process may claim it, so two
+  replicas never run one item side by side.
 - **A process lost with its node** gives its locks up within about 40 seconds: the
   runtime's sessions carry the server keepalives the leader lock's session has, and an
   idle-in-transaction timeout of 30 seconds (`deadPeerOptions` in platform.ts).
@@ -654,7 +664,8 @@ The kernel guarantees cover:
 - timers;
 - two processes running at once;
 - a kind's limit across processes, and no claims while it is full;
-- quarantine of an item that kills its process;
+- a lapsed lease recorded and ending nothing; a process that cannot renew stops itself;
+- an event refused once its caller gave up on it, never applied later;
 - the mixed-version rule;
 - ownership.
 

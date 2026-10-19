@@ -1,4 +1,6 @@
-{{- if and .Values.enabled .Values.platform.enabled .Values.platform.conductor.enabled .Values.platform.conductor.metricsPort .Values.monitoring.enabled }}
+{{- /* Only where the Prometheus Operator's kinds exist: a cluster without them
+would refuse the whole sync. */}}
+{{- if and .Values.enabled .Values.platform.enabled .Values.platform.conductor.enabled .Values.platform.conductor.metricsPort .Values.monitoring.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
 {{- $conductor := printf "%s-conductor" (include "social-vibecoding-platform.fullname" .) }}
 {{- $ns := .Release.Namespace | quote }}
 # The workflow's metrics and alerts (docs/kubernetes-operations.md,
@@ -66,11 +68,12 @@ spec:
           labels: {severity: critical, namespace: {{ $ns }}}
           annotations:
             summary: A workflow event has waited over two minutes to be decided
-        - alert: SocialWorkflowPoisonWork
-          expr: max(homeroom_workflow_work_quarantined_last_hour{namespace={{ $ns }}}) > 0
+        - alert: SocialWorkflowWorkKeepsLapsing
+          expr: max(homeroom_workflow_work_lapsed_most_last_hour{namespace={{ $ns }}}) >= 3
           labels: {severity: warning, namespace: {{ $ns }}}
           annotations:
-            summary: A work item was taken off after its process died on each of its last three attempts
+            summary: A work item's lease lapsed three times in an hour (its process died, hung or lost the database)
+            description: An item that takes its process down with it shows here; Admin → Workflows lists its attempts.
         - alert: SocialWorkflowInstancesFlagged
           expr: max by (flag) (homeroom_workflow_instances_flagged{namespace={{ $ns }}}) > 0
           for: 15m

@@ -13754,6 +13754,9 @@ CREATE TABLE IF NOT EXISTS wf_work_attempts (
   UNIQUE (work_id, number)
 );
 COMMENT ON TABLE wf_work_attempts IS 'staging:private';
+-- Attempts lost lately (a lease that lapsed, a stop, a cancel), read by
+-- Admin -> Workflows and the workflow's metrics (src/workflow/metrics.ts).
+CREATE INDEX IF NOT EXISTS wf_work_attempts_lost_idx ON wf_work_attempts (finished_at) WHERE outcome = 'lost';
 
 -- Kernel settings, written at boot (src/workflow/platform.ts):
 -- 'enabled:<machine>' switches the machine's ownership guards on. Every
