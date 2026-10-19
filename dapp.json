@@ -3199,7 +3199,7 @@
     {
       "name": "The Me tab lists Challenges above Settings (#1823, #2718)",
       "path": "/?shot=profile&demo=1#profile",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-row-challenges[href=\"#leaderboard/challenges\"]",
+      "expectSelector": "body:has(#profile-settings #profile-row-profile[href=\"#profile?edit\"]+#profile-row-notifications[href=\"#settings/alerts\"]+#profile-row-settings[href=\"#settings\"]) #profile-screen:not(.hidden) #profile-row-challenges[href=\"#leaderboard/challenges\"]",
       "expectText": "Challenges"
     },
     {
