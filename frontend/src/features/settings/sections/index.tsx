@@ -97,11 +97,10 @@ export function SettingsSections() {
       <GlobalChatSettingsSection />
       <ExperimentalSection />
       {/* ── Preferences ── THE UI OVERHAUL moved Theme out of the hamburger
-          drawer; see ./theme.tsx for why it is a stateful pane. The console
-          switch and the admins-only preview share its Appearance page. */}
+          drawer; see ./theme.tsx for why it is a stateful pane. Appearance
+          is the theme and the desktop sidebar switch; #5285 moved the
+          console switch and the admins-only preview to Developer, below. */}
       <ThemeSection />
-      <DevConsoleSection />
-      <AdminPreviewSection />
       {/* ── #3969: text size and high contrast, the other reading controls,
           as their own page right after Appearance. Stateful like Theme;
           see ./accessibility.tsx. */}
@@ -111,6 +110,10 @@ export function SettingsSections() {
       <AppPermissionsSection />
       <AppAiSection />
       <BlockedAppsSection />
+      {/* ── #5285: Developer, the last page of Preferences. The console
+          switch (everyone) and Admin preview (real admins only). */}
+      <DevConsoleSection />
+      <AdminPreviewSection />
       {/* ── Help & about ── The way back to Home's welcome tour, then the
           native app's diagnostics and the version rows: panes you read or
           replay rather than configure. See ./tour.tsx and ./about.tsx. */}

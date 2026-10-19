@@ -2097,11 +2097,15 @@
   },
   "nav.page.theme": {
     "text": "Appearance",
-    "description": "Name of a Settings page that groups several parts: theme, the developer console switch and the admin preview. Shown as a row in the Settings menu and as the phone header title inside that page."
+    "description": "Name of the Settings page about how Homeroom looks on this device: the theme and, on a computer, whether the sidebar stays open beside a running app. Shown as a row in the Settings menu and as the phone header title inside that page."
   },
   "nav.page.appPermissions": {
     "text": "App permissions",
     "description": "Name of a Settings page that groups several parts: what each app may do: device access, AI spending, and blocked apps. Shown as a row in the Settings menu and as the phone header title inside that page."
+  },
+  "nav.page.developer": {
+    "text": "Developer",
+    "description": "Name of a Settings page that groups the tools for people who build apps: the developer console switch and, for administrators only, the admin preview. Shown as a row in the Settings menu and as the phone header title inside that page."
   },
   "nav.group.account": {
     "text": "Account",
