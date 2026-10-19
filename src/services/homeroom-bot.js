@@ -8674,6 +8674,29 @@ async function loopMemory(pool, now = Date.now()) {
   return out;
 }
 
+/**
+ * What builds run on while a bot configuration is current
+ * (services/bot-configs.js), which the per-stage settings do not say: a
+ * project's first version is triaged, planned and built by the
+ * first-version configuration's recipe (currentVersion), and every later
+ * change is planned and built by the `later` one's (laterVersion, which
+ * also leaves out a recipe the catalog cannot run, as buildAndPropose
+ * does). A later change's triage and every follow-up keep the stage
+ * settings. A scope with none is null, and its builds use the stage
+ * settings. Never throws.
+ */
+async function currentConfigurations(pool) {
+  const shape = (v, stages) => (v && v.recipe && v.recipe.models ? {
+    id: v.id, key: v.key, label: v.label, version: v.version,
+    models: Object.fromEntries(stages.map((stage) => [stage, v.recipe.models[stage] || null])),
+  } : null);
+  const [first, later] = await Promise.all([
+    botConfigs().currentVersion(pool).catch(() => null),
+    botConfigs().laterVersion(pool).catch(() => null),
+  ]);
+  return { firstVersion: shape(first, ['triage', 'spec', 'build']), later: shape(later, ['spec', 'build']) };
+}
+
 async function adminPayload(pool, config, {
   app = null, verdict = null, before = null, limit = RUNS_PAGE, budgetOnly = false,
 } = {}) {
@@ -8714,7 +8737,9 @@ async function adminPayload(pool, config, {
       weeklySpentCents,
       hasIncludedKey,
       model: platformDefaultModel(settings, config),
-      // #3654: what each stage runs on now, the default filled in.
+      // #3654: each stage's setting, the default filled in. A build's plan
+      // and build, and a first version's triage, run on `configurations`
+      // instead while one is current.
       models: Object.fromEntries(MODEL_STAGES.map((stage) => [stage, stageModel(settings, config, stage)])),
     };
   }
@@ -8785,6 +8810,7 @@ async function adminPayload(pool, config, {
     // the deploy's own, which a blank setting goes back to.
     defaultModel: platformDefaultModel(settings, config),
     deploymentDefaultModel: defaultModelSetting.deployDefault(config),
+    configurations: await currentConfigurations(pool),
     bot,
     loop: memory.loop,
     totals,
@@ -9464,6 +9490,7 @@ module.exports = {
   // #3654: per-stage models and the pieces the benchmark replays with.
   stageModel,
   platformDefaultModel,
+  currentConfigurations,
   checkDefaultModel,
   MODEL_STAGES,
   KEY_MODELS,
