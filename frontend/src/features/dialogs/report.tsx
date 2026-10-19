@@ -1,6 +1,8 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
+import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { CheckIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
 import { useDialog } from './use-dialog';
 
@@ -15,6 +17,54 @@ export const REPORT_REASONS = [
   ['hate', 'dialogs:report.reason.hate'], ['threats', 'dialogs:report.reason.threats'], ['sexual_content', 'dialogs:report.reason.sexualContent'],
   ['impersonation', 'dialogs:report.reason.impersonation'], ['other', 'dialogs:report.reason.other'],
 ];
+/**
+ * The reasons as a short list to tap (#5294), not a drop-down: a radio group
+ * of rows, the whole row the target, a check on the picked one. One row is in
+ * the tab order (the picked one, else the first) and the arrow keys move the
+ * pick, as a native radio group does. The value sent is the same key the
+ * drop-down sent.
+ */
+function ReasonList({ reasons, value, onPick, labelId }: {
+  reasons: string[][]; value: string; onPick: (key: string) => void; labelId: string;
+}) {
+  const t = useMessages('dialogs');
+  const focusable = reasons.some(([key]) => key === value) ? value : reasons[0]?.[0];
+  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const step = event.key === 'ArrowDown' || event.key === 'ArrowRight' ? 1
+      : event.key === 'ArrowUp' || event.key === 'ArrowLeft' ? -1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const at = Math.max(0, reasons.findIndex(([key]) => key === value));
+    const next = value ? (at + step + reasons.length) % reasons.length : (step > 0 ? 0 : reasons.length - 1);
+    const key = reasons[next][0];
+    onPick(key);
+    const row = event.currentTarget.querySelector<HTMLElement>(`[data-report-reason="${key}"]`);
+    row?.focus();
+  }
+  return (
+    <GroupedList className="mx-0" role="radiogroup" aria-labelledby={labelId} aria-required="true" data-report-reasons="" onKeyDown={onKeyDown}>
+      {reasons.map(([key, label]) => (
+        <ListRow
+          key={key}
+          as="button"
+          role="radio"
+          aria-checked={value === key}
+          tabIndex={key === focusable ? 0 : -1}
+          data-report-reason={key}
+          onClick={() => onPick(key)}
+          className="py-3"
+          title={t(label)}
+          titleClassName="font-medium"
+          chevron={false}
+          trailing={value === key
+            ? <CheckIcon className="h-5 w-5 shrink-0 text-violet-600 dark:text-violet-400" aria-hidden="true" />
+            : <span className="h-5 w-5 shrink-0" aria-hidden="true" />}
+        />
+      ))}
+    </GroupedList>
+  );
+}
+
 export function ReportDialog() {
   const t = useMessages('dialogs');
   const [target, setTarget] = useState<ReportTarget | null>(null);
@@ -26,7 +76,10 @@ export function ReportDialog() {
   const [busy, setBusy] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [blockAction, setBlockAction] = useState<{ appSlug?: string; userId?: number; username?: string } | null>(null);
+  // A bottom sheet on a phone, the centred card elsewhere (#5294): the
+  // presentation the feedback dialog and Who can see & change it use.
   const dialog = useDialog<ReportTarget>('report', {
+    phoneSheet: true,
     onOpen(value) {
       (window as any).UITelemetry?.screen?.('report_dialog');
       if (detailRef.current) detailRef.current.value = '';
@@ -104,17 +157,25 @@ export function ReportDialog() {
         </div>
       </div> : <form className="mt-4 space-y-4" onSubmit={submit}>
         {target?.targetType === 'conversation_message' ? <p className="text-sm">{t('dialogs:report.privateMessageNote')}</p> : null}
-        <label className="block text-sm font-medium">{t('dialogs:report.reason.label')}
-          <select required className="mt-1 w-full min-h-[44px] rounded-lg border border-zinc-300 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-900" value={reason} onChange={(e) => setReason(e.target.value)}>
-            <option value="">{t('dialogs:report.reason.choose')}</option>
-            {REPORT_REASONS.filter(([key]) => key !== 'impersonation' || target?.targetType === 'user').map(([key,label]) => <option key={key} value={key}>{t(label)}</option>)}
-          </select>
-        </label>
+        <div>
+          <SectionHeader className="px-1 pb-2" id="report-reason-label">{t('dialogs:report.reason.label')}</SectionHeader>
+          <ReasonList
+            reasons={REPORT_REASONS.filter(([key]) => key !== 'impersonation' || target?.targetType === 'user')}
+            value={reason}
+            onPick={setReason}
+            labelId="report-reason-label"
+          />
+        </div>
         <label className="block text-sm font-medium">{reason === 'other' ? t('dialogs:report.details.required') : t('dialogs:report.details.optional')}
           <textarea className="mt-1 w-full rounded-lg border border-zinc-300 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-900" rows={4} maxLength={1000} required={reason === 'other'} ref={detailRef} defaultValue="" onChange={(e) => setDetail(e.target.value)} />
         </label>
         <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('dialogs:report.identityNote')}</p>
-        <div className="flex gap-3"><Button type="button" disabled={busy} onClick={dialog.close}>{t('core:common.cancel')}</Button><Button type="submit" disabled={busy || !reason || (reason === 'other' && !detail.trim())}>{busy ? t('dialogs:report.sending') : t('dialogs:report.submit')}</Button></div>
+        {/* One strong button (#5294): Send report is the filled one, Cancel
+            is quiet text beside it. */}
+        <div className="flex items-center justify-end gap-2">
+          <Button type="button" variant="unstyled" size="default" ink="muted" className="rounded-lg" disabled={busy} onClick={dialog.close}>{t('core:common.cancel')}</Button>
+          <Button type="submit" disabledStyle="block" disabled={busy || !reason || (reason === 'other' && !detail.trim())}>{busy ? t('dialogs:report.sending') : t('dialogs:report.submit')}</Button>
+        </div>
       </form>}
       {error ? <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-400">{error}</p> : null}
       </> : null}
