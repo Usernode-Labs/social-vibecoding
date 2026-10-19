@@ -608,7 +608,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'start_request',
-      description: 'They asked you to work on one of their requests now (one that is filed and waiting, or that you left earlier). It goes to the front of your queue, and the result says where it stands: started, or what it still waits for (another request on the same project being built, how many you already have going for them). Only on a project you build on. One per turn.',
+      description: 'They asked you to work on one of their requests now (one that is filed and waiting, or that you left earlier). It goes to the front of your queue, and the result says where it stands: started, or what it still waits for (another request on the same project being built, how many you already have going for them). Only on a project you build on. When its plan waits for their Build it and they say to build it or go ahead, this is Build it: the plan goes ahead as they saw it and is not planned again. One per turn.',
       parameters: {
         type: 'object',
         properties: {
@@ -1074,8 +1074,14 @@ async function readSource(pool, { user, project, path: rawPath, fromLine, deps =
  * when the look built nothing. WP1 (#10): a build that waits or runs says
  * so ("building now"), so a second build of a request is never invisible;
  * and a build that was not needed (skipped) stopped, it did not fail.
+ *
+ * Papote #3 (18 Oct 2026): a plan waiting for its requester's Build it read
+ * as "building now", so "status?" on a request whose plan had waited three
+ * days for its requester was told the build was still running. `waitingFor`
+ * names who the plan waits on: 'them' (whoever is asking), a username, or
+ * null when it cannot be named.
  */
-function buildWords(r) {
+function buildWords(r, { waitingFor = null } = {}) {
   const error = clip(r.build_error || 'no reason recorded', 300);
   if (r.verdict !== 'ready') return r.build_ok == null ? undefined : (r.build_ok ? 'built' : `could not build: ${error}`);
   if (r.build_ok === true || r.proposal_session_id) return 'built';
@@ -1087,7 +1093,15 @@ function buildWords(r) {
   if (r.cap_suppressed) return 'held back by a limit, so not built yet';
   // A wait a later look replaced (homeroom-bot.js runTriage) was never built.
   if (r.build_error) return `not built: ${error.replace(/^superseded:\s*/, '')}`;
-  if (r.live_build_waiting_at && !r.build_session_id) return 'waiting its turn to be built';
+  if (r.awaiting_go_at && !r.build_session_id) {
+    const who = waitingFor === 'them' ? 'them' : waitingFor ? `@${waitingFor}` : 'the person who asked for it';
+    return `not building: its plan is written and waits for ${who} to say Build it, and nothing is built until then`;
+  }
+  if (r.live_build_waiting_at && !r.build_session_id) {
+    return r.complicated === true && !r.planned
+      ? 'writing the plan its requester checks before anything is built'
+      : 'waiting its turn to be built';
+  }
   return 'building now';
 }
 
@@ -1101,11 +1115,19 @@ async function requestDetail(pool, { user, project, number, settings = null, dep
   // nothing to anybody, and its verdict read as the bot's decision.
   const { rows: runs } = await pool.query(
     `SELECT verdict, question, question_answers, reason, build_note, build_ok, build_error, created_at,
-            proposal_session_id, cap_suppressed, live_build_waiting_at, build_session_id, about_platform
+            proposal_session_id, cap_suppressed, live_build_waiting_at, build_session_id, about_platform,
+            awaiting_go_at, complicated, plan IS NOT NULL AS planned
        FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = $2 AND mode = 'live'
       ORDER BY id DESC LIMIT 4`,
     [app.id, n],
   );
+  // Who a plan waiting for Build it waits on (buildWords).
+  const requester = runs.some((r) => r.awaiting_go_at)
+    ? await Promise.resolve().then(() => dmModule(deps).requesterOf(pool, app.id, n)).catch(() => null)
+    : null;
+  const waitingFor = requester
+    ? (Number(requester.userId) === Number(user.id) ? 'them' : requester.username || null)
+    : null;
   const { rows: queue } = await pool.query(
     'SELECT started_at, enqueued_at FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2',
     [app.id, n],
@@ -1139,7 +1161,7 @@ async function requestDetail(pool, { user, project, number, settings = null, dep
       // #4239: left because it is about Homeroom itself (offer_move_request).
       aboutHomeroom: r.about_platform ? true : undefined,
       plan: r.build_note ? clip(r.build_note, 800) : undefined,
-      build: buildWords(r),
+      build: buildWords(r, { waitingFor }),
     })),
     proposal: sessionId ? await progressSvc.proposalFacts(pool, Number(sessionId), { domain: domainOf(deps) }) : null,
   };
@@ -3114,6 +3136,29 @@ async function requestExists(pool, appId, n) {
 }
 
 /**
+ * Papote #3 (18 Oct 2026): whether request `n`'s newest live look found it
+ * ready and its build waits its turn (`live_build_waiting_at`, which is also
+ * a complicated change's plan being drafted) or runs in an open session. A
+ * new look then replaces a build already on its way (homeroom-bot.js
+ * runTriage supersedes the wait). A build whose session ended with no
+ * outcome is not pending: looking again is how it is tried again.
+ */
+async function pendingBuild(pool, appId, n) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM homeroom_bot_runs r
+       LEFT JOIN chat_sessions bs ON bs.id = r.build_session_id
+      WHERE r.id = (SELECT id FROM homeroom_bot_runs
+                     WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' ORDER BY id DESC LIMIT 1)
+        AND r.verdict = 'ready' AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
+        AND r.cap_suppressed IS NULL AND r.awaiting_go_at IS NULL
+        AND ((r.live_build_waiting_at IS NOT NULL AND r.build_session_id IS NULL)
+             OR bs.status IN ('active', 'paused'))`,
+    [appId, n],
+  );
+  return rows.length > 0;
+}
+
+/**
  * #3768: `comment_on_request`. A person asked the bot to add something to a
  * request that already exists ("can you add it as a comment on that
  * issue?"), and it could only say it could not. Their message is posted on
@@ -3174,6 +3219,14 @@ async function commentOnRequest(pool, ctx, args) {
  * the records: started, or what it still waits for (progress). A request
  * the bot built and the group is voting on is changed with revise_proposal
  * instead, and one it is on this minute is said to be.
+ *
+ * Papote #3 (18 Oct 2026): "build it" and "try again" said to the bot under
+ * a plan waiting for its requester's Build it each queued a new look, which
+ * retired that plan and wrote the same one again, three times running. A
+ * plan waiting for whoever asks is now Build it (buildWaitingPlan), a plan
+ * waiting for somebody else says whose OK it waits on, and a ready verdict
+ * whose build waits its turn or runs is not looked at again: a new look
+ * would only replace it.
  */
 async function startRequest(pool, ctx, args) {
   const { user, settings, deps } = ctx;
@@ -3198,6 +3251,30 @@ async function startRequest(pool, ctx, args) {
     return { ok: false, error: `You do not build on ${name}, so its requests wait for the group or for someone to start a change. Nothing was started.` };
   }
   if (settings?.mode === 'off') return { ok: false, error: 'You are switched off, so nothing can start. Nothing was started.' };
+  // A plan waiting for Build it: its build was already paid for by the look
+  // that wrote it, so going ahead is not a new start (the card's own Build
+  // it checks no allowance either).
+  const plan = await dm.waitingPlanRun(pool, app.id, n);
+  if (plan) {
+    const who = requester?.username ? `@${requester.username}` : 'whoever asked for it';
+    if (!theirs || !plan.complicated) {
+      return {
+        ok: false,
+        error: theirs
+          ? 'Its plan waits for their Build it on the plan card in their chat with you. Nothing was started; a new look would only plan it again.'
+          : `Its plan waits for ${who} to say Build it, and only they can. Nothing was started; a new look would only plan it again. A change to the plan is asked for on the request: change_plan in its discussion, comment_on_request from your chat.`,
+      };
+    }
+    const went = await dm.buildWaitingPlan(pool, { user, appId: app.id, issueNumber: n, deps });
+    if (!went.ok) return { ok: false, error: 'Its plan stopped waiting just now, so nothing was started. Check request_detail for where it stands.' };
+    ctx.started = name;
+    ctx.cards.push({ type: 'issue', appId: Number(app.id), issueNumber: n });
+    require('./homeroom-bot-tray').noteWorkChanged(user.id, deps);
+    return {
+      ok: true,
+      built: 'That was Build it: the plan they were shown goes ahead as written, and it was not planned again. Its build starts as soon as a builder is free.',
+    };
+  }
   // Whoever asks pays: this person, on their own building time, whether or
   // not the request is theirs.
   const payer = user.id;
@@ -3216,6 +3293,13 @@ async function startRequest(pool, ctx, args) {
   if (before?.busyNow) {
     ctx.started = name;
     return { ok: true, already: `You are on it now: ${before.doing}.` };
+  }
+  if (await pendingBuild(pool, app.id, n)) {
+    ctx.started = name;
+    return {
+      ok: true,
+      already: `It is ready and its build is already on its way${before?.doing ? ` (${before.doing})` : ''}, so nothing new was queued: a new look would only start it over.`,
+    };
   }
   const queued = await botModule(deps).enqueueFront(pool, {
     appId: app.id, issueNumber: n, userId: user.id, reason: 'dm_start',
@@ -3239,6 +3323,59 @@ async function startRequest(pool, ctx, args) {
     queued: queued ? 'At the front of your queue.' : 'You are already on it: it is not waiting in the queue.',
     ...(after ? { status: after.doing, ...(after.step ? { step: `step ${after.step} of ${after.of}` } : {}) } : {}),
     ...left,
+  };
+}
+
+/**
+ * Papote #3 (18 Oct 2026): `change_plan`, the voice's on a request whose
+ * plan waits for Build it. What people say to the bot there no longer reads
+ * the request again by itself (homeroom-bot.js unaddressedActivityByIssue),
+ * so a change to the plan asked of it is planned again here, as Change
+ * something under the plan's card is (homeroom-bot-dm.js changeOnRequest):
+ * the plan stops waiting, its cards close, and a new look goes first in the
+ * queue, reading their words where they wrote them. The same gates as
+ * start_request, and whoever asks pays as there.
+ */
+async function replanRequest(pool, ctx, args) {
+  const { user, settings, deps } = ctx;
+  if (ctx.started) return { ok: false, error: 'One start per turn.' };
+  const app = await findApp(pool, args.project);
+  const n = Number(args.number);
+  if (!app || !Number.isInteger(n) || n <= 0 || !(await canView(pool, app, user))) {
+    return { ok: false, error: 'No such request on a project they can see. Nothing was changed.' };
+  }
+  ctx.appIds.add(Number(app.id));
+  const name = app.name || app.slug;
+  const dm = dmModule(deps);
+  const requester = await dm.requesterOf(pool, app.id, n);
+  const theirs = requester && Number(requester.userId) === Number(user.id);
+  if (!theirs && !(await canFile(pool, app, user))) {
+    return { ok: false, error: `Only whoever asked for it, or a member of ${name}, can ask for its plan to change. Nothing was changed.` };
+  }
+  if (!liveModule(deps).isLiveFor(settings, app) || (settings?.pausedApps || []).includes(app.slug) || settings?.mode === 'off') {
+    return { ok: false, error: `You are not building on ${name} now, so its plan cannot be redone. Nothing was changed.` };
+  }
+  const plan = await dm.waitingPlanRun(pool, app.id, n);
+  if (!plan) return { ok: false, error: 'No plan of yours waits for Build it on it, so there is nothing to plan again. Nothing was changed.' };
+  // A first version's plan is changed from its card in its maker's chat (homeroom-bot-dm.js changePlan).
+  if (!plan.complicated) return { ok: false, error: 'Its plan is changed from the plan card in its maker\'s chat with you. Nothing was changed.' };
+  if (await dm.overWeeklyAllowance(pool, settings, user.id)) {
+    return { ok: false, error: 'Their building time for this week is used up, so it cannot be planned again this week. Nothing was changed. It resets on Monday.' };
+  }
+  const bot = botModule(deps);
+  await bot.retireWaitingPlans(pool, {
+    appId: app.id, issueNumber: n, why: theirs ? 'its requester asked to change the plan' : 'somebody asked to change the plan',
+    note: 'replaced', deps: { dm, ws: deps.ws || null },
+  });
+  await bot.enqueueFront(pool, {
+    appId: app.id, issueNumber: n, userId: user.id, reason: 'plan_change', payerId: theirs ? null : user.id,
+  });
+  ctx.started = name;
+  ctx.cards.push({ type: 'issue', appId: Number(app.id), issueNumber: n });
+  require('./homeroom-bot-tray').noteWorkChanged(user.id, deps);
+  return {
+    ok: true,
+    replanning: `The plan stopped waiting, and you plan it again next with what was asked here. The new plan comes here${requester?.username ? `, for @${requester.username} to say Build it` : ''}.`,
   };
 }
 
@@ -4063,6 +4200,8 @@ module.exports = {
   commentText,
   commentOnRequest,
   startRequest,
+  replanRequest,
+  pendingBuild,
   answerLater,
   actOnTap,
   answerKey,

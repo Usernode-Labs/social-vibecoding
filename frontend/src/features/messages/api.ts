@@ -592,8 +592,8 @@ export async function leaveConversation(id: number): Promise<void> {
   await request<unknown>(`/api/conversations/${id}/leave`, { method: 'POST', body: '{}' });
 }
 
-export async function listMessages(id: number, before?: number | null, options?: ReadOptions): Promise<{ messages: ConversationMessage[]; nextBefore: number | null }> {
-  const params = new URLSearchParams({ limit: '50' });
+export async function listMessages(id: number, before?: number | null, options?: ReadOptions, limit = 50): Promise<{ messages: ConversationMessage[]; nextBefore: number | null }> {
+  const params = new URLSearchParams({ limit: String(limit) });
   if (before) params.set('before', String(before));
   const data = record(await request<unknown>(`/api/conversations/${id}/messages?${params}`, readInit(options)));
   return {
@@ -1132,6 +1132,7 @@ export function normalizeBotTrack(input: unknown): BotTrack | null {
     step: TRACK_STEPS.has(step) ? step : null,
     why: CODE.test(why) ? why : null,
     waitingOn: waitingOn === 'you' || waitingOn === 'group' ? waitingOn : null,
+    ...(waitingOn === 'you' && text(pick(row, 'waitingFor')) ? { waitingFor: text(pick(row, 'waitingFor')).slice(0, 64) } : {}),
     busy: bool(pick(row, 'busy')),
     try: Math.min(tries, 99),
     tryStartedAt: text(pick(row, 'tryStartedAt')) || null,

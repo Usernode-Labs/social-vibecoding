@@ -15,6 +15,7 @@ const {
   otpRequestLimiter,
   otpRequestEmailLimiter,
   otpVerifyLimiter,
+  usernameCheckLimiter,
   releaseLinkLimiter,
   passwordResetRequestLimiter,
   passwordResetRequestEmailLimiter,
@@ -511,6 +512,27 @@ function authRoutes(config) {
         return res.status(422).json({ error: error.message, code: error.code });
       }
       log.error('email-signup', 'Release link failed', { message: error.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The sign-in sheet's account step asks this as the person types (#5255):
+  // the handle's rules, then whether anybody holds it, live or retired, in
+  // the same words a refusal would use. Read-only, and answered only to a
+  // person mid-sign-up: the signup cookie set-password spends, unexpired,
+  // for an account that still has to choose its handle. Anyone else gets
+  // 401, so it is no oracle for handles a public profile would not show.
+  router.get('/api/auth/username-available', usernameCheckLimiter, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      const userId = await emailSignup.pendingUsernameChoice(pool, req.cookies?.[SIGNUP_COOKIE]);
+      if (!userId) return res.status(401).json({ error: 'Your signup session expired. Request a new code.', code: 'invalid_signup_session' });
+      const check = usernames.validateUsername(typeof req.query.username === 'string' ? req.query.username : '');
+      if (!check.ok) return res.json({ ok: true, available: false, error: check.error });
+      const free = await usernames.checkAvailability(pool, check.value, userId);
+      return res.json({ ok: true, available: free.available === true, ...(free.available ? {} : { error: free.error }) });
+    } catch (error) {
+      log.error('auth', 'Username availability check failed', { message: error.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

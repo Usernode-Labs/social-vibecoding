@@ -396,7 +396,8 @@ test('the sign-in sheet\'s panel rides the keys as a sheet in the band, and ever
   assert.match(SHEET, /ref=\{panelRef\}\s+role="dialog"/);
   assert.match(SHEET, /className=\{`platform-kb-sheet absolute inset-x-0 bottom-0 /);
   assert.doesNotMatch(SHEET, /\.focus\(\)/);
-  for (const step of ['sign-in-sheet-email', 'sign-in-sheet-code', 'sign-in-sheet-identifier', 'sign-in-sheet-username']) {
+  // The code step has no button: its sixth digit sends it (#5253).
+  for (const step of ['sign-in-sheet-email', 'sign-in-sheet-identifier', 'sign-in-sheet-username']) {
     const form = SHEET.slice(SHEET.lastIndexOf('<form', SHEET.indexOf(`id="${step}"`)), SHEET.indexOf('</form>', SHEET.indexOf(`id="${step}"`)));
     assert.match(form, /<button type="submit"/, `${step}'s form has the button the reveal brings with it`);
   }

@@ -1638,9 +1638,11 @@ const STATES = [
     // when a merge carries it, which no copy does, so the shots of the change
     // that added it found none (PR 4825, 2026-10-12). By the read-only admin,
     // merged and live two hours ago, with the member's Yes; the row as
-    // notifications.js createVotedChangeMergedNotifications writes it. Unread
-    // (#5461: a read went-live row leaves the bell's list), so the All tab
-    // shows it and the bell counts it on every screen the member is shot on.
+    // notifications.js createVotedChangeMergedNotifications writes it, unread
+    // as it is written at merge time. #5487: the bell no longer lists a row
+    // about a merged change (MERGED_HIDDEN_KINDS), so the All tab no longer
+    // shows it and the bell does not count it — the row is seeded all the
+    // same, so a revision before #5487 still shows it in the bell.
     // Left out on a revision that does not know
     // the row's kind (its push category is that revision's own list).
     id: 'shots-demo-member-voted-change-live-v1',
@@ -1684,8 +1686,6 @@ const STATES = [
       );
       return {
         shows: [
-          { state: `Your bell's All tab: a row for a change you voted on that went live two hours ago, "A change you voted on is live" over its title, ${title}, with the project and the time beside them. It is unread, so the bell counts it (on the Unread tab it is first). Tapping it opens the change.`,
-            path: '/' },
           { state: 'The change itself, live, with your Yes on it.',
             path: `/#app/${ctx.selfAppSlug}/dev/proposals/${IDS.votedLiveProposal}` },
         ],

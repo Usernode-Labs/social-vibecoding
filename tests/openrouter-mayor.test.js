@@ -206,6 +206,99 @@ test('the client sends one atomic request on the bound model and key', async () 
   assert.equal(result.text, 'On it.');
 });
 
+// ── Host routing ───────────────────────────────────────────────────────
+//
+// A model the coding turns route to a host shortlist gets the same hosts,
+// order and preferences here (worker/claude-openrouter-request.js), and the
+// same one resend to every host when that shortlist refuses it.
+
+const LISTENER_PREFERENCES = { preferred_max_latency: { p90: 15 }, preferred_min_throughput: { p50: 30 } };
+
+async function providerSent(model, options = {}) {
+  const { fetchImpl, calls } = fakeFetch(completion({ content: 'ok', model }));
+  const client = mayor.createClient({ apiKey: 'k', model, fetchImpl, ...options });
+  await client.streamChat({ messages: [{ role: 'user', content: 'hi' }] });
+  assert.equal(calls.length, 1);
+  return calls[0].body.provider;
+}
+
+test('a chat on a shortlisted model goes to the coding turns\' hosts, any other model where OpenRouter chooses', async () => {
+  assert.deepEqual(await providerSent('deepseek/deepseek-v4.1-flash-1017'), {
+    ...LISTENER_PREFERENCES, only: ['parasail', 'inference-net'], sort: 'throughput', allow_fallbacks: true,
+  });
+  assert.deepEqual(await providerSent('openrouter/z-ai/glm-5.3-flash'), {
+    ...LISTENER_PREFERENCES,
+    only: ['relace', 'fireworks', 'parasail', 'together', 'baseten'],
+    sort: 'throughput',
+    allow_fallbacks: true,
+  });
+  assert.deepEqual(await providerSent('anthropic/claude-opus-5.5'), { allow_fallbacks: true });
+  assert.deepEqual(await providerSent('m/x'), { allow_fallbacks: true });
+
+  // The platform's override (OPENROUTER_PROVIDER_SHORTLISTS) wins, for any model.
+  assert.deepEqual(await providerSent('deepseek/deepseek-v4.1-flash-1017', { providerShortlist: 'parasail' }), {
+    ...LISTENER_PREFERENCES, only: ['parasail'], sort: 'throughput', allow_fallbacks: true,
+  });
+  assert.deepEqual(await providerSent('m/x', { providerShortlist: 'together,baseten' }), {
+    ...LISTENER_PREFERENCES, only: ['together', 'baseten'], sort: 'throughput', allow_fallbacks: true,
+  });
+  assert.deepEqual(
+    await providerSent('deepseek/deepseek-v4.1-flash-1017', { providerShortlist: 'none' }),
+    { ...LISTENER_PREFERENCES, allow_fallbacks: true },
+    '`none` drops the shortlist and keeps the preferences',
+  );
+  assert.deepEqual(await providerSent('m/x', { providerShortlist: 'none' }), { allow_fallbacks: true });
+});
+
+test('a request its shortlist refuses is sent once more to every host; other refusals are final', async () => {
+  const sequence = (statuses) => {
+    const calls = [];
+    const fetchImpl = async (url, init) => {
+      calls.push(JSON.parse(init.body));
+      const status = statuses[calls.length - 1] ?? 200;
+      return {
+        ok: status === 200,
+        status,
+        text: async () => JSON.stringify(status === 200 ? completion({ content: 'Rerouted.' }) : { error: { message: 'no' } }),
+      };
+    };
+    return { fetchImpl, calls };
+  };
+
+  for (const status of [404, 429, 502, 503]) {
+    const { fetchImpl, calls } = sequence([status]);
+    const client = mayor.createClient({ apiKey: 'k', model: 'deepseek/deepseek-v4.1-flash-1017', fetchImpl });
+    const result = await client.streamChat({ messages: [{ role: 'user', content: 'hi' }] });
+    assert.equal(result.text, 'Rerouted.', `a ${status} is resent`);
+    assert.equal(calls.length, 2, `one resend on ${status}`);
+    assert.deepEqual(calls[0].provider.only, ['parasail', 'inference-net']);
+    assert.deepEqual(calls[1].provider, { ...LISTENER_PREFERENCES, allow_fallbacks: true });
+    assert.deepEqual({ ...calls[1], provider: null }, { ...calls[0], provider: null }, 'only the routing changes');
+  }
+
+  // Every host refusing too is the error it always was.
+  const both = sequence([503, 503]);
+  const twice = mayor.createClient({ apiKey: 'k', model: 'z-ai/glm-5.3-flash', fetchImpl: both.fetchImpl });
+  await assert.rejects(twice.streamChat({ messages: [] }), (err) => err.code === 'provider_unavailable' && err.status === 503);
+  assert.equal(both.calls.length, 2);
+
+  // A refusal the shortlist did not cause, and a model with no shortlist, are not resent.
+  const bad = sequence([400]);
+  const badClient = mayor.createClient({ apiKey: 'k', model: 'deepseek/deepseek-v4.1-flash-1017', fetchImpl: bad.fetchImpl });
+  await assert.rejects(badClient.streamChat({ messages: [] }), (err) => err.status === 400);
+  assert.equal(bad.calls.length, 1);
+  const open = sequence([503]);
+  const openClient = mayor.createClient({ apiKey: 'k', model: 'm/x', fetchImpl: open.fetchImpl });
+  await assert.rejects(openClient.streamChat({ messages: [] }), (err) => err.status === 503);
+  assert.equal(open.calls.length, 1);
+  const unlisted = sequence([404]);
+  const unlistedClient = mayor.createClient({
+    apiKey: 'k', model: 'deepseek/deepseek-v4.1-flash-1017', providerShortlist: 'none', fetchImpl: unlisted.fetchImpl,
+  });
+  await assert.rejects(unlistedClient.streamChat({ messages: [] }), (err) => err.status === 404);
+  assert.equal(unlisted.calls.length, 1, '`none` has no shortlist to drop');
+});
+
 test('provider failures surface as coded errors and a stop is not disguised', async () => {
   const refused = mayor.createClient({
     apiKey: 'k', model: 'm/x', fetchImpl: fakeFetch({ error: { message: 'no' } }, { status: 402 }).fetchImpl,
@@ -317,6 +410,40 @@ test('a session gets a Mayor only with a usable key and a model that calls tools
 
   meta = { status: 'invalid', revision: 3 };
   assert.deepEqual(await mayor.resolveForSession({ pool: {}, config, session, userId: 1 }), { error: 'credential_required' });
+});
+
+test('a session\'s Mayor takes the platform\'s host shortlist for its own model', async (t) => {
+  const originals = {
+    readMetadata: credentialStore.readMetadata,
+    readSecret: credentialStore.readSecret,
+    resolveModelPricing: agentModels.resolveModelPricing,
+  };
+  t.after(() => Object.assign(credentialStore, {
+    readMetadata: originals.readMetadata,
+    readSecret: originals.readSecret,
+  }));
+  t.after(() => { agentModels.resolveModelPricing = originals.resolveModelPricing; });
+  credentialStore.readMetadata = async () => ({ status: 'valid', revision: 1, metadata: { source: 'usernode_managed' } });
+  credentialStore.readSecret = async () => 'sk-or-v1-x';
+  agentModels.resolveModelPricing = async () => ({ supportsTools: true });
+
+  const config = {
+    openrouterSessionMayorEnabled: true,
+    codexOpenrouterEnabled: true,
+    openrouterDefaultCodexModel: 'z-ai/glm-5.3-flash',
+    openrouterProviderShortlists: { 'deepseek/deepseek-v4.1-flash-1017': 'parasail', 'z-ai/glm-5.3-flash': 'none' },
+  };
+  const sent = async (agentModel) => {
+    const { fetchImpl, calls } = fakeFetch(completion({ content: 'ok' }));
+    const { client } = await mayor.resolveForSession({
+      pool: {}, config, session: { id: 7, agent_model: agentModel }, userId: 1, fetchImpl,
+    });
+    await client.streamChat({ messages: [{ role: 'user', content: 'hi' }] });
+    return calls[0].body.provider;
+  };
+  assert.deepEqual((await sent('openrouter/deepseek/deepseek-v4.1-flash-1017')).only, ['parasail']);
+  assert.deepEqual(await sent(null), { ...LISTENER_PREFERENCES, allow_fallbacks: true }, 'the default model, unlisted by `none`');
+  assert.deepEqual(await sent('m/x'), { allow_fallbacks: true });
 });
 
 test('#3557: a PDF goes to OpenRouter as a file part only for a model listed as taking files', async () => {

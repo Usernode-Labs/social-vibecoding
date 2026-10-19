@@ -171,7 +171,10 @@ test('the tray\'s read passes `fresh` as cache: no-store, as every other re-read
   // One request, one story: the strip's Approve reads the strip again
   // fresh once the yes is in (it has no retry button: the panel that had one
   // is gone, and the strip waits for its first read before it draws).
-  assert.match(read('frontend/src/features/messages/bot-strip.tsx'), /if \(out\.ok\) \{ loadBotWork\(\); return; \}/);
+  // #5483: the yes is recorded for the page first, so the row stops
+  // offering Approve at once.
+  assert.match(read('frontend/src/features/messages/bot-strip.tsx'),
+    /if \(out\.ok\) \{ noteApprovedHere\(sessionId, ready\?\.epoch \?\? null, out\.goesLive \|\| null\); loadBotWork\(\); return; \}/);
 });
 
 test('the worker\'s late correction (resync) reads the tray and the cards again, through the event both re-read on', () => {

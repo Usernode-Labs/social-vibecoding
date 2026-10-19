@@ -1524,6 +1524,35 @@ async function threadActivityByIssue(pool, appId) {
 }
 
 /**
+ * Papote #3 (18 Oct 2026): threadActivityByIssue for `numbers`, without
+ * what people said to the bot: a mention of it (homeroom-bot-holds.js
+ * mentionPattern) or a Reply to one of its messages. The refresh reads it
+ * for a request whose plan waits for Build it, with the bot's voice on in
+ * requests' discussions: what is said to the bot there is the voice's to
+ * answer ("status?", Build it through start_request, a change to the plan
+ * through change_plan). Read as a change to the request, "@Homeroom bot
+ * status" started a new look that retired the plan and wrote it again.
+ */
+async function unaddressedActivityByIssue(pool, appId, numbers, botId) {
+  if (!numbers.length) return new Map();
+  const { rows } = await pool.query(
+    `SELECT m.thread_ref AS n, MAX(m.created_at) AS last_at
+       FROM chat_messages m
+       LEFT JOIN users u ON u.id = m.user_id
+       LEFT JOIN chat_messages q
+         ON (m.metadata->'quote'->>'refMsgId') ~ '^[0-9]+$'
+        AND q.id = (m.metadata->'quote'->>'refMsgId')::int
+      WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = ANY($2::int[])
+        AND m.msg_type = 'message' AND u.is_synthetic IS NOT TRUE
+        AND COALESCE(m.content, '') !~* $3
+        AND q.user_id IS DISTINCT FROM $4
+      GROUP BY m.thread_ref`,
+    [appId, numbers.map(Number), require('./homeroom-bot-holds').mentionPattern(), botId],
+  );
+  return new Map(rows.map((r) => [Number(r.n), r.last_at]));
+}
+
+/**
  * #3264: the newest person's message in the discussion of each of the bot's
  * open proposals on this app, by the issue it answers. Messages only
  * (`msg_type = 'message'`), so the promote and vote-reset notices never
@@ -1570,6 +1599,9 @@ function latestOf(a, b) {
  * (classifyIssue), as rules/bot-loop.ts READ_CANDIDATES_SQL reads it. One older than the window a
  * build from before builds were durable is asked for again in
  * (requeueLegacyBuilds) holds nothing.
+ *
+ * `plan_waiting`: that run's plan waits for its Build it (goAhead), which
+ * the refresh reads what was said to the bot past (papote #3).
  */
 async function lastRunsByIssue(pool, appId) {
   const { rows } = await pool.query(
@@ -1577,6 +1609,8 @@ async function lastRunsByIssue(pool, appId) {
             (mode = 'live' AND verdict = 'ready' AND build_ok IS NULL AND proposal_session_id IS NULL
              AND (live_build_waiting_at IS NOT NULL OR build_session_id IS NOT NULL)
              AND created_at > NOW() - make_interval(days => $2)) AS live_building,
+            (mode = 'live' AND awaiting_go_at IS NOT NULL AND build_ok IS NULL
+             AND build_session_id IS NULL) AS plan_waiting,
             -- Failed runs that read this same thread (RETRY_FAILED_REASON).
             (SELECT count(*)::int FROM homeroom_bot_runs f
               WHERE f.app_id = r.app_id AND f.issue_number = r.issue_number AND f.verdict = 'failed'
@@ -1736,6 +1770,20 @@ async function refreshApp(pool, app, {
     capRoom ? require('./homeroom-bot-dm').importedAt(pool, app.id).catch(() => null) : null,
   ]);
   const backlogUntil = toMs(importedAt);
+  // Papote #3: under a plan waiting for Build it, what people said to the
+  // bot is the voice's to answer, not a change that reads the request again
+  // (unaddressedActivityByIssue). With the voice off nobody answers it, so
+  // it is read as before. Unreadable: read as before.
+  const planWaiting = new Set(capRoom && bot && voiceModule(null).voiceOn(settings, { type: 'issue' })
+    ? [...lastRuns.values()].filter((r) => r.plan_waiting === true).map((r) => Number(r.issue_number))
+    : []);
+  const unaddressed = planWaiting.size
+    ? await unaddressedActivityByIssue(pool, app.id, [...planWaiting], bot.id).catch((err) => {
+      log.warn('homeroom-bot', 'Could not read what people said apart from to the bot', { app: app.slug, err: err.message });
+      return null;
+    })
+    : null;
+  const personAt = (n) => (unaddressed && planWaiting.has(n) ? unaddressed.get(n) || null : threads.get(n));
   // A failed read's retry that found nothing to answer is not offered again
   // for that run (its request's instance keeps it: bot-request spentRetry).
   const spentRetries = new Map((await pool.query(
@@ -1778,7 +1826,7 @@ async function refreshApp(pool, app, {
     const { lastRun, imported, atGoLive } = lastRunAsSeen(issue, lastRuns.get(n), { everyoneMs, backlogUntil, importedAt });
     const verdict = classifyIssue({
       issue,
-      threadLastAt: latestOf(threads.get(n), proposalThreads.get(n)),
+      threadLastAt: latestOf(personAt(n), proposalThreads.get(n)),
       busy: busy.has(n),
       lastRun,
     });
@@ -3431,7 +3479,9 @@ async function runTriage(pool, config, {
     // B6: a plan still waiting for Build it is not what the bot thinks once
     // it reads the request again. Its buttons go now, so a tap while this
     // look runs builds nothing; this look sends a plan of its own.
-    await retireWaitingPlans(pool, { appId: app.id, issueNumber, why: 'the request was read again', deps: { dm: deps.dm } });
+    await retireWaitingPlans(pool, {
+      appId: app.id, issueNumber, why: 'the request was read again', note: 'replaced', deps: { dm: deps.dm, ws: liveD.ws },
+    });
     return looked?.githubCreatedAt || null;
     });
     if (announcedAt) postedAt.push(announcedAt);
@@ -6823,14 +6873,21 @@ async function buildItOnRequest(pool, { appId, issueNumber, requester, deps = {}
     );
     if (!run) return false;
     const { rows: said } = await pool.query(
-      `SELECT m.user_id, m.content FROM chat_messages m
+      `SELECT m.user_id, m.content, (qu.username = $4) AS quotes_bot FROM chat_messages m
          JOIN users u ON u.id = m.user_id
+         LEFT JOIN chat_messages q
+           ON (m.metadata->'quote'->>'refMsgId') ~ '^[0-9]+$'
+          AND q.id = (m.metadata->'quote'->>'refMsgId')::int
+         LEFT JOIN users qu ON qu.id = q.user_id
         WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = $2
           AND m.created_at > $3 AND m.deleted_at IS NULL AND u.is_synthetic IS NOT TRUE
         ORDER BY m.id`,
-      [appId, issueNumber, run.awaiting_go_at],
+      [appId, issueNumber, run.awaiting_go_at, live.BOT_USERNAME],
     );
-    const people = said.filter((m) => m.user_id != null);
+    // Papote #3: what was said to the bot that is not a go word ("status?")
+    // was the voice's to answer, and says nothing about the plan.
+    const toBot = (m) => m.quotes_bot === true || voiceModule(deps).mentionsBot(m.content);
+    const people = said.filter((m) => m.user_id != null && (isGoWord(m.content) || !toBot(m)));
     if (!people.length || !people.every((m) => Number(m.user_id) === Number(requester.userId) && isGoWord(m.content))) return false;
     const went = await goAhead(pool, { runId: Number(run.id) });
     if (!went.ok) return false;
@@ -6886,6 +6943,8 @@ async function goAhead(pool, { runId, answers = [], planShown = true }) {
   );
   if (!went) return { ok: false, why: 'gone' };
   void timeline.record(pool, { runId, stage: 'go_ahead', detail: { answers: chosen.length } });
+  // Papote #3: its row on the request says it is being built now.
+  await live.notePlanRows(pool, [runId], 'building');
   // The tap is served by whichever Pod the person reached, and only the
   // leader runs the loop that starts the build: the local wake does nothing
   // anywhere else, and the build waited for the leader's next idle pass (up
@@ -6908,10 +6967,14 @@ async function goAhead(pool, { runId, answers = [], planShown = true }) {
  * B6: end the wait of any plan on a request that still waits for Build it,
  * as `why` (a new look at the request, a merge): recorded as not built,
  * and its card's buttons go. Resolves the runs ended. Never throws.
+ * Papote #3: and its row on the request says so (live.notePlanRows): `note`
+ * 'replaced' when a new plan follows, else 'stopped'.
  */
 // `before` leaves alone the plans made after it (a merge's bookkeeping run
 // late by the merge-followups workflow machine: noteRequestMerged).
-async function retireWaitingPlans(pool, { appId, issueNumber = null, issues = null, why, before = null, deps = {} }) {
+async function retireWaitingPlans(pool, {
+  appId, issueNumber = null, issues = null, why, before = null, note = 'stopped', deps = {},
+}) {
   const numbers = issues || [issueNumber];
   let rows = [];
   try {
@@ -6924,6 +6987,7 @@ async function retireWaitingPlans(pool, { appId, issueNumber = null, issues = nu
       [appId, numbers.map(Number), `skipped: ${why}`, before],
     ));
     if (rows.length) await (deps.dm || require('./homeroom-bot-dm')).closePlanCards(pool, rows.map((r) => Number(r.id)));
+    if (rows.length) await live.notePlanRows(pool, rows.map((r) => Number(r.id)), note, { ws: deps.ws || null });
   } catch (err) {
     if (deps.strict) throw err;
     log.warn('homeroom-bot', 'Could not end a waiting plan', { appId, issueNumber, err: err.message });
@@ -6949,6 +7013,7 @@ async function settleStalePlans(pool, deps = {}) {
     );
     if (rows.length) {
       await (deps.dm || require('./homeroom-bot-dm')).closePlanCards(pool, rows.map((r) => Number(r.id)), { stopped: true });
+      await live.notePlanRows(pool, rows.map((r) => Number(r.id)), 'stopped', { ws: deps.ws || null });
       log.info('homeroom-bot', 'Plans nobody tapped Build it under stopped waiting', { runs: rows.map((r) => Number(r.id)) });
     }
     return rows.length;
@@ -9480,6 +9545,7 @@ module.exports = {
   // Pure, exported for tests.
   classifyIssue,
   lastRunsByIssue,
+  unaddressedActivityByIssue,
   BLOCKERS,
   capRoomFor,
   slotHolders,

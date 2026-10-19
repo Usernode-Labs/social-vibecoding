@@ -203,6 +203,53 @@ test('a code field says it is a one-time code, in every way a browser reads (Eva
   assert.doesNotMatch(src, /type="password"[^>]*one-time-code|one-time-code[^>]*type="password"/);
 });
 
+test('the code is six boxes over one real field, and the sixth digit sends it (#5253)', () => {
+  const { codeDigits, CODE_LENGTH } = loadTsx(SHEET);
+  assert.equal(CODE_LENGTH, 6);
+  // A paste or the keyboard's suggestion fills all six, whatever surrounds the digits.
+  assert.equal(codeDigits('583914'), '583914');
+  assert.equal(codeDigits('583 914'), '583914');
+  assert.equal(codeDigits('Code: 583914.'), '583914');
+  assert.equal(codeDigits('58391412'), '583914');
+  assert.equal(codeDigits('ab'), '');
+  const src = read(SHEET);
+  // One real field still carries the one-time-code attributes; the boxes are drawn from it and hidden from readers.
+  assert.match(src, /<div className="grid grid-cols-6 gap-2" aria-hidden="true">/);
+  assert.match(src, /id="sign-in-sheet-code" \{\.\.\.ONE_TIME_CODE_FIELD\} enterKeyHint="go" maxLength=\{6\} onInput=\{\(e\) => onCodeInput\(e\.currentTarget\.value\)\}/);
+  // The sixth digit sends it, once per code.
+  assert.match(src, /if \(digits\.length === CODE_LENGTH && digits !== autoSent\.current && !busy\) \{\s+autoSent\.current = digits;\s+void verify\(\);/);
+  // No Continue to press on the code step any more.
+  const step = src.slice(src.indexOf("{step === 'code' ? ("), src.indexOf("{step === 'password' ? ("));
+  assert.doesNotMatch(step, /type="submit"/);
+  assert.match(step, /<RichMessage id="auth:signInSheet\.code\.sentTo" values=\{\{ email \}\}/);
+  assert.equal(message('auth:signInSheet.code.sentTo', { email: 'ada@example.com' }), 'Sent to <0>ada@example.com</0> · <1>Change</1>');
+  assert.equal(message('auth:signInSheet.code.checkSpam'), 'Nothing? Check spam.');
+  assert.equal(message('auth:signInSheet.code.title'), 'Enter the code we emailed');
+});
+
+test('the code step opens the address\'s own mail, and counts Get started\'s steps (#5253)', () => {
+  const { mailAppFor, storyStep } = loadTsx(SHEET);
+  const gmail = mailAppFor('Ada@Gmail.com');
+  assert.equal(gmail.name, 'Gmail');
+  assert.equal(gmail.url, 'https://mail.google.com/mail/?authuser=Ada%40Gmail.com#search/in%3Aanywhere+newer_than%3A1h');
+  assert.equal(mailAppFor('ada@googlemail.com').name, 'Gmail');
+  assert.equal(mailAppFor('ada@hotmail.com').name, 'Outlook');
+  assert.equal(mailAppFor('ada@yahoo.co.uk').name, 'Yahoo Mail');
+  assert.equal(mailAppFor('ada@icloud.com').name, 'iCloud Mail');
+  assert.equal(mailAppFor('ada@proton.me').name, 'Proton Mail');
+  // A work or school address has no inbox to guess at: no button.
+  assert.equal(mailAppFor('ada@usernodelabs.org'), null);
+  assert.equal(mailAppFor('not an address'), null);
+  assert.equal(message('auth:signInSheet.code.openMail', { app: 'Gmail' }), 'Open Gmail');
+  // Only the story's Get started counts its steps: email, code, username.
+  assert.equal(storyStep('code', 'story'), 2);
+  assert.equal(storyStep('code', 'signin'), null);
+  assert.equal(storyStep('code', 'invite'), null);
+  assert.equal(storyStep('account', 'story'), 3);
+  assert.equal(storyStep('email', 'story'), null);
+  assert.equal(message('auth:signInSheet.progress', { step: 2, total: 3 }), 'Step 2 of 3');
+});
+
 test('the sheet spends the one-time sign-in with a POST, and anything but a spend falls back (#4594)', async () => {
   const sheet = loadTsx(SHEET);
   const key = 'K'.repeat(43);
@@ -241,7 +288,8 @@ test('the sheet spends the one-time sign-in with a POST, and anything but a spen
   assert.match(landing, /const closeSheet = useCallback\(\(\) => \{ setSheet\(null\); setResume\(null\); \}, \[\]\);/);
   assert.doesNotMatch(landing, /setRelease\(null\); \}, \[\]\)/);
   // Refused, the code step says why a code came instead.
-  assert.match(src, /linkRefused \? t\('auth:signInSheet\.code\.leadLinkUsed', \{ email \}\) : t\('auth:signInSheet\.code\.lead', \{ email \}\)/);
+  // Otherwise "Sent to <address> · Change" says it (#5253).
+  assert.match(src, /linkRefused \? t\('auth:signInSheet\.code\.leadLinkUsed', \{ email \}\) : ''/);
   assert.equal(message('auth:signInSheet.code.leadLinkUsed', { email: 'ada@example.com' }),
     'That sign-in link was already used or has expired, so we sent a 6-digit code to ada@example.com instead. It expires in 10 minutes.');
   assert.match(src, /setLinkRefused\(false\); setStep\('email'\);/, 'another address is a plain code again');
@@ -272,7 +320,9 @@ test('the account step asks for no password, and says how they sign in (#4891)',
   }
   // The username is the step's one field, so its Return goes.
   assert.match(step, /<input ref=\{usernameField\} id="sign-in-sheet-username" defaultValue=\{suggestedUsername\} autoComplete="username" enterKeyHint="go" className=\{INPUT\}/);
-  // In the password's place, how they sign in and where a password is added.
+  // In the password's place, how they sign in and where a password is
+  // added, under the button since #5255, so the field's own line is free.
+  assert.ok(step.indexOf('data-sign-in-sheet-code-note') > step.indexOf('<button type="submit"'), 'the note sits under the button');
   assert.match(step, /<p data-sign-in-sheet-code-note="" className="text-\[13px\] text-zinc-500 dark:text-zinc-400">\{t\('auth:signInSheet\.account\.codeNote'\)\}<\/p>/);
   assert.equal(message('auth:signInSheet.account.codeNote'),
     'You sign in with a code we email you. You can add a password later in Settings.');
@@ -280,6 +330,46 @@ test('the account step asks for no password, and says how they sign in (#4891)',
   assert.doesNotMatch(message('auth:signInSheet.account.leadWithUsername'), /password/i);
   // Settings is really where it is offered (tests/settings-screen.test.js).
   assert.equal(message('settings:password.titleAdd'), 'Add a password');
+});
+
+test('the username step wears an @, says live whether the name is free, and shows how others see it (#5255)', async () => {
+  const { checkUsername, USERNAME_CHECK_MS } = loadTsx(SHEET);
+  const free = fakeFetch(() => [200, { ok: true, available: true }]);
+  await withGlobals({ fetch: free }, async () => {
+    assert.deepEqual(await checkUsername(' ada_l '), { state: 'available' });
+  });
+  assert.equal(free.calls[0].url, '/api/auth/username-available?username=ada_l');
+  const taken = fakeFetch(() => [200, { ok: true, available: false, error: 'That username is taken.' }]);
+  await withGlobals({ fetch: taken }, async () => {
+    assert.deepEqual(await checkUsername('ada'), { state: 'taken', error: 'That username is taken.' });
+  });
+  // Empty, throttled or offline: the field says nothing, and Create my account still answers.
+  const none = fakeFetch({});
+  await withGlobals({ fetch: none }, async () => {
+    assert.deepEqual(await checkUsername('  '), { state: 'idle' });
+  });
+  assert.equal(none.calls.length, 0);
+  const throttled = fakeFetch(() => [429, { error: 'Too many username checks.' }]);
+  await withGlobals({ fetch: throttled }, async () => {
+    assert.deepEqual(await checkUsername('ada'), { state: 'idle' });
+  });
+  const offline = fakeFetch(() => new Error('offline'));
+  await withGlobals({ fetch: offline }, async () => {
+    assert.deepEqual(await checkUsername('ada'), { state: 'idle' });
+  });
+  assert.ok(USERNAME_CHECK_MS >= 200 && USERNAME_CHECK_MS <= 600, 'asked once typing pauses');
+  const src = read(SHEET);
+  const step = src.slice(src.indexOf("{step === 'account' ? ("), src.indexOf('</form>', src.indexOf("{step === 'account' ? (")));
+  assert.match(step, /<span aria-hidden="true" className="text-\[17px\] text-zinc-500 dark:text-zinc-400">@<\/span>/);
+  assert.match(step, /onInput=\{\(e\) => setHandleDraft\(e\.currentTarget\.value\)\}/);
+  assert.match(step, /data-sign-in-sheet-username-check="available"/);
+  assert.match(step, /data-sign-in-sheet-username-preview=""/);
+  assert.match(step, /needsUsername \? t\('auth:signInSheet\.account\.create'\) : t\('auth:signInSheet\.account\.submit'\)/);
+  assert.equal(message('auth:signInSheet.account.create'), 'Create my account');
+  assert.equal(message('auth:signInSheet.account.available'), '✓ Available');
+  assert.equal(message('auth:signInSheet.account.rules'), '3 to 32 letters, numbers or _');
+  assert.equal(message('auth:signInSheet.account.previewLabel'), 'How others see you');
+  assert.equal(message('auth:signInSheet.account.titleUsername'), 'Pick your username');
 });
 
 test('the sheet fills in the token\'s address and sends the code once per tab, through the sign-in screen\'s lookup', async () => {
@@ -475,8 +565,24 @@ test('the reset step asks the sign-in screen\'s reset, and says the same whether
   // The sheet's step: its field, its button, the same wording as the screen's, and the way back.
   const src = read(SHEET);
   assert.match(src, /<input ref=\{resetField\} id="sign-in-sheet-reset-email" type="email" autoComplete="email"/);
-  assert.match(src, /data-sign-in-sheet-forgot-back="" className=\{`\$\{QUIET\} self-start`\} onClick=\{\(\) => \{ identifierPrefill\.current = typedIdentifier\.current; toStep\('password'\); \}\}>/);
   assert.equal(message('auth:signInSheet.forgot.sent'), message('auth:login.emailReset.sent'));
+});
+
+test('the reset has one way back, a way in with a code, and the support note only once a link went (#5259)', () => {
+  const src = read(SHEET);
+  // One "‹ Sign in", above the title, carrying the typed username back.
+  assert.match(src, /\{step === 'forgot' \? \(\s+<button type="button" data-sign-in-sheet-forgot-back="" className=\{`\$\{QUIET\} mt-2 -ml-1 flex items-center gap-0\.5`\} onClick=\{\(\) => \{ identifierPrefill\.current = typedIdentifier\.current; toStep\('password'\); \}\}>\s+<ChevronLeftIcon/);
+  assert.equal(src.match(/data-sign-in-sheet-forgot-back=""/g).length, 1, 'one way back, not two');
+  assert.equal(message('auth:signInSheet.forgot.back'), 'Sign in');
+  const step = src.slice(src.indexOf("{step === 'forgot' ? (\n          <form"), src.indexOf("{step === 'account' ? ("));
+  // Beside the reset button: the email code, with the address carried over.
+  assert.match(step, /data-sign-in-sheet-forgot-code="" className=\{MAIL_BUTTON\} onClick=\{\(\) => \{ const typed = \(resetField\.current\?\.value \|\| ''\)\.trim\(\); if \(typed\.includes\('@'\)\) setEmail\(typed\.toLowerCase\(\)\); toStep\('email'\); \}\}/);
+  assert.ok(step.indexOf('data-sign-in-sheet-forgot-code') > step.indexOf('<button type="submit"'), 'right under the reset button');
+  assert.equal(message('auth:signInSheet.forgot.withCode'), 'Sign in with a code instead');
+  // The support note waits for a sent link: nobody has a problem before then.
+  assert.match(step, /\{resetSent \? \(\s+<p data-sign-in-sheet-reset-support=""/);
+  assert.match(message('auth:signInSheet.forgot.support'), /^Nothing arrived\? Check spam\./);
+  assert.match(message('auth:signInSheet.forgot.lead'), /sign in with a code/);
 });
 
 // ─── the way out to the make screen ─────────────────────────────────────
@@ -730,7 +836,11 @@ test('Continue shows a spinner while it finishes, beside "Finishing…" (#4892)'
   // The Welcome step's Continue and a provider's username step's, the two
   // that finish a new account and may hand off to the make screen.
   for (const step of ['account', 'username']) {
-    assert.match(sheet, new RegExp(`\\{busy \\? <><FinishingSpinner />\\{t\\('auth:signInSheet\\.${step}\\.finishing'\\)\\}</> : t\\('auth:signInSheet\\.${step}\\.submit'\\)\\}</button>`), step);
+    // The account step's says "Create my account" when it makes the account with its username (#5255).
+    const done = step === 'account'
+      ? "needsUsername \\? t\\('auth:signInSheet\\.account\\.create'\\) : t\\('auth:signInSheet\\.account\\.submit'\\)"
+      : `t\\('auth:signInSheet\\.${step}\\.submit'\\)`;
+    assert.match(sheet, new RegExp(`\\{busy \\? <><FinishingSpinner />\\{t\\('auth:signInSheet\\.${step}\\.finishing'\\)\\}</> : ${done}\\}</button>`), step);
     assert.equal(message(`auth:signInSheet.${step}.submit`), 'Continue');
     assert.equal(message(`auth:signInSheet.${step}.finishing`), 'Finishing…');
   }

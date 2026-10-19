@@ -2859,6 +2859,14 @@
     "text": "Plan · v{{version}}",
     "description": "Small upper-case label over the title on a plan's card (under a request, or on the page of a change built from the plan). \"Plan\" is a noun: the written description the change is built from. {{version}} is its version number; \"v\" abbreviates version."
   },
+  "topic.request.spec.kickerReplaced": {
+    "text": "Plan · v{{version}} · Replaced",
+    "description": "Small heading over a plan's card on a request's page, for a plan Homeroom bot (the platform's assistant) showed that a newer plan replaced. {{version}} is the plan's version number. \"Replaced\" is an adjective: a newer plan took its place."
+  },
+  "topic.request.spec.kickerStopped": {
+    "text": "Plan · v{{version}} · No longer waiting",
+    "description": "Small heading over a plan's card on a request's page, for a plan Homeroom bot (the platform's assistant) showed that no longer waits for the person who asked for it to say Build it. {{version}} is the plan's version number."
+  },
   "topic.request.spec.by": {
     "text": "by {{author}}",
     "description": "Line under the title on a plan's card (under a request, or on the page of a change built from the plan), when the time is not known: who posted the plan. {{author}} is a username, or the assistant's name, Homeroom bot."
@@ -2962,6 +2970,14 @@
   "topic.request.stream.botPlanWaitingUnnamed": {
     "text": "Plan v{{version}}: {{title}}. Waiting for the person who asked for it to say Build it.",
     "description": "One line among the replies on a request's page: Homeroom bot posted its plan (the written description of the change) and builds nothing until the person who asked for the request approves it; used when that person cannot be named. {{version}} is the plan's version number; {{title}} is the plan's title. \"Build it\" is the name of the button they tap. A \"Read\" link follows the line."
+  },
+  "topic.request.stream.botPlanReplaced": {
+    "text": "Plan v{{version}}: {{title}}. A newer plan replaced it.",
+    "description": "One line among the replies on a request's page: a plan Homeroom bot (the platform's assistant) showed for the change, which stopped waiting because the bot planned the request again; the newer plan is further down. {{version}} is the plan's version number and {{title}} its title."
+  },
+  "topic.request.stream.botPlanStopped": {
+    "text": "Plan v{{version}}: {{title}}. It stopped waiting for Build it.",
+    "description": "One line among the replies on a request's page: a plan Homeroom bot (the platform's assistant) showed for the change, which no longer waits for the person who asked for it (nobody said Build it within a week, or the request was settled another way). {{version}} is the plan's version number and {{title}} its title. \"Build it\" is the name of the button that person taps: keep it as the button reads."
   },
   "topic.request.stream.botPlan": {
     "text": "Plan v{{version}}: {{title}}",

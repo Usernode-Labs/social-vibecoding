@@ -262,6 +262,31 @@ test('Messages insets both of its independent scrollers and its composer', () =>
     'the pinned Messages composer must carry the inset itself');
 });
 
+test('the Messages history reserves no band above a composer that clears the bar', () => {
+  // iPhone app, 19 October 2026: `.platform-safe-scroll` on the history kept
+  // the tab bar's full height empty between the newest message and the
+  // composer, which reserves it again below itself. Where a composer follows
+  // the history in its pane the band goes; where none does (an invitation)
+  // the history reaches the foot of the screen and keeps it.
+  const rule = /\.messages-thread-scroll\.platform-safe-scroll:has\(~ \.platform-safe-bar\) \{([^}]*)\}/.exec(APP_CSS);
+  assert.ok(rule, 'the history-above-a-composer rule is missing');
+  assert.match(rule[1], /padding-bottom:\s*0 !important/,
+    'it must beat `.platform-safe-scroll`, which is !important itself');
+  const composer = read('frontend/src/features/messages/composer.tsx');
+  // Every composer the history can have below it is a `.platform-safe-bar`.
+  for (const root of ['messages-composer messages-composer-awaiting platform-safe-bar', 'messages-composer-disabled platform-safe-bar', 'messages-composer platform-safe-bar']) {
+    assert.ok(composer.includes(root), root);
+  }
+  // And it is the pane's next element after the history, in both panes.
+  const source = read('frontend/src/features/messages/index.tsx');
+  for (const scroller of ['className="messages-thread-scroll platform-safe-scroll"', 'className="messages-thread-scroll messages-reply-scroll platform-safe-scroll"']) {
+    const at = source.indexOf(scroller);
+    assert.ok(at > 0, scroller);
+    const ends = ['</section>', '</aside>'].map((tag) => source.indexOf(tag, at)).filter((i) => i > 0);
+    assert.ok(source.slice(at, Math.min(...ends)).includes('<MessageComposer'), `${scroller} has its composer after it in the same pane`);
+  }
+});
+
 test('#home-screen reads the token instead of a second env() of its own', () => {
   // Home already got this right via .home-body-fill; it just had its own
   // bare env(). One source of truth.

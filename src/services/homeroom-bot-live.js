@@ -1337,6 +1337,53 @@ function specCard({
   };
 }
 
+// Papote #3 (18 Oct 2026): what a plan's row on its request says once it
+// stops waiting for Build it (notePlanRows), after its title.
+const PLAN_ROW_ENDINGS = Object.freeze({
+  building: '. I\'m building it now.',
+  replaced: '. A newer plan replaced it.',
+  stopped: '. It stopped waiting for Build it.',
+});
+
+/**
+ * Papote #3 (18 Oct 2026): what became of plans shown on their requests'
+ * discussions (specCard with `asking`: botNote 'waiting'), on those rows:
+ * 'building' once Build it went ahead, 'replaced' when a new look planned
+ * the request again, 'stopped' when it stopped waiting otherwise (a merge,
+ * a week with no answer). Request #3 on Papote showed four rows each still
+ * "Waiting for @snait to say Build it" under four plans. Only a row still
+ * waiting changes; everybody reading is told (chat_message_updated). Never
+ * throws; resolves how many rows changed.
+ */
+async function notePlanRows(pool, runIds, note, { ws = null } = {}) {
+  const ids = [...new Set((runIds || []).map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+  if (!ids.length || !PLAN_ROW_ENDINGS[note]) return 0;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE chat_messages m
+          SET metadata = jsonb_set(m.metadata, '{specShare,botNote}', to_jsonb($2::text)),
+              content = regexp_replace(m.content, '\\. Waiting for [^\\n]*$', $3)
+         FROM homeroom_bot_posts p
+        WHERE p.run_id = ANY($1::int[]) AND p.kind = 'plan' AND m.id = p.thread_message_id
+          AND m.metadata->'specShare'->>'botNote' = 'waiting'
+        RETURNING m.id, m.app_id, m.thread_type, m.thread_ref, m.metadata`,
+      [ids, note, PLAN_ROW_ENDINGS[note]],
+    );
+    const sock = ws || require('./ws');
+    for (const row of rows) {
+      if (typeof sock?.broadcast !== 'function') break;
+      sock.broadcast(Number(row.app_id), {
+        type: 'chat_message_updated', id: Number(row.id), metadata: row.metadata,
+        thread: { type: row.thread_type, ref: Number(row.thread_ref) },
+      });
+    }
+    return rows.length;
+  } catch (err) {
+    log.warn('homeroom-bot-live', 'Could not say what became of a plan on its request', { runs: ids, note, err: err.message });
+    return 0;
+  }
+}
+
 /**
  * Make the spec version readable by everyone who can see the card: a
  * version is private to its session's owner until it is shared, exactly as
@@ -5179,6 +5226,8 @@ module.exports = {
   specFromTitle,
   blockedText,
   shareSpecVersion,
+  notePlanRows,
+  PLAN_ROW_ENDINGS,
   postSpecOnProposal,
   revisedSpecCommentText,
   postRevisedSpecComment,

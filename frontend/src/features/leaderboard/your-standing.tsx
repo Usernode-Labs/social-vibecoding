@@ -6,7 +6,9 @@
  * the prototype's compact page: the Me row that leads here is "Challenges &
  * standings", and this is the standing. The Semi design (2026-10-16) took the
  * season name, the update note and the points by event off it; the points
- * the viewer earned are on the summary line under it.
+ * the viewer earned are on the summary line under it. #5473 brought the
+ * update note back, shorter and with the right timing: people could not tell
+ * why their rank moved with no activity of their own.
  * ./my-standing.js holds the reads and every decision; this file draws them.
  *
  * Rendered inside #tc-se-grid, so it steps aside with the grid while a
@@ -111,6 +113,9 @@ export function YourStanding(): ReactNode {
       ) : null}
       <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
         {t('leaderboard:standing.pointsNote')}
+      </p>
+      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+        {t('leaderboard:standing.updateNote')}
       </p>
       <Token token={view.token} />
     </section>

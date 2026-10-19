@@ -26,7 +26,7 @@ import { readClaimFacts } from '../rules/merge-claim.ts';
 import type { ClaimFacts } from '../rules/merge-claim.ts';
 import type { GovernedGate } from '../rules/governance-gate.ts';
 import { appMetaFromRow, governanceFromRow } from '../rules/governance-gate.ts';
-import { electorate } from '../rules/electorate.ts';
+import { electorate, getApproverSet } from '../rules/electorate.ts';
 import { parseGithubUrl } from '../rules/github-url.ts';
 import { botLookingSql, buildHoldSql, operationsLiveSql, shotsRunningSql, syncWorkingSql } from '../session-work.ts';
 
@@ -110,8 +110,12 @@ export interface Facts {
   row: Row | null;
   caps: Caps | null;
   gate: GovernedGate | null;
-  // ReviewCheck: the last sign of interest (its promotion or the newest vote).
+  // ReviewCheck: the last sign of interest (its promotion or the newest vote
+  // that counts).
   interestAt: string | null;
+  // ReviewCheck on a proposal whose votes are met: the app's merges are
+  // paused by a red main (rules/merge-claim.ts mainPaused).
+  mergesPaused: boolean;
   // review.open's success: the electorate, stamped as it goes up for a vote.
   electorate: number | null;
   // merge.gate found it ready: what the claim reads again under the lock.
@@ -121,7 +125,9 @@ export interface Facts {
   tearingDown: boolean;
 }
 
-export const NO_FACTS: Facts = { row: null, caps: null, gate: null, interestAt: null, electorate: null, tearingDown: false, claim: null };
+export const NO_FACTS: Facts = {
+  row: null, caps: null, gate: null, interestAt: null, mergesPaused: false, electorate: null, tearingDown: false, claim: null,
+};
 
 // The platform-wide slot count's lock: every move into a slot takes it, for
 // the length of its transaction.
@@ -230,13 +236,27 @@ async function readCaps(tx: Tx, row: Row, global: boolean): Promise<Caps> {
   return { promoted: Number(c.promoted) || 0, active: Number(c.active) || 0, global: Number(c.global) || 0 };
 }
 
-// What the review check reads beside the gate: when anybody last showed
-// interest (the promotion, or the newest vote on it, whatever its epoch).
-async function readInterest(tx: Tx, row: Row): Promise<string | null> {
+// What the review check reads beside the gate: when the group last showed
+// interest (the promotion, or the newest vote on it from someone whose vote
+// counts, whatever its epoch). A vote the gate would not count is not the
+// group's interest: on 17 Oct one account's fourteen Yes votes, none of
+// which counted where they were cast, kept proposals nobody else had looked
+// at for a week from ever going stale. The voter is the gate's rule
+// (counts_toward_session_outcome, and an invited project's approver set);
+// the epoch is not, so new code that cleared the votes does not make a
+// proposal look forgotten the hour after it was pushed.
+export async function readInterest(tx: Tx, row: Row): Promise<string | null> {
+  const { rows: [a] } = await tx.query('SELECT approver_policy, governance_rules FROM apps WHERE id = $1', [row.appId]);
+  const gov = a ? governanceFromRow(a) : null;
+  const approvers = gov && gov.approverPolicy === 'invited' && !gov.rules ? (await getApproverSet(tx, row.appId)).ids : null;
   const { rows: [r] } = await tx.query(
     `SELECT GREATEST(COALESCE($2::timestamptz, $3::timestamptz),
-                     COALESCE((SELECT MAX(pv.created_at) FROM pr_votes pv WHERE pv.session_id = $1), $2::timestamptz, $3::timestamptz))
-              AS at`, [row.id, row.promotedAt, row.createdAt]);
+                     COALESCE((SELECT MAX(pv.created_at) FROM pr_votes pv
+                                WHERE pv.session_id = $1 AND pv.vote IN ('yes', 'no')
+                                  AND counts_toward_session_outcome(pv.user_id, pv.session_id)
+                                  AND ($4::int[] IS NULL OR pv.user_id = ANY($4::int[]))),
+                              $2::timestamptz, $3::timestamptz))
+              AS at`, [row.id, row.promotedAt, row.createdAt, approvers]);
   return iso(r?.at);
 }
 
@@ -293,6 +313,7 @@ export async function readFacts(tx: Tx, sessionId: number, event: Event<any>, o:
     });
   }
   if (event.type === 'ReviewCheck') out.interestAt = await readInterest(tx, row);
+  if (gated && out.gate?.mergeable) out.mergesPaused = !!(await readClaimFacts(tx, row.id))?.mainPaused;
   if (o.reviewOpened) out.electorate = await readElectorate(tx, row.appId);
   if (o.teardownKinds?.length) out.tearingDown = await readTeardown(tx, row.id, o.teardownKinds);
   if (o.claim && row.status === 'promoted') {

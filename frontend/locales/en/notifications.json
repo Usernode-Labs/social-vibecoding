@@ -555,6 +555,10 @@
     "text": "Needs votes",
     "description": "First line of a notification: the viewer's proposed change has too few votes and will be archived if none come. The change's title is on the line below."
   },
+  "row.stale.blocked": {
+    "text": "Approved, can't go live yet",
+    "description": "First line of a notification: the viewer's proposed change has enough votes but cannot be merged (a conflict or failing checks), and will be archived if nothing changes. The change's title is on the line below."
+  },
   "row.stale.yourChange": {
     "text": "your change",
     "description": "Second line of the \"Needs votes\" notification when the change has no title. Lower case: it stands where the title would."

@@ -9,6 +9,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useResolvedCommunityColor } from '../../lib/community-color';
 import * as api from './api';
+import { noteApprovedHere, useApprovedHere } from './bot-activity-store';
 import { tryChange } from './bot-ready';
 import { requestHue, requestKey, storyRootIn } from './bot-request';
 import { ENDED_STATES, trackEnding, trackLine, trackShort, trackStateWord } from './bot-track';
@@ -641,7 +642,12 @@ function ReadyRow({ row, onOpen }: { row: StripRow; onOpen: (row: StripRow) => v
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sessionId = ready?.sessionId || null;
-  const canApprove = !!ready?.approve && !!sessionId;
+  // #5483: a Yes cast here stops the row offering Approve, before the tray's
+  // next read repeats what the server already knows. The hook redraws the row
+  // the moment the Yes lands, wherever on the page it was cast (the card's
+  // included; a bare read would wait for the tray's next read to re-render).
+  const approved = useApprovedHere(sessionId, ready?.epoch ?? null);
+  const canApprove = !!ready?.approve && !!sessionId && !approved;
 
   function tryIt() {
     if (sessionId && row.job.appSlug) { tryChange({ appSlug: row.job.appSlug }, sessionId); return; }
@@ -653,7 +659,7 @@ function ReadyRow({ row, onOpen }: { row: StripRow; onOpen: (row: StripRow) => v
     setBusy(true); setError(null);
     const out = await api.approveChange(sessionId, ready?.epoch ?? null);
     setBusy(false);
-    if (out.ok) { loadBotWork(); return; }
+    if (out.ok) { noteApprovedHere(sessionId, ready?.epoch ?? null, out.goesLive || null); loadBotWork(); return; }
     setError(out.stale ? t('messages:bot.strip.approveStale') : out.error || t('messages:bot.strip.approveFailed'));
   }
 

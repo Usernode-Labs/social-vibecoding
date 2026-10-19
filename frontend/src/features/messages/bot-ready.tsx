@@ -12,7 +12,7 @@ import { useReleaseNow } from '../../lib/use-release-now';
 
 import * as api from './api';
 import { afterYesWords, countOf, waitingWords, type AfterYes } from './approval-words';
-import { ensureBotActivity, useBotActivity } from './bot-activity-store';
+import { approvedHere, ensureBotActivity, noteApprovedHere, useBotActivity } from './bot-activity-store';
 import { botMeta } from './bot-question';
 import { quoteInComposer } from './store';
 import type {
@@ -453,8 +453,13 @@ export function BotReadyCard({ message, conversationId }: { message: Conversatio
   const [error, setError] = useState<string | null>(null);
   if (!meta?.ready) return null;
   const all = meta.actions || [];
+  // #5483: a Yes cast here is kept for the page's lifetime, at the version it
+  // was cast at (./bot-activity-store), so a card reopened before any read
+  // says the vote — the chat unmounted the Yes this component held.
+  const vote = all.find((action) => action.type === 'vote');
+  const kept = vote && typeof vote.sessionId === 'number' ? approvedHere(vote.sessionId, vote.epoch ?? null) : null;
 
-  const state = readyCardState({ meta, fresh, approved, stale: !!stale });
+  const state = readyCardState({ meta, fresh, approved: approved || !!kept, stale: !!stale });
   // Stale: Try it, and Approve back (on the version it is at now) once
   // tried. Live: none, the news under it opens the app (#4228).
   const actions = state === 'open' ? all
@@ -480,7 +485,7 @@ export function BotReadyCard({ message, conversationId }: { message: Conversatio
       const epoch = stale ? stale.epoch : (action.epoch ?? null);
       const out = await api.approveChange(action.sessionId, epoch);
       setBusy(false);
-      if (out.ok) { setGoesLive(out.goesLive || null); setApproved(true); setStale(null); return; }
+      if (out.ok) { noteApprovedHere(action.sessionId, epoch, out.goesLive || null); setGoesLive(out.goesLive || null); setApproved(true); setStale(null); return; }
       if (out.stale) { setStale({ epoch: out.epoch, tried: false }); return; }
       setError(out.error);
     }
@@ -488,7 +493,7 @@ export function BotReadyCard({ message, conversationId }: { message: Conversatio
 
   return (
     <ReadyCardView
-      meta={meta} state={state} actions={actions} fresh={fresh} error={error} busy={busy} goesLive={goesLive}
+      meta={meta} state={state} actions={actions} fresh={fresh} error={error} busy={busy} goesLive={goesLive || kept?.goesLive || null}
       onPress={(action) => { void press(action); }}
     />
   );

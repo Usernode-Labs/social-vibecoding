@@ -962,6 +962,16 @@ test-results/
 playwright-report/
 `,
     },
+    // #5120 (compliance plan X-07, decided in T-15): every change merged
+    // into an app, by a person or a bot, comes in under MIT, and Usernode
+    // claims no ownership of app code (L-08), so the copyright line names the
+    // app's contributors. No year: the same create writes the same file. A
+    // starter, a game and a healed repo all get it; an import or a fork
+    // keeps whatever licence its own tree carries.
+    {
+      path: 'LICENSE',
+      content: mitLicense(appName),
+    },
     {
       path: 'project.toml',
       content: `[_]
@@ -1524,6 +1534,33 @@ function extraDependencies(starter) {
     packages = { ...packages, ...extra.packages };
   }
   return { ranges, packages };
+}
+
+// The standard MIT text (https://opensource.org/license/mit), unchanged but
+// for the copyright line.
+function mitLicense(appName) {
+  return `MIT License
+
+Copyright (c) The ${appName} contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`;
 }
 
 function escapeHtml(str) {

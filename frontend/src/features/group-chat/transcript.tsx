@@ -941,7 +941,14 @@ export function Transcript({ source = 'main' }: { source?: string }) {
    * what keeps this from looping.
    */
   const voteRows = (view ? view.messages : [])
-    .filter((m) => m.kind === 'vote')
+    // #5458: a message row can carry the controls host too — an ordinary
+    // message whose metadata names the proposal (the Homeroom bot's "built
+    // this" post). Keying on vote rows alone left that host empty whenever
+    // the vote snapshot had already landed before the transcript rendered:
+    // refreshVoteControls had run against no host, and nothing called it
+    // again, so returning to a chat whose card you had voted on drew
+    // nothing at all.
+    .filter((m) => m.kind === 'vote' || m.voteRef)
     .map((m) => m.id)
     .join(',');
   useEffect(() => {
@@ -1067,6 +1074,8 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
     glyph = '📋';
     const values = { version: spec.version, title: spec.title };
     text = spec.botNote === 'building' ? t('project:topic.request.stream.botPlanBuilding', values)
+      : spec.botNote === 'replaced' ? t('project:topic.request.stream.botPlanReplaced', values)
+      : spec.botNote === 'stopped' ? t('project:topic.request.stream.botPlanStopped', values)
       : spec.botNote === 'waiting'
         ? (spec.waitingFor
           ? t('project:topic.request.stream.botPlanWaiting', { ...values, requester: spec.waitingFor })

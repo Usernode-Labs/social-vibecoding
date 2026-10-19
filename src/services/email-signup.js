@@ -494,6 +494,24 @@ async function isWaitlisted(pool, userId) {
  * the signup session is spent, so the person fixes the field and submits
  * again with the same cookie.
  */
+/**
+ * The account a signup session is choosing a username for, without spending
+ * it (#5255): the live check on the sign-in sheet's account step answers
+ * only for a person holding an unexpired signup cookie whose account still
+ * has to choose a handle. Null for anything else.
+ */
+async function pendingUsernameChoice(pool, signupToken) {
+  if (typeof signupToken !== 'string' || !/^[a-f0-9]{64}$/.test(signupToken)) return null;
+  const { rows } = await pool.query(
+    `SELECT w.user_id
+       FROM web_signup_sessions w
+       JOIN users u ON u.id = w.user_id
+      WHERE w.token_hash = $1 AND w.expires_at > NOW() AND u.needs_username_choice = TRUE`,
+    [tokenHash(signupToken)]
+  );
+  return rows.length ? rows[0].user_id : null;
+}
+
 async function completePassword(pool, { signupToken, password, username = null, createSession }) {
   if (typeof signupToken !== 'string' || !/^[a-f0-9]{64}$/.test(signupToken)) {
     throw new EmailSignupError('invalid_signup_session', 'Your signup session expired. Request a new code.');
@@ -614,4 +632,5 @@ module.exports = {
   requestCode,
   verifyCode,
   completePassword,
+  pendingUsernameChoice,
 };

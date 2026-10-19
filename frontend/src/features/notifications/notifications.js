@@ -2901,11 +2901,14 @@ function rowView(n) {
   // heading for auto-archive. The old copy spelled the whole mechanism out
   // ("is going stale, it'll auto-archive soon without votes"); what the row
   // has to say is that it needs votes, and the rest is on the proposal.
+  // `detail` 'blocked': its votes are met and its merge is what stands
+  // still, so the row says that rather than asking for votes.
   if (n.kind === 'stale_pr') {
     return {
       ...base,
       icon: '⏳',
-      ...headline(t('notifications:row.stale.label'), prLabel || n.sessionTitle || t('notifications:row.stale.yourChange')),
+      ...headline(t(n.detail === 'blocked' ? 'notifications:row.stale.blocked' : 'notifications:row.stale.label'),
+        prLabel || n.sessionTitle || t('notifications:row.stale.yourChange')),
     };
   }
 

@@ -449,3 +449,117 @@ test('a vote this page saved fills a later row the read drew without it', async 
   AppView._overlayPendingVote(merging);
   assert.equal(merging.my_vote, null, 'a row no longer waiting for votes is left alone');
 });
+
+// ── 5. A chat's card shows the vote at once (#5458) ─────────────────────
+
+// A chat's inline vote controls (group-chat.js refreshVoteControls) read
+// AppView.voteState.bySession — a snapshot loadVoteState builds, a different
+// object from the board row _findItem hands castVote, and on Messages often
+// the only row there is. The vote reaches both rows before the POST is sent,
+// both go back on a refusal, and outside the board the chat's snapshot is
+// re-read once the server has said yes (refreshDevData returns before doing
+// anything when the dev tab is not the one on screen).
+
+function chatHarness({ tab = 'messages', chatMounted = true } = {}) {
+  const AppView = makeAppView();
+  const boardRow = openRow();
+  const chatRow = openRow({ yes_count: 1 });
+  AppView._proposals = [boardRow];
+  AppView.voteState = { bySession: { '7': chatRow }, byPrNumber: {}, majority: 2, activeUsers: 3 };
+  AppView._repaintDevBody = () => {};
+  AppView._renderTopicHead = () => {};
+  if (chatMounted) AppView.__sandbox.GroupChat = { appSlug: 'demo-app', refreshVoteControls: () => {} };
+  AppView.__sandbox.App.currentTab = tab;
+  const reads = [];
+  AppView.loadVoteState = (slug) => { reads.push(slug); return Promise.resolve(); };
+  return { AppView, boardRow, chatRow, reads };
+}
+
+test('a chat card carries the vote before the POST answers, and re-reads once it landed', async () => {
+  const h = chatHarness();
+  const post = deferred();
+  h.AppView.__sandbox.fetch = async () => post.promise.then(
+    () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }));
+  const refresh = deferred();
+  h.AppView.refreshDevData = () => refresh.promise;
+  const read = deferred();
+  h.AppView.loadVoteState = (slug) => { h.reads.push(slug); return read.promise; };
+  const done = h.AppView.castVote(7, 'yes', 3, { reason: null });
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(h.boardRow.my_vote, 'yes', 'the board row still takes the vote optimistically');
+  assert.equal(h.chatRow.my_vote, 'yes', 'the chat row carries the vote before the round-trip');
+  assert.equal(h.chatRow.yes_count, 2, 'and its tally moves too');
+  assert.deepEqual(h.reads, [], 'nothing is re-read until the server has said yes');
+
+  post.resolve();
+  await done;
+  assert.deepEqual(h.reads, ['demo-app'], 'the chat re-reads its snapshot after the ok');
+  assert.equal(h.AppView._pendingVotes.size, 1, 'the vote stays held while the reads land');
+  refresh.resolve();
+  await refresh.promise;
+  await new Promise((r) => setImmediate(r));
+  assert.equal(h.AppView._pendingVotes.size, 1, '…and after the first of the two');
+  read.resolve();
+  await read.promise;
+  await new Promise((r) => setImmediate(r));
+  assert.equal(h.AppView._pendingVotes.size, 0, 'settled only once both reads have landed');
+});
+
+test('a chat card on Messages whose board lists are another app\'s still shows the vote', async () => {
+  // The reported case: _findItem answers null here (its slug guard fails),
+  // so before the change the chat row was never touched at all.
+  const h = chatHarness();
+  h.AppView._devDataSlug = 'other-app';
+  h.AppView._proposals = [];
+  const post = deferred();
+  h.AppView.__sandbox.fetch = async () => post.promise.then(
+    () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }));
+  const done = h.AppView.castVote(7, 'yes', 3, { reason: null });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(h.chatRow.my_vote, 'yes', 'the chat row alone carries the vote');
+  assert.equal(h.chatRow.yes_count, 2);
+  post.resolve();
+  await done;
+  assert.deepEqual(h.reads, ['demo-app']);
+});
+
+test('a refused vote restores the chat row and reads nothing back', async () => {
+  const h = chatHarness();
+  h.AppView.__sandbox.fetch = async () => ({
+    ok: false, status: 409, json: async () => ({ error: 'This proposal changed', approvalEpoch: 4 }),
+  });
+  await h.AppView.castVote(7, 'yes', 3, { reason: null });
+  assert.equal(h.chatRow.my_vote, null, 'the chat row goes back to offering Yes and No');
+  assert.equal(h.chatRow.yes_count, 1);
+  assert.equal(h.boardRow.my_vote, null);
+  assert.equal(h.boardRow.yes_count, 1);
+  assert.deepEqual(h.reads, [], 'a refusal re-reads nothing for the chat');
+});
+
+test('a vote that never reached the server restores the chat row too', async () => {
+  const h = chatHarness();
+  h.AppView.__sandbox.fetch = async () => { throw new TypeError('Failed to fetch'); };
+  await h.AppView.castVote(7, 'yes', 3, { reason: null });
+  assert.equal(h.chatRow.my_vote, null);
+  assert.equal(h.chatRow.yes_count, 1);
+});
+
+test('the chat row and the board row are one object on the dev board, and count once', async () => {
+  const h = chatHarness({ tab: 'dev' });
+  h.boardRow === h.chatRow;
+  h.AppView.voteState.bySession['7'] = h.boardRow;
+  h.AppView.refreshDevData = () => Promise.resolve(true);
+  h.AppView.__sandbox.fetch = async () => ({ ok: true, json: async () => ({ ok: true }) });
+  await h.AppView.castVote(7, 'yes', 3, { reason: null });
+  assert.equal(h.boardRow.my_vote, 'yes');
+  assert.equal(h.boardRow.yes_count, 2, 'one row, one bump — never two');
+  assert.deepEqual(h.reads, [], 'the dev tab re-reads the snapshot through refreshDevData, not here');
+});
+
+test('no chat mounted: no extra read even outside the board', async () => {
+  const h = chatHarness({ chatMounted: false });
+  h.AppView.__sandbox.fetch = async () => ({ ok: true, json: async () => ({ ok: true }) });
+  await h.AppView.castVote(7, 'yes', 3, { reason: null });
+  assert.deepEqual(h.reads, [], 'nothing re-read when no chat is listening');
+});

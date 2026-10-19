@@ -3359,6 +3359,10 @@
     "text": "Waiting on you",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Short status word for a request whose state is: the bot needs something from the person reading: an answer, a go-ahead, more detail or a look."
   },
+  "bot.track.state.waitingNamed": {
+    "text": "Waiting on @{{username}}",
+    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Short status word for a request whose state is: the bot needs something from the person who asked for it (an answer, a go-ahead, more detail), shown to somebody else, on a page anyone can open. {{username}} is that person's username, after an @."
+  },
   "bot.track.state.building": {
     "text": "Building",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Short status word for a request whose state is: the bot is building the change."
@@ -3479,17 +3483,33 @@
     "text": "It has a question for you",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"waiting\" when the reason is \"question\"."
   },
+  "bot.track.line.waiting.questionNamed": {
+    "text": "It has a question for @{{username}}",
+    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"waiting\" when the reason is \"question\", shown to somebody other than the person it waits on. {{username}} is that person's username, after an @."
+  },
   "bot.track.line.waiting.plan": {
     "text": "Its plan is ready for you to say Build it",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"waiting\" when the reason is \"plan\"."
+  },
+  "bot.track.line.waiting.planNamed": {
+    "text": "Its plan is ready for @{{username}} to say Build it",
+    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"waiting\" when the reason is \"plan\", shown to somebody other than the person it waits on. {{username}} is that person's username, after an @. \"Build it\" is the name of the button that person taps: keep it as the button reads."
   },
   "bot.track.line.waiting.detail": {
     "text": "It can't build this as written: add detail",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"waiting\" when the reason is \"detail\"."
   },
+  "bot.track.line.waiting.detailNamed": {
+    "text": "It can't build this as written: it needs more detail from @{{username}}",
+    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"waiting\" when the reason is \"detail\", shown to somebody other than the person it waits on. {{username}} is that person's username, after an @."
+  },
   "bot.track.line.waiting.look": {
     "text": "Built: it needs you to look before it goes up for a vote",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"waiting\" when the reason is \"look\"."
+  },
+  "bot.track.line.waiting.lookNamed": {
+    "text": "Built: it needs @{{username}} to look before it goes up for a vote",
+    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"waiting\" when the reason is \"look\", shown to somebody other than the person it waits on. {{username}} is that person's username, after an @."
   },
   "bot.track.line.building.default": {
     "text": "Building it",

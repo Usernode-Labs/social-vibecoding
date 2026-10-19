@@ -114,17 +114,20 @@ export async function createConnectorSubmittedNotification(
 // A proposal up for a vote that nobody has looked at for a while: its author
 // is warned once, unless they muted the kind. `allows` fails open (the quiet
 // failure mode of the whole feature is a notification silently not
-// arriving); the machine passes it as is.
+// arriving); the machine passes it as is. `detail` 'blocked': its votes are
+// met and its merge is what stands still (a conflict, failing checks), so
+// the row and the push say that rather than asking for votes.
 export async function createStalePrNotification(
-  db: Queryable, { userId, appId, sessionId }: { userId: number | null; appId: number | null; sessionId: number },
+  db: Queryable, { userId, appId, sessionId, detail = null }:
+    { userId: number | null; appId: number | null; sessionId: number; detail?: 'blocked' | null },
   allows: typeof allowsKind = allowsKind,
 ): Promise<NotificationRow[]> {
   if (!userId) return [];
   if (!await allows(db, { userId, appId, kind: 'stale_pr' })) return [];
   const { rows } = await db.query(
-    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
-     VALUES ($1, $2, $3, NULL, 'stale_pr')
-     RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
-    [userId, appId, sessionId]);
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
+     VALUES ($1, $2, $3, NULL, 'stale_pr', $4)
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+    [userId, appId, sessionId, detail === 'blocked' ? 'blocked' : null]);
   return rows;
 }

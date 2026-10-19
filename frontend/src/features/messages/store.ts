@@ -527,6 +527,17 @@ function browserOffline(): boolean {
 }
 
 /**
+ * How many messages a page of a conversation reads. The Homeroom bot's chat
+ * folds most of its news into a few "N finished" lines (./bot-news-line.tsx),
+ * so a page of 50 fills little of the screen and opening it read page after
+ * page to fill it, behind its spinner (./open-hold.ts). There it reads the
+ * server's most (services/conversations.js caps a page at 100).
+ */
+function pageSize(conversation: Pick<ConversationDetail, 'homeroomBot'> | null): number {
+  return conversation?.homeroomBot === true ? 100 : 50;
+}
+
+/**
  * `offlineCopy` is the retry of an open whose read from the server failed
  * (#4243): the one read that takes the service worker's offline copy while
  * the browser says it is online.
@@ -606,8 +617,8 @@ export async function loadThread(conversationId: number, force = false, offlineC
         ? await api.listMessagesAround(conversationId, anchor, read).then((around) => ({
           messages: around.messages, nextBefore: around.nextBefore, nextAfter: around.nextAfter,
           threadRootId: around.focus.threadRootId, focusMessageId: around.focus.messageId,
-        })).catch(() => api.listMessages(conversationId, null, read).then((latest) => ({ ...latest, nextAfter: null })))
-        : { ...(await api.listMessages(conversationId, null, read)), nextAfter: null };
+        })).catch(() => api.listMessages(conversationId, null, read, pageSize(active)).then((latest) => ({ ...latest, nextAfter: null })))
+        : { ...(await api.listMessages(conversationId, null, read, pageSize(active))), nextAfter: null };
     if (request !== threadRequest || state.route.conversationId !== conversationId) return;
     if (focus && page.focusMessageId && page.focusMessageId !== focus) {
       // In its community's page the room has no address of its own (#3653):
@@ -771,7 +782,7 @@ export async function loadOlder(): Promise<boolean> {
   if (!conversationId || !state.nextBefore || state.loadingOlder) return true;
   publish({ loadingOlder: true });
   try {
-    const page = await api.listMessages(conversationId, state.nextBefore);
+    const page = await api.listMessages(conversationId, state.nextBefore, undefined, pageSize(state.active));
     if (state.route.conversationId !== conversationId) return true;
     const known = new Set(state.messages.map((message) => message.id));
     const older = page.messages.filter((message) => !known.has(message.id));

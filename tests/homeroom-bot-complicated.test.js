@@ -130,6 +130,13 @@ test('the DM card names the request, and its words say its screens are there', (
   assert.equal(dm.isPlanGoWord('Build it!'), true);
   assert.equal(dm.isPlanGoWord('  yes please. '), true);
   assert.equal(dm.isPlanGoWord('build it but make it blue'), false);
+  // Papote #3: said to the bot on the request, it is the same go word.
+  assert.equal(dm.isPlanGoWord('@Homeroom bot build it'), true);
+  assert.equal(dm.isPlanGoWord('@\u200bHomeroom bot build it'), true, 'as the composer writes the mention');
+  assert.equal(dm.isPlanGoWord('@homeroom_bot, go ahead!'), true);
+  assert.equal(dm.isPlanGoWord('@homeroom_bot_x build it'), false, 'somebody else\'s handle');
+  assert.equal(dm.isPlanGoWord('@Homeroom bot status'), false);
+  assert.equal(dm.isPlanGoWord('@Homeroom bot build it but make it blue'), false);
 });
 
 test('the plan card for an existing project says where its screens are and where changes go', () => {
@@ -591,5 +598,193 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
       [app.id, proposal.id],
     );
     assert.equal(await bot.plannedWithRequester(pool, { appId: app.id, issueNumber: 14 }), false);
+  });
+
+  // ── Papote #3 (18 Oct 2026): "build it" said to the bot re-planned it ──
+  //
+  // Request #3 on Papote got four plans in a row: "@Homeroom bot status",
+  // "try again" and "@Homeroom bot build it" each started a new look, which
+  // retired the plan waiting for its requester and wrote the same one again.
+  const settings = await bot.readSettings(pool);
+  // Both can see it (the bot's tools ask), and Sam is a member, as on Papote.
+  await pool.query("UPDATE apps SET view_visibility = 'public', collab_visibility = 'public' WHERE id = $1", [app.id]);
+  await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [app.community_id, sam.id]);
+  const ctx = (who) => ({
+    bot: homeroomBot, user: who, settings, config: {}, deps: { domain: 'app.test' }, cards: [], appIds: new Set(),
+  });
+  const queued = async () => (await pool.query(
+    'SELECT priority, reason FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 12', [app.id],
+  )).rows;
+  // Each starts with no plan waiting, nothing queued and nothing said. The
+  // queue is the workflow's (bot-request): its rows go as its kernel's.
+  const fresh = async () => {
+    await pool.query('UPDATE homeroom_bot_runs SET awaiting_go_at = NULL, live_build_waiting_at = NULL, build_ok = COALESCE(build_ok, FALSE) WHERE app_id = $1', [app.id]);
+    const c = await pool.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query("SET LOCAL app.wf_writer = 'transition'");
+      const keys = `request:${Number(app.id)}:%`;
+      await c.query("DELETE FROM wf_work WHERE machine = 'bot-request' AND key LIKE $1", [keys]);
+      await c.query("DELETE FROM wf_events WHERE machine = 'bot-request' AND key LIKE $1 AND status = 'pending'", [keys]);
+      await c.query("DELETE FROM wf_instances WHERE machine = 'bot-request' AND key LIKE $1", [keys]);
+      await c.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1', [app.id]);
+      await c.query('COMMIT');
+    } catch (err) {
+      await c.query('ROLLBACK');
+      throw err;
+    } finally {
+      c.release();
+    }
+    await pool.query('DELETE FROM chat_messages WHERE app_id = $1', [app.id]);
+  };
+  const said = (who, content, { metadata = {}, ago = 0 } = {}) => pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, metadata, created_at)
+     VALUES ($1, $2, $3, 'issue', 12, $4, NOW() - make_interval(secs => $5)) RETURNING id, created_at`,
+    [app.id, who.id, content, JSON.stringify(metadata), ago],
+  ).then((r) => r.rows[0]);
+  // The plan's row in the request's discussion, as planBeforeBuilding posts it.
+  const planRow = async (runId) => {
+    const card = live.specCard({ sessionId: specSession.id, version: 1, spec: '# Leaderboard', bot: homeroomBot, asking: true, requester: 'maya' });
+    const { rows: [row] } = await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, msg_type, metadata)
+       VALUES ($1, $2, $3, 'issue', 12, $4, $5) RETURNING id`,
+      [app.id, homeroomBot.id, card.content, card.msgType, JSON.stringify(card.metadata)],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind, thread_message_id) VALUES ($1, 12, $2, 'plan', $3)`,
+      [app.id, runId, row.id],
+    );
+    return row.id;
+  };
+  const rowOf = async (id) => (await pool.query(
+    `SELECT content, metadata->'specShare'->>'botNote' AS note FROM chat_messages WHERE id = $1`, [id],
+  )).rows[0];
+
+  await t.test('papote #3: start_request from its requester under its plan is Build it, and nothing is read again', async () => {
+    await fresh();
+    const run = await waitingRun();
+    await dm.sendPlanCard(pool, { app, issueNumber: 12, runId: run, plan: SHOWN, bot: homeroomBot });
+    const row = await planRow(run);
+    // Somebody else asking is told whose OK it waits on, and nothing starts.
+    const other = await mayor.startRequest(pool, ctx(sam), { project: 'chores', number: 12 });
+    assert.equal(other.ok, false);
+    assert.match(other.error, /^Its plan waits for @maya to say Build it, and only they can\. Nothing was started; a new look would only plan it again\./);
+    assert.ok((await runRow(run)).awaiting_go_at, 'still waiting');
+    assert.deepEqual(await queued(), []);
+    // Its requester asking is Build it, through the card they were sent.
+    const own = await mayor.startRequest(pool, ctx(maya), { project: 'chores', number: 12 });
+    assert.equal(own.ok, true);
+    assert.match(own.built, /^That was Build it: the plan they were shown goes ahead as written, and it was not planned again\./);
+    const after = await runRow(run);
+    assert.equal(after.awaiting_go_at, null);
+    assert.ok(after.live_build_waiting_at, 'its build waits its turn');
+    assert.match(after.build_note, /Approved by the person who asked for it, who said Build it under this plan and its spec:/);
+    const card = await planMessage(run);
+    assert.deepEqual([card.meta.status, card.meta.chosen], ['answered', 'build']);
+    assert.deepEqual(await queued(), [], 'no new look was queued');
+    // Its row on the request says it is being built (live.notePlanRows).
+    assert.deepEqual(await rowOf(row), { content: "📋 Plan v1: Leaderboard. I'm building it now.", note: 'building' });
+    // Asked again while that build waits its turn: nothing new is queued, as a new look would replace it.
+    const again = await mayor.startRequest(pool, ctx(maya), { project: 'chores', number: 12 });
+    assert.equal(again.ok, true);
+    assert.match(again.already, /^It is ready and its build is already on its way/);
+    assert.deepEqual(await queued(), []);
+    assert.equal(await mayor.pendingBuild(pool, app.id, 12), true);
+  });
+
+  await t.test('papote #3: request_detail says the plan waits for Build it, not "building now"', async () => {
+    await fresh();
+    await waitingRun();
+    const mine = await mayor.requestDetail(pool, { user: maya, project: 'chores', number: 12, settings });
+    assert.equal(mine.recentLooks[0].build, 'not building: its plan is written and waits for them to say Build it, and nothing is built until then');
+    const theirs = await mayor.requestDetail(pool, { user: sam, project: 'chores', number: 12, settings });
+    assert.equal(theirs.recentLooks[0].build, 'not building: its plan is written and waits for @maya to say Build it, and nothing is built until then');
+  });
+
+  await t.test('papote #3: what was said to the bot under a plan is not an answer to it, and "@Homeroom bot build it" is Build it', async () => {
+    await fresh();
+    const run = await waitingRun();
+    await said(maya, '@​Homeroom bot status');
+    assert.equal(await bot.buildItOnRequest(pool, { appId: app.id, issueNumber: 12, requester: { userId: maya.id } }), false,
+      'nothing said to go ahead yet');
+    assert.ok((await runRow(run)).awaiting_go_at);
+    await said(maya, '@Homeroom bot build it');
+    assert.equal(await bot.buildItOnRequest(pool, { appId: app.id, issueNumber: 12, requester: { userId: maya.id } }), true,
+      'the question to the bot before it is no word about the plan');
+    assert.ok((await runRow(run)).live_build_waiting_at);
+  });
+
+  await t.test('papote #3: the refresh reads past what people said to the bot', async () => {
+    await fresh();
+    const bots = await said(homeroomBot, 'Its plan is ready.', { ago: 40 });
+    const plain = await said(sam, 'Looks good to me', { ago: 30 });
+    await said(sam, '@homeroom_bot status?', { ago: 20 });
+    await said(maya, 'And how long?', { metadata: { quote: { refMsgId: bots.id } }, ago: 10 });
+    const seen = await bot.unaddressedActivityByIssue(pool, app.id, [12], homeroomBot.id);
+    assert.equal(new Date(seen.get(12)).getTime(), new Date(plain.created_at).getTime(),
+      'a mention of the bot and a Reply to it are left out; the rest counts');
+    assert.deepEqual(await bot.unaddressedActivityByIssue(pool, app.id, [], homeroomBot.id), new Map());
+  });
+
+  await t.test('papote #3: change_plan plans it again with their words, and its row says a newer plan replaced it', async () => {
+    await fresh();
+    const run = await waitingRun();
+    await dm.sendPlanCard(pool, { app, issueNumber: 12, runId: run, plan: SHOWN, bot: homeroomBot });
+    const row = await planRow(run);
+    const out = await mayor.replanRequest(pool, ctx(sam), { project: 'chores', number: 12 });
+    assert.equal(out.ok, true);
+    assert.match(out.replanning, /for @maya to say Build it\.$/);
+    const after = await runRow(run);
+    assert.deepEqual([after.awaiting_go_at, after.build_ok, after.build_error],
+      [null, false, 'skipped: somebody asked to change the plan']);
+    assert.deepEqual(await queued(), [{ priority: 0, reason: 'plan_change' }], 'read again next');
+    assert.equal((await planMessage(run)).meta.actions?.length || 0, 0, 'its card\'s buttons went');
+    assert.deepEqual(await rowOf(row), { content: '📋 Plan v1: Leaderboard. A newer plan replaced it.', note: 'replaced' });
+    const none = await mayor.replanRequest(pool, ctx(maya), { project: 'chores', number: 12 });
+    assert.match(none.error, /^No plan of yours waits for Build it on it/);
+  });
+
+  await t.test('papote #3: a plan that stopped waiting says so on the request, and only a waiting row changes', async () => {
+    await fresh();
+    const frames = [];
+    const ws = { broadcast: (appId, frame) => frames.push([appId, frame]) };
+    const read = await waitingRun();
+    const readRow = await planRow(read);
+    await bot.retireWaitingPlans(pool, { appId: app.id, issueNumber: 12, why: 'the request was read again', note: 'replaced', deps: { ws } });
+    assert.equal((await rowOf(readRow)).note, 'replaced');
+    assert.equal(frames.length, 1);
+    assert.equal(frames[0][0], app.id);
+    assert.equal(frames[0][1].type, 'chat_message_updated');
+    assert.equal(frames[0][1].id, readRow);
+    assert.equal(frames[0][1].metadata.specShare.botNote, 'replaced');
+    assert.deepEqual(frames[0][1].thread, { type: 'issue', ref: 12 });
+    const merged = await waitingRun();
+    const mergedRow = await planRow(merged);
+    await bot.retireWaitingPlans(pool, { appId: app.id, issueNumber: 12, why: 'merged', deps: { ws } });
+    assert.deepEqual(await rowOf(mergedRow), { content: '📋 Plan v1: Leaderboard. It stopped waiting for Build it.', note: 'stopped' });
+    assert.equal(await live.notePlanRows(pool, [read, merged], 'building', { ws }), 0, 'a row no longer waiting stays as it is');
+    assert.equal(await live.notePlanRows(pool, [read], 'nonsense', { ws }), 0);
+  });
+
+  await t.test('papote #3: the rows of plans that stopped waiting before this say so once, on the next boot', async () => {
+    await fresh();
+    const { backfillPlanRows } = require('../src/db/migrate');
+    const runWith = async (fields) => {
+      const id = await waitingRun();
+      await pool.query(`UPDATE homeroom_bot_runs SET awaiting_go_at = NULL, ${fields} WHERE id = $1`, [id]);
+      return planRow(id);
+    };
+    const readAgain = await runWith("build_ok = FALSE, build_error = 'skipped: the request was read again'");
+    const changed = await runWith("build_ok = FALSE, build_error = 'skipped: its requester asked to change the plan'");
+    const wentAhead = await runWith(`live_build_waiting_at = NOW(), plan = plan || '{"chosen": []}'::jsonb`);
+    const aWeek = await runWith("build_ok = FALSE, build_error = 'skipped: nobody tapped Build it within a week'");
+    const stillWaiting = await planRow(await waitingRun());
+    assert.equal(await backfillPlanRows(pool), 4);
+    assert.deepEqual(await rowOf(readAgain), { content: '📋 Plan v1: Leaderboard. A newer plan replaced it.', note: 'replaced' });
+    assert.equal((await rowOf(changed)).note, 'replaced');
+    assert.deepEqual(await rowOf(wentAhead), { content: "📋 Plan v1: Leaderboard. I'm building it now.", note: 'building' });
+    assert.equal((await rowOf(aWeek)).note, 'stopped');
+    assert.deepEqual(await rowOf(stillWaiting), { content: '📋 Plan v1: Leaderboard. Waiting for @maya to say Build it.', note: 'waiting' });
+    assert.equal(await backfillPlanRows(pool), 0, 'once');
   });
 });

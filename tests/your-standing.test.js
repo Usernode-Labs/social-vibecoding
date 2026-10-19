@@ -1,7 +1,9 @@
 // The Challenges tab's "your standing" card: "#22 of 161 people". It is where
 // the Me screen's rank and token allocation went when Me became the
 // prototype's compact page. The Semi design (2026-10-16) took the season off
-// it: no season name, no update note and no points by event.
+// it: no season name, no update note and no points by event. #5473 brought
+// the update note back, shorter and with the right timing: a rank moves when
+// others earn points, and the card now says so.
 //
 // Run with: node --test tests/your-standing.test.js
 'use strict';
@@ -71,6 +73,13 @@ test('the card reads "#3 of 12 people", inside the grid', () => {
   assert.equal(pointsNote, 'Your place comes from the points you earn in challenges.');
   assert.ok(html.indexOf(pointsNote) > html.indexOf('of 12 people'), 'after the rank');
   assert.ok(html.indexOf(pointsNote) < html.indexOf('Token allocation'), 'before the token block');
+  // #5473: under the points note, why the place can move with no activity,
+  // and how soon the standings catch up.
+  const updateNote = message('leaderboard:standing.updateNote');
+  assert.equal(updateNote,
+    'Your place updates within about 10 minutes whenever anyone earns points, so it can move even when you did nothing.');
+  assert.ok(html.indexOf(updateNote) > html.indexOf(pointsNote), 'after the points note');
+  assert.ok(html.indexOf(updateNote) < html.indexOf('Token allocation'), 'before the token block');
   assert.doesNotMatch(html, /Season 3|taking part|pts · you|Standings update|Points by event|<details/,
     'no season, no update note, no points by event');
   assert.match(html, /Token allocation/);
@@ -97,7 +106,9 @@ test('challenge points the standings have not caught up with keep the card (#318
   assert.match(html, /1,500 pts earned, not in the standings yet/);
   assert.match(html, /Your place comes from the points you earn in challenges\./,
     'the points note is there in the pending state too');
-  assert.doesNotMatch(html, /Standings update every few hours/, 'the update note is gone');
+  assert.ok(html.indexOf(message('leaderboard:standing.updateNote')) > -1,
+    'the update note (#5473) is there in the pending state too, under the points note');
+  assert.doesNotMatch(html, /Standings update/, 'the old "every few hours" wording stays gone');
 });
 
 test('the ledger is read only when the standings have nothing for the viewer', async () => {

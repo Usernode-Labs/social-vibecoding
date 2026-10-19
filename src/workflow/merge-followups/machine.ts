@@ -883,14 +883,14 @@ async function writeMergedNotification(tx: Tx, w: any, ctx: WriteContext) {
     const c = await mergeCredits(tx, { id: w.sessionId, app_id: w.appId, user_id: w.userId }, { before: w.mergedAt });
     credits = creditsSentence(c, { withAuthor: false }) || null;
   }
-  const created = await createPrMergedNotification(tx, {
+  await createPrMergedNotification(tx, {
     userId: w.userId ?? null, appId: w.appId, sessionId: w.sessionId, forced: !!w.force, credits,
     alsoVoters: true,
   });
-  // Named, not carried: the relaying web process reads the row for the
-  // author's tabs (ws.js relayNotification), so the bell's query never runs
-  // in, or holds up, the transition that makes the change live.
-  for (const row of created || []) {
-    ctx.push(toUser(Number(row.user_id), { type: 'notification_new', notificationId: Number(row.id) }));
-  }
+  // The write triggers the phone push from the database. Nothing is pushed
+  // to open tabs (#5487): a row about a change that has just merged is
+  // hidden from the bell's list the moment its next fetch runs, so
+  // prepending it live would flash a row that never lists and bump the
+  // badge for it. The settle step sends `notifications_changed` to those
+  // whose bell changed, which re-badges their phone.
 }
