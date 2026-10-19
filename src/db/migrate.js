@@ -6756,6 +6756,33 @@ async function seedStagingQuietDiscussion(pool) {
           NOW() - INTERVAL '30 minutes')
        ON CONFLICT DO NOTHING`
     );
+    // #5458: the builder's "built this" line in the #general channel (a NULL
+    // thread_type row), the shape a chat transcript hangs the card with
+    // Yes/No buttons under: an ordinary message whose metadata names the
+    // proposal (features/group-chat/transcript.tsx #3288). The product
+    // posts promote lines to the proposal's own thread now, so a fresh
+    // copy has no channel card anywhere; this obviously fake one gives the
+    // chat card a state to be shown in.
+    await pool.query(
+      `INSERT INTO chat_messages (id, app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, created_at)
+       VALUES
+         (900119, 900110, 900110,
+          'I built this. It''s up for a vote: Staging demo: a proposal that is still up for a vote',
+          'message', '{"vote": {"sessionId": 900110, "prNumber": 900110}}', NULL, NULL,
+          NOW() - INTERVAL '29 minutes')
+       ON CONFLICT DO NOTHING`
+    );
+    // The vote card is tapped by the capture member (services/visuals.js
+    // signs shots as usernode-capture), and voting is members-only — so
+    // the fixture account holds a membership on this app, the way a
+    // real invite would have landed it there.
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, invited_by, accepted_at)
+       SELECT 900110, viewer.id, 'member', 900110, NOW()
+         FROM users viewer
+        WHERE viewer.username = 'usernode-capture'
+       ON CONFLICT (app_id, user_id) DO NOTHING`
+    );
     log.info('db', 'Staging quiet-discussion fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging quiet-discussion seeding failed', { message: err.message });
