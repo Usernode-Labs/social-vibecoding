@@ -20,6 +20,8 @@ import { type ReactNode } from 'react';
 import { ArrowPathIcon, SpinnerArcIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
+import { owedHomeWalk } from '../app-context/about-data';
+import { useFirstSessionVisit } from '../first-session/tour-running';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
 
@@ -123,13 +125,28 @@ export function ImproveQuickActions(): ReactNode {
  * App.renderPlatformVersionPill; `deploying` is this app's own. They are
  * separate facts with one presentation here, because "something is being
  * built" is what the viewer is asking, and which of the two it is shows in
- * the wording.
+ * the wording. Each line names what it is about, Homeroom or the app by its
+ * name: right under the app's name at the top of this menu, "There is a new
+ * version available" read as the app having changed, a minute after
+ * somebody signed up (Evan, sign-up test, 19 Oct 2026). The row is a button
+ * on a phone and with a mouse, so the words say what it does, not "Click".
+ *
+ * NOT FOR A NEWCOMER. Somebody who has not reached Homeroom yet (the first
+ * session's walk on Home still owed on this device, or a first-session visit
+ * under way: ../first-session/) is told nothing about Homeroom's own
+ * updates. The new build is still fetched, so their next launch lands on it;
+ * the reload on the next launch, not mid-use, is unchanged
+ * (public/js/app.js's fresh-shell rules). Their app's own lines stay.
  */
 function UpdateStatus(): ReactNode {
   const t = useMessages('agent');
   const { versionState, deploying, appUpdateReady } = useStoreState(improveStore);
-  const platformBusy = versionState === 'deploying' || versionState === 'downloading';
-  const ready = versionState === 'ready' || versionState === 'failed';
+  const { name } = useStoreState(improveStore);
+  const firstVisit = useFirstSessionVisit();
+  const newcomer = firstVisit || owedHomeWalk();
+  const platformBusy = !newcomer && (versionState === 'deploying' || versionState === 'downloading');
+  const ready = !newcomer && (versionState === 'ready' || versionState === 'failed');
+  const app = (name || '').trim();
 
   if (ready) {
     return (
@@ -161,7 +178,7 @@ function UpdateStatus(): ReactNode {
       >
         <ArrowPathIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1">
-          {t('agent:menu.update.appReady')}
+          {app ? t('agent:menu.update.appReady', { app }) : t('agent:menu.update.appReadyUnnamed')}
         </span>
       </button>
     );
@@ -174,7 +191,7 @@ function UpdateStatus(): ReactNode {
       ? (versionState === 'downloading'
         ? t('agent:menu.update.platformDownloading')
         : t('agent:menu.update.platformBuilding'))
-      : t('agent:menu.update.appBuilding');
+      : (app ? t('agent:menu.update.appBuilding', { app }) : t('agent:menu.update.appBuildingUnnamed'));
     return (
       <div
         id="improve-update-note"

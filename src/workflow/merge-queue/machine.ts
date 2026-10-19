@@ -113,7 +113,11 @@ export function admission(c: Candidate, now: number): { admit: boolean; reason: 
   return { admit: false, reason: c.approved ? (c.unmergeable || 'lock') : 'awaiting_approval' };
 }
 // The block reasons the conflict lane owns on a row (the card's "who acts").
-const LANE_REASONS: ReadonlySet<string> = new Set(['awaiting_approval', 'unresolvable', 'fork_head']);
+// 'checks_failing' and 'checks_error': it spends no resolution on a head
+// whose checks fail, and the card said "the platform will resolve it"
+// regardless: on 19 Oct 2026, 33 of the 35 conflicting proposals in review
+// were such heads, some there since September, never asked to resolve.
+const LANE_REASONS: ReadonlySet<string> = new Set(['awaiting_approval', 'unresolvable', 'fork_head', 'checks_failing', 'checks_error']);
 
 const free = (c: Candidate) => c.state === 'in_review' && !c.busy;
 // The proposal states that can hold a slot of the queue's.

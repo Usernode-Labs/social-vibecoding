@@ -357,18 +357,30 @@ const Profile = {
       // Your requests and Your votes (UI overhaul) are two of "Your work"'s
       // lines: how many requests are open and done, and the latest vote.
       // Non-fatal too: a row whose read failed says what is behind it.
+      //
+      // The requests' counts are NOT waited for. They can take seconds for
+      // someone who has asked for hundreds (3.7 s for about 800, 19 Oct
+      // 2026), and the whole screen held its skeleton for them. The page
+      // draws without them, the row keeps its line's place, and
+      // _fillRequests puts them in when they land.
       const demo = Profile._demoQuery();
-      const [ranking, summary, ownerPublicProfile, friends, feedback, requests, votes] = await Promise.all([
+      const requestsRead = Profile._fetchJson(`/api/me/requests?counts=1${demo ? '&demo=1' : ''}`)
+        .catch(() => null);
+      const [ranking, summary, ownerPublicProfile, friends, feedback, votes] = await Promise.all([
         Profile._fetchJson('/challenges-api/me/ranking?season_id=active'),
         Profile._fetchJson(`/api/me/summary${demo}`).catch(() => null),
         Profile._fetchJson('/api/me/public-profile').catch(() => null),
         // The friends client carries `?demo=1` itself.
         listFriends().catch(() => null),
         Profile._fetchJson(`/api/feedback/mine${demo}`).then(feedback => ({ ...feedback, receivedAt: Date.now() })).catch(() => null),
-        Profile._fetchJson(`/api/me/requests${demo}`).catch(() => null),
         Profile._fetchJson('/api/me/history?type=votes&limit=1').catch(() => null),
       ]);
 
+      // Last visit's request counts stay up until this visit's land; with
+      // none, the row holds its line's place while `requestsPending` names
+      // the load whose read will fill it.
+      const cached = username && Profile._ownCache && Profile._ownCache.username === username
+        ? Profile._ownCache.data : null;
       // Written before the staleness check: a load that finished after the
       // screen was left, or overtaken by a public profile, is still the
       // freshest copy of this user's own profile for the next visit.
@@ -381,10 +393,12 @@ const Profile = {
         ownerPublicProfile,
         friends,
         feedback,
-        requests,
+        requests: (cached && cached.requests) || null,
+        requestsPending: token,
         votes,
       };
       if (username) Profile._ownCache = { username, data };
+      Profile._fillRequests(requestsRead, username, token);
       if (token !== Profile._loadToken || Profile._targetUsername) return;
       Profile._data = data;
     } catch (err) {
@@ -428,6 +442,28 @@ const Profile = {
       if (token === Profile._loadToken) Profile._loading = false;
     }
     if (Profile._open && token === Profile._loadToken) Profile._render();
+  },
+
+  // Your requests' counts, landing after the rest of the page (see _load).
+  // They fill only the data that load wrote (`requestsPending` is its
+  // token, and the spreads the friends and feedback actions make keep it):
+  // the cached copy whatever the screen is doing now, and the screen while
+  // that data is still on it. A read that failed keeps last visit's counts
+  // when there were any; with none, the row says what is behind it.
+  async _fillRequests(read, username, token) {
+    const requests = await read;
+    const fill = (data) => (data && data.requestsPending === token
+      ? { ...data, requests: requests || data.requests || null, requestsPending: null }
+      : data);
+    const cache = Profile._ownCache;
+    const cached = cache && cache.username === username ? cache.data : null;
+    const filled = fill(cached);
+    if (filled !== cached) Profile._ownCache = { username, data: filled };
+    // The screen and the cache stay one object when they were one.
+    const next = Profile._data === cached ? filled : fill(Profile._data);
+    if (next === Profile._data) return;
+    Profile._data = next;
+    if (Profile._open) Profile._render();
   },
 
   // ── rendering ─────────────────────────────────────────────────────────

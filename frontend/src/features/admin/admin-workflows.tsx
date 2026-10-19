@@ -6,9 +6,10 @@ import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
 // Workflows: what the workflow machines (src/workflow/) are doing and what
-// needs a person. Problems come first: a faulted or stalled instance, held
-// events, a deadline that did not fire, work that ran out of retries or is
-// running long. Below
+// needs a person. Problems come first: which processes run the workflow,
+// an event nobody decides, work nobody takes, a faulted or stalled instance,
+// held events, a deadline that did not fire, work that ran out of retries or
+// is running long. Below
 // them, the instances by state, and one instance's timeline: every event
 // with its source, result, reason and what it emitted, linked to its cause.
 // Actions are events on that timeline (routes/admin-workflow.js), never row
@@ -30,8 +31,10 @@ type Work = {
   id: string; kind: string; workKey: string; status: string; attemptCount: number; lastError: any;
   result: any; dueAt: string; attempts: { number: number; outcome: string; service_id: string }[];
 };
+type Runner = { id: string; role: string; release: string | null; host: string | null; state: string; startedAt: string };
 type Overview = {
   running: boolean;
+  runners?: Runner[];
   actions: Record<string, string[]>;
   counts: { machine: string; state: string; count: number }[];
   problems: {
@@ -39,6 +42,8 @@ type Overview = {
     overdueDeadlines: Instance[];
     work: (Work & { machine: string; key: string })[];
     waiting?: (Instance & { says: string | null })[];
+    unclaimed?: { id: string; machine: string; key: string; kind: string; workKey: string; waitedSeconds: number }[];
+    pendingOldestSeconds?: number;
   };
 };
 type Ref = { machine: string; key: string };
@@ -71,14 +76,37 @@ function InstanceLink({ r, onOpen }: { r: Ref; onOpen: (r: Ref) => void }) {
 function Problems({ overview, onOpen }: { overview: Overview; onOpen: (r: Ref) => void }) {
   const p = overview.problems;
   const waiting = p.waiting || [];
-  const none = !p.flagged.length && !p.overdueDeadlines.length && !p.work.length && !waiting.length;
+  const unclaimed = p.unclaimed || [];
+  // An event waiting over two minutes to be decided: no process decides.
+  const slow = (p.pendingOldestSeconds || 0) > 120;
+  const none = !p.flagged.length && !p.overdueDeadlines.length && !p.work.length && !waiting.length && !unclaimed.length && !slow;
+  const runners = overview.runners || [];
   return (
     <div id="admin-wf-problems" className={`${AdminUI.card} p-4 mb-4`}>
       <div className={AdminUI.cardHeader}>
         <h2 className={AdminUI.cardTitle}>Needs a person</h2>
       </div>
+      <p id="admin-wf-runners" className={`${AdminUI.muted} mb-2`}>
+        {runners.length
+          ? `Run by ${runners.map((r) => `${r.host || r.id}${r.state === 'draining' ? ' (draining)' : ''}`).join(', ')}`
+          : 'No process runs the workflow.'}
+      </p>
       {none ? <p className={AdminUI.muted}>Nothing is stuck.</p> : null}
       <ul className="space-y-2">
+        {slow ? (
+          <li data-wf-problem="pending" className="flex flex-wrap items-center gap-2">
+            <span className={AdminUI.badge.destructive}>not decided</span>
+            <span className={AdminUI.muted}>{`An event has waited ${Math.round(p.pendingOldestSeconds || 0)} s to be decided`}</span>
+          </li>
+        ) : null}
+        {unclaimed.map((w) => (
+          <li key={`u:${w.id}`} data-wf-problem="unclaimed" className="flex flex-wrap items-center gap-2">
+            <span className={AdminUI.badge.destructive}>nobody takes it</span>
+            <code className="text-xs">{`${w.kind} ${w.workKey}`}</code>
+            <InstanceLink r={w} onOpen={onOpen} />
+            <span className={AdminUI.muted}>{`waited ${Math.round(w.waitedSeconds / 60)} min`}</span>
+          </li>
+        ))}
         {p.flagged.map((i) => (
           <li key={`f:${i.machine}:${i.key}`} data-wf-problem="flagged" className="flex flex-wrap items-center gap-2">
             <span className={FLAG_BADGE.get(i.flag || '') || AdminUI.badge.default}>{i.flag}</span>

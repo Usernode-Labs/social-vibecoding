@@ -672,3 +672,12 @@ test('bug h: the discussion context carries the app artwork, for a header with n
     globalThis.fetch = saved.fetch;
   }
 });
+
+test('a new account\'s Messages says it is empty: #general is read but never listed here (sign-up test, 19 Oct 2026)', () => {
+  // Every account is in #general, so the read always has it, and the list
+  // leaves it out: the empty state has to ask the list, or it never shows.
+  assert.deepEqual(inbox.buildInbox({ conversations: [{ id: 3, kind: 'channel', lastActivityAt: at('2026-10-19T00:00:00Z') }], agents: [] }), []);
+  assert.match(SCREEN, /\{!snap\.loadingList && !snap\.error && snap\.listLoaded && !inbox\.length\n\s+\? <div className="messages-empty"><h3>\{t\('messages:inbox\.empty\.title'\)\}<\/h3>/);
+  assert.doesNotMatch(SCREEN, /!snap\.conversations\.length && !inbox\.length/);
+  assert.equal(message('messages:inbox.empty.title'), 'No messages yet');
+});

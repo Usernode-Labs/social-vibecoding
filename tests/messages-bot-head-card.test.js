@@ -108,6 +108,15 @@ test('a first version’s line is its project, and the maker’s hello stays bef
   assert.equal(botHead('**Todo List**\n\nx', { ...started, appName: 'Herbs' }), null, 'only the project its metadata names');
 });
 
+test('sign-up test, 19 Oct 2026: a ready-made app\'s maker hears hello over the project\'s card', () => {
+  const meta = { kind: 'hello_maker', appSlug: 'city-tier-list', appName: 'City Tier List', hello: dm.MAKER_HELLO, actions: dm.promptActions(dm.READY_MADE_PROMPTS), status: 'open' };
+  const head = botHead(dm.readyMadeHello('City Tier List', 'add a photo of each city'), meta);
+  assert.equal(head.kind, 'project');
+  assert.equal(head.before, dm.MAKER_HELLO);
+  assert.equal(head.rest, 'It works as it is. Ask me here for changes, like “add a photo of each city”.');
+  assert.deepEqual(shape(head).link, { key: 'app:city-tier-list:', href: '#app/city-tier-list/app' }, 'its card opens the app');
+});
+
 test('#4604: the hello after the tour names no project, so it draws no card', () => {
   const meta = { kind: 'hello_tour', hello: dm.TOUR_HELLO, actions: dm.promptActions(dm.TOUR_PROMPTS), status: 'open' };
   assert.equal(botHead(dm.TOUR_HELLO, meta), null, 'plain words, no head line');

@@ -1300,6 +1300,13 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
+      "fingerprint": "bbb2de2fcd61f3c35304",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
       "fingerprint": "cf837b937e37a4415dce",
       "count": 1,
       "preview": "`INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind) SELECT v.user_id, v.app_id, v.chat_message_id, v.source_user_id, v.kind FROM"
@@ -1310,13 +1317,6 @@
       "fingerprint": "d3e346e15c3848d401ba",
       "count": 1,
       "preview": "`INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail) SELECT v.user_id, v.app_id, v.session_id, v.source_user_id, v.kind, v.det"
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
-      "fingerprint": "dce1cbc23acf18fab531",
-      "count": 1,
-      "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
     },
     {
       "source": "src/services/notifications.js",
@@ -1758,6 +1758,20 @@
       "fingerprint": "4ec7c53222c8a758c722",
       "count": 1,
       "preview": "sql"
+    },
+    {
+      "source": "src/workflow/kernel/services.ts",
+      "kind": "runtime-expression",
+      "fingerprint": "d04ac57110303ae1edf6",
+      "count": 1,
+      "preview": "`BEGIN; SET LOCAL lock_timeout = ${millis(opts.lockTimeoutMs)};` + ` SET LOCAL statement_timeout = ${millis(opts.statementTimeoutMs)}`"
+    },
+    {
+      "source": "src/workflow/kernel/stream.ts",
+      "kind": "structural-template",
+      "fingerprint": "c744c2462ef8bfb640f5",
+      "count": 1,
+      "preview": "`BEGIN; SET LOCAL app.wf_writer = 'transition'; SET LOCAL lock_timeout = '${Math.max(0, Math.floor(lockTimeoutMs))}ms'`"
     },
     {
       "source": "src/workflow/merge-followups/facts.ts",

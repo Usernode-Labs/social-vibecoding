@@ -118,6 +118,43 @@ function isFresh(session, ttlMs = FRESHNESS_TTL_MS) {
 
 // ── The refresh ────────────────────────────────────────────────────────
 
+// How young the leader's measurement must be to answer a refresh.
+const MEASURE_ANSWERS_MS = 3 * 60 * 1000;
+
+// The freshness block, from the leader's measurement of this proposal
+// (chat_sessions.integration_*), or null when that cannot answer: older than
+// `ttlMs`, failed, of another head, or with no main. Its merge is a real one,
+// so its files are exact where GitHub's were an upper bound. What it does
+// not measure is how far main has moved past the checks' base, so a
+// superseded base has no count (the note words that case without one).
+function measurementAnswer(s, headSha, ttlMs = MEASURE_ANSWERS_MS) {
+  const at = s.integration_measured_at ? new Date(s.integration_measured_at).getTime() : NaN;
+  if (!Number.isFinite(at) || Date.now() - at >= Math.max(0, ttlMs)) return null;
+  if (s.integration_error) return null;
+  if (normalizeSha(s.integration_head_sha) !== headSha) return null;
+  const mainSha = normalizeSha(s.integration_main_sha);
+  if (!mainSha) return null;
+  const mergeBaseSha = normalizeSha(s.integration_base_sha);
+  const conflict = s.integration_merges_clean === false;
+  const mergeability = s.integration_merges_clean === true ? 'clean'
+    : conflict ? 'conflict' : (s.mergeability === 'conflict' ? 'conflict' : 'unknown');
+  const base = normalizeSha(s.checks_base_sha);
+  const current = s.integration_checks_base_current;
+  return {
+    mainSha,
+    mergeBaseSha,
+    behindBy: intOrNull(s.integration_behind_by),
+    aheadBy: intOrNull(s.integration_ahead_by),
+    mergeability,
+    files: conflict && Array.isArray(s.integration_conflict_paths)
+      ? s.integration_conflict_paths.filter((x) => typeof x === 'string') : [],
+    filesComplete: conflict ? true : null,
+    baseVerdict: !base || current == null ? 'unknown' : (current ? 'current' : 'superseded'),
+    baseBehindBy: base && (base === mainSha || base === mergeBaseSha) ? 0 : null,
+    error: null,
+  };
+}
+
 // Answers "is the base those checks ran on still on main's first-parent
 // line?" with ONE compare call, and skips it entirely in the two cases where
 // the answer is already known for free.
@@ -181,7 +218,8 @@ async function refreshFreshness(deps, session, options = {}) {
   }
 
   const { owner, repo } = parsed;
-  const next = {
+  const measured = measurementAnswer(s, headSha, options.measureTtlMs);
+  const next = measured || {
     mainSha: null,
     mergeBaseSha: null,
     behindBy: null,
@@ -194,80 +232,87 @@ async function refreshFreshness(deps, session, options = {}) {
     error: null,
   };
 
-  try {
-    // Never a hardcoded 'main': getRepoHead reads the repository's own
-    // default branch, which is the branch a merge would actually target.
-    const head = await gh.getRepoHead(owner, repo);
-    const mainSha = normalizeSha(head && head.headSha);
-    if (!mainSha) throw new Error(`${owner}/${repo} has no commits on its default branch`);
-    next.mainSha = mainSha;
+  // GitHub only when the leader's own measurement cannot answer: it measures
+  // every promoted proposal from its mirror of the repository every minute
+  // (services/integration.js, server.js measurePromotedProposals), for no
+  // GitHub request at all. Each refresh here cost four to seven, every
+  // minute a proposal was open.
+  if (!measured) {
+    try {
+      // Never a hardcoded 'main': getRepoHead reads the repository's own
+      // default branch, which is the branch a merge would actually target.
+      const head = await gh.getRepoHead(owner, repo);
+      const mainSha = normalizeSha(head && head.headSha);
+      if (!mainSha) throw new Error(`${owner}/${repo} has no commits on its default branch`);
+      next.mainSha = mainSha;
 
-    const cmp = await gh.compareCommitAncestry(owner, repo, mainSha, headSha);
-    next.behindBy = Number.isFinite(cmp.behindBy) ? cmp.behindBy : null;
-    next.aheadBy = Number.isFinite(cmp.aheadBy) ? cmp.aheadBy : null;
-    next.mergeBaseSha = normalizeSha(cmp.mergeBaseSha);
+      const cmp = await gh.compareCommitAncestry(owner, repo, mainSha, headSha);
+      next.behindBy = Number.isFinite(cmp.behindBy) ? cmp.behindBy : null;
+      next.aheadBy = Number.isFinite(cmp.aheadBy) ? cmp.aheadBy : null;
+      next.mergeBaseSha = normalizeSha(cmp.mergeBaseSha);
 
-    // GitHub computes mergeability lazily and answers `null` until it has.
-    // A null must NEVER overwrite a known 'conflict' — the whole point of
-    // this pass is to stop a proposal reverting to looking clean.
-    if (Number.isFinite(prNumber) && prNumber > 0) {
-      try {
-        const pr = await gh.getPR(owner, repo, prNumber);
-        const m = pr ? pr.mergeable : undefined;
-        if (m === true) next.mergeability = 'clean';
-        else if (m === false) next.mergeability = 'conflict';
-        else next.mergeability = s.mergeability === 'conflict' ? 'conflict' : 'unknown';
-      } catch (err) {
-        next.mergeability = s.mergeability === 'conflict' ? 'conflict' : 'unknown';
-        log.debug('freshness', 'getPR failed', { sessionId: s.id, err: err.message });
+      // GitHub computes mergeability lazily and answers `null` until it has.
+      // A null must NEVER overwrite a known 'conflict' — the whole point of
+      // this pass is to stop a proposal reverting to looking clean.
+      if (Number.isFinite(prNumber) && prNumber > 0) {
+        try {
+          const pr = await gh.getPR(owner, repo, prNumber);
+          const m = pr ? pr.mergeable : undefined;
+          if (m === true) next.mergeability = 'clean';
+          else if (m === false) next.mergeability = 'conflict';
+          else next.mergeability = s.mergeability === 'conflict' ? 'conflict' : 'unknown';
+        } catch (err) {
+          next.mergeability = s.mergeability === 'conflict' ? 'conflict' : 'unknown';
+          log.debug('freshness', 'getPR failed', { sessionId: s.id, err: err.message });
+        }
+      } else {
+        next.mergeability = 'unknown';
       }
-    } else {
-      next.mergeability = 'unknown';
-    }
 
-    // Only spend the two file compares when there is a conflict to locate.
-    if (next.mergeability === 'conflict') {
-      try {
-        const pred = await predictConflictFiles(gh, owner, repo, next.mergeBaseSha, headSha, mainSha);
-        next.files = pred.files;
-        next.filesComplete = pred.complete;
-      } catch (err) {
+      // Only spend the two file compares when there is a conflict to locate.
+      if (next.mergeability === 'conflict') {
+        try {
+          const pred = await predictConflictFiles(gh, owner, repo, next.mergeBaseSha, headSha, mainSha);
+          next.files = pred.files;
+          next.filesComplete = pred.complete;
+        } catch (err) {
+          next.files = [];
+          next.filesComplete = null;
+          log.debug('freshness', 'conflict-file prediction failed', { sessionId: s.id, err: err.message });
+        }
+      } else {
         next.files = [];
         next.filesComplete = null;
-        log.debug('freshness', 'conflict-file prediction failed', { sessionId: s.id, err: err.message });
       }
-    } else {
-      next.files = [];
-      next.filesComplete = null;
-    }
 
-    try {
-      const verdict = await checksBaseVerdict(
-        gh, owner, repo, normalizeSha(s.checks_base_sha), mainSha, next.mergeBaseSha
-      );
-      next.baseVerdict = verdict.verdict;
-      next.baseBehindBy = verdict.behindBy;
+      try {
+        const verdict = await checksBaseVerdict(
+          gh, owner, repo, normalizeSha(s.checks_base_sha), mainSha, next.mergeBaseSha
+        );
+        next.baseVerdict = verdict.verdict;
+        next.baseBehindBy = verdict.behindBy;
+      } catch (err) {
+        next.baseVerdict = 'unknown';
+        next.baseBehindBy = null;
+        log.debug('freshness', 'checks-base compare failed', { sessionId: s.id, err: err.message });
+      }
     } catch (err) {
-      next.baseVerdict = 'unknown';
-      next.baseBehindBy = null;
-      log.debug('freshness', 'checks-base compare failed', { sessionId: s.id, err: err.message });
+      // The outer failure: GitHub is unreachable, or the head is not a commit
+      // this repository has ever seen. Record why, keep the previous numbers,
+      // and stamp checked_at so the sweeper does not spin on this row.
+      next.error = err && err.message ? String(err.message).slice(0, 300) : 'unknown error';
+      try {
+        await pool.query(
+          `UPDATE chat_sessions
+              SET freshness_checked_at = NOW(), freshness_error = $2
+            WHERE id = $1`,
+          [s.id, next.error]
+        );
+      } catch (e) {
+        log.warn('freshness', 'error stamp failed', { sessionId: s.id, err: e.message });
+      }
+      return { ...answer, checkedAt: new Date().toISOString(), error: next.error };
     }
-  } catch (err) {
-    // The outer failure: GitHub is unreachable, or the head is not a commit
-    // this repository has ever seen. Record why, keep the previous numbers,
-    // and stamp checked_at so the sweeper does not spin on this row.
-    next.error = err && err.message ? String(err.message).slice(0, 300) : 'unknown error';
-    try {
-      await pool.query(
-        `UPDATE chat_sessions
-            SET freshness_checked_at = NOW(), freshness_error = $2
-          WHERE id = $1`,
-        [s.id, next.error]
-      );
-    } catch (e) {
-      log.warn('freshness', 'error stamp failed', { sessionId: s.id, err: e.message });
-    }
-    return { ...answer, checkedAt: new Date().toISOString(), error: next.error };
   }
 
   // One write. behind_main is written THROUGH so the merge gate — which
@@ -355,6 +400,8 @@ function refreshFreshnessDeduped(deps, session, options = {}) {
 }
 
 module.exports = {
+  measurementAnswer,
+  MEASURE_ANSWERS_MS,
   refreshFreshness,
   refreshFreshnessDeduped,
   readFreshness,

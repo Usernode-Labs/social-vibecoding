@@ -163,6 +163,14 @@
     "text": "Main has moved on and this proposal no longer merges on its own. The platform resolves it once the vote passes. The creator can bring it up to date sooner from their agent session (\"Sync with main\").",
     "description": "Tooltip on the \"Conflicts with main\" status badge of a proposal that is still being voted on. \"Main\"/\"main\" is the app's main code branch; \"Sync with main\" is the name of a button in the agent session."
   },
+  "merge.title.conflictChecksFailing": {
+    "text": "Main has moved on and this proposal no longer merges on its own. Its checks are failing too, so the platform does not resolve the conflict yet: the change’s creator fixes the checks first (from their agent session), and then the platform resolves the conflict.",
+    "description": "Tooltip on the \"Conflicts with main\" status badge of a proposal whose automated checks are failing as well. \"Main\" is the app's main code branch."
+  },
+  "merge.title.conflictChecksError": {
+    "text": "Main has moved on and this proposal no longer merges on its own. Its checks could not run, so the platform does not resolve the conflict yet: once they are re-run and pass, the platform resolves the conflict.",
+    "description": "Tooltip on the \"Conflicts with main\" status badge of a proposal whose automated checks could not run (the test run itself failed). \"Main\" is the app's main code branch."
+  },
   "merge.title.conflictAutomatic": {
     "text": "Main has moved on and this proposal no longer merges on its own. The platform resolves it automatically. The creator can also bring it up to date from their agent session (\"Sync with main\").",
     "description": "Tooltip on the \"Conflicts with main\" status badge of a proposal, in the ordinary case where the platform will fix the conflict itself. \"Main\"/\"main\" is the app's main code branch; \"Sync with main\" is the name of a button in the agent session."

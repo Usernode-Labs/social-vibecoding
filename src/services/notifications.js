@@ -1526,7 +1526,17 @@ async function markApproverInviteNotificationsRead(pool, userId, appId) {
 // instruction to keep showing it. Riding the one query keeps the saved rows
 // on the same column list, ownership and hydration boundary as the feed, so
 // a saved row serializes to exactly the shape the click branches route on.
-async function listForUser(pool, userId, { limit = 100, before = null, kinds = null, savedOnly = false } = {}) {
+//
+// #5527: `unreadOnly` pages UNREAD rows only (routes/notifications.js
+// `?unread=1`, the bell's Unread tab filling itself up to the badge). Its
+// clause and countUnread's WHERE must stay the same set of filters — the
+// two queries answer one question, "what is the bell counting", from two
+// directions — so when either changes, the two MUST move together. The
+// feed's own WHERE already carries everything else countUnread applies
+// (CONVERSATION_ACCESS_SQL, CHAT_SENDER_ACCESS_SQL, PARKED_KINDS_SQL and
+// the merged-hidden rule), which is why the clause here is only the read
+// state and the settled decided-ask read.
+async function listForUser(pool, userId, { limit = 100, before = null, kinds = null, savedOnly = false, unreadOnly = false } = {}) {
   const params = [userId];
   let cursorClause = '';
   if (before && before.createdAt && before.id != null) {
@@ -1538,6 +1548,15 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
   if (Array.isArray(kinds) && kinds.length) {
     params.push(kinds);
     kindClause = `AND n.kind = ANY($${params.length})`;
+  }
+  // #5527: see the note above the function. No parameters — both halves are
+  // interpolated constants, so every caller's parameter numbering is
+  // untouched. read_at IS NULL is a cheap filter on the rows
+  // idx_notifications_user_recent already produces, the same reasoning as
+  // the kind filter above.
+  let unreadClause = '';
+  if (unreadOnly) {
+    unreadClause = `AND n.read_at IS NULL AND NOT ${DECIDED_ASK_SETTLED_SQL}`;
   }
   // #4795: a merged change is decided, so the rows that asked you to vote on
   // it or try it leave the list instead of staying as read entries somebody
@@ -1618,6 +1637,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
      ${mergedHiddenClause}
      ${cursorClause}
      ${kindClause}
+     ${unreadClause}
      ${orderClause}
      LIMIT $${limitIdx}`,
     params

@@ -118,4 +118,33 @@ test('your requests against the full PostgreSQL schema', { timeout: 180000 }, as
     assert.equal(body.done, 2);
     assert.equal(body.truncated, true);
   });
+
+  const counts = async () => profile.shapeRequestCounts(
+    (await pool.query(profile.MY_REQUEST_COUNTS_SQL, [me])).rows[0]);
+
+  await t.test('the counts alone, as Profile asks for them, agree with the list', async () => {
+    assert.deepEqual(await counts(), { open: 2, done: 2 });
+  });
+
+  // Standing is joined in per app and number (MY_REQUESTS_STANDING), so a
+  // number several changes name, or two applied closes, must not multiply
+  // the request's row.
+  await t.test('a request several changes name, or closed twice, is still one row', async () => {
+    await change(run.id, 'paused', [11, 13]);
+    await change(run.id, 'active', [11]);
+    await pool.query(
+      `INSERT INTO issues (app_id, title, kind, status, payload, created_by)
+       VALUES ($1, 'Close #13 again', 'close_issue', 'closed', $2, $3)`,
+      [run.id, JSON.stringify({ issueNumber: 13, appliedAt: new Date().toISOString() }), someone]);
+    const body = await read();
+    assert.deepEqual(body.requests.map((r) => [r.number, r.state]), [
+      [11, 'underway'],
+      [12, 'waiting'],
+      [13, 'closed'],
+      [21, 'shipped'],
+    ]);
+    assert.equal(body.open, 2);
+    assert.equal(body.done, 2);
+    assert.deepEqual(await counts(), { open: 2, done: 2 });
+  });
 });

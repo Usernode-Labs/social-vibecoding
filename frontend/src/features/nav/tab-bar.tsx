@@ -249,9 +249,10 @@ function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
  * the drawer replaced on a phone. The desktop rail draws no ring (app.css):
  * the header's name is the switcher there.
  *
- * All communities is THE PRERENDER: the scope arrives from localStorage and
- * app.js after the first paint, so the shipped markup and the first client
- * render are both this branch.
+ * All communities is THE PRERENDER: the scope arrives from localStorage in
+ * an effect flushed with the hydration (before the first paint) and from
+ * app.js, so the shipped markup and the first client render are both this
+ * branch.
  */
 function CommunityTabFace({ info }: { info: CommunityInfo | null }) {
   const color = useCommunityColor(info
@@ -497,8 +498,8 @@ export function tabContentRect(tab: HTMLElement): ContentRect | null {
  * to 150ms while the new screen lays out and its data lands), so a slide
  * started two frames out still began inside one of them and showed from its
  * middle. So a press moves the pill FIRST, in the press's own task, and it is
- * the NAVIGATION that waits, until the slide is running on the compositor
- * where the swap cannot hold it (useTabMarker's `press`, schedulePress). This
+ * the NAVIGATION that waits, for the frame that lights the tab and no longer
+ * (useTabMarker's `press`, ./tab-press.ts schedulePress says why). This
  * path is still what a tab change the bar did not start takes (Back, a link,
  * a deep link).
  *
@@ -611,10 +612,8 @@ function useTabMarker(
 } {
   const [box, setBox] = useState<TabMarkerBox | null>(null);
   const markerRef = useRef<HTMLSpanElement | null>(null);
-  // The box the marker was last laid out at, which the next slide leaves,
-  // and the slide playing now, whose start a press waits for.
+  // The box the marker was last laid out at, which the next slide leaves.
   const laidOut = useRef<TabMarkerBox | null>(null);
-  const slide = useRef<Animation | null>(null);
   // THE TAB A PRESS LIT, until the router has answered it (#3259). The bar
   // answers a press at once, pill and label together, and the router's tab
   // takes over when it lands; `lit` is what the bar draws. Null at first,
@@ -701,10 +700,9 @@ function useTabMarker(
     const running = typeof el.getAnimations === 'function' ? el.getAnimations() : [];
     const from = prev && running.length ? shownBox(prev, getComputedStyle(el).transform) : prev;
     for (const animation of running) animation.cancel();
-    slide.current = null;
     if (!box || !from || !box.slide || !motionWelcome()) return;
     const [start, end] = slideKeyframes(from, box);
-    slide.current = el.animate([{ transform: start }, { transform: end }], {
+    el.animate([{ transform: start }, { transform: end }], {
       duration: MARKER_SLIDE.duration,
       easing: MARKER_SLIDE.easing,
     });
@@ -718,10 +716,10 @@ function useTabMarker(
 
   /**
    * A press on another tab (#3259): light it and slide to it NOW, and
-   * navigate once the slide is running (schedulePress). The slide is made in
-   * the press's own task, and the swap's long frames begin only after it is
-   * on the compositor, where they cannot hold it. `go` is the tab's own
-   * navigation, run a few frames late.
+   * navigate once that frame is painted (schedulePress). The slide is made in
+   * the press's own task; the swap no longer waits for it to be running
+   * (polish board #2: that wait held the old screen up for 120 to 205ms).
+   * `go` is the tab's own navigation, run a frame late.
    *
    * False when the pill cannot slide (the desktop rail, reduced motion,
    * nothing lit yet): the caller navigates as it always did, at once.
@@ -735,7 +733,7 @@ function useTabMarker(
     place(el, true);
     setPressed(key);
     // A second press before the first has navigated replaces it.
-    schedulePress(pending, key, go, () => setPressed(null), () => slide.current?.ready ?? null);
+    schedulePress(pending, key, go, () => setPressed(null));
     return true;
   };
 
@@ -769,7 +767,10 @@ export function PlatformTabs() {
   const visible = useVisibility('platform-tabs', true);
   const { tab, messages, communities, screen, peek, peekOut, railOpen, viewer } = useStoreState(navStore);
   // THE COMMUNITY THE FOURTH TAB IS ON (../workshop/community-scope.ts). Read
-  // from storage after the first paint, and every community's votes owed a
+  // from storage by this effect, which is flushed with the hydration itself
+  // (main.tsx hydrates in flushSync), so before the first paint; the viewer's
+  // list of communities follows in the same task (lib/shell-snapshot-apply.ts),
+  // and every community's votes owed a
   // moment after sign-in, so the badge can say so before anybody opens the
   // switcher.
   const scope = useStoreState(communityScopeStore);

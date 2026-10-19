@@ -71,6 +71,10 @@
     "text": "See older message notifications",
     "description": "Button at the foot of the notifications sheet's Messages filter: fetches older notifications about conversations."
   },
+  "sheet.older.unread": {
+    "text": "See more unread notifications",
+    "description": "Button at the foot of the notifications sheet's Unread filter: fetches the next batch of unread notifications the bell counts but the sheet has not loaded yet."
+  },
   "sheet.older.reveal": {
     "text": "See older notifications",
     "description": "Button at the foot of the notifications sheet's Unread filter: shows the older, mostly read notifications under the unread ones, on the same tab, and loads the next batch if the server has one."
@@ -530,6 +534,14 @@
   "row.incident.unknown.body": {
     "text": "something that should not happen did",
     "description": "Second line of the \"Unexpected events\" notification to an administrator, when its details cannot be read. Lower case, as a note under the heading."
+  },
+  "row.incident.signal.label": {
+    "text": "A platform problem needs a person",
+    "description": "First line of a notification to an administrator: Homeroom found a problem in itself that its bot cannot fix, and filed a request for a person."
+  },
+  "row.incident.signal.body": {
+    "text": "Homeroom filed request #{{number}} on its own board from its own records.",
+    "description": "Second line of the \"A platform problem needs a person\" notification to an administrator. {{number}} is the request's number on Homeroom's own board."
   },
   "row.kudos.label": {
     "text": "Kudos",

@@ -136,6 +136,22 @@ const Notifications = {
   msgNextBefore: null,  // { createdAt, id } | null
   msgHasMore: true,
   msgLoading: false,
+  // #5527: the Unread tab's own cursor, walked by loadMoreUnread() over
+  // `?unread=1` — pages of unread rows only, under the exact filters
+  // countUnread counts the badge with. Separate from nextBefore and
+  // msgNextBefore for the same reason those two are separate from each
+  // other: the unread query skips rows the other two keep, so advancing a
+  // shared cursor would strand rows the tab behind it can never reach.
+  // unreadHasMore starts false because refresh() seeds it from the first
+  // page's own hasMore: every unread row newer than the first page's last
+  // row is already loaded, so there is nothing to discover before asking.
+  unreadNextBefore: null,  // { createdAt, id } | null
+  unreadHasMore: false,
+  unreadLoading: false,
+  // #5527: bumped by every refresh() whose first page landed and published
+  // on the store — the Unread tab's auto-fill arms on sheet-open and fires
+  // when this changes while the sheet is open (see the store field's note).
+  refreshTick: 0,
   // Only the newest first-page refresh may replace the authoritative feed.
   // This prevents an older boot/bell request from completing after a native
   // network-only invalidation and overwriting its fresher result.
@@ -175,9 +191,17 @@ const Notifications = {
     // Anonymous SPA boot (fold-auth-pages-into-SPA): the initial fetch
     // waits for the authed boot stage instead of firing a guaranteed 401
     // on a sessionless document. `sv:authed` fires at most once.
-    if (window.App && App.user) Notifications.refresh();
+    //
+    // FROM THE NETWORK (polish board #7, 19 Oct 2026). A boot read is in a
+    // crowd of requests, and past the service worker's API deadline it was
+    // answered from the worker's copy: the bell opened on "Unread (1)", and
+    // the read on open replaced it a few seconds later with "You're all
+    // caught up". `fresh` asks the worker for the current answer, which it
+    // falls back from only when the network fails (public/sw.js
+    // wantsFreshAnswer).
+    if (window.App && App.user) Notifications.refresh({ fresh: true });
     else document.addEventListener('sv:authed',
-      () => Notifications.refresh(), { once: true });
+      () => Notifications.refresh({ fresh: true }), { once: true });
   },
 
   // --- fetching --------------------------------------------------------
@@ -208,6 +232,8 @@ const Notifications = {
       const invalidation = networkOnly
         ? `&native_invalidation=1&native_invalidation_nonce=${encodeURIComponent(invalidationNonce)}`
         : '';
+      // The boot read's: the network's answer rather than the worker's copy.
+      const fresh = !networkOnly && !!(options && options.fresh === true);
       let timeout = null;
       let controller = null;
       if (networkOnly && typeof AbortController === 'function') {
@@ -226,7 +252,7 @@ const Notifications = {
             credentials: 'same-origin',
             cache: 'no-store',
             ...(controller ? { signal: controller.signal } : {}),
-          } : undefined
+          } : fresh ? { cache: 'no-cache' } : undefined
         );
         if (!res.ok) return false;
         data = await res.json();
@@ -249,6 +275,14 @@ const Notifications = {
       Notifications.messageUnread = Number(data.messageUnread) || 0;
       Notifications.hasMore = !!data.hasMore;
       Notifications.nextBefore = data.nextBefore || null;
+      // #5527: the Unread tab's cursor is seeded from the first page too.
+      // Every unread row newer than the first page's last row is already in
+      // `items` (the page holds them all), so paging starts exactly where
+      // the shared page stopped. A refresh resets this pair, so a reload
+      // never mixes two cursors.
+      Notifications.unreadHasMore = !!data.hasMore;
+      Notifications.unreadNextBefore = data.nextBefore || null;
+      Notifications.refreshTick += 1;
       Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
       // Rendered UNCONDITIONALLY now, where this was gated on `open`.
@@ -401,6 +435,88 @@ const Notifications = {
       console.warn('[notifications] loadOlderMessages failed', err);
     } finally {
       Notifications.msgLoading = false;
+      Notifications._renderList();
+    }
+  },
+
+  // #5527: TRUE while the bell counts more unread notifications than the
+  // list holds. `unread` is countUnread's account-wide figure — the number
+  // the badge paints — and the loaded unread rows are what has been fetched
+  // so far. The comparison is the same one the badge makes: a settled
+  // decided-ask row serializes read (the server stamps read_at live off the
+  // change's status), and a parked kind never reaches either side.
+  _unreadShort() {
+    const loaded = Notifications.items.filter((n) => n && !n.readAt).length;
+    return loaded < Notifications.unread;
+  },
+
+  /**
+   * #5527: fill the Unread list up to the bell's number.
+   *
+   * The badge counts every unread row on the account (countUnread) while
+   * the sheet's Unread tab shows the unread rows among the newest 100
+   * fetched — so a backlog of unread sitting behind a long run of read rows
+   * read as a bell of 46 over a list of 1. `?unread=1`
+   * (routes/notifications.js) pages those rows directly, under the exact
+   * filters the badge counts with, on a cursor of its own: advancing
+   * `nextBefore` here would strand every row between the two positions,
+   * which is exactly why msgNextBefore is separate too.
+   *
+   * Up to `pages` batches per call. The sheet auto-fills five (500 rows) on
+   * opening so a huge backlog cannot hang it; anything further waits for
+   * the foot button's next tap. It stops as soon as `_unreadShort()` is
+   * false — loaded has caught up with counted — and never touches
+   * `nextBefore` or `hasMore`, the All tab's cursor.
+   */
+  async loadMoreUnread(options) {
+    const pages = (options && options.pages) || 5;
+    if (Notifications.unreadLoading) return;
+    Notifications.unreadLoading = true;
+    Notifications._renderList();
+    try {
+      for (let page = 0; page < pages; page += 1) {
+        if (!Notifications.unreadHasMore || !Notifications._unreadShort()) break;
+        const generation = Notifications._refreshGeneration;
+        const params = new URLSearchParams({ limit: '100', unread: '1' });
+        // First batch has no cursor of its own: it starts from the shared
+        // first page's last row (refresh seeded unreadNextBefore), and the
+        // dedupe below drops anything already on screen.
+        if (Notifications.unreadNextBefore) {
+          params.set('before', String(Notifications.unreadNextBefore.createdAt));
+          params.set('before_id', String(Notifications.unreadNextBefore.id));
+        }
+        const res = await fetch(`/api/notifications?${params.toString()}`);
+        if (!res.ok) break;
+        const data = await res.json();
+        // A refresh that landed while the page was in flight replaced the
+        // feed and re-seeded the unread cursor; this page is from before
+        // that, so drop it whole rather than mixing two cursors.
+        if (generation !== Notifications._refreshGeneration) return;
+        const incoming = Array.isArray(data.notifications) ? data.notifications.filter(Notifications._shown) : [];
+        const seen = new Set(Notifications.items.map((n) => n.id));
+        for (const n of incoming) {
+          if (!seen.has(n.id)) {
+            Notifications.items.push(n);
+            seen.add(n.id);
+          }
+        }
+        // An unread-only page reaches further back than the shared cursor
+        // has, so its rows do not simply append in feed order the way
+        // loadMore's do. The comparator loadOlderMessages sorts with — the
+        // server's own ORDER BY.
+        Notifications.items.sort((a, b) => {
+          const at = new Date(a.createdAt || a.created_at || 0).getTime();
+          const bt = new Date(b.createdAt || b.created_at || 0).getTime();
+          return (bt - at) || (Number(b.id) - Number(a.id));
+        });
+        Notifications.unreadHasMore = !!data.hasMore;
+        Notifications.unreadNextBefore = data.nextBefore || null;
+        Notifications._renderList();
+      }
+    } catch (err) {
+      console.warn('[notifications] loadMoreUnread failed', err);
+    } finally {
+      Notifications.unreadLoading = false;
       Notifications._renderList();
     }
   },
@@ -1055,6 +1171,18 @@ const Notifications = {
       return;
     }
     // #4296: an unexpected events alert opens the section that lists them.
+    // A platform signal opens its request on Homeroom's own board.
+    const signal = item.kind === 'platform_incident' ? parsePlatformIncidentDetail(item.detail) : null;
+    const platformSlug = signal && signal.type === 'signal' ? window.PlatformTarget?.slug?.() : null;
+    if (platformSlug) {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.openAppTab) {
+        App.openAppTab(platformSlug, 'dev', { subTab: 'issues', ref: signal.issueNumber });
+      } else {
+        window.location.hash = `#app/${platformSlug}/dev/issues/${signal.issueNumber}`;
+      }
+      return;
+    }
     if (item.kind === 'platform_incident') {
       Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
@@ -1875,6 +2003,13 @@ const Notifications = {
         loadingMore: Notifications.loading,
         messagesCanLoadMore: Notifications.msgHasMore,
         loadingOlderMessages: Notifications.msgLoading,
+        // #5527: the Unread tab's own pager. Offered only while the bell
+        // counts more unread than the list has loaded — a viewer who is
+        // caught up (or whose whole unread fit on the first page) gets
+        // nothing to tap.
+        unreadCanLoadMore: Notifications.unreadHasMore && Notifications._unreadShort(),
+        loadingUnread: Notifications.unreadLoading,
+        refreshTick: Notifications.refreshTick,
         touch,
       });
       return;
@@ -1901,6 +2036,10 @@ const Notifications = {
       // The Messages tab's pager, on its own cursor — see loadOlderMessages().
       messagesCanLoadMore: Notifications.msgHasMore,
       loadingOlderMessages: Notifications.msgLoading,
+      // #5527: the Unread tab's pager, on its own cursor — see loadMoreUnread().
+      unreadCanLoadMore: Notifications.unreadHasMore && Notifications._unreadShort(),
+      loadingUnread: Notifications.unreadLoading,
+      refreshTick: Notifications.refreshTick,
       touch,
     });
   },
@@ -1993,9 +2132,14 @@ function parsePlatformLimitDetail(detail) {
 // hourly line).
 const PLATFORM_INCIDENT_DIGEST_RE = /^digest:(\d{1,5}):((?:[a-z][a-z0-9_]{0,23}=\d{1,5})(?:,[a-z][a-z0-9_]{0,23}=\d{1,5})*)?$/;
 const PLATFORM_INCIDENT_HOUR_RE = /^hour:([a-z][a-z0-9_]{0,23}):(\d{1,5})$/;
+// services/platform-signals.js: "signal:<n>", a problem the platform found in
+// itself and filed as request #n on its own board, for a person to fix.
+const PLATFORM_INCIDENT_SIGNAL_RE = /^signal:(\d{1,9})$/;
 
 function parsePlatformIncidentDetail(detail) {
   const s = String(detail || '');
+  const sig = PLATFORM_INCIDENT_SIGNAL_RE.exec(s);
+  if (sig) return { type: 'signal', issueNumber: Number(sig[1]) };
   const h = PLATFORM_INCIDENT_HOUR_RE.exec(s);
   if (h) return { type: 'hour', kind: h[1], n: Number(h[2]) };
   const d = PLATFORM_INCIDENT_DIGEST_RE.exec(s);
@@ -2867,6 +3011,16 @@ function rowView(n) {
   if (n.kind === 'platform_incident') {
     const alert = parsePlatformIncidentDetail(n.detail);
     const words = (kind) => String(kind).replace(/_/g, ' ');
+    if (alert && alert.type === 'signal') {
+      return {
+        ...base,
+        appLine: t('notifications:row.source.admin'),
+        wrap: true,
+        icon: '\u{1F6E0}\uFE0F',
+        label: t('notifications:row.incident.signal.label'),
+        segments: [{ t: 'text', v: t('notifications:row.incident.signal.body', { number: alert.issueNumber }) }],
+      };
+    }
     if (alert && alert.type === 'hour') {
       return {
         ...base,

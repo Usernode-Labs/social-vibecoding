@@ -99,9 +99,11 @@ export const TAB_FOR_SCREEN = Object.freeze({
  *   fifth tab shows in place of "Me" (#2760), or null while nobody is known.
  *   Null is the prerender: the document is built in Node with no session, so
  *   it can only ever say "Me", and the first client render has to agree with
- *   it. Nothing writes this before hydration — app.js publishes it from
- *   App.enterAuthed, which runs on DOMContentLoaded, after the bundle has
- *   hydrated — so the name arrives as an ordinary update, like `tab` does.
+ *   it. Nothing writes this before hydration. The session snapshot's name
+ *   is applied in the same task, right after hydration and before the first
+ *   paint (lib/shell-snapshot-apply.ts applyNavSnapshot), and app.js
+ *   publishes the verified one from App.enterAuthed: both are ordinary
+ *   updates, like `tab`.
  */
 
 /**

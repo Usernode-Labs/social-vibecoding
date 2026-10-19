@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const path = require('path');
+const { once } = require('events');
 const { loadShellRelease } = require('./src/services/shell-release');
 const shellRelease = loadShellRelease(path.join(__dirname, 'public'));
 // The baked artifact is authoritative even when a runtime omits build args.
@@ -182,6 +183,12 @@ let startupDiagnostics = null;
 // src/middleware/inflight-requests.js).
 app.use(inflightRequests.inflightRequests());
 
+// Then count every /api/ response by the route template it matched and its
+// status, and each 5xx by what was thrown, for the Server errors figure and
+// the server_errors signal (src/middleware/request-counts.js,
+// src/services/server-error-counts.js). It only listens for `finish`.
+app.use(require('./src/middleware/request-counts').requestCounts());
+
 // Express never trusts forwarding headers globally. Docker mode resolves one
 // configured proxy peer; Kubernetes mode lets Cilium/Envoy supply the client
 // address without a proxy hostname. Direct child/worker calls carry no
@@ -245,6 +252,10 @@ app.use(explorerProxyRoutes(config));
 // no secret is configured. src/routes/github-webhook.js carries the rest.
 app.use(githubWebhookRoutes(config));
 app.use(require('./src/routes/mail-webhooks').mailWebhookRoutes(config));
+// Alertmanager's webhook (src/routes/alerts-webhook.js): HERE for the same
+// second reason, a caller with no session, authenticated by its own token.
+// It parses its own JSON body.
+app.use(require('./src/routes/alerts-webhook').alertsWebhookRoutes(config));
 
 // ── Work-order patch uploads (#4264) ───────────────────────────────────────
 // A coding agent's one-time upload of a large patch for a connector work
@@ -1158,15 +1169,9 @@ async function becomeLeader() {
     identity: leadership && leadership.identity,
   });
 
-  // The workflow's timers and services, and the boot backfill: the leader is
-  // where they run. A leader without them would leave every governance
-  // proposal's timers and work to the next election, with no other path, so
-  // a failure stops this process through its own drain (cleanup, on SIGTERM)
-  // and another one leads.
-  await require('./src/workflow/platform.ts').startWorkflowLoops().catch((err) => {
-    log.error('server', 'Workflow loops failed to start; stopping so another process leads', { err: err.message });
-    process.kill(process.pid, 'SIGTERM');
-  });
+  // (The workflow's timers, services and the release's adoptions are no
+  // leader work: every process that runs the workflow starts them, in
+  // start().)
 
   // What leader work keeps in memory and an admin screen reads, written for
   // the processes that do not lead (services/leader-status.js): a web process
@@ -1335,11 +1340,17 @@ async function becomeLeader() {
   // any repo that's currently private. The worker bootstrap guard
   // refuses to spawn against private repos, so these apps will fail
   // to start a dev session until the user makes the repo public —
-  // surfacing them at boot lets operators see the impact ahead of
-  // first user contact. Non-blocking.
-  auditExistingRepoPrivacy(getPool(config)).catch((err) => {
-    log.warn('server', 'private-repo audit failed', { err: err.message });
-  });
+  // the log lets operators see the impact ahead of first user contact.
+  // Daily on the durable clock, not at every election: on 19 Oct 2026 the
+  // leader changed some twenty times (eight in one hour), and each one
+  // spent a GitHub read per app (~150) on a result that is only logged.
+  // Every worker start checks the repo itself (services/worker.js,
+  // routes/internal.js), so nothing waits on this.
+  const runRepoPrivacyAudit = () => auditExistingRepoPrivacy(getPool(config))
+    .catch((err) => log.warn('server', 'private-repo audit failed', { err: err.message }))
+    // An audit the drain cut short is not recorded: the next leader runs it.
+    .then(() => (lifecycle.isShuttingDown() ? leaderTimers.SKIPPED : undefined));
+  leaderTimers.every('repo-privacy-audit', runRepoPrivacyAudit, 24 * 60 * 60 * 1000, { durable: getPool(config) });
 
   // The push SENDER claims queued jobs — a singleton. Enqueueing (HTTP
   // side) works on every color; only the leader drains the queue.
@@ -1524,6 +1535,22 @@ async function becomeLeader() {
   // when one kind piles up within an hour, for the full admins.
   startPlatformIncidentAlertSweeper(config);
 
+  // Platform signals (services/platform-signals.js): every problem the
+  // platform detects in itself files one request, or updates it, and closes
+  // it once the problem has stopped. Shadow mode (the default) only keeps
+  // the rows the topic pages and figures read.
+  {
+    const platformSignals = require('./src/services/platform-signals');
+    leaderTimers.every('platform-signals', () => platformSignals.sweep(getPool(config), config),
+      platformSignals.SWEEP_INTERVAL_MS, { firstDelayMs: 60 * 1000 });
+    // The server-error counts the figure and the server_errors signal read
+    // keep 14 days: daily, on the durable clock.
+    const serverErrorCounts = require('./src/services/server-error-counts');
+    leaderTimers.every('server-error-prune', () => serverErrorCounts.prune(getPool(config))
+      .then((n) => { if (n && (n.requests || n.errors)) log.info('server-errors', 'Pruned old server error counts', n); }),
+    24 * 60 * 60 * 1000, { durable: getPool(config) });
+  }
+
   // #907: release local coding-agent leases whose machine stopped
   // heartbeating, and fail the turn they were holding.
   startLocalAgentLeaseSweeper(config);
@@ -1542,20 +1569,29 @@ async function becomeLeader() {
   // leader's boot adopted above. (A checks run a rollout interrupted is the
   // preview machine's work: claimed again once its lease lapses, and its
   // Jobs are collected rather than started over.)
-  observeMergedOnGithub(config)
-    // #447: after reconciling merge state, hand the preview machine any
-    // proposal whose checks were never recorded or were left 'pending' from
-    // before it held the row. Off the critical path. (The machine retries
-    // the platform's own faults at a release itself: platform.ts.)
-    .then(() => reconcileStuckChecks(config))
-    // (The whole-tree check under direct merges is the main-check machine's:
-    // a run a restart interrupted is its work item's, carried on by the next
-    // process, and a paused red's rechecks are its deadline.)
-    .catch((err) => {
-      log.warn('server', 'Boot merge observation / stuck-check reconcile failed', {
-        err: err.message,
-      });
-    });
+  // Every six hours on the durable clock, not at every election: on 19 Oct
+  // 2026 the leader changed some twenty times, and each one read every
+  // proposal up for a vote from GitHub again. Nothing else notices such a
+  // merge (the webhook only moves an imported head; merge.observe asks only
+  // about a merge the platform attempted), so one is now recorded within
+  // six hours rather than at the next election.
+  const runMergedByHandLookup = () => observeMergedOnGithub(config)
+    .catch((err) => log.warn('server', 'Merged-by-hand lookup failed', { err: err.message }))
+    // A lookup the drain cut short is not recorded: the next leader runs it.
+    .then(() => (lifecycle.isShuttingDown() ? leaderTimers.SKIPPED : undefined));
+  leaderTimers.every('merged-by-hand-lookup', runMergedByHandLookup, 6 * 60 * 60 * 1000, { durable: getPool(config) });
+
+  // #447: hand the preview machine any proposal whose checks were never
+  // recorded or were left 'pending' from before it held the row, now rather
+  // than at the first pass of a sweep (the session sweeper's Pass 4 after a
+  // minute, the stuck-checks sweep's after four). Off the critical path.
+  // (The machine retries the platform's own faults at a release itself:
+  // platform.ts. The whole-tree check under direct merges is the main-check
+  // machine's: a run a restart interrupted is its work item's, carried on by
+  // the next process, and a paused red's rechecks are its deadline.)
+  reconcileStuckChecks(config).catch((err) => {
+    log.warn('server', 'Boot stuck-check reconcile failed', { err: err.message });
+  });
 
   // Fallback recovery: for sessions whose container is already gone but
   // whose branch is ahead of main (i.e. CC pushed commits during an old
@@ -1630,12 +1666,11 @@ async function start() {
   // (src/workflow/setup.ts): the push sender, GitHub, the model.
   await require('./src/workflow/setup.ts').startWorkflowClients(config);
   // The workflow runtime (src/workflow/platform.ts): every process appends
-  // and waits for outcomes; the loops start in becomeLeader(), or here on a
-  // staging preview, which never stands for election but must still decide.
-  // Fatal: the machines are the only paths for what they decide (governance
-  // has no other), so a process without them exits and is restarted rather
-  // than serving without them.
-  await require('./src/workflow/platform.ts').startWorkflow(config, { loops: !runsClusterMaintenance() });
+  // and waits for outcomes; a process that runs the workflow starts its
+  // loops below, once it listens. Fatal: the machines are the only paths for
+  // what they decide (governance has no other), so a process without them
+  // exits and is restarted rather than serving without them.
+  await require('./src/workflow/platform.ts').startWorkflow(config, { loops: false });
   startupDiagnostics = Object.freeze({
     totalMs: Date.now() - startedAt,
     migrationsOnStartup,
@@ -1673,13 +1708,39 @@ async function start() {
   shutdownPool = getPool(config);
 
   ws.attach(server, config);
-  chainPoller.start(config);
-  genesisAccounts.start();
-  nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
-  // Warm the /api/status cache so the first dashboard load doesn't have
-  // to wait 1-2s on `docker stats`. Subsequent loads are served from
-  // cache via stale-while-revalidate (see services/status.js).
-  statusService.start(config);
+  // The caches people's requests read: a conductor serves nobody's.
+  if (processRole.servesRequests(ownRole)) {
+    chainPoller.start(config);
+    genesisAccounts.start();
+    nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
+    // Warm the /api/status cache so the first dashboard load doesn't have
+    // to wait 1-2s on `docker stats`. Subsequent loads are served from
+    // cache via stale-while-revalidate (see services/status.js).
+    statusService.start(config);
+  }
+  // Every process writes its own server-error counts to the database once a
+  // minute (services/server-error-counts.js), on an unref'd timer; a minute
+  // with nothing answered sends nothing.
+  require('./src/services/server-error-counts').start({ pool: getPool(config) });
+
+  // ── The workflow's loops ─────────────────────────────────────────────
+  // A conductor (any number of replicas) or an 'all' runs every machine's
+  // pipeline slots, timers and work (services/process-role.js runsWorkflow);
+  // none of it needs the leader lock. They start once this process listens
+  // and its bus is up: the work they claim calls this process's own port
+  // (the bot's platform tools, services/mayor/mcp-shim.js) and pushes over
+  // the bus (ws.attach above). Fatal, like the runtime itself.
+  if (processRole.runsWorkflow(ownRole)) {
+    if (!server.listening) await once(server, 'listening');
+    const workflow = require('./src/workflow/platform.ts');
+    await workflow.startWorkflowLoops();
+    // Its metrics, for the alerts (src/workflow/metrics.ts), on a port of
+    // their own that no Service reaches; set by the chart on the conductor.
+    const metricsPort = Number(process.env.WF_METRICS_PORT);
+    if (Number.isInteger(metricsPort) && metricsPort > 0) {
+      require('./src/workflow/metrics.ts').serveMetrics(metricsPort, () => workflow.workflowHealth(), log);
+    }
+  }
 
   // ── Leader-only singleton work ───────────────────────────────────────
   // Elect a single leader across the colors. The leader runs becomeLeader()
@@ -1735,7 +1796,7 @@ if (require.main === module) {
 
 // Test-only surface (#183): the orphan-adoption + recovered-turn finalize
 // internals, so the headless-recovery guards stay covered by node --test.
-// `observeMergedOnGithub` rides along so the boot's merged-by-hand lookup
+// `observeMergedOnGithub` rides along so the leader's merged-by-hand lookup
 // stays covered too. `cleanup` + `__setShutdownTargets`
 // (#767) let tests drive the graceful-shutdown sequence against a stubbed
 // listener and pool without booting a server. Not used by any runtime caller.
@@ -1744,6 +1805,9 @@ module.exports = {
   // order but not listening, so a test can drive the headers production
   // sends with a shell asset (tests/spec-frame-styles.test.js).
   app,
+  // The boot itself: the two-process tests' workflow side runs it as a
+  // conductor (tests/lib/workflow-child.js), so it is what production runs.
+  start,
   adoptOrphanWorker,
   // docs/plans/draining-releases.md: the leader's sweep for turns their
   // process left behind.
@@ -1791,13 +1855,15 @@ module.exports = {
 // Scan existing imported apps for privacy violations. Homeroom workers
 // run with zero GitHub credentials and rely on unauthenticated public
 // HTTPS clones; a private repo can't be cloned by the worker, so dev
-// sessions against it will fail at bootstrap. Surface those rows at
-// boot so the operator can decide whether to ask the user to make
-// the repo public or delete the import.
+// sessions against it will fail at bootstrap. Surface those rows once
+// a day (the leader's `repo-privacy-audit` timer) so the operator can
+// decide whether to ask the user to make the repo public or delete the
+// import.
 //
 // Bounded concurrency (a small pool) keeps the scan from spending
-// minutes on a large `apps` table during startup. The check is purely
-// read-only — we log and move on.
+// minutes on a large `apps` table. The check is purely read-only — we
+// log and move on — and stops at its next row once shutdown begins, so
+// it never holds a drain.
 async function auditExistingRepoPrivacy(pool) {
   const github = require('./src/services/github');
   let rows;
@@ -1821,14 +1887,14 @@ async function auditExistingRepoPrivacy(pool) {
   let privateCount = 0;
   let errorCount = 0;
 
-  // One read per app on every boot, and only a log line comes of it, so it
-  // is the first thing to give way when GitHub's hourly budget is nearly
-  // used up (services/github-budget.js): a rollout right after the budget
-  // ran out must not spend what is left on an audit.
+  // One read per app, and only a log line comes of it, so it is the first
+  // thing to give way when GitHub's hourly budget is nearly used up
+  // (services/github-budget.js): a run right after the budget ran out must
+  // not spend what is left on an audit.
   const githubBudget = require('./src/services/github-budget');
   let held = false;
   async function worker() {
-    while (queue.length) {
+    while (queue.length && !lifecycle.isShuttingDown()) {
       if (!githubBudget.budgetAllows('background')) { held = true; return; }
       const row = queue.shift();
       const m = (row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
@@ -1863,12 +1929,13 @@ async function auditExistingRepoPrivacy(pool) {
   });
 }
 
-// A pull request merged on GitHub by hand while it was up for a vote: the
-// leader's boot asks GitHub about every proposal in review and reports a
-// merge it finds (merge-followups records it and runs every follow-up). It
-// decides nothing else: a merge the platform attempted is the proposal
-// machine's, which asks GitHub itself about an answer it lost
-// (`unconfirmed`, observe-first), so nothing is ever demoted from here.
+// A pull request merged on GitHub by hand while it was up for a vote: every
+// six hours (its `merged-by-hand-lookup` timer) the leader asks GitHub about
+// every proposal in review and reports a merge it finds (merge-followups
+// records it and runs every follow-up). It decides nothing else: a merge
+// the platform attempted is the proposal machine's, which asks GitHub
+// itself about an answer it lost (`unconfirmed`, observe-first), so nothing
+// is ever demoted from here.
 //
 // Every lookup spends GitHub's hourly budget (9 Oct 2026: this sweep was
 // one of the callers refused when the bot token ran out), so it is
@@ -4797,6 +4864,8 @@ async function sweepIdleWarmWorkers({ now = Date.now(), held = heldByDurableBuil
 // should stay live, and pausing+resuming would currently lose the
 // promoted distinction).
 let sessionSweeperHandle = null;
+// The proposal measurement's own timer (measurePromotedProposals).
+let proposalMeasureHandle = null;
 
 // Messages attachment retention is independent of session auto-pause. In
 // deployments that disable SESSION_AUTOPAUSE_IDLE_MS, abandoned private
@@ -4889,6 +4958,67 @@ const adoptProposals = async () => {
     .catch((err) => log.warn('server', 'Adopting the bot\'s queue rows failed', { err: err.message }));
 };
 
+// Measure every promoted proposal against its app's main (#2038), on its own
+// single-flight timer beside the session sweeper.
+//
+// This replaced a freshness pass that was capped at ten rows a sweep with
+// a five-minute per-row cooldown, because each row cost two to six GitHub
+// reads against a rate limit. A proposal nobody had opened could therefore
+// carry numbers that were hours old, and the merge gate read them. A
+// measurement is local plumbing against the app's mirror, so every promoted
+// proposal is measured every pass: the fix for the whole class of failures
+// where a proposal was described confidently and wrongly, including a
+// drifted proposal below the vote threshold that nothing else re-measured.
+//
+// One fetch of an app's mirror serves every open proposal on it
+// (integration.fetchAppMirror). The pass used to fetch the whole repository
+// once per proposal, inside the session sweeper: on 19 Oct 2026 that was
+// about 126 full fetches every two minutes, and it held idle pausing,
+// preview cleanup and the staging heal for two to ten minutes a pass.
+async function measurePromotedProposals(pool) {
+  const integrationSvc = require('./src/services/integration');
+  const { rows } = await pool.query(
+    `SELECT cs.*, a.slug AS app_slug, a.repo_url
+       FROM chat_sessions cs
+       JOIN apps a ON cs.app_id = a.id
+      WHERE cs.status = 'promoted'
+        AND a.repo_url IS NOT NULL
+        AND cs.branch_name IS NOT NULL
+      ORDER BY cs.app_id, cs.integration_measured_at NULLS FIRST`
+  );
+  const byApp = new Map();
+  for (const row of rows) {
+    if (!byApp.has(row.app_id)) byApp.set(row.app_id, []);
+    byApp.get(row.app_id).push(row);
+  }
+  let measured = 0;
+  // Held for the shutdown drain, which therefore waits for one measurement
+  // at most: the loop stops at its next row once shutdown begins, rather
+  // than writing into the closed pool.
+  await inflightWork.track('proposal-measure', async () => {
+    for (const sessions of byApp.values()) {
+      if (lifecycle.isShuttingDown()) break;
+      // A session mid-turn is about to move its own head; measuring it now
+      // records an answer that is wrong before it is written. Mid-turn on
+      // any process, not only this one.
+      const ready = sessions.filter((session) => !(worker.isInFlight(session.id) || activeWorkersSvc.isSessionBusy(session.id)));
+      if (!ready.length) continue;
+      // A fetch that fails leaves each measurement to fetch for itself, as
+      // before, so each records the failure as its own.
+      const mirrorDir = await integrationSvc.fetchAppMirror(ready).catch((err) => {
+        log.warn('server', 'Could not fetch an app\'s mirror for its proposals', { appId: ready[0].app_id, err: err.message });
+        return null;
+      });
+      for (const session of ready) {
+        if (lifecycle.isShuttingDown()) break;
+        const written = await integrationSvc.measure({ pool, session }, { force: true, ...(mirrorDir ? { mirrorDir } : {}) });
+        if (written && !written.skipped) measured++;
+      }
+    }
+  });
+  if (measured) log.info('server', 'Measured proposals against main', { count: measured, apps: byApp.size });
+}
+
 function startSessionAutoPauseSweeper(config) {
   if (sessionSweeperHandle) return;
   if (!config.sessionAutopauseIdleMs || config.sessionAutopauseIdleMs <= 0) {
@@ -4911,7 +5041,7 @@ function startSessionAutoPauseSweeper(config) {
   // it), and waiting for one held a release's drain to its 60s deadline on
   // 14 Oct 2026. Its long loops stop at their next row once shutdown begins,
   // and the proposal measurement, whose write the closing pool cut, is held
-  // on its own below. One pass at a time (services/single-flight.js): a pass
+  // on its own (measurePromotedProposals, its own timer). One pass at a time (services/single-flight.js): a pass
   // minutes into a staging heal had later ticks start beside it.
   sessionSweeperHandle = setInterval(singleFlight('session-sweeper', async () => {
     if (lifecycle.isShuttingDown()) return;
@@ -5353,51 +5483,9 @@ function startSessionAutoPauseSweeper(config) {
       log.warn('server', 'Imported-PR head-sync sweep failed', { err: err.message });
     }
 
-    // Pass 9: measure every promoted proposal (#2038).
-    //
-    // This replaced a freshness pass that was capped at ten rows a sweep with
-    // a five-minute per-row cooldown, because each row cost two to six GitHub
-    // reads against a rate limit. A proposal nobody had opened could therefore
-    // carry numbers that were hours old, and the merge gate read them.
-    //
-    // A measurement is local plumbing against the app's mirror now, so the cap
-    // and the cooldown are gone: every promoted proposal is measured every
-    // pass. That is the fix for the whole class of failures where a proposal
-    // was described confidently and wrongly — including the one that mattered
-    // most, a drifted proposal below the vote threshold that no drain would
-    // ever pick up and nothing else would ever re-measure.
-    //
-    // Grouped by app so one `git fetch` serves every open proposal on it.
-    try {
-      const integrationSvc = require('./src/services/integration');
-      const { rows } = await pool.query(
-        `SELECT cs.*, a.slug AS app_slug, a.repo_url
-           FROM chat_sessions cs
-           JOIN apps a ON cs.app_id = a.id
-          WHERE cs.status = 'promoted'
-            AND a.repo_url IS NOT NULL
-            AND cs.branch_name IS NOT NULL
-          ORDER BY cs.app_id, cs.integration_measured_at NULLS FIRST`
-      );
-      let measured = 0;
-      // Held for the shutdown drain, which therefore waits for one
-      // measurement at most: the loop stops at its next row once shutdown
-      // begins, rather than writing into the closed pool.
-      await inflightWork.track('session-sweeper:measure', async () => {
-        for (const session of rows) {
-          if (lifecycle.isShuttingDown()) break;
-          // A session mid-turn is about to move its own head; measuring it now
-          // records an answer that is wrong before it is written. Mid-turn on
-          // any process, not only this one.
-          if (worker.isInFlight(session.id) || activeWorkersSvc.isSessionBusy(session.id)) continue;
-          const written = await integrationSvc.measure({ pool, session }, { force: true });
-          if (written && !written.skipped) measured++;
-        }
-      });
-      if (measured) log.info('server', 'Measured proposals against main', { count: measured });
-    } catch (err) {
-      log.warn('server', 'Proposal measurement sweep failed', { err: err.message });
-    }
+    // Pass 9, measuring every promoted proposal against main, has its own
+    // timer now (measurePromotedProposals, below): on 19 Oct 2026 it held
+    // every pass here for two to ten minutes.
 
     // Pass 7: stale-env preview teardown (#851). The counterpart to Pass 3:
     // Pass 3 REBUILDS a stale preview that backs a live vote, this tears down
@@ -5460,6 +5548,16 @@ function startSessionAutoPauseSweeper(config) {
       await stagingReap.previewServerDrainStatus(config);
     } catch (err) {
       log.warn('server', 'Connection-pressure sweep failed', { err: err.message });
+    }
+  }), config.sessionSweepIntervalMs).unref();
+
+  // The measurement pass, on its own clock so a slow one holds up only itself.
+  proposalMeasureHandle = setInterval(singleFlight('proposal-measure', async () => {
+    if (lifecycle.isShuttingDown()) return;
+    try {
+      await measurePromotedProposals(pool);
+    } catch (err) {
+      log.warn('server', 'Proposal measurement sweep failed', { err: err.message });
     }
   }), config.sessionSweepIntervalMs).unref();
 }
@@ -5949,8 +6047,9 @@ async function cleanup() {
   // actually complete.
   //
   // A process finishing its work keeps listening until its drain ends:
-  // Kubernetes has already taken it out of the Service, and a shots worker
-  // calls the Pod that runs its run by its own address.
+  // Kubernetes has already taken it out of the Service, a request it still
+  // answers finishes, and the work it still runs calls its own port (the
+  // bot's platform tools, services/mayor/mcp-shim.js).
   if (!finishesWork) closeListener(drainMs);
   // Behind the listener close, deliberately: what the tabs fetch on hearing
   // this must not be able to land here. Awaited with the drain below.
@@ -5968,6 +6067,10 @@ async function cleanup() {
   if (sessionSweeperHandle) {
     clearInterval(sessionSweeperHandle);
     sessionSweeperHandle = null;
+  }
+  if (proposalMeasureHandle) {
+    clearInterval(proposalMeasureHandle);
+    proposalMeasureHandle = null;
   }
   if (appStorageCapFirstRunHandle) {
     clearTimeout(appStorageCapFirstRunHandle);
@@ -6082,6 +6185,15 @@ async function cleanup() {
   // (services/processes.js). Bounded like the marks above.
   await boundedStep(processes.stop(), BUILD_SHUTDOWN_MARK_TIMEOUT_MS)
     .catch((err) => log.warn('server', 'Could not remove this process\'s row', { err: err.message }));
+
+  // The minute of server responses still counting (services/server-error-
+  // counts.js) is written before the pool closes, or it is lost with the
+  // process. Bounded like the marks above; flush never throws.
+  if (shutdownPool) {
+    const serverErrorCounts = require('./src/services/server-error-counts');
+    serverErrorCounts.stop();
+    await boundedStep(serverErrorCounts.flush(shutdownPool, { all: true }), BUILD_SHUTDOWN_MARK_TIMEOUT_MS).catch(() => {});
+  }
 
   // Close the pg pool so in-flight queries settle instead of being severed
   // by process.exit(). Bounded: a pool that won't drain must not hold the

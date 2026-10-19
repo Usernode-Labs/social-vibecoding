@@ -26,8 +26,9 @@ import { type ReactNode } from 'react';
 
 import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
+import { useWaitlistOptions } from '../../auth/waitlist-shared';
 import { faqTiles } from './usernode-faq';
-import { UnBtn, UnP, UnRow, UnSection, UnSwitch } from './usernode-ui';
+import { UnBtn, UnLink, UnP, UnRow, UnSection, UnSwitch } from './usernode-ui';
 import { usernodeSectionStore, type UsernodeSectionState } from './usernode-store';
 
 /**
@@ -253,7 +254,10 @@ function Tail({ s }: { s: UsernodeSectionState }): ReactNode {
           {s.about.notes.map((n, i) => (
             <p key={i} className="text-xs text-zinc-500 dark:text-zinc-400 font-mono">{n.text}</p>
           ))}
-          <div>{s.about.actions.map((a) => <UnBtn key={a.action} btn={a} />)}</div>
+          <div>
+            {s.about.actions.map((a) => <UnBtn key={a.action} btn={a} />)}
+            <PrivacyNoticeLink />
+          </div>
           <Faq s={s} />
         </UnSection>
       ) : null}
@@ -266,6 +270,17 @@ function Tail({ s }: { s: UsernodeSectionState }): ReactNode {
       ) : null}
     </>
   );
+}
+
+/**
+ * Homeroom's privacy notice, beside Terms in "about & legal" (#5106): the
+ * address GET /api/public/waitlist/options serves (src/services/
+ * marketing-links.js), opened outside the app by the bridge.
+ */
+function PrivacyNoticeLink(): ReactNode {
+  const t = useMessages('settings');
+  const href = useWaitlistOptions()?.privacy_link || undefined;
+  return <UnLink id="settings-usernode-privacy-notice" href={href} label={t('settings:usernode.about.privacy')} />;
 }
 
 function Faq({ s }: { s: UsernodeSectionState }): ReactNode {

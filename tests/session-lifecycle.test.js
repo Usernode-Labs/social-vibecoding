@@ -89,6 +89,9 @@ const ACCEPTED = (reply = null) => ({
   status: 'accepted', eventId: 1, requestKey: 'k', reason: null, state: 'underway', version: 2, reply,
 });
 const REJECTED = (reason) => ({ status: 'rejected', reason });
+// Not decided in time: the machine (in its own process) did not answer
+// within the wait, or reached the move past its deadline.
+const PENDING = () => ({ status: 'pending', requestKey: 'k', reason: null });
 const SLUG = [/SELECT a\.slug FROM chat_sessions/, [{ slug: 'widget' }]];
 
 // ── pauseSession ──────────────────────────────────────────────────────────
@@ -117,6 +120,16 @@ test('pauseSession: a replayed pause is a pause; a refusal says why and touches 
     assert.deepEqual(res, { paused: false, reason: 'worked_on' });
     assert.equal(pool.calls.length, 0, 'a refused pause reads nothing and writes nothing');
   } finally { restore(); }
+});
+
+test('pauseSession: a pause the machine did not decide in time says so, never as a refusal', async () => {
+  for (const out of [PENDING(), REJECTED('expired')]) {
+    const { subject, restore } = loadWithStubs({ pauseProposal: out });
+    try {
+      assert.deepEqual(await subject.pauseSession({ pool: makePool([SLUG]), sessionId: 7, from: 'active' }),
+        { paused: false, reason: 'not_decided' }, out.status);
+    } finally { restore(); }
+  }
 });
 
 // ── unpromoteSession ──────────────────────────────────────────────────────
@@ -175,12 +188,20 @@ test('unpromoteSession: the machine\'s refusals map onto the codes the route ans
     ['merging', { ok: false, code: 'merging' }],
     // Anything else changed under us (a stale read): a conflict, not a guess.
     ['session_state_changed', { ok: false, code: 'merging' }],
+    // Reached past its deadline: never applied, so not decided, not merging.
+    ['expired', { ok: false, code: 'not_decided' }],
   ];
   for (const [reason, want] of cases) {
     const { run, restore } = unpromoteWith({ status: 'promoted', user_id: 3, app_id: 2 },
       { unpromoteProposal: REJECTED(reason) });
     try { assert.deepEqual(await run(), want, reason); } finally { restore(); }
   }
+});
+
+test('unpromoteSession: a move the machine has not decided yet is never reported as merging', async () => {
+  const { run, restore } = unpromoteWith({ status: 'promoted', user_id: 3, app_id: 2 },
+    { unpromoteProposal: PENDING() });
+  try { assert.deepEqual(await run(), { ok: false, code: 'not_decided' }); } finally { restore(); }
 });
 
 // ── Slot eviction (freeGlobalSlot / freeUserSlot) ─────────────────────────
@@ -235,6 +256,42 @@ test('slot eviction: an append that throws is passed over, never fails the reque
   });
   try {
     assert.deepEqual(await subject.freeUserSlot({ pool: slotPool([7, 8]), userId: 3 }), { freed: true, sessionId: 8 });
+  } finally { restore(); }
+});
+
+test('slot eviction: a pause the machine has not decided stops the search, and the gate says so', async () => {
+  const { subject, called, restore } = loadWithStubs({
+    pauseProposal: ({ sessionId }) => (sessionId === 7 ? REJECTED('worked_on') : PENDING()),
+  });
+  try {
+    assert.deepEqual(await subject.freeGlobalSlot({ pool: slotPool([7, 8, 9]), graceMs: 1000 }), { freed: false, notDecided: true });
+    assert.deepEqual(called('pauseProposal').map((p) => p.sessionId), [7, 8],
+      'a refusal is passed over; an undecided pause is not waited out once per victim');
+    assert.deepEqual(await subject.freeUserSlot({ pool: slotPool([8, 9]), userId: 3 }), { freed: false, notDecided: true });
+    // The platform-wide gate: not a refusal at the cap, and none recorded.
+    const pool = makePool([
+      [/COUNT\(\*\)/, [{ cnt: '100' }]],
+      [/SELECT id FROM chat_sessions/, [{ id: 8 }]],
+    ]);
+    assert.deepEqual(await subject.claimGlobalSlot({ pool, config: { maxGlobalSessions: 100, sessionPressureGraceMs: 1000 }, path: 'start' }),
+      { ok: false, notDecided: true });
+    assert.ok(!pool.issued(/INSERT INTO events/), 'no capacity refusal is recorded');
+  } finally { restore(); }
+});
+
+test('answerNotDecided: a retryable 503 with its code and Retry-After', () => {
+  const { subject, restore } = loadWithStubs();
+  try {
+    const sent = { headers: {} };
+    const res = {
+      set(k, v) { sent.headers[k] = v; return res; },
+      status(n) { sent.status = n; return res; },
+      json(b) { sent.body = b; return res; },
+    };
+    subject.answerNotDecided(res, 'Not yet.');
+    assert.deepEqual(sent, { headers: { 'Retry-After': '5' }, status: 503, body: { error: 'Not yet.', code: 'not_decided' } });
+    subject.answerNotDecided(res);
+    assert.equal(sent.body.error, subject.NOT_DECIDED);
   } finally { restore(); }
 });
 
@@ -338,6 +395,15 @@ test('unarchiveSession: reopens from what was read and surfaces ccPurged', async
       pool: unarchivePool({ status: 'archived', user_id: 2, app_id: 5, cc_purged: false }), sessionId: 1, userId: 2,
     }), { unarchived: false, busy: true });
   } finally { tearing.restore(); }
+  // Not decided in time is its own answer, not "still being closed".
+  for (const out of [PENDING(), REJECTED('expired')]) {
+    const undecided = loadWithStubs({ reopenProposal: out });
+    try {
+      assert.deepEqual(await undecided.subject.unarchiveSession({
+        pool: unarchivePool({ status: 'archived', user_id: 2, app_id: 5, cc_purged: false }), sessionId: 1, userId: 2,
+      }), { unarchived: false, notDecided: true }, out.status);
+    } finally { undecided.restore(); }
+  }
 });
 
 // ── A flow's own sessions (takeSlot / restSession / closeOwnSession) ─────

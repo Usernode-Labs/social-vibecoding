@@ -157,7 +157,10 @@ test('the pages: one pane at a time in the inbox, All communities one page, and 
   const all = read('public/css/app.css');
   assert.doesNotMatch(all, /MESSAGES' COLUMN IS ITS OWN LIST/);
   assert.doesNotMatch(css, /data-workshop-panes/, 'no column and page on All communities');
-  assert.match(css, /> :is\(#workshop-list, \[data-workshop-needs-door\], div:has\(> \[data-workshop-start\]\)\) \{\n    display: none;/, 'a search\'s answer is the whole list');
+  // #5296: a search's answer IS the one list, narrowed in place, so no CSS
+  // hides the list for it; the screen leaves Join and Start out itself.
+  assert.doesNotMatch(all, /data-workshop-results/, 'no second list for a search');
+  assert.match(read('frontend/src/features/workshop/index.tsx'), /\{rows !== null && !state\.error && !q \? \(/, 'a search\'s answer is the whole list');
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /if \(key === 'workshop' && sidebarRows\) \{\s*event\.preventDefault\(\);\s*if \(screen === 'workshop-screen'\) pressLitTab\(screen\);\s*else goToCommunity\(null\);/);
   // The places button has nothing to open beside the docked sidebar.

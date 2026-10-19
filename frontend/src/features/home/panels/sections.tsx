@@ -22,9 +22,12 @@
  *
  * ── `hidden` and the prerender ────────────────────────────────────────
  *
- * The hand-written shell shipped these sections WITHOUT `hidden`, empty. That
- * is what the prerendered document still contains and what the first client
- * render has to agree with, so `hidden` waits for `painted` — the flag that
+ * The hand-written shell shipped these sections WITHOUT `hidden`, empty. They
+ * still ship without it, holding a skeleton (#10, 19 Oct 2026: the empty
+ * section was a heading that grew by a block when the data landed, moving
+ * everything under it). That is what the prerendered document contains and
+ * what the first client render has to agree with, so `hidden` waits for
+ * `painted` — the flag that
  * separates "no render has happened yet" from "this render decided there is
  * nothing to show". Inferring it from a null block would put `hidden` on the
  * very first paint and mismatch hydration, which is a console error on #home
@@ -57,7 +60,7 @@ import { BrowseLink, SectionHeading, SeeAllLink, stampProps } from './ui';
  * its label down with it rather than leaving a label over a gap.
  */
 function Section({
-  id, slot, label, action, painted, stamps, children,
+  id, slot, label, action, painted, stamps, holdLabel = false, skeleton, children,
 }: {
   id: string;
   slot: string;
@@ -65,22 +68,58 @@ function Section({
   action?: ReactNode;
   painted: boolean;
   stamps?: PanelStamps;
+  /** Draw the label's box but not its words until the first paint. */
+  holdLabel?: boolean;
+  /** What stands in for the block until the first paint. */
+  skeleton: ReactNode;
   children: ReactNode;
 }) {
+  // PENDING until HomePanels' first paint (`painted`), which waits for both
+  // /api/home-panels and /api/apps (HomePanels.readyToPaint). The prerender
+  // is this state, so hydration matches. `home-section-pending` is what
+  // app.css holds at the height this device last drew the section at
+  // (../../../lib/first-paint-reserve.ts), and the skeleton's pulse is what the app's launch cover
+  // waits to see gone (public/js/native-chrome.js, `shellPainted`).
+  const pending = !painted;
   return (
     <section
       id={id}
       data-panel-slot={slot}
-      className={painted && !children ? 'hidden px-3 pb-3' : 'px-3 pb-3'}
+      className={pending ? 'home-section-pending px-3 pb-3' : children ? 'px-3 pb-3' : 'hidden px-3 pb-3'}
       {...stampProps(stamps)}
     >
       <SectionHeading action={action}>
-        {label}
+        {pending && holdLabel ? <span className="invisible">{label}</span> : label}
       </SectionHeading>
-      {children}
+      {pending ? skeleton : children}
     </section>
   );
 }
+
+/**
+ * The two skeletons, each the shape of what usually arrives: Discover's
+ * one-card lane (its empty card is 66px) and three challenge cards (the
+ * shared card is 104px, `gap-2.5` apart under a `pt-2`, as ./challenges.tsx
+ * lays them out). A device that has drawn Home before holds each section at
+ * the height it last drew instead (../../../lib/first-paint-reserve.ts and app.css), so these set
+ * the shape only for a first visit. Decorative: the grid's skeleton already
+ * says "Loading" to a screen reader once.
+ */
+const DISCOVER_SKELETON = (
+  <div className="animate-pulse" aria-hidden="true">
+    <div className="h-[66px] rounded-[0.875rem] bg-zinc-200/70 dark:bg-zinc-800/70" />
+  </div>
+);
+
+const CHALLENGES_SKELETON = (
+  <div className="home-panel-body pt-2 animate-pulse" aria-hidden="true">
+    <div className="flex flex-col gap-2.5">
+      <div className="h-[104px] rounded-3xl bg-zinc-200/70 dark:bg-zinc-800/70" />
+      <div className="h-[104px] rounded-3xl bg-zinc-200/70 dark:bg-zinc-800/70" />
+      <div className="h-[104px] rounded-3xl bg-zinc-200/70 dark:bg-zinc-800/70" />
+    </div>
+  </div>
+);
 
 /**
  * The sections as pure functions of the whole state, and the store-connected
@@ -110,6 +149,7 @@ export function DiscoverSectionView({ painted, discover }: HomePanelsState) {
       stamps={discover
         ? { featured: discover.featured.length, popular: discover.popular.length }
         : undefined}
+      skeleton={DISCOVER_SKELETON}
     >
       {discover ? <DiscoverPanel view={discover} /> : null}
     </Section>
@@ -127,14 +167,19 @@ export function DiscoverSectionView({ painted, discover }: HomePanelsState) {
 // WHY THIS CANNOT MISMATCH HYDRATION. The heading element is the same static
 // `h2.home-area-label` in every state; only its text and its link follow the
 // view, and both fall back to the prerender's own values while there is no
-// view: "Challenges" and no link. The view is null in the prerender and stays
-// null until HomePanels.render() pushes one after `/api/home-panels`
-// answers, which is long after hydration, the same moment the cards under the
-// heading appear. So the first client render draws exactly the document the
-// shell ships, and the content-named heading is an ordinary update after it.
-// It is also what the loading state looks like: "Challenges" with no link
-// until the data lands. (The counter that once rode here was dropped with the
-// season progress; see ./challenges.tsx.)
+// view: "Challenges", held invisible, and no link. The view is null in the
+// prerender and stays null until HomePanels.render() pushes one after
+// `/api/home-panels` and `/api/apps` answer, which is long after hydration,
+// the same moment the cards under the heading appear. So the first client
+// render draws exactly the document the shell ships, and the content-named
+// heading is an ordinary update after it.
+//
+// THE WORDS ARE HELD, NOT GUESSED (#10). The loading state used to SAY
+// "Challenges" and then switch to "Next challenges" or "First challenges"
+// when the view landed, a word change in the middle of the first screen. The
+// label keeps its box (so nothing moves) and shows no words until the view
+// says which. (The counter that once rode here was dropped with the season
+// progress; see ./challenges.tsx.)
 export function ChallengesSectionView({ painted, challenges }: HomePanelsState) {
   const t = useMessages('home');
   return (
@@ -144,6 +189,8 @@ export function ChallengesSectionView({ painted, challenges }: HomePanelsState) 
       label={challenges ? challenges.heading : t('home:challenges.heading')}
       action={challenges?.seeAll ? <SeeAllLink /> : null}
       painted={painted}
+      holdLabel
+      skeleton={CHALLENGES_SKELETON}
     >
       {challenges ? <ChallengesPanel view={challenges} /> : null}
     </Section>

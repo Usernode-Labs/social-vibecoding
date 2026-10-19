@@ -116,6 +116,11 @@ One additive **presentation** capability extends v4 the same way:
   status bar style: SV reads the capability as "the app takes the tone",
   and stops painting its web-side stopgap band under the status bar.
   Unprivileged and not persisted: see "Status-bar tone" below.
+- `shellPainted`: the shell keeps a launch cover over the web view until SV
+  says its first screen is drawn, then fades it out. Advertise it only on a
+  build that holds such a cover: SV reads the capability as "the app is
+  waiting for this", and sends nothing otherwise. Unprivileged: see "First
+  paint" below.
 
 ## Methods
 
@@ -508,6 +513,9 @@ boot and whenever the answer changes, and only with a changed value:
 - `"dark"` while the fullscreen staging preview (`#staging-overlay`, not
   docked and not under a session's chrome) or the before/after compare
   overlay (`#visual-compare-overlay`) is open;
+- otherwise `"dark"` on a project's pages, whose header wears its
+  community's colour (`data-community-tint` on `<html>`); every such colour
+  is fitted for white text, and the attribute is off inside a running app;
 - otherwise the running app's tone (`data-app-tone` on `<html>`), when an
   app is on screen;
 - otherwise `null`. The boot publish is `null` too, which also clears an
@@ -538,6 +546,60 @@ preview bar's safe-area band in the shell's ground colour (scoped to
 `html.in-native-webview`), so the theme's glyphs sit on the ground they were
 picked for. The first tone the app accepts puts `.native-status-bar-tone` on
 `<html>`, which retires that band for the rest of the document.
+
+### First paint (additive; `shellPainted`)
+
+#### `shellPainted({})` → resolves when received
+
+No arguments: the bridge sends `{}`. SV sends it **at most once per
+document**, from the top document of the trusted shell only, never from a
+framed copy or from an app.
+
+**The problem it solves.** A cold launch walked through six stages in about
+3.3 s: the native splash, a "Connecting" screen, a white frame, a blank
+frame, SV's skeleton with its header under the status bar, and Home
+settling (the header dropping, the tab bar renaming itself, rows inserted,
+artwork arriving a frame late). The app now keeps one cover up across all of
+them, and this call is what lets it go at the right moment rather than on a
+guess.
+
+SV calls it from `public/js/native-chrome.js` (`_initShellPainted`) when all
+of these hold:
+
+- the document is parsed (`DOMContentLoaded` has fired) and no boot hold is
+  up (the head's `first-session-boot` / `language-pending` classes);
+- no skeleton is on screen in a screen root: no `.animate-pulse` placeholder
+  inside a visible `<main>` intersects the viewport;
+- every `<img>` on screen in a screen root has finished loading or failing;
+- `env(safe-area-inset-top)`, read off a probe element's computed
+  `padding-top`, is greater than 0. Inside the app the web view can lay the
+  page out before it knows the inset, and that layout drew the header under
+  the clock.
+
+It then waits for the next paint (two `requestAnimationFrame`s, with a
+120 ms timer under them in case the web view produces no frames under the
+cover) and sends. **Whatever is still loading, it sends at the latest 1.5 s
+after `DOMContentLoaded`**, without waiting for a frame. A document that is
+never parsed sends nothing, which is what the app's own cap is for.
+
+The capability is read once, early, through `getBridgeInfo()`. A degraded
+probe is asked once more after 300 ms; still degraded, SV sends nothing.
+
+Producer requirements for a build that advertises the capability:
+
+- **Fade the cover out over 150 ms on receipt**, and never wait longer than
+  3 s for the call: a page that fails to boot must not leave the cover up.
+- **Resolve the call promptly** (any value; SV ignores it). The wrapper
+  rejects after 4 s and SV logs a `console.warn`, never a `console.error`.
+- **Idempotent, and per document.** A call with no cover up changes
+  nothing. A reload or a new document is a new launch only if the app put
+  the cover back up for it.
+- **Nothing else changes on receipt.** It is presentation state: it must not
+  affect auth, node lifecycle, or which code path runs.
+
+Builds without the capability lose nothing: SV feature-detects it via
+`getBridgeInfo().capabilities` and never calls it otherwise, so a browser,
+an older build and a framed copy run no probe and no polling.
 
 ### Chrome data (v2 — the app-as-SV-chrome surface)
 

@@ -26,6 +26,28 @@
  */
 
 const ImproveStatus = {
+  // THE APP A LAUNCH IS OPENING, from the launcher's cached record, until its
+  // own read lands and setAppOpen publishes the confirmed target (polish
+  // board #9, 19 Oct 2026). Opening an app from Home drew the header as
+  // "Homeroom" with a blank tile for the whole zoom, and named the app only
+  // once GET /api/apps/:slug answered. This carries only what the header
+  // draws, the app's name and icon: nothing it offers (sharing, its repo,
+  // reporting) is said until the read confirms it, and a read that fails
+  // clears it through setAppOpen as before. Only for the app the router is
+  // opening, so a late call cannot name another.
+  setPendingApp(record) {
+    const currentSlug = window.App?.currentApp;
+    if (!record || !record.slug || record.self_hosted || record.slug !== currentSlug) return;
+    window.Improve?.setTarget({
+      kind: 'app',
+      slug: record.slug,
+      name: record.name || record.slug,
+      iconUrl: record.icon_url || null,
+      iconEmoji: record.icon_emoji || null,
+      iconColor: record.icon_color || null,
+    });
+  },
+
   // The header's App/Dev switch rides the SAME lifecycle, which is why
   // it's owned here rather than in a seventh place: this one call
   // already covers openApp, navigateHome, AppView.close() and all six

@@ -585,6 +585,17 @@ function notificationsRoutes(config) {
   // hand back `nextBefore` (the cursor for the next page) and `hasMore`.
   // The unread count is omitted on paginated follow-up requests (it's a
   // whole-account aggregate the client already has from the first page).
+  //
+  // #5527: `?unread=1` pages UNREAD rows only, on the same keyset cursor.
+  // The bell's Unread tab walks it to fill its list up to the badge, and
+  // the query's filters are exactly countUnread's (see listForUser) — so a
+  // page of "what the bell is counting" can never disagree with the badge.
+  // With it set, `kind` is ignored (the Unread list spans every kind) and
+  // the response is a follow-up page: notifications, hasMore and
+  // nextBefore only. The aggregate block below changes from `if (!before)`
+  // to `if (!before && !unreadOnly)` — no unread, invites, saved lists,
+  // badge sync or staging mocks, which are first-page concerns and here
+  // would only re-send what the client already has.
   router.get('/api/notifications', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     res.set('Cache-Control', 'private, no-store');
@@ -610,11 +621,12 @@ function notificationsRoutes(config) {
       // rather than a free list of kinds: the client does not get to select
       // arbitrary rows out of its own feed, and the grouping stays defined in
       // one place (services/notifications.js).
-      const kinds = req.query.kind === 'conversation'
+      const unreadOnly = req.query.unread === '1';
+      const kinds = !unreadOnly && req.query.kind === 'conversation'
         ? [...notifications.CONVERSATION_NOTIFICATION_KINDS]
         : null;
 
-      const rows = await notifications.listForUser(pool, req.user.id, { limit, before, kinds });
+      const rows = await notifications.listForUser(pool, req.user.id, { limit, before, kinds, unreadOnly });
       const serialized = rows.map(notifications.serialize);
 
       const hasMore = rows.length === limit;
@@ -630,7 +642,7 @@ function notificationsRoutes(config) {
         hasMore,
         nextBefore,
       };
-      if (!before) {
+      if (!before && !unreadOnly) {
         // #18: and how many of those are plain messages, which the bell
         // leaves to the Messages tab (services/notifications.js).
         Object.assign(payload, await notifications.countUnreadSplit(pool, req.user.id));

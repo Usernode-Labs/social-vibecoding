@@ -1241,6 +1241,25 @@ export function WaitlistScreen() {
           >
             {t('auth:waitlist.submit')}
           </Button>
+          {/*
+              #5092: what joining stores, and where the privacy notice is,
+              right under the button that stores it. The link arrives with
+              the options (privacy_link, src/services/marketing-links.js);
+              until then, as in the prerender, the words carry no link, the
+              same as TermsNotice on the sign-in screens.
+          */}
+          <p className="text-[13px] text-zinc-500 dark:text-zinc-400">
+            <RichMessage id="auth:waitlist.privacy" components={[
+            options?.privacy_link ? (
+              <a
+                href={options.privacy_link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-200"
+              />
+            ) : <></>,
+            ]} />
+          </p>
         </form>
         <p id="waitlist-msg" className={msgClass(msg ? msg.tone : null)}>
           {msg ? msg.text : null}
