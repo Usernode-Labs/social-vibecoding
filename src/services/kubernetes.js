@@ -2453,6 +2453,21 @@ async function getPlatformDeployStatus(config, { timeoutMs = 3000 } = {}) {
   } finally { clearTimeout(timer); }
 }
 
+// Read one Pod of this installation's own namespace: the platform reads its
+// own at boot for what ended its last container (platform-release.js
+// recordPodExit). Bounded like the rollout read above, so a slow API server
+// cannot hold a boot step open. The chart's rollout-reader Role grants `get`
+// on pods there (deploy/helm/social-vibecoding-platform/templates/rollout-rbac.yaml).
+async function readPlatformPod({ name, namespace, timeoutMs = 5000 }) {
+  let timer;
+  try {
+    return await Promise.race([
+      getClients().core.readNamespacedPod({ name, namespace }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Platform pod read timed out')), timeoutMs); }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+
 function readyPod(pod) {
   return (pod.status?.conditions || []).some((condition) =>
     condition.type === 'Ready' && condition.status === 'True'
@@ -3655,7 +3670,7 @@ module.exports = {
   workerIdentity, deleteWorkerIdentity, workerIdentityGone, listWorkers, cloneWorkerVolume,
   listWorkerVolumes, listPreviews, listShotsRuntimes, isQuotaExceeded,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
-  stopCheckJobs,
+  readPlatformPod, stopCheckJobs,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum, _upsertForTest: upsert,
   _packageRunsScriptForTest: packageRunsScript,
   _attachLineObserverForTest: attachLineObserver,

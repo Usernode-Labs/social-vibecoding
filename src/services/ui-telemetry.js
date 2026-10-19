@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const events = require('./events');
 const usernames = require('./usernames');
 const leftOut = require('./journey-left-out');
+const { scrubText } = require('./platform-signal-evidence');
 
 const MAX_BATCH_EVENTS = 25;
 const MAX_BODY_BYTES = 32 * 1024;
@@ -67,6 +68,11 @@ const KINDS = Object.freeze(new Set([
   // real screen the shell showed, or shell_boot when none did before it
   // ended.
   'page_load',
+  // A script error after boot (platform signals, wave 2): a fixed name, a
+  // placeholder-only template, this origin's own frame and their hash, on
+  // the screen showing. services/signal-observers/client-errors.js files
+  // the ones several visits hit; topic-figures.js counts the visits.
+  'client_error',
 ]));
 const OUTCOMES = Object.freeze(new Set(['success', 'failure', 'cancelled']));
 const ERROR_CODES = Object.freeze(new Set([
@@ -79,8 +85,131 @@ const ERROR_CODES = Object.freeze(new Set([
 const EVENT_KEYS = Object.freeze([
   'id', 'visitId', 'attemptId', 'kind', 'screen', 'action', 'outcome',
   'errorCode', 'durationMs', 'appSlug', 'build', 'occurredAt', 'sequence',
-  'via',
+  'via', 'errorName', 'template', 'frame',
 ]);
+
+// ── client_error ────────────────────────────────────────────────────────
+//
+// Exactly these fields, and nothing a person could have typed except the
+// template, which arrives with every value already a placeholder and is
+// made so again here before it is stored: the request a run of them files
+// (signal-observers/client-errors.js) is public. Keep the name list, the
+// two patterns, the template rules and the code identical with
+// public/js/ui-telemetry.js (tests/client-errors.test.js holds them to each
+// other).
+const CLIENT_ERROR_KEYS = Object.freeze([
+  'id', 'visitId', 'kind', 'screen', 'errorCode', 'errorName', 'template', 'frame',
+  'build', 'occurredAt', 'sequence',
+]);
+const CLIENT_ERROR_ONLY_KEYS = Object.freeze(['errorName', 'template', 'frame']);
+const CLIENT_ERROR_NAMES = Object.freeze(new Set([
+  'Error', 'TypeError', 'ReferenceError', 'RangeError', 'SyntaxError',
+  'EvalError', 'URIError', 'AggregateError', 'InternalError', 'DOMException',
+  'AbortError', 'NotAllowedError', 'NotFoundError', 'NotSupportedError',
+  'InvalidStateError', 'SecurityError', 'QuotaExceededError', 'NetworkError',
+  'TimeoutError', 'DataCloneError', 'InvalidAccessError',
+  'HierarchyRequestError', 'InvalidCharacterError', 'NotReadableError',
+  'OperationError',
+]));
+const CLIENT_ERROR_CODE_RE = /^js_[a-z0-9]{6,16}$/;
+// The first frame in this origin's own scripts, without origin, build
+// prefix or query: `/js/app.js:12:34`, `/shell/assets/shell.js:1:2345`.
+const CLIENT_ERROR_FRAME_RE = /^\/(?:js|shell\/assets)\/[A-Za-z0-9_.\/-]{1,160}:\d{1,7}:\d{1,7}$/;
+const MAX_TEMPLATE_CHARS = 120;
+
+function isClientErrorFrame(value) {
+  return typeof value === 'string' && CLIENT_ERROR_FRAME_RE.test(value)
+    && !value.includes('..') && !value.includes('//');
+}
+
+// Lone surrogates out: Postgres refuses them in jsonb.
+function wellFormed(text) {
+  let out = '';
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff) {
+      const d = text.charCodeAt(i + 1);
+      if (d >= 0xdc00 && d <= 0xdfff) { out += text[i] + text[i + 1]; i += 1; }
+      continue;
+    }
+    if (c >= 0xdc00 && c <= 0xdfff) continue;
+    out += text[i];
+  }
+  return out;
+}
+
+function clipTemplate(text) {
+  return text.length > MAX_TEMPLATE_CHARS
+    ? `${wellFormed(text.slice(0, MAX_TEMPLATE_CHARS - 1))}\u2026` : text;
+}
+
+function templatePass(text) {
+  let out = text
+    // Control, bidi and zero-width characters say nothing about an error.
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2069\ufeff]/g, ' ')
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s'"`<>]+/gi, '[url]')
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email]')
+    .replace(/"[^"]*"/g, '[string]')
+    .replace(/`[^`]*`/g, '[string]')
+    .replace(/[\u201c\u2018][^\u201d\u2019]*[\u201d\u2019]/g, '[string]');
+  // A single quote opens a string only where it is not an apostrophe
+  // ("can't"); repeated, because a replaced string can open the next.
+  for (let i = 0; i < 20; i += 1) {
+    const next = out.replace(/(^|[^A-Za-z0-9])'[^']*'/g, '$1[string]');
+    if (next === out) break;
+    out = next;
+  }
+  out = out
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '[id]')
+    .replace(/\b0x[0-9a-f]+\b/gi, '[hex]')
+    .replace(/\b(?=[a-f]*\d)[0-9a-f]{6,}\b/gi, '[hex]')
+    .replace(/(^|[^A-Za-z0-9])\d+(?:[.,]\d+)*/g, '$1[number]')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return clipTemplate(wellFormed(out));
+}
+
+/** Pure: an error's message as a template, placeholders for every value. */
+function normalizeErrorTemplate(raw) {
+  let out = templatePass(wellFormed(String(raw == null ? '' : raw).slice(0, 2000)));
+  for (let i = 0; i < 3; i += 1) {
+    const next = templatePass(out);
+    if (next === out) break;
+    out = next;
+  }
+  return out;
+}
+
+/** Pure: a short stable hash (cyrb53, base 36, 11 characters). */
+function errorHash(text) {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+  h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+  h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36).padStart(11, '0');
+}
+
+/**
+ * Pure: the code a script error is grouped by: its name, its template and
+ * its frame's file (never the line and column, which move with every build
+ * of the shell bundle, so one bug keeps one code across releases).
+ */
+function clientErrorCode(errorName, template, frame) {
+  const path = String(frame || '').replace(/:\d+:\d+$/, '');
+  return `js_${errorHash(`${errorName}|${template}|${path}`)}`;
+}
+
+/** Pure: the template as stored: normalized again, scrubbed, bounded. */
+function storedErrorTemplate(raw) {
+  return clipTemplate(wellFormed(scrubText(normalizeErrorTemplate(raw)).replace(/\s+/g, ' ').trim()));
+}
 
 class TelemetryValidationError extends Error {}
 
@@ -172,9 +301,71 @@ function eventTimestamp(value, nowMs) {
   return new Date(ms).toISOString();
 }
 
+// A script error after boot: its own fields, and none of an attempt's.
+function parseClientError(value, index, nowMs) {
+  const label = `events[${index}]`;
+  exactKeys(value, CLIENT_ERROR_KEYS, label);
+  const screen = oneOf(value.screen, SCREENS, `${label}.screen`);
+  if (typeof value.errorCode !== 'string' || !CLIENT_ERROR_CODE_RE.test(value.errorCode)) {
+    throw new TelemetryValidationError(`${label}.errorCode is not a script error code`);
+  }
+  const errorName = oneOf(value.errorName, CLIENT_ERROR_NAMES, `${label}.errorName`);
+  if (typeof value.template !== 'string' || value.template.length > MAX_TEMPLATE_CHARS) {
+    throw new TelemetryValidationError(`${label}.template must be at most ${MAX_TEMPLATE_CHARS} characters`);
+  }
+  let frame = null;
+  if (value.frame != null) {
+    if (!isClientErrorFrame(value.frame)) {
+      throw new TelemetryValidationError(`${label}.frame must be a frame in this origin's own scripts`);
+    }
+    frame = value.frame;
+  }
+  const template = storedErrorTemplate(value.template);
+  // The code is the collector's own, from what it was sent (before the
+  // scrub, as the client computed it), so a client cannot file one error
+  // under another's code. An honest client sent this same code; one whose
+  // copy of the rules drifted is regrouped here rather than refused, which
+  // would drop its whole batch.
+  const errorCode = clientErrorCode(errorName, normalizeErrorTemplate(value.template), frame);
+  if (!template && !frame) {
+    throw new TelemetryValidationError('client_error requires a template or a frame');
+  }
+  let build = null;
+  if (value.build != null) {
+    if (typeof value.build !== 'string' || !BUILD_RE.test(value.build)) {
+      throw new TelemetryValidationError(`${label}.build is invalid`);
+    }
+    build = value.build;
+  }
+  return {
+    eventId: opaqueId(value.id, `${label}.id`),
+    visitId: opaqueId(value.visitId, `${label}.visitId`),
+    attemptId: null,
+    kind: 'client_error',
+    screen,
+    action: null,
+    outcome: null,
+    errorCode,
+    durationMs: null,
+    appSlug: null,
+    build,
+    occurredAt: eventTimestamp(value.occurredAt, nowMs),
+    sequence: integer(value.sequence, `${label}.sequence`, 1, 1_000_000),
+    via: null,
+    errorName,
+    template,
+    frame,
+  };
+}
+
 function parseEvent(value, index, nowMs) {
   exactKeys(value, EVENT_KEYS, `events[${index}]`);
   const kind = oneOf(value.kind, KINDS, `events[${index}].kind`);
+  if (kind === 'client_error') return parseClientError(value, index, nowMs);
+  const scriptOnly = CLIENT_ERROR_ONLY_KEYS.find((key) => value[key] != null);
+  if (scriptOnly) {
+    throw new TelemetryValidationError(`${scriptOnly} is only valid on a client_error`);
+  }
   const screen = oneOf(value.screen, SCREENS, `events[${index}].screen`);
   const action = oneOf(value.action, ACTIONS, `events[${index}].action`, true);
   const outcome = oneOf(value.outcome, OUTCOMES, `events[${index}].outcome`, true);
@@ -312,7 +503,8 @@ function eventMetadata(event, language = null) {
     screen: event.screen,
     sequence: event.sequence,
   };
-  for (const key of ['attemptId', 'action', 'outcome', 'errorCode', 'durationMs', 'build', 'via']) {
+  for (const key of ['attemptId', 'action', 'outcome', 'errorCode', 'durationMs', 'build', 'via',
+    'errorName', 'template', 'frame']) {
     if (event[key] != null) metadata[key] = event[key];
   }
   // Once per shell start is all browserLanguages() reads.
@@ -729,6 +921,10 @@ async function aggregate(pool, { days = 14, includeAdmins = false } = {}) {
 
 module.exports = {
   ACTIONS,
+  CLIENT_ERROR_CODE_RE,
+  CLIENT_ERROR_FRAME_RE,
+  CLIENT_ERROR_NAMES,
+  MAX_TEMPLATE_CHARS,
   JOURNEY_SCREENS,
   NAV_SCREENS,
   VIAS,
@@ -746,8 +942,11 @@ module.exports = {
   insertBatch,
   isEligibleUser,
   isRecordable,
+  clientErrorCode,
+  normalizeErrorTemplate,
   parseBatch,
   pageLoads,
   recordServerFailure,
   safeServerError,
+  storedErrorTemplate,
 };

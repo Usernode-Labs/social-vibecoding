@@ -573,6 +573,16 @@ async function sendDm(pool, {
   // A "ready to try" says whether others approve it (contract 2.2's ready_group).
   const group = story === 'ready' && metadata && !metadata.said && !metadata.firstVersion && metadata.appSlug
     && !metadata.ready ? await hasOthers(pool, null, metadata.appSlug) : false;
+  // #5582: a ringing message about a request whose sender passed no title
+  // names it by the request's own one, so the bell says which request it is
+  // and not just "Request #5580". A first version keeps naming the project.
+  const title = story && wantsStoryTitle(metadata) ? await titleForStory(pool, metadata) : null;
+  if (title) metadata = { ...metadata, issueTitle: title };
+  if (title && hello?.metadata && wantsStoryTitle(hello.metadata)
+    && hello.metadata.appSlug === metadata.appSlug
+    && Number(hello.metadata.issueNumber) === Number(metadata.issueNumber)) {
+    hello = { ...hello, metadata: { ...hello.metadata, issueTitle: title } };
+  }
   const stored = metadata
     ? storyMetadata(group ? { ...metadata, group: true } : metadata, { moment: story, threadRootId: root })
     : null;
@@ -899,6 +909,44 @@ async function requestTitleFor(pool, app, issueNumber, deps = {}) {
     log.warn('homeroom-bot-dm', 'Could not look up a request\'s title', { app: app?.slug, issueNumber: n, err: err.message });
     return null;
   }
+}
+
+/**
+ * #5582: a request's title for a message about it whose sender passed none
+ * (sendPlanCard's card does): the requester row's cached one, else
+ * requestTitleFor (Homeroom's own copy of the request, else GitHub's, cached
+ * on the requester row from then on). Null when neither has one or the
+ * lookup fails: the send is never blocked by it.
+ */
+async function titleForStory(pool, metadata) {
+  const n = Number(metadata?.issueNumber);
+  if (!metadata?.appSlug || !Number.isInteger(n) || n <= 0) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT a.id, a.repo_url, q.issue_title
+         FROM apps a LEFT JOIN homeroom_bot_requesters q ON q.app_id = a.id AND q.issue_number = $2
+        WHERE a.slug = $1`,
+      [metadata.appSlug, n],
+    );
+    const row = rows[0];
+    if (!row) return null;
+    const cached = row.issue_title ? clip(String(row.issue_title).trim(), 300) : null;
+    if (cached) return cached;
+    return row.id ? await requestTitleFor(pool, { id: row.id, repo_url: row.repo_url }, n) : null;
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not look up a story\'s request title', { app: metadata.appSlug, issueNumber: n, err: err.message });
+    return null;
+  }
+}
+
+/** Whether a message about a request still wants its title filled in. */
+function wantsStoryTitle(metadata) {
+  return !!metadata
+    && Number.isInteger(Number(metadata.issueNumber)) && Number(metadata.issueNumber) > 0
+    && !!metadata.appSlug
+    && !metadata.firstVersion
+    && !metadata.issueTitle
+    && !('requestTitle' in metadata);
 }
 
 /**
@@ -2012,7 +2060,12 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
     content: planCardText({ appName: name, plan: { bullets: plan.bullets, questions, complicated }, issueNumber }),
     idempotencyKey: `hrbot-plan-${runId}`,
     metadata: {
-      kind: PLAN_KIND, appSlug: app.slug, appName: name, issueNumber: Number(issueNumber), firstVersion: !complicated,
+      kind: PLAN_KIND, appSlug: app.slug, appName: name, issueNumber: Number(issueNumber),
+      // #5582: a complicated plan on an existing project names its request
+      // when the requester row has its title, and sendDm's lookup covers it
+      // when it does not.
+      ...(complicated && requester.issueTitle ? { issueTitle: requester.issueTitle } : {}),
+      firstVersion: !complicated,
       plan: {
         bullets: plan.bullets, questions,
         ...(complicated ? { complicated: true, ...(plan.spec ? { spec: plan.spec } : {}) } : {}),

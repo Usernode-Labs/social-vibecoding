@@ -442,6 +442,10 @@ async function alertingSilent(pool, { now = Date.now() } = {}) {
 
 // ── All of them ─────────────────────────────────────────────────────────
 
+// Wave 2's detectors, one module each under signal-observers/, loaded when
+// they run so a broken one costs only its own kinds.
+const lazy = (file) => (pool, opts) => require(`./signal-observers/${file}`).run(pool, opts);
+
 const OBSERVERS = Object.freeze([
   { kinds: ['checks_not_change'], run: checksNotChange },
   { kinds: ['checks_platform_fault'], run: checksPlatformFault },
@@ -451,6 +455,13 @@ const OBSERVERS = Object.freeze([
   { kinds: ['limit'], run: limitsFull },
   { kinds: ['project_deploys'], run: projectDeploys },
   { kinds: ['alerting_silent'], run: alertingSilent },
+  { kinds: ['server_errors'], run: lazy('server-errors') },
+  { kinds: ['client_errors'], run: lazy('client-errors') },
+  { kinds: ['homeroom_crash'], run: lazy('homeroom-crashes') },
+  { kinds: ['project_down'], run: lazy('project-down') },
+  { kinds: ['bot_health'], run: lazy('bot-health') },
+  { kinds: ['figure_off_target'], run: lazy('figures-off-target') },
+  { kinds: ['turn_recovery_gave_up'], run: lazy('turn-recovery') },
 ]);
 
 /**

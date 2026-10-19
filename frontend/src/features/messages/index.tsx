@@ -2949,6 +2949,22 @@ export function AppReplyThreadPane({ slug, rootId, ready, readOnly, where, close
  * `messages-layout` carries the thread's surface tokens; it is not this
  * screen's strip, so none of the strip's own classes come with it.
  */
+/**
+ * A room on its way, as the room says it itself (ConversationThread's own
+ * loading row, in its scroller). A project's channel shows it from its first
+ * frame until its messages are in, so the channel loads in one state rather
+ * than a card skeleton, then "#general" over "Loading messages…", then its
+ * messages (polish board #19).
+ */
+export function ChannelLoading(): ReactNode {
+  const t = useMessages('messages');
+  return (
+    <div className="messages-thread-scroll" data-channel-loading="">
+      <div className="messages-state"><span className="messages-spinner" />{t('messages:thread.loading')}</div>
+    </div>
+  );
+}
+
 export function EmbeddedConversation({ conversationId, active, at = null }: {
   conversationId: number;
   active: boolean;
@@ -2983,7 +2999,7 @@ export function EmbeddedConversation({ conversationId, active, at = null }: {
   }, [at]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className={`messages-layout messages-layout-embedded${here && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}`}>
-      {here ? <ConversationThread embedded /> : null}
+      {here ? <ConversationThread embedded /> : <ChannelLoading />}
       {here && snap.route.threadRootId ? <ReplyThreadPanel /> : null}
     </div>
   );

@@ -710,3 +710,22 @@ test('the thread\'s header and the bot\'s own words wear the number\'s colour to
   // The tag's own ink is the same four values, so the two never drift apart.
   assert.match(read(STRIP), /bg-\[hsl\(var\(--req-h\)_80%_92%\)\] text-\[hsl\(var\(--req-h\)_70%_26%\)\] dark:bg-\[hsl\(var\(--req-h\)_35%_25%\)\] dark:text-\[hsl\(var\(--req-h\)_80%_82%\)\]/);
 });
+
+// ── Polish board #22 (19 Oct 2026): the ••• menu's dismiss rules ─────────
+
+test('the Activity drawer closes on a press outside and on Escape, which hands focus back to its bar', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', STRIP), 'utf8');
+  const view = src.slice(src.indexOf('export function BotStripView('), src.indexOf('/** The strip in the chat with Homeroom bot'));
+  assert.match(view, /useDismiss\(open, \[sectionRef\], \(\) => choose\(false\)\);/, 'the ••• menu\'s hook (message-actions/use-dismiss.ts)');
+  assert.match(view, /if \(event\.key === 'Escape' && sectionRef\.current\?\.contains\(document\.activeElement\)\) \{\s*toggleRef\.current\?\.focus\(\{ preventScroll: true \}\);/);
+  assert.match(view, /<section ref=\{sectionRef\} className="relative z-20 shrink-0"/);
+  assert.match(view, /ref=\{toggleRef\}[\s\S]{0,400}focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500/,
+    'the shell\'s focus ring, not the browser\'s');
+  // The bar draws nothing until the tray has something to say. Every hook is
+  // above that return: one below it changed the hook count when the tray
+  // landed, and the chat's pane threw (caught by the declared checks on
+  // #messages/910005 before this proposal was promoted).
+  const early = view.indexOf('if (!parts.length) return null;');
+  assert.ok(early > 0);
+  assert.doesNotMatch(view.slice(early), /\buse[A-Z]\w*\(/, 'no hook after the early return');
+});

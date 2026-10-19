@@ -899,7 +899,7 @@ test('render: a registry illustration takes the kind icon’s place in the tile'
     panels: [panel({ challenges: [challenge({ icon: '🐞', illustration })] })],
   }).html);
   const card = withArt('useful-feedback');
-  assert.match(card, /<img src="\/illustrations\/challenges\/useful-feedback\.svg" alt="" draggable="false" class="object-contain"\/>/,
+  assert.match(card, /<img src="\/illustrations\/challenges\/useful-feedback\.svg" alt="" width="64" height="64" decoding="sync" draggable="false" class="object-contain"\/>/,
     'the artwork, from the same-origin static path');
   assert.match(card, /home-tone-orange bg-\[var\(--tint-art\)\] dark:bg-\[var\(--tint-art\)\]/, 'on its pale tone');
   assert.doesNotMatch(card, /🐞/, 'in place of the kind icon');
@@ -917,7 +917,7 @@ test('render: a registry illustration takes the kind icon’s place in the tile'
     panels: [panel({ challenges: [challenge({ icon: '🐞', illustration: `u-${HEX}`, illustration_tone: tone })] })],
   }).html);
   const onTone = uploadedCard('yellow');
-  assert.ok(onTone.includes(`<img src="/challenge-illustrations/${HEX}" alt="" draggable="false" class="object-contain"/>`),
+  assert.ok(onTone.includes(`<img src="/challenge-illustrations/${HEX}" alt="" width="64" height="64" decoding="sync" draggable="false" class="object-contain"/>`),
     'the upload, from its derived path');
   assert.match(onTone, /home-tone-yellow bg-\[var\(--tint-art\)\] dark:bg-\[var\(--tint-art\)\]/, 'on the payload tone');
   assert.doesNotMatch(onTone, /🐞/, 'in place of the kind icon');
@@ -994,14 +994,17 @@ test('render: See all replaces "Open challenges" and the in-place toggle', () =>
 
 // Prerender safety: the section is prerendered with no view, and the first
 // client render must agree with that document. The heading's element is the
-// same in every state; before a view exists it says "Challenges" with no
-// link, which is what the prerender says too.
+// same in every state; before a view exists it holds "Challenges" invisible
+// (#10: the words used to switch to "Next challenges" as the view landed)
+// with no link, which is what the prerender holds too. The skeleton under it
+// is tests/home-first-paint.test.js's.
 test('the heading is the prerender\'s own until the data lands', () => {
   const mod = loadTsx(SECTIONS);
   const before = renderToHtml(createElement(mod.ChallengesSectionView, { painted: false, discover: null, challenges: null }));
-  assert.match(before, /^<section id="home-challenges-section" data-panel-slot="challenges" class="px-3 pb-3">/,
+  assert.match(before, /^<section id="home-challenges-section" data-panel-slot="challenges" class="home-section-pending px-3 pb-3">/,
     'not hidden before the first paint');
-  assert.match(headingOf(before), />Challenges<\/span><\/h2>$/, 'the constant label, and no link');
+  assert.match(headingOf(before), /><span class="invisible">Challenges<\/span><\/span><\/h2>$/,
+    'the constant label, its words held, and no link');
   assert.doesNotMatch(before, /home-panel-see-all|<article/);
   const [, sections] = PANEL_SOURCES.find(([n]) => n.endsWith('sections.tsx'));
   assert.match(sections,
@@ -1055,9 +1058,24 @@ test('render: nothing at all when signed out or unloaded', () => {
     assert.ok(host._classes.has('hidden'), `${host.dataset.panelSlot} host hidden`);
   }
 
-  // Data not loaded yet — absent, never a skeleton flash.
+  // Data not loaded yet: no block, and not hidden either. The section holds
+  // its skeleton at the height this device last drew it (#10,
+  // tests/home-first-paint.test.js): hiding it and showing it again when the
+  // data landed was the jump.
   const unloaded = renderWith(null);
-  assert.equal(blocksOf(unloaded.html), '');
+  assert.doesNotMatch(unloaded.html, /<article/);
+  for (const host of unloaded.hosts) {
+    assert.ok(!host._classes.has('hidden'), `${host.dataset.panelSlot} host not hidden while it waits`);
+  }
+
+  // Answered with nothing (a failed read keeps no copy): absent and hidden.
+  const failed = renderWith(null);
+  failed.HP._answered = true;
+  failed.rerender();
+  assert.equal(blocksOf(failed.rerender()), '');
+  for (const host of failed.hosts) {
+    assert.ok(host._classes.has('hidden'), `${host.dataset.panelSlot} host hidden once the read failed`);
+  }
 
 });
 

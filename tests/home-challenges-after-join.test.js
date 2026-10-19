@@ -163,7 +163,9 @@ function makeHome({ joinOk = true, holdPanels = false } = {}) {
   Home.load = async () => { counts.load += 1; };
   bus.addEventListener('sv:membership-changed', (e) => events.push(e.detail));
 
-  // Home has drawn the block once, a moment ago: inside its minute.
+  // Home has drawn the block once, a moment ago: inside its minute. Its
+  // apps are in too, which the block's first paint waits for (#10).
+  Home._appsLoaded = true;
   HP._data = panelsPayload(false);
   HP._fetchedAt = Date.now();
   HP.render();

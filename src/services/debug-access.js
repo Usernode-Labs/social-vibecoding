@@ -156,6 +156,11 @@ const DENIED_COLUMNS = {
     'input_hash',
     'normalized_input',
   ],
+  server_error_minutes: [
+    // One scrubbed 5xx message per route and minute: it can still carry
+    // what a person sent (services/server-error-counts.js).
+    'sample',
+  ],
   platform_signals: [
     // Raw evidence behind a problem the platform found in itself (log
     // lines, ids, a project's own build output): full admins read it on the

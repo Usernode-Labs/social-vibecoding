@@ -54,8 +54,9 @@
  *
  * ── Loading and failure ───────────────────────────────────────────────
  *
- * Until the first read lands the section shows its heading alone
- * ("Challenges", no link), as it always has; there is no skeleton. A failed
+ * Until the first paint (both the panels' read and the apps') the section
+ * holds its heading's box with no words and three card skeletons, at the
+ * height this device last drew it (./sections.tsx, ../../../lib/first-paint-reserve.ts). A failed
  * read keeps no copy, so the section is hidden (HomePanels.ensureLoaded is
  * silent on failure); there is no error state to draw.
  */
