@@ -188,8 +188,9 @@ test('the moved control keeps the ids app.css draws it with', () => {
 
 // THE UI OVERHAUL made Theme the first setting and the default section. The
 // settings restructure made Account the default page (Profile leads it) and
-// gave Theme the head of the Appearance page, in Preferences, where the
-// developer console's switch joins it.
+// gave Theme the head of the Appearance page, in Preferences. #5285 moved
+// the developer console's switch and the admin preview to a Developer page,
+// so Appearance is the theme and the desktop sidebar switch alone.
 test('theme leads the Appearance page in Preferences', () => {
   const settings = fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'),
@@ -289,6 +290,23 @@ test('the control drives the caret through the CSS custom property', () => {
     'reading Theme.get() during render would mismatch the prerendered markup');
   assert.match(body, /if \(!track \|\| mode === null\) return/,
     'and the caret index must not be written until a mode is actually known');
+});
+
+// #5285: the chosen segment was a white face on the light track, white on
+// zinc-100, and hardly showed. It wears the lit tokens now (the palette's
+// "where you are"), which every theme defines, and the caret under it the
+// lit ink.
+test('the chosen segment and its caret wear the lit tokens', () => {
+  const css = read('css', 'app.css');
+  const rule = /\.theme-seg\.theme-seg-active \{([^}]*)\}/.exec(css);
+  assert.ok(rule, '.theme-seg.theme-seg-active rule located');
+  assert.match(rule[1], /background:\s*var\(--lit-tint\)/, 'filled with the lit tint');
+  assert.match(rule[1], /color:\s*var\(--lit-ink\)/, 'labelled in the lit ink');
+  assert.match(rule[1], /box-shadow:\s*inset 0 0 0 1px var\(--lit-line\)/, 'ringed by the lit line');
+  assert.doesNotMatch(rule[1], /var\(--bg-primary\)/, 'no longer the page colour, which vanished on light');
+  const caret = /#drawer-theme-caret::after \{([^}]*)\}/.exec(css);
+  assert.ok(caret, 'caret arrow rule located');
+  assert.match(caret[1], /border-bottom:\s*4px solid var\(--lit-ink\)/, 'the caret points in the same ink');
 });
 
 test('the caret is a CSS transform with a reduced-motion escape hatch', () => {

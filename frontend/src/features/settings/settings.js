@@ -291,7 +291,7 @@
     // real platform admin). Those gates live in their _render* methods and
     // are read here, never duplicated. A page is offered while any of its
     // parts is. A gated part that is a page of its own hides exactly one row;
-    // one that shares a page (Admin preview, on Appearance) hides only its
+    // one that shares a page (Admin preview, on Developer) hides only its
     // own block, and its address opens that page either way.
     SECTIONS: [
       // ── Account ─────────────────────────────────────────────────────────
@@ -330,16 +330,14 @@
       { key: 'experimental', label: 'settings:nav.part.experimental', group: 'settings:nav.group.aiBuilding' },
 
       // ── Preferences ─────────────────────────────────────────────────────
-      // THE UI OVERHAUL moved Theme here out of the hamburger drawer. The
-      // developer console's switch and the admin preview are the same kind of
-      // setting — what the shell shows on this device — so they share its
-      // page. Admin preview is gated to real admins; for everyone else its
-      // wrapper is empty and the page is Theme and the console switch. It had
-      // a group of its own, which put an "Admin" heading directly above the
-      // footer's own Admin block.
+      // THE UI OVERHAUL moved Theme here out of the hamburger drawer.
+      // Appearance is how the shell looks: the theme and, on a desktop, the
+      // sidebar beside a running app (both in sections/theme.tsx). #5285
+      // took the developer console's switch and the admin preview off it:
+      // they are tools for people building and running Homeroom, and next to
+      // the theme they read as part of choosing a look. They are the
+      // Developer page now, at the end of this group.
       { key: 'theme', label: 'settings:nav.part.theme', group: 'settings:nav.group.preferences', page: 'theme' },
-      { key: 'dev-console', label: 'settings:nav.part.devConsole', group: 'settings:nav.group.preferences', page: 'theme' },
-      { key: 'admin-preview', label: 'settings:nav.part.adminPreview', group: 'settings:nav.group.preferences', page: 'theme', gate: 'settings-admin-section' },
       // #3969: text size and high contrast — the other controls about how
       // the shell reads on this device. Their own page of one part, right
       // after Appearance, so they are visible without opening Appearance
@@ -358,6 +356,15 @@
       { key: 'app-permissions', label: 'settings:nav.part.appPermissions', group: 'settings:nav.group.preferences', page: 'app-permissions' },
       { key: 'app-ai', label: 'settings:nav.part.appAi', group: 'settings:nav.group.preferences', page: 'app-permissions' },
       { key: 'blocked-apps', label: 'settings:nav.part.blockedApps', group: 'settings:nav.group.preferences', page: 'app-permissions' },
+      // #5285: the developer tools, off Appearance. The console switch is
+      // offered to everyone, so the page always has a row; Admin preview is
+      // gated to real admins, and for everyone else its wrapper is empty and
+      // the page is the console switch alone. It is never the page's first
+      // part, so the page's address and title never depend on the gate. It
+      // had a group of its own once, which put an "Admin" heading directly
+      // above the footer's own Admin block; it stays in Preferences.
+      { key: 'dev-console', label: 'settings:nav.part.devConsole', group: 'settings:nav.group.preferences', page: 'developer' },
+      { key: 'admin-preview', label: 'settings:nav.part.adminPreview', group: 'settings:nav.group.preferences', page: 'developer', gate: 'settings-admin-section' },
 
       // ── Help & about ────────────────────────────────────────────────────
       // Panes you come to read or replay rather than configure. The welcome
@@ -378,6 +385,7 @@
       connectors: 'settings:nav.page.connectors',
       theme: 'settings:nav.page.theme',
       'app-permissions': 'settings:nav.page.appPermissions',
+      developer: 'settings:nav.page.developer',
     },
 
     // Extra words the nav's filter box matches for each part, beyond its own

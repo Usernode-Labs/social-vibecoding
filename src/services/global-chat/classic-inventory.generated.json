@@ -210,24 +210,6 @@
       "mobileSupported": true
     },
     {
-      "key": "dev-console",
-      "label": "Developer console",
-      "group": "Preferences",
-      "gate": null,
-      "capabilityId": "settings.open.dev_console",
-      "classicPath": "#settings/dev-console",
-      "mobileSupported": true
-    },
-    {
-      "key": "admin-preview",
-      "label": "Admin preview",
-      "group": "Preferences",
-      "gate": "settings-admin-section",
-      "capabilityId": "settings.open.admin_preview",
-      "classicPath": "#settings/admin-preview",
-      "mobileSupported": true
-    },
-    {
       "key": "accessibility",
       "label": "Accessibility",
       "group": "Preferences",
@@ -279,6 +261,24 @@
       "gate": null,
       "capabilityId": "settings.open.blocked_apps",
       "classicPath": "#settings/blocked-apps",
+      "mobileSupported": true
+    },
+    {
+      "key": "dev-console",
+      "label": "Developer console",
+      "group": "Preferences",
+      "gate": null,
+      "capabilityId": "settings.open.dev_console",
+      "classicPath": "#settings/dev-console",
+      "mobileSupported": true
+    },
+    {
+      "key": "admin-preview",
+      "label": "Admin preview",
+      "group": "Preferences",
+      "gate": "settings-admin-section",
+      "capabilityId": "settings.open.admin_preview",
+      "classicPath": "#settings/admin-preview",
       "mobileSupported": true
     },
     {
