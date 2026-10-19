@@ -94,7 +94,7 @@ test('one story: who the platform pings about a change Homeroom bot built, again
       [ben.id, app.id, rota.id, cy.id],
     );
     const result = await voteDigest.sweep(pool);
-    assert.equal(result.busy, false);
+    assert.ok(result.candidates >= 1);
     const { rows } = await pool.query(
       `SELECT user_id, detail, session_id FROM notifications WHERE kind = 'vote_digest' ORDER BY user_id`,
     );

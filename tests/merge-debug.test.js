@@ -116,7 +116,7 @@ test('endRun on a null runId is a no-op', async () => {
   assert.equal(pool.calls.length, 0);
 });
 
-test('pruneOldRuns issues a bounded DELETE and never throws', async () => {
+test('pruneOldRuns issues a bounded DELETE, and a failure throws (the clock records it)', async () => {
   const pool = makePool((sql) => {
     if (/DELETE FROM merge_debug_runs/.test(sql)) return { rowCount: 3 };
     return { rows: [] };
@@ -125,6 +125,8 @@ test('pruneOldRuns issues a bounded DELETE and never throws', async () => {
   assert.equal(n, 3);
   const del = pool.calls.find((c) => /DELETE FROM merge_debug_runs/.test(c.sql));
   assert.ok(del);
+  const broken = makePool(() => { throw new Error('the database is gone'); });
+  await assert.rejects(md.pruneOldRuns(broken, 30), /the database is gone/);
 });
 
 // ── kind='checks': the proposal-checks timing trace ─────────────────────

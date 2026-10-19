@@ -108,9 +108,9 @@ test('the two advisory-lock keys are distinct', () => {
 
 // ── server.js: leader/instance split ──────────────────────────────────
 
-test('server.js runs migrations under the migration lock', () => {
-  assert.match(serverJs, /await withMigrationLock\(getPool\(config\), \(\) => migrate\(config\)\)/,
-    'two booting colors must never run DDL concurrently');
+test('server.js runs migrations under the migration lock, and the read-only roles with them', () => {
+  assert.match(serverJs, /await withMigrationLock\(getPool\(config\), async \(\) => \{\n\s*const result = await migrate\(config\);\n\s*await require\('\.\/src\/services\/db-roles'\)\.ensureRoles\(config\);/,
+    'two booting colors must never run DDL concurrently, nor set the roles up at once');
 });
 
 test('singleton background work lives in becomeLeader(), not start()', () => {
@@ -130,20 +130,23 @@ test('singleton background work lives in becomeLeader(), not start()', () => {
     'recoverActiveWorkers(config)',
     'resumeHeadlessRuns',
     'observeMergedOnGithub(config)',
-    'auditExistingRepoPrivacy(getPool(config))',
     'reconcileStuckChecks(config)',
     'recoverSessions(config)',
     'startSessionAutoPauseSweeper(config)',
     'startStalePrSweeper(config)',
     'startStuckChecksSweeper(config)',
-    'startTitleHealSweeper(config)',
     "require('./src/services/main-drift-poller').start(config)",
     "require('./src/services/app-heal').start(config)",
-    "require('./src/services/check-retention').start(config)",
-    'mobilePush.start()',
   ]) {
     assert.ok(becomeLeaderBody.includes(singleton), `becomeLeader() must own: ${singleton}`);
     assert.ok(!startBody.includes(singleton), `start() must NOT run singleton work: ${singleton}`);
+  }
+
+  // The platform's scheduled jobs are no leader work at all: each is a clock
+  // of the workflow (src/workflow/clock/), one run at a time wherever it runs.
+  for (const gone of ['mobilePush.start()', 'check-retention', 'startTitleHealSweeper', 'auditExistingRepoPrivacy',
+    'vote-digest', 'welcome-dm', 'challenge-scorer']) {
+    assert.ok(!serverJs.includes(gone), `no leader runs ${gone}`);
   }
 
   // Per-instance services every color needs to serve traffic.

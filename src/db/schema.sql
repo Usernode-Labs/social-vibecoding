@@ -5902,6 +5902,13 @@ BEGIN
 END $$;
 ALTER TABLE mobile_push_deliveries
   VALIDATE CONSTRAINT mobile_push_deliveries_platform_check;
+-- The sender's claim: the work item and attempt of the push-drain clock's run
+-- that is sending the row (src/workflow/clock/services.ts). A row left 'sending'
+-- by an attempt that is no longer live is sent again; one a live attempt
+-- holds is not, so a run beside another (a release's overlap, a process
+-- that stalled past its lease) never sends a push twice.
+ALTER TABLE mobile_push_deliveries ADD COLUMN IF NOT EXISTS claimed_work UUID;
+ALTER TABLE mobile_push_deliveries ADD COLUMN IF NOT EXISTS claimed_attempt INTEGER;
 CREATE INDEX IF NOT EXISTS idx_mobile_push_deliveries_claim
   ON mobile_push_deliveries (environment, available_at, id) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_mobile_push_deliveries_registration
@@ -12933,6 +12940,10 @@ CREATE TABLE IF NOT EXISTS platform_limit_alerts (
   measured_at TIMESTAMPTZ,
   notified_at TIMESTAMPTZ
 );
+-- GitHub's caps: the quota window (its reset) the level is about. Each
+-- process knows GitHub's figures from its own last answer; a level holds
+-- within its window and decides afresh in the next (platform-limit-alerts.js).
+ALTER TABLE platform_limit_alerts ADD COLUMN IF NOT EXISTS window_reset_at TIMESTAMPTZ;
 
 -- ── Test accounts ──────────────────────────────────────────────────────
 --
@@ -13771,6 +13782,9 @@ ALTER TABLE wf_work ADD COLUMN IF NOT EXISTS lost_attempts INTEGER NOT NULL DEFA
 CREATE INDEX IF NOT EXISTS wf_work_due_idx
   ON wf_work (kind, due_at) WHERE status IN ('queued', 'running');
 CREATE INDEX IF NOT EXISTS wf_work_instance_idx ON wf_work (machine, key, created_at);
+-- An instance's outstanding items of one kind (a clock's targets still owed
+-- an item: src/workflow/clock/machine.ts facts).
+CREATE INDEX IF NOT EXISTS wf_work_outstanding_idx ON wf_work (machine, key, kind) WHERE status <> 'settled';
 CREATE INDEX IF NOT EXISTS wf_work_settled_idx
   ON wf_work (settled_at) WHERE status = 'settled';
 COMMENT ON TABLE wf_work IS 'staging:private';

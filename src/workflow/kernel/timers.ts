@@ -54,8 +54,9 @@ export async function nextDeadlineMs(pool: Pool): Promise<number | null> {
 }
 
 // Retention: processed events and settled work after `eventsDays` /
-// `workDays`, receipts `receiptsDays` after their instance went terminal
-// (approximated by its last update). Instances themselves are kept.
+// `workDays` (a machine's own `retainDays` when it keeps less), receipts
+// `receiptsDays` after their instance went terminal (approximated by its
+// last update). Instances themselves are kept.
 export async function purge(pool: Pool, opts: {
   lockTimeoutMs: number; statementTimeoutMs: number;
   machines: ReadonlyMap<string, Machine<any, any>>; eventsDays?: number; receiptsDays?: number; workDays?: number;
@@ -75,6 +76,23 @@ export async function purge(pool: Pool, opts: {
     await client.query(
       `DELETE FROM wf_work WHERE status = 'settled' AND settled_at < now() - make_interval(days => $1)`,
       [opts.workDays ?? 90]);
+    // A machine that keeps a shorter history (its `retainDays`: a clock that
+    // runs every minute) loses its processed events and settled work sooner.
+    for (const [machine, { retainDays }] of opts.machines) {
+      if (retainDays == null) continue;
+      await client.query(
+        `DELETE FROM wf_events WHERE machine = $1 AND status = 'processed' AND processed_at < now() - make_interval(days => $2)`,
+        [machine, retainDays]);
+      await client.query(
+        `DELETE FROM wf_work WHERE machine = $1 AND status = 'settled' AND settled_at < now() - make_interval(days => $2)`,
+        [machine, retainDays]);
+      // Its receipts too, ended instance or not: such a machine's request
+      // keys never come back after that long (a timer's names its version,
+      // a work result its item).
+      await client.query(
+        `DELETE FROM wf_receipts WHERE machine = $1 AND created_at < now() - make_interval(days => $2)`,
+        [machine, retainDays]);
+    }
     for (const [machine, { terminal }] of opts.machines) {
       if (!terminal.size) continue;
       await client.query(

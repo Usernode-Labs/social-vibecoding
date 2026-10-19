@@ -46,6 +46,9 @@ import { botLaneServices } from './bot-lane/services.ts';
 import { MACHINE as RELEASE, releaseKey, releaseMachine } from './release/machine.ts';
 import { releaseServices } from './release/services.ts';
 import type { Adoption } from './release/services.ts';
+import { MACHINE as CLOCK, clock, clockKey } from './clock/machine.ts';
+import { clockServices } from './clock/services.ts';
+import { JOBS as CLOCK_JOBS, JOB_NAMES as CLOCK_JOB_NAMES } from './clock/services.ts';
 import { requestKey as botRequestKey } from './rules/bot-loop.ts';
 import { DM as BOT_DM, VOICE as BOT_VOICE, dmKey, placeOf, voiceKey } from './rules/bot-replies.ts';
 import type { Place } from './rules/bot-replies.ts';
@@ -187,13 +190,16 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const lane = botLane({ staging });
   // What a release runs once, whichever process claims it (release/).
   const releases = releaseMachine();
-  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, releases];
+  // The platform's scheduled jobs (clock/), armed by the release's work.
+  const clocks = clock();
+  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, releases, clocks];
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
     ...appDeliveryServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
     ...campaignServices(deps), ...botChangeServices(deps), ...botVoiceServices(deps), ...botDmServices(deps),
     ...mainCheckServices(deps), ...botRequestServices(deps), ...botLaneServices(deps),
     ...releaseServices({ adoptions: ADOPTIONS }),
+    ...clockServices(CLOCK_JOBS, { config, pool: appPool }),
   };
   const started = createRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, release: bootRelease(),
@@ -263,6 +269,9 @@ export async function startWorkflowLoops(): Promise<void> {
 const ADOPTIONS: readonly Adoption[] = Object.freeze([
   // First: the bot's whole loop waits on its clock.
   ['botLane', (release: string) => startLaneClock(release)],
+  // The platform's scheduled jobs: each armed with this build's interval,
+  // and the ones it no longer defines retired.
+  ['clocks', (release: string) => armClocks(release)],
   ['governance', () => enrollGovernance()],
   ['proposals', () => adoptProposals()],
   ['waitingProposals', () => rearmWaitingProposals()],
@@ -284,6 +293,85 @@ async function enrollGovernance(): Promise<number> {
   for (const r of rows) await file(r.id, r.app_id, { kind: 'system', name: 'backfill' });
   if (rows.length) log!.info('workflow', 'Enrolled open governance proposals', { count: rows.length });
   return rows.length;
+}
+
+// Every scheduled job this build defines is armed with its interval, and a
+// job it no longer defines is retired. A staging preview runs none of them
+// (config.runsClusterMaintenance, the rule the leader's duties had): its rows
+// are a copy of production's, and one that ran them before retires them.
+// Resolves how many it armed.
+async function armClocks(release: string): Promise<number> {
+  if (!runtime) return 0;
+  const runs = legacy('config').runsClusterMaintenance();
+  const { rows: existing } = await kernelPool!.query(
+    `SELECT data->>'job' AS job FROM wf_instances
+      WHERE machine = $1 AND state NOT IN ('retired', '(none)') AND data->>'job' IS NOT NULL`, [CLOCK]);
+  for (const { job } of existing) {
+    if (runs && CLOCK_JOB_NAMES.has(job)) continue;
+    await runtime.append(CLOCK, clockKey(job), { type: 'Retire', payload: {} },
+      { requestKey: `retire:${release}`, source: { kind: 'system', name: 'release' } });
+  }
+  if (!runs) return 0;
+  const { rows: swept } = await kernelPool!.query(
+    `SELECT name, last_run_at FROM leader_sweeps WHERE name = ANY($1::text[])`,
+    [CLOCK_JOBS.map((j) => j.leaderSweep).filter(Boolean)]).catch(() => ({ rows: [] as any[] }));
+  const lastRun = new Map<string, Date>(swept.map((r: any) => [r.name, new Date(r.last_run_at)]));
+  for (const job of CLOCK_JOBS) {
+    // A job first armed is due when the leader timer it replaces would have
+    // run, or within the next two minutes (spread, so they do not all start
+    // in the same second). Only the first Arm reads it.
+    const ran = job.leaderSweep ? lastRun.get(job.leaderSweep) : undefined;
+    const spread = Math.floor(Math.random() * Math.min(job.everyMs, 2 * 60 * 1000));
+    const firstDueAt = new Date(ran ? ran.getTime() + job.everyMs : Date.now() + spread).toISOString();
+    await runtime.append(CLOCK, clockKey(job.name), { type: 'Arm', payload: { job: job.name, everyMs: job.everyMs, firstDueAt } },
+      { requestKey: `arm:${release}`, source: { kind: 'system', name: 'release' } });
+  }
+  return CLOCK_JOBS.length;
+}
+
+// A scheduled job's last run, as the admin pages that once read the leader's
+// own status read it: when it last ran, its error, whether a run is under
+// way, what it found, and when the next is due. Read from any process.
+export async function clockStatus(db: Queryable, job: string): Promise<{
+  lastSweepAt: string | null; lastError: string | null; sweepInFlight: boolean; result: Json; nextDueAt: string | null;
+}> {
+  const { rows: [r] } = await db.query(
+    'SELECT state, data FROM wf_instances WHERE machine = $1 AND key = $2', [CLOCK, clockKey(job)]);
+  const last = r?.data?.last ?? null;
+  return {
+    lastSweepAt: last?.at ?? null,
+    lastError: last && !last.ok ? last.error : null,
+    sweepInFlight: r?.state === 'running',
+    result: last?.ok ? (last.result ?? null) : null,
+    nextDueAt: r?.state === 'waiting' ? r.data.due : null,
+  };
+}
+
+// An admin's "run it now" for a scheduled job, waited for: the run happens
+// on whichever process runs the workflow, one at a time with its own, and
+// the answer is its result. Null when it did not end within `timeoutMs`
+// (it still runs; its result shows on the job's page).
+export async function runClockNow(job: string, admin: { id: number }, { timeoutMs = 60000 } = {}): Promise<Awaited<ReturnType<typeof clockStatus>> | null> {
+  if (!runtime) throw new AdminActionError(409, 'The workflow runtime is not running here');
+  const outcome = await runtime.appendAndWait(CLOCK, clockKey(job), { type: 'RunNow', payload: {} },
+    { requestKey: `admin:${randomUUID()}`, source: { kind: 'admin', name: 'console' }, actor: `user:${admin.id}` });
+  if (outcome.status === 'rejected') {
+    // A job no release armed here (a staging preview): the caller decides.
+    throw Object.assign(new AdminActionError(409, `The job ${job} cannot run now (${outcome.reason})`), { code: outcome.reason });
+  }
+  if (outcome.status !== 'accepted' && outcome.status !== 'replayed') return null;
+  const read = async () => (await kernelPool!.query(
+    'SELECT state, data FROM wf_instances WHERE machine = $1 AND key = $2', [CLOCK, clockKey(job)])).rows[0];
+  const now = await read();
+  // The run this asked for: the one it started, or the next one when a run
+  // was under way.
+  const target = Number(now?.data?.n ?? 0) + (now?.data?.again ? 1 : 0);
+  const deadline = Date.now() + timeoutMs;
+  for (let r = now; Date.now() < deadline; r = await read()) {
+    if (Number(r?.data?.last?.n ?? 0) >= target) return clockStatus(kernelPool!, job);
+    await new Promise((done) => setTimeout(done, 500));
+  }
+  return null;
 }
 
 // The bot's lane starts its clock (its refresh, its grants): the same tick,
@@ -1537,6 +1625,7 @@ const ADMIN_EVENTS = new Map<string, ReadonlySet<string>>([
   [DELIVERY, new Set(['EndDeploy'])],
   [PREVIEW, new Set(['AdminRetry', 'AdminRetire', 'AdminEnd'])],
   [BOT_CHANGE, new Set(['RetryFollowup'])],
+  [CLOCK, new Set(['RunNow'])],
 ]);
 
 // The states a machine names as waiting on something outside (its
