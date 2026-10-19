@@ -40,6 +40,9 @@ async function main() {
   try {
     await ensureTargetDatabase(config);
     await migrate(config);
+    // The read-only database roles, by the new build over the new schema,
+    // before any Pod of the release starts (services/db-roles.js).
+    await require('../src/services/db-roles').ensureRoles(config);
   } finally {
     await pool.end();
   }

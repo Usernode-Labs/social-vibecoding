@@ -458,10 +458,11 @@ test('run-cc.sh: no hook for a build that did not ask, or for a scout', async ()
 test('run-cc.sh: a guard that cannot be set up leaves the build running without it', async () => {
   const fx = runnerFixture();
   // The hook script missing beside the runner: copy the runner somewhere
-  // that has session-branch.sh, memory-fields.sh and the adapter but not the hook.
+  // that has session-branch.sh, memory-fields.sh and the adapter (with the
+  // helper it requires, #5123) but not the hook.
   const alone = path.join(fx.dir, 'runner');
   fs.mkdirSync(alone);
-  for (const f of ['run-cc.sh', 'session-branch.sh', 'memory-fields.sh', 'claude-openrouter-request.js', 'agent-api-failure.js', 'start-inloop-db.sh']) {
+  for (const f of ['run-cc.sh', 'session-branch.sh', 'memory-fields.sh', 'claude-openrouter-request.js', 'openrouter-privacy.js', 'agent-api-failure.js', 'start-inloop-db.sh']) {
     fs.copyFileSync(path.join(ROOT, 'worker', f), path.join(alone, f));
   }
   const ran = await runRunCc(fx, { RUNNER: path.join(alone, 'run-cc.sh') });

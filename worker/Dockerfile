@@ -164,6 +164,9 @@ COPY start-inloop-db.sh /usr/local/bin/start-inloop-db.sh
 COPY session-branch.sh /usr/local/bin/session-branch.sh
 # Sourced by both runners: the container's memory for a turn's result line.
 COPY memory-fields.sh /usr/local/bin/memory-fields.sh
+# #5123: required by both OpenRouter adapters below, from their own directory:
+# every request they send denies data collection (no training, no retention).
+COPY openrouter-privacy.js /usr/local/bin/openrouter-privacy.js
 COPY codex-openrouter-request.js /usr/local/bin/codex-openrouter-request.js
 # #3296: the same per-invocation, worker-local adapter for an OpenRouter turn
 # that Claude Code runs. It holds that turn's key; claude gets a local token.

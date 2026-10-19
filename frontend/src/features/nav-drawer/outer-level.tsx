@@ -182,8 +182,11 @@ export function OuterLevel({ current, searching, wanted, onPick, listRef }: {
                   ? t('communities:needsYou.waiting', { count: totals.needs })
                   : t('communities:needsYou.skipped', { count: totals.owed })}
                 subtitle={needsApps(rows, !totals.needs)}
-                trailing={<span className="text-sm font-semibold text-violet-700 dark:text-violet-300">{t('communities:needsYou.review')}</span>}
-                chevron={false}
+                // The drawer is 85% of a phone: a "Review" word beside the
+                // title cut it to "90 votes waiting o…". The chevron every
+                // other row here wears says the row opens, and a long count
+                // wraps rather than losing its last words.
+                titleClassName="whitespace-normal"
               />
             </GroupedList>
           </section>

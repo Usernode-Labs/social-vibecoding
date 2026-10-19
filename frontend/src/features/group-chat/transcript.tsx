@@ -231,6 +231,14 @@ function AttachmentImage({ att }: { att: Attachment }) {
   // #3286: a plain tap opens the picture in the app's own viewer, which has
   // a way out; the link is still the file for a new tab on purpose.
   const [viewing, setViewing] = useState(false);
+  // Polish board #19: until the picture is in, its box is held at the size a
+  // picture is drawn at (app.css `.dc-msg-att-img[data-pending]`). A room's
+  // pictures load late and lazily, and each one grew its row from nothing to
+  // 120px under the reader: two of them moved Homeroom Maps' #general 236px.
+  const [drawn, setDrawn] = useState(false);
+  const drawnRef = (img: HTMLImageElement | null) => {
+    if (img && !drawn && img.complete && img.naturalWidth > 0) setDrawn(true);
+  };
   if (broken) {
     return (
       <a href={att.url} target="_blank" rel="noopener" className="dc-msg-att-chip">
@@ -249,10 +257,13 @@ function AttachmentImage({ att }: { att: Attachment }) {
         onClick={(event) => openInViewer(event, () => setViewing(true))}
       >
         <img
+          ref={drawnRef}
           className="dc-msg-att-img"
           src={att.url}
           alt={att.name}
+          data-pending={drawn ? undefined : ''}
           loading="lazy"
+          onLoad={() => setDrawn(true)}
           onError={() => setBroken(true)}
         />
       </a>

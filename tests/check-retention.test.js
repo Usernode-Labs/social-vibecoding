@@ -270,39 +270,16 @@ test('a delete names the exact object judged: its UID and resourceVersion as pre
   await assert.rejects(kubernetes.deleteCheckLeftover(config, 'job', { name: 'x', uid: 'u', resourceVersion: '1' }), /Unknown check leftover kind/);
 });
 
-test('the scheduler sweeps at once, then every interval, and nothing after stop', async (t) => {
-  await retention.stop();
-  t.mock.timers.enable({ apis: ['setInterval'] });
+test('the check-retention clock runs the sweep every quarter hour, and a stopped run deletes nothing more', async (t) => {
+  // The schedule is the clock's (src/workflow/clock/services.ts): one run at
+  // a time wherever the workflow runs, its stop the run's signal.
+  const { JOBS } = require('../src/workflow/clock/services.ts');
+  const job = JOBS.find((j) => j.name === 'check-retention');
+  assert.equal(job.everyMs, retention.INTERVAL_MS);
   const list = t.mock.method(kubernetes, 'listCheckLeftovers', async () => ({ jobs: [], pods: [], secrets: [] }));
-  const moduleId = require.resolve('../src/services/check-retention');
-  const cached = require.cache[moduleId];
-  delete require.cache[moduleId];
-  const scheduler = require(moduleId);
-  t.after(async () => { await scheduler.stop(); require.cache[moduleId] = cached; });
-  scheduler.start({ ...config, captureRuntime: 'docker', workerRuntime: 'docker' });
-  assert.equal(list.mock.callCount(), 0, 'no Kubernetes runtime, no sweep');
-  scheduler.start(config);
-  scheduler.start(config);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(list.mock.callCount(), 1, 'one pass at start, however often start is called');
-  t.mock.timers.tick(scheduler.INTERVAL_MS);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(list.mock.callCount(), 2);
-  await scheduler.stop();
-  t.mock.timers.tick(scheduler.INTERVAL_MS * 2);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(list.mock.callCount(), 2);
-});
-
-test('the sweep runs on the leader only and stops before leadership is handed over', () => {
+  const out = await job.run({ input: {}, signal: new AbortController().signal }, { config });
+  assert.equal(list.mock.callCount(), 1);
+  assert.equal(out.deleted, 0);
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  const leader = server.slice(server.indexOf('async function becomeLeader()'), server.indexOf('async function start()'));
-  const boot = server.slice(server.indexOf('async function start()'), server.indexOf('// Boot only when run as the entry point'));
-  assert.ok(leader.includes("require('./src/services/check-retention').start(config)"));
-  assert.ok(!boot.includes('check-retention'), 'a follower serves HTTP; it never sweeps');
-  const cleanup = server.slice(server.indexOf('async function cleanup()'));
-  const stopAt = cleanup.indexOf("require('./src/services/check-retention').stop()");
-  assert.ok(stopAt !== -1, 'cleanup stops the sweep');
-  assert.ok(/Promise\.all\(\[[^\]]*checkRetentionStop[^\]]*\]\)/.test(cleanup), 'and waits for a pass in flight');
-  assert.ok(stopAt < cleanup.lastIndexOf('leadership.stop()'), 'before the standby can promote');
+  assert.ok(!server.includes('check-retention'), 'no leader runs it any more');
 });

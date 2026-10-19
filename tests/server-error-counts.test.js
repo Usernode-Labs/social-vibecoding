@@ -438,7 +438,7 @@ test('the sweep runs this observer for its kind', async () => {
 
 // ── Where the platform runs it ──────────────────────────────────────────
 
-test('server.js counts every request, flushes on every process and prunes on the leader', () => {
+test('server.js counts every request and flushes on every process; the prune is a daily clock', () => {
   const src = read('server.js');
   const mount = src.indexOf("app.use(require('./src/middleware/request-counts').requestCounts());");
   assert.ok(mount > 0, 'the middleware is mounted');
@@ -449,9 +449,11 @@ test('server.js counts every request, flushes on every process and prunes on the
   const startBody = src.slice(src.indexOf('async function start()'), src.indexOf('// Boot only when run as the entry point'));
   assert.match(startBody, /require\('\.\/src\/services\/server-error-counts'\)\.start\(\{ pool: getPool\(config\) \}\);/,
     'every process flushes its own counts');
-  const leader = src.slice(src.indexOf('async function becomeLeader()'), src.indexOf('async function start()'));
-  assert.match(leader, /leaderTimers\.every\('server-error-prune', [\s\S]*?24 \* 60 \* 60 \* 1000, \{ durable: getPool\(config\) \}\);/,
-    'the leader prunes daily on the durable clock');
+  // A scheduled job of the workflow (src/workflow/clock/services.ts), first
+  // due when the leader timer it replaced would have run.
+  assert.match(read('src/workflow/clock/services.ts'),
+    /name: 'server-error-prune', everyMs: 24 \* HOUR, leaderSweep: 'server-error-prune',/, 'pruned daily');
+  assert.ok(!src.includes("'server-error-prune'"), 'no leader prunes them');
   const handler = read('src/middleware/error-handler.js');
   assert.match(handler, /if \(status >= 500 && res\.locals\) res\.locals\.serverError = errorFacts\(err\);/);
 });

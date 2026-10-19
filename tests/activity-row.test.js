@@ -26,7 +26,7 @@ test('a timed activity shows weekday, date and time, in local time', () => {
   const iso = '2026-10-02T16:32:00.000Z';
   const d = new Date(iso);
   const day = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' }).format(d);
-  const time = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(d);
+  const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(d);
   const when = mod.activityWhen(iso, { now: NOW });
   assert.ok(when);
   assert.equal(when.text, `${day} · ${time}`);
@@ -43,7 +43,7 @@ test('an earlier year keeps its year', () => {
 
 test('explicit occurrence precision shows genuine noon and midnight times in the viewer timezone', () => {
   for (const iso of ['2026-10-02T12:00:00.000Z', '2026-10-02T00:00:00.000Z']) {
-    const time = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
+    const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(iso));
     const when = mod.activityWhen(iso, { now: NOW, precision: 'instant' });
     assert.ok(when.text.endsWith(` · ${time}`));
     const html = renderToHtml(createElement(mod.ActivityRow, {
@@ -61,7 +61,7 @@ test('explicit old day precision is honored without guessing from the timestamp 
 test('a date-only credit (pinned to noon UTC by the scorer) shows no time', () => {
   const d = new Date('2026-10-02T12:00:00.000Z');
   const day = new Intl.DateTimeFormat(undefined, { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' }).format(d);
-  const noon = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(d);
+  const noon = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(d);
   const when = mod.activityWhen('2026-10-02T12:00:00.000Z', { now: NOW });
   assert.equal(when.text, day, 'the calendar day alone, read in UTC');
   assert.ok(!when.title.includes(noon), 'and no invented time in the title either');

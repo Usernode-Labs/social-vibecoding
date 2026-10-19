@@ -58,8 +58,6 @@ const CANDIDATE_LIMIT = 5000;
 const DEFAULT_INTERVAL_MINUTES = 10;
 const DEFAULT_AGGREGATE_HOURS = 6;
 
-let timer = null;
-let inFlight = null;
 
 // ── The challenges each rule covers ────────────────────────────────────
 //
@@ -1138,17 +1136,14 @@ async function loadCadence(pool, eventId, rows, opts = {}) {
   return (await loadRuleFacts(pool, eventId, rows, opts)).cadence;
 }
 
-// When this process last looked at the standings. In memory, and per process,
-// because all it guards is a rebuild that produces nothing: a deployment with
-// no event to score has no snapshot, `maybeAggregate` finds none and tries
-// again — once per run, which used to mean every ten minutes and would now
-// mean every beat.
-let lastAggregateCheckAt = 0;
-
-// One beat of the schedule. Advisory-locked and `pg_try_advisory_lock`, not
-// the waiting kind: every platform instance runs this timer, and a beat that
-// cannot take the lock has nothing useful to do — the instance holding it is
-// already writing the same credits.
+// One beat of the schedule: a run of the `challenge-scorer` clock
+// (src/workflow/clock/services.ts), on whichever process runs the workflow.
+// Advisory-locked and `pg_try_advisory_lock`, not the waiting kind: the
+// scoring on the spot (scoreOn, at the doors people act through) plans its
+// counted measures under the same lock, and a beat that cannot take it has
+// nothing useful to do — the pass holding it is already writing the same
+// credits. A session lock, so a beat whose process stalls keeps it, and one
+// whose process dies frees it: the fence holds under the clock's lease.
 //
 // A beat with nothing due is not a run and records nothing, with one
 // exception. The service has to be seen to be alive, and the standings have
@@ -1157,7 +1152,12 @@ let lastAggregateCheckAt = 0;
 // every run happened before rules carried intervals of their own. That clock
 // is read from the run history rather than kept in memory, so two instances
 // share one heartbeat and a deploy does not start with an empty run.
-async function tick(pool, config, { now = Date.now() } = {}) {
+//
+// `lastAggregateCheckAt`: when a beat last looked at the standings (the
+// clock carries it from one run to the next, as `aggregateCheckedAt`). All
+// it guards is a rebuild that produces nothing on a deployment with no
+// event to score.
+async function tick(pool, config, { now = Date.now(), lastAggregateCheckAt = 0 } = {}) {
   const client = await pool.connect();
   let locked = false;
   try {
@@ -1175,9 +1175,9 @@ async function tick(pool, config, { now = Date.now() } = {}) {
       const last = rows[0] && rows[0].at ? new Date(rows[0].at).getTime() : null;
       if (last != null && now - last < defaultMs - rules.DUE_SLACK_MS) return { idle: true };
     }
-    const aggregate = now - lastAggregateCheckAt >= defaultMs - rules.DUE_SLACK_MS;
-    if (aggregate) lastAggregateCheckAt = now;
-    return await runOnce(pool, { trigger: 'schedule', config, now, only: due, aggregate });
+    const aggregate = now - (Number(lastAggregateCheckAt) || 0) >= defaultMs - rules.DUE_SLACK_MS;
+    const ran = await runOnce(pool, { trigger: 'schedule', config, now, only: due, aggregate });
+    return { ...ran, aggregateCheckedAt: aggregate ? now : (Number(lastAggregateCheckAt) || 0) };
   } finally {
     if (locked) {
       await client.query('SELECT pg_advisory_unlock($1, $2)', [CHALLENGE_SCORER_LOCK, 0]).catch(() => {});
@@ -1359,43 +1359,6 @@ async function scoreOnAppTime(pool, config, {
   return scoreOn(pool, config, APP_TIME_MEASURES, { now });
 }
 
-function start(config) {
-  if (timer) return;
-  const minutes = intervalMinutes(config);
-  if (!minutes) {
-    log.info('challenge-scorer', 'Automatic challenge scoring is off (interval 0)');
-    return;
-  }
-  const { getPool } = require('../../db/pool');
-  const run = () => {
-    if (inFlight) return inFlight;
-    inFlight = tick(getPool(config), config)
-      .then((result) => {
-        if (result && result.credits) {
-          log.info('challenge-scorer', 'Credits written', {
-            credits: result.credits, graded: result.graded,
-          });
-        }
-      })
-      .catch((err) => log.error('challenge-scorer', 'Run failed', { err: err.message }))
-      .finally(() => { inFlight = null; });
-    return inFlight;
-  };
-  // The beat, not the interval: `minutes` is now how often a rule runs when
-  // it does not say otherwise, and which rules a beat runs is tick()'s call.
-  timer = setInterval(run, rules.FLOOR_MINUTES * 60_000);
-  if (typeof timer.unref === 'function') timer.unref();
-  // Deploys frequently replace the leader before its first tick, so a season
-  // could otherwise go a whole cadence unscored after every release.
-  setTimeout(run, 30_000).unref?.();
-}
-
-async function stop() {
-  if (timer) clearInterval(timer);
-  timer = null;
-  await inFlight;
-}
-
 module.exports = {
   score,
   runOnce,
@@ -1405,8 +1368,6 @@ module.exports = {
   scoreOnVote,
   scoreOnFeedback,
   scoreOnAppTime,
-  start,
-  stop,
   maybeAggregate,
   loadCandidates,
   loadCredited,

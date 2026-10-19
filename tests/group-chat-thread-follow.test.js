@@ -117,6 +117,33 @@ test('a topic opening at its card is not pulled down as its history loads', () =
     '#363: the unified layout opens at the top, unpinned');
   assert.match(src, /GroupChat\._threadPinned = false;\s*GroupChat\._attachThreadFollow\(GroupChat\._threadScrollEl\(\)\);/,
     'every mount starts unpinned and attaches the follow');
+  // Polish board #12: put at its top ONCE, as it mounts. The replies' first
+  // page lands later, and sending the reader back up then was a second jump.
+  assert.match(src, /if \(GroupChat\._threadPlaced\) return;\s*GroupChat\._threadPlaced = true;\s*scroll\.scrollTop = 0;/);
+  assert.match(src, /GroupChat\._threadPlaced = false;\s*GroupChat\._threadPinned = false;\s*GroupChat\._attachThreadFollow/,
+    'every mount is placed afresh');
+});
+
+test('polish board #12: a topic page still loading is not pinned to its bottom as its card paints', () => {
+  const h = setup({ scrollHeight: 500, clientHeight: 600, scrollTop: 0 });
+  const messages = { id: 'gc-thread-messages', dataset: { loaded: '' } };
+  h.scroll.querySelector = (sel) => (sel === '#gc-thread-messages' ? messages : null);
+  h.resize();
+  // The composer takes height while the page still fits, then the card paints.
+  h.scroll.clientHeight = 560;
+  h.resize();
+  assert.equal(h.gc._threadPinned, false, 'not pinned while its history is on its way');
+  h.scroll.scrollHeight = 900;
+  h.resize();
+  assert.equal(h.scroll.scrollTop, 0, 'the reader stays at the card');
+  // Once its history is in, a page that fits is followed as before (#4513).
+  messages.dataset.loaded = '1';
+  h.scroll.scrollHeight = 500;
+  h.scroll.clientHeight = 600;
+  h.resize();
+  h.scroll.clientHeight = 560;
+  h.resize();
+  assert.equal(h.gc._threadPinned, true);
 });
 
 // _handleThreadIncoming, driven with a mounted thread.
