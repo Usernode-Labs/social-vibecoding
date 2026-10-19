@@ -11,7 +11,8 @@
 //     read; everyone touched hears it. #4795: on a merge the asks leave the
 //     list as well (listForUser hides them for a merged change, and
 //     countUnread leaves them out), while the rows that say it went live —
-//     pr_merged to the author, voted_change_merged to the voters — stay.
+//     pr_merged to the author, voted_change_merged to the voters — stay
+//     until read (#5461): a read one leaves the list too.
 //     Nothing is re-opened unread: the news rides its own rows.
 //   - The bell reads the change's status, a digest's live count and the
 //     request a first message became, with the row (listForUser, getForUser).
@@ -147,8 +148,8 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     }
 
     // ...and every ask about the merged change leaves the list, read or not.
-    // The news that it went live stays: pr_merged to the author,
-    // voted_change_merged to the voter (#4787).
+    // The news that it went live stays while it is unread: pr_merged to the
+    // author, voted_change_merged to the voter (#4787).
     const moLive = await notify(mo.id, 'pr_merged', { sessionId: first, source: null });
     const priyaLive = await notify(priya.id, 'voted_change_merged', { sessionId: first, source: null });
     assert.ok(await listed(mo.id, moLive), 'the author hears it went live');
@@ -169,6 +170,84 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     pushed.length = 0;
     assert.deepEqual(await notifications.settleDecidedChange(pool, first), []);
     assert.deepEqual(changedFor(), []);
+  });
+
+  // #5461: the news that a change went live is listed until it is read, then
+  // leaves the bell's list — a read note somebody taps hours later only
+  // opens a merged page again. Unread it is listed and counts; saved it
+  // stays in Saved; the exact lookup is not filtered.
+  await t.test('#5461: the news that a merged change went live leaves the list once it is read', async () => {
+    const basePriya = await notifications.countUnread(pool, priya.id);
+    const baseMo = await notifications.countUnread(pool, mo.id);
+
+    // Unread, on a merged and live change: listed, and counted.
+    const live = await change('A change that went live');
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [live]);
+    const priyaNews = await notify(priya.id, 'voted_change_merged', { sessionId: live, source: null });
+    const moNews = await notify(mo.id, 'pr_merged', { sessionId: live, source: null });
+    assert.ok(await listed(priya.id, priyaNews), 'the voter is told it went live');
+    assert.ok(await listed(mo.id, moNews), 'the author is told too');
+    assert.equal(await notifications.countUnread(pool, priya.id), basePriya + 1);
+    assert.equal(await notifications.countUnread(pool, mo.id), baseMo + 1);
+
+    // Read, on another merged change: off the list, and the count is
+    // unchanged — a read row never counted. The exact lookup (a push
+    // opened) still resolves it.
+    const readChange = await change('Another change that went live');
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [readChange]);
+    const priyaRead = await notify(priya.id, 'voted_change_merged', { sessionId: readChange, source: null, read: true });
+    const moRead = await notify(mo.id, 'pr_merged', { sessionId: readChange, source: null, read: true });
+    assert.equal(await listed(priya.id, priyaRead), null, 'a read note is off the list');
+    assert.equal(await listed(mo.id, moRead), null);
+    assert.equal(await notifications.countUnread(pool, priya.id), basePriya + 1, 'the count is unchanged');
+    assert.equal(await notifications.countUnread(pool, mo.id), baseMo + 1);
+    const exact = notifications.serialize(await notifications.getForUser(pool, priya.id, priyaRead));
+    assert.equal(exact.sessionStatus, 'merged');
+    assert.notEqual(exact.readAt, null, 'the exact lookup still resolves the read row');
+
+    // A read row on a merged change that is still going live is hidden too:
+    // the clause reads the stored status, which is already 'merged'.
+    const { rows: [home] } = await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility, self_hosted, main_sha)
+       VALUES ('Homeroom', 'homeroom-5461', 'running', $1, 'public', 'public', TRUE, 'AAAA1111') RETURNING id`,
+      [alex.id],
+    );
+    // The build that serves is the one main_sha names; the merge below is
+    // newer, so the release has not carried it yet (#5064).
+    await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, pr_title, merge_commit_sha, merged_at)
+       VALUES ($1, $2, $3, 'merged', 'The running build', 'AAAA1111', NOW() - INTERVAL '1 hour')`,
+      [home.id, bot.id, `b-${crypto.randomBytes(4).toString('hex')}`],
+    );
+    const merging = (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, pr_title, merge_commit_sha, merged_at)
+       VALUES ($1, $2, $3, 'merged', 'Say going live', 'BBBB2222', NOW()) RETURNING id`,
+      [home.id, bot.id, `b-${crypto.randomBytes(4).toString('hex')}`],
+    )).rows[0].id;
+    const mergingRow = (await pool.query(
+      `INSERT INTO notifications (user_id, app_id, session_id, kind, read_at)
+       VALUES ($1, $2, $3, 'voted_change_merged', NOW()) RETURNING id`,
+      [priya.id, home.id, merging],
+    )).rows[0].id;
+    assert.equal(notifications.serialize(await notifications.getForUser(pool, priya.id, mergingRow)).sessionStatus,
+      'merging', 'the change is still going live');
+    assert.equal(await listed(priya.id, mergingRow), null, 'and the read note about it is off the list');
+
+    // A closed change keeps its read news in the list, as it does today.
+    const closed = await change('A change that was closed');
+    await pool.query(`UPDATE chat_sessions SET status = 'archived', archived_at = NOW() WHERE id = $1`, [closed]);
+    const closedNews = await notify(priya.id, 'voted_change_merged', { sessionId: closed, source: null, read: true });
+    assert.ok(await listed(priya.id, closedNews), 'a closed change keeps its news in the list');
+
+    // A row with no session behind it is never hidden (the NULL-safe
+    // comparison).
+    const noSession = await notify(mo.id, 'pr_merged', { sessionId: null, source: null, read: true });
+    assert.ok(await listed(mo.id, noSession), 'a row with no session is never hidden');
+
+    // A saved read row stays in the Saved section, which skips the filter.
+    await pool.query(`INSERT INTO notification_bookmarks (user_id, notification_id) VALUES ($1, $2)`, [priya.id, priyaRead]);
+    const saved = await notifications.listSavedForUser(pool, priya.id);
+    assert.ok(saved.some((r) => r.id === priyaRead), 'a saved read row stays in Saved');
   });
 
   // #4778: settleDecidedChange runs best-effort at every call site, so the
