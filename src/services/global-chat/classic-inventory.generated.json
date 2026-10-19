@@ -2081,6 +2081,14 @@
       "classicPath": "#admin"
     },
     {
+      "source": "src/routes/adult-attestation.js",
+      "method": "POST",
+      "path": "/api/me/adult-attestation",
+      "expression": null,
+      "status": "exempt",
+      "reason": "the person's own answer to \"Are you 18 or older?\" (#5095), given in its sheet; an assistant never gives it for them"
+    },
+    {
       "source": "src/routes/agent-session-drafts.js",
       "method": "GET",
       "path": "/api/agent-sessions/:id/drafts",

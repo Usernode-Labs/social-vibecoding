@@ -62,6 +62,7 @@ const { getPlatformApp } = require('../services/platform-app');
 // swap sendPasswordResetMail on the module object.
 const mail = require('../services/mail');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const { requireAdultAttestation } = require('../services/adult-attestation');
 
 // The idle lease a freshly-minted browser session starts with. This matches
 // SESSION_IDLE_DAYS in middleware/auth.js, which renews active sessions and
@@ -859,6 +860,10 @@ function authRoutes(config) {
     // credits) and Home's "Verify your account" card follow up on it.
     // Unreadable means not held to it.
     let identityNeeded = false;
+    // "Are you 18 or older?" answered yes (#5095,
+    // services/adult-attestation.js). The shell asks before a wallet,
+    // staking, node or passport feature opens while this is false.
+    let adultAttested = false;
     try {
       const { rows } = await pool.query(
         `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
@@ -869,6 +874,7 @@ function authRoutes(config) {
                 (u.username_provisional_since IS NOT NULL) AS username_provisional,
                 (u.tour_done_at IS NOT NULL) AS tour_done,
                 identity_needed(u.id) AS identity_needed,
+                (u.adult_attested_at IS NOT NULL) AS adult_attested,
                 EXISTS (
                   SELECT 1 FROM credentials.user_ai_credentials credential
                    WHERE credential.user_id = u.id
@@ -896,6 +902,7 @@ function authRoutes(config) {
       usernameProvisional = rows[0]?.username_provisional === true;
       needsCommunitiesChoice = rows[0]?.needs_communities_choice === true;
       tourDone = rows[0]?.tour_done === true;
+      adultAttested = rows[0]?.adult_attested === true;
       // A member let in (not a private member, who waits for that).
       identityNeeded = rows[0]?.identity_needed === true && !!req.user.hasPlatformAccess;
       if (needsCommunitiesChoice) storyFirstSession = await firstSession.asksWhatToMake(pool, req.user.id);
@@ -1012,6 +1019,8 @@ function authRoutes(config) {
         waitlistIdea,
         // The verified-identity rule holds this member to it (see above).
         identityNeeded,
+        // Said yes to "Are you 18 or older?" (see above).
+        adultAttested,
         // The welcome tour was finished or skipped on this account, on any
         // device (POST /api/me/tour-done; cleared by Reset first run). The
         // tour counts it done when this OR the browser's own flag says so
@@ -1366,7 +1375,9 @@ function authRoutes(config) {
   // ── Wallet linking ───────────────────────────────────────────────
   const LINK_TOKEN_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-  router.post('/api/me/wallet-link', sameOriginBrowserOnly, async (req, res) => {
+  // Linking a wallet is for adults (#5095): refused until the account said
+  // it is 18 or older. Unlinking (DELETE below) is never refused.
+  router.post('/api/me/wallet-link', sameOriginBrowserOnly, requireAdultAttestation(pool), async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     if (!config.usernodeAppPubkey) {
       return res.status(503).json({ error: 'Wallet linking not configured' });

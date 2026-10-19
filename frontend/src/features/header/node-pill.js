@@ -25,6 +25,7 @@
 import { nodePillStore, NODE_PILL_EMPTY } from './node-pill-store';
 import { mountNodeSheet, unmountNodeSheet } from './node-pill-sheet';
 import { t } from '../../lib/i18n/runtime';
+import { requireAdult } from '../auth/adult-gate';
 
 (function () {
   'use strict';
@@ -86,8 +87,12 @@ import { t } from '../../lib/i18n/runtime';
     // group now — a screen does not need dismissing — so the sheet presents
     // directly. This was an addEventListener on the row; it is the
     // component's onClick, dispatching here by name.
+    //
+    // Nodes are for adults (#5095): "Are you 18 or older?" first, once. The
+    // `?shot=node-status` preview opens without asking.
     openFromRow() {
-      NodePill._openSheet();
+      if (demoShot()) { NodePill._openSheet(); return; }
+      requireAdult().then((ok) => { if (ok) NodePill._openSheet(); });
     },
 
     async init() {

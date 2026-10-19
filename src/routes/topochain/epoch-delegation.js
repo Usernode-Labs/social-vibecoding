@@ -5,6 +5,7 @@ const { getPool } = require('../../db/pool');
 const log = require('../../services/logger');
 const { mobileTokenAuth, partnerApiKey } = require('../../middleware/topochain-auth');
 const { ok, fail } = require('./helpers');
+const { requireAdultAttestation } = require('../../services/adult-attestation');
 const {
   EpochDelegationError,
   EpochDelegationService,
@@ -21,10 +22,10 @@ function sendError(res, error, operation) {
   return fail(res, 500, 'Internal server error.');
 }
 
-function nativeEpochDelegationRoutes(config, { service } = {}) {
+function nativeEpochDelegationRoutes(config, { service, pool = getPool(config) } = {}) {
   const router = Router();
   const protocol = service || new EpochDelegationService({
-    pool: getPool(config),
+    pool,
     config,
   });
 
@@ -41,7 +42,9 @@ function nativeEpochDelegationRoutes(config, { service } = {}) {
     }
   });
 
-  router.post(NATIVE_DELEGATION_PATH, auth, async (req, res) => {
+  // Staking is for adults (#5095): the policy write waits for the 18+ answer.
+  // The read above stays open, so the app can still show what is set.
+  router.post(NATIVE_DELEGATION_PATH, auth, requireAdultAttestation(pool, { shape: 'topochain' }), async (req, res) => {
     try {
       const data = await protocol.setNativePolicy({
         userId: req.user.id,

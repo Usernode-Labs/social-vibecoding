@@ -12983,6 +12983,14 @@ COMMENT ON TABLE test_phone_sign_ins IS 'staging:private';
 -- so existing databases need nothing; nothing reads it.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_ask_answered_at TIMESTAMPTZ;
 
+-- "Are you 18 or older?" (#5095, compliance A-02): when the account said
+-- yes, asked the first time it opens a wallet, staking, node or passport
+-- feature. NULL until then, including "I'm under 18", which records
+-- nothing so the question comes back. No birthdate is kept. The wallet,
+-- staking, node and passport writes refuse a NULL here with 403
+-- adult_attestation_required (src/services/adult-attestation.js).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS adult_attested_at TIMESTAMPTZ;
+
 -- VERIFIED IDENTITY (sybil protection for public decisions and the full AI
 -- budget). An account is verified by any of: a verified phone
 -- (user_phone_identities), BOTH GitHub and X linked (user_social_identities,
