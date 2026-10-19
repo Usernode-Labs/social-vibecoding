@@ -309,6 +309,19 @@ const EVENT_TYPES = Object.freeze({
   // (a crash, the memory limit, a failed liveness probe): the infra topic's
   // "Homeroom crashes" counts those. A rollout starts new pods instead.
   PLATFORM_BOOTED: 'platform_booted',
+  // What ended the last process in a Homeroom pod, read off the Pod by the
+  // process that came up after it (services/platform-release.js
+  // recordPodExit): { pod, role, container, reason (OOMKilled, Error, ...),
+  // exitCode, signal, startedAt, finishedAt, restartCount, memoryLimit }. A
+  // second platform_booted says a process died; this says why. The platform
+  // signals group them by role (signal-observers/homeroom-crashes.js).
+  PLATFORM_POD_EXIT: 'platform_pod_exit',
+  // A retained recovery of an interrupted turn ran out of attempts and was
+  // given up on (services/recovery-retry.js scheduleRetainedRecovery):
+  // { sessionId, recovery: 'interactive' | 'headless' | ..., code, failures }.
+  // The turn is left to the stale-turn watchdog; the platform signals file
+  // these (signal-observers/turn-recovery.js).
+  TURN_RECOVERY_GAVE_UP: 'turn_recovery_gave_up',
   // A checks run got its slot in the checks queue (services/checks-queue.js
   // waitForSlot), or went ahead without one because the queue could not be
   // read or joined: { runId, kind, class, waitedMs, failedOpen }. Admin →

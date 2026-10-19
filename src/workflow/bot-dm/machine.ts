@@ -84,7 +84,8 @@ const EVENTS = {
       ? p.answers.slice(0, 2).map((a: unknown) => (typeof a === 'string' ? a.slice(0, 200) : null)) : [];
     return { userId: int(p?.userId, 'userId'), actionId: int(p?.actionId, 'actionId'), choice, answers };
   },
-  // Their one hello, of this kind, is owed (joining by an invite, the tour's end).
+  // Their one hello, of this kind, is owed (joining by an invite, the tour's
+  // end, the first session's answer, a ready-made app made).
   Greet: (p: any) => {
     if (!HELLO_KINDS.has(p?.kind)) throw new Error('kind is not a hello');
     return { userId: int(p?.userId, 'userId'), kind: p.kind as string, appId: optInt(p?.appId) };

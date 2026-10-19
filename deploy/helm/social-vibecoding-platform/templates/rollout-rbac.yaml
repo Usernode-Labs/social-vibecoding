@@ -10,6 +10,14 @@ rules:
     resources: [deployments]
     resourceNames: [{{ include "social-vibecoding-platform.fullname" . | quote }}]
     verbs: [get]
+  # A platform process reads its OWN Pod when it boots, for what ended the
+  # process before it in that Pod: the reason (OOMKilled, Error), exit code
+  # and memory limit behind a crash (src/services/platform-release.js
+  # recordPodExit). Pod names change with every rollout, so the rule cannot
+  # name them; it is get only (no list, no watch), in this namespace only.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

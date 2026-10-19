@@ -246,6 +246,28 @@ test('the tip\'s words: the maker\'s, an invited person\'s with who sent it, and
   }
 });
 
+test('the tip names Homeroom alone while the menu offers only "Go to Homeroom" (sign-up test, 19 Oct 2026)', () => {
+  // While the walk on Home is owed (or a private member has not been Home),
+  // the mark's menu has "Go to Homeroom" and no "Go to community", so the
+  // tip promises only what is there.
+  assert.deepEqual(['lineHomeroom', 'lineInvitedHomeroom'].map((k) => message(`onboarding:firstSession.tip.${k}`, { inviter: 'Maya' })), [
+    'Tap <0></0> to suggest a change, or to go to Homeroom.',
+    'Maya invited you. Tap <0></0> to suggest a change, or to go to Homeroom.',
+  ]);
+  assert.deepEqual(tip.tipWords({ who: 'maker', name: 'Plant Pal' }, true), {
+    title: 'onboarding:firstSession.tip.title', titleValues: {}, line: 'onboarding:firstSession.tip.lineHomeroom', lineValues: {},
+  });
+  assert.deepEqual(tip.tipWords({ who: 'invited', name: 'Plant Pal', inviter: 'Maya' }, true), {
+    title: 'onboarding:firstSession.tip.titleInvited', titleValues: { app: 'Plant Pal' }, line: 'onboarding:firstSession.tip.lineInvitedHomeroom', lineValues: { inviter: 'Maya' },
+  });
+  assert.equal(tip.tipWords({ who: 'invited', name: 'Plant Pal', inviter: null }, true).line, 'onboarding:firstSession.tip.lineHomeroom');
+  // The menu's own test of it: the walk owed, or a private member not yet Home.
+  const src = read(`${DIR}/app-tip.tsx`);
+  assert.match(src, /return owedHomeWalk\(\) \|\| offeringGoToHomeroom\(!!app\?\.user\?\.privateMember\);/);
+  assert.match(src, /const \[homeroomOnly\] = useState\(homeroomOnlyNow\);/);
+  assert.match(src, /const words = tipWords\(tip, homeroomOnly\);/);
+});
+
 test('the tip sits under the mark, its pointer at the mark\'s middle, whole on the screen', () => {
   const phone = { width: 390, height: 844 };
   // The mark at the header's top-left, in the app.
@@ -268,19 +290,30 @@ test('the tip sits under the mark, its pointer at the mark\'s middle, whole on t
 });
 
 /** The tip as it first paints, under a mark at the given box, on a phone. */
-function drawTip(record, box = { left: 56, top: 55, width: 26, height: 28 }) {
+function drawTip(record, box = { left: 56, top: 55, width: 26, height: 28 }, { walkOwed = false } = {}) {
   const had = { window: Object.hasOwn(globalThis, 'window'), document: Object.hasOwn(globalThis, 'document') };
   const before = { window: globalThis.window, document: globalThis.document };
+  const storage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
   const rect = () => ({ ...box, right: box.left + box.width, bottom: box.top + box.height });
   const tile = { getBoundingClientRect: rect };
-  globalThis.window = { innerWidth: 390, innerHeight: 844 };
+  globalThis.window = { innerWidth: 390, innerHeight: 844, ...(walkOwed ? { App: { user: { id: 42 } } } : {}) };
   globalThis.document = {
     getElementById: (id) => (id === 'platform-mark-btn' ? { getBoundingClientRect: rect, querySelector: () => tile } : null),
   };
+  if (walkOwed) {
+    const walk = JSON.stringify({ slug: record.slug, name: record.name, armed: true });
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: { getItem: (k) => (k === 'usernode:first-session:walk:42' ? walk : null), setItem() {} },
+      configurable: true, writable: true,
+    });
+  }
   try {
     return renderToHtml(createElement(tip.AppTip, { tip: record, onClose() {} }));
   } finally {
     for (const k of ['window', 'document']) { if (had[k]) globalThis[k] = before[k]; else delete globalThis[k]; }
+    if (walkOwed) {
+      if (storage) Object.defineProperty(globalThis, 'localStorage', storage); else delete globalThis.localStorage;
+    }
   }
 }
 
@@ -306,6 +339,12 @@ test('the tip, drawn: its title, its line with the mark in it, a small ✕, and 
   assert.doesNotMatch(unknown, /invited you/);
   // A name is text, never markup.
   assert.match(drawTip({ slug: 'x', name: '<b>X</b>', who: 'invited', inviter: '<i>M</i>' }), />&lt;i&gt;M&lt;\/i&gt; invited you\./);
+  // The walk on Home owed (the menu offers "Go to Homeroom" alone): Homeroom.
+  const owedMaker = drawTip({ slug: 'plant-pal', name: 'Plant Pal', who: 'maker' }, undefined, { walkOwed: true });
+  assert.match(owedMaker, />Tap <img [^>]*alt="Homeroom menu"[^>]*\/> to suggest a change, or to go to Homeroom\.<\/p>/);
+  assert.doesNotMatch(owedMaker, /community/);
+  const owedInvited = drawTip({ slug: 'plant-pal', name: 'Plant Pal', who: 'invited', inviter: 'Maya' }, undefined, { walkOwed: true });
+  assert.match(owedInvited, />Maya invited you\. Tap <img [^>]*\/> to suggest a change, or to go to Homeroom\.<\/p>/);
   // No mark on screen: nothing drawn.
   const had = { window: Object.hasOwn(globalThis, 'window'), document: Object.hasOwn(globalThis, 'document') };
   const before = { window: globalThis.window, document: globalThis.document };

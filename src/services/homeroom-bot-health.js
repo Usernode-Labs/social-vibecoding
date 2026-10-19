@@ -182,9 +182,12 @@ const CHAT_SQL = `
 
 /**
  * The dashboard's rollout health. Each figure fails soft on its own, to
- * zeros, like the rest of the dashboard's reads.
+ * zeros, like the rest of the dashboard's reads. With `failSoft: false` a
+ * failed read rejects instead: the platform signals' observer
+ * (signal-observers/bot-health.js) must not read a zero it could not look
+ * at as a figure back within its line.
  */
-async function rolloutHealth(pool, { botUsername, days = DAYS } = {}) {
+async function rolloutHealth(pool, { botUsername, days = DAYS, failSoft = true } = {}) {
   // Each query names its SQL constant where it is called, so
   // scripts/check-sql.js resolves and checks it against the schema.
   const read = async (name, query) => {
@@ -193,6 +196,7 @@ async function rolloutHealth(pool, { botUsername, days = DAYS } = {}) {
       return rows[0] || {};
     } catch (err) {
       log.warn('homeroom-bot', 'Rollout health read failed', { figure: name, err: err.message });
+      if (!failSoft) throw err;
       return {};
     }
   };

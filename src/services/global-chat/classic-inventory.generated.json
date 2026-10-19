@@ -2287,6 +2287,14 @@
       "reason": "the agent-session Mayor's own conversation (#2779); one assistant does not drive another"
     },
     {
+      "source": "src/routes/alerts-webhook.js",
+      "method": "POST",
+      "path": "/api/internal/alerts",
+      "expression": null,
+      "status": "exempt",
+      "reason": "internal service protocol"
+    },
+    {
       "source": "src/routes/app-blocks.js",
       "method": "GET",
       "path": "/api/me/app-blocks",
@@ -11776,6 +11784,21 @@
       "expression": null,
       "status": "mapped",
       "capabilityId": "issues.get.apps.item.topics.item.figures.40973609",
+      "domain": "issues",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "issue",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/workshop"
+    },
+    {
+      "source": "src/routes/topic-figures.js",
+      "method": "GET",
+      "path": "/api/apps/:slug/topics/:key/signals",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "issues.get.apps.item.topics.item.signals.e3f32648",
       "domain": "issues",
       "risk": "read",
       "confirmation": "never",

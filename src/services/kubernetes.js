@@ -830,7 +830,15 @@ async function reconcilePlatformAssetIngresses(config) {
     const body = ingressWithPlatformAssetRoutes(ingress, config);
     const name = ingress?.metadata?.name;
     if (!body || !name) continue;
-    await networking.replaceNamespacedIngress({ name, namespace, body });
+    try {
+      await networking.replaceNamespacedIngress({ name, namespace, body });
+    } catch (err) {
+      // Written since the list: a deploy routed it while this ran (see
+      // platformAssetBackendForDeploy). That write is the newer one, so
+      // leave it and go on with the rest rather than abandon them all.
+      if (!isConflict(err)) throw err;
+      continue;
+    }
     updated += 1;
   }
   return updated;
@@ -850,11 +858,15 @@ let platformAssetBackend = null;
 // rather than costing it once. Routing is the thing being delayed here, and
 // no app needs it urgently enough to be worth that.
 let platformAssetBackendRetryAfter = 0;
+// Set once this process's reconcile has finished, so a deploy after that
+// awaits the settled memo and reads nothing (platformAssetBackendForDeploy).
+let platformAssetBackendReady = false;
 
 async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retryAfterMs = 300000 } = {}) {
   if (platformAssetBackend) return platformAssetBackend;
   // Still cooling off from a failure: no backend, and crucially no wait.
   if (Date.now() < platformAssetBackendRetryAfter) return null;
+  platformAssetBackendReady = false;
   platformAssetBackend = (async () => {
     const cfg = config.kubernetes;
     const namespace = cfg.appNamespace;
@@ -930,6 +942,7 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retr
         namespace, error: err?.message,
       });
     });
+    platformAssetBackendReady = true;
     return PLATFORM_ASSET_NAME;
   })().catch((err) => {
     // Clear the memo so the next deploy retries rather than this process
@@ -939,6 +952,77 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retr
     throw err;
   });
   return platformAssetBackend;
+}
+
+// Whether a shared backend in the app namespace (the asset backend, the app
+// gate) serves right now: its Service is there and selects its pods, and its
+// Deployment has a replica that is ready and available. Two reads. Any
+// error, or anything missing, is "not serving".
+//
+// An older revision's replicas count. Both Deployments roll with
+// maxUnavailable 0, so while a new revision fails to start the old one keeps
+// answering, and every app already routed to it is being served by them.
+async function sharedBackendServing(config, name) {
+  const namespace = config.kubernetes.appNamespace;
+  const { core, apps } = getClients();
+  if (typeof core?.readNamespacedService !== 'function' || typeof apps?.readNamespacedDeployment !== 'function') return false;
+  try {
+    const [service, deployment] = await Promise.all([
+      core.readNamespacedService({ name, namespace }),
+      apps.readNamespacedDeployment({ name, namespace }),
+    ]);
+    if (!service?.metadata || service.metadata.deletionTimestamp) return false;
+    if (service.spec?.selector?.['social.usernode.io/runtime-name'] !== name) return false;
+    if (!deployment?.metadata || deployment.metadata.deletionTimestamp) return false;
+    if ((deployment.spec?.replicas ?? 1) < 1) return false;
+    const status = deployment.status || {};
+    return (status.readyReplicas || 0) >= 1 && (status.availableReplicas || 0) >= 1;
+  } catch {
+    return false;
+  }
+}
+
+// KUBERNETES_ASSET_BACKEND_WAIT (config.kubernetes.assetBackendWait):
+// `serving` (the default) lets a deploy route to a shared backend that
+// already serves without waiting for its reconcile; `always` waits, as
+// every deploy did before.
+function sharedBackendWaitAlways(config) {
+  return String(config?.kubernetes?.assetBackendWait || 'serving').trim().toLowerCase() === 'always';
+}
+
+// A shared backend for one deploy. `ensure()` is its memoised reconcile;
+// `settled` and `coolingOff` are read from its memo BEFORE calling it.
+//
+// The reconcile's first run in a process upserts the backend with the
+// platform's image, waits for that rollout and (for the assets) rewrites
+// every app Ingress: 20-30 s. Platform pods restart on every release and
+// new apps are rare, so nearly every new app's deploy was the first in its
+// process and waited for all of it (19 Oct 2026: a pod's first app deploy
+// 19 s, its second 0 s). So when the backend already serves, this deploy is
+// routed to it at once and the reconcile goes on behind it, its failure
+// logged. When it does not serve, the deploy waits for the reconcile
+// exactly as before: routing to a backend that is not up is the 503 on every
+// asset path of #2045. When the memo has settled, is cooling off, or
+// KUBERNETES_ASSET_BACKEND_WAIT is `always`, the memo answers, as before.
+async function sharedBackendForDeploy(config, { name, ensure, settled, coolingOff, app }) {
+  const reconcile = ensure();
+  if (settled || coolingOff || sharedBackendWaitAlways(config)) return reconcile;
+  if (!(await sharedBackendServing(config, name))) return reconcile;
+  reconcile.catch((err) => {
+    log.warn('kubernetes', 'shared backend reconcile failed behind a deploy routed to it while it served', {
+      backend: name, app: app?.slug, error: err?.message,
+    });
+  });
+  return name;
+}
+
+function platformAssetBackendForDeploy(config, app) {
+  return sharedBackendForDeploy(config, {
+    name: PLATFORM_ASSET_NAME, app,
+    ensure: () => ensurePlatformAssetBackend(config),
+    settled: Boolean(platformAssetBackend) && platformAssetBackendReady,
+    coolingOff: !platformAssetBackend && Date.now() < platformAssetBackendRetryAfter,
+  });
 }
 
 // ── The app-host gate (#3657) ────────────────────────────────────────────
@@ -1018,12 +1102,14 @@ function appGateDeploymentManifest({ namespace, image, cfg, platformUrl }) {
 
 let appGateBackend = null;
 let appGateBackendRetryAfter = 0;
+let appGateBackendReady = false;
 
 // Same memo and cool-off as the asset backend (above), for the same reasons.
 async function ensureAppGateBackend(config, { readyTimeoutMs = 60000, retryAfterMs = 300000 } = {}) {
   if (appGateMode(config) !== 'on') return null;
   if (appGateBackend) return appGateBackend;
   if (Date.now() < appGateBackendRetryAfter) return null;
+  appGateBackendReady = false;
   appGateBackend = (async () => {
     const cfg = config.kubernetes;
     const namespace = cfg.appNamespace;
@@ -1049,6 +1135,7 @@ async function ensureAppGateBackend(config, { readyTimeoutMs = 60000, retryAfter
       appGateDeploymentManifest({ namespace, image, cfg, platformUrl }));
     // Only a gate that answers may carry the apps' traffic.
     await waitForDeployment(namespace, APP_GATE_NAME, { timeoutMs: readyTimeoutMs });
+    appGateBackendReady = true;
     return APP_GATE_NAME;
   })().catch((err) => {
     appGateBackend = null;
@@ -1056,6 +1143,18 @@ async function ensureAppGateBackend(config, { readyTimeoutMs = 60000, retryAfter
     throw err;
   });
   return appGateBackend;
+}
+
+// The gate for one deploy, the way the asset backend is chosen (see
+// sharedBackendForDeploy): a gate that already answers takes the app at
+// once while its reconcile goes on behind it.
+function appGateBackendForDeploy(config, app) {
+  return sharedBackendForDeploy(config, {
+    name: APP_GATE_NAME, app,
+    ensure: () => ensureAppGateBackend(config),
+    settled: Boolean(appGateBackend) && appGateBackendReady,
+    coolingOff: !appGateBackend && Date.now() < appGateBackendRetryAfter,
+  });
 }
 
 // The catch-all path of one Ingress, pointed through the gate (`on`) or at
@@ -1232,7 +1331,9 @@ async function deployApplication(config, {
   if (!internalOnly) {
     let assetBackend = null;
     try {
-      const backend = await ensurePlatformAssetBackend(config);
+      // The reconcile starts here either way; this deploy waits for it only
+      // when the backend does not already serve (sharedBackendForDeploy).
+      const backend = await platformAssetBackendForDeploy(config, app);
       if (app.slug !== config.selfAppSlug) assetBackend = backend;
     } catch (err) {
       log.warn('kubernetes', 'platform asset backend unavailable — app deploys without asset routing', {
@@ -1244,7 +1345,7 @@ async function deployApplication(config, {
     let gateBackend = null;
     if (appGateMode(config) === 'on') {
       try {
-        gateBackend = await ensureAppGateBackend(config);
+        gateBackend = await appGateBackendForDeploy(config, app);
       } catch (err) {
         log.warn('kubernetes', 'app gate unavailable — app deploys without it', {
           namespace, app: app.slug, error: err?.message,
@@ -2349,6 +2450,21 @@ async function getPlatformDeployStatus(config, { timeoutMs = 3000 } = {}) {
       startedAt: progressing?.lastUpdateTime || progressing?.lastTransitionTime || null,
       ...(failure ? { message: boundedText([failure.reason, failure.message].filter(Boolean).join(': '), 1000) } : {}),
     };
+  } finally { clearTimeout(timer); }
+}
+
+// Read one Pod of this installation's own namespace: the platform reads its
+// own at boot for what ended its last container (platform-release.js
+// recordPodExit). Bounded like the rollout read above, so a slow API server
+// cannot hold a boot step open. The chart's rollout-reader Role grants `get`
+// on pods there (deploy/helm/social-vibecoding-platform/templates/rollout-rbac.yaml).
+async function readPlatformPod({ name, namespace, timeoutMs = 5000 }) {
+  let timer;
+  try {
+    return await Promise.race([
+      getClients().core.readNamespacedPod({ name, namespace }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Platform pod read timed out')), timeoutMs); }),
+    ]);
   } finally { clearTimeout(timer); }
 }
 
@@ -3554,7 +3670,7 @@ module.exports = {
   workerIdentity, deleteWorkerIdentity, workerIdentityGone, listWorkers, cloneWorkerVolume,
   listWorkerVolumes, listPreviews, listShotsRuntimes, isQuotaExceeded,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
-  stopCheckJobs,
+  readPlatformPod, stopCheckJobs,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum, _upsertForTest: upsert,
   _packageRunsScriptForTest: packageRunsScript,
   _attachLineObserverForTest: attachLineObserver,
@@ -3574,9 +3690,12 @@ module.exports = {
   APP_GATE_NAME, APP_GATE_HEALTH_PATH, appGateMode, ensureAppGateBackend, reconcileAppGateIngresses,
   _appGateDeploymentManifestForTest: appGateDeploymentManifest,
   _ingressWithGateRouteForTest: ingressWithGateRoute,
-  _resetAppGateForTest: () => { appGateBackend = null; appGateBackendRetryAfter = 0; },
+  _resetAppGateForTest: () => { appGateBackend = null; appGateBackendRetryAfter = 0; appGateBackendReady = false; },
   _ingressWithPlatformAssetRoutesForTest: ingressWithPlatformAssetRoutes,
   _reconcilePlatformAssetIngressesForTest: reconcilePlatformAssetIngresses,
   _ensurePlatformAssetBackendForTest: ensurePlatformAssetBackend,
-  _resetPlatformAssetBackendForTest: () => { platformAssetBackend = null; platformAssetBackendRetryAfter = 0; },
+  _resetPlatformAssetBackendForTest: () => {
+    platformAssetBackend = null; platformAssetBackendRetryAfter = 0; platformAssetBackendReady = false;
+  },
+  _sharedBackendServingForTest: sharedBackendServing,
 };

@@ -34,6 +34,7 @@
 
 import { useEffect, useState } from 'react';
 
+import { owedWalk } from '../first-session/first-visit';
 import { PlatformTarget } from './platform-target.js';
 import type { AppRow } from './about-model';
 
@@ -51,7 +52,7 @@ type G = {
   Home?: { _apps?: AppRow[]; _appsLoaded?: boolean; load?: () => Promise<unknown> } & Record<string, any>;
   Browse?: { _apps?: AppRow[] };
   AppView?: { appData?: AppRow | null };
-  App?: { _privateHomeVisited?: () => boolean };
+  App?: { _privateHomeVisited?: () => boolean; user?: { id?: number | string | null } | null };
 };
 
 function g(): G {
@@ -85,6 +86,30 @@ export function offeringGoToHomeroom(privateMember: boolean): boolean {
     return !g().App?._privateHomeVisited?.();
   } catch {
     return true;
+  }
+}
+
+/**
+ * Whether this person is still owed the first session's walk on Home
+ * (../first-session/first-visit.ts): a newcomer who made their first project
+ * or came in by an invite, and has not yet reached Homeroom since. While it
+ * is, the mark menu's way on is "Go to Homeroom" alone, which takes them
+ * Home and runs the walk (firstSession.goHome), not "Go to community", which
+ * opens the project's hub inside the app, where the walk does not run (Evan,
+ * sign-up test, 19 Oct 2026). The tip under the mark says the same, and the
+ * menu holds back news of a Homeroom update meanwhile (../improve/
+ * actions.tsx): somebody who has not reached Homeroom yet has nothing to
+ * update.
+ *
+ * Read after mount only, as offeringGoToHomeroom: it is in this device's
+ * storage, which the prerender cannot see.
+ */
+export function owedHomeWalk(): boolean {
+  try {
+    const uid = g().App?.user?.id;
+    return uid != null && owedWalk(uid) != null;
+  } catch {
+    return false;
   }
 }
 

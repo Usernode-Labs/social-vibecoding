@@ -12,12 +12,12 @@
     "description": "Under the viewer's name on their profile: when they joined. {{date}} is a month and year, such as \"March 2026\". \"Building\" means making things on Homeroom."
   },
   "identity.apps_one": {
-    "text": "{{count}} app",
-    "description": "Under the viewer's name on their profile. {{count}} is how many apps they have made."
+    "text": "Changes live in {{count}} app",
+    "description": "Under the viewer's name on their profile. {{count}} is how many apps have a change of theirs live, whoever made the app; it is not the apps they made, which the App slots row counts."
   },
   "identity.apps_other": {
-    "text": "{{count}} apps",
-    "description": "Under the viewer's name on their profile. {{count}} is how many apps they have made."
+    "text": "Changes live in {{count}} apps",
+    "description": "Under the viewer's name on their profile. {{count}} is how many apps have a change of theirs live, whoever made the app; it is not the apps they made, which the App slots row counts."
   },
   "line.factPair": {
     "text": "{{first}} · {{second}}",
@@ -86,6 +86,10 @@
   "work.requests.hint": {
     "text": "What you asked for, and where it stands",
     "description": "Small line under \"Your requests\" on the viewer's profile when there are no counts to show."
+  },
+  "work.requests.counting": {
+    "text": "Counting your requests",
+    "description": "Read by screen readers only, under \"Your requests\" on the viewer's profile, while the counts of their open and done requests are still loading; on screen a grey placeholder bar stands in for the line."
   },
   "work.requests.loadFailed": {
     "text": "Your requests could not be loaded.",
@@ -266,6 +270,26 @@
   "admin.console.hint": {
     "text": "Reports, people and platform settings",
     "description": "Small line under \"Admin & moderation\" on an administrator's own profile: what the console holds."
+  },
+  "settings.heading": {
+    "text": "Settings",
+    "description": "Heading over the Settings card at the foot of the viewer's own profile: the rows that lead to their profile, notification and account settings."
+  },
+  "settings.profile.title": {
+    "text": "Profile",
+    "description": "Row in the Settings card on the viewer's own profile: opens the Edit profile sheet. The same name the Settings page uses for its Profile part."
+  },
+  "settings.profile.hint": {
+    "text": "Name, photo and bio",
+    "description": "Small line under \"Profile\" in the Settings card on the viewer's own profile."
+  },
+  "settings.notifications.title": {
+    "text": "Notifications",
+    "description": "Row in the Settings card on the viewer's own profile: opens Settings' Notifications page. The same name that page uses."
+  },
+  "settings.notifications.hint": {
+    "text": "What you are told about, here and in each app",
+    "description": "Small line under \"Notifications\" in the Settings card on the viewer's own profile: the account-wide defaults and the per-app choices live on the page it opens."
   },
   "date.today": {
     "text": "today",

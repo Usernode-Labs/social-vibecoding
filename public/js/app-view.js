@@ -2151,7 +2151,13 @@ const AppView = {
       : { kind: 'letter', html: escapeHtml(((record && record.name) || '?').charAt(0).toUpperCase()) };
     return {
       iconKind: tile.kind,
-      iconHtml: tile.html,
+      // Not lazy (polish board #9): the cover is on screen from its first
+      // frame, scaled inside the zooming card, and a lazy <img> there was
+      // drawn blank until the browser got round to it. It is the image the
+      // tile just showed, so it is in hand; decode it with the frame.
+      iconHtml: tile.kind === 'image'
+        ? tile.html.replace(' loading="lazy"', ' decoding="sync"')
+        : tile.html,
       name: (record && record.name) || '',
       note: PlatformI18n.t('changes:launch.cover.opening'),
       spinner: false,
@@ -2245,6 +2251,7 @@ const AppView = {
     resume() { return false; },
     resumed() { return false; },
     markStale() { return false; },
+    showing(slug) { return !!slug && AppView._appFrameDom._slug === slug && !!AppView._appFrameDom._el('app-iframe'); },
     evict() { return false; },
     evictAll() {},
     liveSlugs() { return []; },
@@ -2422,6 +2429,20 @@ const AppView = {
     }
     delete AppView._issueStateBySlug[slug];
     return frame.evict(slug);
+  },
+
+  // A build landed for `slug`: is the build before it on screen, so that the
+  // Improve menu has a reload to offer (App.handleAppRedeployStatus)? Only a
+  // document the viewer is looking at: the app's frame mounted, shown and
+  // loaded. Not while its first version is still on its way, when the App tab
+  // draws the build's own screen in its place: that version going live is
+  // the one they are about to see, not an update to one they have.
+  frameShowing(slug) {
+    if (!slug) return false;
+    const appData = AppView.appData;
+    if (appData && appData.slug === slug && AppView._firstVersionPending(appData)) return false;
+    const frame = AppView._appFrame();
+    return !!(frame.showing && frame.showing(slug));
   },
 
   // The build each app is on, as the last app_version_changed announced it,
@@ -4174,6 +4195,9 @@ const AppView = {
       AppView.scheduleSafeAreaBroadcast();
     });
     frame.setSrc(iframeSrc, { granted: AppView._grantedNow(), build: AppView.buildFor(appData.slug) });
+    // A fresh load is of the build that is live now, so an offer to reload
+    // onto it is spent (the ?shot=app-update-ready state pins its own).
+    if (!App._appUpdateShot) window.Improve?.update?.({ appUpdateReady: false });
   },
 
   // Single source of truth for the per-app version pill on home cards.
