@@ -13,6 +13,10 @@
 // a vote (Your votes' own-vote note, the saved-vote publication the Needs you
 // surfaces listen on, the notification list).
 //
+// #5484: the same moment also fires the tray's window event, so the tray
+// readers (the Activity bar, the inbox's Homeroom bot row) read again even
+// when the socket's push is missed.
+//
 // Run with: node --test tests/messages-ready-approval-kept.test.js
 
 const test = require('node:test');
@@ -27,9 +31,14 @@ const STORE = 'frontend/src/features/messages/bot-activity-store.ts';
 const READY = 'frontend/src/features/messages/bot-ready.tsx';
 const STRIP = 'frontend/src/features/messages/bot-strip.tsx';
 
+// The page's own timeline of what a Yes did: reads asked for and window
+// events dispatched, in order. #5484 fires the tray's event here itself.
+const page = [];
+
 globalThis.window = {
   location: { search: '', hash: '#messages/42' },
-  addEventListener() {}, removeEventListener() {}, dispatchEvent() {},
+  addEventListener() {}, removeEventListener() {},
+  dispatchEvent(event) { page.push(['event', event.type]); },
   matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
   requestAnimationFrame: (fn) => fn(),
   setTimeout, clearTimeout, setInterval, clearInterval,
@@ -38,7 +47,11 @@ globalThis.window = {
 // The store reads the change's state again once a Yes is recorded; the stub
 // answers the one read the store makes, as the server would for no cards.
 const answeringApi = (reads) => ({
-  getHomeroomBotActivity(options) { if (reads) reads.push(options); return Promise.resolve({ cards: [], ready: [] }); },
+  getHomeroomBotActivity(options) {
+    page.push(['read', options && options.fresh]);
+    if (reads) reads.push(options);
+    return Promise.resolve({ cards: [], ready: [] });
+  },
   catchUpHomeroomBotActivity() { return Promise.resolve(0); },
 });
 
@@ -58,14 +71,14 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 // ── The record ──
 
 test('a Yes recorded here is kept at its version, and the page hears it in castVote\'s order', async () => {
-  const calls = [];
   const reads = [];
+  page.length = 0;
   const store = loadStore({ reads });
   window.AppView = {
-    _noteOwnVote(id, vote) { calls.push(['own', id, vote]); },
-    _publishVoteSaved(id, vote, epoch) { calls.push(['saved', id, vote, epoch]); },
+    _noteOwnVote(id, vote) { page.push(['own', id, vote]); },
+    _publishVoteSaved(id, vote, epoch) { page.push(['saved', id, vote, epoch]); },
   };
-  window.Notifications = { refresh() { calls.push(['notifications']); } };
+  window.Notifications = { refresh() { page.push(['notifications']); } };
 
   store.noteApprovedHere(9, 2, null);
   await settle();
@@ -74,9 +87,12 @@ test('a Yes recorded here is kept at its version, and the page hears it in castV
   assert.ok(store.approvedHere(9, null), 'so is a reader with no epoch of its own (an older card)');
   assert.equal(store.approvedHere(9, 3), null, 'a newer version\'s card asks again');
   assert.equal(store.approvedHere(8, 2), null, 'another change is not matched');
-  assert.deepEqual(calls, [['own', 9, 'yes'], ['saved', 9, 'yes', 2], ['notifications']],
-    'the page hears the vote in castVote\'s order: the own-vote note, the saved-vote publication, notifications');
-  assert.deepEqual(reads.map((r) => r && r.fresh), [true], 'the change\'s state is read again fresh');
+  assert.deepEqual(page, [
+    ['read', true],
+    ['event', 'homeroom-bot-work-changed'],
+    ['own', 9, 'yes'], ['saved', 9, 'yes', 2], ['notifications'],
+  ], 'the page hears the vote in castVote\'s order, one tray event per Yes (#5484): the fresh read is asked for, then the event fires, then the bridges');
+  assert.deepEqual(reads.map((r) => r && r.fresh), [true], 'the change\'s state is read again fresh, once');
 });
 
 test('none of the page announcements throwing stops the rest, and the vote is kept all the same', async () => {
