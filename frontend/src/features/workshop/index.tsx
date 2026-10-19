@@ -1035,13 +1035,27 @@ export const workshopController = {
     let counts: Counts = {};
     let feed: NeedsFeedItem[] | null = null;
     let feedCapped = false;
+    // #5462: RE-ENTRY asks for the current answer, the same spelling
+    // refreshNeeds() sends — the store already holding rows or a feed is what
+    // says this is not the first read. Without it the worker's boot lane
+    // (sw.js networkFirstApi) answers a read whose network leg misses its
+    // deadline with the saved copy from BEFORE the vote, `close()` having
+    // cleared the answered set leaves nothing to strip the card out with, and
+    // the proposal just voted on is drawn as still owed. The FIRST entry keeps
+    // the boot lane (#5164): it is the cold start's fast paint, and with
+    // nothing answered yet there is no copy of it to be stale against. The
+    // apps read is unchanged: the list of your communities is not what the
+    // vote moved.
+    const state = workshopStore.get();
+    const fresh = state.rows != null || state.feed != null;
+    const freshOpts = fresh ? { cache: 'no-cache' as const } : undefined;
     try {
       const [appsRes, countsRes, feedRes] = await Promise.all([
         // Only the communities you are in (#5023): the list below keeps
         // nothing else, so the rest of the catalog was payload for nothing.
         fetch(`/api/apps?scope=joined${demo.replace('?', '&')}`),
-        fetch(`/api/workshop/counts${demo}`).catch(() => null),
-        fetch(`/api/workshop/needs-feed${demo}`).catch(() => null),
+        fetch(`/api/workshop/counts${demo}`, freshOpts).catch(() => null),
+        fetch(`/api/workshop/needs-feed${demo}`, freshOpts).catch(() => null),
       ]);
       if (appsRes.ok) {
         const data = await appsRes.json();
