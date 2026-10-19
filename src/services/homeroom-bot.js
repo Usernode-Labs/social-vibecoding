@@ -322,8 +322,8 @@ const DEFAULT_WEEKLY_LIMIT_CENTS = 15000;
 
 // Loop cadence. The loop is EVENT-DRIVEN: an issue filed, edited or
 // discussed on the platform calls noteIssueActivity, which queues that app's
-// issues and wakes the loop at once (through the ws-bus when the event
-// landed on another Pod, since only the leader runs the loop). A pass drains
+// issues and wakes the loop at once (its bot-request and bot-lane machines,
+// src/workflow/, whichever conductor runs their work). A pass drains
 // one batch; when it did work the next pass follows almost at once, and when
 // the queue was empty the loop sleeps until the next wake. The idle delay is
 // only a fallback poll for a wake that was lost, and REFRESH_INTERVAL_MS is

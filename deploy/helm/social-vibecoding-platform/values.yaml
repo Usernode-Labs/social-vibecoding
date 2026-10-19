@@ -32,19 +32,27 @@ platform:
   drainingMax: 2
   replicas: 1
   # The web and conductor split (docs/plans/web-and-conductor.md). On, the
-  # Pods above serve people's requests and never lead (PROCESS_ROLE=web), and
-  # a Deployment of its own runs the conductor (PROCESS_ROLE=conductor): the
-  # leader, its timers, sweeps, merge queue, workflow loops, Homeroom bot and
-  # bench lane, on Pods the Service sends no requests to. Off, the Pods above
-  # serve and stand for leader, as they always did. Either way round, the
-  # Service's selector changes only after the Deployments are healthy (its
-  # Argo CD sync wave), so the release that flips it keeps serving.
+  # Pods above serve people's requests, never lead and decide nothing
+  # (PROCESS_ROLE=web: they append and wait for outcomes), and a Deployment
+  # of its own runs the conductor (PROCESS_ROLE=conductor): the workflow
+  # (every machine's pipeline slots, timers and work, docs/workflows.md) on
+  # every replica, and the leader's remaining work (its timers, sweeps,
+  # bench lane) on the one that leads, on Pods the Service sends no requests
+  # to. Off, the Pods above do everything, as they always did. Either way
+  # round, the Service's selector changes only after the Deployments are
+  # healthy (its Argo CD sync wave), so the release that flips it keeps serving.
   conductor:
     enabled: true
-    # More than one is a standby: it waits for the leader lock.
+    # Each replica runs the workflow; a kind's work limit holds across them
+    # all, so a second one is for failover, not more at once. One leads.
     replicas: 1
     # Empty: the platform's resources above.
     resources: {}
+    # Its own request pool (DB_POOL_MAX): it serves nobody's requests.
+    dbPoolMax: 30
+    # The workflow's metrics (GET /metrics, src/workflow/metrics.ts), on a
+    # port of their own that the Service does not expose.
+    metricsPort: 9464
   image:
     repository: ghcr.io/replace-me/social-vibecoding-platform
     digest: ""
@@ -299,5 +307,15 @@ networkPolicy:
   databaseCallerNamespaces:
     - social-apps
 
+# The workflow's metrics and alerts (docs/kubernetes-operations.md,
+# "Workflow alerts"): a PodMonitor for the conductor's metrics port and a
+# PrometheusRule, picked up by the cluster's kube-prometheus-stack, whose
+# Alertmanager routes them.
+monitoring:
+  enabled: true
+  # The `release` label the Prometheus Operator selects monitors and rules by.
+  prometheusRelease: kube-prometheus-stack
+  # The namespace Prometheus scrapes from (admitted on the metrics port).
+  namespace: monitoring
 podDisruptionBudget:
   enabled: true

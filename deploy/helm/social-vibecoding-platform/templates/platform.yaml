@@ -54,13 +54,14 @@ spec:
 {{- if .Values.platform.conductor.enabled }}
 ---
 # The conductor (docs/plans/web-and-conductor.md): the same image and Pod as
-# above, run as PROCESS_ROLE=conductor. It stands for leader and runs the
-# leader's work; the Pods above serve people's requests and never lead. Its
-# Pods carry the platform's component label, so every network policy and the
-# PodDisruptionBudget that admit the platform admit it; its own selector adds
-# process-role, and the Service above leaves it out. A release replaces it as
-# it replaces them: the new one first, then the old one finishes its work
-# (docs/plans/draining-releases.md).
+# above, run as PROCESS_ROLE=conductor. Every replica runs the workflow
+# (docs/workflows.md), none of it needing the leader lock; one also stands as
+# leader for the leader's remaining work. The Pods above serve people's
+# requests, never lead and decide nothing. Its Pods carry the platform's
+# component label, so every network policy that admits the platform admits
+# it; its own selector adds process-role, and the Service above leaves it
+# out. A release replaces it as it replaces them: a new one first, then an
+# old one finishes its work (docs/plans/draining-releases.md).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -116,6 +117,19 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
       # (docs/plans/draining-releases.md). The 60 seconds on top are the
       # preStop sleep and the bounded steps after the drain.
       terminationGracePeriodSeconds: {{ add (mul (int .Values.platform.drainMinutes) 60) 60 }}
+      {{- if eq .processRole "conductor" }}
+      # The conductor's replicas on different nodes where it can: losing a
+      # node then leaves one running the workflow.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "social-vibecoding-platform.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: platform
+              social.usernode.io/process-role: conductor
+      {{- end }}
       # The pause container is PID 1 and reaps zombies, as `--init` does on
       # Docker (src/services/docker.js). Node as PID 1 never reaped the
       # orphaned `git` processes it spawns: the conductor held 824 zombies
@@ -214,7 +228,15 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             - {name: CAPTURE_CPUS, value: {{ .Values.config.captureCpus | quote }}}
             - {name: CHECKS_MAX_CONCURRENT_RUNS, value: {{ .Values.config.checksMaxConcurrentRuns | int64 | quote }}}
             - {name: CHECK_NODE_POOL, value: {{ .Values.config.checkNodePool | quote }}}
+            {{- if and (eq .processRole "conductor") .Values.platform.conductor.dbPoolMax }}
+            - {name: DB_POOL_MAX, value: {{ .Values.platform.conductor.dbPoolMax | int64 | quote }}}
+            {{- else }}
             - {name: DB_POOL_MAX, value: {{ .Values.config.dbPoolMax | int64 | quote }}}
+            {{- end }}
+            {{- if and (eq .processRole "conductor") .Values.platform.conductor.metricsPort }}
+            # The workflow's metrics (src/workflow/metrics.ts).
+            - {name: WF_METRICS_PORT, value: {{ .Values.platform.conductor.metricsPort | int64 | quote }}}
+            {{- end }}
             - {name: MAX_GLOBAL_SESSIONS, value: {{ .Values.config.maxGlobalSessions | int64 | quote }}}
             - {name: MAX_USER_SESSIONS, value: {{ .Values.config.maxUserSessions | int64 | quote }}}
             - {name: MAX_USER_PROMOTED_SESSIONS, value: {{ .Values.config.maxUserPromotedSessions | int64 | quote }}}
@@ -227,6 +249,9 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             - {name: KUBERNETES_CAPTURE_IMAGE, value: {{ include "social-vibecoding-platform.image" .Values.platform.captureImage | quote }}}
           ports:
             - {name: http, containerPort: 3000, protocol: TCP}
+            {{- if and (eq .processRole "conductor") .Values.platform.conductor.metricsPort }}
+            - {name: metrics, containerPort: {{ .Values.platform.conductor.metricsPort | int64 }}, protocol: TCP}
+            {{- end }}
           startupProbe:
             httpGet: {path: /health, port: http}
             periodSeconds: 3

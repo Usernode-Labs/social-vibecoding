@@ -13640,6 +13640,9 @@ CREATE TABLE IF NOT EXISTS wf_instances (
     CHECK ((deadline_at IS NULL) = (deadline_event IS NULL))
 );
 CREATE INDEX IF NOT EXISTS wf_instances_state_idx ON wf_instances (machine, state);
+-- Faulted and stalled instances, read by Admin → Workflows and by every
+-- scrape of the workflow's metrics (src/workflow/metrics.ts).
+CREATE INDEX IF NOT EXISTS wf_instances_flag_idx ON wf_instances (flag) WHERE flag IS NOT NULL;
 CREATE INDEX IF NOT EXISTS wf_instances_app_idx ON wf_instances (app_id, machine);
 CREATE INDEX IF NOT EXISTS wf_instances_deadline_idx
   ON wf_instances (deadline_at) WHERE deadline_at IS NOT NULL;
@@ -13757,6 +13760,9 @@ CREATE TABLE IF NOT EXISTS wf_work_attempts (
   UNIQUE (work_id, number)
 );
 COMMENT ON TABLE wf_work_attempts IS 'staging:private';
+-- Attempts lost lately (a lease that lapsed, a stop, a cancel), read by
+-- Admin -> Workflows and the workflow's metrics (src/workflow/metrics.ts).
+CREATE INDEX IF NOT EXISTS wf_work_attempts_lost_idx ON wf_work_attempts (finished_at) WHERE outcome = 'lost';
 
 -- Kernel settings, written at boot (src/workflow/platform.ts):
 -- 'enabled:<machine>' switches the machine's ownership guards on. Every

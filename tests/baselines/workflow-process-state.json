@@ -10,8 +10,11 @@
     "state src/workflow/platform.ts#runtime": "this process's handle on the workflow runtime (its slots, loops and LISTEN connection, which routes append through and wait on), set once by startWorkflow from the configuration and cleared by stopWorkflow; it decides nothing, and a restart builds the same one",
     "state src/workflow/platform.ts#kernelPool": "the runtime's own connection pool, opened by startWorkflow and ended by stopWorkflow: wiring, never a decision",
     "state src/workflow/platform.ts#log": "the platform's logger, bound by startWorkflow: output only",
+    "state src/workflow/platform.ts#loopsHere": "whether this process started the workflow's loops, set once by startWorkflowLoops: what Admin -> Workflows says of the process that answered, deciding nothing",
     "uses src/db/pool.js:getPool": "the process's request pool, handed to the work handlers as their database: wiring, never a decision",
-    "uses src/services/logger.js (whole module)": "the platform's logger, handed to the runtime: output only, decides nothing"
+    "uses src/services/logger.js (whole module)": "the platform's logger, handed to the runtime: output only, decides nothing",
+    "uses src/services/leadership.js:KEEPALIVE_INITIAL_DELAY_MS": "a constant: the runtime pool's client keepalive delay, as the leader lock's session sets it, so a process lost with its node gives its locks up within a minute; wiring, never a decision",
+    "uses src/services/leadership.js:SERVER_KEEPALIVE": "constants: the server-side keepalive settings the runtime pool's sessions start with, as the leader lock's session does, so a process lost with its node gives its locks up within a minute; wiring, never a decision"
   },
   "io": {
     "app-delivery": {

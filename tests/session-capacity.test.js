@@ -61,6 +61,14 @@ test('every start, resume and reopen passes the same gate, and says where it ask
   const userRefusals = [...`${sessions}\n${handoff}\n${read('src/services/connector-limits.js')}`
     .matchAll(/recordCapacityRefusal\(pool, \{\s*cap: 'user', path: '([a-z_]+)'/g)].map((m) => m[1]);
   assert.deepEqual(userRefusals.sort(), ['clone_headless', 'connector', 'proposal_start', 'resume', 'resume', 'start']);
+  // A slot Homeroom has not freed in time is no cap: every gate answers it
+  // with the retryable 503 before its 429 (tests/session-not-decided-routes
+  // and tests/session-cap-enforcement drive two of them).
+  const gates = `${sessions}\n${handoff}`;
+  assert.equal((gates.match(/if \(globalSlot\.notDecided\) return sessionLifecycle\.answerNotDecided\(res, sessionLifecycle\.SLOT_NOT_DECIDED\);/g) || []).length, 3);
+  assert.match(handoff, /if \(global\.notDecided\) return sessionLifecycle\.answerNotDecided\(res, sessionLifecycle\.SLOT_NOT_DECIDED\);\n\s*if \(!global\.ok\)/);
+  assert.equal((gates.match(/if \(notDecided\) return sessionLifecycle\.answerNotDecided\(res, sessionLifecycle\.SLOT_NOT_DECIDED\);/g) || []).length, 3,
+    'the user-cap frees: start, clone_headless, proposal_start');
 });
 
 function capPool({ count, idle = [] }) {

@@ -334,13 +334,19 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
 });
 
 // The machine is the only path for a governance proposal, so a process
-// whose workflow runtime fails to start exits (start()'s catch ends it) and
-// is restarted, rather than serving votes nothing would decide.
-test('a failed workflow runtime start ends the process, and failed leader loops stop it', () => {
+// whose workflow runtime or loops fail to start exits (start()'s catch ends
+// it) and is restarted, rather than serving votes nothing would decide.
+test('a failed workflow runtime or loop start ends the process; the loops need no leader', () => {
   const server = fs.readFileSync(require.resolve('../server.js'), 'utf8');
-  assert.match(server, /await require\('\.\/src\/workflow\/platform\.ts'\)\.startWorkflow\(config, \{ loops: !runsClusterMaintenance\(\) \}\);/);
+  assert.match(server, /await require\('\.\/src\/workflow\/platform\.ts'\)\.startWorkflow\(config, \{ loops: false \}\);/);
   assert.doesNotMatch(server, /\.startWorkflow\([^;]*\)\s*\.catch\(/, 'nothing swallows the failure');
-  // A leader whose loops fail stops through its own drain, so another leads.
-  const loops = server.slice(server.indexOf('.startWorkflowLoops()'));
-  assert.match(loops.slice(0, 400), /process\.kill\(process\.pid, 'SIGTERM'\)/);
+  // A process that runs the workflow starts its loops in start(), once it
+  // listens, whether or not it leads; a failure is start()'s to end.
+  const start = server.slice(server.indexOf('async function start()'));
+  const block = start.slice(start.indexOf('if (processRole.runsWorkflow(ownRole)) {'));
+  assert.ok(block.length < start.length, 'the loops start in start()');
+  assert.match(block.slice(0, 400), /if \(!server\.listening\) await once\(server, 'listening'\);\s+const workflow = require\('\.\/src\/workflow\/platform\.ts'\);\s+await workflow\.startWorkflowLoops\(\);/);
+  assert.ok(start.indexOf('ws.attach(server, config);') < start.indexOf('await workflow.startWorkflowLoops();'), 'after the bus is up');
+  assert.doesNotMatch(server.slice(server.indexOf('async function becomeLeader()'), server.indexOf('async function start()')),
+    /startWorkflowLoops\(/, 'no leader work');
 });

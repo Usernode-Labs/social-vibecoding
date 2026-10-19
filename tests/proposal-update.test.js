@@ -801,6 +801,15 @@ test('an imported fork head the classifier keeps reports the votes kept', async 
   });
   assert.equal(raced.votesCleared, 2, 'reported as it always was');
   assert.equal(raced.checksRerun, true);
+
+  // Homeroom did not decide the move in time (each ask refused as expired):
+  // nothing moved, so the agent is told to submit again, not that it landed.
+  const undecided = await forkHeadMove({
+    applied: false, votesKept: false, checksCarry: false, kind: 'authored', epoch: null, notDecided: true,
+  });
+  assert.equal(undecided.ok, false);
+  assert.equal(undecided.code, 'not_decided');
+  assert.equal(undecided.retryable, true);
 });
 
 // #1196. The proposal the connector's mirror rung opens: imported, but its

@@ -16713,7 +16713,8 @@ const AppView = {
         if (btn) { btn.disabled = false; btn.textContent = PlatformI18n.t('changes:step.resume.label'); }
         return;
       }
-      PlatformUI.toast(PlatformI18n.t('changes:step.resume.done'));
+      // 202: recorded, not applied yet; the refresh shows the pause until it is.
+      PlatformUI.toast(PlatformI18n.t(data.pending ? 'changes:step.resume.pending' : 'changes:step.resume.done'));
       AppView.refreshDevData('main-check-resume');
       return true;
     } catch (err) {

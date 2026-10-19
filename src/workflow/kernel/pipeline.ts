@@ -34,7 +34,7 @@ const TX_CONTROL = /^\s*(begin|commit|rollback|end|abort|start|savepoint|release
 // faulted between the pick and the lock) before it reports nothing ready.
 const MAX_PASSES = 16;
 
-const millis = (v: number) => {
+export const millis = (v: number) => {
   const n = Math.floor(Number(v));
   if (!Number.isFinite(n) || n < 0) throw new Error(`workflow: invalid timeout ${v}`);
   return `'${n}ms'`;
@@ -360,8 +360,10 @@ const CANCEL_WORK = `
   cancelled AS (
     UPDATE wf_work w SET status = 'settled', claim_id = NULL, lease_until = NULL, settled_at = now(),
            result = COALESCE(w.result, '{}'::jsonb) || '{"cancelled": true}'::jsonb
-      FROM target t WHERE w.id = t.id RETURNING w.id)
-  SELECT id FROM cancelled`;
+      FROM target t WHERE w.id = t.id RETURNING w.id, w.kind)
+  -- A running item no longer counts against its kind's limit: every process
+  -- with room hears it (services.ts claim).
+  SELECT id, pg_notify('wf_work', kind) FROM cancelled`;
 
 const json = (v: Json | undefined) => (v == null ? null : JSON.stringify(v));
 

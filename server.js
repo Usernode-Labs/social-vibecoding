@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const path = require('path');
+const { once } = require('events');
 const { loadShellRelease } = require('./src/services/shell-release');
 const shellRelease = loadShellRelease(path.join(__dirname, 'public'));
 // The baked artifact is authoritative even when a runtime omits build args.
@@ -1158,15 +1159,9 @@ async function becomeLeader() {
     identity: leadership && leadership.identity,
   });
 
-  // The workflow's timers and services, and the boot backfill: the leader is
-  // where they run. A leader without them would leave every governance
-  // proposal's timers and work to the next election, with no other path, so
-  // a failure stops this process through its own drain (cleanup, on SIGTERM)
-  // and another one leads.
-  await require('./src/workflow/platform.ts').startWorkflowLoops().catch((err) => {
-    log.error('server', 'Workflow loops failed to start; stopping so another process leads', { err: err.message });
-    process.kill(process.pid, 'SIGTERM');
-  });
+  // (The workflow's timers, services and the release's adoptions are no
+  // leader work: every process that runs the workflow starts them, in
+  // start().)
 
   // What leader work keeps in memory and an admin screen reads, written for
   // the processes that do not lead (services/leader-status.js): a web process
@@ -1645,12 +1640,11 @@ async function start() {
   // (src/workflow/setup.ts): the push sender, GitHub, the model.
   await require('./src/workflow/setup.ts').startWorkflowClients(config);
   // The workflow runtime (src/workflow/platform.ts): every process appends
-  // and waits for outcomes; the loops start in becomeLeader(), or here on a
-  // staging preview, which never stands for election but must still decide.
-  // Fatal: the machines are the only paths for what they decide (governance
-  // has no other), so a process without them exits and is restarted rather
-  // than serving without them.
-  await require('./src/workflow/platform.ts').startWorkflow(config, { loops: !runsClusterMaintenance() });
+  // and waits for outcomes; a process that runs the workflow starts its
+  // loops below, once it listens. Fatal: the machines are the only paths for
+  // what they decide (governance has no other), so a process without them
+  // exits and is restarted rather than serving without them.
+  await require('./src/workflow/platform.ts').startWorkflow(config, { loops: false });
   startupDiagnostics = Object.freeze({
     totalMs: Date.now() - startedAt,
     migrationsOnStartup,
@@ -1688,13 +1682,35 @@ async function start() {
   shutdownPool = getPool(config);
 
   ws.attach(server, config);
-  chainPoller.start(config);
-  genesisAccounts.start();
-  nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
-  // Warm the /api/status cache so the first dashboard load doesn't have
-  // to wait 1-2s on `docker stats`. Subsequent loads are served from
-  // cache via stale-while-revalidate (see services/status.js).
-  statusService.start(config);
+  // The caches people's requests read: a conductor serves nobody's.
+  if (processRole.servesRequests(ownRole)) {
+    chainPoller.start(config);
+    genesisAccounts.start();
+    nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
+    // Warm the /api/status cache so the first dashboard load doesn't have
+    // to wait 1-2s on `docker stats`. Subsequent loads are served from
+    // cache via stale-while-revalidate (see services/status.js).
+    statusService.start(config);
+  }
+
+  // ── The workflow's loops ─────────────────────────────────────────────
+  // A conductor (any number of replicas) or an 'all' runs every machine's
+  // pipeline slots, timers and work (services/process-role.js runsWorkflow);
+  // none of it needs the leader lock. They start once this process listens
+  // and its bus is up: the work they claim calls this process's own port
+  // (the bot's platform tools, services/mayor/mcp-shim.js) and pushes over
+  // the bus (ws.attach above). Fatal, like the runtime itself.
+  if (processRole.runsWorkflow(ownRole)) {
+    if (!server.listening) await once(server, 'listening');
+    const workflow = require('./src/workflow/platform.ts');
+    await workflow.startWorkflowLoops();
+    // Its metrics, for the alerts (src/workflow/metrics.ts), on a port of
+    // their own that no Service reaches; set by the chart on the conductor.
+    const metricsPort = Number(process.env.WF_METRICS_PORT);
+    if (Number.isInteger(metricsPort) && metricsPort > 0) {
+      require('./src/workflow/metrics.ts').serveMetrics(metricsPort, () => workflow.workflowHealth(), log);
+    }
+  }
 
   // ── Leader-only singleton work ───────────────────────────────────────
   // Elect a single leader across the colors. The leader runs becomeLeader()
@@ -1759,6 +1775,9 @@ module.exports = {
   // order but not listening, so a test can drive the headers production
   // sends with a shell asset (tests/spec-frame-styles.test.js).
   app,
+  // The boot itself: the two-process tests' workflow side runs it as a
+  // conductor (tests/lib/workflow-child.js), so it is what production runs.
+  start,
   adoptOrphanWorker,
   // docs/plans/draining-releases.md: the leader's sweep for turns their
   // process left behind.
@@ -5998,8 +6017,9 @@ async function cleanup() {
   // actually complete.
   //
   // A process finishing its work keeps listening until its drain ends:
-  // Kubernetes has already taken it out of the Service, and a shots worker
-  // calls the Pod that runs its run by its own address.
+  // Kubernetes has already taken it out of the Service, a request it still
+  // answers finishes, and the work it still runs calls its own port (the
+  // bot's platform tools, services/mayor/mcp-shim.js).
   if (!finishesWork) closeListener(drainMs);
   // Behind the listener close, deliberately: what the tabs fetch on hearing
   // this must not be able to land here. Awaited with the drain below.

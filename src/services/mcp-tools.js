@@ -469,6 +469,11 @@ function platformError(result, fallbackCode = 'platform_error') {
     const code = result.body && result.body.code === 'budget_exceeded' ? 'budget_exceeded' : 'at_capacity';
     return toolError(code, message, { retryable: true });
   }
+  // Homeroom did not decide the move in time, so nothing changed and asking
+  // again may (services/session-lifecycle.js answerNotDecided).
+  if (result.body && (result.body.code === 'not_decided' || result.body.error === 'not_decided')) {
+    return toolError('not_decided', message, { retryable: true });
+  }
   // The route's own code rides beside the connector's, so a caller can tell
   // `invalid_request` (fix the call) from `base_mismatch` (rebase) without
   // parsing the sentence.

@@ -2785,6 +2785,9 @@ test('platform failures pass the platform’s own wording through', () => {
     [{ ok: false, status: 404, body: {} }, 'no_access'],
     [{ ok: false, status: 429, body: { code: 'budget_exceeded', error: 'Daily limit reached ($20.00).' } }, 'budget_exceeded'],
     [{ ok: false, status: 429, body: { error: 'You already have 5 PRs up for vote.' } }, 'at_capacity'],
+    // Homeroom did not decide in time: nothing changed, ask again.
+    [{ ok: false, status: 503, body: { error: 'Homeroom has not decided this yet.', code: 'not_decided' } }, 'not_decided'],
+    [{ ok: false, status: 503, body: { error: 'not_decided', message: 'Homeroom has not freed a slot yet.', retryable: true } }, 'not_decided'],
     [{ ok: false, status: 500, body: null }, 'platform_error'],
     [{ ok: false, status: 0, body: null, networkError: true }, 'platform_unavailable'],
   ];
@@ -2801,6 +2804,9 @@ test('platform failures pass the platform’s own wording through', () => {
   );
   assert.match(budget.structuredContent.message, /Daily limit reached/);
   assert.equal(budget.structuredContent.retryable, true);
+  const undecided = tools.platformError({ ok: false, status: 503, body: { error: 'not_decided', message: 'Homeroom has not freed a slot yet.' } });
+  assert.equal(undecided.structuredContent.retryable, true);
+  assert.match(undecided.structuredContent.message, /not freed a slot/);
 });
 
 test('the registered tool surface is exactly this, and nothing more', () => {
