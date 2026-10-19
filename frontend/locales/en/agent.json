@@ -1504,24 +1504,32 @@
     "description": "The one button at the top of the Homeroom menu (the sheet opened from the Homeroom mark): opens the dialog for sending a suggestion or bug report about the app on screen."
   },
   "menu.update.platformReady": {
-    "text": "There is a new version available. Click here to get the new version.",
-    "description": "Row in the Homeroom menu (the sheet opened from the Homeroom mark) when a new version of Homeroom itself is ready; pressing it reloads the page."
+    "text": "Homeroom has an update. Reload to get it.",
+    "description": "Row in the Homeroom menu (the sheet opened from the Homeroom mark) when a new version of Homeroom itself, not of the app on screen, is ready; pressing the row reloads the page. It is a button on phones and computers alike, so it says Reload rather than Tap or Click."
   },
   "menu.update.appReady": {
-    "text": "This app has a new version. Click here to reload it.",
-    "description": "Row in the Homeroom menu (the sheet opened from the Homeroom mark) when the app on screen has a new released version; pressing it reloads the app."
+    "text": "{{app}} has an update. Reload to see it.",
+    "description": "Row in the Homeroom menu (the sheet opened from the Homeroom mark) when the app on screen has a new released version; pressing the row reloads the app. {{app}} is the app's name."
+  },
+  "menu.update.appReadyUnnamed": {
+    "text": "This app has an update. Reload to see it.",
+    "description": "The same row as menu.update.appReady, when the app's name is not known yet: the app on screen has a new released version, and pressing the row reloads the app."
   },
   "menu.update.platformDownloading": {
-    "text": "A new version of the platform is downloading. The reload appears once it is ready.",
-    "description": "Small note with a spinner in the Homeroom menu (the sheet opened from the Homeroom mark) while a new version of Homeroom is being downloaded. \"The reload\" is the row that will let the person reload."
+    "text": "Homeroom is downloading an update. You can reload once it’s ready.",
+    "description": "Small note with a spinner in the Homeroom menu (the sheet opened from the Homeroom mark) while a new version of Homeroom itself is being downloaded. A row to reload takes its place once it is ready."
   },
   "menu.update.platformBuilding": {
-    "text": "A new version of the platform is being built.",
-    "description": "Small note with a spinner in the Homeroom menu (the sheet opened from the Homeroom mark) while a new version of Homeroom is being deployed."
+    "text": "Homeroom is being updated.",
+    "description": "Small note with a spinner in the Homeroom menu (the sheet opened from the Homeroom mark) while a new version of Homeroom itself is being deployed."
   },
   "menu.update.appBuilding": {
-    "text": "A new version of this app is being built.",
-    "description": "Small note with a spinner in the Homeroom menu (the sheet opened from the Homeroom mark) while a new version of the app on screen is being deployed."
+    "text": "An update to {{app}} is on its way.",
+    "description": "Small note with a spinner in the Homeroom menu (the sheet opened from the Homeroom mark) while a new version of the app on screen is being deployed. {{app}} is the app's name."
+  },
+  "menu.update.appBuildingUnnamed": {
+    "text": "An update to this app is on its way.",
+    "description": "The same note as menu.update.appBuilding, when the app's name is not known yet: a new version of the app on screen is being deployed."
   },
   "menu.row.state.working": {
     "text": "Working",

@@ -4460,11 +4460,87 @@ async function greetTourFinisher(pool, { userId, strict = false }) {
   }
 }
 
+// Sign-up test, 19 Oct 2026: somebody who made a ready-made app (a tier
+// list, a find-a-time, ...) heard nothing from the bot. A described project
+// gets the maker's hello as its first version starts (startFirstVersion),
+// but a ready-made app works as it is, has nothing to build first, and
+// nothing was said, so the first-session walk's "Homeroom bot is in
+// Messages" pointed at an empty chat. Its maker hears the maker's hello now,
+// with the project's card and one thing to ask for: the starter's own
+// example change (services/app-templates.js exampleChange), as the walk's
+// card offers it.
+const READY_MADE_PROMPTS = Object.freeze(['What can I ask for?', 'How do I invite friends?', 'How does the group decide?']);
+
+/**
+ * Pure: the hello a maker hears with a ready-made app: the maker's hello,
+ * the project's name as a line of its own (Messages draws it as the
+ * project's card, as with a described project's), and that it works as it
+ * is ("It": the card above names it), with `example` as the change to ask
+ * for when the starter has one.
+ */
+function readyMadeHello(appName, example = null) {
+  const name = appName || 'Your app';
+  const ask = example ? `Ask me here for changes, like “${example}”.` : 'Ask me here for any change you\'d like.';
+  return `${MAKER_HELLO}\n\n**${name}**\n\nIt works as it is. ${ask}`;
+}
+
+/**
+ * Greet the maker of a ready-made app (routes/apps.js, through their DM
+ * machine's `dm.hello` work), once ever: their one hello, as a 'maker', so
+ * somebody already greeted any way hears nothing, and their next project
+ * says nothing either. The same gates as greetTourFinisher: the bot on, and
+ * building for them; a test account is greeted like anybody (#4897). Only
+ * the project's own maker, and only a ready-made app: anything else is
+ * greeted where it is made. Quiet: it rings nothing. `strict` (the work): a
+ * failure throws, so it is tried again; else it never throws.
+ */
+async function greetReadyMadeMaker(pool, { userId, app, strict = false }) {
+  try {
+    if (!userId || !app?.id) return null;
+    const appTemplates = require('./app-templates');
+    if (Number(app.created_by) !== Number(userId) || !appTemplates.isReadyMade(app.template)) return null;
+    const settings = await settingsModule().readSettings(pool);
+    if (settings.mode === 'off') return null;
+    const { rows } = await pool.query(
+      `SELECT id, username, is_synthetic, (has_platform_access OR private_member_since IS NOT NULL) AS has_platform_access,
+              is_admin
+         FROM users WHERE id = $1 AND anonymised_at IS NULL`, [userId],
+    );
+    const person = rows[0];
+    if (!person || !hasBot(settings, {
+      username: person.username, isSynthetic: !!person.is_synthetic,
+      hasPlatformAccess: !!person.has_platform_access, isAdmin: !!person.is_admin,
+    })) return null;
+    const bot = await botAccount(pool);
+    if (!bot) return null;
+    const name = app.name || app.slug;
+    const content = readyMadeHello(name, appTemplates.exampleChangeOf(app.template));
+    // The message is the hello alone: sent only when it is theirs to have
+    // (one already sent is not sent again).
+    const sent = await sendDm(pool, {
+      bot,
+      userId,
+      idempotencyKey: `hrbot-readymade-${app.id}`,
+      content,
+      metadata: {
+        kind: 'hello_maker', appSlug: app.slug, appName: name,
+        hello: MAKER_HELLO, actions: promptActions(READY_MADE_PROMPTS), status: 'open',
+      },
+      hello: { kind: 'maker' },
+    });
+    return sent && !sent.duplicate ? sent : null;
+  } catch (err) {
+    if (strict) throw err;
+    log.warn('homeroom-bot-dm', 'Could not greet a ready-made app\'s maker', { userId, appId: app?.id, err: err.message });
+    return null;
+  }
+}
+
 /**
  * A hello owed to a person (their DM machine's `dm.hello` work): the
- * joiner's or the tour's. Throws on a failure a retry can cure. Resolves
- * what was sent, or null (the bot is off, does not build for them, or they
- * had their hello).
+ * joiner's, the tour's, or a ready-made app's maker's. Throws on a failure
+ * a retry can cure. Resolves what was sent, or null (the bot is off, does
+ * not build for them, or they had their hello).
  */
 async function greet(pool, { userId, kind, appId = null }) {
   if (kind === 'tour') return greetTourFinisher(pool, { userId, strict: true });
@@ -4472,6 +4548,11 @@ async function greet(pool, { userId, kind, appId = null }) {
     const { rows: [app] } = await pool.query('SELECT id, slug, name FROM apps WHERE id = $1', [Number(appId)]);
     if (!app) return null;
     return greetJoiner(pool, { user: { id: Number(userId) }, app, strict: true });
+  }
+  if (kind === 'maker') {
+    const { rows: [app] } = await pool.query('SELECT id, slug, name, template, created_by FROM apps WHERE id = $1', [Number(appId)]);
+    if (!app) return null;
+    return greetReadyMadeMaker(pool, { userId: Number(userId), app, strict: true });
   }
   return null;
 }
@@ -5411,6 +5492,9 @@ module.exports = {
   TOUR_PROMPTS,
   greetTourFinisher,
   greetJoiner,
+  READY_MADE_PROMPTS,
+  readyMadeHello,
+  greetReadyMadeMaker,
   MAKER_PROMPTS,
   MEMBER_PROMPTS,
   memberHello,
