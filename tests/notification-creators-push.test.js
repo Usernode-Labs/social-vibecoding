@@ -266,9 +266,14 @@ test('stale_pr is a system notification addressed to the proposal author', async
     userId: 7, appId: 10, sessionId: 55,
   });
   const insert = pool.state.inserts[0];
-  assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, NULL, 'stale_pr'\)/);
-  assert.deepEqual(insert.params, [7, 10, 55]);
+  assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, NULL, 'stale_pr', \$4\)/);
+  assert.deepEqual(insert.params, [7, 10, 55, null]);
   assert.equal(rows.length, 1);
+
+  // Its votes met and its merge stuck: the row says so ('blocked').
+  const blocked = fakePool({});
+  await notifications.createStalePrNotification(blocked, { userId: 7, appId: 10, sessionId: 55, detail: 'blocked' });
+  assert.deepEqual(blocked.state.inserts[0].params, [7, 10, 55, 'blocked']);
 
   const empty = fakePool({});
   assert.deepEqual(await notifications.createStalePrNotification(empty, { appId: 10 }), []);

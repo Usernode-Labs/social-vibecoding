@@ -581,6 +581,14 @@ function buildCopy(kind, context, now) {
         body: 'It needs a fix before it can go live',
       };
     case 'stale_pr': {
+      // Its votes are met and its merge is what stands still: asking for
+      // votes would send the author after the wrong thing.
+      if (detail === 'blocked') {
+        return {
+          title: withApp(quotedTitle ? `${quotedTitle} is approved but can't go live` : "Your approved change can't go live"),
+          body: 'It needs a fix before it can go live, or it will be set aside',
+        };
+      }
       const days = daysSince(context.promotedAt, now);
       return {
         title: withApp(quotedTitle
