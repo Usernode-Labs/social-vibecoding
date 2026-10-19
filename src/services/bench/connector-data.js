@@ -245,6 +245,10 @@ async function botOverview(pool, config, query = {}, deps = {}) {
       // while a bot configuration is current, over `models` (homeroom-bot.js
       // currentConfigurations).
       configurations: p.configurations || null,
+      // What the helper calls ask first (titles, the plan at Make it, chat
+      // reads, the content review; services/helper-model.js): the admin's
+      // choice, else the built-in GLM.
+      helperModel: s.helperModel || p.helperBuiltInModel || null,
       turnSeconds: num(s.turnSeconds),
       concurrency: num(s.concurrency),
       buildConcurrency: num(s.buildConcurrency),

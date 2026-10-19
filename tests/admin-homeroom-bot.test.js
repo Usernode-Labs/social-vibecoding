@@ -685,6 +685,16 @@ test('Save changes sends only what changed, in the route\'s own shape, or says w
   assert.deepEqual(buildPatch({ ...saved, defaultModel: '' }, { ...saved, defaultModel: 'z-ai/glm-5.3-flash' }, ['defaultModel']).patch,
     { defaultModel: '' }, 'back to the deployment default is a blank');
   assert.match(buildPatch({ ...saved, defaultModel: 'not a model' }, saved, ['defaultModel']).error, /^Platform default: a model is an OpenRouter id/);
+  // The helper calls' model (services/helper-model.js): an id, or a blank
+  // for the built-in GLM.
+  assert.equal(saved.helperModel, '', 'unset is the built-in model');
+  assert.equal(savedForm({ settings: { mode: 'shadow', helperModel: 'deepseek/deepseek-v4.1-flash-1017' }, bot: null }).helperModel,
+    'deepseek/deepseek-v4.1-flash-1017');
+  assert.deepEqual(buildPatch({ ...saved, helperModel: 'deepseek/deepseek-v4.1-flash-1017' }, saved, ['helperModel']),
+    { patch: { helperModel: 'deepseek/deepseek-v4.1-flash-1017' }, error: null });
+  assert.deepEqual(buildPatch({ ...saved, helperModel: '' }, { ...saved, helperModel: 'deepseek/deepseek-v4.1-flash-1017' }, ['helperModel']).patch,
+    { helperModel: '' }, 'back to the built-in model is a blank');
+  assert.match(buildPatch({ ...saved, helperModel: 'not a model' }, saved, ['helperModel']).error, /^Helper calls: a model is an OpenRouter id/);
 
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
   assert.match(tsx, /id="admin-homeroom-bot-savebar"/);

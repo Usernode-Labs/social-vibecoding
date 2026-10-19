@@ -76,6 +76,9 @@ interface Settings {
   // The platform default itself (services/default-model.js); blank is the
   // deployment's OPENROUTER_DEFAULT_CODEX_MODEL.
   defaultModel?: string;
+  // What the helper calls ask first (services/helper-model.js); blank is
+  // the built-in GLM 5.3 Flash.
+  helperModel?: string;
   // #3624 stage 2: live work at once across the platform and per person,
   // and whether a DM to the bot is read by its model.
   liveAtOnce: number;
@@ -366,6 +369,8 @@ interface Payload {
   // setting goes back to.
   defaultModel?: string | null;
   deploymentDefaultModel?: string | null;
+  // The model a blank helper model setting asks.
+  helperBuiltInModel?: string | null;
   // What builds run on while a bot configuration is current (homeroom-bot.js
   // currentConfigurations), over the stage settings; a scope with none is null.
   configurations?: Configurations | null;
@@ -1179,10 +1184,11 @@ export function benchHint(best: Best | null, stage: ModelStage, modelId: string 
  * One stage's model: the platform default, a model from the benchmark's
  * catalog (with its price), or any other OpenRouter id typed in. The
  * platform default's own picker (`stage` "default") offers the
- * deployment's default in that first place, and has no benchmark line.
+ * deployment's default in that first place, and has no benchmark line; so
+ * does the helper calls' (`stage` "helper"), with the built-in model there.
  */
 function ModelPicker({ stage, label, value, defaultModel, blankLabel = 'Platform default', models, best, canWrite, configurations = null, onChange }: {
-  stage: ModelStage | 'default'; label: string; value: string; defaultModel: string | null; blankLabel?: string;
+  stage: ModelStage | 'default' | 'helper'; label: string; value: string; defaultModel: string | null; blankLabel?: string;
   models: BenchModel[] | null; best: Best | null; canWrite: boolean; configurations?: Configurations | null; onChange: (id: string) => void;
 }) {
   const listed = !value || (models || []).some((m) => m.id === value);
@@ -1191,7 +1197,7 @@ function ModelPicker({ stage, label, value, defaultModel, blankLabel = 'Platform
   const nameOf = (id: string) => (models || []).find((m) => m.id === id)?.label || id;
   const price = (m: BenchModel) => (m.inputPerMillion != null && m.outputPerMillion != null
     ? ` · $${m.inputPerMillion.toFixed(2)} / $${m.outputPerMillion.toFixed(2)}` : '');
-  const configured = stage === 'default' ? '' : configuredLine(stage, configurations, nameOf);
+  const configured = stage === 'default' || stage === 'helper' ? '' : configuredLine(stage, configurations, nameOf);
   return (
     <div data-model-stage={stage}>
       <label className={AdminUI.label} htmlFor={`admin-homeroom-bot-model-${stage}`}>{label}</label>
@@ -1228,7 +1234,7 @@ function ModelPicker({ stage, label, value, defaultModel, blankLabel = 'Platform
           onChange={(e) => onChange(e.target.value.trim())}
         />
       ) : null}
-      {stage === 'default' ? null : (
+      {stage === 'default' || stage === 'helper' ? null : (
         <p className={`${AdminUI.muted} mt-1`} data-model-hint={stage}>{benchHint(best, stage, value || defaultModel)}</p>
       )}
     </div>
@@ -1243,6 +1249,7 @@ interface Form {
   pausedApps: string[];
   models: Record<ModelStage, string>;
   defaultModel: string;
+  helperModel: string;
   botCap: string;
   userCap: string;
   adminCap: string;
@@ -1268,6 +1275,7 @@ const FIELD_LABEL: Record<FormKey, string> = {
   pausedApps: 'where it works',
   models: 'models',
   defaultModel: 'the platform default model',
+  helperModel: 'the helper calls\' model',
   botCap: "the bot's weekly budget",
   userCap: 'the budget per person',
   adminCap: 'the budget per admin',
@@ -1297,6 +1305,7 @@ export function savedForm(p: Pick<Payload, 'settings' | 'bot'>): Form {
       triage: s.models?.triage || '', spec: s.models?.spec || '', build: s.models?.build || '', followup: s.models?.followup || '',
     },
     defaultModel: s.defaultModel || '',
+    helperModel: s.helperModel || '',
     botCap: p.bot ? (p.bot.weeklyLimitCents / 100).toFixed(2) : '',
     userCap: ((s.userWeeklyCents ?? 5000) / 100).toFixed(2),
     adminCap: ((s.adminWeeklyCents ?? 10000) / 100).toFixed(2),
@@ -1368,6 +1377,10 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
       const id = String(form.defaultModel || '').trim();
       if (id && !MODEL_ID_RE.test(id)) errors.push('Platform default: a model is an OpenRouter id such as deepseek/deepseek-v4.1-flash-1017, or the deployment default.');
       patch.defaultModel = id;
+    } else if (key === 'helperModel') {
+      const id = String(form.helperModel || '').trim();
+      if (id && !MODEL_ID_RE.test(id)) errors.push('Helper calls: a model is an OpenRouter id such as deepseek/deepseek-v4.1-flash-1017, or the built-in model.');
+      patch.helperModel = id;
     } else if (key === 'botCap') patch.weeklyLimitCents = dollars('botCap', "The bot's weekly budget", '');
     else if (key === 'userCap') patch.userWeeklyCents = dollars('userCap', 'The budget per person', ' (0 for no limit)');
     else if (key === 'adminCap') patch.adminWeeklyCents = dollars('adminCap', 'The budget per admin', ' (0 for no limit)');
@@ -2114,6 +2127,26 @@ function HomeroomBotSection() {
               </div>
               <p className={`${AdminUI.muted} mt-3`} id="admin-homeroom-bot-models-note">
                 {`A stage on the platform default runs on ${payload?.defaultModel || 'the deployment\'s OpenRouter default'} now. A change applies from the next turn, and each run records the model it ran on.`}
+              </p>
+              <div className="grid gap-4 md:grid-cols-2 mt-4">
+                <ModelPicker
+                  key={`helper-${formRound}`}
+                  stage="helper" label="Helper calls"
+                  value={form.helperModel}
+                  defaultModel={payload?.helperBuiltInModel || null}
+                  blankLabel="Built-in"
+                  models={bench ? bench.models : null}
+                  best={null}
+                  canWrite={canWrite}
+                  onChange={(id) => setField('helperModel', id)}
+                />
+              </div>
+              <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-helper-model-note">
+                The short calls with a time limit: titles, the one-line description, the sketch card, the plan at Make it, reads of
+                a chat message to the bot, quick replies, the progress guess, report summaries, the ask box, the content review,
+                challenge grades and the small-change tag. A model other than GLM is asked with its thinking off. When it is late or
+                its answer cannot be used, Haiku 5.5 answers instead, except on the small-change tag, which is tried again on the
+                next checks run. Every server follows a change within 10 seconds.
               </p>
             </div>
 
