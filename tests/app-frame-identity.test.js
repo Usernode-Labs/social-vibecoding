@@ -1885,7 +1885,8 @@ test('WP2: a build that lands while the app is parked behind its Workshop loads 
   h.AppView._parkAppFrame();
   landed('app-a', 'sha-new');
   assert.deepEqual(h.bridge.liveSlugs(), [], 'the parked old build is let go');
-  assert.deepEqual(offers, [{ deploying: false, appUpdateReady: false }],
+  // (The first is the open's own: a fresh load spends any offer.)
+  assert.deepEqual(offers, [{ appUpdateReady: false }, { deploying: false, appUpdateReady: false }],
     'and nothing is offered to reload: the next open loads the new build anyway');
   // Open app is switchTab('app'), which renders the App tab.
   const navigations = h.navigations();
@@ -1915,6 +1916,28 @@ test('WP2: the same, with the frame kept from an earlier visit and the Workshop 
   assert.equal(h.navigations(), navigations + 1);
 });
 
+test('a build that lands with no document on screen offers no reload: the first version going live, the App tab open', async () => {
+  // Sign-up test, 19 Oct 2026: Homeroom bot's first version of a project went
+  // live while its build's screen was up on the App tab, and the menu said
+  // "This app has a new version". No frame was ever shown for it.
+  const h = await makeHarness();
+  const { landed, offers } = withBuildHandlers(h, { currentApp: 'app-a' });
+  h.AppView.appData = { slug: 'app-a', name: 'A', url: 'https://app-a.example', status: 'running', first_version: { building: true } };
+  assert.equal(h.AppView.frameShowing('app-a'), false, 'its first version still on its way');
+  landed('app-a', 'sha-first');
+  assert.deepEqual(offers, [{ deploying: false, appUpdateReady: false }]);
+  // The app opened since: its frame, shown and loaded, is the build on screen.
+  const a = openApp(h, 'app-a');
+  assert.equal(h.AppView.frameShowing('app-a'), true);
+  assert.equal(h.AppView.frameShowing('app-b'), false, 'another app\'s is not');
+  // Behind its Workshop it is not on screen.
+  h.AppView._parkAppFrame();
+  assert.equal(h.AppView.frameShowing('app-a'), false);
+  h.bridge.activate();
+  assert.equal(h.bridge.frame(), a);
+  assert.equal(h.AppView.frameShowing('app-a'), true);
+});
+
 test('WP2: a build that lands while the app is on screen keeps it until it is closed, then opens fresh', async () => {
   const h = await makeHarness();
   const { landed, offers } = withBuildHandlers(h, { currentApp: 'app-a' });
@@ -1927,12 +1950,15 @@ test('WP2: a build that lands while the app is on screen keeps it until it is cl
   assert.equal(h.bridge.frame(), a);
   assert.equal(a.contentWindow, win, 'not reloaded from under the viewer');
   assert.equal(a.loads, loads);
-  assert.deepEqual(offers, [{ deploying: false, appUpdateReady: true }],
+  // (The first is the open's own: a fresh load spends any offer.)
+  assert.deepEqual(offers, [{ appUpdateReady: false }, { deploying: false, appUpdateReady: true }],
     'the update-ready offer is made, and not withdrawn by the version event');
-  // A render while it is on screen leaves it alone too: no auto-reload.
+  // A render while it is on screen leaves it alone too: no auto-reload, and
+  // the offer stands.
   h.AppView.renderAppTab();
   assert.equal(a.loads, loads, 'a re-render on screen is not an open');
   assert.equal(h.store.get().stale, true);
+  assert.equal(offers.length, 2);
 
   // Closing it lets it go rather than keeping the old build…
   h.AppView._retireAppFrame();

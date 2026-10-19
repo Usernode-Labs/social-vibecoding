@@ -51,8 +51,10 @@ const COVERS = Object.freeze(['all', 'split', 'others']);
 const PEOPLE_MIN = 10;
 const PEOPLE_FIVE = 20;
 const PEOPLE_EXACT = 50;
-// How many figures one topic may show.
-const MAX_TOPIC_FIGURES = 9;
+// How many figures one topic may show. 12 since the platform signals'
+// figures (services/platform-signals.js): the bot's strip is a grid of
+// three groups by Quality, Cost and Speed.
+const MAX_TOPIC_FIGURES = 12;
 
 const NOTE_PEOPLE = 'Totals only. Smaller groups are rounded more; under 10 people shows “Not enough data”.';
 const FEW_PEOPLE = 'Fewer than 10 people so far';
@@ -507,6 +509,34 @@ const HOMEROOM_CRASHES_SQL = `
           AND p.created_at < b.created_at
           AND p.created_at >= b.created_at - interval '7 days')`;
 
+// Platform signals (services/platform-signals.js): the problems the
+// platform found in itself, one row per episode. An episode counts in a
+// window it overlaps; one still going counts up to now. A blip (it stopped
+// before its kind's delay, so it never became a problem) does not count.
+const SIGNAL_EPISODES_SQL = `
+  SELECT COUNT(*)::int AS n,
+         COALESCE(SUM(EXTRACT(EPOCH FROM (
+           LEAST(COALESCE(s.cleared_at, s.closed_at, NOW()), $2::timestamptz)
+           - GREATEST(s.first_seen_at, $1::timestamptz)))), 0)::bigint AS secs
+    FROM platform_signals s
+   WHERE s.kind = $3
+     AND s.close_reason IS DISTINCT FROM 'blip'
+     AND ($4::text IS NULL OR s.subject->>'severity' = $4)
+     AND s.first_seen_at < $2::timestamptz
+     AND COALESCE(s.closed_at, NOW()) >= $1::timestamptz`;
+
+// A red check the bot's fix turn found was not the change's doing
+// (platform_incident checks_not_change), over the fix turns it ran on red
+// checks (homeroom-bot.js CHECKS_REASON).
+const NOT_THE_CHANGE_SQL = `
+  SELECT
+    (SELECT COUNT(*)::int FROM events e
+      WHERE e.event_type = 'platform_incident' AND e.metadata->>'kind' = 'checks_not_change'
+        AND e.created_at >= $1::timestamptz AND e.created_at < $2::timestamptz) AS hits,
+    (SELECT COUNT(*)::int FROM homeroom_bot_runs r
+      WHERE r.read_reason = 'checks_failing'
+        AND r.created_at >= $1::timestamptz AND r.created_at < $2::timestamptz) AS total`;
+
 const PLATFORM_APPS_SQL = 'SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id';
 
 // ── Sources: one query each, shared by the figures that read it ─────────
@@ -545,6 +575,10 @@ const SOURCES = Object.freeze({
   redsRerun: { days: 7, scoped: true, read: (pool, w, s) => pool.query(REDS_RERUN_SQL, [w.from, w.until, ...scoped(s), SAME_CODE_TRIGGERS]) },
   releaseStalls: { days: 7, read: (pool, w) => pool.query(RELEASE_STALLS_SQL, [w.from, w.until]) },
   homeroomCrashes: { days: 7, read: (pool, w) => pool.query(HOMEROOM_CRASHES_SQL, [w.from, w.until]) },
+  notTheChange: { days: 7, read: (pool, w) => pool.query(NOT_THE_CHANGE_SQL, [w.from, w.until]) },
+  stuckWork: { days: 7, read: (pool, w) => pool.query(SIGNAL_EPISODES_SQL, [w.from, w.until, 'workflow', null]) },
+  botPaused: { days: 7, read: (pool, w) => pool.query(SIGNAL_EPISODES_SQL, [w.from, w.until, 'bot_paused', null]) },
+  infraAlerts: { days: 7, read: (pool, w) => pool.query(SIGNAL_EPISODES_SQL, [w.from, w.until, 'alert', 'critical']) },
 });
 
 // ── Formatting ───────────────────────────────────────────────────────────
@@ -740,6 +774,12 @@ const FIGURES = Object.freeze({
     target: { atMost: 0.1 },
     measure: (r) => ({ hits: r.failed_spent, total: r.spent }),
   },
+  'bot.paused': {
+    source: 'botPaused', kind: 'count', group: 'running', column: 'speed', label: 'Time the bot was paused',
+    tip: 'How many times the bot stopped starting work for long enough to be a problem (the platform failing under it, its weekly budget, or GitHub’s hourly budget), and for how long in all. While it is paused, nobody’s request moves.',
+    target: { atMost: 0 },
+    measure: (r) => ({ n: r.n, secs: r.secs }),
+  },
   'pipeline.checks-time': {
     source: 'checks', kind: 'duration', covers: 'split', label: 'Time to a checks verdict',
     tip: 'How long from a check run starting to its checks passing or failing, including the build and any wait in the queue. Half are faster.',
@@ -788,6 +828,24 @@ const FIGURES = Object.freeze({
     target: { atMost: 0.05 },
     measure: (r) => ({ hits: r.failed, total: r.total }),
   },
+  'pipeline.not-the-change': {
+    source: 'notTheChange', kind: 'rate', label: 'Reds that weren’t the change', noun: 'fix turns',
+    tip: 'Of the times the bot set out to fix a proposal’s red checks, the share where it found the check fails without the change too: the check’s own problem, not the proposal’s. Each one holds up every proposal that runs that check.',
+    target: { atMost: 0.05 },
+    measure: (r) => ({ hits: r.hits, total: r.total }),
+  },
+  'pipeline.stuck-work': {
+    source: 'stuckWork', kind: 'count', label: 'Stuck work',
+    tip: 'How many times work in Homeroom’s workflows got stuck: an instance that faulted or stalled, a deadline that did not fire, or work that ran out of attempts. Each one is filed as a request for the bot to fix.',
+    target: { atMost: 0 },
+    measure: (r) => ({ n: r.n }),
+  },
+  'infra.alerts': {
+    source: 'infraAlerts', kind: 'count', label: 'Critical infra alerts',
+    tip: 'How many critical alerts the cluster’s monitoring raised about the servers Homeroom runs on, counted once per alert and resource. Each one is filed as a request on Homeroom’s board.',
+    target: { atMost: 0 },
+    measure: (r) => ({ n: r.n }),
+  },
   'infra.apps-up': {
     source: 'appOpens', kind: 'rate', covers: 'others', label: 'App opens that worked', noun: 'opens',
     tip: 'Of the times someone opened a project’s app in Homeroom, the share that loaded instead of showing the page that says the app is restarting. Homeroom itself is not counted.',
@@ -830,6 +888,7 @@ const FIGURE_IDS = Object.freeze(Object.keys(FIGURES));
 const GROUPS = Object.freeze({
   answers: { name: 'Answers', about: 'Threads, chats and DMs' },
   builds: { name: 'Builds', about: 'Specs, builds and fixes' },
+  running: { name: 'Running', about: 'Whether the bot can work at all' },
 });
 const COLUMNS = Object.freeze(['quality', 'cost', 'speed']);
 const COLUMN_NAMES = Object.freeze({ quality: 'Quality', cost: 'Cost', speed: 'Speed' });
@@ -1216,6 +1275,10 @@ const DEMO_MEASURES = Object.freeze({
   'infra.turned-away': { n: 3 },
   'infra.homeroom-stalls': { n: 1 },
   'infra.homeroom-crashes': { n: 0 },
+  'pipeline.not-the-change': { hits: 2, total: 31 },
+  'pipeline.stuck-work': { n: 1 },
+  'bot.paused': { n: 1, secs: 2400 },
+  'infra.alerts': { n: 0 },
 });
 
 /** The demo strip for `ids`. Pure. */

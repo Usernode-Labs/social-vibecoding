@@ -1547,14 +1547,28 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         } catch (err) {
           log.warn('apps', 'Homeroom bot project not recorded', { appId: appRow.id, err: err.message });
         }
+        // A ready-made app works as it is, so nothing is built and, until
+        // the sign-up test of 19 Oct 2026, nothing was said in the DM: its
+        // maker met an empty Messages. Their one hello is owed now, as a
+        // maker's, with the project's card (homeroom-bot-dm.js
+        // greetReadyMadeMaker, through their DM machine). Never a reason the
+        // create fails.
+        if (readyMade) {
+          await require('../workflow/platform.ts').greet(pool, { userId: req.user.id, kind: 'maker', appId: appRow.id })
+            .catch((err) => log.warn('apps', 'Homeroom bot hello not owed', { appId: appRow.id, err: err.message }));
+        }
       }
 
       // Made from the first session's "What do you want to make?"
       // (frontend/src/features/first-session): making something answers it,
       // and the join screen it stood in for, so neither is asked again
-      // (services/first-session.js). Until this, every boot asks it.
+      // (services/first-session.js). Until this, every boot asks it. It
+      // also owes the newcomer the bot's hello, unless making this project
+      // already greets them as its maker: a ready-made app (owed above,
+      // which the tour's would otherwise race) or a description the bot
+      // builds from (said in startFirstVersion's own message).
       if (req.body.from === 'first-session') {
-        await require('../services/first-session').answerJoinScreenByMaking(pool, req.user.id)
+        await require('../services/first-session').answerJoinScreenByMaking(pool, req.user.id, { greet: !readyMade && !homeroomBot })
           .catch((err) => log.warn('apps', 'Join screen not answered', { userId: req.user.id, err: err.message }));
       }
 
@@ -3024,8 +3038,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(409).json({ error: 'Merges are not paused for this app' });
       }
       if (resumed === 'failed') return res.status(500).json({ error: 'Internal server error' });
+      // Recorded and not applied yet (the machine slow or restarting): it
+      // applies once it is, and the pause read now would still be the old one.
+      if (resumed === 'pending') return res.status(202).json({ ok: true, pending: true });
       const mainWatch = require('../services/main-watch');
-      res.json({ ok: true, mainCheck: (await mainWatch.mergePause(pool, rows[0].id)), ...(resumed === 'pending' ? { pending: true } : {}) });
+      res.json({ ok: true, mainCheck: (await mainWatch.mergePause(pool, rows[0].id)) });
     } catch (err) {
       log.error('apps', 'Main-check resume failed', { slug: req.params.slug, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -3888,6 +3905,18 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         });
       }
     } catch (err) {
+      // A preview not retired yet (the machine slow, or refusing for now):
+      // nothing was removed, and a delete asked again finishes it.
+      if (err instanceof require('../services/app-teardown').PreviewNotRetiredError) {
+        log.warn('apps', 'App delete stopped before removing anything: a preview is not retired yet', {
+          slug: req.params.slug, sessionId: err.sessionId, err: err.message,
+        });
+        res.set('Retry-After', String(err.retryAfterSeconds));
+        return res.status(409).json({
+          error: 'A preview of this app is still being retired, so nothing was deleted. Delete the app again in a minute.',
+          reason: err.code,
+        });
+      }
       log.error('apps', 'Failed to delete app', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }

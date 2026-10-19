@@ -413,13 +413,13 @@ function listChildren(html) {
   return out;
 }
 
-test('#workshop-list holds the empty card, then one section per audience, in order', () => {
-  // THE LIST IS A WRAPPER NOW (communities). Its children are the empty
-  // card and up to three SECTIONS — Public communities, Private communities,
-  // Just you — each a SectionHeader over a GroupedList of its own. The declared checks select
+test('#5296: #workshop-list holds the empty card, then ONE list of every community, under audience chips', () => {
+  // THE LIST IS A WRAPPER (communities). Its children are the empty card and
+  // one GroupedList of every row; it held one card per audience section, three
+  // rows each behind "Show N more", until #5296. The declared checks select
   // through it with DESCENDANT combinators (`#workshop-list
-  // a[data-workshop-app=…]`) and name the sections by attribute, so what this
-  // pins is the tree they resolve against.
+  // a[data-workshop-app=…]`), so what this pins is the tree they resolve
+  // against.
   const mod = loadTsx('frontend/src/features/workshop/index.tsx');
   const html = () => renderToHtml(createElement(mod.WorkshopScreen, {}));
 
@@ -428,6 +428,7 @@ test('#workshop-list holds the empty card, then one section per audience, in ord
   mod.workshopStore.set({
     open: true,
     error: false,
+    tab: 'status',
     rows: [
       { slug: 'staging-demo-emoji-icon', name: 'Emoji', audience: 'solo', last_active_at: '2026-09-24T10:00:00Z', working: 0, needs: 5 },
       { slug: 'staging-demo-long-name', name: 'Long', audience: 'invited', member_count: 4, last_active_at: '2026-09-25T09:00:00Z', working: 4, needs: 1 },
@@ -436,25 +437,64 @@ test('#workshop-list holds the empty card, then one section per audience, in ord
   });
 
   const kids = listChildren(html());
-  assert.equal(kids[0].attrs.id, 'workshop-empty',
-    'the empty card first, so it never sits between a header and its rows');
+  assert.equal(kids[0].attrs.id, 'workshop-empty', 'the empty card first');
   assert.notEqual(kids[0].tag, 'a', 'a wrapper, never an anchor among the rows');
   assert.match(kids[0].attrs.class || '', /\bhidden\b/, 'and hidden while there are rows');
-  assert.deepEqual(kids.slice(1).map((k) => [k.tag, k.attrs['data-workshop-section']]),
-    [['section', 'open'], ['section', 'invited'], ['section', 'solo']],
-    'Public communities, Private communities, Just you — the order a person reaches for them');
+  assert.equal(kids.length, 2, 'then one card, not a section per audience');
+  assert.equal(kids[1].attrs['data-workshop-rows'], 'all', 'the card says which chip it shows');
 
   const out = html();
-  for (const [section, slug] of [['open', 'staging-demo-your-app'], ['invited', 'staging-demo-long-name'], ['solo', 'staging-demo-emoji-icon']]) {
-    const at = out.indexOf(`data-workshop-section="${section}"`);
-    const row = out.indexOf(`data-workshop-app="${slug}"`);
-    assert.ok(at >= 0 && row > at, `${slug} is drawn inside the ${section} section`);
+  assert.doesNotMatch(out, /data-workshop-section=/, 'no sections on the page');
+  assert.doesNotMatch(out, /data-workshop-more=/, 'and no "Show N more"');
+  assert.deepEqual([...out.matchAll(/data-workshop-app="([^"]+)"/g)].map((m) => m[1]),
+    ['staging-demo-your-app', 'staging-demo-long-name', 'staging-demo-emoji-icon'], 'every row, most recent first');
+  // The chips: All pressed, then the audiences in the order the sections had.
+  assert.deepEqual([...out.matchAll(/data-workshop-chip="([^"]+)"/g)].map((m) => m[1]), ['all', 'open', 'invited', 'solo']);
+  assert.match(out, /aria-pressed="true"[^>]*data-workshop-chip="all"|data-workshop-chip="all"[^>]*aria-pressed="true"/);
+  assert.match(out, /aria-label="All, 3 communities"/);
+  assert.match(out, /aria-label="1 in Public communities"/);
+  for (const label of ['All', 'Public', 'Private', 'Just you']) {
+    assert.match(out, new RegExp(`<span>${label}</span>`), `the ${label} chip is drawn`);
   }
-  for (const label of ['Public communities', 'Private communities', 'Just you']) {
-    assert.match(out, new RegExp(`<span>${label}</span>`), `the ${label} header is drawn`);
-  }
+  // The search box heads the list at every width, not only beside the sidebar.
+  assert.match(out, /id="workshop-search"/);
   assert.match(out, /data-workshop-audience="invited"/, 'each row says its audience');
   assert.match(out, />12 members</, 'and its second line says who is in it');
+  mod.workshopStore.set({ open: false, rows: null });
+});
+
+test('#5296: the chips and the search narrow the one list', () => {
+  const { filterRows, audienceTallies } = loadTsx('frontend/src/features/workshop/index.tsx');
+  const rows = [
+    { slug: 'garden', name: 'Garden club', audience: 'open', working: 0, needs: 0 },
+    { slug: 'flat', name: 'Flat 4B', audience: 'invited', working: 0, needs: 0 },
+    { slug: 'notes', name: 'Notes', audience: 'solo', working: 0, needs: 0 },
+    { slug: 'odd', name: 'Garden odd', audience: 'mystery', working: 0, needs: 0 },
+  ];
+  assert.deepEqual(filterRows(rows, 'all', '').map((r) => r.slug), ['garden', 'flat', 'notes', 'odd'], 'All is every row');
+  assert.deepEqual(filterRows(rows, 'open', '').map((r) => r.slug), ['garden', 'odd'], 'an unknown audience reads as public');
+  assert.deepEqual(filterRows(rows, 'solo', '').map((r) => r.slug), ['notes']);
+  assert.deepEqual(filterRows(rows, 'all', 'garden').map((r) => r.slug), ['garden', 'odd'], 'the search matches names');
+  assert.deepEqual(filterRows(rows, 'invited', 'garden'), [], 'inside the pressed chip');
+  assert.deepEqual(audienceTallies(rows), { all: 4, open: 2, invited: 1, solo: 1 });
+  const src = read('frontend/src/features/workshop/index.tsx');
+  assert.match(src, /return matchRows\(inAudience, query\);/, 'the search is the drawer\'s own matcher');
+  assert.match(src, /const q = query\.trim\(\);/, 'at every width');
+});
+
+test('#5296: every community is out at once, and an empty audience\'s chip is hidden', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const rows = Array.from({ length: 12 }, (_, i) => ({
+    slug: `c${i}`, name: `C${i}`, audience: 'open', member_count: 3,
+    last_active_at: new Date(Date.UTC(2026, 8, 20 - i)).toISOString(), working: 0, needs: 0,
+  }));
+  mod.workshopStore.set({ open: true, error: false, tab: 'status', rows });
+  const html = renderToHtml(createElement(mod.WorkshopScreen, {}));
+  assert.equal([...html.matchAll(/data-workshop-app="/g)].length, 12, 'all twelve, no fold');
+  assert.doesNotMatch(html, /Show \d+ more/);
+  assert.match(html, /class="[^"]*\bhidden\b[^"]*"[^>]*data-workshop-chip="solo"|data-workshop-chip="solo"[^>]*class="[^"]*\bhidden\b/,
+    'a zero says nothing, and the chip stays in the document');
+  mod.workshopStore.set({ open: false, rows: null });
 });
 
 test('the screen is built from the grouped-list primitives, not a copy of them', () => {
@@ -544,27 +584,6 @@ test('groupRows: three sections in order, empty ones left out, an unknown audien
     'no Private communities section when there are none, and a row is never dropped');
 });
 
-test('a section shows its three most recent and folds the rest under "Show N more"', () => {
-  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
-  const rows = Array.from({ length: 5 }, (_, i) => ({
-    slug: `c${i}`, name: `C${i}`, audience: 'open', member_count: 3,
-    last_active_at: new Date(Date.UTC(2026, 8, 20 - i)).toISOString(), working: 0, needs: 0,
-  }));
-  mod.workshopStore.set({ open: true, error: false, rows });
-  const html = renderToHtml(createElement(mod.WorkshopScreen, {}));
-  assert.deepEqual([...html.matchAll(/data-workshop-app="([^"]+)"/g)].map((m) => m[1]), ['c0', 'c1', 'c2'],
-    'the three most recent');
-  assert.match(html, /<button[^>]*data-workshop-more="open"[^>]*aria-expanded="false"/,
-    'the fold is a button row of the same card, never an anchor');
-  assert.match(html, />Show 2 more</);
-  // Polish N2: the number says what the card lists, "3 of 5", not a bare
-  // total sitting over three rows and "Show 2 more".
-  assert.match(html, /aria-label="Showing 3 of 5">3 of 5</, 'the header counts what is listed, out of the whole section');
-  const { sectionCount } = mod;
-  assert.deepEqual(sectionCount(5, 5, 'communities:sections.open.count'), { text: '5', label: '5 in Public communities' },
-    'every row out: the total alone');
-});
-
 test('"Show N more" reveals five at a time, then folds back (#3269)', () => {
   const { sectionFold, SECTION_STEP } = loadTsx('frontend/src/features/workshop/index.tsx');
   assert.equal(SECTION_STEP, 5);
@@ -608,11 +627,9 @@ test('15 Oct 2026: a project with an invite link out and nobody in yet says "Inv
   // Which section it sits in is its audience's: a link out is not a member.
   mod.workshopStore.set({ open: true, error: false, tab: 'status', rows: [row({ invite_link_out: true }), row({ slug: 'club', name: 'Club', audience: 'invited', member_count: 3 })] });
   const html = renderToHtml(createElement(mod.WorkshopScreen, {}));
-  assert.match(html, /data-workshop-section="solo"[\s\S]*?data-workshop-app="garden"[\s\S]*?Invite link out/,
-    'under Just you, saying so');
-  const invited = html.slice(html.indexOf('data-workshop-section="invited"'), html.indexOf('data-workshop-section="solo"'));
-  assert.ok(invited.includes('data-workshop-app="club"') && !invited.includes('data-workshop-app="garden"'), 'not among the groups');
-  assert.match(html, /data-workshop-app="garden" data-workshop-audience="solo"/);
+  assert.match(html, /data-workshop-app="garden"[\s\S]*?Invite link out/, 'saying so');
+  assert.match(html, /data-workshop-app="garden" data-workshop-audience="solo"/, 'under Just you (its chip)');
+  assert.deepEqual(mod.filterRows(mod.workshopStore.get().rows, 'invited', '').map((r) => r.slug), ['club'], 'not among the groups');
   mod.workshopStore.set({ open: false, rows: null });
   // One read for the whole list (GET /api/apps), never one per project; the
   // server says it only while nobody else is in it.
@@ -643,6 +660,54 @@ test('a row says its status in words, leaves zeroes out, and keeps both numbers 
   assert.doesNotMatch(line(0, 1), / · /, 'no separator ahead of the only half showing');
   assert.doesNotMatch(read('frontend/src/features/workshop/index.tsx'), /function Count\(/,
     'the glyph pills are gone from the rows');
+});
+
+test('#5296: a row has one pill, its votes, and the channel count steps aside for it', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const pill = renderToHtml(createElement(mod.VotePill, { count: 3 }));
+  assert.match(pill, /data-workshop-vote-pill="3"[^>]*class="[^"]*rounded-full[^"]*violet/);
+  assert.match(pill, />3 to vote<\/span>$/);
+  // In the row the words stay in the document for the checks' adjacency, undrawn.
+  const line = renderToHtml(createElement(mod.StatusLine, { working: 2, needs: 3, needsInPill: true }));
+  assert.match(line, /data-workshop-working="2" class="[^"]*">2 in progress<\/span><span data-workshop-needs="3" class="hidden">/);
+  const src = read('frontend/src/features/workshop/index.tsx');
+  assert.match(src, /trailing=\{row\.needs > 0 \? <VotePill count=\{row\.needs\} \/> : unread > 0 \? \(/,
+    'the votes, else the unread count: never both');
+  assert.match(src, /<StatusLine working=\{row\.working\} needs=\{row\.needs\} needsInPill \/>/);
+  mod.workshopStore.set({
+    open: true, error: false, tab: 'status',
+    rows: [{ slug: 'garden', name: 'Garden', audience: 'open', member_count: 3, working: 0, needs: 2, owed: ['proposal:1@0', 'proposal:2@0'] }],
+  });
+  const html = renderToHtml(createElement(mod.WorkshopScreen, {}));
+  assert.equal([...html.matchAll(/data-workshop-vote-pill="2"/g)].length, 1, 'one pill on the row');
+  mod.workshopStore.set({ open: false, rows: null });
+});
+
+test('#5296: the page counts votes the way the tab does, so the two say the same number', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const rows = mod.joinCounts(
+    [{ slug: 'homeroom', name: 'Homeroom', audience: 'open' }, { slug: 'flat', name: 'Flat', audience: 'invited' }],
+    {
+      homeroom: { working: 0, needs: 5, owed: ['proposal:11@0', 'proposal:12@0', 'proposal:13@0', 'proposal:14@0', 'governance:5'], unchosen: true },
+      flat: { working: 0, needs: 1, owed: ['proposal:90@0'] },
+    },
+  );
+  assert.equal(rows[0].unchosen, true, 'the counts\' flag rides on the row');
+  assert.equal(rows[1].unchosen, undefined);
+  const seen = rows.map(mod.unseenRow);
+  assert.deepEqual(seen.map((r) => [r.slug, r.needs, r.owedCount]), [['homeroom', 0, 0], ['flat', 1, 1]],
+    'an unchosen community\'s votes wait on nobody, here as on the tab');
+  mod.workshopStore.set({ open: true, error: false, tab: 'status', rows });
+  const html = renderToHtml(createElement(mod.WorkshopScreen, {}));
+  assert.match(html, /1 vote waiting on you/, 'the tab\'s 1, not 6');
+  assert.doesNotMatch(html, /data-workshop-vote-pill="5"/);
+  mod.workshopStore.set({ open: false, rows: null });
+  const src = read('frontend/src/features/workshop/index.tsx');
+  assert.match(src, /import \{ takeCounts, votesWaiting \} from '\.\/community-scope';/, 'one definition, the tab\'s');
+  assert.equal([...src.matchAll(/takeCounts\(/g)].length, 2, 'and both counts reads hand their answer to the tab');
+  const scope = read('frontend/src/features/workshop/community-scope.ts');
+  assert.match(scope, /badgeNeeds \+= votesWaiting\(info\[s\]\);/);
+  assert.match(scope, /if \(st\.slug\) return votesWaiting\(st\.info\[st\.slug\]\);/);
 });
 
 test('the controller loads both reads and survives losing the counts', async () => {

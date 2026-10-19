@@ -932,64 +932,44 @@ test('#3887: the chip goes through the module handler, which restarts at page 1'
     'the fetch carries the ask only while the chip is on');
 });
 
-test('the standings table drops the Success rate column on a season board', () => {
+test('the standings table is rank, name and points on a season board (#5275)', () => {
   const view = renderStandings({
     event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
     leaderboard: [SEASON_ROW],
   });
   assert.equal(view.state, 'table');
-  assert.ok(!view.columns.includes('success'),
-    'the season aggregate has no per-event success rate to report, so the '
-    + 'column does not exist — it cannot print the hard-coded 0 as if measured');
-  // The points and blocks columns are real on both paths and must survive.
-  assert.deepEqual(view.columns, ['rank', 'user', 'points', 'blocks']);
-  assert.equal(view.rows[0].points, '67,973.66', 'the season total is the headline number, with thousands separators (polish N11)');
-  assert.equal(view.rows[0].extra, null, 'no "+0"');
-  assert.equal(view.headers.blocks, 'Blocks produced', 'blocks IS a real season-wide sum');
+  // A phone cut the four-column table at "10…"; blocks, the "+" figure and
+  // the success rate moved to the row's details (drillView's figures).
+  assert.deepEqual(view.columns, ['rank', 'user', 'points']);
+  assert.equal(view.rows[0].points, '67,974', 'whole points, grouped');
   assert.equal(view.headers.points, 'Season points', 'the column says which total it is');
   assert.equal(view.isSeason, true);
+  for (const gone of ['extra', 'blocks', 'success']) {
+    assert.ok(!(gone in view.rows[0]), `a row carries no ${gone} figure any more`);
+  }
 });
 
-test('polish N11: points carry separators, and "+N" is shown only when it is part of the total', () => {
+test('the standings table is rank, name and points on a per-event board too (#5275)', () => {
   const view = renderStandings({
     event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
-    leaderboard: [
-      { ...SEASON_ROW, rank: 1, total_points: 13252, extra_points: 13252 },
-      { ...SEASON_ROW, rank: 2, total_points: 12000, extra_points: 1500 },
-    ],
+    leaderboard: [{ ...SEASON_ROW, total_points: 10823, event_success_rate: 80 }],
   });
-  assert.equal(view.rows[0].points, '13,252');
-  assert.equal(view.rows[0].extra, null, 'all of it from activities: "+13,252" read as a gain the size of the score');
-  assert.equal(view.rows[1].points, '12,000');
-  assert.equal(view.rows[1].extra, '1,500', 'a part of it: still said');
-});
-
-test('the standings table keeps the Success rate column on a per-event board', () => {
-  const view = renderStandings({
-    event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
-    leaderboard: [{ ...SEASON_ROW, total_points: 1900, event_success_rate: 80 }],
-  });
-  assert.equal(view.state, 'table');
-  assert.deepEqual(view.columns, ['rank', 'user', 'points', 'blocks', 'success'],
-    'a single event measures it');
-  assert.equal(view.headers.success, 'Success rate');
-  assert.equal(view.rows[0].success, '80');
+  assert.deepEqual(view.columns, ['rank', 'user', 'points']);
+  assert.equal(view.rows[0].points, '10,823');
   assert.equal(view.headers.points, 'Points', 'and the points column is unqualified');
   assert.equal(view.isSeason, false);
 });
 
-test('the season board and the per-event board stay column-aligned', () => {
+test('the head and the body read the one column list', () => {
   // This used to count <th> against <td> in the rendered HTML, because the
   // string renderer dropped the success cell with TWO independent
   // conditionals and one could be edited without the other. The descriptor
   // makes that unrepresentable: there is a single `columns` list, and the
-  // renderer maps over it once for the header row and once per body row. The
-  // assertion is therefore structural — both maps read the same list.
+  // renderer maps over it once for the header row and once per body row.
   const view = renderStandings({
     event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
     leaderboard: [SEASON_ROW],
   });
-  assert.equal(view.columns.length, 4, 'rank, user, season points, blocks');
   for (const c of view.columns) {
     assert.ok(view.headers[c], `every rendered column has a header (${c})`);
   }
@@ -997,6 +977,96 @@ test('the season board and the per-event board stay column-aligned', () => {
   assert.equal(maps, 2,
     'exactly two maps over the one column list — the header row and the body row; '
     + 'a third source of truth is how the table skewed before');
+});
+
+test('#5275: a masked address is never shown as a name', () => {
+  const masked = { ...SEASON_ROW, rank: 22, discord: null, display_name: 'sed***@***.com', identifier: 'sed***@***.com' };
+  const view = renderStandings({
+    event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
+    leaderboard: [
+      { ...masked, username: 'sedna' },
+      { ...masked, rank: 23, username: null },
+      SEASON_ROW,
+    ],
+  });
+  assert.equal(view.rows[0].user, 'sedna', 'the public username, when there is one');
+  assert.equal(view.rows[1].user, 'Member #23', 'else a neutral stand-in that names no address');
+  assert.equal(view.rows[1].anonymous, false, 'which is a name the row sentence can carry');
+  assert.equal(view.rows[2].user, 'Ocank14', 'a real name is untouched');
+  assert.equal(message('leaderboard:standings.member'), 'Member #{{rank}}');
+
+  const { TL } = loadStandings();
+  TL._drillRow = { ...masked, username: null };
+  TL._drillActivities = { loading: false, error: null, data: null };
+  TL._drillEpoch = { loading: false, error: null, data: null };
+  TL._drillProfile = { loading: false, error: null, data: null };
+  assert.equal(TL.drillView().displayName, 'Member #22', 'and the details header says the same');
+});
+
+test('#5275: the viewer\'s own place is pinned above the table', () => {
+  const view = renderStandings({
+    event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
+    leaderboard: [SEASON_ROW],
+    viewer_row: { ...SEASON_ROW, rank: 22, total_points: 10823, is_viewer: true },
+  });
+  assert.deepEqual(view.you, { rank: '22', points: '10,823', count: 10823 });
+  assert.equal(message('leaderboard:standings.you_other'), 'You · #{{rank}} · {{points}} points');
+
+  const guest = renderStandings({
+    event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
+    leaderboard: [SEASON_ROW],
+  });
+  assert.equal(guest.you, null, 'a guest, or a viewer with no row, gets no line');
+
+  const excluded = renderStandings({
+    event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
+    leaderboard: [SEASON_ROW],
+    viewer_row: { ...NON_PODIUM_ROW, is_viewer: true },
+  });
+  assert.equal(excluded.you, null, 'nor does a viewer outside the ranking, who has no rank to show');
+
+  assert.match(standingsTsx, /id="tc-lb-you"[\s\S]{0,400}?_openViewerRow\(\)/,
+    'pressing it opens their details');
+});
+
+test('#5275: the row\'s details carry the figures that left the table, only when they say something', () => {
+  function figuresFor(row, type = 'regular') {
+    const { TL } = loadStandings();
+    TL._data = { event: { id: 8, display_leaderboard: true, type }, leaderboard: [row] };
+    TL._drillRow = row;
+    TL._drillActivities = { loading: false, error: null, data: null };
+    TL._drillEpoch = { loading: false, error: null, data: null };
+    TL._drillProfile = { loading: false, error: null, data: null };
+    const view = TL.drillView();
+    assert.equal(view.index, 0, 'opened under its own row');
+    return Object.fromEntries(view.figures.map((f) => [f.key, f.value]));
+  }
+  assert.deepEqual(
+    figuresFor({ ...SEASON_ROW, total_points: 10823, extra_points: 10823, event_total_produced_blocks: 0, event_success_rate: 0 }),
+    {}, 'zero blocks, no rate, and challenge points equal to the total: nothing to add');
+  assert.deepEqual(
+    figuresFor({ ...SEASON_ROW, total_points: 1900, extra_points: 400, event_total_produced_blocks: 1200, event_success_rate: 80 }),
+    { blocks: '1,200', challenges: '400', success: '80%' });
+  assert.deepEqual(
+    figuresFor({ ...SEASON_ROW, total_points: 1900, extra_points: 400, event_total_produced_blocks: 42 }, 'season'),
+    { blocks: '42', challenges: '400' }, 'the season aggregate measures no success rate');
+});
+
+test('#5275: a row\'s details open under it, and pressing it again folds them', () => {
+  const { TL } = loadStandings();
+  TL._open = true;
+  TL._data = {
+    event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
+    leaderboard: [SEASON_ROW, { ...SEASON_ROW, rank: 2, display_name: 'Second' }],
+  };
+  TL.fetchJson = () => new Promise(() => {});
+  TL._openRowAt(1);
+  assert.equal(TL._drillRow.display_name, 'Second');
+  TL._openRowAt(1);
+  assert.equal(TL._drillRow, null, 'the same row closes them');
+  assert.match(standingsTsx, /openIndex === row\.index && drill \?[\s\S]{0,200}?<DrillPanel view=\{drill\} \/>/,
+    'the panel is drawn in a row of its own right under the opened one');
+  assert.match(standingsTsx, /aria-expanded=\{openIndex === row\.index\}/);
 });
 
 test('a standings row opens from the keyboard, and says what it opens', () => {
@@ -1020,7 +1090,7 @@ test('a standings row opens from the keyboard, and says what it opens', () => {
   assert.doesNotMatch(tr[0], /role=/, 'it stays a table row');
   assert.match(tr[0], /focus-visible:outline-violet-500/, 'with a visible focus ring');
 
-  const row = standingsTsx.slice(standingsTsx.indexOf('<tr\n              key={row.index}'));
+  const row = standingsTsx.slice(standingsTsx.indexOf('<Fragment key={row.index}>'));
   assert.match(row,
     /onKeyDown=\{\(e\) => \{\s*if \(e\.key === 'Enter' \|\| e\.key === ' '\) \{\s*e\.preventDefault\(\);\s*controller\(\)\?\._openRowAt\(row\.index\);/,
     'Enter and Space open the same details a click does');

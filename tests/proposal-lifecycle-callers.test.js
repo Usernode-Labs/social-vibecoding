@@ -146,7 +146,9 @@ test('a move its caller waits on carries a deadline, and a resume not applied in
     assert.match(platform.slice(at, platform.indexOf('\nexport ', at + 10)), /deadlineMs: ANSWER_MS/, name);
   }
   const sessions = read('src/routes/sessions.js');
-  assert.match(sessions, /if \(out\.status === 'pending'\) return \{ ok: false, status: 503/);
+  assert.match(sessions, /if \(out\.status === 'pending' \|\| out\.reason === 'expired'\) return RESUME_NOT_DECIDED;/);
+  assert.match(sessions, /const RESUME_NOT_DECIDED = Object\.freeze\(\{\n\s*ok: false, status: 503, code: 'not_decided',/,
+    'a retryable 503 (tests/session-not-decided-routes.test.js pins its answer)');
   assert.doesNotMatch(sessions, /out\.status === 'replayed' \|\| out\.status === 'pending'\) break/);
 });
 

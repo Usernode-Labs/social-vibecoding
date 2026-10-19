@@ -120,6 +120,15 @@ async function patOctokit(pat) {
 // immediately (#192). The TTL — plus the panel's throttled manual refresh
 // (refreshPublicIssues) — is the backstop for creates/closes that happen
 // directly on GitHub.
+//
+// An entry whose list came back as ONE page also keeps that answer's ETag,
+// and the read after its TTL asks with If-None-Match. On 19 Oct 2026 the
+// Homeroom bot's five-minute refresh of every project's list was the largest
+// steady GitHub cost, about 1,500 requests an hour, and a 304 is free. The
+// ETag lives in the entry itself, so it is kept and dropped with it: one
+// entry per repository, as before. A list of more pages keeps none (each
+// page would need its own), and an entry whose list was changed here
+// (recordCreatedHere) or expired on purpose drops it.
 const issuesCache = new Map();
 const ISSUES_CACHE_TTL_MS = 5 * 60 * 1000;
 // One issue read on its own (fetchPublicIssue), for an issue the open-issues
@@ -863,11 +872,13 @@ async function installationReadHeaders(owner) {
 // One raw GET for the public read paths: through the installation when the
 // rule says so, again with publicFetchHeaders() (the bot token, or
 // anonymous) when that is refused, as the Octokit reads do. Returns the
-// fetch Response the caller would have had.
-async function publicReadFetch(owner, url, { signal } = {}) {
+// fetch Response the caller would have had. `headers` (optional) go out
+// with both attempts: a conditional read's If-None-Match has to reach
+// whichever credential answers it.
+async function publicReadFetch(owner, url, { signal, headers: extra = null } = {}) {
   const viaApp = await installationReadHeaders(owner);
   if (viaApp) {
-    const resp = await fetch(url, { headers: viaApp.headers, signal });
+    const resp = await fetch(url, { headers: { ...viaApp.headers, ...extra }, signal });
     recordFetchResponse(viaApp.credential, resp, { url });
     const refused = READ_FALLBACK_STATUSES.has(resp.status);
     if (!refused) {
@@ -876,7 +887,7 @@ async function publicReadFetch(owner, url, { signal } = {}) {
     }
     budget.noteRead('pat', `status_${resp.status}`);
   }
-  const resp = await fetch(url, { headers: publicFetchHeaders(), signal });
+  const resp = await fetch(url, { headers: { ...publicFetchHeaders(), ...extra }, signal });
   recordFetchResponse(publicFetchCredential(), resp, { url });
   return resp;
 }
@@ -2050,12 +2061,27 @@ async function patchIssueContent(owner, repo, issueNumber, { title, body }) {
   await octokit.rest.issues.update({ owner, repo, issue_number: issueNumber, ...content });
 }
 
-async function closeIssue(owner, repo, issueNumber) {
+// `reason`: GitHub's state_reason, 'completed' or 'not_planned' (a problem
+// that stopped by itself, services/platform-signals.js). Left out, GitHub
+// records 'completed', as every caller before it did.
+async function closeIssue(owner, repo, issueNumber, { reason = null } = {}) {
   const octokit = await getOctokit(owner);
   const { data } = await octokit.rest.issues.update({
     owner, repo, issue_number: issueNumber, state: 'closed',
+    ...(reason === 'completed' || reason === 'not_planned' ? { state_reason: reason } : {}),
   });
-  log.info('github', 'Issue closed', { repo: `${owner}/${repo}`, issue: issueNumber });
+  log.info('github', 'Issue closed', { repo: `${owner}/${repo}`, issue: issueNumber, reason });
+  return data;
+}
+
+// Open a closed issue again: a problem the platform closed came back within
+// a week (services/platform-signals.js).
+async function reopenIssue(owner, repo, issueNumber) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.issues.update({
+    owner, repo, issue_number: issueNumber, state: 'open',
+  });
+  log.info('github', 'Issue reopened', { repo: `${owner}/${repo}`, issue: issueNumber });
   return data;
 }
 
@@ -2488,17 +2514,31 @@ async function fetchPublicIssues(owner, repo, { force = false } = {}) {
   const collected = [];
   let page = 0;
   let truncatedList = false;
+  // The ETag the cached list was answered with, only ever one page's (see
+  // issuesCache): asked with on page one, and a 304 means that list stands.
+  const sentEtag = cached && cached.etag ? cached.etag : null;
+  let etag = null;
 
   try {
     while (url && page < ISSUES_MAX_PAGES) {
       page += 1;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), ISSUES_FETCH_TIMEOUT_MS);
+      const conditional = page === 1 && sentEtag ? { 'If-None-Match': sentEtag } : null;
       let resp;
       try {
-        resp = await publicReadFetch(owner, url, { signal: controller.signal });
+        resp = await publicReadFetch(owner, url, { signal: controller.signal, headers: conditional });
       } finally {
         clearTimeout(timer);
+      }
+
+      // Not modified: the cached list is still GitHub's list. Before the
+      // !resp.ok branch below, which would take a 304 for a failure. Served
+      // the way a cache hit is; confirmCreatedIssues is not run, because
+      // nothing new was read to confirm anything with.
+      if (resp.status === 304 && conditional) {
+        issuesCache.set(cacheKey, { result: cached.result, etag: sentEtag, expiresAt: Date.now() + ISSUES_CACHE_TTL_MS });
+        return applyIssueOverlays(owner, repo, cached.result);
       }
 
       // Rate limited: anonymous quota is per-IP and shared across all apps
@@ -2532,13 +2572,15 @@ async function fetchPublicIssues(owner, repo, { force = false } = {}) {
         if (item) collected.push(normalizeIssue(item));
       }
       url = parseNextLink(resp.headers.get('link'));
+      // The whole list in one page: its ETag names all of it.
+      if (page === 1 && !url) etag = resp.headers.get('etag') || null;
     }
     // We stopped with a next page still pending → repo has more open issues
     // than our ceiling; flag the list as partial.
     if (url) truncatedList = true;
 
     const result = { issues: collected, truncatedList };
-    issuesCache.set(cacheKey, { result, expiresAt: Date.now() + ISSUES_CACHE_TTL_MS });
+    issuesCache.set(cacheKey, { result, ...(etag ? { etag } : {}), expiresAt: Date.now() + ISSUES_CACHE_TTL_MS });
     // A successful fresh fetch is proof GitHub's list now serves any
     // overlaid issue it contains — drop those overlay entries early.
     confirmCreatedIssues(owner, repo, collected);
@@ -2824,7 +2866,8 @@ function invalidateIssuesCacheHere(owner, repo) {
       // merge — left the next read with nothing to fall back to: one slow
       // or refused GitHub answer, and the board painted "no open issues".
       // A fresh object also drops any failure backoff, so the read after
-      // an invalidation always goes to GitHub.
+      // an invalidation always goes to GitHub, and its ETag, so that read
+      // is a full one rather than a 304 for the list held here.
       const entry = issuesCache.get(key);
       issuesCache.set(key, { result: entry.result, expiresAt: 0 });
       log.debug('github', 'Invalidated open-issues cache', { repo: key });
@@ -2841,8 +2884,9 @@ function invalidateIssuesCacheHere(owner, repo) {
 function expireIssuesCachesHere() {
   singleIssueCache.clear();
   // Its failure backoff kept (#2261): a reconnect during a rate limit does
-  // not send every repo's next read to GitHub at once.
-  for (const [key, entry] of issuesCache) issuesCache.set(key, { ...entry, expiresAt: 0 });
+  // not send every repo's next read to GitHub at once. Its ETag is dropped,
+  // as an invalidation drops it: the next read is a full one.
+  for (const [key, { etag: _dropped, ...entry }] of issuesCache) issuesCache.set(key, { ...entry, expiresAt: 0 });
 }
 
 // The open-issues copy, its closed-issue suppressions and its single-issue
@@ -2997,7 +3041,10 @@ function recordCreatedHere(owner, repo, normalized, ttlMs = ISSUES_CREATED_OVERL
 
   for (const key of issuesCache.keys()) {
     if (key.toLowerCase().replace(/\.git$/, '') !== target) continue;
-    const entry = issuesCache.get(key);
+    // Without its ETag: the seeded list is no longer the one GitHub's ETag
+    // names, and a 304 against it would keep this issue listed as open after
+    // it was closed on GitHub, until some other issue changed.
+    const { etag: _dropped, ...entry } = issuesCache.get(key);
     const issues = [
       normalized,
       ...entry.result.issues.filter((i) => i.number !== normalized.number),
@@ -3070,6 +3117,7 @@ module.exports = {
   patchIssueBody,
   patchIssueContent,
   closeIssue,
+  reopenIssue,
   getCloneUrl,
   safeMention,
   parseGithubUrl,

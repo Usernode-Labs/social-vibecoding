@@ -128,6 +128,66 @@ const MODEL_STAGES: { key: ModelStage; label: string }[] = [
   { key: 'build', label: 'Build' },
   { key: 'followup', label: 'Follow-ups and check fixes' },
 ];
+// The current bot configurations' models (Admin → Bot configurations): a
+// first version's triage, plan and build, and a later change's plan and
+// build. Each decides over the stage's own setting while it is current.
+interface ConfiguredModels {
+  id: number;
+  key: string;
+  label: string;
+  version: number;
+  models: Partial<Record<ModelStage, string | null>>;
+}
+interface Configurations {
+  firstVersion: ConfiguredModels | null;
+  later: ConfiguredModels | null;
+}
+
+const CONFIGURED_VERB: Partial<Record<ModelStage, string>> = { spec: 'plan', build: 'build' };
+
+/**
+ * What a stage's row says runs while a bot configuration is current, or ''
+ * when its picker decides. Plan and Build: each scope with a current
+ * configuration, and who the picker below is still for. Triage: only a
+ * project's first version (a later change's triage is the picker's).
+ * Follow-ups: always the picker's. Pure.
+ */
+export function configuredLine(stage: ModelStage, c: Configurations | null | undefined, nameOf: (id: string) => string = (id) => id): string {
+  const first = c?.firstVersion?.models?.[stage] || null;
+  if (stage === 'triage') {
+    return first ? `A project's first version is triaged on ${nameOf(first)}, as its bot configuration says. Every other request uses the picker below.` : '';
+  }
+  const verb = CONFIGURED_VERB[stage];
+  if (!verb) return '';
+  const later = c?.later?.models?.[stage] || null;
+  if (!first && !later) return '';
+  const parts = [
+    first ? `first versions ${verb} on ${nameOf(first)}` : '',
+    later ? `later changes ${verb} on ${nameOf(later)}` : '',
+  ].filter(Boolean).join(' and ');
+  const rest = first && later
+    ? 'The picker below applies only when no configuration is current.'
+    : `${first ? 'Later changes' : 'First versions'} use the picker below.`;
+  return `${parts.charAt(0).toUpperCase()}${parts.slice(1)}, as the current bot configurations say. ${rest}`;
+}
+
+/**
+ * The model each stage runs on for the Benchmark's "In use": the stage's
+ * setting, with a later change's plan and build taken from its current
+ * configuration, since the benchmark's spec and build tasks are later
+ * changes. Pure.
+ */
+export function modelsInUse(p: Pick<Payload, 'bot' | 'configurations'> | null | undefined): Partial<Record<ModelStage, string | null>> | null {
+  const stages = p?.bot?.models;
+  if (!stages) return null;
+  const later = p?.configurations?.later?.models || null;
+  return {
+    ...stages,
+    ...(later?.spec ? { spec: later.spec } : {}),
+    ...(later?.build ? { build: later.build } : {}),
+  };
+}
+
 // The server's own rule (MODEL_ID_RE in services/homeroom-bot.js).
 const MODEL_ID_RE = /^[a-z0-9][a-z0-9._-]{0,60}\/[a-z0-9][a-z0-9._:-]{0,100}$/i;
 
@@ -306,6 +366,9 @@ interface Payload {
   // setting goes back to.
   defaultModel?: string | null;
   deploymentDefaultModel?: string | null;
+  // What builds run on while a bot configuration is current (homeroom-bot.js
+  // currentConfigurations), over the stage settings; a scope with none is null.
+  configurations?: Configurations | null;
   bot: Bot | null;
   loop: LastPass | null;
   totals: Totals;
@@ -1118,9 +1181,9 @@ export function benchHint(best: Best | null, stage: ModelStage, modelId: string 
  * platform default's own picker (`stage` "default") offers the
  * deployment's default in that first place, and has no benchmark line.
  */
-function ModelPicker({ stage, label, value, defaultModel, blankLabel = 'Platform default', models, best, canWrite, onChange }: {
+function ModelPicker({ stage, label, value, defaultModel, blankLabel = 'Platform default', models, best, canWrite, configurations = null, onChange }: {
   stage: ModelStage | 'default'; label: string; value: string; defaultModel: string | null; blankLabel?: string;
-  models: BenchModel[] | null; best: Best | null; canWrite: boolean; onChange: (id: string) => void;
+  models: BenchModel[] | null; best: Best | null; canWrite: boolean; configurations?: Configurations | null; onChange: (id: string) => void;
 }) {
   const listed = !value || (models || []).some((m) => m.id === value);
   const [typing, setTyping] = useState(!listed);
@@ -1128,9 +1191,16 @@ function ModelPicker({ stage, label, value, defaultModel, blankLabel = 'Platform
   const nameOf = (id: string) => (models || []).find((m) => m.id === id)?.label || id;
   const price = (m: BenchModel) => (m.inputPerMillion != null && m.outputPerMillion != null
     ? ` · $${m.inputPerMillion.toFixed(2)} / $${m.outputPerMillion.toFixed(2)}` : '');
+  const configured = stage === 'default' ? '' : configuredLine(stage, configurations, nameOf);
   return (
     <div data-model-stage={stage}>
       <label className={AdminUI.label} htmlFor={`admin-homeroom-bot-model-${stage}`}>{label}</label>
+      {configured ? (
+        <p className="text-sm mt-1 mb-2" id={`admin-homeroom-bot-model-${stage}-configured`} data-model-configured={stage}>
+          {`${configured} `}
+          <a className={AdminUI.btn.link} href="#admin/bot-configs">Bot configurations</a>
+        </p>
+      ) : null}
       <select
         id={`admin-homeroom-bot-model-${stage}`}
         className={`${AdminUI.select} mt-1`}
@@ -1545,7 +1615,9 @@ function HomeroomBotSection() {
     setModel(stage, id);
     showTab('settings');
     const name = MODEL_STAGES.find((m) => m.key === stage)?.label || stage;
-    setStatus({ text: `${name} is set to ${id} in the form below. Nothing changes until you press Save changes.`, tone: 'ok' });
+    // A plan or build a configuration decides: the picker is its fallback.
+    const fallback = configuredLine(stage, payload?.configurations) ? ' Builds use it only where no bot configuration is current.' : '';
+    setStatus({ text: `${name} is set to ${id} in the form below.${fallback} Nothing changes until you press Save changes.`, tone: 'ok' });
     try { window.requestAnimationFrame(() => document.getElementById('admin-homeroom-bot-models')?.scrollIntoView({ block: 'center' })); } catch { /* non-fatal */ }
   };
 
@@ -2021,8 +2093,9 @@ function HomeroomBotSection() {
                 />
               </div>
               <p className={`${AdminUI.muted} mt-1 mb-4`} id="admin-homeroom-bot-default-model-note">
-                What every stage below left on the platform default runs on, the bot&apos;s answers in DMs and chats, and a new
-                agent chat for anyone who has not picked a model. Every server follows a change within 10 seconds, with no deploy.
+                What every stage below left on the platform default runs on (plans and builds only where no bot configuration is
+                current), the bot&apos;s answers in DMs and chats, and a new agent chat for anyone who has not picked a model. Every
+                server follows a change within 10 seconds, with no deploy.
               </p>
               <div className="grid gap-4 md:grid-cols-2">
                 {MODEL_STAGES.map((m) => (
@@ -2034,6 +2107,7 @@ function HomeroomBotSection() {
                     models={bench ? bench.models : null}
                     best={bench?.best || null}
                     canWrite={canWrite}
+                    configurations={payload?.configurations || null}
                     onChange={(id) => setModel(m.key, id)}
                   />
                 ))}
@@ -2198,7 +2272,7 @@ function HomeroomBotSection() {
       {/* ── Benchmark ────────────────────────────────────────────────── */}
       <div id="admin-homeroom-bot-panel-benchmark" role="tabpanel" aria-labelledby="admin-homeroom-bot-tab-benchmark" hidden={tab !== 'benchmark'}>
         {benchSeen ? (
-          <BenchmarkArea canWrite={canWrite} active={tab === 'benchmark'} inUse={payload?.bot?.models || null}
+          <BenchmarkArea canWrite={canWrite} active={tab === 'benchmark'} inUse={modelsInUse(payload)}
             defaultModel={payload?.defaultModel || null} onUseModel={applyBenchModel} />
         ) : null}
       </div>

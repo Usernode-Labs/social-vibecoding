@@ -47,11 +47,11 @@ test('processes and their holds, against the full schema', { timeout: 120000 }, 
   });
 
   // Another process: its row, beaten `ageSeconds` ago, and what it holds.
-  async function other(id, { ageSeconds = 0, state = 'serving', holds = [], drainStartedAt = null, role = 'all' } = {}) {
+  async function other(id, { ageSeconds = 0, state = 'serving', holds = [], drainStartedAt = null, role = 'all', release = null } = {}) {
     await pool.query(
-      `INSERT INTO platform_processes (id, role, state, heartbeat_at, drain_started_at)
-       VALUES ($1, $2, $3, NOW() - make_interval(secs => $4), $5)`,
-      [id, role, state, ageSeconds, drainStartedAt]);
+      `INSERT INTO platform_processes (id, role, state, heartbeat_at, drain_started_at, release)
+       VALUES ($1, $2, $3, NOW() - make_interval(secs => $4), $5, $6)`,
+      [id, role, state, ageSeconds, drainStartedAt, release]);
     for (const [kind, ref] of holds) {
       await pool.query('INSERT INTO process_holds (process_id, kind, ref) VALUES ($1, $2, $3)', [id, kind, String(ref)]);
     }
@@ -175,6 +175,23 @@ test('processes and their holds, against the full schema', { timeout: 120000 }, 
     assert.equal(await processes.servingOthers(), 2, 'the conductor takes over leading');
     await other('pod-newer-conductor', { state: 'draining', role: 'conductor', drainStartedAt: new Date(Date.now() + 1000) });
     assert.equal(await processes.newerDraining(), 2, 'and drains beside it');
+    // Counted by release, not by process: the replicas of one newer release
+    // count once (a release replaces every conductor), and a replica of
+    // this process's own release draining beside it is no newer release.
+    await pool.query(`DELETE FROM platform_processes WHERE id IN ('pod-newer', 'pod-newer-conductor')`);
+    const own = process.env.GIT_SHA;
+    process.env.GIT_SHA = 'release-a';
+    try {
+      const later = new Date(Date.now() + 1000);
+      await other('pod-b1', { state: 'draining', role: 'conductor', drainStartedAt: later, release: 'release-b' });
+      await other('pod-b2', { state: 'draining', role: 'conductor', drainStartedAt: later, release: 'release-b' });
+      await other('pod-a2', { state: 'draining', role: 'conductor', drainStartedAt: later, release: 'release-a' });
+      assert.equal(await processes.newerDraining(), 1, 'one newer release, whatever its replicas');
+      await other('pod-c1', { state: 'draining', drainStartedAt: later, release: 'release-c' });
+      assert.equal(await processes.newerDraining(), 2);
+    } finally {
+      if (own === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = own;
+    }
     // A beat keeps the drain: it does not put the row back to serving.
     await processes.beat();
     assert.equal((await pool.query('SELECT state FROM platform_processes WHERE id = $1', [processes.ID])).rows[0].state, 'draining');

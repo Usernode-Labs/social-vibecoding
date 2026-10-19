@@ -388,18 +388,22 @@ async function markDraining(deadline) {
 }
 
 /**
- * How many live processes that could replace this one (process-role.js
- * successorRoles) began draining after it did: releases faster than work
- * finishes. The drain ends early when there are too many, rather than keep
- * one Pod per release.
+ * How many newer releases have processes that could replace this one
+ * (process-role.js successorRoles) draining, begun after this one began:
+ * releases faster than work finishes. The drain ends early when there are
+ * too many, rather than keep one Pod per release. Counted by release, not by
+ * process: one release replaces every replica of the conductor, and a
+ * fellow replica of this process's own release draining beside it is not a
+ * newer release (a process with no release recorded counts as one of its own).
  */
 async function newerDraining() {
   if (!started || !pool || !draining) return 0;
   const { rows: [row] } = await pool.query(
-    `SELECT count(*)::int AS n FROM platform_processes
+    `SELECT count(DISTINCT COALESCE(release, id))::int AS n FROM platform_processes
       WHERE id <> $1 AND role = ANY($2::text[]) AND state = 'draining' AND drain_started_at > $3
-        AND heartbeat_at > NOW() - make_interval(secs => $4)`,
-    [ID, successorRoles(role), draining.since, LIVE_SECONDS]);
+        AND heartbeat_at > NOW() - make_interval(secs => $4)
+        AND (release IS NULL OR $5::text IS NULL OR release <> $5)`,
+    [ID, successorRoles(role), draining.since, LIVE_SECONDS, process.env.GIT_SHA || null]);
   return row?.n || 0;
 }
 

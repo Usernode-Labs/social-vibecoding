@@ -131,6 +131,12 @@ test('the page renders its six parts in order', () => {
   assert.ok(!/id="profile-(work|rewards|account|settings)|id="profile-row-/.test(between),
     'the identity card and the stat cards stay adjacent');
   assert.match(html, /id="profile-edit-btn"/);
+  // The Settings card shows at every width now (#5557): no md:hidden, and
+  // the two rows the desktop Me page never had.
+  const settingsCard = html.slice(html.indexOf('id="profile-settings"'), html.indexOf('id="profile-row-settings"'));
+  assert.ok(!/md:hidden/.test(settingsCard), 'no md:hidden on the Settings card');
+  assert.ok(settingsCard.includes('id="profile-row-profile"') && settingsCard.includes('id="profile-row-notifications"'),
+    'Profile and Notifications rows render before Settings');
   assert.ok(!/profile-contributions|data-contribution=/.test(html), 'Your contributions is gone');
   assert.ok(!/id="profile-friends"/.test(html), 'Friends is a row, not a section, until it is opened');
   assert.ok(!/id="profile-more"/.test(html), 'the "More" list is regrouped away');
@@ -196,11 +202,14 @@ test('every part of the older Profile has a home', () => {
   assert.match(sheet, /Profile\._setPublished\(!published\)/);
   assert.match(sheet, /\{t\('profile:edit\.public\.copy'\)\}/);
   assert.equal(message('profile:edit.public.copy'), 'Copy public link');
-  // Admin & moderation, node / wallet / staking → Settings; Log out already there
+  // node / wallet / staking → Settings; Log out already there. Admin &
+  // moderation went to Settings too, and came back to Me (admins only) in
+  // #5281: tests/admin-console-entry-row.test.js pins where it is.
   const rows = read('frontend/src/features/settings/account-rows.tsx');
-  for (const needle of ['id="settings-row-admin"', '<NodePillRow />', '<WalletRow />', '<StakingRow />']) {
+  for (const needle of ['<NodePillRow />', '<WalletRow />', '<StakingRow />']) {
     assert.ok(rows.includes(needle), needle);
   }
+  assert.ok(!rows.includes('settings-row-admin'), 'Admin & moderation is not a Settings row any more');
   assert.match(read('frontend/src/features/settings/index.tsx'), /id="settings-logout"/);
   // completions → counted on Me, listed on the Challenges tab
   assert.match(read(STORE), /summary\.challenges && summary\.challenges\.done/);

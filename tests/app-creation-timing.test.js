@@ -400,6 +400,22 @@ test('buildNote says what happened to the layer cache, and which starter\'s shar
   }), { engine: 'buildkit', cacheUpload: 'skipped', starterCache: { starter: 'chore-list', export: false } });
   assert.deepEqual(timingModule.buildNote({ engine: 'buildkit', result: { cacheUpload: null, starterCache: null } }), { engine: 'buildkit' },
     'no starter, and a build that said nothing about its cache');
+  assert.deepEqual(timingModule.buildNote({
+    engine: 'buildkit', result: { starterCache: { starter: 'tier-list-cities', key: 'afc94f505564', export: true } },
+  }), { engine: 'buildkit', starterCache: { starter: 'tier-list-cities', key: 'afc94f505564', export: true } },
+  'the shared cache is named by its package key');
+  // Handed over before the Job had uploaded it: the upload is not the
+  // build's time any more, and the note says so.
+  assert.deepEqual(timingModule.buildNote({ engine: 'buildkit', result: { cacheUpload: 'background' } }),
+    { engine: 'buildkit', cacheUpload: 'background' });
+});
+
+test('buildNote keeps the base image time, which a busy node\'s pull can make the slowest step nobody sees', () => {
+  assert.deepEqual(timingModule.buildNote({ engine: 'buildkit', result: { baseImageMs: 16700.4 } }),
+    { engine: 'buildkit', baseImageMs: 16700 });
+  assert.equal(timingModule.buildNote({ engine: 'buildkit', result: { baseImageMs: null } }).baseImageMs, undefined,
+    'no FROM timed (all cached, or kpack)');
+  assert.equal(timingModule.buildNote({ engine: 'kpack', result: { phases: [] } }).baseImageMs, undefined);
 });
 
 test('record writes the event and never throws', async () => {

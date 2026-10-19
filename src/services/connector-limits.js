@@ -144,11 +144,14 @@ async function checkActiveCap(pool, config, user) {
     // the lifecycle service pulls in the worker and staging modules.
     const lifecycle = require('./session-lifecycle');
     let freed = false;
+    let notDecided = false;
     try {
-      ({ freed } = await lifecycle.freeUserSlot({ pool, userId: user.id }));
+      ({ freed, notDecided = false } = await lifecycle.freeUserSlot({ pool, userId: user.id }));
     } catch (err) {
       log.warn('connector-limits', 'Could not free a session slot', { userId: user.id, err: err.message });
     }
+    // A pause Homeroom did not decide in time: retryable, not at capacity.
+    if (notDecided) return limitError('not_decided', lifecycle.SLOT_NOT_DECIDED);
     if (!freed) {
       lifecycle.recordCapacityRefusal(pool, { cap: 'user', path: 'connector', userId: user.id });
       return limitError(

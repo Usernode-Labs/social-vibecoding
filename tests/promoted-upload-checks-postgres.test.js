@@ -120,13 +120,25 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
   // What votes.reconcileNativeReviewedHead does to the row for a promoted
   // upload (deferChecks, a move that is not a mechanical merge): the head
   // people vote on becomes the branch's head and the approvals reset. It
-  // starts no checks and leaves the checks pin where it was.
+  // starts no checks and leaves the checks pin where it was. The move is the
+  // proposal machine's (it holds every promoted row once the release's
+  // adoptions ran), so the stand-in writes as its transition does.
   stub('../src/routes/votes', {
     async reconcileNativeReviewedHead({ pool: p, session }) {
-      const { rows: [r] } = await p.query(
-        `UPDATE chat_sessions SET reviewed_head_sha = $1, approval_epoch = approval_epoch + 1
-          WHERE id = $2 RETURNING approval_epoch`, [gh.remote, session.id]);
-      return { headSha: gh.remote, epoch: r.approval_epoch, kind: 'code', checksDeferred: true };
+      const c = await p.connect();
+      try {
+        await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+        const { rows: [r] } = await c.query(
+          `UPDATE chat_sessions SET reviewed_head_sha = $1, approval_epoch = approval_epoch + 1
+            WHERE id = $2 RETURNING approval_epoch`, [gh.remote, session.id]);
+        await c.query('COMMIT');
+        return { headSha: gh.remote, epoch: r.approval_epoch, kind: 'code', checksDeferred: true };
+      } catch (err) {
+        await c.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        c.release();
+      }
     },
   });
 

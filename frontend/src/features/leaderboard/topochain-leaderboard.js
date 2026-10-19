@@ -394,45 +394,52 @@ const TopochainLeaderboard = {
       return { state: 'noentries', challengeLine, disclaimer };
     }
 
-    // The season aggregate (`event.type === 'season'`) is resolved through
-    // computeStandings, which has no per-EVENT breakdown to report: the
-    // server's season path hard-codes event_success_rate (and every other
-    // per-event field) to 0, so a "Success rate" column can only ever read
-    // "0%" — indistinguishable from a real zero and read as broken data.
-    // Drop the column rather than print a number that isn't measured.
-    // `event_total_produced_blocks` is NOT in that bucket: the season path
-    // maps it from the aggregate's real SUM, so it stays.
     const isSeason = event.type === 'season';
     // ONE list drives both the header row and every body row — the renderer
-    // maps over it twice. The string version spelled the two out separately
-    // and dropped the success-rate cell with a second, matching conditional,
-    // which is a skewed table one edit away; here a column cannot exist in the
-    // head without existing in the body.
-    const columns = isSeason
-      ? ['rank', 'user', 'points', 'blocks']
-      : ['rank', 'user', 'points', 'blocks', 'success'];
+    // maps over it twice, so a column cannot exist in the head without
+    // existing in the body.
+    //
+    // #5275: three columns, rank, name and points, on both boards. A phone
+    // cut the four- and five-column table off at "10…", "Blocks produced"
+    // read 0 on nearly every row, and the "+" figure beside the points
+    // often repeated the total. Those figures moved to the row's details
+    // (drillView's `figures`), where each is shown only when it says
+    // something.
+    const columns = ['rank', 'user', 'points'];
     const headers = {
       rank: PlatformI18n.t('leaderboard:standings.column.rank'),
       user: PlatformI18n.t('leaderboard:standings.column.user'),
       points: isSeason ? PlatformI18n.t('leaderboard:standings.column.seasonPoints') : PlatformI18n.t('leaderboard:standings.column.points'),
-      blocks: PlatformI18n.t('leaderboard:standings.column.blocks'),
-      success: PlatformI18n.t('leaderboard:standings.column.success'),
     };
 
-    const rows = shown.map((r, i) => ({
-      index: i,
-      rank: r.is_non_podium ? '—' : String(r.rank),
-      nonPodium: !!r.is_non_podium,
-      // The server resolves a name for every account it can (#2394); a row
-      // it still cannot name says so rather than showing only its points.
-      user: str(r.display_name) || PlatformI18n.t('leaderboard:standings.anonymous'),
-      // Nobody to name: the row's sentence has an unnamed wording.
-      anonymous: !str(r.display_name),
-      points: TopochainLeaderboard.pts(r.total_points),
-      extra: TopochainLeaderboard.extraPart(r.total_points, r.extra_points),
-      blocks: str(r.event_total_produced_blocks),
-      success: str(r.event_success_rate),
-    }));
+    const rows = shown.map((r, i) => {
+      const name = TopochainLeaderboard._rowName(r);
+      return {
+        index: i,
+        rank: r.is_non_podium ? '—' : String(r.rank),
+        nonPodium: !!r.is_non_podium,
+        // The server resolves a name for every account it can (#2394); a row
+        // it still cannot name says so rather than showing only its points.
+        user: name || PlatformI18n.t('leaderboard:standings.anonymous'),
+        // Nobody to name: the row's sentence has an unnamed wording.
+        anonymous: !name,
+        points: TopochainLeaderboard._points(r.total_points),
+      };
+    });
+
+    // #5275: the viewer's own place, pinned above the table so nobody pages
+    // through 25 rows to find themselves. The server sends it whichever page
+    // it falls on (`viewer_row`); a guest, a viewer with no score here, or a
+    // viewer excluded from the ranking gets none, since there is no rank to
+    // show.
+    const own = payload.viewer_row;
+    const you = own && !own.is_non_podium && own.rank != null
+      ? {
+        rank: String(own.rank),
+        points: TopochainLeaderboard._points(own.total_points),
+        count: Math.round(Number(own.total_points) || 0),
+      }
+      : null;
 
     const meta = TopochainLeaderboard._meta;
     const pagination = meta ? {
@@ -451,9 +458,50 @@ const TopochainLeaderboard = {
       columns,
       headers,
       rows,
+      you,
       nonPodiumToggle,
       pagination,
     };
+  },
+
+  // A figure as the table prints it: whole points, grouped ("10,823").
+  // Season totals arrive with cents (67973.66); the row is for ranking,
+  // and the exact figure is in the viewer's own profile.
+  _points(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return TopochainLeaderboard.str(value);
+    return Math.round(n).toLocaleString('en-US');
+  },
+
+  // The name a row is listed under, or null when there is none to show.
+  //
+  // #5275: the server's display-name chain puts a MASKED email or handle
+  // ("sed***@***.com") ahead of the platform username (SPEC 1246, #2394),
+  // and a masked address reads as a leak, not as a name. A row whose
+  // display name IS its masked identifier is listed under its public
+  // username when it has one, else as "Member #22". Asking people for a
+  // display name is a separate change.
+  _rowName(r) {
+    const str = TopochainLeaderboard.str;
+    if (!r) return null;
+    const name = str(r.display_name);
+    if (!name) return null;
+    const masked = !!r.identifier && name === str(r.identifier) && name.includes('***');
+    if (!masked) return name;
+    if (r.username) return str(r.username);
+    if (r.is_non_podium || r.rank == null) return null;
+    return PlatformI18n.t('leaderboard:standings.member', { rank: String(r.rank) });
+  },
+
+  // The board the table shows: excluded rows hidden unless the chip is on
+  // (#3887). bodyView, _openRowAt and drillView all read the same list, so
+  // an index means one row everywhere.
+  _shownRows() {
+    const raw = TopochainLeaderboard._data?.leaderboard;
+    if (!Array.isArray(raw)) return [];
+    return TopochainLeaderboard._showNonPodium
+      ? raw
+      : raw.filter((r) => !r.is_non_podium);
   },
 
   // The three things a rendered body can DO. They were closures over the
@@ -464,13 +512,34 @@ const TopochainLeaderboard = {
     // hidden by default), so the drill opens the row at that index of the
     // same filtered list bodyView built — never of the raw payload, whose
     // indices drift once rows are hidden. Same filter, same direction.
-    const raw = TopochainLeaderboard._data?.leaderboard;
-    if (!Array.isArray(raw)) return;
-    const rows = TopochainLeaderboard._showNonPodium
-      ? raw
-      : raw.filter((r) => !r.is_non_podium);
+    const rows = TopochainLeaderboard._shownRows();
     if (!rows[index]) return;
+    // #5275: the details open under the row, so pressing the open row
+    // again folds them away.
+    if (TopochainLeaderboard._drillRow === rows[index]) {
+      TopochainLeaderboard._closeDrill();
+      return;
+    }
     TopochainLeaderboard._openDrill(rows[index]);
+  },
+
+  // #5275: the pinned "You" line. Opens the viewer's row in place when it
+  // is on this page, else their details on their own under the table.
+  _openViewerRow() {
+    const rows = TopochainLeaderboard._shownRows();
+    const index = rows.findIndex((r) => r && r.is_viewer);
+    if (index !== -1) {
+      TopochainLeaderboard._openRowAt(index);
+      return;
+    }
+    const own = TopochainLeaderboard._data?.viewer_row;
+    if (!own) return;
+    const open = TopochainLeaderboard._drillRow;
+    if (open && open.is_viewer) {
+      TopochainLeaderboard._closeDrill();
+      return;
+    }
+    TopochainLeaderboard._openDrill(own);
   },
 
   _prevPage() {
@@ -667,8 +736,48 @@ const TopochainLeaderboard = {
       } : null,
     };
 
+    // #5275: the figures the table no longer has columns for, each shown
+    // only when it says something. Blocks produced is left out at 0, the
+    // usual case. Challenge points (`extra_points`, points earned outside
+    // block production) are left out at 0 and when they ARE the whole
+    // total, where the table's "+10823" beside "10823" said nothing new. A
+    // success rate needs blocks to be a rate of, and the season aggregate
+    // has none of its own (the server sends a hard-coded 0 there).
+    const blocks = Number(row.event_total_produced_blocks) || 0;
+    const extra = Number(row.extra_points) || 0;
+    const total = Number(row.total_points) || 0;
+    const rate = Number(row.event_success_rate) || 0;
+    const figures = [];
+    if (blocks > 0) {
+      figures.push({
+        key: 'blocks',
+        label: PlatformI18n.t('leaderboard:standings.column.blocks'),
+        value: blocks.toLocaleString('en-US'),
+      });
+    }
+    if (extra > 0 && extra !== total) {
+      figures.push({
+        key: 'challenges',
+        label: PlatformI18n.t('leaderboard:standings.detail.challengePoints'),
+        value: TopochainLeaderboard._points(extra),
+      });
+    }
+    if (!TopochainLeaderboard._isSeasonBoard() && (blocks > 0 || rate > 0)) {
+      figures.push({
+        key: 'success',
+        label: PlatformI18n.t('leaderboard:standings.column.success'),
+        value: `${str(row.event_success_rate)}%`,
+      });
+    }
+    const index = TopochainLeaderboard._shownRows().indexOf(row);
+
     return {
-      displayName: str(row.display_name) || PlatformI18n.t('leaderboard:standings.anonymous'),
+      displayName: TopochainLeaderboard._rowName(row) || PlatformI18n.t('leaderboard:standings.anonymous'),
+      // Where the details are drawn: under this row of the table, or (the
+      // viewer's own row opened from the pinned line while it is on another
+      // page) under the table.
+      index: index === -1 ? null : index,
+      figures,
       walletAddress: row.wallet_address ? str(row.wallet_address) : null,
       profile,
       activities,

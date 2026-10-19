@@ -186,7 +186,9 @@ export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, desc
   /**
    * The icon drawn below `bandCorner` rather than centred under it, in a
    * band 16px taller (the made screen's Invite | App switch, ./made.tsx):
-   * on a narrow phone a centred icon met the switch.
+   * on a narrow phone a centred icon met the switch. With `bandOnly` too,
+   * the card is `bandClassName` tall on both sides, so the switch never
+   * changes its height.
    */
   cornerRoom?: boolean;
   /** More of the card's body, under the line. */
@@ -196,11 +198,15 @@ export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, desc
   const glyph = glyphOf(name, emoji, sketched);
   const tagline = (card && card.tagline) || (description || '').trim();
   const Title = heading ? 'h1' : 'p';
+  // The made screen's Invite | App switch: the card is the band's height on
+  // both sides, so switching moves nothing under it (the Invite side's art
+  // and body fit inside it: 148px, then the name and two lines at most).
+  const oneHeight = bandOnly && cornerRoom && !!bandCorner;
   return (
     <div className="flex flex-col gap-2">
       <div
         data-featured-card={sketched ? 'sketching' : 'ready'}
-        className="relative overflow-hidden rounded-[20px] bg-white text-left text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-100"
+        className={`relative overflow-hidden rounded-[20px] bg-white text-left text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-100${oneHeight ? ` flex flex-col ${bandClassName}` : ''}`}
       >
         <div className={`relative flex items-center justify-center overflow-hidden bg-zinc-200 dark:bg-zinc-800 ${band ? bandClassName : compact ? 'h-[88px]' : cornerRoom && bandCorner ? 'h-[148px] pt-10' : 'h-[132px]'}`}>
           <div

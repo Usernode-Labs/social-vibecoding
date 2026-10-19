@@ -145,12 +145,12 @@ test('#3075: the menu no longer says it in words; the mark\'s own spinner stays'
   store.improveStore.set({ ...store.improveStore.get(), working: true });
   assert.equal(renderToHtml(createElement(wired.UpdateStatus)), '');
   store.improveStore.set({ ...store.improveStore.get(), deploying: true });
-  assert.match(renderToHtml(createElement(wired.UpdateStatus)), /A new version of this app is being built\./);
+  assert.match(renderToHtml(createElement(wired.UpdateStatus)), /An update to this app is on its way\./);
   store.improveStore.set({ ...store.improveStore.get(), deploying: false, versionState: 'downloading' });
-  assert.match(renderToHtml(createElement(wired.UpdateStatus)), /A new version of the platform is downloading\./);
+  assert.match(renderToHtml(createElement(wired.UpdateStatus)), /Homeroom is downloading an update\. You can reload once it’s ready\./);
   store.improveStore.set({ ...store.improveStore.get(), versionState: 'ready' });
   // Polish N4: a short line and an Update button, not "Click here".
-  assert.match(renderToHtml(createElement(wired.UpdateStatus)), /A new version is ready<\/span><span[^>]*>Update<\/span>/);
+  assert.match(renderToHtml(createElement(wired.UpdateStatus)), /Homeroom has an update\. Reload to get it\.<\/span><span[^>]*>Update<\/span>/);
 });
 
 // #3559: "can overscroll horizontally on mobile on agent chats". The

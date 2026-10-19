@@ -569,15 +569,31 @@
   },
   "standings.column.blocks": {
     "text": "Blocks produced",
-    "description": "Column heading in the Standings table: how many blocks of the blockchain the participant's node produced."
+    "description": "Label of a figure in a participant's details, opened from a row of the Standings table: how many blocks of the blockchain the participant's node produced."
   },
   "standings.column.success": {
     "text": "Success rate",
-    "description": "Column heading in the Standings table: the share of the participant's won slots in which a block was produced."
+    "description": "Label of a figure in a participant's details, opened from a row of the Standings table: the share of the participant's won slots in which a block was produced."
   },
   "standings.anonymous": {
     "text": "Anonymous",
     "description": "Stands in for a participant's name in the Standings table, and over their details, when they have no public name."
+  },
+  "standings.member": {
+    "text": "Member #{{rank}}",
+    "description": "Stands in for a participant's name in the Standings table, and over their details, when the only name on record is a hidden email address or handle. {{rank}} is their position in the ranking, e.g. \"Member #22\"."
+  },
+  "standings.you_one": {
+    "text": "You · #{{rank}} · {{points}} point",
+    "description": "The viewer's own place, pinned above the Standings table. {{rank}} is their position, {{points}} their points, already formatted (\"10,823\"); {{count}} is the same number, for the plural. Pressing it opens their details."
+  },
+  "standings.you_other": {
+    "text": "You · #{{rank}} · {{points}} points",
+    "description": "The viewer's own place, pinned above the Standings table. {{rank}} is their position, {{points}} their points, already formatted (\"10,823\"); {{count}} is the same number, for the plural. Pressing it opens their details."
+  },
+  "standings.detail.challengePoints": {
+    "text": "Challenge points",
+    "description": "Label of a figure in a participant's details, opened from a row of the Standings table: the part of their points earned outside block production, from challenges and other activities."
   },
   "standings.nonPodium": {
     "text": "<0>{{name}}</0><1> non-podium</1>",

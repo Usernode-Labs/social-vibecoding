@@ -53,7 +53,9 @@ test('a running sign-out looks like one, and a failed one says Sign out again', 
 test('the declared check that reads the button\'s words reads Sign out; the selectors are unchanged', () => {
   const manifest = JSON.parse(read('dapp.json'));
   const checks = manifest.tests.filter((t) => /#settings-logout/.test(t.expectSelector || ''));
-  assert.ok(checks.length >= 3);
+  // Three until #5281 moved the Admin row's check (which reached the button
+  // through its sibling chain) to Me.
+  assert.ok(checks.length >= 2);
   const worded = checks.filter((t) => t.expectText);
   assert.deepEqual(worded.map((t) => t.expectText), ['Sign out']);
   assert.equal(worded[0].name, 'Settings\' Sign out is a danger-tinted pill under the sections');

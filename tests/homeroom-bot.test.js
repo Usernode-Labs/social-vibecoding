@@ -1372,16 +1372,18 @@ test('the bot session is not work on any issue: is_headless FALSE, empty linked_
 
 test('the loop runs on the workflow\'s machines, ships off, and its spend joins the shared weekly pool', () => {
   // No timer loop of its own: server.js starts nothing for the bot, and the
-  // lane's clock starts with the workflow's loops, on the leader.
+  // lane's clock starts with the release's adoptions (the release machine's
+  // work), once per release, whichever process runs the workflow.
   const server = read('server.js');
   assert.doesNotMatch(server, /homeroom-bot'\)\.start\(/);
   assert.doesNotMatch(server, /homeroom-bot'\)\.stop\(/);
   assert.equal(bot.start, undefined);
   assert.equal(bot.runOnce, undefined);
   const loops = read('src/workflow/platform.ts');
-  const start = loops.slice(loops.indexOf('export async function startWorkflowLoops()'), loops.indexOf('// ── The Homeroom bot\'s loop'));
-  assert.match(start, /await adoptBotQueue\(\);/, 'the rows an older release queued are adopted');
-  assert.match(start, /await runtime\.append\(BOT_LANE, LANE_KEY, \{ type: 'Tick', payload: \{\} \}/, 'and the lane\'s clock starts');
+  const start = loops.slice(loops.indexOf('const ADOPTIONS'), loops.indexOf('// ── The Homeroom bot\'s loop'));
+  assert.match(start, /\['botQueue', \(\) => adoptBotQueue\(\)\]/, 'the rows an older release queued are adopted');
+  assert.match(start, /\['botLane', \(release: string\) => startLaneClock\(release\)\]/);
+  assert.match(start, /await runtime\.append\(BOT_LANE, LANE_KEY, \{ type: 'Tick', payload: \{\} \},\s+\{ requestKey: `boot:\$\{release\}`/, 'and the lane\'s clock starts, once per release');
   const schema = read('src/db/schema.sql');
   assert.match(schema, /CREATE TABLE IF NOT EXISTS homeroom_bot_queue/);
   assert.match(schema, /CREATE TABLE IF NOT EXISTS homeroom_bot_runs/);

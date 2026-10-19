@@ -32,6 +32,10 @@
  * row rather than the whole screen. It lives in the header feature on purpose
  * — see the note in its own file.
  *
+ * <LegalLinks/> is the second island: the terms and the privacy notice, for
+ * a signed-in person to find again after the sign-in screens named them
+ * (#5094, #5106). See its own note.
+ *
  * `.drawer-ver-row` / `.drawer-ver-*` keep their names. app.css draws all
  * three rows off them, and renaming for tidiness would be a restyle wearing a
  * move's clothes.
@@ -40,6 +44,7 @@
 import { SectionHeading } from '@/components/ui/field';
 
 import { useMessages } from '../../../lib/i18n/react';
+import { useWaitlistOptions } from '../../auth/waitlist-shared';
 import { useIsomorphicLayoutEffect } from '../../../lib/legacy-dom';
 import { useStoreState } from '../../../lib/use-store-state';
 import { improveStore } from '../../improve/improve-store.js';
@@ -121,6 +126,51 @@ function PlatformVersionRow() {
   );
 }
 
+/** Both rows read as links; the accent, because each is something to do. */
+const LEGAL_LINK = 'text-sm font-medium text-violet-700 hover:underline dark:text-violet-400';
+
+/**
+ * The terms and Homeroom's privacy notice (#5094, #5106), under the versions:
+ * the sign-in screens name both, and this is where a signed-in person finds
+ * them again, on the web and inside the Homeroom app (which shows this same
+ * screen).
+ *
+ * Terms opens the terms sheet settings.js owns (`showTermsSheet`, the one the
+ * Homeroom app's "about & legal" block opens too): the current version, its
+ * full text link, and whether you accepted it. The privacy notice is a page
+ * on the marketing site, so it is a plain new-tab link to the address
+ * GET /api/public/waitlist/options serves (src/services/marketing-links.js);
+ * inside the Homeroom app, public/js/nav-link.js hands a target="_blank"
+ * link to another origin to the bridge's openExternal. The address arrives
+ * with the options, so the first render, like the prerender, has no href.
+ */
+function LegalLinks() {
+  const t = useMessages('settings');
+  const privacy = useWaitlistOptions()?.privacy_link || undefined;
+  const openTerms = () => {
+    const settings = window.Settings;
+    const show = settings?.showTermsSheet;
+    if (typeof show === 'function') show.call(settings);
+  };
+  return (
+    <div id="settings-about-legal" className="mt-6">
+      <SectionHeading title={t('settings:about.legal.title')} />
+      <div className="flex flex-col items-start gap-2 px-4">
+        <button id="settings-about-terms" type="button" className={LEGAL_LINK} onClick={openTerms}>
+          {t('settings:about.legal.terms')}
+        </button>
+        <a
+          id="settings-about-privacy"
+          href={privacy}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={LEGAL_LINK}
+        >{t('settings:about.legal.privacy')}</a>
+      </div>
+    </div>
+  );
+}
+
 export function AboutSection() {
   const t = useMessages('settings');
   return (
@@ -139,6 +189,8 @@ export function AboutSection() {
             open app's. Hidden outside the mobile app. */}
         <NativeAppVersionRow />
       </div>
+
+      <LegalLinks />
     </div>
   );
 }

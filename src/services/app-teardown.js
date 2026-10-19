@@ -145,6 +145,20 @@ async function removeApp(pool, config, app) {
 // it named, and one it refused or faulted on retires nothing. First, so a
 // refusal leaves the app as it was; a delete asked again finishes it.
 const RETIRE_WAIT_MS = 30_000;
+
+// A preview the machine has not retired (yet): nothing of the app was
+// removed, and asking again in a minute finishes it. The delete route
+// answers it with 409 and Retry-After, not as a fault.
+class PreviewNotRetiredError extends Error {
+  constructor(sessionId, why) {
+    super(`The preview of proposal ${sessionId} is not retired yet (${why}); delete the app again in a minute`);
+    this.name = 'PreviewNotRetiredError';
+    this.code = 'preview_retiring';
+    this.sessionId = sessionId;
+    this.retryAfterSeconds = 60;
+  }
+}
+
 async function retirePreviews(pool, app) {
   const previewWorkflow = require('./preview-workflow');
   const { rows } = await pool.query(
@@ -157,9 +171,13 @@ async function retirePreviews(pool, app) {
     const out = await previewWorkflow.retire({ session: { id: r.id, app_id: app.id }, reason: 'app_deleted', terminal: true,
       waitMs: RETIRE_WAIT_MS });
     if (!out.retired) {
-      throw new Error(`The preview of proposal ${r.id} is not retired yet (${out.reason || out.status}); delete the app again in a minute`);
+      // Not decided in time, or refused for now (a turn still running on
+      // it): asking again in a minute may. A faulted instance answers the
+      // same until an admin releases it: an error, not a minute's wait.
+      if (out.status === 'faulted') throw new Error(`preview of session ${r.id} not retired: ${out.reason || out.status}`);
+      throw new PreviewNotRetiredError(r.id, out.reason || out.status);
     }
   }
 }
 
-module.exports = { teardownApp, isTearingDown, removeRuntimeIfDeleted };
+module.exports = { teardownApp, isTearingDown, removeRuntimeIfDeleted, PreviewNotRetiredError };

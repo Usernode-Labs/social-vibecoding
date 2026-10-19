@@ -85,59 +85,77 @@ function rowHtml(s) {
   return renderToHtml(createElement(m.AiBudgetRow));
 }
 
-test('the ordinary meter: spend-first, the remainder beside it, one tooltip', async () => {
+test('the ordinary meter: one sentence, what is left of the allowance, one tooltip', async () => {
+  // #5284: it read "limit $6.40/$20.00 · $13.60 left", which says the limit
+  // is $6.40. One sentence now, the amount left first.
   const s = await publish(budget({ spentCents: 640, remainingCents: 1360 }));
   assert.equal(s.hidden, false);
   const html = rowHtml(s);
   assert.match(html, /id="drawer-row-ai-budget"/);
   assert.match(html, /id="ai-budget-slot"[^>]*class="ml-auto grow min-w-0 text-right"/);
   assert.match(html, /class="ai-budget-meter drawer-meter"/);
-  assert.match(html, /drawer-meter-dim">limit /);
-  assert.match(html, /\$6\.40/);
-  assert.match(html, /drawer-meter-dim">\/\$20\.00/);
-  assert.match(html, /data-credits-remaining="1"/);
-  assert.match(html, /\$13\.60 left/);
+  assert.match(html, /<span class="drawer-meter-part" data-credits-remaining="1"><span class="text-emerald-700 dark:text-emerald-400">\$13\.60<\/span><span class="drawer-meter-dim"> of \$20 left today<\/span><\/span>/);
+  assert.doesNotMatch(html, /limit /, 'no "limit $spent/$limit"');
   assert.match(html, /title="[^"]*of your \$20\.00 daily AI allowance used/);
+});
+
+test('a whole amount drops its ".00", any other keeps its cents', async () => {
+  const s = await publish(budget({
+    limitCents: 84000, spentCents: 1, remainingCents: 83999, capWindow: 'weekly',
+  }));
+  assert.equal(s.view.parts[0].runs.map((r) => r.text).join(''), '$839.99 of $840 left this week');
+  const full = await publish(budget({ limitCents: 5000, spentCents: 0, remainingCents: 5000, capWindow: 'weekly' }));
+  assert.equal(full.view.parts[0].runs.map((r) => r.text).join(''), '$50 of $50 left this week');
+  const big = await publish(budget({ limitCents: 250000, spentCents: 50, remainingCents: 249950, capWindow: 'weekly' }));
+  assert.equal(big.view.parts[0].runs.map((r) => r.text).join(''), '$2,499.50 of $2,500 left this week');
 });
 
 test('the parts are separated by a real space, because each one is nowrap', async () => {
   // .drawer-meter-part is `white-space: nowrap`, so the space BETWEEN parts
-  // is the only place "limit $6.40/$20.00 · $13.60 left" may break. A
-  // separator moved inside a part would make the whole value unbreakable.
-  const s = await publish(budget({ spentCents: 640, remainingCents: 1360 }));
+  // is the only place "$13.60 of $20 left today · your key $4.50" may break.
+  // A separator moved inside a part would make the whole value unbreakable.
+  const s = await publish(budget({ spentCents: 640, remainingCents: 1360, byokCents: 450 }));
   const html = rowHtml(s);
   assert.match(html, /<\/span> <span class="drawer-meter-part"/);
 });
 
-test('the spend threshold picks the tone, and the tone is a class the row owns', async () => {
+test('how much is used picks the tone of what is left, and the tone is a class the row owns', async () => {
   const low = await publish(budget({ spentCents: 100, remainingCents: 1900 }));
-  assert.equal(low.view.parts[0].runs[1].tone, 'low');
-  assert.match(rowHtml(low), /text-emerald-700 dark:text-emerald-400">\$1\.00/);
+  assert.equal(low.view.parts[0].runs[0].tone, 'low');
+  assert.match(rowHtml(low), /text-emerald-700 dark:text-emerald-400">\$19</);
 
   const mid = await publish(budget({ spentCents: 1200, remainingCents: 800 }));
-  assert.equal(mid.view.parts[0].runs[1].tone, 'mid');
-  assert.match(rowHtml(mid), /text-amber-800 dark:text-amber-400">\$12\.00/);
+  assert.equal(mid.view.parts[0].runs[0].tone, 'mid');
+  assert.match(rowHtml(mid), /text-amber-800 dark:text-amber-400">\$8</);
 
   const high = await publish(budget({ spentCents: 1900, remainingCents: 100 }));
-  assert.equal(high.view.parts[0].runs[1].tone, 'high');
-  assert.match(rowHtml(high), /text-red-700 dark:text-red-400">\$19\.00/);
+  assert.equal(high.view.parts[0].runs[0].tone, 'high');
+  assert.match(rowHtml(high), /text-red-700 dark:text-red-400">\$1</);
 
   // The thresholds themselves stay in the module, where the budget is.
   assert.match(CREDIT_SRC, /pct > 80 \? 'high' : pct > 50 \? 'mid' : 'low'/);
 });
 
-test('exhausted with no key reads "none left", in red', async () => {
+test('exhausted with no key reads "$0 of $20 left", the $0 in red', async () => {
   const s = await publish(budget({ spentCents: 2000, remainingCents: 0 }));
   const left = s.view.parts.find((p) => p.remaining);
-  assert.equal(left.runs[1].text, 'none left');
-  assert.equal(left.runs[1].tone, 'high');
+  assert.equal(left.runs.map((r) => r.text).join(''), '$0 of $20 left today');
+  assert.equal(left.runs[0].tone, 'high');
   assert.match(rowHtml(s), /title="You have used all \$20\.00 of today/);
 });
 
 test('exhausted WITH a key drops the remainder and says where turns bill now', async () => {
   const s = await publish(budget({ spentCents: 2000, remainingCents: 0, hasByokKey: true }));
   assert.ok(!s.view.parts.some((p) => p.remaining), 'no "0 left" on a row that can keep going');
+  assert.equal(s.view.parts[0].runs[0].text, 'All $20 used today');
   assert.match(s.view.title, /billed to the Anthropic key you saved in Settings/);
+});
+
+test('no allowance at all says so, instead of "$0 of $0"', async () => {
+  const s = await publish(budget({ limitCents: 0, spentCents: 0, remainingCents: 0, capWindow: 'none' }));
+  const html = rowHtml(s);
+  assert.match(html, /No free AI allowance/);
+  assert.doesNotMatch(html, /\$0 of \$0/);
 });
 
 test('a BYOK figure is its own part, so the "·" wraps with it', async () => {
@@ -217,11 +235,8 @@ test('a weekly-bound row says "weekly" and points at Monday, not midnight', asyn
     capWindow: 'weekly', windowLabel: 'This week', resetLabel: 'Monday 00:00 UTC',
   }));
   const html = rowHtml(s);
-  // Same meter, same tone rules — the figures are the figures.
-  assert.match(html, /\$48\.00/);
-  assert.match(html, /drawer-meter-dim">\/\$50\.00/);
-  assert.match(html, /\$2\.00 left/);
-  assert.match(html, /text-red-700 dark:text-red-400">\$48\.00/, '96% used is still "high"');
+  // Same tone rules, and the sentence names the week (#5284).
+  assert.match(html, /text-red-700 dark:text-red-400">\$2<\/span><span class="drawer-meter-dim"> of \$50 left this week</, '96% used is still "high"');
   // But the words are the week's.
   assert.match(s.view.title, /of your \$50\.00 weekly AI allowance used/);
   assert.match(s.view.title, /Free credits reset Monday 00:00 UTC/);
@@ -235,7 +250,7 @@ test('an exhausted weekly window tells the user it was the week that ran out', a
     capWindow: 'weekly', windowLabel: 'This week', resetLabel: 'Monday 00:00 UTC',
   }));
   const left = s.view.parts.find((p) => p.remaining);
-  assert.equal(left.runs[1].text, 'none left');
+  assert.equal(left.runs.map((r) => r.text).join(''), '$0 of $50 left this week');
   assert.match(s.view.title, /You have used all \$50\.00 of this week’s AI allowance/);
   assert.doesNotMatch(s.view.title, /of today’s/);
 });
@@ -246,6 +261,7 @@ test('a weekly window with a key on file names the weekly allowance as the one s
     capWindow: 'weekly', windowLabel: 'This week', resetLabel: 'Monday 00:00 UTC',
   }));
   assert.match(s.view.title, /\$50\.00 weekly allowance is used up/);
+  assert.equal(s.view.parts[0].runs[0].text, 'All $50 used this week');
   assert.match(s.view.title, /billed to the Anthropic key you saved in Settings/);
 });
 

@@ -130,6 +130,8 @@ test('singleton background work lives in becomeLeader(), not start()', () => {
     'recoverActiveWorkers(config)',
     'resumeHeadlessRuns',
     'observeMergedOnGithub(config)',
+    'auditExistingRepoPrivacy(getPool(config))',
+    'reconcileStuckChecks(config)',
     'recoverSessions(config)',
     'startSessionAutoPauseSweeper(config)',
     'startStalePrSweeper(config)',

@@ -591,8 +591,10 @@ test("the chip row is a faithful copy of Browse.FILTERS, in the prototype's orde
   const { Browse } = makeBrowse();
   // The labels are message ids; the catalog holds the words.
   assert.deepEqual(Array.from(Browse.FILTERS, (f) => f.label),
-    ['discover:filter.all', 'discover:filter.featured', 'discover:filter.joined', 'discover:filter.new']);
-  assert.deepEqual(Array.from(Browse.FILTERS, (f) => message(f.label)), ['All', 'Featured', 'Joined', 'New']);
+    ['discover:filter.all', 'discover:filter.featured', 'discover:filter.notJoined', 'discover:filter.joined', 'discover:filter.new']);
+  assert.deepEqual(Array.from(Browse.FILTERS, (f) => message(f.label)), ['All', 'Featured', 'Not joined', 'Joined', 'New']);
+  // The admin's chip (#5267), copied the same way.
+  assert.deepEqual(Array.from(Browse.ADMIN_FILTERS, (f) => message(f.label)), ['Not yet reviewed']);
   // Same reason SORT_OPTIONS is a copy: window.Browse does not exist in the
   // SSG pass, so the chips carry their own labels.
   const src = read('frontend/src/features/apps/browse-screen.tsx');
@@ -601,11 +603,22 @@ test("the chip row is a faithful copy of Browse.FILTERS, in the prototype's orde
   const copied = [...block[0].matchAll(/\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)'\s*\}/g)]
     .map((m) => ({ key: m[1], label: m[2] }));
   assert.deepEqual(copied, Array.from(Browse.FILTERS, (f) => ({ key: f.key, label: f.label })));
+  const adminBlock = src.match(/const ADMIN_FILTER_CHIPS[\s\S]*?\n\];/);
+  assert.ok(adminBlock, 'ADMIN_FILTER_CHIPS is declared in browse-screen.tsx');
+  const adminCopied = [...adminBlock[0].matchAll(/\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)'\s*\}/g)]
+    .map((m) => ({ key: m[1], label: m[2] }));
+  assert.deepEqual(adminCopied, Array.from(Browse.ADMIN_FILTERS, (f) => ({ key: f.key, label: f.label })));
+  // Drawn only when the store says so, which the prerender never does.
+  assert.match(src, /\{state\.adminFilters \? ADMIN_FILTER_CHIPS\.map/);
+  assert.match(read('frontend/src/features/apps/browse-store.js'), /adminFilters: false,/);
 });
 
 test('resolveFilter: anything unrecognised is All, never an empty screen', () => {
   const { Browse } = makeBrowse();
-  for (const key of ['all', 'featured', 'yours', 'new']) assert.equal(Browse.resolveFilter(key), key);
+  for (const key of ['all', 'featured', 'notjoined', 'yours', 'new']) assert.equal(Browse.resolveFilter(key), key);
+  // The admin chip is nobody else's: a ?filter=unreviewed link lands on All.
+  assert.equal(Browse.resolveFilter('unreviewed'), 'all', 'not for a member');
+  assert.equal(makeBrowse({ user: { id: 1, isAdmin: true } }).Browse.resolveFilter('unreviewed'), 'unreviewed');
   assert.equal(Browse.resolveFilter(' Featured '), 'featured');
   for (const bad of ['mine', '', null, undefined, 42, 'drop-tables']) {
     assert.equal(Browse.resolveFilter(bad), 'all', String(bad));
@@ -634,6 +647,8 @@ test('filterApps: each chip admits the set its name promises', () => {
   // as the rows' Join / Joined pill. Taking an app off Home is not leaving,
   // so the hidden member is still here, and a pin alone is not membership.
   assert.deepEqual(keys(Browse.filterApps(apps, 'yours', NOW)), ['curated-mine', 'member', 'member-hidden']);
+  // Not joined is the rest of it (#5267): exactly what Joined leaves out.
+  assert.deepEqual(keys(Browse.filterApps(apps, 'notjoined', NOW)), ['plain', 'curated', 'pinned-only', 'fresh']);
   assert.deepEqual(keys(Browse.filterApps(apps, 'new', NOW)), ['fresh'], 'created in the last 14 days');
   // Pure: the input is untouched and the default key is the current chip.
   assert.equal(apps.length, 7);
@@ -803,7 +818,8 @@ test('the chips prerender with All pressed, from the store\'s initial value', ()
   const bar = INDEX.slice(INDEX.indexOf('id="browse-search-bar"'), INDEX.indexOf('id="browse-sort-bar"'));
   const chips = [...bar.matchAll(/<button[^>]*aria-pressed="(true|false)"[^>]*data-filter="([a-z]+)"[^>]*>([^<]+)</g)]
     .map((m) => `${m[2]}:${m[1]}:${m[3]}`);
-  assert.deepEqual(chips, ['all:true:All', 'featured:false:Featured', 'yours:false:Joined', 'new:false:New']);
+  assert.deepEqual(chips, ['all:true:All', 'featured:false:Featured', 'notjoined:false:Not joined', 'yours:false:Joined', 'new:false:New']);
+  assert.doesNotMatch(bar, /data-filter="unreviewed"/, 'the admin chip is never prerendered');
   assert.match(bar, /id="browse-filter-chips" role="group" aria-label="Filter apps"/);
   assert.match(INDEX, /id="browse-list"[^>]*data-filter="all"/);
   // The language's own filter chip, not a hand-rolled one.
@@ -887,13 +903,14 @@ test('rowView: an app-store row — icon, name, meta, Join state', () => {
   // The whole app record rides the descriptor, because the icon tile and the
   // chip strip are shared decisions (app-card.js) the row does not re-make.
   assert.equal(fresh.app.slug, 'fresh');
-  // Joined rows read "Joined", fresh ones "Join" (communities) — the flag
-  // is the descriptor's (`added`, the name the declared checks' data-added
-  // attribute keeps), the two labels are browse-list.tsx's.
+  // Fresh rows offer "Join", joined ones "Open" (#5267: not "✓ Joined").
+  // The flag is the descriptor's (`added`, the name the declared checks'
+  // data-added attribute keeps), the two labels are browse-list.tsx's.
   assert.equal(fresh.added, false);
   assert.equal(fresh.addTitle, 'Join Fresh App');
   assert.equal(rowFor(state, 'mine').added, true);
-  assert.match(rowFor(state, 'mine').addTitle, /Tap to leave My App/);
+  assert.equal(rowFor(state, 'mine').addTitle, 'Open My App');
+  assert.equal(rowFor(state, 'mine').canOpen, true, 'a running joined app can be opened');
   // The "…" menu is gone from this screen — the detail page absorbed it.
   assert.doesNotMatch(BROWSE_SRC, /card-menu-btn/);
   assert.doesNotMatch(BROWSE_SRC, /card-add-btn/, 'the corner badge is a real button now');
@@ -934,8 +951,9 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   assert.doesNotMatch(listTag, /max-md:/, 'phone: the surface is app.css, not utilities');
   const barTag = INDEX.match(/<div id="browse-search-bar"[^>]*>/)[0];
   assert.match(barTag, /browse-pane-head/, 'phone: the search bar keeps its part name');
-  assert.match(barTag, /md:bg-\[color:var\(--home-ground\)\]/,
-    'md+: the bar keeps the wallpaper fill');
+  // #5267: no band. The bar used to wear the wallpaper's base colour at md+,
+  // a flat fill that read as a separate panel over the wallpaper's washes.
+  assert.doesNotMatch(barTag, /home-ground|md:bg-/, 'md+: the controls sit on the page background too');
   const css = read('public/css/app.css');
   assert.match(css, /\.browse-row \+ \.browse-row::before \{/,
     'phone: a hairline between consecutive rows');
@@ -1775,8 +1793,9 @@ test('index.html hosts #browse-screen with its own search field and grid', () =>
   assert.ok(main.includes('id="browse-search-input"'));
   assert.ok(main.includes('id="browse-list"'));
   assert.ok(main.includes('id="browse-empty"'));
-  // Always visible here — the hidden-until-pulled treatment is home's.
-  assert.match(main, /id="browse-search-bar"[^>]*sticky/);
+  // Always visible here (the hidden-until-pulled treatment is home's), and
+  // not pinned (#5267): a pinned bar needs a fill, and the fill was the band.
+  assert.doesNotMatch(main.match(/<div id="browse-search-bar"[^>]*>/)[0], /sticky/);
   // Two levels in ONE <main>: the list wrapper and the detail page. Keeping
   // the detail inside this screen is what leaves _exitBrowse, the PTR
   // wiring and every sibling hide-list untouched.
@@ -1824,14 +1843,122 @@ test('#1553: the row button names what it acts on, like every other surface', ()
   // QA 2026-09-24 Q10: a long pill squeezed the app's name to ten characters
   // on desktop and to nothing at 1024, so the visible label stays one short
   // word and the rest rides the accessible name and the title.
-  assert.match(listSrc, /view\.added \? t\('discover:list\.join\.joined'\) : t\('discover:list\.join\.action'\)/);
+  assert.match(listSrc, /\{t\('discover:list\.join\.action'\)\}/);
   assert.equal(message('discover:list.join.action'), 'Join');
-  assert.match(listSrc, /aria-label=\{view\.added \? undefined : t\('discover:list\.join\.named', \{ app: view\.name \}\)\}/);
+  assert.match(listSrc, /aria-label=\{t\('discover:list\.join\.named', \{ app: view\.name \}\)\}/);
   assert.equal(message('discover:list.join.named', { app: 'Recipe Box' }), 'Join Recipe Box');
   assert.match(listSrc, /title=\{view\.addTitle\}/);
   assert.match(listSrc, /<PlusIcon /);
-  // The state label stays short: the row it sits on already says which app.
-  assert.equal(message('discover:list.join.joined'), 'Joined');
+  // #5267: a joined row offers Open, the next thing to do with the app, in
+  // place of the "✓ Joined" state that filled the directory. Same rule: one
+  // short word, the app's name in the accessible name.
+  assert.match(listSrc, /\{t\('discover:list\.open\.action'\)\}/);
+  assert.equal(message('discover:list.open.action'), 'Open');
+  assert.match(listSrc, /aria-label=\{t\('discover:list\.open\.named', \{ app: view\.name \}\)\}/);
+  assert.doesNotMatch(listSrc, /CheckIcon|list\.join\.joined/, 'no "✓ Joined" left on a row');
+});
+
+// ── #5267: Recommended for you, Not joined, Open, the admin's chip ────
+
+test('#5267: the default list leads with Recommended for you, the featured apps you are not in', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [
+    app({ slug: 'loud', active_users: 99, directory: { tier: 'ready', state: 'working' } }),
+    app({ slug: 'f-second', featured: true, featured_order: 2, directory: { tier: 'ready', state: 'working' } }),
+    app({ slug: 'f-first', featured: true, featured_order: 1, directory: { tier: 'unreviewed', state: 'unreviewed' } }),
+    app({ slug: 'f-mine', featured: true, featured_order: 0, is_member: true, directory: { tier: 'ready', state: 'working' } }),
+    app({ slug: 'f-demo', featured: true, featured_order: 0, directory: { tier: 'more', state: 'demo' } }),
+  ];
+  Browse.render();
+  assert.equal(state.grouped, true);
+  const picked = Array.from(state.rows.filter((r) => r.recommended), (r) => r.slug);
+  // The admin's featured order, not the tier order, and never a joined app
+  // or one under Show more.
+  assert.deepEqual(picked, ['f-first', 'f-second']);
+  assert.deepEqual(slugs(state).slice(0, 2), ['f-first', 'f-second'], 'and they come first');
+  assert.equal(slugs(state).filter((s) => s === 'f-first').length, 1, 'each app is listed once');
+  assert.ok(slugs(state).includes('f-mine'), 'a joined featured app is still in the list below');
+  // Only the default list: another chip, a metric sort or a search is one
+  // list in its own order, with no section.
+  for (const go of [() => Browse.setFilter('featured'), () => Browse.setSort('users'),
+    () => Browse.setQuery('f', { immediate: true })]) {
+    go();
+    assert.equal(state.grouped, false);
+    assert.equal(state.rows.some((r) => r.recommended), false);
+  }
+});
+
+test('#5267: Join keeps the row where it was, now offering Open', () => {
+  const { Browse, Home, state } = makeBrowse();
+  const pick = app({ slug: 'pick', name: 'Pick', featured: true, featured_order: 0, directory: { tier: 'ready', state: 'working' } });
+  const other = app({ slug: 'other', name: 'Other' });
+  Home._apps = [pick, other];
+  Browse._apps = [pick, other];
+  Browse.render();
+  Browse.toggleRowAdded(rowFor(state, 'pick'));
+  assert.equal(pick.is_member, true);
+  const row = rowFor(state, 'pick');
+  assert.equal(row.recommended, true, 'still in Recommended for you for this visit');
+  assert.equal(row.added, true);
+  assert.equal(row.addTitle, 'Open Pick');
+  Browse.setFilter('notjoined');
+  assert.deepEqual(slugs(state), ['other'], 'a new list is built without it');
+  Browse.toggleRowAdded(rowFor(state, 'other'));
+  assert.deepEqual(slugs(state), ['other'], 'Not joined keeps a row joined from it');
+});
+
+test('#5267: Open opens the app itself, and only an app that can run', () => {
+  const opened = [];
+  const { Browse, win } = makeBrowse();
+  win.App.navigateToApp = (slug) => opened.push(slug);
+  const running = Browse.rowView(app({ slug: 'up', is_member: true }));
+  const broken = Browse.rowView(app({ slug: 'down', is_member: true, status: 'error' }));
+  const fixture = Browse.rowView(app({ slug: 'demo', is_member: true, demo: true }));
+  assert.equal(broken.canOpen, false);
+  assert.equal(fixture.canOpen, false, 'a staging fixture has no app to open');
+  Browse.openRowApp(running);
+  Browse.openRowApp(broken);
+  Browse.openRowApp(fixture);
+  assert.deepEqual(opened, ['up']);
+});
+
+test('#5267: "Not yet reviewed" is an admin\'s chip, not a heading in everybody\'s list', () => {
+  const apps = () => [
+    app({ slug: 'ok', icon_emoji: '🎮', directory: { tier: 'ready', state: 'working' } }),
+    app({ slug: 'new', directory: { tier: 'unreviewed', state: 'unreviewed' } }),
+    app({ slug: 'demo', directory: { tier: 'more', state: 'demo' } }),
+  ];
+  const member = makeBrowse();
+  member.Browse._apps = apps();
+  member.Browse._load = () => {};
+  member.Browse.open(null);
+  assert.equal(member.state.adminFilters, false, 'a member gets no admin chip');
+  // Unreviewed apps are NOT hidden from anyone: they still follow the
+  // reviewed ones in the default list, as they always have.
+  assert.deepEqual(slugs(member.state), ['ok', 'new', 'demo']);
+  member.Browse.setFilter('unreviewed');
+  assert.equal(member.state.filter, 'all', 'and cannot reach the chip by hand');
+
+  const admin = makeBrowse({ user: { id: 2, isAdmin: true } });
+  admin.Browse._apps = apps();
+  admin.Browse._load = () => {};
+  admin.Browse.open(null);
+  assert.equal(admin.state.adminFilters, true);
+  admin.Browse.setFilter('unreviewed');
+  assert.equal(admin.state.filter, 'unreviewed');
+  assert.deepEqual(slugs(admin.state), ['new']);
+  admin.Browse._apps = [apps()[0]];
+  admin.Browse.render();
+  assert.equal(admin.state.empty, 'Every app has been reviewed.');
+});
+
+test('#5267: an empty Not joined chip says so', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [app({ slug: 'mine', name: 'Mine', is_member: true })];
+  Browse.setFilter('notjoined');
+  assert.equal(state.empty, 'You’ve joined every app here.');
+  Browse.setQuery('zzz', { immediate: true });
+  assert.equal(state.empty, 'Nothing you haven’t joined matches “zzz”.');
 });
 
 // ── app.js routing ───────────────────────────────────────────────

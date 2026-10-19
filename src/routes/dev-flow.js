@@ -60,6 +60,8 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 const STATUS_BY_CODE = {
   no_repository: 409,
   platform_unavailable: 503,
+  // Homeroom did not decide the move in time: nothing changed, ask again.
+  not_decided: 503,
   github_link_unavailable: 503,
   github_not_linked: 409,
   unknown_task: 404,

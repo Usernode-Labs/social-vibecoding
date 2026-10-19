@@ -5502,7 +5502,11 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
       });
       const msg = `${label} conflicts with main in ${n} file${n === 1 ? '' : 's'}`
         + `${n ? ` (${measured.conflictPaths.slice(0, 5).join(', ')}${n > 5 ? ', …' : ''})` : ''}. `
-        + (step.actor === 'author'
+        + (step.actor === 'author' && /checks are failing/.test(step.note || '')
+          ? `Its checks are failing too, so the platform waits for ${owner} to fix them before it resolves the conflict.`
+          : step.actor === 'author' && /checks could not run/.test(step.note || '')
+          ? 'Its checks could not run either; once they are re-run and pass, the platform resolves the conflict.'
+          : step.actor === 'author'
           ? `The platform cannot resolve this one; ${owner} needs to resolve it from the session's dev-chat.`
           : `The platform will try to resolve it automatically; if it can't, ${owner} needs to resolve it from the session's dev-chat.`);
       await sendSystemMessage(pool, session.app_id, msg, 'system',

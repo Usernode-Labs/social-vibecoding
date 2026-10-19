@@ -750,8 +750,10 @@ test('GET /leaderboard: happy path envelope keys + masking + shared identity fal
   assert.equal(body.success, true);
   // #3887: the envelope carries non_podium_count (the chip's number —
   // over the UNFILTERED scope, not the returned rows).
-  assert.deepEqual(Object.keys(body.data).sort(), ['event', 'leaderboard', 'non_podium_count']);
+  // #5275: and viewer_row, the signed-in viewer's own row (null for a guest).
+  assert.deepEqual(Object.keys(body.data).sort(), ['event', 'leaderboard', 'non_podium_count', 'viewer_row']);
   assert.equal(body.data.non_podium_count, 1);
+  assert.equal(body.data.viewer_row, null, 'a guest has no row of their own');
   assert.deepEqual(body.data.event, {
     id: 100, name: 'Sprint One', disclaimer: 'Please read the rules.', display_leaderboard: true,
     starts_at: body.data.event.starts_at, ends_at: body.data.event.ends_at,
@@ -795,6 +797,27 @@ test('GET /leaderboard: happy path envelope keys + masking + shared identity fal
   assert.equal(carol.is_non_podium, false);
   // carol has no email (telegram identifier instead) — masked generic form.
   assert.equal(carol.identifier, 'car***');
+});
+
+test('GET /leaderboard: the viewer\'s own row rides along, and a masked row carries its public username (#5275)', async () => {
+  const res = await get('/api/v4/leaderboard?season_event_id=100', { headers: { 'x-test-user': '4' } });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  const own = body.data.viewer_row;
+  assert.ok(own, 'dave is ranked on this board, so his row comes back');
+  assert.equal(own.rank, 1);
+  assert.equal(own.is_viewer, true);
+  assert.equal(own.display_name, 'dav***@***.com', 'the display-name chain is unchanged');
+  assert.equal(own.username, null,
+    "dave's handle is his address's local part, so it would unmask what the identifier hides");
+  const rows = body.data.leaderboard;
+  assert.deepEqual(rows.filter((r) => r.is_viewer).map((r) => r.rank), [1],
+    'exactly one row on the page is marked as the viewer');
+
+  // A viewer with no row on this board gets null, not somebody else's.
+  const other = await (await get('/api/v4/leaderboard?season_event_id=100', { headers: { 'x-test-user': '7' } })).json();
+  assert.equal(other.data.viewer_row, null);
+  assert.ok(other.data.leaderboard.every((r) => r.is_viewer === false));
 });
 
 test('GET /leaderboard: include_non_podium=1 shows the excluded rows, ranks unchanged from the default view (#3887)', async () => {
@@ -1507,4 +1530,24 @@ test('resolveDisplayName: discord, display_name and the masked identifier all st
   assert.equal(resolveDisplayName({ ...bare, discord: 'davediscord', username: 'dave' }), 'davediscord');
   assert.equal(resolveDisplayName({ ...bare, discord: 'davediscord', username: 'dave' }, { includeDiscord: false }),
     'dav***', 'the redacted global chain still masks discord before reaching the username');
+});
+
+test('shownUsername: a chosen handle shows; one made from the masked address or a messenger handle does not (#5275)', () => {
+  const { shownUsername } = require('../src/routes/topochain/public');
+  const row = (username, extra = {}) => ({ username, email: null, telegram: null, discord: null, ...extra });
+  assert.equal(shownUsername(row('stargazer', { email: 'sed.lopez@example.com' })), 'stargazer');
+  // Suggested from the address at sign-up (#4596), numbered when taken, or any case of it.
+  assert.equal(shownUsername(row('sedlopez', { email: 'sed.lopez+hr@example.com' })), null);
+  assert.equal(shownUsername(row('sedlopez2', { email: 'sed.lopez@example.com' })), null);
+  assert.equal(shownUsername(row('SED_Lopez', { email: 'sed.lopez@example.com' })), null);
+  assert.equal(shownUsername(row('sed', { email: 'sed.lopez@example.com' })), null, 'a prefix of the local part');
+  assert.equal(shownUsername(row('sedlopezfan', { email: 'sedlopez@example.com' })), null, 'the local part inside it');
+  // A Telegram or Discord handle is an identifier too.
+  assert.equal(shownUsername(row('nightowl', { telegram: 'NightOwl' })), null);
+  assert.equal(shownUsername(row('nightowl', { discord: 'night_owl99' })), null);
+  // Generated, address-shaped or too short to judge: never.
+  assert.equal(shownUsername(row('topochain_ab12')), null);
+  assert.equal(shownUsername(row('a@b')), null);
+  assert.equal(shownUsername(row('ab')), null);
+  assert.equal(shownUsername(row(null)), null);
 });

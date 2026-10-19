@@ -62,7 +62,7 @@ test('the options carry the switch, and the admin switches it beside the invite 
 });
 
 test('making something, or looking around, answers the join screen; starting answers nothing', async () => {
-  const pool = fakePool([[], [], []]);
+  const pool = fakePool([[], [], [{ id: 1 }], []]);
   await firstSession.answerJoinScreen(pool, 7, 'made');
   assert.match(pool.calls[0].sql, /SET needs_communities_choice = FALSE,/);
   assert.match(pool.calls[0].sql, /WHERE id = \$1 AND needs_communities_choice = TRUE/);
@@ -77,12 +77,18 @@ test('making something, or looking around, answers the join screen; starting ans
   // it is already app_created with from 'first-session'.
   assert.match(pool.calls[1].sql, /RETURNING id, getting_started_seen->>'first_session' AS via\s+\)\s+INSERT INTO events \(user_id, event_type, metadata\)\s+SELECT a\.id, 'first_session_looked_around', jsonb_build_object\('via', a\.via\)\s+FROM answered a\s+WHERE \$2::text = 'looked_around'/);
   assert.equal(require('../src/services/events').EVENT_TYPES.FIRST_SESSION_LOOKED_AROUND, 'first_session_looked_around');
+  // Sign-up test, 19 Oct 2026: and the newcomer is owed Homeroom bot's hello,
+  // the tour's, to their DM machine (the walk on Home points at it).
+  assert.match(pool.calls[2].sql, /INSERT INTO wf_events \(machine, key, app_id, type, payload, source, actor, request_key, caused_by\)/);
+  assert.deepEqual(pool.calls[2].params.slice(0, 5), ['bot-dm', 'person:9', null, 'Greet', JSON.stringify({ userId: 9, kind: 'tour', appId: null })]);
   // Being shown the question is recorded once, and leaves it owed.
   await firstSession.recordStart(pool, 7, 'story');
-  assert.doesNotMatch(pool.calls[2].sql, /needs_communities_choice = FALSE/);
-  assert.match(pool.calls[2].sql, /WHERE id = \$1 AND needs_communities_choice = TRUE\s+AND getting_started_seen->>'first_session' IS NULL/);
-  assert.deepEqual(pool.calls[2].params, [7, 'story']);
-  assert.match(read('src/routes/apps.js'), /if \(req\.body\.from === 'first-session'\) \{\s+await require\('\.\.\/services\/first-session'\)\.answerJoinScreenByMaking\(pool, req\.user\.id\)/);
+  assert.doesNotMatch(pool.calls[3].sql, /needs_communities_choice = FALSE/);
+  assert.match(pool.calls[3].sql, /WHERE id = \$1 AND needs_communities_choice = TRUE\s+AND getting_started_seen->>'first_session' IS NULL/);
+  assert.deepEqual(pool.calls[3].params, [7, 'story']);
+  // Make it is answered from POST /api/apps, which says whether making the
+  // project greets them already (below).
+  assert.match(read('src/routes/apps.js'), /if \(req\.body\.from === 'first-session'\) \{\s+await require\('\.\.\/services\/first-session'\)\.answerJoinScreenByMaking\(pool, req\.user\.id, \{ greet: !readyMade && !homeroomBot \}\)/);
   const routes = read('src/routes/onboarding.js');
   assert.match(routes, /router\.post\('\/api\/me\/first-session\/started', drainGuard, sameOriginBrowserOnly,/);
   assert.match(routes, /await firstSession\.recordStart\(pool, req\.user\.id, via\);/);
@@ -1069,4 +1075,34 @@ test('the instant or custom line follows each pick and keystroke', (t) => {
   brief(tree).props.onChange({ target: { value: 'A' } });
   tree = draw();
   assert.deepEqual(said(tree), CUSTOM, 'their own words, as they type');
+});
+
+test('the first session\'s answer owes Homeroom bot\'s hello, unless making the project greets them as its maker', async () => {
+  // Sign-up test, 19 Oct 2026: Messages was empty for anybody who did not
+  // make a project the bot builds. Looking around, a project with no
+  // description and an import owe the tour's hello now.
+  const made = fakePool([[], [{ id: 1 }]]);
+  await firstSession.answerJoinScreenByMaking(made, 11);
+  assert.deepEqual(made.calls.map((c) => c.params[0]), [11, 'bot-dm']);
+  assert.equal(made.calls[1].params[3], 'Greet');
+  assert.deepEqual(JSON.parse(made.calls[1].params[4]), { userId: 11, kind: 'tour', appId: null });
+  // A ready-made app or a description the bot builds greets them as its
+  // maker: no tour's hello is owed beside it (a ready-made app's would race
+  // its maker's, both work of the same DM machine).
+  const greeted = fakePool([[]]);
+  await firstSession.answerJoinScreenByMaking(greeted, 12, { greet: false });
+  assert.equal(greeted.calls.length, 1);
+  assert.match(greeted.calls[0].sql, /SET needs_communities_choice = FALSE,/);
+  // Best-effort: a hello that cannot be owed never fails the answer.
+  const down = fakePool([[], new Error('connection reset')]);
+  await firstSession.answerJoinScreenByLookingAround(down, 13);
+  assert.equal(down.calls.length, 2);
+  // POST /api/apps owes a ready-made app's maker their hello before the
+  // answer, and the answer owes none beside it.
+  const route = read('src/routes/apps.js');
+  const create = route.slice(route.indexOf("router.post('/api/apps', "));
+  const maker = create.indexOf("greet(pool, { userId: req.user.id, kind: 'maker', appId: appRow.id })");
+  assert.ok(maker > 0, 'a ready-made app\'s maker is greeted');
+  assert.match(create, /if \(readyMade\) \{\n\s+await require\('\.\.\/workflow\/platform\.ts'\)\.greet\(pool, \{ userId: req\.user\.id, kind: 'maker', appId: appRow\.id \}\)\n\s+\.catch\(/);
+  assert.ok(maker < create.indexOf('answerJoinScreenByMaking('), 'owed first');
 });

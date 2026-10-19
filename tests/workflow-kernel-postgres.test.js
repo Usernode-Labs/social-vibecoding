@@ -10,6 +10,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
 const { createRuntime, defineMachine, inspect, NONE, ok, reject } = require('../src/workflow/kernel/index.ts');
+const { CLAIM_LOCKS, PURGE_LOCK } = require('../src/workflow/kernel/services.ts');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -677,10 +678,16 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     };
     await route('k7r', 'Work', { workKey: 'k7r-w' });
     await rt.drain();
+    // Its process stops (a release): the attempt says so, and the lease is
+    // given up, as execute() does on a stop. A stop is not a death.
+    const stopped = (workKey) => pool.query(
+      `WITH w AS (UPDATE wf_work SET lease_until = now() - interval '1 second' WHERE work_key = $1 RETURNING claim_id)
+       UPDATE wf_work_attempts SET outcome = 'lost', finished_at = now(), error = '{"code": "stopped"}'::jsonb
+        WHERE id = (SELECT claim_id FROM w) AND outcome = 'running'`, [workKey]);
     for (let i = 0; i < 3; i++) {
       // As the service loop does: claim again until a slot is free and the item is due.
       while (seen.length < i + 1) { void r.runServices(); await sleep(50); }
-      await pool.query(`UPDATE wf_work SET lease_until = now() - interval '1 second' WHERE work_key = 'k7r-w'`);
+      await stopped('k7r-w');
     }
     // Three lost attempts and maxAttempts 2: a plain handler would be exhausted by now.
     while ((await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7r-w'`)).rows[0].status === 'running') {
@@ -704,7 +711,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await rt.drain();
     for (let i = 0; i < 4; i++) {
       while (tries < i + 1) { void r.runServices(); await sleep(50); }
-      await pool.query(`UPDATE wf_work SET lease_until = now() - interval '1 second' WHERE work_key = 'k7x-w'`);
+      await stopped('k7x-w');
     }
     while ((await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7x-w'`)).rows[0].status === 'running') {
       await r.runServices();
@@ -714,6 +721,122 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     item = (await pool.query(`SELECT * FROM wf_work WHERE work_key = 'k7x-w'`)).rows[0];
     assert.equal(item.status, 'settled');
     assert.deepEqual((await inst('k7x')).data.results.map((x) => x.slice(0, 2)), [['exhausted', 'k7x-w']]);
+  });
+
+  await t.test('K7 a lease that lapses is recorded as such and ends nothing; a stop and a cancel say so otherwise', async () => {
+    const gone = (ctx) => new Promise((resolve, reject) => {
+      if (ctx.signal.aborted) { reject(ctx.signal.reason); return; }
+      ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason), { once: true });
+    });
+    const r = make({ services: { 'kt.echo': { ...echo, resumable: true } } });
+    // Its process dies (no stop recorded): the lease just lapses.
+    const lapse = (workKey) => pool.query(
+      `UPDATE wf_work SET lease_until = now() - interval '1 second' WHERE work_key = $1`, [workKey]);
+    await create('k7q');
+    let runs = 0;
+    handlers['k7q-w'] = async (ctx) => { runs += 1; if (runs <= 3) await gone(ctx); return { ran: runs }; };
+    await route('k7q', 'Work', { workKey: 'k7q-w' });
+    await rt.drain();
+    for (let i = 0; i < 3; i++) {
+      while (runs < i + 1) { void r.runServices(); await sleep(50); }
+      await lapse('k7q-w');
+    }
+    while ((await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7q-w'`)).rows[0].status !== 'reported') {
+      await r.runServices();
+      await sleep(50);
+    }
+    await rt.drain();
+    assert.equal(runs, 4, 'three lapses in a row, and it still runs');
+    assert.deepEqual((await inst('k7q')).data.results.map((x) => x.slice(0, 2)), [['ok', 'k7q-w']]);
+    const { rows } = await pool.query(
+      `SELECT a.outcome, a.error->>'code' AS code FROM wf_work_attempts a JOIN wf_work w ON w.id = a.work_id
+        WHERE w.work_key = 'k7q-w' ORDER BY a.number`);
+    assert.deepEqual(rows.map((x) => [x.outcome, x.code]),
+      [['lost', 'lapsed'], ['lost', 'lapsed'], ['lost', 'lapsed'], ['succeeded', null]]);
+    // What the metrics report: the most lapses of one item in the hour.
+    const h = await inspect.health(pool, { limits: new Map([['kt.echo', 4]]), versions: new Map([['kt-counter', 1]]) });
+    assert.ok(h.lapsedMostLastHour >= 3);
+  });
+
+  await t.test('K7 a process that cannot renew its lease stops the handler before the lease lapses', async () => {
+    let failRenew = false;
+    const flaky = {
+      connect: () => pool.connect(),
+      query: (text, ...rest) => (failRenew && /SET lease_until = now\(\) \+/.test(text)
+        ? Promise.reject(Object.assign(new Error('connection lost'), { code: 'ECONNRESET' }))
+        : pool.query(text, ...rest)),
+    };
+    const r = make({ pool: flaky, services: { 'kt.echo': { ...echo, leaseMs: 800 } } });
+    await create('k7f');
+    let aborted = null;
+    handlers['k7f-w'] = (ctx) => new Promise((resolve, reject) => {
+      ctx.signal.addEventListener('abort', () => { aborted = Date.now(); reject(ctx.signal.reason); }, { once: true });
+    });
+    await route('k7f', 'Work', { workKey: 'k7f-w' });
+    await rt.drain();
+    const running = r.runServices();
+    while (!(await pool.query(`SELECT 1 FROM wf_work WHERE work_key = 'k7f-w' AND status = 'running'`)).rows.length) await sleep(20);
+    await sleep(250);
+    failRenew = true;
+    const { rows: [{ lease_until: until }] } = await pool.query(`SELECT lease_until FROM wf_work WHERE work_key = 'k7f-w'`);
+    await running;
+    assert.ok(aborted, 'stopped by its own process');
+    assert.ok(aborted < new Date(until).getTime(), 'before another process could claim it');
+    failRenew = false;
+    // Its item is the next claim's (the attempt reported nothing).
+    handlers['k7f-w'] = async () => ({ done: true });
+    await pool.query(`UPDATE wf_work SET lease_until = now() - interval '1 second' WHERE work_key = 'k7f-w'`);
+    await rt.runServices();
+    await rt.drain();
+    assert.deepEqual((await inst('k7f')).data.results.map((x) => x.slice(0, 2)), [['ok', 'k7f-w']]);
+  });
+
+  await t.test('K7 a checkpoint that lands while renewals fail extends the lease: the item is never claimable while its handler runs', async () => {
+    // Review of #5545 (P2): a checkpoint reset the renewal clock without
+    // extending the lease, so with renewals failing and checkpoints landing
+    // the lease ran out under a live handler and another process claimed it.
+    let failRenew = false;
+    const flaky = {
+      connect: () => pool.connect(),
+      query: (text, ...rest) => (failRenew && /^UPDATE wf_work SET lease_until = now\(\)/.test(text)
+        ? Promise.reject(Object.assign(new Error('connection lost'), { code: 'ECONNRESET' }))
+        : pool.query(text, ...rest)),
+    };
+    const r = make({ pool: flaky, services: { 'kt.echo': { ...echo, leaseMs: 800 } } });
+    await create('k7cp');
+    let active = true;
+    let stopAt = 0;
+    handlers['k7cp-w'] = async (ctx) => {
+      try {
+        while (Date.now() < stopAt && !ctx.signal.aborted) {
+          await ctx.checkpoint({ at: Date.now() });
+          await sleep(100);
+        }
+        return { done: true };
+      } finally {
+        active = false;
+      }
+    };
+    await route('k7cp', 'Work', { workKey: 'k7cp-w' });
+    await rt.drain();
+    stopAt = Date.now() + 2500;
+    failRenew = true;
+    const running = r.runServices();
+    let checks = 0;
+    while (active) {
+      const { rows: [w] } = await pool.query(
+        `SELECT status, lease_until > now() AS live FROM wf_work WHERE work_key = 'k7cp-w'`);
+      if (active && w.status === 'running') {
+        assert.equal(w.live, true, 'the lease holds while its handler runs');
+        checks += 1;
+      }
+      await sleep(40);
+    }
+    await running;
+    failRenew = false;
+    assert.ok(checks > 20, `watched it run (${checks} looks)`);
+    await rt.drain();
+    assert.deepEqual((await inst('k7cp')).data.results.map((x) => x.slice(0, 2)), [['ok', 'k7cp-w']]);
   });
 
   await t.test('K7 a work item that continues an earlier one starts from its checkpoint', async () => {
@@ -881,6 +1004,116 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.deepEqual(rows, [{ machine_version: 1 }]);
   });
 
+  await t.test('K20 a kind\'s concurrency holds across processes, a draining one\'s work included', async () => {
+    let now = 0;
+    let most = 0;
+    const gate = [];
+    const limited = { ...echo, concurrency: 2, leaseMs: 5000 };
+    const a = make({ services: { 'kt.echo': limited } });
+    const b = make({ pool: other, services: { 'kt.echo': limited } });
+    await create('k20');
+    const keys = Array.from({ length: 6 }, (_, i) => `k20-${i}`);
+    for (const key of keys) {
+      handlers[key] = () => new Promise((resolve) => {
+        now += 1; most = Math.max(most, now);
+        gate.push(() => { now -= 1; resolve({ done: key }); });
+      });
+    }
+    await route('k20', 'Work', { keys, workKey: keys[0] });
+    await rt.drain();
+    await a.start({ loops: true });
+    await b.start({ loops: true });
+    // One process quiesces with its items running (a release's drain): they still count.
+    await sleep(500);
+    await a.quiesce();
+    const deadline = Date.now() + 20000;
+    let done = 0;
+    while (done < keys.length) {
+      assert.ok(Date.now() < deadline, 'every item ran');
+      const running = (await pool.query(
+        `SELECT count(*)::int AS n FROM wf_work WHERE key = 'k20' AND status = 'running' AND lease_until > now()`)).rows[0].n;
+      assert.ok(running <= 2, `at most two running across both processes (saw ${running})`);
+      if (gate.length) { gate.shift()(); done += 1; }
+      await sleep(150);
+    }
+    assert.equal(most, 2, 'two at once, never more');
+    await a.stop();
+    await b.stop();
+  });
+
+  await t.test('K20 a kind at its limit costs no claims until an item of it ends, then is claimed at once', async () => {
+    let claims = 0;
+    const counting = {
+      query: (...args) => pool.query(...args),
+      async connect() {
+        const client = await pool.connect();
+        const query = client.query.bind(client);
+        client.query = (text, ...rest) => {
+          if (typeof text === 'string' && text.includes('pg_try_advisory_xact_lock($1, hashtext($2))')) claims += 1;
+          return query(text, ...rest);
+        };
+        return client;
+      },
+    };
+    const gates = new Map();
+    const single = { ...echo, concurrency: 1, leaseMs: 10000 };
+    const r = make({ pool: counting, services: { 'kt.echo': single }, pollMs: 30000 });
+    await create('k20f');
+    const keys = ['k20f-0', 'k20f-1', 'k20f-2'];
+    for (const key of keys) handlers[key] = () => new Promise((resolve) => gates.set(key, () => resolve({ done: key })));
+    await route('k20f', 'Work', { keys, workKey: keys[0] });
+    await rt.drain();
+    await r.start({ loops: true });
+    try {
+      while (gates.size < 1) await sleep(20);
+      await sleep(300);
+      const before = claims;
+      await sleep(1500);
+      assert.ok(claims - before <= 1, `a full kind is left alone (claimed ${claims - before} times in 1.5 s)`);
+      const first = [...gates.keys()][0];
+      const ended = Date.now();
+      gates.get(first)();
+      while (gates.size < 2) {
+        assert.ok(Date.now() - ended < 3000, 'the next item is claimed as soon as one ends');
+        await sleep(20);
+      }
+    } finally {
+      for (const g of gates.values()) g();
+      await r.stop();
+    }
+    // What it left (a stop gives the leases up) finishes, so no later test meets it.
+    for (const key of keys) handlers[key] = async () => ({ done: key });
+    while ((await pool.query(`SELECT count(*)::int AS n FROM wf_work WHERE key = 'k20f' AND status IN ('queued', 'running')`)).rows[0].n) {
+      await rt.runServices();
+      await sleep(20);
+    }
+    await rt.drain();
+  });
+
+  await t.test('K20 a claim never waits on another process claiming the same kind; the purge runs in one process', async () => {
+    const r = make({ services: { 'kt.echo': { ...echo, leaseMs: 5000 } } });
+    await create('k20l');
+    await route('k20l', 'Work', { workKey: 'k20l-w' });
+    await rt.drain();
+    const holder = await other.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT pg_advisory_xact_lock($1, hashtext($2))', [CLAIM_LOCKS, 'kt.echo']);
+      const started = Date.now();
+      assert.equal(await r.runServices(), 0, 'the kind is skipped while another process claims it');
+      assert.ok(Date.now() - started < 1500, 'without waiting for its lock');
+      await holder.query('SELECT pg_advisory_xact_lock($1, 0)', [PURGE_LOCK]);
+      assert.equal(await r.purge(), false, 'a purge under way elsewhere is not run twice');
+      await holder.query('COMMIT');
+      assert.equal(await r.runServices(), 1);
+      assert.equal(await r.purge(), true);
+    } finally {
+      await holder.query('ROLLBACK').catch(() => {});
+      holder.release();
+    }
+    await rt.drain();
+  });
+
   await t.test('K15 a process never applies events to an instance a newer version wrote', async () => {
     const v2 = counter({ version: 2 });
     const newer = make({ machine: v2 });
@@ -933,7 +1166,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     } finally {
       await pool.query(`DELETE FROM wf_settings WHERE key = 'ownership_mode'`);
     }
-    assert.deepEqual(Object.keys(await inspect.problems(pool)).sort(), ['flagged', 'overdueDeadlines', 'waiting', 'work']);
+    assert.deepEqual(Object.keys(await inspect.problems(pool)).sort(), ['flagged', 'overdueDeadlines', 'pendingOldestSeconds', 'unclaimed', 'waiting', 'work']);
   });
 
   await t.test('K17 appendAndWait answers with the outcome, or pending within its budget', async () => {
@@ -961,6 +1194,33 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.deepEqual([fresh.status, fresh.reason], ['rejected', 'not_positive']);
     assert.ok(Date.now() - started < 3000, 'answered by notification, not by the budget');
     await r.stop();
+  });
+
+  await t.test('K17 an event its caller gave up on is refused, never applied later; one being decided keeps its answer', async () => {
+    await create('k17r');
+    const waiting = await rt.appendAndWait(machine, 'k17r', { type: 'Add', payload: { n: 2 } },
+      { requestKey: 'k17r-a', source: { kind: 'route' }, actor: 'user:1', waitMs: 100 });
+    assert.equal(waiting.status, 'pending');
+    const refused = await rt.refuseIfPending(waiting.eventId, 'expired');
+    assert.deepEqual([refused.status, refused.reason], ['rejected', 'expired']);
+    await rt.drain();
+    assert.equal((await inst('k17r')).data.count, 0, 'never applied after it was refused');
+    // The same key may be asked again: a refusal writes no receipt.
+    await route('k17r', 'Add', { n: 2 }, { requestKey: 'k17r-a' });
+    await rt.drain();
+    assert.equal((await inst('k17r')).data.count, 2);
+
+    // A slot deciding it at that moment holds its row: the refusal waits, and
+    // finds it decided.
+    const slow = await rt.appendAndWait(machine, 'k17r', { type: 'Add', payload: { n: 3, sleepMs: 800 } },
+      { requestKey: 'k17r-b', source: { kind: 'route' }, actor: 'user:1', waitMs: 50 });
+    assert.equal(slow.status, 'pending');
+    const deciding = rt.drain();
+    await sleep(200);
+    const answer = await rt.refuseIfPending(slow.eventId, 'expired');
+    await deciding;
+    assert.equal(answer.status, 'accepted', 'the decision under way, not a refusal');
+    assert.equal((await inst('k17r')).data.count, 5);
   });
 
   await t.test('admin reads: state counts, instance list and timeline', async () => {

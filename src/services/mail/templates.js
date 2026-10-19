@@ -727,6 +727,16 @@ const TEMPLATES = {
       + codeBlock(code)
       + p('It expires in 10 minutes. Never share this code. If you did not request this, ignore this email.'),
   }),
+  // #5281: confirms a username change on an account that has no password.
+  // It names what the code does, so a code nobody asked for reads as a
+  // warning rather than as a sign-in prompt.
+  username_change: ({ code }) => ({
+    subject: 'Confirm your new username',
+    text: `Your code to confirm a username change is ${code}.\n\nEnter it in Settings, Account, Username. It expires in 10 minutes. Never share this code. If you did not ask to change your username, ignore this email and nothing will change.`,
+    html: p('Enter this code in Settings, Account, Username to confirm your new username:')
+      + codeBlock(code)
+      + p('It expires in 10 minutes. Never share this code. If you did not ask to change your username, ignore this email and nothing will change.'),
+  }),
   waitlist_joined: waitlistJoined,
   waitlist_code: waitlistCode,
   waitlist_released: waitlistReleased,
