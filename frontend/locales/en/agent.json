@@ -1597,11 +1597,19 @@
   },
   "appContext.about.members_one": {
     "text": "{{formatted}} member",
-    "description": "Pill beside the builders' avatars in the About pane of the app menu (the sheet opened from the app's name in the header): how many people are in the app's community. {{formatted}} is that number written with digit grouping, for example 1,284; {{count}} is the same number and only selects the plural form."
+    "description": "Figure beside the builders' avatars in the About pane of the app menu (the sheet opened from the app's name in the header, or from the Homeroom mark for Homeroom itself): how many people are in the app's community. {{formatted}} is that number written with digit grouping, for example 1,284; {{count}} is the same number and only selects the plural form."
   },
   "appContext.about.members_other": {
     "text": "{{formatted}} members",
-    "description": "Pill beside the builders' avatars in the About pane of the app menu (the sheet opened from the app's name in the header): how many people are in the app's community. {{formatted}} is that number written with digit grouping, for example 1,284; {{count}} is the same number and only selects the plural form."
+    "description": "Figure beside the builders' avatars in the About pane of the app menu (the sheet opened from the app's name in the header, or from the Homeroom mark for Homeroom itself): how many people are in the app's community. {{formatted}} is that number written with digit grouping, for example 1,284; {{count}} is the same number and only selects the plural form."
+  },
+  "appContext.about.changesLive_one": {
+    "text": "{{formatted}} change live",
+    "description": "Figure after the member count in the About pane of the app menu, after a middle dot: how many of this app's own changes (for Homeroom, of Homeroom's own) have been voted in and released. {{formatted}} is that number written with digit grouping, for example 1,284; {{count}} is the same number and only selects the plural form."
+  },
+  "appContext.about.changesLive_other": {
+    "text": "{{formatted}} changes live",
+    "description": "Figure after the member count in the About pane of the app menu, after a middle dot: how many of this app's own changes (for Homeroom, of Homeroom's own) have been voted in and released. {{formatted}} is that number written with digit grouping, for example 1,284; {{count}} is the same number and only selects the plural form."
   },
   "appContext.about.version.app": {
     "text": "App version: {{version}}",
@@ -1626,30 +1634,6 @@
   "appContext.about.version.platformDeployingOnly": {
     "text": "Version: deploying…",
     "description": "Plain line at the foot of Homeroom's own About pane while a version is being deployed and there is no version code to show."
-  },
-  "appContext.about.stat.apps_one": {
-    "text": "app",
-    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the apps on Homeroom."
-  },
-  "appContext.about.stat.apps_other": {
-    "text": "apps",
-    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the apps on Homeroom."
-  },
-  "appContext.about.stat.members_one": {
-    "text": "member",
-    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the people on Homeroom."
-  },
-  "appContext.about.stat.members_other": {
-    "text": "members",
-    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the people on Homeroom."
-  },
-  "appContext.about.stat.live_one": {
-    "text": "live",
-    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the changes that have been released; an adjective."
-  },
-  "appContext.about.stat.live_other": {
-    "text": "live",
-    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the changes that have been released; an adjective."
   },
   "appContext.about.contributor.unknown": {
     "text": "unknown",
@@ -1965,11 +1949,11 @@
   },
   "appContext.about.more": {
     "text": "More",
-    "description": "Heading and accessible name of the last section in the About pane of the app menu, which holds Share, Add to home screen, Code, Remix and the version."
+    "description": "Heading and accessible name of the last section in the About pane of the app menu, which holds Code, Remix and the version."
   },
   "appContext.row.share": {
     "text": "Share",
-    "description": "Row under More in the About pane of the app menu: a verb, shares a link to this app (or to Homeroom itself)."
+    "description": "Row right under the name and the Open button in the About pane of the app menu: a verb, shares a link to this app (or to Homeroom itself)."
   },
   "appContext.about.share.copied": {
     "text": "Link copied",
@@ -1981,7 +1965,7 @@
   },
   "appContext.about.addToHomeScreen": {
     "text": "Add to home screen",
-    "description": "Row under More in the About pane of the app menu: puts an icon for this app (or for Homeroom) on the phone's home screen, or shows how."
+    "description": "Row right under the name and the Open button in the About pane of the app menu: puts an icon for this app (or for Homeroom) on the phone's home screen, or shows how."
   },
   "appContext.about.code": {
     "text": "Code",

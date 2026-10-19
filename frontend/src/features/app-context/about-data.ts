@@ -20,7 +20,7 @@
  *                     taken from it by key, not re-derived.
  *
  * Homeroom's pane adds GET /api/platform/about (src/routes/platform-about.js)
- * for the three figures and for the identity a viewer not served the
+ * for its two figures and for the identity a viewer not served the
  * platform's row still needs.
  *
  * ── Read on open, never in the prerender ───────────────────────────────
@@ -194,13 +194,14 @@ export interface PlatformAbout {
   repoUrl: string | null;
   version: string | null;
   updatedAt: string | null;
-  stats: { apps: number; members: number; merged: number };
+  /** Homeroom's own: its members, and its own changes that are live. */
+  stats: { members: number; merged: number };
   selfAppSlug?: string | null;
   served?: boolean;
 }
 
 /**
- * GET /api/platform/about — Homeroom's identity and its three figures.
+ * GET /api/platform/about — Homeroom's identity and its two figures.
  *
  * The same read ./platform-target.js makes to find the platform on a cold
  * load, and the same cached answer: a pane opened after the menu found its

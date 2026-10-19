@@ -10,10 +10,10 @@
 //      The design's build-by-vote line is one of three regimes the platform
 //      runs per app, so the sentence is assembled from the app's own
 //      approval rules and must stay true for each of them.
-//   2. THE PANE, rendered: an app's (tile, name, tagline, pill, Open/Resume,
-//      Add, note, Contributors, More), Homeroom's (the three figures instead
-//      of the actions), and Homeroom's for a viewer not served its row (no
-//      roster the API would refuse).
+//   2. THE PANE, rendered: an app's (tile, name, tagline, its own figures,
+//      Open/Resume, Add, Share, Add to home screen, note, Contributors, More),
+//      Homeroom's (its own two figures, no Open, Share first), and Homeroom's
+//      for a viewer not served its row (no roster the API would refuse).
 //   3. THE RESOLVER (./frontend/src/features/app-context/platform-target.js):
 //      it finds the platform on its own, never probes a row the viewer would
 //      be refused (a 404 is a console error), and hands its answer back to
@@ -51,7 +51,7 @@ test('the build line is short and warm: the community builds it, the rules are a
   assert.match(restricted, /open to admins only\.$/);
 });
 
-test('the pill, the cards, the rows and the Open button say what the design says', () => {
+test('the figures, the rows and the Open button say what the design says', () => {
   assert.equal(model.membersPillText(1), '1 member');
   assert.equal(model.membersPillText('12'), '12 members');
   assert.equal(model.membersPillText(0), null, 'a zero says nothing');
@@ -62,8 +62,11 @@ test('the pill, the cards, the rows and the Open button say what the design says
   assert.equal(model.versionRowText(null, false, false), null, 'no row rather than "version —"');
   assert.equal(model.shortVersionOf({ version: { shortSha: 'abc1234' } }), 'abc1234');
   assert.equal(model.shortVersionOf({ main_sha: 'abc1234def' }), 'abc1234');
-  assert.deepEqual(model.statCards({ apps: 1, members: 2, merged: 0 }).map((c) => [c.key, c.value, c.label]),
-    [['apps', '1', 'app'], ['members', '2', 'members'], ['merged', '0', 'live']]);
+  assert.equal(model.changesLiveText(1), '1 change live');
+  assert.equal(model.changesLiveText('1204'), '1,204 changes live');
+  assert.equal(model.changesLiveText(0), null, 'a zero says nothing');
+  assert.equal(model.changesLiveText(null), null);
+  assert.equal(model.statCards, undefined, 'no platform-wide cards (#5293)');
   assert.equal(model.taglineOf({ manifest_snapshot: { description: '  Sketch\n together. ' } }), 'Sketch together.');
   assert.equal(model.taglineOf({ manifest_snapshot: {} }), null);
   assert.deepEqual(model.contributorView({ username: 'dana', merged_count: '6' }), { who: 'dana', initial: 'D', merged: 6 });
@@ -80,6 +83,7 @@ const ROW = {
   manifest_snapshot: { description: 'Shared notes for the group.' },
   version: { shortSha: 'a1b2c3d' }, last_deploy_at: new Date(Date.now() - 2 * 3600e3).toISOString(),
   approver_policy: 'anyone', approvals_required: null, repo_url: 'https://github.com/example/notes', member_count: 3,
+  merged_prs: 14,
 };
 
 function render(patch, { apps = [ROW], parked = null, items = null, privateMember = false, homeVisited = false } = {}) {
@@ -114,12 +118,13 @@ function render(patch, { apps = [ROW], parked = null, items = null, privateMembe
   }
 }
 
-test('an app\'s About, in the design\'s order', () => {
+test('an app\'s About: who it is, then what you can do with it, then how it is built (#5293)', () => {
   const html = render({ target: 'app', slug: 'notes-ab12', name: 'Notes', tab: 'dev', canShare: true,
     repoUrl: ROW.repo_url });
-  const order = ['app-about-identity', 'app-about-tagline', 'app-about-members', 'app-about-actions',
-    'app-about-open', 'app-about-add', 'app-about-note', 'app-about-how', 'app-about-contributors', 'app-about-more',
-    'improve-row-share', 'app-about-a2hs', 'improve-row-github', 'app-about-fork', 'app-about-version'];
+  const order = ['app-about-identity', 'app-about-tagline', 'app-about-stats', 'app-about-members', 'app-about-actions',
+    'app-about-open', 'app-about-add', 'app-about-quick', 'improve-row-share', 'app-about-a2hs',
+    'app-about-note', 'app-about-how', 'app-about-contributors', 'app-about-more',
+    'improve-row-github', 'app-about-fork', 'app-about-version'];
   let at = -1;
   for (const id of order) {
     const i = html.indexOf(`id="${id}"`);
@@ -127,7 +132,10 @@ test('an app\'s About, in the design\'s order', () => {
     at = i;
   }
   assert.match(html, /Shared notes for the group\./, 'the tagline is the manifest\'s description');
-  assert.match(html, /id="app-about-members"[^>]*>3 members</, 'how many are in its community, not the version');
+  assert.match(html, /id="app-about-stats" data-loaded=""/);
+  assert.match(html, /id="app-about-members" data-stat="members">3 members</, 'how many are in its community, not the version');
+  assert.match(html, /data-stat="merged"><span aria-hidden="true"[^>]*>·<\/span>14 changes live</,
+    'and how many of its own changes are live, in words');
   assert.match(html, /id="app-about-version"[^>]*>App version: a1b2c3d</, 'the version is a plain row under More');
   assert.match(html, /id="app-about-how" href="#app\/notes-ab12\/workshop"[^>]*>How changes work</,
     'the details are the Workshop\'s');
@@ -193,7 +201,7 @@ test('Remix says "Make your own copy", and a copy says what it was remixed from'
   assert.doesNotMatch(gone, /id="app-about-lineage"[^>]*><a /, 'a deleted original is text, not a link');
 });
 
-test('About Homeroom: the three figures instead of the actions, the platform\'s note, its roster', () => {
+test('About Homeroom: its own figures, Share first, the platform\'s note, its roster (#5293)', () => {
   const self = { ...ROW, slug: 'usernode-2d5619', name: 'Homeroom', self_hosted: true,
     approver_policy: 'invited', approvals_required: 1 };
   const html = render({ target: 'platform', slug: 'usernode-2d5619', name: 'Homeroom', selfHosted: true },
@@ -201,15 +209,35 @@ test('About Homeroom: the three figures instead of the actions, the platform\'s 
   assert.match(html, /src="\/brand\/homeroom-mark\.png"/, 'the tile is the mark that opened the menu');
   assert.doesNotMatch(html, /id="app-about-actions"/, 'no Open, no Add: you are standing in it');
   assert.match(html, /id="app-about-stats"/);
-  for (const key of ['apps', 'members', 'merged']) {
-    assert.match(html, new RegExp(`data-stat="${key}"`), `the ${key} card`);
+  for (const key of ['members', 'merged']) {
+    assert.match(html, new RegExp(`data-stat="${key}"`), `the ${key} figure`);
   }
+  assert.doesNotMatch(html, /data-stat="apps"/, 'not the platform\'s app count on a page about one app');
+  assert.doesNotMatch(html, /3 members|14 changes live/,
+    'its figures are the about payload\'s, counted on its own row, not a list row a viewer may lack');
+  assert.ok(html.indexOf('id="improve-row-share"') < html.indexOf('id="app-about-note"'),
+    'Share comes right under its name, before how it is built');
   assert.match(html, /Homeroom’s community builds it together, the same way as the apps on it\./);
   assert.match(html, /id="app-about-how" href="#app\/usernode-2d5619\/workshop"/, 'the platform\'s own Workshop');
-  assert.doesNotMatch(html, /id="app-about-members"/, 'its members are a figure card');
   assert.match(html, /id="app-about-contributors"/);
   assert.match(html, /id="improve-row-share"/, 'Homeroom always has an address to share');
   assert.doesNotMatch(html, /app-about-fork/);
+});
+
+test('About Homeroom reads its figures from the about payload, and a zero says nothing', () => {
+  const PT = ui.PlatformTarget;
+  const saved = { _about: PT._about, _aboutAt: PT._aboutAt };
+  try {
+    Object.assign(PT, { _about: { name: 'Homeroom', stats: { members: 368, merged: 0 } }, _aboutAt: Date.now() });
+    const html = render({ target: 'platform', slug: 'usernode-2d5619', name: 'Homeroom', restricted: true },
+      { apps: [] });
+    assert.match(html, /id="app-about-stats" data-loaded=""/);
+    assert.match(html, /data-stat="members">368 members</);
+    assert.match(html, /<span data-stat="merged" hidden="">/, 'none live: hidden, still in the DOM for a check');
+    assert.doesNotMatch(html, /·/, 'no dot before a hidden figure');
+  } finally {
+    Object.assign(PT, saved);
+  }
 });
 
 test('About Homeroom for a viewer not served its row: no roster the API would refuse', () => {
@@ -286,7 +314,7 @@ function resolverEnv(routes, { home = {} } = {}) {
   return { PT, calls, published, restore };
 }
 
-const ABOUT = { name: 'Homeroom', stats: { apps: 1, members: 1, merged: 1 }, selfAppSlug: 'usernode-2d5619' };
+const ABOUT = { name: 'Homeroom', stats: { members: 1, merged: 1 }, selfAppSlug: 'usernode-2d5619' };
 const SELF = { slug: 'usernode-2d5619', name: 'Homeroom', self_hosted: true };
 
 test('served: the platform row, from the route an app\'s page uses, handed to Home to publish', async () => {

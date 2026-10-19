@@ -2,8 +2,8 @@
 // (src/routes/platform-about.js).
 //
 // The pane is the platform's page in the mark menu, the same pane every app
-// has, and the design gives the platform three figures an app does not have:
-// apps, members and merged. Pinned here:
+// has, and it shows the two figures an app's shows: members and changes live,
+// Homeroom's own rather than the platform's (#5293). Pinned here:
 //
 //   - the shape the pane reads, from the one query's one row;
 //   - what each figure COUNTS — only what is out in the open, so a total
@@ -35,7 +35,6 @@ stub(require.resolve('../src/services/logger'),
   { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} });
 
 const ROW = {
-  apps: 41,
   members: '368',
   merged: 1204,
   name: 'Homeroom',
@@ -77,7 +76,7 @@ function reset() {
   delete process.env.GIT_SHA;
 }
 
-test('the pane gets the platform\'s identity and its three figures', async () => {
+test('the pane gets the platform\'s identity and its two figures', async () => {
   reset();
   const server = await start();
   try {
@@ -89,7 +88,7 @@ test('the pane gets the platform\'s identity and its three figures', async () =>
       repoUrl: 'https://github.com/Usernode-Labs/social-vibecoding',
       version: 'f8c45cc',
       updatedAt: '2026-09-22T10:00:00.000Z',
-      stats: { apps: 41, members: 368, merged: 1204 },
+      stats: { members: 368, merged: 1204 },
       selfAppSlug: 'usernode-2d5619',
       served: false,
     });
@@ -100,12 +99,11 @@ test('the pane gets the platform\'s identity and its three figures', async () =>
 
 test('what each figure counts is only what is out in the open', () => {
   const sql = route.ABOUT_SQL.replace(/\s+/g, ' ');
-  assert.match(sql, /FROM apps WHERE NOT self_hosted AND view_visibility = 'public'\) AS apps/,
-    'apps: every app anyone can view, never the platform row, never a private app');
+  assert.doesNotMatch(sql, /AS apps/, 'no platform-wide app count on a page about one app (#5293)');
   assert.match(sql, /FROM users WHERE has_platform_access AND NOT is_synthetic\) AS members/,
     'members: accounts the platform admits, not the demo partners that cannot sign in');
-  assert.match(sql, /cs\.status = 'merged' AND cs\.live_at IS NOT NULL AND \(a\.self_hosted OR a\.view_visibility = 'public'\)\) AS merged/,
-    'merged: merged proposals on those apps and the platform itself, once live');
+  assert.match(sql, /FROM chat_sessions cs WHERE cs\.app_id = s\.id AND cs\.status = 'merged' AND cs\.live_at IS NOT NULL\) AS merged/,
+    'merged: merged proposals on the platform\'s own row only, once live (#5293)');
   assert.match(sql, /LEFT JOIN apps s ON s\.slug = \$1 AND s\.self_hosted/,
     'a database with no self row still answers the counts');
 });
@@ -159,12 +157,12 @@ test('the version is the build answering, then the row\'s', () => {
 });
 
 test('no self row, no description: sensible defaults rather than blanks', () => {
-  const shaped = route.shapeAbout({ apps: 3, members: 0, merged: null },
+  const shaped = route.shapeAbout({ members: 0, merged: null },
     { config: { platformRepoUrl: 'https://github.com/example/fork' } });
   assert.equal(shaped.name, 'Homeroom');
   assert.equal(shaped.tagline, null, 'no sentence is better than an invented one');
   assert.equal(shaped.repoUrl, 'https://github.com/example/fork', 'a fork names its own repository');
-  assert.deepEqual(shaped.stats, { apps: 3, members: 0, merged: 0 });
+  assert.deepEqual(shaped.stats, { members: 0, merged: 0 });
   assert.equal(route.shapeAbout({ ...ROW, description: 'x'.repeat(400) }).tagline.length, 160,
     'capped the way the launcher caps a manifest description');
 });

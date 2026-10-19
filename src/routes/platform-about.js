@@ -4,21 +4,22 @@
 //
 //   GET /api/platform/about
 //        → { name, tagline, repoUrl, version, updatedAt,
-//            stats: { apps, members, merged },
+//            stats: { members, merged },
 //            selfAppSlug, served }
 //
 // The menu is the same menu every app has, pointed at the platform itself
 // (frontend/src/features/app-context/), and its About pane says what an app's
-// says: what it is, who builds it, how. For Homeroom the design adds three
-// figures an app's page does not have — how many apps live here, how many
-// people, how many changes have merged — because the platform's "who builds
-// it" is the whole community rather than a roster.
+// says: what it is, who builds it, how. Beside it go the two figures an
+// app's pane shows for an app (#5293): how many people are in its community
+// and how many of ITS changes are live. They are Homeroom's own, not the
+// platform's: the pane once said "90 apps", the platform's count, on a page
+// about one app, and counted every public app's merges as Homeroom's.
 //
 // ── Why a route of its own ─────────────────────────────────────────────
 //
-// Nothing answered those three. GET /api/apps is per viewer and its length is
-// what THIS viewer can see; the admin dashboard's counters are admin-only and
-// counted for a different question. And the pane has to work for a viewer
+// An app's figures come off its GET /api/apps row (member_count, merged_prs).
+// The platform's row is not served to every viewer, and the pane has to work
+// for a viewer
 // who is NOT served the platform's own `apps` row: with SELF_APP_PUBLIC_VOTING
 // off a non-admin gets a 404 for it (routes/apps.js), yet the platform they
 // are standing in still has a name, a tagline, a source repository and a
@@ -32,17 +33,16 @@
 // Only what is out in the open, so no figure discloses anything a directory
 // listing would not:
 //
-//   apps     every app anyone can view — view-public, not the platform's own
-//            row. A view-private app is absent from GET /api/apps for
-//            outsiders, and a total that included them would count what it
-//            may not name.
 //   members  accounts with platform access, the people the platform's own
 //            surfaces admit (has_platform_access), minus the synthetic demo
 //            partners routes/demo-mode.js creates, which cannot sign in.
-//   merged   merged proposals — a `chat_sessions` row in status `merged`, the
-//            definition services/contributors.js and the gallery use — on
-//            those same public apps plus the platform itself, which is built
-//            by the same votes.
+//            Every one of them is in Homeroom's community (the
+//            join_platform_community trigger in schema.sql), so this is its
+//            members.
+//   merged   merged proposals once live — a `chat_sessions` row in status
+//            `merged` with `live_at`, the definition GET /api/apps's
+//            merged_prs and services/contributors.js use — on the platform's
+//            own row only.
 //
 // ── Whether THIS viewer is served the platform's row ───────────────────
 //
@@ -60,14 +60,14 @@
 //
 // Nothing else in the payload depends on who asks, so one in-process copy
 // serves every viewer for a minute, and the two per-viewer fields are added
-// to it per request. The menu opens About on a tap; three COUNTs over the
+// to it per request. The menu opens About on a tap; two COUNTs over the
 // whole platform on every tap would be cost for a number that moves a few
 // times a day.
 //
 // ── Staging ────────────────────────────────────────────────────────────
 //
 // `chat_sessions` is `staging:private`, so a prod-cloned staging database has
-// merged nothing and the third card would read 0 in every preview. Under
+// merged nothing and the second figure would be hidden in every preview. Under
 // IS_STAGING && ?demo=1 an empty count is replaced with a fixed demo figure,
 // the request-time injection the platform's other demo reads use. Real counts
 // win, and it is a strict no-op in production.
@@ -81,19 +81,17 @@ const CACHE_TTL_MS = 60 * 1000;
 // The demo figure for `merged` on a staging preview whose clone has none.
 const DEMO_MERGED = 212;
 
-// One round trip. The three counts are scalar subqueries; the identity is the
+// One round trip. The two counts are scalar subqueries; the identity is the
 // self-hosted row, LEFT JOINed so a database without one (a fresh local boot
-// before seedSelfApp) still answers the counts.
+// before seedSelfApp) still answers the members, and merges counted on no
+// row are none.
 const ABOUT_SQL = `
   SELECT
-    (SELECT COUNT(*)::int FROM apps
-      WHERE NOT self_hosted AND view_visibility = 'public') AS apps,
     (SELECT COUNT(*)::int FROM users
       WHERE has_platform_access AND NOT is_synthetic) AS members,
     (SELECT COUNT(*)::int FROM chat_sessions cs
-       JOIN apps a ON a.id = cs.app_id
-      WHERE cs.status = 'merged' AND cs.live_at IS NOT NULL
-        AND (a.self_hosted OR a.view_visibility = 'public')) AS merged,
+      WHERE cs.app_id = s.id
+        AND cs.status = 'merged' AND cs.live_at IS NOT NULL) AS merged,
     s.name, s.repo_url, s.main_sha, s.last_deploy_at,
     s.manifest_snapshot->>'description' AS description
   FROM (SELECT 1) AS one
@@ -129,7 +127,6 @@ function shapeAbout(row, { config = {}, gitSha = null } = {}) {
     version: sha ? String(sha).slice(0, 7) : null,
     updatedAt: r.last_deploy_at ? new Date(r.last_deploy_at).toISOString() : null,
     stats: {
-      apps: toCount(r.apps),
       members: toCount(r.members),
       merged: toCount(r.merged),
     },

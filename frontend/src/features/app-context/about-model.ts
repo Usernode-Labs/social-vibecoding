@@ -56,9 +56,9 @@ export function shortVersionOf(row: AppRow | null | undefined): string | null {
 }
 
 /**
- * The pill beside the builders' avatars (#4218): how many people are in the
- * app's community, since the avatars stop at four. Nothing for none or an
- * unknown count: a zero says nothing.
+ * The first figure beside the builders' avatars (#4218, #5293): how many
+ * people are in the app's community, since the avatars stop at four. Nothing
+ * for none or an unknown count: a zero says nothing.
  */
 export function membersPillText(count: unknown): string | null {
   const n = typeof count === 'number' ? count : parseInt(String(count ?? ''), 10);
@@ -88,23 +88,16 @@ export function versionRowText(version: string | null, deploying: boolean, platf
     : t('agent:appContext.about.version.app', { version });
 }
 
-export interface StatCard { key: 'apps' | 'members' | 'merged'; value: string; label: string }
-
-/** About Homeroom's three cards, in the design's order. */
-export function statCards(stats: { apps?: number; members?: number; merged?: number } | null): StatCard[] {
-  const n = (v: unknown) => {
-    const x = typeof v === 'number' ? v : parseInt(String(v ?? ''), 10);
-    return Number.isFinite(x) && x > 0 ? x : 0;
-  };
-  const s = stats || {};
-  const apps = n(s.apps);
-  const members = n(s.members);
-  const merged = n(s.merged);
-  return [
-    { key: 'apps', value: apps.toLocaleString(), label: t('agent:appContext.about.stat.apps', { count: apps }) },
-    { key: 'members', value: members.toLocaleString(), label: t('agent:appContext.about.stat.members', { count: members }) },
-    { key: 'merged', value: merged.toLocaleString(), label: t('agent:appContext.about.stat.live', { count: merged }) },
-  ];
+/**
+ * The second figure beside the members (#5293): how many of the app's own
+ * changes have gone live. For an app it is its list row's `merged_prs`; for
+ * Homeroom, GET /api/platform/about's `stats.merged`, counted on the
+ * platform's own row only. Nothing for none: a zero says nothing.
+ */
+export function changesLiveText(count: unknown): string | null {
+  const n = typeof count === 'number' ? count : parseInt(String(count ?? ''), 10);
+  if (!Number.isFinite(n) || n < 1) return null;
+  return t('agent:appContext.about.changesLive', { count: n, formatted: n.toLocaleString() });
 }
 
 export interface ContributorView { who: string; initial: string; merged: number }

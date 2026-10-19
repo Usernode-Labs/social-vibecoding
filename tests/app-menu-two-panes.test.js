@@ -94,6 +94,10 @@ test('two panes of ONE sheet, not two sheets', () => {
   // the app, a second pane's back arrow (About's, Invite's) names it again
   // beside a chevron.
   assert.match(SHEET, /\{view !== 'menu' \? \(/, 'one row, two states');
+  // #5293: not on About, whose first line is the name, large; the small caps
+  // above it said it twice. Invite keeps it.
+  assert.match(SHEET, /\{view === 'about' \? null : \(\s*<span className=\{'min-w-0 truncate ' \+ SECTION_TYPE\}>\{appLabel\}<\/span>\s*\)\}/,
+    'About\'s back row is the disc alone');
   // What used to be tested here — that Create New and the app strip belonged
   // to the MENU pane rather than to About — is gone with both of them
   // (#2718 review). About was never the reason: a rail of other apps at the

@@ -4728,10 +4728,10 @@
       "expectText": "14 live"
     },
     {
-      "name": "About Homeroom carries the platform's own figures: apps, members, merged (nav prototype)",
+      "name": "About Homeroom says its own figures in words, members and changes live, not the platform's app count (#5293)",
       "path": "/?shot=app-about&demo=1",
-      "expectSelector": "#apps-switcher-sheet[data-open] #app-about-pane #app-about-stats[data-loaded] > [data-stat=\"members\"] + [data-stat=\"merged\"]",
-      "expectText": "members"
+      "expectSelector": "#apps-switcher-sheet[data-open] #app-about-pane:not(:has([data-stat=\"apps\"])) #app-about-identity #app-about-stats[data-loaded] > [data-stat=\"members\"] + [data-stat=\"merged\"]:not([hidden])",
+      "expectText": "changes live"
     },
     {
       "name": "A cold load of any platform tab but Home points the mark's menu at Homeroom, not 'this app' (audit bug)",

@@ -6,18 +6,22 @@
  * ── What it says, in the design's order ────────────────────────────────
  *
  *   1. WHO IT IS. A large tile, the name, the tagline, the builders' avatars
- *      and how many members its community has ("12 members", #4218).
- *   2. WHAT YOU CAN DO WITH IT (an app): Open — Resume for the app you
- *      parked, and nothing at all for the app already running — and Add to
- *      your apps. HOW BIG IT IS (the platform): apps, members, merged.
+ *      and the app's OWN figures in words: how many members its community
+ *      has and how many of its changes are live ("12 members · 34 changes
+ *      live", #4218, #5293). Homeroom's are Homeroom's too, not the
+ *      platform's: its pane once said "90 apps" on a page about one app.
+ *   2. WHAT YOU CAN DO WITH IT, first (#5293): Open — Resume for the app you
+ *      parked, and nothing at all for the app already running, or for
+ *      Homeroom, which you are standing in — and Add to your apps; then
+ *      Share and Add to home screen as rows right under them.
  *   3. HOW IT IS BUILT. One short line, its community builds it together,
  *      and "How changes work", which opens the Workshop (#4218).
  *   4. WHO BUILDS IT. Contributors, each with what they have merged, each
  *      opening that person's page.
- *   5. MORE. Share, Add to home screen, Code (public on GitHub), Remix
- *      (a fork, to the code; "Remix" to people), and the version as a plain
- *      row, "App version: a1b2c3d" (#4218). A remix also says what it was
- *      remixed from, under its description.
+ *   5. MORE. Code (public on GitHub), Remix (a fork, to the code; "Remix"
+ *      to people), and the version as a plain row, "App version: a1b2c3d"
+ *      (#4218). A remix also says what it was remixed from, under its
+ *      description.
  *
  * ── It is still a PANE, not a sheet ────────────────────────────────────
  *
@@ -32,7 +36,8 @@
  * Discover's app page (../apps/browse-detail.tsx) is the same page at full
  * size, so this reads its sources and nothing else: the app row, its ranked
  * contributors, and Home.menuItemsFor's action list — see ./about-data.ts.
- * Homeroom's pane adds GET /api/platform/about for its figures.
+ * Homeroom's pane adds GET /api/platform/about for its two figures, which
+ * that route counts for Homeroom's own row (src/routes/platform-about.js).
  *
  * ── The product's own truths, kept ─────────────────────────────────────
  *
@@ -64,8 +69,8 @@
  *
  * ── A viewer who is not served the platform's row ──────────────────────
  *
- * About Homeroom still opens for them (./platform-target.js): who it is, the
- * three figures, how it is built, Share and its Code row. The contributor
+ * About Homeroom still opens for them (./platform-target.js): who it is, its
+ * two figures, Share, how it is built, and its Code row. The contributor
  * list is the platform row's, which the API does not serve them, so it is not
  * drawn rather than drawn as an error.
  */
@@ -91,12 +96,12 @@ import { parkedStore } from '../nav/parked-store.js';
 import { AppContext } from './app-context-controller.js';
 import {
   appNote,
+  changesLiveText,
   contributorView,
   membersPillText,
   openLabel,
   platformNote,
   shortVersionOf,
-  statCards,
   taglineOf,
   versionRowText,
   type AppRow,
@@ -362,9 +367,14 @@ export function AboutPane({ label, unnamed = false }: { label: string; unnamed?:
     : (row?.last_deploy_at || row?.created_at || null);
   const updated = updatedAt ? agoStamp(updatedAt) : null;
   const versionText = versionRowText(shortSha || null, !!deploying && !platform, platform);
-  // The platform shows its members as a figure card below, so the pill is
-  // an app's.
-  const pill = isApp ? membersPillText(row?.member_count) : null;
+  // THE APP'S OWN FIGURES (#5293), in words beside the avatars: its
+  // community's members and its changes live. An app reads its list row
+  // (member_count, merged_prs: GET /api/apps); Homeroom reads its about
+  // payload, counted on its own row, so a viewer not served that row still
+  // gets them. Each zero says nothing.
+  const figures: AppRow | null = platform ? (about?.stats || null) : (row || null);
+  const membersText = membersPillText(platform ? figures?.members : figures?.member_count);
+  const liveText = changesLiveText(platform ? figures?.merged : figures?.merged_prs);
   const ready = contributors.state === 'ready' ? contributors.items : [];
   const stack = ready.slice(0, 4).map(contributorView);
   const record = {
@@ -471,23 +481,30 @@ export function AboutPane({ label, unnamed = false }: { label: string; unnamed?:
               )}
             </p>
           ) : null}
-          {stack.length || pill ? (
-            <div id="app-about-pills" className="mt-2 flex flex-wrap items-center gap-2">
-              {stack.length ? (
-                <span className="flex -space-x-1.5" aria-hidden="true">
-                  {stack.map((c) => <Avatar key={c.who} who={c.who} size="xs" />)}
-                </span>
-              ) : null}
-              {pill ? (
-                <span
-                  id="app-about-members"
-                  className="inline-flex items-center rounded-full bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 text-xs font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap"
-                >
-                  {pill}
-                </span>
-              ) : null}
-            </div>
-          ) : null}
+          {/* THE FIGURES (#5293): words, not cards or a pill. Both spans are
+              always in the DOM, hidden at zero, and `data-loaded` says the
+              source answered, so a check can tell a figure from a gap. */}
+          <div
+            id="app-about-pills"
+            className={stack.length || membersText || liveText ? 'mt-2 flex items-center gap-2 min-w-0' : 'hidden'}
+          >
+            {stack.length ? (
+              <span className="flex -space-x-1.5 shrink-0" aria-hidden="true">
+                {stack.map((c) => <Avatar key={c.who} who={c.who} size="xs" />)}
+              </span>
+            ) : null}
+            <p
+              id="app-about-stats"
+              data-loaded={figures ? '' : undefined}
+              className="min-w-0 truncate text-[0.8125rem] text-zinc-500 dark:text-zinc-400"
+            >
+              <span id="app-about-members" data-stat="members" hidden={!membersText}>{membersText || ''}</span>
+              <span data-stat="merged" hidden={!liveText}>
+                {membersText && liveText ? <span aria-hidden="true" className="mx-1.5">·</span> : null}
+                {liveText || ''}
+              </span>
+            </p>
+          </div>
         </div>
       </div>
 
@@ -558,27 +575,54 @@ export function AboutPane({ label, unnamed = false }: { label: string; unnamed?:
         </div>
       ) : null}
 
-      {platform ? (
-        // `data-loaded` once GET /api/platform/about has answered: the cards
-        // hold their place with a dash until then, and a check can tell a
-        // figure from a placeholder.
-        <div
-          id="app-about-stats"
-          data-loaded={about ? '' : undefined}
-          className="grid grid-cols-3 gap-2 px-5 pb-2"
-        >
-          {statCards(about?.stats || null).map((card) => (
-            <div
-              key={card.key}
-              data-stat={card.key}
-              className="rounded-xl border border-zinc-200 dark:border-zinc-700/70 bg-white/70 dark:bg-zinc-800/50 px-1.5 py-2.5 text-center"
-            >
-              <b className="block text-lg leading-tight font-semibold text-zinc-900 dark:text-zinc-100">
-                {about ? card.value : '–'}
-              </b>
-              <span className="text-xs text-zinc-500 dark:text-zinc-400">{card.label}</span>
-            </div>
-          ))}
+      {/*
+          SHARE AND ADD TO HOME SCREEN, right under the buttons (#5293): the
+          things you can do with it come before the facts about it, and for
+          Homeroom, which has no Open, they are the first thing under its
+          name. Both are the rows they were under More, with their gates.
+      */}
+      {shareRow || showHomeScreen ? (
+        <div id="app-about-quick" className="pb-1">
+          {shareRow ? (
+            <ActionRow
+              id="improve-row-share"
+              icon={<ShareIcon />}
+              label={shareSaid || t('agent:appContext.row.share')}
+              onClick={() => {
+                if (!platform) {
+                  // The app's live address, in the share dialog the Improve
+                  // panel's footer opened — same method, same gate.
+                  afterDismiss(() => {
+                    (window as unknown as { Improve?: { share?: () => void } }).Improve?.share?.();
+                  });
+                  return;
+                }
+                void sharePlatform(label).then((how) => {
+                  const said = how === 'copied' ? t('agent:appContext.about.share.copied') : (how === 'failed' ? t('agent:appContext.about.share.failed') : null);
+                  if (!said) return;
+                  setShareSaid(said);
+                  window.setTimeout(() => setShareSaid(null), 1800);
+                });
+              }}
+            />
+          ) : null}
+          {showHomeScreen ? (
+            <ActionRow
+              id="app-about-a2hs"
+              icon={<Glyph d={GLYPHS.homeScreen} />}
+              label={t('agent:appContext.about.addToHomeScreen')}
+              onClick={() => {
+                if (platform) {
+                  setA2hsOpen((v) => !v);
+                  return;
+                }
+                if (homeScreenItem) afterDismiss(() => homeScreenItem.run());
+              }}
+            />
+          ) : null}
+          {platform && a2hsOpen && os ? (
+            <p id="app-about-a2hs-steps" className={NOTE}>{t(A2HS_STEPS[os])}</p>
+          ) : null}
         </div>
       ) : null}
 
@@ -627,49 +671,9 @@ export function AboutPane({ label, unnamed = false }: { label: string; unnamed?:
         </section>
       ) : null}
 
-      {shareRow || showHomeScreen || repo || showFork || versionText ? (
+      {repo || showFork || versionText ? (
         <section id="app-about-more" aria-label={t('agent:appContext.about.more')}>
           <h4 className={SECTION}>{t('agent:appContext.about.more')}</h4>
-          {shareRow ? (
-            <ActionRow
-              id="improve-row-share"
-              icon={<ShareIcon />}
-              label={shareSaid || t('agent:appContext.row.share')}
-              onClick={() => {
-                if (!platform) {
-                  // The app's live address, in the share dialog the Improve
-                  // panel's footer opened — same method, same gate.
-                  afterDismiss(() => {
-                    (window as unknown as { Improve?: { share?: () => void } }).Improve?.share?.();
-                  });
-                  return;
-                }
-                void sharePlatform(label).then((how) => {
-                  const said = how === 'copied' ? t('agent:appContext.about.share.copied') : (how === 'failed' ? t('agent:appContext.about.share.failed') : null);
-                  if (!said) return;
-                  setShareSaid(said);
-                  window.setTimeout(() => setShareSaid(null), 1800);
-                });
-              }}
-            />
-          ) : null}
-          {showHomeScreen ? (
-            <ActionRow
-              id="app-about-a2hs"
-              icon={<Glyph d={GLYPHS.homeScreen} />}
-              label={t('agent:appContext.about.addToHomeScreen')}
-              onClick={() => {
-                if (platform) {
-                  setA2hsOpen((v) => !v);
-                  return;
-                }
-                if (homeScreenItem) afterDismiss(() => homeScreenItem.run());
-              }}
-            />
-          ) : null}
-          {platform && a2hsOpen && os ? (
-            <p id="app-about-a2hs-steps" className={NOTE}>{t(A2HS_STEPS[os])}</p>
-          ) : null}
           {repo ? (
             <a
               id="improve-row-github"

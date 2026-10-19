@@ -499,7 +499,12 @@ export function AppsSwitcherSheet(): ReactNode {
               >
                 <ChevronLeftIcon className="w-[18px] h-[18px]" aria-hidden="true" />
               </button>
-              <span className={'min-w-0 truncate ' + SECTION_TYPE}>{appLabel}</span>
+              {/* Not on About (#5293): its first line is the name, large,
+                  so the small caps above it only said it twice. The disc's
+                  label still names where it goes back to. */}
+              {view === 'about' ? null : (
+                <span className={'min-w-0 truncate ' + SECTION_TYPE}>{appLabel}</span>
+              )}
             </div>
           ) : (
             /*
