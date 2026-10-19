@@ -467,3 +467,71 @@ test('an imported PR is authoritative about its own head', () => {
   assert.equal(svc._headShaOf({}), null);
   assert.equal(svc._headShaOf(null), null);
 });
+
+// ── The leader's measurement answers, for no GitHub request ────────────
+//
+// On 19 Oct 2026 each refresh here cost four to seven GitHub requests, every
+// minute a proposal was open, while the leader measured every promoted
+// proposal from its own mirror every minute (services/integration.js).
+
+const HEAD = 'c'.repeat(40);
+const MAIN = 'a'.repeat(40);
+const BASE = 'b'.repeat(40);
+const measuredNow = (extra = {}) => session({
+  integration_measured_at: new Date(Date.now() - 30 * 1000).toISOString(),
+  integration_head_sha: HEAD, integration_main_sha: MAIN, integration_base_sha: BASE,
+  integration_behind_by: 8, integration_ahead_by: 2, integration_merges_clean: true,
+  integration_conflict_paths: [], integration_checks_base_current: true, checks_base_sha: BASE,
+  integration_error: null,
+  ...extra,
+});
+
+test('a fresh measurement of this head answers the refresh with no GitHub call, and is written like one', async () => {
+  const gh = fakeGh();
+  const pool = fakePool();
+  const out = await svc.refreshFreshness({ gh, pool }, measuredNow());
+  assert.deepEqual(gh.calls, [], 'GitHub is not asked');
+  const params = pool.last().params;
+  assert.match(pool.last().sql, /SET freshness_main_sha = \$2/);
+  assert.deepEqual(params, [3590, MAIN, BASE, 8, 2, 'clean', '[]', null, 'current', 0]);
+  assert.equal(out.mainSha, MAIN);
+  assert.equal(out.behindBy, 8);
+  assert.equal(out.mergeability, 'clean');
+  assert.equal(out.checksBaseVerdict, 'current');
+});
+
+test('a measured conflict carries its exact files; a superseded base carries no count', async () => {
+  const pool = fakePool();
+  const out = await svc.refreshFreshness({ gh: fakeGh(), pool }, measuredNow({
+    integration_merges_clean: false, integration_conflict_paths: ['dapp.json', 'server.js'],
+    integration_checks_base_current: false, checks_base_sha: 'd'.repeat(40),
+  }));
+  assert.equal(out.mergeability, 'conflict');
+  assert.deepEqual(out.mergeabilityFiles, ['dapp.json', 'server.js']);
+  assert.equal(out.mergeabilityFilesComplete, true, 'a real merge, not an upper bound');
+  assert.equal(out.checksBaseVerdict, 'superseded');
+  assert.equal(out.checksBaseBehindBy, null);
+});
+
+test('GitHub is asked as before when the measurement is old, failed, of another head, or missing', async () => {
+  const cases = {
+    old: { integration_measured_at: new Date(Date.now() - svc.MEASURE_ANSWERS_MS - 1000).toISOString() },
+    failed: { integration_error: 'fetch failed' },
+    otherHead: { integration_head_sha: 'e'.repeat(40) },
+    noMain: { integration_main_sha: null },
+    never: { integration_measured_at: null },
+  };
+  for (const [name, extra] of Object.entries(cases)) {
+    const gh = fakeGh();
+    await svc.refreshFreshness({ gh, pool: fakePool() }, measuredNow(extra));
+    assert.ok(gh.calls.some((c) => c[0] === 'getRepoHead'), name);
+  }
+});
+
+test('the measurement answers only inside its window, which the caller can set', () => {
+  assert.equal(svc.MEASURE_ANSWERS_MS, 3 * 60 * 1000);
+  assert.ok(svc.measurementAnswer(measuredNow(), HEAD));
+  assert.equal(svc.measurementAnswer(measuredNow(), HEAD, 10 * 1000), null, 'a 30 s old one, against a 10 s window');
+  // An unknown merge keeps a conflict GitHub reported, as the GitHub path does.
+  assert.equal(svc.measurementAnswer(measuredNow({ integration_merges_clean: null, mergeability: 'conflict' }), HEAD).mergeability, 'conflict');
+});
