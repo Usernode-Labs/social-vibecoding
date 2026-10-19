@@ -126,8 +126,8 @@ test('App slots says the allowance in words, and opens the create dialog in plac
   assert.equal(appSlotsLine({ used: 1, limit: 2, remaining: 1 }, null), '1 of 2 app slots used');
   assert.equal(appSlotsLine({ used: 2, limit: 2, remaining: 0 }, '2026-09-07T12:00:00Z'),
     '2 of 2 app slots used · more requested');
-  assert.equal(appSlotsLine({ used: 3, limit: null, remaining: null }, null), '3 apps · no limit',
-    'an admin without a slot limit is told so, not shown a fraction');
+  assert.equal(appSlotsLine({ used: 3, limit: null, remaining: null }, null), '3 apps made · no limit',
+    'an admin without a slot limit is told so, not shown a fraction, and that these are the apps made');
 
   const store = loadTsx('frontend/src/features/dialogs/app-allowance-store.js');
   store.seedAppAllowance({ appCreationQuota: { used: 1, limit: 2, remaining: 1 } });

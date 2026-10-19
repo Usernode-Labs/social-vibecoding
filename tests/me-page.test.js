@@ -71,6 +71,7 @@ test('the rows say what is behind them, from the data only', () => {
     kudos: '3 received',
     changes: '9 live · 2 in progress',
     requests: '2 open · 1 done',
+    requestsPending: false,
     votes: 'Latest: Weekly distance leaderboard',
     friends: '1 request waiting',
     feedback: '4 sent · 1 counted',
@@ -91,7 +92,7 @@ test('the rows say what is behind them, from the data only', () => {
   assert.equal(moreRowsView({ ranking: {}, summary: { ...SUMMARY, merged: 0 } }).changes, null);
   // A read that failed is not a claim that there is nothing.
   assert.deepEqual(moreRowsView({ ranking: null, summary: null }), {
-    challenges: null, kudos: null, changes: null, requests: null, votes: null, friends: null, feedback: null,
+    challenges: null, kudos: null, changes: null, requests: null, requestsPending: false, votes: null, friends: null, feedback: null,
   });
 });
 
@@ -101,10 +102,13 @@ test('the card\'s one line of facts: @handle, building since, apps', () => {
   const view = identityView({ user, data: { summary: SUMMARY } });
   assert.equal(view.name, 'Evan S');
   // Month names are the runtime locale's; the shape is what is pinned.
-  assert.match(view.sub, /^@evan · Building since \S+ 2026 · 3 apps$/);
+  // "Changes live in": apps with a change of theirs live, not the apps they
+  // made, which the App slots row counts (N18 of the 19 Oct polish board:
+  // "21 apps" here beside "18 apps" there read as one count disagreeing).
+  assert.match(view.sub, /^@evan · Building since \S+ 2026 · Changes live in 3 apps$/);
   const bare = identityView({ user: { username: 'evan' }, data: { summary: { ...SUMMARY, apps: 1 } } });
   assert.equal(bare.name, '@evan');
-  assert.match(bare.sub, /^Building since \S+ 2026 · 1 app$/, 'the handle is the headline, so not repeated');
+  assert.match(bare.sub, /^Building since \S+ 2026 · Changes live in 1 app$/, 'the handle is the headline, so not repeated');
   assert.equal(identityView({ user: { username: 'evan' }, data: null }).sub, null);
 });
 

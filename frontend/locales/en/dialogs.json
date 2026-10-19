@@ -408,12 +408,12 @@
     "description": "Summary at the right of the allowance box for an account that may create any number of apps, when how many it has is not known."
   },
   "allowance.headline.usedNoLimit_one": {
-    "text": "{{count}} app · no limit",
-    "description": "Summary at the right of the allowance box for an account with no limit. {{count}} is how many apps it has created. Keep the middle dot as a separator."
+    "text": "{{count}} app made · no limit",
+    "description": "Summary at the right of the allowance box, and the App slots row's line on the profile, for an account with no limit. {{count}} is how many apps it has created, imported or remixed. Keep the middle dot as a separator."
   },
   "allowance.headline.usedNoLimit_other": {
-    "text": "{{count}} apps · no limit",
-    "description": "Summary at the right of the allowance box for an account with no limit. {{count}} is how many apps it has created. Keep the middle dot as a separator."
+    "text": "{{count}} apps made · no limit",
+    "description": "Summary at the right of the allowance box, and the App slots row's line on the profile, for an account with no limit. {{count}} is how many apps it has created, imported or remixed. Keep the middle dot as a separator."
   },
   "allowance.headline.slots_one": {
     "text": "{{count}} app slots",

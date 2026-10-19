@@ -90,6 +90,7 @@ import { type ReactNode } from 'react';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
+import { Skeleton } from '@/components/ui/skeleton';
 import { AppWindowIcon, BallotIcon, BellIcon, ChatIcon, CogIcon, HandRaisedIcon, ShieldCheckIcon, ThumbsUpIcon, TrophyIcon, UserGroupIcon, UserPenIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
@@ -108,9 +109,26 @@ type ProfileRows = {
   kudos: string | null;
   changes?: string | null;
   requests?: string | null;
+  requestsPending?: boolean;
   votes?: string | null;
   friends?: string | null;
 };
+
+/**
+ * A row's second line whose words are still on their way: a muted bar at
+ * the line's own height (ListRow's subtitle is 1.125rem leading), so the row
+ * is already the height it will be and nothing under it moves when they
+ * land. Your requests' counts come after the rest of Profile (profile.js
+ * _load).
+ */
+function PendingLine({ label }: { label: string }): ReactNode {
+  return (
+    <div className="flex h-[1.125rem] items-center">
+      <span className="sr-only">{label}</span>
+      <Skeleton shape="muted" className="w-32 animate-pulse" aria-hidden="true" />
+    </div>
+  );
+}
 
 /** A plain click that the row takes for itself; anything modified is the browser's. */
 function plainClick(event: { defaultPrevented: boolean; button: number; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }): boolean {
@@ -143,7 +161,10 @@ export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
           leading={<IconTile size="sm"><ChatIcon /></IconTile>}
           title={t('profile:work.requests.title')}
           titleClassName={TITLE}
-          subtitle={rows.requests || t('profile:work.requests.hint')}
+          subtitle={rows.requests
+            || (rows.requestsPending
+              ? <PendingLine label={t('profile:work.requests.counting')} />
+              : t('profile:work.requests.hint'))}
           subtitleClassName={SUBTITLE}
         />
         <ListRow
