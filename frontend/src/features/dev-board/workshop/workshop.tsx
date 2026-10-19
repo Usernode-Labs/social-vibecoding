@@ -2526,6 +2526,55 @@ export function savedVoteFor(
 }
 
 /**
+ * #5466: a queue with the rows a saved vote (cards-store.ts voteSavedStore)
+ * already answers taken out — the one pure rule both places that strip it
+ * use, the module-level listener over `devWorkshopStore` below and mount.ts
+ * `publishWorkshop` at the door. The match is `savedVoteFor`'s own: a row at
+ * a newer epoch than the vote stays and asks again, and a governance row — a
+ * group decision — always stays. Pure and cheap: the SAME array comes back
+ * when nothing matches, so a store with no saved vote to strip republishes
+ * nothing.
+ */
+export function withoutSavedVotes(
+  queue: DevWorkshopView['queue'] | null | undefined,
+  saved: Record<string, { vote: 'yes' | 'no'; epoch: number | null }> | null | undefined,
+): DevWorkshopView['queue'] {
+  const rows = queue || [];
+  if (!saved || Object.keys(saved).length === 0) return rows;
+  let out: DevWorkshopView['queue'] | null = null;
+  for (let idx = 0; idx < rows.length; idx++) {
+    if (!savedVoteFor(rows[idx], saved)) {
+      if (out) out.push(rows[idx]);
+      continue;
+    }
+    if (!out) out = rows.slice(0, idx);
+  }
+  return out || rows;
+}
+
+// #5466: the project page's own copy of the queue hears a saved vote the way
+// the Communities feed does (workshop/index.tsx's subscribe, the #4794
+// pattern). Three surfaces read `devWorkshopStore.get().queue` — the hub's
+// "For you" card and its "1 to vote" (hub-cards.tsx `owesVote`), the places
+// list's Needs you count, and the Needs you deck itself — and the only thing
+// that used to rewrite it was `publishWorkshop`, which publishes only while
+// `#dev-workshop` is up and whose read (`refreshDevData`) no-ops outside the
+// dev tab. So a vote cast off the project page left the kept queue holding
+// the row until a page reload. Strip it here, whichever tab the viewer is on,
+// through the same pure rule `publishWorkshop` uses, so a later publish built
+// from a pre-vote list cannot bring the row back either (mount.ts guards the
+// same way at the door). A mounted deck keeps its place as today: a row it
+// voted on is held by `pinsRef`, and a row voted elsewhere is held by the
+// `drawnRef` plus `savedAll` pin.
+voteSavedStore.subscribe(() => {
+  const cur = devWorkshopStore.get();
+  if (!cur.queue) return; // nothing published yet: nothing kept to strip
+  const queue = withoutSavedVotes(cur.queue, voteSavedStore.get());
+  if (queue === cur.queue) return;
+  devWorkshopStore.set({ queue });
+});
+
+/**
  * A project's Needs you, and the Communities screen's (#3488): ONE feed, so
  * the two cannot drift apart again. There the rows mix every project's, each
  * carrying its own (`row.app`), and every address the feed builds (the card's
@@ -5375,6 +5424,11 @@ export function DevWorkshop(): ReactNode {
           canPost={canPost}
           onDone={() => openTab('workshop')}
           onHub={() => openTab('status')}
+          // No `onAnswered` here (#4794): a project page passes nothing. The
+          // vote's own route already drops the row — the deck casts through
+          // AppView.castVote, whose ok path publishes the saved vote into
+          // voteSavedStore, and the store listener above strips it from the
+          // kept queue before the feed's own `setAnswered` even lands.
           // #4680: the end card's quiet way into the Suggest an improvement
           // form, the same open the hub's ⋯ row makes. No `intent: 'issue'`,
           // so the heading reads "Suggest an improvement".

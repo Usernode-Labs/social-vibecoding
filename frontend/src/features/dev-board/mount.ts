@@ -58,10 +58,11 @@ import {
   publishVoteSending,
   devKanbanStore,
   devWorkshopStore,
+  voteSavedStore,
 } from './card/cards-store';
 import { DevKanban } from './card/dev-kanban';
 import type { DevKanbanView, DevWorkshopView } from './card/model';
-import { DevWorkshop } from './workshop/workshop';
+import { DevWorkshop, withoutSavedVotes } from './workshop/workshop';
 import { TopicHead } from './topic/topic-head';
 import { topicHeadStore, type TopicHeadState } from './topic/topic-store';
 import { publishRequestThread } from './topic/request-model';
@@ -310,7 +311,13 @@ export const devBoardBridge: DevBoardBridge = {
   },
 
   publishWorkshop(view) {
-    devWorkshopStore.set(view);
+    // #5466: the queue goes through the saved-vote strip at the door, the
+    // same rule the store listener in workshop.tsx applies after a vote
+    // lands (voteSavedStore). `_overlayPendingVote` already fills a read
+    // that started before the vote; this keeps the store honest whatever
+    // list the publish came from, so a later publish built from a pre-vote
+    // list cannot bring the row back.
+    devWorkshopStore.set({ ...view, queue: withoutSavedVotes(view.queue, voteSavedStore.get()) });
   },
 
   mountKanban(host) {
