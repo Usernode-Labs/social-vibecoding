@@ -130,6 +130,9 @@ let sizes = [];
 const roleCalls = [];
 const notifyCalls = [];
 dbManager.listAppDatabaseSizes = async () => sizes.map(([dbName, bytes]) => ({ dbName, bytes }));
+// Whether a frozen app's role is read-only already: the fixture's frozen
+// apps are, so holding them changes nothing.
+dbManager.isAppDatabaseReadOnly = async () => true;
 dbManager.setAppDatabaseWritable = async (dbName, writable) => {
   roleCalls.push([dbName, writable]);
   return { dbName, role: `${dbName}_owner`, writable };

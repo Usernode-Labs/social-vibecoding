@@ -337,14 +337,17 @@ async function applyTransition(pool, app, dbName, decision, ctx) {
       return;
     }
     case 'none': {
-      // Frozen and staying so: the role is made read-only again, under the
-      // row's lock and only if the row still says frozen with no grace open
-      // (an admin's grace granted since this sweep read the app wins).
-      // Idempotent: it holds a freeze whatever happened to the role.
+      // Frozen and staying so: a role that is not read-only (a freeze whose
+      // process died between its row and its role) is made so again, under
+      // the row's lock and only if the row still says frozen with no grace
+      // open (an admin's grace granted since this sweep read the app wins).
+      // A role already read-only is left alone: setting it again would end
+      // every connection the app has open, at every sweep.
       if (decision.frozen && !staging) {
         const enforced = await underRowLock(pool, app.id, async (_db, cur) => {
           if (!cur || !cur.db_storage_frozen_at) return false;
           if (toMs(cur.db_storage_grace_until) > toMs(now)) return false;
+          if (await dbManager.isAppDatabaseReadOnly(dbName, { execute })) return false;
           await dbManager.setAppDatabaseWritable(dbName, false, { execute });
           return true;
         });

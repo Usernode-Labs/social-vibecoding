@@ -428,6 +428,18 @@ test('a sweep acts on the row as it stands under its lock: a stale read freezes 
   assert.deepEqual(tell.calls.map((c) => c.detail), ['storage_warn'], 'only warm, which nobody touched');
 });
 
+test('holding a freeze leaves a role that is already read-only alone (setting it again ends the app\'s connections)', async () => {
+  const pool = fixture();
+  pool.apps[1].db_storage_frozen_at = NOW;
+  pool.apps[1].db_storage_warned_at = NOW;
+  const base = fakeExecute(SIZES);
+  const execute = async (sql, opts) => (/pg_db_role_setting/.test(sql) && /app_big_one_owner/.test(sql) ? '1' : base(sql, opts));
+  execute.roleCalls = base.roleCalls;
+  const out = await cap.sweep(pool, { execute, now: NOW, staging: false, notify: fakeNotify() });
+  assert.equal(out.enforced, 0);
+  assert.ok(!base.roleCalls().some((c) => /app_big_one_owner/.test(c)), 'no ALTER, no terminate');
+});
+
 test('holding a freeze leaves alone an app an admin gave grace since the sweep read it', async () => {
   // The review's case: grantGrace thawed big-one after the sweep's read; the
   // sweep's hold must not make its role read-only again.
