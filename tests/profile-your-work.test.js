@@ -396,6 +396,35 @@ test('the router: three addresses no username can have, one screen, the bar name
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'), /const SEE_MINE_ROUTE = '#profile\/your-requests';/);
 });
 
+// ── #5454: coming back to the screen from an app reads the list again ──
+
+test('#5454: the already-open guard stops only the duplicate dispatch, not a return from an app', () => {
+  const app = read('public/js/app.js');
+  const start = app.indexOf('  navigateToProfileProposals(');
+  assert.ok(start > 0, 'navigateToProfileProposals is defined in app.js');
+  const body = app.slice(start, app.indexOf('\n  },', start));
+  // With an app open the entry must run on to open(view) (which reloads),
+  // AppView.close() and the reveal; only the same view re-entered with no
+  // app open bails out, so one tick's popstate + hashchange still paints
+  // once (#979).
+  assert.match(body, /if \(App\._inProfileProposals && !App\.currentApp && window\.UsernodeReact\?\.profileProposals\?\.isOpen\?\.\(view\)\) \{\s*return;\s*\}/,
+    'the guard includes !App.currentApp');
+  assert.ok(body.indexOf('!App.currentApp') < body.indexOf('PlatformUI.transition('),
+    'the guard runs before the transition, so a replay never starts one');
+});
+
+test('#5454: entering an app exits the screen, like Leaderboard, Profile, Admin and Settings', () => {
+  const app = read('public/js/app.js');
+  // App.setChromeless(chromeless) runs only in restoreFromHash's
+  // #app/<slug> branch. The Workshop deliberately stays open behind an app,
+  // so it is the one exit this branch must not gain.
+  const at = app.indexOf('App.setChromeless(chromeless);');
+  assert.ok(at > 0, 'the #app/<slug> branch sets chromeless');
+  const exits = app.slice(Math.max(0, at - 700), at + 'App.setChromeless(chromeless);'.length);
+  assert.match(exits, /if \(App\._inSettings\) App\._exitSettings\(\);\s*if \(App\._inProfileProposals\) App\._exitProfileProposals\(\);\s*App\.setChromeless\(chromeless\);/,
+    'the #app/<slug> branch exits the screen before App.setChromeless(chromeless)');
+});
+
 // ── The layout (#3498) ─────────────────────────────────────────────────
 //
 // "Your requests + your votes sections are misformatted (gray, behind

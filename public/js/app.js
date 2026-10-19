@@ -5459,6 +5459,7 @@ const App = {
         if (App._inProfile) App._exitProfile();
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
+        if (App._inProfileProposals) App._exitProfileProposals();
             App.setChromeless(chromeless);
         // Stash the validated inner path where renderAppTab / the token
         // refresh read it. Set on EVERY pass (null when absent) so
@@ -7118,7 +7119,12 @@ const App = {
 
   navigateToProfileProposals(kind = 'changes') {
     const view = App.PROFILE_WORK_TITLES[kind] ? kind : 'changes';
-    if (App._inProfileProposals && window.UsernodeReact?.profileProposals?.isOpen?.(view)) {
+    // The guard stops only the duplicate dispatch (popstate + hashchange in
+    // one tick, #979): the same view re-entered while it is on screen with
+    // no app open. Opening an app from a row leaves both flags set, so a
+    // return trip must take the full entry below and read the list again
+    // (#5454) — navigateToWorkshop documents the same trap.
+    if (App._inProfileProposals && !App.currentApp && window.UsernodeReact?.profileProposals?.isOpen?.(view)) {
       return;
     }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
