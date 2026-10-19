@@ -131,10 +131,30 @@ test('a governance vote stays within its query budget', { timeout: 120000 }, asy
   const { rows: [issue] } = await pool.query(
     `INSERT INTO issues (app_id, title, kind, payload, created_by) VALUES ($1, 'rename', 'rename', $2, $3) RETURNING *`,
     [app.id, JSON.stringify({ newName: 'Budgeted' }), author.id]);
+  // No scheduled job is armed here (as on a staging preview,
+  // config.runsClusterMaintenance): each clock is first due at a random point
+  // of the next two minutes, and its run, or the timer loop waking for it,
+  // would land among the vote's queries.
+  const runtimeConfig = require('../src/config');
+  const runsClusterMaintenance = runtimeConfig.runsClusterMaintenance;
+  runtimeConfig.runsClusterMaintenance = () => false;
+  t.after(() => { runtimeConfig.runsClusterMaintenance = runsClusterMaintenance; });
   await platform.startWorkflow(config, { loops: true });
   const enrolled = Date.now() + 5000;
   while (!(await pool.query(`SELECT 1 FROM wf_instances WHERE key = $1 AND state = 'open'`, [`issue:${issue.id}`])).rowCount) {
     assert.ok(Date.now() < enrolled, 'the boot backfill enrolled the proposal');
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  // The boot's own work is not the vote's: the release's adoptions run to
+  // their end first.
+  const booted = Date.now() + 20000;
+  for (;;) {
+    const { rows: [r] } = await pool.query(
+      `SELECT (SELECT count(*) FROM wf_instances WHERE machine = 'release' AND state = 'adopting')::int AS adopting,
+              (SELECT count(*) FROM wf_events WHERE status = 'pending')::int AS pending,
+              (SELECT count(*) FROM wf_work WHERE status IN ('running', 'reported'))::int AS working`);
+    if (!r.adopting && !r.pending && !r.working) break;
+    assert.ok(Date.now() < booted, `the boot's work ended (${JSON.stringify(r)})`);
     await new Promise((r) => setTimeout(r, 50));
   }
   const settle = () => new Promise((r) => setTimeout(r, 300));  // let the loops go quiet
