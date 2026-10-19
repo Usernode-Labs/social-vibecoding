@@ -2126,6 +2126,193 @@
       }
     },
 
+    // ── First paint (`shellPainted`) ──────────────────────────────────
+    //
+    // A cold launch of the app used to walk through six screens in about
+    // 3.3 s: the native splash, a "Connecting" screen, a white frame, a
+    // blank one, this document's skeleton with its header under the status
+    // bar, and then Home settling into place. The app now keeps one cover
+    // over the web view until THIS DOCUMENT SAYS its first screen is drawn,
+    // then fades the cover out over 150 ms (its own cap is 3 s). This is
+    // the saying.
+    //
+    // DRAWN means three things at once:
+    //   - the document is parsed and no boot hold is up (the head's
+    //     `first-session-boot` and `language-pending` hide the body);
+    //   - no skeleton is on screen in a screen root: no `.animate-pulse`
+    //     placeholder inside a visible <main>, which is how Home's grid,
+    //     its Discover and Challenges sections (features/home/panels/
+    //     sections.tsx) and every SkeletonGroup draw "not yet";
+    //   - every image on screen in a screen root has finished (loaded or
+    //     failed), so the challenge art is there when the cover lifts.
+    // …and, inside the app, `env(safe-area-inset-top)` is no longer 0. The
+    // web view can lay the page out before it knows the inset, which drew
+    // the header under the clock; the cover stays until it does.
+    //
+    // Then it waits for the next paint (two animation frames), so what the
+    // app fades to is on screen, and calls `shellPainted` once for this
+    // document. Whatever is still loading, it calls at the latest 1.5 s
+    // after DOMContentLoaded: the cover is a curtain over a page, never a
+    // wait for one.
+    //
+    // Unprivileged, capability-gated like setStatusBarTone (NATIVE-BRIDGE.md,
+    // `shellPainted`), and only from the top document. A browser, a framed
+    // copy of the shell or a build without the capability pays nothing: no
+    // probe, no polling.
+    _SHELL_PAINTED_CAP_MS: 1500,
+    _SHELL_PAINTED_POLL_MS: 50,
+    _shellPaintedSent: false,
+    _shellPaintedStarted: false,
+
+    // Pure over a document and a window, so the test can hand it a fake.
+    firstScreenDrawn(doc, win) {
+      try {
+        if (!doc || doc.readyState === 'loading') return false;
+        const root = doc.documentElement;
+        if (root && root.classList && (root.classList.contains('first-session-boot')
+            || root.classList.contains('language-pending'))) return false;
+        const vw = Number(win && win.innerWidth) || 0;
+        const vh = Number(win && win.innerHeight) || 0;
+        const onScreen = (el) => {
+          const rects = el.getClientRects ? el.getClientRects() : [];
+          for (let i = 0; i < rects.length; i += 1) {
+            const r = rects[i];
+            if (r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0
+                && r.top < vh && r.left < vw) return true;
+          }
+          return false;
+        };
+        // Screen roots only. The header's node pill pulses a live dot, and
+        // a dialog's spinner is not the first screen.
+        const pulses = doc.querySelectorAll('main .animate-pulse');
+        for (let i = 0; i < pulses.length; i += 1) {
+          if (onScreen(pulses[i])) return false;
+        }
+        const images = doc.querySelectorAll('main img');
+        for (let i = 0; i < images.length; i += 1) {
+          const img = images[i];
+          if (!img.complete && img.getAttribute('src') && onScreen(img)) return false;
+        }
+        return true;
+      } catch (_) {
+        // A document that cannot be read cannot be waited on.
+        return true;
+      }
+    },
+
+    // `env(safe-area-inset-top)` as the page resolves it now, off a probe on
+    // <html> (the body is React's to hydrate, so nothing is added there).
+    _safeTopInset(doc, win) {
+      try {
+        let probe = NativeChrome._insetProbe;
+        if (!probe) {
+          probe = doc.createElement('div');
+          probe.setAttribute('aria-hidden', 'true');
+          probe.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;'
+            + 'visibility:hidden;pointer-events:none;'
+            + 'padding-top:env(safe-area-inset-top,0px)';
+          doc.documentElement.appendChild(probe);
+          NativeChrome._insetProbe = probe;
+        }
+        return parseFloat(win.getComputedStyle(probe).paddingTop) || 0;
+      } catch (_) {
+        return 0;
+      }
+    },
+
+    _dropInsetProbe() {
+      const probe = NativeChrome._insetProbe;
+      NativeChrome._insetProbe = null;
+      try { if (probe && probe.parentNode) probe.parentNode.removeChild(probe); } catch (_) { /* gone */ }
+    },
+
+    // Pure: is it time to send? `elapsed` is ms since DOMContentLoaded, or
+    // null before it.
+    shellPaintedDue(state) {
+      const s = state || {};
+      if (s.elapsed != null && s.elapsed >= NativeChrome._SHELL_PAINTED_CAP_MS) return 'cap';
+      if (s.drawn === true && Number(s.insetTop) > 0) return 'drawn';
+      return null;
+    },
+
+    _shellPaintedCallable() {
+      const bridge = window.usernode;
+      return !!bridge && bridge.isNative === true &&
+        typeof bridge.shellPainted === 'function' &&
+        NativeChrome._isTopDocument();
+    },
+
+    // Once per document. Never throws, never console.errors: an old build
+    // that drops the method times out in the wrapper and lands in the warn.
+    async _sendShellPainted(reason) {
+      if (NativeChrome._shellPaintedSent) return false;
+      NativeChrome._shellPaintedSent = true;
+      NativeChrome._dropInsetProbe();
+      NativeChrome._shellPaintedReason = reason;
+      try {
+        await window.usernode.shellPainted();
+        return true;
+      } catch (err) {
+        console.warn('[native-chrome] shellPainted failed:', err && err.message);
+        return false;
+      }
+    },
+
+    // After the paint that shows what was checked: two frames, and a timer
+    // under them in case the web view is not producing frames under the
+    // app's cover.
+    _afterNextPaint(fn) {
+      let done = false;
+      const once = () => { if (!done) { done = true; fn(); } };
+      try {
+        if (typeof window.requestAnimationFrame === 'function') {
+          window.requestAnimationFrame(() => window.requestAnimationFrame(once));
+        }
+      } catch (_) { /* no frames: the timer sends */ }
+      setTimeout(once, 120);
+    },
+
+    _domContentLoadedAt() {
+      try {
+        const nav = performance.getEntriesByType('navigation')[0];
+        if (nav && nav.domContentLoadedEventStart > 0) return nav.domContentLoadedEventStart;
+      } catch (_) { /* no timing: the event listener records it */ }
+      return NativeChrome._dclAt != null ? NativeChrome._dclAt : null;
+    },
+
+    async _initShellPainted() {
+      if (NativeChrome._shellPaintedStarted || !NativeChrome._shellPaintedCallable()) return;
+      NativeChrome._shellPaintedStarted = true;
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+          NativeChrome._dclAt = performance.now();
+        }, { once: true });
+      }
+      // Asked once, now, so the answer is in hand by the time the screen
+      // is. A degraded probe is "don't know" (#978): one more ask, then the
+      // app's own cap lifts its cover.
+      let info = await NativeChrome.getInfo();
+      if (info && info.degraded === true) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        info = await NativeChrome.getInfo();
+      }
+      const capabilities = Array.isArray(info && info.capabilities) ? info.capabilities : [];
+      if ((info && info.degraded === true) || !capabilities.includes('shellPainted')) return;
+      const tick = () => {
+        if (NativeChrome._shellPaintedSent) return;
+        const dcl = NativeChrome._domContentLoadedAt();
+        const due = NativeChrome.shellPaintedDue({
+          elapsed: dcl == null ? null : performance.now() - dcl,
+          drawn: NativeChrome.firstScreenDrawn(document, window),
+          insetTop: NativeChrome._safeTopInset(document, window),
+        });
+        if (due === 'cap') { NativeChrome._sendShellPainted('cap'); return; }
+        if (due === 'drawn') { NativeChrome._afterNextPaint(() => NativeChrome._sendShellPainted('drawn')); return; }
+        setTimeout(tick, NativeChrome._SHELL_PAINTED_POLL_MS);
+      };
+      tick();
+    },
+
     init() {
       // The bridge loads before wallet-sheet.js and before App resolves its
       // web session. Start closed so native A cannot be cached/rendered while
@@ -2138,6 +2325,8 @@
       NativeChrome._initAppearancePublish();
       // Same reasoning: the tone under the status bar is presentation state.
       NativeChrome._initStatusBarTonePublish();
+      // …and so is the first paint, which the app's launch cover waits for.
+      NativeChrome._initShellPainted();
       // Native session establishment needs a verified web session, so it
       // waits for the session boot stage. Always observe later SPA account
       // changes, even when a session was already present at script load.

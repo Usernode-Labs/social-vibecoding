@@ -116,7 +116,7 @@ test('with no illustration the tile is the neutral face: the group headings carr
 
 test('a registry illustration draws in the tile, on its pale tone in both themes', () => {
   const html = tile({ icon: '🧪', illustration: 'try-three-apps' });
-  assert.match(html, /<img src="\/illustrations\/challenges\/try-three-apps\.svg" alt="" draggable="false" class="object-contain"\/>/,
+  assert.match(html, /<img src="\/illustrations\/challenges\/try-three-apps\.svg" alt="" width="64" height="64" decoding="sync" draggable="false" class="object-contain"\/>/,
     'a same-origin static file, decorative, not draggable, fitted rather than stretched');
   const face = classOf(html, 'aria-hidden="true"').split(' ');
   for (const c of ['h-20', 'w-20', 'home-tone-mint', 'bg-[var(--tint-art)]', 'dark:bg-[var(--tint-art)]']) {
@@ -141,7 +141,7 @@ const faceOf = (html) => classOf(html, 'aria-hidden="true"').split(' ');
 
 test('an uploaded illustration draws from its derived path, on the payload tone', () => {
   const html = tile({ icon: '🧪', illustration: UPLOADED, illustrationTone: 'teal' });
-  assert.ok(html.includes(`<img src="/challenge-illustrations/${HEX}" alt="" draggable="false" class="object-contain"/>`),
+  assert.ok(html.includes(`<img src="/challenge-illustrations/${HEX}" alt="" width="64" height="64" decoding="sync" draggable="false" class="object-contain"/>`),
     'the same <img>, from the path the slug derives, fitted so a non-square upload is not stretched');
   const face = faceOf(html);
   for (const c of ['home-tone-teal', 'bg-[var(--tint-art)]', 'dark:bg-[var(--tint-art)]']) {

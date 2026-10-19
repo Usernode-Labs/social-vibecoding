@@ -373,11 +373,10 @@ const SHELL_ASSETS = [
   '/icons/v3/icon-192.png',
   '/icons/v3/icon-512.png',
   '/icons/v3/icon-maskable-512.png',
-  // The signed-out landing's illustration. Unlike the challenge artwork that
-  // deliberately stays on the network (see the classify tests), this one has no
-  // fallback to draw in its place, and it is the first thing a visitor who has
-  // never signed in sees — on a document that is itself precached. An offline
-  // first run would otherwise render the new landing around a broken image.
+  // The signed-out landing's illustration. It has no fallback to draw in its
+  // place, and it is the first thing a visitor who has never signed in sees —
+  // on a document that is itself precached. An offline first run would
+  // otherwise render the new landing around a broken image.
   // Provenance and export settings in public/brand/README.md.
   '/brand/people.png',
   // #2718: the Homeroom mark, drawn in the header on EVERY route — the
@@ -386,6 +385,25 @@ const SHELL_ASSETS = [
   // place; this one because a missing header logo is a hole at the top of
   // every screen, offline and on a cold cache alike.
   '/brand/homeroom-mark.png',
+  // The built-in challenge artwork (frontend/src/lib/challenge-illustrations.ts,
+  // one file per slug). It used to stay on the network, as decoration with a
+  // fallback, and that cost Home a visible step on every cold load: the
+  // Challenges cards drew, and their pictures arrived a frame or more later
+  // (#1 and #10, the polish board of 19 Oct 2026; in the app the launch cover
+  // now waits for them). From the release cache they are on hand when the
+  // cards are. About 150 KB together; tests/pwa-sw-classify.test.js holds this
+  // list to the directory.
+  '/illustrations/challenges/block-production.svg',
+  '/illustrations/challenges/connect-participants.svg',
+  '/illustrations/challenges/identity-level-one.svg',
+  '/illustrations/challenges/identity-level-two.svg',
+  '/illustrations/challenges/invite-to-network.svg',
+  '/illustrations/challenges/make-a-proposal.svg',
+  '/illustrations/challenges/network-participation.svg',
+  '/illustrations/challenges/proposal-accepted.svg',
+  '/illustrations/challenges/ten-minutes-in-apps.svg',
+  '/illustrations/challenges/try-three-apps.svg',
+  '/illustrations/challenges/useful-feedback.svg',
 ];
 
 // Server-rendered standalone pages that stay online-only: never serve the
@@ -569,6 +587,13 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   // The brand assets the shell itself draws, precached above. Without this rule
   // the SHELL_ASSETS entry would fill the cache on install and never be read.
   if (p.startsWith('/brand/')) return 'shell';
+  // The built-in challenge artwork, precached above for the same reason.
+  if (p.startsWith('/illustrations/challenges/')) return 'shell';
+  // Uploaded challenge artwork: minted per upload and served immutable
+  // (src/routes/topochain/challenge-illustrations.js), so cache-first like
+  // the app icons. Its card draws the moment it is on hand rather than a
+  // frame after.
+  if (/^\/challenge-illustrations\/[a-f0-9]{32}$/.test(p)) return 'immutable';
 
   // Everything else (e.g. the /health connectivity probe) goes straight
   // to the network so it always reflects real reachability.

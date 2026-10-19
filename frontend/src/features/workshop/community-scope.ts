@@ -51,13 +51,18 @@
  * ── Island rules ───────────────────────────────────────────────────────
  *
  * The store starts empty, which is what the prerendered tab bar draws (the
- * plain Communities tab); everything here arrives from effects and from
- * app.js after the first paint.
+ * plain Communities tab), so hydration matches. What this device kept (the
+ * community the tab is on, and the list of the viewer's communities) is
+ * applied in the same task as hydration, before the first paint
+ * (`hydrateCommunityScope`: from the tab bar's effect, which is flushed with
+ * the hydration, and from lib/shell-snapshot-apply.ts once the viewer is
+ * named); the rest arrives from effects and from app.js.
  */
 
 import { createStore } from '../../lib/plain-store.js';
 import { voteSavedStore } from '../dev-board/card/cards-store';
 import { landKeepingPlace } from '../dev-board/workshop/place-store';
+import { navStore } from '../nav/nav-store.js';
 import { hydrateNeedsSeen, needsSeenStore, unseenNeeds } from './needs-seen';
 import { orderRows } from './sections';
 
@@ -174,22 +179,92 @@ function saveInfo(info: CommunityInfo | null): void {
   } catch { /* a cold paint without the tile is the old behaviour */ }
 }
 
-let hydrated = false;
-/** Read what the last visit left, once, after the first paint. */
-export function hydrateCommunityScope(): void {
-  if (hydrated || typeof window === 'undefined') return;
-  hydrated = true;
-  const slug = readViewSlug();
-  let info: CommunityInfo | null = null;
+/**
+ * THE LIST OF YOUR COMMUNITIES as this device last read it, for whom, so a
+ * cold paint can draw the desktop sidebar's rows (../nav/rail-communities.tsx)
+ * and its "All 31 communities" count at once instead of 185px of rows
+ * arriving under the page after GET /api/apps. Names and tiles only: the
+ * votes owed are not kept, so a number is never shown before it is read.
+ * Written for one viewer, and read back for that viewer alone.
+ */
+const LIST_KEY = 'communityScopeList:v1';
+
+/** What a kept entry carries: what the row draws, nothing counted. */
+function keptInfo(info: CommunityInfo): CommunityInfo {
+  return {
+    slug: info.slug,
+    name: info.name,
+    iconUrl: info.iconUrl ?? null,
+    iconEmoji: info.iconEmoji ?? null,
+    iconColor: info.iconColor ?? null,
+    audience: info.audience,
+    memberCount: info.memberCount,
+    selfHosted: info.selfHosted,
+    lastActiveAt: info.lastActiveAt ?? null,
+  };
+}
+
+function saveList(viewer: string | null, list: string[], info: Record<string, CommunityInfo>): void {
+  if (!viewer) return;
   try {
-    const raw = JSON.parse(window.localStorage.getItem(INFO_KEY) || 'null');
-    if (raw && typeof raw.slug === 'string') info = raw as CommunityInfo;
-  } catch { /* nothing kept */ }
+    const kept: Record<string, CommunityInfo> = {};
+    for (const s of list) if (info[s]) kept[s] = keptInfo(info[s]);
+    window.localStorage.setItem(LIST_KEY, JSON.stringify({ viewer, list, info: kept }));
+  } catch { /* the rows arrive with the read, as they used to */ }
+}
+
+function readList(viewer: string | null): { list: string[]; info: Record<string, CommunityInfo> } | null {
+  if (!viewer) return null;
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(LIST_KEY) || 'null');
+    if (!raw || raw.viewer !== viewer || !Array.isArray(raw.list) || !raw.info || typeof raw.info !== 'object') return null;
+    const list = raw.list.filter((s: unknown): s is string => typeof s === 'string' && !!raw.info[s]
+      && typeof raw.info[s].slug === 'string');
+    const info: Record<string, CommunityInfo> = {};
+    for (const s of list) info[s] = keptInfo(raw.info[s] as CommunityInfo);
+    return { list, info };
+  } catch {
+    return null;
+  }
+}
+
+let hydrated = false;
+let listHydratedFor: string | null = null;
+/**
+ * Read what the last visit left: once, the community the tab is on and its
+ * description; and once per viewer named, the list of their communities.
+ * Both run in the same task as hydration and before the first paint: the tab
+ * bar's own effect is flushed with the hydration itself, which names nobody
+ * yet, and lib/shell-snapshot-apply.ts applyNavSnapshot calls again with the
+ * session snapshot's viewer right after.
+ */
+export function hydrateCommunityScope(viewer: string | null = null): void {
+  if (typeof window === 'undefined') return;
   const cur = communityScopeStore.get();
-  communityScopeStore.set({
-    slug: cur.slug || slug,
-    info: info && info.slug === slug && !cur.info[slug] ? { ...cur.info, [slug]: info } : cur.info,
-  });
+  let slug = cur.slug;
+  let info = cur.info;
+  if (!hydrated) {
+    hydrated = true;
+    const viewSlug = readViewSlug();
+    let described: CommunityInfo | null = null;
+    try {
+      const raw = JSON.parse(window.localStorage.getItem(INFO_KEY) || 'null');
+      if (raw && typeof raw.slug === 'string') described = raw as CommunityInfo;
+    } catch { /* nothing kept */ }
+    slug = cur.slug || viewSlug;
+    if (described && viewSlug && described.slug === viewSlug && !cur.info[viewSlug]) {
+      info = { ...info, [viewSlug]: described };
+    }
+  }
+  let list: string[] | null = null;
+  if (viewer && listHydratedFor !== viewer && !cur.list) {
+    listHydratedFor = viewer;
+    const kept = readList(viewer);
+    // What anybody has said since wins over the kept copy: a describer, or
+    // the chosen community's own description, votes and all.
+    if (kept) { info = { ...kept.info, ...info }; list = kept.list; }
+  }
+  communityScopeStore.set({ slug, info, ...(list ? { list } : {}) });
 }
 
 /** The router's word: the tab is now on `slug`, or on All communities. */
@@ -371,6 +446,7 @@ export function loadCommunities(force = false): Promise<void> {
       const list = ordered.map((r) => r.slug);
       communityScopeStore.set({ info, list, ...sums(list, info) });
       if (cur.slug && info[cur.slug]) saveInfo(info[cur.slug]);
+      saveList(navStore.get().viewer, list, info);
       loadedAt = Date.now();
     } catch {
       /* the switcher says it could not load; the tab keeps what it had */

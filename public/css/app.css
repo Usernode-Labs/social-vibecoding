@@ -5187,7 +5187,43 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    hydrate window and never to a loaded grid, including the empty one a brand
    new account has (which would otherwise be padded with two blank rows). */
 #app-list:not([data-view]) {
-  min-height: calc(2 * var(--home-cell-h));
+  /* Two cells PLUS the gap between them and the grid's own padding
+     (app-grid.tsx: `gap-1.5 p-2 pt-1.5`, from 640px `gap-2 p-3 pt-2`). The
+     box is border-box, so two bare cells came up 20px short of the two rows
+     they stand for (28px from 640px), and the sections under the grid moved
+     by that much when it drew (#10). */
+  min-height: calc(2 * var(--home-cell-h) + 1.25rem);
+}
+@media (min-width: 640px) {
+  #app-list:not([data-view]) {
+    min-height: calc(2 * var(--home-cell-h) + 1.75rem);
+  }
+}
+/* …AND HOLD EVERY AREA AT THE HEIGHT THIS DEVICE LAST DREW IT (#10, 19 Oct
+   2026). Two rows was the right guess for the grid alone, but the real
+   launcher draws as many rows as the screen has room for, plus "Show all N
+   apps", and Discover and Challenges below it land at heights no skeleton can
+   know: the desktop measured one shift of 0.0585 on every cold load (Discover
+   54 → 121px, Challenges pushed from y 392 to 523). The head's inline script
+   puts the heights this device last drew on <html> (`first-paint-reserved`
+   and the `--reserve-*` properties; frontend/src/lib/first-paint-reserve.ts
+   keeps them), and each area holds its height only while it is still a
+   skeleton: the grid until its first ready render (`data-view`, as above), a
+   section while `.home-section-pending` (features/home/panels/sections.tsx).
+   The real page then lands in boxes of its own size. `overflow: hidden` clips
+   a skeleton taller than its box; nothing real is ever inside one. The
+   sidebar's community rows have the same hold, beside their own rules. */
+html.first-paint-reserved #home-apps-section:has(#app-list:not([data-view])) {
+  height: var(--reserve-home-apps);
+  overflow: hidden;
+}
+html.first-paint-reserved #home-discover-section.home-section-pending {
+  height: var(--reserve-home-discover);
+  overflow: hidden;
+}
+html.first-paint-reserved #home-challenges-section.home-section-pending {
+  height: var(--reserve-home-challenges);
+  overflow: hidden;
 }
 #app-list[data-view="search"] {
   grid-auto-rows: auto;
@@ -22913,6 +22949,13 @@ html.un-kb #platform-parked {
     flex: none;
     flex-direction: column;
     gap: 1px;
+  }
+  /* Until its rows are drawn (the heading is all it holds: the prerender,
+     and a cold load until the list is read), it keeps the height this device
+     last drew it at, so "All 31 communities" under it does not drop 185px as
+     they arrive (#10; `first-paint-reserved`, as Home's areas). */
+  html.first-paint-reserved .platform-rail-communities:has(> .platform-rail-head:last-child) {
+    min-height: var(--reserve-rail-communities);
   }
   .platform-rail-community {
     position: relative;
