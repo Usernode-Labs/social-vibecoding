@@ -71,23 +71,36 @@ poolMod.getPool = () => ({
       a.db_size_measured_at = params[1];
       return { rows: [] };
     }
+    // The sweep's transitions are compare-and-sets on what it read: each
+    // answers how many rows it changed.
     if (/^UPDATE apps SET db_storage_frozen_at = \$1, db_storage_warned_at = COALESCE/.test(q)) {
       const a = byId(params[1]);
+      if (a.db_storage_frozen_at || (a.db_storage_grace_until ?? null) !== params[2] || (a.db_storage_cap_bytes ?? null) !== params[3]) return { rows: [], rowCount: 0 };
       a.db_storage_frozen_at = params[0];
       if (!a.db_storage_warned_at) a.db_storage_warned_at = params[0];
-      return { rows: [] };
+      return { rows: [], rowCount: 1 };
+    }
+    if (/^UPDATE apps SET db_storage_frozen_at = NULL WHERE id = \$1 AND db_storage_frozen_at IS NOT NULL$/.test(q)) {
+      const a = byId(params[0]);
+      if (!a.db_storage_frozen_at) return { rows: [], rowCount: 0 };
+      a.db_storage_frozen_at = null;
+      return { rows: [], rowCount: 1 };
     }
     if (/^UPDATE apps SET db_storage_frozen_at = NULL WHERE id = \$1$/.test(q)) {
       byId(params[0]).db_storage_frozen_at = null;
-      return { rows: [] };
+      return { rows: [], rowCount: 1 };
     }
-    if (/^UPDATE apps SET db_storage_warned_at = \$1 WHERE id = \$2$/.test(q)) {
-      byId(params[1]).db_storage_warned_at = params[0];
-      return { rows: [] };
+    if (/^UPDATE apps SET db_storage_warned_at = \$1 WHERE id = \$2 AND db_storage_warned_at IS NULL$/.test(q)) {
+      const a = byId(params[1]);
+      if (a.db_storage_warned_at) return { rows: [], rowCount: 0 };
+      a.db_storage_warned_at = params[0];
+      return { rows: [], rowCount: 1 };
     }
-    if (/^UPDATE apps SET db_storage_warned_at = NULL WHERE id = \$1$/.test(q)) {
-      byId(params[0]).db_storage_warned_at = null;
-      return { rows: [] };
+    if (/^UPDATE apps SET db_storage_warned_at = NULL WHERE id = \$1 AND db_storage_warned_at IS NOT NULL$/.test(q)) {
+      const a = byId(params[0]);
+      if (!a.db_storage_warned_at) return { rows: [], rowCount: 0 };
+      a.db_storage_warned_at = null;
+      return { rows: [], rowCount: 1 };
     }
     return { rows: [] };
   },
@@ -108,6 +121,16 @@ dbManager.setAppDatabaseWritable = async (dbName, writable) => {
 notifications.createAppHealthNotification = async (_pool, args) => { notifyCalls.push(args); return []; };
 
 const appStorageCap = require('../src/services/app-storage-cap');
+// The storage clock (src/workflow/clock/) stood in for: a run now runs the
+// real sweep against the stub pool, and its result is the job's last run.
+const clocks = require('../src/services/clocks');
+let lastRun = null;
+clocks.runNow = async (job) => {
+  assert.equal(job, 'app-storage-cap');
+  lastRun = await appStorageCap.sweep(poolMod.getPool());
+  return { result: lastRun };
+};
+clocks.status = async (_db, job) => ({ lastSweepAt: null, lastError: null, sweepInFlight: false, result: job === 'app-storage-cap' ? lastRun : null, nextDueAt: null });
 const { adminRoutes } = require('../src/routes/admin');
 const express = require('express');
 

@@ -718,8 +718,11 @@ test('landing tiles mirror home cards and gate on requires_login', () => {
 
 // ─── probe wiring ─────────────────────────────────────────────────
 
-test('shell probe starts at boot and its columns are in schema', () => {
-  assert.match(read('server.js'), /shell-probe'\)\.start\(config\)/);
+test('the shell probe is a scheduled job of the workflow, and its columns are in schema', () => {
+  // A clock (src/workflow/clock/services.ts): every five minutes wherever the
+  // workflow runs, and the first run of a new build re-probes every app that
+  // read public.
+  assert.match(read('src/workflow/clock/services.ts'), /name: 'shell-probe', everyMs: 5 \* MIN,/);
   const schema = read('src/db/schema.sql');
   assert.match(schema, /ADD COLUMN IF NOT EXISTS anon_shell VARCHAR\(10\) NOT NULL DEFAULT 'unknown'/);
   assert.match(schema, /ADD COLUMN IF NOT EXISTS anon_shell_checked_at TIMESTAMPTZ/);

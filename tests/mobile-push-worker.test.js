@@ -474,18 +474,40 @@ test('claim uses the current deployment and increments the retry count', async (
     },
     provider: { send: async () => {} },
   });
-  assert.deepEqual(await worker.claimBatch(), [{ id: 5, attempts: 2 }]);
+  // The push-drain clock's run claims each row with its work item and
+  // attempt, which is what tells a live sender's rows from a lost one's.
+  const token = { workId: '00000000-0000-0000-0000-000000000001', attempt: 3 };
+  assert.deepEqual(await worker.claimBatch(token), [{ id: 5, attempts: 2 }]);
   assert.doesNotMatch(seen.sql, /SKIP LOCKED|lease_expires_at/);
+  assert.match(seen.sql, /claimed_work = \$4::uuid, claimed_attempt = \$5::integer/);
   assert.match(seen.sql, /JOIN mobile_push_deployment_state/);
   assert.match(seen.sql, /send_enabled/);
   assert.match(seen.sql, /d\.created_at >= state\.send_not_before/);
   assert.match(seen.sql, /attempts = d\.attempts \+ 1/);
   assert.equal(seen.params[1], 'production');
   assert.equal(seen.params[2], 'social-prod');
-  assert.equal(seen.params.length, 3);
+  assert.deepEqual(seen.params.slice(3), [token.workId, 3]);
 });
 
-test('maintenance resets interrupted work and performs bounded retention', async () => {
+test('a row left sending is sent again only when its claiming attempt is no longer live, or was this run\'s', async () => {
+  const queries = [];
+  const pool = { async query(sql, params) { queries.push({ sql, params }); return { rows: [] }; } };
+  const worker = new MobilePushWorker({
+    pool, config: { mobilePushEnabled: true, mobilePushEnvironment: 'production' }, provider: { send: async () => {} },
+  });
+  const token = { workId: '00000000-0000-0000-0000-000000000002', attempt: 1 };
+  await worker.resetInterrupted(token);
+  assert.equal(queries.length, 1);
+  const { sql, params } = queries[0];
+  assert.match(sql, /d\.status = 'sending'/);
+  assert.match(sql, /d\.claimed_work = \$1::uuid AND d\.claimed_attempt = \$2::integer/, 'this run\'s own earlier passes');
+  assert.match(sql, /NOT EXISTS \(\s*SELECT 1 FROM wf_work w\s*WHERE w\.id = d\.claimed_work AND w\.attempt_count = d\.claimed_attempt\s*AND w\.status = 'running' AND w\.lease_until > NOW\(\)\)/,
+    'or a claim whose attempt is no longer live');
+  assert.match(sql, /claimed_work = NULL, claimed_attempt = NULL/);
+  assert.deepEqual(params, [token.workId, 1]);
+});
+
+test('retention is bounded, and its own job', async () => {
   const queries = [];
   const pool = {
     async query(sql, params) {
@@ -499,12 +521,9 @@ test('maintenance resets interrupted work and performs bounded retention', async
     provider: { send: async () => {} },
     options: { retentionDays: 14, retentionBatchSize: 25 },
   });
-  await worker.maintain();
+  await worker.retention();
+  queries.unshift(null);
   assert.equal(queries.length, 5);
-  assert.doesNotMatch(queries[0].sql, /attempts\s*>=/);
-  assert.doesNotMatch(queries[0].sql, /lease_expires_at/);
-  assert.match(queries[0].sql, /status = 'sending'/);
-  assert.equal(queries[0].params, undefined);
   assert.doesNotMatch(queries[1].sql, /mobile_auth_tokens/);
   assert.match(queries[1].sql, /r\.session_expires_at <= NOW\(\)/);
   assert.match(queries[1].sql, /ORDER BY r\.id LIMIT \$1/);

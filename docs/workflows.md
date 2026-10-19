@@ -326,6 +326,9 @@ All of it is in `src/db/schema.sql`. The tables are `staging:private`.
 - settled work after 90 days;
 - receipts 30 days after their instance ends.
 
+A machine whose history is mostly a clock's ticks keeps less (its definition's `retainDays`):
+the `clock` machine keeps a week.
+
 Instances keep their latest state indefinitely.
 
 **Projections.** Existing readers (API, frontend, `dapp.json` checks) keep reading the
@@ -501,6 +504,10 @@ does both.
   took it within 10 minutes (it was replaced first) is `abandoned`, and the next release
   adopts what is left. A route that meets an open row the machine does not hold enrolls it itself,
   and the conductor's leader still adopts sessions created since, every minute.
+- **The platform's scheduled jobs** (retention, probes, digests, the push sender, title heal,
+  Workshop themes, the challenge scorer) are the `clock` machine's: one instance per job,
+  each run a work item at most one at a time across every process, armed by the release's
+  work and on no staging preview (below).
 - **A Pod a release replaced** quiesces its runtime as it starts draining
   (`quiesceWorkflow`: no slot, timer or claim) and keeps running the work it had
   claimed, its leases renewed, until it ends or the drain does
@@ -703,6 +710,7 @@ A new machine brings the same two layers:
 | `bot-request` | `request:<appId>:<issue>`, for each request the Homeroom bot is owed a look at | `idle` → `queued` → `reading` / `following_up` → `idle`; `building`; `older_turn` | On everywhere; its old paths are deleted |
 | `bot-lane` | `bot`, one for the Homeroom bot | `open` | On everywhere; its old paths are deleted |
 | `release` | `release:<GIT_SHA>`, one per release of the platform | `adopting` → `done`, `failed` or `abandoned` | Runs the boot adoptions once per release (`release.adopt`), in that release's own processes |
+| `clock` | `clock:<job>`, one per scheduled platform job | `waiting` ⇄ `running`; `retired` | Runs each job on its schedule (`clock.<job>`), wherever the workflow runs; its old leader timers are deleted |
 
 ### Turns workflow work runs
 
@@ -1424,3 +1432,39 @@ board's banner read them.
   `enabled:main-check` row of `wf_settings` after such a rollback (the same holds for every
   machine's guard).
 
+### clock
+
+The platform's scheduled jobs (`src/workflow/clock/`): what the leader's timers ran, now on
+whichever process runs the workflow. One instance per job (`clock:<job>`); the jobs, their
+intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
+
+- **Due.** The instance's deadline is when the job is next due. When it passes, the job runs
+  as one work item (`clock.<job>`, key `run:<n>`) with a limit of 1 across every process, so
+  no two runs of a job overlap and no job needs a leader. The next run is due one interval
+  after this one ends; after a failure, sooner (30 s doubling, never later than the interval),
+  and the failure is recorded as one. A job with no interval (the push sender's drain) runs
+  again as soon as a run ends.
+- **What a run found** is the instance's last run: when, ok or its error, how long, its
+  result. That is the status an admin page reads (`platform.clockStatus`: the custom-domain
+  sweep, the storage cap), and the last good result is handed to the next run as
+  `input.previous`, so what a job carries from run to run (the build it last ran under, when
+  it last looked at the challenge standings) lives here and not in a process.
+- **Targets.** An effect a sweep finds owed once per target (a title's model call, an app's
+  Workshop re-draft) is never made by the sweep: its result lists `items`
+  (`{ target, gen, input }`), and each becomes a work item of its own
+  (`clock.<job>.item`, key `item:<target>@<gen>`). The same target and generation found again
+  asks for nothing new, and a target with an item still outstanding gets no second one.
+- **Safe to run twice.** A lease is weaker than a lock: a run whose process stalls stops
+  itself only at three quarters of its lease. So every run is an age DELETE, a delete
+  preconditioned on what it read, or a state change written as a compare-and-set with the
+  notice it causes (custom domains, the storage cap, connector waits, the vote digest), and
+  the push sender claims each row with its run's work item and attempt: a row left sending
+  is sent again only when that attempt is no longer live.
+- **Armed by the release** (`release.adopt`'s `clocks` step): every job the build defines
+  gets `Arm` with its interval, a new one first due when the leader timer it replaces would
+  have run (`leader_sweeps`), or at once; a job the build no longer defines is `Retire`d (no
+  deadline, its run cancelled). On a staging preview nothing is armed
+  (`config.runsClusterMaintenance`), as no leader duty ran there.
+- **Run now.** Admin → Workflows' `RunNow`, and the storage page's "Measure now", which
+  waits for the run it asked for (`platform.runClockNow`). During a run it runs once more
+  after it.

@@ -286,8 +286,12 @@ test('the sweep checks every cap and one failure does not stop the others', asyn
   const out = await limits.sweep(pool, CONFIG, deps);
   assert.deepEqual(out.errors, ['apps: db down']);
   assert.deepEqual(out.results.map((r) => r.key), ['sessions', 'github', 'github_app']);
-  assert.deepEqual(out.results.slice(1).map((r) => r.level), ['ok', 'ok'],
-    'nothing known about GitHub reads as ok');
+  // A process that has not heard from GitHub yet records nothing: "ok"
+  // would re-arm a crossing already told (each new leader used to).
+  assert.deepEqual(out.results.slice(1).map((r) => [r.level, r.unknown]), [[null, true], [null, true]],
+    'nothing known about GitHub records nothing');
+  assert.ok(!pool.state.queries.some((q) => /platform_limit_alerts/.test(q.sql) && /github/.test(JSON.stringify(q.params))),
+    'no GitHub level is written');
   assert.deepEqual(calls.create, [{ detail: 'sessions_warn:60:75' }]);
 });
 
@@ -367,13 +371,12 @@ test('an unknown cap is refused, and a nudge for a cap that is off does nothing'
 
 // ─── 3. Wiring ──────────────────────────────────────────────────────────
 
-test('the leader sweeps, and shutdown clears both handles', () => {
-  const server = read('server.js');
-  const leader = server.slice(server.indexOf('async function becomeLeader()'));
-  assert.match(leader.slice(0, leader.indexOf('\n}\n')), /startPlatformLimitSweeper\(config\);/);
-  assert.match(server, /function startPlatformLimitSweeper\(config\) \{/);
-  assert.match(server, /clearTimeout\(platformLimitFirstRunHandle\)/);
-  assert.match(server, /clearInterval\(platformLimitSweeperHandle\)/);
+test('the sweep is a scheduled job of the workflow, not the leader\'s', () => {
+  // A clock (src/workflow/clock/services.ts): every five minutes wherever the
+  // workflow runs, one run at a time.
+  assert.match(read('src/workflow/clock/services.ts'),
+    /name: 'platform-limits', everyMs: 5 \* MIN,\n\s*run: \(_ctx: WorkContext, \{ pool, config \}: JobDeps\) => legacy\('services\/platform-limit-alerts'\)\.sweep\(pool, config\),/);
+  assert.ok(!read('server.js').includes('startPlatformLimitSweeper'));
 });
 
 test('both app-create routes nudge the apps check on success and on refusal', () => {

@@ -194,6 +194,12 @@ export const JOBS: readonly Job[] = Object.freeze([
     },
   },
   {
+    // Each imported app's repository still public (a worker clones without
+    // credentials), logged for the operator; one GitHub read per app.
+    name: 'repo-privacy-audit', everyMs: 24 * HOUR, leaderSweep: 'repo-privacy-audit', leaseMs: 5 * MIN,
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/repo-privacy-audit').audit(pool, { shouldStop: stopped(ctx) }),
+  },
+  {
     // Custom domains: DNS for a claim, the certificate, the live host's
     // health. Each step a compare-and-set on the status it read.
     name: 'app-domains', everyMs: MIN,

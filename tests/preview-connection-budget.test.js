@@ -110,13 +110,18 @@ test('#1771: becomeLeader is still where the fleet duties live', () => {
   const body = src.slice(src.indexOf('async function becomeLeader()'), src.indexOf('async function start()'));
   assert.ok(body.length > 1000, 'becomeLeader must still exist');
   for (const starter of [
-    'startConversationAttachmentSweeper',
-    'startSessionAutoPauseSweeper', 'startStalePrSweeper', 'startWorkshopThemeSweeper',
+    'startSessionAutoPauseSweeper', 'startStalePrSweeper',
     'startLocalAgentLeaseSweeper', 'startStuckChecksSweeper',
-    'startTitleHealSweeper',
   ]) {
     assert.ok(body.includes(`${starter}(`), `${starter} is started under the leader gate`);
   }
+  // The platform's scheduled jobs are clocks of the workflow, which a
+  // preview runs: the release's work arms none of them there, by the same
+  // rule (src/workflow/platform.ts armClocks).
+  const platform = read('src/workflow/platform.ts');
+  const arm = platform.slice(platform.indexOf('async function armClocks('));
+  assert.match(arm.slice(0, arm.indexOf('\n}\n')), /if \(!legacy\('config'\)\.runsClusterMaintenance\(\)\) return 0;/,
+    'no clock is armed on a staging preview');
   // What each process sweeps of its own (the idle eviction of its warm
   // workers) runs whether or not it leads, and still never on a preview.
   assert.match(src, /if \(runsClusterMaintenance\(\)\) startProcessDuties\(\);/);
