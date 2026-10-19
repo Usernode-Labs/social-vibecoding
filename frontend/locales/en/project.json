@@ -1639,6 +1639,10 @@
     "text": "The first look at {{app}}'s main screen",
     "description": "Description, for screen readers, of the small picture on the first-look card of a project's Hub: a drawing of the app's main screen, made before the app was built. {{app}} is the project's name."
   },
+  "hub.firstLook.open": {
+    "text": "Open your chat with Homeroom bot",
+    "description": "Screen reader label of the first look card's picture and words on a project's Hub: tapping them opens the chat with the assistant called Homeroom bot, where its build is reported. Homeroom bot is a name."
+  },
   "hub.needs.title": {
     "text": "Needs you",
     "description": "Heading of the card on a project's Hub that leads to the Needs you tab: the proposals waiting for this person's vote."

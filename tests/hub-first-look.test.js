@@ -82,6 +82,36 @@ test('its button opens the project\'s App tab, where the live picture of the bui
   assert.match(read(HUB), /data-ws-first-look-watch=""\s+onClick=\{\(\) => watchBuild\(slug\)\}/);
 });
 
+test('tapping the picture or the words opens the maker\'s chat with Homeroom bot; Watch keeps its own tap', () => {
+  // Without onOpen: the card is unchanged, Watch still its only button.
+  const plain = renderToHtml(createElement(hub.FirstLookView, { slug: 'club-votes', name: 'Club Votes', src: SRC }))
+    .replace(/^<link rel="preload" as="image" href="[^"]*"\/>/, '');
+  assert.doesNotMatch(plain, /data-ws-first-look-open/);
+  assert.equal((plain.match(/<button/g) || []).length, 1);
+  const html = renderToHtml(createElement(hub.FirstLookView, { slug: 'club-votes', name: 'Club Votes', src: SRC, onOpen() {} }))
+    .replace(/^<link rel="preload" as="image" href="[^"]*"\/>/, '');
+  // The empty overlay is the section's FIRST child, so the markup order
+  // after it is kept; it carries the screen reader label.
+  assert.match(html, /^<section class="dev-ws-strip dev-ws-first-look" data-ws-first-look=""><button type="button" class="dev-ws-first-look-open" data-ws-first-look-open="" aria-label="Open your chat with Homeroom bot"><\/button>/);
+  // Watch is still the card's last child, above the overlay.
+  assert.match(html, /data-ws-first-look-watch=""[^>]*>Watch Homeroom bot build it<\/button><\/div><\/section>$/);
+  assert.equal(message('project:hub.firstLook.open'), 'Open your chat with Homeroom bot');
+  // The card hands the first version's conversation to openConversation,
+  // else openBot finds or opens the chat, the way Review does.
+  const src = read(HUB);
+  const card = src.slice(src.indexOf('export function FirstLookCard('), src.indexOf('export function watchBuild('));
+  assert.match(card, /const id = data\?\.first_version\?\.conversation_id;/);
+  assert.match(card, /if \(id\) openConversation\(id\); else void openBot\(\);/);
+  // The CSS gives the overlay its place and its faint tint, and Watch its
+  // own layer above it.
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-ws-strip\.dev-ws-first-look \{ position: relative; \}/);
+  assert.match(css, /\.dev-ws-first-look-open \{\n  position: absolute; inset: 0; z-index: 1;\n  border: 0; padding: 0; background: transparent;\n  border-radius: inherit; cursor: pointer;\n\}/);
+  assert.match(css, /\.dev-ws-first-look-open:hover \{ background: rgba\(0, 0, 0, 0\.03\); \}/);
+  assert.match(css, /\.dev-ws-first-look-open:focus-visible \{ outline: 2px solid var\(--accent\); outline-offset: 1px; \}/);
+  assert.match(css, /\.dev-ws-first-look-body > button \{ margin-top: 8px; position: relative; z-index: 2; \}/);
+});
+
 test('shown to its maker while it is built or tested, never once it is ready to try or live', () => {
   const { hubShowsFirstLook } = hub;
   assert.equal(hubShowsFirstLook(building()), true, 'being built');

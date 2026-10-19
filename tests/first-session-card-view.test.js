@@ -190,7 +190,7 @@ test('one picture at a time: while the card shows the first look, the first look
   assert.match(both, /data-made-first-look-phone=/);
   assert.doesNotMatch(both, /data-made-first-look-above/);
   const words = renderToHtml(createElement(made.FirstLookCard, { src: LOOK, name: 'Plant Pal', progress, phone: false }));
-  assert.match(words, /<section data-made-first-look="ready" data-made-first-look-above="" aria-labelledby="made-first-look-title">/);
+  assert.match(words, /<section data-made-first-look="ready" data-made-first-look-above="" aria-labelledby="made-first-look-title" class="relative">/);
   assert.doesNotMatch(words, /data-made-first-look-phone|<img |<iframe /);
   // Its words and progress stay, in the same row at the same height.
   assert.match(words, new RegExp(`<div class="${made.FIRST_LOOK_ROW.replace(/[[\]().]/g, '\\$&')}">`));
@@ -201,8 +201,26 @@ test('one picture at a time: while the card shows the first look, the first look
   // Only while the App side shows the first look: on Invite, or with a
   // ready-made app's example, the first look card draws its phone.
   assert.match(MADE_SRC, /const lookInCard = !!appScreen && !!picture && !picture\.example;/);
-  assert.match(MADE_SRC, /<FirstLookCard src=\{lookShown\} name=\{made\.name\} progress=\{lookProgress\} onBroken=\{setBrokenLook\} phone=\{!lookInCard\} \/>/);
+  assert.match(MADE_SRC, /<FirstLookCard src=\{lookShown\} name=\{made\.name\} progress=\{lookProgress\} onBroken=\{setBrokenLook\} phone=\{!lookInCard\} onOpen=\{\(\) => onOpenChat\(made\.conversationId\)\} \/>/);
   assert.match(MADE_SRC, /const appScreen = picture && view === 'app'\n/);
+});
+
+test('the first look card opens the maker\'s chat with Homeroom bot: an empty overlay button, labelled, the section\'s last child', () => {
+  const progress = { setup: false, words: 'Building it', note: 'It’s set up.', busy: true, asks: false };
+  // Without onOpen: nothing on the card can be tapped, as before.
+  const plain = renderToHtml(createElement(made.FirstLookCard, { src: LOOK, name: 'Plant Pal', progress }));
+  assert.doesNotMatch(plain, /data-made-first-look-open/);
+  const open = renderToHtml(createElement(made.FirstLookCard, { src: LOOK, name: 'Plant Pal', progress, onOpen() {} }));
+  // Empty, so no invalid content ends up inside a button, and last in the
+  // section: it covers the card, above the positioned phone and its iframe.
+  assert.match(open, /<button type="button" data-made-first-look-open="" aria-label="Open your chat with Homeroom bot" class="absolute inset-0 z-\[1\] rounded-\[20px\] [^"]*"><\/button><\/section>$/);
+  // Only a hover tint and the platform's focus ring say the card can be
+  // tapped: no arrow, no new colour.
+  assert.match(open, /hover:bg-black\/\[0\.03\] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:hover:bg-white\/\[0\.04\]/);
+  assert.equal(message('onboarding:firstSession.made.firstLook.open'), 'Open your chat with Homeroom bot');
+  // The made screen hands it the chat the build is reported in, the one
+  // "Review the plan" opens.
+  assert.match(MADE_SRC, /<FirstLookCard src=\{lookShown\} name=\{made\.name\} progress=\{lookProgress\} onBroken=\{setBrokenLook\} phone=\{!lookInCard\} onOpen=\{\(\) => onOpenChat\(made\.conversationId\)\} \/>/);
 });
 
 test('the switch never meets the icon: on the Invite side the icon starts below it, at any width', () => {

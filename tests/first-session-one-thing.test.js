@@ -129,7 +129,8 @@ test('questions: the project, then the questions and Submit, with no planning li
   assert.match(CODE, /const rowHidden = settingUp \|\| ranInPlace \|\| !ownLine;/);
   assert.match(CODE, /\{rowHidden \? null : \(\s+<div data-first-session-build-row=""/);
   // The first look card is the invite ask's, never over the questions.
-  assert.match(CODE, /\{firstLook \? <FirstLookCard src=\{lookShown\} name=\{made\.name\} progress=\{lookProgress\} onBroken=\{setBrokenLook\} phone=\{!lookInCard\} \/> : null\}/);
+  // #5618: tapping it opens the maker's chat with Homeroom bot.
+  assert.match(CODE, /\{firstLook \? <FirstLookCard src=\{lookShown\} name=\{made\.name\} progress=\{lookProgress\} onBroken=\{setBrokenLook\} phone=\{!lookInCard\} onOpen=\{\(\) => onOpenChat\(made\.conversationId\)\} \/> : null\}/);
 });
 
 test('after Submit: one card carries the first look and the setup, under the project card, which stays as it is', () => {
@@ -146,7 +147,8 @@ test('after Submit: one card carries the first look and the setup, under the pro
   // No picture yet: a calm phone outline with a band of light, then the
   // small caps kicker, the title, and the setup's ring, step and estimate.
   const drawing = card({ progress: SETUP(3) });
-  assert.match(drawing, /^<section data-made-first-look="drawing" aria-labelledby="made-first-look-title">/);
+  // #5618: the card is positioned, so the empty overlay button can cover it.
+  assert.match(drawing, /^<section data-made-first-look="drawing" aria-labelledby="made-first-look-title" class="relative">/);
   assert.match(drawing, /data-made-first-look-phone="drawing"/);
   assert.match(drawing, /motion-safe:animate-card-sweep/);
   assert.doesNotMatch(drawing, /<img/);
