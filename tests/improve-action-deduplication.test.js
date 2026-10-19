@@ -73,7 +73,11 @@ test('hiding import leaves Suggest an improvement first, so the settings divider
   // where the rest begins.
   const html = board({ canCollaborate: false });
   // #4045: "Settings & rules" is one row now, its settings in a panel under it.
-  assert.deepEqual(actions(html), ['issue', 'new-change', 'settings', 'members', 'rename', 'topics', 'secrets', 'fork']);
+  // #5553: the Topics row is for people who can build there only. A viewer who
+  // cannot build was offered it, and proposing from it always failed; the
+  // project's list of places now carries the way in for those who can.
+  assert.deepEqual(actions(html), ['issue', 'new-change', 'settings', 'members', 'rename', 'secrets', 'fork']);
+  assert.doesNotMatch(html, /data-plus="topics"/);
   assert.doesNotMatch(html, /data-plus-group="build"/);
   assert.doesNotMatch(html, /Add to the board/);
   const settings = html.match(/<button data-plus="settings" data-plus-group="settings"[^>]*>/);
