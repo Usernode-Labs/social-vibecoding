@@ -849,6 +849,17 @@ export async function setMessageSaved(
  * page's vote is. `stale` when that version was replaced (a 409 that says
  * so), with the version it is at now.
  */
+/**
+ * #5452: a saved Yes belongs in Your votes and the Kudos My history tab.
+ * Both listen on the window bridge, so this says the vote landed without
+ * this chunk importing the profile screen. Optional at every link: neither
+ * listener needs to be up for the Yes itself to be counted.
+ */
+function announceApprovalVote() {
+  (window as any).UsernodeReact?.profileProposals?.voted?.();
+  (window as any).Leaderboard?.invalidateHistory?.();
+}
+
 export async function approveChange(sessionId: number, epoch: number | null): Promise<{
   ok: boolean; stale: boolean; epoch: number | null; error: string | null;
   /** B7: what happens next, when the Yes settled a ready card of theirs. */
@@ -866,15 +877,13 @@ export async function approveChange(sessionId: number, epoch: number | null): Pr
     return { ok: false, stale: false, epoch: null, error: t('messages:api.approve.unreachable') };
   }
   const data = record(await response.json().catch(() => ({})));
-  if (response.ok) {
-    // The Yes now belongs in Your votes and the Kudos My history tab (#5452):
-    // tell both through the window bridge, the way the kudos give path does,
-    // so this chunk does not pull in the profile screen. Never optimistic —
-    // only on the server's yes.
-    (window as any).UsernodeReact?.profileProposals?.voted?.();
-    (window as any).Leaderboard?.invalidateHistory?.();
-    return { ok: true, stale: false, epoch, error: null, goesLive: normalizeGoesLive(pick(data, 'goesLive')) };
-  }
+  // #5452: the Yes now belongs in Your votes and the Kudos My history tab,
+  // so tell both through the window bridge, the way the kudos give path
+  // does, so this chunk does not pull in the profile screen. Never
+  // optimistic: only on the server's yes. Announced ahead of the return so
+  // the one-line ok return keeps the shape the B7 check pins.
+  if (response.ok) announceApprovalVote();
+  if (response.ok) return { ok: true, stale: false, epoch, error: null, goesLive: normalizeGoesLive(pick(data, 'goesLive')) };
   const stale = response.status === 409 && pick(data, 'headChanged') === true;
   const next = Number.isInteger(pick(data, 'approvalEpoch')) ? Number(pick(data, 'approvalEpoch')) : null;
   return { ok: false, stale, epoch: next, error: stale ? null : (text(pick(data, 'message')) || text(pick(data, 'error')) || t('messages:api.approve.failed')) };

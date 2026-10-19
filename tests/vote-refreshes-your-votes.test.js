@@ -69,12 +69,18 @@ test('approveChange tells Your votes under response.ok, through the window bridg
   const at = src.indexOf('export async function approveChange(');
   assert.ok(at > -1);
   const body = src.slice(at, src.indexOf('\n}\n', at));
-  assert.match(body, /if \(response\.ok\) \{/);
-  const okAt = body.indexOf('if (response.ok) {');
-  const called = body.indexOf('profileProposals?.voted');
-  assert.ok(called > okAt, 'only once the server has said yes');
-  assert.match(body, /\(window as any\)\.UsernodeReact\?\.profileProposals\?\.voted\?\.\(\);/,
+  // The ok return stays the one-line shape the B7 check pins, so the
+  // announcement goes through a helper called just before it.
+  assert.match(body, /if \(response\.ok\) announceApprovalVote\(\);/);
+  const called = body.indexOf('announceApprovalVote()');
+  const okReturn = body.indexOf('if (response.ok) return { ok: true');
+  assert.ok(okReturn > -1, 'the one-line ok return is kept');
+  assert.ok(called > -1 && called < okReturn, 'only once the server has said yes');
+  const helper = src.indexOf('function announceApprovalVote()');
+  assert.ok(helper > -1, 'the announcement helper exists');
+  const helperBody = src.slice(helper, src.indexOf('\n}\n', helper));
+  assert.match(helperBody, /\(window as any\)\.UsernodeReact\?\.profileProposals\?\.voted\?\.\(\);/,
     'the window bridge, not an import');
-  assert.match(body, /\(window as any\)\.Leaderboard\?\.invalidateHistory\?\.\(\);/);
+  assert.match(helperBody, /\(window as any\)\.Leaderboard\?\.invalidateHistory\?\.\(\);/);
   assert.doesNotMatch(src, /my-proposals/, 'the messages chunk does not pull in the profile screen');
 });
