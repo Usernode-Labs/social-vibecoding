@@ -382,6 +382,146 @@ test('#5452: a read started before the vote cannot put the stale list back over 
   }
 });
 
+// ── #5457: the read waits for the network, and the open view catches up ─
+//
+// On a slow connection the service worker answered the read from its saved
+// copy (taken before the vote) and later posted the correction; this screen
+// heard neither, so the vote stayed missing until a refresh. The cases below
+// run the controller against the real live-reads module, handed in through
+// the loader's stub seam so the test holds the very watch/resync/flush the
+// controller binds to; _resetLiveReads between cases, and every case loads a
+// fresh controller module, so nothing carries over.
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test('#5457: reload() asks for a fresh answer on each of the three views', async () => {
+  const mod = loadTsx(SCREEN);
+  const { profileProposalsController: ctl } = mod;
+  const prior = { fetch: globalThis.fetch, location: globalThis.location };
+  const asked = [];
+  globalThis.location = { search: '' };
+  globalThis.fetch = (url, init) => {
+    asked.push([url, init]);
+    return Promise.resolve({ ok: true, json: async () => ({}) });
+  };
+  try {
+    await ctl.open('changes');
+    await ctl.open('requests');
+    await ctl.open('votes');
+    assert.deepEqual(asked.map(([url]) => url), [
+      '/api/me/proposal-history',
+      '/api/me/requests',
+      '/api/me/history?type=votes&limit=50',
+    ]);
+    for (const [, init] of asked) {
+      assert.equal(init.cache, 'no-cache', 'the worker waits for the network, not its saved copy');
+      assert.equal(init.credentials, 'same-origin');
+    }
+    ctl.close();
+  } finally {
+    globalThis.fetch = prior.fetch;
+    if (prior.location === undefined) delete globalThis.location; else globalThis.location = prior.location;
+  }
+});
+
+test('#5457: a correction to the open view\'s read re-reads it; another view\'s does not', async () => {
+  const live = loadTsx('frontend/src/lib/live-reads.ts');
+  live._resetLiveReads();
+  const mod = loadTsx(SCREEN, { stubs: { '../../lib/live-reads': live } });
+  const { profileProposalsController: ctl, profileProposalsStore: store } = mod;
+  const prior = { fetch: globalThis.fetch, location: globalThis.location };
+  const asked = [];
+  const pending = [];
+  globalThis.location = { search: '' };
+  globalThis.fetch = (url) => {
+    asked.push(url);
+    return new Promise((resolve) => { pending.push(resolve); });
+  };
+  try {
+    const first = ctl.open('votes');
+    pending[0]({ ok: true, json: async () => ({ items: [] }) });
+    await first;
+    assert.deepEqual(asked, ['/api/me/history?type=votes&limit=50']);
+
+    // The service worker corrects the read the open view owns: it is read
+    // again, and what comes back is published.
+    live.resync('correction', '/api/me/history?type=votes&limit=50');
+    live.flush();
+    assert.equal(asked.length, 2, 'the open view re-read its own URL');
+    pending[1]({ ok: true, json: async () => ({ items: [{ pr: { sessionId: 31 } }] }) });
+    await settle();
+    assert.equal(store.get().data.votes.items.length, 1, 'the corrected list is what shows');
+
+    // A correction to another view's URL — or to another kind of history —
+    // is not the open view's read, and wakes nothing.
+    live.resync('correction', '/api/me/requests');
+    live.flush();
+    live.resync('correction', '/api/me/history?type=kudos');
+    live.flush();
+    assert.equal(asked.length, 2, 'only the view that is up is re-read');
+    ctl.close();
+  } finally {
+    live._resetLiveReads();
+    globalThis.fetch = prior.fetch;
+    if (prior.location === undefined) delete globalThis.location; else globalThis.location = prior.location;
+    store.set({ open: false, kind: 'changes', data: {}, error: false });
+  }
+});
+
+test('#5457: a reconnect re-reads the open view; close() stops it; open() stacks nothing', async () => {
+  const live = loadTsx('frontend/src/lib/live-reads.ts');
+  live._resetLiveReads();
+  const mod = loadTsx(SCREEN, { stubs: { '../../lib/live-reads': live } });
+  const { profileProposalsController: ctl, profileProposalsStore: store } = mod;
+  const prior = { fetch: globalThis.fetch, location: globalThis.location };
+  const asked = [];
+  const pending = [];
+  globalThis.location = { search: '' };
+  globalThis.fetch = (url) => {
+    asked.push(url);
+    return new Promise((resolve) => { pending.push(resolve); });
+  };
+  try {
+    const first = ctl.open('votes');
+    pending[0]({ ok: true, json: async () => ({ items: [] }) });
+    await first;
+
+    // A socket reconnect (or the tab coming back) re-reads the view that is up.
+    live.resync('reconnect');
+    live.flush();
+    assert.deepEqual(asked, [
+      '/api/me/history?type=votes&limit=50',
+      '/api/me/history?type=votes&limit=50',
+    ], 'one re-read for the pass, of the view that is up');
+    pending[1]({ ok: true, json: async () => ({ items: [] }) });
+    await settle();
+
+    // Entry then a switch of views: two open() calls left one watcher.
+    const second = ctl.open('requests');
+    pending[2]({ ok: true, json: async () => ({ requests: [] }) });
+    await second;
+    asked.length = 0;
+    live.resync('reconnect');
+    live.flush();
+    assert.deepEqual(asked, ['/api/me/requests'], 'still one re-read per pass, now of Your requests');
+    pending[3]({ ok: true, json: async () => ({ requests: [] }) });
+    await settle();
+
+    ctl.close();
+    asked.length = 0;
+    live.resync('reconnect');
+    live.flush();
+    live.resync('correction', '/api/me/requests');
+    live.flush();
+    assert.deepEqual(asked, [], 'close() stopped the watcher: a closed screen re-reads nothing');
+  } finally {
+    live._resetLiveReads();
+    globalThis.fetch = prior.fetch;
+    if (prior.location === undefined) delete globalThis.location; else globalThis.location = prior.location;
+    store.set({ open: false, kind: 'changes', data: {}, error: false });
+  }
+});
+
 test('the router: three addresses no username can have, one screen, the bar named for the view', () => {
   const app = read('public/js/app.js');
   assert.match(app, /PROFILE_WORK: \{\s*proposals: 'changes',\s*'your-changes': 'changes',\s*'your-requests': 'requests',\s*'your-votes': 'votes',\s*\},/);
