@@ -1179,7 +1179,10 @@ const attributeVoteLimiter = makeLimiter({
 });
 
 // #2525: GOVERNANCE votes — POST /api/sessions/:id/vote and
-// POST /api/issues/:id/vote. 30 / minute / user.
+// POST /api/issues/:id/vote. 30 / minute / user. DELETE
+// /api/sessions/:id/vote (taking a vote back, the review flow's Undo)
+// shares the bucket: it posts a thread line too, and vote, undo, vote is
+// the flip loop by another road.
 //
 // These had no limiter at all, and unlike the attribute vote above a
 // governance vote is not a quiet field update: every CHANGED vote posts a

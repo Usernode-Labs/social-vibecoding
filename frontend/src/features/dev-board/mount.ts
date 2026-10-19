@@ -128,7 +128,7 @@ export interface DevBoardBridge {
   /** #3984: a vote on its way, by `<fn>:<id>`; null clears it (cards-store.ts). */
   publishVoteSending(key: string, side: 'yes' | 'no' | null): void;
   /** #5463: a vote the server saved, by session id and epoch (cards-store.ts). */
-  publishVoteSaved(sessionId: number, vote: 'yes' | 'no', epoch: number | null): void;
+  publishVoteSaved(sessionId: number, vote: 'yes' | 'no' | null, epoch: number | null): void;
   /** Run four (13 Oct 2026): the next page of change `sessionId` opens at its Votes card (topic/votes-in-view.ts). */
   showVotes(sessionId: number): void;
   publishViewMode(mode: string): void;
