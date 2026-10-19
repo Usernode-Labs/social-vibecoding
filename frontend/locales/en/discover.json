@@ -111,6 +111,10 @@
     "text": "Featured",
     "description": "Filter chip on the Discover screen: show only the apps Homeroom's staff picked to feature."
   },
+  "filter.notJoined": {
+    "text": "Not joined",
+    "description": "Filter chip on Discover: shows only the apps the viewer has not joined yet, the ones they could still join."
+  },
   "filter.joined": {
     "text": "Joined",
     "description": "Filter chip on the Discover screen: show only the apps whose community the viewer has joined."
@@ -118,6 +122,10 @@
   "filter.new": {
     "text": "New",
     "description": "Filter chip on the Discover screen: show only recently created apps."
+  },
+  "filter.unreviewed": {
+    "text": "Not yet reviewed",
+    "description": "Filter chip on Discover shown only to platform admins: shows only the apps no admin has reviewed in their current version yet."
   },
   "sort.label": {
     "text": "Sort",
@@ -159,6 +167,10 @@
     "text": "No featured apps match “{{query}}”.",
     "description": "Shown in place of Discover's list when the Featured filter is on and the search finds nothing. {{query}} is what the person typed; keep the quotation marks around it in your language's style."
   },
+  "empty.search.notJoined": {
+    "text": "Nothing you haven’t joined matches “{{query}}”.",
+    "description": "Shown in place of Discover's list when the Not joined filter is on and the search finds nothing. {{query}} is what the viewer typed."
+  },
   "empty.search.joined": {
     "text": "Nothing you’ve joined matches “{{query}}”.",
     "description": "Shown in place of Discover's list when the Joined filter is on and the search finds nothing. {{query}} is what the person typed."
@@ -166,6 +178,10 @@
   "empty.search.new": {
     "text": "No new apps match “{{query}}”.",
     "description": "Shown in place of Discover's list when the New filter is on and the search finds nothing. {{query}} is what the person typed."
+  },
+  "empty.search.unreviewed": {
+    "text": "No unreviewed apps match “{{query}}”.",
+    "description": "Shown to an admin in place of Discover's list when the Not yet reviewed filter is on and the search finds nothing. {{query}} is what the admin typed."
   },
   "empty.search.all": {
     "text": "No apps match “{{query}}”.",
@@ -175,25 +191,33 @@
     "text": "No featured apps yet.",
     "description": "Shown in place of Discover's list when the Featured filter is on and no app is featured."
   },
+  "empty.notJoined": {
+    "text": "You’ve joined every app here.",
+    "description": "Shown in place of Discover's list when the Not joined filter is on and there is no app the viewer has not joined."
+  },
   "empty.joined": {
     "text": "You haven’t joined anything yet. Join apps from All.",
     "description": "Shown in place of Discover's list when the Joined filter is on and the viewer has joined no app. \"All\" is the name of the first filter chip; use the same word as that chip."
+  },
+  "empty.unreviewed": {
+    "text": "Every app has been reviewed.",
+    "description": "Shown to an admin in place of Discover's list when the Not yet reviewed filter is on and no app is waiting for a review."
   },
   "empty.all": {
     "text": "No apps to show yet.",
     "description": "Shown in place of Discover's list when there are no apps at all (or none are new)."
   },
-  "list.heading.reviewedWorking": {
-    "text": "Reviewed working apps",
-    "description": "Heading over the first group of rows in Discover's Recommended order: apps a reviewer has checked and found working."
+  "list.heading.recommended": {
+    "text": "Recommended for you",
+    "description": "Heading over the first group of rows in Discover's default list: apps picked by the platform's admins that the viewer has not joined yet."
   },
-  "list.heading.notYetReviewed": {
-    "text": "Not yet reviewed",
-    "description": "Heading over the second group of rows in Discover's Recommended order: apps nobody has reviewed yet."
+  "list.heading.moreApps": {
+    "text": "More apps",
+    "description": "Heading over the rest of Discover's default list, below the \"Recommended for you\" group."
   },
-  "list.label.notYetReviewed": {
-    "text": "Not yet reviewed",
-    "description": "Small label on one app's row in Discover: this app's current version has not been reviewed. Shown where no group heading already says it."
+  "list.heading.allApps": {
+    "text": "All apps",
+    "description": "Heading over Discover's default list when there is no \"Recommended for you\" group above it."
   },
   "list.more.note": {
     "text": "Demos and apps needing fixes, setup, or an icon are still available below and in search.",
@@ -215,21 +239,25 @@
     "text": "Join",
     "description": "Button on an app's row in Discover: join that app's community, which also puts the app on the viewer's Home. A verb."
   },
-  "list.join.joined": {
-    "text": "Joined",
-    "description": "State shown, with a check mark, on the same button of a Discover row once the viewer is a member of the app's community. Pressing it asks whether to leave."
-  },
   "list.join.named": {
     "text": "Join {{app}}",
     "description": "Accessible name of the Join button on an app's row in Discover. {{app}} is the app's name."
+  },
+  "list.open.action": {
+    "text": "Open",
+    "description": "Button on a Discover row for an app the viewer has joined: opens the app. A verb. Keep it one short word: the row is narrow."
+  },
+  "list.open.named": {
+    "text": "Open {{app}}",
+    "description": "Accessible name of the Open button on a Discover row, read by screen readers. {{app}} is the app's name."
   },
   "row.join.tip": {
     "text": "Join {{app}}",
     "description": "Tooltip of the Join button on an app's row in Discover. {{app}} is the app's name."
   },
-  "row.join.joinedTip": {
-    "text": "Joined. Tap to leave {{app}}",
-    "description": "Tooltip of the button on a Discover row when the viewer is already a member. {{app}} is the app's name. \"Leave\" means stop being a member of the app's community."
+  "row.open.tip": {
+    "text": "Open {{app}}",
+    "description": "Tooltip of the Open button on a Discover row for an app the viewer has joined. {{app}} is the app's name."
   },
   "row.meta.users_one": {
     "text": "{{count}} user",

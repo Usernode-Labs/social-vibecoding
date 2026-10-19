@@ -1396,10 +1396,10 @@
       "expectText": "staging-demo-lead"
     },
     {
-      "name": "Discover leads its list with filter chips, All / Featured / Joined / New, with All pressed (the prototype's scrDiscover)",
+      "name": "Discover leads its list with filter chips, All / Featured / Not joined / Joined / New, with All pressed (the prototype's scrDiscover, #5267)",
       "path": "/#apps",
-      "expectSelector": "#browse-screen:not(.hidden) #browse-search-bar > #browse-filter-chips[role=\"group\"] > [data-filter=\"all\"][aria-pressed=\"true\"] + [data-filter=\"featured\"][aria-pressed=\"false\"] + [data-filter=\"yours\"] + [data-filter=\"new\"]",
-      "expectText": "Featured"
+      "expectSelector": "#browse-screen:not(.hidden) #browse-search-bar > #browse-filter-chips[role=\"group\"] > [data-filter=\"all\"][aria-pressed=\"true\"] + [data-filter=\"featured\"] + [data-filter=\"notjoined\"][aria-pressed=\"false\"] + [data-filter=\"yours\"] + [data-filter=\"new\"]",
+      "expectText": "Not joined"
     },
     {
       "name": "The Featured chip narrows Discover to the admin's featured apps (?filter=featured)",
@@ -1436,10 +1436,10 @@
       "expectText": "Browse all apps"
     },
     {
-      "name": "Directory leads with reviewed apps and keeps demos under Show more (#1523)",
+      "name": "Directory leads with Recommended for you and keeps demos under Show more (#1523, #5267)",
       "path": "/?demo=1&curation=1&sort=recommended#apps",
-      "expectSelector": "#browse-list:has([data-slug=\"directory-sample-working\"][data-directory-state=\"working\"]):not(:has(.browse-row[data-slug=\"directory-sample-demo\"])) button[aria-controls=\"browse-more-apps\"][aria-expanded=\"false\"]",
-      "expectText": "Reviewed working apps"
+      "expectSelector": "#browse-list:has(h2 ~ [data-slug=\"directory-sample-working\"][data-directory-state=\"working\"]):not(:has(.browse-row[data-slug=\"directory-sample-demo\"])) button[aria-controls=\"browse-more-apps\"][aria-expanded=\"false\"]",
+      "expectText": "Recommended for you"
     },
     {
       "name": "Show more is on every sort, not just Recommended (#1912)",
