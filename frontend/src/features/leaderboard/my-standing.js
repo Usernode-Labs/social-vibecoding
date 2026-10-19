@@ -12,7 +12,9 @@
 // The Semi design (2026-10-16) took the season out of the card: no season
 // name, no note on how often the standings update, and no points by event
 // (so no breakdown read). What is left is where the viewer stands and among
-// how many people.
+// how many people. #5473 put the update note back on the card
+// (./your-standing.tsx draws it), because people could not tell why their
+// rank moved with no activity of their own.
 //
 // The token figure keeps its one-time "Reveal" acknowledgement under the
 // SAME storage key the profile used, so nobody who already revealed it is
