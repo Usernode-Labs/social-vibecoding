@@ -21,7 +21,11 @@
  *   account  POST /api/auth/otp/set-password: the username when the account
  *            has none, which mints the session. No password (#4891): the
  *            account signs in with an emailed code, and adds a password in
- *            Settings if it wants one.
+ *            Settings if it wants one. The handle field (#5255) wears an @,
+ *            says live whether the name is free (GET
+ *            /api/auth/username-available, `checkUsername`) beside its
+ *            rules, shows how others will see it, and its button says
+ *            "Create my account", with the code note under it.
  *
  * Continue with Apple and Continue with Google come first when an admin has
  * set them up (`providers`, from the waitlist options). Either leaves
@@ -477,11 +481,36 @@ export function mailAppFor(address: string): MailApp | null {
   return app ? { name: app.name, url: app.url(address.trim()) } : null;
 }
 
-/** Where the code step is in Get started (#5253): email, code, username. Only the story's sheet counts its steps. */
+/** Where a step is in Get started (#5253, #5255): email, code, username. Only the story's sheet counts its steps. */
 export function storyStep(step: string, from: 'invite' | 'story' | 'signin'): number | null {
   if (from !== 'story') return null;
-  return step === 'code' ? 2 : null;
+  return step === 'code' ? 2 : step === 'account' ? 3 : null;
 }
+
+/** What the account step's live check says of a handle (#5255). */
+export type UsernameCheck = { state: 'idle' } | { state: 'checking' } | { state: 'available' } | { state: 'taken'; error: string };
+
+/**
+ * Whether anybody holds `handle`, by the server's own rules and ledger
+ * (GET /api/auth/username-available). 'idle' for an empty field and for a
+ * check that could not be made (offline, throttled): the field then says
+ * nothing, and Create my account still answers with the server's refusal.
+ */
+export async function checkUsername(handle: string, signal?: AbortSignal): Promise<UsernameCheck> {
+  const value = handle.trim();
+  if (!value) return { state: 'idle' };
+  try {
+    const res = await fetch(`/api/auth/username-available?username=${encodeURIComponent(value)}`, { credentials: 'same-origin', signal });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok !== true) return { state: 'idle' };
+    return data.available === true ? { state: 'available' } : { state: 'taken', error: String(data.error || '') };
+  } catch {
+    return { state: 'idle' };
+  }
+}
+
+// How long the field waits after the last keystroke before it asks.
+export const USERNAME_CHECK_MS = 350;
 
 /** The line Google asks for where its reCAPTCHA badge is not shown (./recaptcha.ts). */
 export function RecaptchaNotice() {
@@ -808,6 +837,9 @@ export function SignInSheet({
   const [code, setCode] = useState('');
   const [codeFocused, setCodeFocused] = useState(false);
   const autoSent = useRef('');
+  // The account step's handle as typed, and what the live check says of it (#5255).
+  const [handleDraft, setHandleDraft] = useState('');
+  const [handleCheck, setHandleCheck] = useState<UsernameCheck>({ state: 'idle' });
 
   useEffect(() => {
     // Closed, the link is not "seen" any more: opened again (Get started
@@ -873,6 +905,24 @@ export function SignInSheet({
               : usernameField;
     if (focus) field.current?.focus({ preventScroll: true });
   }, [open, step, needsUsername]);
+
+  // The account step starts from the handle its field arrives holding.
+  useEffect(() => {
+    if (open && step === 'account' && needsUsername) setHandleDraft(suggestedUsername);
+  }, [open, step, needsUsername, suggestedUsername]);
+
+  // The live "✓ Available" (#5255): asked once typing pauses, and the answer
+  // to an older draft is dropped.
+  useEffect(() => {
+    if (!open || step !== 'account' || !needsUsername) return undefined;
+    if (!handleDraft.trim()) { setHandleCheck({ state: 'idle' }); return undefined; }
+    setHandleCheck({ state: 'checking' });
+    const abort = new AbortController();
+    const timer = window.setTimeout(() => {
+      void checkUsername(handleDraft, abort.signal).then((answer) => { if (!abort.signal.aborted) setHandleCheck(answer); });
+    }, USERNAME_CHECK_MS);
+    return () => { window.clearTimeout(timer); abort.abort(); };
+  }, [open, step, needsUsername, handleDraft]);
 
   // Back from the provider's page by the browser's Back button, the page can
   // come out of the back-forward cache as it was left: busy. Undo that.
@@ -1399,7 +1449,8 @@ export function SignInSheet({
         : step === 'password' ? (methodSwitch ? title : t('auth:signInSheet.password.title'))
           : step === 'forgot' ? t('auth:signInSheet.forgot.title')
           : step === 'username' ? t('auth:signInSheet.username.title')
-            : welcome ? t('auth:signInSheet.account.welcome', { email: welcome }) : t('auth:signInSheet.account.title');
+            : needsUsername && !welcome ? t('auth:signInSheet.account.titleUsername')
+              : welcome ? t('auth:signInSheet.account.welcome', { email: welcome }) : t('auth:signInSheet.account.title');
   // The first step says nothing under its title unless it is given a line:
   // "Make your account", "Join Sunday Run Club" and "Sign in" already say
   // it, and the field or the providers come next (#4037). With the phone
@@ -1422,7 +1473,7 @@ export function SignInSheet({
           ? (resetSent ? '' : t('auth:signInSheet.forgot.lead'))
           : step === 'username'
             ? t('auth:signInSheet.username.lead')
-            : (needsUsername ? t('auth:signInSheet.account.leadWithUsername') : '');
+            : (needsUsername ? t('auth:signInSheet.account.leadPublic') : '');
   // Up, on its way up, or leaving for the make screen: whole literals, for
   // the extractor. On a phone it slides; from md, where it is a centred
   // card, it fades. `held`, it stays down under the screen that covers it.
@@ -1658,16 +1709,46 @@ export function SignInSheet({
         {step === 'account' ? (
           <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void finishAccount(); }}>
             {needsUsername ? (
-              <div className={FIELD_GROUP}>
-                <div className={FIELD}>
-                  <label htmlFor="sign-in-sheet-username" className={LABEL}>{t('auth:signInSheet.account.usernameLabel')}</label>
-                  <input ref={usernameField} id="sign-in-sheet-username" defaultValue={suggestedUsername} autoComplete="username" enterKeyHint="go" className={INPUT} placeholder={t('auth:signInSheet.usernamePlaceholder')} {...HANDLE_FIELD} />
+              <>
+                <div className={FIELD_GROUP}>
+                  <div className={FIELD}>
+                    <label htmlFor="sign-in-sheet-username" className={LABEL}>{t('auth:signInSheet.account.usernameLabel')}</label>
+                    {/* The @ the name wears everywhere else (#5255), outside the field so it is never sent. */}
+                    <div className="flex items-baseline">
+                      <span aria-hidden="true" className="text-[17px] text-zinc-500 dark:text-zinc-400">@</span>
+                      <input ref={usernameField} id="sign-in-sheet-username" defaultValue={suggestedUsername} autoComplete="username" enterKeyHint="go" className={INPUT} onInput={(e) => setHandleDraft(e.currentTarget.value)} aria-describedby="sign-in-sheet-username-check" placeholder={t('auth:signInSheet.usernamePlaceholder')} {...HANDLE_FIELD} />
+                    </div>
+                  </div>
                 </div>
-              </div>
+                {/* Whether it is free, live, and the rules, on one line under the field. */}
+                <div id="sign-in-sheet-username-check" aria-live="polite" className="flex items-baseline justify-between gap-3 text-[13px]">
+                  {handleCheck.state === 'available' ? (
+                    <span data-sign-in-sheet-username-check="available" className="font-semibold text-green-700 dark:text-green-400">{t('auth:signInSheet.account.available')}</span>
+                  ) : handleCheck.state === 'taken' ? (
+                    <span data-sign-in-sheet-username-check="taken" className="text-red-600 dark:text-red-400">{handleCheck.error || t('auth:signInSheet.account.taken')}</span>
+                  ) : handleCheck.state === 'checking' ? (
+                    <span data-sign-in-sheet-username-check="checking" className="text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.account.checking')}</span>
+                  ) : <span />}
+                  <span className="shrink-0 text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.account.rules')}</span>
+                </div>
+                {/* How the name will look beside what they suggest and vote on. */}
+                {handleDraft.trim() ? (
+                  <div data-sign-in-sheet-username-preview="" className="rounded-2xl bg-white px-4 py-3 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+                    <p className="text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.account.previewLabel')}</p>
+                    <div className="mt-2 flex items-center gap-3">
+                      <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-100 text-[15px] font-semibold text-violet-700 dark:bg-violet-950 dark:text-violet-300">{handleDraft.trim().charAt(0).toUpperCase()}</span>
+                      <div className="min-w-0">
+                        <p className="truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">@{handleDraft.trim()}</p>
+                        <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.account.previewLine')}</p>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </>
             ) : null}
-            {/* No password here (#4891): how they sign in, and where a password is added. */}
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? <><FinishingSpinner />{t('auth:signInSheet.account.finishing')}</> : needsUsername ? t('auth:signInSheet.account.create') : t('auth:signInSheet.account.submit')}</button>
+            {/* No password here (#4891): how they sign in, and where a password is added, under the button (#5255) so the field's own line is free for what is wrong with it. */}
             <p data-sign-in-sheet-code-note="" className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.account.codeNote')}</p>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? <><FinishingSpinner />{t('auth:signInSheet.account.finishing')}</> : t('auth:signInSheet.account.submit')}</button>
           </form>
         ) : null}
 

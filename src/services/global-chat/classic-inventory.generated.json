@@ -3602,6 +3602,21 @@
     },
     {
       "source": "src/routes/auth.js",
+      "method": "GET",
+      "path": "/api/auth/username-available",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "profile.get.auth.username.available.681458fa",
+      "domain": "profile",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "profile",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#profile"
+    },
+    {
+      "source": "src/routes/auth.js",
       "method": "POST",
       "path": "/api/auth/otp/set-password",
       "expression": null,
