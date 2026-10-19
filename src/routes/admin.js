@@ -1734,8 +1734,17 @@ function adminRoutes(config) {
   // wherever the workflow runs, and its result is the page's last sweep.
   router.post('/api/admin/storage/sweep', requireAdminWrite, async (req, res) => {
     try {
-      const ran = await clocks.runNow('app-storage-cap', req.user);
-      const sweep = ran && ran.result;
+      let sweep;
+      try {
+        const ran = await clocks.runNow('app-storage-cap', req.user);
+        if (ran && ran.lastError) return res.status(500).json({ error: ran.lastError });
+        sweep = ran && ran.result;
+      } catch (err) {
+        // No clock runs it here (a staging preview arms none): measured on
+        // the spot, which on a preview records figures and freezes nothing.
+        if (err && err.code !== 'not_armed') throw err;
+        sweep = await appStorageCap.sweep(pool);
+      }
       if (!sweep) {
         return res.status(503).json({ error: 'Still measuring: the figures will show here when it ends.' });
       }

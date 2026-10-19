@@ -77,9 +77,10 @@ async function audit(pool, { shouldStop = () => false } = {}) {
     ...(held ? { heldForGithubBudget: queue.length } : {}),
   };
   log.info('server', 'Private-repo audit complete', summary);
-  // A run stopped or held before the end is no audit: it fails, and the
-  // clock tries again sooner.
-  if (queue.length) throw new Error(held ? 'held for GitHub\'s hourly budget' : 'stopped before the end');
+  // A run stopped before the end fails, and the clock runs it again soon. One
+  // held for GitHub's budget is done for the day, as it always was: a retry
+  // would only start again from the first app on the same short budget.
+  if (queue.length && !held) throw new Error('stopped before the end');
   return summary;
 }
 

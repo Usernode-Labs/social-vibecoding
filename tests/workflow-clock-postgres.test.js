@@ -107,7 +107,7 @@ test('the clock machine runs each job once at a time, wherever the workflow runs
     await r.stop();
   });
 
-  await t.test('targets: each an item of its own, once per generation, none while one is outstanding', async () => {
+  await t.test('targets: each an item of its own, asked again by each run, once per generation it names, none while one is outstanding', async () => {
     const healed = [];
     let release = null;
     const gate = new Promise((r) => { release = r; });
@@ -131,7 +131,9 @@ test('the clock machine runs each job once at a time, wherever the workflow runs
     assert.deepEqual(healed.filter((h) => h.startsWith('pr:2')), ['pr:2@2'], 'no second item while one is outstanding');
     gen = 1;
     await until(async () => healed.filter((h) => h.startsWith('pr:1')).length === 2, 'a new generation is a new item');
+    // pr:2 names no generation: once its item ends, the next run asks again.
     release();
+    await until(async () => healed.filter((h) => h.startsWith('pr:2')).length >= 2, 'each run asks again for what is still owed');
     const { data } = await instance('targets');
     assert.ok(data.last.result.items <= 2);
     await r.stop();

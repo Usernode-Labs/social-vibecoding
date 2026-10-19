@@ -346,10 +346,13 @@ test('delivery reload includes the current deployment state and activation times
   assert.match(seen.sql, /conversation_message\.content AS conversation_message_content/);
   assert.match(seen.sql, /cs\.session_title, cs\.pr_title, cs\.branch_name/);
   assert.match(seen.sql, /n\.detail/);
-  assert.deepEqual(seen.params, [JOB.id]);
+  // Read only while it is still this run's claim (the push-drain clock's
+  // work item and attempt).
+  assert.match(seen.sql, /d\.claimed_work IS NOT DISTINCT FROM \$2::uuid AND d\.claimed_attempt IS NOT DISTINCT FROM \$3::integer/);
+  assert.deepEqual(seen.params, [JOB.id, null, null]);
 });
 
-test('finish updates the in-process claim without a lease-generation fence', async () => {
+test('finish settles the row only while it is still this run\'s claim', async () => {
   let seen;
   const worker = new MobilePushWorker({
     pool: {
@@ -361,10 +364,11 @@ test('finish updates the in-process claim without a lease-generation fence', asy
     config: {},
     provider: { send: async () => {} },
   });
-  await worker.finish(JOB, 'sent');
+  const token = { workId: '00000000-0000-0000-0000-000000000003', attempt: 2 };
+  await worker.finish({ ...JOB, token }, 'sent');
   assert.doesNotMatch(seen.sql, /attempts\s*=|lease_expires_at/);
-  assert.match(seen.sql, /WHERE id = \$1 AND status = 'sending'/);
-  assert.deepEqual(seen.params, [JOB.id, 'sent', null, true, null]);
+  assert.match(seen.sql, /WHERE id = \$1 AND status = 'sending'\s+AND claimed_work IS NOT DISTINCT FROM \$6::uuid AND claimed_attempt IS NOT DISTINCT FROM \$7::integer/);
+  assert.deepEqual(seen.params, [JOB.id, 'sent', null, true, null, token.workId, 2]);
 });
 
 test('invalid provider token deletes the live registration and kills this delivery', async () => {

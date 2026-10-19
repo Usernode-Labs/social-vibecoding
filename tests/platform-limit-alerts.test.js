@@ -138,8 +138,8 @@ test('the detail token round-trips and fits the 32-character column', () => {
 
 // ─── 2. evaluate() against a recording pool ─────────────────────────────
 
-function fakePool({ apps = 0, sessions = 0, level = 'ok', countError = null, setting = null } = {}) {
-  const state = { level, queries: [], updates: [] };
+function fakePool({ apps = 0, sessions = 0, level = 'ok', countError = null, setting = null, thisHour = false } = {}) {
+  const state = { level, thisHour, queries: [], updates: [] };
   return {
     state,
     async query(rawSql, params = []) {
@@ -156,8 +156,8 @@ function fakePool({ apps = 0, sessions = 0, level = 'ok', countError = null, set
         return { rows: setting == null ? [] : [{ value: String(setting), updated_at: null, updated_by: 'ada' }] };
       }
       if (/^INSERT INTO platform_limit_alerts/.test(sql)) return { rows: [] };
-      if (/^SELECT level FROM platform_limit_alerts .* FOR UPDATE$/.test(sql)) {
-        return { rows: [{ level: state.level }] };
+      if (/^SELECT level, measured_at > NOW\(\) - INTERVAL '1 hour' AS this_hour FROM platform_limit_alerts .* FOR UPDATE$/.test(sql)) {
+        return { rows: [{ level: state.level, this_hour: state.thisHour }] };
       }
       if (/^UPDATE platform_limit_alerts/.test(sql)) {
         state.updates.push(params);
@@ -330,6 +330,21 @@ test('the bot token warns at a fifth left and again when used up, once per windo
   githubWindow(900, { resetMin: 90 });
   assert.equal((await run()).notified, 'warn');
   assert.equal(calls.create.length, 3);
+});
+
+test('within the hour a GitHub level only rises: a process with an older answer re-arms nothing', async () => {
+  // The platform-limits clock runs on whichever process runs the workflow,
+  // and each knows GitHub's figures from its own last answer.
+  githubBudget._resetForTests();
+  const pool = fakePool({ level: 'warn', thisHour: true });
+  const { calls, deps } = recorder();
+  githubWindow(4000);
+  const out = await limits.evaluate(pool, CONFIG, 'github', deps);
+  assert.equal(out.level, 'warn', 'held, not re-armed');
+  // Then the process that saw the crossing: nobody is told again.
+  githubWindow(900);
+  assert.equal((await limits.evaluate(pool, CONFIG, 'github', deps)).notified, null);
+  assert.deepEqual(calls.create, []);
 });
 
 test('the warning line is GitHub\'s own, not PLATFORM_LIMIT_WARN_PERCENT', async (t) => {

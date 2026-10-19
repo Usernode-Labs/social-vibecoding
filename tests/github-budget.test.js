@@ -418,11 +418,11 @@ test('an election does not re-run the privacy audit or the merged-by-hand lookup
   assert.match(def.slice(0, def.indexOf(';\n')),
     /\.then\(\(\) => \(lifecycle\.isShuttingDown\(\) \? leaderTimers\.SKIPPED : undefined\)\)$/, 'runMergedByHandLookup');
   // The audit stops at its next row once its run is stopped, so it never
-  // holds a drain; a run stopped or held before the end fails, and the
-  // clock tries again sooner.
+  // holds a drain; a run stopped before the end fails, and the clock tries
+  // again sooner.
   const audit = read('src/services/repo-privacy-audit.js');
   assert.match(audit, /while \(queue\.length && !shouldStop\(\)\) \{/);
-  assert.match(audit, /if \(queue\.length\) throw new Error/);
+  assert.match(audit, /if \(queue\.length && !held\) throw new Error/);
 
   // The stuck-check reconcile still runs at once on election, no longer
   // behind the lookup: its sweeps' first passes come a minute or more later.

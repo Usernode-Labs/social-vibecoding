@@ -99,25 +99,28 @@ function retryInMs(d: Data, failures: number): number {
 }
 
 // The targets a run handed back (`items: [{ target, gen, input }]`), as one
-// work item each, keyed by the target and its generation (`gen`: what makes
-// a new try a new item, such as its attempts so far): the same target and
-// generation found again asks for nothing new, and a target with an item
-// still outstanding (`busy`) gets no second one.
+// work item each, keyed by the target and its generation: the run's own
+// number unless the job names one (`gen`, such as a row's attempts so far,
+// when only a new attempt may ask again). So each run asks again for what is
+// still owed; a target with an item still outstanding (`busy`) gets no
+// second one, and the same target and generation never two. MAX_ITEMS counts
+// what is asked for, after those.
 const TARGET = /^[A-Za-z0-9:._-]{1,160}$/;
 export const itemKey = (target: string, gen: string) => `item:${target}@${gen}`;
 const targetOf = (workKey: string) => workKey.slice('item:'.length, workKey.lastIndexOf('@'));
 
-function itemsOf(jobName: string, result: Json, busy: ReadonlySet<string>): { items: WorkRequest[]; status: Json } {
+function itemsOf(jobName: string, run: number, result: Json, busy: ReadonlySet<string>): { items: WorkRequest[]; status: Json } {
   if (!result || typeof result !== 'object' || Array.isArray(result) || !Array.isArray((result as any).items)) {
     return { items: [], status: result ?? null };
   }
   const { items, ...status } = result as { items: Json[] } & Record<string, Json>;
   const out: WorkRequest[] = [];
   const seen = new Set<string>();
-  for (const it of items.slice(0, MAX_ITEMS)) {
+  for (const it of items) {
+    if (out.length >= MAX_ITEMS) break;
     const o = it && typeof it === 'object' && !Array.isArray(it) ? it as Record<string, Json> : null;
     const target = typeof o?.target === 'string' ? o.target : '';
-    const gen = String(o?.gen ?? '0');
+    const gen = o?.gen == null ? `run${run}` : String(o.gen);
     if (!TARGET.test(target) || !TARGET.test(gen) || busy.has(target) || seen.has(target)) continue;
     seen.add(target);
     out.push({ kind: itemKind(jobName), key: itemKey(target, gen), input: { job: jobName, target, input: (o!.input ?? null) as Json } });
@@ -135,7 +138,7 @@ function ran(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionCont
   // An earlier run's late result (Run now raced it, a retired run): nothing.
   if (d.running == null || p.workKey !== `run:${d.running}`) return { next: s };
   const okRun = e.type === 'WorkSucceeded';
-  const { items, status } = okRun ? itemsOf(d.job, p.result ?? null, f.busy) : { items: [], status: null };
+  const { items, status } = okRun ? itemsOf(d.job, d.running, p.result ?? null, f.busy) : { items: [], status: null };
   const ms = d.startedAt ? ctx.now.getTime() - Date.parse(d.startedAt) : null;
   const failures = okRun ? 0 : d.failures + 1;
   const last: Last = { n: d.running, at: iso(ctx.now), ok: okRun, ms, result: status, error: okRun ? null : (p.error?.message ?? 'failed').slice(0, 500) };
@@ -144,8 +147,15 @@ function ran(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionCont
     due: iso(okRun ? at(ctx, d.everyMs) : at(ctx, retryInMs(d, failures))),
   };
   if (s.name === 'retired') return { next: { name: 'retired', data: { ...next, running: null, startedAt: null } }, work: items };
-  // A continuous job, or an admin's Run now during the run: at once.
-  if ((okRun && d.everyMs === 0) || d.again) return start({ ...next, due: iso(ctx.now) }, ctx, items);
+  // An admin's Run now during the run: at once.
+  if (d.again) return start({ ...next, due: iso(ctx.now) }, ctx, items);
+  if (okRun && d.everyMs === 0) {
+    // A continuous job runs again at once, unless it had nothing to do and
+    // asked to rest (`restMs`: the push sender of a process that sends none).
+    const rest = Math.min(Math.max(0, Number((status as any)?.restMs) || 0), CONTINUOUS_RETRY_MAX_MS);
+    if (!rest) return start({ ...next, due: iso(ctx.now) }, ctx, items);
+    return wait({ ...next, due: iso(at(ctx, rest)) }, { work: items });
+  }
   return wait(next, { work: items });
 }
 
@@ -185,7 +195,10 @@ export function clock() {
     // A run's result: its targets that still have an item outstanding.
     async facts(tx, state, event, ctx) {
       if (state.name === NONE || event.type === 'Arm' || event.type === 'Tick' || event.type === 'RunNow' || event.type === 'Retire') return NO_FACTS;
-      if ((event.payload as WorkResultPayload).kind !== runKind(state.data.job)) return NO_FACTS;
+      const p = event.payload as WorkResultPayload;
+      // Only a run's result that hands targets back needs to know which are
+      // busy (most jobs hand none).
+      if (p.kind !== runKind(state.data.job) || !Array.isArray((p.result as any)?.items)) return NO_FACTS;
       const { rows } = await tx.query(
         `SELECT work_key FROM wf_work WHERE machine = $1 AND key = $2 AND kind = $3 AND status <> 'settled'`,
         [MACHINE, ctx.key, itemKind(state.data.job)]);

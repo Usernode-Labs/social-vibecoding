@@ -86,6 +86,12 @@ export async function purge(pool: Pool, opts: {
       await client.query(
         `DELETE FROM wf_work WHERE machine = $1 AND status = 'settled' AND settled_at < now() - make_interval(days => $2)`,
         [machine, retainDays]);
+      // Its receipts too, ended instance or not: such a machine's request
+      // keys never come back after that long (a timer's names its version,
+      // a work result its item).
+      await client.query(
+        `DELETE FROM wf_receipts WHERE machine = $1 AND created_at < now() - make_interval(days => $2)`,
+        [machine, retainDays]);
     }
     for (const [machine, { terminal }] of opts.machines) {
       if (!terminal.size) continue;

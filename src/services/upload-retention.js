@@ -37,8 +37,15 @@ async function sweep(pool, config) {
   try {
     // Uploads from staging previews are test data (#752): object first, row
     // second, so a row whose object delete failed is tried again.
+    // In batches of 200, up to 2,000 a pass (it ran every minute before).
     const appFiles = require('./app-files');
-    out.stagingAppFiles = await appFiles.sweepStagingFiles(pool, appFiles.getStore(config));
+    const store = appFiles.getStore(config);
+    out.stagingAppFiles = 0;
+    for (let batch = 0; batch < 10; batch++) {
+      const removed = await appFiles.sweepStagingFiles(pool, store);
+      out.stagingAppFiles += removed || 0;
+      if (!(removed >= 200)) break;
+    }
   } catch (err) {
     failed ||= err;
     log.warn('upload-retention', 'The staging app-file sweep failed', { err: err.message });

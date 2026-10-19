@@ -13,7 +13,8 @@
  * row on that false → true edge, while the switch is on. So a path added
  * later is covered without anybody remembering this file.
  *
- * The leader's sweep (server.js becomeLeader) turns each row into:
+ * The welcome-dm clock's sweep (src/workflow/clock/services.ts) turns each
+ * row into:
  *   1. the group — everyone a `member` from the start, because an invited
  *      member sees no messages until they accept, and a welcome nobody can
  *      read until they say yes to it is not a welcome. The group's id is

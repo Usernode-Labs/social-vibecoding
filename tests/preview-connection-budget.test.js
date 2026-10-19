@@ -120,8 +120,10 @@ test('#1771: becomeLeader is still where the fleet duties live', () => {
   // rule (src/workflow/platform.ts armClocks).
   const platform = read('src/workflow/platform.ts');
   const arm = platform.slice(platform.indexOf('async function armClocks('));
-  assert.match(arm.slice(0, arm.indexOf('\n}\n')), /if \(!legacy\('config'\)\.runsClusterMaintenance\(\)\) return 0;/,
-    'no clock is armed on a staging preview');
+  const armed = arm.slice(0, arm.indexOf('\n}\n'));
+  assert.match(armed, /const runs = legacy\('config'\)\.runsClusterMaintenance\(\);/);
+  assert.match(armed, /if \(runs && CLOCK_JOB_NAMES\.has\(job\)\) continue;/, 'one armed there before is retired');
+  assert.match(armed, /if \(!runs\) return 0;/, 'no clock is armed on a staging preview');
   // What each process sweeps of its own (the idle eviction of its warm
   // workers) runs whether or not it leads, and still never on a preview.
   assert.match(src, /if \(runsClusterMaintenance\(\)\) startProcessDuties\(\);/);

@@ -263,8 +263,11 @@ class MobilePushWorker {
     if (!this.config.mobilePushEnabled || !this.provider || this.stopping) return 0;
     await this.resetInterrupted(token);
     const jobs = await this.claimBatch(token);
+    // Each row is read and settled only while it is still this run's claim:
+    // a run that outlived its lease sends and settles nothing the next run
+    // took over.
     const results = await Promise.allSettled(
-      jobs.map((job) => this.processDelivery(job))
+      jobs.map((job) => this.processDelivery({ ...job, token }))
     );
     const failed = results.find((result) => result.status === 'rejected');
     if (failed) throw failed.reason;
@@ -371,8 +374,9 @@ class MobilePushWorker {
           AND preference.category = policy.category
          LEFT JOIN mobile_push_deployment_state state ON state.environment = d.environment
          LEFT JOIN mobile_push_registrations r ON r.id = d.registration_id
-        WHERE d.id = $1 AND d.status = 'sending'`,
-      [job.id]
+        WHERE d.id = $1 AND d.status = 'sending'
+          AND d.claimed_work IS NOT DISTINCT FROM $2::uuid AND d.claimed_attempt IS NOT DISTINCT FROM $3::integer`,
+      [job.id, job.token?.workId ?? null, job.token?.attempt ?? null]
     );
     return rows[0] || null;
   }
@@ -442,8 +446,9 @@ class MobilePushWorker {
               sent_at = CASE WHEN $4 THEN NOW() ELSE sent_at END,
               last_error_code = $5,
               updated_at = NOW()
-        WHERE id = $1 AND status = 'sending'`,
-      [job.id, status, availableAt, sent, code]
+        WHERE id = $1 AND status = 'sending'
+          AND claimed_work IS NOT DISTINCT FROM $6::uuid AND claimed_attempt IS NOT DISTINCT FROM $7::integer`,
+      [job.id, status, availableAt, sent, code, job.token?.workId ?? null, job.token?.attempt ?? null]
     );
   }
 

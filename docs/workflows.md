@@ -1452,8 +1452,9 @@ intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
 - **Targets.** An effect a sweep finds owed once per target (a title's model call, an app's
   Workshop re-draft) is never made by the sweep: its result lists `items`
   (`{ target, gen, input }`), and each becomes a work item of its own
-  (`clock.<job>.item`, key `item:<target>@<gen>`). The same target and generation found again
-  asks for nothing new, and a target with an item still outstanding gets no second one.
+  (`clock.<job>.item`, key `item:<target>@<gen>`), at most 50 a run. The generation is the run
+  unless the job names one, so each run asks again for what is still owed; a target with an
+  item still outstanding gets no second one, and a named generation only one.
 - **Safe to run twice.** A lease is weaker than a lock: a run whose process stalls stops
   itself only at three quarters of its lease. So every run is an age DELETE, a delete
   preconditioned on what it read, or a state change written as a compare-and-set with the
@@ -1465,6 +1466,10 @@ intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
   have run (`leader_sweeps`), or at once; a job the build no longer defines is `Retire`d (no
   deadline, its run cancelled). On a staging preview nothing is armed
   (`config.runsClusterMaintenance`), as no leader duty ran there.
-- **Run now.** Admin → Workflows' `RunNow`, and the storage page's "Measure now", which
-  waits for the run it asked for (`platform.runClockNow`). During a run it runs once more
-  after it.
+- **A continuous job** (no interval) runs again as soon as a run ends, unless its result asks
+  to rest (`restMs`, at most 5 minutes: the push sender in a process that sends none).
+- **Run now.** Admin → Workflows' "Run now" (`RunNow`), and the storage page's "Measure now",
+  which waits for the run it asked for (`platform.runClockNow`; on a staging preview, where
+  nothing is armed, it measures on the spot). During a run it runs once more after it.
+- **First runs** are due when the leader timer a job replaces would have run, else spread over
+  the next two minutes.

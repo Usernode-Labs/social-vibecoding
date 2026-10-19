@@ -228,6 +228,8 @@ function sweepOwnCheckouts(config, pool) {
     .catch((err) => log.warn('shots', 'Orphan shots checkout sweep failed', { error: err.message }));
   ownCheckoutsTimer = setInterval(run, OWN_CHECKOUTS_EVERY_MS);
   ownCheckoutsTimer.unref?.();
+  // And once soon after boot: what a crash left is most likely there then.
+  setTimeout(() => { if (ownCheckoutsTimer) run(); }, 10 * 60 * 1000).unref?.();
 }
 function stopOwnCheckouts() {
   if (ownCheckoutsTimer) clearInterval(ownCheckoutsTimer);

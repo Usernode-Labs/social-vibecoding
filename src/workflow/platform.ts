@@ -295,28 +295,34 @@ async function enrollGovernance(): Promise<number> {
   return rows.length;
 }
 
-// Every scheduled job this build defines is armed with its interval (a new
-// one is due when the leader's timer it replaces would have been, or at
-// once), and a job it no longer defines is retired. A staging preview runs
-// none of them (config.runsClusterMaintenance, the rule the leader's duties
-// had): its rows are a copy of production's. Resolves how many it armed.
+// Every scheduled job this build defines is armed with its interval, and a
+// job it no longer defines is retired. A staging preview runs none of them
+// (config.runsClusterMaintenance, the rule the leader's duties had): its rows
+// are a copy of production's, and one that ran them before retires them.
+// Resolves how many it armed.
 async function armClocks(release: string): Promise<number> {
   if (!runtime) return 0;
+  const runs = legacy('config').runsClusterMaintenance();
   const { rows: existing } = await kernelPool!.query(
-    `SELECT data->>'job' AS job FROM wf_instances WHERE machine = $1 AND state <> 'retired'`, [CLOCK]);
+    `SELECT data->>'job' AS job FROM wf_instances
+      WHERE machine = $1 AND state NOT IN ('retired', '(none)') AND data->>'job' IS NOT NULL`, [CLOCK]);
   for (const { job } of existing) {
-    if (CLOCK_JOB_NAMES.has(job)) continue;
+    if (runs && CLOCK_JOB_NAMES.has(job)) continue;
     await runtime.append(CLOCK, clockKey(job), { type: 'Retire', payload: {} },
       { requestKey: `retire:${release}`, source: { kind: 'system', name: 'release' } });
   }
-  if (!legacy('config').runsClusterMaintenance()) return 0;
+  if (!runs) return 0;
   const { rows: swept } = await kernelPool!.query(
     `SELECT name, last_run_at FROM leader_sweeps WHERE name = ANY($1::text[])`,
     [CLOCK_JOBS.map((j) => j.leaderSweep).filter(Boolean)]).catch(() => ({ rows: [] as any[] }));
   const lastRun = new Map<string, Date>(swept.map((r: any) => [r.name, new Date(r.last_run_at)]));
   for (const job of CLOCK_JOBS) {
+    // A job first armed is due when the leader timer it replaces would have
+    // run, or within the next two minutes (spread, so they do not all start
+    // in the same second). Only the first Arm reads it.
     const ran = job.leaderSweep ? lastRun.get(job.leaderSweep) : undefined;
-    const firstDueAt = ran ? new Date(ran.getTime() + job.everyMs).toISOString() : null;
+    const spread = Math.floor(Math.random() * Math.min(job.everyMs, 2 * 60 * 1000));
+    const firstDueAt = new Date(ran ? ran.getTime() + job.everyMs : Date.now() + spread).toISOString();
     await runtime.append(CLOCK, clockKey(job.name), { type: 'Arm', payload: { job: job.name, everyMs: job.everyMs, firstDueAt } },
       { requestKey: `arm:${release}`, source: { kind: 'system', name: 'release' } });
   }
@@ -349,7 +355,10 @@ export async function runClockNow(job: string, admin: { id: number }, { timeoutM
   if (!runtime) throw new AdminActionError(409, 'The workflow runtime is not running here');
   const outcome = await runtime.appendAndWait(CLOCK, clockKey(job), { type: 'RunNow', payload: {} },
     { requestKey: `admin:${randomUUID()}`, source: { kind: 'admin', name: 'console' }, actor: `user:${admin.id}` });
-  if (outcome.status === 'rejected') throw new AdminActionError(409, `The job ${job} cannot run now (${outcome.reason})`);
+  if (outcome.status === 'rejected') {
+    // A job no release armed here (a staging preview): the caller decides.
+    throw Object.assign(new AdminActionError(409, `The job ${job} cannot run now (${outcome.reason})`), { code: outcome.reason });
+  }
   if (outcome.status !== 'accepted' && outcome.status !== 'replayed') return null;
   const read = async () => (await kernelPool!.query(
     'SELECT state, data FROM wf_instances WHERE machine = $1 AND key = $2', [CLOCK, clockKey(job)])).rows[0];

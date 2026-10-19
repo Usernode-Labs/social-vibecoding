@@ -1154,9 +1154,9 @@ function startProcessDuties() {
 // PR/merge rows, staging, Postgres roles, GitHub) or is a singleton
 // poller/sweeper that must never double-run across the two colors. The
 // follower serves HTTP from boot, and so does a web process, which never
-// leads (docs/plans/web-and-conductor.md): what the leader sets up or keeps
-// in memory and a route reads (the read-only database roles, the admin
-// statuses) is recorded for them (platform_db_roles, services/leader-status.js).
+// leads (docs/plans/web-and-conductor.md): what the leader keeps in memory
+// and a route reads (the admin statuses) is recorded for them
+// (services/leader-status.js).
 async function becomeLeader() {
   log.info('server', 'Running leader duties (recovery, sweepers)', {
     identity: leadership && leadership.identity,

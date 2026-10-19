@@ -28,9 +28,9 @@
 //
 // The resolver is pinned to public resolvers rather than the cluster's, so a
 // stale cache or an in-cluster answer never vouches for a record the public
-// internet cannot see. The sweep runs on the leader only (server.js
-// becomeLeader), so a preview, which never becomes leader, never acts on a
-// row, and the table is staging:private anyway.
+// internet cannot see. The sweep is the app-domains clock
+// (src/workflow/clock/services.ts), which no staging preview arms, and the
+// table is staging:private anyway.
 
 const crypto = require('crypto');
 const dns = require('dns');

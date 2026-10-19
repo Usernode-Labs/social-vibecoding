@@ -1128,10 +1128,13 @@ function usesMockGithubForImports() {
 
 // #1771: cluster maintenance is not a staging preview's job.
 //
-// server.becomeLeader() is where every fleet-wide duty lives — role
-// bootstraps, container cleanup, backfills, the pollers, and nine sweepers.
-// It is gated to ONE leader so the two blue-green colors never double-run
-// it. A preview is neither color: it is a throwaway clone with its own
+// server.becomeLeader() is where the fleet-wide duties still under the
+// leader live — recovery, container cleanup, the pollers and the sweepers —
+// and the workflow's scheduled jobs (src/workflow/clock/) are the rest; the
+// release's work arms those only where this answers true, and the read-only
+// database roles are set up with the schema only then (services/db-roles.js).
+// becomeLeader is gated to ONE leader so the two blue-green colors never
+// double-run it. A preview is neither color: it is a throwaway clone with its own
 // database, so it wins its own advisory lock instantly and runs the whole
 // suite against a copy of production's rows.
 //

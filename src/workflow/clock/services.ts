@@ -82,13 +82,6 @@ const HOUR = 60 * MIN;
 // is shutting down): a sweep over many rows stops at the next one.
 const stopped = (ctx: WorkContext) => () => ctx.signal.aborted;
 
-// Wait `ms`, or until the run is stopped.
-const pause = (ms: number, signal: AbortSignal) => new Promise<void>((resolve) => {
-  const done = () => { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); };
-  const timer = setTimeout(done, ms);
-  signal.addEventListener('abort', done, { once: true });
-});
-
 // WORKSHOP_THEMES_SWEEP_INTERVAL_MS (config.js workshopSweepIntervalMs): 0
 // switches the sweep off.
 const workshopEveryMs = () => {
@@ -135,9 +128,13 @@ export const JOBS: readonly Job[] = Object.freeze([
     // failed ones a restart left behind.
     name: 'build-retention', everyMs: HOUR, leaseMs: 5 * MIN,
     run: async (ctx: WorkContext, { pool, config }: JobDeps) => {
-      const failed = await legacy('services/application-runtime').cleanupFailedBuilds(config);
+      // The failed Builds first; a failure there is reported, and the sweep
+      // still runs.
+      const failed = await legacy('services/application-runtime').cleanupFailedBuilds(config)
+        .catch((err: Error) => ({ error: err.message }));
       const r = await legacy('services/build-retention').sweep(config, { dryRun: false, pool, shouldStop: stopped(ctx) });
-      return { failedDeleted: failed?.deleted ?? 0, examined: r.examined, deleted: r.deleted.length, busy: !!r.busy };
+      if (r.deleted.length) legacy('services/logger').info('build-retention', 'kpack retention sweep', { examined: r.examined, deleted: r.deleted });
+      return { failedDeleted: failed?.deleted ?? 0, failedError: failed?.error ?? null, examined: r.examined, deleted: r.deleted.length, busy: !!r.busy };
     },
   },
   {
@@ -169,9 +166,8 @@ export const JOBS: readonly Job[] = Object.freeze([
       const r = await legacy('services/mobile-push').drain({
         token: { workId: ctx.workId, attempt: ctx.attempt }, forMs: 4 * MIN, signal: ctx.signal,
       });
-      // A process that sends no pushes waits the run out rather than spin.
-      if (r?.off) await pause(4 * MIN, ctx.signal);
-      return r;
+      // Push off here: the clock waits a few minutes rather than spin.
+      return r?.off ? { ...r, restMs: 4 * MIN } : r;
     },
   },
   {

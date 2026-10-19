@@ -84,7 +84,7 @@ const ROLE = 'topochain_console_ro';
 
 let _available = false;
 let _unavailableReason = 'topochain console role not initialized';
-// When this process last read the leader's record (loadShared).
+// When this process last read the role's record (loadShared).
 let _sharedReadAt = 0;
 const SHARED_TTL_MS = 30 * 1000;
 
@@ -198,8 +198,8 @@ async function ensureConsoleRole(config) {
   await recordBootstrap(config);
 }
 
-// Whether the setup succeeded, for the processes that never run it (a web
-// process never leads, docs/plans/web-and-conductor.md): platform_db_roles,
+// Whether the setup succeeded, for the processes, which never run it (the
+// release's migration step does: services/db-roles.js): platform_db_roles,
 // beside the prod-debug role's. This role has no password, so no secret is
 // written. Never throws.
 async function recordBootstrap(config) {
@@ -215,10 +215,10 @@ async function recordBootstrap(config) {
   }
 }
 
-// A process that did not set the role up takes the leader's word for it:
+// A process that did not set the role up takes the record's word for it:
 // the role exists with this release's grants or the previous one's, which
-// the leader replaces at its election (REVOKE, then GRANT: never wider than
-// either). Read at most every SHARED_TTL_MS; it also primes the table-name
+// each release's migration step replaces (REVOKE, then GRANT: never wider
+// than either). Read at most every SHARED_TTL_MS; it also primes the table-name
 // cache the validator reads, as the setup does. Never throws.
 async function loadShared(pool) {
   if (_available || Date.now() - _sharedReadAt < SHARED_TTL_MS) return;
@@ -227,18 +227,18 @@ async function loadShared(pool) {
     const { rows: [row] } = await pool.query(
       'SELECT ok, reason FROM platform_db_roles WHERE role = $1', [ROLE]);
     if (!row) {
-      _unavailableReason = 'topochain console role not set up by the leader yet';
+      _unavailableReason = 'topochain console role not set up yet (the release\'s migration step does it)';
       return;
     }
     if (!row.ok) {
-      _unavailableReason = row.reason || 'topochain console role bootstrap failed on the leader';
+      _unavailableReason = row.reason || 'topochain console role bootstrap failed in the migration step';
       return;
     }
     await loadConsoleScope(pool);
     _available = true;
     _unavailableReason = null;
   } catch (err) {
-    log.warn('topochain-console', 'Could not read the leader\'s record of the role', { err: err.message });
+    log.warn('topochain-console', 'Could not read the record of the role', { err: err.message });
   }
 }
 

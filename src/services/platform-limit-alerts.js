@@ -49,11 +49,11 @@
 //
 // The level last reached is kept per cap in platform_limit_alerts, read and
 // written under a row lock in the same transaction that inserts the
-// notifications, so the leader's sweep and a create route racing it cannot
-// both claim the same crossing.
+// notifications, so the sweep and a create route racing it cannot both
+// claim the same crossing.
 //
-// Evaluated by the leader's sweep (server.js, startPlatformLimitSweeper)
-// for both caps, and — for apps only — right after a create or fork
+// Evaluated by the platform-limits clock (src/workflow/clock/services.ts)
+// for every cap, and — for apps only — right after a create or fork
 // succeeds or is refused at the cap, and right after an admin changes the
 // app limit (routes/admin.js), so the alert does not wait for the next
 // sweep.
@@ -245,10 +245,18 @@ async function evaluate(pool, config, key, deps = {}) {
       [key]
     );
     const { rows } = await db.query(
-      'SELECT level FROM platform_limit_alerts WHERE limit_key = $1 FOR UPDATE',
+      `SELECT level, measured_at > NOW() - INTERVAL '1 hour' AS this_hour
+         FROM platform_limit_alerts WHERE limit_key = $1 FOR UPDATE`,
       [key]
     );
-    const decision = decide({ used, cap, percent, level: rows[0] && rows[0].level });
+    let decision = decide({ used, cap, percent, level: rows[0] && rows[0].level });
+    // GitHub's figures are each process's own last answer, so two processes
+    // read the same hour differently: within the hour a GitHub level only
+    // rises, and it re-arms once a new window has begun.
+    const stored = normalizeLevel(rows[0] && rows[0].level);
+    if (limit.fromAnswers && rows[0] && rows[0].this_hour && RANK[decision.level] < RANK[stored]) {
+      decision = { level: stored, notify: null };
+    }
     await db.query(
       `UPDATE platform_limit_alerts
           SET level = $2, used = $3, cap = $4, measured_at = NOW(),

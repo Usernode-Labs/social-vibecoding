@@ -13,9 +13,9 @@
 // It is a SWEEP, not a write-path check. The platform does not sit
 // between an app and its database (the app holds its own connection
 // string), so the only place a limit can bite is Postgres itself, and the
-// only way to learn how big a database is is to ask. The leader measures
-// every `app_*` database every APP_DB_STORAGE_SWEEP_INTERVAL_MS
-// (server.js, becomeLeader), records the figure on the app row, and moves
+// only way to learn how big a database is is to ask. The app-storage-cap
+// clock (src/workflow/clock/services.ts) measures every `app_*` database
+// every APP_DB_STORAGE_SWEEP_INTERVAL_MS, records the figure on the app row, and moves
 // each app through a small state machine:
 //
 //   ok --(>= warn%)--> warned --(>= cap)--> frozen --(< 95% of cap)--> ok
@@ -268,8 +268,18 @@ async function applyTransition(pool, app, dbName, decision, ctx) {
         try {
           await dbManager.setAppDatabaseWritable(dbName, false, { execute });
         } catch (err) {
-          await pool.query('UPDATE apps SET db_storage_frozen_at = NULL WHERE id = $1 AND db_storage_frozen_at = $2', [app.id, now]);
+          await pool.query(
+            `UPDATE apps SET db_storage_frozen_at = NULL, db_storage_warned_at = $3
+              WHERE id = $1 AND db_storage_frozen_at = $2`,
+            [app.id, now, app.db_storage_warned_at ?? null]);
           throw err;
+        }
+        // An admin's grace that thawed the app between the row and the role
+        // (grantGrace thaws on the spot) wins: the role is writable again.
+        const { rows: [after] } = await pool.query('SELECT db_storage_frozen_at FROM apps WHERE id = $1', [app.id]);
+        if (!after || !after.db_storage_frozen_at) {
+          await dbManager.setAppDatabaseWritable(dbName, true, { execute });
+          return;
         }
       }
       summary.frozen += 1;

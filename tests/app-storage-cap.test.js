@@ -83,11 +83,16 @@ function fakePool(apps) {
         if (!a.db_storage_warned_at) a.db_storage_warned_at = params[0];
         return { rows: [], rowCount: 1 };
       }
-      if (/^UPDATE apps SET db_storage_frozen_at = NULL WHERE id = \$1 AND db_storage_frozen_at = \$2$/.test(q)) {
+      if (/^UPDATE apps SET db_storage_frozen_at = NULL, db_storage_warned_at = \$3 WHERE id = \$1 AND db_storage_frozen_at = \$2$/.test(q)) {
         const a = byId(params[0]);
         if (a.db_storage_frozen_at !== params[1]) return { rows: [], rowCount: 0 };
         a.db_storage_frozen_at = null;
+        a.db_storage_warned_at = params[2];
         return { rows: [], rowCount: 1 };
+      }
+      if (/^SELECT db_storage_frozen_at FROM apps WHERE id = \$1$/.test(q)) {
+        const a = byId(params[0]);
+        return { rows: a ? [{ db_storage_frozen_at: a.db_storage_frozen_at }] : [] };
       }
       if (/^UPDATE apps SET db_storage_frozen_at = NULL WHERE id = \$1 AND db_storage_frozen_at IS NOT NULL$/.test(q)) {
         const a = byId(params[0]);

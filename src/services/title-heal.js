@@ -269,7 +269,8 @@ async function targets(config) {
     issues: issues.length,
     items: [
       ...prs.map((r) => ({ target: `pr:${r.id}`, input: { sessionId: Number(r.id) } })),
-      ...issues.map((r) => ({ target: `issue:${r.id}`, gen: String(r.attempts || 0), input: { id: Number(r.id) } })),
+      // A queued issue is a target only once its backoff has passed.
+      ...issues.map((r) => ({ target: `issue:${r.id}`, input: { id: Number(r.id) } })),
     ],
   };
 }

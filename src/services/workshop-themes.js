@@ -37,8 +37,8 @@
 //
 // The reconcile runs from three triggers, all through the same function:
 // a board change (ws.pushSessionUpdate / pushIssueUpdate → noteBoardChange,
-// debounced per app), the hourly leader sweep over apps viewed in the last
-// week (sweep), and a GET that finds no draft, cards the row does not know,
+// debounced per app), the hourly workshop-themes clock over apps viewed in
+// the last week (sweepTargets, each app a target: sweepApp), and a GET that finds no draft, cards the row does not know,
 // a stage run under another prompt version or a paragraph that is due
 // (getThemes), so a first visit still starts one. GET never waits on the
 // model: it serves what the row has, with `coverage` saying how much of the

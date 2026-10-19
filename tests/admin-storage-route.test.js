@@ -80,6 +80,10 @@ poolMod.getPool = () => ({
       if (!a.db_storage_warned_at) a.db_storage_warned_at = params[0];
       return { rows: [], rowCount: 1 };
     }
+    if (/^SELECT db_storage_frozen_at FROM apps WHERE id = \$1$/.test(q)) {
+      const a = byId(params[0]);
+      return { rows: a ? [{ db_storage_frozen_at: a.db_storage_frozen_at }] : [] };
+    }
     if (/^UPDATE apps SET db_storage_frozen_at = NULL WHERE id = \$1 AND db_storage_frozen_at IS NOT NULL$/.test(q)) {
       const a = byId(params[0]);
       if (!a.db_storage_frozen_at) return { rows: [], rowCount: 0 };
@@ -379,5 +383,23 @@ test('POST sweep answers 200 with the failure in the summary when measuring fail
     assert.deepEqual(sweep.errors, ['measure: psql: connection refused']);
   } finally {
     dbManager.listAppDatabaseSizes = original;
+  }
+});
+
+test('POST sweep where no clock runs it (a staging preview) measures on the spot; a failed run says why', async () => {
+  const saved = clocks.runNow;
+  try {
+    clocks.runNow = async () => { throw Object.assign(new Error('The job app-storage-cap cannot run now (not_armed)'), { status: 409, code: 'not_armed' }); };
+    sizes = [['app_notes', GIB]];
+    let res = await fetch(`${bases.full}/api/admin/storage/sweep`, { method: 'POST' });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).sweep.measured, 1);
+
+    clocks.runNow = async () => ({ result: null, lastError: 'psql: connection refused' });
+    res = await fetch(`${bases.full}/api/admin/storage/sweep`, { method: 'POST' });
+    assert.equal(res.status, 500);
+    assert.deepEqual(await res.json(), { error: 'psql: connection refused' });
+  } finally {
+    clocks.runNow = saved;
   }
 });

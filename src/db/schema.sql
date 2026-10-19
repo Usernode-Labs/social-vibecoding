@@ -13770,6 +13770,9 @@ ALTER TABLE wf_work ADD COLUMN IF NOT EXISTS lost_attempts INTEGER NOT NULL DEFA
 CREATE INDEX IF NOT EXISTS wf_work_due_idx
   ON wf_work (kind, due_at) WHERE status IN ('queued', 'running');
 CREATE INDEX IF NOT EXISTS wf_work_instance_idx ON wf_work (machine, key, created_at);
+-- An instance's outstanding items of one kind (a clock's targets still owed
+-- an item: src/workflow/clock/machine.ts facts).
+CREATE INDEX IF NOT EXISTS wf_work_outstanding_idx ON wf_work (machine, key, kind) WHERE status <> 'settled';
 CREATE INDEX IF NOT EXISTS wf_work_settled_idx
   ON wf_work (settled_at) WHERE status = 'settled';
 COMMENT ON TABLE wf_work IS 'staging:private';
