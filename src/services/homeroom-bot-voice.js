@@ -1045,7 +1045,7 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   };
   const t = {
     config: cfg, user: speaker, settings, message: { id: last.message.id }, ctx,
-    model: cfg.openrouterDefaultCodexModel || mayor.DEFAULT_MODEL,
+    model: require('./default-model').fromSettings(settings, cfg) || mayor.DEFAULT_MODEL,
     chat: deps.chat || require('./global-chat/openrouter').streamChat,
     sleep: deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
     apiKey: deps.apiKey,
@@ -1752,7 +1752,7 @@ async function composeReport(pool, cfg, { app, session, bot, asks, outcome, deps
   ].filter(Boolean).join('\n');
   const t = {
     config: cfg, user: { id: bot.id }, message: { id: Number(asks[asks.length - 1]?.message_id) || 0 },
-    model: cfg.openrouterDefaultCodexModel || mayor.DEFAULT_MODEL,
+    model: (await require('./default-model').effective(pool, cfg)) || mayor.DEFAULT_MODEL,
     chat: deps.chat || require('./global-chat/openrouter').streamChat,
     sleep: deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
     apiKey, route: 1, startedMs: Date.now(), usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 }, failures: [],

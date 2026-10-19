@@ -466,7 +466,10 @@ function globalChatRoutes(config) {
     const row = rows[0] || {};
     return {
       backend: row.backend || 'claude_code',
-      model: row.model_id || null,
+      // No model on an OpenRouter preference is "follow the platform
+      // default" (services/default-model.js).
+      model: row.model_id
+        || (row.backend === 'codex_openrouter' ? await require('../services/default-model').effective(pool, config) : null),
       reasoningEffort: row.reasoning_effort || null,
     };
   }

@@ -289,6 +289,9 @@ test('settings default to off and clamp their numbers', () => {
     userWeeklyCents: 5000, adminWeeklyCents: 10000,
     // #3654: every stage on the platform default until an admin names one.
     models: { triage: '', spec: '', build: '', followup: '' },
+    // And the platform default itself on the deployment's until an admin
+    // picks one (services/default-model.js).
+    defaultModel: '',
     // Live work, 12 at once and 3 per person (raised from 6 and 2 when every
     // project went live); a DM is read.
     liveAtOnce: 12, perPerson: 3, dmChat: true,

@@ -261,6 +261,7 @@ async function migrate(config) {
   await backfillUsernameChoiceForEmailHandles(pool);
   await backfillSettingsProposalSource(pool);
   await migrateWaitlistCountryCodes(pool);
+  await followPlatformDefaultModel(pool);
   // After backfillVotesRequired, which reads the merge announcements.
   await clearAutomatedChannelLines(pool);
   await backfillPlanRows(pool);
@@ -705,6 +706,54 @@ async function revokeLegacyGithubGrants(pool, config) {
 // Best-effort throughout: every fetch/update is individually guarded and a
 // failure never aborts boot. Sessions that already have linked_issues are
 // excluded by the query (cheap, no network) and need no flag.
+
+// ── One-time: untouched coding-agent preferences follow the default ───
+//
+// The platform default model became an admin setting
+// (services/default-model.js), and a coding-agent preference with no model
+// follows it. Provisioning used to store the default of the day instead, so
+// every account with an included key was pinned to GLM 5.3 Flash and a
+// change of default reached none of them. This moves, once, the preferences
+// nobody touched since the key was set up (the row's updated_at within a
+// minute of its created_at; any save through Settings or the model picker
+// moves updated_at) back to following the default. A model someone picked,
+// GLM included, stays theirs.
+//
+// Marker-guarded like migrateWaitlistCountryCodes below: after it has run,
+// a GLM preference saved by hand is a choice and must never be moved.
+const FORMER_DEFAULT_MODEL = 'z-ai/glm-5.3-flash';
+
+async function followPlatformDefaultModel(pool) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM platform_settings WHERE key = 'agent_preferences_follow_default_migrated'`
+    );
+    if (rows.length) return;
+
+    const res = await pool.query(
+      `UPDATE user_agent_preferences
+          SET model_id = NULL
+        WHERE backend = 'codex_openrouter'
+          AND model_id = $1
+          AND updated_at <= created_at + INTERVAL '1 minute'`,
+      [FORMER_DEFAULT_MODEL]
+    );
+
+    await pool.query(
+      `INSERT INTO platform_settings (key, value, description) VALUES
+         ('agent_preferences_follow_default_migrated', 'true',
+          'Marker: the one-time move of untouched GLM 5.3 Flash coding-agent preferences to following the platform default has run. Do not delete: deleting re-runs it, and after it a GLM preference is somebody''s choice.')
+       ON CONFLICT (key) DO NOTHING`
+    );
+
+    if (res.rowCount) {
+      log.info('db', 'Coding-agent preferences now follow the platform default', { rows: res.rowCount });
+    }
+  } catch (err) {
+    log.warn('db', 'coding-agent default-model migration skipped', { err: err.message });
+  }
+}
+
 // ── One-time: namespace the retired waitlist region pseudo-codes ───────
 //
 // The waitlist country picker was ~50 curated codes in six region buckets,
@@ -15148,6 +15197,7 @@ module.exports = {
   seedStagingBotChatRequest,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
+  followPlatformDefaultModel,
   clearAutomatedChannelLines,
   backfillPlanRows,
   backfillProposalIssuerAssignments, backfillVotesRequired,

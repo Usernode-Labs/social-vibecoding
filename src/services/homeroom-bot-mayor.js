@@ -2248,7 +2248,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   // to. A retry moves to a fresh one, and the turn stays there.
   const t = {
     config, user, settings, message, ctx,
-    model: config.openrouterDefaultCodexModel || DEFAULT_MODEL,
+    model: require('./default-model').fromSettings(settings, config) || DEFAULT_MODEL,
     chat: deps.chat || require('./global-chat/openrouter').streamChat,
     sleep: deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
     apiKey: deps.apiKey,

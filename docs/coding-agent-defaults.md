@@ -42,14 +42,28 @@ configuration in `services/bot-configs.js`, still GLM while a 1017 version
 is compared blind beside it), and the Homeroom bot's per-stage models
 (triage, follow-up), which an admin sets in the bot's console settings.
 
-Changing the default is an operations change, not only a code change.
-Production takes `OPENROUTER_DEFAULT_CODEX_MODEL` from the deploy: a value
-set in the Homeroom project's Platform variables panel wins (appended last
-by `scripts/dump-platform-env.js`), else the deploy workflow's repository
-variable, whose own fallback is still `z-ai/glm-5.3-flash`. The value in
-`src/config.js` is the fallback for runs that set nothing (local runs and
-tests), and dapp.json's `default` is what the panel shows.
-`OPENROUTER_RECOMMENDED_MODELS` works the same way.
+Changing the default is an admin setting: Admin → Homeroom bot → Settings
+→ Models → Platform default (`services/default-model.js`, stored in
+`platform_settings`). Every server follows a save within 10 seconds, with no
+deploy. Blank goes back to the deployment's default, which is
+`OPENROUTER_DEFAULT_CODEX_MODEL` where the deploy sets it, else the fallback
+in `src/config.js`. On the Kubernetes deploy nothing sets it: the platform
+chart does not carry it and the Platform variables panel is not applied
+there, so the deployment's default is `src/config.js`'s. The VPS deploy
+workflow (`.github/workflows/deploy.yml`, run by hand only) writes its own
+fallback, still `z-ai/glm-5.3-flash`; the admin setting wins over it too.
+`OPENROUTER_RECOMMENDED_MODELS` has no admin setting and comes from the same
+places.
+
+What follows the default: a new agent chat for an account whose coding
+agent preference names no model, the model catalog's recommended model, and
+the Homeroom bot's stages left on the platform default and its answers in
+DMs and chats. A key set up for an account stores no model, so the account
+follows the default until its person picks one. Before this, setting up a
+key stored the default of the day, so a one-time migration
+(`followPlatformDefaultModel` in `src/db/migrate.js`) moved the GLM 5.3
+Flash preferences nobody had touched since their key was set up back to
+following the default. A model a person picked stays theirs.
 
 ## Before 2026-10-19: GLM 5.3 Flash stays (reviewed 2026-09-23)
 

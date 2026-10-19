@@ -642,7 +642,7 @@ function createClient({
 async function resolveForSession({ pool, config = {}, session, userId, fetchImpl, sessionKey = null }) {
   if (!config.openrouterSessionMayorEnabled) return { error: 'disabled' };
   if (!config.codexOpenrouterEnabled) return { error: 'backend_disabled' };
-  const model = bareModelId(session?.agent_model || config.openrouterDefaultCodexModel);
+  const model = bareModelId(session?.agent_model || await require('./default-model').effective(pool, config));
   if (!model) return { error: 'model_required' };
   const meta = await credentialStore.readMetadata({
     pool, userId, provider: 'openrouter', purpose: 'coding_agent',
