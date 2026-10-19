@@ -71,18 +71,27 @@ function runtimeWith(clients) {
 
 // A cluster on a timeline, in ms from the moment the Job is created: the
 // log's lines at their times (and the stream's end), the container's exit,
-// the Job's verdict. `null` for a time is never.
+// the Job's verdict. `null` for a time is never. The Pod belongs to the Job
+// (its controller owner reference carries the Job's UID); `pod(p)` may
+// change what the Pod says, `job(j)` what the Job says.
 function timedCluster({
   lines = [], streamEndAt = null, podExitAt = 100, exitCode = 0, message = digest('d'),
   jobDoneAt = 3000, jobFailed = false, withLogs = true, patch = async () => {}, previousJobs = [],
-  createConflict = false,
+  createConflict = false, pod: shapePod = (p) => p, job: shapeJob = (j) => j,
 } = {}) {
-  const state = { jobs: [], secrets: [], deleted: [], patches: [], jobReads: 0, podReads: 0, created: null };
+  const state = {
+    jobs: [], secrets: [], deleted: [], patches: [], jobReads: 0, podReads: 0, created: null,
+    jobUid: createConflict ? 'uid-existing' : null, annotations: {},
+  };
   const since = () => (state.created === null ? -1 : Date.now() - state.created);
-  const pod = () => ({
-    metadata: { name: 'bk-pod', creationTimestamp: '2026-10-19T10:00:00Z' },
+  const pod = () => shapePod({
+    metadata: {
+      name: 'bk-pod', creationTimestamp: '2026-10-19T10:00:00Z', labels: { 'job-name': 'x' },
+      ownerReferences: [{ kind: 'Job', controller: true, uid: state.jobUid, name: 'x' }],
+    },
     spec: { nodeName: 'worker-3' },
     status: {
+      phase: podExitAt !== null && since() >= podExitAt ? (exitCode === 0 ? 'Succeeded' : 'Failed') : 'Running',
       containerStatuses: [{
         name: 'buildkit',
         state: podExitAt !== null && since() >= podExitAt
@@ -90,7 +99,7 @@ function timedCluster({
           : { running: { startedAt: '2026-10-19T10:00:01Z' } },
       }],
     },
-  });
+  }, since());
   const batch = {
     async listNamespacedJob(request) {
       if (/social\.usernode\.io\/revision=/.test(request.labelSelector || '')) return { items: [] };
@@ -100,7 +109,9 @@ function timedCluster({
       if (createConflict) throw Object.assign(new Error('exists'), { code: 409 });
       state.jobs.push(body);
       state.created = Date.now();
-      return { metadata: { ...body.metadata, uid: `uid-${state.jobs.length}` } };
+      state.jobUid = `uid-${state.jobs.length}`;
+      state.annotations = { ...(body.metadata.annotations || {}) };
+      return { metadata: { ...body.metadata, uid: state.jobUid } };
     },
     async readNamespacedJob({ name }) {
       state.jobReads += 1;
@@ -109,17 +120,24 @@ function timedCluster({
       const status = !done ? { active: 1 }
         : jobFailed ? { failed: 1, conditions: [{ type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded' }] }
           : { succeeded: 1, conditions: [{ type: 'Complete', status: 'True' }] };
-      return { metadata: { name, namespace: 'bk' }, status };
+      return shapeJob({
+        metadata: { name, namespace: 'bk', uid: state.jobUid, resourceVersion: String(state.jobReads), annotations: { ...state.annotations } },
+        status,
+      }, since());
     },
-    async patchNamespacedJob(request) { state.patches.push(request); return patch(request); },
+    async patchNamespacedJob(request) {
+      state.patches.push(request);
+      Object.assign(state.annotations, request.body?.metadata?.annotations || {});
+      return patch(request);
+    },
     async deleteNamespacedJob(request) { state.deleted.push({ kind: 'Job', ...request }); },
   };
   const core = {
-    async createNamespacedSecret({ body }) { state.secrets.push(body); },
-    async readNamespacedSecret({ name }) { return { metadata: { name } }; },
+    async createNamespacedSecret({ body }) { state.secrets.push(body); return { metadata: { ...body.metadata, uid: 'secret-uid-1' } }; },
+    async readNamespacedSecret({ name }) { return { metadata: { name, uid: 'secret-uid-1' } }; },
     async replaceNamespacedSecret() {},
     async deleteNamespacedSecret(request) { state.deleted.push({ kind: 'Secret', ...request }); },
-    async listNamespacedPod() { return { items: [pod()] }; },
+    async listNamespacedPod() { state.podReads += 1; return { items: [pod()] }; },
     async readNamespacedPod() { state.podReads += 1; return pod(); },
   };
   const logs = {
@@ -189,7 +207,7 @@ test('a running container keeps the build waiting, and the Job\'s verdict still 
   // no digest, which the Job path reports as before.
   await assert.rejects(build(cluster), /finished without an image digest/);
   assert.ok(cluster.since() >= 1200);
-  assert.equal(cluster.state.podReads, 0, 'a followed log that has not ended costs no Pod reads');
+  assert.ok(cluster.state.podReads <= 2, `the Pod is looked up to follow its log and for the Job's result, not on every tick (${cluster.state.podReads})`);
 });
 
 test('with no log to follow, the Pod is read on every tick', async () => {
@@ -228,7 +246,7 @@ test('the digest annotation is written, but the deploy does not wait for it', { 
 // sleeping and exiting as told, its absolute paths moved into a scratch
 // directory. Resolves with the exit code, the output, the stand-ins' calls
 // and the wall time.
-function runScript({ preflightMs = 0, preflightExit = 0, fetchMs = 0, fetchExit = 0 } = {}) {
+function runScript({ preflightMs = 0, preflightExit = 0, fetchMs = 0, fetchExit = 0, termAfterMs = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bk-waits-script-'));
   const bin = path.join(dir, 'bin');
   fs.mkdirSync(bin);
@@ -236,7 +254,7 @@ function runScript({ preflightMs = 0, preflightExit = 0, fetchMs = 0, fetchExit 
   fs.writeFileSync(path.join(bin, 'git'), [
     '#!/bin/sh',
     'printf \'git %s\\n\' "$*" >> "$STUB_DIR/calls.log"',
-    'case "$*" in *" fetch "*) ' + sleepFor(fetchMs) + '; exit $STUB_FETCH_EXIT ;; esac',
+    'case "$*" in *" fetch "*) ' + sleepFor(fetchMs) + '; printf \'git fetch done\\n\' >> "$STUB_DIR/calls.log"; exit $STUB_FETCH_EXIT ;; esac',
     'exit 0',
   ].join('\n'), { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'buildctl-daemonless.sh'), [
@@ -258,14 +276,21 @@ function runScript({ preflightMs = 0, preflightExit = 0, fetchMs = 0, fetchExit 
     STUB_PREFLIGHT_EXIT: String(preflightExit), STUB_FETCH_EXIT: String(fetchExit),
   };
   const started = Date.now();
+  // `ms` is when the script itself exited; `calls` is read once the
+  // stand-ins have had the whole fetch time to say they finished, so a
+  // fetch the script stopped shows as one that never did.
   return new Promise((resolve) => {
     const child = spawn('sh', ['-c', script], { env });
+    if (termAfterMs !== null) setTimeout(() => child.kill('SIGTERM'), termAfterMs);
     let out = '';
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { out += d; });
-    child.on('close', (code) => {
-      const calls = fs.existsSync(path.join(dir, 'calls.log')) ? fs.readFileSync(path.join(dir, 'calls.log'), 'utf8') : '';
-      resolve({ code, out, calls, ms: Date.now() - started });
+    child.on('exit', (code, signal) => {
+      const ms = Date.now() - started;
+      setTimeout(() => {
+        const calls = fs.existsSync(path.join(dir, 'calls.log')) ? fs.readFileSync(path.join(dir, 'calls.log'), 'utf8') : '';
+        resolve({ code: code ?? signal, out, calls, ms });
+      }, Math.max(50, fetchMs - ms + 300));
     });
   });
 }
@@ -399,4 +424,193 @@ test('an early start the lane refuses is remembered under auto, and the build go
   await assert.rejects(kubernetes.startEarlyBuild(config(), { app, revision, environment: 'staging', sessionId: 42 }), /lane unavailable/);
   assert.ok(buildkit.unavailableReason(), 'the next build does not try the lane again at once');
   assert.ok(cluster.state.deleted.some((d) => d.kind === 'Secret'), 'the clone credential does not outlive the refusal');
+});
+
+// ── review round 1: what the fast path, the cancel and the script must not do ──
+
+test('the script: a stalled fetch does not hold back exit 75; the fetch is stopped and reaped', async () => {
+  const run = await runScript({ preflightMs: 20, preflightExit: 1, fetchMs: 2000 });
+  assert.equal(run.code, buildkit._forTest.PREFLIGHT_EXIT, run.out);
+  assert.ok(run.ms < 1000, `exits as soon as the preflight fails (took ${run.ms} ms)`);
+  assert.doesNotMatch(run.calls, /git fetch done/, 'the fetch was stopped, not left to finish');
+});
+
+test('the script: a TERM during the fetch (the Job\'s deadline) stops the fetch too', async () => {
+  const run = await runScript({ preflightMs: 3000, fetchMs: 2000, termAfterMs: 300 });
+  assert.equal(run.code, 143, run.out);
+  assert.ok(run.ms < 1000, `took ${run.ms} ms`);
+  assert.doesNotMatch(run.calls, /git fetch done/);
+  assert.doesNotMatch(run.calls, /buildctl build/);
+});
+
+const pushedSoon = { lines: [{ at: 10, line: '[buildkit] pushed x' }] };
+
+test('a finished Pod of an older Job of the same name never completes this build', async () => {
+  // The Job was deleted in the background and made again; its old Pod,
+  // which succeeded, still carries the `job-name` label.
+  const cluster = timedCluster({
+    ...pushedSoon, podExitAt: 0, jobDoneAt: 400, jobFailed: true,
+    pod: (p) => { p.metadata.ownerReferences[0].uid = 'uid-of-the-old-job'; return p; },
+  });
+  await assert.rejects(build(cluster), /failed: BackoffLimitExceeded/, 'the current Job\'s verdict decides');
+});
+
+test('a Job that is failing (FailureTarget) is never completed by its Pod, and still reports its deadline', async () => {
+  const cluster = timedCluster({
+    ...pushedSoon, podExitAt: 0, jobDoneAt: null,
+    job: (j, t) => {
+      j.status = t < 400
+        ? { active: 1, conditions: [{ type: 'FailureTarget', status: 'True', reason: 'DeadlineExceeded' }] }
+        : { failed: 1, conditions: [{ type: 'Failed', status: 'True', reason: 'DeadlineExceeded' }] };
+      return j;
+    },
+  });
+  await assert.rejects(build(cluster), (err) => {
+    assert.match(err.message, /failed: DeadlineExceeded/);
+    assert.equal(err.killed, true);
+    return true;
+  });
+});
+
+test('a failed or deleting Pod is no result, whatever its container says', async () => {
+  for (const [why, shape] of [
+    ['phase Failed', (p) => { p.status.phase = 'Failed'; return p; }],
+    ['being deleted', (p) => { p.metadata.deletionTimestamp = '2026-10-19T10:00:02Z'; return p; }],
+  ]) {
+    const cluster = timedCluster({ ...pushedSoon, podExitAt: 0, jobDoneAt: 400, jobFailed: true, pod: shape });
+    await assert.rejects(build(cluster), /failed: BackoffLimitExceeded/, why);
+  }
+});
+
+test('a container\'s earlier termination (lastState) is history, not a result', async () => {
+  const cluster = timedCluster({
+    ...pushedSoon, podExitAt: null, jobDoneAt: 400, jobFailed: true,
+    pod: (p) => { p.status.containerStatuses[0].lastState = { terminated: { exitCode: 0, message: digest('e') } }; return p; },
+  });
+  await assert.rejects(build(cluster), /failed: BackoffLimitExceeded/);
+});
+
+test('the fast path waits on the Job this build made: a Job recreated under its name is left to its own verdict', async () => {
+  const cluster = timedCluster({ ...pushedSoon, podExitAt: 0, jobDoneAt: 400, jobFailed: true });
+  const handle = await buildkit.startBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, dockerfile: 'Dockerfile.kubernetes',
+  }, runtimeWith(cluster.clients));
+  cluster.state.jobUid = 'uid-of-a-newer-job'; // and its Pod with it
+  await assert.rejects(buildkit.finishBuild(handle, {}, runtimeWith(cluster.clients)), /failed: BackoffLimitExceeded/);
+  const failDelete = cluster.state.deleted.find((d) => d.kind === 'Job');
+  assert.deepEqual(failDelete.body.preconditions, { uid: 'uid-1' }, 'and its cleanup can only remove the Job it made');
+});
+
+test('an early build of a starter\'s first commit is not adopted (that build writes the starter\'s cache)', async () => {
+  const cluster = timedCluster({ previousJobs: [previousJob('Dockerfile.kubernetes')], ...pushedSoon, podExitAt: 20 });
+  kubernetes._setClientsForTest(cluster.clients);
+  const early = await kubernetes.startEarlyBuild(config(), { app, revision, environment: 'staging', sessionId: 42 });
+  const result = await kubernetes.createBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile.kubernetes']), early, starterTree: true,
+  });
+  assert.equal(result.earlyStart, undefined);
+  assert.ok(cluster.state.deleted.some((d) => d.kind === 'Job'), 'the early Job is cancelled');
+});
+
+// One Job name, two starts: the Job the first made, found by the second.
+function sharedJobCluster() {
+  let current = null;
+  let serial = 0;
+  let rv = 0;
+  const deletes = [];
+  const c = timedCluster({ withLogs: false });
+  c.clients.batch.listNamespacedJob = async () => ({ items: [] });
+  c.clients.batch.createNamespacedJob = async ({ body }) => {
+    if (current) throw Object.assign(new Error('exists'), { code: 409 });
+    serial += 1;
+    rv += 1;
+    current = { ...body, metadata: { ...body.metadata, uid: `job-uid-${serial}`, resourceVersion: String(rv) }, status: { active: 1 } };
+    return current;
+  };
+  c.clients.batch.readNamespacedJob = async () => {
+    if (!current) throw Object.assign(new Error('not found'), { code: 404 });
+    return JSON.parse(JSON.stringify(current));
+  };
+  c.clients.batch.patchNamespacedJob = async ({ body }) => {
+    rv += 1;
+    current.metadata = { ...current.metadata, resourceVersion: String(rv),
+      annotations: { ...current.metadata.annotations, ...body.metadata.annotations } };
+  };
+  c.clients.batch.deleteNamespacedJob = async (req) => {
+    const pre = req.body?.preconditions || {};
+    if (!current) throw Object.assign(new Error('not found'), { code: 404 });
+    if ((pre.uid && pre.uid !== current.metadata.uid) || (pre.resourceVersion && pre.resourceVersion !== current.metadata.resourceVersion)) {
+      throw Object.assign(new Error('Precondition failed'), { code: 409 });
+    }
+    deletes.push({ kind: 'Job', uid: current.metadata.uid });
+    current = null;
+  };
+  c.clients.core.deleteNamespacedSecret = async (req) => { deletes.push({ kind: 'Secret', preconditions: req.body?.preconditions || null }); };
+  return {
+    rt: runtimeWith(c.clients), deletes, get: () => current,
+    fail: () => { current.status = { failed: 1, conditions: [{ type: 'Failed', status: 'True' }] }; },
+  };
+}
+
+const startParams = { app, revision, environment: 'staging', sessionId: 42, dockerfile: 'Dockerfile.kubernetes' };
+
+test('a start whose Job another start has taken over cannot cancel it', async () => {
+  const shared = sharedJobCluster();
+  const a = await buildkit.startBuild(config(), startParams, shared.rt);
+  const b = await buildkit.startBuild(config(), startParams, shared.rt);
+  assert.equal(a.createdHere, true);
+  assert.equal(b.createdHere, false);
+  assert.equal(await buildkit.cancelBuild(a, shared.rt), false);
+  assert.equal(shared.get()?.metadata?.uid, 'job-uid-1', 'the Job the second start waits on is still there');
+  assert.deepEqual(shared.deletes, []);
+});
+
+test('a start cannot cancel the Job that replaced its own under the same name, nor that Job\'s Secret', async () => {
+  const shared = sharedJobCluster();
+  const a = await buildkit.startBuild(config(), startParams, shared.rt);
+  shared.fail();
+  const b = await buildkit.startBuild(config(), startParams, shared.rt); // deletes the failed job-uid-1, makes job-uid-2
+  assert.equal(b.createdHere, true);
+  assert.equal(shared.get()?.metadata?.uid, 'job-uid-2');
+  const before = shared.deletes.length;
+  assert.equal(await buildkit.cancelBuild(a, shared.rt), false);
+  assert.equal(shared.get()?.metadata?.uid, 'job-uid-2');
+  assert.deepEqual(shared.deletes.slice(before), [], 'neither the new Job nor its input Secret');
+});
+
+test('a start that still holds its Job cancels it, fenced by UID and resourceVersion, then its Secret by UID', async () => {
+  const shared = sharedJobCluster();
+  const a = await buildkit.startBuild(config(), startParams, shared.rt);
+  assert.equal(await buildkit.cancelBuild(a, shared.rt), true);
+  assert.equal(shared.get(), null);
+  assert.deepEqual(shared.deletes, [{ kind: 'Job', uid: 'job-uid-1' }, { kind: 'Secret', preconditions: { uid: 'secret-uid-1' } }]);
+});
+
+test('an early start whose Job list the lane refuses is remembered under auto too', async () => {
+  let reads = 0;
+  kubernetes._setClientsForTest({ batch: { async listNamespacedJob() { reads += 1; throw Object.assign(new Error('forbidden'), { code: 403 }); } } });
+  const params = { app, revision, environment: 'staging', sessionId: 42 };
+  await assert.rejects(kubernetes.startEarlyBuild(config(), params), /forbidden/);
+  assert.equal(await kubernetes.startEarlyBuild(config(), params), null, 'the next start does not ask again');
+  assert.equal(reads, 1);
+  assert.ok(buildkit.unavailableReason());
+});
+
+test('finishedPod: a result only from a Pod of this Job that exited 0, never from another Job\'s, a failed or a deleting one', () => {
+  const { finishedPod } = buildkit._forTest;
+  const pod = (extra = {}) => ({
+    metadata: { name: 'p', ownerReferences: [{ kind: 'Job', controller: true, uid: 'uid-1' }], ...(extra.metadata || {}) },
+    status: { phase: 'Succeeded', containerStatuses: [{ name: 'buildkit', state: { terminated: { exitCode: 0, message: digest('d') } } }], ...(extra.status || {}) },
+  });
+  assert.equal(finishedPod(pod(), 'job', 'uid-1').digest, digest('d'));
+  assert.equal(finishedPod(pod(), 'job', 'uid-2'), null, 'another Job\'s Pod');
+  assert.equal(finishedPod(pod(), 'job', null), null, 'no Job to match it against');
+  assert.equal(finishedPod(pod({ metadata: { ownerReferences: [{ kind: 'Job', controller: false, uid: 'uid-1' }] } }), 'job', 'uid-1'), null,
+    'an owner that is not the controller');
+  assert.equal(finishedPod(pod({ status: { phase: 'Failed' } }), 'job', 'uid-1'), null);
+  // A container that exited non-zero before the kubelet has moved the Pod
+  // to Failed: its message may still carry a digest from the build output.
+  assert.equal(finishedPod(pod({ status: { phase: 'Running', containerStatuses: [{ name: 'buildkit',
+    state: { terminated: { exitCode: 1, message: digest('e') } } }] } }), 'job', 'uid-1'), null);
+  assert.equal(finishedPod(pod({ metadata: { deletionTimestamp: 'now' } }), 'job', 'uid-1'), null);
 });

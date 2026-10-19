@@ -380,15 +380,18 @@ async function startEarlyBuild(config, { app, revision, environment, sessionId }
   if (engine === 'auto' && buildkit.unavailableReason()) return null;
   if (!/^[a-f0-9]{40}$/i.test(revision || '')) return null;
   const runtime = buildkitRuntime();
-  const dockerfile = await buildkit.previousDockerfile(config, app.id, runtime);
-  if (!dockerfile) return null;
   try {
+    const dockerfile = await buildkit.previousDockerfile(config, app.id, runtime);
+    if (!dockerfile) return null;
     const handle = await buildkit.startBuild(config, {
       app, revision: revision.toLowerCase(), environment, sessionId, dockerfile,
     }, runtime);
     return { ...handle, startedAt: Date.now() };
   } catch (err) {
-    if (engine === 'auto' && err?.engineUnavailable) buildkit.noteUnavailable(err);
+    // A namespace or RBAC the lane does not have yet refuses the Job list
+    // too: remembered as the Job create's refusal is.
+    const code = err?.code || err?.response?.statusCode || err?.response?.status || err?.statusCode;
+    if (engine === 'auto' && (err?.engineUnavailable || code === 403 || code === 404)) buildkit.noteUnavailable(err);
     throw err;
   }
 }
