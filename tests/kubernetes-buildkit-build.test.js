@@ -185,10 +185,10 @@ test('the Job manifest: rootless daemon, per-app cache repository, source and id
 
 // BUILDKIT_NODE_PREFERENCE (buildPlacement): the build Pod's spec with a
 // preference, through createBuild as the platform makes it.
-async function buildPodWith(buildkitNodePreference) {
+async function buildPodWith(buildkitNodePreference, { environment = 'staging', sessionId = 42, buildApp = app } = {}) {
   const { clients, state } = fakeCluster({});
   await buildkit.createBuild(config({ buildkitNodePreference }), {
-    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile.kubernetes']),
+    app: buildApp, revision, environment, sessionId, sourceDir: sourceTree(['Dockerfile.kubernetes']),
   }, runtimeWith(clients));
   assert.equal(state.jobs.length, 1);
   return state.jobs[0].spec.template.spec;
@@ -226,9 +226,57 @@ test('BUILDKIT_NODE_PREFERENCE: one label value, a prefix-less key, spaces and r
 test('BUILDKIT_NODE_PREFERENCE: empty or malformed leaves the default placement', () => {
   for (const value of [undefined, '', '   ', 'talos-2cc-re6', 'kubernetes.io/hostname=', '=fast',
     'kubernetes.io/hostname=a,,b', 'kubernetes.io/hostname=a,', 'a=b=c', 'Bad_Prefix/pool=x',
-    `pool=${'x'.repeat(64)}`, 'kubernetes.io/hostname=-a']) {
+    `pool=${'x'.repeat(64)}`, 'kubernetes.io/hostname=-a',
+    // A prefix is a DNS subdomain: Kubernetes refuses these keys, and a Job
+    // it refuses is a build that cannot start.
+    'example..com/cpu=fast', 'example.-com/cpu=fast', 'example-.com/cpu=fast', '.example.com/cpu=fast',
+    'example.com./cpu=fast', '-example.com/cpu=fast', 'Example.com/cpu=fast', 'exa_mple.com/cpu=fast',
+    '/cpu=fast', 'a/b/cpu=fast', `${'a'.repeat(254)}/cpu=fast`, `${'n'.repeat(64)}=fast`, `cpu=${'v'.repeat(64)}`]) {
     assert.deepEqual(buildkit._forTest.buildPlacement(config({ buildkitNodePreference: value }).kubernetes), {},
       JSON.stringify(value));
+  }
+});
+
+test('BUILDKIT_NODE_PREFERENCE: keys and values at Kubernetes\' length limits are accepted', () => {
+  const key = `${'a'.repeat(61)}.${'b'.repeat(63)}.${'c'.repeat(63)}.${'d'.repeat(63)}/${'N'.repeat(63)}`;
+  assert.equal(key.indexOf('/'), 253);
+  const value = 'V'.repeat(63);
+  const placement = buildkit._forTest.buildPlacement(config({ buildkitNodePreference: `${key}=${value}` }).kubernetes);
+  assert.deepEqual(placement.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].preference.matchExpressions,
+    [{ key, operator: 'In', values: [value] }]);
+  for (const ok of ['a.b-c.d/x=y', 'a/x=y', '0-9.example.com/cpu-class=fast']) {
+    assert.notDeepEqual(buildkit._forTest.buildPlacement(config({ buildkitNodePreference: ok }).kubernetes), {}, ok);
+  }
+});
+
+test('BUILDKIT_NODE_PREFERENCE: a malformed value is logged once, however many builds read it', () => {
+  const logger = require('../src/services/logger');
+  const saved = logger.warn;
+  const calls = [];
+  logger.warn = (...args) => calls.push(args);
+  try {
+    for (let i = 0; i < 3; i++) {
+      assert.deepEqual(buildkit._forTest.buildPlacement(config({ buildkitNodePreference: 'warn-once.example..com/x=y' }).kubernetes), {});
+    }
+  } finally {
+    logger.warn = saved;
+  }
+  assert.equal(calls.length, 1);
+  assert.match(calls[0][1], /BUILDKIT_NODE_PREFERENCE/);
+  assert.deepEqual(calls[0][2], { value: 'warn-once.example..com/x=y' });
+});
+
+test('BUILDKIT_NODE_PREFERENCE: production images and other apps\' builds get the same preference as previews', async () => {
+  const value = 'kubernetes.io/hostname=talos-2cc-re6,talos-kth-nbr';
+  const preview = await buildPodWith(value);
+  for (const options of [
+    { environment: 'production', sessionId: null },
+    { environment: 'staging', sessionId: 7, buildApp: { id: 99, slug: 'other', repo_url: 'https://github.com/example/other' } },
+    { environment: 'production', sessionId: null, buildApp: { id: 99, slug: 'other', repo_url: 'https://github.com/example/other' } },
+  ]) {
+    const pod = await buildPodWith(value, options);
+    assert.deepEqual(pod.affinity, preview.affinity, JSON.stringify(options));
+    assert.equal(pod.tolerations, undefined);
   }
 });
 

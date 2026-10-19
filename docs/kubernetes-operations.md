@@ -799,7 +799,11 @@ class label survives a node being replaced. It is a preferred node affinity
 with no toleration: with those nodes full, cordoned or gone a build runs
 wherever it fits, as before, and never waits for them. It applies to every
 BuildKit build, previews and production images of every app. A value that is
-not a valid label pair is logged once and ignored. To see where builds ran:
+not a valid label pair is logged once and ignored. The web and conductor
+Pods both read it from their environment at start, so after changing the
+ConfigMap (or reverting it) restart both: `kubectl -n social-platform rollout
+restart deployment/social-vibecoding deployment/social-vibecoding-conductor`.
+A platform release rolls both anyway. To see where builds ran:
 `kubectl -n social-buildkit get pods -o wide`.
 
 Self-app previews (`USERNODE_ENV=staging`) do not build worker images, inspect

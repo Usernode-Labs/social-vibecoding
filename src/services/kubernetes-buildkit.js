@@ -471,15 +471,34 @@ function securityContexts(cfg) {
 // that cannot start, and the default placement is the better failure. The
 // preference is not part of the recipe: where a build ran does not change
 // the image, so a finished build is still reused.
-const LABEL_PART = '[A-Za-z0-9](?:[-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?';
-const NODE_PREFERENCE = new RegExp(
-  `^((?:[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?/)?${LABEL_PART})=(${LABEL_PART}(?:,${LABEL_PART})*)$`);
+// The checks are Kubernetes' own for a label key and value: a name and a
+// value are at most 63 characters, alphanumeric at both ends; a key's
+// optional prefix is a DNS subdomain (dot-separated DNS labels, each
+// alphanumeric at both ends) of at most 253 characters.
+const LABEL_PART = /^[A-Za-z0-9](?:[-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$/;
+const DNS_SUBDOMAIN = /^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$/;
 const warnedPreferences = new Set();
+
+function labelKeyValid(key) {
+  const slash = key.indexOf('/');
+  if (slash === -1) return LABEL_PART.test(key);
+  const prefix = key.slice(0, slash);
+  return prefix.length <= 253 && DNS_SUBDOMAIN.test(prefix) && LABEL_PART.test(key.slice(slash + 1));
+}
+
+function parseNodePreference(raw) {
+  const eq = raw.indexOf('=');
+  if (eq === -1) return null;
+  const key = raw.slice(0, eq);
+  const values = raw.slice(eq + 1).split(',');
+  if (!labelKeyValid(key) || !values.every((value) => LABEL_PART.test(value))) return null;
+  return { key, values };
+}
 
 function nodePreference(cfg) {
   const raw = String(cfg.buildkitNodePreference || '').replace(/\s+/g, '');
   if (!raw) return null;
-  const match = NODE_PREFERENCE.exec(raw);
+  const match = parseNodePreference(raw);
   if (!match) {
     if (!warnedPreferences.has(raw)) {
       warnedPreferences.add(raw);
@@ -487,7 +506,7 @@ function nodePreference(cfg) {
     }
     return null;
   }
-  return { key: match[1], values: [...new Set(match[2].split(','))] };
+  return { key: match.key, values: [...new Set(match.values)] };
 }
 
 function buildPlacement(cfg) {
