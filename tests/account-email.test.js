@@ -118,6 +118,43 @@ test('account email linking: ownership, expiry, retry limits and atomic replacem
     assert.equal(result.recoveryAllowed, false);
     assert.equal(result.passwordRequired, false);
   });
+  await t.test('#5281: username-change codes against real Postgres', async () => {
+    await fresh("UPDATE users SET password_set=FALSE, email_confirmed=TRUE");
+    // A password account is refused; nothing is minted.
+    await pool.query('UPDATE users SET password_set=TRUE WHERE id=2');
+    await assert.rejects(email.requestUsernameCode(pool, {}, 2), { status: 409 });
+    await email.requestUsernameCode(pool, {}, 1);
+    assert.equal(sent.at(-1).kind, 'username_change');
+    assert.equal(sent.at(-1).to, 'old@example.com');
+    const code = sent.at(-1).code;
+    // A minute between requests.
+    await assert.rejects(email.requestUsernameCode(pool, {}, 1), { status: 429 });
+    // The address proof's table is untouched, and its verify ignores this code.
+    assert.equal((await pool.query('SELECT count(*) FROM account_email_verifications')).rows[0].count, '0');
+    await assert.rejects(email.verifyCode(pool, 1, code), { status: 400 });
+    // Another account cannot use it, even one that may ask for its own.
+    await pool.query('UPDATE users SET password_set=FALSE WHERE id=2');
+    await assert.rejects(email.checkUsernameCode(pool, 2, code), { status: 400 });
+    // Checked without being spent; then spent exactly once.
+    const proof = await email.checkUsernameCode(pool, 1, code);
+    const spent = await Promise.all([
+      email.consumeUsernameCode(pool, 1, proof.codeHash),
+      email.consumeUsernameCode(pool, 1, proof.codeHash),
+    ]);
+    assert.deepEqual(spent.sort(), [false, true]);
+    await assert.rejects(email.checkUsernameCode(pool, 1, code), { status: 400 });
+    // Five wrong guesses stop the right code; an expired code is refused.
+    await pool.query("UPDATE account_username_codes SET created_at = NOW() - INTERVAL '61 seconds'");
+    await email.requestUsernameCode(pool, {}, 1);
+    const next = sent.at(-1).code;
+    const wrong = next === '000000' ? '000001' : '000000';
+    for (let i = 0; i < 5; i += 1) await assert.rejects(email.checkUsernameCode(pool, 1, wrong), { status: 400 });
+    await assert.rejects(email.checkUsernameCode(pool, 1, next), { status: 400 });
+    await pool.query('DELETE FROM account_username_codes');
+    await email.requestUsernameCode(pool, {}, 1);
+    await pool.query("UPDATE account_username_codes SET expires_at = NOW() - INTERVAL '1 second'");
+    await assert.rejects(email.checkUsernameCode(pool, 1, sent.at(-1).code), { status: 400 });
+  });
   await t.test('HTTP routes require authentication, return private state and bind writes to caller', async () => {
     await fresh();
     const poolModule = require('../src/db/pool');

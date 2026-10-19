@@ -42,8 +42,8 @@
  *    reason there is no portal here.
  *
  *    ONE React-owned child lives inside it, above Log out: the account block
- *    Me's Admin & moderation row and native wallet / node / staking rows
- *    moved into (./account-rows.tsx). Updates inside a moved node are safe —
+ *    Me's native wallet / node / staking rows moved into (./account-rows.tsx;
+ *    Admin & moderation was there too, and is back on Me since #5281). Updates inside a moved node are safe —
  *    React inserts relative to the footer, a valid parent wherever it is —
  *    and the block renders nothing until mounted, so the prerendered footer
  *    is unchanged.

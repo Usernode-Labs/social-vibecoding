@@ -10744,6 +10744,16 @@ html.un-kb #settings-content-col > .settings-sheet {
   padding-top: 24px;
   border-top: 1px solid var(--app-sheet-line);
 }
+/* #5281: Username, Email & recovery and Password are one group of rows
+   under the "Sign-in" heading Username carries, each a card of its own so its
+   form can open inside it. The two after Username therefore sit 8px under
+   the card above, with no rule and no gap of a new block. Same specificity
+   as the rule above, and after it, so it wins. */
+.settings-sheet > [data-settings-section]:not(.hidden) ~ :is([data-settings-section="email"], [data-settings-section="password"]):not(.hidden):has(> :not(.hidden)) {
+  margin-top: 8px;
+  padding-top: 0;
+  border-top: 0;
+}
 /* Delete account closes the Account page: more room above it, so it never
    reads as the next field of the password form. Spelled with the same
    sibling chain as the rule above so it outranks that rule's margin. */

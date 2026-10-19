@@ -10296,6 +10296,27 @@ CREATE TABLE IF NOT EXISTS account_email_verifications (
 );
 COMMENT ON TABLE account_email_verifications IS 'staging:private';
 
+-- #5281: the same user-bound proof for a USERNAME CHANGE on an account with no
+-- password (it signs in with an emailed code, so it has no password to give
+-- POST /api/me/username). Its own table, not a purpose column on the one
+-- above: that one is keyed by user_id alone, so an email change in flight and
+-- a rename in flight would overwrite each other's code, and keeping the two
+-- proofs in two tables is what makes a code minted for one useless for the
+-- other. Sign-in codes (mobile_otp_codes) are keyed by address and never read
+-- here. One live code per account, only its bcrypt hash, five guesses, ten
+-- minutes, and bound to the confirmed address and the password hash it was
+-- minted against: a code outlives neither a new address nor a new password.
+CREATE TABLE IF NOT EXISTS account_username_codes (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  email VARCHAR(255) NOT NULL,
+  code_hash TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE account_username_codes IS 'staging:private';
+
 -- ── Demo mode ──────────────────────────────────────────────────────────
 --
 -- A recording of the proposal flow needs a second participant who proposes

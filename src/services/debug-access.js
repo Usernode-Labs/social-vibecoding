@@ -57,6 +57,7 @@ const DENIED_TABLES = new Set([
   'platform_env_values', // platform's own env values (AES blobs, still deny)
   'pending_secret_declarations', // values held for a declaration PR (AES blobs)
   'account_email_verifications', // mailbox proof and current-password hash snapshot
+  'account_username_codes', // #5281 username-change mailbox proof and password hash snapshot
   'mobile_otp_codes',   // hashed one-time email signup/claim codes
   'waitlist_verification_codes', // one-time waitlist email codes, same treatment as mobile_otp_codes
   'waitlist_release_links', // hashed one-time sign-in links from the release mail (#4594)

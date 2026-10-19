@@ -243,13 +243,17 @@
     "text": "Account, alerts, keys, wallet",
     "description": "Small line under \"Settings\" on the viewer's profile, for a person who has a wallet: what is in there. \"Keys\" are API keys."
   },
-  "more.settings.hintAdmin": {
-    "text": "Account, alerts, keys, admin",
-    "description": "Small line under \"Settings\" on the viewer's profile, for an administrator: what is in there. \"Keys\" are API keys; \"admin\" is the admin console."
+  "admin.heading": {
+    "text": "Admin",
+    "description": "Small heading on the viewer's own profile over the row that opens the administration console, shown only to platform administrators. Short for administration."
   },
-  "more.settings.hintWalletAdmin": {
-    "text": "Account, alerts, keys, wallet, admin",
-    "description": "Small line under \"Settings\" on the viewer's profile, for an administrator who has a wallet: what is in there. \"Keys\" are API keys; \"admin\" is the admin console."
+  "admin.console.title": {
+    "text": "Admin & moderation",
+    "description": "Row on the viewer's own profile, shown only to platform administrators: opens the administration and moderation console."
+  },
+  "admin.console.hint": {
+    "text": "Reports, people and platform settings",
+    "description": "Small line under \"Admin & moderation\" on an administrator's own profile: what the console holds."
   },
   "date.today": {
     "text": "today",

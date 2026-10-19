@@ -9659,6 +9659,21 @@
     {
       "source": "src/routes/profile.js",
       "method": "POST",
+      "path": "/api/me/username/code",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.me.username.code.bdfe8cff",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/profile.js",
+      "method": "POST",
       "path": "/api/me/username",
       "expression": null,
       "status": "mapped",
