@@ -93,10 +93,15 @@ function demoWeek(resetsAt) {
     usedShare: 0.62,
     usedUp: false,
     resetsAt,
+    // Seven, so the card's top five and its "Show all 7" show (#5284), one
+    // title long enough to wrap onto a second line.
     requests: [
-      { app: { slug: 'staging-demo', name: 'Staging demo board' }, issueNumber: 12, title: 'Staging demo: a dark mode for the board', share: 0.31, asked: false, runs: 3 },
-      { app: { slug: 'staging-demo', name: 'Staging demo board' }, issueNumber: 15, title: 'Staging demo: export the board as a list', share: 0.18, asked: false, runs: 1 },
-      { app: { slug: 'staging-garden', name: 'Staging demo garden' }, issueNumber: 4, title: 'Staging demo: water reminders', share: 0.12, asked: true, runs: 1 },
+      { app: { slug: 'staging-demo', name: 'Staging demo board' }, issueNumber: 12, title: 'Staging demo: a dark mode for the board', share: 0.24, asked: false, runs: 3 },
+      { app: { slug: 'staging-demo', name: 'Staging demo board' }, issueNumber: 15, title: 'Staging demo: export the board as a list', share: 0.12, asked: false, runs: 1 },
+      { app: { slug: 'staging-garden', name: 'Staging demo garden' }, issueNumber: 4, title: 'Staging demo: water reminders', share: 0.09, asked: true, runs: 1 },
+      { app: { slug: 'staging-demo', name: 'Staging demo board' }, issueNumber: 18, title: 'Staging demo: sort the board by due date, by who a card is assigned to, or by when it last changed', share: 0.07, asked: false, runs: 2 },
+      { app: { slug: 'staging-garden', name: 'Staging demo garden' }, issueNumber: 9, title: 'Staging demo: a photo for each plant', share: 0.05, asked: false, runs: 1 },
+      { app: { slug: 'staging-demo', name: 'Staging demo board' }, issueNumber: 21, title: 'Staging demo: keyboard shortcuts', share: 0.04, asked: false, runs: 1 },
       { app: { slug: 'staging-garden', name: 'Staging demo garden' }, issueNumber: 7, title: null, share: 0.004, asked: false, runs: 1 },
     ],
     otherShare: 0,

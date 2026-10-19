@@ -66,6 +66,10 @@ test('staging\'s demo week is obviously fake and marked as a demo', () => {
   assert.equal(demo.demo, true);
   assert.ok(demo.requests.every((r) => r.title === null || r.title.startsWith('Staging demo')));
   assert.ok(demo.requests.some((r) => r.asked) && demo.requests.some((r) => r.share < 0.01), 'it shows a request asked for and a sliver');
+  assert.ok(demo.requests.length > 5, 'more than five, so the card\'s Show all shows (#5284)');
+  const shares = demo.requests.map((r) => r.share);
+  assert.deepEqual(shares, [...shares].sort((a, b) => b - a), 'largest first, as the endpoint answers');
+  assert.ok(shares.reduce((a, b) => a + b, 0) <= demo.usedShare, 'no more than the week used');
 });
 
 test('the card: how much is used, when it resets, each request\'s share and where it is', () => {
@@ -77,15 +81,31 @@ test('the card: how much is used, when it resets, each request\'s share and wher
   assert.match(html, /data-building-time-summary="">62% of this week&#x27;s building time used</);
   assert.match(html, /role="progressbar"[^>]*aria-valuenow="62"[\s\S]*?bg-\[color:var\(--lit-ink\)\]" style="width:62%"/);
   assert.match(html, /title="Mon, Oct 12, 00:00 UTC">Resets Sunday at 8:00 PM\.</);
+  // #5284: the five largest, then "Show all 7" for the rest.
   assert.deepEqual([...html.matchAll(/href="([^"]+)" data-building-time-request="([^"]+)"/g)].map((m) => [m[1], m[2]]), [
     ['#app/staging-demo/dev/issues/12', 'staging-demo#12'],
     ['#app/staging-demo/dev/issues/15', 'staging-demo#15'],
     ['#app/staging-garden/dev/issues/4', 'staging-garden#4'],
-    ['#app/staging-garden/dev/issues/7', 'staging-garden#7'],
+    ['#app/staging-demo/dev/issues/18', 'staging-demo#18'],
+    ['#app/staging-garden/dev/issues/9', 'staging-garden#9'],
   ]);
-  assert.match(html, />Staging demo: a dark mode for the board<[\s\S]*?>Staging demo board<[\s\S]*?>31%</);
+  assert.match(html, /<button[^>]*data-building-time-show-all=""[\s\S]*?>Show all 7</);
+  assert.match(html, />Staging demo: a dark mode for the board<[\s\S]*?>Staging demo board<[\s\S]*?>24%</);
   assert.match(html, />Staging demo garden · You asked for this</);
-  assert.match(html, />Request #7<[\s\S]*?>Under 1%</, 'a request with no known title, and a sliver');
+  assert.match(html, /class="[^"]*line-clamp-2 whitespace-normal[^"]*">Staging demo: sort the board/, 'a long title wraps onto two lines, not cut at one');
+  assert.doesNotMatch(html, /Request #7/, 'the sixth and seventh wait behind Show all');
+
+  const all = renderToHtml(createElement(BuildingTimeView, { week, reset: null, showAll: true }));
+  assert.equal([...all.matchAll(/data-building-time-request=/g)].length, 7, 'Show all shows every request');
+  assert.doesNotMatch(all, /data-building-time-show-all/);
+  assert.match(all, />Request #7<[\s\S]*?>Under 1%</, 'a request with no known title, and a sliver');
+  const five = renderToHtml(createElement(BuildingTimeView, { week: { ...week, requests: week.requests.slice(0, 5) }, reset: null }));
+  assert.equal([...five.matchAll(/data-building-time-request=/g)].length, 5);
+  assert.doesNotMatch(five, /data-building-time-show-all/, 'no Show all for five or fewer');
+  const others = { ...week, otherShare: 0.05 };
+  assert.doesNotMatch(renderToHtml(createElement(BuildingTimeView, { week: others, reset: null })), />Other requests</,
+    'folded, "Other requests" would read as the hidden rows');
+  assert.match(renderToHtml(createElement(BuildingTimeView, { week: others, reset: null, showAll: true })), />Other requests</);
   assert.match(html, /data-building-time-demo="">Staging demo figures, not real numbers\.</);
   assert.doesNotMatch(html, /\$|&#x24;/, 'never money');
 
@@ -121,7 +141,7 @@ test('the route is the viewer\'s own, with a staging demo; its words are catalog
   assert.match(handler, /if \(IS_STAGING && req\.query\.demo === '1'\)/);
   assert.match(handler, /buildingTime\.weekFor\(pool, req\.user\.id\)/);
   const catalog = JSON.parse(read('frontend/locales/en/settings.json'));
-  for (const key of ['title', 'used', 'usedUp', 'none', 'unlimited', 'resets', 'percent', 'underOne', 'untitled', 'askedFor', 'others', 'explainLimited', 'explainUnlimited', 'demo']) {
+  for (const key of ['title', 'used', 'usedUp', 'none', 'unlimited', 'resets', 'percent', 'underOne', 'untitled', 'askedFor', 'others', 'showAll_one', 'showAll_other', 'explainLimited', 'explainUnlimited', 'demo']) {
     const entry = catalog[`settings:usage.buildingTime.${key}`] || catalog[`usage.buildingTime.${key}`];
     assert.ok(entry && entry.text && entry.description, key);
   }
