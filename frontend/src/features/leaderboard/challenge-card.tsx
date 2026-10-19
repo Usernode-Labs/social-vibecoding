@@ -206,13 +206,21 @@ export function ChallengeMeta({ text = null, earned = false, size = 'md' }: {
 // An upload need not be square, so the image is `object-contain`: a wide or
 // tall one fits inside the 64px art box on its tone rather than stretching.
 //
+// The image is 64px whatever it holds (the xl tile's `[&>img]` size), and
+// says so in its own attributes too, and it is decoded with the frame that
+// draws it rather than after it (`decoding="sync"`). On Home the art is
+// decoded before the cards first draw (lib/challenge-illustrations.ts
+// warmIllustrations), and the service worker keeps the built-ins in its
+// release cache and an upload cache-first (public/sw.js), so the picture
+// arrives with its card instead of a frame later.
+//
 // Anything else is the tile as it was: a neutral face holding the challenge
 // kind's icon when the payload carries one (both surfaces do, from
 // `challenge_kinds.icon`) and empty otherwise. That includes artwork that
-// fails to load. The service worker leaves both image paths to the network, so
-// offline the image errors, and the error puts back the tile it replaced
-// rather than a broken-image glyph on a tone. It is component state, not a
-// write to the node: the card is a React island.
+// fails to load: offline before the worker has it, the image errors, and the
+// error puts back the tile it replaced rather than a broken-image glyph on a
+// tone. It is component state, not a write to the node: the card is a React
+// island.
 //
 // It never holds the category: headings name it, and a category word in an
 // 80px square was the "ONBOARDIN / G" break on both surfaces.
@@ -228,7 +236,16 @@ export function ChallengeTile({ icon = null, illustration = null, illustrationTo
   if (art && failed !== art.src) {
     return (
       <IconTile size="xl" aria-hidden="true" className={`${art.toneClass} ${TILE_ART} ${TILE_RADIUS}`}>
-        <img src={art.src} alt="" draggable={false} className="object-contain" onError={() => setFailed(art.src)} />
+        <img
+          src={art.src}
+          alt=""
+          width={64}
+          height={64}
+          decoding="sync"
+          draggable={false}
+          className="object-contain"
+          onError={() => setFailed(art.src)}
+        />
       </IconTile>
     );
   }

@@ -67,7 +67,8 @@ import './lib/overlay-scrim-bridge';
 import { bootStep } from './lib/boot-guard';
 import { initOffline } from './lib/offline';
 import { registerServiceWorker } from './lib/service-worker';
-import { applyShellSnapshot } from './lib/shell-snapshot-apply';
+import { applyNavSnapshot, applyShellSnapshot } from './lib/shell-snapshot-apply';
+import { installFirstPaintReserve } from './lib/first-paint-reserve';
 import { installJoinRequired } from './lib/join-required';
 import { installSessionRenewalRetry } from './lib/session-renewal-retry';
 // Publishes window.UsernodeReact.devBoard at module scope. Imported for the
@@ -244,3 +245,17 @@ bootStep('hydrate', () => {
 // on screen in between. See ./lib/shell-snapshot.ts for the storage contract
 // and why it is display-only.
 bootStep('applyShellSnapshot', applyShellSnapshot);
+// …and the tab bar's: the viewer's name from the session snapshot, and the
+// list of their communities the desktop sidebar draws its rows from. Same
+// reasoning, same moment. flushSync commits it before this task ends, so the
+// first frame after hydration already has both. (A frame painted BEFORE
+// hydration still shows the prerender; in the app the launch cover hides
+// those, and lifts on what is drawn here: public/js/native-chrome.js,
+// `shellPainted`.)
+bootStep('applyNavSnapshot', () => {
+  flushSync(applyNavSnapshot);
+});
+// What this device draws Home's areas and the sidebar's community rows at,
+// kept for the next cold load, whose head script holds their skeletons at
+// those heights (./lib/first-paint-reserve.ts).
+bootStep('installFirstPaintReserve', installFirstPaintReserve);

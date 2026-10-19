@@ -245,9 +245,10 @@ function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
  * the drawer replaced on a phone. The desktop rail draws no ring (app.css):
  * the header's name is the switcher there.
  *
- * All communities is THE PRERENDER: the scope arrives from localStorage and
- * app.js after the first paint, so the shipped markup and the first client
- * render are both this branch.
+ * All communities is THE PRERENDER: the scope arrives from localStorage in
+ * an effect flushed with the hydration (before the first paint) and from
+ * app.js, so the shipped markup and the first client render are both this
+ * branch.
  */
 function CommunityTabFace({ info }: { info: CommunityInfo | null }) {
   const color = useCommunityColor(info
@@ -765,7 +766,10 @@ export function PlatformTabs() {
   const visible = useVisibility('platform-tabs', true);
   const { tab, messages, communities, screen, peek, peekOut, railOpen, viewer } = useStoreState(navStore);
   // THE COMMUNITY THE FOURTH TAB IS ON (../workshop/community-scope.ts). Read
-  // from storage after the first paint, and every community's votes owed a
+  // from storage by this effect, which is flushed with the hydration itself
+  // (main.tsx hydrates in flushSync), so before the first paint; the viewer's
+  // list of communities follows in the same task (lib/shell-snapshot-apply.ts),
+  // and every community's votes owed a
   // moment after sign-in, so the badge can say so before anybody opens the
   // switcher.
   const scope = useStoreState(communityScopeStore);
