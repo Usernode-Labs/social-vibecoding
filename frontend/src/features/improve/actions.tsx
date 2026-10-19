@@ -187,11 +187,12 @@ function UpdateStatus(): ReactNode {
 }
 
 /**
- * A new build is ready: a short line, then "Update" at the row's end (polish
- * N4). It read "There is a new version available. Click here to get the new
- * version." in link blue, a run of text with nothing on a phone to tap but
- * the words. The whole row is still the one button, so the target is the
- * row's full height, and the pill is what says it does something.
+ * A new build is ready: a short line naming what has the update (#5577),
+ * then "Reload" at the row's end (polish N4). It read "There is a new
+ * version available. Click here to get the new version." in link blue, a run
+ * of text with nothing on a phone to tap but the words. The whole row is
+ * still the one button, so the target is the row's full height, and the pill
+ * is what says it does something.
  */
 function UpdateReadyRow({ id, onUpdate, children }: { id: string; onUpdate: () => void; children: ReactNode }): ReactNode {
   const t = useMessages('agent');

@@ -2868,7 +2868,7 @@
       "name": "Once the open app's build has landed, the menu offers to reload the app",
       "path": "/?shot=app-update-ready#app/staging-demo-forkable",
       "expectSelector": "#apps-switcher-sheet[data-open] button#improve-app-update-ready",
-      "expectText": "This app has a new version"
+      "expectText": "reload"
     },
     {
       "name": "The image-built document carries its own platform build identity",

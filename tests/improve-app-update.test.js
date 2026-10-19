@@ -470,7 +470,10 @@ test('the rows name what has the update, Homeroom or the app, and a newcomer hea
   };
   t.after(() => store.improveStore.set(initial));
 
-  assert.equal(message('agent:menu.update.platformReady'), 'Homeroom has an update. Reload to get it.');
+  // The line names what has the update; the row's "Reload" button is the
+  // action (polish N4 merged with #5577).
+  assert.equal(message('agent:menu.update.platformReady'), 'Homeroom has an update');
+  assert.equal(message('agent:menu.update.action'), 'Reload');
   assert.equal(message('agent:menu.update.platformDownloading'), 'Homeroom is downloading an update. You can reload once it’s ready.');
   assert.equal(message('agent:menu.update.platformBuilding'), 'Homeroom is being updated.');
   for (const id of ['platformReady', 'appReady', 'appReadyUnnamed', 'platformDownloading', 'platformBuilding', 'appBuilding', 'appBuildingUnnamed']) {
@@ -479,12 +482,12 @@ test('the rows name what has the update, Homeroom or the app, and a newcomer hea
 
   // Homeroom's own: ready (or a prefetch that failed, which a reload still
   // beats), downloading, being deployed.
-  assert.match(draw({ versionState: 'ready' }), /<button id="improve-update-ready"[^>]*>.*Homeroom has an update\. Reload to get it\./);
-  assert.match(draw({ versionState: 'failed' }), /id="improve-update-ready"[^]*Homeroom has an update\. Reload to get it\./);
+  assert.match(draw({ versionState: 'ready' }), /<button id="improve-update-ready"[^>]*>.*Homeroom has an update<\/span><span[^>]*>Reload<\/span><\/button>/);
+  assert.match(draw({ versionState: 'failed' }), /id="improve-update-ready"[^]*Homeroom has an update<\/span><span[^>]*>Reload</);
   assert.match(draw({ versionState: 'deploying' }), /id="improve-update-note"[^]*Homeroom is being updated\./);
   // The app's, by its name; "this app" before the name is known.
-  assert.match(draw({ name: 'City Tier List', appUpdateReady: true }), /id="improve-app-update-ready"[^]*City Tier List has an update\. Reload to see it\./);
-  assert.match(draw({ name: '', appUpdateReady: true }), /This app has an update\. Reload to see it\./);
+  assert.match(draw({ name: 'City Tier List', appUpdateReady: true }), /id="improve-app-update-ready"[^]*City Tier List has an update<\/span><span[^>]*>Reload</);
+  assert.match(draw({ name: '', appUpdateReady: true }), /This app has an update<\/span><span[^>]*>Reload</);
   assert.match(draw({ name: 'City Tier List', deploying: true }), /An update to City Tier List is on its way\./);
   assert.match(draw({ name: '  ', deploying: true }), /An update to this app is on its way\./);
 
