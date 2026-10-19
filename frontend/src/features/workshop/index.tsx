@@ -118,6 +118,9 @@ import { openPinMenu } from '../nav/pin-actions';
 import { useSidebarRows } from '../nav/sidebar-rows';
 import { communitiesSearchStore } from './communities-search';
 import { takeCounts, votesWaiting } from './community-scope';
+// What the last read of your communities knew, for the list's skeleton
+// (expectNeedsDoor): its own line, beside the tab's one definition above.
+import { communityScopeStore } from './community-scope';
 import { NeedsReel, type NeedsFeedItem } from './needs-reel';
 import { unseenNeeds, useNeedsSeen } from './needs-seen';
 import {
@@ -494,6 +497,35 @@ export function AppRow({ row, onOpen, current = false }: {
  * changes. `chevron={false}` because a disclosure arrow on a row that
  * discloses nothing yet is the one part of the shape worth NOT reproducing.
  */
+/**
+ * Whether the Needs you door is to be expected over the list while it loads:
+ * yes unless the last read of your communities (./community-scope.ts) found
+ * no vote owed in any of them. The door stands where the list's first rows
+ * would, so a skeleton without it put the list 120px too high (polish board
+ * #19).
+ */
+export function expectNeedsDoor(scope: { list: string[] | null; info: Record<string, { owedCount?: number }> }): boolean {
+  if (!scope.list) return true;
+  return scope.list.some((slug) => (Number(scope.info[slug]?.owedCount) || 0) > 0);
+}
+
+/** The Needs you door's place while the list loads: its label's line and one row. */
+function NeedsDoorSkeleton(): ReactNode {
+  return (
+    <section aria-hidden="true">
+      <SectionHeader>{'\u00a0'}</SectionHeader>
+      <GroupedList tone="plane">
+        <ListRow
+          chevron={false}
+          leading={<Skeleton shape="block" className="w-11 h-11 rounded-xl" />}
+          title={<Skeleton className="max-w-[40%]" />}
+          subtitle={<Skeleton className="max-w-[30%]" />}
+        />
+      </GroupedList>
+    </section>
+  );
+}
+
 export function RowSkeletons(): ReactNode {
   const t = useMessages('communities');
   return (
@@ -637,6 +669,8 @@ export function WorkshopScreen() {
   // that opens the feed of votes owed across all of them (`tab: 'needs'`,
   // also reached by `?ws=needs`), and a way back. See the markup below.
   const rows = state.rows ? orderRows(state.rows.map(unseenRow)) : null;
+  // What the last read of your communities knew, for the list's skeleton.
+  const scope = useStoreState(communityScopeStore) as { list: string[] | null; info: Record<string, { owedCount?: number }> };
   // #5296: ONE LIST, every row out, narrowed by the chip and the search. A
   // chip whose audience has nothing left in it falls back to All rather than
   // showing an empty list under a chip that is no longer drawn.
@@ -719,6 +753,7 @@ export function WorkshopScreen() {
               the page, above the search, and stays while one is up: the
               search narrows the list under it, and a row that went away on
               the first letter would move the box being typed in. */}
+          {rows === null && !state.error && !q && expectNeedsDoor(scope) ? <NeedsDoorSkeleton /> : null}
           {totals && totals.owed > 0 ? (
             <section data-workshop-needs-door="" aria-labelledby="workshop-needs-heading">
               <SectionHeader id="workshop-needs-heading">{t('communities:needsYou.heading')}</SectionHeader>
@@ -846,7 +881,7 @@ export function WorkshopScreen() {
                 </GroupedList>
               )
               : rows === null
-                ? <GroupedList tone="plane"><RowSkeletons /></GroupedList>
+                ? <><SectionHeader aria-hidden="true">{'\u00a0'}</SectionHeader><GroupedList tone="plane"><RowSkeletons /></GroupedList></>
                 : shown && shown.length ? (
                   <GroupedList tone="plane" data-workshop-rows={pressed}>
                     {shown.map((row) => <AppRow key={row.slug} row={row} />)}
@@ -1168,14 +1203,21 @@ export const workshopController = {
     const state = workshopStore.get();
     const fresh = state.rows != null || state.feed != null;
     const freshOpts = fresh ? { cache: 'no-cache' as const } : undefined;
+    // POLISH BOARD #19: THE LIST DOES NOT WAIT FOR THE FEED. Only the Needs
+    // you tab reads the feed, and it took three times as long as your
+    // communities did (694 ms against 187), all of it with the list held
+    // back. The three reads still leave together; the list draws when its
+    // communities and their counts are in, and the feed follows on its own.
+    let feedRead: Promise<Response | null> = Promise.resolve(null);
     try {
-      const [appsRes, countsRes, feedRes] = await Promise.all([
+      const listReads = Promise.all([
         // Only the communities you are in (#5023): the list below keeps
         // nothing else, so the rest of the catalog was payload for nothing.
         fetch(`/api/apps?scope=joined${demo.replace('?', '&')}`),
         fetch(`/api/workshop/counts${demo}`, freshOpts).catch(() => null),
-        fetch(`/api/workshop/needs-feed${demo}`, freshOpts).catch(() => null),
       ]);
+      feedRead = fetch(`/api/workshop/needs-feed${demo}`, freshOpts).catch(() => null);
+      const [appsRes, countsRes] = await listReads;
       if (appsRes.ok) {
         const data = await appsRes.json();
         const home = (window as any).Home;
@@ -1193,17 +1235,6 @@ export const workshopController = {
           counts = data.counts;
           // #5296: the tab counts from this same answer.
           takeCounts(counts);
-        }
-      }
-      // The Needs you feed is optional like the counts: losing it costs the
-      // feed its cards (it says so), never the screen. A read issued before a
-      // vote in the feed and landing after it runs through the answered set
-      // with refreshNeeds()'s, so it cannot bring the card back.
-      if (feedRes && feedRes.ok) {
-        const data = await feedRes.json().catch(() => null);
-        if (data && Array.isArray(data.items)) {
-          feed = stripAnswered(data.items as NeedsFeedItem[]);
-          feedCapped = Number(data.max) > 0 && feed.length >= Number(data.max);
         }
       }
     } catch {
@@ -1224,10 +1255,25 @@ export const workshopController = {
       // rows too, the way the feed's own read is stripped below.
       rows: stripAnsweredCounts(joinCounts(apps, counts)),
       error: false,
-      feed: feed || [],
-      feedError: !feed,
-      feedCapped,
     });
+    // The Needs you feed is optional like the counts: losing it costs the
+    // feed its cards (it says so), never the screen. A read issued before a
+    // vote in the feed and landing after it runs through the answered set
+    // with refreshNeeds()'s, so it cannot bring the card back.
+    try {
+      const feedRes = await feedRead;
+      if (feedRes && feedRes.ok) {
+        const data = await feedRes.json().catch(() => null);
+        if (data && Array.isArray(data.items)) {
+          feed = stripAnswered(data.items as NeedsFeedItem[]);
+          feedCapped = Number(data.max) > 0 && feed.length >= Number(data.max);
+        }
+      }
+    } catch {
+      // The feed says it could not load; the list is drawn.
+    }
+    if (!workshopStore.get().open) return;
+    workshopStore.set({ feed: feed || [], feedError: !feed, feedCapped });
   },
 };
 

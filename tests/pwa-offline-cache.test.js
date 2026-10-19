@@ -585,8 +585,6 @@ test('the boot reads answer from cache immediately; everything else waits', () =
     '/api/apps/usernode-2d5619',
     '/api/apps/usernode-2d5619/github-issues',
     '/api/apps/usernode-2d5619/issues',
-    '/api/apps/usernode-2d5619/promoted',
-    '/api/apps/usernode-2d5619/merged',
     '/api/apps/usernode-2d5619/board-order',
     '/api/apps/usernode-2d5619/sessions',
     '/api/apps/usernode-2d5619/shared-sessions',
@@ -603,6 +601,12 @@ test('the boot reads answer from cache immediately; everything else waits', () =
   // ends, and this is what proves it.
   for (const p of [
     '/api/apps/usernode-2d5619/messages',
+    // Polish board #3: the counts the project's hub states as facts (votes
+    // and check states, what went live) take the ordinary deadline beside its
+    // community record, so a warm open draws today's numbers once rather than
+    // last visit's and then the swap.
+    '/api/apps/usernode-2d5619/promoted',
+    '/api/apps/usernode-2d5619/merged',
     '/api/apps/usernode-2d5619/promoted/9',
     '/api/apps/usernode-2d5619/issues/12/comments',
     '/api/notifications',
