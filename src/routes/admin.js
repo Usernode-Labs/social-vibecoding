@@ -16,11 +16,23 @@ const events = require('../services/events');
 const llmTelemetry = require('../services/llm-telemetry');
 const appRollover = require('../services/app-rollover');
 const stagingReap = require('../services/staging-reap');
-// What the leader keeps in memory, for a process that does not lead
-// (services/leader-status.js, docs/plans/web-and-conductor.md).
-const leaderStatus = require('../services/leader-status');
 // A scheduled job's last run (src/workflow/clock/), wherever it ran.
 const clocks = require('../services/clocks');
+
+// The automatic leftover-preview pass, as the Stale previews section shows
+// it: the preview-gc clock's last run (src/workflow/clock/services.ts),
+// read from any process. `tornDown` is how many it handed on to be taken
+// (the clock keeps a run's targets as their count).
+async function automaticReap(pool) {
+  const intervalMs = stagingReap.staleSweepIntervalMs();
+  const s = await clocks.status(pool, 'preview-gc').catch(() => null);
+  const items = Number.isInteger(s?.result?.items) ? s.result.items : null;
+  return {
+    lastRunAt: s?.lastSweepAt || null, intervalMs,
+    examined: s?.result?.examined ?? null, abandoned: s?.result?.abandoned ?? null,
+    tornDown: items, failed: s?.lastError ? 1 : 0,
+  };
+}
 const { isSessionBusy } = require('../services/active-workers');
 const stagingEnv = require('../services/staging-env');
 const mail = require('../services/mail');
@@ -319,7 +331,7 @@ function adminRoutes(config) {
         stale: counts.stale,
         abandoned: counts.abandoned,
         expectedFingerprint: stagingEnv.expectedStagingFingerprint(config),
-        automatic: await leaderStatus.readOr('staging-reap.automatic', pool, stagingReap.readAutomatic),
+        automatic: await automaticReap(pool),
         staging,
         runtimeKind,
         available: !staging,

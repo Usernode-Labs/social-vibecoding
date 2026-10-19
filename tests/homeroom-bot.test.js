@@ -1381,7 +1381,9 @@ test('the loop runs on the workflow\'s machines, ships off, and its spend joins 
   assert.equal(bot.runOnce, undefined);
   const loops = read('src/workflow/platform.ts');
   const start = loops.slice(loops.indexOf('const ADOPTIONS'), loops.indexOf('// ── The Homeroom bot\'s loop'));
-  assert.match(start, /\['botQueue', \(\) => adoptBotQueue\(\)\]/, 'the rows an older release queued are adopted');
+  // No queue rows to adopt: the bot-request machine has been the queue's
+  // only writer since #5424, so every row is one an instance holds.
+  assert.doesNotMatch(loops, /adoptBotQueue|\['botQueue'/, 'no release adopts the bot\'s queue rows');
   assert.match(start, /\['botLane', \(release: string\) => startLaneClock\(release\)\]/);
   assert.match(start, /await runtime\.append\(BOT_LANE, LANE_KEY, \{ type: 'Tick', payload: \{\} \},\s+\{ requestKey: `boot:\$\{release\}`/, 'and the lane\'s clock starts, once per release');
   const schema = read('src/db/schema.sql');

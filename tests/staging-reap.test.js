@@ -36,6 +36,7 @@ const ids = {
   pool: require.resolve('../src/db/pool'),
   kubernetes: require.resolve('../src/services/kubernetes'),
   applicationRuntime: require.resolve('../src/services/application-runtime'),
+  previewWorkflow: require.resolve('../src/services/preview-workflow'),
   reap: require.resolve('../src/services/staging-reap'),
 };
 
@@ -65,6 +66,8 @@ function freshFixtures() {
     // pool
     sessions: [],
     queries: [],
+    // session ids the preview machine holds (wf_instances, and its held())
+    held: [],
     // ws / events
     adminBroadcasts: [],
     eventRecords: [],
@@ -90,6 +93,7 @@ const fakePool = {
       const ids_ = params[0] || [];
       return { rows: fx.sessions.filter((s) => ids_.includes(s.id)) };
     }
+    if (/FROM wf_instances/.test(sql)) return { rows: fx.held.map((id) => ({ id })) };
     return { rows: [], rowCount: 1 };
   },
 };
@@ -174,6 +178,9 @@ function installStubs() {
       if (fx.kubeListError) throw fx.kubeListError;
       return fx.kubePreviews;
     },
+  });
+  stub(ids.previewWorkflow, {
+    async held(sessionId) { return fx.held.includes(Number(sessionId)); },
   });
   stub(ids.applicationRuntime, {
     mode: (config) => config?.appRuntime || process.env.APP_RUNTIME || 'docker',
@@ -538,13 +545,16 @@ test('isStagingEnv gates the demo injection on USERNODE_ENV', () => {
   }
 });
 
-// ── #851: the automatic stale-env pass ──────────────────────────────────
+// ── #851: previews built with another platform environment ─────────────
 //
-// The admin sweep takes EVERYTHING it can enumerate. The automatic pass is
-// selective, and what it selects on is what makes it safe to run unattended
-// on a 15-minute timer: only previews whose env fingerprint label does not
-// match the platform's current one, never a preview backing a live vote (the
-// heal sweep REBUILDS those instead), never a session mid-turn.
+// The admin sweep takes one selection (selectReapable): only previews whose
+// env fingerprint label does not match the platform's current one, or whose
+// session finished, never a preview backing a live vote, never a session
+// mid-turn. The automatic passes split it in two: the preview-env clock,
+// acting only in the newest build, tells the preview machine about every
+// out-of-date preview its row names (staleEnvTargets, tellStaleEnv), and the
+// preview-gc clock takes the leftovers whatever their env (leftovers,
+// reapLeftover, src/workflow/clock/services.ts).
 
 const realStagingEnv = require('../src/services/staging-env');
 
@@ -564,16 +574,16 @@ function labelledFleet(fp) {
     ['usernode-staging-oldmerged-bbb222--3002', 'running', 'usernode-staging-oldmerged-bbb222-3002:bbb222', 'stale000stale000'],
     // stale and UNLABELLED — every preview built before #851
     ['usernode-staging-prelabel-ccc333--3003', 'running', 'usernode-staging-prelabel-ccc333-3003:ccc333'],
-    // stale but backs a live vote — Pass 3's job, not this pass's
+    // stale but backs a live vote — the preview machine rebuilds it
     ['usernode-staging-voting-ddd444--3004', 'running', 'usernode-staging-voting-ddd444-3004:ddd444', 'stale000stale000'],
     // stale, no session row at all
     ['usernode-staging-orphan-eee555--3005', 'running', 'usernode-staging-orphan-eee555-3005:eee555', 'stale000stale000'],
   ];
   fx.sessions = [
-    { id: 3001, status: 'paused', staging_container_id: 'cid-3001', staging_url: 'https://x--s3001--aaa111.example', app_slug: 'fresh-aaa111' },
-    { id: 3002, status: 'merged', staging_container_id: 'cid-3002', staging_url: 'https://x--s3002--bbb222.example', app_slug: 'oldmerged-bbb222' },
-    { id: 3003, status: 'archived', staging_container_id: 'cid-3003', staging_url: 'https://x--s3003--ccc333.example', app_slug: 'prelabel-ccc333' },
-    { id: 3004, status: 'promoted', staging_container_id: 'cid-3004', staging_url: 'https://x--s3004--ddd444.example', app_slug: 'voting-ddd444' },
+    { id: 3001, app_id: 31, status: 'paused', staging_container_id: 'cid-3001', staging_url: 'https://x--s3001--aaa111.example', app_slug: 'fresh-aaa111' },
+    { id: 3002, app_id: 32, status: 'merged', staging_container_id: 'cid-3002', staging_url: 'https://x--s3002--bbb222.example', app_slug: 'oldmerged-bbb222' },
+    { id: 3003, app_id: 33, status: 'archived', staging_container_id: 'cid-3003', staging_url: 'https://x--s3003--ccc333.example', app_slug: 'prelabel-ccc333' },
+    { id: 3004, app_id: 34, status: 'promoted', staging_container_id: 'cid-3004', staging_url: 'https://x--s3004--ddd444.example', app_slug: 'voting-ddd444' },
   ];
 }
 
@@ -613,7 +623,7 @@ test('selectStale: never selects a preview backing a live vote', async () => {
       ? { ...i, session: { ...i.session, status } } : i));
     const names = reap.selectStale(patched, fp).map((s) => s.slug);
     assert.equal(names.includes('voting-ddd444'), false,
-      `${status} previews are rebuilt by the heal sweep, not torn down here`);
+      `${status} previews are rebuilt by the preview machine, not torn down here`);
   }
 });
 
@@ -629,7 +639,7 @@ test('selectStale: skips a session with a coding turn in flight', async () => {
   assert.ok(names.includes('prelabel-ccc333'), 'other stale previews are unaffected');
 });
 
-// A boot runs this pass while the harvest seats the old leader's checks runs
+// A boot runs while the harvest seats the old leader's checks runs
 // (services/check-harvest.js), whose capture Jobs run against the session's
 // preview. An out-of-date preview of a live session with a run on the
 // cluster (a check_runs row: running, waiting for its slot, or left for the
@@ -650,79 +660,55 @@ test('selectStale: skips a preview a checks run on the cluster still uses', asyn
   assert.ok(reap.selectStale(freed, fp).map((s) => s.slug).includes('oldmerged-bbb222'),
     'once the run has settled, the next pass takes it');
 
-  const summary = await reap.sweepStale({});
-  assert.equal(fx.teardownCalls.some((c) => c.sessionId === 3002), false, 'the automatic pass leaves it');
-  assert.equal(summary.stale, 2);
+  // The button takes the same selection, so it leaves it too.
+  const job = await runSweep(reap);
+  assert.equal(fx.teardownCalls.some((c) => c.sessionId === 3002), false, 'the admin sweep leaves it');
+  assert.equal(job.total, 2);
 });
 
-test('sweepStale: tears down the stale, spares the current and the vote-backed', async () => {
+// ── The preview-env clock: what another environment built ──────────────
+//
+// staleEnvTargets decides nothing: each preview its row names that another
+// env built goes to the preview machine, which rebuilds one under review and
+// gives back the rest (and refuses one it is building or checking). Only the
+// new build runs it, so an older Pod never judges previews by its own
+// fingerprint.
+
+test('staleEnvTargets: every preview its row names that another env built, vote-backed included', async () => {
   const reap = setup();
   const fp = currentFp();
   labelledFleet(fp);
 
-  const summary = await reap.sweepStale({});
+  const out = await reap.staleEnvTargets({});
 
-  assert.equal(summary.examined, 5);
-  assert.equal(summary.stale, 3, 'fresh + promoted excluded');
-  assert.equal(summary.tornDown, 3);
-  assert.equal(summary.failed, 0);
-
-  // 3002 + 3003 are linked, so they go through the teardownStaging chokepoint.
-  assert.deepEqual(fx.teardownCalls.map((c) => c.sessionId).sort(), [3002, 3003]);
-  // 3005 has no session row → by-name teardown.
-  assert.deepEqual(fx.stopCalls.map((c) => c.name), ['usernode-staging-orphan-eee555--3005']);
-  // Nothing touched the current-env or vote-backed previews.
-  const touched = [...fx.teardownCalls.map((c) => c.sessionId), 3005];
-  assert.equal(touched.includes(3001), false);
-  assert.equal(touched.includes(3004), false);
+  assert.equal(out.examined, 5);
+  assert.deepEqual(out.stale, [
+    { sessionId: 3002, appId: 32, name: 'usernode-staging-oldmerged-bbb222--3002' },
+    // Unlabelled: every preview built before #851.
+    { sessionId: 3003, appId: 33, name: 'usernode-staging-prelabel-ccc333--3003' },
+    // Backs a live vote: the machine rebuilds it in place.
+    { sessionId: 3004, appId: 34, name: 'usernode-staging-voting-ddd444--3004' },
+  ], 'not the current-env 3001, nor the session-less 3005 (a leftover)');
+  // Nothing is torn down from here.
+  assert.deepEqual(fx.teardownCalls, []);
+  assert.deepEqual(fx.stopCalls, []);
 });
 
-test('sweepStale: respects the per-pass cap and says what it deferred', async () => {
+test('staleEnvTargets: a preview its row no longer names is not the machine\'s to rebuild', async () => {
   const reap = setup();
-  const fp = currentFp();
-  labelledFleet(fp);
+  labelledFleet(currentFp());
+  fx.sessions = fx.sessions.map((s) => (s.id === 3002 ? { ...s, staging_container_id: null, staging_url: null } : s));
 
-  const summary = await reap.sweepStale({}, { limit: 1 });
+  const out = await reap.staleEnvTargets({});
 
-  assert.equal(summary.stale, 3, 'it still reports the true stale count');
-  assert.equal(summary.tornDown, 1, 'but acts on one');
-  assert.equal(summary.skipped, 2, 'the remainder is reported, never silently dropped');
+  assert.deepEqual(out.stale.map((t) => t.sessionId), [3003, 3004]);
 });
 
-test('sweepStale: records the reap event tagged as the sweeper', async () => {
-  const reap = setup();
-  const fp = currentFp();
-  labelledFleet(fp);
-  await reap.sweepStale({});
-
-  const rec = fx.eventRecords.find((r) => r.type === 'stale_previews_reaped');
-  assert.ok(rec, 'the pass leaves a durable trace');
-  assert.equal(rec.metadata.trigger, 'sweeper', 'distinguishable from an admin sweep');
-  assert.equal(rec.metadata.tornDown, 3);
-  assert.equal(rec.metadata.examined, 5);
-});
-
-test('sweepStale: a leaked teardown counts as failed, not torn down', async () => {
-  const reap = setup();
-  const fp = currentFp();
-  labelledFleet(fp);
-  fx.teardownLeaks = [3002];
-
-  const summary = await reap.sweepStale({});
-
-  assert.equal(summary.failed, 1, 'a surviving container must not be reported as removed');
-  assert.equal(summary.tornDown, 2);
-});
-
-test('sweepStale: never throws when docker ps fails, and reaps nothing', async () => {
+test('staleEnvTargets: never throws when docker ps fails, and names nothing', async () => {
   const reap = setup();
   fx.psError = new Error('Cannot connect to the Docker daemon');
 
-  const summary = await reap.sweepStale({});
-
-  assert.deepEqual(summary, { examined: 0, stale: 0, abandoned: 0, tornDown: 0, failed: 0, skipped: 0 });
-  assert.deepEqual(fx.stopCalls, [], 'an unreadable host is a no-op sweep, not a blind one');
-  assert.deepEqual(fx.teardownCalls, []);
+  assert.deepEqual(await reap.staleEnvTargets({}), { examined: 0, stale: [] });
 });
 
 // ── Abandoned previews: the session finished, whatever the env ─────────
@@ -747,30 +733,172 @@ test('selectAbandoned: takes merged, archived and session-less previews only', a
     .map((i) => i.sessionId), [5001, 5006], 'a session mid-turn is left alone here too');
 });
 
-test('sweepStale: a merged session\'s preview goes even on the current env', async () => {
+// ── The preview-gc clock: previews that serve nobody ────────────────────
+//
+// leftovers lists them (abandoned, or unlinked and held by no preview
+// instance), each a target of its own; reapLeftover reads its row again and
+// takes it through reapOne. The env does not matter, so an older build
+// running it during a rollout decides nothing differently.
+
+// Drive one preview-gc run the way the clock does: the run, then each
+// target as an item of its own. Resolves the run's result and the outcomes.
+async function runLeftovers(reap, config = {}) {
+  const found = await reap.leftovers(config);
+  const outcomes = {};
+  for (const item of found.items) outcomes[item.target] = (await reap.reapLeftover(item.input, config)).outcome;
+  return { found, outcomes };
+}
+
+test('leftovers: abandoned whatever the env, plus what no row names and no instance holds', async () => {
   const reap = setup();
   const fp = currentFp();
   fx.psLines = [
     ['usernode-staging-merged-aaa111--6001', 'running', 'usernode-staging-merged-aaa111-6001:aaa111', fp],
     ['usernode-staging-live-bbb222--6002', 'running', 'usernode-staging-live-bbb222-6002:bbb222', fp],
     ['usernode-staging-oldenv-ccc333--6003', 'running', 'usernode-staging-oldenv-ccc333-6003:ccc333', 'stale000stale000'],
+    ['usernode-staging-moved-ddd444--6004', 'running', 'usernode-staging-moved-ddd444-6004:ddd444', fp],
+    ['usernode-staging-building-eee555--6005', 'running', 'usernode-staging-building-eee555-6005:eee555', fp],
+    ['usernode-staging-voting-fff666--6006', 'running', 'usernode-staging-voting-fff666-6006:fff666', 'stale000stale000'],
   ];
   fx.sessions = [
     { id: 6001, status: 'merged', staging_container_id: 'cid-6001', app_slug: 'merged-aaa111' },
     { id: 6002, status: 'paused', staging_container_id: 'cid-6002', app_slug: 'live-bbb222' },
+    // Out of date but serving: the preview-env clock's, not this one.
     { id: 6003, status: 'paused', staging_container_id: 'cid-6003', app_slug: 'oldenv-ccc333' },
+    // Its row moved on (a rebuild that replaced it), and nothing holds it.
+    { id: 6004, status: 'paused', staging_container_id: null, app_slug: 'moved-ddd444' },
+    // Its row does not name it yet: the machine is building this attempt.
+    { id: 6005, status: 'active', staging_container_id: null, app_slug: 'building-eee555' },
+    { id: 6006, status: 'promoted', staging_container_id: 'cid-6006', app_slug: 'voting-fff666' },
   ];
+  fx.held = [6005];
 
-  const summary = await reap.sweepStale({}, { limit: 1 });
+  const { found, outcomes } = await runLeftovers(reap);
 
-  assert.equal(summary.stale, 1, 'the out-of-date count is still the fingerprint count');
-  assert.equal(summary.abandoned, 1, 'the merged preview is counted on top of it');
-  assert.equal(summary.skipped, 1, 'the cap covers both');
-  assert.deepEqual(fx.teardownCalls.map((c) => c.sessionId), [6001],
-    'abandoned previews go first: they back nothing at all');
-  const rec = fx.eventRecords.find((r) => r.type === 'stale_previews_reaped');
-  assert.equal(rec.metadata.abandoned, 1);
-  assert.equal(reap.readAutomatic().abandoned, 1);
+  assert.equal(found.examined, 6);
+  assert.equal(found.abandoned, 1);
+  assert.equal(found.unlinked, 1);
+  assert.deepEqual(found.items, [
+    { target: 'usernode-staging-merged-aaa111--6001', input: {
+      name: 'usernode-staging-merged-aaa111--6001', sessionId: 6001, slug: 'merged-aaa111',
+      image: 'usernode-staging-merged-aaa111-6001:aaa111', runtimeKind: 'docker',
+    } },
+    { target: 'usernode-staging-moved-ddd444--6004', input: {
+      name: 'usernode-staging-moved-ddd444--6004', sessionId: 6004, slug: 'moved-ddd444',
+      image: 'usernode-staging-moved-ddd444-6004:ddd444', runtimeKind: 'docker',
+    } },
+  ]);
+  assert.deepEqual(outcomes, {
+    'usernode-staging-merged-aaa111--6001': 'torn_down',
+    'usernode-staging-moved-ddd444--6004': 'torn_down',
+  });
+  // The merged row still names its preview: the chokepoint. The moved one
+  // goes by name, its database read off its image tag.
+  assert.deepEqual(fx.teardownCalls.map((c) => c.sessionId), [6001]);
+  assert.deepEqual(fx.stopCalls.map((c) => c.name), ['usernode-staging-moved-ddd444--6004']);
+  assert.deepEqual(fx.dropCalls, ['app_moved_ddd444_staging_s6004_ddd444']);
+});
+
+test('reapLeftover: a session whose row names its preview again is left; a finished one still goes', async () => {
+  const reap = setup();
+  fx.psLines = [
+    ['usernode-staging-moved-ddd444--6004', 'running', 'usernode-staging-moved-ddd444-6004:ddd444'],
+    ['usernode-staging-merged-aaa111--6001', 'running', 'usernode-staging-merged-aaa111-6001:aaa111'],
+  ];
+  fx.sessions = [
+    { id: 6004, status: 'paused', staging_container_id: null, app_slug: 'moved-ddd444' },
+    { id: 6001, status: 'merged', staging_container_id: 'cid-6001', app_slug: 'merged-aaa111' },
+  ];
+  const found = await reap.leftovers({});
+  assert.deepEqual(found.items.map((i) => i.input.sessionId), [6001, 6004]);
+
+  // Minutes pass between the run and its targets: the session opened again
+  // and its row points at the preview once more.
+  fx.sessions = fx.sessions.map((s) => (s.id === 6004 ? { ...s, staging_container_id: 'cid-6004' } : s));
+  const outcomes = [];
+  for (const item of found.items) outcomes.push((await reap.reapLeftover(item.input, {})).outcome);
+
+  assert.deepEqual(outcomes, ['torn_down', 'skipped_linked'], 'it serves again');
+  assert.deepEqual(fx.stopCalls, []);
+  assert.deepEqual(fx.teardownCalls.map((c) => c.sessionId), [6001]);
+});
+
+test('reapLeftover: an unlinked preview the machine took up since is the machine\'s', async () => {
+  const reap = setup();
+  fx.psLines = [['usernode-staging-moved-ddd444--6004', 'running', 'usernode-staging-moved-ddd444-6004:ddd444']];
+  fx.sessions = [{ id: 6004, status: 'paused', staging_container_id: null, app_slug: 'moved-ddd444' }];
+  const found = await reap.leftovers({});
+  assert.equal(found.unlinked, 1);
+
+  fx.held = [6004];
+  assert.equal((await reap.reapLeftover(found.items[0].input, {})).outcome, 'skipped_workflow');
+  assert.deepEqual(fx.stopCalls, []);
+  assert.deepEqual(fx.dropCalls, []);
+});
+
+test('reapLeftover: a leaked teardown is a failed target, not a torn-down one', async () => {
+  const reap = setup();
+  labelledFleet(currentFp());
+  fx.teardownLeaks = [3002];
+
+  const { found, outcomes } = await runLeftovers(reap);
+
+  assert.equal(found.abandoned, 3, 'merged 3002, archived 3003, session-less 3005');
+  assert.equal(outcomes['usernode-staging-oldmerged-bbb222--3002'], 'failed',
+    'a surviving container must not be reported as removed');
+  assert.equal(outcomes['usernode-staging-prelabel-ccc333--3003'], 'torn_down');
+  assert.equal(outcomes['usernode-staging-orphan-eee555--3005'], 'torn_down');
+  // Nothing touched the current-env or vote-backed previews.
+  const touched = [...fx.teardownCalls.map((c) => c.sessionId), ...fx.stopCalls.map((c) => c.name)];
+  assert.equal(touched.includes(3001), false);
+  assert.equal(touched.includes(3004), false);
+});
+
+test('leftovers: never throws when docker ps fails, and lists nothing', async () => {
+  const reap = setup();
+  fx.psError = new Error('Cannot connect to the Docker daemon');
+
+  const found = await reap.leftovers({});
+
+  assert.deepEqual(found, { examined: 0, abandoned: 0, unlinked: 0, items: [] });
+  assert.deepEqual(fx.stopCalls, [], 'an unreadable host is a no-op sweep, not a blind one');
+  assert.deepEqual(fx.teardownCalls, []);
+});
+
+test('the preview-gc clock takes the leftovers, each a target of its own, and 0 switches it off', async () => {
+  const reap = setup();
+  labelledFleet(currentFp());
+  const { JOBS } = require('../src/workflow/clock/services.ts');
+  const job = JOBS.find((j) => j.name === 'preview-gc');
+  assert.ok(job, 'the preview-gc clock exists');
+  assert.equal(job.everyMs, reap.staleSweepIntervalMs(), 'it runs on the stale-sweep interval');
+  assert.equal(job.item.concurrency, 3, 'a few teardowns at a time, each failing on its own');
+
+  const found = await job.run({ input: {} }, { config: {}, pool: fakePool });
+  assert.deepEqual(found.items.map((i) => i.target), [
+    'usernode-staging-oldmerged-bbb222--3002',
+    'usernode-staging-prelabel-ccc333--3003',
+    'usernode-staging-orphan-eee555--3005',
+  ]);
+  // The clock hands each item its target's input as `ctx.input.input`.
+  const outcomes = [];
+  for (const item of found.items) {
+    outcomes.push((await job.item.run({ input: { job: 'preview-gc', target: item.target, input: item.input } },
+      { config: {}, pool: fakePool })).outcome);
+  }
+  assert.deepEqual(outcomes, ['torn_down', 'torn_down', 'torn_down']);
+
+  const saved = process.env.STAGING_STALE_SWEEP_INTERVAL_MS;
+  try {
+    process.env.STAGING_STALE_SWEEP_INTERVAL_MS = '0';
+    fx.dockerExecCalls = 0;
+    assert.deepEqual(await job.run({ input: {} }, { config: {}, pool: fakePool }), { off: true });
+    assert.equal(fx.dockerExecCalls, 0, 'switched off, it lists nothing');
+    assert.equal(job.everyMs, 24 * 60 * 60 * 1000, 'and looks again only to see whether it is still off');
+  } finally {
+    if (saved === undefined) delete process.env.STAGING_STALE_SWEEP_INTERVAL_MS;
+    else process.env.STAGING_STALE_SWEEP_INTERVAL_MS = saved;
+  }
 });
 
 // ── Kubernetes: the preview Deployments are the inventory ───────────────
@@ -828,16 +956,22 @@ test('Kubernetes: a row names its preview by runtime name, and the slug comes fr
   assert.equal(fx.kubeListCalls[0].kubernetes.appNamespace, 'social-apps');
 });
 
-test('Kubernetes: the automatic pass reaps abandoned and out-of-date previews only', async () => {
+test('Kubernetes: the preview-gc clock takes abandoned previews, whatever their env', async () => {
   const reap = setup();
   kubeFleet(currentFp());
 
-  const summary = await reap.sweepStale(KUBE, { isInFlight: (id) => id === 5080 });
+  const { found, outcomes } = await runLeftovers(reap, KUBE);
 
-  assert.deepEqual(summary, { examined: 7, stale: 1, abandoned: 3, tornDown: 4, failed: 0, skipped: 0 });
+  // The out-of-date 5806 serves a paused session: the preview-env clock
+  // hands it to the machine. A turn in flight on the archived 5080 is
+  // the machine's to refuse (staging.teardownStaging reports it busy), so it
+  // is a target here like any other leftover.
+  assert.deepEqual({ examined: found.examined, abandoned: found.abandoned, unlinked: found.unlinked },
+    { examined: 7, abandoned: 4, unlinked: 0 });
+  assert.deepEqual(Object.values(outcomes), ['torn_down', 'torn_down_no_db', 'torn_down_no_db', 'torn_down']);
   // Rows that still name their Deployment go through the shared chokepoint,
   // which also drops the staging database and nulls the row.
-  assert.deepEqual(fx.teardownCalls.map((c) => c.sessionId).sort((a, b) => a - b), [3711, 5806]);
+  assert.deepEqual(fx.teardownCalls.map((c) => c.sessionId).sort((a, b) => a - b), [3711, 5080]);
   // The rest are removed by name, in the app namespace.
   assert.deepEqual(fx.kubeRemoveCalls.map((c) => c.name).sort(), ['sv-preview-10-s4001', 'sv-preview-1559-s4658']);
   for (const call of fx.kubeRemoveCalls) {
@@ -851,35 +985,48 @@ test('Kubernetes: the automatic pass reaps abandoned and out-of-date previews on
   assert.deepEqual(fx.stopCalls, []);
 });
 
+test('Kubernetes: the release names the out-of-date previews its rows name, with their apps', async () => {
+  const reap = setup();
+  kubeFleet(currentFp());
+
+  const out = await reap.staleEnvTargets(KUBE);
+
+  assert.deepEqual(out.stale, [{ sessionId: 5806, appId: null, name: 'sv-preview-424-s5806' }]);
+  fx.sessions = fx.sessions.map((s) => (s.id === 5806 ? { ...s, app_id: 424 } : s));
+  assert.deepEqual((await reap.staleEnvTargets(KUBE)).stale, [{ sessionId: 5806, appId: 424, name: 'sv-preview-424-s5806' }],
+    'the machine instance is keyed by its app');
+});
+
 test('Kubernetes: a Deployment already gone is skipped, not removed', async () => {
   const reap = setup();
   kubeFleet(currentFp());
   fx.kubeExists = (name) => name !== 'sv-preview-10-s4001';
 
-  const summary = await reap.sweepStale(KUBE, { isInFlight: (id) => id === 5080 });
+  const { outcomes } = await runLeftovers(reap, KUBE);
 
-  assert.equal(summary.tornDown, 3);
+  assert.equal(outcomes['sv-preview-10-s4001'], 'skipped_gone');
   assert.equal(fx.kubeRemoveCalls.some((c) => c.name === 'sv-preview-10-s4001'), false);
 });
 
-test('Kubernetes: a failed removal is isolated to its own unit', async () => {
+test('Kubernetes: a failed removal is isolated to its own target', async () => {
   const reap = setup();
   kubeFleet(currentFp());
   fx.kubeRemoveError = new Error('deployments.apps "sv-preview-10-s4001" is forbidden');
 
-  const summary = await reap.sweepStale(KUBE, { isInFlight: (id) => id === 5080 });
+  const { outcomes } = await runLeftovers(reap, KUBE);
 
-  assert.equal(summary.failed, 2, 'both by-name removals failed');
-  assert.equal(summary.tornDown, 2, 'the chokepoint teardowns still ran');
+  assert.equal(outcomes['sv-preview-10-s4001'], 'failed', 'both by-name removals failed');
+  assert.equal(outcomes['sv-preview-1559-s4658'], 'failed');
+  assert.equal(outcomes['sv-preview-320-s3711'], 'torn_down', 'the chokepoint teardowns still ran');
+  assert.equal(outcomes['sv-preview-847-s5080'], 'torn_down');
 });
 
 test('Kubernetes: an unreadable API is a no-op sweep, not a blind one', async () => {
   const reap = setup();
   fx.kubeListError = new Error('connect ECONNREFUSED');
 
-  const summary = await reap.sweepStale(KUBE);
-
-  assert.deepEqual(summary, { examined: 0, stale: 0, abandoned: 0, tornDown: 0, failed: 0, skipped: 0 });
+  assert.deepEqual(await reap.leftovers(KUBE), { examined: 0, abandoned: 0, unlinked: 0, items: [] });
+  assert.deepEqual(await reap.staleEnvTargets(KUBE), { examined: 0, stale: [] });
   assert.deepEqual(fx.kubeRemoveCalls, []);
   assert.deepEqual(fx.teardownCalls, []);
 });
@@ -887,24 +1034,16 @@ test('Kubernetes: an unreadable API is a no-op sweep, not a blind one', async ()
 test('Kubernetes: the admin sweep takes everything due at once, nothing more', async () => {
   const reap = setup();
   kubeFleet(currentFp());
-  const saved = process.env.STAGING_STALE_SWEEP_LIMIT;
-  try {
-    // The per-pass cap paces the timer; the button is the "now" version.
-    process.env.STAGING_STALE_SWEEP_LIMIT = '1';
-    const job = await runSweep(reap, { isInFlight: (id) => id === 5080 }, KUBE);
+  const job = await runSweep(reap, { isInFlight: (id) => id === 5080 }, KUBE);
 
-    assert.equal(job.total, 4, 'abandoned + out of date, uncapped');
-    assert.equal(job.failed, 0);
-    const taken = job.previews.map((p) => p.sessionId).sort((a, b) => a - b);
-    assert.deepEqual(taken, [3711, 4001, 4658, 5806],
-      'not the vote-backed 5161, the live current 5775, or the in-flight 5080');
-    assert.deepEqual(job.previews.filter((p) => p.outOfDate).map((p) => p.sessionId), [5806],
-      'a live session\'s row says why it was taken');
-    assert.equal(fx.dockerExecCalls, 0);
-  } finally {
-    if (saved === undefined) delete process.env.STAGING_STALE_SWEEP_LIMIT;
-    else process.env.STAGING_STALE_SWEEP_LIMIT = saved;
-  }
+  assert.equal(job.total, 4, 'abandoned + out of date, uncapped');
+  assert.equal(job.failed, 0);
+  const taken = job.previews.map((p) => p.sessionId).sort((a, b) => a - b);
+  assert.deepEqual(taken, [3711, 4001, 4658, 5806],
+    'not the vote-backed 5161, the live current 5775, or the in-flight 5080');
+  assert.deepEqual(job.previews.filter((p) => p.outOfDate).map((p) => p.sessionId), [5806],
+    'a live session\'s row says why it was taken');
+  assert.equal(fx.dockerExecCalls, 0);
 });
 
 test('Kubernetes: the console counts come from the Deployments', async () => {
@@ -916,10 +1055,11 @@ test('Kubernetes: the console counts come from the Deployments', async () => {
   assert.deepEqual(counts, { open: 7, stale: 1, abandoned: 4 });
 });
 
-test('sweepStale: an all-unlabelled fleet is verified by inspect before acting', async () => {
+test('inventory: an all-unlabelled fleet is verified by inspect before it is used', async () => {
   // The dangerous false positive: a docker that cannot answer {{.Label}} makes
-  // EVERY container look stale, which would tear down the whole fleet. When an
-  // inspect proves the labels are really there, the pass uses inspect instead.
+  // EVERY container look out of date, which would have the release rebuild or
+  // give back the whole fleet. When an inspect proves the labels are really
+  // there, the inventory reads them with inspect instead.
   const reap = setup();
   const fp = currentFp();
   fx.psLines = [
@@ -937,73 +1077,40 @@ test('sweepStale: an all-unlabelled fleet is verified by inspect before acting',
     labels: { [realStagingEnv.LABEL_ENV_FP]: name.includes('-a-') ? fp : 'stale000stale000' },
   });
 
-  const summary = await reap.sweepStale({});
-
+  const items = await reap.inventory({});
   assert.ok(fx.inspectCalls.length >= 1, 'the all-null reading is probed, not trusted');
-  assert.equal(summary.stale, 1, 'only the genuinely stale one is selected');
-  assert.deepEqual(fx.teardownCalls.map((c) => c.sessionId), [4002]);
+  assert.deepEqual(items.map((i) => i.fingerprint), [fp, 'stale000stale000']);
+  assert.deepEqual((await reap.staleEnvTargets({})).stale.map((t) => t.sessionId), [4002],
+    'only the genuinely stale one is named');
 });
 
-test('sweepStale: an all-unlabelled fleet with no labels anywhere IS stale', async () => {
+test('inventory: an all-unlabelled fleet with no labels anywhere IS out of date', async () => {
   // The other side of the guard: when the probe agrees there is no label, the
-  // containers really do predate the fingerprint and should be swept.
+  // containers really do predate the fingerprint.
   const reap = setup();
   fx.psLines = [['usernode-staging-old-aaa111--4101', 'running', 'img:aaa111']];
-  fx.sessions = [];
+  fx.sessions = [{ id: 4101, status: 'paused', staging_container_id: 'cid-4101', app_slug: 'old-aaa111' }];
   fx.inspect = () => ({ status: 'running', labels: {} });
 
-  const summary = await reap.sweepStale({});
-  assert.equal(summary.stale, 1);
-  assert.equal(summary.tornDown, 1);
+  assert.deepEqual((await reap.inventory({})).map((i) => i.fingerprint), [null]);
+  assert.deepEqual((await reap.staleEnvTargets({})).stale.map((t) => t.sessionId), [4101]);
 });
 
-test('sweepStale: refuses to run inside a staging preview', async () => {
+test('the automatic passes refuse to run inside a staging preview', async () => {
   const reap = setup();
   labelledFleet(currentFp());
   const saved = process.env.USERNODE_ENV;
   try {
     process.env.USERNODE_ENV = 'staging';
-    const summary = await reap.sweepStale({});
-    assert.equal(summary.examined, 0, 'a preview has no docker socket to sweep with');
+    assert.deepEqual(await reap.leftovers({}), { examined: 0, abandoned: 0, unlinked: 0, items: [] },
+      'a preview has no docker socket to sweep with');
+    assert.deepEqual(await reap.staleEnvTargets({}), { examined: 0, stale: [] });
+    assert.equal(fx.dockerExecCalls, 0);
     assert.deepEqual(fx.stopCalls, []);
   } finally {
     if (saved === undefined) delete process.env.USERNODE_ENV;
     else process.env.USERNODE_ENV = saved;
   }
-});
-
-test('sweepStale: stands down while an admin sweep owns the fleet', async () => {
-  const reap = setup();
-  labelledFleet(currentFp());
-  fx.unitDelayMs = 40;
-  const started = reap.start({}, { username: 'admin-user' });
-  assert.equal(started.started, true);
-  try {
-    const summary = await reap.sweepStale({});
-    assert.equal(summary.examined, 0, 'two sweeps must not interleave on one host');
-  } finally {
-    for (let i = 0; i < 200; i++) {
-      if (reap.read()?.finishedAt) break;
-      await sleep(5);
-    }
-  }
-});
-
-test('readAutomatic: reports the last pass, and the interval/limit tunables', async () => {
-  const reap = setup();
-  const fp = currentFp();
-  labelledFleet(fp);
-
-  const before = reap.readAutomatic();
-  assert.equal(before.lastRunAt, null, 'a fresh process has no history — that is correct');
-  assert.ok(before.intervalMs > 0, 'the interval is reported so the console can say "every N minutes"');
-
-  await reap.sweepStale({});
-  const after = reap.readAutomatic();
-  assert.ok(after.lastRunAt, 'the run is timestamped');
-  assert.equal(after.tornDown, 3);
-  assert.equal(after.stale, 3);
-  assert.equal(after.examined, 5);
 });
 
 test('staleSweepIntervalMs: 0 disables, junk falls back to the default', () => {
@@ -1052,40 +1159,32 @@ test('demoCounts: fake-but-complete numbers for the staging screenshot', () => {
   assert.match(demo.expectedFingerprint, /^stagingdemo/, 'obviously fake, per the seed rules');
 });
 
-test('staleSweepDue: due at boot, then not again until the interval elapses', async () => {
+test('previewCounts: open counts everything, stale counts the out-of-date subset', async () => {
   const reap = setup();
-  labelledFleet(currentFp());
+  const fp = currentFp();
+  labelledFleet(fp);
 
-  // A fresh process is due immediately: a restart is exactly when a platform
-  // env change has just landed.
-  assert.equal(reap.staleSweepDue(), true);
-
-  await reap.sweepStale({});
-  assert.equal(reap.staleSweepDue(), false, 'a pass that just ran is not due again');
-
-  // ...and it becomes due again once the interval has passed.
-  assert.equal(reap.staleSweepDue(Date.now() + reap.staleSweepIntervalMs() + 1), true);
+  const counts = await reap.previewCounts({});
+  assert.equal(counts.open, 5, 'what the admin button would shut down');
+  assert.equal(counts.stale, 3, 'what the automatic pass would shut down');
 });
 
-test('staleSweepDue: never due when the pass is disabled', () => {
-  const reap = setup();
-  const saved = process.env.STAGING_STALE_SWEEP_INTERVAL_MS;
-  try {
-    process.env.STAGING_STALE_SWEEP_INTERVAL_MS = '0';
-    assert.equal(reap.staleSweepDue(), false);
-    // Even far in the future — 0 is a kill switch, not a zero-delay.
-    assert.equal(reap.staleSweepDue(Date.now() + 86400000), false);
-  } finally {
-    if (saved === undefined) delete process.env.STAGING_STALE_SWEEP_INTERVAL_MS;
-    else process.env.STAGING_STALE_SWEEP_INTERVAL_MS = saved;
-  }
-});
-
-test('sweepStale: arms the throttle even when it bails out early', async () => {
-  // A pass that finds nothing (or cannot read docker) must still count as
-  // having run, or a broken host would be re-swept on every 60s tick.
+test('previewCounts: nulls (not zeros) when docker cannot be read', async () => {
   const reap = setup();
   fx.psError = new Error('daemon unreachable');
-  await reap.sweepStale({});
-  assert.equal(reap.staleSweepDue(), false);
+  const counts = await reap.previewCounts({});
+  // A bogus 0 would read as "all clear" on the console; "—" is honest.
+  assert.deepEqual(counts, { open: 0, stale: 0, abandoned: 0 });
+});
+
+test('demoCounts: fake-but-complete numbers for the staging screenshot', () => {
+  const reap = setup();
+  const demo = reap.demoCounts();
+  assert.equal(demo.open, 9);
+  assert.equal(demo.stale, 4);
+  assert.equal(demo.abandoned, 2);
+  assert.equal(demo.stale + demo.abandoned, reap.demoJob().total, 'the tile matches the demo job');
+  assert.ok(demo.automatic.lastRunAt, 'the "last ran" line needs a timestamp to render');
+  assert.ok(demo.automatic.intervalMs > 0);
+  assert.match(demo.expectedFingerprint, /^stagingdemo/, 'obviously fake, per the seed rules');
 });

@@ -313,44 +313,47 @@ test('dapp.json asserts the text the new pills render', () => {
   assert.ok(texts.some((t) => /Preview unavailable|The preview didn’t start/.test(t)), 'unavailable chip checked');
 });
 
-// ── the sweeper and check-status guards (server.js) ────────────────────
+// ── what replaced the leader's sweeper passes ──────────────────────────
 //
-// server.js cannot be required here — it binds ports and starts timers on
-// load — so these are source invariants over call sites whose absence is
-// silent and destructive, so they're worth pinning even at this coarse
-// granularity.
+// These are source invariants over call sites whose absence is silent and
+// destructive, so they're worth pinning even at this coarse granularity.
 //
-//  Pass 3 (staging heal): an imported proposal's first build takes minutes,
-//  during which staging_url is NULL. The heal pass hands the session to
-//  stagingRecovery.rebuildSessionStaging, which leaves a preview the machine
-//  is preparing, retiring or retrying to it ('left_to_machine') rather than
-//  asking for a second build of the same commit.
+//  The heal (once the leader's Pass 3): an imported proposal's first build
+//  takes minutes, during which staging_url is NULL. The preview-runtimes
+//  clock (staging-recovery.lookForLostPreviews) looks only at previews the
+//  machine says serve, so one it is preparing, retiring or retrying is left
+//  to it rather than reported lost into a second build of the same commit.
 //
-//  Pass 2 (idle GC): archived rows are reclaimable — a withdrawn proposal's
-//  container is pure waste — and the GC asks the machine to retire it
-//  (sessionLifecycle.teardownStagingForSession); the machine refuses a
-//  preview it is building or checking, so the GC never deletes the container
-//  a build is about to publish.
-test('server.js: the sweeper passes leave a live build to the preview machine', () => {
-  const src = require('node:fs').readFileSync(
-    require('node:path').join(__dirname, '..', 'server.js'), 'utf8'
-  );
+//  The idle give-back (once the leader's Pass 2 idle GC): the machine's own
+//  IdleDue deadline, taken only in a state that serves, so it never retires
+//  the container a build is about to publish; never under review, and later
+//  while someone works on the session. A withdrawn proposal's container is
+//  pure waste: the preview-gc clock takes an archived row's preview
+//  (staging-reap FINISHED_STATUSES).
+test('the clocks and the machine\'s own deadlines leave a live build to the preview machine', () => {
+  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+  const server = read('server.js');
+  assert.ok(!/hasInFlightBuild/.test(server), 'no per-process build registry is consulted any more');
+  assert.ok(!/reason: 'heal'|reason: 'idle-gc'|checkRecoveryInFlight/.test(server), 'the leader\'s passes are gone');
 
-  assert.ok(!/hasInFlightBuild/.test(src), 'no per-process build registry is consulted any more');
-  assert.match(src,
-    /function checkRecoveryInFlight\(sessionId\) \{\n\s*return activeWorkersSvc\.isSessionBusy\(sessionId\) \|\| hasInFlightHandoffPipeline\(sessionId\);/,
-    'stalled-check reporting leaves a session to its own turn or hand-off tail');
-  assert.match(src,
-    /await stagingRecovery\.rebuildSessionStaging\(\{ config, pool, session, reason: 'heal' \}\)/,
-    'the heal pass hands the session to the machine instead of building');
-  assert.match(src,
-    /if \(activeWorkersSvc\.isSessionBusy\(row\.id\)\) continue;\n(\s*\/\/[^\n]*\n)*\s*try \{\n\s*await sessionLifecycle\.teardownStagingForSession\(\{ pool, sessionId: row\.id, reason: 'idle-gc' \}\);/,
-    'the GC pass asks the machine to retire, which refuses a live build');
+  const clock = read('src/workflow/clock/services.ts');
+  assert.match(clock, /name: 'preview-runtimes', everyMs: 2 \* MIN, leaseMs: 10 \* MIN,\s+run: \(ctx: WorkContext, \{ config \}: JobDeps\) => legacy\('services\/staging-recovery'\)\.lookForLostPreviews\(config, \{ signal: ctx\.signal \}\),/);
+  const recovery = read('src/services/staging-recovery.js');
+  const look = recovery.slice(recovery.indexOf('async function lookForLostPreviews('));
+  assert.match(look.slice(0, look.indexOf('\n}\n')),
+    /WHERE w\.machine = 'preview' AND w\.state IN \('settled', 'deferred'\)\s+AND NOT \(w\.state = 'settled' AND w\.data->>'verdict' = 'error'\)\s+AND jsonb_typeof\(w\.data->'serving'\) = 'object'/,
+    'a preview being built, retired or retried is the machine\'s');
 
-  // The GC query no longer excludes archived rows...
-  assert.match(src, /AND status NOT IN \('promoted', 'merging', 'merged'\)/);
-  assert.ok(!/NOT IN \('promoted', 'merging', 'merged', 'archived'\)/.test(src),
-    'archived rows are in scope now — that is the withdrawn-mid-build leak');
-  // ...but it still refuses to touch a session mid-turn.
-  assert.match(src, /if \(activeWorkersSvc\.isSessionBusy\(row\.id\)\) continue;\n\s*\/\//);
+  const machine = read('src/workflow/preview/machine.ts');
+  assert.match(machine, /const SERVES: ReadonlySet<string> = new Set\(\['settled', 'deferred', 'failed'\]\);/);
+  assert.match(machine, /IdleDue: SERVES\.has\(name\) \? idleDue : notHere\('not_serving'\),/);
+  const idle = machine.slice(machine.indexOf('const idleDue: Entry = {'));
+  const body = idle.slice(0, idle.indexOf('\n  };\n'));
+  assert.match(body, /underReview\(f\)/, 'never under review');
+  assert.match(body, /if \(worked\(s, f\)\) return step\(\{ name: s\.name, data: s\.data, timer: \{ at: new Date\(ctx\.now\.getTime\(\) \+ WORKED_RECHECK_MS\), event: \{ type: 'IdleDue' \} \} \}\);/,
+    'nor while someone works on it');
+  assert.match(body, /return toRetiring\(s, 'idle', false, ctx, deps\);/);
+
+  assert.match(read('src/services/staging-reap.js'), /const FINISHED_STATUSES = new Set\(\['merged', 'archived'\]\);/,
+    'archived rows are reclaimable: that is the withdrawn-mid-build leak');
 });

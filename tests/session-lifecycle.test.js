@@ -490,17 +490,59 @@ test('closeOwnSession: closes from whatever open status it reads, the way every 
   } finally { refused.restore(); }
 });
 
-// ── purgeArchivedCc ───────────────────────────────────────────────────────
+// ── teardownStagingForSession ─────────────────────────────────────────────
 
-test('purgeArchivedCc: destroys the volume and flips cc_purged', async () => {
-  const { subject, spies, restore } = loadWithStubs();
+// The preview machine retires the preview; the reason it is handed is the
+// one the card and the logs name. A leak keeps the row's link for a retry
+// and announces nothing.
+test('teardownStagingForSession: hands its reason to the preview\'s teardown, and a leak announces nothing', async () => {
+  const ids = { staging: require.resolve('../src/services/staging'), ws: require.resolve('../src/services/ws') };
+  const orig = Object.fromEntries(Object.entries(ids).map(([k, id]) => [k, require.cache[id]]));
+  const torn = [];
+  const pushed = [];
+  let answer = { removed: true };
+  require.cache[ids.staging] = { id: ids.staging, filename: ids.staging, loaded: true, paths: [],
+    exports: { teardownStaging: async (...args) => { torn.push(args); return answer; } } };
+  require.cache[ids.ws] = { id: ids.ws, filename: ids.ws, loaded: true, paths: [],
+    exports: { pushSessionUpdate: (u) => pushed.push(u) } };
+  const { subject, restore } = loadWithStubs();
   try {
-    const pool = makePool([[/SET cc_purged = TRUE/, []]]);
-    const res = await subject.purgeArchivedCc({ pool, sessionId: 42 });
-    assert.equal(res.purged, true);
-    assert.deepEqual(spies.destroyCcVolume, [42]);
-    assert.equal(pool.issued(/SET cc_purged = TRUE/), true);
+    const row = { id: 42, app_slug: 'widget', staging_runtime_name: 'preview-42' };
+    const pool = makePool([[/FROM chat_sessions cs JOIN apps a/, [row]]]);
+    assert.deepEqual(await subject.teardownStagingForSession({ pool, sessionId: 42, reason: 'pressure' }), { torn: true });
+    assert.deepEqual(torn, [[row, { slug: 'widget' }, { reason: 'pressure' }]]);
+    assert.deepEqual(pushed, [{ action: 'staging_torn_down', sessionId: 42, appSlug: 'widget' }]);
+    await subject.teardownStagingForSession({ pool, sessionId: 42 });
+    assert.deepEqual(torn[1][2], { reason: 'idle' }, 'idle unless it says otherwise');
+
+    answer = { removed: false, leaked: true };
+    pushed.length = 0;
+    assert.deepEqual(await subject.teardownStagingForSession({ pool, sessionId: 42, reason: 'pressure' }), { torn: false, leaked: true });
+    assert.deepEqual(pushed, []);
+    // Nothing to give back: no teardown at all.
+    torn.length = 0;
+    const none = makePool([[/FROM chat_sessions cs JOIN apps a/, [{ id: 43, app_slug: 'widget' }]]]);
+    assert.deepEqual(await subject.teardownStagingForSession({ pool: none, sessionId: 43 }), { torn: false });
+    assert.deepEqual(torn, []);
   } finally {
     restore();
+    for (const [k, id] of Object.entries(ids)) {
+      if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
+    }
   }
+});
+
+// ── An archived session's CC volume ───────────────────────────────────────
+
+// The leader's hourly GC purged it with no lock, and could race a Reopen.
+// The proposal machine queues the purge with the close, due once the
+// retention window has passed, and a Reopen cancels it
+// (tests/workflow-proposal-retention-postgres.test.js).
+test('the archived CC purge is the proposal machine\'s, not this module\'s', () => {
+  const { subject, restore } = loadWithStubs();
+  try {
+    assert.equal(subject.purgeArchivedCc, undefined);
+  } finally { restore(); }
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/session-lifecycle'), 'utf8');
+  assert.doesNotMatch(src, /destroyCcVolume|cc_purged = TRUE/);
 });

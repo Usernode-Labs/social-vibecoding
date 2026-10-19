@@ -1122,7 +1122,7 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_checked_at T
 -- PR 'pending'/NULL and permanently merge-blocked. A 'pending' row whose
 -- checks_checked_at is older than CHECKS_STALE_MS (default 10m) is now treated
 -- as STUCK and
--- re-run: by server.js reconcileStuckChecks (boot + session-sweeper Pass 4),
+-- re-run: by the preview machine's own ChecksDue deadline (preview/machine.ts),
 -- by a vote that reaches threshold (the merge gate's stale-pending kick), by any
 -- staging rebuild (staging-recovery.rebuildSessionStaging now re-runs checks),
 -- and by the manual POST /api/sessions/:id/recheck ("Re-run checks" button).
@@ -14150,6 +14150,31 @@ CREATE TRIGGER chat_sessions_wf_proposal_owned
     'active_users_at_promote', 'approval_epoch', 'reviewed_head_sha',
     'boot_failure_sync_head', 'fixed_check_sync_head', 'fixed_check_sync_keys', 'integration_resolved_epoch');
 
+-- Every session that holds or wants a slot is the proposal machine's from
+-- the moment it exists: its INSERT appends `Adopted` in the same statement,
+-- whoever inserts it (a route, a hand-off, the bot, an import, an older
+-- release during a rollout). The request key and payload are the ones
+-- platform.proposalAdopted uses, so an adoption appended again replays. A
+-- paused row needs no idle check and is adopted by its first event (Resume,
+-- Close, ...). Before this, a new session waited for the leader's per-minute
+-- adoption pass, and without a leader it was never adopted.
+CREATE OR REPLACE FUNCTION wf_enrol_proposal() RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO wf_events (machine, key, app_id, type, payload, source, request_key)
+  VALUES ('proposal', 'session:' || NEW.id, NEW.app_id, 'Adopted',
+          jsonb_build_object('sessionId', NEW.id), '{"kind": "system", "name": "adopt"}'::jsonb,
+          'adopt:' || NEW.id);
+  PERFORM pg_notify('wf_events', 'proposal');
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS chat_sessions_wf_enrol_proposal ON chat_sessions;
+CREATE TRIGGER chat_sessions_wf_enrol_proposal
+  AFTER INSERT ON chat_sessions
+  FOR EACH ROW
+  WHEN (NEW.status IN ('active', 'promoted', 'merging'))
+  EXECUTE FUNCTION wf_enrol_proposal();
+
 -- campaign (src/workflow/campaign/) owns a fleet maintenance campaign once it
 -- holds it: the campaign's status, when it ended, and each app's record (its
 -- state and error), projected from the instance; and the lease columns an
@@ -14193,7 +14218,7 @@ CREATE TRIGGER shot_runs_wf_shots_owned
 -- bot-request (src/workflow/bot-request/): the Homeroom bot's queue is its
 -- projection. A row of a request it holds is written only by its
 -- transitions; a row no instance holds yet (an older release's insert during
--- a rollout) is written as before and adopted (platform.adoptBotQueue). A
+-- a rollout, before #5424) was written as before and adopted. A
 -- row going with its project (the cascade) or a deleted account's id
 -- emptied (ON DELETE SET NULL) is not the queue moving.
 CREATE OR REPLACE FUNCTION wf_guard_bot_queue() RETURNS TRIGGER AS $$

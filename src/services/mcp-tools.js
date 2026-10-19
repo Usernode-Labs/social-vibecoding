@@ -1487,7 +1487,7 @@ function shapeNextStep(session, checks, viewerId = null) {
 }
 
 // Will the error lane run this stored 'error' again on its own? The row is
-// one findStuckCheckSessions picks up, a retry is scheduled, and the streak
+// in the error lane's scope (isStuckCheckRecoveryScope), a retry is scheduled, and the streak
 // is under CHECK_MAX_AUTO_RETRIES or the error is the platform's own inside
 // its day (staging-recovery.errorWithinAutoRetries). A row that does not say
 // answers no, so a rerun is never promised that will not come.

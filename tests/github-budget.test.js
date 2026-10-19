@@ -383,21 +383,31 @@ test('the timer-driven GitHub callers ask before they spend', () => {
     assert.match(read(rel), asks, `${rel} asks services/github-budget.js`);
   }
   assert.match(read('src/services/repo-privacy-audit.js'), /githubBudget\.budgetAllows\('background'\)/, 'the daily privacy audit');
-  const server = read('server.js');
-  const headSync = server.slice(server.indexOf('// Pass 6: imported-PR head sync'));
-  assert.match(headSync.slice(0, 1800), /if \(!githubBudget\.budgetAllows\('background'\)\) break;/, 'the imported-PR head sync');
-  const observe = server.slice(server.indexOf('async function observeMergedOnGithub'));
-  assert.match(observe.slice(0, observe.indexOf('\n}\n')), /if \(!githubBudget\.budgetAllows\('background'\)\) \{/,
-    'the six-hourly merged-by-hand lookup');
+  // The imported-PR look and the six-hourly merged-by-hand lookup, each a
+  // clock's target (services/proposal-scans.js): a spent budget is a look
+  // skipped, which the next run makes again.
+  const scans = read('src/services/proposal-scans.js');
+  assert.match(scans, /function budgetAllows\(\) \{\n\s+return require\('\.\/github-budget'\)\.budgetAllows\('background'\);/);
+  const fn = (name) => scans.slice(scans.indexOf(`async function ${name}(`), scans.indexOf('\n}\n', scans.indexOf(`async function ${name}(`)));
+  const imported = fn('lookImported');
+  assert.ok(imported.indexOf("if (!budgetAllows()) return { skipped: 'budget' };") !== -1
+    && imported.indexOf("if (!budgetAllows()) return { skipped: 'budget' };") < imported.indexOf('syncImportedProposal('),
+  'the imported-PR head sync asks before it reads');
+  const byHand = fn('lookMergedByHand');
+  assert.ok(byHand.indexOf("if (!budgetAllows()) return { skipped: 'budget' };") !== -1
+    && byHand.indexOf("if (!budgetAllows()) return { skipped: 'budget' };") < byHand.indexOf('github.getPR('),
+  'the six-hourly merged-by-hand lookup asks before it reads');
+  assert.match(byHand, /if \(githubBudget\.isRateLimitError\(err\)\) return \{ skipped: 'budget' \};/,
+    'and a rate limit GitHub answered is a look skipped, not a failure');
 });
 
 // 19 Oct 2026: some twenty leader changes, eight in one hour, and each
 // election read every app's repository (~150) and every proposal up for a
 // vote from GitHub again: an audit whose result is only logged, while every
 // worker start checks privacy itself, and a look for merges made by hand.
-// Neither runs at an election now. The audit is a daily clock of the
-// workflow (src/workflow/clock/services.ts), first due when its leader timer
-// would have run; the lookup keeps its durable leader timer.
+// Neither runs at an election now. Both are clocks of the workflow
+// (src/workflow/clock/services.ts), first due when their leader timers would
+// have run.
 test('an election does not re-run the privacy audit or the merged-by-hand lookup', () => {
   const server = read('server.js');
   const becomeLeader = server.slice(server.indexOf('async function becomeLeader()'), server.indexOf('async function start()'));
@@ -407,30 +417,21 @@ test('an election does not re-run the privacy audit or the merged-by-hand lookup
   assert.match(clocks, /name: 'repo-privacy-audit', everyMs: 24 \* HOUR, leaderSweep: 'repo-privacy-audit'/,
     'the privacy audit: a daily clock, first due when its leader timer would have run');
   assert.ok(!/auditExistingRepoPrivacy|repo-privacy/.test(server), 'and no leader runs it');
-  assert.match(becomeLeader, /const runMergedByHandLookup = \(\) => observeMergedOnGithub\(config\)\n/);
-  assert.match(becomeLeader,
-    /leaderTimers\.every\('merged-by-hand-lookup', runMergedByHandLookup, 6 \* 60 \* 60 \* 1000, \{ durable: getPool\(config\) \}\);/,
-    'the merged-by-hand lookup: every six hours, on the durable clock');
+  assert.match(clocks, /name: 'merged-by-hand', everyMs: 6 \* HOUR, leaderSweep: 'merged-by-hand-lookup',/,
+    'the merged-by-hand lookup: every six hours, first due when its leader timer would have run');
+  assert.ok(!/observeMergedOnGithub|merged-by-hand/.test(server), 'and no leader runs it');
+  // Each proposal is a target of its own: a run stopped part way leaves the
+  // rest to be looked at, rather than the whole lookup to run again.
+  const job = clocks.slice(clocks.indexOf("name: 'merged-by-hand'"), clocks.indexOf("name: 'proposal-revisions'"));
+  assert.match(job, /legacy\('services\/proposal-scans'\)\.mergedByHandTargets\(pool\)/);
+  assert.match(job, /item: \{\n\s+concurrency: \d+,\n\s+run: [^\n]*legacy\('services\/proposal-scans'\)\.lookMergedByHand\(pool, Number\(ctx\.input\.input\?\.sessionId\)\)/);
 
-  // Called from its timer and nowhere else: a bare call at election is the
-  // spend this removed.
-  const calls = (name) => becomeLeader.split(`${name}(`).length - 1;
-  assert.equal(calls('observeMergedOnGithub'), 1, 'the lookup runs only from its timer');
-
-  // A run the drain cut short records nothing, so the next leader runs it.
-  const def = becomeLeader.slice(becomeLeader.indexOf('const runMergedByHandLookup ='));
-  assert.match(def.slice(0, def.indexOf(';\n')),
-    /\.then\(\(\) => \(lifecycle\.isShuttingDown\(\) \? leaderTimers\.SKIPPED : undefined\)\)$/, 'runMergedByHandLookup');
   // The audit stops at its next row once its run is stopped, so it never
   // holds a drain; a run stopped before the end fails, and the clock tries
   // again sooner.
   const audit = read('src/services/repo-privacy-audit.js');
   assert.match(audit, /while \(queue\.length && !shouldStop\(\)\) \{/);
   assert.match(audit, /if \(queue\.length && !held\) throw new Error/);
-
-  // The stuck-check reconcile still runs at once on election, no longer
-  // behind the lookup: its sweeps' first passes come a minute or more later.
-  assert.match(becomeLeader, /\n {2}reconcileStuckChecks\(config\)\.catch\(\(err\) => \{/);
 });
 
 // The bot's refresh, a look and a build's start read GitHub, and they are

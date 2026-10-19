@@ -109,11 +109,14 @@ test('#1771: becomeLeader is still where the fleet duties live', () => {
   const src = read('server.js');
   const body = src.slice(src.indexOf('async function becomeLeader()'), src.indexOf('async function start()'));
   assert.ok(body.length > 1000, 'becomeLeader must still exist');
-  for (const starter of [
-    'startSessionAutoPauseSweeper', 'startStalePrSweeper',
-    'startLocalAgentLeaseSweeper', 'startStuckChecksSweeper',
-  ]) {
+  for (const starter of ['startTurnWatchdog', 'startLocalAgentLeaseSweeper']) {
     assert.ok(body.includes(`${starter}(`), `${starter} is started under the leader gate`);
+  }
+  // The session sweeper's passes, the stale-PR and stuck-checks sweepers are
+  // gone: what they did is the preview and proposal machines' own deadlines,
+  // or a clock (below).
+  for (const retired of ['startSessionAutoPauseSweeper', 'startStalePrSweeper', 'startStuckChecksSweeper']) {
+    assert.ok(!src.includes(`function ${retired}(`), `${retired} no longer exists`);
   }
   // The platform's scheduled jobs are clocks of the workflow, which a
   // preview runs: the release's work arms none of them there, by the same
@@ -409,19 +412,24 @@ test('#1771: pressure reclaim skips every preview somebody is using', () => {
   assert.equal(victims[0].id, 1, 'idle-longest first');
 });
 
-test('#1771: the reclaim acts on a reading, stops on a reading, and kills nothing', () => {
+test('#1771: the reclaim acts on a reading, one preview at a time, and kills nothing', () => {
   const src = stripComments(read('src/services/staging-reap.js'));
   const fn = src.slice(src.indexOf('async function sweepConnectionPressure('));
   const body = fn.slice(0, fn.indexOf('\n}\n') + 3);
   assert.match(body, /if \(!before \|\| !before\.saturated\) return summary;/,
     'on an ordinary day this is one cheap query and nothing else');
-  assert.match(body, /if \(!now\.saturated\) break;/,
-    're-census after each teardown: freeing the budget is the goal, tearing down is the means');
   assert.match(body, /if \(isStagingEnv\(\)\) return summary;/,
     'a preview computing victims from its own stale clone would be fiction');
-  assert.match(body, /reason: 'connection-pressure'/);
-  assert.match(body, /teardownStagingForSession/,
-    'through the one chokepoint that also drops the DB and nulls staging_url');
+  // A retirement is asynchronous, so a census right after the ask sees
+  // nothing freed: while the last one asked for is still retiring, no other
+  // is asked for. Freeing the budget is the goal, tearing down the means.
+  assert.match(body, /if \(await previewWorkflow\.retiring\(Number\(id\)\)\) summary\.asked\.push\(Number\(id\)\);/);
+  assert.match(body, /if \(summary\.asked\.length\) \{\s*summary\.waiting = summary\.asked\.length;\s*return summary;/);
+  // Through the preview machine, which refuses one under review, worked on,
+  // building or checking, and drops its database and nulls staging_url.
+  assert.match(body, /previewWorkflow\.retire\(\{ session: \{ id: Number\(victim\.id\), app_id: victim\.app_id \}, reason: 'pressure', terminal: false \}\)/);
+  assert.match(body, /summary\.asked\.push\(Number\(victim\.id\)\);\s*break;/, 'one a pass');
+  assert.ok(!/teardownStagingForSession/.test(body), 'never around the machine');
   // The fast way to free connections is the wrong one: node-postgres
   // surfaces a killed idle client as a pool 'error' event, and a pool with
   // no listener takes the process down. Generated apps frequently have none,
@@ -433,7 +441,12 @@ test('#1771: the reclaim acts on a reading, stops on a reading, and kills nothin
     assert.match(line.trim(), /^(\/\/|\*)/,
       'never terminate another database\'s backends to make room');
   }
-  // Wired next to the passes it belongs with, behind its own throttle.
-  const server = stripComments(read('server.js'));
-  assert.match(server, /if \(stagingReap\.pressureSweepDue\(\)\) \{\s*await stagingReap\.sweepConnectionPressure\(config\);/);
+  // A clock of the workflow, which carries each server's asks from its last
+  // run (src/workflow/clock/services.ts), and nothing in server.js.
+  const clocks = read('src/workflow/clock/services.ts');
+  const job = clocks.slice(clocks.indexOf("name: 'preview-pressure'"));
+  const run = job.slice(0, job.indexOf('\n  },\n'));
+  assert.match(run, /reap\.sweepConnectionPressure\(config, \{ asked: previous\.main\?\.asked \?\? \[\] \}\)/);
+  assert.match(run, /reap\.sweepConnectionPressure\(config, \{ server: 'preview', asked: previous\.preview\?\.asked \?\? \[\] \}\)/);
+  assert.ok(!/sweepConnectionPressure/.test(stripComments(read('server.js'))), 'the leader runs no pressure pass of its own');
 });
