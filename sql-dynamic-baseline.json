@@ -1746,6 +1746,13 @@
       "preview": "sql"
     },
     {
+      "source": "src/workflow/kernel/services.ts",
+      "kind": "runtime-expression",
+      "fingerprint": "d04ac57110303ae1edf6",
+      "count": 1,
+      "preview": "`BEGIN; SET LOCAL lock_timeout = ${millis(opts.lockTimeoutMs)};` + ` SET LOCAL statement_timeout = ${millis(opts.statementTimeoutMs)}`"
+    },
+    {
       "source": "src/workflow/merge-followups/facts.ts",
       "kind": "structural-template",
       "fingerprint": "48e2b24d263d197f6dbb",
