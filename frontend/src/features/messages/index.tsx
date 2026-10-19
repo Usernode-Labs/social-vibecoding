@@ -1059,8 +1059,10 @@ function ConversationList({ drawer = false, litId = null }: {
     return parts.length ? parts.slice(0, 2).map((part) => part.text).join(' · ') : null;
   }, [botWork.work]);
 
-  // What each section's heading says asks for you: agents at work, and the
-  // messages from people you have not read. A zero says nothing.
+  // What each section's heading says: agents at work, and the messages from
+  // people you have not read. A zero says nothing. Unread is new to read,
+  // grey like every unread count since #18 (19 Oct 2026 polish board); the
+  // accent is for what waits on you.
   const working = mayors.filter((item) => item.busy).length + agents.filter((item) => item.busy).length
     + sessions.filter((item) => item.busy).length;
   const unreadFromPeople = snap.conversations
@@ -1068,7 +1070,7 @@ function ConversationList({ drawer = false, litId = null }: {
     .reduce((sum, item) => sum + Math.max(0, Number(item.unreadCount) || 0), 0);
   const asides: Record<InboxSection, { text: string | null; ask: boolean }> = {
     agents: { text: working ? t('messages:inbox.section.working', { count: working }) : null, ask: false },
-    people: { text: unreadFromPeople ? t('messages:inbox.section.unread', { count: unreadFromPeople }) : null, ask: true },
+    people: { text: unreadFromPeople ? t('messages:inbox.section.unread', { count: unreadFromPeople }) : null, ask: false },
   };
   // Agents shows its week until "N older chats" (./inbox.ts
   // shownInSection). Not remembered: the next visit starts on the week.

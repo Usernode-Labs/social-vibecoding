@@ -22901,7 +22901,9 @@ html.un-kb #platform-parked {
   #platform-tab-workshop .platform-tab-mark:has(.platform-tab-votes) > #platform-tabs-badge-communities:not(.hidden) {
     display: inline-flex;
   }
-  #platform-tab-workshop:has(.platform-tab-all-votes) #platform-tabs-badge-communities {
+  /* As heavy as the rule above, and after it, so it wins (#18): it was
+     (2,1,0) against (2,3,0), and the All row drew a grey 1 beside a blue 28. */
+  #platform-tab-workshop:has(.platform-tab-all-votes) .platform-tab-mark > #platform-tabs-badge-communities:not(.hidden) {
     display: none;
   }
   /* ON A COMMUNITY'S PAGE ITS OWN ROW IS LIT, NOT ALL. The tab keeps

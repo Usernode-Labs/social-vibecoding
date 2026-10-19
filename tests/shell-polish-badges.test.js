@@ -203,3 +203,12 @@ test('a group\'s header leads with a member\'s face and says who is still invite
   assert.match(src, /name: reply\.sender\.bot \? senderName\(reply\.sender, \{ bare: true \}\) : reply\.sender\.username,\s*bot: !!reply\.sender\.bot,/);
   assert.match(read('frontend/src/features/message-actions/thread-activity.tsx'), /\{reply\.bot \? reply\.name : `@\$\{reply\.name\}`\}/);
 });
+
+test('one number on the All row: the votes hide the grey count of unread channels', () => {
+  // The rule that brings the grey count back on the desktop row weighs
+  // (2,3,0); the one that hides it under the All row's votes must weigh as
+  // much and come after it. It weighed (2,1,0), and the row said "1 28".
+  const show = CSS.indexOf('#platform-tab-workshop .platform-tab-mark:has(.platform-tab-votes) > #platform-tabs-badge-communities:not(.hidden) {');
+  const hide = CSS.indexOf('#platform-tab-workshop:has(.platform-tab-all-votes) .platform-tab-mark > #platform-tabs-badge-communities:not(.hidden) {\n    display: none;');
+  assert.ok(show > 0 && hide > show, 'the hide rule, as heavy, after the show rule');
+});
