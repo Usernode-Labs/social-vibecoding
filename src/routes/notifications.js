@@ -247,11 +247,19 @@ function stagingMockNotifications() {
       detail: '0:2',
       sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
     },
+    //
+    // #5289: in a project of its own. The sheet's Unread tab folds a
+    // project's unread notifications of one kind into one row, so in the
+    // demo project this row would fold into 990201's "2 sessions finished"
+    // (990205 does, which is how a preview shows the fold) and the date it
+    // exists to show would never be on screen. It also shows a second
+    // project's group on the Unread tab.
     {
       ...base,
       id: 990209, kind: 'session_done',
       createdAt: '2024-05-21T14:05:00Z',
       readAt: null,
+      appId: 990003, appSlug: 'staging-demo-archive', appName: 'Staging demo archive',
       sessionId: 990108,
       sessionTitle: '[Mock] Something from an earlier year',
       prTitle: null, branchName: 'dev/mockuser-1700000000003',

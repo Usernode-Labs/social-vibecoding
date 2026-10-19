@@ -6092,7 +6092,8 @@ const DevChat = {
   // navigation re-set of the title.
   applyTitleStatus() {
     const full = document.title;
-    const countMatch = full.match(/^\(\d+\)\s*/);
+    // "(99+) " too: the count prints the bell's own capped text (#5289).
+    const countMatch = full.match(/^\(\d+\+?\)\s*/);
     const count = countMatch ? countMatch[0] : '';
     let base = full.slice(count.length);
     const applied = DevChat._titleApplied;

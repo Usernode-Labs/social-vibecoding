@@ -1,9 +1,11 @@
 /**
  * The Notifications SHEET (#notifications-sheet) — Streamlined Concept.
  *
- * Unread | Messages | All tabs, TODAY / EARLIER sections, one row per
- * notification with an avatar-initial chip, the source app + relative time as
- * the subtitle, an unread dot and a trailing chevron.
+ * Unread | All tabs. Unread groups its rows under one heading per project and
+ * folds repeats inside a project into one row; All is the archive, in TODAY /
+ * EARLIER sections. One row per notification has an avatar-initial chip, the
+ * source app + relative time as the subtitle, an unread dot and a trailing
+ * chevron.
  *
  * ── UNREAD LEADS, and it is where the sheet opens ──────────────────────
  *
@@ -11,15 +13,7 @@
  * is opening it on the answer to a question nobody asked: you tapped the bell
  * BECAUSE it had a count, and the count is the unread. So Unread is first in
  * the strip and is the initial tab, and All is the archive you step sideways
- * into — which is what the Messages footer link still does, rather than paging
- * more rows into a filter you are trying to empty. Unread shows its older rows
- * in place instead (#4700).
- *
- * All is LAST for the same reason it is not first. The strip reads as a
- * narrowing: the count you came for, then the one conversation kind you answer
- * rather than read, then the archive that holds both. With All in the middle
- * the two filtered tabs sat either side of the unfiltered one, so stepping
- * from Unread to Messages meant passing through everything.
+ * into. Unread shows its older rows in place instead (#4700).
  *
  * "Mark all read" went with it. It sat at the far right of the same row as
  * the tabs, in the same ink, and read as a fourth tab you could not select —
@@ -27,28 +21,24 @@
  * an action ON the unread list, so it lives under the Unread tab with the
  * list it acts on, and exists nowhere else.
  *
- * ── Messages, and why it has a tab of its own ──────────────────────────
+ * ── #5289: one count, no Messages filter, repeats folded ──────────────
  *
- * A message notification is one row in a flat chronological list that also
- * carries every session completion, proposal nudge and kudos on a busy
- * account, so it sinks within hours — and it is the one kind you ANSWER
- * rather than just read. The tab is the place to catch up on conversations
- * whatever the rest of the feed is doing, and it carries the way out of the
- * sheet: `#notifications-all-messages` opens the same #messages screen the
- * app chip's Messages row does.
+ * The Unread tab's count is the bell's own number (`badgeTotal` in the
+ * store, Notifications._badgeTotal), printed through the bell's cap, so the
+ * bell, this tab and the browser tab's title can no longer say three
+ * different things. It used to sum the rows paged in so far.
  *
- * AGENTS LIVE HERE TOO (#2815). The bell had a fourth tab, Agents, listing
- * the running sessions; the Messages screen already puts agents in its chats
- * beside people, so the bell now does the same. The Messages tab is one list,
- * newest first: conversation rows, the agent notifications (a session
- * finished, Claude asked you something, work it submitted — the `agent` flag
- * screenViews sets in ./notifications.js) and the sessions themselves as the
- * same <SessionRow> the Agents tab drew, each at its own last-activity time.
+ * The Messages filter is gone. It repeated the Messages tab in the bar
+ * (which lists the same conversations and the agents beside them), and the
+ * strip is now the count you came for and the archive. A message is still a
+ * row here; consecutive lines from one conversation still collapse into one
+ * counted row (collapseConversationRuns in ./notifications.js).
  *
- * The rows on it are already collapsed per conversation — a run of
- * consecutive same-conversation notifications renders as one row with a
- * count, see collapseConversationRuns in ./notifications.js — so a friend
- * sending four lines is one entry here, not four.
+ * On Unread, inside one project's group, notifications of the same kind
+ * that printed the same label fold into one row: "3 changes you voted on are
+ * live" rather than three rows saying it. The row is drawn as its newest
+ * member; tapping it opens that one and reads the whole group
+ * (Notifications.openGroupRow), and clearing it clears them all.
  *
  * ── It was a screen, and a screen needed a back button ─────────────────
  *
@@ -107,7 +97,7 @@ import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } fr
 import { Button } from '@/components/ui/button';
 import { IconTile } from '@/components/ui/icon-tile';
 import {
-  BookmarkIcon, BookmarkSolidIcon, ChatBubbleTailIcon, ChevronRightIcon, SearchIcon, XIcon,
+  BookmarkIcon, BookmarkSolidIcon, ChevronRightIcon, SearchIcon, XIcon,
 } from '@/components/ui/icons';
 
 import { UserAvatar, swatchFor } from '../messages/format';
@@ -121,9 +111,6 @@ import { matchesNotificationQuery, normalizeNotificationQuery } from './notifica
 import { notificationsSheetStore } from './notifications-sheet-store.js';
 import { NotificationsSheet } from './notifications-sheet-controller.js';
 import { NotificationsPinnedSections } from './notifications-list';
-import { improveStore } from '../improve/improve-store.js';
-import { SessionRow } from '../improve/session-row';
-import type { SessionRowView } from '../improve/session-row';
 import type { NotificationRowView } from './notifications-list';
 
 type ScreenRowView = NotificationRowView & {
@@ -144,13 +131,20 @@ type ScreenRowView = NotificationRowView & {
    * subject rather than the actor.
    */
   by?: string | null;
-  /** Set on a conversation row — what the Messages tab filters on. */
+  /** Set on a conversation row: a person speaking, never folded by kind. */
   conversation?: boolean;
   /** Set on a row from the Homeroom bot: it wears the bot's own face. */
   bot?: boolean;
-  /** Set on an agent-status row (#2815) — the Messages tab lists these too. */
-  agent?: boolean;
   conversationId?: number | null;
+  /** #5289: the notification's kind, what a project's repeats fold on. */
+  kind?: string;
+  /**
+   * #5289: set on a row that stands for several notifications of one kind in
+   * one project: every member's id, the row's own (the newest) first.
+   */
+  groupIds?: number[];
+  /** #5289: the group's label says the count, so the count pill steps aside. */
+  groupLabelled?: boolean;
   /**
    * #4769: the user has bookmarked this row for later. Independent of the
    * read state — saving never reads, reading never saves.
@@ -164,16 +158,10 @@ type ScreenRowView = NotificationRowView & {
   count?: number;
 };
 
-type Tab = 'all' | 'unread' | 'messages';
+type Tab = 'all' | 'unread';
 
-/**
- * One entry on the Messages tab: a notification row, or a running session.
- * Both carry `at` (ms) so the tab sorts them as one list, as the Messages
- * screen's chats section does (see buildInbox in ../messages/inbox.ts).
- */
-type MessagesEntry =
-  | { type: 'notif'; key: string; at: number; view: ScreenRowView }
-  | { type: 'session'; key: string; at: number; session: SessionRowView & { sortAt?: number } };
+/** One row of the list, with its time (ms) for the Today/Earlier split. */
+type Entry = { type: 'notif'; key: string; at: number; view: ScreenRowView };
 
 /** The bot as the avatar reads it: a platform account, drawn as its mark. */
 const BOT_SENDER: ConversationUser = { id: 0, username: 'homeroom_bot', avatarUrl: null, bot: true };
@@ -299,10 +287,10 @@ type AppGroup = {
   appId: number | null;
   /** The first row's appLine, before the "Other" fallback the renderer applies. */
   appLine: string;
-  entries: MessagesEntry[];
+  entries: Entry[];
 };
 
-function groupUnreadByApp(rows: ScreenRowView[]): AppGroup[] {
+function groupUnreadByApp(rows: ScreenRowView[], t: Translate): AppGroup[] {
   const groups: AppGroup[] = [];
   const byKey = new Map<string, AppGroup>();
   for (const view of rows) {
@@ -315,7 +303,70 @@ function groupUnreadByApp(rows: ScreenRowView[]): AppGroup[] {
     }
     group.entries.push({ type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view });
   }
+  for (const group of groups) {
+    if (group.appId != null) group.entries = foldRepeats(group.entries, t);
+  }
   return groups;
+}
+
+type Translate = (id: string, values?: Record<string, unknown>) => string;
+
+/**
+ * #5289: the kinds whose repeats have words of their own: the kind's one
+ * label, and the counted sentence a group of them reads as. A group of any
+ * other kind keeps its label and shows the count pill instead.
+ */
+const GROUP_LABELS: Record<string, { one: string; many: string }> = {
+  voted_change_merged: { one: 'notifications:row.votedMerged.label', many: 'notifications:row.group.votedMerged' },
+  pr_proposed: { one: 'notifications:row.proposed.label', many: 'notifications:row.group.proposed' },
+  stale_pr: { one: 'notifications:row.stale.label', many: 'notifications:row.group.stale' },
+  check_failed: { one: 'notifications:row.checkFailed.label', many: 'notifications:row.group.checkFailed' },
+  issue_opened: { one: 'notifications:row.issueOpened.label', many: 'notifications:row.group.issueOpened' },
+  issue_mention: { one: 'notifications:row.issueMention.label', many: 'notifications:row.group.issueMention' },
+  reaction: { one: 'notifications:row.reaction.label', many: 'notifications:row.group.reaction' },
+  session_done: { one: 'notifications:row.session.finished', many: 'notifications:row.group.sessionDone' },
+};
+
+/**
+ * #5289: inside one project's group, the notifications of one kind that
+ * printed one label fold into a single row where the newest of them stood.
+ * A person speaking (a conversation row) and a row with buttons of its own
+ * never fold: each of those is its own thing to answer. The folded row is
+ * the newest member's view carrying every member's id (`groupIds`, its own
+ * first) and how many it stands for (`count`).
+ */
+export function foldRepeats(entries: Entry[], t: Translate): Entry[] {
+  const out: Entry[] = [];
+  const firstAt = new Map<string, number>();
+  for (const entry of entries) {
+    const view = entry.view;
+    const foldable = !!view.kind && !view.conversation && !(view.actions && view.actions.length);
+    const key = foldable ? `${view.kind}\n${view.label}` : null;
+    const at = key != null ? firstAt.get(key) : undefined;
+    if (at == null) {
+      if (key != null) firstAt.set(key, out.length);
+      out.push(entry);
+      continue;
+    }
+    const lead = out[at].view;
+    out[at] = { ...out[at], view: { ...lead, groupIds: [...(lead.groupIds || [lead.id]), view.id] } };
+  }
+  return out.map((entry) => {
+    const ids = entry.view.groupIds;
+    if (!ids || ids.length < 2) return entry;
+    const count = ids.length;
+    const words = entry.view.kind ? GROUP_LABELS[entry.view.kind] : undefined;
+    const labelled = !!words && t(words.one) === entry.view.label;
+    return {
+      ...entry,
+      view: {
+        ...entry.view,
+        count,
+        label: labelled && words ? t(words.many, { count }) : entry.view.label,
+        groupLabelled: labelled,
+      },
+    };
+  });
 }
 
 /**
@@ -426,7 +477,7 @@ type ScreenRowProps = {
  *     nothing else wants that one.
  *
  *     On Unread the long swipe COMMITS, because there the row leaves: it
- *     slides out and collapses, as on the lock screen. On Messages and All
+ *     slides out and collapses, as on the lock screen. On All
  *     the row stays, so the swipe reveals Clear and a tap on it clears. A
  *     row that slid away and then came straight back without its dot would
  *     say two different things in half a second. The button is the kit's
@@ -453,13 +504,21 @@ type ScreenRowProps = {
  * sit in anyway. The slot is KEYED on what decides the kit's hold on the
  * row, its read state and its shape, so a row that changes either is a new
  * slot and React drops the old one whole instead of swapping out an element
- * the kit may still be holding. The hairline between rows follows the
+ * the kit may still be holding (a folded group, #5289, is a shape of its
+ * own: it has no bookmark). The hairline between rows follows the
  * slot's place in the list rather than the row's (app.css).
  */
 function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
   const t = useMessages('notifications');
   const clearable = view.unread;
   const shape = view.actions && view.actions.length ? 'actions' : 'plain';
+  // #5289: a row standing for several notifications of one kind clears,
+  // opens and reads as all of them (see foldRepeats).
+  const groupIds = view.groupIds && view.groupIds.length > 1 ? view.groupIds : null;
+  const open = () => {
+    if (groupIds) controller()?.openGroupRow(view.id, groupIds);
+    else controller()?._onItemClick(view.id);
+  };
   const rowRef = useRef<HTMLElement | null>(null);
   const setRow = useCallback((el: HTMLElement | null) => { rowRef.current = el; }, []);
   useEffect(() => {
@@ -473,11 +532,11 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
         // takes the row out of the document; only Unread wants that.
         destructive: removes,
         color: 'var(--un-action-neutral)',
-        handler: () => { void controller()?.clearNotification(view.id); },
+        handler: () => { void controller()?.clearNotification(view.id, groupIds || undefined); },
       }],
     });
     return () => swipe.detach();
-  }, [clearable, touch, removes, shape, view.id, t]);
+  }, [clearable, touch, removes, shape, view.id, groupIds?.join(','), t]);
 
   // Everything between the row's left edge and its chevron: the tile, the
   // three lines, the count, the dot.
@@ -501,8 +560,10 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
         ) : null}
         {/* WHICH ONE — the PR's title, the conversation, the message. The
             row's own content, and the only line whose text differs between
-            two notifications of the same kind, so it carries the strong ink. */}
-        <span className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+            two notifications of the same kind, so it carries the strong ink.
+            #5289: two lines before it is cut, not one: a title cut to one
+            line on a phone was rarely enough to tell two changes apart. */}
+        <span className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2 break-words">
           {view.segments.length ? view.segments.map((segment, index) => (
             // eslint-disable-next-line react/no-array-index-key
             <span
@@ -566,9 +627,11 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
           A collapsed conversation run says how many it stands for. Only ever
           rendered above 1, so an ordinary row is unchanged — and it is a
           COUNT, not an alerting badge: it sits in the row's own ink when the
-          run is read, violet only while it is still waiting on you.
+          run is read, violet only while it is still waiting on you. A folded
+          group whose label already says the number (#5289) does not say it
+          twice.
       */}
-      {view.count && view.count > 1 ? (
+      {view.count && view.count > 1 && !view.groupLabelled ? (
         <span
           className={'shrink-0 min-w-[1.5rem] px-2 h-6 rounded-full text-[11px] font-semibold '
             + 'flex items-center justify-center '
@@ -608,7 +671,7 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
         className="min-w-0 flex-1 text-left flex items-center gap-4"
         onClick={(event) => {
           event.stopPropagation();
-          controller()?._onItemClick(view.id);
+          open();
         }}
       >
         {body}
@@ -619,11 +682,12 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
     <button
       ref={touch ? undefined : setRow}
       data-notif-id={view.id}
+      data-notif-group-size={groupIds ? groupIds.length : undefined}
       className={'notifications-row w-full text-left pl-4 pr-12 py-3.5 '
         + 'hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4'}
       onClick={(event) => {
         event.stopPropagation();
-        controller()?._onItemClick(view.id);
+        open();
       }}
     >
       {body}
@@ -635,7 +699,9 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
   // phone-width row needs a real one. `stopPropagation` first, for the
   // reason every handler in this sheet stops its click: this is not a tap
   // that opens the row.
-  const bookmark = (
+  // #5289: a folded group has no bookmark: a save is one notification's,
+  // and the row stands for several. Each one is on All, with its own.
+  const bookmark = groupIds ? null : (
     <button
       type="button"
       data-notification-save={view.id}
@@ -666,13 +732,15 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
     </div>
   ) : row;
   return (
-    <div key={`${clearable ? 'unread' : 'read'}:${shape}`} className="notifications-row-slot group/notif relative">
+    <div key={`${clearable ? 'unread' : 'read'}:${shape}${groupIds ? ':group' : ''}`} className="notifications-row-slot group/notif relative">
       {swipeHost}
       {clearable && !touch ? (
         <button
           type="button"
           data-notification-clear={view.id}
-          aria-label={t('notifications:row.clearLabel')}
+          aria-label={groupIds
+            ? t('notifications:row.clearGroupLabel', { count: groupIds.length })
+            : t('notifications:row.clearLabel')}
           // Hidden until the pointer is over the slot or something in it has
           // keyboard focus, and untouchable while hidden, so a click on the
           // tile's corner opens the row as it always did.
@@ -694,7 +762,7 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
             // `detail` is 0 for a click the keyboard made (Enter or Space).
             const fromKeyboard = event.detail === 0;
             const neighbourId = sheet ? neighbourRowId(sheet, view.id) : null;
-            void controller()?.clearNotification(view.id);
+            void controller()?.clearNotification(view.id, groupIds || undefined);
             if (fromKeyboard && sheet) {
               requestAnimationFrame(() => refocusAfterClear(sheet, view.id, neighbourId));
             }
@@ -724,8 +792,8 @@ export function NotificationsSheetView() {
     screenList: ScreenRowView[] | null;
     screenCanLoadMore?: boolean;
     loadingMore: boolean;
-    messagesCanLoadMore?: boolean;
-    loadingOlderMessages?: boolean;
+    /** #5289: the bell's number, which the Unread tab prints too. */
+    badgeTotal?: number;
     /** #5527: the Unread tab's own pager — see loadMoreUnread(). */
     unreadCanLoadMore?: boolean;
     loadingUnread?: boolean;
@@ -744,7 +812,7 @@ export function NotificationsSheetView() {
   // again. It starts false, so the prerendered markup is unchanged.
   const [olderShown, setOlderShown] = useState(false);
   // #5405: what the search field holds. It narrows the tab that is open —
-  // all three tabs — and a tab change keeps it. It starts '' so the
+  // both tabs, and a tab change keeps it. It starts '' so the
   // prerendered markup is an empty field; the restore effect below reads
   // the remembered value back after mount (#5460), so the field still holds
   // what you typed when you come back — opening a row closes the sheet, and
@@ -766,28 +834,11 @@ export function NotificationsSheetView() {
   }, []);
   const t = useMessages('notifications');
 
-  // `?shot=notifications-messages` lands on the Messages tab, so the capture
-  // pipeline and the declared checks can reach a view that is otherwise only
-  // one click away and therefore invisible to both. It is also the address of
-  // the agent session rows: they were the Improve panel's, then the Agents
-  // tab's (#2718 review), and are the Messages tab's since #2815.
-  //
-  // In an effect and not in the initial state, for the reason every deep link
-  // in this bundle is: the SSG pass renders this island in Node, where there
-  // is no `location` and the prerendered markup has to match the client's
-  // first pass byte for byte. Reading it during render would mismatch on
-  // hydration, and a console error on any route fails proposal checks.
-  useIsomorphicLayoutEffect(() => {
-    let shot: string | null = null;
-    try { shot = new URLSearchParams(window.location.search).get('shot'); }
-    catch { shot = null; }
-    if (shot === 'notifications-messages') setTab('messages');
-  }, []);
-
   // #5460: the remembered search comes back after mount, not in the initial
   // state — the SSG pass renders this island in Node with no sessionStorage,
   // and the prerendered field has to stay empty so hydration matches (the
-  // reason the deep-link effect above spells out). An empty or missing value
+  // reason every deep link in this bundle reads its address in an effect: a
+  // console error on any route fails proposal checks). An empty or missing value
   // restores nothing, so a search you cleared stays cleared.
   useEffect(() => {
     try {
@@ -801,7 +852,7 @@ export function NotificationsSheetView() {
   // above). The query is NOT: it is remembered for the tab session (#5460),
   // because opening a row closes the sheet, and clearing it here made every
   // round trip to a proposal re-widen the list. An effect, not the initial
-  // state, for the hydration reason the deep link above spells out.
+  // state, for the same hydration reason.
   useEffect(() => {
     if (!open) setOlderShown(false);
     else if (tab !== 'unread') setOlderShown(false);
@@ -844,49 +895,24 @@ export function NotificationsSheetView() {
 
   const all = snap.screenList || [];
   const unread = all.filter((view) => view.unread);
-  const messages = all.filter((view) => view.conversation || view.agent);
-  // WHAT YOU ARE WORKING ON, from the store that already answers it (#2718
-  // review). The Improve panel splits the same list in two — this app's and
-  // everywhere else — because it is standing inside an app; the bell is not,
-  // so it is one list and every row names its app. No second fetch and no
-  // second model: a tab that recomputed "which sessions are live" would be a
-  // second answer to a question the platform already answers once.
-  const improve = useStoreState(improveStore) as {
-    sessions: (SessionRowView & { sortAt?: number })[];
-    otherSessions: (SessionRowView & { sortAt?: number })[];
-    sessionsLoaded: boolean;
-  };
-  const agentRows = [...(improve.sessions || []), ...(improve.otherSessions || [])];
-  const rows = tab === 'unread' ? unread
-    : tab === 'messages' ? messages : all;
+  const rows = tab === 'unread' ? unread : all;
   // What the tab DRAWS. On Unread expanded (#4700) the older rows — the read
   // ones already in hand, plus any further page the server still has — show
   // UNDER the unread ones, on the same tab. `rows` stays the tab's own filter:
-  // the footer's conditions and counts read it, and the list is `shown`.
+  // the footer's conditions read it, and the list is `shown`.
   const shown = tab === 'unread' && olderShown ? all : rows;
-  // #2815: the Messages tab interleaves the sessions with its notification
-  // rows by time, one list, newest first — the order the Messages screen's
-  // chats section keeps. Stable sort, so a tie keeps notifications first.
-  const messageEntries: MessagesEntry[] = tab === 'messages'
-    ? [
-      ...messages.map((view): MessagesEntry => (
-        { type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view })),
-      ...agentRows.map((session): MessagesEntry => (
-        { type: 'session', key: `s:${session.key}`, at: session.sortAt || 0, session })),
-    ].sort((a, b) => b.at - a.at)
-    : [];
-  // The tab counts NOTIFICATIONS, not rows. A collapsed conversation row
-  // stands for `count` of them, so summing is what keeps this number equal to
-  // the one on the bell — after collapsing, `unread.length` would say 1 where
-  // the badge says 4.
-  const unreadCount = unread.reduce((sum, view) => sum + (view.count || 1), 0);
+  // #5289: the tab prints the BELL'S number, through the bell's own cap, so
+  // the bell, this tab and the browser tab's title say one thing. It used to
+  // sum the unread rows paged in so far, which on a backlog was a count of
+  // the list ("Unread (81)") under a bell saying 99+ and a title saying 300.
+  const unreadCount = snap.badgeTotal || 0;
   const boundary = startOfToday();
-  const entries: MessagesEntry[] = tab === 'messages' ? messageEntries
-    : shown.map((view) => ({ type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
+  const entries: Entry[] = shown.map((view) => (
+    { type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
   const today = entries.filter((entry) => entry.at >= boundary);
   const earlier = entries.filter((entry) => entry.at < boundary);
   // #5405: the query narrows what the open tab already drew — the same
-  // `entries`, notifications and sessions both. Whitespace-only is no query
+  // `entries`. Whitespace-only is no query
   // at all. While it is active the headings, the pinned sections and the
   // pager footers step aside, and the empty state is the search one.
   const needle = normalizeNotificationQuery(query);
@@ -897,13 +923,14 @@ export function NotificationsSheetView() {
   // #5406: on Unread in its collapsed state — the one the sheet opens in, and
   // the list you are trying to empty — the rows group under one heading per
   // app, with that app's "Mark read" beside it, instead of under Today and
-  // Earlier. Unread only: Messages and All keep the time-grouped flat list,
+  // Earlier, and a project's repeats fold into one row (#5289, foldRepeats).
+  // Unread only: All keeps the time-grouped flat list,
   // and once the older rows are revealed on Unread the tab is the archive
   // again, so it draws Today/Earlier as it always did. `unread` is feed
   // order (newest first), so groupUnreadByApp's insertion order keeps the
   // groups newest-first too.
   const groupedUnread = tab === 'unread' && !olderShown;
-  const appGroups = groupedUnread ? groupUnreadByApp(unread) : [];
+  const appGroups = groupedUnread ? groupUnreadByApp(unread, t) : [];
   const renderAppGroup = (group: AppGroup): ReactNode => (
     <Fragment key={group.key}>
       <AppGroupHead
@@ -914,25 +941,14 @@ export function NotificationsSheetView() {
       {group.entries.map(renderEntry)}
     </Fragment>
   );
-  const renderEntry = (entry: MessagesEntry): ReactNode => (entry.type === 'session' ? (
-    // The same <SessionRow> the Improve panel and then the Agents tab drew,
-    // so a session reads the same wherever you meet it and its busy /
-    // awaiting-input state cannot say two different things in two places.
-    // `showApp` because the bell is the platform's, not one app's.
-    <SessionRow
-      key={entry.key}
-      session={entry.session}
-      showApp
-      onNavigate={() => { NotificationsSheet.close?.(); }}
-    />
-  ) : (
+  const renderEntry = (entry: Entry): ReactNode => (
     <ScreenRow
       key={entry.key}
       view={entry.view}
       touch={!!snap.touch}
       removes={tab === 'unread'}
     />
-  ));
+  );
 
   // `whitespace-nowrap`: "Unread (12)" is two words and the strip is a flex
   // row inside a phone-width sheet, so the count wrapped onto a second line
@@ -1063,26 +1079,9 @@ export function NotificationsSheetView() {
           className={tabCls(tab === 'unread')}
           onClick={() => setTab('unread')}
         >
-          {unreadCount ? t('notifications:sheet.tab.unreadCount', { count: unreadCount }) : t('notifications:sheet.tab.unread')}
-        </button>
-        {/*
-            Messages, SECOND. One place to catch up on conversations regardless
-            of how busy the rest of the feed is: a message sinks fast in a flat
-            chronological list that also carries every session, proposal and
-            kudos notification, and it is the one kind you answer rather than
-            just read. It sits next to Unread because both are filters on what
-            still wants something from you; All is the archive behind them.
-            Agents are in it too (#2815), as they are on the Messages screen:
-            there is no separate Agents tab.
-        */}
-        <button
-          id="notifications-tab-messages"
-          role="tab"
-          aria-selected={tab === 'messages'}
-          className={tabCls(tab === 'messages')}
-          onClick={() => setTab('messages')}
-        >
-          {t('notifications:sheet.tab.messages')}
+          {unreadCount > 99 ? t('notifications:sheet.tab.unreadCountCapped')
+            : unreadCount ? t('notifications:sheet.tab.unreadCount', { count: unreadCount })
+              : t('notifications:sheet.tab.unread')}
         </button>
         <button
           id="notifications-tab-all"
@@ -1105,59 +1104,22 @@ export function NotificationsSheetView() {
           either tab, and a save has no read state to filter by.
       */}
       {/*
-          The Messages tab is a messages-only view, so Saved and Invites step
-          aside on it — they are neither, and between them they can hold the
-          top ~450px of the sheet (`max-h-64` and `max-h-48`), which is most of a
-          phone's first screen.
-          
-          In their place, the way OUT: this tab lists the conversations that
-          pinged you, and the next thing you want is the rest of them. It goes
-          to the same #messages screen the app chip's Messages row does — one
-          destination, reached from either place — and dismisses the sheet
-          first, because on touch it is a modal kit sheet that would otherwise
-          cover the screen it just sent you to (the contract _onItemClick
-          follows for every row that routes).
-      */}
-      {/*
           "Mark all read" lives in the title row above (see the comment on
           the sheet root), as a small pill between the name and the close
           disc.
 
           It once sat at the far right of the tab row, in tab-sized ink on
-          the same baseline as All / Unread / Messages, which made a control
+          the same baseline as the tabs, which made a control
           that CHANGES data look like a fourth place to go; then under the
           rail as a text button. The title-row pill keeps the point of both
           moves — it shares no baseline and no shape with the chips, so it
           cannot be read as a tab — and it still exists only on Unread,
-          because "mark all read" while looking at All or at Messages is an
-          offer to act on rows you are not being shown. It is rendered even
+          because "mark all read" while looking at All is an offer to act on
+          rows you are not being shown. It is rendered even
           with nothing unread (disabled), so the row does not reflow the
           first time you clear the list.
       */}
-      {searching ? null : tab === 'messages' ? (
-        <button
-          id="notifications-all-messages"
-          type="button"
-          className={'notifications-row w-full text-left px-4 py-3.5 '
-            + 'hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4 '
-            + 'text-sm font-semibold text-violet-700 dark:text-violet-400'}
-          onClick={(event) => {
-            event.stopPropagation();
-            NotificationsSheet.close();
-            const bridge = (window as any).UsernodeReact?.messages;
-            if (bridge?.open) bridge.open();
-            else window.location.hash = '#messages';
-          }}
-        >
-          <ChatBubbleTailIcon className="w-5 h-5 shrink-0" />
-          <span className="flex-1 min-w-0">
-            {t('notifications:sheet.allMessages')}
-          </span>
-          <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
-        </button>
-      ) : (
-        <NotificationsPinnedSections />
-      )}
+      {searching ? null : <NotificationsPinnedSections />}
       {/* #5405: while searching the list is ONLY the matches — no headings,
           no pager — and a query with no matches gets one line saying so. */}
       {searching ? (
@@ -1195,15 +1157,6 @@ export function NotificationsSheetView() {
       {/*
           THE WAY ON, and it depends on which tab you are standing on.
 
-          On MESSAGES it is a real pager, and it stays on this tab. The reason
-          a filtered tab could not page used to be that only one page existed —
-          the unfiltered one — so pressing it fetched 100 older rows of
-          everything and typically surfaced no new message at all: a spinner,
-          and nothing. `?kind=conversation` (src/routes/notifications.js) makes
-          a page of older MESSAGES a thing the server can return, so the tab
-          now pages itself on its own cursor. See
-          Notifications.loadOlderMessages for why that cursor is separate.
-
           On UNREAD it shows the older rows IN PLACE (#4700), where it used to
           be the All tab. Paging Unread still cannot mean "more of the thing
           you are trying to get to zero" — the older rows are mostly read, and
@@ -1222,30 +1175,7 @@ export function NotificationsSheetView() {
           on a quiet account would otherwise offer a link to an equally empty
           All, which is a dead end dressed as a way forward.
       */}
-      {searching ? null : (tab === 'messages' && snap.messagesCanLoadMore ? (
-        <div className="px-4 py-3">
-          <button
-            id="notifications-see-older-messages"
-            type="button"
-            className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-40"
-            disabled={snap.loadingOlderMessages}
-            onClick={() => controller()?.loadOlderMessages()}
-          >
-            {snap.loadingOlderMessages ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.messages')}
-          </button>
-        </div>
-      ) : tab === 'messages' && (all.length > rows.length || snap.screenCanLoadMore) ? (
-        <div className="px-4 py-3">
-          <button
-            id="notifications-see-older"
-            type="button"
-            className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline"
-            onClick={() => setTab('all')}
-          >
-            {t('notifications:sheet.older.showAll')}
-          </button>
-        </div>
-      ) : tab === 'unread' && !olderShown ? (
+      {searching ? null : (tab === 'unread' && !olderShown ? (
         <>
           {/* #5527: the bell's number, completed. The badge counts every
               unread row on the account; the sheet's first page holds only the

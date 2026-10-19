@@ -21,7 +21,7 @@
   },
   "sheet.filters": {
     "text": "Notification filters",
-    "description": "Accessible name of the row of three filter buttons (Unread, Messages, All) at the top of the notifications sheet."
+    "description": "Accessible name of the row of two filter buttons (Unread, All) at the top of the notifications sheet."
   },
   "sheet.tab.unread": {
     "text": "Unread",
@@ -35,17 +35,13 @@
     "text": "Unread ({{count}})",
     "description": "Filter button at the top of the notifications sheet: shows only notifications not yet read. {{count}} is how many there are."
   },
-  "sheet.tab.messages": {
-    "text": "Messages",
-    "description": "Filter button at the top of the notifications sheet: shows only notifications about conversations and about what coding agents did."
+  "sheet.tab.unreadCountCapped": {
+    "text": "Unread (99+)",
+    "description": "Filter button at the top of the notifications sheet when more than 99 notifications are unread: the same capped number the bell's badge shows."
   },
   "sheet.tab.all": {
     "text": "All",
     "description": "Filter button at the top of the notifications sheet: shows every notification, read ones included."
-  },
-  "sheet.allMessages": {
-    "text": "All messages",
-    "description": "Link row at the top of the notifications sheet's Messages filter: leaves the sheet and goes to the Messages screen."
   },
   "sheet.today": {
     "text": "Today",
@@ -61,15 +57,11 @@
   },
   "sheet.empty.other": {
     "text": "Nothing here yet. You’ll get pinged here.",
-    "description": "Shown in the notifications sheet when the Messages or All filter has nothing in it. \"Pinged\" means notified."
+    "description": "Shown in the notifications sheet when the All filter has nothing in it. \"Pinged\" means notified."
   },
   "sheet.older.loading": {
     "text": "Loading…",
     "description": "Shown on the button at the foot of the notifications sheet while older notifications are being fetched."
-  },
-  "sheet.older.messages": {
-    "text": "See older message notifications",
-    "description": "Button at the foot of the notifications sheet's Messages filter: fetches older notifications about conversations."
   },
   "sheet.older.unread": {
     "text": "See more unread notifications",
@@ -83,17 +75,13 @@
     "text": "Hide older notifications",
     "description": "Button at the foot of the notifications sheet's Unread filter once the older notifications are showing: collapses the list back to just the unread ones."
   },
-  "sheet.older.showAll": {
-    "text": "See older notifications",
-    "description": "Button at the foot of the notifications sheet's Messages filter: switches to the All filter, where read notifications are listed too."
-  },
   "sheet.older.load": {
     "text": "See older notifications",
     "description": "Button at the foot of the notifications sheet's All filter: fetches the next page of older notifications."
   },
   "sheet.search.placeholder": {
     "text": "Search notifications…",
-    "description": "Placeholder and accessible name of the search field between the title and the Unread, Messages and All filters in the notifications sheet. It narrows the notifications already loaded to those whose project, kind or subject matches."
+    "description": "Placeholder and accessible name of the search field between the title and the Unread and All filters in the notifications sheet. It narrows the notifications already loaded to those whose project, kind or subject matches."
   },
   "sheet.search.noMatches": {
     "text": "No notifications match “{{query}}”.",
@@ -106,6 +94,14 @@
   "row.clearLabel": {
     "text": "Clear notification",
     "description": "Accessible name of the small × button on an unread notification: marks that notification as read without opening it."
+  },
+  "row.clearGroupLabel_one": {
+    "text": "Clear {{count}} notification",
+    "description": "Accessible name of the small × button on a notification row that stands for several notifications of one kind in one project: marks all of them as read without opening them. {{count}} is how many."
+  },
+  "row.clearGroupLabel_other": {
+    "text": "Clear {{count}} notifications",
+    "description": "Accessible name of the small × button on a notification row that stands for several notifications of one kind in one project: marks all of them as read without opening them. {{count}} is how many."
   },
   "row.save": {
     "text": "Save notification",
@@ -126,6 +122,70 @@
   "row.runCount_other": {
     "text": "{{count}} notifications",
     "description": "Accessible name of the number at the right of a row that stands for several notifications from one conversation. {{count}} is how many."
+  },
+  "row.group.votedMerged_one": {
+    "text": "{{count}} change you voted on is live",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. Changes the viewer voted for were merged and are now live."
+  },
+  "row.group.votedMerged_other": {
+    "text": "{{count}} changes you voted on are live",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. Changes the viewer voted for were merged and are now live."
+  },
+  "row.group.proposed_one": {
+    "text": "{{count}} new change",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. New changes were put up for a vote."
+  },
+  "row.group.proposed_other": {
+    "text": "{{count}} new changes",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. New changes were put up for a vote."
+  },
+  "row.group.stale_one": {
+    "text": "{{count}} change needs votes",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. Proposed changes are waiting for more votes."
+  },
+  "row.group.stale_other": {
+    "text": "{{count}} changes need votes",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. Proposed changes are waiting for more votes."
+  },
+  "row.group.checkFailed_one": {
+    "text": "Testing couldn't run on {{count}} change",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. The automatic tests could not run on these proposed changes."
+  },
+  "row.group.checkFailed_other": {
+    "text": "Testing couldn't run on {{count}} changes",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. The automatic tests could not run on these proposed changes."
+  },
+  "row.group.issueOpened_one": {
+    "text": "{{count}} new request",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. New requests were filed in the project."
+  },
+  "row.group.issueOpened_other": {
+    "text": "{{count}} new requests",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. New requests were filed in the project."
+  },
+  "row.group.issueMention_one": {
+    "text": "Mentioned you {{count}} time",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. Someone mentioned the viewer in requests."
+  },
+  "row.group.issueMention_other": {
+    "text": "Mentioned you {{count}} times",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. Someone mentioned the viewer in requests."
+  },
+  "row.group.reaction_one": {
+    "text": "{{count}} reaction",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. People reacted to the viewer's messages."
+  },
+  "row.group.reaction_other": {
+    "text": "{{count}} reactions",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. People reacted to the viewer's messages."
+  },
+  "row.group.sessionDone_one": {
+    "text": "{{count}} session finished",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. The viewer's coding sessions finished their work."
+  },
+  "row.group.sessionDone_other": {
+    "text": "{{count}} sessions finished",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. The viewer's coding sessions finished their work."
   },
   "row.sending": {
     "text": "Sending…",

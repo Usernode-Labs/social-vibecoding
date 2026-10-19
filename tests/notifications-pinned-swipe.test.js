@@ -38,7 +38,6 @@ function renderPinned({ saved, invites, touch }) {
   const notificationsStore = createStore({
     saved, invites, touch,
     items: [], loadingMore: false, screenCanLoadMore: false,
-    messagesCanLoadMore: false, loadingOlderMessages: false,
   });
   const mod = loadTsx(LIST_PATH, {
     stubs: { './notifications-store.js': { notificationsStore } },

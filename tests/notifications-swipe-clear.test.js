@@ -246,7 +246,7 @@ const view = (id, overrides = {}) => ({
 function renderSheet({ touch, list }) {
   const notificationsStore = createStore({
     saved: [], invites: [], screenList: list, touch, loadingMore: false,
-    screenCanLoadMore: false, messagesCanLoadMore: false, loadingOlderMessages: false,
+    screenCanLoadMore: false,
   });
   const notificationsSheetStore = createStore({ open: true, adopted: false });
   const mod = loadTsx(SHEET_PATH, {
@@ -358,14 +358,14 @@ test('the hairline between rows follows the slot', () => {
   assert.match(APP_CSS, /\.dark \.notifications-row-slot:not\(:last-child\) \.notifications-row::after \{ background: rgba\(255, 255, 255, 0\.08\); \}/);
 });
 
-test('a declared check sees the ×, and the Messages-tab check sees through the slot', () => {
+test('a declared check sees the ×, and a folded row\'s × names the group', () => {
   const has = (fragment) => dapp.tests.some((t) => (t.expectSelector || '').includes(fragment));
   // Folded into an existing check on the same route rather than taking a
   // slot (the fold-first rule in services/app-manifest.js). The checks run
   // at 1280x800, where the kit reports a desktop and the × is rendered.
-  assert.ok(has('.notifications-row-slot > [data-notif-id="990201"] + button[data-notification-clear="990201"][aria-label="Clear notification"]'));
-  // The rows are not siblings of #notifications-all-messages any more; their
-  // slots are.
-  assert.ok(has('#notifications-all-messages ~ .notifications-row-slot [data-notif-id="990209"]'));
-  assert.ok(!has('#notifications-all-messages ~ [data-notif-id='));
+  // #5289: 990201 folds with 990205 ("2 sessions finished"), so the plain
+  // row this pins is 990211, and the folded one names both.
+  assert.ok(has('.notifications-row-slot > [data-notif-id="990211"] + button[data-notification-clear="990211"][aria-label="Clear notification"]'));
+  assert.ok(has('.notifications-row-slot > [data-notif-id="990201"] + button[data-notification-clear="990201"][aria-label="Clear 2 notifications"]'));
+  assert.ok(!has('#notifications-all-messages'));
 });

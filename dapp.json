@@ -848,15 +848,15 @@
       "expectText": "Whole-season standings"
     },
     {
-      "name": "A change row shows its title, and an idle row wears no status dot (#971, #1946)",
-      "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#notifications-sheet[data-open] a[href$=\"/proposals/990101\"]:not(:has(.h-3.w-3.rounded-full))",
+      "name": "A change row in Messages' agents shows its title, and an idle row wears no status dot (#971, #1946, #5289)",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session=\"s990101\"] a[data-improve-row=\"session\"]:not(:has(.h-3.w-3.rounded-full))",
       "expectText": "[Mock] Your in-progress session"
     },
     {
-      "name": "A busy change row spins the standard arc, and nothing else (#1038, #1597, #1947)",
-      "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#notifications-sheet[data-open] a[href$=\"/proposals/990102\"]:not(:has(.h-3.w-3.rounded-full)) .dc-status-spinner-arc"
+      "name": "A busy change row in Messages spins the standard arc, and nothing else (#1038, #1597, #1947, #5289)",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session=\"s990102\"] a[data-improve-row=\"session\"]:not(:has(.h-3.w-3.rounded-full)) .dc-status-spinner-arc"
     },
     {
       "name": "Send Feedback: no kudos bounty (#964, #5249), up to three images (#3027), video (#3940) behind one paperclip (#4127)",
@@ -2833,8 +2833,8 @@
     {
       "name": "A notification row says what kind it is, then which one, then where it came from",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-sheet[data-open]:has([data-notif-id=\"990210\"] > span:nth-child(2) > span:nth-child(3)) [data-notif-id=\"990201\"] > span:nth-child(2) > span:nth-child(3)",
-      "expectText": "Session finished"
+      "expectSelector": "#notifications-sheet[data-open]:has([data-notif-id=\"990210\"] > span:nth-child(2) > span:nth-child(3)) [data-notif-id=\"990211\"] > span:nth-child(2) > span:nth-child(3)",
+      "expectText": "[Mock] Session that stopped before finishing"
     },
     {
       "name": "The menu leads with Suggest an improvement, one button where there were two (#2718 review, UI overhaul)",
@@ -3124,9 +3124,9 @@
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-group .messages-attachment a[data-image-open][href*=\"/attachments/\"] img[alt*=\"Screenshot 2026-08-13\"]"
     },
     {
-      "name": "The notifications strip reads Unread, Messages, All — agents live under Messages, and it opens on Unread (#2718 review, #2815)",
+      "name": "The notifications strip reads Unread, All, and it opens on Unread (#2718 review, #5289)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child[aria-selected=\"true\"] + #notifications-tab-messages + #notifications-tab-all:last-child"
+      "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child[aria-selected=\"true\"] + #notifications-tab-all:last-child"
     },
     {
       "name": "The Unread footer shows older notifications in place rather than jumping to All",
@@ -3135,10 +3135,10 @@
       "expectText": "See older notifications"
     },
     {
-      "name": "The Messages tab pages older MESSAGES in place rather than jumping to All",
-      "path": "/?shot=notifications-messages&demo=1",
-      "expectSelector": "#notifications-sheet[data-open] #notifications-see-older-messages",
-      "expectText": "See older message notifications"
+      "name": "On Unread, a project's repeats of one kind fold into one row that says how many (#5289)",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-app-group=\"a:0\"] ~ .notifications-row-slot > [data-notif-id=\"990201\"][data-notif-group-size=\"2\"]",
+      "expectText": "2 sessions finished"
     },
     {
       "name": "A proposal notification names the proposal, not a sentence about it",
@@ -3147,24 +3147,24 @@
       "expectText": "Testing couldn't run"
     },
     {
-      "name": "The notifications sheet offers a Messages tab",
+      "name": "A folded row's clear names every notification it stands for (#5289)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-sheet[data-open] #notifications-screen-tabs #notifications-tab-messages"
+      "expectSelector": "#notifications-sheet[data-open] .notifications-row-slot > [data-notif-id=\"990201\"] + button[data-notification-clear=\"990201\"][aria-label=\"Clear 2 notifications\"]"
     },
     {
-      "name": "The messages deep link lands on the Messages tab",
-      "path": "/?shot=notifications-messages&demo=1",
-      "expectSelector": "#notifications-sheet[data-open] #notifications-tab-messages[aria-selected=\"true\"]"
+      "name": "A notification's subject runs to two lines before it is cut (#5289)",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990211\"] > span:nth-child(2) > span.line-clamp-2:nth-child(2)"
     },
     {
-      "name": "The Messages tab leads to the full Messages screen",
-      "path": "/?shot=notifications-messages&demo=1",
-      "expectSelector": "#notifications-sheet[data-open] #notifications-all-messages",
-      "expectText": "All messages"
+      "name": "Another project's notification is its own group, not folded into the first project's (#5289)",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-app-group=\"a:990003\"] + .notifications-row-slot > [data-notif-id=\"990209\"]:not([data-notif-group-size])",
+      "expectText": "Staging demo archive"
     },
     {
       "name": "Consecutive messages from one conversation collapse to a counted row",
-      "path": "/?shot=notifications-messages&demo=1",
+      "path": "/?shot=notifications&demo=1",
       "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990207\"] [aria-label=\"2 notifications\"]"
     },
     {
@@ -4348,19 +4348,19 @@
       "expectSelector": "body.bg-zinc-100"
     },
     {
-      "name": "A connector work order shows on the bell's Messages tab, beside an agent's finished-session notification (#1417, Streamlined Concept, #2815)",
-      "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#notifications-sheet[data-open]:has(#notifications-all-messages ~ .notifications-row-slot [data-notif-id=\"990209\"]) [data-improve-row=\"task\"]"
+      "name": "A connector work order is listed with the agents on the Messages screen (#1417, #2815, #5289)",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session] [data-improve-row=\"task\"]"
     },
     {
       "name": "The work-order row points at its request, not a session page (#1417)",
-      "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#notifications-sheet[data-open] [data-improve-row=\"task\"][href$=\"/dev/issues/900002\"]"
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) [data-improve-row=\"task\"][href$=\"/dev/issues/900002\"]"
     },
     {
-      "name": "Real sessions still render beside it on the full change destination (#1417)",
-      "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#notifications-sheet[data-open] [data-improve-row=\"session\"][href*=\"/dev/proposals/\"]"
+      "name": "Real sessions still render beside it in Messages (#1417, #5289)",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden):has([data-improve-row=\"task\"]) [data-inbox-session] a[data-improve-row=\"session\"][href^=\"#messages/session/\"]"
     },
     {
       "name": "The all-apps directory offers a Sort control, defaulting to Recommended (#1383)",
@@ -4428,7 +4428,7 @@
     {
       "name": "Unread notification rows read source, bold subject, muted preview",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-sheet[data-open]:has(.notifications-row-slot > [data-notif-id=\"990201\"] + button[data-notification-clear=\"990201\"][aria-label=\"Clear notification\"]) .notifications-row .text-xs + .text-sm.font-semibold"
+      "expectSelector": "#notifications-sheet[data-open]:has(.notifications-row-slot > [data-notif-id=\"990211\"] + button[data-notification-clear=\"990211\"][aria-label=\"Clear notification\"]) .notifications-row .text-xs + .text-sm.font-semibold"
     },
     {
       "name": "The sign-in screen stands on the wallpaper as a card form with a filled Log in pill",
@@ -4544,8 +4544,8 @@
     },
     {
       "name": "#1808: a change row's age is its own element with the full instant in title",
-      "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#notifications-sheet[data-open] [data-improve-row] time[title]"
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session] [data-improve-row] time[title]"
     },
     {
       "name": "#1808: an admin log line keeps its seconds and gains the day once it is not today's",

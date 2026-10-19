@@ -131,8 +131,12 @@ test('the tile still shows the app, and is no longer a positioning context', () 
 // ── The declared checks follow the markup ──────────────────────────────
 
 test('the two mock rows are the rendered evidence, with one check per row', () => {
-  const at = (href) => MANIFEST.tests.filter((t) =>
-    (t.expectSelector || '').includes(`/proposals/${href}"]`));
+  // #5289: the rows are checked on the Messages screen's agents list, by
+  // their inbox slot, since the bell's Messages filter went. Other checks
+  // read the same slot for other things; these are the two on the dot.
+  const at = (id) => MANIFEST.tests.filter((t) =>
+    (t.expectSelector || '').includes(`[data-inbox-session="s${id}"]`)
+    && (t.expectSelector || '').includes(':not(:has(.h-3.w-3.rounded-full))'));
 
   const idle = at('990101');
   assert.equal(idle.length, 1, 'one check owns the idle mock row');
