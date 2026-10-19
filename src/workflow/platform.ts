@@ -196,7 +196,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     ...releaseServices({ adoptions: ADOPTIONS }),
   };
   const started = createRuntime({
-    pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!,
+    pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, release: bootRelease(),
     publish: (q, pushes) => publishPushes(q, pushes, { badges: !!config.mobilePushEnabled }),
   });
   try {

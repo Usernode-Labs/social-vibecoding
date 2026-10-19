@@ -24,6 +24,9 @@ export function releaseServices({ adoptions }: { adoptions: readonly Adoption[] 
       leaseMs: 120000,
       resumable: true,
       concurrency: 1,
+      // The new build's adoptions, never an older build's still running
+      // during the rollout (kernel: WorkHandler.ownRelease).
+      ownRelease: true,
       async run(ctx): Promise<Json> {
         // An adoption that fails is tried again with the work; on its last
         // try its error is kept and the others still run, so one that keeps

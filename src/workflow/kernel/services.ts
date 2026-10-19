@@ -25,7 +25,12 @@ export interface ServiceOptions {
   // A claim's lock and statement timeouts: it never waits long on a lock.
   lockTimeoutMs: number;
   statementTimeoutMs: number;
+  // The build this process runs, and the kinds only a process of the
+  // release their input names may claim (WorkHandler.ownRelease).
+  release: string | null;
+  releaseKinds: readonly string[];
 }
+
 
 const DEFAULTS = { maxAttempts: 5, leaseMs: 60000, maxLostAttempts: 100, concurrency: 4 };
 // The kernel's own advisory locks, in the two-key form (which never meets
@@ -107,6 +112,8 @@ export async function claim(opts: ServiceOptions, kind: string, room: number): P
           WHERE w.kind = $1
             AND ((w.status = 'queued' AND w.due_at <= now()) OR (w.status = 'running' AND w.lease_until <= now()))
             AND (i.machine_version IS NULL OR m.version IS NULL OR i.machine_version <= m.version)
+            -- A kind claimed only by its own release (WorkHandler.ownRelease).
+            AND (NOT (w.kind = ANY($6::text[])) OR w.input->>'release' = $7::text)
           ORDER BY w.due_at, w.created_at
           LIMIT $2
           FOR UPDATE OF w SKIP LOCKED)
@@ -117,7 +124,7 @@ export async function claim(opts: ServiceOptions, kind: string, room: number): P
          FROM due WHERE w.id = due.id
        RETURNING w.id, w.machine, w.key, w.kind, w.work_key, w.input, w.checkpoint,
                  w.attempt_count, w.lost_attempts, w.claim_id, due.claim_id AS previous_claim`,
-      [kind, take, leaseMs, [...opts.versions.keys()], [...opts.versions.values()]]);
+      [kind, take, leaseMs, [...opts.versions.keys()], [...opts.versions.values()], opts.releaseKinds, opts.release ?? '']);
     for (const r of rows) {
       if (r.previous_claim) {
         // An attempt still 'running' when its item is claimed again lapsed
@@ -144,7 +151,7 @@ export async function claim(opts: ServiceOptions, kind: string, room: number): P
 // Which of these kinds have an item this process may claim now (the
 // mixed-version rule as in claim()): one query for a pass of the services
 // loop, which then claims only those kinds.
-export async function dueKinds(opts: Pick<ServiceOptions, 'pool' | 'versions'>, kinds: string[]): Promise<string[]> {
+export async function dueKinds(opts: Pick<ServiceOptions, 'pool' | 'versions' | 'release' | 'releaseKinds'>, kinds: string[]): Promise<string[]> {
   if (!kinds.length) return [];
   const { rows } = await opts.pool.query(
     `SELECT DISTINCT w.kind FROM wf_work w
@@ -152,14 +159,15 @@ export async function dueKinds(opts: Pick<ServiceOptions, 'pool' | 'versions'>, 
        LEFT JOIN unnest($2::text[], $3::int[]) AS m(machine, version) ON m.machine = w.machine
       WHERE w.kind = ANY($1::text[])
         AND ((w.status = 'queued' AND w.due_at <= now()) OR (w.status = 'running' AND w.lease_until <= now()))
-        AND (i.machine_version IS NULL OR m.version IS NULL OR i.machine_version <= m.version)`,
-    [kinds, [...opts.versions.keys()], [...opts.versions.values()]]);
+        AND (i.machine_version IS NULL OR m.version IS NULL OR i.machine_version <= m.version)
+        AND (NOT (w.kind = ANY($4::text[])) OR w.input->>'release' = $5::text)`,
+    [kinds, [...opts.versions.keys()], [...opts.versions.values()], opts.releaseKinds, opts.release ?? '']);
   return rows.map((r: { kind: string }) => r.kind);
 }
 
 // Milliseconds until the next item of these kinds is due (queued, or a
 // lease that runs out), or null when there is none. New work notifies.
-export async function nextDueMs(opts: Pick<ServiceOptions, 'pool' | 'versions'>, kinds: string[]): Promise<number | null> {
+export async function nextDueMs(opts: Pick<ServiceOptions, 'pool' | 'versions' | 'release' | 'releaseKinds'>, kinds: string[]): Promise<number | null> {
   if (!kinds.length) return null;
   // What this process may claim (the mixed-version rule, as in claim()): an
   // item a newer machine version's process must run is never due here.
@@ -169,8 +177,9 @@ export async function nextDueMs(opts: Pick<ServiceOptions, 'pool' | 'versions'>,
        LEFT JOIN wf_instances i ON i.machine = w.machine AND i.key = w.key
        LEFT JOIN unnest($2::text[], $3::int[]) AS m(machine, version) ON m.machine = w.machine
       WHERE w.kind = ANY($1::text[]) AND w.status IN ('queued', 'running')
-        AND (i.machine_version IS NULL OR m.version IS NULL OR i.machine_version <= m.version)`,
-    [kinds, [...opts.versions.keys()], [...opts.versions.values()]]);
+        AND (i.machine_version IS NULL OR m.version IS NULL OR i.machine_version <= m.version)
+        AND (NOT (w.kind = ANY($4::text[])) OR w.input->>'release' = $5::text)`,
+    [kinds, [...opts.versions.keys()], [...opts.versions.values()], opts.releaseKinds, opts.release ?? '']);
   return r?.ms == null ? null : Number(r.ms);
 }
 

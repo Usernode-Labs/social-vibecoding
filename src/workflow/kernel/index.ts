@@ -42,6 +42,9 @@ export interface RuntimeOptions {
   // (default 30 s), the polling interval when not (default and at most 1 s).
   pollMs?: number;
   serviceId?: string;
+  // The build this process runs: work of a kind marked `ownRelease` is
+  // claimed only by a process whose release its input names.
+  release?: string;
   // Publishes what browsers should hear, inside the transition's transaction.
   publish?: (q: Queryable, pushes: Push[]) => Promise<void>;
 }
@@ -63,7 +66,9 @@ export function createRuntime(opts: RuntimeOptions) {
   const timeouts = { lockTimeoutMs: opts.lockTimeoutMs ?? 2000, statementTimeoutMs: opts.statementTimeoutMs ?? 5000 };
   const pipeline = { pool: opts.pool, machines, log, ...timeouts, stallAfter: opts.stallAfter ?? 5, publish: opts.publish };
   const service = { pool: opts.pool, handlers, log, serviceId: opts.serviceId || `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`,
-    versions: new Map([...machines].map(([name, m]) => [name, m.version])), ...timeouts };
+    versions: new Map([...machines].map(([name, m]) => [name, m.version])), ...timeouts,
+    release: opts.release ?? null,
+    releaseKinds: [...handlers].filter(([, h]) => h.ownRelease).map(([kind]) => kind) };
   const signals = new Signals(opts.pool, log);
   const stopping = new AbortController();
   // Set by quiesce(): the loops end, the work they started does not.
@@ -202,8 +207,9 @@ export function createRuntime(opts: RuntimeOptions) {
 
     // Each kind's limit across every process, and the machine versions this
     // process runs: what the problems and the health read work against.
-    workLimits(): { limits: Map<string, number>; versions: Map<string, number> } {
-      return { limits: new Map([...handlers].map(([kind, h]) => [kind, concurrencyOf(h)])), versions: new Map(service.versions) };
+    workLimits(): { limits: Map<string, number>; versions: Map<string, number>; release: string | null; releaseKinds: string[] } {
+      return { limits: new Map([...handlers].map(([kind, h]) => [kind, concurrencyOf(h)])), versions: new Map(service.versions),
+        release: service.release, releaseKinds: [...service.releaseKinds] };
     },
 
     // Single steps, for tests and admin tooling.

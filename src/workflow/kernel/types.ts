@@ -181,6 +181,11 @@ export interface WorkHandler {
   // do not count against maxAttempts, only against maxLostAttempts (default 100).
   resumable?: boolean;
   maxLostAttempts?: number;
+  // Claimed only by a process of the release its input names
+  // (`input.release`, the runtime's `release` option): work that must run
+  // the code of the build that asked for it (release/machine.ts), never an
+  // older build's still running during a rollout.
+  ownRelease?: boolean;
 }
 
 // What a producer gets back for an event.

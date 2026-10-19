@@ -1,10 +1,14 @@
-// release: what a release of the platform runs once, whichever process runs
-// it. Every process that runs the workflow says it booted (Booted, keyed by
-// the build, so a release's processes append it once between them); its
-// first one queues the release's work (release.adopt), which whichever
-// process claims it runs, under a lease, retried like any work and shown in
-// Admin → Workflows. Booting waits for none of it, and a second replica of
-// the conductor does not run it again (docs/workflows.md, "Running it").
+// release: what a release of the platform runs once, whichever of its
+// processes runs it. Every process that runs the workflow says it booted
+// (Booted, keyed by the build, so a release's processes append it once
+// between them); its first one queues the release's work (release.adopt),
+// which only a process of that release claims (an older build still running
+// during the rollout would run its own, older adoptions: WorkHandler.
+// ownRelease), under a lease, retried like any work and shown in Admin →
+// Workflows. Booting waits for none of it, and a second replica of the
+// conductor does not run it again (docs/workflows.md, "Running it"). A
+// release none of whose processes took its work in ADOPT_WITHIN_MS (it was
+// replaced first) is abandoned: the next release adopts what is left.
 
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type { Event, Json, Outcome, WorkResultPayload } from '../kernel/index.ts';
@@ -12,8 +16,11 @@ import type { Event, Json, Outcome, WorkResultPayload } from '../kernel/index.ts
 export const MACHINE = 'release';
 export const WORK = Object.freeze({ adopt: 'release.adopt' });
 export const releaseKey = (release: string) => `release:${release}`;
+// A release's processes claim its work at once (Booted is appended just
+// before their loops start); one that has not in this long is gone.
+export const ADOPT_WITHIN_MS = 10 * 60 * 1000;
 
-type Name = 'adopting' | 'done' | 'failed';
+type Name = 'adopting' | 'done' | 'failed' | 'abandoned';
 interface Data { release: string; adopted?: Json; error?: string | null }
 export type RState = { name: Name; data: Data } | { name: typeof NONE; data: null };
 
@@ -26,27 +33,40 @@ const release = (p: any) => {
 const ended = (name: 'done' | 'failed') => (s: RState, e: Event<WorkResultPayload>): Outcome<RState> => {
   const data = (s as { data: Data }).data;
   return name === 'done'
-    ? { next: { name, data: { ...data, adopted: e.payload.result ?? null } } }
-    : { next: { name, data: { ...data, error: e.payload.error?.message ?? null } } };
+    ? { next: { name, data: { ...data, adopted: e.payload.result ?? null } }, timer: null }
+    : { next: { name, data: { ...data, error: e.payload.error?.message ?? null } }, timer: null };
 };
 
+// Whether a process of the release is running its work now (Expired then
+// waits for it rather than give it up under it).
+interface Facts { running: boolean }
+
 export function releaseMachine() {
-  return defineMachine<RState, null>({
+  return defineMachine<RState, Facts>({
     name: MACHINE,
     version: 1,
-    events: { Booted: release },
+    events: { Booted: release, Expired: () => ({}) },
     create: ['Booted'],
-    terminal: ['done', 'failed'],
+    terminal: ['done', 'failed', 'abandoned'],
     decode: (row) => (row.state === NONE ? { name: NONE, data: null } : { name: row.state as Name, data: row.data as Data }),
+    async facts(tx, state, event, ctx) {
+      if (event.type !== 'Expired') return { running: false };
+      const { rows: [w] } = await tx.query(
+        `SELECT 1 FROM wf_work WHERE machine = $1 AND key = $2 AND kind = $3 AND status = 'running' AND lease_until > now()`,
+        [MACHINE, ctx.key, WORK.adopt]);
+      return { running: !!w };
+    },
     authorize: {
       Booted: (e) => (e.source.kind === 'system' ? ok() : reject('system_only')),
+      Expired: (e) => (e.source.kind === 'timer' ? ok() : reject('timer_only')),
     },
     transitions: {
       [NONE]: {
         Booted: {
-          to: (s, e) => ({
+          to: (s, e, f, ctx) => ({
             next: { name: 'adopting', data: { release: e.payload.release } },
             work: [{ kind: WORK.adopt, key: 'adopt', input: { release: e.payload.release } }],
+            timer: { at: new Date(ctx.now.getTime() + ADOPT_WITHIN_MS), event: { type: 'Expired' } },
           }),
         },
       },
@@ -55,9 +75,19 @@ export function releaseMachine() {
         WorkSucceeded: { to: ended('done') },
         WorkFailed: { to: ended('failed') },
         WorkExhausted: { to: ended('failed') },
+        // None of its processes took its work: it was replaced first. The
+        // work is given up (a claim under way finishes and is refused as
+        // stale); the next release adopts what is left.
+        Expired: {
+          to: (s, e, f, ctx) => (f.running
+            // Its own process is at it: wait for it.
+            ? { next: s, timer: { at: new Date(ctx.now.getTime() + ADOPT_WITHIN_MS), event: { type: 'Expired' } } }
+            : { next: { name: 'abandoned', data: (s as { data: Data }).data }, cancel: [{ kind: WORK.adopt, key: 'adopt' }] }),
+        },
       },
       done: { '*': { ignore: 'done' } },
       failed: { '*': { ignore: 'failed' } },
+      abandoned: { '*': { ignore: 'abandoned' } },
     },
   });
 }

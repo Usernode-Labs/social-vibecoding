@@ -36,7 +36,13 @@ export interface ProblemOptions extends Partial<WorkLimits> {
 // What the work this release runs may take (each kind's limit across every
 // process) and the machine versions it runs (the mixed-version rule): what
 // tells work nobody can take from work waiting its turn.
-export interface WorkLimits { limits: ReadonlyMap<string, number>; versions: ReadonlyMap<string, number>; unclaimedMs?: number }
+export interface WorkLimits {
+  limits: ReadonlyMap<string, number>; versions: ReadonlyMap<string, number>; unclaimedMs?: number;
+  // The release asking, and the kinds only a process of their input's
+  // release may take: another release's such work is not "nobody takes it"
+  // here (its own process takes it, or its machine gives it up).
+  release?: string | null; releaseKinds?: readonly string[];
+}
 
 // Work due for more than `unclaimedMs` (5 min) that a process running this
 // release could take now (its kind is below its limit, and its instance is
@@ -58,10 +64,12 @@ const UNCLAIMED_SQL = `
           OR (w.status = 'running' AND w.lease_until < now() - make_interval(secs => $5::float8 / 1000)))
      AND COALESCE(r.n, 0) < l.lim
      AND (i.machine_version IS NULL OR m.version IS NULL OR i.machine_version <= m.version)
+     AND (NOT (w.kind = ANY($7::text[])) OR w.input->>'release' = $8::text)
    ORDER BY waited DESC LIMIT $6`;
 
 const unclaimedArgs = (o: WorkLimits, limit: number) =>
-  [[...o.limits.keys()], [...o.limits.values()], [...o.versions.keys()], [...o.versions.values()], o.unclaimedMs ?? 300000, limit];
+  [[...o.limits.keys()], [...o.limits.values()], [...o.versions.keys()], [...o.versions.values()], o.unclaimedMs ?? 300000, limit,
+    [...(o.releaseKinds ?? [])], o.release ?? ''];
 
 // The oldest event waiting to be decided (pending and due, not held behind a
 // fault), in seconds: what says no process decides.

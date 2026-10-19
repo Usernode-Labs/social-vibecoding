@@ -213,6 +213,10 @@ A service is a `WorkHandler` registered for a kind:
 - **Concurrency.** A handler's `concurrency` (default 4) is how many items of its kind run
   at once **across every process**, counted under the kind's claim lock: replicas add
   failover, not more at once (Running it).
+- **A release's own work.** A handler marked `ownRelease` is claimed only by a process of
+  the release its input names (`input.release`, the runtime's `release` option): an older
+  build still running during a rollout never runs a newer build's work (the `release`
+  machine's adoptions).
 - **A lapsed lease.** An attempt whose item is claimed again on a lease that ran out with
   no word from its process is closed `lost` with code `lapsed`; a graceful stop (`stopped`)
   and a cancel (`cancelled`) say so. A process that cannot renew stops the handler itself
@@ -492,8 +496,10 @@ does both.
   proposal machine does not hold, claims with no clock, merge queues, deferred DM answers,
   main checks mid-run, the bot's queue rows, the platform's own faults, the bot lane's clock)
   is the `release` machine's: `release:<GIT_SHA>`, one `release.adopt` work item per
-  release, run by whichever process claims it, each adoption a step. Booting waits for
-  none of it. A route that meets an open row the machine does not hold enrolls it itself,
+  release, run by whichever process of that release claims it (never an older build's),
+  each adoption a step. Booting waits for none of it. A release none of whose processes
+  took it within 10 minutes (it was replaced first) is `abandoned`, and the next release
+  adopts what is left. A route that meets an open row the machine does not hold enrolls it itself,
   and the conductor's leader still adopts sessions created since, every minute.
 - **A Pod a release replaced** quiesces its runtime as it starts draining
   (`quiesceWorkflow`: no slot, timer or claim) and keeps running the work it had
@@ -696,7 +702,7 @@ A new machine brings the same two layers:
 | `main-check` | `app:<id>`, for each app whose main was checked after a merge or a new commit | `idle` → `running` (→ `confirming`) → `idle`; `idle` ⇄ `rechecking` while paused | On everywhere; its old paths are deleted |
 | `bot-request` | `request:<appId>:<issue>`, for each request the Homeroom bot is owed a look at | `idle` → `queued` → `reading` / `following_up` → `idle`; `building`; `older_turn` | On everywhere; its old paths are deleted |
 | `bot-lane` | `bot`, one for the Homeroom bot | `open` | On everywhere; its old paths are deleted |
-| `release` | `release:<GIT_SHA>`, one per release of the platform | `adopting` → `done`, or `failed` | Runs the boot adoptions once per release (`release.adopt`) |
+| `release` | `release:<GIT_SHA>`, one per release of the platform | `adopting` → `done`, `failed` or `abandoned` | Runs the boot adoptions once per release (`release.adopt`), in that release's own processes |
 
 ### Turns workflow work runs
 
