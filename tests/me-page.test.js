@@ -136,6 +136,13 @@ test('the page renders its six parts in order', () => {
   assert.ok(!/id="profile-more"/.test(html), 'the "More" list is regrouped away');
   assert.ok(!/Log out|profile-row-admin|data-completed-challenge|Points breakdown/.test(html),
     'nothing that moved elsewhere is drawn twice');
+  // #5557: the Settings card is on Me at every width, with Profile,
+  // Notifications and Settings.
+  const settings = html.slice(html.indexOf('id="profile-settings"'));
+  assert.doesNotMatch(settings, /md:hidden/, 'no width hides the card');
+  assert.match(settings, /id="profile-row-profile"/);
+  assert.match(settings, /id="profile-row-notifications"/);
+  assert.match(settings, /id="profile-row-settings"/);
 });
 
 test('Me sits in the Workshop tab\'s frame, and its labels on the rows\' edge (#2832)', () => {

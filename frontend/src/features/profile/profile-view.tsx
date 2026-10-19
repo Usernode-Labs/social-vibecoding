@@ -11,7 +11,7 @@
  * review: the profile card and three stat cards, then the row lists of
  * ./account-panel.tsx — "Your work", "Rewards" (Challenges & standings,
  * Kudos) and "Account" (Friends, App slots), with a Settings card at the foot
- * on a phone. On a wide window (lg and up) the own profile is two columns:
+ * at every width (#5557). On a wide window (lg and up) the own profile is two columns:
  * who you are and your Account group on the left, Your work and Rewards on
  * the right — see ./profile-store.js's header for where each part of the
  * older, longer Profile went.
@@ -336,7 +336,7 @@ export function ProfileRoot(): ReactNode {
           Challenges & standings and Kudos. "Account": Friends and App
           slots. Admin & moderation, the native node / wallet / staking rows
           and Log out are in Settings (features/settings/account-rows.tsx);
-          its row stays only on a phone, whose sidebar has no gear. Your
+          its card is here at every width (#5557). Your
           contributions, which closed the screen, is gone: Your changes
           lists every merged one.
       */}

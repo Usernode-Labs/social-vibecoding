@@ -4,7 +4,8 @@
 // review): "Your work" (Your changes, Your requests, Your votes), "Rewards"
 // (Challenges & standings, Kudos) and "Account" (Friends, App slots), each
 // row with a line under it that says what is behind it (`scrMe` in the
-// prototype), and a Settings card at the foot that only a phone shows.
+// prototype), and a Settings card at the foot (Profile, Notifications,
+// Settings) that every width shows (#5557).
 //
 // #2718 made Challenges, Settings and the Admin console rows of the Profile
 // screen, with the native node / wallet / staking readouts and Log out under
@@ -19,8 +20,7 @@
 //      middle-click, the context menu and drag-to-bookmark;
 //   3. a row whose line claims something the data did not say;
 //   4. Settings' line naming the admin console to an account without it;
-//   5. the old "More" list, or a Settings row repeating the sidebar's gear
-//      on a window wide enough to show that gear.
+//   5. the old "More" list, or a Settings card that a wide window cannot see.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -57,7 +57,11 @@ const ROWS = [
   // more" (#3250); `#create` is the same dialog's deep link.
   ['profile-row-friends', '#profile?friends'],
   ['profile-row-app-slots', '#create'],
-  // Settings: the phone's entrance, hidden where the sidebar's gear shows.
+  // Settings (#5557): at every width. Profile opens the Edit profile sheet
+  // in place by the `#profile?edit` deep link; Notifications is Settings' own
+  // Notifications page; Settings is the whole screen.
+  ['profile-row-profile', '#profile?edit'],
+  ['profile-row-notifications', '#settings/alerts'],
   ['profile-row-settings', '#settings'],
 ];
 
@@ -74,11 +78,11 @@ test('the rows are anchors to their destinations', () => {
   }
 });
 
-test('in order: Your changes, requests, votes; then Challenges & standings, Kudos; Friends, App slots; Settings', () => {
+test('in order: Your changes, requests, votes; then Challenges & standings, Kudos; Friends, App slots; Profile, Notifications, Settings', () => {
   const order = ROWS.map(([id]) => CODE.indexOf(`id="${id}"`));
   assert.deepEqual([...order].sort((a, b) => a - b), order);
   // The regrouped panels: Your work, then Rewards, then Account, then the
-  // phone's Settings card — and no "More" list mixing them again.
+  // Settings card — and no "More" list mixing them again.
   const sections = ['id="profile-work"', 'id="profile-rewards"', 'id="profile-account"', 'id="profile-settings"']
     .map((needle) => CODE.indexOf(needle));
   assert.ok(sections.every((i) => i >= 0), 'all four groups render');
@@ -87,6 +91,8 @@ test('in order: Your changes, requests, votes; then Challenges & standings, Kudo
   assert.ok(!CODE.includes('id="profile-more"'), 'the "More" list is gone');
   // Friends opens its card in place on a plain click; the browser keeps the rest.
   assert.match(rowSource(CODE, 'profile-row-friends'), /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*Profile\.showFriends\(\);/);
+  // Profile opens the Edit profile sheet in place the same way (#5557).
+  assert.match(rowSource(CODE, 'profile-row-profile'), /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*Profile\.showEditSheet\(\);/);
   const { validateUsername } = require('../src/services/usernames');
   for (const [, href] of ROWS.filter(([id]) => /proposals|feedback|votes/.test(id))) {
     const tail = href.split('/')[1];
@@ -94,16 +100,24 @@ test('in order: Your changes, requests, votes; then Challenges & standings, Kudo
   }
 });
 
-test('the Settings card is the phone\'s entrance, hidden where the sidebar\'s gear shows', () => {
-  // md:hidden matches the rail's own 768px breakpoint (features/nav/
-  // tab-bar.tsx with app.css's media query): where the gear shows, no row.
-  const section = CODE.slice(CODE.indexOf('id="profile-settings"'));
-  assert.match(section, /className="mt-6 md:hidden"/);
-  // It is its own one-row card: GroupedList's separators are
-  // :not(:last-child), so a row hidden inside Account would leave a hairline.
+test('the Settings card shows at every width, labelled, with three rows (#5557)', () => {
+  // It used to carry md:hidden (the rail's own 768px breakpoint, features/nav/
+  // tab-bar.tsx with app.css's media query), so a wide window had no settings
+  // entrance on Me at all.
   const at = CODE.indexOf('id="profile-settings"');
-  const group = CODE.slice(at, CODE.indexOf('</GroupedList>', at));
-  assert.equal((group.match(/<ListRow/g) || []).length, 1, 'one row, its own card');
+  const section = CODE.slice(at, CODE.indexOf('</section>', at));
+  assert.doesNotMatch(section, /md:hidden/, 'a desktop sees it too');
+  assert.match(section, /<SectionHeader>\{t\('profile:settings\.heading'\)\}<\/SectionHeader>/);
+  // Its own card: GroupedList's separators are :not(:last-child), so a row
+  // hidden inside Account would leave a hairline behind.
+  assert.equal((section.match(/<ListRow/g) || []).length, 3, 'Profile, Notifications, Settings');
+
+  const mod = loadTsx('frontend/src/features/profile/account-panel.tsx');
+  const html = renderToHtml(createElement(mod.SettingsPanel, {}));
+  assert.match(html, /id="profile-row-settings"[\s\S]*?Account, alerts, keys/);
+  assert.match(html, /Name, photo and bio/);
+  assert.match(html, /What you are told about, here and in each app/);
+  assert.match(html, /Settings<\/h2>/, 'the label above the card');
 });
 
 test('App slots says the allowance in words, and opens the create dialog in place', () => {

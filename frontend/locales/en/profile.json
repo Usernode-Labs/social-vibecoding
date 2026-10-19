@@ -231,6 +231,26 @@
     "text": "{{number}} requests waiting",
     "description": "Small line under \"Friends\" on the viewer's profile. {{number}} is how many friend requests wait for their answer, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
   },
+  "settings.heading": {
+    "text": "Settings",
+    "description": "Heading over the last list of rows on the viewer's own profile: the ways into the settings about them."
+  },
+  "settings.profile.title": {
+    "text": "Profile",
+    "description": "Row on the viewer's own profile: opens the sheet where they change their photo, name and bio. The same name Settings gives this part."
+  },
+  "settings.profile.hint": {
+    "text": "Name, photo and bio",
+    "description": "Small line under \"Profile\" on the viewer's profile: what they can change there."
+  },
+  "settings.notifications.title": {
+    "text": "Notifications",
+    "description": "Row on the viewer's own profile: opens the Notifications page in Settings, with what they are told about and each app's choices."
+  },
+  "settings.notifications.hint": {
+    "text": "What you are told about, here and in each app",
+    "description": "Small line under \"Notifications\" on the viewer's profile: what that page holds."
+  },
   "more.settings.title": {
     "text": "Settings",
     "description": "Row on the viewer's own profile: opens the Settings screen."
