@@ -131,6 +131,17 @@ import { AdminUI } from './admin-console.js';
 // chassis below is unchanged: every id it renders is still in the
 // prerendered document, because the sections were never in it to begin with.
 
+// Exit is a real anchor whose href is the Me tab, the console's way in, and
+// that is where it goes when nothing better is known (a deep link, a fresh
+// tab). When the console was entered from somewhere in this tab, it goes back
+// there instead: the address AdminConsole recorded before it opened.
+function onExit(e: { preventDefault(): void }) {
+  const target = (window as any).AdminConsole?.exitTarget?.();
+  if (!target || target === '#profile') return;
+  e.preventDefault();
+  location.hash = target;
+}
+
 export function AdminScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
 
@@ -155,6 +166,35 @@ export function AdminScreen() {
       data-page-bounce=""
     >
       <div id="admin-root" className="w-full p-4 lg:px-6">
+        {/*
+            The console's own marker (#5286). It used to open in the same
+            chrome as a person's own Settings, so nothing said you had stepped
+            into a place whose levers act on everyone. An inverted band is
+            this screen's colour and nobody else's, and its Exit goes back to
+            where you came from (AdminConsole.exitTarget), not up a level.
+            Ships hidden, and AdminConsole._renderShell() reveals it through
+            classList for an admin; public mode (a non-admin on Health &
+            status) keeps it hidden, because that viewer is not in the
+            console at all. The inner row carries the flex, so the toggled
+            node holds no display utility of its own.
+        */}
+        <div id="admin-console-bar" className="hidden mb-4">
+          <div className="flex items-center gap-3 rounded-2xl bg-zinc-900 px-4 py-3 text-white dark:bg-zinc-100 dark:text-zinc-900">
+            <span className="h-8 w-1.5 shrink-0 rounded-full bg-amber-400 dark:bg-amber-600" aria-hidden="true"></span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold">Admin console</p>
+              <p className="text-xs text-zinc-300 dark:text-zinc-600">Platform-wide tools, apart from your own settings.</p>
+            </div>
+            <a
+              id="admin-exit"
+              href="#profile"
+              onClick={onExit}
+              className="inline-flex items-center min-h-[36px] shrink-0 rounded-lg bg-white/15 px-3 text-sm font-medium text-white transition-colors hover:bg-white/25 dark:bg-zinc-900/10 dark:text-zinc-900 dark:hover:bg-zinc-900/20"
+            >
+              Exit
+            </a>
+          </div>
+        </div>
         <div className="md:flex md:items-start md:gap-6">
           {/*
               Desktop sidebar menu. Below md there is no nav here at all:

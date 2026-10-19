@@ -76,6 +76,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useDevViewMode } from './view-mode-store';
 import { discussionStore, type DiscussionState } from './discussion-store';
 import { skeletonKanbanHtml, skeletonListHtml } from './card/skeleton';
+import { isChannelPlace } from './workshop/places';
 import { mainPauseStore, mainPauseText, type MainPauseState } from './main-pause-store';
 import { releaseStallStore, releaseStallText, type ReleaseStallState } from './release-stall-store';
 
@@ -131,6 +132,21 @@ export interface DevBoardFrameProps {
 // where three becoming four read as the page jumping on the way in (#2880).
 const DEV_BODY_WORKSHOP_INITIAL = { __html: '<div id="dev-workshop">' + skeletonListHtml(4) + '</div>' };
 const DEV_BODY_KANBAN_INITIAL = { __html: skeletonKanbanHtml() };
+// THE HUB AND A CHANNEL OPEN ON AN EMPTY HOST (polish board #3, #19): their
+// own loading state is not the card list (workshop.tsx draws the hub's shape,
+// and a channel its room's "Loading messages…", under the page's bar), so the
+// card list first was a second, different loading state in front of theirs.
+const DEV_BODY_PLACE_INITIAL = { __html: '<div id="dev-workshop"></div>' };
+
+/** Whether the page opens on a place that draws its own loading shape. */
+function opensOnOwnShape(): boolean {
+  try {
+    const tab = (window as any).AppView?._workshopTab?.();
+    return tab === 'status' || isChannelPlace(tab);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Which of the two this mount opens with, decided ONCE.
@@ -148,7 +164,8 @@ function useBodyInitial(): { __html: string } {
   const mode = useDevViewMode();
   const chosen = useRef<{ __html: string } | null>(null);
   if (!chosen.current) {
-    chosen.current = mode === 'kanban' ? DEV_BODY_KANBAN_INITIAL : DEV_BODY_WORKSHOP_INITIAL;
+    chosen.current = mode === 'kanban' ? DEV_BODY_KANBAN_INITIAL
+      : opensOnOwnShape() ? DEV_BODY_PLACE_INITIAL : DEV_BODY_WORKSHOP_INITIAL;
   }
   return chosen.current;
 }

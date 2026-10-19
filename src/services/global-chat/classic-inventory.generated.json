@@ -2090,6 +2090,14 @@
       "classicPath": "#admin"
     },
     {
+      "source": "src/routes/adult-attestation.js",
+      "method": "POST",
+      "path": "/api/me/adult-attestation",
+      "expression": null,
+      "status": "exempt",
+      "reason": "the person's own answer to \"Are you 18 or older?\" (#5095), given in its sheet; an assistant never gives it for them"
+    },
+    {
       "source": "src/routes/agent-session-drafts.js",
       "method": "GET",
       "path": "/api/agent-sessions/:id/drafts",
@@ -3726,6 +3734,36 @@
       "domain": "profile",
       "risk": "read",
       "confirmation": "never",
+      "renderer": "profile",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#profile"
+    },
+    {
+      "source": "src/routes/auth.js",
+      "method": "GET",
+      "path": "/api/auth/waiting/about",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "profile.get.auth.waiting.about.235abb48",
+      "domain": "profile",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "profile",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#profile"
+    },
+    {
+      "source": "src/routes/auth.js",
+      "method": "POST",
+      "path": "/api/auth/waiting/about",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "profile.post.auth.waiting.about.5a1b9fc2",
+      "domain": "profile",
+      "risk": "external_write",
+      "confirmation": "required",
       "renderer": "profile",
       "transport": "server_loopback",
       "mobileSupported": true,

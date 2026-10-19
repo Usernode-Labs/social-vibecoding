@@ -5201,9 +5201,19 @@ const AppView = {
     // paints a cold open. The fetchers are best-effort and swallow their own
     // errors, so a rejection here is not expected; treat it as a miss all
     // the same.
+    //
+    // A page painted from a list row the board read BEFORE is drawn from an
+    // old copy (polish board #12): what moves in it — where Homeroom bot's
+    // work stands, the request's track card — waits for the board's reload
+    // below, rather than saying "Its checks are running" until it lands.
+    // `rowFresh` is false only for that paint; every other page is drawn
+    // from a read made for it.
+    const topic = AppView._devTopic;
+    if (topic) topic.rowFresh = false;
     if (paint()) {
       itemDone = true;
     } else {
+      if (topic) topic.rowFresh = true;
       AppView._fetchTopicItem(ref).finally(() => {
         itemDone = true;
         paint();
@@ -5216,8 +5226,11 @@ const AppView = {
       if (painted) {
         // The board's list row carries what the single-item row cannot
         // (who is working on an open request, the checks badge): repaint
-        // from it now that the board is in.
-        if (ok && live()) AppView._renderTopicHead();
+        // from it now that the board is in. A page held back for it repaints
+        // either way: a failed reload leaves the row there is.
+        const held = !!topic && topic.rowFresh === false;
+        if (topic) topic.rowFresh = true;
+        if ((ok || held) && live()) AppView._renderTopicHead();
         return;
       }
       if (concluded) return;
@@ -5820,6 +5833,10 @@ const AppView = {
       // 16 Oct 2026: where Homeroom bot's work on it is, as every surface
       // draws it (routes/issues.js track): the page's track card.
       track: issue.track || null,
+      // Polish board #12: the card keeps its place but says nothing while the
+      // page is drawn from the board's older row (openTopic `rowFresh`).
+      trackPending: !!issue.track && AppView._devTopic?.kind === 'issue'
+        && Number(AppView._devTopic.id) === Number(n) && AppView._devTopic.rowFresh === false,
     };
   },
 

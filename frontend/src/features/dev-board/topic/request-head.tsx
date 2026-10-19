@@ -253,7 +253,13 @@ function RequestEditor({ r, onClose }: { r: RequestView; onClose: () => void }):
  * is at marked; one sentence; the claim's lapse in small words; and the one
  * thing this viewer would do next. A step already done gets no fill.
  */
-function RequestStatus({ s, specs }: { s: RequestStatusView; specs: RequestSpecCard[] }): ReactNode {
+function RequestStatus({ s, specs, tracked = false }: {
+  s: RequestStatusView;
+  specs: RequestSpecCard[];
+  /** Homeroom bot's track card follows, with its own steps (TrackBar): one
+      row of steps on the page, not two that disagree (polish board #12). */
+  tracked?: boolean;
+}): ReactNode {
   const t = useMessages('project');
   const stage = requestStage(s.stage, specs.length);
   const at = STAGES.findIndex((step) => step.key === stage);
@@ -268,7 +274,7 @@ function RequestStatus({ s, specs }: { s: RequestStatusView; specs: RequestSpecC
   const a = s.action;
   return (
     <div className="dev-request-status" role="group" aria-label={t('project:topic.request.status.label')} data-request-stage={stage}>
-      {s.closed ? null : (
+      {s.closed || tracked ? null : (
         <ol className="dev-request-steps">
           {STAGES.map((step, i) => {
             const state = done || i < at ? 'done' : i === at ? 'now' : 'next';
@@ -384,12 +390,14 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
             <TitleContent t={{ text: r.title, title: r.title, editing: r.titleEditing || undefined }} />
           </h1>
           {editing ? <RequestEditor r={r} onClose={() => setEditing(false)} /> : <RequestWords html={r.bodyHtml} />}
-          <RequestStatus s={r.status} specs={specs} />
+          <RequestStatus s={r.status} specs={specs} tracked={!!track} />
           {track ? (
             // 16 Oct 2026 (C4, V3): the same card a request's thread leads
             // with, where it is and why, its bar and its pictures, in place
-            // of having to open the chat to find out.
-            <div className="dev-request-track" data-request-track={track.state}>
+            // of having to open the chat to find out. Drawn from the board's
+            // older row it holds its place unseen (`trackPending`, app.css),
+            // and says where the work is once the fresh row lands.
+            <div className="dev-request-track" data-request-track={r.trackPending ? 'pending' : track.state} inert={!!r.trackPending}>
               <TrackCard track={track} title={r.title} links={trackLinks(track, { request: false })} pictures />
             </div>
           ) : null}

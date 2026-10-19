@@ -10,6 +10,8 @@ export interface ThreadActivityReply {
   /** The author's face, drawn by the caller in its own style. */
   face: ReactNode;
   name: string;
+  /** A bot's line is its display name, with no "@" (19 Oct polish board, N14). */
+  bot?: boolean;
   text: string;
 }
 
@@ -66,7 +68,7 @@ export function ThreadActivityCard({ rootText, rootDeleted = false, time, timeTi
         {replies.slice(-THREAD_ACTIVITY_LINES).map((reply) => (
           <span key={reply.key} className="msgx-thread-line">
             {reply.face}
-            <strong className="msgx-thread-line-name">@{reply.name}</strong>
+            <strong className="msgx-thread-line-name">{reply.bot ? reply.name : `@${reply.name}`}</strong>
             <span className="msgx-thread-line-text">{reply.text || t('messages:thread.activity.attachment')}</span>
           </span>
         ))}

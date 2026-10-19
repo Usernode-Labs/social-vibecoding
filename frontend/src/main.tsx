@@ -70,6 +70,7 @@ import { registerServiceWorker } from './lib/service-worker';
 import { applyNavSnapshot, applyShellSnapshot } from './lib/shell-snapshot-apply';
 import { installFirstPaintReserve } from './lib/first-paint-reserve';
 import { installJoinRequired } from './lib/join-required';
+import { installAdultGate } from './features/auth/adult-gate';
 import { installSessionRenewalRetry } from './lib/session-renewal-retry';
 // Publishes window.UsernodeReact.devBoard at module scope. Imported for the
 // side effect, and imported HERE (rather than reached from a Shell island)
@@ -204,6 +205,10 @@ bootStep('initOffline', initOffline);
 // refused with `join_required` becomes a Join prompt and a retry
 // (./lib/join-required.ts), for every caller in both bundles.
 bootStep('installJoinRequired', () => installJoinRequired());
+// Same seam for the 18+ check (#5095): a wallet, staking, node or passport
+// write refused `adult_attestation_required` asks "Are you 18 or older?"
+// and is sent again on a yes (./features/auth/adult-gate.tsx).
+bootStep('installAdultGate', () => installAdultGate());
 // Before app.js's init (DOMContentLoaded) sends the boot's first reads: in the
 // mobile app a request refused 401 while the native bridge renewed the web
 // session is sent again once it lands (./lib/session-renewal-retry.ts, #5049).

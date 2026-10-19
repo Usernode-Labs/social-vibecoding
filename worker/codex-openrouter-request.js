@@ -15,6 +15,8 @@ const { pipeline } = require('node:stream/promises');
 const { StringDecoder } = require('node:string_decoder');
 const { constants: { signals } } = require('node:os');
 const { performance } = require('node:perf_hooks');
+// Copied beside this script in the worker image (worker/Dockerfile).
+const { noTrainingProvider, withNoTraining } = require('./openrouter-privacy');
 
 const MAX_REQUEST_BYTES = 64 * 1024 * 1024;
 const MAX_KEY_RESPONSE_BYTES = 32 * 1024;
@@ -119,7 +121,8 @@ function providerRoutingFor(model, asked = {}, { shortlist = null } = {}) {
   const routed = only.length && !brings
     ? { only: [...only], sort: base?.sort || 'throughput', allow_fallbacks: true }
     : {};
-  return { ...PROVIDER_PREFERENCES, ...routed, ...own };
+  // #5123: and never a host that trains on or keeps the prompt.
+  return noTrainingProvider({ ...PROVIDER_PREFERENCES, ...routed, ...own });
 }
 
 // The same request without the shortlist: the plain preferences and the
@@ -128,7 +131,7 @@ function withoutShortlist(provider, asked = {}) {
   if (!provider || !Array.isArray(provider.only)) return null;
   const own = asked && typeof asked === 'object' && !Array.isArray(asked) ? asked : {};
   if (own.only != null) return null;
-  return { ...PROVIDER_PREFERENCES, ...own };
+  return noTrainingProvider({ ...PROVIDER_PREFERENCES, ...own });
 }
 
 async function readBounded(stream, limit) {
@@ -331,7 +334,7 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
       const askedProvider = body.provider && typeof body.provider === 'object' && !Array.isArray(body.provider)
         ? { ...body.provider } : {};
       body.provider = providerRoutingFor(model, askedProvider, { shortlist: providerShortlist });
-      const serializedBody = JSON.stringify(body);
+      const serializedBody = JSON.stringify(withNoTraining(body));
       const payloadBytes = Buffer.byteLength(serializedBody);
       const inputBytes = body.input == null ? 0 : Buffer.byteLength(JSON.stringify(body.input));
       if (onTiming) {
@@ -381,7 +384,7 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         body.provider = plain;
         shortlistFallback = true;
         response = await fetchImpl(`${upstreamBase}/responses`, {
-          method: 'POST', headers, body: JSON.stringify(body), redirect: 'error', signal: controller.signal,
+          method: 'POST', headers, body: JSON.stringify(withNoTraining(body)), redirect: 'error', signal: controller.signal,
         });
       }
       if (timing) {

@@ -356,6 +356,18 @@ const RETIRED_IDS = {
   // emailed code and adds a password in Settings (#cp-title-add below).
   'otp-new-password': '#4891: the set-password step\'s optional New password field. A password is one more decision at the very first step; Settings → Account offers "Add a password" instead.',
   'otp-confirm-password': '#4891: the same step\'s Confirm password field, gone with the password it confirmed.',
+  // ── #5261: one way onto the waitlist ─────────────────────────────
+  // The in-app join form made a waitlist row of its own beside the one
+  // Continue's account gets: two ways in, two records. Continue makes the
+  // account and puts it in line; the two optional questions are asked in the
+  // waiting room after it (features/auth/waiting-about.tsx) and saved to the
+  // same keys on the account's row. #waitlist keeps only check your status.
+  'waitlist-form': 'The join form on #waitlist. Retired with the second way onto the waitlist: a bare #waitlist opens Continue now (AuthScreens.retireWaitlistLink).',
+  'waitlist-email': 'The join form\'s address field. Continue asks for the address, and the account it makes is what waits in line.',
+  'waitlist-country': 'The join form\'s country select. Asked after the account is made, in the waiting room, as #waiting-about-country, and saved to the same answers.country.',
+  'waitlist-discovery-chips': 'The join form\'s "How did you find us?" chips. Asked in the waiting room as #waiting-about-discovery, and saved to the same answers.discovery.source.',
+  'waitlist-submit': 'The join form\'s submit. Continue is the one way to join.',
+  'waitlist-queued': 'The "already on the list" note a signed-in visitor saw in place of the join form. A signed-in #waitlist goes to the waiting room now, which shows their spot.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
@@ -363,6 +375,9 @@ const ADDED_IDS = {
   // ── #5097: Settings > Privacy, "Share usage analytics" ──────────────
   'settings-usage-analytics': '#5097: the Share usage analytics switch (features/settings/sections/privacy.tsx). Off, and disabled until the saved choice is read.',
   'settings-usage-analytics-description': '#5097: the line under that switch saying what is collected; the switch\'s aria-describedby.',
+  // ── #5286: the admin console marks itself ─────────────────────────
+  'admin-console-bar': '#5286: the admin console\'s own band at the top of #admin-root, ships hidden and is revealed through classList by AdminConsole._renderShell for an admin (never in public mode).',
+  'admin-exit': '#5286: the band\'s Exit link, href #profile, which goes back to the address the console was entered from when one is known.',
   // ── #5405: search over the loaded notifications ───────────────────
   'notifications-search': '#5405: the search field\'s block between the notifications sheet\'s title and the Unread | Messages | All tabs.',
   'notifications-search-input': '#5405: the field itself (type="search"). Filters the tab that is open, over the rows already loaded, by project, kind and subject; Escape with text empties it.',
@@ -588,7 +603,6 @@ const ADDED_IDS = {
   'waitlist-status-pill': 'The three-state queue pill on #waitlist-confirmed, rendered from the SAME table as the stage-2 screen\'s #more-status-pill (waitlist-shared.tsx) so one row cannot be described two ways. Always in the markup and hidden until a code lands: the prerender has no status, and contents rendered before the fetch are a hydration mismatch, which console.errors and fails proposal checks.',
   'waitlist-status-since': 'The joined-on date, offered in place of the queue position this panel deliberately does not show. Nothing on the platform ranks the waitlist (services/waitlist-signals.js computes no score on purpose), so a number would be invented; the date is a fact the row actually holds. Same always-present, hidden-until-filled contract as #waitlist-confirmed-email beside it.',
   'waitlist-status-action': 'The one thing a RELEASED signup can act on: Create my account (#signup) or Sign in (#login), chosen on whether the invite has already been redeemed. Before this, somebody who lost the access-ready mail was told by this panel to keep waiting for it. Hidden for a signup that is still queued.',
-  'waitlist-confirmed-headline': 'The panel\u2019s emerald headline, named because it is CONDITIONAL now rather than constant. The card serves two arrivals: somebody who just joined and confirmed, and somebody who typed their address to read where they stand. Congratulating the second one restates what the pill below already says and reads as a system that has lost track of when they joined, so the headline is the confirm path\u2019s and the pill is the status path\u2019s, split on the codeOnly state that already separates the two everywhere else on this screen. Visible in the prerender, which is the shape the hand-written shell shipped.',
   'landing-status-link': 'The landing card\'s "Already joined? Check your status" link, into the same code-entry step #waitlist-enter-code opens. It is the entry point for the case the issue is about — checking from a device that knows nothing about the signup — and it is on the landing page because that is where such a device arrives. Hidden for a session, like the CTA above it.',
   // ── #1876: the check-my-status errand is two steps ────────────────
   // It asked for the address and the six-digit code in one breath, and the
@@ -604,7 +618,7 @@ const ADDED_IDS = {
   // ── #2201: the address step's third answer ───────────────────────
   // POST /api/public/waitlist/status made "that address is not on the list"
   // something the step can actually say, and saying it needs somewhere to go.
-  'waitlist-join-instead': 'The way out of the one dead end step 1 had. An address that is not on the waitlist used to be told a code was coming and left waiting for a mail nobody sent; it is told the truth now, and the truth is half an answer unless the next move is beside it. Carries the typed address back into #waitlist-email so nobody retypes it. Always in the markup and hidden until the status read says not-found, which is why the class rides on the button itself: the declared checks assert presence, so `:not(.hidden)` on this id is the only way one can tell the offered state from the withheld one.',
+  'waitlist-join-instead': 'The way out of the one dead end step 1 had. An address that is not on the waitlist used to be told a code was coming and left waiting for a mail nobody sent; it is told the truth now, and the truth is half an answer unless the next move is beside it. Opens Continue since #5261, which joins now. Always in the markup and hidden until the status read says not-found, which is why the class rides on the button itself: the declared checks assert presence, so `:not(.hidden)` on this id is the only way one can tell the offered state from the withheld one.',
   'feedback-form': 'The existing feedback form is hidden while the first-feedback confirmation is visible (#1583).',
   'feedback-first-success': 'Persistent first-feedback confirmation inside the existing feedback dialog (#1583).',
   'feedback-first-title': 'Accessible heading congratulating the first feedback submission (#1583).',
@@ -692,7 +706,6 @@ const ADDED_IDS = {
   'waitlist-confirm': 'The confirm-your-email block on the join success state. Hides once the code is accepted.',
   'waitlist-code': 'Six-digit email verification code; confirms the same row the mailed link does.',
   'waitlist-code-submit': 'Submits the verification code.',
-  'waitlist-enter-code': 'Step-1 link to the confirm step, for somebody who joined earlier and whose 15-minute code expired. Before it, that control was reachable only by submitting the join form again.',
   'waitlist-confirm-email': 'The address the code belongs to, asked for only when the confirm step was reached without a join. Hidden after a join, where the form field still holds it.',
   'waitlist-resend': 'Requests a fresh confirmation code (POST /api/public/waitlist/resend). Disabled for the advertised 60-second gap.',
   'waitlist-resend-note': 'The resend result, kept apart from #waitlist-msg so a wrong code and a resend answer cannot overwrite each other.',

@@ -277,15 +277,16 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
         {/* Two lines, the row's own geometry: the name with the time on its
             trailing edge, then the preview with the unread count on its. The
             time and the count read as one column, which is what lets an
-            unread row state itself three ways — bold name, accent time, count
-            pill — without adding a third line. */}
+            unread row state itself three ways — bold name, the time in ink,
+            "2 new" in grey (#18: grey is new to read, the accent is waiting
+            on you) — without adding a third line. */}
         <div className="messages-row-line">
           <span className="messages-row-name">{conversation.kind === 'direct' && peer ? senderName(peer, { bare: true }) : conversation.title}{conversation.kind === 'direct' && peer?.bot ? <span className="messages-bot-badge">{t('messages:inbox.aiBadge')}</span> : null}{conversation.kind === 'group' && !invited ? <GroupMemberCount count={conversation.memberCount} /> : null}</span>
           <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
         </div>
         <div className="messages-row-line">
           <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{invited ? (conversation.kind === 'direct' ? t('messages:inbox.requestReview') : t('messages:inbox.invitationReview')) : groupPreview ?? (preview || conversation.latestSummary || t('messages:inbox.noMessages'))}</span>
-          {conversation.unreadCount > 0 ? <span className="messages-unread" aria-label={t('messages:inbox.unread', { count: conversation.unreadCount })}>{conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}</span> : null}
+          {conversation.unreadCount > 0 ? <span className="messages-unread">{t('messages:inbox.newCount', { count: conversation.unreadCount })}</span> : null}
         </div>
       </div>
     </a>
@@ -351,7 +352,7 @@ const GeneralChannelRow = memo(function GeneralChannelRow({ conversation, active
               ? (by ? t('messages:inbox.previewBy', { username: by, message: conversation.latestSummary }) : conversation.latestSummary)
               : t('messages:inbox.everyone')}
           </span>
-          {unread ? <span className="messages-unread" aria-label={t('messages:inbox.unread', { count: conversation.unreadCount })}>{conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}</span> : null}
+          {unread ? <span className="messages-unread">{t('messages:inbox.newCount', { count: conversation.unreadCount })}</span> : null}
         </div>
       </div>
     </a>
@@ -412,7 +413,7 @@ const AppChannelRow = memo(function AppChannelRow({ discussion, active }: { disc
               ? (discussion.lastBy ? t('messages:inbox.previewBy', { username: discussion.lastBy, message: plainText(discussion.lastMessage) }) : plainText(discussion.lastMessage))
               : t('messages:inbox.noMessages')}
           </span>
-          {unread ? <span className="messages-unread" aria-label={t('messages:inbox.unread', { count: unread })}>{unread > 99 ? '99+' : unread}</span> : null}
+          {unread ? <span className="messages-unread">{t('messages:inbox.newCount', { count: unread })}</span> : null}
         </div>
       </div>
     </a>
@@ -1009,7 +1010,7 @@ function ConversationList({ drawer = false, litId = null }: {
   // (./rail-inbox.ts), from the whole inbox, whatever the search box holds.
   const railOpenKey = inbox.find(isOpen)?.key || null;
   useEffect(() => {
-    const rows = railConversations(inbox, railOpenKey)
+    const rows = railConversations(inbox)
       .map(railRow)
       .filter((row): row is RailConversation => !!row);
     publishRailInbox({ rows, openKey: railOpenKey, page: !(snap.route.conversationId || snap.route.appSlug || snap.route.agent) });
@@ -1058,8 +1059,10 @@ function ConversationList({ drawer = false, litId = null }: {
     return parts.length ? parts.slice(0, 2).map((part) => part.text).join(' · ') : null;
   }, [botWork.work]);
 
-  // What each section's heading says asks for you: agents at work, and the
-  // messages from people you have not read. A zero says nothing.
+  // What each section's heading says: agents at work, and the messages from
+  // people you have not read. A zero says nothing. Unread is new to read,
+  // grey like every unread count since #18 (19 Oct 2026 polish board); the
+  // accent is for what waits on you.
   const working = mayors.filter((item) => item.busy).length + agents.filter((item) => item.busy).length
     + sessions.filter((item) => item.busy).length;
   const unreadFromPeople = snap.conversations
@@ -1067,7 +1070,7 @@ function ConversationList({ drawer = false, litId = null }: {
     .reduce((sum, item) => sum + Math.max(0, Number(item.unreadCount) || 0), 0);
   const asides: Record<InboxSection, { text: string | null; ask: boolean }> = {
     agents: { text: working ? t('messages:inbox.section.working', { count: working }) : null, ask: false },
-    people: { text: unreadFromPeople ? t('messages:inbox.section.unread', { count: unreadFromPeople }) : null, ask: true },
+    people: { text: unreadFromPeople ? t('messages:inbox.section.unread', { count: unreadFromPeople }) : null, ask: false },
   };
   // Agents shows its week until "N older chats" (./inbox.ts
   // shownInSection). Not remembered: the next visit starts on the week.
@@ -1432,7 +1435,7 @@ export function threadWords(active: ConversationDetail): { title: string; sub: s
   // QA 2026-09-24 Q14: "1 member", not "1 members". An invitee is not shown
   // the roster until they accept, so the count the server gives them is 0 —
   // they read the invitation's state instead of "0 members".
-  const subtitle = channel
+  const said = channel
     ? translate('messages:header.subtitle.channel', { count: active.memberCount })
     : invited
       ? translate('messages:header.subtitle.invited')
@@ -1441,6 +1444,10 @@ export function threadWords(active: ConversationDetail): { title: string; sub: s
           ? translate('messages:header.subtitle.groupOwner', { count: active.memberCount })
           : translate('messages:header.subtitle.group', { count: active.memberCount }))
         : active.awaitingAcceptance ? translate('messages:header.subtitle.requestPending') : translate('messages:header.subtitle.direct');
+  // N14 (19 Oct polish board): the people asked who have not joined yet are
+  // said beside the members, since a group's name can already list them.
+  const asked = active.kind === 'group' && !invited ? active.members.filter((m) => m.status === 'invited').length : 0;
+  const subtitle = asked ? dotText([said, translate('messages:header.subtitle.invitedCount', { count: asked })]) : said;
   return {
     title: active.kind === 'direct' && person ? senderName(person, { bare: true }) : channel ? `#${active.channelKey || active.title}` : active.title,
     sub: botDm ? translate('messages:header.subtitle.homeroomBot') : subtitle,
@@ -1562,7 +1569,7 @@ function ThreadHeader() {
   // the roster until they accept, so the count the server gives them is 0 —
   // they read the invitation's state instead of "0 members".
   // (threadWords above says the same to the phone's header.)
-  const subtitle = channel
+  const said = channel
     ? t('messages:header.subtitle.channel', { count: active.memberCount })
     : invited
       ? t('messages:header.subtitle.invited')
@@ -1571,6 +1578,15 @@ function ThreadHeader() {
           ? t('messages:header.subtitle.groupOwner', { count: active.memberCount })
           : t('messages:header.subtitle.group', { count: active.memberCount }))
         : active.awaitingAcceptance ? t('messages:header.subtitle.requestPending') : t('messages:header.subtitle.direct');
+  // N14: the people asked who have not joined yet, as threadWords says them.
+  const asked = active.kind === 'group' && !invited ? active.members.filter((m) => m.status === 'invited').length : 0;
+  const subtitle = asked ? dotText([said, t('messages:header.subtitle.invitedCount', { count: asked })]) : said;
+  // N14: a group leads with a member's face, as its row in the list does,
+  // not the initials of its name ("E+" for "Evan + Lukas").
+  const viewerId = Number(window.App?.user?.id);
+  const face = active.kind === 'group' && !invited
+    ? active.members.find((member) => member.status === 'member' && Number(member.id) !== viewerId) || null
+    : null;
   return (
     <header className="messages-thread-header">
       {channel ? <PageBackButton label={hubBack.label} onBack={hubBack.onBack} data-channel-back="" /> : null}
@@ -1579,7 +1595,8 @@ function ThreadHeader() {
           page leaves its own name out and keeps only its discs. */}
       {inDrawer ? null : channel
         ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
-        : <UserAvatar user={active.kind === 'direct' ? person : null} title={person?.username || active.title} shape="square" />}
+        : face ? <UserAvatar user={face} shape="square" />
+          : <UserAvatar user={active.kind === 'direct' ? person : null} title={person?.username || active.title} shape="square" />}
       {inDrawer ? <span className="flex-1" aria-hidden="true" /> : (
       <button
         type="button"
@@ -2587,7 +2604,9 @@ function ThreadActivityRow({ replies }: { replies: ConversationMessage[] }) {
       replies={replies.map((reply) => ({
         key: reply.clientKey || reply.id,
         face: <span className="msgx-thread-face"><UserAvatar user={reply.sender} size="sm" shape="square" /></span>,
-        name: reply.sender.username,
+        // N14: a bot by its name ("Homeroom bot"), a person by @username.
+        name: reply.sender.bot ? senderName(reply.sender, { bare: true }) : reply.sender.username,
+        bot: !!reply.sender.bot,
         text: reply.content,
       }))}
       onOpen={() => openThread(rootId)}
@@ -2933,6 +2952,22 @@ export function AppReplyThreadPane({ slug, rootId, ready, readOnly, where, close
  * `messages-layout` carries the thread's surface tokens; it is not this
  * screen's strip, so none of the strip's own classes come with it.
  */
+/**
+ * A room on its way, as the room says it itself (ConversationThread's own
+ * loading row, in its scroller). A project's channel shows it from its first
+ * frame until its messages are in, so the channel loads in one state rather
+ * than a card skeleton, then "#general" over "Loading messages…", then its
+ * messages (polish board #19).
+ */
+export function ChannelLoading(): ReactNode {
+  const t = useMessages('messages');
+  return (
+    <div className="messages-thread-scroll" data-channel-loading="">
+      <div className="messages-state"><span className="messages-spinner" />{t('messages:thread.loading')}</div>
+    </div>
+  );
+}
+
 export function EmbeddedConversation({ conversationId, active, at = null }: {
   conversationId: number;
   active: boolean;
@@ -2967,7 +3002,7 @@ export function EmbeddedConversation({ conversationId, active, at = null }: {
   }, [at]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className={`messages-layout messages-layout-embedded${here && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}`}>
-      {here ? <ConversationThread embedded /> : null}
+      {here ? <ConversationThread embedded /> : <ChannelLoading />}
       {here && snap.route.threadRootId ? <ReplyThreadPanel /> : null}
     </div>
   );

@@ -235,6 +235,9 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
         policy: 'anyone', approvals_required: null, electorate: 1, required: 1,
         mode: 'columns', preset: 'group_vote', rules: null, groups: [],
         creator: { id: owner.id, username: owner.username, display_name: null },
+        // Polish board #13: the invited approvers' names, so the Workshop's
+        // rule line is drawn once. None here: approval is not by invitation.
+        approvers: null,
       });
       assert.deepEqual(got.body.visibility, { build: 'public', view: 'public' });
       assert.deepEqual(got.body.channel, {

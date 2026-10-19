@@ -688,7 +688,11 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
-.messages-row-time-unread { color: var(--accent); font-weight: 600; }
+/* #18 of the 19 Oct polish board, ONE MEANING PER BADGE: the accent is
+   "waiting on you" (a vote, an answer), and an unread message is new to
+   read, which is grey everywhere. So an unread row's time is the ink, and
+   its count is said, "2 new", in grey (.messages-unread below). */
+.messages-row-time-unread { color: var(--text-primary); font-weight: 600; }
 .messages-group-tag {
   display: inline-flex;
   align-items: center;
@@ -703,20 +707,18 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   font-weight: 600;
   vertical-align: 2px;
 }
+/* NEW TO READ, SAID ON THE ROW (#18): "2 new" in grey at the preview's
+   end, where a blue bubble with a bare number was. A full row says its count
+   in words (the shell's rule); bare numbers are for tabs and the sidebar's
+   compact rows, and grey there too. */
 .messages-unread {
   flex: 0 0 auto;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 7px;
-  border-radius: 9999px;
-  background: var(--accent);
-  /* --accent-ink, not `white`: the dark accent is a lighter blue and white
-     on it is 2.5:1. Same pair the send disc and the empty-state button use. */
-  color: var(--accent-ink);
+  margin-left: 8px;
+  color: var(--text-muted);
   font-size: 13px;
-  font-weight: 700;
-  line-height: 22px;
-  text-align: center;
+  font-weight: 650;
+  line-height: 18px;
+  white-space: nowrap;
 }
 
 .messages-network-banner {
@@ -2228,6 +2230,17 @@ form.agent-session-composer:focus-within {
   .messages-markdown.gc-msg-content { font-size: 15px; line-height: 1.4; }
   .messages-composer-input { font-size: 15px; }
   .messages-edit textarea { font-size: 15px; }
+}
+
+/* A READABLE MEASURE (N14 of the 19 Oct polish board). A message's text ran
+   the pane's whole width on a desktop: about 1,100px beside the sidebar and
+   1,380px without it, a hundred and fifty characters a line. From 768px its
+   lines stop at 72 characters; the face, the name line and the cards keep
+   their own widths. A phone is narrower than this already. */
+@media (min-width: 768px) {
+  .messages-markdown.gc-msg-content {
+    max-width: 72ch;
+  }
 }
 
 /* ── An app's discussion, as a thread of this inbox (#2718 review) ──────
@@ -4817,6 +4830,18 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 .app-icon-tile[data-icon="letter"] {
   color: var(--text-faint);
 }
+/* An image tile's initial while its picture loads (AppIconContent's
+   IconImage, polish board #11): the letter tile's own quiet placeholder,
+   laid under the image, and gone once the image has drawn. The tile is its
+   box at zero specificity, so a tile that already positions itself keeps
+   doing so. */
+:where(:has(> .app-icon-wait)) { position: relative; }
+.app-icon-wait {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  color: var(--text-faint); font-weight: 700; line-height: 1;
+  pointer-events: none;
+}
 .dark .app-icon-tile {
   /* --bg-primary is near-black in dark mode; one step up so the tile
      reads as a surface sitting on the page rather than a hole in it. */
@@ -6182,10 +6207,13 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   background: var(--bg-primary);
 }
 
-/* THE GREEN "STILL OPEN" DOT (#2902), on an app kept loaded — its tile on
-   Home, its row in the rail's Recents (features/app-frame/live-apps.tsx).
-   Green because it says the app is RUNNING, the one colour every status
-   surface here already reads that way; ringed in the page ground so it
+/* THE "STILL OPEN" DOT (#2902), on an app kept loaded — its tile on Home,
+   its App row in the sidebar (features/app-frame/live-apps.tsx). QUIET
+   GREY since the 19 Oct polish board (N17): it was green, and the shell
+   shows a coloured status dot only when something is wrong (AGENTS.md,
+   "let zero say nothing"), never a green one on every running app. An app
+   kept open is a convenience, not news; the dot stays because the sidebar's
+   close control (#5525) sits where it is. Ringed in the page ground so it
    stays a dot on any icon behind it. */
 .app-live-dot {
   display: block;
@@ -6193,7 +6221,7 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   height: 10px;
   flex: none;
   border-radius: 999px;
-  background: #22c55e;
+  background: var(--text-muted);
   box-shadow: 0 0 0 2px var(--bg-primary);
 }
 /* On a launcher tile: the icon's top-right corner, where the fork tag's
@@ -8081,6 +8109,10 @@ a.dc-flow-action {
   border: 1px solid var(--border);
   background: rgba(0, 0, 0, 0.25);
 }
+/* Until the picture has drawn, its box is the size pictures are drawn at,
+   so a late, lazy picture fills the room it already has rather than growing
+   its row (transcript.tsx AttachmentImage, polish board #19). */
+.dc-msg-att-img[data-pending] { width: 160px; height: 120px; }
 
 .dc-msg-att-chip {
   display: inline-flex;
@@ -12585,6 +12617,46 @@ html.web-browser-chrome {
   }
 }
 
+/* ONE ROW, CENTRED, ON EVERY DESKTOP SCREEN (#20 of the 19 Oct polish
+   board). A community's pages already split the bar's 52px 12 and 12
+   (#4237, near `.dev-ws-tabs`), and every other screen kept pt-2/pb-4, so
+   the toggle, the bell, the H and the title sat 4px above the middle there
+   and jumped 4px each time you went into a project or came out. From 768px
+   every bar is 12 and 12, signed out as signed in, so parity holds and
+   nothing moves.
+
+   EXCEPT OVER A RUNNING APP: its sheet comes 8px up under the bar (-mb-2),
+   and 12 under the controls is what leaves them 8px clear of its lip (the
+   invariant above). A phone is untouched.
+
+   THE TITLE IS THE ROW'S 28px, ITS WORDS CENTRED IN IT. They sit in an
+   inline-flex box on `vertical-align: middle`: the wordmark's 20px box
+   fitted the 24px line, a 24px line of words grew it to 25.7px, and the
+   title moved 1px between Home and Messages. A taller line does not help
+   (measured: 29.7px in a 28px line), so the title centres its one child,
+   as the row centres the buttons; the child's own max-width still ends a
+   long name in "…". */
+@media (min-width: 768px) {
+  body:not(:has(#app-view:not(.hidden)[data-app-surface="app"])) :is(#platform-header, #landing-header) {
+    padding-bottom: 0.75rem;
+  }
+  #header-title {
+    display: flex;
+    align-items: center;
+    height: 1.75rem;
+  }
+}
+@media (min-width: 768px) {
+  @supports (padding: env(safe-area-inset-top)) {
+    body:not(:has(#app-view:not(.hidden)[data-app-surface="app"])) :is(#platform-header, #landing-header).un-safe-top-extend {
+      padding-top: calc(0.75rem + var(--un-safe-inset-top, env(safe-area-inset-top, 0px))) !important;
+    }
+    html.web-browser-chrome body:not(:has(#app-view:not(.hidden)[data-app-surface="app"])) :is(#platform-header, #landing-header).un-safe-top-extend {
+      padding-top: 0.75rem !important;
+    }
+  }
+}
+
 /* A FLAT TOP EDGE FOR THE INSTALLED LANDING. From iOS 26 an installed web app
    whose status bar is black-translucent (frontend/src/head.html, #1929) gets
    a Liquid Glass blur over the strip, and it runs about 38pt below the clock
@@ -16643,6 +16715,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   .pin-shot-layer { transition: none; }
 }
 
+/* A request's track card drawn from the board's older row keeps its place
+   unseen until the fresh row says where the work is (request-head.tsx
+   `trackPending`, polish board #12). */
+.dev-request-track[data-request-track="pending"] { visibility: hidden; }
 /* Where it stands: a card on the sheet, the stepper, a sentence, the next step. */
 .dev-request-status {
   margin-top: 10px;
@@ -18168,6 +18244,12 @@ button.dev-ws-recent-card {
   object-fit: cover; object-position: top center;
 }
 .dev-ws-recent-glyph { width: 26px; height: 26px; color: var(--text-muted); opacity: .6; }
+/* A change with no picture, and the app's own card: the project's tile on its
+   community's colour, the band's own `--community-tint` (polish board N13),
+   where a grey box with a check was. */
+.dev-ws-recent-pic:is([data-ws-recent-pic="plain"], [data-ws-recent-pic="app"]) {
+  background: var(--community-tint, var(--bg-tertiary));
+}
 .dev-ws-recent-title {
   font-size: 14px; font-weight: 650; line-height: 1.3; color: var(--text-primary);
   display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
@@ -19220,6 +19302,11 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   border-radius: 999px; background: var(--accent); color: #fff;
   font-size: 12px; font-weight: 700; line-height: 20px; text-align: center;
 }
+/* A channel's count is new to read, not waiting on you (#18): the grey the
+   tab bar's unread count wears. Needs you keeps the accent. */
+.dev-ws-place:is([data-place="discussion"], [data-place^="c:"]) .dev-ws-place-count {
+  background: var(--text-faint, #8e8e93);
+}
 .dev-ws-place .dev-ws-filter-dot { position: static; flex-shrink: 0; background: var(--accent); }
 .dev-ws-places-line { height: 1px; margin: 8px 10px; background: var(--app-sheet-line); }
 .dev-ws-places-group { display: flex; flex-direction: column; gap: 2px; }
@@ -19245,9 +19332,12 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
 }
 .dev-ws-places-btn:focus-visible { outline: 2px solid #fff; outline-offset: -4px; }
 .dev-ws-places-btn-glyph { width: 22px; height: 22px; }
+/* Something waits in the places (votes, unread talk). WHITE on the
+   community's colour, not red (#18 of the 19 Oct polish board): red is the
+   bell's alone, and the places' own counts say which it is when opened. */
 .dev-ws-places-dot {
   position: absolute; top: 9px; right: 8px; width: 9px; height: 9px; border-radius: 999px;
-  background: #ff5a4f; box-shadow: 0 0 0 2px var(--community-tint, #2a2e34);
+  background: #fff; box-shadow: 0 0 0 2px var(--community-tint, #2a2e34);
 }
 .dev-ws-place-title {
   min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -19259,7 +19349,7 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   .dev-ws-places-btn { color: var(--text-muted); margin-left: -10px; }
   .dev-ws-places-btn:focus-visible { outline-color: var(--accent); }
   @media (hover: hover) { .dev-ws-places-btn:hover { background: var(--bg-secondary); color: var(--text-primary); } }
-  .dev-ws-places-dot { box-shadow: 0 0 0 2px var(--bg-primary); }
+  .dev-ws-places-dot { background: var(--text-muted); box-shadow: 0 0 0 2px var(--bg-primary); }
   .dev-ws-place-title { font-size: 20px; font-weight: 700; color: var(--text-primary); }
 }
 
@@ -20789,7 +20879,11 @@ button.dev-ws-dash-cell {
   font-weight: inherit;
   text-align: left;
   cursor: pointer;
-  border-radius: 10px;
+  /* Square, as the spans beside it are (polish board #24): a radius bent
+     this cell's hairline into a faint rounded outline where the other
+     figures have straight dividers. */
+  border-radius: 0;
+  box-shadow: none;
 }
 button.dev-ws-dash-cell:hover .dev-ws-dash-label { color: var(--accent); }
 button.dev-ws-dash-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -22039,10 +22133,15 @@ html.un-ios {
 
 /* A QUIET GREY DISC, NOT THE BELL'S RED (#2912). This used to be the same
    red disc as #notifications-badge, on the argument that two counts on one
-   screen should look alike. But an unread message is ALSO counted in the
+   screen should look alike. But an unread message was ALSO counted in the
    bell, so the same news arrived twice in the loudest colour on the screen,
    and the second red drew the eye away from the one that is the alarm. The
    bell keeps the red; this only says "there is something here".
+
+   ONE MEANING PER BADGE since the 19 Oct 2026 polish board (#18): grey is
+   NEW TO READ wherever it is (this, the channels' count beside it, a chat's
+   row), the accent is WAITING ON YOU (votes), and red is the bell alone,
+   which no longer counts plain messages at all: this count is theirs.
 
    Same size and place on the phone's bar, on the glyph's corner, with white
    ink. The fill is `--text-faint`, the neutral ramp's lightest step, which
@@ -22696,10 +22795,16 @@ html.un-kb #platform-parked {
     order: 3;
   }
   /* The cog: the ink, radius, lit fill and hover are a tab's, so it reads as
-     one more place in the rail rather than a toolbar button. */
+     one more place in the rail rather than a toolbar button.
+     ONE STEP ABOVE THE TABS (#4 of the 19 Oct polish board). A flex item
+     paints in `order`, not in markup order, so Me (`order: 3`) painted over
+     the cog (`order: 2`) at the same z-index 1. In the sidebar of rows Me's
+     row runs under the cog, and its padding left room to see the cog but
+     not to press it: every click on the cog opened Profile, and Me's lit
+     fill covered it on Profile, Settings and the leaderboard. */
   .platform-rail-settings {
     position: relative;
-    z-index: 1;
+    z-index: 2;
     align-self: center;
     display: inline-flex;
     align-items: center;
@@ -22874,10 +22979,12 @@ html.un-kb #platform-parked {
   }
 
   /* THE COMMUNITIES TAB IS THE SECTION'S ALL ROW: the grid and "All 13
-     communities" in place of the ring and the word, and on it only the
-     votes in the communities the section does not list
-     (`.platform-tab-all-votes`), so no vote is counted twice. The grey count
-     of unread channels stays until a vote takes its seat, as on the strip. */
+     communities" in place of the ring and the word, and on it every vote
+     waiting on you (`.platform-tab-all-votes`, the tab's own figure: #18 of
+     the 19 Oct polish board; it used to be only the votes in the rows not
+     listed, which read as a total and was not one). The grey count of
+     unread channels stays until a vote takes its seat, as on the strip:
+     one number per row. */
   #platform-tab-workshop .platform-tab-ring,
   #platform-tab-workshop .platform-tab-label,
   #platform-tab-workshop .platform-tab-votes {
@@ -22908,7 +23015,9 @@ html.un-kb #platform-parked {
   #platform-tab-workshop .platform-tab-mark:has(.platform-tab-votes) > #platform-tabs-badge-communities:not(.hidden) {
     display: inline-flex;
   }
-  #platform-tab-workshop:has(.platform-tab-all-votes) #platform-tabs-badge-communities {
+  /* As heavy as the rule above, and after it, so it wins (#18): it was
+     (2,1,0) against (2,3,0), and the All row drew a grey 1 beside a blue 28. */
+  #platform-tab-workshop:has(.platform-tab-all-votes) .platform-tab-mark > #platform-tabs-badge-communities:not(.hidden) {
     display: none;
   }
   /* ON A COMMUNITY'S PAGE ITS OWN ROW IS LIT, NOT ALL. The tab keeps
@@ -23196,10 +23305,15 @@ html.un-kb #platform-parked {
   }
   /* The part's one grid row is what features/nav/rail-nest.tsx animates
      (`0fr` to `1fr`, which is the rows' own height on every frame). */
+  /* ITS ONE COLUMN IS THE RAIL'S WIDTH (N19). With no column size the
+     implicit track grew to the widest row, which never wraps (350px inside
+     199px), so a long name ran past the edge and was clipped by the
+     overflow with no ellipsis. Sized to the rail, each label ends in "…". */
   .platform-rail-nest {
     flex: none;
     display: grid;
     grid-template-rows: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     overflow: hidden;
   }
   .platform-rail-nest[data-nest="closing"] {
@@ -23327,6 +23441,11 @@ html.un-kb #platform-parked {
     font-weight: 700;
     line-height: 1;
   }
+  /* A conversation's and a channel's count is new to read (#18): grey, as
+     the Messages tab's is. Needs you's votes keep the accent. */
+  .platform-rail-nest :is(.platform-rail-sub-count, :is([data-place="discussion"], [data-place^="c:"]) > .dev-ws-place-count) {
+    background: var(--text-faint, #8e8e93);
+  }
   .platform-rail-nest .dev-ws-places-more {
     padding-left: 30px;
     color: var(--text-muted);
@@ -23411,14 +23530,16 @@ html.un-kb #platform-parked {
   .platform-rail-nest .platform-rail-places > .platform-rail-nest-in::before {
     display: none;
   }
-  /* The parent: lit by its page, filled by none, its count said under it. */
+  /* The parent: lit by its page, filled by none, its count said under it.
+     Messages only while a row under it is lit (#21): a conversation that is
+     not among the five adds no row now, and Messages keeps its fill. */
   .platform-rail-community[data-rail-open][aria-current="page"],
-  .platform-tabs:has(#platform-rail-conversations > [data-nest="open"]) #platform-tab-messages[aria-current="page"] {
+  .platform-tabs:has(#platform-rail-conversations > [data-nest="open"] [aria-current="page"]) #platform-tab-messages[aria-current="page"] {
     background: transparent;
     color: var(--text-primary);
     font-weight: 650;
   }
-  .platform-tabs:has(#platform-rail-conversations > [data-nest="open"]) #platform-tab-messages[aria-current="page"] .platform-tab-glyph {
+  .platform-tabs:has(#platform-rail-conversations > [data-nest="open"] [aria-current="page"]) #platform-tab-messages[aria-current="page"] .platform-tab-glyph {
     color: var(--text-primary);
   }
   /* The places are in the sidebar, so the place bar's button to the tray has
@@ -23771,8 +23892,10 @@ html.dark .messages-inbox-change-tile {
      the ROUTER's answer about whether this route has a rail, and the two have
      to stay tellable apart (frontend/src/features/nav/tab-bar.tsx). A peeking
      bar keeps both classes and this rule stands aside for it, which is what
-     makes the hot zone at the window's edge the way back. */
-  .platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) {
+     makes the hot zone at the window's edge the way back. It stands aside
+     too while the rail slides away (`platform-tabs-leaving`, N21:
+     frontend/src/features/nav/rail-slide.ts). */
+  .platform-tabs.platform-tabs-folded:not(.platform-tabs-peek):not(.platform-tabs-leaving) {
     display: none;
   }
   /* …AND ITS FOOTER GOES WITH IT (#2762). The parked strip is fixed to the
@@ -24241,6 +24364,15 @@ html.in-side-panel body {
 .dev-ws-hrow-meta {
   flex: none; display: inline-flex; align-items: center; gap: 8px;
   font-size: 13px; color: var(--text-muted); white-space: nowrap;
+  /* Never wider than the row (polish board #24): a long step, "Waiting for
+     a slot, 1 request ahead of it", ran past the card's edge and was cut
+     with no ellipsis. The words tags give way with an ellipsis instead; the
+     pill, the glyph tags and the time keep their size. */
+  max-width: 100%; min-width: 0;
+}
+.dev-ws-hrow-meta > * { flex: none; }
+.dev-ws-hrow-meta > .dev-ws-hrow-tag:not(:has(> svg)) {
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
 }
 .dev-ws-hrow-you {
   display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 999px;

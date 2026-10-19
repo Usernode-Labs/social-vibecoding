@@ -40,9 +40,10 @@
 // kanban-tabs pattern, #814) made sixteen ungrouped sections a thumb-swipe
 // scavenger hunt. Phones now get a real two-level nav instead:
 //
-//   level 1 (#admin)        the grouped section menu, one tappable row per
-//                           section under the same Operations / People /
-//                           Insights / Platform headings as the sidebar;
+//   level 1 (#admin)        Overview's numbers, then the grouped section
+//                           menu (#5286), one tappable row per section
+//                           under the same Operations / People / Insights /
+//                           Platform headings as the sidebar;
 //   level 2 (#admin/<key>)  that one section, full width, with the platform
 //                           header's back button flipped to an arrow and
 //                           its title set to the section label.
@@ -244,6 +245,15 @@ const AdminConsole = {
   // while it is set, so the platform header is never rewritten before the
   // View Transition has captured the page the viewer is leaving.
   _chromeSuspended: false,
+
+  // Where the console's Exit goes (#5286). _lastOutside is the newest
+  // address this tab showed that was not the console, kept current by the
+  // listener at the foot of this file; open() copies it into _returnTo, so a
+  // move inside the console never changes where Exit leads. Null means the
+  // console was the first thing this tab showed, and Exit falls back to the
+  // Me tab, the console's way in.
+  _lastOutside: null,
+  _returnTo: null,
 
   // The single source of truth in JS for where the sidebar layout starts.
   // Must stay in step with the `md:` classes in _renderShell (Tailwind's
@@ -537,6 +547,7 @@ const AdminConsole = {
     AdminConsole._pushedFromMenu = false;
     AdminConsole._chromeSuspended = !!(opts && opts.chrome === false);
     AdminConsole._menuScrollTop = 0;
+    AdminConsole._returnTo = AdminConsole._lastOutside;
     AdminConsole._ensureMediaListener();
     section = AdminConsole._canonicalSection(section);
     const visible = AdminConsole._visibleSections();
@@ -569,6 +580,12 @@ const AdminConsole = {
     // Runs after app.js's own setHeaderTitle, so on a mobile deep link the
     // header ends up showing the section's name rather than the console's.
     AdminConsole._syncChrome();
+  },
+
+  // The address the band's Exit leads to: where the console was entered
+  // from, else the Me tab. Read by features/admin/index.tsx on the press.
+  exitTarget() {
+    return AdminConsole._returnTo || '#profile';
   },
 
   close() {
@@ -1073,6 +1090,11 @@ const AdminConsole = {
     // and its class attribute must be written once at hydration and then
     // only ever toggled from here (the useHiddenClass contract).
     if (banner) banner.classList.toggle('hidden', !viewOnly);
+    // The console's own band (#5286), same classList contract as the banner.
+    // A non-admin on a public section is not in the admin console, so it
+    // stays hidden for them.
+    const bar = document.getElementById('admin-console-bar');
+    if (bar) bar.classList.toggle('hidden', AdminConsole._publicMode());
   },
 
   // Every [data-admin-section] control routes through here. On mobile a
@@ -1258,10 +1280,27 @@ const AdminConsole = {
     AdminConsole._markRouted();
   },
 
+  // Level 1 on a phone opens on the numbers (#5286): the Overview section,
+  // then every section under an "All sections" heading. It used to be the
+  // section list alone, forty rows with no summary before them. Overview
+  // renders into a sub-host of its own through the same _renderModule
+  // seam (so _teardownActiveSection still stops it), and the menu follows
+  // it in the same innerHTML write. Public mode has no Overview to show,
+  // so a non-admin keeps the bare list. #admin/overview is still Overview
+  // alone, as a level-2 section.
   _renderMobileMenu(host) {
-    host.innerHTML = AdminConsole._mobileMenuHtml();
+    host.innerHTML = AdminConsole._levelOneHtml();
     AdminConsole._wireSectionButtons(host);
     AdminConsole._wireGroupToggles(host);
+    const sub = document.getElementById('admin-mobile-overview');
+    if (sub) AdminConsole._renderModule(sub, 'AdminOverview', 'overview');
+  },
+
+  _levelOneHtml() {
+    if (AdminConsole._publicMode()) return AdminConsole._mobileMenuHtml();
+    return `<div id="admin-mobile-overview" class="mb-6"></div>
+      <h2 class="${AdminUI.sectionTitle} mb-3">All sections</h2>
+      ${AdminConsole._mobileMenuHtml()}`;
   },
 
   _renderSection() {
@@ -1359,9 +1398,12 @@ const AdminConsole = {
       const pending = AdminConsole._ensureSections();
       if (pending) {
         host.innerHTML = `<p class="${AdminUI.loading} p-4">Loading…</p>`;
+        // Through _renderContent rather than _renderSection: on a phone's
+        // level 1 the host passed here is the Overview sub-host under the
+        // menu (#5286), and a bare section render would wipe the menu.
         pending.then(() => {
           const live = document.getElementById('admin-section-content');
-          if (live && AdminConsole._open) AdminConsole._renderSection();
+          if (live && AdminConsole._open) AdminConsole._renderContent();
         });
         return;
       }
@@ -1460,3 +1502,21 @@ const AdminConsole = {
 // section modules through window[modName], so the global publication stays.
 // Guarded: the prerender pass evaluates this module in Node.
 if (typeof window !== 'undefined') window.AdminConsole = AdminConsole;
+
+// Remember the newest address that was not the console (#5286), for Exit.
+// popstate and hashchange both, because a history traversal can route on
+// popstate before hashchange fires; replaceState fires neither, so a screen
+// that rewrites its own tail leaves the address it was entered at, which is
+// still that screen. Registered when the module evaluates, before app.js's
+// router, so the address is recorded before the console can open on it.
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  const remember = () => {
+    try {
+      const h = location.hash || '#';
+      if (!/^#admin(\/|$)/.test(h)) AdminConsole._lastOutside = h;
+    } catch { /* no location: nothing to remember */ }
+  };
+  remember();
+  window.addEventListener('hashchange', remember);
+  window.addEventListener('popstate', remember);
+}

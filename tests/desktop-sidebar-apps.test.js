@@ -142,14 +142,21 @@ test('the source: the part holds App, then the places; the five leave the pins o
   // The five are the most recent of yours that are not pinned, and opening
   // one keeps a running app's community in.
   assert.match(src, /const listKey = yours \? yours\.filter\(\(s\) => !pinned\.includes\(s\)\)\.join\(\) : null;/);
-  assert.match(src, /const next = noteOpened\(shown, slug, list, RAIL_COMMUNITIES, live\);/);
-  // The section: a visit, a running app not among the five, then the five,
+  assert.match(src, /const next = noteOpened\(saved, slug, list, RAIL_COMMUNITIES, live\);/);
+  // #21: the visit draws the five it read first; what you open is kept for
+  // the next load.
+  assert.match(src, /if \(ready && list && visit\.viewer !== viewer\) setVisit\(\{ viewer, slugs: saved \}\);/);
+  assert.match(src, /const shown = visit\.viewer === viewer \? railCommunities\(visit\.slugs, list\) : saved;/);
+  // The section: the five, then a visit and a running app not among them,
   // less the pinned ones.
   assert.match(src, /railRows\(shown, here\.onPage \|\| here\.onApp, here\.live\)/);
   assert.match(src, /\.filter\(\(slug\) => !pinned\.includes\(slug\)\);/);
-  // The All row counts neither the five's votes nor the pins'.
-  assert.match(read('frontend/src/features/nav/tab-bar.tsx'),
-    /votesElsewhere\(\[\.\.\.pins\.map\(\(app: \{ slug: string \}\) => app\.slug\), \.\.\.railShown\], scope\.list, scope\.info\)/);
+  // #18 (19 Oct polish board): the All row states every vote waiting on
+  // you, the tab's own figure, not the remainder after the rows above it.
+  const bar = read('frontend/src/features/nav/tab-bar.tsx');
+  assert.match(bar, /const allVotes = Number\(scope\.badgeNeeds\) \|\| 0;/);
+  assert.match(bar, /key === 'workshop' && allVotes > 0 \? \(\s*<span className="platform-tab-all-votes" aria-label=\{t\('core:tabs\.votesWaiting', \{ count: allVotes \}\)\}>/);
+  assert.doesNotMatch(bar, /votesElsewhere/);
 });
 
 test('the pinned section: its own heading, the pins drawn as rows, the slot while a tile is in the air', () => {
