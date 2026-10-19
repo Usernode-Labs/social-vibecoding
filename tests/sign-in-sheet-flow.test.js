@@ -245,6 +245,7 @@ test('the code step opens the address\'s own mail, and counts Get started\'s ste
   assert.equal(storyStep('code', 'story'), 2);
   assert.equal(storyStep('code', 'signin'), null);
   assert.equal(storyStep('code', 'invite'), null);
+  assert.equal(storyStep('account', 'story'), 3);
   assert.equal(storyStep('email', 'story'), null);
   assert.equal(message('auth:signInSheet.progress', { step: 2, total: 3 }), 'Step 2 of 3');
 });
@@ -319,7 +320,9 @@ test('the account step asks for no password, and says how they sign in (#4891)',
   }
   // The username is the step's one field, so its Return goes.
   assert.match(step, /<input ref=\{usernameField\} id="sign-in-sheet-username" defaultValue=\{suggestedUsername\} autoComplete="username" enterKeyHint="go" className=\{INPUT\}/);
-  // In the password's place, how they sign in and where a password is added.
+  // In the password's place, how they sign in and where a password is
+  // added, under the button since #5255, so the field's own line is free.
+  assert.ok(step.indexOf('data-sign-in-sheet-code-note') > step.indexOf('<button type="submit"'), 'the note sits under the button');
   assert.match(step, /<p data-sign-in-sheet-code-note="" className="text-\[13px\] text-zinc-500 dark:text-zinc-400">\{t\('auth:signInSheet\.account\.codeNote'\)\}<\/p>/);
   assert.equal(message('auth:signInSheet.account.codeNote'),
     'You sign in with a code we email you. You can add a password later in Settings.');
@@ -327,6 +330,46 @@ test('the account step asks for no password, and says how they sign in (#4891)',
   assert.doesNotMatch(message('auth:signInSheet.account.leadWithUsername'), /password/i);
   // Settings is really where it is offered (tests/settings-screen.test.js).
   assert.equal(message('settings:password.titleAdd'), 'Add a password');
+});
+
+test('the username step wears an @, says live whether the name is free, and shows how others see it (#5255)', async () => {
+  const { checkUsername, USERNAME_CHECK_MS } = loadTsx(SHEET);
+  const free = fakeFetch(() => [200, { ok: true, available: true }]);
+  await withGlobals({ fetch: free }, async () => {
+    assert.deepEqual(await checkUsername(' ada_l '), { state: 'available' });
+  });
+  assert.equal(free.calls[0].url, '/api/auth/username-available?username=ada_l');
+  const taken = fakeFetch(() => [200, { ok: true, available: false, error: 'That username is taken.' }]);
+  await withGlobals({ fetch: taken }, async () => {
+    assert.deepEqual(await checkUsername('ada'), { state: 'taken', error: 'That username is taken.' });
+  });
+  // Empty, throttled or offline: the field says nothing, and Create my account still answers.
+  const none = fakeFetch({});
+  await withGlobals({ fetch: none }, async () => {
+    assert.deepEqual(await checkUsername('  '), { state: 'idle' });
+  });
+  assert.equal(none.calls.length, 0);
+  const throttled = fakeFetch(() => [429, { error: 'Too many username checks.' }]);
+  await withGlobals({ fetch: throttled }, async () => {
+    assert.deepEqual(await checkUsername('ada'), { state: 'idle' });
+  });
+  const offline = fakeFetch(() => new Error('offline'));
+  await withGlobals({ fetch: offline }, async () => {
+    assert.deepEqual(await checkUsername('ada'), { state: 'idle' });
+  });
+  assert.ok(USERNAME_CHECK_MS >= 200 && USERNAME_CHECK_MS <= 600, 'asked once typing pauses');
+  const src = read(SHEET);
+  const step = src.slice(src.indexOf("{step === 'account' ? ("), src.indexOf('</form>', src.indexOf("{step === 'account' ? (")));
+  assert.match(step, /<span aria-hidden="true" className="text-\[17px\] text-zinc-500 dark:text-zinc-400">@<\/span>/);
+  assert.match(step, /onInput=\{\(e\) => setHandleDraft\(e\.currentTarget\.value\)\}/);
+  assert.match(step, /data-sign-in-sheet-username-check="available"/);
+  assert.match(step, /data-sign-in-sheet-username-preview=""/);
+  assert.match(step, /needsUsername \? t\('auth:signInSheet\.account\.create'\) : t\('auth:signInSheet\.account\.submit'\)/);
+  assert.equal(message('auth:signInSheet.account.create'), 'Create my account');
+  assert.equal(message('auth:signInSheet.account.available'), '✓ Available');
+  assert.equal(message('auth:signInSheet.account.rules'), '3 to 32 letters, numbers or _');
+  assert.equal(message('auth:signInSheet.account.previewLabel'), 'How others see you');
+  assert.equal(message('auth:signInSheet.account.titleUsername'), 'Pick your username');
 });
 
 test('the sheet fills in the token\'s address and sends the code once per tab, through the sign-in screen\'s lookup', async () => {
@@ -777,7 +820,11 @@ test('Continue shows a spinner while it finishes, beside "Finishing…" (#4892)'
   // The Welcome step's Continue and a provider's username step's, the two
   // that finish a new account and may hand off to the make screen.
   for (const step of ['account', 'username']) {
-    assert.match(sheet, new RegExp(`\\{busy \\? <><FinishingSpinner />\\{t\\('auth:signInSheet\\.${step}\\.finishing'\\)\\}</> : t\\('auth:signInSheet\\.${step}\\.submit'\\)\\}</button>`), step);
+    // The account step's says "Create my account" when it makes the account with its username (#5255).
+    const done = step === 'account'
+      ? "needsUsername \\? t\\('auth:signInSheet\\.account\\.create'\\) : t\\('auth:signInSheet\\.account\\.submit'\\)"
+      : `t\\('auth:signInSheet\\.${step}\\.submit'\\)`;
+    assert.match(sheet, new RegExp(`\\{busy \\? <><FinishingSpinner />\\{t\\('auth:signInSheet\\.${step}\\.finishing'\\)\\}</> : ${done}\\}</button>`), step);
     assert.equal(message(`auth:signInSheet.${step}.submit`), 'Continue');
     assert.equal(message(`auth:signInSheet.${step}.finishing`), 'Finishing…');
   }
