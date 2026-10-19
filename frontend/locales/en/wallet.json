@@ -311,17 +311,25 @@
     "text": "AI credit",
     "description": "Label of the row in Settings, Anthropic API key, that shows how much of the person's free AI allowance is spent. Credit is money to spend on AI, not a loan or an attribution."
   },
-  "credit.meter.spend": {
-    "text": "<0>limit </0><1>{{spent}}</1><0>/{{limit}}</0>",
-    "description": "The AI credit meter in Settings: what was spent against the allowance, as in 'limit $13.60/$20.00'. {{spent}} and {{limit}} are dollar amounts. The numbered tags only set colours: keep every character inside a tag, with <1> around the amount spent."
+  "credit.meter.leftWeekly": {
+    "text": "<0>{{remaining}}</0> of {{limit}} left this week",
+    "description": "The AI credit meter in Settings, AI usage & models, as one sentence: how much of the person's free weekly AI allowance remains, as in '$839.99 of $840 left this week'. {{remaining}} and {{limit}} are dollar amounts. The numbered tag only sets the colour of the amount left: keep it around {{remaining}}."
   },
-  "credit.meter.left": {
-    "text": "<0>· </0><1>{{remaining}} left</1>",
-    "description": "Second part of the AI credit meter in Settings: how much of the allowance remains, as in '· $6.40 left'. {{remaining}} is a dollar amount. The tags only set colours: keep <0> around the separator dot and its space, and <1> around the words."
+  "credit.meter.leftToday": {
+    "text": "<0>{{remaining}}</0> of {{limit}} left today",
+    "description": "The AI credit meter in Settings, AI usage & models, as one sentence, for an allowance that resets each day: how much of it remains, as in '$12.50 of $20 left today'. {{remaining}} and {{limit}} are dollar amounts. The numbered tag only sets the colour of the amount left: keep it around {{remaining}}."
   },
-  "credit.meter.noneLeft": {
-    "text": "<0>· </0><1>none left</1>",
-    "description": "Second part of the AI credit meter in Settings when the whole allowance is spent and the person has no API key of their own. The tags only set colours: keep <0> around the separator dot and its space, and <1> around the words."
+  "credit.meter.usedAllWeekly": {
+    "text": "All {{limit}} used this week",
+    "description": "The AI credit meter in Settings, AI usage & models, when the whole weekly free allowance is spent and the person's own Anthropic API key now pays for AI use. {{limit}} is a dollar amount, as in 'All $840 used this week'."
+  },
+  "credit.meter.usedAllToday": {
+    "text": "All {{limit}} used today",
+    "description": "The AI credit meter in Settings, AI usage & models, when the whole daily free allowance is spent and the person's own Anthropic API key now pays for AI use. {{limit}} is a dollar amount, as in 'All $20 used today'."
+  },
+  "credit.meter.noAllowance": {
+    "text": "No free AI allowance",
+    "description": "The AI credit meter in Settings, AI usage & models, for an account whose free AI allowance is zero (an admin set no allowance for it). Credit is money to spend on AI, not a loan."
   },
   "credit.meter.ownKey": {
     "text": "<0>· </0><1>your key {{amount}}</1>",

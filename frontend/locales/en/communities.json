@@ -59,6 +59,34 @@
     "text": "Show {{count}} more",
     "description": "Last row of a section in the list of the person's communities: reveals the next communities in that section. {{count}} is how many this press reveals."
   },
+  "filter.label": {
+    "text": "Show communities",
+    "description": "Accessible name of the row of filter chips above the list of every community the person is in (All, Public, Private, Just you) on the All communities page."
+  },
+  "filter.all": {
+    "text": "All",
+    "description": "Filter chip above the list of the person's communities: shows every community they are in, whoever it is for."
+  },
+  "filter.open": {
+    "text": "Public",
+    "description": "Filter chip above the list of the person's communities: shows only the public communities (anyone can see and join them)."
+  },
+  "filter.invited": {
+    "text": "Private",
+    "description": "Filter chip above the list of the person's communities: shows only the private communities (people are invited in)."
+  },
+  "filter.solo": {
+    "text": "Just you",
+    "description": "Filter chip above the list of the person's communities: shows only the projects nobody else is in yet."
+  },
+  "filter.allCount_one": {
+    "text": "All, {{count}} community",
+    "description": "Accessible name of the All filter chip above the list of the person's communities, with how many communities they are in. {{count}} is that number."
+  },
+  "filter.allCount_other": {
+    "text": "All, {{count}} communities",
+    "description": "Accessible name of the All filter chip above the list of the person's communities, with how many communities they are in. {{count}} is that number."
+  },
   "list.loading": {
     "text": "Loading your apps",
     "description": "Accessible name of the placeholder rows on the Communities screen while the person's list of communities is loading."
@@ -298,6 +326,26 @@
   "switcher.toVote_other": {
     "text": "{{count}} to vote",
     "description": "Badge on a row of the Your communities switcher: how many proposals and group decisions in that community (or, on the All communities row, in all of them) are waiting for this person's vote."
+  },
+  "switcher.search.placeholder": {
+    "text": "Search your communities",
+    "description": "Placeholder of the search field at the top of the Your communities switcher, which filters the person's communities by name as they type."
+  },
+  "switcher.search.label": {
+    "text": "Search your communities",
+    "description": "Accessible name of the search field at the top of the Your communities switcher. It can also be reached with Command+K or Ctrl+K."
+  },
+  "switcher.search.results": {
+    "text": "Matching communities",
+    "description": "Accessible name of the list of communities whose names match what the person typed in the Your communities switcher's search."
+  },
+  "switcher.search.none": {
+    "text": "None of your communities match “{{query}}”.",
+    "description": "Shown in the Your communities switcher when no community the person is in has the searched words in its name. {{query}} is what they typed."
+  },
+  "switcher.recent": {
+    "text": "Recent",
+    "description": "Small heading in the Your communities switcher over the communities the person used most recently (and the ones they pinned), above the All communities row."
   },
   "switcher.join": {
     "text": "Join a community",

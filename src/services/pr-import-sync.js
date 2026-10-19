@@ -213,6 +213,12 @@ async function classifyImportedHeadMove({ session, oldHead, newHead }) {
 // the verdict green, and nobody has tested it, so it is tested.
 const CARRIABLE_CHECK_STATES = new Set(['passing', 'skipped']);
 
+// How many times a head move is asked of the proposal machine while it did
+// not decide it in time (the conductor slow or restarting): refused as
+// `expired`, which changed nothing.
+const MOVE_ATTEMPTS = 3;
+const undecided = (out) => !!out && (out.status === 'pending' || out.reason === 'expired');
+
 // Apply a head change: advance the stored SHA, decide what the move costs the
 // approvals and the checks, refresh drift, and re-run SHA-pinned checks where
 // the verdict cannot carry. An active import has no votes to protect and
@@ -271,14 +277,27 @@ async function applyHeadChange({
   //    code nor the new. It is refused if the pin is no longer the one this
   //    decision was made about (another pass got there first), or the
   //    proposal has closed or merged meanwhile.
-  const moved = await require('../workflow/platform.ts').moveReviewHead({
-    sessionId: session.id, appId: session.app_id, column: 'imported', from: oldHead || null, to: newHead,
-    keepVotes: !bumpEpoch, reason: `imported_head_${kind}`,
-  });
-  if (moved.status !== 'accepted' && moved.status !== 'replayed') {
-    log.info('pr-import-sync', 'Head change already applied by another pass; nothing to do', {
-      sessionId: session.id, prNumber: session.pr_number, oldHead, newHead, refused: moved.reason || moved.status,
+  //    A move the machine did not decide in time is asked again: it was
+  //    refused as expired (changing nothing), and a fresh event (a fresh
+  //    request key) is the only way it lands.
+  let moved = null;
+  for (let attempt = 0; attempt < MOVE_ATTEMPTS; attempt++) {
+    moved = await require('../workflow/platform.ts').moveReviewHead({
+      sessionId: session.id, appId: session.app_id, column: 'imported', from: oldHead || null, to: newHead,
+      keepVotes: !bumpEpoch, reason: `imported_head_${kind}`,
     });
+    if (!undecided(moved)) break;
+  }
+  if (moved.status !== 'accepted' && moved.status !== 'replayed') {
+    if (undecided(moved)) {
+      log.error('pr-import-sync', 'The proposal machine never answered the head move; the next pass tries again', {
+        sessionId: session.id, prNumber: session.pr_number, oldHead, newHead, attempts: MOVE_ATTEMPTS,
+      });
+    } else {
+      log.info('pr-import-sync', 'Head change already applied by another pass; nothing to do', {
+        sessionId: session.id, prNumber: session.pr_number, oldHead, newHead, refused: moved.reason || moved.status,
+      });
+    }
     // Let the caller carry on with the row as it now is, not as it was read:
     // a merge attempt that kept the stale pin would offer GitHub the old
     // commit and buy exactly the 409 this path exists to avoid.
@@ -288,7 +307,7 @@ async function applyHeadChange({
       [session.id]
     ).catch(() => ({ rows: [] }));
     if (current[0]) Object.assign(session, current[0]);
-    return { applied: false, votesKept: false, checksCarry: false, kind, epoch: null };
+    return { applied: false, votesKept: false, checksCarry: false, kind, epoch: null, ...(undecided(moved) ? { notDecided: true } : {}) };
   }
   const claimed = [{ approval_epoch: moved.reply?.epoch, pr_summary_stale: moved.reply?.prSummaryStale }];
   const epoch = parseInt(claimed[0].approval_epoch, 10);

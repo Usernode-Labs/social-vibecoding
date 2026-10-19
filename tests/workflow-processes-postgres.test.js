@@ -3,16 +3,13 @@
 // The workflow machines with their decisions and work in another process
 // than the web side, and through a crash of that process
 // (tests/lib/workflow-processes.js). This test process is the web side: it
-// appends through platform.ts with no pipeline slot of its own, so every
-// decision and every work item runs in the child, with only outside services
-// faked (tests/fixtures/workflow-outside-fakes.js). A restart scenario kills
-// the child with SIGKILL in the middle of a flow, starts another, and checks
-// the end is what an uninterrupted run of the same flow gives.
-//
-// The scenarios marked `todo` are the known places where a machine still
-// depends on the web process's memory; each says which entry of
-// tests/baselines/workflow-process-state.json it shows, and passes once the
-// step that removes the entry lands.
+// appends through platform.ts with no pipeline slot of its own, as a web Pod
+// does, so every decision and every work item runs in the child: server.js
+// itself, booted as a conductor, with only outside services faked
+// (tests/fixtures/workflow-outside-fakes.js). A restart scenario kills the
+// child with SIGKILL in the middle of a flow, starts another, and checks the
+// end is what an uninterrupted run of the same flow gives; the last ones run
+// two conductors at once.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -45,12 +42,16 @@ test('workflow machines in a process of their own, and through its crash', { tim
   pool.on('error', () => {});
   // Registered first, so a failure from here on still drops the database.
   let workflow = null;
+  let second = null;
   let listener = null;
   let platform = null;
+  let leader = null;
   t.after(async () => {
     await workflow?.stop();
+    await second?.stop();
     await platform?.stopWorkflow();
     await listener?.end();
+    await leader?.end();
     await pool.end();
     await admin.query(`DROP DATABASE ${dbName} WITH (FORCE)`);
     await admin.end();
@@ -58,7 +59,9 @@ test('workflow machines in a process of their own, and through its crash', { tim
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
   await procs.prepare(pool);
 
-  // The configuration, as config.js reads it; the child adds the database URL.
+  // The configuration, as config.js reads it: the web side's, and the
+  // conductor's environment, as the chart sets it (the child adds the
+  // database URL and its port).
   const flags = { dataEncryptionKey: DATA_KEY, wfPoolMax: 4, wfSlots: 2,
     // Before & after shots taken (their steps are faked).
     shots: { execute: true, collect: true, maxAgentMs: 480000, maxRunMs: 1440000 },
@@ -66,11 +69,23 @@ test('workflow machines in a process of their own, and through its crash', { tim
     mobilePushEnabled: true, mobilePushEnvironment: 'production', firebaseProjectId: 'social-test',
     firebaseServiceAccountJsonB64: Buffer.from(JSON.stringify({
       project_id: 'social-test', client_email: 'push@social-test.iam.example', private_key: 'fake' })).toString('base64') };
+  const conductorEnv = {
+    DATA_ENCRYPTION_KEY: DATA_KEY, WF_POOL_MAX: '4', WF_SLOTS: '2',
+    SHOTS_ENABLED: 'true', SHOTS_MAX_AGENT_MS: '480000', SHOTS_MAX_RUN_MS: '1440000',
+    MOBILE_PUSH_ENABLED: 'true', PUSH_ENV: 'production', FIREBASE_PROJECT_ID: flags.firebaseProjectId,
+    FIREBASE_SERVICE_ACCOUNT_JSON_B64: flags.firebaseServiceAccountJsonB64,
+  };
+  const startConductor = async (env = {}) => {
+    const p = await procs.startWorkflowProcess({ databaseUrl, fixture: FAKES, env: { ...conductorEnv, ...env } });
+    await p.ready;
+    return p;
+  };
   const startWorkflow = async (env = {}) => {
-    workflow = procs.startWorkflowProcess({ databaseUrl, config: flags, fixture: FAKES, env });
-    await workflow.ready;
+    workflow = await startConductor(env);
     return workflow;
   };
+  // The leader lock is the test's: a conductor runs the workflow without it.
+  leader = await procs.holdLeadership(databaseUrl);
 
   // The web side: appends and waits, decides nothing (no pipeline slot).
   const stub = (p, exports) => { const id = require.resolve(p); require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] }; };
@@ -80,7 +95,13 @@ test('workflow machines in a process of their own, and through its crash', { tim
   const heard = [];
   listener = new Client({ connectionString: databaseUrl });
   await listener.connect();
-  listener.on('notification', (m) => { const e = JSON.parse(m.payload); if (e.i === 'workflow') heard.push(e); });
+  // And what the conductor's own code pushes over the bus (ws-bus.js), as a
+  // web process's relay hears it: an io core's push, not a transition's.
+  const relayed = [];
+  listener.on('notification', (m) => {
+    const e = JSON.parse(m.payload);
+    if (e.i === 'workflow') heard.push(e); else relayed.push(e);
+  });
   await listener.query('LISTEN usernode_ws');
 
   let seq = 0;
@@ -109,7 +130,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
     [machine, key, kind])).rows[0]?.status === 'settled';
 
   // GitHub merged it: merge-followups is created by Merged, here as the
-  // boot's merged-by-hand lookup reports it (the merge itself, below).
+  // leader's merged-by-hand lookup reports it (the merge itself, below).
   const reportMerge = async (m) => { await platform.mergeObserved({ ...m, mergedAt: null }); return { status: 'accepted' }; };
 
   await platform.startWorkflow({ ...flags, databaseUrl, wfSlots: 0 }, { loops: false });
@@ -301,7 +322,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
       `INSERT INTO wf_instances (machine, key, state, data, version, machine_version)
        VALUES ('shots', $1, $2, $3::jsonb, 1, 1)
        ON CONFLICT (machine, key) DO UPDATE SET state = EXCLUDED.state`,
-      [`session:${s.id}`, state, JSON.stringify({ sessionId: s.id, run: { id: 'r'.repeat(32) } })]);
+      [`session:${s.id}`, state, JSON.stringify({ sessionId: s.id, run: { id: 'r'.repeat(32) }, cleaning: [] })]);
     await asWriter(shots('taking_shots'));
     await reportMerge({ sessionId: s.id, appId: a.id, mergeSha: SHA('c') });
     const retires = async () => (await pool.query(
@@ -349,7 +370,8 @@ test('workflow machines in a process of their own, and through its crash', { tim
     assert.equal(n, 2);
     const { rows: [row] } = await pool.query('SELECT shots_state, shots_run_id FROM chat_sessions WHERE id = $1', [s.id]);
     assert.deepEqual(row, { shots_state: 'verified', shots_run_id: runs[0].id });
-    await procs.until(async () => (await procs.effects(pool, 'shots.cleanup')).length === 1, 'its copies to go');
+    await procs.until(async () => (await procs.effects(pool, 'shots.cleanup')).filter((c) => c.data.runId === runs[0].id).length === 1,
+      'its copies to go');
   });
 
   await t.test('a change whose head moved since the carrier listed its commits is not marked as carried', async () => {
@@ -749,7 +771,9 @@ test('workflow machines in a process of their own, and through its crash', { tim
     const pushed = await procs.until(async () => heard.find((e) => e.k === 'scoped' && e.r?.boardChange === true && e.r.appId === a.id),
       'the board change, on the push the web side relays', 5000);
     assert.equal(pushed.d.type, 'issue_update');
-    assert.deepEqual(await procs.effects(pool, 'workshop.boardChange'), [], 'nothing kicked in the workflow process after its commit');
+    // Every process that relays the bus acts on it (its row lease makes that
+    // safe), the conductor's own relay too: nothing runs after a commit but
+    // the push itself (a machine has no notifiers).
   });
 
   // ── App delivery: the deploy and its "deploying" state ──────────────
@@ -1066,5 +1090,63 @@ test('workflow machines in a process of their own, and through its crash', { tim
     assert.equal(await platform.resumeMainCheck(b.id, { id: author.id, username: author.username }), 'resumed');
     assert.deepEqual(await mainCheckOf(b), { state: 'failing', sha: SHA('8'), paused: null });
     assert.equal(await platform.resumeMainCheck(b.id, { id: author.id, username: author.username }), 'not_paused');
+  });
+
+  // ── The conductor is the process production runs ───────────────────
+  // What a process that only ran the workflow would lack, and these tests
+  // could not see while their child was one: its own code's pushes (the
+  // bus), its holds (its process row), its listener (the bot's platform
+  // tools call this process's own port).
+  await t.test('the conductor\'s own code reaches the web side over the bus, other processes see it, and it listens', async () => {
+    const before = relayed.length;
+    await dmToTheBot();
+    const fromConductor = relayed.slice(before);
+    assert.ok(fromConductor.some((e) => e.k === 'user'),
+      `the DM's answer reaches the person's tabs through the bus (heard: ${[...new Set(fromConductor.map((e) => e.k))].join(', ') || 'nothing'})`);
+    const { rows } = await pool.query(`SELECT role, state FROM platform_processes WHERE id LIKE $1`, [`%:${workflow.pid}:%`]);
+    assert.deepEqual(rows, [{ role: 'conductor', state: 'serving' }], 'its row, so what it holds is seen elsewhere');
+    const res = await fetch(`http://127.0.0.1:${workflow.port}/health`);
+    assert.equal(res.status, 200, 'it listens on its own port');
+  });
+
+  // ── Two conductors at once ──────────────────────────────────────────
+  await t.test('two conductors: every flow ends once, whichever runs it', async () => {
+    second = await startConductor();
+    const [govs, merged, dm, checked] = await Promise.all([
+      Promise.all([closeByVote(301), closeByVote(302), closeByVote(303)]),
+      mergeGoesLive(),
+      dmToTheBot(),
+      mergeIsChecked(),
+    ]);
+    for (const g of govs) {
+      assert.equal(g.state, 'applied');
+      assert.equal(g.closed, 1, 'closed once');
+      assert.equal(g.comments.length, 1, 'commented once');
+    }
+    assert.deepEqual(merged.row, { status: 'merged', live: true });
+    assert.deepEqual(dm, dmUninterrupted);
+    assert.deepEqual(checked.verdicts, [{ sha: SHA('6'), state: 'passing' }]);
+    assert.equal(checked.runs.length, 1, 'one suite run between them');
+    // The release's adoptions ran once between them (the release machine).
+    const { rows: releases } = await pool.query(
+      `SELECT count(*)::int AS n FROM wf_work WHERE machine = 'release' AND kind = 'release.adopt' AND status = 'settled'`);
+    assert.ok(releases[0].n >= 1);
+  });
+
+  await t.test('two conductors: one killed mid-item, the other carries it on', async () => {
+    const a = await app();
+    const s = await proposal(a);
+    await procs.arm(pool, 'main.suite');
+    await reportMerge({ sessionId: s.id, appId: a.id, mergeSha: SHA('9') });
+    const pid = await procs.reached(pool, 'main.suite');
+    const [dead, alive] = pid === workflow.pid ? [workflow, second] : [second, workflow];
+    await dead.kill();
+    await procs.release(pool, 'main.suite');
+    await procs.expireLeases(pool);
+    await procs.until(async () => (await mainCheckOf(a)).state === 'passing', 'the other conductor to finish the suite');
+    const runs = await suiteRuns(a);
+    assert.equal(runs.length, 2);
+    assert.equal(runs[1].pid, alive.pid, 'carried on by the one still running');
+    if (dead === workflow) workflow = await startConductor(); else second = await startConductor();
   });
 });

@@ -113,6 +113,19 @@
   // query cannot survive the sign-out either.
   const LANDING_URL = '/';
 
+  // #5281: the Account page's sign-in rows (Username, Email & recovery,
+  // Password) each open their own form, one at a time. Username and Password
+  // are this module's; Email is React's (sections/email.tsx), so the two
+  // owners keep each other closed through this one window event, whose
+  // detail is `{ part }`: the part now open, or null for none.
+  const ACCOUNT_EDITOR_EVENT = 'usernode:settings-account-editor';
+  // Each part's form, its row's Change button, and the field a fresh open
+  // puts the cursor in.
+  const ACCOUNT_EDITORS = {
+    username: { form: 'cu-form', button: 'cu-edit', focus: 'cu-new' },
+    password: { form: 'cp-form', button: 'cp-edit', focus: null },
+  };
+
   // A native sign-out whose terminal step fails leaves this document alive
   // with server authority already revoked, so it navigates to the landing
   // page like every other surface. The advisory that used to be toasted here
@@ -291,7 +304,7 @@
     // real platform admin). Those gates live in their _render* methods and
     // are read here, never duplicated. A page is offered while any of its
     // parts is. A gated part that is a page of its own hides exactly one row;
-    // one that shares a page (Admin preview, on Appearance) hides only its
+    // one that shares a page (Admin preview, on Developer) hides only its
     // own block, and its address opens that page either way.
     SECTIONS: [
       // ── Account ─────────────────────────────────────────────────────────
@@ -330,16 +343,14 @@
       { key: 'experimental', label: 'settings:nav.part.experimental', group: 'settings:nav.group.aiBuilding' },
 
       // ── Preferences ─────────────────────────────────────────────────────
-      // THE UI OVERHAUL moved Theme here out of the hamburger drawer. The
-      // developer console's switch and the admin preview are the same kind of
-      // setting — what the shell shows on this device — so they share its
-      // page. Admin preview is gated to real admins; for everyone else its
-      // wrapper is empty and the page is Theme and the console switch. It had
-      // a group of its own, which put an "Admin" heading directly above the
-      // footer's own Admin block.
+      // THE UI OVERHAUL moved Theme here out of the hamburger drawer.
+      // Appearance is how the shell looks: the theme and, on a desktop, the
+      // sidebar beside a running app (both in sections/theme.tsx). #5285
+      // took the developer console's switch and the admin preview off it:
+      // they are tools for people building and running Homeroom, and next to
+      // the theme they read as part of choosing a look. They are the
+      // Developer page now, at the end of this group.
       { key: 'theme', label: 'settings:nav.part.theme', group: 'settings:nav.group.preferences', page: 'theme' },
-      { key: 'dev-console', label: 'settings:nav.part.devConsole', group: 'settings:nav.group.preferences', page: 'theme' },
-      { key: 'admin-preview', label: 'settings:nav.part.adminPreview', group: 'settings:nav.group.preferences', page: 'theme', gate: 'settings-admin-section' },
       // #3969: text size and high contrast — the other controls about how
       // the shell reads on this device. Their own page of one part, right
       // after Appearance, so they are visible without opening Appearance
@@ -358,6 +369,15 @@
       { key: 'app-permissions', label: 'settings:nav.part.appPermissions', group: 'settings:nav.group.preferences', page: 'app-permissions' },
       { key: 'app-ai', label: 'settings:nav.part.appAi', group: 'settings:nav.group.preferences', page: 'app-permissions' },
       { key: 'blocked-apps', label: 'settings:nav.part.blockedApps', group: 'settings:nav.group.preferences', page: 'app-permissions' },
+      // #5285: the developer tools, off Appearance. The console switch is
+      // offered to everyone, so the page always has a row; Admin preview is
+      // gated to real admins, and for everyone else its wrapper is empty and
+      // the page is the console switch alone. It is never the page's first
+      // part, so the page's address and title never depend on the gate. It
+      // had a group of its own once, which put an "Admin" heading directly
+      // above the footer's own Admin block; it stays in Preferences.
+      { key: 'dev-console', label: 'settings:nav.part.devConsole', group: 'settings:nav.group.preferences', page: 'developer' },
+      { key: 'admin-preview', label: 'settings:nav.part.adminPreview', group: 'settings:nav.group.preferences', page: 'developer', gate: 'settings-admin-section' },
 
       // ── Help & about ────────────────────────────────────────────────────
       // Panes you come to read or replay rather than configure. The welcome
@@ -378,6 +398,7 @@
       connectors: 'settings:nav.page.connectors',
       theme: 'settings:nav.page.theme',
       'app-permissions': 'settings:nav.page.appPermissions',
+      developer: 'settings:nav.page.developer',
     },
 
     // Extra words the nav's filter box matches for each part, beyond its own
@@ -569,13 +590,32 @@
 
       this._wireConnectorNameSpelling();
 
-      // Change password (issue #282) → POST /api/me/password.
+      // #5281: the Account page's sign-in rows. Each row's Change opens its
+      // own form under it and Cancel closes it; one is open at a time.
+      [['cu-edit', 'username'], ['cp-edit', 'password']].forEach(([id, part]) => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('click', () => this._openAccountEditor(part));
+      });
+      ['cu-cancel', 'cp-cancel'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('click', () => this._openAccountEditor(null));
+      });
+      // The Email part is React-owned (sections/email.tsx) and announces its
+      // own opening; close ours when it does, without announcing again.
+      window.addEventListener?.(ACCOUNT_EDITOR_EVENT, (e) => {
+        if (e && e.detail && e.detail.part === 'email') this._openAccountEditor('email', { announce: false });
+      });
+
+      // Change username → POST /api/me/username (and, for an account with no
+      // password, POST /api/me/username/code first, #5281).
       const cuSave = document.getElementById('cu-save');
       if (cuSave) cuSave.addEventListener('click', () => this.changeUsername());
-      // Enter in either field submits, like the password form's fields do
+      const cuSendCode = document.getElementById('cu-send-code');
+      if (cuSendCode) cuSendCode.addEventListener('click', () => this.requestUsernameCode());
+      // Enter in any field submits, like the password form's fields do
       // not — this one is two fields and a button, and a rename typed on a
       // phone should not require reaching for the button.
-      ['cu-new', 'cu-password'].forEach((id) => {
+      ['cu-new', 'cu-password', 'cu-code'].forEach((id) => {
         const el = document.getElementById(id);
         if (el) {
           el.addEventListener('keydown', (e) => {
@@ -583,6 +623,7 @@
           });
         }
       });
+      // Change password (issue #282) → POST /api/me/password.
       const cpSave = document.getElementById('cp-save');
       if (cpSave) cpSave.addEventListener('click', () => this.changePassword());
 
@@ -1495,6 +1536,9 @@
       if (!key || (Settings._isMobile() && Settings._level === 1)) return;
       const el = document.querySelector?.(`[data-settings-section="${key}"]`);
       if (!el || el.classList.contains('hidden')) return;
+      // #5281: a link to the Username or Password part (the sign-up step's
+      // "add a password later in Settings") wants its form, not just its row.
+      if (ACCOUNT_EDITORS[key]) Settings._openAccountEditor(key);
       try { el.scrollIntoView({ block: 'start' }); } catch { /* old engines: no scroll */ }
     },
 
@@ -3696,6 +3740,9 @@
       const status = document.getElementById('cp-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
       this._setChangePasswordMode('password');
+      // #5281: the row reads first, its form closed, except in the
+      // password-creation screenshot state, whose words live in the form.
+      this._setEditorOpen('password', this._passwordCreateDemo());
     },
 
     _setChangePasswordMode(mode) {
@@ -3714,6 +3761,12 @@
       // #4891: and it is offered "Add a password", not "Change password".
       const first = this._noPasswordYet();
       show('cp-current-row', !wallet && !first);
+      // #5281: the row's own line and link say the same: "Set" with Change,
+      // or "Not set" with Add.
+      show('cp-state-set', !first);
+      show('cp-state-unset', first);
+      show('cp-edit-change', !first);
+      show('cp-edit-add', first);
       show('cp-title-change', !first);
       show('cp-title-add', first);
       show('cp-save-change', !first);
@@ -3786,31 +3839,121 @@
       paintStatus(el, text, kind);
     },
 
-    // Paint the current handle. Called from _renderAllSections on every
-    // open, so the row is right even after a rename made somewhere else in
+    // #5281: open one of the Account page's sign-in forms and close the
+    // others; null closes them all. `announce: false` is for a change that
+    // came FROM the event (the Email part opening itself), so it is not
+    // echoed back. Only the forms this module owns are touched by id; the
+    // Email part closes itself on the event.
+    _openAccountEditor(part, { announce = true } = {}) {
+      Object.keys(ACCOUNT_EDITORS).forEach((key) => this._setEditorOpen(key, key === part));
+      const focusId = part && ACCOUNT_EDITORS[part] && ACCOUNT_EDITORS[part].focus;
+      if (focusId && !Settings._isMobile?.()) {
+        // Not on a phone: focusing a field there pops the keyboard over the
+        // form the person is about to read.
+        try { document.getElementById(focusId)?.focus?.({ preventScroll: true }); } catch { /* ignore */ }
+      }
+      if (announce) {
+        try {
+          window.dispatchEvent(new CustomEvent(ACCOUNT_EDITOR_EVENT, { detail: { part: part || null } }));
+        } catch { /* the other part simply stays as it is */ }
+      }
+    },
+
+    // Paint the current handle. Called from the section render and after a
+    // rename, so the row is right even after a rename made somewhere else in
     // this tab (or in another one, once /api/auth/me is re-read).
-    _renderChangeUsernameSection() {
+    _paintCurrentUsername() {
       const cur = document.getElementById('cu-current');
       if (!cur) return;
       const name = (typeof App !== 'undefined' && App.user && App.user.username) || '';
       cur.textContent = name ? `@${name}` : '—';
     },
 
+    // Called from _renderAllSections on every open: the row reads first,
+    // with its form closed and empty, asking for whichever proof the account
+    // has (#5281): its password, or a code emailed to it when it has none.
+    // ?shot=username-change opens the form, so the reviewable state includes
+    // the words under it.
+    _renderChangeUsernameSection() {
+      this._paintCurrentUsername();
+      const code = this._noPasswordYet();
+      const show = (id, on) => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('hidden', !on);
+      };
+      show('cu-password-row', !code);
+      show('cu-code-row', code);
+      ['cu-new', 'cu-password', 'cu-code'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+      const status = document.getElementById('cu-status');
+      if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      const open = this._demoParam?.('shot') === 'username-change';
+      this._setEditorOpen('username', open);
+    },
+
+    // One part's form open or shut, with its row's Change button the other
+    // way round, and nothing announced: the section renders reset their own
+    // part, each in turn, on every open.
+    _setEditorOpen(part, open) {
+      const { form, button } = ACCOUNT_EDITORS[part];
+      const formEl = document.getElementById(form);
+      const buttonEl = document.getElementById(button);
+      if (formEl) formEl.classList.toggle('hidden', !open);
+      if (buttonEl) {
+        buttonEl.classList.toggle('hidden', open);
+        buttonEl.setAttribute?.('aria-expanded', open ? 'true' : 'false');
+      }
+    },
+
+    // POST /api/me/username/code (#5281): for an account with no password,
+    // a six-digit code to its verified address that confirms the rename.
+    // The server refuses it for an account with a password, an admin, and an
+    // account with no verified address, and says which.
+    async requestUsernameCode() {
+      const btn = document.getElementById('cu-send-code');
+      if (!btn) return;
+      btn.disabled = true;
+      try {
+        this._setCuStatus(tr('settings:username.status.sendingCode'), 'info');
+        const r = await fetch('/api/me/username/code', {
+          method: 'POST',
+          credentials: 'same-origin',
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { this._setCuStatus(j.error || tr('settings:username.status.codeFailed'), 'error'); return; }
+        this._setCuStatus(tr('settings:username.status.codeSent', { email: j.email || '' }), 'ok');
+        const codeEl = document.getElementById('cu-code');
+        try { codeEl?.focus?.({ preventScroll: true }); } catch { /* ignore */ }
+      } catch (err) {
+        this._setCuStatus(tr('settings:username.status.networkError', { reason: err.message }), 'error');
+      } finally {
+        btn.disabled = false;
+      }
+    },
+
     // POST /api/me/username. The server is the authority on every rule
     // here (charset, reserved names, availability against the retired
-    // ledger, the cooldown, the password); this only avoids a round-trip
-    // for the two states the form can see on its own.
+    // ledger, the cooldown, the password or the emailed code, and which of
+    // the two this account must give); this only avoids a round-trip for
+    // the states the form can see on its own.
     async changeUsername() {
       const nameEl = document.getElementById('cu-new');
       const pwEl = document.getElementById('cu-password');
+      const codeEl = document.getElementById('cu-code');
       const btn = document.getElementById('cu-save');
-      if (!nameEl || !pwEl || !btn) return;
+      // #5281: an account with no password confirms with an emailed code.
+      const byCode = this._noPasswordYet();
+      if (!nameEl || !btn || (byCode ? !codeEl : !pwEl)) return;
 
       const username = nameEl.value.trim();
-      const currentPassword = pwEl.value;
+      const currentPassword = byCode ? '' : pwEl.value;
+      const code = byCode ? codeEl.value.trim() : '';
 
       if (!username) { this._setCuStatus(tr('settings:username.status.enterNew'), 'error'); return; }
-      if (!currentPassword) { this._setCuStatus(tr('settings:username.status.enterPassword'), 'error'); return; }
+      if (byCode && !code) { this._setCuStatus(tr('settings:username.status.enterCode'), 'error'); return; }
+      if (!byCode && !currentPassword) { this._setCuStatus(tr('settings:username.status.enterPassword'), 'error'); return; }
 
       // Everything that can throw goes INSIDE the try, so `finally` is the
       // only exit and the button cannot be stranded disabled under a
@@ -3824,13 +3967,14 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
-          body: JSON.stringify({ username, currentPassword }),
+          body: JSON.stringify(byCode ? { username, code } : { username, currentPassword }),
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) { this._setCuStatus(j.error || tr('settings:username.status.changeFailed'), 'error'); return; }
 
         nameEl.value = '';
-        pwEl.value = '';
+        if (pwEl) pwEl.value = '';
+        if (codeEl) codeEl.value = '';
 
         // The handle is on the drawer row, the identity card and every
         // link this tab is about to build, so App.user has to move with
@@ -3842,7 +3986,7 @@
           if (typeof App.saveSessionSnapshot === 'function') App.saveSessionSnapshot(App.user);
           try { App.resyncCurrentView(); } catch (_) { /* best effort */ }
         }
-        this._renderChangeUsernameSection();
+        this._paintCurrentUsername();
 
         this._setCuStatus(
           j.unchanged

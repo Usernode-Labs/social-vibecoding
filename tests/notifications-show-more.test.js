@@ -194,8 +194,10 @@ test('the pager renders after the rows and is wired to loadOlder', () => {
 test('the Unread footer reveals older notifications on the tab instead of jumping to All', () => {
   const block = listBlock();
   // The collapsed Unread footer, found by its guard so the Messages branch
-  // (which shares the button id) cannot satisfy this test.
-  const m = block.match(/\) : tab === 'unread' && !olderShown[\s\S]*?<\/button>/);
+  // (which shares the button id) cannot satisfy this test. #5527 put a
+  // load-unread button above it, so the span reaches past that to the
+  // see-older button this test pins.
+  const m = block.match(/\) : tab === 'unread' && !olderShown[\s\S]*?id="notifications-see-older"[\s\S]*?<\/button>/);
   assert.ok(m, 'the collapsed Unread footer branch found');
   assert.match(m[0], /id="notifications-see-older"/, 'same id the footer always used');
   assert.match(m[0], /setOlderShown\(true\);\s*\n\s*controller\(\)\?\.loadOlder\(\)/,

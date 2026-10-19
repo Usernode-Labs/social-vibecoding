@@ -35,7 +35,7 @@ stub('../src/services/db-manager', {
 stub('../src/services/app-files', { getStore: () => null });
 stub('../src/services/app-access', { invalidateVisibility() {} });
 
-const { teardownApp } = require('../src/services/app-teardown');
+const { teardownApp, PreviewNotRetiredError } = require('../src/services/app-teardown');
 
 const app = { id: 7, slug: 'shop', runtime_kind: 'kubernetes', runtime_name: 'sv-app-7' };
 const pool = { async query(text, params) {
@@ -48,9 +48,18 @@ test('a retirement the machine has not applied, or faulted on, stops the deletio
   for (const status of ['pending', 'faulted']) {
     calls.length = 0;
     retirements.status = status;
-    await assert.rejects(teardownApp(pool, {}, app), new RegExp(`not retired yet \\(${status}\\); delete the app again`));
+    await assert.rejects(teardownApp(pool, {}, app));
     assert.deepEqual(calls, [['retire', 41, 'app_deleted', true, 30000]], `${status}: the runtime, its database and its row stay`);
   }
+  // Not decided in time: typed, so the delete route answers a retryable 409
+  // ("delete again in a minute") rather than a 500.
+  retirements.status = 'pending';
+  await assert.rejects(teardownApp(pool, {}, app), (err) => err instanceof PreviewNotRetiredError
+    && err.code === 'preview_retiring' && err.sessionId === 41 && err.retryAfterSeconds === 60);
+  // A faulted retirement answers the same again in a minute: an error for an
+  // admin, not a minute's wait.
+  retirements.status = 'faulted';
+  await assert.rejects(teardownApp(pool, {}, app), (err) => !(err instanceof PreviewNotRetiredError) && /not retired: faulted/.test(err.message));
 });
 
 test('once every retirement is applied the app goes, previews first', async () => {

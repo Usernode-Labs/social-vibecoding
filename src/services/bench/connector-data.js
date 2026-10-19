@@ -241,6 +241,10 @@ async function botOverview(pool, config, query = {}, deps = {}) {
       everyoneSince: s.everyoneSince || null,
       models: p.bot?.models || null,
       defaultModel: p.defaultModel || null,
+      // What a build's plan and build (and a first version's triage) run on
+      // while a bot configuration is current, over `models` (homeroom-bot.js
+      // currentConfigurations).
+      configurations: p.configurations || null,
       turnSeconds: num(s.turnSeconds),
       concurrency: num(s.concurrency),
       buildConcurrency: num(s.buildConcurrency),

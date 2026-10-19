@@ -103,3 +103,46 @@ export function resolveIllustration(slug: unknown, tone?: unknown): ResolvedIllu
 export function builtInIllustrations(): ResolvedIllustration[] {
   return Object.keys(ILLUSTRATIONS).map((slug) => resolveIllustration(slug) as ResolvedIllustration);
 }
+
+/**
+ * DECODED BEFORE THE CARD DRAWS (#1 and #10, the polish board of 19 Oct
+ * 2026). A challenge card drew on Home with an empty tone where its picture
+ * goes, and the picture arrived a frame or more later: an <img> starts its
+ * fetch when it is inserted, and paints once it has decoded. So Home's
+ * panels decode the art its cards are about to show first, and draw them
+ * after (features/home/home-panels.js `_warmArt`): an image this document has
+ * decoded is in the browser's memory cache, and a new <img> of it paints in
+ * the frame it is inserted. The built-ins come from the service worker's
+ * release cache (public/sw.js), so this is a few milliseconds; `capMs` is the
+ * most it waits, after which the cards draw and the art follows as it did.
+ *
+ * The decoded images are kept, so the memory cache keeps them too. A slug that
+ * draws nothing, or art that fails, costs nothing. Resolves, never rejects.
+ */
+const warmed = new Map<string, HTMLImageElement>();
+
+export function warmIllustrations(
+  art: ReadonlyArray<{ slug?: unknown; tone?: unknown }>,
+  capMs = 400,
+): Promise<void> {
+  if (typeof Image === 'undefined') return Promise.resolve();
+  const srcs: string[] = [];
+  for (const item of art) {
+    const src = resolveIllustration(item && item.slug, item && item.tone)?.src;
+    if (src && !warmed.has(src) && !srcs.includes(src)) srcs.push(src);
+  }
+  if (!srcs.length) return Promise.resolve();
+  const decodeOne = (src: string) => new Promise<void>((resolve) => {
+    const img = new Image();
+    img.decoding = 'async';
+    const done = () => { warmed.set(src, img); resolve(); };
+    img.onerror = () => resolve();
+    img.src = src;
+    if (typeof img.decode === 'function') img.decode().then(done, () => resolve());
+    else img.onload = done;
+  });
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const cap = new Promise<void>((resolve) => { timer = setTimeout(resolve, capMs); });
+  return Promise.race([Promise.all(srcs.map(decodeOne)).then(() => undefined), cap])
+    .then(() => { if (timer) clearTimeout(timer); });
+}

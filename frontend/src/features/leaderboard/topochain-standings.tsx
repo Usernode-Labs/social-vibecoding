@@ -28,7 +28,7 @@
  * initial value is what makes it do so.
  */
 
-import type { ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
@@ -37,7 +37,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { ActivityRow } from './activity-row';
 import { topochainStandingsStore } from './topochain-standings-store.js';
 
-type ColumnKey = 'rank' | 'user' | 'points' | 'blocks' | 'success';
+type ColumnKey = 'rank' | 'user' | 'points';
 
 type RowView = {
   index: number;
@@ -47,10 +47,10 @@ type RowView = {
   /** No display name: `user` is the "Anonymous" stand-in. */
   anonymous?: boolean;
   points: string;
-  extra: string;
-  blocks: string;
-  success: string;
 };
+
+/** #5275: the viewer's own place, pinned above the table. */
+type YouView = { rank: string; points: string; count: number };
 
 type NonPodiumToggle = { count: number | null; on: boolean };
 
@@ -81,6 +81,7 @@ type BodyView =
       columns: ColumnKey[];
       headers: Record<ColumnKey, string>;
       rows: RowView[];
+      you?: YouView | null;
       nonPodiumToggle: NonPodiumToggle | null;
       pagination: {
         page: number;
@@ -95,6 +96,10 @@ type Triple = { loading: boolean; error: string | null };
 
 type DrillView = {
   displayName: string;
+  /** The shown row the details open under, or null to draw them under the table. */
+  index?: number | null;
+  /** The row's figures that say something (#5275): blocks, challenge points, success rate. */
+  figures?: { key: string; label: string; value: string }[];
   walletAddress: string | null;
   profile: Triple & {
     shown: boolean;
@@ -118,9 +123,7 @@ const controller = () => (window as any).TopochainLeaderboard;
 const ALIGN: Record<ColumnKey, string> = {
   rank: 'text-left',
   user: 'text-left',
-  points: 'text-right',
-  blocks: 'text-right',
-  success: 'text-right',
+  points: 'text-right whitespace-nowrap',
 };
 
 const HINT = 'text-sm text-zinc-500 py-8 text-center dark:text-zinc-400';
@@ -222,44 +225,59 @@ function Cell({ column, row }: { column: ColumnKey; row: RowView }): ReactNode {
     return <td className="w-14 px-4 py-3 text-[0.9375rem] tabular-nums text-zinc-500 dark:text-zinc-400">{row.rank}</td>;
   }
   if (column === 'user') {
+    // `max-w-0 w-full` gives the name the width the rank and the points
+    // leave, and a long one ends in "…" instead of pushing the points off
+    // a phone's screen (#5275).
     return (
-      <td className="px-4 py-3 text-[0.9375rem]">
-        {row.nonPodium ? (
-          <RichMessage
-            id="leaderboard:standings.nonPodium"
-            values={{ name: row.user }}
-            components={[
-              <span className="font-medium text-zinc-500 dark:text-zinc-400" />,
-              <span
-                className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400"
-                title={t('leaderboard:standings.nonPodiumTip')}
-              />,
-            ]}
-          />
-        ) : (
-          <span className="font-[650] text-zinc-900 dark:text-zinc-100">{row.user}</span>
-        )}
+      <td className="max-w-0 w-full px-4 py-3 text-[0.9375rem]">
+        <span className="block truncate">
+          {row.nonPodium ? (
+            <RichMessage
+              id="leaderboard:standings.nonPodium"
+              values={{ name: row.user }}
+              components={[
+                <span className="font-medium text-zinc-500 dark:text-zinc-400" />,
+                <span
+                  className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400"
+                  title={t('leaderboard:standings.nonPodiumTip')}
+                />,
+              ]}
+            />
+          ) : (
+            <span className="font-[650] text-zinc-900 dark:text-zinc-100">{row.user}</span>
+          )}
+        </span>
       </td>
     );
   }
-  if (column === 'points') {
-    return (
-      <td className={`${FIGURE}${ink}`}>
-        {row.points}
-        <span className="text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{` +${row.extra}`}</span>
-      </td>
-    );
-  }
-  if (column === 'blocks') {
-    return <td className={`${FIGURE}${ink}`}>{row.blocks}</td>;
-  }
-  return <td className={`${FIGURE}${ink}`}>{`${row.success}%`}</td>;
+  return <td className={`${FIGURE} whitespace-nowrap${ink}`}>{row.points}</td>;
+}
+
+/**
+ * #5275: "You · #22 · 10,823 points", above the table, so the viewer sees
+ * their own place without paging to it. Pressing it opens their details,
+ * under their row when it is on this page.
+ */
+function YouLine({ you }: { you: YouView | null | undefined }): ReactNode {
+  const t = useMessages('leaderboard');
+  if (!you) return null;
+  return (
+    <button
+      type="button"
+      id="tc-lb-you"
+      className={`${CARD} mb-3 block w-full px-4 py-3 text-left text-[0.9375rem] font-[650] tabular-nums text-zinc-900 dark:text-zinc-100 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500`}
+      onClick={() => controller()?._openViewerRow()}
+    >
+      {t('leaderboard:standings.you', { rank: you.rank, points: you.points, count: you.count })}
+    </button>
+  );
 }
 
 function StandingsTable(
-  { view }: { view: Extract<BodyView, { state: 'table' }> },
+  { view, drill }: { view: Extract<BodyView, { state: 'table' }>; drill: DrillView | null },
 ): ReactNode {
   const t = useMessages('leaderboard');
+  const openIndex = drill && drill.index != null ? drill.index : null;
   return (
     <div className={`overflow-x-auto ${CARD}`}>
       <table className="w-full">
@@ -277,22 +295,33 @@ function StandingsTable(
               their column headers) but takes focus and opens on Enter or
               Space, as the Kudos rows do. The label says what it opens. */}
           {view.rows.map((row) => (
-            <tr
-              key={row.index}
-              className={`tc-lb-row ${RULE} hover:bg-zinc-50 dark:hover:bg-zinc-800/60 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-violet-500 focus-visible:bg-zinc-50 dark:focus-visible:bg-zinc-800/60`}
-              data-row-index={row.index}
-              tabIndex={0}
-              aria-label={row.anonymous ? t('leaderboard:standings.openDetailsAnonymous') : t('leaderboard:standings.openDetails', { name: row.user })}
-              onClick={() => controller()?._openRowAt(row.index)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  controller()?._openRowAt(row.index);
-                }
-              }}
-            >
-              {view.columns.map((c) => <Cell key={c} column={c} row={row} />)}
-            </tr>
+            <Fragment key={row.index}>
+              <tr
+                className={`tc-lb-row ${RULE} hover:bg-zinc-50 dark:hover:bg-zinc-800/60 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-violet-500 focus-visible:bg-zinc-50 dark:focus-visible:bg-zinc-800/60`}
+                data-row-index={row.index}
+                aria-expanded={openIndex === row.index}
+                tabIndex={0}
+                aria-label={row.anonymous ? t('leaderboard:standings.openDetailsAnonymous') : t('leaderboard:standings.openDetails', { name: row.user })}
+                onClick={() => controller()?._openRowAt(row.index)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    controller()?._openRowAt(row.index);
+                  }
+                }}
+              >
+                {view.columns.map((c) => <Cell key={c} column={c} row={row} />)}
+              </tr>
+              {/* #5275: the row's details open under it, not at the foot of
+                  a 25-row table. */}
+              {openIndex === row.index && drill ? (
+                <tr>
+                  <td colSpan={view.columns.length} className="px-4 pb-4">
+                    <DrillPanel view={drill} />
+                  </td>
+                </tr>
+              ) : null}
+            </Fragment>
           ))}
         </tbody>
       </table>
@@ -379,7 +408,7 @@ function StandingsSkeleton(): ReactNode {
   );
 }
 
-function Body({ view }: { view: BodyView | null }): ReactNode {
+function Body({ view, drill }: { view: BodyView | null; drill: DrillView | null }): ReactNode {
   const t = useMessages('leaderboard');
   if (!view || view.state === 'loading') return <StandingsSkeleton />;
   if (view.state === 'error') {
@@ -430,8 +459,9 @@ function Body({ view }: { view: BodyView | null }): ReactNode {
     <>
       <ChallengeLine line={view.challengeLine} />
       <Disclaimer text={view.disclaimer} />
+      <YouLine you={view.you} />
       <NonPodiumChip toggle={view.nonPodiumToggle} />
-      <StandingsTable view={view} />
+      <StandingsTable view={view} drill={drill} />
       <Pagination meta={view.pagination} />
     </>
   );
@@ -531,43 +561,67 @@ function Profile({ view }: { view: DrillView['profile'] }): ReactNode {
   );
 }
 
-function Drill({ view }: { view: DrillView | null }): ReactNode {
+/** A row's figures that say something (#5275); nothing at all when none do. */
+function Figures({ figures }: { figures: DrillView['figures'] }): ReactNode {
+  if (!figures || !figures.length) return null;
+  return (
+    <div className="mb-4 grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+      {figures.map((f) => <ProfileStat key={f.key} label={f.label} value={f.value} />)}
+    </div>
+  );
+}
+
+/**
+ * The details themselves. Drawn under the open row of the table (#5275),
+ * or, for the viewer's own row opened from the "You" line while it is on
+ * another page, under the table on its own card. Either way the panel is
+ * #tc-lb-drill, once.
+ */
+function DrillPanel({ view }: { view: DrillView }): ReactNode {
   const t = useMessages('leaderboard');
+  return (
+    <div id="tc-lb-drill">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100">
+          {view.displayName}
+        </h3>
+        <button
+          id="tc-lb-drill-close"
+          className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 text-lg leading-none dark:text-zinc-400"
+          aria-label={t('core:common.close')}
+          onClick={() => controller()?._closeDrill()}
+        >
+          ×
+        </button>
+      </div>
+      {view.walletAddress ? (
+        <p className="text-xs font-mono text-zinc-500 mb-3 break-all dark:text-zinc-400">{view.walletAddress}</p>
+      ) : null}
+      <Figures figures={view.figures} />
+      <Profile view={view.profile} />
+      <div className="grid sm:grid-cols-2 gap-4">
+        <div>
+          <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">{t('leaderboard:drill.activities')}</div>
+          <Activities view={view.activities} />
+        </div>
+        <div>
+          <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">{t('leaderboard:drill.epoch.heading')}</div>
+          <EpochBreakdown view={view.epoch} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Drill({ view, inline }: { view: DrillView | null; inline: boolean }): ReactNode {
   // `hidden` is part of the rendered class string here rather than a legacy
   // `classList` toggle, because this whole subtree is React's — the pane's
   // module no longer touches the node at all.
+  if (inline) return null;
   if (!view) return <div id="tc-lb-drill" className="hidden mt-4" />;
   return (
-    <div id="tc-lb-drill" className="mt-4">
-      <div className={`${CARD} p-4`}>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100">
-            {view.displayName}
-          </h3>
-          <button
-            id="tc-lb-drill-close"
-            className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 text-lg leading-none dark:text-zinc-400"
-            aria-label={t('core:common.close')}
-            onClick={() => controller()?._closeDrill()}
-          >
-            ×
-          </button>
-        </div>
-        {view.walletAddress ? (
-          <p className="text-xs font-mono text-zinc-500 mb-3 break-all dark:text-zinc-400">{view.walletAddress}</p>
-        ) : null}
-        <Profile view={view.profile} />
-        <div className="grid sm:grid-cols-2 gap-4">
-          <div>
-            <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">{t('leaderboard:drill.activities')}</div>
-            <Activities view={view.activities} />
-          </div>
-          <div>
-            <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">{t('leaderboard:drill.epoch.heading')}</div>
-            <EpochBreakdown view={view.epoch} />
-          </div>
-        </div>
-      </div>
+    <div className={`${CARD} mt-4 p-4`}>
+      <DrillPanel view={view} />
     </div>
   );
 }
@@ -581,10 +635,14 @@ export function TopochainStandingsPane(): ReactNode {
   // Subscribed: the table's headings and names are read by the controller's views.
   useMessages('leaderboard');
   if (!state.mounted) return null;
+  // The details sit inside the table when their row is on it.
+  const inline = !!(state.drill && state.drill.index != null
+    && state.body && state.body.state === 'table'
+    && state.drill.index < state.body.rows.length);
   return (
     <>
-      <div id="tc-lb-body"><Body view={state.body} /></div>
-      <Drill view={state.drill} />
+      <div id="tc-lb-body"><Body view={state.body} drill={inline ? state.drill : null} /></div>
+      <Drill view={state.drill} inline={inline} />
     </>
   );
 }

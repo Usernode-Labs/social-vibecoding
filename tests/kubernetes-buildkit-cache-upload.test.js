@@ -230,6 +230,24 @@ test('the script: a build that fails is still a failed build, with no upload and
   assert.equal(run.builds.length, 1);
   assert.equal(run.message, null);
   assert.doesNotMatch(run.log, /layer cache/);
+  assert.doesNotMatch(run.log, /\[buildkit\] image /, 'no image to hand over');
+});
+
+// "The image before the cache": the line the platform takes the image from
+// comes once the image is pushed and before anything about the cache, and
+// it is the line the platform's own parser accepts for this build's tag.
+test('the script: says the image is pushed, in the platform\'s line, before it turns to the cache', { skip }, () => {
+  for (const options of [{}, { settled: RAN }, { uploadFails: true }, { starterRef: 'registry.test/cache/starter-pkg-0123456789ab:buildkit-cache', starterExport: 'yes' }]) {
+    const run = runScript(options);
+    assert.equal(run.status, 0, run.log);
+    const lines = run.log.split('\n');
+    const at = lines.findIndex((line) => buildkit._forTest.pushedImage(line, 'registry.test/apps/demo:git-x'));
+    assert.ok(at >= 0, `${JSON.stringify(options)}: ${run.log}`);
+    assert.equal(buildkit._forTest.pushedImage(lines[at], 'registry.test/apps/demo:git-x'), DIGEST);
+    const cacheLine = lines.findIndex((line) => /layer cache/.test(line));
+    assert.ok(cacheLine > at, 'before the upload, or the word that there is none');
+    assert.equal(lines.filter((line) => /^\[buildkit\] image /.test(line)).length, 1, 'said once');
+  }
 });
 
 // The starter's shared cache (src/services/kubernetes-buildkit.js, "The
@@ -238,7 +256,7 @@ test('the script: a build that fails is still a failed build, with no upload and
 // them every argument is what it was before the starter cache existed.
 const APP_IMPORT = 'type=registry,ref=registry.test/cache/demo:buildkit-cache';
 const APP_EXPORT = 'type=registry,ref=registry.test/cache/demo:buildkit-cache,mode=max,image-manifest=true,oci-mediatypes=true';
-const STARTER_REF = 'registry.test/cache/starter-grocery-list:buildkit-cache';
+const STARTER_REF = 'registry.test/cache/starter-pkg-0123456789ab:buildkit-cache';
 const STARTER_IMPORT = `type=registry,ref=${STARTER_REF}`;
 const STARTER_EXPORT = `type=registry,ref=${STARTER_REF},mode=max,image-manifest=true,oci-mediatypes=true`;
 // A flag's values, in order, from one call's arguments.
@@ -286,7 +304,7 @@ test('the script: the starter\'s first build uploads to the app\'s cache and the
     assert.deepEqual(values(upload, '--import-cache'), [APP_IMPORT, STARTER_IMPORT]);
     assert.deepEqual(values(upload, '--export-cache'), [APP_EXPORT, STARTER_EXPORT]);
     assert.equal(run.message, `cache-upload=done\ncache-ran=${RAN.join(' ')}\ncache-served=${SERVED.join(' ')}\n${DIGEST}`);
-    assert.match(run.log, /\[buildkit\] uploading the layer cache\n\[buildkit\] and the starter's shared cache, registry\.test\/cache\/starter-grocery-list:buildkit-cache\n/);
+    assert.match(run.log, /\[buildkit\] uploading the layer cache\n\[buildkit\] and the starter's shared cache, registry\.test\/cache\/starter-pkg-0123456789ab:buildkit-cache\n/);
   }
   // A plain-HTTP registry is plain HTTP for the starter's cache too.
   const insecure = runScript({ starterRef: STARTER_REF, starterExport: 'yes', registryAttrs: ',registry.insecure=true' });

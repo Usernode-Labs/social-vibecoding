@@ -370,10 +370,12 @@ test('the drawer row renders the remainder and shares the reset wording', () => 
     fs.readFileSync(path.join(root, 'frontend/src/features/header/ai-budget.tsx'), 'utf8'),
     /'data-credits-remaining': '1'/,
   );
-  assert.match(AI_CREDIT_SRC, /runs\('wallet:credit\.meter\.left', amounts, \['dim', leftTone\]\)/,
+  assert.match(AI_CREDIT_SRC, /runs\(weeklyWindow \? 'wallet:credit\.meter\.leftWeekly' : 'wallet:credit\.meter\.leftToday',\s+brief, \[leftTone\]\)/,
     'rendered, not tooltip-only');
-  assert.match(AI_CREDIT_SRC, /remaining: money\(remaining\)/);
-  assert.equal(message('wallet:credit.meter.left', { remaining: '$19.00' }), '<0>· </0><1>$19.00 left</1>');
+  assert.match(AI_CREDIT_SRC, /remaining: wholeMoney\(remaining\)/);
+  // #5284: one sentence, the amount left first.
+  assert.equal(message('wallet:credit.meter.leftWeekly', { remaining: '$839.99', limit: '$840' }), '<0>$839.99</0> of $840 left this week');
+  assert.equal(message('wallet:credit.meter.leftToday', { remaining: '$19', limit: '$20' }), '<0>$19</0> of $20 left today');
   assert.match(AI_CREDIT_SRC, /CO\.resetSentence\(state, undefined, \{ withUtc: true \}\)/,
     'one wording for the boundary, shared with the dev chat');
   assert.ok(!/Resets at midnight UTC/.test(AI_CREDIT_SRC),

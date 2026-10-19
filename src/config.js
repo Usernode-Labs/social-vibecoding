@@ -74,6 +74,12 @@ const REQUIRED_LIFECYCLE_PROD = [
 const MIN_HMAC_BYTES = 32;
 
 const IS_STAGING = () => process.env.USERNODE_ENV === 'staging';
+// Whether this process runs the workflow's loops (services/process-role.js).
+// A role that names nothing is server.js's to refuse at boot; read as 'all' here.
+const RUNS_WORKFLOW = () => {
+  const role = require('./services/process-role');
+  try { return role.runsWorkflow(role.processRole()); } catch { return true; }
+};
 
 // The platform's own staging clone runs platform code with no platform
 // keys. It still needs A data key: migrate.js seeds an encrypted fixture
@@ -685,6 +691,13 @@ function load() {
       // it on only once the app namespace's network policy lets the gate's
       // pods reach app pods and the platform.
       appGate: (process.env.APP_GATE || 'off').trim().toLowerCase() === 'on' ? 'on' : 'off',
+      // `serving` (default): an app deploy whose shared asset backend (or
+      // app gate) already serves is routed to it at once, and the backend's
+      // reconcile, 20-30 s the first time in a process, goes on behind it
+      // (services/kubernetes.js sharedBackendForDeploy). `always`: every
+      // deploy waits for that reconcile, as before.
+      assetBackendWait: (process.env.KUBERNETES_ASSET_BACKEND_WAIT || 'serving').trim().toLowerCase() === 'always'
+        ? 'always' : 'serving',
       workerImage: process.env.KUBERNETES_WORKER_IMAGE || '',
       captureImage: process.env.KUBERNETES_CAPTURE_IMAGE || '',
       // The dedicated node pool check Jobs prefer, as the pool nodes' label
@@ -739,12 +752,20 @@ function load() {
       // it rebuilt something a later build can reuse. `always`: after every
       // build, as before the choice existed.
       buildkitCacheUpload: process.env.BUILDKIT_CACHE_UPLOAD || 'auto',
-      // `on` (default): an app made from a ready-made starter also imports
-      // that starter's shared layer cache, and the app's first build, the
-      // starter as created, uploads to it. `off` (or 0/false): every app
-      // has its own cache only, as before.
+      // `on` (default): an app made from a starter (ready-made, a game, or
+      // the empty scaffold) also imports the shared layer cache of its
+      // package files, and the app's first build, the starter as created,
+      // uploads to it. `off` (or 0/false): every app has its own cache only,
+      // as before.
       buildkitStarterCache: !['off', '0', 'false'].includes(
         String(process.env.BUILDKIT_STARTER_CACHE || 'on').trim().toLowerCase()),
+      // `on` (default): the platform takes a build's image as soon as the
+      // Job says it is pushed (its `[buildkit] image …` line), and the Job
+      // uploads the layer cache after that on its own. `off` (or 0/false):
+      // the build waits for the Job to finish, cache upload and all, as
+      // before.
+      buildkitEarlyImage: !['off', '0', 'false'].includes(
+        String(process.env.BUILDKIT_EARLY_IMAGE || 'on').trim().toLowerCase()),
     },
     // Postgres connection pool size (pg `Pool.max`). pg's built-in default
     // is 10, which can bottleneck under many concurrent SSE turns + staging
@@ -825,11 +846,15 @@ function load() {
       return Number.isFinite(n) ? n : 6;
     })(),
     // Its own pool, so pipeline slots and the outcome listener never take
-    // request connections, and how many slots each process runs. A staging
-    // preview shares one Postgres server with the fleet: one slot, and a
-    // pool of two (the outcome listener and one working connection).
-    wfPoolMax: parseInt(process.env.WF_POOL_MAX || (IS_STAGING() ? '2' : '6'), 10),
-    wfSlots: parseInt(process.env.WF_SLOTS || (IS_STAGING() ? '1' : '4'), 10),
+    // request connections, and how many slots each process runs, by role
+    // (services/process-role.js runsWorkflow). A process that runs the
+    // workflow (a conductor, or 'all') runs four slots, and its pool holds
+    // them, the work's claims and lease renewals; a web process only
+    // appends and waits for outcomes: no slot, and a pool of two (the
+    // outcome listener and one working connection). A staging preview
+    // shares one Postgres server with the fleet: one slot, and a pool of two.
+    wfPoolMax: parseInt(process.env.WF_POOL_MAX || (IS_STAGING() ? '2' : RUNS_WORKFLOW() ? '10' : '2'), 10),
+    wfSlots: parseInt(process.env.WF_SLOTS || (IS_STAGING() ? '1' : RUNS_WORKFLOW() ? '4' : '0'), 10),
     // Demand-driven global-cap eviction. When a new session is needed but
     // the platform is at maxGlobalSessions, we pause the globally least-
     // recently-active session that has been idle longer than this grace

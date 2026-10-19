@@ -164,13 +164,16 @@ test('the size control is a labelled radiogroup reusing the theme segments', () 
 
 // ── The registry ─────────────────────────────────────────────────────────
 
-test('Accessibility is a one-part page in Preferences, after Admin preview', () => {
+// #5285 left Theme alone on Appearance, so Accessibility follows it directly.
+test('Accessibility is a one-part page in Preferences, right after Appearance', () => {
   const settings = settingsJs();
   const list = settings.slice(settings.indexOf('SECTIONS: ['), settings.indexOf('    PAGES: {'));
-  const prev = list.indexOf("{ key: 'admin-preview'");
+  const prev = list.indexOf("{ key: 'theme'");
   const entry = list.indexOf("{ key: 'accessibility', label: 'settings:nav.part.accessibility', group: 'settings:nav.group.preferences' }");
   assert.ok(entry !== -1, 'the accessibility part is registered');
-  assert.ok(prev !== -1 && entry > prev, 'it sits right after admin-preview');
+  assert.ok(prev !== -1 && entry > prev, 'it sits after theme');
+  assert.ok(!/\{ key: '[a-z-]+'/.test(list.slice(list.indexOf('\n', prev), entry)),
+    'with no part between them');
   assert.ok(entry < list.indexOf("{ key: 'language'"), 'and before Language');
   assert.equal(message('settings:nav.part.accessibility'), 'Accessibility');
   assert.match(settings, /accessibility: 'settings:nav\.keywords\.accessibility',/);

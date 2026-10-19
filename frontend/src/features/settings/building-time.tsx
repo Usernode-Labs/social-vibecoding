@@ -17,7 +17,11 @@
  *   │ Board                                          │
  *   │ Water reminders                           12% │
  *   │ Garden · You asked for this                    │
+ *   │ Show all 12                                    │
  *   └───────────────────────────────────────────────┘
+ *
+ * The five largest show; the rest wait behind "Show all" (#5284), and a
+ * title wraps onto a second line rather than being cut at the first.
  *
  * Shares of the week, never money (GET /api/me/building-time words nothing
  * else). It is read when the section shows, not when the shell loads, and
@@ -65,6 +69,9 @@ export function percentOf(share: number): { under: boolean; percent: number } {
   return { under: false, percent: Math.round(pct) };
 }
 
+/** How many requests show before "Show all". */
+export const TOP_REQUESTS = 5;
+
 /** Where a request is read. Pure. */
 export function requestPath(slug: string, issueNumber: number): string {
   return `#app/${encodeURIComponent(slug)}/dev/issues/${issueNumber}`;
@@ -79,12 +86,19 @@ function demoAsked(): boolean {
 }
 
 /** The card, from a week as the endpoint answers it. Pure but for the reset's clock. */
-export function BuildingTimeView({ week, reset }: {
+export function BuildingTimeView({ week, reset, showAll = false }: {
   week: BuildingTimeWeek;
   /** The reset in the viewer's own clock, worked out in an effect. */
   reset: { day: string; time: string; utc: string } | null;
+  /** Start with every request showing, not only the top five. */
+  showAll?: boolean;
 }): ReactNode {
   const t = useMessages('settings');
+  const [all, setAll] = useState(showAll);
+  // The endpoint answers largest first (services/building-time.js), so the
+  // first five are the five that used the most.
+  const folded = !all && week.requests.length > TOP_REQUESTS;
+  const shown = folded ? week.requests.slice(0, TOP_REQUESTS) : week.requests;
   const pct = (share: number) => {
     const p = percentOf(share);
     return p.under ? t('settings:usage.buildingTime.underOne') : t('settings:usage.buildingTime.percent', { percent: p.percent });
@@ -130,7 +144,7 @@ export function BuildingTimeView({ week, reset }: {
             </div>
           ) : null}
         </div>
-        {week.requests.map((r) => (
+        {shown.map((r) => (
           <ListRow
             key={`${r.app.slug}#${r.issueNumber}`}
             as="a"
@@ -138,11 +152,25 @@ export function BuildingTimeView({ week, reset }: {
             data-building-time-request={`${r.app.slug}#${r.issueNumber}`}
             title={r.title || t('settings:usage.buildingTime.untitled', { number: r.issueNumber })}
             subtitle={r.asked ? t('settings:usage.buildingTime.askedFor', { app: r.app.name }) : r.app.name}
+            titleClassName="line-clamp-2 whitespace-normal [overflow-wrap:anywhere]"
             chevron={false}
             trailing={<span className="shrink-0 tabular-nums text-[0.9375rem] text-zinc-500 dark:text-zinc-400">{pct(r.share)}</span>}
           />
         ))}
-        {week.otherShare > 0 ? (
+        {folded ? (
+          // A row of the list, not a link: it opens the rest in place.
+          <ListRow
+            as="button"
+            onClick={() => setAll(true)}
+            data-building-time-show-all=""
+            title={t('settings:usage.buildingTime.showAll', { count: week.requests.length })}
+            titleClassName="text-center font-semibold text-violet-700 dark:text-violet-300"
+            chevron={false}
+          />
+        ) : null}
+        {/* "Other requests" is the list's past its end, so it follows the
+            whole list: under a folded one it would read as the hidden rows. */}
+        {!folded && week.otherShare > 0 ? (
           <ListRow
             title={t('settings:usage.buildingTime.others')}
             chevron={false}

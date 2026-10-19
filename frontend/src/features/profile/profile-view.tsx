@@ -36,7 +36,7 @@ import {
 } from './profile-store.js';
 import { Profile } from './profile.js';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
-import { AccountPanel, RewardsPanel, SettingsPanel, WorkPanel } from './account-panel';
+import { AccountPanel, AdminPanel, RewardsPanel, SettingsPanel, WorkPanel } from './account-panel';
 import { FeedbackSheet } from './feedback-sheet';
 import { FriendsSheet } from './friends-sheet';
 import { ProfileEditSheet } from './profile-edit-sheet';
@@ -336,8 +336,8 @@ export function ProfileRoot(): ReactNode {
           Challenges & standings and Kudos. "Account": Friends and App
           slots. Admin & moderation, the native node / wallet / staking rows
           and Log out are in Settings (features/settings/account-rows.tsx);
-          its row stays only on a phone, whose sidebar has no gear. Your
-          contributions, which closed the screen, is gone: Your changes
+          the Settings card under this ends the screen at every width (#5557).
+          Your contributions, which closed the screen, is gone: Your changes
           lists every merged one.
       */}
       <div className="lg:grid lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:grid-rows-[auto_1fr] lg:gap-x-6 lg:items-start">
@@ -352,6 +352,7 @@ export function ProfileRoot(): ReactNode {
         <div className="lg:col-start-1 lg:row-start-2">
           <AccountPanel rows={view.rows} />
           <SettingsPanel />
+          <AdminPanel />
         </div>
       </div>
     </>

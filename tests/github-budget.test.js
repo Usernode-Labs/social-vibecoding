@@ -380,12 +380,53 @@ test('the timer-driven GitHub callers ask before they spend', () => {
   }
   const server = read('server.js');
   const audit = server.slice(server.indexOf('async function auditExistingRepoPrivacy'));
-  assert.match(audit.slice(0, audit.indexOf('\n}\n')), /githubBudget\.budgetAllows\('background'\)/, 'the boot privacy audit');
+  assert.match(audit.slice(0, audit.indexOf('\n}\n')), /githubBudget\.budgetAllows\('background'\)/, 'the daily privacy audit');
   const headSync = server.slice(server.indexOf('// Pass 6: imported-PR head sync'));
   assert.match(headSync.slice(0, 1800), /if \(!githubBudget\.budgetAllows\('background'\)\) break;/, 'the imported-PR head sync');
   const observe = server.slice(server.indexOf('async function observeMergedOnGithub'));
   assert.match(observe.slice(0, observe.indexOf('\n}\n')), /if \(!githubBudget\.budgetAllows\('background'\)\) \{/,
-    'the boot\'s merged-by-hand lookup');
+    'the six-hourly merged-by-hand lookup');
+});
+
+// 19 Oct 2026: some twenty leader changes, eight in one hour, and each
+// election read every app's repository (~150) and every proposal up for a
+// vote from GitHub again: an audit whose result is only logged, while every
+// worker start checks privacy itself, and a look for merges made by hand.
+// Both keep a durable clock now (services/leader-timers.js): a new leader
+// runs one only when leader_sweeps says it is due.
+test('an election does not re-run the privacy audit or the merged-by-hand lookup', () => {
+  const server = read('server.js');
+  const becomeLeader = server.slice(server.indexOf('async function becomeLeader()'), server.indexOf('async function start()'));
+  assert.ok(becomeLeader.length > 0, 'becomeLeader() exists');
+
+  assert.match(becomeLeader, /const runRepoPrivacyAudit = \(\) => auditExistingRepoPrivacy\(getPool\(config\)\)\n/);
+  assert.match(becomeLeader,
+    /leaderTimers\.every\('repo-privacy-audit', runRepoPrivacyAudit, 24 \* 60 \* 60 \* 1000, \{ durable: getPool\(config\) \}\);/,
+    'the privacy audit: daily, on the durable clock');
+  assert.match(becomeLeader, /const runMergedByHandLookup = \(\) => observeMergedOnGithub\(config\)\n/);
+  assert.match(becomeLeader,
+    /leaderTimers\.every\('merged-by-hand-lookup', runMergedByHandLookup, 6 \* 60 \* 60 \* 1000, \{ durable: getPool\(config\) \}\);/,
+    'the merged-by-hand lookup: every six hours, on the durable clock');
+
+  // Each is called from its timer and nowhere else: a bare call at election
+  // is the spend this removed.
+  const calls = (name) => becomeLeader.split(`${name}(`).length - 1;
+  assert.equal(calls('auditExistingRepoPrivacy'), 1, 'the audit runs only from its timer');
+  assert.equal(calls('observeMergedOnGithub'), 1, 'the lookup runs only from its timer');
+
+  // A run the drain cut short records nothing, so the next leader runs it.
+  for (const name of ['runRepoPrivacyAudit', 'runMergedByHandLookup']) {
+    const def = becomeLeader.slice(becomeLeader.indexOf(`const ${name} =`));
+    assert.match(def.slice(0, def.indexOf(';\n')),
+      /\.then\(\(\) => \(lifecycle\.isShuttingDown\(\) \? leaderTimers\.SKIPPED : undefined\)\)$/, name);
+  }
+  const audit = server.slice(server.indexOf('async function auditExistingRepoPrivacy'));
+  assert.match(audit.slice(0, audit.indexOf('\n}\n')), /while \(queue\.length && !lifecycle\.isShuttingDown\(\)\) \{/,
+    'the audit stops at its next row once shutdown begins, so it never holds a drain');
+
+  // The stuck-check reconcile still runs at once on election, no longer
+  // behind the lookup: its sweeps' first passes come a minute or more later.
+  assert.match(becomeLeader, /\n {2}reconcileStuckChecks\(config\)\.catch\(\(err\) => \{/);
 });
 
 // The bot's refresh, a look and a build's start read GitHub, and they are

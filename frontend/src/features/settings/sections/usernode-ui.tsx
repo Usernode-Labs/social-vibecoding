@@ -149,6 +149,20 @@ export function UnBtn({ btn }: { btn: UnAction }): ReactNode {
   );
 }
 
+/**
+ * A link drawn as an {@link UnBtn}, for a page outside the platform: a
+ * new-tab anchor, which public/js/nav-link.js hands to the bridge's
+ * openExternal inside the Homeroom app. No href until there is one.
+ */
+export function UnLink({ id, href, label }: { id?: string; href?: string; label: string }): ReactNode {
+  return (
+    <a
+      id={id} href={href} target="_blank" rel="noopener noreferrer"
+      className={'inline-block ' + BTN_BASE + BTN_TONE.plain}
+    >{label}</a>
+  );
+}
+
 export function UnSwitch({ toggle }: { toggle: UnToggle }): ReactNode {
   const t = useMessages('settings');
   // `checked` follows the MODEL, and a failed setter simply never publishes a

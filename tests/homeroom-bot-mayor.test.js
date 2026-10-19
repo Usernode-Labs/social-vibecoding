@@ -298,9 +298,9 @@ test('#3772: a later try is promised only for a provider\'s failure, three times
   assert.match(mayor.DEFERRED_TEXT, /you don't need to send it again/);
   assert.doesNotMatch(`${mayor.DEFERRED_TEXT} ${mayor.DEFERRED_GAVE_UP_TEXT}`, /—|lookups/);
   // The person's DM machine's timer asks them, so a process that is gone
-  // leaves nothing to pick up; an older release's are adopted once at the
-  // leader's boot (workflow/platform.ts adoptDeferredDms).
-  assert.match(read('src/workflow/platform.ts'), /await adoptDeferredDms\(\);/);
+  // leaves nothing to pick up; an older release's are adopted once per
+  // release, by the release machine's work (workflow/platform.ts ADOPTIONS).
+  assert.match(read('src/workflow/platform.ts'), /\['deferredDms', \(\) => adoptDeferredDms\(\)\]/);
 });
 
 test('#3769: a reply never opens with a bracketed note, and the history no longer teaches one', () => {

@@ -51,9 +51,16 @@ function contributorRows() {
 }
 const notified = { attempts: [], deletions: [] };
 
+// The sessions whose previews the teardown asks the preview machine to
+// retire first (services/app-teardown.js retirePreviews).
+let previewSessions = [];
+
 const pool = {
   async query(sql, params = []) {
     const source = String(sql);
+    if (/FROM chat_sessions cs\s+LEFT JOIN wf_instances/.test(source)) {
+      return { rows: previewSessions.map((id) => ({ id })) };
+    }
     if (/SELECT \* FROM apps WHERE slug = \$1/.test(source)) {
       return { rows: appRow ? [{ ...appRow }] : [] };
     }
@@ -139,7 +146,7 @@ async function remove(body = { confirm_name: 'Throwaway' }) {
     headers: body ? { 'Content-Type': 'application/json' } : {},
     body: body ? JSON.stringify(body) : undefined,
   });
-  return { status: res.status, body: await res.json() };
+  return { status: res.status, retryAfter: res.headers.get('retry-after'), body: await res.json() };
 }
 
 function assertNoTeardown() {
@@ -157,6 +164,29 @@ test('the creator can delete while they are the sole contributor', async () => {
   assert.deepEqual(teardown.drops, ['app_throwaway']);
   assert.deepEqual(teardown.prefixes, [7]);
   assert.deepEqual(teardown.deletedRows, [7]);
+});
+
+// The preview machine decides in its own process: a retirement it has not
+// applied yet stops the delete before anything is removed. That is a state
+// to wait out, not a fault: a 409 that says to delete again, with
+// Retry-After, never "Internal server error".
+test('a preview not retired yet stops the delete with a retryable 409, nothing removed', async () => {
+  currentUser = { id: 42, username: 'creator', canAdminWrite: false };
+  const previewWorkflow = require('../src/services/preview-workflow');
+  const realRetire = previewWorkflow.retire;
+  previewWorkflow.retire = async () => ({ taken: true, retired: false, status: 'pending', reason: null });
+  previewSessions = [55];
+  try {
+    const result = await remove();
+    assert.equal(result.status, 409);
+    assert.equal(result.retryAfter, '60');
+    assert.equal(result.body.reason, 'preview_retiring');
+    assert.match(result.body.error, /nothing was deleted\. Delete the app again in a minute\./);
+    assertNoTeardown();
+  } finally {
+    previewWorkflow.retire = realRetire;
+    previewSessions = [];
+  }
 });
 
 test('the creator is rejected before teardown when another contributor exists', async () => {

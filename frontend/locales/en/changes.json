@@ -2099,6 +2099,10 @@
     "text": "Merges resumed. Anything ready merges on the next pass.",
     "description": "Toast shown after an administrator resumed merges on a project. \"The next pass\" is the next time Homeroom looks for approved changes to merge, usually within a minute."
   },
+  "step.resume.pending": {
+    "text": "Resuming merges. Homeroom has the request and lifts the pause shortly.",
+    "description": "Toast shown after an administrator asked to resume merges on a project and Homeroom accepted the request but has not applied it yet; the pause shows until it does."
+  },
   "step.headline.live": {
     "text": "Live",
     "description": "Headline of a proposal's list of steps when every step is done: the change is merged and running."
@@ -2206,6 +2210,30 @@
   "step.integration.budgetMain": {
     "text": "Conflict with main · resumes after the daily budget reset",
     "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps: the change conflicts with the main branch, and automatic resolving is paused until the project's daily AI budget resets."
+  },
+  "step.integration.checksFirstFiles_one": {
+    "text": "Conflict in {{count}} file · fix the checks first",
+    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps: the change conflicts with the main branch in {{count}} file, and its automated checks are failing, so it will not be resolved automatically until its author fixes the checks."
+  },
+  "step.integration.checksFirstFiles_other": {
+    "text": "Conflict in {{count}} files · fix the checks first",
+    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps: the change conflicts with the main branch in {{count}} files, and its automated checks are failing, so it will not be resolved automatically until its author fixes the checks."
+  },
+  "step.integration.checksFirstMain": {
+    "text": "Conflict with main · fix the checks first",
+    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps: the change conflicts with the main branch, and its automated checks are failing, so it will not be resolved automatically until its author fixes the checks."
+  },
+  "step.integration.checksRerunFiles_one": {
+    "text": "Conflict in {{count}} file · re-run the checks first",
+    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps: the change conflicts with the main branch in {{count}} file, and its automated checks could not run, so it will not be resolved automatically until they are re-run and pass."
+  },
+  "step.integration.checksRerunFiles_other": {
+    "text": "Conflict in {{count}} files · re-run the checks first",
+    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps: the change conflicts with the main branch in {{count}} files, and its automated checks could not run, so it will not be resolved automatically until they are re-run and pass."
+  },
+  "step.integration.checksRerunMain": {
+    "text": "Conflict with main · re-run the checks first",
+    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps: the change conflicts with the main branch, and its automated checks could not run, so it will not be resolved automatically until they are re-run and pass."
   },
   "step.integration.queuedFiles_one": {
     "text": "Conflict in {{count}} file · queued to fix",

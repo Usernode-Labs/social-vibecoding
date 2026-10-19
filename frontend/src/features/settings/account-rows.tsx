@@ -1,6 +1,12 @@
 /**
- * Settings' account block — Admin & moderation and the native wallet, node
- * and staking rows, above Log out.
+ * Settings' account block — the native wallet, node and staking rows, above
+ * Log out.
+ *
+ * Admin & moderation was a row here too, under an "Admin" heading. It left
+ * Settings in #5281: Settings is about your own account, and on a phone the
+ * row was one more line of a fifteen-row list. The console is a place, not a
+ * preference, so its entrance is a row on Me (features/profile/
+ * account-panel.tsx, `AdminPanel`), shown to admins only, on both layouts.
  *
  * ── Why these live in Settings now ────────────────────────────────────
  *
@@ -32,9 +38,8 @@
  * ── First render ──────────────────────────────────────────────────────
  *
  * Nothing until mounted. The footer is in the prerendered shell, and the
- * admin flag and the native stores can be published BEFORE hydration (the
- * admin flag by app.js as the session resolves), so reading them during the
- * first render could disagree with the document — React #418 on every
+ * native stores can be published BEFORE hydration, so reading them during
+ * the first render could disagree with the document — React #418 on every
  * route. The block appears from an effect instead, and its rows are never in
  * the shell's markup.
  */
@@ -42,10 +47,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
 
 import { GroupedList, SectionHeader } from '@/components/ui/grouped-list';
-import { ChevronRightIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
-import { useVisibility } from '../../lib/visibility-store';
 import { NodePillRow } from '../header/node-pill-row';
 import { nodePillStore } from '../header/node-pill-store';
 import { navStore } from '../nav/nav-store.js';
@@ -56,27 +59,10 @@ import { StakingRow } from '../profile/staking-sheet';
 /** The two nav hosts' heading insets, phone then desktop (settings-nav.tsx). */
 const HEADING = 'px-4 pt-0 pb-1.5 md:px-3 md:pb-1';
 
-/**
- * The Admin row wears each layout's own nav row, so it reads as one more
- * entry of the list it sits under: a level-1 MENU row on a phone (white card,
- * 44px, 17px text, a chevron — settings-nav.tsx's MENU_ROW over ListRow) and a
- * sidebar NAV row from md up (settings.js's `settings-nav-item`, no card, no
- * chevron). One anchor, two sets of classes; complete literals for Tailwind.
- */
-const ADMIN_CARD = 'overflow-hidden rounded-2xl bg-white dark:bg-zinc-900 md:rounded-none md:bg-transparent md:dark:bg-transparent md:overflow-visible';
-const ADMIN_ROW = 'flex w-full items-center gap-4 px-4 min-h-[44px] py-2 text-[1.0625rem] text-zinc-700 dark:text-zinc-200 '
-  + 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors '
-  + 'md:min-h-0 md:gap-2 md:rounded-lg md:px-3 md:py-2 md:text-sm md:font-medium md:text-zinc-600 md:dark:text-zinc-300 '
-  + 'md:hover:bg-zinc-100 md:dark:hover:bg-zinc-800';
-
 export function SettingsAccountRows(): ReactNode {
   const t = useMessages('settings');
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
-  // A CAPABILITY, published rather than fetched: App.renderAdminButton in
-  // public/js/app.js writes it after the session resolves. The id is a row's
-  // from when the app menu held that row; the flag outlived it.
-  const isAdmin = useVisibility('switcher-row-admin', false);
   const nodeVisible = (useStoreState(nodePillStore) as { visible: boolean }).visible;
   const walletVisible = (useStoreState(walletSheetStore) as { visible: boolean }).visible;
   // The Node row keeps itself current while Settings is on screen: status
@@ -97,24 +83,7 @@ export function SettingsAccountRows(): ReactNode {
   // never shows a heading over nothing.
   const native = nodeVisible || walletVisible;
   return (
-    <div id="settings-account-rows" className={isAdmin || native ? 'mb-6 space-y-5' : undefined}>
-      {isAdmin ? (
-        <section aria-label={t('settings:accountRows.admin.heading')}>
-          <SectionHeader className={HEADING}>{t('settings:accountRows.admin.heading')}</SectionHeader>
-          <div className={ADMIN_CARD}>
-            {/*
-                A real anchor, like every row that navigates: #admin is a hash
-                route the router resolves, and a modified click opens it in a
-                new tab. Not rendered at all without the capability, which is
-                safe here for the reason above: none of this is prerendered.
-            */}
-            <a id="settings-row-admin" href="#admin" className={ADMIN_ROW}>
-              <span className="min-w-0 flex-1 truncate">{t('settings:accountRows.admin.console')}</span>
-              <ChevronRightIcon className="h-5 w-5 shrink-0 text-zinc-300 dark:text-zinc-600 md:hidden" aria-hidden="true" />
-            </a>
-          </div>
-        </section>
-      ) : null}
+    <div id="settings-account-rows" className={native ? 'mb-6 space-y-5' : undefined}>
       <section aria-label={t('settings:accountRows.native.name')}>
         {native ? <SectionHeader className={HEADING}>{t('settings:accountRows.native.heading')}</SectionHeader> : null}
         <GroupedList className="mx-0">

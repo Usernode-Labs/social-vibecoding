@@ -1,7 +1,11 @@
 import { Button } from '@/components/ui/button';
-import { SectionHeading, StatusLine } from '@/components/ui/field';
+import { StatusLine } from '@/components/ui/field';
+import { GroupedList } from '@/components/ui/grouped-list';
 import { PasswordInput } from '@/components/ui/password-input';
 import { useMessages } from '../../../lib/i18n/react';
+import {
+  EDITOR_ACTIONS, EDITOR_NOTE, EDITOR_TITLE, ROW_ACTION, ROW_EDITOR, SignInRow,
+} from './sign-in-row';
 
 import { pressButton, returnKeyHandler } from '../../../lib/return-to-next';
 
@@ -31,82 +35,89 @@ export function PasswordSection() {
     <div data-settings-section="password" className="hidden">
       <div id="change-password-section" onKeyDown={returnKeyHandler({ submit: submitShown })}>
         {/*
-            #4891: an account with no password (it signs in with an emailed
-            code) is offered "Add a password", the words the sign-up step
-            sends it here with. Both wordings are rendered once, here and on
-            the button; settings.js shows the one that fits
-            (`_setChangePasswordMode`), as it does the current-password row.
+            #5281: the last of the Account page's sign-in rows
+            (./sign-in-row.tsx). "Password, Set" with Change, or, for an
+            account with none, "Not set" with Add; the form opens under it.
+            Each wording is rendered once and settings.js shows the one that
+            fits (`_setChangePasswordMode`), as it does the current-password
+            row, so this stays a static render.
         */}
-        <SectionHeading
-          title={(
-            <>
-              <span id="cp-title-change">{t('settings:password.title')}</span>
-              <span id="cp-title-add" className="hidden">{t('settings:password.titleAdd')}</span>
-            </>
-          )}
-        >
-          {t('settings:password.intro')}
-        </SectionHeading>
-        {/* One card, the three fields as its rows. */}
-        <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
-          <div id="cp-current-row" className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
-            <PasswordInput
-              id="cp-current"
-              autoComplete="current-password"
-              enterKeyHint="next"
-              placeholder={t('settings:password.currentPlaceholder')}
-              box="card"
-              ring="bare"
-              hint="dim"
-            />
-          </div>
-          <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
+        <GroupedList className="mx-0">
+          <SignInRow
+            title={t('settings:password.rowTitle')}
+            value={(
+              <>
+                <span id="cp-state-set">{t('settings:password.stateSet')}</span>
+                <span id="cp-state-unset" className="hidden">{t('settings:password.stateNotSet')}</span>
+              </>
+            )}
+            action={(
+              <button id="cp-edit" type="button" className={ROW_ACTION} aria-expanded="false" aria-controls="cp-form">
+                <span id="cp-edit-change">{t('settings:account.change')}</span>
+                <span id="cp-edit-add" className="hidden">{t('settings:account.add')}</span>
+              </button>
+            )}
+          />
+          <div id="cp-form" className={`${ROW_EDITOR} hidden`}>
+            {/*
+                #4891: an account with no password (it signs in with an
+                emailed code) is offered "Add a password", the words the
+                sign-up step sends it here with.
+            */}
+            <h4 className={EDITOR_TITLE}>
+              <span id="cp-title-change">{t('settings:password.title')}</span><span id="cp-title-add" className="hidden">{t('settings:password.titleAdd')}</span>
+            </h4>
+            <p className={EDITOR_NOTE}>{t('settings:password.intro')}</p>
+            <div id="cp-current-row">
+              <PasswordInput
+                id="cp-current"
+                autoComplete="current-password"
+                enterKeyHint="next"
+                placeholder={t('settings:password.currentPlaceholder')}
+              />
+            </div>
             <PasswordInput
               id="cp-new"
               autoComplete="new-password"
               enterKeyHint="next"
               placeholder={t('settings:password.newPlaceholder')}
-              box="card"
-              ring="bare"
-              hint="dim"
             />
-          </div>
-          <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
             <PasswordInput
               id="cp-confirm"
               autoComplete="new-password"
               enterKeyHint="done"
               placeholder={t('settings:password.confirmPlaceholder')}
-              box="card"
-              ring="bare"
-              hint="dim"
             />
+            <div className={EDITOR_ACTIONS}>
+              {/* Default (password) submit */}
+              <Button id="cp-save" type="button" variant="pillAccent" size="pill">
+                <span id="cp-save-change">{t('settings:password.submit')}</span><span id="cp-save-add" className="hidden">{t('settings:password.submitAdd')}</span>
+              </Button>
+              {/* Wallet (signature) submit — shown only in wallet mode */}
+              <Button id="cp-wallet-save" type="button" layout="hidden" variant="pillAccent" size="pill">
+                {t('settings:password.submitWithWallet')}
+              </Button>
+              <Button id="cp-cancel" type="button" variant="pillNeutral" size="pill" ink="neutral">
+                {t('core:common.cancel')}
+              </Button>
+            </div>
+            {/*
+                Mode switches. cp-wallet-mode is itself hidden unless the user
+                is in the native app with a linked wallet (settings.js).
+            */}
+            <p id="cp-wallet-mode" className="hidden text-xs">
+              <a id="cp-use-wallet" href="#" className="text-violet-700 hover:text-violet-400 dark:text-violet-400">
+                {t('settings:password.useWallet')}
+              </a>
+            </p>
+            <p id="cp-password-mode" className="hidden text-xs">
+              <a id="cp-use-password" href="#" className="text-violet-700 hover:text-violet-400 dark:text-violet-400">
+                {t('settings:password.usePassword')}
+              </a>
+            </p>
+            <StatusLine id="cp-status" />
           </div>
-        </div>
-        {/* Default (password) submit */}
-        <Button id="cp-save" layout="stacked" variant="pillAccent" size="pillLg" className="mt-3">
-          <span id="cp-save-change">{t('settings:password.submit')}</span>
-          <span id="cp-save-add" className="hidden">{t('settings:password.submitAdd')}</span>
-        </Button>
-        {/* Wallet (signature) submit — shown only in wallet mode */}
-        <Button id="cp-wallet-save" layout="hiddenStacked" variant="pillAccent" size="pillLg">
-          {t('settings:password.submitWithWallet')}
-        </Button>
-        {/*
-            Mode switches. cp-wallet-mode is itself hidden unless the user
-            is in the native app with a linked wallet (settings.js).
-        */}
-        <p id="cp-wallet-mode" className="hidden text-xs text-center mt-2">
-          <a id="cp-use-wallet" href="#" className="text-violet-700 hover:text-violet-400 dark:text-violet-400">
-            {t('settings:password.useWallet')}
-          </a>
-        </p>
-        <p id="cp-password-mode" className="hidden text-xs text-center mt-2">
-          <a id="cp-use-password" href="#" className="text-violet-700 hover:text-violet-400 dark:text-violet-400">
-            {t('settings:password.usePassword')}
-          </a>
-        </p>
-        <StatusLine id="cp-status" />
+        </GroupedList>
       </div>
     </div>
   );

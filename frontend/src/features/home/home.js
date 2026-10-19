@@ -195,6 +195,10 @@ const Home = {
       // and offer the retry. Anything already cached stays on screen.
       let offline = false;
       try { offline = !!(window.Offline && Offline.isOffline()); } catch (_) { offline = false; }
+      if (!Home._appsLoaded) {
+        Home._appsSettled = true;
+        window.HomePanels?.render();
+      }
       if (offline) {
         if (Home._apps.length) {
           Home.render();
@@ -239,6 +243,11 @@ const Home = {
   // payload. Kept separate from _apps because [] is both the safe initial
   // value and a legitimate loaded result for an account with no apps.
   _appsLoaded: false,
+  // The first /api/apps read has FAILED (offline with nothing kept, or an
+  // error). Home's sections wait for the apps before their first paint
+  // (HomePanels.readyToPaint), and a read that will not come must not hold
+  // them: they draw from what they have.
+  _appsSettled: false,
   _query: '',
 
   // ── Edit mode (#4669) ──────────────────────────────────────────────

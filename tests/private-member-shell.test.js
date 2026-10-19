@@ -103,7 +103,9 @@ test('the shell follows the tier: a reload when it changes, the store told, "Wan
 
 test('the mark menu: "Go to Homeroom" for a private member, and no terminal or Build it now', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /\{mounted && privateMember \? \(\s+<div\s+id="app-menu-homeroom-card"[^>]*>\s+<button\s+id="app-menu-row-homeroom"/);
+  // …and for any newcomer the walk on Home is still owed to (sign-up test,
+  // 19 Oct 2026; tests/app-about-pane.test.js draws it).
+  assert.match(sheet, /\{mounted && \(privateMember \|\| walkOwed\) \? \(\s+<div\s+id="app-menu-homeroom-card"[^>]*>\s+<button\s+id="app-menu-row-homeroom"/);
   // A white card leading the list, right under "Suggest an improvement"
   // (#4401): 20px, one inset hairline, the mark, rows' 15 over 13, a chevron.
   // The card is a wrapper since #4399, which can add a second row to it.
@@ -235,4 +237,89 @@ test('the waitlist card\'s routes: a code-mailing join behind the email code\'s 
   const server = read('server.js');
   assert.ok(server.indexOf('app.use(authMiddleware(config));') < server.indexOf('app.use(memberWaitlistRoutes(config));'));
   assert.ok(server.indexOf('app.use(communityInviteRoutes(config));') < server.indexOf('app.use(memberWaitlistRoutes(config));'));
+});
+
+// ── Every newcomer, not only a private member (sign-up test, 19 Oct 2026) ─
+//
+// Evan made a project, opened it, and the mark's menu offered "Go to
+// community". He took it: the project's hub opened inside the app, and the
+// walk on Home (his tile, Messages and Homeroom bot, Communities) did not run
+// until he found Home himself. While that walk is owed, the menu's way on is
+// "Go to Homeroom", which goes Home and runs it.
+
+/**
+ * The menu as it draws once mounted, on the server renderer: its after-mount
+ * effect runs in render (a render-phase update, which the renderer draws
+ * again for), once per draw, and the layout effect that hides "Go to
+ * community" runs on stand-in elements, since a server render attaches no
+ * refs. `walk` is what this device holds for user `uid`, or nothing, and
+ * `viewer` is who is signed in.
+ */
+function drawMenu({ walk = null, uid = 42, viewer = uid } = {}) {
+  const React = require(require.resolve('react', { paths: [path.join(ROOT, 'frontend')] }));
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  let mountedOnce = false;
+  const refs = [];
+  const hides = (fn) => /classList\.toggle\(["']hidden["'], hide\)/.test(String(fn));
+  const fake = {
+    ...React,
+    useEffect(fn, deps) {
+      if (!mountedOnce && Array.isArray(deps) && deps.length === 0 && /setMounted\(true\)/.test(String(fn))) {
+        mountedOnce = true;
+        fn();
+      } else if (hides(fn)) fn();
+    },
+    useLayoutEffect(fn) { if (hides(fn)) fn(); },
+    useRef(init) {
+      if (init !== null) return React.useRef(init);
+      const classes = new Set();
+      const el = { classes, classList: { contains: (c) => classes.has(c), toggle: (c, on) => { if (on) classes.add(c); else classes.delete(c); } } };
+      refs.push(el);
+      return React.useRef(el);
+    },
+  };
+  const ui = loadTsx('tests/fixtures/app-context-sheet-api.ts', { stubs: { react: fake } });
+  const data = new Map(walk ? [[`usernode:first-session:walk:${uid}`, typeof walk === 'string' ? walk : JSON.stringify(walk)]] : []);
+  const had = { window: Object.getOwnPropertyDescriptor(globalThis, 'window'), localStorage: Object.getOwnPropertyDescriptor(globalThis, 'localStorage') };
+  Object.defineProperty(globalThis, 'window', { value: { App: { user: { id: viewer }, _privateHomeVisited: () => false } }, configurable: true, writable: true });
+  Object.defineProperty(globalThis, 'localStorage', { value: { getItem: (k) => (data.has(k) ? data.get(k) : null), setItem: (k, v) => { data.set(k, String(v)); } }, configurable: true, writable: true });
+  const before = ui.improveStore.get();
+  ui.improveStore.set({ ...before, target: 'app', slug: 'city-tier-list', name: 'City Tier List' });
+  try {
+    const html = renderToHtml(createElement(ui.AppsSwitcherSheet));
+    return { html, mounted: mountedOnce, hidden: refs.filter((el) => el.classes.has('hidden')).length };
+  } finally {
+    ui.improveStore.set(before);
+    for (const [k, d] of Object.entries(had)) {
+      if (d) Object.defineProperty(globalThis, k, d); else delete globalThis[k];
+    }
+  }
+}
+
+test('a newcomer owed the walk on Home: the menu offers "Go to Homeroom", and "Go to community" is hidden', () => {
+  const owed = drawMenu({ walk: { slug: 'city-tier-list', name: 'City Tier List', maker: true, armed: true } });
+  assert.ok(owed.mounted, 'drawn as mounted');
+  assert.match(owed.html, /<div id="app-menu-homeroom-card" class="[^"]*"><button id="app-menu-row-homeroom" type="button"/);
+  assert.match(owed.html, />Go to Homeroom<\/span>/);
+  assert.equal(owed.hidden, 1, '"Go to community" hidden');
+  // Still in the document, its id and address the Workshop's (dapp.json
+  // checks select on it for a viewer who is owed no walk).
+  assert.match(owed.html, /<a id="app-menu-row-workshop" data-context-row="workshop" href="#app\/city-tier-list\/workshop"/);
+  // The home-screen row stays a private member's.
+  assert.doesNotMatch(owed.html, /app-menu-row-add-home/);
+  // Not yet armed (they have not opened the app yet) counts the same.
+  assert.equal(drawMenu({ walk: { slug: 'city-tier-list', name: 'City Tier List', maker: true } }).hidden, 1);
+
+  // Nobody owed a walk: "Go to community", as always. None on this device,
+  // one that has run, or one owed to somebody else signed in here before.
+  for (const [label, drawn] of [
+    ['none', drawMenu({ walk: null })],
+    ['run already', drawMenu({ walk: 'done' })],
+    ['somebody else\'s', drawMenu({ walk: { slug: 'x', name: 'X' }, uid: 42, viewer: 7 })],
+  ]) {
+    assert.ok(drawn.mounted, label);
+    assert.doesNotMatch(drawn.html, /app-menu-homeroom-card/, label);
+    assert.equal(drawn.hidden, 0, label);
+    assert.match(drawn.html, /id="app-menu-row-workshop"/, label);
+  }
 });

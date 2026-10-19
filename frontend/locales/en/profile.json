@@ -135,6 +135,18 @@
     "text": "Show all",
     "description": "Row at the end of the \"Decided\" group on the \"Your votes\" screen when only the first few are shown: unfolds the rest."
   },
+  "work.tab.changes": {
+    "text": "Changes",
+    "description": "Tab on the Your work screen (Me › Your work) that shows the changes the person started. A noun, plural: proposed changes to apps."
+  },
+  "work.tab.requests": {
+    "text": "Requests",
+    "description": "Tab on the Your work screen (Me › Your work) that shows the requests the person filed. A noun, plural: things they asked to have built or fixed."
+  },
+  "work.tab.votes": {
+    "text": "Votes",
+    "description": "Tab on the Your work screen (Me › Your work) that shows the votes the person cast. A noun, plural."
+  },
   "work.changes.live_one": {
     "text": "{{number}} live",
     "description": "Small line under \"Your changes\" on the viewer's profile. {{number}} is how many of their changes are running, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
@@ -247,13 +259,37 @@
     "text": "Account, alerts, keys, wallet",
     "description": "Small line under \"Settings\" on the viewer's profile, for a person who has a wallet: what is in there. \"Keys\" are API keys."
   },
-  "more.settings.hintAdmin": {
-    "text": "Account, alerts, keys, admin",
-    "description": "Small line under \"Settings\" on the viewer's profile, for an administrator: what is in there. \"Keys\" are API keys; \"admin\" is the admin console."
+  "admin.heading": {
+    "text": "Admin",
+    "description": "Small heading on the viewer's own profile over the row that opens the administration console, shown only to platform administrators. Short for administration."
   },
-  "more.settings.hintWalletAdmin": {
-    "text": "Account, alerts, keys, wallet, admin",
-    "description": "Small line under \"Settings\" on the viewer's profile, for an administrator who has a wallet: what is in there. \"Keys\" are API keys; \"admin\" is the admin console."
+  "admin.console.title": {
+    "text": "Admin & moderation",
+    "description": "Row on the viewer's own profile, shown only to platform administrators: opens the administration and moderation console."
+  },
+  "admin.console.hint": {
+    "text": "Reports, people and platform settings",
+    "description": "Small line under \"Admin & moderation\" on an administrator's own profile: what the console holds."
+  },
+  "settings.heading": {
+    "text": "Settings",
+    "description": "Heading over the Settings card at the foot of the viewer's own profile: the rows that lead to their profile, notification and account settings."
+  },
+  "settings.profile.title": {
+    "text": "Profile",
+    "description": "Row in the Settings card on the viewer's own profile: opens the Edit profile sheet. The same name the Settings page uses for its Profile part."
+  },
+  "settings.profile.hint": {
+    "text": "Name, photo and bio",
+    "description": "Small line under \"Profile\" in the Settings card on the viewer's own profile."
+  },
+  "settings.notifications.title": {
+    "text": "Notifications",
+    "description": "Row in the Settings card on the viewer's own profile: opens Settings' Notifications page. The same name that page uses."
+  },
+  "settings.notifications.hint": {
+    "text": "What you are told about, here and in each app",
+    "description": "Small line under \"Notifications\" in the Settings card on the viewer's own profile: the account-wide defaults and the per-app choices live on the page it opens."
   },
   "date.today": {
     "text": "today",
@@ -283,9 +319,45 @@
     "text": "Closed",
     "description": "Heading on the \"Your changes\" screen over the changes that ended without going live. An adjective."
   },
-  "changes.fallbackTitle": {
-    "text": "Change",
-    "description": "Stands in for a change's title on the \"Your changes\" screen when it has none. A noun."
+  "changes.untitled": {
+    "text": "Untitled change to {{project}}",
+    "description": "Stands in for a change's title on the \"Your changes\" tab of the Your work screen when nobody has named it yet. {{project}} is the name of the project (app) the change is for."
+  },
+  "changes.untitledPr": {
+    "text": "Change #{{number}} to {{project}}",
+    "description": "Stands in for a change's title on the \"Your changes\" tab of the Your work screen when nobody has named it yet but it has a pull request. {{number}} is the pull request's number, {{project}} the name of the project (app) the change is for."
+  },
+  "changes.filter.all": {
+    "text": "All",
+    "description": "Filter chip on the \"Your changes\" tab of the Your work screen, first of a row of chips: shows every change, whatever stage it is at. An adjective standing for \"all changes\"."
+  },
+  "changes.filter.upForVote": {
+    "text": "Up for vote",
+    "description": "Filter chip on the \"Your changes\" tab of the Your work screen, and the heading over its rows when picked: changes the members are voting on, or that were approved and are going live."
+  },
+  "changes.filter.stage": {
+    "text": "Show changes by stage",
+    "description": "Accessible name, read by a screen reader, of the row of filter chips (All, In progress, Up for vote, Live, Closed) on the \"Your changes\" tab of the Your work screen."
+  },
+  "changes.filter.project": {
+    "text": "Project",
+    "description": "Accessible name, read by a screen reader, of the drop-down on the \"Your changes\" tab of the Your work screen that narrows the list to one project. A noun: an app being built."
+  },
+  "changes.filter.allProjects": {
+    "text": "All projects",
+    "description": "First choice of the drop-down on the \"Your changes\" tab of the Your work screen that narrows the list to one project: shows the changes of every project."
+  },
+  "changes.filter.noMatch": {
+    "text": "None of your changes match these filters.",
+    "description": "Shown on the \"Your changes\" tab of the Your work screen when the stage chip and the project picked together leave no rows."
+  },
+  "changes.step.continue": {
+    "text": "Continue",
+    "description": "Small pill at the end of a row on the \"Your changes\" tab of the Your work screen, for a change whose agent session was paused: the next step is to open it and carry on working on it. A verb."
+  },
+  "changes.step.fixChecks": {
+    "text": "Fix checks",
+    "description": "Small pill at the end of a row on the \"Your changes\" tab of the Your work screen, for a change whose automated checks failed: the next step is to open it and get them passing. A verb phrase; \"checks\" is a noun, the automated tests run on the change."
   },
   "changes.state.waiting": {
     "text": "waiting for approval",
@@ -295,9 +367,17 @@
     "text": "in progress",
     "description": "One fact on the small line of a row of the \"Your changes\" screen, after the app's name: the change is still being worked on. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
   },
+  "changes.state.paused": {
+    "text": "paused",
+    "description": "One fact on the small line of a row of the \"Your changes\" tab of the Your work screen, after the app's name: the change's agent session was paused to free a slot, and is still unfinished. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
+  },
   "changes.state.closed": {
     "text": "closed without going live",
     "description": "One fact on the small line of a row of the \"Your changes\" screen, after the app's name: the change was withdrawn or archived without becoming part of the app. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
+  },
+  "changes.state.goingLive": {
+    "text": "going live",
+    "description": "One fact on the small line of a row of the \"Your changes\" tab of the Your work screen, after the app's name: the change was approved and is on its way into the running app. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
   },
   "requests.group.open": {
     "text": "Open",

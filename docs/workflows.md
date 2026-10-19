@@ -210,6 +210,21 @@ A service is a `WorkHandler` registered for a kind:
 - **Claim.** A service loop claims work with `FOR UPDATE SKIP LOCKED` and a lease (60 s by
   default, renewed while it runs). If the lease is lost, the handler's `signal` aborts and
   the attempt reports nothing. The next claim resumes from the last checkpoint.
+- **Concurrency.** A handler's `concurrency` (default 4) is how many items of its kind run
+  at once **across every process**, counted under the kind's claim lock: replicas add
+  failover, not more at once (Running it).
+- **A release's own work.** A handler marked `ownRelease` is claimed only by a process of
+  the release its input names (`input.release`, the runtime's `release` option): an older
+  build still running during a rollout never runs a newer build's work (the `release`
+  machine's adoptions).
+- **A lapsed lease.** An attempt whose item is claimed again on a lease that ran out with
+  no word from its process is closed `lost` with code `lapsed`; a graceful stop (`stopped`)
+  and a cancel (`cancelled`) say so. A process that cannot renew stops the handler itself
+  three quarters of a lease after its last renewal.
+- **A move nobody decided in time.** An event its caller stopped waiting for can be
+  refused at once (`refuseIfPending`, under the event's row lock, so one a slot is deciding
+  keeps its answer): platform.ts does so for every move with a deadline, so a route that
+  says "nothing changed" is right, and the move is never applied after that.
 - **Report.** The service appends a result event to the owning instance, with `workId`,
   `kind`, `workKey`, `attempt` and the result or error:
   - `WorkSucceeded` when the handler returns;
@@ -435,24 +450,61 @@ append and answer with the outcome.
 
 ## Running it
 
-**Where it runs.** The workflow runtime runs inside the platform process. There is no
-separate workflow Pod.
+**Where it runs.** On Kubernetes the workflow runs on the conductor
+(`PROCESS_ROLE=conductor`, docs/plans/web-and-conductor.md), in as many replicas as the
+chart runs (two in production), and nothing in it needs the leader lock. The web Pods only
+append and wait. Locally, in docker-compose and on a staging preview, one process (`all`)
+does both.
 
 - **Every process** turns every machine's ownership guard on at boot (`enabled:<machine>`
   in `wf_settings`, `startWorkflow` in `server.js`). A process whose runtime fails to
   start exits. It also starts the runtime on its own pool (`application_name`
-  `homeroom-workflow`), registers every machine, listens for outcomes so routes can wait
-  for them, and runs pipeline slots. A Pod that is not the leader (the new one, during a
-  rollout) therefore applies its own events at once instead of answering `202`.
+  `homeroom-workflow`), registers every machine, and listens for outcomes so routes can
+  wait for them.
+- **A web process decides nothing.** It runs no pipeline slot (`WF_SLOTS` defaults to 0 by
+  role, config.js). A route appends its event and waits for a conductor's outcome
+  (3 to 8 seconds); when none comes in time it answers retryably: `202` with the request key,
+  or, for a move with a deadline (resume, pause, unpromote, reopen), `503` with
+  `Retry-After` and `code: 'not_decided'` (`session-lifecycle.answerNotDecided`), since such
+  a move is refused as `expired` when it is decided late and so changes nothing.
+- **A process that runs the workflow** (a conductor, or `all`;
+  `process-role.runsWorkflow`) starts its loops once it listens and its bus is up
+  (`startWorkflowLoops` in `start()`): pipeline slots, the timer and retention loop, and the
+  service loops. The work it claims calls its own port (the bot's platform tools,
+  `services/mayor/mcp-shim.js`) and pushes over the bus. A failure to start them ends the
+  process. Its last step appends `Booted` to the `release` machine (below).
+- **Any number of them at once.** Events are taken `SKIP LOCKED` and applied under the
+  instance's row lock; timers fire under `SKIP LOCKED` with keyed events; work is claimed
+  under a lease. A kind's `concurrency` holds **across every process**: a claim takes the
+  kind's try-lock (another process claiming the kind is skipped, never waited for), counts
+  the items running on a live lease anywhere, a draining process's included, and claims
+  at most the rest. A full kind costs no claims until an item of it ends (`finish`
+  notifies `wf_work` with its kind) or its earliest lease end. Replicas therefore add
+  failover, not concurrency. The retention purge runs in one process at a time.
+- **A work item that keeps taking its process down** is held back by its own lease: a
+  lease that lapses with no word from its process (it died, hung or lost the database) is
+  claimed again only once it has run out, and the attempt is recorded as `lapsed` (a stop
+  or a cancel says so instead). Nothing ends an item for it beyond `maxLostAttempts`; the
+  metrics report the most lapses of one item in the hour, and an alert fires at three.
+- **A process that cannot reach the database** stops its own running work once three
+  quarters of a lease pass without a renewal, before another process may claim it, so two
+  replicas never run one item side by side.
+- **A process lost with its node** gives its locks up within about 40 seconds: the
+  runtime's sessions carry the server keepalives the leader lock's session has, and an
+  idle-in-transaction timeout of 30 seconds (`deadPeerOptions` in platform.ts).
+- **What a release owes what an older one left** (open governance rows, sessions the
+  proposal machine does not hold, claims with no clock, merge queues, deferred DM answers,
+  main checks mid-run, the bot's queue rows, the platform's own faults, the bot lane's clock)
+  is the `release` machine's: `release:<GIT_SHA>`, one `release.adopt` work item per
+  release, run by whichever process of that release claims it (never an older build's),
+  each adoption a step. Booting waits for none of it. A release none of whose processes
+  took it within 10 minutes (it was replaced first) is `abandoned`, and the next release
+  adopts what is left. A route that meets an open row the machine does not hold enrolls it itself,
+  and the conductor's leader still adopts sessions created since, every minute.
 - **A Pod a release replaced** quiesces its runtime as it starts draining
   (`quiesceWorkflow`: no slot, timer or claim) and keeps running the work it had
   claimed, its leases renewed, until it ends or the drain does
-  (docs/plans/draining-releases.md).
-- **The leader** also runs (`startWorkflowLoops` in `becomeLeader`):
-  - the timer and retention loop;
-  - service loops;
-  - a backfill that enrolls open rows the machine does not hold yet. A route that meets
-    an open row the machine does not hold enrolls it itself.
+  (docs/plans/draining-releases.md). Its items keep counting against their kinds' limits.
 - **Waking.** Each `wf_events` notification wakes one slot in each process. Idle loops
   sleep until a notification, the next thing they know is due (an event's backoff, a
   deadline, a work item), or a 30-second fallback; nothing polls every second. A
@@ -460,18 +512,15 @@ separate workflow Pod.
   statement that ends the event. The timer loop wakes only for a deadline earlier than
   the one it sleeps until, so a vote that re-arms the 10-minute backstop costs it
   nothing. The fallback only covers a lost notification.
-- **A staging preview** never stands for election, so it runs the loops itself. A
+- **A staging preview** never stands for election and runs the loops itself. A
   preview has no GitHub credentials and no app fleet, so its work items fail and show in
   Admin → Workflows, where [main]'s inline calls only failed in the logs.
 
-Which process holds the leader role does not decide anything: row locks do. What the
-machines' work handlers still reach in process memory does: a restart
+Which process runs a decision or a work item decides nothing: row locks and leases do.
+What the machines' work handlers still reach in process memory would: a restart
 erases it, and a machine resumes its work right after a boot, when memory is empty.
 Every place a machine calls into code outside the workflow is reviewed, per machine, in
 `tests/baselines/workflow-process-state.json` (below), and nothing unreviewed is left.
-**Moving the loops to a Deployment of their own** is then a deployment change, with more
-than one replica and alerts on overdue work; what it still needs (a workflow process role,
-web Pods without slots, the WebSocket bus started in that process) is not in the code yet.
 
 ### What the machines still depend on (the list)
 
@@ -510,8 +559,8 @@ reaches zero, and nothing outside the workflow code runs inside a transaction.
 reviewed, each with its reason, and `tests/workflow-process-state.test.js` fails on
 anything else (a new call, another writer of an owned column, module state, a timer):
 - `allowed`: the kernel's own timers, the bot-build machine's build pipeline, and the
-  routes' side's wiring in `platform.ts` (the runtime handle, its pool and the logger,
-  set once at boot and deciding nothing);
+  routes' side's wiring in `platform.ts` (the runtime handle, its pool and its dead-peer
+  settings, and the logger, set once at boot and deciding nothing);
 - `io`: a work handler's **I/O core**, a function outside `src/workflow/` that does the
   work's I/O and keeps no process memory: cut out of the per-process wrapper the old flow
   ran it through (the build without `_stagingBuilds`, the checks run without its seat, the
@@ -528,21 +577,30 @@ reviewed, `--all` everything).
 
 ### In production (Kubernetes)
 
-- **The workloads.** Production is the `social-vibecoding-platform` Deployment, deployed
-  by Argo CD from the Helm chart in `deploy/helm/` with values from the infra repository.
-  It runs one replica (`platform.replicas`).
-- **During a rollout.** Old and new Pods serve together for a short time
-  (`maxSurge: 1`). `PLATFORM_LEADER_LOCK` lets only the Pod holding the Postgres advisory
-  lock run background work, the workflow loops included.
+- **The workloads.** The `social-vibecoding` Deployment serves people (`PROCESS_ROLE=web`,
+  `platform.replicas`) and decides nothing; the `social-vibecoding-conductor` Deployment
+  runs the workflow (`platform.conductor.replicas`, two in production), deployed by Argo
+  CD from the Helm chart in `deploy/helm/` with values from the infra repository. The
+  conductor's replicas spread across nodes, and its PodDisruptionBudget lets a node drain
+  evict one at a time.
+- **During a rollout.** Each Deployment rolls `maxSurge: 1, maxUnavailable: 0`: a new
+  conductor is Ready, its loops running, before an old one drains, so the workflow never
+  stops. `PLATFORM_LEADER_LOCK` still elects one conductor for the leader's remaining
+  work (docs/plans/web-and-conductor.md); an old replica may win it for a minute during a
+  rollout, which runs that work's election-time recovery twice, harmlessly.
 - **Schema.** The `wf_*` tables and triggers come from `schema.sql`. The chart's
   migration Job applies it before the Deployment rolls.
 - **Connections.** The runtime's pool adds `WF_POOL_MAX` connections per Pod, beside the
-  main pool's `DB_POOL_MAX`.
+  main pool's `DB_POOL_MAX` (`platform.conductor.dbPoolMax` on a conductor).
+- **Alerts.** The conductors serve the workflow's metrics on `WF_METRICS_PORT`
+  (`src/workflow/metrics.ts`), which a PodMonitor scrapes and a PrometheusRule alerts on
+  (docs/kubernetes-operations.md, "Workflow alerts").
 
 | Variable | Default | Set in production by | Meaning |
 |---|---|---|---|
-| `WF_SLOTS` | 4 (1 on a staging preview) | the default | Pipeline slots in each process. |
-| `WF_POOL_MAX` | 6 (2 on a staging preview) | the default | Connections in the runtime's own pool, the outcome listener's included. Keep it above `WF_SLOTS`. |
+| `WF_SLOTS` | 4 where the workflow runs, 0 in a web process (1 on a staging preview) | the default | Pipeline slots in each process. |
+| `WF_POOL_MAX` | 10 where the workflow runs, 2 in a web process or on a staging preview | the default | Connections in the runtime's own pool, the outcome listener's included. Keep it above `WF_SLOTS`. |
+| `WF_METRICS_PORT` | unset: no metrics | the chart, on the conductor (`platform.conductor.metricsPort`) | The port the workflow's metrics are served on (`GET /metrics`). |
 
 **Where the variables are set.**
 - **The Helm chart.** A Kubernetes Pod gets only the variables the chart lists, so a
@@ -557,10 +615,10 @@ release (`docs/kubernetes-operations.md`).
 - **The rolling deploy.** While old and new Pods overlap, an old one may still decide a
   row the machine also decides. Both sides lock the row, so whichever commits first wins
   and the other stands down. The machine ends such an instance `superseded`
-  (`closed_outside`). Until the new Pod becomes leader, its routes answer `202` with the
-  request key: the event is recorded and applied once the loops start. A machine whose
-  new version changes what an instance means raises its `version`: an old Pod leaves the
-  instances a newer version wrote alone.
+  (`closed_outside`). While no conductor runs, routes answer `202` with the request key:
+  the event is recorded and applied once one does. A machine whose new version changes
+  what an instance means raises its `version`: an old Pod leaves the instances a newer
+  version wrote alone.
 
 ## TypeScript
 
@@ -585,7 +643,7 @@ release (`docs/kubernetes-operations.md`).
 
 | Suite | Covers |
 |---|---|
-| `tests/workflow-kernel-postgres.test.js` | The kernel's guarantees (K1–K17) against real PostgreSQL. |
+| `tests/workflow-kernel-postgres.test.js` | The kernel's guarantees (K1–K20) against real PostgreSQL. |
 | `tests/workflow-kernel-machine.test.js` | Definition validation. |
 | `tests/workflow-governance-postgres.test.js` | The governance machine, one subtest per guarantee (G1–G13), plus the rollout cases. |
 | `tests/workflow-governance-routes-postgres.test.js` | The routes with the runtime on. |
@@ -597,7 +655,10 @@ release (`docs/kubernetes-operations.md`).
 | `tests/workflow-bot-replies-postgres.test.js` | The Homeroom bot's reply machines (`bot-voice`, `bot-dm`), one subtest per rule, with their work faked. |
 | `tests/workflow-main-check-postgres.test.js` | The main-check machine, one subtest per rule (a provisional first red, flakes, a confirmed red, rechecks, Resume, a superseded run, a run carried on after a crash, adopting an older release's row). |
 | `tests/app-teardown-mark-postgres.test.js` | An app's teardown is marked on its row, which a deploy in any process reads. |
-| `tests/workflow-processes-postgres.test.js` | Each machine's flows with every decision and work item in a child process, the test process being the web side; and the same flows with the child killed (SIGKILL) mid-item, restarted, and compared with an uninterrupted run. Only outside services are faked (`tests/fixtures/workflow-outside-fakes.js`); the harness is `tests/lib/workflow-processes.js`. The known dependencies on the web process's memory are `todo` scenarios, each naming its entry in the list. |
+| `tests/workflow-processes-postgres.test.js` | Each machine's flows with every decision and work item in a child process, the test process being the web side (no pipeline slot, as a web Pod); the same flows with the child killed (SIGKILL) mid-item, restarted, and compared with an uninterrupted run; and two children at once. The child is server.js itself, booted as a conductor (`tests/lib/workflow-child.js`; the test holds the leader lock), so its bus, its process row and its listener are production's. Only outside services are faked (`tests/fixtures/workflow-outside-fakes.js`); the harness is `tests/lib/workflow-processes.js`. |
+| `tests/workflow-release-postgres.test.js` | The release machine: a release's adoptions run once between its processes, a failed step is tried again without the done ones, adoptions that keep failing are shown. |
+| `tests/workflow-dead-peer-postgres.test.js` | The runtime's sessions reap a dead peer and an abandoned transaction. |
+| `tests/workflow-metrics.test.js` | The metrics a conductor serves, and that every metric an alert rule names is served. |
 
 The kernel guarantees cover:
 - replay;
@@ -609,6 +670,9 @@ The kernel guarantees cover:
 - message order;
 - timers;
 - two processes running at once;
+- a kind's limit across processes, and no claims while it is full;
+- a lapsed lease recorded and ending nothing; a process that cannot renew stops itself;
+- an event refused once its caller gave up on it, never applied later;
 - the mixed-version rule;
 - ownership.
 
@@ -638,6 +702,7 @@ A new machine brings the same two layers:
 | `main-check` | `app:<id>`, for each app whose main was checked after a merge or a new commit | `idle` → `running` (→ `confirming`) → `idle`; `idle` ⇄ `rechecking` while paused | On everywhere; its old paths are deleted |
 | `bot-request` | `request:<appId>:<issue>`, for each request the Homeroom bot is owed a look at | `idle` → `queued` → `reading` / `following_up` → `idle`; `building`; `older_turn` | On everywhere; its old paths are deleted |
 | `bot-lane` | `bot`, one for the Homeroom bot | `open` | On everywhere; its old paths are deleted |
+| `release` | `release:<GIT_SHA>`, one per release of the platform | `adopting` → `done`, `failed` or `abandoned` | Runs the boot adoptions once per release (`release.adopt`), in that release's own processes |
 
 ### Turns workflow work runs
 
@@ -792,9 +857,10 @@ What a merged pull request still has to do once GitHub has merged it
 
 - **Created by `Merged`.** The proposal machine sends it by message in the transition
   that records GitHub's merge (its `merge.attempt`, or its `merge.observe` once GitHub
-  answers a merge nobody heard), and each boot's `observeMergedOnGithub` appends it for a
-  promoted row GitHub has merged (`platform.mergeObserved`). Either way the merge gets
-  every follow-up, and the app's merge queue is told to go on (`MergeWanted`).
+  answers a merge nobody heard), and the leader's six-hourly `observeMergedOnGithub`
+  appends it for a promoted row GitHub has merged (`platform.mergeObserved`). Either way
+  the merge gets every follow-up, and the app's merge queue is told to go on
+  (`MergeWanted`).
 - **One transaction with the merge:**
   - the move into `merged` (with `merge_commit_sha` and the vote snapshot);
   - the secret values the proposal declared;

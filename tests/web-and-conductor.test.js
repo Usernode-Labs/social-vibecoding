@@ -294,4 +294,36 @@ test('the chart runs a conductor beside the web Pods by default, and the Service
   assert.deepEqual(only.map((d) => [d.metadata.name, role(d)]), [['social-vibecoding', undefined]]);
   assert.equal(off.find((o) => o.kind === 'Service' && o.metadata.name === 'social-vibecoding')
     .spec.selector['social.usernode.io/serves-requests'], undefined);
+  assert.equal(off.filter((o) => o.metadata?.name?.endsWith('-conductor')).length, 0, 'no conductor budget either');
+});
+
+test('the conductor runs the workflow in replicas: its budget, its spread, its pool and its metrics', { skip: !helmAvailable }, () => {
+  const objects = render(['--api-versions', 'monitoring.coreos.com/v1', '--set', 'platform.conductor.replicas=2']);
+  const env = (d) => new Map(d.spec.template.spec.containers[0].env.map((e) => [e.name, e.value]));
+  const web = objects.find((o) => o.kind === 'Deployment' && o.metadata.name === 'social-vibecoding');
+  const conductor = objects.find((o) => o.kind === 'Deployment' && o.metadata.name === 'social-vibecoding-conductor');
+  assert.equal(conductor.spec.replicas, 2);
+  assert.equal(env(conductor).get('DB_POOL_MAX'), '30', 'its own request pool: it serves nobody');
+  assert.equal(env(conductor).get('WF_METRICS_PORT'), '9464');
+  assert.equal(env(web).get('WF_METRICS_PORT'), undefined, 'a web Pod runs no workflow, and serves no metrics');
+  assert.ok(conductor.spec.template.spec.containers[0].ports.some((p) => p.name === 'metrics' && p.containerPort === 9464));
+  const spread = conductor.spec.template.spec.topologySpreadConstraints;
+  assert.equal(spread[0].topologyKey, 'kubernetes.io/hostname');
+  assert.equal(spread[0].labelSelector.matchLabels['social.usernode.io/process-role'], 'conductor');
+  assert.equal(web.spec.template.spec.topologySpreadConstraints, undefined);
+  // A node drain evicts one at a time, and never blocks at one replica.
+  const budget = objects.find((o) => o.kind === 'PodDisruptionBudget' && o.metadata.name === 'social-vibecoding-conductor');
+  assert.equal(budget.spec.maxUnavailable, 1);
+  assert.equal(budget.spec.selector.matchLabels['social.usernode.io/process-role'], 'conductor');
+  // Prometheus scrapes the metrics port, admitted from its namespace only.
+  const monitor = objects.find((o) => o.kind === 'PodMonitor');
+  assert.equal(monitor.spec.podMetricsEndpoints[0].port, 'metrics');
+  assert.equal(monitor.metadata.labels.release, 'kube-prometheus-stack');
+  const rules = objects.find((o) => o.kind === 'PrometheusRule').spec.groups[0].rules.map((r) => r.alert);
+  assert.ok(rules.includes('SocialWorkflowNoConductor') && rules.includes('SocialWorkflowWorkNobodyTakes'));
+  const policy = objects.find((o) => o.kind === 'NetworkPolicy' && o.metadata.name.endsWith('-platform'));
+  assert.ok(policy.spec.ingress.some((r) => r.ports?.[0]?.port === 9464
+    && r.from?.[0]?.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'] === 'monitoring'));
+  // A cluster without the Prometheus Operator's kinds gets no monitors.
+  assert.equal(render().filter((o) => o.kind === 'PodMonitor' || o.kind === 'PrometheusRule').length, 0);
 });

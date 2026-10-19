@@ -20,12 +20,17 @@ import { useEffect, useRef } from 'react';
  * An open dialog takes the swipe away too. WebKit's gesture walks to the
  * record under the dialog and slides the whole page, so it springs back with
  * the dialog still up; a sheet closes by its own controls and device back.
+ *
+ * So does the phone's Communities drawer (../nav-drawer/, `drawerOn`): its
+ * pan is the page's swipe back there, from the left edge too, and WebKit's
+ * would take the same finger. A Workshop topic opened from the community's
+ * pages is under the drawer now (polish board #23), chip and all.
  */
-export function nativeBackEnabled({ visible, mode, href, paneHref = null, dialogOpen = false }: {
+export function nativeBackEnabled({ visible, mode, href, paneHref = null, dialogOpen = false, drawerOn = false }: {
   visible: boolean; mode: string; href: string | null;
-  paneHref?: string | null; dialogOpen?: boolean;
+  paneHref?: string | null; dialogOpen?: boolean; drawerOn?: boolean;
 }): boolean {
-  if (!visible || dialogOpen) return false;
+  if (!visible || dialogOpen || drawerOn) return false;
   return (mode === 'arrow' && !!href) || !!paneHref;
 }
 

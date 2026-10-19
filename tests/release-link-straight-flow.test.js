@@ -247,7 +247,7 @@ test('the Welcome is a page in the make screen\'s frame: picture, eyebrow, headi
     /<p data-welcome-page-code-note="" class="mt-2 text-\[13px\] text-zinc-500 dark:text-zinc-400">You sign in with a code we email you\. You can add a password later in Settings\.<\/p>/,
     /<div class="grow"><\/div>/,
     /<div data-welcome-page-continue=""><button[^>]*type="submit"[^>]*>Continue<\/button>/,
-    /<p class="text-center text-\[13px\] text-zinc-500 dark:text-zinc-400 mt-3">By continuing, you agree to Homeroom(?:&#x27;|')s terms\.<\/p><\/div><\/form>/,
+    /<p class="text-center text-\[13px\] text-zinc-500 dark:text-zinc-400 mt-3">By continuing, you agree to Homeroom(?:&#x27;|')s terms and acknowledge the privacy notice\.<\/p><\/div><\/form>/,
   ];
   let at = 0;
   for (const re of order) {

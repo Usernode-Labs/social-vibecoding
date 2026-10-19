@@ -13,10 +13,12 @@ Now the two jobs can run apart (`platform.conductor.enabled` in the chart):
   stand for leader. A route still starts what it always started (a turn, a
   preview build, a checks capture, a shots run), and a web Pod a release
   replaces finishes that work as any Pod does.
-- **the conductor** (`PROCESS_ROLE=conductor`, a Deployment of its own, one
-  replica) stands for leader and runs the leader's work. It listens on HTTP
-  too, for what is addressed to its own Pod (a shots worker calls the Pod
-  that runs its run), but no Service sends it people's requests.
+- **the conductor** (`PROCESS_ROLE=conductor`, a Deployment of its own, two
+  replicas in production) runs the workflow (docs/workflows.md) on every
+  replica, with no leader lock, and stands for leader for the leader's
+  remaining work. It listens on HTTP too, for its own loopback calls (the
+  bot's platform tools) and probes, but no Service sends it people's
+  requests, and it starts none of the caches they read.
 - **all** (no `PROCESS_ROLE`) is both, as before: docker-compose, local
   development, tests, staging previews, and the chart with the switch off.
 
@@ -88,6 +90,8 @@ is one for its whole life, so what a follower could not do had to move:
   imported-PR head sync, the proposal measurement) check every process.
 - **A conductor does not say a release is live**: only a process that serves
   requests records the merges it carries as running.
+- **A web process decides nothing** (docs/workflows.md, "Running it"): it runs
+  no pipeline slot, and a route waits for a conductor's outcome.
 
 What already worked across processes (docs/plans/draining-releases.md) is
 what makes the split safe: every process registers what it holds, stops reach
@@ -114,7 +118,10 @@ as web; off, one Deployment does both, as before. The conductor's Pods keep
 the platform's `component` label, so the network policies that admit the
 platform admit them, in the chart and outside it; the Service and the
 PodDisruptionBudget select `social.usernode.io/serves-requests: "true"`, which
-only the serving Pods carry. The Service is in Argo CD sync wave 1: its
+only the serving Pods carry; the conductor has a budget of its own
+(`maxUnavailable: 1`), spreads its replicas across nodes, and serves the
+workflow's metrics to the chart's PodMonitor (docs/kubernetes-operations.md,
+"Workflow alerts"). The Service is in Argo CD sync wave 1: its
 selector changes only after the Deployments are healthy, so the release that
 first requires the label never leaves it with no labelled Pod Ready. (Applied
 without Argo, all at once, that first release would.) The platform

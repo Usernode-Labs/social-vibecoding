@@ -301,3 +301,21 @@ test('the About pane still renders the pill slot EMPTY, as app.js\'s host', () =
     'no pill variant class: those are app.js\'s to write');
   assert.match(html, /id="drawer-row-platform-version"/);
 });
+
+test('Settings → About ends with the terms and the privacy notice (#5094, #5106)', () => {
+  // Under the version rows, so the declared checks' `~` chains over those
+  // rows still hold; and the Homeroom app shows this same screen, which is
+  // how the app's Settings carries both too.
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const { AboutSection } = loadTsx(`${SETTINGS_DIR}/sections/about.tsx`);
+  const html = renderToHtml(createElement(AboutSection, {}));
+  const versions = html.indexOf('id="drawer-row-native-app-version"');
+  const legal = html.indexOf('id="settings-about-legal"');
+  assert.ok(versions > 0 && legal > versions, 'the Legal block comes after the version rows');
+  assert.match(html, /<button id="settings-about-terms" type="button"[^>]*>Terms<\/button>/);
+  // The privacy notice opens in a new tab; its address arrives with the
+  // options (effects do not run here), so the first render has no href.
+  assert.match(html, /<a id="settings-about-privacy" target="_blank" rel="noopener noreferrer"[^>]*>Privacy notice<\/a>/);
+  assert.match(aboutTsx, /const privacy = useWaitlistOptions\(\)\?\.privacy_link \|\| undefined;/);
+  assert.match(aboutTsx, /const show = settings\?\.showTermsSheet;/);
+});
