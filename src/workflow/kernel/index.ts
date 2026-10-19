@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { processNext } from './pipeline.ts';
 import { fireDueTimers, nextDeadlineMs, purge } from './timers.ts';
 import { claim, concurrencyOf, dueKinds, execute, nextDueMs } from './services.ts';
-import { Signals, append, waitForInstance, waitForOutcome } from './stream.ts';
+import { Signals, append, refuseIfPending, waitForInstance, waitForOutcome } from './stream.ts';
 import type { AppendOptions } from './stream.ts';
 import { release } from './inspect.ts';
 import type { Machine } from './machine.ts';
@@ -186,6 +186,10 @@ export function createRuntime(opts: RuntimeOptions) {
     waitForEvent(eventId: number, waitMs: number): Promise<EventOutcome> {
       return waitForOutcome(opts.pool, listening ? signals : null, eventId, waitMs, null);
     },
+
+    // An event still undecided once its caller stopped waiting, refused as
+    // `reason` so it is never applied later (stream.ts refuseIfPending).
+    refuseIfPending: (eventId: number, reason: string) => refuseIfPending(opts.pool, eventId, reason),
 
     // Wait up to waitMs for an instance to reach a state `done` accepts, as
     // a route that waits for a later event (a work result) to move it on.

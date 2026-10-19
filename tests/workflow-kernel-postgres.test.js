@@ -1103,7 +1103,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     } finally {
       await pool.query(`DELETE FROM wf_settings WHERE key = 'ownership_mode'`);
     }
-    assert.deepEqual(Object.keys(await inspect.problems(pool)).sort(), ['flagged', 'overdueDeadlines', 'waiting', 'work']);
+    assert.deepEqual(Object.keys(await inspect.problems(pool)).sort(), ['flagged', 'overdueDeadlines', 'pendingOldestSeconds', 'unclaimed', 'waiting', 'work']);
   });
 
   await t.test('K17 appendAndWait answers with the outcome, or pending within its budget', async () => {
@@ -1131,6 +1131,33 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.deepEqual([fresh.status, fresh.reason], ['rejected', 'not_positive']);
     assert.ok(Date.now() - started < 3000, 'answered by notification, not by the budget');
     await r.stop();
+  });
+
+  await t.test('K17 an event its caller gave up on is refused, never applied later; one being decided keeps its answer', async () => {
+    await create('k17r');
+    const waiting = await rt.appendAndWait(machine, 'k17r', { type: 'Add', payload: { n: 2 } },
+      { requestKey: 'k17r-a', source: { kind: 'route' }, actor: 'user:1', waitMs: 100 });
+    assert.equal(waiting.status, 'pending');
+    const refused = await rt.refuseIfPending(waiting.eventId, 'expired');
+    assert.deepEqual([refused.status, refused.reason], ['rejected', 'expired']);
+    await rt.drain();
+    assert.equal((await inst('k17r')).data.count, 0, 'never applied after it was refused');
+    // The same key may be asked again: a refusal writes no receipt.
+    await route('k17r', 'Add', { n: 2 }, { requestKey: 'k17r-a' });
+    await rt.drain();
+    assert.equal((await inst('k17r')).data.count, 2);
+
+    // A slot deciding it at that moment holds its row: the refusal waits, and
+    // finds it decided.
+    const slow = await rt.appendAndWait(machine, 'k17r', { type: 'Add', payload: { n: 3, sleepMs: 800 } },
+      { requestKey: 'k17r-b', source: { kind: 'route' }, actor: 'user:1', waitMs: 50 });
+    assert.equal(slow.status, 'pending');
+    const deciding = rt.drain();
+    await sleep(200);
+    const answer = await rt.refuseIfPending(slow.eventId, 'expired');
+    await deciding;
+    assert.equal(answer.status, 'accepted', 'the decision under way, not a refusal');
+    assert.equal((await inst('k17r')).data.count, 5);
   });
 
   await t.test('admin reads: state counts, instance list and timeline', async () => {

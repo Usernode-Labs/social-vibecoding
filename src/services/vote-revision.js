@@ -33,8 +33,11 @@
 const log = require('./logger');
 
 // How many times the head move is asked of the proposal machine while it
-// answers `pending` (the deciding process slow or restarting).
-const MOVE_ATTEMPTS = 4;
+// did not decide it in time (the conductor slow or restarting): refused as
+// `expired`, which changed nothing (platform.ts refuses a move nobody
+// decided once its caller stops waiting).
+const MOVE_ATTEMPTS = 3;
+const undecided = (out) => !!out && (out.status === 'pending' || out.reason === 'expired');
 
 /**
  * Retire the votes counted against `session` and pin it to `commitHash`.
@@ -64,19 +67,18 @@ async function retireVotesAfterAuthoredPush(pool, session, commitHash) {
     'SELECT reviewed_head_sha, app_id FROM chat_sessions WHERE id = $1', [sessionId]);
   const from = now?.reviewed_head_sha ? String(now.reviewed_head_sha).toLowerCase() : null;
   if (!now || !head || from === head) return { bumped: false, epoch: null, retired: 0, priorYes: [] };
-  // An answer the machine has not given in time is not a "nothing moved":
-  // the event carries a deadline, so it will be refused as expired and the
-  // votes would never be retired. Each try is a fresh event (a fresh
-  // request key), so asking again is safe; a head another pass moved
-  // meanwhile is refused on `from`, as above.
+  // A move the machine did not decide in time is not a "nothing moved": it
+  // was refused as expired, and the votes would never be retired. Each try
+  // is a fresh event (a fresh request key), so asking again is safe; a head
+  // another pass moved meanwhile is refused on `from`, as above.
   let moved = null;
   for (let attempt = 0; attempt < MOVE_ATTEMPTS; attempt++) {
     moved = await require('../workflow/platform.ts').moveReviewHead({
       sessionId, appId: now.app_id, column: 'reviewed', from, to: head, keepVotes: false, reason: 'authored-push',
     });
-    if (moved.status !== 'pending') break;
+    if (!undecided(moved)) break;
   }
-  if (moved.status === 'pending') {
+  if (undecided(moved)) {
     log.error('vote-revision', 'The proposal machine never answered the head move; the votes on the old version still count', {
       sessionId, from, to: head, attempts: MOVE_ATTEMPTS,
     });

@@ -378,9 +378,10 @@ async function syncOne({ config, pool, candidate, wait = true }, deps = defaultD
       head: String(candidate.head).toLowerCase(), keys: candidate.keys, wait,
     });
     if (out.status === 'rejected') return { synced: false, why: out.reason === 'already_tried' ? 'already_tried' : (out.reason || 'claimed') };
-    // Recorded and not decided yet (the machine slow or restarting) is not a
-    // fault: it says so.
-    if (out.status === 'pending') return { synced: false, why: 'pending' };
+    // Recorded and not decided yet (the conductor slow or restarting): a
+    // sync carries no deadline, so it still runs, and its checks run again
+    // after it. Asked for, not refused.
+    if (out.status === 'pending') return { synced: false, requested: true, why: 'pending' };
     if (out.status !== 'accepted' && out.status !== 'replayed') return { synced: false, why: 'threw' };
     if (!wait) return { synced: false, requested: true, why: null };
     const done = out.lastSync;

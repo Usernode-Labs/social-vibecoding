@@ -1302,8 +1302,14 @@ async function proposalEvent(type: string, payload: Record<string, unknown>, o: 
     source: o.source || sys(type), actor: o.actor ?? undefined, appId: o.appId ?? undefined,
   };
   if (o.db) return runtime!.append(m, proposalKey(o.sessionId), event, { ...opts, db: o.db });
-  return runtime!.appendAndWait(m, proposalKey(o.sessionId), event,
+  const out = await runtime!.appendAndWait(m, proposalKey(o.sessionId), event,
     { ...opts, waitMs: o.waitMs ?? (o.deadlineMs ? o.deadlineMs + 3000 : 5000) });
+  // A move with a deadline is answered definitely: one no conductor decided
+  // in time is refused now, as its machine would refuse it past its deadline,
+  // so a caller that tells a person "nothing changed" is right, and it is
+  // never applied once that was said.
+  if (o.deadlineMs && out.status === 'pending') return (await runtime!.refuseIfPending(out.eventId, 'expired')) ?? out;
+  return out;
 }
 
 // The proposal machine's instance of a session: its state and data, or null.

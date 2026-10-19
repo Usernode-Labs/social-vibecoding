@@ -221,6 +221,35 @@ export class Signals {
   }
 }
 
+// An event whose answer must be definite (a move with a deadline, whose
+// caller tells a person "nothing changed" when it was not decided in time):
+// once the caller stops waiting, it is refused as `reason` if no slot has
+// decided it, so it is never applied after its caller gave up on it. The
+// update waits on a slot that is deciding it now (the slot holds the event's
+// row lock until it commits) and then finds it decided: either way the
+// outcome read afterwards is the one that holds. Refused, it writes no
+// receipt, as any rejection. A lock it cannot have within `lockTimeoutMs`
+// leaves the event pending, and the caller's answer with it.
+export async function refuseIfPending(pool: Pool, eventId: number, reason: string, lockTimeoutMs = 10000): Promise<EventOutcome | null> {
+  const client = await pool.connect();
+  try {
+    // The kernel's own write of an event, as the pipeline's: its marker.
+    await client.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'; SET LOCAL lock_timeout = '${Math.max(0, Math.floor(lockTimeoutMs))}ms'`);
+    await client.query(
+      `WITH refused AS (
+         UPDATE wf_events SET status = 'processed', result = 'rejected', reason = $2, processed_at = clock_timestamp()
+          WHERE id = $1 AND status = 'pending' RETURNING id)
+       SELECT pg_notify('wf_outcome', id::text) FROM refused`, [eventId, reason]);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if ((err as { code?: string }).code !== '55P03') throw err;
+  } finally {
+    client.release();
+  }
+  return readOutcome(pool, eventId);
+}
+
 // Wait up to waitMs for the event's outcome; 'pending' means the caller
 // answers 202 with the request key, and a retry with that key replays.
 // With a watch (started before the append), the outcome is read once its

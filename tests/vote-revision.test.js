@@ -113,12 +113,13 @@ test('a move the machine refuses (another pass got there first) bumps nothing', 
   assert.equal(moves.length, 1);
 });
 
-// The machine runs in another process: an answer it has not given within
-// the wait is `pending`, and the event's deadline means it will be refused
-// as expired. That is not "nothing moved": the move is asked again.
-test('a move the machine has not answered yet is asked again until it lands', async () => {
+// The machine runs in another process: a move it did not decide in time is
+// refused as expired (platform.ts refuses it once the wait runs out; a
+// `pending` is one it could not refuse yet). That is not "nothing moved":
+// the move is asked again.
+test('a move the machine did not decide in time is asked again until it lands', async () => {
   const pool = makePool({ counted: [{ user_id: 8, vote: 'yes' }], epoch: 6 });
-  moveQueue = [{ status: 'pending', requestKey: 'k1' }, { status: 'pending', requestKey: 'k2' }];
+  moveQueue = [{ status: 'rejected', reason: 'expired', requestKey: 'k1' }, { status: 'pending', requestKey: 'k2' }];
   const r = await retireVotesAfterAuthoredPush(pool, session, HEAD);
   assert.equal(r.bumped, true, 'the third ask landed');
   assert.equal(r.epoch, 6);
@@ -129,10 +130,10 @@ test('a move the machine has not answered yet is asked again until it lands', as
 
 test('a move the machine never answers is asked a bounded number of times', async () => {
   const pool = makePool({ counted: [{ user_id: 8, vote: 'yes' }] });
-  moveReply = { status: 'pending', requestKey: 'k' };
+  moveReply = { status: 'rejected', reason: 'expired', requestKey: 'k' };
   const r = await retireVotesAfterAuthoredPush(pool, session, HEAD);
   assert.deepEqual(r, { bumped: false, epoch: null, retired: 0, priorYes: [] });
-  assert.equal(moves.length, 4, 'once and three more times, then given up (loudly)');
+  assert.equal(moves.length, 3, 'once and twice more, then given up (loudly)');
 });
 
 test('retireAndRecheck announces once and asks the prior Yes voters back', async () => {

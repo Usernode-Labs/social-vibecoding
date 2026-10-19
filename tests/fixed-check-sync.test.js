@@ -329,9 +329,6 @@ test('level with main, conflicting, a moved head, or refused by the proposal mac
     [{ measured: { error: 'mirror down' } }, {}, 'unmeasured'],
     [{ answer: { status: 'rejected', reason: 'already_tried' } }, {}, 'already_tried'],
     [{ answer: { status: 'rejected', reason: 'busy' } }, {}, 'busy'],
-    // Recorded, not decided yet (the machine in another process, slow or
-    // restarting): said as such, not as a fault.
-    [{ answer: { status: 'pending', requestKey: 'k' } }, {}, 'pending'],
     [{ answer: { status: 'faulted', reason: 'boom' } }, {}, 'threw'],
     [{}, { current: fullRow({ checks_commit_sha: NEW_HEAD }) }, 'head_moved'],
     [{}, { current: fullRow({ status: 'merged' }) }, 'gone'],
@@ -341,6 +338,11 @@ test('level with main, conflicting, a moved head, or refused by the proposal mac
     assert.deepEqual(out, { synced: false, why }, why);
     if (!opts.answer) assert.equal(calls.sync.length, 0, `${why}: never asked`);
   }
+  // Recorded, not decided yet (the conductor slow or restarting): a sync has
+  // no deadline, so it still runs: asked for, not refused, and not a fault.
+  const { deps } = makeDeps({ answer: { status: 'pending', requestKey: 'k' } });
+  const out = await subject.syncOne({ config: {}, pool: makePool({}), candidate: CANDIDATE }, deps);
+  assert.deepEqual(out, { synced: false, requested: true, why: 'pending' });
 });
 
 test('a sync that pushes nothing reports it and starts no run', async () => {

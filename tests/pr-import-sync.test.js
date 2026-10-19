@@ -271,7 +271,8 @@ function recordingPool({ pinnedHead = SESSION_HEAD, epoch = 0, summaryStale, pen
     moves,
     move(p) {
       moves.push(p);
-      if (moves.length <= pending) return { status: 'pending', requestKey: `k${moves.length}` };
+      // Not decided in time: refused as expired, or still pending.
+      if (moves.length <= pending) return moves.length % 2 ? { status: 'rejected', reason: 'expired', requestKey: `k${moves.length}` } : { status: 'pending', requestKey: `k${moves.length}` };
       if (p.from !== pinnedHead) return { status: 'rejected', reason: 'head_moved' };
       const reply = { state: 'in_review', status: 'promoted', epoch: epoch + (p.keepVotes ? 0 : 1) };
       if (summaryStale !== undefined) reply.prSummaryStale = summaryStale;
@@ -697,7 +698,8 @@ test('applyHeadChange: a move the machine never answers is asked a bounded numbe
       config: {}, pool, session: { ...SESSION }, newHead: NEW, oldHead: SESSION_HEAD, notify: false,
     });
     assert.equal(res.applied, false);
-    assert.equal(pool.moves.length, 4, 'once and three more times, then left for the next pass');
+    assert.equal(res.notDecided, true, 'said as not decided, not as another pass\'s');
+    assert.equal(pool.moves.length, 3, 'once and twice more, then left for the next pass');
   });
 });
 
