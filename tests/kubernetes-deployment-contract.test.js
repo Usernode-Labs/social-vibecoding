@@ -31,17 +31,42 @@ test('Kubernetes hosted-app evidence image declares a numeric non-root user', ()
 // it copies from another stage, what it mounts, and its instructions.
 const DEPENDENCY_MOUNT = '--mount=type=bind,from=asset-deps,source=/build/frontend/node_modules,target=/build/frontend/node_modules,rw';
 
-// The Dockerfile as logical instructions, one per line, in one spelling:
-// continuations joined (a backslash at the end of a line, with or without
-// trailing blanks), every run of spaces and tabs one space, comment and blank
-// lines dropped. The guards below read this, so a formatting-only edit to the
-// Dockerfile changes nothing they see.
+// The Dockerfile as logical instructions, one per line, in one spelling, the
+// way Docker reads it (https://docs.docker.com/reference/dockerfile/#format):
+//
+// - comment lines (a `#` first on the physical line) are dropped FIRST, one
+//   physical line at a time. A comment takes no continuation, so a comment
+//   ending in a backslash does not swallow the instruction after it, and a
+//   comment inside a continued instruction does not end it;
+// - then continuations are joined: a backslash at the end of a line, with or
+//   without trailing blanks;
+// - every run of spaces and tabs becomes one space, and blank lines go.
+//
+// So a formatting-only edit changes nothing the guards see. What this does
+// NOT parse is refused rather than guessed at: parser directives (an
+// `escape=` changes what a continuation is), heredocs, and a continuation
+// left open at the end of the file. It also folds blanks inside quotes,
+// which is the safe direction: a quoted command no longer matches the exact
+// instruction the sibling guard expects.
 function dockerInstructions(dockerfile) {
-  return dockerfile
+  const physical = String(dockerfile).split(/\r?\n/);
+  for (const line of physical) {
+    assert.doesNotMatch(line, /^\s*#\s*(?:escape|syntax|check)\s*=/i,
+      `parser directives are not read by this test's Dockerfile reader: ${line}`);
+  }
+  const joined = physical
+    .filter((line) => !/^\s*#/.test(line))
+    .join('\n');
+  assert.doesNotMatch(joined, /\\[ \t]*(?:\r?\n[ \t]*)*$/, 'a continuation left open at the end of the Dockerfile');
+  const instructions = joined
     .replace(/\\[ \t]*\r?\n/g, ' ')
-    .split(/\r?\n/)
+    .split('\n')
     .map((line) => line.replace(/[ \t]+/g, ' ').trim())
-    .filter((line) => line && !line.startsWith('#'));
+    .filter((line) => line);
+  for (const line of instructions) {
+    assert.doesNotMatch(line, /<<-?\s*["']?[A-Za-z_]/, `heredocs are not read by this test's Dockerfile reader: ${line}`);
+  }
+  return instructions;
 }
 
 function dockerStages(dockerfile) {
@@ -228,6 +253,28 @@ test('the sibling-stage guard refuses a mount that would make one asset step wai
   for (const run of cases) {
     assert.throws(() => assertSiblingStages(withRun(run)), /shell-prerender must run exactly/, run);
   }
+});
+
+test('a comment ending in a backslash cannot hide an instruction from the sibling guard', () => {
+  // Review of #5518, round 3: joining continuations before dropping comments
+  // read the comment and the line after it as one comment. Docker does not:
+  // a comment takes no continuation, so the instruction after it runs. Here
+  // that instruction makes the prerender wait for the bundle.
+  const dockerfile = read('Dockerfile.kubernetes').replace(/\r\n/g, '\n');
+  const head = 'FROM shell-src AS shell-prerender\n';
+  assert.ok(dockerfile.includes(head));
+  const hide = (instruction) => dockerfile.replace(head, `${head}# Explanatory comment ending with a backslash \\\n${instruction}\n`);
+  assert.throws(() => assertSiblingStages(hide('COPY --from=shell-bundle /build/public /review-sibling-copy')),
+    /shell-prerender must take nothing from another stage/);
+  assert.throws(() => assertSiblingStages(hide(`RUN ${DEPENDENCY_MOUNT} --mount=type=bind,from=shell-bundle,target=/x true`)),
+    /shell-prerender runs one step/);
+  // The comment itself, and one inside a continued instruction, change nothing.
+  assertSiblingStages(dockerfile.replace(head, `${head}# Explanatory comment ending with a backslash \\\n`));
+  assertSiblingStages(dockerfile.replace(`${DEPENDENCY_MOUNT} \\\n`, `${DEPENDENCY_MOUNT} \\\n  # the command \\\n`));
+  // Syntax the reader does not parse is refused, not guessed at.
+  assert.throws(() => dockerInstructions(`# escape=\`\n${dockerfile}`), /parser directives/);
+  assert.throws(() => dockerInstructions(dockerfile.replace(head, `${head}RUN <<EOF\ntrue\nEOF\n`)), /heredocs/);
+  assert.throws(() => dockerInstructions(`${dockerfile.trimEnd()} \\\n`), /continuation left open/);
 });
 
 test('Kubernetes platform image ships every directory the server reads beside src/', () => {
