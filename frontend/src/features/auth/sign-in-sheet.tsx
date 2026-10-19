@@ -28,8 +28,11 @@
  *            "Create my account", with the code note under it.
  *
  * Continue with Apple and Continue with Google come first when an admin has
- * set them up (`providers`, from the waitlist options). Either leaves
- * the page for the provider (GET /api/auth/oauth/:provider/start) and comes
+ * set them up (`providers`, from the waitlist options), then the terms line
+ * (either makes an account in one tap), an "or", the email field with
+ * Continue with email, which sends the code from there, and "Use a password"
+ * (#5257: one "Continue to Homeroom" sheet for new and returning people).
+ * Either provider leaves the page for the provider (GET /api/auth/oauth/:provider/start) and comes
  * back to it signed in, or (`resume`) to this sheet: at
  *
  *   username POST /api/auth/oauth/finish, when the provider's sign-in made
@@ -64,9 +67,9 @@
  * Google when an admin has set them up (the same buttons as the first step's
  * otherwise), then "Already on Homeroom? Sign in with email", for an account
  * made before; one made by email from here is not a private member and
- * waits in the queue. That step still leads on to "Sign in with a password".
+ * waits in the queue. That step still leads on to "Use a password".
  *
- * "Sign in with a password" is a step of its own here too:
+ * "Use a password" is a step of its own here too:
  *
  *   password POST /api/auth/login with a username or an email, the sign-in
  *            screen's own exchange (passwordSignIn in ./shared.ts).
@@ -83,7 +86,9 @@
  * Email code | Password (#5258), in place of the small links that used to
  * lead from one to the other. The password and reset steps say nothing of
  * the terms: neither can make an account, and the account agreed to them
- * when it was made. Every step that can make one still says it.
+ * when it was made. Nor does the email step there, since sending a code
+ * makes nothing (#5257): the code step, whose right code can, says it.
+ * Every step that can make one still says it.
  *
  * A waitlist "you're in" link opens the sheet already at work
  * (`releaseToken`): the address its token names filled in and the code
@@ -401,10 +406,11 @@ export { phoneE164 } from './phone-input';
  * 7 October). Where the sheet only makes an account (an invite's Join) it is
  * the terms line alone, since continuing is agreeing
  * (tests/terms-first-run.test.js). Where it may be for an account somebody
- * has, it is "Sign in with a password" right under the button, then the
- * terms line: Sign in, the story's Continue (#5251: one button for new and
- * returning people, so the password way in is here now that the story has
- * no Sign in of its own), and the other ways after an invite's phone step.
+ * has, it is "Use a password", and no terms under the email, since sending a
+ * code makes nothing (#5257; the code step says them): Sign in, the story's
+ * Continue (#5251: one button for new and returning people, so the password
+ * way in is here now that the story has no Sign in of its own), and the
+ * other ways after an invite's phone step.
  */
 export function firstStepLine(from: 'invite' | 'story' | 'signin', phone = false): 'terms' | 'password' {
   return from === 'invite' && !phone ? 'terms' : 'password';
@@ -1410,21 +1416,24 @@ export function SignInSheet({
   const methodSwitch = hasMethodSwitch(step, from, phone);
   const toStep = (next: Step) => { setError(null); setDetails(null); setResetSent(false); setStep(next); };
 
-  const oneLine = firstStepLine(from, phone) === 'password' && !methodSwitch ? (
-    <>
-      <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
-        <a
-          href="#login"
-          data-sign-in-sheet-password=""
-          onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('password'); }}
-          className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
-        >
-          {t('auth:signInSheet.withPassword')}
-        </a>
-      </p>
-      <TermsNotice />
-    </>
-  ) : <TermsNotice />;
+  // The way to a password, where the sheet may be for an account somebody
+  // has: under the first step's email, and nothing else under it (#5257).
+  const passwordLink = firstStepLine(from, phone) === 'password' ? (
+    <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
+      <a
+        href="#login"
+        data-sign-in-sheet-password=""
+        onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('password'); }}
+        className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
+      >
+        {t('auth:signInSheet.withPassword')}
+      </a>
+    </p>
+  ) : null;
+  // Under the email step's button: the terms only where the sheet only makes
+  // an account (an invite's Join). Elsewhere sending a code makes nothing;
+  // the code step, whose right code can, says them (#5257).
+  const emailFoot = firstStepLine(from, phone) === 'terms' ? <TermsNotice /> : null;
 
   // Apple and Google, in the order the server lists them: the first step's
   // own, or under the invite's phone step past an "or".
@@ -1561,13 +1570,28 @@ export function SignInSheet({
         {step === 'choose' ? (
           <div className="mt-5 flex flex-col gap-2.5">
             {providerButtons}
-            <button type="button" data-sign-in-provider="email" disabled={busy} className={EMAIL_BUTTON} onClick={() => { setError(null); setStep('email'); }}>
-              {t('auth:signInSheet.continueWithEmail')}
-            </button>
+            {/* Apple and Google make an account in one tap, so their terms sit under them (#5257). */}
+            <TermsNotice />
+            <div data-sign-in-sheet-or="" className="flex items-center gap-3 text-[13px] text-zinc-500 dark:text-zinc-400">
+              <span aria-hidden="true" className="h-px flex-1 bg-[color:var(--app-sheet-line)]" />
+              {t('auth:signInSheet.or')}
+              <span aria-hidden="true" className="h-px flex-1 bg-[color:var(--app-sheet-line)]" />
+            </div>
+            <form className="flex flex-col gap-2.5" onSubmit={(e) => { e.preventDefault(); void requestCode(firstField.current?.value || ''); }}>
+              <div className={FIELD_GROUP}>
+                <div className={FIELD}>
+                  <label htmlFor="sign-in-sheet-email" className={LABEL}>{t('auth:signInSheet.email.label')}</label>
+                  <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="go" defaultValue={email} className={INPUT} {...HANDLE_FIELD} />
+                </div>
+              </div>
+              <button type="submit" data-sign-in-provider="email" disabled={busy} className={EMAIL_BUTTON} {...HOLD_FIELD_FOCUS}>
+                {busy ? t('auth:signInSheet.email.sending') : t('auth:signInSheet.continueWithEmail')}
+              </button>
+            </form>
             {phone ? (
               <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>{t('auth:signInSheet.toPhone')}</button>
             ) : null}
-            {oneLine}
+            {passwordLink}
           </div>
         ) : null}
 
@@ -1580,7 +1604,7 @@ export function SignInSheet({
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.email.sending') : t('auth:signInSheet.email.send')}</button>
-            {oneLine}
+            {emailFoot}
             {providers.length ? (
               <button type="button" className={QUIET} onClick={() => { setError(null); setStep('choose'); }}>{t('auth:signInSheet.email.otherWays')}</button>
             ) : null}
