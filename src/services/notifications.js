@@ -1545,22 +1545,18 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
   // with no session behind it (NULL cs.status) evaluates to false and is
   // kept, rather than to NULL and dropped by the NOT. The saved section
   // leaves the clause off (see the #4769 note above this function).
-  // #5461: the news that the change went live is listed until it is read,
-  // then leaves like the asks did — a read note somebody taps hours later
-  // opens the same merged page. It reads the stored n.read_at, which is how
-  // the bell marks these rows read; they are not in DECIDED_ASK_SETTLED_SQL,
-  // so there is no derived read state for them. cs.status = 'merged' also
-  // covers a change still going live ('merging' is only derived in
-  // LIVE_ROW_COLUMNS_SQL). Unread rows are listed and still count, so the
-  // voter is still told; saved rows stay in the Saved section; the exact
+  // #5487: the news that the change went live (pr_merged to the author,
+  // voted_change_merged to the voters) leaves with the asks, unread or read —
+  // it only ever opened a merged page, and the phone push announced the
+  // merge. cs.status = 'merged' also covers a change still going live
+  // ('merging' is only derived in LIVE_ROW_COLUMNS_SQL). Rows with no
+  // session behind it and messages people wrote are not in the kinds and
+  // are never hidden; saved rows stay in the Saved section; the exact
   // lookup (a push opened) is not filtered.
   let mergedHiddenClause = '';
   if (!savedOnly) {
     params.push(MERGED_HIDDEN_KINDS);
     mergedHiddenClause = `AND NOT (n.kind = ANY($${params.length}::text[]) AND cs.status IS NOT DISTINCT FROM 'merged')`;
-    params.push(MERGED_READ_HIDDEN_KINDS);
-    mergedHiddenClause += ` AND NOT (n.kind = ANY($${params.length}::text[]) AND n.read_at IS NOT NULL
-              AND cs.status IS NOT DISTINCT FROM 'merged')`;
   }
   params.push(limit);
   const limitIdx = params.length; // last param is the limit
@@ -1831,11 +1827,8 @@ const { settleVoteDigests } = changeNotifications;
 // it, so once that change has MERGED the rows leave the bell's list instead
 // of lingering as read entries somebody taps and finds a merged page behind.
 // It is every ask the decision settles plus "ready to try" itself: a merged
-// change is decided, so the vote it asked for is already in. The rows that
-// say the change went live (pr_merged to its author, voted_change_merged to
-// its voters) are not asks; they stay until read (MERGED_READ_HIDDEN_KINDS
-// below). A closed change keeps its rows in the
-// list, where "ready to try" reads Closed.
+// change is decided, so the vote it asked for is already in. A closed change
+// keeps its rows in the list, where "ready to try" reads Closed.
 // "One story": the requester's own "ready to try" from Homeroom bot
 // (build_ready) too, once settleDecidedChange has linked it to its change.
 // #5482: the remaining kinds that name a change are not asks, but tapping
@@ -1843,23 +1836,21 @@ const { settleVoteDigests } = changeNotifications;
 // (proposal_vote), testing that could not run (check_failed), the session's
 // finish or stall (session_done, session_stalled), a headless run finished
 // (auto_solve_done), work a connector put up (connector_submitted) and a
-// spec shared privately (spec_shared). They join the list: once the change
-// has merged, the bell keeps only the news that it went live. Rows with no
-// session behind them and messages people wrote (mention, reply, reaction,
-// thread_reply) are not in this list and are never hidden.
+// spec shared privately (spec_shared). They join the list.
+// #5487: so does the news that the change went live (pr_merged to its
+// author, voted_change_merged to its voters), unread or read — the phone
+// push announced the merge and tapping the row only opened a merged page.
+// The change's own page and the hub's Recently live still say it went live;
+// a saved row stays in the Saved section and a push-opened one still
+// resolves through the exact lookup. Rows with no session behind them and
+// messages people wrote (mention, reply, reaction, thread_reply) are not in
+// this list and are never hidden.
 const MERGED_HIDDEN_KINDS = Object.freeze([
   ...DECIDED_ASK_KINDS, 'change_ready', 'build_ready',
   'proposal_vote', 'check_failed', 'session_done', 'session_stalled',
   'auto_solve_done', 'connector_submitted', 'spec_shared',
+  'pr_merged', 'voted_change_merged',
 ]);
-
-// #5461: the news that a change went live is listed until it is read, then
-// leaves the bell's list like the asks above did — a read note somebody
-// taps hours later only opens a merged page again. Unread rows are listed
-// and counted, so the voter is still told it went live; the Saved section
-// and the exact lookup skip the filter, so a saved row and a push-opened
-// one still resolve.
-const MERGED_READ_HIDDEN_KINDS = Object.freeze(['pr_merged', 'voted_change_merged']);
 
 async function settleDecidedChange(pool, sessionId, { status = null, push = true } = {}) {
   const touched = await changeNotifications.settleDecidedChange(pool, sessionId, { status });
@@ -2200,7 +2191,6 @@ module.exports = {
   refreshFiledMessage,
   DECIDED_ASK_KINDS,
   MERGED_HIDDEN_KINDS,
-  MERGED_READ_HIDDEN_KINDS,
   markReadForAction,
   markReadForAgentSession,
   markReadForApp,
