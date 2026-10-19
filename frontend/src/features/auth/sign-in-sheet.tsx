@@ -73,7 +73,10 @@
  *   forgot   "Forgot password?", inside the sheet (#5258): POST
  *            /api/auth/password-reset/request emails a link for choosing a
  *            new password, the sign-in screen's own reset (#login/forgot),
- *            without leaving for that screen and its own Back.
+ *            without leaving for that screen and its own Back. One "‹ Sign
+ *            in" above its title goes back (#5259); "Sign in with a code
+ *            instead" beside the button skips the password altogether; and
+ *            the note about mail that never comes shows once a link went.
  *
  * Where the sheet may be for an account somebody has (`firstStepLine`
  * 'password'), the email and password steps carry a switch at the top,
@@ -167,7 +170,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 
 import { PLANE_FILL } from '@/components/ui/grouped-list';
-import { AppleIcon, GoogleIcon, SpinnerArcIcon, XIcon } from '@/components/ui/icons';
+import { AppleIcon, ChevronLeftIcon, GoogleIcon, SpinnerArcIcon, XIcon } from '@/components/ui/icons';
 import { PasswordInput } from '@/components/ui/password-input';
 
 import { KB_OPEN_CLASS } from '../../lib/keyboard-open';
@@ -1517,6 +1520,11 @@ export function SignInSheet({
         className={`platform-kb-sheet absolute inset-x-0 bottom-0 max-h-[92%] overflow-y-auto overscroll-contain rounded-t-[20px] ${PLANE_FILL} shadow-[inset_0_0_0_1px_var(--app-sheet-line)] px-4 pt-2 pb-[max(2rem,env(safe-area-inset-bottom))] transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none md:inset-x-auto md:left-1/2 md:bottom-auto md:top-1/2 md:w-full md:max-w-md md:rounded-[20px] md:pb-6 ${panelState}`}
       >
         <div className="mx-auto h-1 w-9 rounded-full bg-[color:var(--border)] md:hidden" aria-hidden="true" />
+        {step === 'forgot' ? (
+          <button type="button" data-sign-in-sheet-forgot-back="" className={`${QUIET} mt-2 -ml-1 flex items-center gap-0.5`} onClick={() => { identifierPrefill.current = typedIdentifier.current; toStep('password'); }}>
+            <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />{t('auth:signInSheet.forgot.back')}
+          </button>
+        ) : null}
         {stepNumber ? (
           <div data-sign-in-sheet-progress={stepNumber} className="mt-3 flex items-center gap-3">
             <div className="flex flex-1 gap-1.5" aria-hidden="true">
@@ -1701,8 +1709,12 @@ export function SignInSheet({
               <p role="status" data-sign-in-sheet-reset-sent="" className="text-[14px] font-medium text-green-700 dark:text-green-400">{t('auth:signInSheet.forgot.sent')}</p>
             ) : null}
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.forgot.sending') : t('auth:signInSheet.forgot.submit')}</button>
-            <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.forgot.support')}</p>
-            <button type="button" data-sign-in-sheet-forgot-back="" className={`${QUIET} self-start`} onClick={() => { identifierPrefill.current = typedIdentifier.current; toStep('password'); }}>{t('auth:signInSheet.forgot.back')}</button>
+            {/* The way out that needs no password at all (#5259): the email step, with the address carried over. */}
+            <button type="button" data-sign-in-sheet-forgot-code="" className={MAIL_BUTTON} onClick={() => { const typed = (resetField.current?.value || '').trim(); if (typed.includes('@')) setEmail(typed.toLowerCase()); toStep('email'); }}>{t('auth:signInSheet.forgot.withCode')}</button>
+            {/* Only once a link went: before then nobody has a problem to read about (#5259). */}
+            {resetSent ? (
+              <p data-sign-in-sheet-reset-support="" className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.forgot.support')}</p>
+            ) : null}
           </form>
         ) : null}
 
