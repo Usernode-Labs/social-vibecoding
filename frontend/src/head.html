@@ -460,6 +460,45 @@
     })();
   </script>
   <script>
+    // The first paint's boxes at the height this device last drew them (#10,
+    // 19 Oct 2026). The prerendered Home is skeletons and the desktop sidebar
+    // has no community rows yet, and the real page used to land at other
+    // heights and push everything under it down (a layout shift of 0.0585 on
+    // every cold desktop load). Once they have drawn, their heights are kept
+    // per window size and text size (frontend/src/lib/first-paint-reserve.ts,
+    // which computes the same key); here they go onto <html> before the first
+    // paint, and app.css holds each box at its height for as long as it is
+    // still a skeleton. Display-only, and only on a device that was signed in
+    // (the session snapshot), where Home is what comes. Outside React's body
+    // tree, like `.dark`.
+    (function () {
+      try {
+        if (!localStorage.getItem('usernode.session.v1')) return;
+        var kept = JSON.parse(localStorage.getItem('usernode.first-paint.v1') || 'null');
+        var root = document.documentElement;
+        var key = window.innerWidth + 'x' + window.innerHeight + '|'
+          + (root.getAttribute('data-text-size') || 'normal');
+        var r = kept && kept.sizes && kept.sizes[key];
+        if (!r) return;
+        var boxes = {
+          homeApps: '--reserve-home-apps',
+          homeDiscover: '--reserve-home-discover',
+          homeChallenges: '--reserve-home-challenges',
+          railCommunities: '--reserve-rail-communities'
+        };
+        var any = false;
+        for (var box in boxes) {
+          var px = Number(r[box]);
+          if (r[box] != null && isFinite(px) && px >= 0 && px < 4000) {
+            root.style.setProperty(boxes[box], px + 'px');
+            any = true;
+          }
+        }
+        if (any) root.classList.add('first-paint-reserved');
+      } catch (_) { /* nothing kept: the skeletons keep their own shape */ }
+    })();
+  </script>
+  <script>
     // ── The boot record: what went wrong, for an inspector to read ───────
     //
     // When the boot fails, it fails INVISIBLY: every island is left as the

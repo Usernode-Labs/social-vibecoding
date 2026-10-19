@@ -183,6 +183,12 @@ let startupDiagnostics = null;
 // src/middleware/inflight-requests.js).
 app.use(inflightRequests.inflightRequests());
 
+// Then count every /api/ response by the route template it matched and its
+// status, and each 5xx by what was thrown, for the Server errors figure and
+// the server_errors signal (src/middleware/request-counts.js,
+// src/services/server-error-counts.js). It only listens for `finish`.
+app.use(require('./src/middleware/request-counts').requestCounts());
+
 // Express never trusts forwarding headers globally. Docker mode resolves one
 // configured proxy peer; Kubernetes mode lets Cilium/Envoy supply the client
 // address without a proxy hostname. Direct child/worker calls carry no
@@ -246,6 +252,10 @@ app.use(explorerProxyRoutes(config));
 // no secret is configured. src/routes/github-webhook.js carries the rest.
 app.use(githubWebhookRoutes(config));
 app.use(require('./src/routes/mail-webhooks').mailWebhookRoutes(config));
+// Alertmanager's webhook (src/routes/alerts-webhook.js): HERE for the same
+// second reason, a caller with no session, authenticated by its own token.
+// It parses its own JSON body.
+app.use(require('./src/routes/alerts-webhook').alertsWebhookRoutes(config));
 
 // ── Work-order patch uploads (#4264) ───────────────────────────────────────
 // A coding agent's one-time upload of a large patch for a connector work
@@ -1525,6 +1535,22 @@ async function becomeLeader() {
   // when one kind piles up within an hour, for the full admins.
   startPlatformIncidentAlertSweeper(config);
 
+  // Platform signals (services/platform-signals.js): every problem the
+  // platform detects in itself files one request, or updates it, and closes
+  // it once the problem has stopped. Shadow mode (the default) only keeps
+  // the rows the topic pages and figures read.
+  {
+    const platformSignals = require('./src/services/platform-signals');
+    leaderTimers.every('platform-signals', () => platformSignals.sweep(getPool(config), config),
+      platformSignals.SWEEP_INTERVAL_MS, { firstDelayMs: 60 * 1000 });
+    // The server-error counts the figure and the server_errors signal read
+    // keep 14 days: daily, on the durable clock.
+    const serverErrorCounts = require('./src/services/server-error-counts');
+    leaderTimers.every('server-error-prune', () => serverErrorCounts.prune(getPool(config))
+      .then((n) => { if (n && (n.requests || n.errors)) log.info('server-errors', 'Pruned old server error counts', n); }),
+    24 * 60 * 60 * 1000, { durable: getPool(config) });
+  }
+
   // #907: release local coding-agent leases whose machine stopped
   // heartbeating, and fail the turn they were holding.
   startLocalAgentLeaseSweeper(config);
@@ -1692,6 +1718,10 @@ async function start() {
     // cache via stale-while-revalidate (see services/status.js).
     statusService.start(config);
   }
+  // Every process writes its own server-error counts to the database once a
+  // minute (services/server-error-counts.js), on an unref'd timer; a minute
+  // with nothing answered sends nothing.
+  require('./src/services/server-error-counts').start({ pool: getPool(config) });
 
   // ── The workflow's loops ─────────────────────────────────────────────
   // A conductor (any number of replicas) or an 'all' runs every machine's
@@ -6155,6 +6185,15 @@ async function cleanup() {
   // (services/processes.js). Bounded like the marks above.
   await boundedStep(processes.stop(), BUILD_SHUTDOWN_MARK_TIMEOUT_MS)
     .catch((err) => log.warn('server', 'Could not remove this process\'s row', { err: err.message }));
+
+  // The minute of server responses still counting (services/server-error-
+  // counts.js) is written before the pool closes, or it is lost with the
+  // process. Bounded like the marks above; flush never throws.
+  if (shutdownPool) {
+    const serverErrorCounts = require('./src/services/server-error-counts');
+    serverErrorCounts.stop();
+    await boundedStep(serverErrorCounts.flush(shutdownPool, { all: true }), BUILD_SHUTDOWN_MARK_TIMEOUT_MS).catch(() => {});
+  }
 
   // Close the pg pool so in-flight queries settle instead of being severed
   // by process.exit(). Bounded: a pool that won't drain must not hold the

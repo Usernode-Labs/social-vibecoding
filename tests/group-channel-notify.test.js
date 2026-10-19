@@ -263,6 +263,10 @@ test('a row that comes back grown is not a second unread, and moves to the top',
   // A fresh row is one more.
   N.handleIncoming({ ...ROW, id: 42, createdAt: new Date(Date.now() + 2000).toISOString() });
   assert.equal(N.unread, 3);
+  // #18 (19 Oct 2026 polish board): a channel message is new to read, which
+  // the Messages side counts: it is one more of `unread` and none of the bell's.
+  assert.equal(N.messageUnread, 1, 'counted as a plain message');
+  assert.equal(N._badgeTotal(), 2, 'the bell counts the mention, not the message');
 });
 
 // ── What can never ring it ──────────────────────────────────────────────

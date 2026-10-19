@@ -355,7 +355,7 @@ export function HappenedRow({ row, fresh, slug, on = false, onOpen, standing = f
               {maker ? <MetaTag tag={maker} /> : null}
               {first ? <MetaTag tag={first} /> : null}
               {botStep ? (
-                <span className="dev-ws-hrow-tag" data-ws-bot-step="" data-tone={botStepTone}>{botStep}</span>
+                <span className="dev-ws-hrow-tag" data-ws-bot-step="" data-tone={botStepTone} title={botStep}>{botStep}</span>
               ) : null}
             </>
           ) : (

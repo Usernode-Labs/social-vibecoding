@@ -38,6 +38,10 @@ test('a Workshop topic keeps swiping through its in-pane back chip', () => {
     'a hidden header (chromeless) still publishes false');
   assert.equal(nativeBackEnabled({ ...topic, dialogOpen: true }), false,
     'and a dialog open over the topic takes it away');
+  // Polish #23: on a phone the topic is under the Communities drawer, whose
+  // pan is the swipe back; WebKit's would take the same finger.
+  assert.equal(nativeBackEnabled({ ...topic, drawerOn: true }), false);
+  assert.equal(nativeBackEnabled({ ...topic, drawerOn: false }), true);
 });
 
 const deferred = () => {

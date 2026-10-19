@@ -297,6 +297,50 @@ export const IMPORT_TITLE = 'onboarding:firstSession.import.title';
 export const IMPORT_LINE = 'onboarding:firstSession.import.line';
 
 /**
+ * N9 (polish board, 19 Oct 2026): A REVEAL NEVER STOPS INSIDE THE HEADING.
+ * A pick that grows the form scrolls the description and Make it into view
+ * (`revealScrollTop`), and on a phone that left the screen's top edge
+ * through "What do you want to make?", showing only its second line. A
+ * scrollTop that would cut the heading goes on to its foot instead, so the
+ * heading is whole or out of view, and Make it is still in view. Positions
+ * are the scroller content's (scrollTop's own measure). Pure.
+ */
+export function clearOfHeading(top: number, headTop: number, headBottom: number, scrollMax: number): number {
+  if (!(top > headTop && top < headBottom)) return top;
+  return Math.max(0, Math.min(Math.max(0, scrollMax), Math.ceil(headBottom)));
+}
+
+/**
+ * N9: WHAT YOU STARTED IS KEPT. ✕ (or Escape, or anything else that leaves
+ * the screen) used to throw away a form with a description, a name or a
+ * pick in it. From Create the form is kept for the page's life and opens
+ * filled the next time; making the project, or leaving it empty, clears it.
+ * Only Create's: the first session's screen is answered once. It is kept
+ * with whose it is, and opens only for them.
+ */
+type MakeDraft = {
+  brief: string;
+  name: string;
+  nameTyped: boolean;
+  picked: Template | typeof OWN_IDEA | null;
+  choice: string;
+  words: string;
+  written: string | null;
+  rule: PresetKey;
+};
+let keptDraft: (MakeDraft & { who: string }) | null = null;
+
+/** The draft to keep, or null when the form holds nothing worth keeping. Pure. */
+export function draftWorthKeeping(draft: MakeDraft | null): MakeDraft | null {
+  if (!draft) return null;
+  return draft.brief.trim() || draft.name.trim() || draft.words.trim() || draft.picked || draft.rule !== DEFAULT_PRESET
+    ? draft : null;
+}
+
+/** How long the screen takes to fade off what is under it as it leaves (#8). */
+export const MAKE_LEAVE_MS = 200;
+
+/**
  * The screen's root. On the first session it is the whole screen: it
  * arrives on the wallpaper after sign-in, over everything. From Create
  * (#4195) it is a screen like the others, below the platform header
@@ -337,22 +381,35 @@ export function MakeScreen({
   const { blocked: quotaBlocks } = useAppAllowance();
   // Make it, or (from Create only) Import it.
   const [mode, setMode] = useState<'make' | 'import'>(fromCreate && startImport ? 'import' : 'make');
-  const [brief, setBrief] = useState(waitlistIdea ?? '');
-  const [name, setName] = useState('');
+  // N9: Create's form as it was last left (keptDraft), read once at mount.
+  const [draft] = useState(() => (fromCreate && !startImport && keptDraft?.who === who ? keptDraft : null));
+  const [brief, setBrief] = useState(draft ? draft.brief : waitlistIdea ?? '');
+  const [name, setName] = useState(draft ? draft.name : '');
   // The tile picked: a template, Your own idea, or nothing yet.
-  const [picked, setPicked] = useState<Template | typeof OWN_IDEA | null>(waitlistIdea ? OWN_IDEA : null);
+  const [picked, setPicked] = useState<Template | typeof OWN_IDEA | null>(draft ? draft.picked : waitlistIdea ? OWN_IDEA : null);
   // The template's choice, and their own words: in its blank, or the rest
   // of the game's sentence.
-  const [choice, setChoice] = useState('');
-  const [words, setWords] = useState('');
+  const [choice, setChoice] = useState(draft ? draft.choice : '');
+  const [words, setWords] = useState(draft ? draft.words : '');
   // "Write it yourself": the sentence it put in the plain box. The template
   // stays picked until they change those words.
-  const [written, setWritten] = useState<string | null>(null);
+  const [written, setWritten] = useState<string | null>(draft ? draft.written : null);
   // A name they typed: from then on a choice no longer suggests one.
-  const [nameTyped, setNameTyped] = useState(false);
+  const [nameTyped, setNameTyped] = useState(draft ? draft.nameTyped : false);
   // Who can change it (#4666): You or the group, unless Change picked another.
   // Sent only when it is another, as the project's own governance block.
-  const [rule, setRule] = useState<PresetKey>(DEFAULT_PRESET);
+  const [rule, setRule] = useState<PresetKey>(draft ? draft.rule : DEFAULT_PRESET);
+  // Kept when the screen goes, unless it went because the project was made.
+  const formRef = useRef<MakeDraft | null>(null);
+  formRef.current = fromCreate ? { brief, name, nameTyped, picked, choice, words, written, rule } : null;
+  const madeRef = useRef(false);
+  const whoRef = useRef(who);
+  whoRef.current = who;
+  useEffect(() => () => {
+    if (!fromCreate) return;
+    const kept = madeRef.current ? null : draftWorthKeeping(formRef.current);
+    keptDraft = kept ? { ...kept, who: whoRef.current } : null;
+  }, [fromCreate]);
   // "Something else…" (./more-sheet.tsx), while it is up.
   const [sheetOpen, setSheetOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -410,7 +467,7 @@ export function MakeScreen({
       const view = scroller.getBoundingClientRect();
       const field = card.getBoundingClientRect();
       const action = button.getBoundingClientRect();
-      const top = revealScrollTop({
+      const reveal = revealScrollTop({
         scrollTop: scroller.scrollTop,
         scrollMax: scroller.scrollHeight - scroller.clientHeight,
         viewTop: view.top,
@@ -420,6 +477,11 @@ export function MakeScreen({
         actionTop: action.top,
         actionBottom: action.bottom,
       });
+      const heading = scroller.querySelector('#first-session-make-title')?.getBoundingClientRect();
+      const top = heading
+        ? clearOfHeading(reveal, heading.top - view.top + scroller.scrollTop, heading.bottom - view.top + scroller.scrollTop,
+          scroller.scrollHeight - scroller.clientHeight)
+        : reveal;
       if (top === Math.round(scroller.scrollTop)) return;
       const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
       scroller.scrollTo({ top, behavior: still ? 'auto' : 'smooth' });
@@ -432,14 +494,47 @@ export function MakeScreen({
     const raf = requestAnimationFrame(() => setArrived(true));
     return () => cancelAnimationFrame(raf);
   }, []);
-  const motion = arrived ? ARRIVED : ARRIVING;
+  // IT LEAVES THE WAY IT CAME (polish board #8, 19 Oct 2026). From Create,
+  // ✕ and Escape unmounted it in the frame they were pressed in, after a
+  // 300ms rise in: it vanished. Now the form falls back the way it rose and
+  // the screen fades off what is under it, over MAKE_LEAVE_MS, and only then
+  // does `onClose` take it away (the fade's transitionend, or a timer a
+  // little past it). With reduced motion it goes at once.
+  const [leaving, setLeaving] = useState(false);
+  const leavingRef = useRef(false);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const leave = useCallback(() => {
+    const close = closeRef.current;
+    if (!close || leavingRef.current) return;
+    leavingRef.current = true;
+    const root = rootRef.current;
+    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (still || !root) { close(); return; }
+    let done = false;
+    const gone = () => {
+      if (done) return;
+      done = true;
+      root.removeEventListener('transitionend', onEnd);
+      closeRef.current?.();
+    };
+    const onEnd = (e: TransitionEvent) => { if (e.target === root && e.propertyName === 'opacity') gone(); };
+    root.addEventListener('transitionend', onEnd);
+    window.setTimeout(gone, MAKE_LEAVE_MS + 80);
+    // On the node, not in the render: React keeps only the ground it set.
+    root.style.transition = `opacity ${MAKE_LEAVE_MS}ms ease-in`;
+    root.style.opacity = '0';
+    root.style.pointerEvents = 'none';
+    setLeaving(true);
+  }, []);
+  const motion = arrived && !leaving ? ARRIVED : ARRIVING;
   // From Create, Escape closes it, as it closes a dialog.
   useEffect(() => {
     if (!onClose) return undefined;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') leave(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, leave]);
 
   const template = picked && picked !== OWN_IDEA ? picked : null;
   // The fourth tile: a pick from "Something else…" (Your own idea, or one of
@@ -553,6 +648,7 @@ export function MakeScreen({
         setError(reply.ok ? translate('onboarding:firstSession.make.error.notMade') : reply.error);
         return;
       }
+      madeRef.current = true;
       onMade({
         slug: data.app.slug,
         name: data.app.name || name.trim(),
@@ -582,6 +678,7 @@ export function MakeScreen({
     const reply = await postCreateApp({ name: repoName, audience: 'invited', repoUrl, from: entry });
     const data = (reply.ok ? reply.data : {}) as { app?: { slug?: string; name?: string } };
     if (!reply.ok || !data.app?.slug) return reply.ok ? translate('onboarding:firstSession.import.error.notImported') : reply.error;
+    madeRef.current = true;
     onMade({
       slug: data.app.slug,
       name: data.app.name || repoName,
@@ -620,7 +717,7 @@ export function MakeScreen({
           <button
             type="button"
             data-make-close=""
-            onClick={onClose}
+            onClick={leave}
             aria-label={t('core:common.close')}
             className="absolute bottom-1 left-3 flex h-9 w-9 items-center justify-center rounded-full bg-white text-zinc-500 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-400"
           >

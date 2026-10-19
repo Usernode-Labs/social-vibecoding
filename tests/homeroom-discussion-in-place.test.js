@@ -200,7 +200,8 @@ test('#3494: exactly one copy of the thread is drawn, and the page\'s has no hea
   const embedded = SCREEN.slice(SCREEN.indexOf('export function EmbeddedConversation('), SCREEN.indexOf('export function MessagesScreen('));
   // #3653: with the place a door named in the room, taken once (`take`).
   assert.match(embedded, /if \(!active \|\| messagesOpen\) return undefined;\s*embed\(conversationId, take\(\)\);\s*return \(\) => release\(conversationId\);/);
-  assert.match(embedded, /\{here \? <ConversationThread embedded \/> : null\}/);
+  // Polish board #19: until the room is in place, the room's own loading row.
+  assert.match(embedded, /\{here \? <ConversationThread embedded \/> : <ChannelLoading \/>\}/);
   assert.match(embedded, /\{here && snap\.route\.threadRootId \? <ReplyThreadPanel \/> : null\}/);
 });
 

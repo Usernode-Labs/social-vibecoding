@@ -4771,6 +4771,34 @@
     "text": "Staging demo figures, not real numbers.",
     "description": "Small line under the card of numbers at the top of a topic's chat channel, shown only on a test copy of Homeroom: says the numbers are made up for testing."
   },
+  "places.topicSignals.label": {
+    "text": "Open problems",
+    "description": "Small heading over the list, at the top of a topic's chat channel, of problems Homeroom found in itself and filed as requests, such as a release that stalled. Also the list's accessible name. Shown in capitals."
+  },
+  "places.topicSignals.since": {
+    "text": "first seen {{when}}",
+    "description": "Part of the grey line under one problem in the Open problems list of a topic's chat channel: when Homeroom first noticed the problem. {{when}} is already worded, for example \"3h ago\", \"just now\" or \"Jun 16\". Starts lower case because it follows who is handling the problem and a middle dot."
+  },
+  "places.topicSignals.clearing": {
+    "text": "Stopped, waiting to be sure",
+    "description": "Part of the grey line under one problem in the Open problems list of a topic's chat channel, in place of when it was first seen: the problem has stopped happening, and Homeroom is waiting a while to be sure before closing it."
+  },
+  "places.topicSignals.times_one": {
+    "text": "once",
+    "description": "Part of the grey line under one problem in the Open problems list of a topic's chat channel: how many times Homeroom has seen the problem happen. English shows it only from 2. A translation may use {{count}}, the number of times."
+  },
+  "places.topicSignals.times_other": {
+    "text": "{{count}} times",
+    "description": "Part of the grey line under one problem in the Open problems list of a topic's chat channel: how many times Homeroom has seen the problem happen, for example \"4 times\". {{count}} is that number."
+  },
+  "places.topicSignals.details": {
+    "text": "Details",
+    "description": "Small link at the end of one problem's row in the Open problems list of a topic's chat channel, shown only to Homeroom's admins: opens the part of the admin console that shows more about the problem."
+  },
+  "places.topicSignals.detailsLabel": {
+    "text": "Details of {{title}} in the admin console",
+    "description": "Accessible name of the Details link on one problem's row in the Open problems list of a topic's chat channel, shown only to Homeroom's admins. {{title}} is the problem's one-line description, for example \"Release stalled: the deploy workflow failed\"."
+  },
   "topic.request.shots.hideComment": {
     "text": "Hide comment",
     "description": "Small button on the corner of a screenshot in a request, while the comment pinned to the picture is drawn over it: hides the comment."

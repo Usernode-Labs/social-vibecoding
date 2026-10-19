@@ -87,7 +87,15 @@ export function rowDirectoryLabel(directory?: { state?: string; label?: string }
   return directory.label;
 }
 
-function Row({ view }: { view: RowView }): ReactNode {
+/** How many rows down the list load their icons without waiting: a phone's
+    first screen, or the first rows of the wide window's grid. */
+const EAGER_ICON_ROWS = 12;
+
+function Row({ view, eager = false }: {
+  view: RowView;
+  /** On the first screen: its icon loads at once (AppIconContent `eager`). */
+  eager?: boolean;
+}): ReactNode {
   const t = useMessages('discover');
   const rowRef = useRef<HTMLDivElement | null>(null);
 
@@ -148,7 +156,7 @@ function Row({ view }: { view: RowView }): ReactNode {
           className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
           data-icon={appIconKind(view.app)}
         >
-          <AppIconContent app={view.app} />
+          <AppIconContent app={view.app} eager={eager} />
         </AppIconLink>
       )}
       title={(
@@ -286,8 +294,11 @@ export function BrowseRows({ rows, site = null, curated = false, grouped = true,
   const t = useMessages('discover');
   if (!rows) return null;
   const siteRow = site ? <SiteRow site={site} /> : null;
+  // The rows a first screen shows load their icons at once (#11); the rest
+  // wait until they are scrolled near. Counted down the list as drawn.
+  let drawn = 0;
   const renderRows = (items: RowView[]) => items.map((view) => (
-    <Row key={view.slug} view={view} />
+    <Row key={view.slug} view={view} eager={drawn++ < EAGER_ICON_ROWS} />
   ));
   if (!curated) return <>{siteRow}{renderRows(rows)}</>;
   const shown = rows.filter((view) => view.directoryTier !== 'more');

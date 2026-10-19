@@ -130,7 +130,7 @@ import {
 } from '@/components/ui/icons';
 
 import { AboutPane } from './about-pane';
-import { offeringGoToHomeroom } from './about-data';
+import { offeringGoToHomeroom, owedHomeWalk } from './about-data';
 import { InvitePane } from './invite-pane';
 import { useHomeScreenOffer } from '../mobile-install/home-screen-offer';
 import { InstallStepsSheet } from '../mobile-install/install-steps-sheet';
@@ -332,15 +332,25 @@ export function AppsSwitcherSheet(): ReactNode {
   // who has not used it yet has that one way onward, and the community page
   // comes after it, so "Go to community" is hidden through the same seam
   // until they have used it or are let in (./about-data.ts
-  // offeringGoToHomeroom). Hidden, never renamed or dropped: the row is in
-  // the prerender, and its id is the Workshop's.
+  // offeringGoToHomeroom), and so is it for any newcomer while the walk on
+  // Home is owed to them (`walkOwed`, below). Hidden, never renamed or
+  // dropped: the row is in the prerender, and its id is the Workshop's.
   // AFTER MOUNT ONLY, for the viewer's own rows below (their agent
   // sessions): the hydrating render must print what the prerender printed
   // whatever the store says by then, or it is React #418 on every route. The
   // class toggle below is an effect for the same reason.
+  //
+  // A NEWCOMER WHO HAS NOT REACHED HOMEROOM YET (Evan, sign-up test, 19 Oct
+  // 2026): the first session's walk on Home is still owed to them on this
+  // device (./about-data.ts owedHomeWalk), a maker in their first app or an
+  // invited person new to Homeroom. "Go to community" opened the project's
+  // hub inside the app, where the walk does not run, so they get "Go to
+  // Homeroom" instead, as a private member does: Home, and the walk on it.
+  // The home-screen row stays a private member's (`newcomer`).
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
   const newcomer = mounted && offeringGoToHomeroom(!!privateMember);
+  const walkOwed = mounted && owedHomeWalk();
   // #4399: the home-screen offer that rides in the Go to Homeroom card while
   // it is offered (the banner is held down meanwhile). Asked only while the
   // menu is open, so a closed menu costs no request.
@@ -348,13 +358,13 @@ export function AppsSwitcherSheet(): ReactNode {
   const [homeScreenSteps, setHomeScreenSteps] = useState(false);
   const workshopRowRef = useRef<HTMLAnchorElement | null>(null);
   useIsomorphicLayoutEffect(() => {
-    const hide = !!restricted || newcomer;
+    const hide = !!restricted || newcomer || walkOwed;
     for (const el of [workshopRowRef.current]) {
       if (el && el.classList.contains('hidden') !== hide) {
         el.classList.toggle('hidden', hide);
       }
     }
-  }, [restricted, newcomer, view, open]);
+  }, [restricted, newcomer, walkOwed, view, open]);
 
   // "About Notes", not "About this app". The name is what the viewer is
   // looking at and it is already on the bar above; "this app" is what you
@@ -598,10 +608,12 @@ export function AppsSwitcherSheet(): ReactNode {
               nests a mini-app's menu.
           */}
           {/*
-              GO TO HOMEROOM, for a private member only, and only after mount
-              (the store says who is signed in after hydration, so the
-              prerender has no such row). Home, and the first time its tour
-              (features/first-session goHome).
+              GO TO HOMEROOM, for a private member, and for any newcomer the
+              first session's walk on Home is still owed to (`walkOwed`, in
+              place of "Go to community"), and only after mount (the store
+              says who is signed in after hydration, so the prerender has no
+              such row). Home, and the first time its walk (features/
+              first-session goHome).
 
               A CARD, NOT A ROW (#4401): as a plain row among the app's own it
               was easy to miss, and it is the one door a private member has to
@@ -620,7 +632,7 @@ export function AppsSwitcherSheet(): ReactNode {
               home-screen install (../mobile-install/home-screen-offer.ts).
               Once they have been Home the row goes and the banner is back.
           */}
-          {mounted && privateMember ? (
+          {mounted && (privateMember || walkOwed) ? (
             <div
               id="app-menu-homeroom-card"
               className="mx-4 mt-1 mb-2 w-[calc(100%_-_2rem)] rounded-[20px] bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]"

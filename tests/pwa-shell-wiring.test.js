@@ -257,8 +257,13 @@ test('the precached document names the platform, and does not guess a theme', ()
     'and they pulse, so the first painted frame says the grid is coming');
   assert.doesNotMatch(readPublic('index.html'), /id="app-list"[^>]*data-view=/,
     'and carries no data-view until the grid has rendered once');
-  assert.match(readPublic('css/app.css'),
-    /#app-list:not\(\[data-view\]\) \{[^}]*min-height: calc\(2 \* var\(--home-cell-h\)\)/);
+  // Two rows, with the gap between them and the grid's padding (#10): the box
+  // is border-box, so two bare cells were 20px short (28px from 640px).
+  const css = readPublic('css/app.css');
+  assert.match(css, /#app-list:not\(\[data-view\]\) \{[^}]*min-height: calc\(2 \* var\(--home-cell-h\) \+ 1\.25rem\)/);
+  assert.match(css, /@media \(min-width: 640px\) \{\s*#app-list:not\(\[data-view\]\) \{\s*min-height: calc\(2 \* var\(--home-cell-h\) \+ 1\.75rem\);/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'home', 'app-grid.tsx'), 'utf8'), /className="grid grid-cols-4 gap-1\.5 sm:gap-2 p-2 pt-1\.5 sm:p-3 sm:pt-2"/,
+    'the padding and gap those two sums are made of');
 });
 
 test('index.html wires up the manifest, the banner, and the React bundle', () => {

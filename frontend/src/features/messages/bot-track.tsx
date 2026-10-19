@@ -416,10 +416,10 @@ function DrawnSide({ screen, side, label }: { screen: SpecScreen; side: 'before'
     observer?.observe(el);
     return () => observer?.disconnect();
   }, []);
-  const [x, y, w, h] = screen.focus || [0, 0, screen.width, Math.min(screen.height, Math.round(screen.width * 0.75))];
+  const [x, y, w] = screen.focus || [0, 0, screen.width];
   const scale = width ? width / w : 0;
   return (
-    <div ref={box} className="relative w-full overflow-hidden rounded-lg bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900" style={{ aspectRatio: `${w} / ${h}` }} role="img" aria-label={label}>
+    <div ref={box} className="relative w-full overflow-hidden rounded-lg bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900" style={{ aspectRatio: PICTURE_RATIO }} role="img" aria-label={label}>
       {scale ? (
         <iframe
           sandbox=""
@@ -436,11 +436,26 @@ function DrawnSide({ screen, side, label }: { screen: SpecScreen; side: 'before'
   );
 }
 
-function PictureSide({ src, label, ratio }: { src: string; label: string; ratio: string }) {
+/**
+ * Every picture's frame, whatever the shot's own size (polish board #12): the
+ * frame is drawn while the pictures are still being read, and a request's
+ * page grew by 200px when they arrived at the shot's own proportions. A shot
+ * fills it from its top, a plan's screen from its focus.
+ */
+const PICTURE_RATIO = '4 / 3';
+
+function PictureSide({ src, label }: { src: string; label: string }) {
   return (
-    <span className="block w-full overflow-hidden rounded-lg bg-zinc-100 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-800" style={{ aspectRatio: ratio }}>
+    <span className="block w-full overflow-hidden rounded-lg bg-zinc-100 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-800" style={{ aspectRatio: PICTURE_RATIO }}>
       <img src={src} alt={label} loading="lazy" draggable={false} className="h-full w-full object-cover object-top" />
     </span>
+  );
+}
+
+/** A frame waiting for its picture: the same box, empty. */
+function PendingSide() {
+  return (
+    <span className="block w-full overflow-hidden rounded-lg bg-zinc-100 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-800" style={{ aspectRatio: PICTURE_RATIO }} />
   );
 }
 
@@ -457,9 +472,12 @@ export function TrackPictures({ track }: { track: BotTrack }) {
   const slug = track.appSlug;
   const proposal = track.proposalId;
   const session = track.sessionId;
+  // Something to read: the frames hold the pictures' place until it answers.
+  const asks = !!((slug && proposal) || session);
+  const [reading, setReading] = useState(asks);
   useEffect(() => {
     let live = true;
-    setShots(null); setPlanHtml(null);
+    setShots(null); setPlanHtml(null); setReading(asks);
     const read = async () => {
       if (slug && proposal) {
         try {
@@ -480,24 +498,25 @@ export function TrackPictures({ track }: { track: BotTrack }) {
         } catch { /* nothing to show */ }
       }
     };
-    void read();
+    void read().finally(() => { if (live) setReading(false); });
     return () => { live = false; };
-  }, [slug, proposal, session]);
+  }, [slug, proposal, session]); // eslint-disable-line react-hooks/exhaustive-deps
   const screen = useMemo(() => (planHtml ? firstSpecScreen(planHtml) : null), [planHtml]);
-  if (!shots && !screen) return null;
+  const pending = !shots && !screen && reading;
+  if (!shots && !screen && !pending) return null;
   const before = t('messages:bot.track.pictures.before');
   const after = t('messages:bot.track.pictures.after');
   return (
-    <figure className="m-0 flex flex-col gap-1.5" data-bot-track-pictures={shots ? 'change' : 'plan'}>
+    <figure className="m-0 flex flex-col gap-1.5" data-bot-track-pictures={shots ? 'change' : pending ? 'pending' : 'plan'} aria-busy={pending || undefined}>
       <figcaption className="text-[12px] font-semibold text-zinc-500 dark:text-zinc-400">
-        {t(shots ? 'messages:bot.track.pictures.change' : 'messages:bot.track.pictures.plan')}
+        {pending ? '\u00a0' : t(shots ? 'messages:bot.track.pictures.change' : 'messages:bot.track.pictures.plan')}
       </figcaption>
       <div className="grid grid-cols-2 gap-2">
         {[{ side: 'before' as const, label: before }, { side: 'after' as const, label: after }].map(({ side, label }) => (
           <div key={side} className="flex min-w-0 flex-col gap-1">
             {shots
-              ? <PictureSide src={side === 'before' ? shots.before : shots.after} label={label} ratio={`${shots.width} / ${Math.min(shots.height, Math.round(shots.width * 1.4))}`} />
-              : screen ? <DrawnSide screen={screen} side={side} label={label} /> : null}
+              ? <PictureSide src={side === 'before' ? shots.before : shots.after} label={label} />
+              : screen ? <DrawnSide screen={screen} side={side} label={label} /> : <PendingSide />}
             <span className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">{label}</span>
           </div>
         ))}

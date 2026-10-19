@@ -58,7 +58,7 @@ import { improveStore } from '../improve/improve-store.js';
 import { navStore } from '../nav/nav-store.js';
 import type { WorkshopRow } from '../workshop/index';
 import {
-  depthAt, EDGE_PX, isPan, keepPlace, landing, LEVEL_AT, PAN_SLOP_PX, SLIDE_EASE, SLIDE_MS, type Level,
+  afterSlideStarts, depthAt, EDGE_PX, isPan, keepPlace, landing, LEVEL_AT, PAN_SLOP_PX, SLIDE_EASE, SLIDE_MS, type Level,
 } from './drawer-math';
 import {
   drawerStore, go, holdBack, letGoBack, registerSurface, setBackRecords, setDepth, setMoving, setOn, setPending,
@@ -90,33 +90,28 @@ function usePhone(): boolean {
 /**
  * Whether the drawer applies. A phone, the app view on show, and on it a
  * community's own page (its Dev half, in the Workshop layout: not the
- * running app, a card or a change under it, or the Kanban board) — or a
- * community picked on level 0 whose page is still on its way, while the
- * header's record of the app is cleared for the load. Pure.
+ * running app, a change's session, or the Kanban board) — or a community
+ * picked on level 0 whose page is still on its way, while the header's
+ * record of the app is cleared for the load. Pure.
+ *
+ * AN ITEM'S PAGE TOO (polish board #23, 19 Oct 2026): a request, a change's
+ * page or a vote opened from the community's pages is a page of the
+ * community's, so it keeps the drawer's header (the arrow, the community
+ * over its place) and its swipe back. With the drawer off there, opening a
+ * request from the Workshop swapped the header to the community switcher,
+ * and a swipe back did nothing. One opened from a Messages conversation
+ * (`topicOrigin` there) belongs to that conversation and keeps the drawer
+ * off, as does any item under the Kanban board.
  */
 export function drawerApplies(at: {
   phone: boolean; screen: string | null; slug: string | null; tab: string | null; subTab: string | null;
-  viewMode: string; pending: boolean;
+  viewMode: string; pending: boolean; topicOrigin?: string | null;
 }): boolean {
   if (!at.phone || at.screen !== 'app-view') return false;
   if (at.pending) return true;
-  return !!at.slug && at.tab === 'dev' && at.subTab === 'forum' && at.viewMode === 'workshop';
-}
-
-/** Two frames, so the slide is on the compositor before heavy work runs; never later than `capMs`. */
-export function afterSlideStarts(run: () => void, capMs = 120): void {
-  if (typeof requestAnimationFrame !== 'function') {
-    run();
-    return;
-  }
-  let done = false;
-  const once = () => {
-    if (done) return;
-    done = true;
-    run();
-  };
-  requestAnimationFrame(() => requestAnimationFrame(once));
-  setTimeout(once, capMs);
+  if (!at.slug || at.tab !== 'dev' || at.viewMode !== 'workshop') return false;
+  if (at.subTab === 'forum') return true;
+  return at.subTab === 'topic' && !String(at.topicOrigin || '').startsWith('#messages');
 }
 
 export function NavDrawer(): ReactNode {
@@ -124,6 +119,7 @@ export function NavDrawer(): ReactNode {
   const { screen } = useStoreState(navStore) as { screen: string | null };
   const improve = useStoreState(improveStore) as {
     slug: string | null; tab: string | null; subTab: string | null; name: string | null; selfHosted: boolean;
+    topicOrigin: string | null;
   };
   const viewMode = useDevViewMode();
   const drawer = useStoreState(drawerStore);
@@ -131,6 +127,7 @@ export function NavDrawer(): ReactNode {
   const pending = drawer.pending;
   const on = drawerApplies({
     phone, screen, slug: improve.slug, tab: improve.tab, subTab: improve.subTab, viewMode, pending: !!pending,
+    topicOrigin: improve.topicOrigin,
   });
 
   // Before paint, so the header draws the drawer's arrow and titles in the

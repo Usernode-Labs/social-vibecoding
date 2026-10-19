@@ -88,14 +88,14 @@ import type { ActionRef, DevCardModel, DevWorkshopView, ListRow, WorkshopTheme }
 import { CardSkeleton } from '../card/skeleton';
 import { VotePicker } from '../card/dev-card';
 import { useWorkshopGroup } from './group-mode-store';
-import { describe as describeCommunity, openSwitcher } from '../../workshop/community-scope';
+import { communityScopeStore, describe as describeCommunity, openSwitcher } from '../../workshop/community-scope';
 import { registerLevel } from '../../workshop/tab-ladder';
 import { firstUnseenIndex, markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
 import {
   ApprovalLine, CommunityCard, HubCardClose, ShareItCard, canLeave,
   communityPending, leaveCommunity, useCommunity,
 } from './community-card';
-import { FirstLookCard, FirstVersionCard, ForYouCard, RecentlyLive, hubAlone, owesVote } from './hub-cards';
+import { FirstLookCard, FirstVersionCard, ForYouCard, HubSkeleton, RecentlyLive, hubAlone, owesVote } from './hub-cards';
 import { useHubDismissed } from './hub-dismissed';
 import { ProjectDiscussion } from './project-discussion';
 import {
@@ -111,7 +111,7 @@ import { PrivateRequests } from './private-requests';
 import { Diagram, decisionDiagram, readDiagram, type DecisionFacts, type DiagramRecord, type DiagramSource } from '../../../lib/diagram/diagram';
 import { TouchesPicture, readTouches, touchesSaid, type Touches } from './touches';
 import { PageBack } from './page-back';
-import { BotSlotsDoor, BotSlotsPage } from './bot-slots';
+import { BotSlotsDoor, BotSlotsPage, warmBotSlots } from './bot-slots';
 import { readAskStream } from './ask-stream';
 import {
   ActButton, ActRow, WorkList, primaryAct, rowWords, topicRef, type CardRow as WorkCardRow, type TopicRef,
@@ -172,6 +172,16 @@ const EMPTY_SINCE: NonNullable<DevWorkshopView['since']> = {
 export function freshTab(): TabKey | null {
   const tab = callAppView('_workshopTab');
   return isPlaceKey(tab) ? tab : null;
+}
+
+/**
+ * Whether the hub's skeleton draws who is around: when the last read of your
+ * communities (../../workshop/community-scope.ts) says other people are in
+ * this one, as the hero draws that row only then (hubAlone).
+ */
+function hubSkeletonOthers(slug: string): boolean {
+  const info = communityScopeStore.get().info[slug];
+  return !!info && info.audience !== 'solo' && (Number(info.memberCount) || 0) > 1;
 }
 
 /**
@@ -4670,6 +4680,10 @@ export function DevWorkshop(): ReactNode {
       ...(community ? { audience: community.audience, memberCount: Number(community.member_count) || 0 } : {}),
     });
   }, [v.slug, v.loading, owedRows.length, owedSig, own, app.name, app.iconUrl, app.iconEmoji, app.iconColor, community]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The Workshop overview's Homeroom bot line (./bot-slots.tsx), asked for
+  // as the page opens so it is in hand when the overview first draws,
+  // rather than inserted under its figures after (polish board #13).
+  useEffect(() => { warmBotSlots(v.slug); }, [v.slug]);
 
   // #4417: THE PLACES TRAY (./places-tray.tsx), the list behind the place
   // bar's button, and a swipe from the left edge on a phone. It shuts when
@@ -4731,7 +4745,19 @@ export function DevWorkshop(): ReactNode {
 
   // The hub is drawn once, with its community record (ONE DRAW, NOT TWO,
   // ./community-card.tsx communityPending).
-  if (v.loading || communityPending(v.slug || '')) return <div ref={hostRef}><CardSkeleton n={4} label={t('project:page.loading')} /></div>;
+  //
+  // POLISH BOARD #3 AND #19: WHILE IT LOADS, A PLACE IS DRAWN IN ITS OWN
+  // SHAPE. The hub's is its hero, For you and Recently live (./hub-cards.tsx
+  // HubSkeleton), under the page's own bar; it was the Dev board's card list.
+  // A channel waits for neither the board nor the record here: it draws the
+  // bar and the room's own "Loading messages…" from the first frame
+  // (./project-discussion.tsx), and keeps that one state until its messages
+  // are in. The other places keep the card list, which is their shape.
+  const pending = v.loading || communityPending(v.slug || '');
+  const channelHere = isChannelPlace(tab);
+  if (pending && (!v.slug || (tab !== 'status' && !channelHere))) {
+    return <div ref={hostRef}><CardSkeleton n={4} label={t('project:page.loading')} /></div>;
+  }
   const nextUp = v.nextUp && v.nextUp.t === 'card' ? v.nextUp : null;
   const slug = v.slug || '';
   const canPost = !!v.canPost;
@@ -4763,6 +4789,8 @@ export function DevWorkshop(): ReactNode {
     iconEmoji: own ? app.iconEmoji : null,
     since: community.live_since,
   } : null;
+  // N13: a change with no picture shows the project's tile on its colour.
+  const recentIdent = { name: app.name || community?.name || slug, iconUrl: own ? app.iconUrl : null, iconEmoji: own ? app.iconEmoji : null };
 
   /* ── The place bar, the tray behind it, and on All items its back bar ──
      #4417: the four tabs are gone; the project's places are one list (Hub,
@@ -4945,7 +4973,8 @@ export function DevWorkshop(): ReactNode {
           it. Above 700px the bar is not sticky and overlays nothing, so
           app.css takes the clearance back off. */}
       <div className="dev-ws-tabbody">
-      {tab === 'status' ? (
+      {tab === 'status' && pending ? <HubSkeleton others={hubSkeletonOthers(slug)} /> : null}
+      {tab === 'status' ? (pending ? null : (
       <>
       {/* ── The hero: what it is, who it is for, who is around ──
           FIRST ON THE PAGE, under the band: the tile and the name over
@@ -5062,11 +5091,11 @@ export function DevWorkshop(): ReactNode {
       {/* Run six: the maker's first look while it is built, with the way to
           watch it built on the App tab. See ./hub-cards.tsx FirstLookCard. */}
       {slug ? <FirstLookCard slug={slug} data={community} /> : null}
-      {slug ? <RecentlyLive slug={slug} rows={v.recentLive} onAll={() => openTab('workshop')} own={ownLive} /> : null}
+      {slug ? <RecentlyLive slug={slug} rows={v.recentLive} onAll={() => openTab('workshop')} own={ownLive} ident={recentIdent} /> : null}
       {/* Start a new change was the hub's last line; it is the hero's ⋯
           now (../actions-row.tsx), as well as the Homeroom menu's. */}
       </>
-      ) : null}
+      )) : null}
 
       {/* ── THE PLAN, read only, for the people who joined (#4074) ──
           A page under the Hub, opened by the First version card's "See the

@@ -367,8 +367,8 @@ test('the bot\'s row says what waits on you, and the headings say what in them a
     'its last message until then — the bot\'s own line first, then a group\'s sender-prefixed one');
   assert.equal(message('messages:inbox.section.working', { count: 1 }), '1 working');
   assert.equal(message('messages:inbox.section.unread', { count: 3 }), '3 unread');
-  assert.match(SCREEN, /people: \{ text: unreadFromPeople \? t\('messages:inbox\.section\.unread', \{ count: unreadFromPeople \}\) : null, ask: true \},/,
-    'a zero says nothing, and the people count is the accent');
+  assert.match(SCREEN, /people: \{ text: unreadFromPeople \? t\('messages:inbox\.section\.unread', \{ count: unreadFromPeople \}\) : null, ask: false \},/,
+    'a zero says nothing, and the people count is grey: new to read, not waiting on you (#18)');
 });
 
 test('#5393: a group row shows its members\' faces and names the person who spoke last', () => {
@@ -671,4 +671,13 @@ test('bug h: the discussion context carries the app artwork, for a header with n
     globalThis.window = saved.window;
     globalThis.fetch = saved.fetch;
   }
+});
+
+test('a new account\'s Messages says it is empty: #general is read but never listed here (sign-up test, 19 Oct 2026)', () => {
+  // Every account is in #general, so the read always has it, and the list
+  // leaves it out: the empty state has to ask the list, or it never shows.
+  assert.deepEqual(inbox.buildInbox({ conversations: [{ id: 3, kind: 'channel', lastActivityAt: at('2026-10-19T00:00:00Z') }], agents: [] }), []);
+  assert.match(SCREEN, /\{!snap\.loadingList && !snap\.error && snap\.listLoaded && !inbox\.length\n\s+\? <div className="messages-empty"><h3>\{t\('messages:inbox\.empty\.title'\)\}<\/h3>/);
+  assert.doesNotMatch(SCREEN, /!snap\.conversations\.length && !inbox\.length/);
+  assert.equal(message('messages:inbox.empty.title'), 'No messages yet');
 });

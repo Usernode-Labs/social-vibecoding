@@ -560,7 +560,8 @@ export async function dmWritten(db: Queryable, p: { userId: number; conversation
 }
 
 // A hello of `kind` is owed to a person (joining by an invite, the tour's
-// end): in the caller's transaction when it has one, so it commits with
+// end, the first session's answer, a ready-made app made: `maker` with its
+// appId): in the caller's transaction when it has one, so it commits with
 // what makes it owed.
 export async function greet(db: Queryable, p: { userId: number; kind: string; appId?: number | null }): Promise<void> {
   await appendEvent(db, BOT_DM, dmKey(Number(p.userId)),

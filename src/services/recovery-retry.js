@@ -87,12 +87,38 @@ function isDurableTurnCleanupError(err) {
   return err?.code === 'recovery_cleanup_pending';
 }
 
+// Say that a retained recovery was given up on (events
+// 'turn_recovery_gave_up'): until this, giving up was a log line, and an
+// interrupted turn nothing could pick up again was found by its owner. The
+// platform signals file a request for them (signal-observers/
+// turn-recovery.js). The key is `<recovery>:<session id>` (server.js
+// `interactive:`, routes/sessions.js `headless:`). Written to `pool`, or the
+// process's shared pool (db/pool.js) when the caller passes none. Never
+// throws, and never waits: what the user sees is terminalized either way.
+function recordGaveUp({ pool = null, key, err, failures }) {
+  try {
+    const events = require('./events');
+    const m = /^([a-z][a-z0-9_-]*):(\d+)$/i.exec(String(key));
+    const id = m ? Number(m[2]) : 0;
+    const sessionId = Number.isSafeInteger(id) && id > 0 ? id : null;
+    // An error's code is the platform's own word for it (no_commits,
+    // recovery_cleanup_pending, ECONNRESET), never its message.
+    const code = err?.code == null ? null : String(err.code).replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, 60) || null;
+    events.record(pool || undefined, {
+      type: events.EVENT_TYPES.TURN_RECOVERY_GAVE_UP,
+      sessionId,
+      metadata: { sessionId, recovery: m ? m[1].toLowerCase() : null, code, failures: Number(failures) || 0 },
+    });
+  } catch { /* a record is a help; giving up still happens */ }
+}
+
 // When a job has failed `maxFailures` times, it stops: `onExhausted` runs
 // (callers terminalize what the user sees there) and the session reservation
 // is released. The durable active_turn is left as it is, which is what lets
 // the stale-turn watchdog end it the same way it ends any turn nothing owns:
 // ledger closed, "[interrupted]" on the progress card, the unfinished-turn
-// message with its retry pills, and the owner notified.
+// message with its retry pills, and the owner notified. Giving up is
+// recorded as an event (recordGaveUp above).
 function scheduleRetainedRecovery({
   key,
   run,
@@ -107,6 +133,7 @@ function scheduleRetainedRecovery({
   maxFailures = DEFAULT_MAX_FAILURES,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
+  pool = null,
 }) {
   if (!key) throw new Error('recovery-retry: key required');
   if (typeof run !== 'function') throw new Error('recovery-retry: run required');
@@ -177,6 +204,7 @@ function scheduleRetainedRecovery({
         return;
       }
       if (state.failures >= maxFailures) {
+        recordGaveUp({ pool, key, err, failures: state.failures });
         try {
           await onExhausted(err, { failures: state.failures, key });
         } catch (hookErr) {
@@ -219,6 +247,7 @@ module.exports = {
   requireDurableTurnCleanup,
   isDurableTurnCleanupError,
   scheduleRetainedRecovery,
+  recordGaveUp,
   isScheduled,
   cancel,
 };

@@ -50,14 +50,47 @@ type OpenItem = (event: ReactMouseEvent<HTMLAnchorElement>, ref: TopicRef) => vo
 
 interface SlotsState { view: BotSlotsView | null; failed: boolean; loaded: boolean }
 
+/*
+ * ONE READ, SHARED, AND ASKED FOR WITH THE PAGE (polish board #13). The
+ * Workshop's door below was read only once the overview had drawn, so its
+ * line was inserted under the figures about 170 ms later and pushed the rule
+ * down. The project page asks as it opens (warmBotSlots, ./workshop.tsx), a
+ * read asked for again within a few seconds is that same read, and the last
+ * answer for a project is what the door and the page first draw, corrected
+ * in place by the read every mount still makes.
+ */
+const SLOTS_REUSE_MS = 5000;
+const slotsSeen = new Map<string, BotSlotsView | null>();
+const slotsAsked = new Map<string, { at: number; read: Promise<BotSlotsView | null> }>();
+
+function readSlots(slug: string): Promise<BotSlotsView | null> {
+  const open = slotsAsked.get(slug);
+  if (open && Date.now() - open.at < SLOTS_REUSE_MS) return open.read;
+  const read = getBotSlots(slug).then((view) => { slotsSeen.set(slug, view); return view; });
+  slotsAsked.set(slug, { at: Date.now(), read });
+  read.catch(() => { if (slotsAsked.get(slug)?.read === read) slotsAsked.delete(slug); });
+  return read;
+}
+
+/** Ask for a project's slots ahead of the overview that draws them. */
+export function warmBotSlots(slug: string | null | undefined): void {
+  if (slug) readSlots(slug).catch(() => {});
+}
+
+function seenSlots(slug: string | null | undefined): SlotsState {
+  return slug && slotsSeen.has(slug)
+    ? { view: slotsSeen.get(slug) || null, failed: false, loaded: true }
+    : { view: null, failed: false, loaded: false };
+}
+
 /** A project's bot slots, read in an effect, again when the slug changes. */
 export function useBotSlots(slug: string | null | undefined): SlotsState {
-  const [state, setState] = useState<SlotsState>({ view: null, failed: false, loaded: false });
+  const [state, setState] = useState<SlotsState>(() => seenSlots(slug));
   useEffect(() => {
     if (!slug) return undefined;
     let live = true;
-    setState({ view: null, failed: false, loaded: false });
-    getBotSlots(slug)
+    setState(seenSlots(slug));
+    readSlots(slug)
       .then((view) => { if (live) setState({ view, failed: false, loaded: true }); })
       .catch(() => { if (live) setState({ view: null, failed: true, loaded: true }); });
     return () => { live = false; };

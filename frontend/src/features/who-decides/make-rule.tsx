@@ -19,7 +19,7 @@
  * form rises on a transform, which would trap a fixed overlay inside it.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
@@ -30,30 +30,69 @@ import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { presetName, type PresetKey } from './model';
 import { PlaysOut, PresetTiles, type Viewer } from './parts';
 
-function PresetsSheet({ now, viewer, onPick, onClose }: {
+/** The sheet's slide, each way (`duration-200` below). */
+export const SHEET_SLIDE_MS = 200;
+
+function reducedMotion(): boolean {
+  try { return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
+}
+
+/**
+ * IT LEAVES THE WAY IT CAME (polish board #8, 19 Oct 2026). It slid up over
+ * 200ms and every way out (✕, Done, Use, the scrim, Escape) unmounted it in
+ * the same frame, so it vanished. Now a way out slides it down first and
+ * `onGone` takes it off the page when the slide has run (its transitionend,
+ * or SHEET_SLIDE_MS and a little after, whichever comes first). With
+ * reduced motion it goes at once.
+ */
+function PresetsSheet({ now, viewer, onPick, onGone }: {
   now: PresetKey;
   viewer: Viewer;
   onPick: (key: PresetKey) => void;
-  onClose: () => void;
+  onGone: () => void;
 }) {
   const t = useMessages('onboarding');
   const [picked, setPicked] = useState<PresetKey>(now);
   const [shown, setShown] = useState(false);
+  const leaving = useRef(false);
+  const panelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const r = requestAnimationFrame(() => setShown(true));
     return () => cancelAnimationFrame(r);
   }, []);
+  const goneRef = useRef(onGone);
+  goneRef.current = onGone;
+  const close = () => {
+    if (leaving.current) return;
+    leaving.current = true;
+    const panel = panelRef.current;
+    if (reducedMotion() || !panel) { goneRef.current(); return; }
+    let done = false;
+    const gone = () => {
+      if (done) return;
+      done = true;
+      panel.removeEventListener('transitionend', onEnd);
+      goneRef.current();
+    };
+    const onEnd = (e: TransitionEvent) => { if (e.target === panel && e.propertyName === 'transform') gone(); };
+    panel.addEventListener('transitionend', onEnd);
+    window.setTimeout(gone, SHEET_SLIDE_MS + 60);
+    setShown(false);
+  };
+  const closeRef = useRef(close);
+  closeRef.current = close;
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeRef.current(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, []);
   const changed = picked !== now;
   return (
     <div className="fixed inset-0 z-[9002]" data-make-rule-sheet="">
-      <div aria-hidden="true" onClick={onClose}
+      <div aria-hidden="true" onClick={close}
         className={`absolute inset-0 bg-[color:var(--pane-scrim)] transition-opacity duration-200 ${shown ? 'opacity-100' : 'opacity-0'}`} />
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="make-rule-sheet-title"
@@ -62,7 +101,7 @@ function PresetsSheet({ now, viewer, onPick, onClose }: {
         <div className="mx-auto h-1.5 w-10 rounded-full bg-zinc-300 dark:bg-zinc-700" aria-hidden="true" />
         <div className="mt-3 flex items-center gap-3">
           <h2 id="make-rule-sheet-title" className="min-w-0 flex-1 text-[17px] font-semibold">{t('onboarding:firstSession.make.rule.title')}</h2>
-          <button type="button" onClick={onClose} aria-label={t('onboarding:firstSession.make.rule.close')}
+          <button type="button" onClick={close} aria-label={t('onboarding:firstSession.make.rule.close')}
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
             <XIcon className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -75,7 +114,7 @@ function PresetsSheet({ now, viewer, onPick, onClose }: {
         <PlaysOut preset={picked} viewer={viewer} />
         <Button type="button" layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="mt-4 flex items-center justify-center"
           data-make-rule-done=""
-          onClick={() => (changed ? onPick(picked) : onClose())}>
+          onClick={() => { if (changed) onPick(picked); close(); }}>
           {changed ? t('onboarding:firstSession.make.rule.use', { preset: presetName(picked, viewer) }) : t('onboarding:firstSession.make.rule.done')}
         </Button>
       </div>
@@ -111,7 +150,7 @@ export function MakeRuleLine({ preset, onPick, who }: { preset: PresetKey; onPic
       </p>
       {open && typeof document !== 'undefined'
         ? createPortal(
-          <PresetsSheet now={preset} viewer={viewer} onPick={(key) => { onPick(key); setOpen(false); }} onClose={() => setOpen(false)} />,
+          <PresetsSheet now={preset} viewer={viewer} onPick={onPick} onGone={() => setOpen(false)} />,
           document.body,
         )
         : null}
