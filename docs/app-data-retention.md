@@ -46,9 +46,23 @@ The reap sweep (server.js, on the orphan staging-database pass's six-hour
 throttle) retries every receipt with a data step undone and its last attempt
 more than an hour old, up to 10 a pass. A step already done is not repeated.
 After 20 attempts a receipt is left for an operator (`needs_operator` in the
-report). A receipt whose database name a live app now holds (the slug was
-taken again) never has its database or template dropped from the old
-receipt: that would drop the new app's. It is marked for an operator instead.
+report).
+
+While a receipt's database or template step is undone, its database name is
+reserved: the `apps` trigger `reserve_purged_app_name` refuses any insert or
+slug change that would give an app the same name (`app_` plus the slug with
+every character outside `[a-z0-9_]` made `_`), with SQLSTATE `UP121`, which
+create and remix answer as a 409: "This name is still being cleaned up; try
+again later or pick another name". The trigger and each drop take the same
+transaction-scoped advisory lock on the name (`APP_NAME_PURGE_LOCK`, 991019),
+and the drop re-checks under it, immediately before dropping, that no other
+app holds the name. A receipt whose name a live app does hold (one made
+before the receipt existed) never has its database or template dropped: that
+would drop the live app's. It is marked for an operator instead.
+
+To free a reserved name by hand once the database and template are confirmed
+gone: `UPDATE deleted_app_purges SET database_dropped_at = NOW(),
+template_dropped_at = NOW() WHERE db_name = '<db_name>';`.
 
 Not removed by the teardown, and not personal data the platform holds about
 the app's users:

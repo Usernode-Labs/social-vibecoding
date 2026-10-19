@@ -105,8 +105,16 @@ const PREVIEW_DOCKER_DEPLOY_LOCK = 991017;
 // (src/workflow/rules/presence.ts, where the id is defined: the workflow's
 // readers test it in SQL).
 const { PROCESS_PRESENCE_LOCK } = require('../workflow/rules/presence.ts');
+// #5121: an app database NAME, between a deleted app's purge and a new app
+// taking the same name. The CLASSIFIER half of
+// `pg_advisory_xact_lock(classifier, hashtext(db_name))`, transaction-scoped:
+// taken by the apps trigger reserve_purged_app_name() (src/db/schema.sql,
+// which spells the number; tests pin the two together) around a new or
+// renamed slug's check and insert, and by services/app-data-retention.js
+// around its re-check and drop.
+const APP_NAME_PURGE_LOCK = 991019;
 
 module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, BUILD_RETENTION_LOCK,
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK,
   VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, WEEKLY_DIGEST_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK,
-  CHECKS_QUEUE_LOCK, PREVIEW_DOCKER_DEPLOY_LOCK, PROCESS_PRESENCE_LOCK };
+  CHECKS_QUEUE_LOCK, PREVIEW_DOCKER_DEPLOY_LOCK, PROCESS_PRESENCE_LOCK, APP_NAME_PURGE_LOCK };

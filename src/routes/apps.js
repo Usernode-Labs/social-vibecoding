@@ -1,6 +1,7 @@
 const appAllowance = require('../services/app-allowance');
 const platformLimits = require('../services/platform-limit-alerts');
 const appLimit = require('../services/app-limit');
+const { NAME_BEING_PURGED, NAME_BEING_PURGED_ERROR } = require('../services/app-data-retention');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
@@ -1586,6 +1587,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (err.code === '23505') {
         return res.status(409).json({ error: 'An app with that name already exists' });
       }
+      // A deleted app's purge still holds this database name (#5121,
+      // the apps trigger reserve_purged_app_name in schema.sql).
+      if (err.code === NAME_BEING_PURGED) {
+        return res.status(409).json({ error: NAME_BEING_PURGED_ERROR, reason: 'name_being_purged' });
+      }
       log.error('apps', 'Failed to create app', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
@@ -1702,6 +1708,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     } catch (err) {
       if (err.code === '23505') {
         return res.status(409).json({ error: 'An app with that name already exists' });
+      }
+      // A deleted app's purge still holds this database name (#5121,
+      // the apps trigger reserve_purged_app_name in schema.sql).
+      if (err.code === NAME_BEING_PURGED) {
+        return res.status(409).json({ error: NAME_BEING_PURGED_ERROR, reason: 'name_being_purged' });
       }
       log.error('apps', 'Failed to fork app', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

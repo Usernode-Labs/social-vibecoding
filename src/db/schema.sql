@@ -15019,3 +15019,42 @@ CREATE TABLE IF NOT EXISTS deleted_app_purges (
 CREATE INDEX IF NOT EXISTS idx_deleted_app_purges_pending
   ON deleted_app_purges (last_attempt_at)
   WHERE database_dropped_at IS NULL OR template_dropped_at IS NULL OR files_removed_at IS NULL;
+
+-- A deleted app's database name is reserved while its purge is unfinished
+-- (#5121). The purge retry drops `db_name` once no live app holds it; a new
+-- app (or a renamed slug) taking the same name in between would have its
+-- own database dropped. So taking a name waits on the same transaction-scoped
+-- advisory lock the purge holds around its re-check and drop (classifier
+-- 991019, APP_NAME_PURGE_LOCK in services/advisory-locks.js), and is refused
+-- while a receipt for that name still has its database or template step
+-- undone. The name is `app_` plus the slug with every character outside
+-- [a-z0-9_] made `_`, exactly as db-manager.appDbName builds it. A trigger,
+-- so every path that writes apps.slug (create, fork, import, seeds) is held
+-- to it. SQLSTATE UP121; routes/apps.js answers it with a 409.
+CREATE OR REPLACE FUNCTION reserve_purged_app_name() RETURNS trigger AS $$
+DECLARE
+  db TEXT := 'app_' || regexp_replace(NEW.slug, '[^a-z0-9_]', '_', 'g');
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.slug IS NOT DISTINCT FROM OLD.slug THEN
+    RETURN NEW;
+  END IF;
+  PERFORM pg_advisory_xact_lock(991019, hashtext(db));
+  IF EXISTS (SELECT 1 FROM deleted_app_purges p
+              WHERE p.db_name = db
+                AND (p.database_dropped_at IS NULL OR p.template_dropped_at IS NULL)) THEN
+    RAISE EXCEPTION 'This name is still being cleaned up; try again later or pick another name'
+      USING ERRCODE = 'UP121', DETAIL = 'database name ' || db || ' has an unfinished purge';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+-- Created once, not dropped and made again on every boot: that would take
+-- an exclusive lock on apps each time the schema runs.
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'apps_reserve_purged_name'
+                  AND tgrelid = 'apps'::regclass) THEN
+    CREATE TRIGGER apps_reserve_purged_name
+      BEFORE INSERT OR UPDATE OF slug ON apps
+      FOR EACH ROW EXECUTE FUNCTION reserve_purged_app_name();
+  END IF;
+END $$;

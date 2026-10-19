@@ -98,11 +98,12 @@ test('a deleted app is purged from its receipt, retried, and the report lists id
   assert.equal(receipt.attempts, 2);
   assert.equal((await retention.retryPendingPurges(pool, {}, { retryAfterMs: 0 })).examined, 0, 'a purged receipt is done');
 
-  // The slug taken again by a live app: its database is never dropped from
-  // the old receipt.
+  // A live app holding the name of an old receipt (made before the receipt
+  // existed; the trigger refuses it after): its database is never dropped
+  // from the old receipt.
+  await pool.query("INSERT INTO apps (name, slug, status, created_by) VALUES ('Reused', 'reused', 'running', $1)", [owner.id]);
   await pool.query(
     "INSERT INTO deleted_app_purges (app_id, slug, db_name, storage_prefix, attempts, last_attempt_at) VALUES (999999, 'reused', 'app_reused', 'app/999999/', 1, NOW() - INTERVAL '2 hours')");
-  await pool.query("INSERT INTO apps (name, slug, status, created_by) VALUES ('Reused', 'reused', 'running', $1)", [owner.id]);
   dropped.length = 0;
   const reused = await retention.retryPendingPurges(pool, {});
   assert.equal(reused.skippedNameInUse, 1);
@@ -132,4 +133,87 @@ test('a deleted app is purged from its receipt, retried, and the report lists id
   assert.ok(bySlug['quiet-app'].idle_days >= 189 && bySlug['quiet-app'].idle_days <= 191);
   const states = Object.fromEntries(report.deletedApps.map((r) => [r.slug, r.state]));
   assert.deepEqual(states, { 'gone-app': 'purged', reused: 'pending' });
+
+  // ── The name is reserved while its purge is unfinished ──
+  const purged = (db) => pool.query(
+    'UPDATE deleted_app_purges SET database_dropped_at = NOW(), template_dropped_at = NOW() WHERE db_name = $1', [db]);
+  await pool.query(
+    "INSERT INTO deleted_app_purges (app_id, slug, db_name, storage_prefix, attempts) VALUES (999990, 'taken-x', 'app_taken_x', 'app/999990/', 1)");
+  const create = (slug) => pool.query(
+    "INSERT INTO apps (name, slug, status, created_by) VALUES ('Taken', $1, 'creating', $2) RETURNING id", [slug, owner.id]);
+  await assert.rejects(create('taken-x'), (err) => err.code === retention.NAME_BEING_PURGED
+    && err.message === retention.NAME_BEING_PURGED_ERROR);
+  // The same normalised name from another slug, and a rename onto it.
+  await assert.rejects(create('taken_x'), (err) => err.code === retention.NAME_BEING_PURGED);
+  const { rows: [other] } = await create('other-x');
+  await assert.rejects(pool.query("UPDATE apps SET slug = 'taken-x' WHERE id = $1", [other.id]),
+    (err) => err.code === retention.NAME_BEING_PURGED);
+  await pool.query("UPDATE apps SET name = 'Other X' WHERE id = $1", [other.id]); // other columns are untouched
+  // Database dropped but the template not yet: still reserved.
+  await pool.query("UPDATE deleted_app_purges SET database_dropped_at = NOW() WHERE db_name = 'app_taken_x'");
+  await assert.rejects(create('taken-x'), (err) => err.code === retention.NAME_BEING_PURGED);
+  await purged('app_taken_x');
+  const { rows: [retaken] } = await create('taken-x');
+  assert.ok(retaken.id, 'free again once purged');
+
+  // A creation that reaches the name while a purge holds its lock waits for
+  // it, then finds the receipt still pending and is refused.
+  await pool.query(
+    "INSERT INTO deleted_app_purges (app_id, slug, db_name, storage_prefix, attempts) VALUES (999991, 'held-y', 'app_held_y', 'app/999991/', 1)");
+  const { APP_NAME_PURGE_LOCK } = require('../src/services/advisory-locks');
+  const holder = await pool.connect();
+  await holder.query('BEGIN');
+  await holder.query('SELECT pg_advisory_xact_lock($1::int, hashtext($2::text))', [APP_NAME_PURGE_LOCK, 'app_held_y']);
+  let settled = false;
+  const waiting = create('held-y').then(() => 'created', (err) => err.code).finally(() => { settled = true; });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(settled, false, 'the insert waits on the purge lock');
+  await holder.query('COMMIT');
+  holder.release();
+  assert.equal(await waiting, retention.NAME_BEING_PURGED);
+
+  // The race the lock closes: the sweep's first look finds the name free,
+  // and an app takes it (outside the trigger, as one made before its receipt
+  // existed would) before the drop. The re-check under the lock sees it, and
+  // nothing is dropped.
+  await pool.query(
+    "INSERT INTO deleted_app_purges (app_id, slug, db_name, storage_prefix, attempts, last_attempt_at) VALUES (999992, 'race-z', 'app_race_z', 'app/999992/', 1, NOW() - INTERVAL '2 hours')");
+  const racing = Object.create(pool);
+  let raced = false;
+  racing.connect = async () => {
+    if (!raced) {
+      raced = true;
+      const c = await pool.connect();
+      try {
+        await c.query('BEGIN');
+        await c.query('SET LOCAL session_replication_role = replica'); // past the trigger
+        await c.query("INSERT INTO apps (name, slug, status, created_by) VALUES ('Race', 'race-z', 'running', $1)", [owner.id]);
+        await c.query('COMMIT');
+      } finally { c.release(); }
+    }
+    return pool.connect();
+  };
+  racing.query = (...args) => pool.query(...args);
+  dropped.length = 0;
+  templates.length = 0;
+  const race = await retention.retryPendingPurges(racing, {});
+  assert.ok(raced, 'the app was taken after the first look');
+  assert.deepEqual(dropped, [], 'a database a live app holds is never dropped');
+  assert.deepEqual(templates, [], 'nor its staging template');
+  assert.equal(race.skippedNameInUse, 1);
+  ({ rows: [receipt] } = await pool.query('SELECT * FROM deleted_app_purges WHERE app_id = 999992'));
+  assert.equal(receipt.database_dropped_at, null);
+  assert.equal(receipt.template_dropped_at, null);
+  assert.match(receipt.errors.database, /held by a live app/);
+  assert.match(receipt.errors.template, /held by a live app/);
+});
+
+test('the trigger and the service take the same name lock', () => {
+  const { APP_NAME_PURGE_LOCK } = require('../src/services/advisory-locks');
+  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
+  assert.ok(schema.includes(`pg_advisory_xact_lock(${APP_NAME_PURGE_LOCK}, hashtext(db))`));
+  assert.ok(schema.includes("'app_' || regexp_replace(NEW.slug, '[^a-z0-9_]', '_', 'g')"),
+    'the trigger builds the name as db-manager.appDbName does');
+  const dbManager = require('../src/services/db-manager');
+  assert.equal(dbManager.appDbName('taken-x'), 'app_taken_x');
 });

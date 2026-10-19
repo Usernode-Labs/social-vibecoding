@@ -72,9 +72,62 @@ async function markStep(pool, appId, step, err = null) {
   }
 }
 
+// A new app's name meeting a deleted app's unfinished purge (#5121). The
+// apps trigger reserve_purged_app_name (schema.sql) raises it, and refuses
+// the name, while a receipt for the same database name has its database or
+// template step undone.
+const NAME_BEING_PURGED = 'UP121';
+const NAME_BEING_PURGED_ERROR = 'This name is still being cleaned up; try again later or pick another name';
+
+// Held by an app other than `appId` (the app being torn down still has its
+// row while the teardown runs; the sweep's receipts have none). The name is
+// built exactly as db-manager.appDbName builds it.
+const NAME_HELD_SQL = `SELECT EXISTS (
+    SELECT 1 FROM apps a
+     WHERE 'app_' || regexp_replace(a.slug, '[^a-z0-9_]', '_', 'g') = $1
+       AND a.id <> $2) AS held`;
+
+class NameHeldError extends Error {
+  constructor(dbName) {
+    super(`database name ${dbName} is held by a live app; left for an operator`);
+    this.name = 'NameHeldError';
+    this.code = 'name_held';
+  }
+}
+
+// Run one destructive step on `dbName` with the name locked: the same
+// transaction-scoped advisory lock the apps trigger takes before it lets a
+// slug through (APP_NAME_PURGE_LOCK), held on its own connection while the
+// drop runs (DROP DATABASE cannot run in a transaction, so the drop is on
+// the admin connection and only the lock is here). Re-checked under the
+// lock, immediately before the step: a name a live app holds is never
+// dropped, whatever a read before the lock said. An app created while the
+// lock is held waits for it, then sees the receipt still pending (it is
+// stamped after the lock is released) and is refused.
+async function underNameLock(pool, { dbName, appId }, step) {
+  const { APP_NAME_PURGE_LOCK } = require('./advisory-locks');
+  const client = await pool.connect();
+  let open = false;
+  try {
+    await client.query('BEGIN');
+    open = true;
+    await client.query('SELECT pg_advisory_xact_lock($1::int, hashtext($2::text))', [APP_NAME_PURGE_LOCK, dbName]);
+    const { rows: [r] } = await client.query(NAME_HELD_SQL, [dbName, appId]);
+    if (r?.held) throw new NameHeldError(dbName);
+    await step();
+    await client.query('COMMIT');
+    open = false;
+  } finally {
+    if (open) await client.query('ROLLBACK').catch(() => {});
+    client.release();
+  }
+}
+
 // The three data steps, each recorded. Never throws: the teardown goes on to
 // delete the row whatever happened here, and the sweep comes back for a step
-// that failed. `skip` names steps already done (a retry).
+// that failed. `skip` names steps already done (a retry). The two steps that
+// drop by NAME run under the name lock; files are keyed by the app id, which
+// is never reused.
 async function purgeData(pool, config, { appId, dbName }, { skip = [] } = {}) {
   const dbManager = require('./db-manager');
   const result = {};
@@ -82,7 +135,7 @@ async function purgeData(pool, config, { appId, dbName }, { skip = [] } = {}) {
   if (!skip.includes('database')) {
     try {
       // strict: a failed drop is reported, not swallowed, so it is recorded.
-      await dbManager.dropDatabase(dbName, { strict: true });
+      await underNameLock(pool, { dbName, appId }, () => dbManager.dropDatabase(dbName, { strict: true }));
       result.database = true;
       await markStep(pool, appId, 'database');
     } catch (err) {
@@ -96,7 +149,7 @@ async function purgeData(pool, config, { appId, dbName }, { skip = [] } = {}) {
   // refresh that slipped in cannot rebuild it from a source still there.
   if (!skip.includes('template')) {
     try {
-      await dbManager.dropStagingTemplates(dbName);
+      await underNameLock(pool, { dbName, appId }, () => dbManager.dropStagingTemplates(dbName));
       result.template = true;
       await markStep(pool, appId, 'template');
     } catch (err) {
@@ -163,12 +216,14 @@ async function retryPendingPurges(pool, config, opts = {}) {
     if (row.database_dropped_at) skip.push('database');
     if (row.template_dropped_at) skip.push('template');
     if (row.files_removed_at) skip.push('files');
+    // A first look, to skip the lock for a name plainly taken. Not the
+    // guard: purgeData re-checks under the name lock before each drop.
     if (row.name_in_use) {
       summary.skippedNameInUse++;
       for (const step of ['database', 'template']) {
         if (!skip.includes(step)) {
           skip.push(step);
-          await markStep(pool, row.app_id, step, new Error('database name now held by a live app; left for an operator'));
+          await markStep(pool, row.app_id, step, new NameHeldError(row.db_name));
         }
       }
     }
@@ -183,6 +238,11 @@ async function retryPendingPurges(pool, config, opts = {}) {
     summary.retried++;
     const out = await purgeData(pool, config, { appId: row.app_id, dbName: row.db_name }, { skip });
     if (Object.values(out).every(Boolean) && !row.name_in_use) summary.completed++;
+    else if (!row.name_in_use && (out.database === false || out.template === false)) {
+      // Taken between the first look and the lock: counted with the others.
+      const { rows: [r] } = await pool.query(NAME_HELD_SQL, [row.db_name, row.app_id]).catch(() => ({ rows: [] }));
+      if (r?.held) summary.skippedNameInUse++;
+    }
   }
   if (summary.examined) log.info('app-retention', 'Deleted app purge retries', summary);
   return summary;
@@ -263,6 +323,9 @@ async function adminReport(pool, { days } = {}) {
 module.exports = {
   STEPS,
   MAX_ATTEMPTS,
+  NAME_BEING_PURGED,
+  NAME_BEING_PURGED_ERROR,
+  NameHeldError,
   INACTIVE_AFTER_DAYS,
   STOP_GRACE_DAYS,
   recordDeletion,

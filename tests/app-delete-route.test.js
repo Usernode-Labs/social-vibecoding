@@ -87,6 +87,11 @@ const pool = {
     }
     return { rows: [], rowCount: 0 };
   },
+  // The purge's name lock (services/app-data-retention.js, #5121): a
+  // connection whose re-check finds the name held by no other app.
+  async connect() {
+    return { query: async () => ({ rows: [{ held: false }] }), release() {} };
+  },
 };
 poolMod.getPool = () => pool;
 
