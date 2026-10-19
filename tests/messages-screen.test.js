@@ -145,7 +145,7 @@ test('an invitation resolves metadata before deciding whether history may be fet
     store.indexOf('export async function loadOlder('));
   const detailAt = fn.indexOf('await api.getConversation(conversationId, read)');
   const statusAt = fn.indexOf("active.membershipStatus === 'member'");
-  const messagesAt = fn.indexOf('await api.listMessages(conversationId, null, read)');
+  const messagesAt = fn.indexOf('await api.listMessages(conversationId, null, read, pageSize(active))');
   assert.ok(detailAt > -1 && detailAt < statusAt && statusAt < messagesAt);
   assert.match(screen, /t\('messages:invitation\.invitedBy', \{ username: requesterUser\.username \}\)/);
   assert.match(message('messages:invitation.invitedBy', { username: 'ada' }), /^@ada invited you\. Accepting gives you access to the complete retained conversation history\.$/);
