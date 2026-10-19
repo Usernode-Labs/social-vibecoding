@@ -256,32 +256,38 @@ export async function execute(opts: ServiceOptions, w: Claimed, stopping?: Abort
   const abort = new AbortController();
   const onStop = () => abort.abort(new LeaseLost());
   stopping?.addEventListener('abort', onStop, { once: true });
-  const live = `id = $1 AND claim_id = $2 AND status = 'running' AND lease_until > now()`;
+  // The lease is read at the time of the check, not of the statement's start:
+  // a write that waited on the row while this process gave its lease up is
+  // checked again after it, and must not find it live and extend it.
+  const live = `id = $1 AND claim_id = $2 AND status = 'running' AND lease_until > clock_timestamp()`;
   let leaseLost = false;
   const lose = () => { leaseLost = true; abort.abort(new LeaseLost()); };
-  // When the lease was last renewed, by this process's own clock: a process
+  // When the lease was last extended, by this process's own clock: a process
   // that cannot reach the database cannot tell whether its lease still holds,
   // and another process claims the item once it lapses, so it stops the
-  // handler itself before then rather than run beside that one.
+  // handler itself before then rather than run beside that one. Every write
+  // under the claim extends the lease (a checkpoint too), and the clock is
+  // set to when the write was sent: the lease it extended runs from later.
   let renewedAt = Date.now();
+  const extend = `lease_until = now() + make_interval(secs => $3::float8 / 1000)`;
   const renew = async (sql: string, values: unknown[]) => {
+    const sentAt = Date.now();
     const { rowCount } = await opts.pool.query(sql, values);
     if (!rowCount) { lose(); throw new LeaseLost(); }
-    renewedAt = Date.now();
+    renewedAt = Math.max(renewedAt, sentAt);
   };
   // Renewed every quarter lease; three renewals missed in a row (three
   // quarters of a lease with no word from the database) stop it.
   const heartbeat = setInterval(() => {
     if (!leaseLost && Date.now() - renewedAt >= Math.floor((leaseMs * 3) / 4)) lose();
-    renew(`UPDATE wf_work SET lease_until = now() + make_interval(secs => $3::float8 / 1000) WHERE ${live}`,
-      [w.id, w.claim_id, leaseMs]).catch(() => {});
+    renew(`UPDATE wf_work SET ${extend} WHERE ${live}`, [w.id, w.claim_id, leaseMs]).catch(() => {});
   }, Math.max(50, Math.floor(leaseMs / 4)));
   let report: Report | null;
   try {
     const checkpoint = async (v: Json) => {
       assertJson(v);
       if (leaseLost) throw new LeaseLost();
-      await renew(`UPDATE wf_work SET checkpoint = $3 WHERE ${live}`, [w.id, w.claim_id, JSON.stringify(v)]);
+      await renew(`UPDATE wf_work SET checkpoint = $4, ${extend} WHERE ${live}`, [w.id, w.claim_id, leaseMs, JSON.stringify(v)]);
     };
     const value = await h.run({
       workId: w.id, kind: w.kind, key: w.work_key, input: w.input, attempt: w.attempt_count, lostAttempts: lost,

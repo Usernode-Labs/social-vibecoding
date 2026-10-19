@@ -791,6 +791,54 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.deepEqual((await inst('k7f')).data.results.map((x) => x.slice(0, 2)), [['ok', 'k7f-w']]);
   });
 
+  await t.test('K7 a checkpoint that lands while renewals fail extends the lease: the item is never claimable while its handler runs', async () => {
+    // Review of #5545 (P2): a checkpoint reset the renewal clock without
+    // extending the lease, so with renewals failing and checkpoints landing
+    // the lease ran out under a live handler and another process claimed it.
+    let failRenew = false;
+    const flaky = {
+      connect: () => pool.connect(),
+      query: (text, ...rest) => (failRenew && /^UPDATE wf_work SET lease_until = now\(\)/.test(text)
+        ? Promise.reject(Object.assign(new Error('connection lost'), { code: 'ECONNRESET' }))
+        : pool.query(text, ...rest)),
+    };
+    const r = make({ pool: flaky, services: { 'kt.echo': { ...echo, leaseMs: 800 } } });
+    await create('k7cp');
+    let active = true;
+    let stopAt = 0;
+    handlers['k7cp-w'] = async (ctx) => {
+      try {
+        while (Date.now() < stopAt && !ctx.signal.aborted) {
+          await ctx.checkpoint({ at: Date.now() });
+          await sleep(100);
+        }
+        return { done: true };
+      } finally {
+        active = false;
+      }
+    };
+    await route('k7cp', 'Work', { workKey: 'k7cp-w' });
+    await rt.drain();
+    stopAt = Date.now() + 2500;
+    failRenew = true;
+    const running = r.runServices();
+    let checks = 0;
+    while (active) {
+      const { rows: [w] } = await pool.query(
+        `SELECT status, lease_until > now() AS live FROM wf_work WHERE work_key = 'k7cp-w'`);
+      if (active && w.status === 'running') {
+        assert.equal(w.live, true, 'the lease holds while its handler runs');
+        checks += 1;
+      }
+      await sleep(40);
+    }
+    await running;
+    failRenew = false;
+    assert.ok(checks > 20, `watched it run (${checks} looks)`);
+    await rt.drain();
+    assert.deepEqual((await inst('k7cp')).data.results.map((x) => x.slice(0, 2)), [['ok', 'k7cp-w']]);
+  });
+
   await t.test('K7 a work item that continues an earlier one starts from its checkpoint', async () => {
     await create('k7c');
     const seen = new Map();

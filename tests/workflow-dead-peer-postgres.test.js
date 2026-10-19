@@ -28,12 +28,18 @@ test('the workflow runtime\'s sessions reap a dead peer and an abandoned transac
     t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
   }
   try {
-    const show = async (name) => (await pool.query(`SELECT current_setting($1) AS v`, [name])).rows[0].v;
-    assert.equal(await show('idle_in_transaction_session_timeout'), '30s');
-    assert.equal(await show('tcp_keepalives_idle'), `${SERVER_KEEPALIVE.tcp_keepalives_idle}`);
-    assert.equal(await show('tcp_keepalives_interval'), `${SERVER_KEEPALIVE.tcp_keepalives_interval}`);
-    assert.equal(await show('tcp_keepalives_count'), `${SERVER_KEEPALIVE.tcp_keepalives_count}`);
-    assert.match(await show('tcp_user_timeout'), new RegExp(`^${SERVER_KEEPALIVE.tcp_user_timeout}(ms)?$`));
+    const setting = async (name) => (await pool.query(
+      'SELECT setting, unit, source FROM pg_settings WHERE name = $1', [name])).rows[0];
+    const idle = await setting('idle_in_transaction_session_timeout');
+    assert.deepEqual([idle.setting, idle.unit, idle.source], ['30000', 'ms', 'client']);
+    // Asked for by the pool on every session. A server whose OS lacks a TCP
+    // option (TCP_USER_TIMEOUT on macOS; keepalives on a Unix socket)
+    // reports 0 for it, which is all it can do there.
+    for (const [name, value] of Object.entries(SERVER_KEEPALIVE)) {
+      const got = await setting(name);
+      assert.equal(got.source, 'client', `${name} is the session's own`);
+      assert.ok([String(value), '0'].includes(got.setting), `${name} = ${got.setting}`);
+    }
   } finally {
     await pool.end();
   }
