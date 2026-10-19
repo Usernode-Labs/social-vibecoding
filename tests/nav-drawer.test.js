@@ -187,7 +187,7 @@ test('it applies on a phone, on a community\'s own page, and through a switch', 
   assert.equal(renderToHtml(createElement(NavDrawer)), '', 'nothing in the prerender');
 });
 
-test('level 0 searches your communities by name, in the list\'s order', () => {
+test('level 0 searches your communities by name, in the list\'s order, an exact name first (#5472)', () => {
   const { matchCommunities } = loadTsx(`${DIR}/outer-level.tsx`);
   const rows = [
     { slug: 'a', name: 'Type Racer Battle', working: 0, needs: 0 },
@@ -198,6 +198,18 @@ test('level 0 searches your communities by name, in the list\'s order', () => {
   assert.deepEqual(matchCommunities(rows, 'A').map((r) => r.slug), ['a', 'b'], 'any case');
   assert.deepEqual(matchCommunities(rows, 'c-x').map((r) => r.slug), ['c-x'], 'a row with no name by its slug');
   assert.equal(matchCommunities(rows, '').length, 3);
+  const gardens = [
+    { slug: 'garden-swap', name: 'Garden Swap', working: 0, needs: 0 },
+    { slug: 'garden', name: 'Garden', working: 0, needs: 0 },
+  ];
+  assert.deepEqual(matchCommunities(gardens, 'garden').map((r) => r.slug), ['garden', 'garden-swap'], 'the exact name leads');
+  assert.deepEqual(matchCommunities(gardens, 'arden').map((r) => r.slug), ['garden-swap', 'garden'], 'a partial-only query keeps the list order');
+  // The Communities screen's search (frontend/src/features/workshop/index.tsx)
+  // shares the one rule: it computes `found` with matchRows too, from
+  // ./sections, where the drawer also reads it (importing the screen back
+  // would be a cycle).
+  const screen = read('frontend/src/features/workshop/index.tsx');
+  assert.match(screen, /const found = rows && q \? matchRows\(rows, q\) : null;/);
 });
 
 test('the header takes the drawer\'s arrow and titles only while it applies', () => {

@@ -51,6 +51,34 @@ test('the search narrows the apps by name or short name, every word in any order
   assert.deepEqual(ids(filterAppChoices(APPS, { query: 'zebra' })), []);
 });
 
+test('an exact name or short name leads the matched list, even ahead of the own projects (#4793)', () => {
+  const { filterAppChoices } = mod();
+  // The report: typing an app's full name put it below own projects that
+  // only share a word with it.
+  const GARDEN = [
+    { id: 1, slug: 'garden-planner-pro', name: 'Garden Planner Pro', mine: true },
+    { id: 2, slug: 'garden-swap', name: 'Garden Swap', mine: true },
+    { id: 3, slug: 'garden', name: 'Garden', mine: false },
+    { id: 4, slug: 'rose-garden', name: 'Rose Garden', mine: false },
+  ];
+  assert.deepEqual(ids(filterAppChoices(GARDEN, { query: 'garden' })), [3, 1, 2, 4], 'exact leads, own projects after');
+  assert.deepEqual(ids(filterAppChoices(GARDEN, { query: ' GARDEN ' })), [3, 1, 2, 4], 'in any case, with padding');
+  assert.deepEqual(ids(filterAppChoices(GARDEN, { query: 'rose-garden' })), [4], 'a short name as the query leads too');
+  assert.deepEqual(ids(filterAppChoices(GARDEN, { query: 'swap' })), [2], 'a partial-only query keeps the usual order');
+  assert.deepEqual(ids(filterAppChoices(GARDEN, { group: 'mine', query: 'garden' })), [1, 2], 'the chip limits the pool first, so the exact match outside it is not shown');
+  // Several exact matches keep their order among themselves.
+  const TWINS = [
+    { id: 5, slug: 'chores-board', name: 'Chores', mine: true },
+    { id: 6, slug: 'chores', name: 'Chores', mine: false },
+  ];
+  assert.deepEqual(ids(filterAppChoices(TWINS, { query: 'chores' })), [5, 6], 'two exact matches, in the list\'s own order');
+  assert.deepEqual(ids(filterAppChoices(TWINS, { query: 'chores' })), filterAppChoices(TWINS, { query: 'Chores ' }).map((r) => r.id), 'the same list whatever the padding');
+  // Extra spaces between words break neither exact match.
+  assert.deepEqual(ids(filterAppChoices([
+    { id: 7, slug: 'flat-4b-chores-e98ecd', name: 'Flat 4B Chores', mine: true },
+  ], { query: 'flat  4b  chores' })), [7], 'extra spaces between words still exact');
+});
+
 test('the group chips filter the list, and combine with the search', () => {
   const { filterAppChoices, offersAppGroups, APP_GROUPS } = mod();
   assert.equal(message('messages:shareItem.group.all'), 'All');

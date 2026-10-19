@@ -110,7 +110,7 @@ import { communitiesSearchStore } from './communities-search';
 import { NeedsReel, type NeedsFeedItem } from './needs-reel';
 import { unseenNeeds, useNeedsSeen } from './needs-seen';
 import {
-  groupRows, orderRows, SECTION_LIMIT, sectionFold, type Audience,
+  groupRows, matchRows, orderRows, SECTION_LIMIT, sectionFold, type Audience,
 } from './sections';
 import { workshopStore } from './workshop-store.js';
 
@@ -552,9 +552,7 @@ export function WorkshopScreen() {
   // that opens the feed of votes owed across all of them (`tab: 'needs'`,
   // also reached by `?ws=needs`), and a way back. See the markup below.
   const rows = state.rows ? orderRows(state.rows.map(unseenRow)) : null;
-  const found = rows && q
-    ? rows.filter((row) => String(row.name || row.slug).toLocaleLowerCase().includes(q.toLocaleLowerCase()))
-    : null;
+  const found = rows && q ? matchRows(rows, q) : null;
   const sections = rows ? groupRows(rows) : null;
   const all = rows;
   // `#workshop-empty` keeps its ONE meaning — you have no apps at all — and
