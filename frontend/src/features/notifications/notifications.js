@@ -129,6 +129,20 @@ const Notifications = {
   msgNextBefore: null,  // { createdAt, id } | null
   msgHasMore: true,
   msgLoading: false,
+  // #5527: the Unread tab's own cursor, walked by loadMoreUnread() over
+  // `?unread=1`. The bell counts EVERY unread notification on the account, but
+  // the shared first page holds only the newest 100 rows, read or unread — so
+  // an unread row behind a long run of read ones was never loaded and the tab
+  // said 1 where the badge said 46. This cursor reaches the rest. Separate
+  // from `nextBefore` for the same reason as the Messages cursor: paging it on
+  // the shared cursor would walk read rows too and strand unread ones.
+  //
+  // `unreadHasMore` starts false: refresh() seeds it (and the cursor) from
+  // the first page, because every unread row newer than that page's last row
+  // is already in it.
+  unreadNextBefore: null,  // { createdAt, id } | null
+  unreadHasMore: false,
+  unreadLoading: false,
   // Only the newest first-page refresh may replace the authoritative feed.
   // This prevents an older boot/bell request from completing after a native
   // network-only invalidation and overwriting its fresher result.
@@ -241,6 +255,12 @@ const Notifications = {
       Notifications.unread = data.unread || 0;
       Notifications.hasMore = !!data.hasMore;
       Notifications.nextBefore = data.nextBefore || null;
+      // #5527: the first page holds every unread row newer than its last
+      // row, so its own cursor is where the Unread tab's catch-up starts.
+      // Seeded here, so a reload never mixes two cursors.
+      Notifications.unreadHasMore = !!data.hasMore;
+      Notifications.unreadNextBefore = data.nextBefore || null;
+      Notifications.unreadLoading = false;
       Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
       // Rendered UNCONDITIONALLY now, where this was gated on `open`.
@@ -394,6 +414,91 @@ const Notifications = {
     } finally {
       Notifications.msgLoading = false;
       Notifications._renderList();
+    }
+  },
+
+  /**
+   * #5527: the Unread tab still holds fewer unread notifications than the
+   * bell counts. Counted off the ROWS, not the collapsed runs: the bell counts
+   * rows (`countUnread`), and the tab's run count sums to the same number.
+   */
+  _unreadShort() {
+    const loaded = Notifications.items.filter((n) => n && !n.readAt).length;
+    return loaded < (Number(Notifications.unread) || 0);
+  },
+
+  /**
+   * #5527: bring the Unread list up to the number on the bell.
+   *
+   * The shared first page is the newest 100 rows of everything, so an unread
+   * row behind a long run of read ones was never loaded: the tab said 1 where
+   * the badge said 46. `?unread=1` pages unread rows only, under the same
+   * filters `countUnread` uses, on `unreadNextBefore` — its own cursor, kept
+   * separate from the shared one for the same reason as the Messages cursor:
+   * advancing the shared cursor past read rows this query skipped would keep
+   * the All tab from ever reaching them.
+   *
+   * It stops once the loaded unread rows reach the bell's number, when the
+   * server runs out, or after `pages` pages. That last cap is why the sheet
+   * offers "See more unread notifications": a huge backlog waits for a tap
+   * instead of making the sheet slow.
+   */
+  async loadMoreUnread({ pages = 5 } = {}) {
+    if (Notifications.unreadLoading) return;
+    if (!Notifications.unreadHasMore || !Notifications.unreadNextBefore) return;
+    if (!Notifications._unreadShort()) return;
+    const generation = Notifications._refreshGeneration;
+    Notifications.unreadLoading = true;
+    Notifications._renderList();
+    try {
+      let remaining = pages;
+      while (remaining > 0
+          && Notifications.unreadHasMore
+          && Notifications.unreadNextBefore
+          && Notifications._unreadShort()) {
+        remaining -= 1;
+        const { createdAt, id } = Notifications.unreadNextBefore;
+        const params = new URLSearchParams({
+          unread: '1',
+          limit: '100',
+          before: String(createdAt),
+          before_id: String(id),
+        });
+        const res = await fetch(`/api/notifications?${params.toString()}`);
+        if (!res.ok) break;
+        const data = await res.json();
+        // A newer refresh() replaced the feed and re-seeded this cursor; the
+        // page belongs to the request that was in flight before it.
+        if (generation !== Notifications._refreshGeneration) return;
+        const incoming = Array.isArray(data.notifications)
+          ? data.notifications.filter(Notifications._shown) : [];
+        const seen = new Set(Notifications.items.map((n) => n.id));
+        for (const n of incoming) {
+          if (!seen.has(n.id)) {
+            Notifications.items.push(n);
+            seen.add(n.id);
+          }
+        }
+        // Re-sort: an unread page reaches further back than the shared cursor
+        // has, so its rows do not append in feed order. created_at DESC with
+        // id as the tiebreak, matching the server's ORDER BY.
+        Notifications.items.sort((a, b) => {
+          const at = new Date(a.createdAt || a.created_at || 0).getTime();
+          const bt = new Date(b.createdAt || b.created_at || 0).getTime();
+          return (bt - at) || (Number(b.id) - Number(a.id));
+        });
+        Notifications.unreadHasMore = !!data.hasMore;
+        Notifications.unreadNextBefore = data.nextBefore || null;
+      }
+    } catch (err) {
+      console.warn('[notifications] loadMoreUnread failed', err);
+    } finally {
+      // A page that landed after a refresh does not own this flag: that
+      // refresh already cleared it and re-rendered.
+      if (generation === Notifications._refreshGeneration) {
+        Notifications.unreadLoading = false;
+        Notifications._renderList();
+      }
     }
   },
 
@@ -1815,6 +1920,11 @@ const Notifications = {
     // up", and telling a viewer the first when the second is true reads as
     // the drawer having lost their history.
     const olderCount = Notifications._allBellItems().filter((n) => n.readAt).length;
+    // #5527: whether the Unread tab still has unread rows to fetch on its own
+    // cursor. Read from the live count, so the offer goes away the moment the
+    // loaded rows match the bell (or a mark-read closes the gap).
+    const unreadCanLoadMore = Notifications.unreadHasMore
+      && Notifications._unreadShort();
 
     if (Notifications._bellItems().length === 0) {
       // The pinned sections may still have content — only show the empty
@@ -1848,6 +1958,10 @@ const Notifications = {
         loadingMore: Notifications.loading,
         messagesCanLoadMore: Notifications.msgHasMore,
         loadingOlderMessages: Notifications.msgLoading,
+        // #5527: the Unread tab's own pager, on its own cursor — see
+        // loadMoreUnread().
+        unreadCanLoadMore,
+        loadingUnread: Notifications.unreadLoading,
         touch,
       });
       return;
@@ -1874,6 +1988,9 @@ const Notifications = {
       // The Messages tab's pager, on its own cursor — see loadOlderMessages().
       messagesCanLoadMore: Notifications.msgHasMore,
       loadingOlderMessages: Notifications.msgLoading,
+      // The Unread tab's own pager, on its own cursor — see loadMoreUnread().
+      unreadCanLoadMore,
+      loadingUnread: Notifications.unreadLoading,
       touch,
     });
   },

@@ -610,11 +610,22 @@ function notificationsRoutes(config) {
       // rather than a free list of kinds: the client does not get to select
       // arbitrary rows out of its own feed, and the grouping stays defined in
       // one place (services/notifications.js).
-      const kinds = req.query.kind === 'conversation'
+      //
+      // #5527: `?unread=1` is the bell's Unread list catching up with the
+      // badge. It pages the unread rows only, under countUnread's exact
+      // filters (the service's `unreadOnly`), so a backlog of read rows can
+      // no longer keep older unread ones off the list. A follow-up page in
+      // that mode carries only the rows and the cursor: the aggregates are
+      // account-wide facts the first page already sent. `kind` is ignored
+      // there — the two filters are not combined.
+      const unreadOnly = req.query.unread === '1';
+      const kinds = !unreadOnly && req.query.kind === 'conversation'
         ? [...notifications.CONVERSATION_NOTIFICATION_KINDS]
         : null;
 
-      const rows = await notifications.listForUser(pool, req.user.id, { limit, before, kinds });
+      const rows = await notifications.listForUser(
+        pool, req.user.id, { limit, before, kinds, unreadOnly }
+      );
       const serialized = rows.map(notifications.serialize);
 
       const hasMore = rows.length === limit;
@@ -624,13 +635,15 @@ function notificationsRoutes(config) {
         : null;
 
       // Only compute the account-wide unread aggregate on the first page;
-      // follow-up (cursor) fetches just append older rows.
+      // follow-up (cursor) fetches just append older rows. #5527: an
+      // `?unread=1` page is always a follow-up on the Unread tab, so it never
+      // carries the aggregate block — the first page already sent it.
       const payload = {
         notifications: serialized,
         hasMore,
         nextBefore,
       };
-      if (!before) {
+      if (!before && !unreadOnly) {
         payload.unread = await notifications.countUnread(pool, req.user.id);
         // #3050: the bell just learned the true total, so re-badge the
         // iPhone to it. The icon changes only when a push carries

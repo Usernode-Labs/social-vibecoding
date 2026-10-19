@@ -520,6 +520,8 @@ test('parked, a kudos row never enters the list', async () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/notifications/notifications.js'), 'utf8');
   assert.match(src, /Notifications\.items = Array\.isArray\(data\.notifications\)\s*\? data\.notifications\.filter\(Notifications\._shown\) : \[\];/,
     'the first page is filtered');
-  assert.equal((src.match(/data\.notifications\.filter\(Notifications\._shown\)/g) || []).length, 3,
-    'and so are both older-page loads');
+  // #5527 added a third pager (the Unread tab's own `?unread=1` pages), so
+  // every older-page load it makes is filtered through `_shown` too.
+  assert.equal((src.match(/data\.notifications\.filter\(Notifications\._shown\)/g) || []).length, 4,
+    'and so are the older-page loads');
 });

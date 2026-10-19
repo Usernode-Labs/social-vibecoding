@@ -2941,11 +2941,77 @@ async function seedStagingNotifications(pool, config) {
     [target.id, appId, source.id, backlogLike]
   );
 
+  // #5527: the Unread tab's catch-up, on the shots' member fixture.
+  // Everything above is either read or newer than the 100-row first page, so
+  // a fresh staging copy shows a bell whose number the Unread list already
+  // matches: the case this change fixes (unread rows behind a long run of
+  // read ones) cannot be seen. 120 read rows newer than 5 older unread ones
+  // make exactly that shape for `usernode-capture` — the bell counts the 5,
+  // the shared first page holds none of them. Obviously fake, and idempotent
+  // on each row's own content, like the backlog above.
+  const capture = (await pool.query(
+    `SELECT id FROM users WHERE username = 'usernode-capture'`
+  )).rows[0] || target;
+  const readBacklogPrefix = '[staging fixture] read backlog notification';
+  const unreadBacklogPrefix = '[staging fixture] unread backlog notification';
+  const READ_BACKLOG_COUNT = 120;
+  const UNREAD_BACKLOG_COUNT = 5;
+
+  await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, created_at)
+     SELECT $1, $2, $3 || ' #' || g, 'message', NOW() - ((10 + g) * INTERVAL '1 minute')
+       FROM generate_series(1, $4) AS g
+      WHERE NOT EXISTS (
+        SELECT 1 FROM chat_messages m
+         WHERE m.app_id = $1 AND m.content = $3 || ' #' || g
+      )`,
+    [appId, source.id, readBacklogPrefix, READ_BACKLOG_COUNT]
+  );
+  await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, created_at)
+     SELECT $1, $2, $3 || ' #' || g, 'message', NOW() - ((200 + g) * INTERVAL '1 minute')
+       FROM generate_series(1, $4) AS g
+      WHERE NOT EXISTS (
+        SELECT 1 FROM chat_messages m
+         WHERE m.app_id = $1 AND m.content = $3 || ' #' || g
+      )`,
+    [appId, source.id, unreadBacklogPrefix, UNREAD_BACKLOG_COUNT]
+  );
+  const { rowCount: readBacklogInserted } = await pool.query(
+    `INSERT INTO notifications
+       (user_id, app_id, chat_message_id, source_user_id, kind, read_at, created_at)
+     SELECT $1, $2, m.id, $3, 'mention', NOW() - INTERVAL '1 minute', m.created_at
+       FROM chat_messages m
+      WHERE m.app_id = $2
+        AND m.content LIKE $4
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications n
+           WHERE n.user_id = $1 AND n.chat_message_id = m.id
+        )`,
+    [capture.id, appId, source.id, `${readBacklogPrefix} #%`]
+  );
+  const { rowCount: unreadBacklogInserted } = await pool.query(
+    `INSERT INTO notifications
+       (user_id, app_id, chat_message_id, source_user_id, kind, read_at, created_at)
+     SELECT $1, $2, m.id, $3, 'mention', NULL, m.created_at
+       FROM chat_messages m
+      WHERE m.app_id = $2
+        AND m.content LIKE $4
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications n
+           WHERE n.user_id = $1 AND n.chat_message_id = m.id
+        )`,
+    [capture.id, appId, source.id, `${unreadBacklogPrefix} #%`]
+  );
+
   log.info('db', 'Staging notification fixtures seeded', {
     targetUser: target.username,
     inserted,
     multiAppInserted,
     backlogInserted,
+    readBacklogInserted,
+    unreadBacklogInserted,
+    unreadBacklogUser: capture === target ? target.username : 'usernode-capture',
     otherApps: otherApps.length,
   });
 }

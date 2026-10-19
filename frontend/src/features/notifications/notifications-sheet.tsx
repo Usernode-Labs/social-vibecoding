@@ -726,6 +726,9 @@ export function NotificationsSheetView() {
     loadingMore: boolean;
     messagesCanLoadMore?: boolean;
     loadingOlderMessages?: boolean;
+    /** #5527: the Unread tab has unread rows to fetch that the badge counts. */
+    unreadCanLoadMore?: boolean;
+    loadingUnread?: boolean;
     /** #3538: the rows' clear is a swipe on touch and a × everywhere else. */
     touch?: boolean;
   };
@@ -801,6 +804,23 @@ export function NotificationsSheetView() {
     if (!open) setOlderShown(false);
     else if (tab !== 'unread') setOlderShown(false);
   }, [open, tab]);
+
+  // #5527: the Unread list fills itself up to the bell's number. The shared
+  // first page is the newest 100 rows of EVERYTHING, so unread rows behind a
+  // long run of read ones are not in it: the badge counted them and the tab
+  // did not hold them. `loadMoreUnread()` fetches up to five pages of unread
+  // rows. The ref makes that one attempt per opening: a backlog bigger than
+  // the cap waits for a tap on "See more unread notifications" instead of the
+  // effect starting another round. It resets when the sheet closes.
+  const unreadFillTried = useRef(false);
+  useEffect(() => {
+    if (!open) { unreadFillTried.current = false; return; }
+    if (tab !== 'unread') return;
+    if (!snap.unreadCanLoadMore || snap.loadingUnread) return;
+    if (unreadFillTried.current) return;
+    unreadFillTried.current = true;
+    void controller()?.loadMoreUnread();
+  }, [open, tab, snap.unreadCanLoadMore, snap.loadingUnread]);
 
   const all = snap.screenList || [];
   const unread = all.filter((view) => view.unread);
@@ -1182,7 +1202,28 @@ export function NotificationsSheetView() {
           on a quiet account would otherwise offer a link to an equally empty
           All, which is a dead end dressed as a way forward.
       */}
-      {searching ? null : (tab === 'messages' && snap.messagesCanLoadMore ? (
+      {searching ? null : (
+        <>
+          {/* #5527: FIRST, because it is about the rows this tab counts. The
+              Unread tab holds every unread row the badge does once the
+              sheet's own catch-up has run; if the server still has more (a
+              backlog past the automatic five pages), this fetches the next
+              batch on the same cursor. Drawn like "See older notifications"
+              just below it, which still reveals the read history. */}
+          {tab === 'unread' && !olderShown && snap.unreadCanLoadMore ? (
+            <div className="px-4 py-3">
+              <button
+                id="notifications-load-unread"
+                type="button"
+                className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-40"
+                disabled={snap.loadingUnread}
+                onClick={() => controller()?.loadMoreUnread()}
+              >
+                {snap.loadingUnread ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.unread')}
+              </button>
+            </div>
+          ) : null}
+          {tab === 'messages' && snap.messagesCanLoadMore ? (
         <div className="px-4 py-3">
           <button
             id="notifications-see-older-messages"
@@ -1258,7 +1299,9 @@ export function NotificationsSheetView() {
             {snap.loadingMore ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.load')}
           </button>
         </div>
-      ) : null)}
+      ) : null}
+        </>
+      )}
       </div>
       </div>
       <OverlayScrim panelId="notifications-sheet" backdropId="notifications-sheet-overlay" />

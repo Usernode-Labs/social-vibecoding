@@ -1526,7 +1526,17 @@ async function markApproverInviteNotificationsRead(pool, userId, appId) {
 // instruction to keep showing it. Riding the one query keeps the saved rows
 // on the same column list, ownership and hydration boundary as the feed, so
 // a saved row serializes to exactly the shape the click branches route on.
-async function listForUser(pool, userId, { limit = 100, before = null, kinds = null, savedOnly = false } = {}) {
+//
+// #5527: `unreadOnly` is the bell's Unread list catching up with the number
+// on the bell. The sheet loads the newest page of the WHOLE feed, so an
+// unread row behind a long run of read ones was never loaded and the tab
+// said 1 where the badge said 46. With `unreadOnly` the page holds unread
+// rows only, under the SAME filters countUnread applies (`read_at IS NULL`,
+// the decided-ask settle, conversation access, sender access, parked kinds
+// and the merged-hidden clause). Those two must move together: a filter
+// added here, or there, without the other makes the badge and the list
+// disagree again. Ordering and the keyset cursor are unchanged.
+async function listForUser(pool, userId, { limit = 100, before = null, kinds = null, savedOnly = false, unreadOnly = false } = {}) {
   const params = [userId];
   let cursorClause = '';
   if (before && before.createdAt && before.id != null) {
@@ -1539,6 +1549,11 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
     params.push(kinds);
     kindClause = `AND n.kind = ANY($${params.length})`;
   }
+  // #5527: the same unread test countUnread makes, so a page of the Unread
+  // list can never hold a row the badge did not count (or miss one it did).
+  const unreadClause = unreadOnly
+    ? `AND n.read_at IS NULL AND NOT ${DECIDED_ASK_SETTLED_SQL}`
+    : '';
   // #4795: a merged change is decided, so the rows that asked you to vote on
   // it or try it leave the list instead of staying as read entries somebody
   // taps and finds a merged page behind. `IS NOT DISTINCT FROM` so a row
@@ -1615,6 +1630,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
      ${savedJoin}
      WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
        AND ${PARKED_KINDS_SQL}
+     ${unreadClause}
      ${mergedHiddenClause}
      ${cursorClause}
      ${kindClause}

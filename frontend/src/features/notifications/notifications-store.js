@@ -92,6 +92,15 @@ export const notificationsStore = createStore({
    */
   messagesCanLoadMore: true,
   loadingOlderMessages: false,
+  /**
+   * #5527: the Unread tab's own pager (Notifications.loadMoreUnread). The bell
+   * counts every unread row on the account, but the shared first page holds
+   * only the newest 100 rows of everything, so the tab fetches the rest on a
+   * cursor of its own. Kept apart from `canLoadMore` for the same reason as
+   * the Messages pair above; starts false until refresh() seeds it.
+   */
+  unreadCanLoadMore: false,
+  loadingUnread: false,
   /** PlatformUI.isTouch() at render time — gates the swipe-action wiring. */
   touch: false,
   /**

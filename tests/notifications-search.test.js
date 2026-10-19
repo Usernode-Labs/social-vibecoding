@@ -181,9 +181,16 @@ test('while searching the headings, pinned sections and pager step aside', () =>
     todayHead > gate && earlierHead > gate,
     'the Today/Earlier headings are skipped while searching'
   );
+  // #5527: the footer chain moved inside a fragment (the Unread tab's own
+  // "See more unread notifications" button now leads it), and the whole
+  // fragment still hangs off this gate.
   assert.ok(
-    SHEET_SRC.includes("{searching ? null : (tab === 'messages' && snap.messagesCanLoadMore ? ("),
+    SHEET_SRC.includes("{searching ? null : (\n        <>"),
     'none of the pager footers render while searching'
+  );
+  assert.ok(
+    SHEET_SRC.includes("{tab === 'messages' && snap.messagesCanLoadMore ? ("),
+    'the Messages pager sits inside the gated chain'
   );
   assert.ok(
     SHEET_SRC.includes('{!searching && !entries.length ? ('),
