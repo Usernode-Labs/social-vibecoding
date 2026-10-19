@@ -299,6 +299,26 @@
     "text": "{{count}} to vote",
     "description": "Badge on a row of the Your communities switcher: how many proposals and group decisions in that community (or, on the All communities row, in all of them) are waiting for this person's vote."
   },
+  "switcher.search.placeholder": {
+    "text": "Search your communities",
+    "description": "Placeholder of the search field at the top of the Your communities switcher, which filters the person's communities by name as they type."
+  },
+  "switcher.search.label": {
+    "text": "Search your communities",
+    "description": "Accessible name of the search field at the top of the Your communities switcher. It can also be reached with Command+K or Ctrl+K."
+  },
+  "switcher.search.results": {
+    "text": "Matching communities",
+    "description": "Accessible name of the list of communities whose names match what the person typed in the Your communities switcher's search."
+  },
+  "switcher.search.none": {
+    "text": "None of your communities match “{{query}}”.",
+    "description": "Shown in the Your communities switcher when no community the person is in has the searched words in its name. {{query}} is what they typed."
+  },
+  "switcher.recent": {
+    "text": "Recent",
+    "description": "Small heading in the Your communities switcher over the communities the person used most recently (and the ones they pinned), above the All communities row."
+  },
   "switcher.join": {
     "text": "Join a community",
     "description": "Row at the end of the Your communities switcher: closes it and opens Discover, where the person can find a community to join."

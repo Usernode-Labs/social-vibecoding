@@ -40,10 +40,11 @@
  *
  * ── The switcher ───────────────────────────────────────────────────────
  *
- * "Your communities": All communities first, then each community you are in,
- * then "Join a community" and "Start a community". It opens from the community's name and ⌄
- * in the coloured header and from the header's "Communities ⌄" on the
- * Communities list (the tab pressed while it is lit goes up a level instead,
+ * "Your communities": a search over every community you are in, then the
+ * ones you use (Recent), then All communities, then "Join a community" and
+ * "Start a community" (#5290). It opens from the community's name and ⌄
+ * in the coloured header, from the header's "Communities ⌄" on the
+ * Communities list and from ⌘K anywhere (./community-shortcut.ts) (the tab pressed while it is lit goes up a level instead,
  * ./tab-ladder.ts; held, it opens nothing since 18 Oct 2026).
  * `openSwitcher(from)` says where, so a wide window can hang the menu off
  * whatever opened it.
@@ -91,8 +92,12 @@ export interface CommunityInfo {
   lastActiveAt?: string | null;
 }
 
-/** Where the switcher was opened from: the header (the phone's held tab no longer opens it). */
-export type SwitcherFrom = 'header';
+/**
+ * Where the switcher was opened from: the header (the phone's held tab no
+ * longer opens it), or ⌘K (./community-shortcut.ts, #5290), which opens it
+ * with its search focused.
+ */
+export type SwitcherFrom = 'header' | 'shortcut';
 
 export interface CommunityScopeState {
   /** The community the tab is on, or null for All communities. */

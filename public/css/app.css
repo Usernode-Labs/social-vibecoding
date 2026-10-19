@@ -19607,6 +19607,23 @@ html[data-nav-drawer] #app-view { touch-action: pan-y; }
 .community-switcher-head { padding: 8px 12px 6px; }
 .community-switcher-title { margin: 0; font-size: 17px; font-weight: 700; line-height: 22px; }
 .community-switcher-menu .community-switcher-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); }
+/* #5290: the search first, as the phone drawer's search box draws it. */
+.community-switcher-search {
+  flex: none; height: 38px; margin: 2px 4px 6px; padding: 0 12px;
+  display: flex; align-items: center; gap: 8px;
+  border-radius: 12px; background: var(--bg-secondary);
+  color: var(--text-muted);
+}
+.community-switcher-search:focus-within { box-shadow: inset 0 0 0 2px var(--accent); }
+.community-switcher-search-glyph { flex: none; width: 18px; height: 18px; }
+.community-switcher-search-input {
+  flex: 1 1 auto; min-width: 0; height: 100%; padding: 0; border: 0; outline: none;
+  background: transparent; color: var(--text-primary);
+  font: inherit; font-size: 16px;
+  -webkit-appearance: none; appearance: none;
+}
+.community-switcher-search-input::placeholder { color: var(--text-muted); }
+.community-switcher-search-input::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
 .community-switcher-list {
   display: flex; flex-direction: column; gap: 2px;
   min-height: 0; overflow-y: auto; overscroll-behavior: contain;
@@ -19663,21 +19680,14 @@ html[data-nav-drawer] #app-view { touch-action: pan-y; }
 }
 .community-switcher-tick { flex: none; width: 20px; display: grid; place-items: center; color: var(--text-primary); }
 .community-switcher-note { margin: 0; padding: 10px 12px; font-size: 13px; color: var(--text-muted); }
-/* The Communities screen's sections, in the switcher (#3519): the same small
-   caps label with its count, and the fold row full-width in the accent with
-   no tile, so it reads as more of the same list. */
+/* A small caps label over a part of the switcher (Recent, #5290), as the
+   Communities screen labels its sections. */
 .community-switcher-section {
   display: flex; align-items: center; gap: 6px;
   margin: 0; padding: 12px 12px 4px;
   font-size: 12px; font-weight: 700; line-height: 16px;
   text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted);
 }
-.community-switcher-section-n { margin-left: auto; font-variant-numeric: tabular-nums; }
-.community-switcher-more {
-  min-height: 44px; justify-content: center;
-  color: var(--accent); font-size: 14px; font-weight: 650;
-}
-.community-switcher-menu .community-switcher-more { min-height: 40px; }
 
 /* THE DISCUSSION TAB (project-discussion.tsx): the channel's own pane, a
    FITTED SCREEN like Needs you, so its composer rests on the foot of the
