@@ -451,10 +451,14 @@ test('the standings module builds descriptors, not HTML — so there is nothing 
   // four-character word "null", so a nullable API field still has to land as ''.
   assert.match(leaderboardJs, /str\(s\) \{\s*\n\s*return String\(s == null \? '' : s\)/,
     'str() keeps esc()\'s null→empty coercion');
-  for (const field of ['r.display_name', 'r.total_points', 'row.wallet_address']) {
+  for (const field of ['r.display_name', 'row.wallet_address']) {
     assert.ok(new RegExp(`str\\(${field.replace('.', '\\.')}`).test(leaderboardJs),
       `${field} passes through str() in topochain-leaderboard.js`);
   }
+  // #5275: the points are grouped by _points(), which falls back to str()
+  // for anything that is not a number.
+  assert.match(leaderboardJs, /_points\(r\.total_points\)/);
+  assert.match(leaderboardJs, /if \(!Number\.isFinite\(n\)\) return TopochainLeaderboard\.str\(value\);/);
   // And the renderer must not reintroduce raw HTML by the back door.
   assert.ok(!standingsTsx.includes('dangerouslySetInnerHTML'),
     'the pane component renders text nodes, never raw HTML');
