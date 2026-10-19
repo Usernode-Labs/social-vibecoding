@@ -274,10 +274,15 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.ok(heard.some((p) => p.kind === 'room' && p.data.type === 'chat' && p.data.content === live.content && p.data.id > 0
       && p.data.metadata.merged.votes === '2/3' && !('wfEvent' in p.data.metadata)), 'the line, as the room shows it');
     assert.ok(pushed.some((p) => p.data.type === 'vote_update' && p.data.sessionId === s.id && p.data.live === true), 'the vote card');
-    // The author's "your change is live", named for the relaying web process to read.
+    // The author's "your change is live" row is still written (the phone push
+    // rides it), but it is not pushed to open tabs (#5487): the bell hides a
+    // merged change's rows, so prepending it live would flash a row the next
+    // fetch drops and bump the badge for it.
     const { rows: [n] } = await pool.query(`SELECT id FROM notifications WHERE session_id = $1 AND kind = 'pr_merged'`, [s.id]);
+    assert.ok(n, 'the author\'s went-live row is written');
     const toAuthor = pushed.filter((p) => p.kind === 'user' && p.routing.userId === s.author.id);
-    assert.ok(toAuthor.some((p) => p.data.type === 'notification_new' && p.data.notificationId === n.id && !p.data.notification));
+    assert.ok(toAuthor.every((p) => !(p.data.type === 'notification_new' && p.data.notificationId === n.id)),
+      'no notification_new for the went-live row reaches the author');
     // The requests it closed: the issue lists re-read once that work ended.
     assert.ok(heard.some((p) => p.data.type === 'issue_update' && p.data.action === 'github_synced' && p.data.source === 'pr_merged'));
     // The Workshop re-places the requests it closed: the board change rides

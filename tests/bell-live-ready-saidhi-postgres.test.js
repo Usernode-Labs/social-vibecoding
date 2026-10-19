@@ -10,16 +10,17 @@
 //     about the change is read; digests it was the last one waiting in are
 //     read; everyone touched hears it. #4795: on a merge the asks leave the
 //     list as well (listForUser hides them for a merged change, and
-//     countUnread leaves them out), while the rows that say it went live —
-//     pr_merged to the author, voted_change_merged to the voters — stay
-//     until read (#5461): a read one leaves the list too.
+//     countUnread leaves them out). #5487: the rows that say it went live —
+//     pr_merged to the author, voted_change_merged to the voters — leave the
+//     list too, unread or read (MERGED_HIDDEN_KINDS): they only ever opened
+//     a merged page, and the phone push announced the merge.
 //     Nothing is re-opened unread: the news rides its own rows.
 //     #5482: the remaining kinds that name a change are not asks, but
 //     tapping one hours later only opens the merged page, so they leave the
 //     list on a merge too (proposal_vote, check_failed, session_done,
 //     session_stalled, auto_solve_done, connector_submitted, spec_shared),
-//     while a row with no change behind it, a message people wrote and the
-//     news that it went live stay. A closed change keeps every row.
+//     while a row with no change behind it and a message people wrote stay.
+//     A closed change keeps every row.
 //   - The bell reads the change's status, a digest's live count and the
 //     request a first message became, with the row (listForUser, getForUser).
 //   - #4778: a decided change's asks (the vote nudge, the re-confirm ask, a
@@ -114,7 +115,7 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     return found ? notifications.serialize(found) : null;
   };
 
-  await t.test('the first version goes live: every ask is read and leaves the list, the news that it went live stays', async () => {
+  await t.test('the first version goes live: every ask is read and leaves the list, and the went-live news leaves with it (#5487)', async () => {
     pushed.length = 0;
     const first = await change('Build the Page Turners club screen');
     // Mo: two versions asked about, the vote nudge, a re-confirm ask and the
@@ -153,19 +154,20 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
       assert.notEqual((await row(id)).read_at, null, `${(await row(id)).kind} is answered by the decision`);
     }
 
-    // ...and every ask about the merged change leaves the list, read or not.
-    // The news that it went live stays while it is unread: pr_merged to the
-    // author, voted_change_merged to the voter (#4787).
+    // ...and every row about the merged change leaves the list, read or
+    // not — the asks and, since #5487, the news that it went live: pr_merged
+    // to the author, voted_change_merged to the voter (#4787). The phone
+    // push announced the merge; the row only ever opened a merged page.
     const moLive = await notify(mo.id, 'pr_merged', { sessionId: first, source: null });
     const priyaLive = await notify(priya.id, 'voted_change_merged', { sessionId: first, source: null });
-    assert.ok(await listed(mo.id, moLive), 'the author hears it went live');
-    assert.ok(await listed(priya.id, priyaLive), 'the voter hears it went live');
+    assert.equal(await listed(mo.id, moLive), null, 'the author\'s went-live news is off the list');
+    assert.equal(await listed(priya.id, priyaLive), null, 'the voter\'s went-live news is off the list');
     for (const id of [moReady, moOlder, moNudge, moRecheck, moDigest]) {
       assert.equal(await listed(mo.id, id), null, `${(await row(id)).kind} is off the list`);
     }
     assert.equal(await listed(priya.id, priyaReady), null, 'hers too');
-    assert.equal(await notifications.countUnread(pool, mo.id), 1, 'only the news counts now');
-    assert.equal(await notifications.countUnread(pool, priya.id), 1);
+    assert.equal(await notifications.countUnread(pool, mo.id), 0, 'nothing about a merged change counts now');
+    assert.equal(await notifications.countUnread(pool, priya.id), 0);
 
     // Opening a row from a push still resolves it: the exact lookup is not
     // filtered.
@@ -178,40 +180,43 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     assert.deepEqual(changedFor(), []);
   });
 
-  // #5461: the news that a change went live is listed until it is read, then
-  // leaves the bell's list — a read note somebody taps hours later only
-  // opens a merged page again. Unread it is listed and counts; saved it
-  // stays in Saved; the exact lookup is not filtered.
-  await t.test('#5461: the news that a merged change went live leaves the list once it is read', async () => {
+  // #5487: the news that a change went live leaves the bell's list with the
+  // asks, unread or read — it only ever opened a merged page, and the phone
+  // push announced the merge. The exact lookup (a push opened) still
+  // resolves it; a saved row stays in Saved.
+  await t.test('#5487: the news that a merged change went live is off the list, unread or read', async () => {
     const basePriya = await notifications.countUnread(pool, priya.id);
     const baseMo = await notifications.countUnread(pool, mo.id);
 
-    // Unread, on a merged and live change: listed, and counted.
+    // Unread, on a merged and live change: off the list, and not counted.
     const live = await change('A change that went live');
     await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [live]);
     const priyaNews = await notify(priya.id, 'voted_change_merged', { sessionId: live, source: null });
     const moNews = await notify(mo.id, 'pr_merged', { sessionId: live, source: null });
-    assert.ok(await listed(priya.id, priyaNews), 'the voter is told it went live');
-    assert.ok(await listed(mo.id, moNews), 'the author is told too');
-    assert.equal(await notifications.countUnread(pool, priya.id), basePriya + 1);
-    assert.equal(await notifications.countUnread(pool, mo.id), baseMo + 1);
+    assert.equal(await listed(priya.id, priyaNews), null, 'the voter\'s went-live news is off the list');
+    assert.equal(await listed(mo.id, moNews), null, 'the author\'s too');
+    assert.equal(await notifications.countUnread(pool, priya.id), basePriya, 'and it does not count');
+    assert.equal(await notifications.countUnread(pool, mo.id), baseMo);
+    // The exact lookup (a push opened) still resolves it.
+    const exact = notifications.serialize(await notifications.getForUser(pool, priya.id, priyaNews));
+    assert.equal(exact.sessionStatus, 'merged');
+    assert.equal(exact.readAt, null, 'the exact lookup still resolves the unread row');
 
-    // Read, on another merged change: off the list, and the count is
-    // unchanged — a read row never counted. The exact lookup (a push
-    // opened) still resolves it.
+    // A read row on another merged change: off the list too, and the count
+    // is unchanged — a read row never counted.
     const readChange = await change('Another change that went live');
     await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [readChange]);
     const priyaRead = await notify(priya.id, 'voted_change_merged', { sessionId: readChange, source: null, read: true });
     const moRead = await notify(mo.id, 'pr_merged', { sessionId: readChange, source: null, read: true });
     assert.equal(await listed(priya.id, priyaRead), null, 'a read note is off the list');
     assert.equal(await listed(mo.id, moRead), null);
-    assert.equal(await notifications.countUnread(pool, priya.id), basePriya + 1, 'the count is unchanged');
-    assert.equal(await notifications.countUnread(pool, mo.id), baseMo + 1);
-    const exact = notifications.serialize(await notifications.getForUser(pool, priya.id, priyaRead));
-    assert.equal(exact.sessionStatus, 'merged');
-    assert.notEqual(exact.readAt, null, 'the exact lookup still resolves the read row');
+    assert.equal(await notifications.countUnread(pool, priya.id), basePriya, 'the count is unchanged');
+    assert.equal(await notifications.countUnread(pool, mo.id), baseMo);
+    const exactRead = notifications.serialize(await notifications.getForUser(pool, priya.id, priyaRead));
+    assert.equal(exactRead.sessionStatus, 'merged');
+    assert.notEqual(exactRead.readAt, null, 'the exact lookup still resolves the read row');
 
-    // A read row on a merged change that is still going live is hidden too:
+    // A row on a merged change that is still going live is hidden too:
     // the clause reads the stored status, which is already 'merged'.
     const { rows: [home] } = await pool.query(
       `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility, self_hosted, main_sha)
@@ -237,9 +242,9 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     )).rows[0].id;
     assert.equal(notifications.serialize(await notifications.getForUser(pool, priya.id, mergingRow)).sessionStatus,
       'merging', 'the change is still going live');
-    assert.equal(await listed(priya.id, mergingRow), null, 'and the read note about it is off the list');
+    assert.equal(await listed(priya.id, mergingRow), null, 'and the note about it is off the list');
 
-    // A closed change keeps its read news in the list, as it does today.
+    // A closed change keeps its news in the list, as it does today.
     const closed = await change('A change that was closed');
     await pool.query(`UPDATE chat_sessions SET status = 'archived', archived_at = NOW() WHERE id = $1`, [closed]);
     const closedNews = await notify(priya.id, 'voted_change_merged', { sessionId: closed, source: null, read: true });
@@ -250,10 +255,10 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     const noSession = await notify(mo.id, 'pr_merged', { sessionId: null, source: null, read: true });
     assert.ok(await listed(mo.id, noSession), 'a row with no session is never hidden');
 
-    // A saved read row stays in the Saved section, which skips the filter.
+    // A saved row stays in the Saved section, which skips the filter.
     await pool.query(`INSERT INTO notification_bookmarks (user_id, notification_id) VALUES ($1, $2)`, [priya.id, priyaRead]);
     const saved = await notifications.listSavedForUser(pool, priya.id);
-    assert.ok(saved.some((r) => r.id === priyaRead), 'a saved read row stays in Saved');
+    assert.ok(saved.some((r) => r.id === priyaRead), 'a saved row stays in Saved');
   });
 
   // #4778: settleDecidedChange runs best-effort at every call site, so the
@@ -381,7 +386,7 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     assert.equal(exact.kind, 'proposal_vote', 'the exact lookup (a push opened) still resolves it');
   });
 
-  await t.test('every row about a merged change leaves the list but the news that it went live', async () => {
+  await t.test('every row about a merged change leaves the list, the went-live news included (#5487)', async () => {
     const base = await notifications.countUnread(pool, mo.id);
     const waiting = await change('Books read list');
     const ids = [];
@@ -402,10 +407,11 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     assert.ok(await listed(mo.id, reply), 'a message people wrote stays');
     assert.equal(await notifications.countUnread(pool, mo.id), base + 1, 'only the message counts now');
 
-    // The news that it went live stays while it is unread, and counts (#5461).
+    // The news that it went live leaves too (#5487): the phone push announced
+    // the merge, and the row only ever opened a merged page.
     const live = await notify(mo.id, 'pr_merged', { sessionId: waiting, source: null });
-    assert.ok(await listed(mo.id, live), 'the author is told it went live');
-    assert.equal(await notifications.countUnread(pool, mo.id), base + 2);
+    assert.equal(await listed(mo.id, live), null, 'the went-live news is off the list');
+    assert.equal(await notifications.countUnread(pool, mo.id), base + 1);
 
     // Opening one of the hidden rows from a push still resolves it.
     const exact = notifications.serialize(await notifications.getForUser(pool, mo.id, ids[0]));
@@ -568,25 +574,27 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     const authorRow = await ring(fresh.id, 'pr_merged', alex.id);
     const olderRow = await ring(running.id, 'voted_change_merged', priya.id);
 
-    assert.equal((await listed(priya.id, voterRow)).sessionStatus, 'merging', 'not in the running build: going live');
-    assert.equal((await listed(alex.id, authorRow)).sessionStatus, 'merging', 'the author\'s row too');
-    assert.equal(notifications.serialize(await notifications.getForUser(pool, priya.id, voterRow)).sessionStatus, 'merging',
-      'the exact lookup (a push opened) reads the same');
-    assert.equal((await listed(priya.id, olderRow)).sessionStatus, 'merged', 'the build that serves: live');
+    // #5487: the went-live rows are off the list now, so their session status
+    // is read through the exact lookup, which is what a push-opened row uses.
+    const exactSessionStatus = async (userId, id) =>
+      notifications.serialize(await notifications.getForUser(pool, userId, id)).sessionStatus;
+    assert.equal(await exactSessionStatus(priya.id, voterRow), 'merging', 'not in the running build: going live');
+    assert.equal(await exactSessionStatus(alex.id, authorRow), 'merging', 'the author\'s row too');
+    assert.equal(await exactSessionStatus(priya.id, olderRow), 'merged', 'the build that serves: live');
 
     // The release ships it.
     await pool.query(`UPDATE apps SET main_sha = 'bbbb2222' WHERE id = $1`, [home.id]);
-    assert.equal((await listed(priya.id, voterRow)).sessionStatus, 'merged');
-    assert.equal((await listed(alex.id, authorRow)).sessionStatus, 'merged');
+    assert.equal(await exactSessionStatus(priya.id, voterRow), 'merged');
+    assert.equal(await exactSessionStatus(alex.id, authorRow), 'merged');
 
     // A running build no merged change matches proves nothing: live, as before.
     await pool.query(`UPDATE apps SET main_sha = 'cccc3333' WHERE id = $1`, [home.id]);
-    assert.equal((await listed(priya.id, voterRow)).sessionStatus, 'merged');
+    assert.equal(await exactSessionStatus(priya.id, voterRow), 'merged');
 
     // A child app's merge is live with the row (the first test's app).
     const child = await change('A child app change');
     await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [child]);
     const childRow = await notify(priya.id, 'voted_change_merged', { sessionId: child, source: null });
-    assert.equal((await listed(priya.id, childRow)).sessionStatus, 'merged');
+    assert.equal(await exactSessionStatus(priya.id, childRow), 'merged');
   });
 });

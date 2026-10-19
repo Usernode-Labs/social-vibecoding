@@ -1,9 +1,9 @@
 // What the bell says about a change once it is decided: the author's "your
 // change is live" (pr_merged) and its voters' (voted_change_merged), and the
-// asks it settles. The went-live rows are listed until read (#5461); the
-// merge-followups machine writes them inside its
-// transaction; services/notifications.js re-exports them for [main]'s merge,
-// its included changes and every close.
+// asks it settles. The went-live rows leave the bell's list on the merge too
+// (MERGED_HIDDEN_KINDS, #5487); the merge-followups machine writes them
+// inside its transaction; services/notifications.js re-exports them for
+// [main]'s merge, its included changes and every close.
 
 import type { Queryable } from './db.ts';
 import { filterUsersByCategory, kindAllowed } from './notification-preferences.ts';
@@ -205,8 +205,9 @@ export async function settleVoteDigests(
  *     the newest one as the unread news that it is live is retired: the news
  *     now arrives as its own row (pr_merged to the author,
  *     voted_change_merged to the voters), which a person who was asked to
- *     try the change and never voted also does not get; those rows are
- *     listed until read, then leave the list too (#5461);
+ *     try the change and never voted also does not get; those rows leave
+ *     the list on the merge too, unread or read (#5487), with the rest of
+ *     MERGED_HIDDEN_KINDS;
  *   - digests of several changes it was the last one waiting in are read.
  *
  * Everyone whose bell changed is returned, to hear `notifications_changed`
