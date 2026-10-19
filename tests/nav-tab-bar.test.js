@@ -458,6 +458,8 @@ test('the explicit way to bring the rail back stays the sidebar toggle (#3138)',
   // peeks it when pointed at (it only exists where the route has a rail).
   const toggle = read('frontend/src/features/nav/sidebar-toggle.tsx');
   assert.match(toggle, /navStore\.set\(\{ railOpen: !navStore\.get\(\)\.railOpen, peek: false, peekOut: false \}\);/);
+  // N21 (19 Oct polish board): and the press slides the rail (./rail-slide.ts).
+  assert.match(toggle, /onClick=\{\(\) => slideRail\(\(\) => \{\s*clearPeekTimer\(\);/);
   assert.match(toggle, /onPointerEnter=\{railOpen \? undefined : enterPeekByMouse\}/);
   // …and it is drawn only where the rail is the ROUTE's, never because a
   // peek took `hidden` off it. Beside a running app on the desktop the rail
@@ -552,7 +554,8 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   assert.ok(css.lastIndexOf('@media (min-width: 768px) {', folded) > 0);
   // …and it is not drawn only while it is not peeking, which is what makes
   // the hot zone at the window's edge the way back from folded.
-  assert.match(css.slice(folded, folded + 120), /:not\(\.platform-tabs-peek\) \{\s*display: none;/);
+  // N21: and drawn while it slides away (`platform-tabs-leaving`).
+  assert.match(css.slice(folded, folded + 140), /:not\(\.platform-tabs-peek\):not\(\.platform-tabs-leaving\) \{\s*display: none;/);
   // The toggle itself is desktop-only by the same mechanism, and the group
   // that holds it goes with it when the back slot is empty — an
   // empty-but-present flex item still reserves the header's own `gap-4`,
@@ -686,10 +689,10 @@ test('a tab label has room for its descenders', () => {
 });
 
 test('the Messages count is the quiet one: grey, on the glyph\'s corner on the phone, at the row\'s end beside it (#2912, #4417)', () => {
-  // Unread messages are counted in the bell as well, so a second RED count on
-  // the Messages tab said the same thing twice in the loudest colour on the
-  // screen. The bell keeps the red (#notifications-badge is not touched);
-  // this badge used to match it on purpose and now deliberately does not.
+  // Grey is "new to read" (#18, 19 Oct 2026 polish board): this is where an
+  // unread message is counted, and the bell's red no longer counts plain
+  // messages at all (notifications.js _badgeTotal), so one message lights
+  // one number. The bell keeps the red (#notifications-badge is not touched).
   const phone = css.match(/\n\.platform-tab-badge \{[^}]*\}/);
   assert.ok(phone, 'the badge has its base (phone) rule');
   assert.match(phone[0], /background: var\(--text-faint, #8e8e93\);/,

@@ -41,39 +41,54 @@ function EmailForm() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const generation = useRef(0);
+  // TWO CLOCKS (#15). `read` is the account's own read; `form` is a send or
+  // a verify in flight. Leaving for another page drops what was typed and
+  // the send, never the read: one counter for both left the line saying
+  // "Loading account email…" for good, because the read it threw away only
+  // ran again on an 'email' event, and the event names the PAGE this part
+  // is on ('account'), so that never came.
+  const read = useRef(0);
+  const form = useRef(0);
 
   useEffect(() => {
+    const clearForm = () => {
+      ++form.current;
+      setPassword(''); setPending(''); setCode(''); setBusy(false);
+    };
+    // Read again whenever the page is shown, keeping what is on screen
+    // until the answer lands.
     const refresh = () => {
-      const seq = ++generation.current;
-      setAccount(null); setPassword(''); setPending(''); setCode('');
-      setMessage(''); setError(''); setBusy(false);
+      const seq = ++read.current;
+      clearForm();
+      setMessage(''); setError('');
       void api().then((value: AccountEmail) => {
-        if (seq !== generation.current) return;
+        if (seq !== read.current) return;
         setAccount(value); setEmail(value.email || '');
       }).catch((err: Error) => {
-        if (seq === generation.current) setError(err.message);
+        if (seq === read.current) setError(err.message);
       });
     };
     const onSection = (event: Event) => {
-      if ((event as CustomEvent).detail?.section === 'email') refresh();
-      else { ++generation.current; setPassword(''); setPending(''); setCode(''); }
+      const section = (event as CustomEvent).detail?.section;
+      if (section === 'email' || section === 'account') refresh();
+      else clearForm();
     };
     window.addEventListener('usernode:settings-section', onSection);
     refresh();
     return () => {
-      ++generation.current;
+      ++read.current;
+      ++form.current;
       window.removeEventListener('usernode:settings-section', onSection);
     };
   }, [reload]);
 
   const submit = async (verify: boolean) => {
-    const seq = generation.current;
+    const seq = form.current;
     setBusy(true); setError(''); setMessage('');
     try {
       const result = await api(verify ? '/verify' : '/request', verify
         ? { code } : { email, currentPassword: password });
-      if (seq !== generation.current) return;
+      if (seq !== form.current) return;
       setPassword(''); setCode('');
       if (verify) {
         setAccount(result); setPending(''); setEmail(result.email);
@@ -83,9 +98,9 @@ function EmailForm() {
         setMessage(t('settings:email.codeSentNotice'));
       }
     } catch (err) {
-      if (seq === generation.current) setError((err as Error).message);
+      if (seq === form.current) setError((err as Error).message);
     } finally {
-      if (seq === generation.current) setBusy(false);
+      if (seq === form.current) setBusy(false);
     }
   };
 

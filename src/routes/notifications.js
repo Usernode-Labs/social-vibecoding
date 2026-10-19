@@ -631,7 +631,9 @@ function notificationsRoutes(config) {
         nextBefore,
       };
       if (!before) {
-        payload.unread = await notifications.countUnread(pool, req.user.id);
+        // #18: and how many of those are plain messages, which the bell
+        // leaves to the Messages tab (services/notifications.js).
+        Object.assign(payload, await notifications.countUnreadSplit(pool, req.user.id));
         // #3050: the bell just learned the true total, so re-badge the
         // iPhone to it. The icon changes only when a push carries
         // `aps.badge` — the native shell does not implement the WebView's
@@ -695,7 +697,11 @@ function notificationsRoutes(config) {
         if (IS_STAGING && req.query.demo === '1') {
           const mocks = stagingMockNotifications();
           payload.notifications = [...mocks, ...payload.notifications];
-          payload.unread += mocks.filter((m) => !m.readAt).length;
+          const unreadMocks = mocks.filter((m) => !m.readAt);
+          payload.unread += unreadMocks.length;
+          // #18: the mock messages are messages, which the bell leaves out.
+          payload.messageUnread = (payload.messageUnread || 0)
+            + unreadMocks.filter((m) => notifications.MESSAGE_KINDS.includes(m.kind)).length;
           // Pinned-invite demo row: drives the drawer's Invites section
           // and its swipe Accept/Decline path in a staging preview.
           // Obviously fake (staging-demo-*); acting on it hits a
@@ -846,7 +852,7 @@ function notificationsRoutes(config) {
         const cleared = await notifications.markReadForConversation(
           pool, req.user.id, parsedConversationId
         );
-        const unread = await notifications.countUnread(pool, req.user.id);
+        const { unread, messageUnread } = await notifications.countUnreadSplit(pool, req.user.id);
         if (cleared > 0) {
           try {
             const { pushNotificationToUser } = require('../services/ws');
@@ -855,7 +861,7 @@ function notificationsRoutes(config) {
             log.warn('notifications', 'cross-tab push failed', { message: err.message });
           }
         }
-        return res.json({ unread, cleared });
+        return res.json({ unread, messageUnread, cleared });
       }
 
       // `{ session_id }` (#2847): the viewer opened or touched a proposal card
@@ -871,7 +877,7 @@ function notificationsRoutes(config) {
         const cleared = await notifications.markReadForAction(
           pool, req.user.id, 'proposal_opened', parsedSessionId
         );
-        const unread = await notifications.countUnread(pool, req.user.id);
+        const { unread, messageUnread } = await notifications.countUnreadSplit(pool, req.user.id);
         if (cleared > 0) {
           try {
             const { pushNotificationToUser } = require('../services/ws');
@@ -880,7 +886,7 @@ function notificationsRoutes(config) {
             log.warn('notifications', 'cross-tab push failed', { message: err.message });
           }
         }
-        return res.json({ unread, cleared });
+        return res.json({ unread, messageUnread, cleared });
       }
 
       // `{ app_id }` is the per-group "Mark read" path (#84 grouping):
@@ -892,7 +898,7 @@ function notificationsRoutes(config) {
         const cleared = await notifications.markReadForApp(
           pool, req.user.id, Number(appId)
         );
-        const unread = await notifications.countUnread(pool, req.user.id);
+        const { unread, messageUnread } = await notifications.countUnreadSplit(pool, req.user.id);
         if (cleared > 0) {
           try {
             const { pushNotificationToUser } = require('../services/ws');
@@ -901,7 +907,7 @@ function notificationsRoutes(config) {
             log.warn('notifications', 'cross-tab push failed', { message: err.message });
           }
         }
-        return res.json({ unread, cleared });
+        return res.json({ unread, messageUnread, cleared });
       }
 
       // `{ chat_message_id }` is the in-chat "click a dotted message" path:
@@ -912,7 +918,7 @@ function notificationsRoutes(config) {
         const cleared = await notifications.markReadForMessage(
           pool, req.user.id, Number(chatMessageId)
         );
-        const unread = await notifications.countUnread(pool, req.user.id);
+        const { unread, messageUnread } = await notifications.countUnreadSplit(pool, req.user.id);
         // Sync this user's other tabs (bell badge + the same message's dot
         // in another open chat tab) only when something actually changed.
         if (cleared > 0) {
@@ -923,7 +929,7 @@ function notificationsRoutes(config) {
             log.warn('notifications', 'cross-tab push failed', { message: err.message });
           }
         }
-        return res.json({ unread, cleared });
+        return res.json({ unread, messageUnread, cleared });
       }
 
       // Single-id / mark-all path. Mark-all (#449) previously skipped the
@@ -935,7 +941,7 @@ function notificationsRoutes(config) {
       const cleared = await notifications.markRead(pool, req.user.id, {
         id, all: !!all, kinds: kindList, excludeKinds: excludeList,
       });
-      const unread = await notifications.countUnread(pool, req.user.id);
+      const { unread, messageUnread } = await notifications.countUnreadSplit(pool, req.user.id);
       if (cleared > 0) {
         try {
           const { pushNotificationToUser } = require('../services/ws');
@@ -944,7 +950,7 @@ function notificationsRoutes(config) {
           log.warn('notifications', 'cross-tab push failed', { message: err.message });
         }
       }
-      res.json({ unread, cleared });
+      res.json({ unread, messageUnread, cleared });
     } catch (err) {
       log.error('notifications', 'markRead failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

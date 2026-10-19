@@ -229,7 +229,8 @@ function handlerBody(src, marker) {
 test('loading the bell re-badges the iPhone to the total it just counted', () => {
   const body = handlerBody(routeSource('notifications.js'), "router.get('/api/notifications',");
   const firstPage = body.slice(body.indexOf('if (!before) {'));
-  const count = firstPage.indexOf('payload.unread = await notifications.countUnread(pool, req.user.id);');
+  // #18: the total and the plain messages among it, read in one query.
+  const count = firstPage.indexOf('Object.assign(payload, await notifications.countUnreadSplit(pool, req.user.id));');
   const sync = firstPage.indexOf("require('../services/mobile-push').scheduleBadgeSync(req.user.id)");
   assert.ok(count >= 0, 'first page counts unread');
   assert.ok(sync > count, 'the first page schedules a badge sync after counting');

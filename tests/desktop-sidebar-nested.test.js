@@ -40,12 +40,13 @@ test('which rows: a community you are visiting has one for as long as you are on
   assert.equal(RAIL_TOPICS, 2);
   assert.deepEqual(railRows(['a', 'b'], null), ['a', 'b']);
   assert.deepEqual(railRows(['a', 'b'], 'b'), ['a', 'b'], 'one of the five keeps its row');
-  assert.deepEqual(railRows(['a', 'b'], 'x'), ['x', 'a', 'b'], 'a visited one comes first');
+  // #21 (19 Oct polish board): after the five, so a visit never moves them.
+  assert.deepEqual(railRows(['a', 'b'], 'x'), ['a', 'b', 'x'], 'a visited one comes after the five');
   // Then any other whose app is still running and is not among the five.
-  assert.deepEqual(railRows(['a', 'b'], 'x', ['x', 'b', 'y']), ['x', 'y', 'a', 'b'], 'once each, the five last');
+  assert.deepEqual(railRows(['a', 'b'], 'x', ['x', 'b', 'y']), ['a', 'b', 'x', 'y'], 'once each, the five first');
 });
 
-test('which conversations: the bot, then the four most recent of either section, the open one kept', () => {
+test('which conversations: the bot, then the four most recent of either section, held for the visit', () => {
   const { railConversations, RAIL_CONVERSATIONS } = loadTsx('frontend/src/features/messages/rail-inbox.ts');
   assert.equal(RAIL_CONVERSATIONS, 5);
   const at = (h) => new Date(Date.UTC(2026, 9, 18, h)).toISOString();
@@ -60,14 +61,25 @@ test('which conversations: the bot, then the four most recent of either section,
     { key: 'person:4', section: 'people', at: null },
   ];
   const keys = (rows) => rows.map((row) => row.key);
-  assert.deepEqual(keys(railConversations(inbox, null)),
+  const seen = new Map();
+  assert.deepEqual(keys(railConversations(inbox, seen)),
     ['person:bot', 'mayor:1', 'person:7', 'person:8', 'person:9'],
-    'pinned first, then by clock across both, drawn back in the inbox\'s order');
-  assert.deepEqual(keys(railConversations(inbox, 'mayor:2')),
-    ['person:bot', 'mayor:1', 'mayor:2', 'person:7', 'person:8', 'person:9'],
-    'the open one is a sixth row, in its own place');
-  assert.deepEqual(keys(railConversations(inbox, 'person:7')), keys(railConversations(inbox, null)));
-  assert.deepEqual(railConversations([], null), []);
+    'pinned first, then by clock across both, drawn under the inbox\'s headings');
+  // #21 (19 Oct polish board): a reply during the visit moves nothing. The
+  // clocks first seen rank the rows until the page is loaded again.
+  const later = inbox.map((entry) => (entry.key === 'mayor:2' || entry.key === 'person:9'
+    ? { ...entry, at: at(20) } : entry));
+  assert.deepEqual(keys(railConversations(later, seen)),
+    ['person:bot', 'mayor:1', 'person:7', 'person:8', 'person:9'],
+    'the same five, in the same order, after mayor:2 and person:9 moved');
+  // The next load reads the clocks afresh.
+  assert.deepEqual(keys(railConversations(later, new Map())),
+    ['person:bot', 'mayor:2', 'mayor:1', 'person:9', 'person:7']);
+  // A clock not known yet is not held: the real one ranks it when it comes.
+  const fresh = new Map();
+  railConversations(inbox, fresh);
+  assert.equal(fresh.has('person:4'), false);
+  assert.deepEqual(railConversations([], new Map()), []);
 });
 
 test('the places: the column\'s own list, topics after two behind "Show N more", the one you are on kept', () => {
@@ -113,7 +125,7 @@ test('the markup: the conversations follow Messages, empty in the prerender, and
   // The inbox publishes the rows from the whole merge, not the search's answer.
   const inbox = read('frontend/src/features/messages/index.tsx');
   assert.match(inbox, /const railOpenKey = inbox\.find\(isOpen\)\?\.key \|\| null;/);
-  assert.match(inbox, /const rows = railConversations\(inbox, railOpenKey\)/);
+  assert.match(inbox, /const rows = railConversations\(inbox\)\n/);
 });
 
 test('the motion: one clock for both parts, on the content\'s own height', () => {
@@ -125,7 +137,7 @@ test('the motion: one clock for both parts, on the content\'s own height', () =>
   assert.match(src, /if \(start !== null\) motion\.startTime = start;/, 'a part that heard late joins the clock already running');
   assert.match(src, /reducedMotion\(\) \|\| typeof el\.animate !== 'function'/);
   const css = block1024();
-  assert.match(css, /\.platform-rail-nest \{\n    flex: none;\n    display: grid;\n    grid-template-rows: minmax\(0, 1fr\);\n    overflow: hidden;\n  \}/);
+  assert.match(css, /\.platform-rail-nest \{\n    flex: none;\n    display: grid;\n    grid-template-rows: minmax\(0, 1fr\);\n    grid-template-columns: minmax\(0, 1fr\);\n    overflow: hidden;\n  \}/);
   assert.match(css, /\.platform-rail-communities > \.platform-rail-nest \{\n    margin-top: -1px;\n  \}/, 'the section\'s gap does not arrive with it');
 });
 
@@ -158,7 +170,7 @@ test('the look: one indent a level, one unbroken line, the parent unfilled; Disc
   assert.match(css, /\.platform-rail-nest :is\(\.dev-ws-place, \.platform-rail-sub\) \{[^}]*margin-left: 24px;[^}]*\}/);
   assert.match(css, /\.platform-rail-nest :is\(\.dev-ws-places-group \.dev-ws-place, \.platform-rail-group\[data-rail-headed\] \.platform-rail-sub\) \{\n    margin-left: 36px;\n  \}/, 'a headed group is a step in');
   assert.match(css, /padding: 8px 8px 3px 30px;[^}]*text-transform: none;/, 'sub-headers where the rows above start, in sentence case');
-  assert.match(css, /\.platform-rail-community\[data-rail-open\]\[aria-current="page"\],\n  \.platform-tabs:has\(#platform-rail-conversations > \[data-nest="open"\]\) #platform-tab-messages\[aria-current="page"\] \{\n    background: transparent;/);
+  assert.match(css, /\.platform-rail-community\[data-rail-open\]\[aria-current="page"\],\n  \.platform-tabs:has\(#platform-rail-conversations > \[data-nest="open"\] \[aria-current="page"\]\) #platform-tab-messages\[aria-current="page"\] \{\n    background: transparent;/);
   assert.match(css, /--platform-rail-full: 212px;/, 'the deeper rows need 212px');
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /\{ key: 'discover' as const, label: 'core:tabs\.discover', href: '#apps', Icon: CompassIcon \}/);

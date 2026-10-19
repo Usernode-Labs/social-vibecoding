@@ -147,13 +147,13 @@
     "text": "{{count}} to vote",
     "description": "Status on a community's row on the Communities screen: how many proposals and group decisions in it are waiting for this person's vote. \"To vote\" means still to be voted on by you."
   },
-  "row.unread_one": {
-    "text": "{{count}} unread in the channel",
-    "description": "Accessible name of the number badge on a community's row on the Communities screen: how many unread messages its chat channel has."
+  "row.newMessages_one": {
+    "text": "{{count}} new message",
+    "description": "Status on a community's row on the Communities screen, after how many proposals wait for the person's vote (\"1 to vote · 1 new message\"): how many messages in its chat channel the person has not read yet."
   },
-  "row.unread_other": {
-    "text": "{{count}} unread in the channel",
-    "description": "Accessible name of the number badge on a community's row on the Communities screen: how many unread messages its chat channel has."
+  "row.newMessages_other": {
+    "text": "{{count}} new messages",
+    "description": "Status on a community's row on the Communities screen, after how many proposals wait for the person's vote (\"1 to vote · 5 new messages\"): how many messages in its chat channel the person has not read yet."
   },
   "needsYou.heading": {
     "text": "Needs you",

@@ -23,7 +23,7 @@
  * The row itself keeps `aria-current` but gives its fill to the place lit
  * under it, and its count to Needs you, which says the same votes. A
  * community you are only visiting, which is not one of the five, has a row
- * at the top for as long as you are on its page, so its places are always
+ * after them for as long as you are on its page, so its places are always
  * here. The part opens and shuts on the one clock ./rail-nest.tsx keeps.
  *
  * ── Its app, the first row (18 Oct 2026) ─────────────────────────────
@@ -43,10 +43,9 @@
  * Homeroom's own community has no App row: the platform is its app
  * (`selfHosted`), and you are in it already.
  *
- * A community whose app is running is always listed: it never drops out of
- * the five (`noteOpened` drops the last one whose app is not running), and
- * one that is not among them, an app you use without having joined, has a
- * row at the top while it runs, as a page you visit does.
+ * A community whose app is running is always listed: one that is not among
+ * the five, an app you use without having joined, has a row after them
+ * while it runs, as a page you visit does.
  *
  * THE HEADING HOLDS A SEARCH, shown while the pointer is over the section or
  * the search has focus (app.css). It is All communities with its search box
@@ -57,12 +56,21 @@
  * This device's own order, kept per viewer (`railCommunities`): the five
  * most recently active of your communities to begin with, and after that a
  * community you open that is not among them comes in at the top, pushing the
- * last one out. A community already listed keeps its row, so a row never
- * moves under the pointer that pressed it. Only communities you are in are
- * listed: a page you are visiting is not one of yours until you join it.
- * The ones you pinned are not among the five either: they have their own
- * section above this one (./rail-pinned.tsx), so a pin never pushes one of
- * the five out.
+ * last one out (`noteOpened`, the last one whose app is not running).
+ * Only communities you are in are listed: a page you are visiting is not one
+ * of yours until you join it. The ones you pinned are not among the five
+ * either: they have their own section above this one (./rail-pinned.tsx), so
+ * a pin never pushes one of the five out.
+ *
+ * THE ORDER CHANGES ON THE NEXT LOAD, NEVER DURING A VISIT (#21 of the
+ * 19 Oct polish board). Opening an app from Home used to put its community
+ * at the top and drop the fifth there and then, so the rows moved under you
+ * as you went about. Now the five this page drew first stay where they are
+ * until it is loaded again: what you open is noted in the kept order, which
+ * the next load draws. A community you are in that is not among them for
+ * now (a page you visit, an app still running) has a row AFTER the five
+ * (`railRows`), so nothing above it moves. One you leave or pin goes, and
+ * the gap is filled at the end.
  *
  * ── Where it is, and when ─────────────────────────────────────────────
  *
@@ -111,17 +119,18 @@ export const RAIL_COMMUNITIES = 5;
 export const RAIL_TOPICS = 2;
 
 /**
- * The rows the section draws: the five, and first, while you are in it (on
- * its page or in its app), a community you are visiting that is not among
- * them, then any other whose app is still running (`live`, the frame store's
- * order) and is not among them. Pure.
+ * The rows the section draws: the five, then, while you are in it (on its
+ * page or in its app), a community you are visiting that is not among them,
+ * then any other whose app is still running (`live`, the frame store's
+ * order) and is not among them. After the five, so a visit never moves them
+ * (#21). Pure.
  */
 export function railRows(shown: readonly string[], here: string | null, live: readonly string[] = []): string[] {
   const extra: string[] = [];
   for (const slug of [here, ...live]) {
     if (slug && !shown.includes(slug) && !extra.includes(slug)) extra.push(slug);
   }
-  return [...extra, ...shown];
+  return [...shown, ...extra];
 }
 
 /** This device's order, per viewer. */
@@ -196,9 +205,10 @@ function saveKept(viewer: string | null, slugs: string[]): void {
 }
 
 /**
- * The five, kept current: read from this device once the viewer is named,
- * and moved when a community not among them is opened. ./tab-bar.tsx reads
- * it once and hands it to the section and to the All row's count.
+ * The five: read from this device once the viewer is named, and drawn in
+ * that order for the rest of the visit (#21). Opening a community not among
+ * them moves the kept order, for the next load. ./tab-bar.tsx reads it once
+ * and hands it to the section and to the All row's count.
  */
 export function useRailCommunities(): string[] {
   const { viewer } = useStoreState(navStore);
@@ -215,24 +225,26 @@ export function useRailCommunities(): string[] {
   const [kept, setKept] = useState<{ viewer: string | null; slugs: string[] }>({ viewer: null, slugs: [] });
   useEffect(() => { setKept({ viewer, slugs: readKept(viewer) }); }, [viewer]);
   const ready = !!viewer && kept.viewer === viewer;
-  const shown = railCommunities(ready ? kept.slugs : [], list);
-  const shownKey = shown.join();
+  // The kept order, which the next load draws.
+  const saved = railCommunities(ready ? kept.slugs : [], list);
+  const savedKey = saved.join();
+  // THE VISIT'S ORDER (#21): the kept order as it stood once both it and the
+  // list of yours were read, held for as long as this page is up.
+  const [visit, setVisit] = useState<{ viewer: string | null; slugs: string[] }>({ viewer: null, slugs: [] });
+  useEffect(() => {
+    if (ready && list && visit.viewer !== viewer) setVisit({ viewer, slugs: saved });
+  }, [ready, listKey, viewer, savedKey]);
+  const shown = visit.viewer === viewer ? railCommunities(visit.slugs, list) : saved;
   useEffect(() => {
     if (!ready) return;
-    const next = noteOpened(shown, slug, list, RAIL_COMMUNITIES, live);
+    const next = noteOpened(saved, slug, list, RAIL_COMMUNITIES, live);
     if (!next) return;
     setKept({ viewer, slugs: next });
     saveKept(viewer, next);
-    // `shown`, the list and the running apps are read through their keys:
-    // the same five are the same answer.
-  }, [ready, slug, listKey, viewer, shownKey, liveKey]);
+    // The kept order, the list and the running apps are read through their
+    // keys: the same five are the same answer.
+  }, [ready, slug, listKey, viewer, savedKey, liveKey]);
   return shown;
-}
-
-/** The votes in your communities the sidebar does not list: the All row's count. Pure. */
-export function votesElsewhere(shown: readonly string[], list: readonly string[] | null, info: Record<string, CommunityInfo>): number {
-  if (!list) return 0;
-  return list.reduce((n, s) => (shown.includes(s) || info[s]?.unchosen ? n : n + (Number(info[s]?.needs) || 0)), 0);
 }
 
 /** A community's places, nested under its row: the project's own list, kept short. */
@@ -464,7 +476,7 @@ export function RailCommunities({ shown }: { shown: string[] }) {
   const here = useRailHere();
   const { apps: pins } = useStoreState(pinnedAppsStore);
   const pinned = pins.map((app: { slug: string }) => app.slug);
-  // A visit, then a running app that is not among the five, then the five;
+  // The five, then a visit and a running app that are not among them (#21);
   // a pinned one is in its own section.
   const rows = (here.sidebarRows ? railRows(shown, here.onPage || here.onApp, here.live) : shown)
     .filter((slug) => !pinned.includes(slug));

@@ -665,8 +665,9 @@ const Home = {
       // scroller's content minus that bar. Measuring the live rect alone
       // would hand a viewer who has scrolled down a bigger budget than the
       // one they see when they scroll back.
+      // Only where the bar parks (a phone, _searchReveal.tucks).
       const bar = document.getElementById('home-search-bar');
-      const resting = (bar && bar.offsetHeight) || 0;
+      const resting = (Home._searchReveal.tucks() && bar && bar.offsetHeight) || 0;
       const top = grid.getBoundingClientRect().top
         - screen.getBoundingClientRect().top
         + (pageScroll ? 0 : screen.scrollTop)
@@ -1934,6 +1935,13 @@ const Home = {
 
     pin() { Home._searchReveal._pinned = true; },
 
+    // A PHONE ONLY (#17 of the 19 Oct polish board). Under 768px the bar
+    // parks under the header and a pull brings it out. From 768px there is
+    // no pull: the parked bar left the desktop with no search in sight, and
+    // an empty blur scrolled the page back up on its own. There it stays in
+    // view. `!== false`: with no PlatformUI to ask, it parks, as it did.
+    tucks() { return window.PlatformUI?.isPhoneLayout?.() !== false; },
+
     // Bring a parked or half-parked bar all the way out (QA 2026-09-24
     // Q30c). A parked bar is transparent under the translucent header now
     // (app.css), so focusing it must also SHOW it. Only from near the top:
@@ -1975,7 +1983,8 @@ const Home = {
       const h = bar.offsetHeight || 0;
       const initial = Home._searchReveal._initializedBar !== bar;
       if (h) Home._searchReveal._initializedBar = bar;
-      if ((initial || park) && !Home._searchReveal.isPinned() && h && screen.scrollTop < h) {
+      if ((initial || park) && Home._searchReveal.tucks() && !Home._searchReveal.isPinned()
+        && h && screen.scrollTop < h) {
         if (initial) screen.scrollTop = h;
         else Home._searchReveal.glide(screen, h);
       }

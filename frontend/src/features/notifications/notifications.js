@@ -101,6 +101,13 @@ const Notifications = {
   // pagination.
   savedNotifications: [],
   unread: 0,
+  // #18 (19 Oct 2026 polish board): how many of `unread` are a plain message
+  // in a conversation or a channel (`conversation_message`,
+  // `channel_message`), which the bell leaves to the Messages tab. The
+  // server's figure (countUnreadSplit), walked with `unread` wherever that
+  // is. The kinds are spelled out at each use: the harnesses rebuild single
+  // methods with `new Function`, which can close over nothing.
+  messageUnread: 0,
 
   // #5249: whether a notification is drawn at all. While kudos is parked
   // (features/leaderboard/kudos-parked.ts; the bundle then publishes no
@@ -239,6 +246,7 @@ const Notifications = {
       Notifications.savedNotifications = Array.isArray(data.savedNotifications)
         ? data.savedNotifications.filter(Notifications._shown) : [];
       Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
       Notifications.hasMore = !!data.hasMore;
       Notifications.nextBefore = data.nextBefore || null;
       Notifications._reconcileCompletionTitle();
@@ -422,7 +430,12 @@ const Notifications = {
     } else {
       Notifications.items.unshift(notif);
     }
-    if (!notif.readAt && !wasUnread) Notifications.unread += 1;
+    if (!notif.readAt && !wasUnread) {
+      Notifications.unread += 1;
+      if (/^(conversation|channel)_message$/.test(notif.kind)) {
+        Notifications.messageUnread = (Notifications.messageUnread || 0) + 1;
+      }
+    }
     // #161: a completion arriving while the user is away from the
     // browser tab sets the dedicated tab-title marker (the replacement
     // for the old streaming-driven "✅ Done"). If they're actively
@@ -579,6 +592,7 @@ const Notifications = {
       if (!res.ok) { failed(); return; }
       const data = await res.json();
       Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
       const now = new Date().toISOString();
       Notifications.items = Notifications.items.map((n) => (
         { ...n, readAt: n.readAt || now }
@@ -626,6 +640,7 @@ const Notifications = {
       if (!res.ok) { failed(); return false; }
       const data = await res.json();
       Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
       // Flip only what is still unread: a refresh that landed while the
       // request was running replaced `items` with the server's own rows,
       // which already say what is true.
@@ -682,6 +697,7 @@ const Notifications = {
       const data = await res.json();
       // Reconcile with the server's authoritative unread count.
       Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
       Notifications._renderBadge();
       return true;
     } catch (err) {
@@ -729,6 +745,8 @@ const Notifications = {
     const stamp = new Date().toISOString();
     for (const n of members) n.readAt = stamp;
     Notifications.unread = Math.max(0, Notifications.unread - members.length);
+    Notifications.messageUnread = Math.max(0, (Notifications.messageUnread || 0)
+      - members.filter((n) => /^(conversation|channel)_message$/.test(n.kind)).length);
     Notifications._reconcileCompletionTitle();
     Notifications._renderBadge();
     Notifications._renderList();
@@ -790,6 +808,7 @@ const Notifications = {
     if (!Number.isSafeInteger(id) || id <= 0) return;
     const now = new Date().toISOString();
     let cleared = 0;
+    let messages = 0;
     for (const n of Notifications.items) {
       if (!n || n.readAt || Number(n.conversationId) !== id) continue;
       // #2387: an alert about a message inside a reply thread waits for that
@@ -797,11 +816,13 @@ const Notifications = {
       if (n.conversationThreadRootId) continue;
       n.readAt = now;
       cleared += 1;
+      if (/^(conversation|channel)_message$/.test(n.kind)) messages += 1;
     }
     if (!cleared) return;
     // `unread` is the server's account-wide total; only ever walk it down by
     // what was actually cleared here, and never below zero.
     Notifications.unread = Math.max(0, Notifications.unread - cleared);
+    Notifications.messageUnread = Math.max(0, (Notifications.messageUnread || 0) - messages);
     Notifications._renderBadge();
     Notifications._renderList();
   },
@@ -814,14 +835,17 @@ const Notifications = {
     if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(root) || root <= 0) return;
     const now = new Date().toISOString();
     let cleared = 0;
+    let messages = 0;
     for (const n of Notifications.items) {
       if (!n || n.readAt || Number(n.conversationId) !== id) continue;
       if (Number(n.conversationThreadRootId) !== root) continue;
       n.readAt = now;
       cleared += 1;
+      if (/^(conversation|channel)_message$/.test(n.kind)) messages += 1;
     }
     if (!cleared) return;
     Notifications.unread = Math.max(0, Notifications.unread - cleared);
+    Notifications.messageUnread = Math.max(0, (Notifications.messageUnread || 0) - messages);
     Notifications._renderBadge();
     Notifications._renderList();
   },
@@ -850,6 +874,7 @@ const Notifications = {
       const data = await res.json();
       if (!data.cleared) return;
       Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
       Notifications._renderBadge();
       Notifications._renderList();
     } catch (err) {
@@ -1306,9 +1331,11 @@ const Notifications = {
 
   // Badge total folds in pending invites so an invite is as loud as an
   // unread notification (its underlying collab_invite row may already
-  // be read while the invite is still actionable).
+  // be read while the invite is still actionable). Less the plain messages
+  // (#18, `messageUnread`): the Messages tab counts those, in grey, and one
+  // message lit three numbers while the bell counted it too.
   _badgeTotal() {
-    return Notifications.unread + Notifications.invites.length;
+    return Math.max(0, Notifications.unread - (Notifications.messageUnread || 0)) + Notifications.invites.length;
   },
 
   // Of the loaded items, the ones that are a finished dev session
@@ -1324,9 +1351,9 @@ const Notifications = {
   _renderBadge() {
     // ONE EVENT, ONE BADGE, ON THE SURFACE THAT OWNS IT — and one count.
     //
-    // The bell's number is now every unread notification plus pending
-    // invites, session kinds included. There is no second badge and no
-    // split.
+    // The bell's number is every unread notification plus pending invites,
+    // session kinds included, less the plain messages the Messages tab
+    // counts (#18, _badgeTotal). There is no second badge for the bell.
     //
     // The split it replaces put unread session kinds on #improve-btn — the
     // header pill #2718 has since retired altogether — on the grounds that
@@ -1338,10 +1365,10 @@ const Notifications = {
     // Opening the Improve panel marks nothing, so a finished session left a
     // number pointing at the one surface with no way to dismiss it, and the
     // viewer never found the notification that was waiting for them. Folding
-    // it back in also re-aligns the bell with the two counts that never
-    // learned about the split: the tab title (_updateTitle, which reads
-    // _badgeTotal) and the home-screen icon badge (_publishAppBadge, which
-    // reads `unread`).
+    // it back in also re-aligned the bell with the two counts that never
+    // learned about the split: the tab title (_updateTitle) and the
+    // home-screen icon badge (_publishAppBadge, which reads `unread`). Both
+    // still count the plain messages the bell leaves out since #18.
     //
     // The pulse dot survived both moves and is the reason the distinction
     // matters: "a session is running right now" is a live fact, true only
@@ -1403,9 +1430,11 @@ const Notifications = {
     // so it re-renders on its own.
   },
 
+  // The tab's title keeps counting everything, messages too (#18): it is the
+  // one number a tab in the background shows, and it never lit a badge.
   _updateTitle() {
     const base = document.title.replace(/^\(\d+\)\s*/, '');
-    const total = Notifications._badgeTotal();
+    const total = Notifications.unread + Notifications.invites.length;
     if (total > 0) document.title = `(${total}) ${base}`;
     else document.title = base;
   },
