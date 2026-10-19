@@ -246,3 +246,33 @@ test('the Models card has a platform default picker, and Save sends it', () => {
   // The stage pickers name the default the form now holds, saved or not.
   assert.match(tsx, /defaultModel=\{form\.defaultModel \|\| payload\?\.deploymentDefaultModel/);
 });
+
+// ── What a current configuration runs ───────────────────────────────────
+
+test('the admin payload names the current configurations\' models, which builds run on over the stage settings', async () => {
+  const configs = require('../src/services/bot-configs');
+  const saved = { currentVersion: configs.currentVersion, laterVersion: configs.laterVersion };
+  configs.currentVersion = async () => ({
+    id: 15, key: 'fv', label: 'FV', version: 1,
+    recipe: { models: { triage: 'z-ai/glm-5.3-flash', spec: 'anthropic/claude-opus-5.5', build: 'deepseek/deepseek-v4.1-flash-1017' } },
+  });
+  configs.laterVersion = async () => ({
+    id: 5, key: 'later', label: 'Later', version: 1,
+    recipe: { models: { triage: 'z-ai/glm-5.3-flash', spec: 'anthropic/claude-opus-5.5', build: 'z-ai/glm-5.3-flash' } },
+  });
+  try {
+    assert.deepEqual(await bot.currentConfigurations({}), {
+      firstVersion: { id: 15, key: 'fv', label: 'FV', version: 1, models: { triage: 'z-ai/glm-5.3-flash', spec: 'anthropic/claude-opus-5.5', build: 'deepseek/deepseek-v4.1-flash-1017' } },
+      // A later change's triage keeps the stage setting, so it is not named.
+      later: { id: 5, key: 'later', label: 'Later', version: 1, models: { spec: 'anthropic/claude-opus-5.5', build: 'z-ai/glm-5.3-flash' } },
+    });
+    configs.currentVersion = async () => null;
+    configs.laterVersion = async () => { throw new Error('boom'); };
+    assert.deepEqual(await bot.currentConfigurations({}), { firstVersion: null, later: null }, 'none, or unreadable: the stage settings decide');
+  } finally {
+    configs.currentVersion = saved.currentVersion;
+    configs.laterVersion = saved.laterVersion;
+  }
+  const connector = fs.readFileSync(path.join(__dirname, '..', 'src/services/bench/connector-data.js'), 'utf8');
+  assert.match(connector, /configurations: p\.configurations \|\| null/, 'get_homeroom_bot carries them too');
+});

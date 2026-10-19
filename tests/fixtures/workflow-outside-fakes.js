@@ -39,7 +39,9 @@ module.exports = function install(fakes) {
   const comments = async (number) => (await fakes.read('github.comment')).filter((c) => c.number === number);
   outside(fakes, 'services/github', {
     keep: ['init', 'parseGithubUrl', 'safeMention', 'noteIssuesClosed', 'unsuppressIssues', 'invalidateIssuesCache',
-      'noteIssueCreated', 'describeGithubError', 'credentialClass', 'clipIssueComments'],
+      'noteIssueCreated', 'describeGithubError', 'credentialClass', 'clipIssueComments',
+      // What the bus tells this process's issues cache (ws.js): memory only.
+      'applyIssuesChange'],
     overrides: {
       isEnabled: () => true,
       async getIssue(owner, repo, number) {
@@ -339,7 +341,8 @@ module.exports = function install(fakes) {
     },
   });
   // Not an outside service, a probe: whether the Workshop hears a board
-  // change in this process (its listener is registered by server.js only).
+  // change in this process (its listener is registered by server.js, and
+  // fired by the bus's relay of the machine's push).
   const themes = require(path.join(SRC, 'services/workshop-themes'));
   fakes.stub(path.join(SRC, 'services/workshop-themes'), {
     ...themes, noteBoardChange: (pool, info) => { fakes.record('workshop.boardChange', info).catch(() => {}); return true; },

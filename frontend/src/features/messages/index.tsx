@@ -1135,7 +1135,12 @@ function ConversationList({ drawer = false, litId = null }: {
       >
         {snap.loadingList && !snap.listLoaded ? <ConversationRowSkeleton /> : null}
         {snap.error ? <div className="messages-state messages-state-error"><p>{snap.error}</p><button type="button" onClick={() => void loadConversations(true)}>{t('core:common.tryAgain')}</button></div> : null}
-        {!snap.loadingList && !snap.error && snap.listLoaded && !snap.conversations.length && !inbox.length
+        {/* Nothing in the list: what the list draws, not what was read.
+            #general is always read (every account is in it) and is drawn on
+            Homeroom's hub, never here (./inbox.ts), so a new account's
+            Messages was a search box over nothing (sign-up test, 19 Oct
+            2026). */}
+        {!snap.loadingList && !snap.error && snap.listLoaded && !inbox.length
           ? <div className="messages-empty"><h3>{t('messages:inbox.empty.title')}</h3><p>{t('messages:inbox.empty.body')}</p><button type="button" onClick={() => openDialog('messagesCreate')}>{t('messages:inbox.empty.action')}</button></div>
           : null}
         {/* A QUERY THAT MATCHED NOTHING is not an empty inbox, and must not

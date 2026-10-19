@@ -1250,7 +1250,7 @@ function readIcon(parsed) {
 //               history keep their key; read-only from then on.
 //   mergedInto  the id of the LIVE topic it was merged into: never itself,
 //               never a topic that was itself merged or archived.
-//   figures     optional: up to nine figure ids from services/topic-figures.js,
+//   figures     optional: up to twelve figure ids from services/topic-figures.js,
 //               the numbers the channel shows above its room. An unknown id
 //               is an error; the reader keeps the known ones.
 //

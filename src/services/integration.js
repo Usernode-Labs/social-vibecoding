@@ -102,6 +102,27 @@ function readIntegration(session) {
   };
 }
 
+// The commits a measurement of this proposal asks the mirror about.
+function knownShas(s) {
+  return [s.reviewed_head_sha, s.checks_base_sha, s.checks_commit_sha].map(normalizeSha).filter(Boolean);
+}
+
+/**
+ * One fetch of an app's mirror for every open proposal on it, with all the
+ * commits they will ask about, for the sweep that measures them in turn
+ * (`measure(..., { mirrorDir })`). Each measurement used to fetch the whole
+ * repository again: on 19 Oct 2026 a pass measured about 126 proposals with
+ * a full `git fetch` each, every two minutes, and the session sweeper the
+ * pass lived in took two to ten minutes. Throws as ensureMirror does.
+ */
+async function fetchAppMirror(sessions) {
+  const list = (sessions || []).filter(Boolean);
+  const parsed = list.length ? parseRepo(list[0].repo_url) : null;
+  if (!parsed) return null;
+  const refs = [...new Set(list.flatMap(knownShas))];
+  return mirror.ensureMirror(parsed.owner, parsed.repo, { refs });
+}
+
 /** Is this measurement young enough that a read path should not re-take it? */
 function isFresh(session, ttlMs = MEASURE_TTL_MS) {
   const at = session && session.integration_measured_at;
@@ -230,9 +251,10 @@ async function measure({ pool, session }, options = {}) {
   };
 
   try {
-    const known = [s.reviewed_head_sha, s.checks_base_sha, s.checks_commit_sha]
-      .map(normalizeSha).filter(Boolean);
-    const dir = await mirror.ensureMirror(parsed.owner, parsed.repo, { refs: known });
+    // `mirrorDir`: the sweep fetched this app's mirror once for every open
+    // proposal on it (fetchAppMirror), so this one reads it as it is.
+    const dir = options.mirrorDir
+      || await mirror.ensureMirror(parsed.owner, parsed.repo, { refs: knownShas(s) });
 
     const mainSha = await mirror.defaultBranchSha(dir);
     if (!mainSha) throw new Error(`${parsed.owner}/${parsed.repo} has no default-branch commit`);
@@ -459,6 +481,7 @@ module.exports = {
   readIntegration,
   isFresh,
   measure,
+  fetchAppMirror,
   measureDeduped,
   setBlockReasons,
   classifyHeadMove,

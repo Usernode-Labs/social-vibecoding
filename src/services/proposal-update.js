@@ -2230,6 +2230,18 @@ async function advanceForkHead(ctx) {
     );
   }
 
+  // Homeroom did not decide the move in time (applyHeadChange asked again,
+  // and each was refused as expired): nothing moved, and the push is on
+  // GitHub either way, so the agent may submit again.
+  if (moved && moved.notDecided) {
+    return fail(
+      'not_decided',
+      'Homeroom has not recorded your new commit against this proposal yet, so nothing changed. Your push is on GitHub '
+      + 'either way, so try again in a few seconds.',
+      { retryable: true }
+    );
+  }
+
   // What the move actually cost, in applyHeadChange's own words. A mechanical
   // or resolved move keeps the approvals, and a mechanical one can carry a
   // green verdict, so nothing rebuilds. When another pass applied this head

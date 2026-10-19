@@ -627,6 +627,10 @@ const ADDED_IDS = {
   'settings-about-section': 'Settings → About: the three version rows. They have moved twice before (#1431 built an About block, #1443 took them to the Improve panel\'s footer). They are back because the question they were being read for — "is something happening, and is there a new version yet" — is answered directly by that footer now, as a note and a reload button. What is left over is reference material, and this is the reference screen.',
   'about-row-app-version': 'The open app\'s latest merged main, in that pane. Gated on `slug && !selfHosted`, exactly as the Improve panel\'s copy was: on the platform\'s own app this row IS the platform, so it and "Platform version" under it printed the same seven characters twice.',
   'about-app-version-slot': 'Its value. A store-fed island rather than a legacy innerHTML target — the pane around it is static, and a version arriving when an app opens should repaint one row, not the settings screen.',
+  // ── #5094, #5106: the terms and the privacy notice in Settings → About ──
+  'settings-about-legal': 'Settings → About\'s Legal block, under the version rows: where a signed-in person finds the terms and Homeroom\'s privacy notice again after the sign-in screens named them (#5094, #5106). The Homeroom app shows this same screen, which is what puts them in the app\'s Settings too.',
+  'settings-about-terms': 'Its Terms row: opens the terms sheet settings.js owns (Settings.showTermsSheet), the same one the Homeroom app\'s "about & legal" block opens.',
+  'settings-about-privacy': 'Its Privacy notice row: a new-tab link to the address GET /api/public/waitlist/options serves as privacy_link (src/services/marketing-links.js). Inside the Homeroom app public/js/nav-link.js hands it to the bridge\'s openExternal. No href in the prerender; it arrives with the options.',
   // ── Andrea's 27 Aug 2026 waitlist review: "Follow along" ────────
   'more-follow-row': 'Holds the "Follow on X / LinkedIn / Instagram" links on the stage-2 form. Empty in this document by design: each link renders only when WAITLIST_FOLLOW_<NETWORK>_URL is set, so an unconfigured network shows nothing rather than a dead profile link.',
   'more-followed': 'The "I followed along" checkbox, stored as `answers.followed_claim`. It is a SELF-REPORT and is deliberately kept out of `answers.verified`: LinkedIn returns aggregate follower statistics with no identity, Instagram exposes a count and no relationship lookup, and X retired its boolean friendship endpoint, so no network will confirm a follow for us. Hidden here because its label is shown only once at least one follow URL is configured.',
@@ -1085,6 +1089,27 @@ const ADDED_IDS = {
   'cp-title-add': '#4891: its "Add a password" title, shown instead to an account that has none and signs in with an emailed code.',
   'cp-save-change': '#4891: #cp-save\'s "Change password" label, beside its "Add password" one.',
   'cp-save-add': '#4891: #cp-save\'s "Add password" label, for an account with no password yet.',
+  // ── #5281: the Account page's sign-in rows read first ────────────────
+  // Username and Password each became a row (what it is, what it holds) with
+  // a Change link, and their forms open under the row only when asked
+  // (features/settings/sections/username.tsx, password.tsx). settings.js
+  // binds the links and Cancels by id and opens one form at a time
+  // (_openAccountEditor). An account with no password confirms a rename with
+  // an emailed code instead of the password it does not have.
+  'cu-edit': '#5281: the Username row\'s Change link, which opens #cu-form.',
+  'cu-form': '#5281: the change-username form under its row, shipped hidden.',
+  'cu-cancel': '#5281: closes #cu-form.',
+  'cu-password-row': '#5281: wraps #cu-password, shown to an account that has a password.',
+  'cu-code-row': '#5281: the emailed-code confirmation, shown instead to an account with no password.',
+  'cu-code': '#5281: the six-digit code POST /api/me/username takes from an account with no password.',
+  'cu-send-code': '#5281: emails that code (POST /api/me/username/code).',
+  'cp-edit': '#5281: the Password row\'s Change (or Add) link, which opens #cp-form.',
+  'cp-edit-change': '#5281: #cp-edit\'s "Change" label, for an account with a password.',
+  'cp-edit-add': '#5281: #cp-edit\'s "Add" label, for an account with none.',
+  'cp-state-set': '#5281: the Password row\'s "Set" line.',
+  'cp-state-unset': '#5281: its "Not set" line, for an account that signs in with an emailed code.',
+  'cp-form': '#5281: the change-password form under its row, shipped hidden.',
+  'cp-cancel': '#5281: closes #cp-form.',
   // ── D (18 Oct 2026): the desktop's sidebar of rows ──────────────────
   // From 1024px the rail lists your communities itself (features/nav/
   // rail-communities.tsx), between Messages and the Communities tab, which is
@@ -1102,7 +1127,7 @@ const ADDED_IDS = {
   'platform-rail-pinned': 'The sidebar\'s Pinned section (role=group), between #platform-rail-conversations and #platform-rail-communities, hidden while nothing is pinned. Home\'s drag recognizer drops a My apps tile on it; dapp.json pins the bar order through it.',
   'platform-rail-pinned-label': 'The section\'s "Pinned" heading, which names the group.',
   'platform-rail-search': 'D: the search beside that heading, shown on hover or focus: All communities with its search box focused and lit (features/workshop/communities-search.ts). dapp.json selects on it.',
-  'workshop-search': 'D: the search at the head of All communities\' column (features/workshop/index.tsx), drawn by app.css from 1024px only: your communities by name, as one list. Prerendered empty.',
+  'workshop-search': 'D: the search at the head of All communities (features/workshop/index.tsx), at every width since #5296: your communities by name, in the one list. Prerendered empty.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

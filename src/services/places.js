@@ -130,13 +130,17 @@ async function topicRequestCounts(pool, appId, keys) {
     [appId]
   );
   const vote = new Map(voted.map((v) => [`${v.target_type}:${v.target_ref}`, v.value]));
+  // A request the platform filed about itself (services/platform-signals.js)
+  // belongs to its signal's topic: after the group's vote, before the
+  // Workshop's placement, as workshop-themes.js reads it too.
+  const signalTopics = await require('./platform-signals').topicsByIssue(pool, appId);
   const row = board[0];
   if (row) {
     const placements = row.placements_json && typeof row.placements_json === 'object' ? row.placements_json : {};
     const cards = new Set([...Object.keys(placements), ...(Array.isArray(row.unplaced_json) ? row.unplaced_json : [])]);
     for (const card of cards) {
       if (!String(card).startsWith('issue:')) continue;
-      const category = vote.get(targetKey(card)) || placements[card] || null;
+      const category = vote.get(targetKey(card)) || signalTopics.get(Number(String(card).slice(6))) || placements[card] || null;
       if (category && out.has(category)) out.set(category, out.get(category) + 1);
     }
     return out;

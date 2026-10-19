@@ -39,9 +39,9 @@
 // wide window, opened from the lit tab, the header's name and ⌄, and the All
 // chip here (features/workshop/community-switcher.tsx). The "Which project?"
 // panel both ends of the chip shared is gone. Its audience sections and "Show
-// N more" (#3363) went with it for a round and are back in the switcher
-// (#3519): every community you are in, in the Communities screen's sections,
-// newest first, each saying who it is for and what it waits on you for.
+// N more" (#3363) went with it for a round and were back in the switcher
+// (#3519) until #5290, which made it a search, then Recent, then the All
+// communities row: the page itself is where every community is listed.
 //
 // What is pinned, each a way the screens can be quietly wrong:
 //
@@ -106,8 +106,12 @@ test('the switcher says which community you are on, who each is for, and what it
   };
   const all = render(null);
   assert.match(all, /<h2 class="community-switcher-title" id="community-switcher-title">Your communities<\/h2>/);
+  // #5290: the search first, then Recent, then All communities.
+  assert.match(all, /<input id="community-switcher-search" type="search" class="community-switcher-search-input"[^>]*placeholder="Search your communities" aria-label="Search your communities" aria-keyshortcuts="Meta\+K Control\+K"/);
+  assert.ok(all.indexOf('community-switcher-search') < all.indexOf('data-switcher-section="recent"'), 'the search comes first');
+  assert.match(all, /<h3 class="community-switcher-section" id="switcher-recent-label"><span>Recent<\/span><\/h3>/);
   const rows = [...all.matchAll(/data-switcher-community="([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(rows, ['all', 'garden', 'club', 'notes'], 'All communities first, then each in the list\'s order');
+  assert.deepEqual(rows, ['garden', 'club', 'notes', 'all'], 'Recent in the list\'s order, then All communities');
   assert.match(all, /data-switcher-community="all" aria-current="true"/, 'with none chosen, All communities is the one you are on');
   assert.match(all, /All communities<\/span><span class="community-switcher-sub">3 communities<\/span>/);
   assert.match(all, /data-switcher-waiting="">2 to vote</, 'what they all wait on you for');
@@ -115,57 +119,41 @@ test('the switcher says which community you are on, who each is for, and what it
   assert.match(all, />Private · 1 member<\/span>/);
   assert.match(all, />Just you<\/span>/);
   assert.equal((all.match(/data-switcher-waiting/g) || []).length, 2, 'a zero says nothing');
-  assert.ok(all.indexOf('data-switcher-join') > all.indexOf('data-switcher-community="notes"'), 'Join, then Start, last');
+  assert.ok(all.indexOf('data-switcher-join') > all.indexOf('data-switcher-community="all"'), 'Join, then Start, last');
   assert.ok(all.indexOf('data-switcher-start') > all.indexOf('data-switcher-join'));
   assert.match(all, />Join a community</);
   assert.match(all, />Start a community</);
+  // It no longer repeats the All communities page's sections (#5290).
+  assert.doesNotMatch(all, /data-switcher-section="(open|invited|solo)"/);
+  assert.doesNotMatch(all, /data-switcher-more=/);
   const one = render('garden');
   assert.match(one, /data-switcher-community="garden" aria-current="true"/, 'the tab\'s community is ticked');
   assert.doesNotMatch(one, /data-switcher-community="all" aria-current/);
   assert.match(one, /color-mix\(in srgb, #2e6660 12%, transparent\)/, 'and tinted in its own colour');
-  // #3519: under the Communities screen's section labels, in their order,
-  // each with its count; three or fewer in a section have no fold row.
-  const labels = [...all.matchAll(/<h3 class="community-switcher-section" id="community-switcher-section-([a-z]+)"><span>([^<]+)<\/span>/g)].map((m) => `${m[1]}:${m[2]}`);
-  assert.deepEqual(labels, ['open:Public communities', 'invited:Private communities', 'solo:Just you']);
-  assert.ok(all.indexOf('data-switcher-section="invited"') < all.indexOf('data-switcher-community="club"')
-    && all.indexOf('data-switcher-community="club"') < all.indexOf('data-switcher-section="solo"'), 'each row under its own section');
-  assert.doesNotMatch(all, /data-switcher-more=/);
 });
 
-test('#3519: a long section shows three, then "Show N more"; the community you are on is never folded away', () => {
-  const fixedStore = (state) => ({ get: () => state, set() {}, subscribe: () => () => {} });
-  const slugs = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
-  const info = Object.fromEntries(slugs.map((slug) => [slug, {
-    slug, name: slug.toUpperCase(), iconUrl: null, iconEmoji: null, iconColor: null, audience: 'open', memberCount: 2, needs: 0,
-  }]));
-  const real = loadTsx('frontend/src/features/workshop/community-scope.ts');
-  const render = (slug) => {
-    const mod = loadTsx('frontend/src/features/workshop/community-switcher.tsx', {
-      stubs: {
-        './community-scope': {
-          ...real,
-          communityScopeStore: fixedStore({ slug, info, list: slugs, totalNeeds: 0, switcher: 'header', anchor: null }),
-        },
-      },
-    });
-    return renderToHtml(createElement(mod.SwitcherBody, {}));
-  };
-  const rowsOf = (html) => [...html.matchAll(/data-switcher-community="([^"]+)"/g)].map((m) => m[1]).filter((x) => x !== 'all');
-  const none = render(null);
-  assert.deepEqual(rowsOf(none), ['a', 'b', 'c'], 'three out, newest first');
-  assert.match(none, /data-switcher-more="open" aria-expanded="false">Show 4 more<\/button>/);
-  const fifth = render('e');
-  assert.deepEqual(rowsOf(fifth), ['a', 'b', 'c', 'd', 'e'], 'open far enough to show the tick');
-  assert.match(fifth, /data-switcher-community="e" aria-current="true"/);
-  assert.match(fifth, />Show 2 more<\/button>/);
-  // The fold itself, from the one shared module.
-  const sec = loadTsx('frontend/src/features/workshop/sections.ts');
-  assert.equal(sec.sectionFloor([{ slug: 'a' }, { slug: 'b' }], 'b'), 3);
-  assert.equal(sec.sectionFloor(slugs.map((slug) => ({ slug })), 'f'), 6);
-  assert.deepEqual(sec.sectionFoldFrom(7, 3, 3), sec.sectionFold(7, 3), 'a floor of three is the screen\'s own fold');
-  assert.deepEqual(sec.sectionFoldFrom(7, 6, 6), { shown: 6, label: 'Show 1 more', next: 11 });
-  assert.deepEqual(sec.sectionFoldFrom(7, 11, 6), { shown: 7, label: 'Show fewer', next: 6 }, 'Show fewer stops at the tick');
-  assert.deepEqual(sec.sectionFoldFrom(5, 5, 5), { shown: 5, label: null, next: 5 }, 'no dead Show fewer');
+test('#5290: Recent is your pins, then the sidebar\'s five; the search matches every community by name', () => {
+  const sw = loadTsx('frontend/src/features/workshop/community-switcher.tsx');
+  const list = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+  assert.deepEqual(sw.switcherRecent([], [], null), [], 'nothing before the list is read');
+  assert.deepEqual(sw.switcherRecent([], [], list), ['a', 'b', 'c', 'd', 'e'], 'the most recently active five, to begin with');
+  assert.deepEqual(sw.switcherRecent([], ['g', 'x', 'b'], list), ['g', 'b', 'a', 'c', 'd'], 'this device\'s order, as the sidebar keeps it');
+  assert.deepEqual(sw.switcherRecent(['h', 'zz', 'h'], ['g'], list), ['h', 'g', 'a', 'b', 'c', 'd'],
+    'pins first, only ones you are in, once, and never twice beside the five');
+  assert.deepEqual(sw.switcherRecent(['a'], [], list), ['a', 'b', 'c', 'd', 'e', 'f']);
+  // The search: the rule the screen and the drawer search by, over every community.
+  assert.match(SWITCHER, /const found = q \? matchRows\(rowsOf\(st\.list \|\| \[\]\), q\) : \[\];/);
+  assert.match(SWITCHER, /import \{ matchRows \} from '\.\/sections';/);
+  assert.match(SWITCHER, /data-switcher-results=""/);
+  assert.match(SWITCHER, /data-switcher-none="">\{t\('communities:switcher\.search\.none', \{ query: q \}\)\}/);
+  // Down from the box into the rows; Enter opens the first match.
+  assert.match(SWITCHER, /if \(e\.key === 'ArrowDown'\) \{[\s\S]{0,200}querySelector<HTMLButtonElement>\('\.community-switcher-list \.community-switcher-row'\)\?\.focus\(\);/);
+  assert.match(SWITCHER, /else if \(e\.key === 'Enter' && found\[0\]\) \{[\s\S]{0,80}goToCommunity\(found\[0\]\.slug\);/);
+  // The All communities row stays outside the search, so the page is always a press away.
+  const at = SWITCHER.indexOf('data-switcher-community="all"');
+  assert.ok(at > SWITCHER.indexOf('data-switcher-section="recent"') && at > SWITCHER.indexOf('data-switcher-results'));
+  // ⌘K focuses the search; a press on the header lands on the row you are on.
+  assert.match(SWITCHER, /if \(from === 'shortcut'\) \{\s*panel\.querySelector<HTMLInputElement>\('#community-switcher-search'\)\?\.focus\(\);/);
 });
 
 test('#852: every class the switcher draws with has a rule, and the menu floats at a fixed size', () => {
@@ -192,10 +180,12 @@ test('All items, the plus and now the tabs are gone; Needs you is a row (#3051)'
     assert.ok(!SCREEN.includes(`id="${id}"`), `#${id} is not on the screen either`);
     assert.ok(!HTML.includes(`id="${id}"`), `#${id} is not in the shipped shell`);
   }
-  // NOTHING FILTERS THE LIST OF APPS, which is the argument that retired the
-  // old strip: the Needs you feed is a page of its own over the list, and
-  // nothing narrows `rows` by it.
-  assert.ok(!SCREEN.includes('filterRows'), 'the screen does not filter the app list');
+  // NOTHING NARROWS THE LIST BY WHAT WAITS, which is the argument that
+  // retired the old strip: the Needs you feed is a page of its own over the
+  // list. The one list's chips and search (#5296) narrow it by audience and
+  // by name only.
+  const filter = SCREEN.slice(SCREEN.indexOf('export function filterRows'), SCREEN.indexOf('/** Each chip\'s words'));
+  assert.ok(filter.length > 0 && !/needs|owed|working/.test(filter), 'the list is never filtered by its counts');
   const store = read('frontend/src/features/workshop/workshop-store.js');
   assert.match(store, /^\s*tab: 'status',/m, 'the list is the default, and the prerender');
   assert.doesNotMatch(store, /scopeOpen/, 'Your communities keeps its own open flag (#852)');

@@ -1020,7 +1020,10 @@ function proposalHandoffRoutes(config) {
 
       const capError = await connectorLimits.checkActiveCap(pool, config, req.user);
       if (capError) {
-        return res.status(429).json({ error: capError.code, message: capError.message, retryable: true });
+        // A slot Homeroom has not decided on freeing yet is not a cap.
+        const undecided = capError.code === 'not_decided';
+        if (undecided) res.set('Retry-After', String(sessionLifecycle.NOT_DECIDED_RETRY_AFTER_S));
+        return res.status(undecided ? 503 : 429).json({ error: capError.code, message: capError.message, retryable: true });
       }
 
       // ── The branch the ROW carries is the app repository's, not the fork's
@@ -1239,9 +1242,10 @@ function proposalHandoffRoutes(config) {
       const replacedActiveSlot = replacementSession?.status === 'active' ? 1 : 0;
       if (Number(ownCounts[0].cnt) - replacedActiveSlot >= caps.activeSessions) {
         // Paused for the user rather than refused (session-lifecycle.freeUserSlot).
-        const { freed } = await sessionLifecycle.freeUserSlot({
+        const { freed, notDecided } = await sessionLifecycle.freeUserSlot({
           pool, userId: req.user.id, excludeSessionId: replacementSession ? replacementSession.id : null,
         });
+        if (notDecided) return sessionLifecycle.answerNotDecided(res, sessionLifecycle.SLOT_NOT_DECIDED);
         if (!freed) {
           sessionLifecycle.recordCapacityRefusal(pool, {
             cap: 'user', path: 'proposal_start', userId: req.user.id, appId: app.id,
@@ -1255,6 +1259,7 @@ function proposalHandoffRoutes(config) {
       const global = await sessionLifecycle.claimGlobalSlot({
         pool, config, path: 'proposal_start', userId: req.user.id, appId: app.id, discount: replacedActiveSlot,
       });
+      if (global.notDecided) return sessionLifecycle.answerNotDecided(res, sessionLifecycle.SLOT_NOT_DECIDED);
       if (!global.ok) return res.status(429).json({ error: sessionLifecycle.PLATFORM_AT_CAPACITY });
 
       const branchName = `dev/cli-u${req.user.id}-${input.requestId}`;

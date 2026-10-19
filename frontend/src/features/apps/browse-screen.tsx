@@ -29,7 +29,7 @@
 // bought. Keystrokes go to Browse.setQuery, which still coalesces them on the
 // 100ms debounce the input listener used to own.
 //
-// The prototype's FILTER CHIPS (scrDiscover: All / Featured / Joined / New)
+// The prototype's FILTER CHIPS (scrDiscover: All / Featured / Not joined / Joined / New)
 // ride the same bar, between the search and Sort. `filter` is the second
 // CONTROLLED store field beside `sort` — the pressed chip is drawn off it, so
 // it can never disagree with the rows — rendered from a copy of Browse.FILTERS
@@ -96,8 +96,17 @@ const SORT_OPTIONS: Array<{ key: string; label: string }> = [
 const FILTER_CHIPS: Array<{ key: string; label: string }> = [
   { key: 'all', label: 'discover:filter.all' },
   { key: 'featured', label: 'discover:filter.featured' },
+  { key: 'notjoined', label: 'discover:filter.notJoined' },
   { key: 'yours', label: 'discover:filter.joined' },
   { key: 'new', label: 'discover:filter.new' },
+];
+
+// The admin-only chips, Browse.ADMIN_FILTERS labelled (#5267), copied for the
+// same reason. They are drawn only once the store says the viewer is an admin
+// (`adminFilters`), which is never true in the prerender, so the shipped
+// markup holds the five chips above and hydration is silent.
+const ADMIN_FILTER_CHIPS: Array<{ key: string; label: string }> = [
+  { key: 'unreviewed', label: 'discover:filter.unreviewed' },
 ];
 
 export function BrowseScreen() {
@@ -119,6 +128,7 @@ export function BrowseScreen() {
     curated: boolean;
     grouped: boolean;
     moreExpanded: boolean;
+    adminFilters?: boolean;
   };
   const onDetail = state.level === 'detail';
 
@@ -144,12 +154,13 @@ export function BrowseScreen() {
           affordance, and on a detail page the field would filter a list
           nobody can see.
 
-          At md and up its fill is the wallpaper's base (--home-ground, set
-          by the body rule that paints the wallpaper on this route — see "The
-          home ground" in app.css), not white: a sticky bar needs an opaque
-          fill for the rows to scroll under, and a white one read as a slab
-          across a cream page. Dark mode reads the same variable, which the
-          body's dark rule points at the inverted ground.
+          ON THE PAGE'S OWN BACKGROUND at every width (#5267). At md and up it
+          used to be a pinned bar filled with the wallpaper's base colour
+          (--home-ground), which a pinned bar needs so the rows can scroll
+          under it; over the wallpaper's washes that flat fill read as a band,
+          a separate panel across the page. Now it has no fill and is not
+          pinned, so the controls scroll away with the list, as they already
+          did on a phone.
 
           ON A PHONE it sits ON THE GROUND, above the list's card, not as
           the card's head. #1919 drew the search, the sort and the list as
@@ -169,7 +180,7 @@ export function BrowseScreen() {
       */}
       <div
         id="browse-search-bar"
-        className={`${onDetail ? 'hidden ' : ''}browse-pane-head sticky top-0 z-20 md:px-3 md:pt-5 md:pb-2 md:bg-[color:var(--home-ground)]`}
+        className={`${onDetail ? 'hidden ' : ''}browse-pane-head md:px-3 md:pt-5 md:pb-2`}
       >
         <div className="relative max-w-xl">
           <SearchIcon
@@ -220,8 +231,8 @@ export function BrowseScreen() {
             with `aria-pressed`, selection drawn as the solid inversion, not
             the accent. `bar` is its size for a control row; `px-4` (over the
             primitive's `px-6`, through cn's twMerge) keeps all four on one
-            line at 390px, and the rail scrolls rather than wrapping if a
-            larger text size does not fit them.
+            line at 390px where they fit, and the rail scrolls rather than
+            wrapping when they do not (five chips, six for an admin).
         */}
         <ChipRail
           id="browse-filter-chips"
@@ -241,6 +252,19 @@ export function BrowseScreen() {
               {t(f.label)}
             </Chip>
           ))}
+          {state.adminFilters ? ADMIN_FILTER_CHIPS.map((f) => (
+            <Chip
+              key={f.key}
+              size="bar"
+              className="browse-filter-chip px-4"
+              selected={state.filter === f.key}
+              data-filter={f.key}
+              data-admin-filter=""
+              onClick={() => browse()?.setFilter(f.key)}
+            >
+              {t(f.label)}
+            </Chip>
+          )) : null}
         </ChipRail>
         {/*
             Sort (#1383). Rides the search bar rather than sitting in its own

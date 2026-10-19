@@ -276,6 +276,20 @@ function integrationStep(session) {
         note: `conflicts with main${files}; the platform resolves it once the group approves`,
       };
     }
+    // The conflict lane resolves no head whose checks fail or could not run
+    // (merge-queue admission): those come first, then the platform's merge.
+    if (has('checks_failing')) {
+      return {
+        state: 'blocked', actor: 'author',
+        note: `conflicts with main${files}, and its checks are failing; the author fixes them first, then the platform resolves the conflict`,
+      };
+    }
+    if (has('checks_error')) {
+      return {
+        state: 'blocked', actor: 'author',
+        note: `conflicts with main${files}, and its checks could not run; once they are re-run and pass, the platform resolves the conflict`,
+      };
+    }
     if (has('budget')) {
       // Waiting on the daily budget reset is waiting on a clock: nobody can
       // clear it, so it is automatic rather than an admin's turn (an admin

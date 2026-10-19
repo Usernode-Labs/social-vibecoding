@@ -520,6 +520,6 @@ test('parked, a kudos row never enters the list', async () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/notifications/notifications.js'), 'utf8');
   assert.match(src, /Notifications\.items = Array\.isArray\(data\.notifications\)\s*\? data\.notifications\.filter\(Notifications\._shown\) : \[\];/,
     'the first page is filtered');
-  assert.equal((src.match(/data\.notifications\.filter\(Notifications\._shown\)/g) || []).length, 3,
-    'and so are both older-page loads');
+  assert.equal((src.match(/data\.notifications\.filter\(Notifications\._shown\)/g) || []).length, 4,
+    'and so are the three older-page loads (All, Messages, and #5527 Unread)');
 });

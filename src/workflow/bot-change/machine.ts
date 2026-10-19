@@ -3,8 +3,7 @@
 // (`session:<id>`), created by the first thing a machine tells it: the
 // proposal machine's promote (Proposed), the preview's verdict, the shots
 // settling, the merge (each a message the sender's own transition writes:
-// rules/bot-notes.ts), or the leader's adoption of a change an older
-// release proposed.
+// rules/bot-notes.ts).
 //
 //   checking ──verdict passes, shots still to come──▶ waiting_on_shots ──settled / held long enough──▶ ready
 //      │   └──part of it fails (checks, or its shots)──▶ with_the_bot ──the bot's round looked──▶ ready

@@ -32,19 +32,27 @@ platform:
   drainingMax: 2
   replicas: 1
   # The web and conductor split (docs/plans/web-and-conductor.md). On, the
-  # Pods above serve people's requests and never lead (PROCESS_ROLE=web), and
-  # a Deployment of its own runs the conductor (PROCESS_ROLE=conductor): the
-  # leader, its timers, sweeps, merge queue, workflow loops, Homeroom bot and
-  # bench lane, on Pods the Service sends no requests to. Off, the Pods above
-  # serve and stand for leader, as they always did. Either way round, the
-  # Service's selector changes only after the Deployments are healthy (its
-  # Argo CD sync wave), so the release that flips it keeps serving.
+  # Pods above serve people's requests, never lead and decide nothing
+  # (PROCESS_ROLE=web: they append and wait for outcomes), and a Deployment
+  # of its own runs the conductor (PROCESS_ROLE=conductor): the workflow
+  # (every machine's pipeline slots, timers and work, docs/workflows.md) on
+  # every replica, and the leader's remaining work (its timers, sweeps,
+  # bench lane) on the one that leads, on Pods the Service sends no requests
+  # to. Off, the Pods above do everything, as they always did. Either way
+  # round, the Service's selector changes only after the Deployments are
+  # healthy (its Argo CD sync wave), so the release that flips it keeps serving.
   conductor:
     enabled: true
-    # More than one is a standby: it waits for the leader lock.
+    # Each replica runs the workflow; a kind's work limit holds across them
+    # all, so a second one is for failover, not more at once. One leads.
     replicas: 1
     # Empty: the platform's resources above.
     resources: {}
+    # Its own request pool (DB_POOL_MAX): it serves nobody's requests.
+    dbPoolMax: 30
+    # The workflow's metrics (GET /metrics, src/workflow/metrics.ts), on a
+    # port of their own that the Service does not expose.
+    metricsPort: 9464
   image:
     repository: ghcr.io/replace-me/social-vibecoding-platform
     digest: ""
@@ -188,6 +196,16 @@ config:
   # A worker on the platform's own repository (its agent boots the whole
   # platform and a browser): 2g OOM-killed most of its bot builds that died.
   workerMemoryPlatformRepo: 4g
+  # Platform signals (src/services/platform-signals.js): every problem the
+  # platform detects in itself becomes one request on Homeroom's board.
+  # `mode`: shadow keeps the rows the topic pages and figures read and files
+  # nothing; file files the requests; off does nothing. `kinds`: a comma list
+  # of the kinds allowed to file (empty: every kind), so a noisy one can go
+  # back to shadow alone. `bot`: "off" leaves every request to people.
+  platformSignals:
+    mode: shadow
+    kinds: ""
+    bot: "on"
   workerCpus: "2"
   captureMemory: 6g
   captureCpus: "8"
@@ -226,6 +244,9 @@ secrets:
   iframeJwtPrivateKey: ""
   iframeJwtPublicKey: ""
   workerJwtSecret: ""
+  # Alertmanager's bearer token for /api/internal/alerts. Empty turns the
+  # route off (503). The same value goes in the infra repo's receiver.
+  alertmanagerWebhookToken: ""
   edgeJwtSecret: ""
   topochainPartnerApiKey: ""
   githubAppId: ""
@@ -294,10 +315,24 @@ networkPolicy:
   internalCallerNamespaces:
     - social-apps
     - social-workers
+    # Alertmanager's `homeroom` receiver posts infra alerts to
+    # /api/internal/alerts (src/routes/alerts-webhook.js), which checks its
+    # token.
+    - monitoring
   # Generated applications connect directly to their dedicated PostgreSQL
   # databases using per-database roles. Workers do not require database access.
   databaseCallerNamespaces:
     - social-apps
 
+# The workflow's metrics and alerts (docs/kubernetes-operations.md,
+# "Workflow alerts"): a PodMonitor for the conductor's metrics port and a
+# PrometheusRule, picked up by the cluster's kube-prometheus-stack, whose
+# Alertmanager routes them.
+monitoring:
+  enabled: true
+  # The `release` label the Prometheus Operator selects monitors and rules by.
+  prometheusRelease: kube-prometheus-stack
+  # The namespace Prometheus scrapes from (admitted on the metrics port).
+  namespace: monitoring
 podDisruptionBudget:
   enabled: true

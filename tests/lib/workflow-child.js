@@ -1,9 +1,14 @@
 'use strict';
 
 // The workflow side of a two-process test (tests/lib/workflow-processes.js):
-// install the fixture's fakes for outside services, start platform.ts with
-// its loops, say when it is ready, and stop cleanly when asked. What it is
-// given comes in WF_TEST_CHILD: { databaseUrl, config, fixture }.
+// install the fixture's fakes for outside services, then boot server.js
+// itself as a conductor (PROCESS_ROLE=conductor): what production runs where
+// the workflow runs, its bus, its process row and holds, its listener and the
+// hooks its module registers included, so nothing a workflow process needs
+// is set up by the test instead. The test holds the leader lock, so this
+// process never runs the leader's remaining work. It says when it is ready,
+// and stops as a release stops it (SIGTERM: server.js cleanup). What it is
+// given comes in WF_TEST_CHILD: { databaseUrl, env, fixture }.
 
 const { Pool } = require('pg');
 
@@ -29,7 +34,7 @@ const fakes = {
   // Stop here while the test has this point armed, until it releases it.
   async pause(name) {
     const { rowCount } = await pool.query(
-      'UPDATE wf_test_pauses SET reached_at = now() WHERE name = $1 AND NOT released AND reached_at IS NULL', [name]);
+      'UPDATE wf_test_pauses SET reached_at = now(), pid = $2 WHERE name = $1 AND NOT released AND reached_at IS NULL', [name, process.pid]);
     if (!rowCount) return;
     for (;;) {
       await sleep(25);
@@ -76,23 +81,25 @@ for (const fn of ['connect', 'createConnection']) {
 
 require(spec.fixture)(fakes);
 
-const platform = require('../../src/workflow/platform.ts');
-const config = { ...spec.config, databaseUrl: spec.databaseUrl };
-// The request pool, made with the config first, as server.js does at boot.
-require('../../src/db/pool').getPool(config);
 process.on('unhandledRejection', (err) => { console.error('unhandled rejection:', err?.message || err); });
-// What every process that runs the machines sets up, as server.js does
-// (src/workflow/setup.ts), and nothing only the web server has.
-const setup = require('../../src/workflow/setup.ts');
-
-process.on('message', async (m) => {
-  if (!m?.stop) return;
-  await platform.stopWorkflow().catch(() => {});
-  await pool.end().catch(() => {});
-  process.exit(0);
+// What config.js reads, as the chart sets it for a conductor: the test's
+// settings, then the platform keys server.js needs to boot at all
+// (tests/platform-keys.js; existing values win).
+const { randomBytes } = require('node:crypto');
+Object.assign(process.env, {
+  SESSION_SECRET: randomBytes(32).toString('hex'),
+  ADMIN_USERNAME: 'wf-admin',
+  ADMIN_PASSWORD: randomBytes(16).toString('hex'),
+  RUN_MIGRATIONS_ON_STARTUP: 'false',
+  PROCESS_ROLE: 'conductor',
+  PLATFORM_LEADER_LOCK: '1',
+  ...spec.env,
+  DATABASE_URL: spec.databaseUrl,
 });
+require('../platform-keys').setPlatformKeys();
 
-setup.setupWorkflowProcess(config).then(() => platform.startWorkflow(config, { loops: true })).then(
+const server = require('../../server.js');
+server.start().then(
   () => process.send({ ready: true }),
   (err) => { console.error(err); process.exit(1); },
 );

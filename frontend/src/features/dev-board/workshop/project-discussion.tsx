@@ -88,6 +88,7 @@ import type { TranscriptMarker } from '../../group-chat/transcript-store';
 import { channelPlace, channelsOf, findChannel, mergedInto, type PlaceKey } from './places';
 import { TopicHead } from './topic-head';
 import { TopicFigures } from './topic-figures';
+import { TopicSignals } from './topic-signals';
 
 type Channel = NonNullable<CommunityPayload['channel']>;
 
@@ -513,6 +514,9 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
       {/* The numbers this topic names in dapp.json, between its line and
           its room (topic-figures.tsx); nothing for a topic with none. */}
       <TopicFigures slug={slug} topic={topic} />
+      {/* What the platform found wrong in this topic and filed as requests,
+          under its figures (topic-signals.tsx); nothing when there is none. */}
+      <TopicSignals slug={slug} topic={topic} />
       {/* The host's class string is constant and its subtree is the group
           chat's: the one-owner rule, satisfied at this boundary. */}
       <div ref={host} className="dev-ws-discussion-host dev-ws-topic-host" data-topic-channel={topic.id} />

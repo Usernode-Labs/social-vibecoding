@@ -10296,6 +10296,27 @@ CREATE TABLE IF NOT EXISTS account_email_verifications (
 );
 COMMENT ON TABLE account_email_verifications IS 'staging:private';
 
+-- #5281: the same user-bound proof for a USERNAME CHANGE on an account with no
+-- password (it signs in with an emailed code, so it has no password to give
+-- POST /api/me/username). Its own table, not a purpose column on the one
+-- above: that one is keyed by user_id alone, so an email change in flight and
+-- a rename in flight would overwrite each other's code, and keeping the two
+-- proofs in two tables is what makes a code minted for one useless for the
+-- other. Sign-in codes (mobile_otp_codes) are keyed by address and never read
+-- here. One live code per account, only its bcrypt hash, five guesses, ten
+-- minutes, and bound to the confirmed address and the password hash it was
+-- minted against: a code outlives neither a new address nor a new password.
+CREATE TABLE IF NOT EXISTS account_username_codes (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  email VARCHAR(255) NOT NULL,
+  code_hash TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE account_username_codes IS 'staging:private';
+
 -- ── Demo mode ──────────────────────────────────────────────────────────
 --
 -- A recording of the proposal flow needs a second participant who proposes
@@ -13640,6 +13661,9 @@ CREATE TABLE IF NOT EXISTS wf_instances (
     CHECK ((deadline_at IS NULL) = (deadline_event IS NULL))
 );
 CREATE INDEX IF NOT EXISTS wf_instances_state_idx ON wf_instances (machine, state);
+-- Faulted and stalled instances, read by Admin → Workflows and by every
+-- scrape of the workflow's metrics (src/workflow/metrics.ts).
+CREATE INDEX IF NOT EXISTS wf_instances_flag_idx ON wf_instances (flag) WHERE flag IS NOT NULL;
 CREATE INDEX IF NOT EXISTS wf_instances_app_idx ON wf_instances (app_id, machine);
 CREATE INDEX IF NOT EXISTS wf_instances_deadline_idx
   ON wf_instances (deadline_at) WHERE deadline_at IS NOT NULL;
@@ -13757,6 +13781,9 @@ CREATE TABLE IF NOT EXISTS wf_work_attempts (
   UNIQUE (work_id, number)
 );
 COMMENT ON TABLE wf_work_attempts IS 'staging:private';
+-- Attempts lost lately (a lease that lapsed, a stop, a cancel), read by
+-- Admin -> Workflows and the workflow's metrics (src/workflow/metrics.ts).
+CREATE INDEX IF NOT EXISTS wf_work_attempts_lost_idx ON wf_work_attempts (finished_at) WHERE outcome = 'lost';
 
 -- Kernel settings, written at boot (src/workflow/platform.ts):
 -- 'enabled:<machine>' switches the machine's ownership guards on. Every
@@ -14852,4 +14879,76 @@ CREATE TABLE IF NOT EXISTS community_pins (
   pinned_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (user_id, community_id),
   FOREIGN KEY (community_id, user_id) REFERENCES community_members (community_id, user_id) ON DELETE CASCADE
+);
+
+-- ── Platform signals: problems the platform found in itself ─────────────
+--
+-- One row per EPISODE of a problem the platform detected on its own (a
+-- release that stalled, a workflow instance that faulted, an infra alert):
+-- services/platform-signals.js. A problem is its `fingerprint` (its kind
+-- and the narrowest stable thing it is about, e.g. "release_stalled:
+-- workflow_failed"), and has at most one row that is not closed, which is
+-- the claim: two pods, or a retry after a crash, file once. Each row files
+-- (or, in shadow mode, only records) one request on the board of `app_id`,
+-- counts recurrences here rather than on GitHub, and closes once the
+-- problem has stayed clear for its kind's quiet window.
+--
+--   state      pending   seen, not filed yet (waiting out its kind's delay,
+--                        a release, the hourly cap or GitHub's budget)
+--              open      filed (issue_number), or recorded in shadow mode
+--              clearing  the detector says it stopped; waiting to be sure
+--              closed    done; a later raise starts a new row, which
+--                        reopens this one's request within 7 days
+--   fixer      bot | person | infra: who is expected to fix it. Only a
+--              `bot` row is put in the Homeroom bot's queue; the others
+--              hold it off (homeroom-bot.js issueHolders).
+--   evidence   the PUBLIC tier: what the request's body says. The platform
+--              repository is public, so it is scrubbed and typed facts only.
+--   evidence_private  the private tier, for full admins: raw lines, ids.
+CREATE TABLE IF NOT EXISTS platform_signals (
+  id                    BIGSERIAL PRIMARY KEY,
+  fingerprint           TEXT NOT NULL,
+  kind                  VARCHAR(48) NOT NULL,
+  subject               JSONB NOT NULL DEFAULT '{}'::jsonb,
+  app_id                INTEGER REFERENCES apps(id) ON DELETE CASCADE,
+  topic_key             VARCHAR(64),
+  fixer                 VARCHAR(8) NOT NULL DEFAULT 'bot'
+                          CHECK (fixer IN ('bot', 'person', 'infra')),
+  state                 VARCHAR(12) NOT NULL DEFAULT 'pending'
+                          CHECK (state IN ('pending', 'open', 'clearing', 'closed')),
+  title                 TEXT,
+  first_seen_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  occurrences           INTEGER NOT NULL DEFAULT 1,
+  published_occurrences INTEGER,
+  cleared_at            TIMESTAMPTZ,
+  filed_at              TIMESTAMPTZ,
+  closed_at             TIMESTAMPTZ,
+  close_reason          VARCHAR(24),
+  issue_number          INTEGER,
+  muted_until           TIMESTAMPTZ,
+  evidence              JSONB,
+  evidence_private      JSONB,
+  evidence_at           TIMESTAMPTZ,
+  previous_id           BIGINT REFERENCES platform_signals(id) ON DELETE SET NULL,
+  filing_attempts       INTEGER NOT NULL DEFAULT 0,
+  last_error            TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS platform_signals_one_open
+  ON platform_signals (fingerprint) WHERE state <> 'closed';
+CREATE INDEX IF NOT EXISTS idx_platform_signals_topic
+  ON platform_signals (topic_key, state);
+CREATE INDEX IF NOT EXISTS idx_platform_signals_issue
+  ON platform_signals (app_id, issue_number) WHERE issue_number IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_platform_signals_kind_seen
+  ON platform_signals (kind, last_seen_at DESC);
+COMMENT ON COLUMN platform_signals.evidence_private IS 'staging:private';
+
+-- When a source that only speaks while it is alive last spoke: the
+-- Alertmanager receiver's Watchdog heartbeat (routes/alerts-webhook.js).
+-- Two hours without one raises `alerting_silent`; a source never heard
+-- from (no row) raises nothing, so an unconfigured receiver stays quiet.
+CREATE TABLE IF NOT EXISTS platform_signal_sources (
+  source        VARCHAR(48) PRIMARY KEY,
+  last_heard_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

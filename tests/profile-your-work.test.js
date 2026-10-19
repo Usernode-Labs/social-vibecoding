@@ -161,6 +161,141 @@ test('Your changes: one list across projects, each row led by its project\'s ico
   mod.profileProposalsStore.set({ open: false, kind: 'changes', data: {}, error: false });
 });
 
+// ── #5272: one page, three tabs; stage chips, a Project choice, next steps ─
+
+const CHANGES = {
+  proposals: {
+    inProgress: [
+      { sessionId: 1, title: 'Dark mode', appSlug: 'run-club', appName: 'Run Club', status: 'active', at: '2026-09-23T10:00:00Z' },
+      { sessionId: 5, title: null, appSlug: 'whiteboard', appName: 'Whiteboard', status: 'paused', at: '2026-09-21T10:00:00Z' },
+    ],
+    openForVote: [
+      { sessionId: 2, title: 'Lasso', appSlug: 'whiteboard', appName: 'Whiteboard', status: 'promoted', at: '2026-09-22T10:00:00Z' },
+      { sessionId: 6, title: 'Pace rounding', appSlug: 'run-club', appName: 'Run Club', status: 'merged', at: '2026-09-22T09:00:00Z' },
+    ],
+    merged: [{ sessionId: 3, title: 'Pace calculator', appSlug: 'run-club', appName: 'Run Club', status: 'merged', at: '2026-09-21T12:00:00Z' }],
+    closed: [{ sessionId: 4, title: 'Badges', appSlug: 'notes', appName: 'Notes', status: 'archived', at: '2026-08-01T12:00:00Z' }],
+  },
+};
+
+test('#5272 Your changes: an untitled change names its project; a paused one says so and carries its next step', () => {
+  const { proposalsView } = loadTsx(STORE);
+  const view = proposalsView(CHANGES, NOW);
+  const rows = Object.fromEntries(view.sections.flatMap((s) => s.rows).map((r) => [r.key, r]));
+  assert.equal(rows['5'].title, message('profile:changes.untitled', { project: 'Whiteboard' }));
+  assert.equal(rows['5'].title, 'Untitled change to Whiteboard');
+  assert.equal(rows['5'].meta, 'paused', 'the title names the project, so the line does not repeat it');
+  assert.equal(rows['5'].step, 'Continue', 'a paused session is picked up again from its page');
+  assert.equal(rows['1'].meta, 'Run Club · in progress');
+  assert.equal(rows['1'].step, null, 'nothing in the read says what an active session needs next');
+  assert.equal(rows['2'].meta, 'Whiteboard · waiting for approval');
+  assert.equal(rows['6'].meta, 'Run Club · going live', 'approved and on its way is no longer waiting for approval');
+  for (const key of ['2', '3', '4', '6']) assert.equal(rows[key].step, null, `row ${key} has no next step of its own`);
+  assert.doesNotMatch(read(STORE), /changes\.fallbackTitle/, 'the bare "Change" is gone');
+});
+
+test('#5272 Your changes: a PR names an untitled change, and failing checks are the step that comes first', () => {
+  const profile = require('../src/routes/profile');
+  // The read carries the PR's title and number and the latest checks verdict,
+  // straight off chat_sessions (no join), in every bucket.
+  assert.equal((profile.MY_PROPOSALS_SQL.match(/cs\.pr_title, cs\.pr_number, cs\.check_state,/g) || []).length, 4);
+  assert.match(profile.MY_PROPOSALS_SQL, /SELECT r\.section, r\.session_id, r\.title, r\.pr_title, r\.pr_number, r\.check_state, r\.status, r\.at,/);
+  const shaped = profile.shapeProposals([
+    { section: 'inProgress', session_id: 1, title: null, pr_title: 'Add lasso', pr_number: 12, check_state: 'failing', app_slug: 'w', app_name: 'W', status: 'paused', at: null },
+    { section: 'closed', session_id: 2, title: 'X', pr_title: null, pr_number: null, check_state: null, app_slug: 'w', app_name: 'W', status: 'archived', at: null },
+  ]).proposals;
+  assert.deepEqual([shaped.inProgress[0].prTitle, shaped.inProgress[0].prNumber, shaped.inProgress[0].checkState], ['Add lasso', 12, 'failing']);
+  assert.deepEqual([shaped.closed[0].prTitle, shaped.closed[0].prNumber, shaped.closed[0].checkState], [null, null, null]);
+  // The demo shows both: an untitled row with a PR number, and failing checks.
+  const demo = profile.withDemoProposals({ openForVote: [], inProgress: [], merged: [], closed: [] },
+    { slug: 'usernode-2d5619', name: 'Homeroom' }, NOW);
+  assert.ok(demo.inProgress.some((r) => !r.title && r.prNumber === 9999));
+  assert.equal(demo.openForVote[0].checkState, 'failing');
+  for (const rows of Object.values(demo)) {
+    for (const row of rows) assert.ok('prTitle' in row && 'prNumber' in row && 'checkState' in row, 'same shape as a real row');
+  }
+
+  const { proposalsView } = loadTsx(STORE);
+  const row = (over) => ({ sessionId: 1, title: null, appSlug: 'run-club', appName: 'Run Club', status: 'active', at: '2026-09-23T10:00:00Z', ...over });
+  const one = (bucket, over) => proposalsView({ proposals: { [bucket]: [row(over)] } }, NOW).sections[0].rows[0];
+  assert.deepEqual([one('inProgress', { prTitle: 'Add lasso' }).title, one('inProgress', { prTitle: 'Add lasso' }).meta],
+    ['Add lasso', 'Run Club · in progress'], 'the PR title is a real title, so the line names the project');
+  assert.equal(one('inProgress', { prNumber: 42 }).title, message('profile:changes.untitledPr', { number: 42, project: 'Run Club' }));
+  assert.equal(one('inProgress', { prNumber: 42 }).title, 'Change #42 to Run Club');
+  assert.equal(one('inProgress', { prNumber: 42 }).meta, 'in progress');
+  assert.equal(one('inProgress', {}).title, 'Untitled change to Run Club');
+  assert.equal(one('inProgress', { status: 'paused', checkState: 'failing' }).step, 'Fix checks', 'failing checks outrank Continue');
+  assert.equal(one('openForVote', { status: 'promoted', checkState: 'failing' }).step, 'Fix checks');
+  assert.equal(one('openForVote', { status: 'merged', checkState: 'failing' }).step, null, 'going live: nothing left to fix');
+  assert.equal(one('closed', { status: 'archived', checkState: 'failing' }).step, null);
+  assert.equal(one('inProgress', { checkState: 'error' }).step, null, 'a broken run is not a failed check');
+});
+
+test('#5272 Your changes: stage chips and a Project choice narrow the loaded list', () => {
+  const { proposalsView, CHANGE_STAGES } = loadTsx(STORE);
+  assert.deepEqual([...CHANGE_STAGES], ['inProgress', 'openForVote', 'merged', 'closed']);
+  const all = proposalsView(CHANGES, NOW);
+  assert.deepEqual(all.stages, ['inProgress', 'openForVote', 'merged', 'closed']);
+  assert.deepEqual(all.projects.map((p) => p.slug), ['notes', 'run-club', 'whiteboard'], 'by name');
+  assert.deepEqual(all.sections.map((s) => s.key), ['inProgress', 'merged', 'closed'], 'All is the three groups, as before');
+
+  const vote = proposalsView(CHANGES, NOW, { stage: 'openForVote' });
+  assert.deepEqual(vote.sections.map((s) => [s.key, s.label, s.rows.map((r) => r.key)]),
+    [['openForVote', 'Up for vote', ['2', '6']]]);
+
+  const runClub = proposalsView(CHANGES, NOW, { project: 'run-club' });
+  assert.deepEqual(runClub.sections.map((s) => [s.key, s.rows.map((r) => r.key)]),
+    [['inProgress', ['1', '6']], ['merged', ['3']]]);
+  assert.deepEqual(runClub.stages, all.stages, 'the chips stay put while a project is picked');
+
+  const none = proposalsView(CHANGES, NOW, { stage: 'closed', project: 'run-club' });
+  assert.equal(none.filtered, true, 'nothing matches, though something was started');
+  assert.equal(none.sections.length, 0);
+
+  const unknown = proposalsView(CHANGES, NOW, { stage: 'bogus', project: 'gone' });
+  assert.equal(unknown.stage, 'all');
+  assert.equal(unknown.project, '', 'a project no longer in the list is every project');
+  assert.equal(proposalsView({ proposals: {} }, NOW).filtered, false, 'nothing started is not "nothing matches"');
+});
+
+test('#5272 the screen: three tabs with their addresses, the filters and the pill on Your changes only', () => {
+  const mod = loadTsx(SCREEN);
+  const html = () => renderToHtml(createElement(mod.ProfileProposalsScreen, {}));
+  assert.deepEqual(mod.WORK_ROUTES, {
+    changes: '#profile/your-changes', requests: '#profile/your-requests', votes: '#profile/your-votes',
+  });
+  // Every tab address is one the router maps to its view.
+  const app = read('public/js/app.js');
+  for (const [kind, route] of Object.entries(mod.WORK_ROUTES)) {
+    assert.match(app, new RegExp(`'${route.slice('#profile/'.length)}': '${kind}'`));
+  }
+  assert.doesNotMatch(renderToHtml(createElement(mod.ProfileProposalsScreen, {})), /data-profile-work-tab/,
+    'the tabs are not in the prerender');
+
+  mod.profileProposalsStore.set({ open: true, kind: 'changes', error: false, stage: 'all', project: '', data: { changes: CHANGES } });
+  let out = html();
+  assert.match(out, /data-profile-work-tab="changes" aria-current="page"[^>]*>Changes<[\s\S]*data-profile-work-tab="requests" aria-current="false"[^>]*>Requests<[\s\S]*data-profile-work-tab="votes" aria-current="false"[^>]*>Votes</);
+  assert.match(out, /data-profile-work-stage="all"[^>]*>All<[\s\S]*data-profile-work-stage="openForVote"[^>]*>Up for vote</);
+  assert.match(out, /aria-pressed="true"[^>]*data-profile-work-stage="all"|data-profile-work-stage="all"[^>]*aria-pressed="true"|aria-pressed="true"[^>]*class="[^"]*"[^>]*data-profile-work-stage="all"/);
+  assert.match(out, /data-profile-work-project=""[\s\S]*?<option value="" selected="">All projects<\/option><option value="notes">Notes<\/option>/);
+  assert.equal((out.match(/data-profile-work-step=""/g) || []).length, 1, 'one row has a next step');
+  assert.match(out, /data-profile-work-step="">Continue</);
+  assert.match(out, /Untitled change to Whiteboard/);
+  // The groups stay siblings after the filters, as the declared check reads them.
+  assert.match(out, /data-profile-work-filters=""[\s\S]*data-profile-work-group="inProgress"[\s\S]*data-profile-work-group="merged"[\s\S]*data-profile-work-group="closed"/);
+
+  mod.profileProposalsStore.set({ stage: 'closed', project: 'run-club' });
+  out = html();
+  assert.match(out, /None of your changes match these filters\./);
+  assert.doesNotMatch(out, /data-profile-work-group=/);
+
+  mod.profileProposalsStore.set({ kind: 'requests', data: { requests: { requests: [{ number: 1, title: 'Export runs', appSlug: 'run-club', appName: 'Run Club', state: 'waiting' }] } } });
+  out = html();
+  assert.match(out, /data-profile-work-tab="requests" aria-current="page"/);
+  assert.doesNotMatch(out, /data-profile-work-filters|data-profile-work-step/, 'the filters are Your changes\' own');
+  mod.profileProposalsStore.set({ open: false, kind: 'changes', data: {}, error: false, stage: 'all', project: '' });
+});
+
 test('Your requests: open, then done, each opening the request', () => {
   const { requestsView } = loadTsx(STORE);
   const view = requestsView({

@@ -670,6 +670,7 @@ test('every kind renders subject, text and html with no leaked undefined', () =>
   const payloads = {
     otp: { code: '123456' },
     account_email: { code: '123456' },
+    username_change: { code: '123456' },
     waitlist_joined: { url: 'https://x.invalid/#more/aa', confirmUrl: 'https://x.invalid/c/aa' },
     // The no-account arm, because that is the one that grew copy in #1548.
     waitlist_released: { url: 'https://x.invalid/#signup/a%40b.invalid', hasAccount: false },

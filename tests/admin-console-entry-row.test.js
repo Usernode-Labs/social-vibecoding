@@ -2,13 +2,14 @@
 // header slim-down moved it into the hamburger drawer; the Streamlined
 // Concept retired the drawer and put it in the app chip's menu; #2718 took
 // the platform's destinations out of that menu and it went back to Profile;
-// the prototype's Me moved it into SETTINGS — the spec's retired-chip table,
-// "Me, with Admin and Validator inside Settings").
+// the prototype's Me moved it into SETTINGS; #5281 took it out of personal
+// Settings again and back onto Me, because the console is a place an admin
+// goes and not one of their settings).
 //
-// It is a row of Settings' account block (features/settings/account-rows.tsx,
-// inside #settings-footer above Log out), and is visible to platform admins
-// AND view-only admins — never to regular users, and never gated on the
-// environment. Those three properties are the
+// It is a row of its own on Me (features/profile/account-panel.tsx,
+// AdminPanel, #profile-row-admin), on both layouts, and is visible to
+// platform admins AND view-only admins — never to regular users, and never
+// gated on the environment. Those three properties are the
 // whole contract, and all three are easy to break later by a well-meaning
 // edit (swapping `isAdmin` for the stricter `canAdminWrite`, or "just showing
 // it in staging"), so they are pinned here.
@@ -31,7 +32,7 @@
 // sanctioned way to drive a converted region's visibility from outside React.
 //
 // Complements the dapp.json check that asserts the row actually renders at
-// `/#settings` for the admin capture identity — this test guards the
+// `/#profile` for the admin capture identity — this test guards the
 // source-level gate that the rendered check cannot see (a check running as an
 // admin cannot prove a non-admin is excluded).
 //
@@ -44,37 +45,34 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
-const panel = read('frontend/src/features/settings/account-rows.tsx');
-const settingsChassis = read('frontend/src/features/settings/index.tsx');
+const settingsRows = read('frontend/src/features/settings/account-rows.tsx');
 const mePanel = read('frontend/src/features/profile/account-panel.tsx');
+const meView = read('frontend/src/features/profile/profile-view.tsx');
+// The AdminPanel component alone, so the assertions below are about it.
+const panel = mePanel.slice(mePanel.indexOf('export function AdminPanel('));
 const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
 const appJs = read('public/js/app.js');
 const dapp = JSON.parse(read('dapp.json'));
 
-test('the row is in Settings, not rendered at all without the flag', () => {
-  assert.match(panel, /id="settings-row-admin"/, 'the row is rendered');
-  assert.match(panel, /id="settings-row-admin"[\s\S]{0,200}?href="#admin"/,
+test('the row is on Me, not rendered at all without the flag', () => {
+  assert.ok(mePanel.includes('export function AdminPanel('), 'AdminPanel is exported from Me\'s panels');
+  assert.match(panel, /id="profile-row-admin"/, 'the row is rendered');
+  assert.match(panel, /id="profile-row-admin"[\s\S]{0,200}?href="#admin"/,
     'navigation rides the anchor hash');
-  // NOT RENDERED rather than rendered-and-hidden. The block renders nothing
-  // until mounted, so none of it is in public/index.html and a conditional
-  // render has no document to disagree with — and a hidden row still leaks
-  // its words to a find-in-page.
-  assert.match(panel, /\{isAdmin \? \(/,
+  // NOT RENDERED rather than rendered-and-hidden: ProfileRoot renders nothing
+  // until its store has data, so a conditional render has no prerendered
+  // document to disagree with — and a hidden row still leaks its words to a
+  // find-in-page.
+  assert.match(panel, /if \(!isAdmin\) return null;/,
     'the row is absent for an account without the capability');
-  assert.match(panel, /if \(!mounted\) return null;/,
-    'and the whole block waits for its mount, so hydration sees nothing');
+  assert.match(meView, /<SettingsPanel \/>\s*<AdminPanel \/>/,
+    'Me renders it, after the phone\'s Settings row, on both layouts');
 });
 
-test('it sits in the Settings footer, above Log out, and left the Me screen', () => {
-  const footer = settingsChassis.indexOf('id="settings-footer"');
-  const block = settingsChassis.indexOf('<SettingsAccountRows />');
-  const logout = settingsChassis.indexOf('id="settings-logout"');
-  assert.ok(footer !== -1 && block !== -1 && logout !== -1, 'all three are present');
-  assert.ok(footer < block && block < logout,
-    'inside the footer Settings._syncFooter moves, above the Log out it already had');
-  const meCode = mePanel.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  assert.doesNotMatch(meCode, /profile-row-admin|href="#admin"/,
-    'Me\'s "More" list is Challenges & standings, Kudos and Settings only');
+test('it left Settings (#5281)', () => {
+  const code = settingsRows.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.doesNotMatch(code, /settings-row-admin|href="#admin"|switcher-row-admin/,
+    'Settings\' account block holds the native rows only');
 });
 
 test('and it is NOT in the app chip menu any more (#2718)', () => {
@@ -131,17 +129,16 @@ test('the row is not gated on the environment', () => {
 
 test('dapp.json locks the rendered row in with a check', () => {
   const hit = dapp.tests.find((t) => String(t.expectSelector || '')
-    .includes('#settings-row-admin'));
+    .includes('#profile-row-admin'));
   assert.ok(hit, 'a declared check must assert the row actually renders');
   // NO `:not(.hidden)` on the row, and its absence is the assertion: this
   // row is not RENDERED at all without the capability, so selecting it IS
   // proving it was revealed.
-  assert.doesNotMatch(String(hit.expectSelector), /#settings-row-admin:not\(\.hidden\)/,
+  assert.doesNotMatch(String(hit.expectSelector), /#profile-row-admin:not\(\.hidden\)/,
     'a conditionally rendered row needs no hidden-class qualifier of its own');
-  // The Settings screen, where the row lives now.
-  assert.match(String(hit.expectSelector), /#settings-screen:not\(\.hidden\)/,
+  assert.match(String(hit.expectSelector), /#profile-screen:not\(\.hidden\)/,
     'on the surface that renders it');
-  assert.match(String(hit.path), /#settings/, 'and at the address that reveals it');
-  assert.ok(!dapp.tests.some((t) => String(t.expectSelector || '').includes('#profile-row-admin')),
-    'and nothing still expects it on Me');
+  assert.match(String(hit.path), /#profile/, 'and at the address that reveals it');
+  assert.ok(!dapp.tests.some((t) => String(t.expectSelector || '').includes('#settings-row-admin')),
+    'and nothing still expects it in Settings');
 });

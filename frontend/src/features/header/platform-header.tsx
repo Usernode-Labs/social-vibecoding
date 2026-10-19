@@ -53,7 +53,7 @@ import { useHeaderLayout } from './use-header-layout';
 import { nativeBackEnabled, useNativeBackNavigation } from './native-back-navigation';
 import { useDismissibleOpen } from '../../lib/back-stack';
 import { HeaderPlace } from '../dev-board/workshop/place-bar';
-import { DrawerBack, DrawerUntint } from '../nav-drawer/header-drawer';
+import { DrawerBack, DrawerUntint, useDrawerMode } from '../nav-drawer/header-drawer';
 // ── The bundle's boot seam ────────────────────────────────────────────
 //
 // These six imports and the four inits below rode on the hamburger drawer's
@@ -283,11 +283,13 @@ export function PlatformHeader() {
   const visible = useVisibility('platform-header', true);
   useHiddenClass(headerRef, !visible);
   const dialogOpen = useDismissibleOpen();
+  // The phone's Communities drawer: its pan is the swipe back.
+  const drawerOn = useDrawerMode() === 'communities';
   // The swipe follows whichever control is the page's back: this bar's
   // arrow, or on a Workshop topic the in-pane chip (#2916), which is a back
   // with a destination even though the bar shows nothing.
   useNativeBackNavigation(nativeBackEnabled({
-    visible, mode, href: resolvedBackHref, paneHref: paneBack, dialogOpen,
+    visible, mode, href: resolvedBackHref, paneHref: paneBack, dialogOpen, drawerOn,
   }));
 
   return (

@@ -48,12 +48,15 @@ const HOMEROOM_FIGURES = {
   onboarding: ['onboarding.sign-up', 'onboarding.first-project', 'onboarding.first-change', 'onboarding.found-project'],
   'homeroom-bot': [
     'bot.answered', 'bot.reply-cost', 'bot.reply-time', 'bot.merged', 'bot.merged-cost', 'bot.request-to-proposal',
-    'bot.builds-proposed', 'bot.first-versions', 'bot.failed-spend',
+    'bot.builds-proposed', 'bot.first-versions', 'bot.failed-spend', 'bot.paused',
   ],
-  'proposal-pipeline': ['pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged', 'pipeline.main-paused', 'pipeline.reds-rerun'],
+  'proposal-pipeline': [
+    'pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged', 'pipeline.main-paused',
+    'pipeline.reds-rerun', 'pipeline.not-the-change', 'pipeline.stuck-work',
+  ],
   infra: [
     'infra.merge-to-live', 'infra.deploys-failed', 'infra.apps-up', 'infra.restarts', 'infra.limits-filled', 'infra.turned-away',
-    'infra.homeroom-stalls', 'infra.homeroom-crashes',
+    'infra.homeroom-stalls', 'infra.homeroom-crashes', 'infra.alerts',
   ],
 };
 

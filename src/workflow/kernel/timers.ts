@@ -4,6 +4,7 @@
 // request key `timer:<version that set it>` makes a duplicate a replay.
 
 import { checkout, enterPipeline } from './pipeline.ts';
+import { PURGE_LOCK } from './services.ts';
 import type { Machine } from './machine.ts';
 import type { Pool } from './types.ts';
 
@@ -58,10 +59,16 @@ export async function nextDeadlineMs(pool: Pool): Promise<number | null> {
 export async function purge(pool: Pool, opts: {
   lockTimeoutMs: number; statementTimeoutMs: number;
   machines: ReadonlyMap<string, Machine<any, any>>; eventsDays?: number; receiptsDays?: number; workDays?: number;
-}): Promise<void> {
+}): Promise<boolean> {
   const client = await checkout(pool);
   try {
     await enterPipeline(client, { ...opts, statementTimeoutMs: Math.max(opts.statementTimeoutMs, 60000) });
+    // One process purges at a time; another finding it under way skips.
+    const { rows: [lock] } = await client.query('SELECT pg_try_advisory_xact_lock($1, 0) AS got', [PURGE_LOCK]);
+    if (!lock.got) {
+      await client.query('COMMIT');
+      return false;
+    }
     await client.query(
       `DELETE FROM wf_events WHERE status = 'processed' AND processed_at < now() - make_interval(days => $1)`,
       [opts.eventsDays ?? 90]);
@@ -77,6 +84,7 @@ export async function purge(pool: Pool, opts: {
         [machine, [...terminal], opts.receiptsDays ?? 30]);
     }
     await client.query('COMMIT');
+    return true;
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;

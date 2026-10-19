@@ -287,16 +287,27 @@ test('the registry groups pages under four headings, Account first', () => {
   }
   assert.deepEqual(['app-permissions', 'app-ai', 'blocked-apps'].map(pageOf),
     Array(3).fill('app-permissions'), 'what each app may do, on one page');
-  assert.deepEqual(['theme', 'dev-console', 'admin-preview'].map(pageOf), Array(3).fill('theme'),
-    'Appearance: what the shell shows on this device');
+  // #5285: Appearance is the theme (and the desktop sidebar switch inside
+  // its pane); the developer console's switch and the admin preview are the
+  // Developer page, the last page of Preferences.
+  assert.deepEqual(registryPages().find((p) => p.key === 'theme').parts.map((s) => s.key), ['theme'],
+    'Appearance holds the theme alone');
+  assert.deepEqual(['dev-console', 'admin-preview'].map(pageOf), Array(2).fill('developer'),
+    'Developer: the console switch and the admin preview');
+  const developer = registryPages().find((p) => p.key === 'developer');
+  assert.equal(developer.group, 'settings:nav.group.preferences', 'Developer stays in Preferences');
+  const preferences = registryPages().filter((p) => p.group === 'settings:nav.group.preferences');
+  assert.equal(preferences.at(-1).key, 'developer', 'and is its last page');
+  assert.equal(message('settings:nav.page.developer'), 'Developer');
   // No "Admin" group in the nav any more: it sat directly above the footer's
   // own Admin block, two identical headings in a row.
-  assert.ok(!order.includes('Admin'), 'admin preview shares Appearance rather than a group of its own');
+  assert.ok(!order.includes('Admin'), 'admin preview shares Developer rather than a group of its own');
 
   // A gated part is a page of its own — so its gate hides exactly one row —
   // unless it shares a page with ungated parts, where the gate hides only its
   // block. Admin preview is the one of those, and it is never a page's first
-  // part, so the page's own address and title never depend on it.
+  // part, so the page's own address and title never depend on it. Its
+  // partner, the console switch, is ungated, so everyone has the row.
   for (const s of sections.filter((x) => x.gate)) {
     if (s.key === 'admin-preview') {
       assert.notEqual(registryPages().find((p) => p.key === s.page).parts[0].key, s.key);
@@ -352,6 +363,11 @@ test('a part address resolves to its page, scrolled to the part', () => {
   assert.deepEqual(S._resolve('build-venue'), { page: null, anchor: null }, 'a retired part (#4311)');
   assert.deepEqual(S._resolve('api-key'), { page: 'ai', anchor: 'api-key' });
   assert.deepEqual(S._resolve('theme'), { page: 'theme', anchor: null });
+  // #5285: the developer tools' page, and the parts' own addresses.
+  assert.deepEqual(S._resolve('developer'), { page: 'developer', anchor: null });
+  assert.deepEqual(S._resolve('dev-console'), { page: 'developer', anchor: null },
+    'the console switch\'s own address opens Developer at its top');
+  assert.deepEqual(S._resolve('admin-preview'), { page: 'developer', anchor: 'admin-preview' });
   assert.deepEqual(S._resolve('usernode'), { page: 'usernode', anchor: null });
   assert.deepEqual(S._resolve('nope'), { page: null, anchor: null });
   assert.deepEqual(S._resolve(null), { page: null, anchor: null });

@@ -45,12 +45,15 @@ const TOPIC_IDS = {
   onboarding: ['onboarding.sign-up', 'onboarding.first-project', 'onboarding.first-change', 'onboarding.found-project'],
   'homeroom-bot': [
     'bot.answered', 'bot.reply-cost', 'bot.reply-time', 'bot.merged', 'bot.merged-cost', 'bot.request-to-proposal',
-    'bot.builds-proposed', 'bot.first-versions', 'bot.failed-spend',
+    'bot.builds-proposed', 'bot.first-versions', 'bot.failed-spend', 'bot.paused',
   ],
-  'proposal-pipeline': ['pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged', 'pipeline.main-paused', 'pipeline.reds-rerun'],
+  'proposal-pipeline': [
+    'pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged', 'pipeline.main-paused',
+    'pipeline.reds-rerun', 'pipeline.not-the-change', 'pipeline.stuck-work',
+  ],
   infra: [
     'infra.merge-to-live', 'infra.deploys-failed', 'infra.apps-up', 'infra.restarts', 'infra.limits-filled', 'infra.turned-away',
-    'infra.homeroom-stalls', 'infra.homeroom-crashes',
+    'infra.homeroom-stalls', 'infra.homeroom-crashes', 'infra.alerts',
   ],
 };
 
@@ -239,7 +242,7 @@ test('a figure about people never sends a count, and a small group is rounded wi
 test('the layout: tiles and the bot\'s grid, with no choice of projects', () => {
   const bot = figures.layoutFor(TOPIC_IDS['homeroom-bot']);
   assert.equal(bot.layout, 'grid');
-  assert.deepEqual(bot.groups.map((g) => g.name), ['Answers', 'Builds']);
+  assert.deepEqual(bot.groups.map((g) => g.name), ['Answers', 'Builds', 'Running']);
   assert.deepEqual(bot.columns.map((c) => c.name), ['Quality', 'Cost', 'Speed']);
   assert.equal('scopes' in bot, false);
   const onboarding = figures.layoutFor(TOPIC_IDS.onboarding);
@@ -303,17 +306,17 @@ test('an unknown figure is an error for the topics PR and costs the topic nothin
   const { topics, errors } = appManifest.validateTopics([
     { id: 'infra', handle: 'infra', name: 'Infra', figures: ['infra.apps-up', 'infra.uptime'] },
     { id: 'other', handle: 'other', name: 'Other', figures: 'infra.apps-up' },
-    { id: 'many', handle: 'many', name: 'Many', figures: [...TOPIC_IDS['homeroom-bot'], 'infra.apps-up'] },
+    { id: 'many', handle: 'many', name: 'Many', figures: [...TOPIC_IDS['homeroom-bot'], 'infra.apps-up', 'infra.restarts', 'infra.limits-filled'] },
   ]);
   assert.deepEqual(errors, [
     'topics[0].figures names an unknown figure: infra.uptime',
     'topics[1].figures must be a list of figure ids',
-    'topics[2].figures holds at most 9 figures',
+    'topics[2].figures holds at most 12 figures',
   ]);
   assert.deepEqual(topics.map((t) => [t.id, t.figures]), [
     ['infra', ['infra.apps-up']],
     ['other', undefined],
-    ['many', TOPIC_IDS['homeroom-bot']],
+    ['many', [...TOPIC_IDS['homeroom-bot'], 'infra.apps-up', 'infra.restarts']],
   ]);
 });
 
@@ -379,11 +382,11 @@ test('the onboarding strip: 30 days, rounded figures and the line that says why'
   assert.doesNotMatch(html, /data-topic-figures-demo/);
 });
 
-test('the Homeroom bot\'s strip is a grid: a row each for Answers and Builds, a column each for Quality, Cost and Speed', () => {
+test('the Homeroom bot\'s strip is a grid: a row each for Answers, Builds and Running, a column each for Quality, Cost and Speed', () => {
   const html = strip('homeroom-bot');
   assert.match(html, /data-topic-figures-layout="grid"/);
   assert.deepEqual([...html.matchAll(/class="dev-ws-figs-colhead">([^<]+)</g)].map((m) => m[1]), ['Quality', 'Cost', 'Speed']);
-  assert.deepEqual([...html.matchAll(/class="dev-ws-figs-rowname">([^<]+)</g)].map((m) => m[1]), ['Answers', 'Builds']);
+  assert.deepEqual([...html.matchAll(/class="dev-ws-figs-rowname">([^<]+)</g)].map((m) => m[1]), ['Answers', 'Builds', 'Running']);
   // Builds runs on into two rows under its first: its failures under its
   // merges, a column at a time, in the order the topic names them.
   assert.deepEqual([...html.matchAll(/data-topic-figure="([^"]+)"/g)].map((m) => m[1]), [
@@ -391,9 +394,10 @@ test('the Homeroom bot\'s strip is a grid: a row each for Answers and Builds, a 
     'bot.merged', 'bot.merged-cost', 'bot.request-to-proposal',
     'bot.builds-proposed', 'bot.failed-spend',
     'bot.first-versions',
+    'bot.paused',
   ]);
   assert.deepEqual([...html.matchAll(/class="dev-ws-figs-row" data-fig-group="([^"]+)"/g)].map((m) => m[1]),
-    ['answers', 'builds', 'builds', 'builds']);
+    ['answers', 'builds', 'builds', 'builds', 'running']);
   assert.equal([...html.matchAll(/class="dev-ws-figs-rowhead dev-ws-figs-rowhead-more" aria-hidden="true"/g)].length, 2);
   assert.equal([...html.matchAll(/class="dev-ws-fig-sides"/g)].length, 7, 'cost and speed split, and the builds\' failures; the rest of quality does not');
   assert.match(html, /data-fig-side="homeroom" data-fig-state="warn">[\s\S]*?81%<\/span><span class="dev-ws-fig-side-detail">21 of 26 builds</);

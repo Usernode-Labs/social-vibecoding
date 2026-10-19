@@ -10,11 +10,14 @@
 //              route still starts what it always started (a turn, a preview
 //              build, a shots run) and finishes it on a release, as any
 //              process does (docs/plans/draining-releases.md).
-//   conductor  stands for leader and runs what the leader runs (the
-//              workflow loops, the timers and sweeps, the merge queue, the
-//              Homeroom bot, the bench lane). It listens on HTTP too, for
-//              callbacks addressed to its own Pod, but no Service sends it
-//              people's requests.
+//   conductor  runs the workflow (src/workflow/: every machine's pipeline
+//              slots, timers and work), in as many replicas as the chart
+//              runs, none of it needing the leader lock; and stands for
+//              leader, for what is still leader work (the timers and
+//              sweeps of server.js becomeLeader, the bench lane). It
+//              listens on HTTP too, for its own loopback calls (the bot's
+//              platform tools, services/mayor/mcp-shim.js) and probes, but
+//              no Service sends it people's requests.
 //
 // Read from PROCESS_ROLE. An unknown value fails boot rather than guess: a
 // typo that ran as 'all' would serve, and a typo that ran as 'web' on the
@@ -32,6 +35,13 @@ function processRole(env = process.env) {
 }
 
 function standsForLeader(role) {
+  return role !== 'web';
+}
+
+// Whether this process runs the workflow's loops: pipeline slots, timers and
+// work (docs/workflows.md). A web process only appends and waits for
+// outcomes; the workflow decides on a conductor (or an 'all').
+function runsWorkflow(role) {
   return role !== 'web';
 }
 
@@ -58,4 +68,4 @@ function successorRoles(role) {
   return SUCCESSORS[role] || SUCCESSORS.all;
 }
 
-module.exports = { ROLES, processRole, standsForLeader, servesRequests, successorRoles };
+module.exports = { ROLES, processRole, standsForLeader, runsWorkflow, servesRequests, successorRoles };

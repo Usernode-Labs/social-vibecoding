@@ -235,6 +235,36 @@ test('a timer stopped before its durable read returns never schedules', async (t
   assert.equal(runs, 0);
 });
 
+test('a day like 19 Oct 2026: twenty leaders run the privacy audit once and the merged-by-hand lookup every six hours', async (t) => {
+  // Twenty leader changes, eight of them in the first hour. Run at every
+  // election, as both were (server.js becomeLeader), that was twenty audits
+  // of every app's repository and twenty reads of every proposal up for a
+  // vote from GitHub.
+  useClock(t);
+  const pool = fakeSweepsPool();
+  const DAY = 24 * HOUR;
+  const startedAt = Date.now();
+  const ran = { audit: [], lookup: [] };
+  const leaders = [...Array(8).fill(7.5 * MIN), ...Array(12).fill(115 * MIN)];
+  assert.equal(leaders.reduce((a, b) => a + b, 0), DAY);
+  for (const lasts of leaders) {
+    timers.every('repo-privacy-audit', () => { ran.audit.push(Date.now() - startedAt); }, DAY, {
+      durable: pool, random: () => 0,
+    });
+    timers.every('merged-by-hand-lookup', () => { ran.lookup.push(Date.now() - startedAt); }, 6 * HOUR, {
+      durable: pool, random: () => 0,
+    });
+    await timers.ready('repo-privacy-audit');
+    await timers.ready('merged-by-hand-lookup');
+    await advance(t, lasts, 30 * 1000);
+    timers.stopAll();
+  }
+  const minutes = (list) => list.map((ms) => ms / MIN);
+  assert.deepEqual(minutes(ran.audit), [0.5], 'once, 30s into the first leader');
+  assert.deepEqual(minutes(ran.lookup), [0.5, 360.5, 720.5, 1080.5], 'every six hours, whichever leader holds it then');
+  assert.equal(pool.writes.length, 5);
+});
+
 // ── shutdown (last: lifecycle's shutdown flag never resets) ───────────
 
 test('once shutdown begins no tick runs and no timer starts; stopAll clears them all', async (t) => {
