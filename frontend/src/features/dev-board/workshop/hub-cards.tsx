@@ -300,6 +300,9 @@ const FIRST_LOOK_ONLY: readonly string[] = ['first_look'];
  * 15 Oct 2026 (newcomer run nine): until the picture is saved, its drawn
  * screen (../../first-session/drawn-look.tsx), asked again until the
  * picture is there and swapped for it once it is in.
+ *
+ * #5618: its picture and words open the maker's chat with Homeroom bot,
+ * where the build is reported; Watch keeps its own job (FirstLookView).
  */
 export function FirstLookCard({ slug, data }: { slug: string; data: CommunityPayload | null }): ReactNode {
   const touring = useTourRunning();
@@ -325,7 +328,22 @@ export function FirstLookCard({ slug, data }: { slug: string; data: CommunityPay
   }, [wanted, slug, src, broken]);
   const shown = useLookSwap(src && src !== broken ? src : null, ownSrc);
   if (!wanted || touring || !shown) return null;
-  return <FirstLookView slug={slug} name={data?.name || slug} src={shown} onBroken={() => setBroken(shown)} />;
+  return (
+    <FirstLookView
+      slug={slug}
+      name={data?.name || slug}
+      src={shown}
+      onBroken={() => setBroken(shown)}
+      // #5618: the picture and the words open the maker's chat with Homeroom
+      // bot, as the First version card's Review the plan does; the Watch
+      // button keeps its own job.
+      onOpen={() => {
+        const id = data?.first_version?.conversation_id;
+        if (id) openConversation(id);
+        else void openBot();
+      }}
+    />
+  );
 }
 
 /**
@@ -337,19 +355,37 @@ export function watchBuild(slug: string): void {
   (window as any).App?.openAppTab?.(slug, 'app');
 }
 
-/** The first look card once its picture is there (FirstLookCard). */
-export function FirstLookView({ slug, name, src, onBroken }: {
+/**
+ * The first look card once its picture is there (FirstLookCard).
+ *
+ * TAPPING IT (#5618): with `onOpen`, the picture and the words open the
+ * maker's chat with Homeroom bot. An empty button over them (under the
+ * Watch button) is the door, so the card keeps its look and only a hover
+ * tint and the focus ring say it can be tapped.
+ */
+export function FirstLookView({ slug, name, src, onBroken, onOpen }: {
   slug: string;
   name: string;
   /** The first look's own URL (../../first-session/first-look.tsx firstLookSrc), or its drawn screen's. */
   src: string;
   /** The picture would not load: the card asks for it again. */
   onBroken?: () => void;
+  /** Opens the maker's chat with Homeroom bot: the picture and words become its door. */
+  onOpen?: () => void;
 }): ReactNode {
   const t = useMessages('project');
   const alt = t('project:hub.firstLook.alt', { app: name });
   return (
     <section className="dev-ws-strip dev-ws-first-look" data-ws-first-look="">
+      {onOpen ? (
+        <button
+          type="button"
+          className="dev-ws-first-look-open"
+          data-ws-first-look-open=""
+          aria-label={t('project:hub.firstLook.open')}
+          onClick={onOpen}
+        />
+      ) : null}
       {isDrawnLook(src) ? (
         // Its drawn screen, at the picture's size, until the picture is saved.
         <div className="dev-ws-first-look-shot relative overflow-hidden">

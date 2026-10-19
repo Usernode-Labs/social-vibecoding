@@ -68,6 +68,34 @@ test('the card: the picture small and phone-shaped, the kicker, the title, the l
   assert.match(css, /\.dev-ws-first-look-shot \{\n  flex: none; width: 64px; height: 138px; border-radius: 12px;\n  object-fit: cover; object-position: top;/);
 });
 
+test('tapping the picture or the words opens the maker\'s chat with Homeroom bot (#5618)', () => {
+  assert.equal(message('project:hub.firstLook.open'), 'Open your chat with Homeroom bot');
+  // Without onOpen the card is what it was: no door.
+  const plain = renderToHtml(createElement(hub.FirstLookView, { slug: 'club-votes', name: 'Club Votes', src: SRC }));
+  assert.doesNotMatch(plain, /data-ws-first-look-open/);
+  // With it, an empty button is the section's first child (absolute, so the
+  // picture and the words after it keep their places), and Watch stays last.
+  const html = renderToHtml(createElement(hub.FirstLookView, { slug: 'club-votes', name: 'Club Votes', src: SRC, onOpen() {} }))
+    .replace(/^<link rel="preload" as="image" href="[^"]*"\/>/, '');
+  assert.match(html, /^<section class="dev-ws-strip dev-ws-first-look" data-ws-first-look=""><button type="button" class="dev-ws-first-look-open" data-ws-first-look-open="" aria-label="Open your chat with Homeroom bot"><\/button><img /,
+    'the door first, empty, over the picture');
+  assert.match(html, /<button[^>]*data-ws-first-look-watch=""[^>]*>Watch Homeroom bot build it<\/button><\/div><\/section>$/,
+    'Watch keeps its place, and its own tap');
+  // It opens the maker's own conversation, or the chat with the bot, as the
+  // First version card's Review the plan does.
+  const src = read(HUB);
+  const card = src.slice(src.indexOf('export function FirstLookCard('), src.indexOf('export function watchBuild('));
+  assert.match(card, /const id = data\?\.first_version\?\.conversation_id;/);
+  assert.match(card, /if \(id\) openConversation\(id\);\n\s+else void openBot\(\);/);
+  // The door lies under the Watch button, and only a hover tint and the
+  // focus ring show it.
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-ws-strip\.dev-ws-first-look \{ position: relative; /);
+  assert.match(css, /\.dev-ws-first-look-open \{\n  position: absolute; inset: 0; z-index: 1; border: 0; padding: 0;\n  background: transparent; border-radius: inherit; cursor: pointer;\n\}/);
+  assert.match(css, /\.dev-ws-first-look-open:focus-visible \{ outline: 2px solid var\(--accent\); outline-offset: 2px; \}/);
+  assert.match(css, /\.dev-ws-first-look-body > button \{ position: relative; z-index: 2; margin-top: 8px; \}/);
+});
+
 test('its button opens the project\'s App tab, where the live picture of the build is', () => {
   const calls = [];
   const had = Object.hasOwn(globalThis, 'window');

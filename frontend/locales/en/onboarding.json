@@ -1343,6 +1343,10 @@
     "text": "The first look at {{app}}'s main screen",
     "description": "Description, for screen readers, of the small picture in the card under a new project on the screen shown right after a project is made: a drawing of the app's main screen. {{app}} is the project's name."
   },
+  "firstSession.made.firstLook.open": {
+    "text": "Open your chat with Homeroom bot",
+    "description": "Name, for screen readers, of the card under a new project on the screen shown right after a project is made: a tap anywhere on the card opens the maker's chat with the assistant called Homeroom bot, where the build is reported. Homeroom bot is a name."
+  },
   "firstSession.made.cardView.label": {
     "text": "Show the invite or the app",
     "description": "Name, for screen readers, of the small two-button switch in the top-right corner of the new project's card on the screen shown right after a project is made. It switches the card between the invite (the app's icon, as the people invited see it) and a picture of what the app looks like."

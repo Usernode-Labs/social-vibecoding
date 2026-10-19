@@ -18435,7 +18435,17 @@ button.dev-ws-recent-card {
    kicker, the card's sentence-case title and line in Share it's own type,
    and its one button. The picture's box is fixed, so nothing moves as it
    loads. */
-.dev-ws-strip.dev-ws-first-look { flex-direction: row; align-items: flex-start; gap: 14px; }
+.dev-ws-strip.dev-ws-first-look { position: relative; flex-direction: row; align-items: flex-start; gap: 14px; }
+/* #5618: the picture and the words open the maker's chat with Homeroom
+   bot. The door is an empty button over the card, under its Watch button,
+   so the card keeps its look: only a hover tint and the focus ring show it. */
+.dev-ws-first-look-open {
+  position: absolute; inset: 0; z-index: 1; border: 0; padding: 0;
+  background: transparent; border-radius: inherit; cursor: pointer;
+}
+.dev-ws-first-look-open:hover { background: rgba(10, 10, 10, 0.03); }
+.dark .dev-ws-first-look-open:hover { background: rgba(255, 255, 255, 0.04); }
+.dev-ws-first-look-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dev-ws-first-look-shot {
   flex: none; width: 64px; height: 138px; border-radius: 12px;
   object-fit: cover; object-position: top;
@@ -18452,7 +18462,8 @@ button.dev-ws-recent-card {
 }
 .dev-ws-first-look-body .dev-ws-head-title { margin: 0; }
 .dev-ws-first-look-body .dev-ws-strip-text { color: var(--text-muted); }
-.dev-ws-first-look-body > button { margin-top: 8px; }
+/* Watch keeps its own tap, over the door (#5618). */
+.dev-ws-first-look-body > button { position: relative; z-index: 2; margin-top: 8px; }
 
 /* ── Approval rules (community-card.tsx ApprovalRules) ─────────────── */
 .dev-ws-rules-line { margin: 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
