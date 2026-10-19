@@ -39,6 +39,8 @@ const { withoutDocuments } = require('./attachments');
 // read from the Claude Code listener itself so the chat and both listeners
 // route a model alike.
 const listenerRouting = require('../../worker/claude-openrouter-request');
+// #5123: every OpenRouter request denies data collection.
+const { noTrainingProvider, withNoTraining } = require('../../worker/openrouter-privacy');
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 // Reasoning models spend part of this on thinking before the visible reply
@@ -306,7 +308,7 @@ function hasParts(request, type) {
 function providerFor(model, shortlist = null) {
   const id = bareModelId(model);
   const listed = Object.prototype.hasOwnProperty.call(listenerRouting.PROVIDER_ROUTING_BY_MODEL, id);
-  if (!listed && !(Array.isArray(shortlist) && shortlist.length)) return { allow_fallbacks: true };
+  if (!listed && !(Array.isArray(shortlist) && shortlist.length)) return noTrainingProvider({ allow_fallbacks: true });
   return listenerRouting.providerRoutingFor(id, { allow_fallbacks: true }, { shortlist });
 }
 
@@ -530,7 +532,7 @@ function createClient({
             'Content-Type': 'application/json',
             ...platformHeaders(origin),
           },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(withNoTraining(payload)),
           signal: combined,
         });
       } catch (err) {

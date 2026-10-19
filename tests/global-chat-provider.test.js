@@ -59,6 +59,7 @@ test('OpenRouter request uses strict tools without conflicting response_format',
     require_parameters: true,
     allow_fallbacks: true,
     sort: 'latency',
+    data_collection: 'deny',
   });
   assert.equal(Object.hasOwn(request, 'response_format'), false);
   // Not sent unless asked for by name: with require_parameters it would route
@@ -88,6 +89,7 @@ test('unsupported optional model parameters are omitted instead of weakening req
     require_parameters: true,
     allow_fallbacks: true,
     sort: 'latency',
+    data_collection: 'deny',
   });
 });
 

@@ -26,9 +26,14 @@ const GLM = 'z-ai/glm-5.3-flash';
 const KIMI = 'moonshotai/kimi-k2';
 const OTHER = 'deepseek/deepseek-v4.1-flash';
 const DEEPSEEK_1017 = 'deepseek/deepseek-v4.1-flash-1017';
+// #5123: every request to OpenRouter denies data collection, whatever else it asks.
+const DENY = { data_collection: 'deny' };
+// The routing every model gets: the preferences, and never a host that trains.
+const PLAIN = { ...PROVIDER_PREFERENCES, ...DENY };
 // GLM's routing: the preferences every model gets, and its fast hosts.
 const GLM_ROUTED = {
   ...PROVIDER_PREFERENCES, only: ['relace', 'fireworks', 'parasail', 'together', 'baseten'], sort: 'throughput', allow_fallbacks: true,
+  ...DENY,
 };
 const KEY = 'sk-or-v1-0123456789abcdef-user-key';
 
@@ -56,10 +61,11 @@ test('every request is pinned to the session model and capped at its output limi
     { model: GLM, maxOutputTokens: 32_000 },
   );
   assert.deepEqual(kept.thinking, { type: 'enabled', budget_tokens: 8_000 });
-  // count_tokens carries no max_tokens; only the model is pinned.
+  // count_tokens carries no max_tokens; only the model is pinned, and data
+  // collection denied.
   assert.deepEqual(
     applyTurnPolicy({ model: 'x', messages: [] }, { model: GLM, maxOutputTokens: 10, countTokens: true }),
-    { model: GLM, messages: [] },
+    { model: GLM, messages: [], provider: DENY },
   );
 });
 
@@ -74,13 +80,14 @@ test('every model request prefers hosts that answer promptly, without excluding 
   });
   assert.equal(Object.isFrozen(PROVIDER_PREFERENCES), true);
   const body = applyTurnPolicy({ max_tokens: 10, messages: [] }, { model: OTHER, maxOutputTokens: 64_000 });
-  assert.deepEqual(body.provider, PROVIDER_PREFERENCES);
+  assert.deepEqual(body.provider, PLAIN);
   assert.equal(body.provider.sort, undefined, 'no sort or order: OpenRouter keeps balancing by price');
   assert.equal(body.provider.order, undefined);
   assert.equal(body.provider.only, undefined);
   const asked = applyTurnPolicy({ max_tokens: 10, provider: { preferred_max_latency: 5, zdr: true } }, { model: OTHER, maxOutputTokens: 64_000 });
-  assert.deepEqual(asked.provider, { preferred_max_latency: 5, preferred_min_throughput: { p50: 30 }, zdr: true });
-  assert.equal(applyTurnPolicy({ messages: [] }, { model: GLM, countTokens: true }).provider, undefined, 'counting tokens is not routed');
+  assert.deepEqual(asked.provider, { preferred_max_latency: 5, preferred_min_throughput: { p50: 30 }, zdr: true, ...DENY });
+  assert.deepEqual(applyTurnPolicy({ messages: [] }, { model: GLM, countTokens: true }).provider, DENY,
+    'counting tokens is not routed, but its prompt still reaches no host that trains on it');
   // The Codex listener asks for the same.
   const codex = require('../worker/codex-openrouter-request');
   assert.deepEqual(codex.PROVIDER_PREFERENCES, PROVIDER_PREFERENCES);
@@ -105,22 +112,22 @@ test('GLM\'s coding turns go to its fast hosts, fastest first, and never to no h
   assert.deepEqual(zdr.provider, { ...GLM_ROUTED, zdr: true });
   for (const own of [{ require_parameters: true }, { only: ['z-ai'] }, { order: ['fireworks'] }, { ignore: ['wafer'] }, { sort: 'price' }]) {
     const p = applyTurnPolicy({ max_tokens: 10, provider: own }, { model: GLM, maxOutputTokens: 64_000 }).provider;
-    assert.deepEqual(p, { ...PROVIDER_PREFERENCES, ...own }, JSON.stringify(own));
+    assert.deepEqual(p, { ...PLAIN, ...own }, JSON.stringify(own));
     assert.deepEqual(codex.providerRoutingFor(GLM, own), p, 'and the Codex listener the same');
   }
   // The platform's list for the turn replaces the default; `none` turns it off.
   const listed = applyTurnPolicy({ max_tokens: 10 }, { model: GLM, maxOutputTokens: 64_000, providerShortlist: ['fireworks'] });
   assert.deepEqual(listed.provider.only, ['fireworks']);
   const off = applyTurnPolicy({ max_tokens: 10 }, { model: GLM, maxOutputTokens: 64_000, providerShortlist: [] });
-  assert.deepEqual(off.provider, PROVIDER_PREFERENCES);
+  assert.deepEqual(off.provider, PLAIN);
   assert.deepEqual(mod.parseShortlist('Fireworks, parasail/fp4,, bad slug!, together'), ['fireworks', 'parasail/fp4', 'together']);
   assert.deepEqual(mod.parseShortlist('none'), []);
   assert.equal(mod.parseShortlist(''), null);
   assert.equal(mod.parseShortlist('!!'), null, 'a list naming no valid slug is no list');
   assert.deepEqual(codex.parseShortlist('relace,fireworks'), mod.parseShortlist('relace,fireworks'));
   // The safety net drops the shortlist, and only it.
-  assert.deepEqual(mod.withoutShortlist(GLM_ROUTED, {}), PROVIDER_PREFERENCES);
-  assert.deepEqual(mod.withoutShortlist({ ...GLM_ROUTED, zdr: true }, { zdr: true }), { ...PROVIDER_PREFERENCES, zdr: true });
+  assert.deepEqual(mod.withoutShortlist(GLM_ROUTED, {}), PLAIN);
+  assert.deepEqual(mod.withoutShortlist({ ...GLM_ROUTED, zdr: true }, { zdr: true }), { ...PLAIN, zdr: true });
   assert.equal(mod.withoutShortlist(PROVIDER_PREFERENCES, {}), null, 'nothing to drop');
   assert.equal(mod.withoutShortlist({ only: ['z-ai'] }, { only: ['z-ai'] }), null, 'a list the request sent is its own');
   assert.deepEqual([...mod.SHORTLIST_FALLBACK_STATUSES].sort(), [404, 429, 502, 503]);
@@ -132,11 +139,11 @@ test('DeepSeek V4.1 Flash 1017\'s coding turns go to Parasail and InferenceNet, 
   // These two kept 1017's thinking across a tool call; a refusal still
   // reaches every host through the same safety net as GLM's.
   const codex = require('../worker/codex-openrouter-request');
-  const routed = { ...PROVIDER_PREFERENCES, only: ['parasail', 'inference-net'], sort: 'throughput', allow_fallbacks: true };
+  const routed = { ...PROVIDER_PREFERENCES, only: ['parasail', 'inference-net'], sort: 'throughput', allow_fallbacks: true, ...DENY };
   assert.deepEqual(applyTurnPolicy({ max_tokens: 10, messages: [] }, { model: DEEPSEEK_1017, maxOutputTokens: 64_000 }).provider, routed);
   assert.deepEqual(codex.providerRoutingFor(DEEPSEEK_1017), routed, 'and the Codex listener the same');
-  assert.deepEqual(require('../worker/claude-openrouter-request').withoutShortlist(routed, {}), PROVIDER_PREFERENCES);
-  assert.deepEqual(applyTurnPolicy({ max_tokens: 10 }, { model: OTHER, maxOutputTokens: 64_000 }).provider, PROVIDER_PREFERENCES,
+  assert.deepEqual(require('../worker/claude-openrouter-request').withoutShortlist(routed, {}), PLAIN);
+  assert.deepEqual(applyTurnPolicy({ max_tokens: 10 }, { model: OTHER, maxOutputTokens: 64_000 }).provider, PLAIN,
     'DeepSeek V4.1 Flash (0910) keeps every host');
 });
 
@@ -164,7 +171,7 @@ test('a GLM request its shortlist refuses is sent once more to every host, and s
     body: JSON.stringify({ model: 'x', max_tokens: 10, messages: [] }),
   });
   assert.equal(reply.status, 200, 'Claude Code never sees the refusal');
-  assert.deepEqual(bodies, [GLM_ROUTED, PROVIDER_PREFERENCES]);
+  assert.deepEqual(bodies, [GLM_ROUTED, PLAIN]);
   const result = timing.find((e) => e.kind === 'provider_request_result');
   assert.equal(result.shortlistFallback, true);
   assert.equal(result.providerName, 'Fireworks');
@@ -586,7 +593,7 @@ test('the adapter forwards Messages requests to OpenRouter with the key and stre
   assert.equal(count.status, 200);
   assert.deepEqual(await count.json(), { input_tokens: 42 });
   assert.equal(upstream.seen[1].url, '/api/v1/messages/count_tokens');
-  assert.deepEqual(upstream.seen[1].body, { model: GLM, messages: [] });
+  assert.deepEqual(upstream.seen[1].body, { model: GLM, messages: [], provider: DENY });
   assert.equal(timing.length, 5, 'count_tokens is not a model request');
 
   // Wrong token, wrong route, wrong method: refused locally.
