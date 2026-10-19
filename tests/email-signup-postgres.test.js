@@ -30,7 +30,9 @@ const DDL = `
     -- the same INSERT (its Getting started gate until #4635).
     getting_started_gate BOOLEAN NOT NULL DEFAULT FALSE,
     -- chooseFirstUsername stamps it (QA 2026-09-24 Q12's handle choice).
-    updated_at TIMESTAMPTZ
+    updated_at TIMESTAMPTZ,
+    -- "Are you 18 or older?" answered yes (#5095); the wallet claim waits for it.
+    adult_attested_at TIMESTAMPTZ
   );
   CREATE UNIQUE INDEX users_email_lower_unique
     ON users (lower(email)) WHERE email IS NOT NULL;
@@ -357,6 +359,23 @@ test('real PostgreSQL web signup keeps authority in HttpOnly cookies', async (t)
       });
       assert.equal(claimCodeRequest.status, 200);
       assert.match(code, /^[0-9]{6}$/);
+
+      // Claiming a wallet waits for the 18+ answer (#5095): refused before
+      // it, with the code left unspent, and let through once it is given.
+      const unasked = await fetch(`${base}/api/v4/mobile/wallet/claim`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `session=${sessionCookie}`,
+        },
+        body: JSON.stringify({ email: 'legacy@example.com', code }),
+      });
+      assert.equal(unasked.status, 403);
+      assert.equal((await unasked.json()).code, 'adult_attestation_required');
+      await pool.query(
+        'UPDATE users SET adult_attested_at = NOW() WHERE email = $1',
+        ['new.user@example.com'],
+      );
 
       const claim = await fetch(`${base}/api/v4/mobile/wallet/claim`, {
         method: 'POST',
