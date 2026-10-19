@@ -5967,8 +5967,9 @@ async function cleanup() {
   // actually complete.
   //
   // A process finishing its work keeps listening until its drain ends:
-  // Kubernetes has already taken it out of the Service, and a shots worker
-  // calls the Pod that runs its run by its own address.
+  // Kubernetes has already taken it out of the Service, a request it still
+  // answers finishes, and the work it still runs calls its own port (the
+  // bot's platform tools, services/mayor/mcp-shim.js).
   if (!finishesWork) closeListener(drainMs);
   // Behind the listener close, deliberately: what the tabs fetch on hearing
   // this must not be able to land here. Awaited with the drain below.

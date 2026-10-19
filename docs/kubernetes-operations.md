@@ -153,8 +153,8 @@ over as it always did). On `SIGTERM` it:
    claim; its running work goes on) and resigns the leader lock, so the new
    Pod is promoted within a poll;
 3. announces the new build to its tabs and closes their sockets;
-4. keeps its listener open (a shots worker calls the Pod that runs its run by
-   `POD_IP`) and waits until it holds nothing (`process_holds`), has no
+4. keeps its listener open (a request it still answers, and its own loopback
+   calls) and waits until it holds nothing (`process_holds`), has no
    registered background work, no running workflow work and no request still
    answering;
 5. then does what shutdown always did: closes the listener, ends the Mayor's
@@ -582,15 +582,13 @@ It has no flag: its old paths (the governance-apply ticker, the stale sweeper's
 Pass 0b, the apply functions in `routes/issues.js`) are deleted.
 `docs/workflows.md` explains the machine and where it runs.
 
-- **Where it runs.** The machine runs inside the platform Pods; there is no extra
-  workload. Every Pod listens for outcomes and runs pipeline slots, so it applies its
-  own votes; only the leader runs the timer and service loops and the boot backfill.
+- **Where it runs.** The machine runs on the conductor's replicas (see "Workflow
+  runtime" below); the web Pods only append votes and wait for the outcome.
 - **A runtime that fails to start ends the process.** With no other path for a
   governance proposal, a Pod without the workflow runtime exits at boot and
   Kubernetes restarts it, rather than serving without it.
-- **A leader whose workflow loops fail to start stops itself** (through its drain, as on
-  SIGTERM), so another process leads: the timers and work of every governance proposal
-  run only there.
+- **A conductor whose workflow loops fail to start exits** and is restarted, as for the
+  runtime itself.
 - **Ownership is enforced.** A write to an enrolled governance proposal's status or audit
   keys from outside the machine is refused (`WF_OWNERSHIP_VIOLATION`). A row is enrolled
   when it is filed, or
@@ -601,8 +599,9 @@ Pass 0b, the apply functions in `routes/issues.js`) are deleted.
   `platform.workflowGovernanceEnabled: true` in the infra values (this chart no longer
   reads it) until no rollback target predates this release.
 - **Verify after a release.** The Pod's log shows `Workflow runtime started` and, on
-  the leader, `Enrolled open governance proposals` when there were any; Admin →
-  Workflows lists the enrolled proposals and its problems panel is empty.
+  the conductor that ran the release's adoptions, `Enrolled open governance proposals`
+  when there were any; Admin → Workflows lists the enrolled proposals and its problems
+  panel is empty.
 
 ## Workflow merge-followups machine
 
@@ -635,15 +634,15 @@ has no flag: the old merge tail (`finalizeMerge` and its follow-ups), the
 ## Workflow app-delivery machine
 
 The app-delivery machine in `src/workflow/app-delivery/` runs every production deploy of
-an app, one at a time per app and at most four at a time in the leading process, for everyone who
+an app, one at a time per app and at most four at a time across the conductors, for everyone who
 asks (a merge, a secret change, the drift poller, Check for updates, Redeploy, heal, a
 rollover whose image is gone, a demo reset). It has no flag: each caller used to deploy
 itself, in its own process, with "deploying" in that process's memory; now it records a
 request and the machine deploys. `docs/workflows.md` explains the machine.
 
-- **Where the deploys run.** `app.deploy` is a work item, which only the leader runs:
-  with the web and conductor split, the conductor Pod. Each deploy clones the app into
-  that Pod's `/tmp` and builds there, as previews do.
+- **Where the deploys run.** `app.deploy` is a work item, run by whichever conductor
+  replica claims it. Each deploy clones the app into that Pod's `/tmp` and builds there,
+  as previews do.
 - **"Deploying" is durable.** It is `apps.deploy_state`, read by every Pod and after a
   restart; a deploy whose process died is retried after its lease. A deploy that never
   answers (a hung build or lock) is ended by an admin in Admin → Workflows (`EndDeploy`).
@@ -672,10 +671,10 @@ the preview lifecycle, the check harvest's sweep, the in-memory capture seat, th
 unit suite's module, the turn tails' own builds) are deleted. `docs/workflows.md`
 explains the machine.
 
-- **Where the work runs.** Its builds and checks runs are work items, which only the
-  leader runs: with the web and conductor split, the conductor Pod. Each build clones the
-  proposal into that Pod's `/tmp` and follows its rollout there, so size
-  `platform.conductor.resources` for the previews built at once.
+- **Where the work runs.** Its builds and checks runs are work items, run by whichever
+  conductor replica claims them, at most ten of each at once across them all. Each build
+  clones the proposal into that Pod's `/tmp` and follows its rollout there, so size
+  `platform.conductor.resources` for the previews one Pod may build at once.
 - **On the cluster.** A preview keeps its per-session Deployment, Service and Ingress
   (`sv-preview-<appId>-s<sessionId>`). Each attempt has its own env Secret
   (`<name>-env-a<n>`) and database (one per claim of its build, should a build be claimed
@@ -703,6 +702,62 @@ explains the machine.
   through `preparing` and `checking` to `settled`, with an empty problems panel; and
   `kubectl -n social-apps get secrets` shows `-env-a<n>` Secrets only for attempts that
   serve or are being prepared.
+
+## Workflow runtime
+
+The workflow (docs/workflows.md) runs on the conductor's replicas
+(`platform.conductor.replicas`, two in production, set in the infra values): every
+replica runs every machine's pipeline slots, timers and work, with no leader lock. The
+web Pods decide nothing; they append and wait. One conductor still holds the leader lock,
+for the leader's remaining work (docs/plans/web-and-conductor.md).
+
+- **Limits hold across the replicas.** A work kind's limit (four deploys, four shots
+  copy builds, ten preview builds, ...) counts every replica's running items, a draining
+  one's too. A second replica is failover, not more at once.
+- **A node lost** with a conductor: its database sessions are reaped within about 40
+  seconds and its work is claimed by the other replica after its lease (one to two
+  minutes). The conductors spread across nodes (`topologySpreadConstraints`, best
+  effort), and the PodDisruptionBudget lets a drain evict one at a time.
+- **Its own database pool** is `platform.conductor.dbPoolMax` (30), beside the
+  runtime's `WF_POOL_MAX` (10). A web Pod's runtime pool is 2.
+- **What a release owes** an older one (the boot adoptions) runs once per release, as the
+  `release` machine's work; Admin → Workflows shows `release / release:<sha>`, and a
+  release whose adoptions failed under "Needs a person".
+- **Verify after a release.** Both conductors log `Workflow runtime started`; Admin →
+  Workflows names them under "Needs a person" ("Run by …"), and `release:<sha>` reaches
+  `done`.
+
+### Workflow alerts
+
+The conductors serve the workflow's metrics on `platform.conductor.metricsPort` (9464,
+`GET /metrics`, not exposed by the Service), read from Postgres on each scrape. The chart's
+PodMonitor (`<fullname>-conductor-workflow`) has Prometheus scrape them, admitted by the
+platform's network policy from `monitoring.namespace`, and its PrometheusRule alerts:
+
+| Alert | When | Severity |
+|---|---|---|
+| `SocialWorkflowNoConductor` | no conductor available for 2 minutes | critical |
+| `SocialWorkflowConductorUnderStrength` | fewer available than asked for, 15 minutes | warning |
+| `SocialWorkflowConductorRestarting` | more than three restarts in 30 minutes | warning |
+| `SocialWorkflowWorkNobodyTakes` | work a conductor could take has waited over 5 minutes, for 5 minutes | critical |
+| `SocialWorkflowEventsNotDecided` | an event has waited over 2 minutes to be decided, for 5 minutes | critical |
+| `SocialWorkflowPoisonWork` | an item was quarantined in the last hour | warning |
+| `SocialWorkflowInstancesFlagged` | instances faulted or stalled for 15 minutes | warning |
+| `SocialWorkflowDeadlinesOverdue` | deadlines passed without firing, 10 minutes | warning |
+| `SocialWorkflowSlowDecisions` | people's events take over 5 s to be decided (p95), 15 minutes | warning |
+
+Alertmanager here is default-deny: these reach Discord only once the infra repository's
+route allowlist names them (`alertname =~ "SocialWorkflow.*"`, namespace
+`social-platform`). Work waiting behind a kind's limit, or for a newer release's
+process, is not "nobody takes it". Admin → Workflows shows the same signs under "Needs a
+person".
+
+**Rolling back past this release.** Older code reads the conductor as the leader's
+process; a second replica is a standby with slots, which is safe. Argo CD does not prune
+here, so the conductor's PodDisruptionBudget, the PodMonitor and the PrometheusRule stay;
+the budget (`maxUnavailable: 1`) blocks no drain, and the metrics rules find nothing to
+scrape: delete `pdb/social-vibecoding-conductor`, `podmonitor/` and
+`prometheusrule/social-vibecoding-conductor-workflow` by hand if the rollback is to last.
 
 ## Read-only inventory and logs
 
