@@ -1197,7 +1197,7 @@ function ModelPicker({ stage, label, value, defaultModel, blankLabel = 'Platform
       <label className={AdminUI.label} htmlFor={`admin-homeroom-bot-model-${stage}`}>{label}</label>
       {configured ? (
         <p className="text-sm mt-1 mb-2" id={`admin-homeroom-bot-model-${stage}-configured`} data-model-configured={stage}>
-          {configured}{' '}
+          {`${configured} `}
           <a className={AdminUI.btn.link} href="#admin/bot-configs">Bot configurations</a>
         </p>
       ) : null}
