@@ -131,7 +131,7 @@ test('the width: one block on every desktop window, from 768px; the phone\'s bar
   // where the sidebar holding the same things is 212px.
   assert.equal(SIDEBAR_ROWS_QUERY, '(min-width: 768px)');
   const css = read('public/css/app.css');
-  assert.match(css, /\.platform-rail-communities,\n\.platform-rail-conversations,\n\.platform-tab-all-glyph,\n\.platform-tab-all-label,\n\.platform-tab-all-votes,\n\.platform-rail-pinned,\n\.workshop-search \{\n  display: none;\n\}/,
+  assert.match(css, /\.platform-rail-communities,\n\.platform-rail-conversations,\n\.platform-tab-all-glyph,\n\.platform-tab-all-label,\n\.platform-tab-all-votes,\n\.platform-rail-pinned \{\n  display: none;\n\}/,
     'nothing of it is drawn outside the block');
   const at = css.indexOf('@media (min-width: 768px) {\n  /* THE ONE NUMBER THE REST FOLLOWS.');
   assert.ok(at > 0, 'the block');

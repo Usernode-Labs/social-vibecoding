@@ -68,7 +68,9 @@ const render = (props = {}) => renderToHtml(createElement(BrowseRows, { rows, cu
 test('directory renders reviewed apps first, leaves unreviewed visible, and discloses the rest accessibly', () => {
   const html = render();
   assert.ok(html.indexOf('data-slug="ready"') < html.indexOf('data-slug="unreviewed"'));
-  assert.match(html, /Reviewed working apps/);
+  // #5267: one heading over them, naming no review state.
+  assert.match(html, /<h2[^>]*>All apps</);
+  assert.doesNotMatch(html, /Reviewed working|Not yet reviewed/);
   assert.match(html, /Show more \(3\)/);
   assert.match(html, /aria-expanded="false" aria-controls="browse-more-apps"/);
   assert.match(html, /id="browse-more-apps" class="hidden"/);
@@ -88,8 +90,8 @@ test('#1912: a metric sort is one list in its own order, and still discloses the
   const ordered = [rows[1], rows[0], rows[2], rows[3], rows[4]];
   const html = render({ rows: ordered, grouped: false });
   assert.ok(html.indexOf('data-slug="unreviewed"') < html.indexOf('data-slug="ready"'), 'the sort order holds');
-  assert.doesNotMatch(html, /<h2[^>]*>(Reviewed working apps|Not yet reviewed)</, 'no tier headings');
-  assert.match(render(), /<h2[^>]*>Reviewed working apps</, 'while Recommended keeps them');
+  assert.doesNotMatch(html, /<h2/, 'no headings');
+  assert.match(render(), /<h2[^>]*>All apps</, 'while the default list keeps its heading');
   assert.match(html, /Show more \(3\)/, 'the same disclosure as Recommended');
   for (const slug of ['demo-only', 'broken', 'iconless']) assert.ok(!html.includes(`data-slug="${slug}"`));
   const expanded = render({ rows: ordered, grouped: false, moreExpanded: true });
@@ -120,43 +122,44 @@ test('staging preview fixtures exercise real curation logic without certifying r
   assert.match(fs.readFileSync(path.join(__dirname, '../src/routes/apps.js'), 'utf8'), /req.query.demo === '1'/);
 });
 
-test('#3911: Discover never says "Needs re-review"; the app reads as not yet reviewed, where it already sat', () => {
+test('#3911, #5267: Discover names no review state, on any row, in any order', () => {
   const { rowDirectoryLabel } = loadTsx('frontend/src/features/apps/browse-list.tsx');
   const outdated = row('updated', { main_sha: 'b'.repeat(40) });
   assert.equal(outdated.app.directory.label, 'Needs re-review', 'the API label is unchanged');
-  assert.equal(rowDirectoryLabel(outdated.app.directory), 'Not yet reviewed');
-  for (const r of rows) assert.equal(rowDirectoryLabel(r.app.directory), r.app.directory.label, `${r.slug} keeps its label`);
+  // Reviewed working, Not yet reviewed and Needs re-review are moderation
+  // words: the admin's chip and Admin › Featured apps carry them.
+  assert.equal(rowDirectoryLabel(outdated.app.directory), null);
+  assert.equal(rowDirectoryLabel(rows[0].app.directory), null, 'working');
+  assert.equal(rowDirectoryLabel(rows[1].app.directory), null, 'unreviewed');
+  // A label about what a person can do with the app stays.
+  for (const r of rows.slice(2)) assert.equal(rowDirectoryLabel(r.app.directory), r.app.directory.label, `${r.slug} keeps its label`);
   assert.equal(rowDirectoryLabel(null), null);
-  assert.equal(rowDirectoryLabel({ state: 'outdated' }), null, 'no label in, no label out');
 
   const withOutdated = [rows[0], rows[1], outdated, rows[2], rows[3], rows[4]];
-  // One row's markup: from its root (the only data-slug followed by the
-  // directory state; the Join button carries the slug alone) to the next root.
-  const labelOf = (html, slug) => {
-    const root = `data-slug="${slug}" data-directory-state=`;
-    const start = html.indexOf(root);
-    assert.ok(start >= 0, `${slug} is listed`);
-    const next = html.indexOf(' data-directory-state=', start + root.length);
-    return html.slice(start, next < 0 ? undefined : next);
-  };
-
-  // Recommended: same tier, same place, under "Not yet reviewed", and the
-  // heading's own rule drops the label just as it does for an unreviewed app.
-  const grouped = render({ rows: withOutdated });
-  assert.doesNotMatch(grouped, /re-review/i);
-  const heading = grouped.indexOf('>Not yet reviewed</h2>');
-  assert.ok(heading >= 0 && heading < grouped.indexOf('data-slug="unreviewed"')
-    && grouped.indexOf('data-slug="unreviewed"') < grouped.indexOf('data-slug="updated"'), 'listing and order unchanged');
-  assert.match(labelOf(grouped, 'updated'), /data-directory-state="outdated"/);
-  assert.doesNotMatch(labelOf(grouped, 'updated'), /Not yet reviewed/, 'the heading already says it');
-
-  // A metric sort and a search have no heading, so the row says it itself,
-  // the same words as a never-reviewed app.
-  for (const html of [render({ rows: withOutdated, grouped: false }), render({ rows: withOutdated, curated: false })]) {
-    assert.doesNotMatch(html, /re-review/i);
-    assert.match(labelOf(html, 'updated'), /Not yet reviewed/);
-    assert.match(labelOf(html, 'unreviewed'), /Not yet reviewed/);
+  for (const html of [render({ rows: withOutdated }), render({ rows: withOutdated, grouped: false }),
+    render({ rows: withOutdated, curated: false })]) {
+    assert.doesNotMatch(html, /re-review|Not yet reviewed|Reviewed working/i);
+    assert.ok(html.indexOf('data-slug="unreviewed"') < html.indexOf('data-slug="updated"'), 'listing and order unchanged');
   }
+  assert.match(render({ rows: withOutdated, curated: false }), /Needs fixes/);
+});
+
+test('#5267: Recommended for you leads the default list, and the rest is More apps', () => {
+  const picked = { ...row('picked'), recommended: true };
+  const html = render({ rows: [picked, rows[0], rows[1]] });
+  const rec = html.indexOf('>Recommended for you</h2>');
+  const more = html.indexOf('>More apps</h2>');
+  assert.ok(rec >= 0 && rec < html.indexOf('data-slug="picked"'));
+  assert.ok(html.indexOf('data-slug="picked"') < more && more < html.indexOf('data-slug="ready"'));
+  assert.doesNotMatch(html, />All apps</);
+  // A joined row offers Open; a row you are not in offers Join.
+  const joined = { ...row('joined'), added: true, canOpen: true };
+  const both = render({ rows: [joined, rows[0]], curated: false });
+  assert.match(both, /data-added="true" data-action="open" aria-label="Open joined"[^>]*>Open</);
+  assert.match(both, /data-added="false" data-action="join" aria-label="Join ready"/);
+  assert.doesNotMatch(both, />Joined</);
+  // One that cannot run has nothing to open: the row itself opens its page.
+  assert.doesNotMatch(render({ rows: [{ ...joined, canOpen: false }], curated: false }), /browse-add-btn/);
 });
 
 test('#3911: the admin console keeps "Needs re-review"', () => {
