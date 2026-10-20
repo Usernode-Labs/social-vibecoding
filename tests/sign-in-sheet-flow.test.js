@@ -469,6 +469,16 @@ test('the password step is the sheet\'s: the link opens it, and Forgot password 
   assert.match(src, /data-sign-in-sheet-forgot="" className=\{QUIET\} onClick=\{\(\) => \{ typedIdentifier\.current = \(identifierField\.current\?\.value \|\| ''\)\.trim\(\); toStep\('forgot'\); \}\}>/);
   assert.doesNotMatch(src, /href="#login\/forgot"/);
   assert.equal(message('auth:signInSheet.password.forgot'), 'Forgot password?');
+  // #5616: picking Password is choosing how to sign in, so the step has no
+  // "Other ways to continue" back to Apple and Google; closing the sheet does
+  // that. Without the Email code | Password switch, the email code is the one
+  // other way, and the link goes straight to that step.
+  assert.doesNotMatch(src, /signInSheet\.password\.otherWays/);
+  const passwordAt = src.indexOf("{step === 'password' ? (");
+  const passwordForm = src.slice(passwordAt, src.indexOf("{step === 'forgot' ? (", passwordAt));
+  assert.doesNotMatch(passwordForm, /otherWays/);
+  assert.match(passwordForm, /\{!methodSwitch \? \(\s+<button type="button" className=\{QUIET\} onClick=\{\(\) => toStep\('email'\)\}>\s+\{t\('auth:signInSheet\.password\.useEmailCode'\)\}/);
+  assert.match(passwordForm, /data-sign-in-sheet-forgot=""/);
   // Join pressed on an invite, then a password: the shell follows the link
   // without asking a second time, as it did from the sign-in screen.
   assert.match(src, /if \(followInvite\) rememberInviteJoin\(\);\s+await finish\('existing'\);/);

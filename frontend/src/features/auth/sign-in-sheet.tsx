@@ -1714,10 +1714,12 @@ export function SignInSheet({
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.password.signingIn') : t('auth:signInSheet.password.submit')}</button>
             <div className="flex items-center justify-between">
-              {/* With the switch, the email code is its other half; Apple and Google are still a step away. */}
-              {providers.length || !methodSwitch ? (
-                <button type="button" className={QUIET} onClick={() => toStep(otherWays)}>
-                  {providers.length ? t('auth:signInSheet.password.otherWays') : t('auth:signInSheet.password.useEmailCode')}
+              {/* Picking Password is choosing how to sign in, so this step offers no way back to
+                  Apple and Google: closing the sheet does that (#5616). Without the switch, the
+                  email code is the one other way, and the link goes to that step. */}
+              {!methodSwitch ? (
+                <button type="button" className={QUIET} onClick={() => toStep('email')}>
+                  {t('auth:signInSheet.password.useEmailCode')}
                 </button>
               ) : <span aria-hidden="true" />}
               {/* The reset opens here, in the sheet (#5258), not on the sign-in screen's own page. */}
