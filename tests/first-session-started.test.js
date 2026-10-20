@@ -211,16 +211,25 @@ test('READY IN PLACE: once the app runs its setup card stays where it was, so no
   // The same card, row and sizes as while it ran: 15 over 13, two lines.
   assert.match(done, /class="flex h-\[84px\] items-center gap-3 rounded-\[20px\] bg-white py-3 pl-3 pr-4 shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\] dark:bg-zinc-900"/);
   assert.match(done, /<div role="status" class="min-w-0 flex-1"><p class="truncate text-\[15px\] font-\[650\] leading-5">Ready to use\.<\/p><p class="line-clamp-2 text-\[13px\] leading-\[18px\] text-zinc-500 dark:text-zinc-400">It’s running now\.<\/p><\/div>/);
-  // Full and quiet: a done state wears no accent, and turns only while the bot builds.
+  // Full and quiet while nothing says it is made, and turns only while the bot builds.
   assert.match(done, />4\/4<\/text>/);
   assert.match(done, /stroke-zinc-400/);
   assert.doesNotMatch(done, /data-progress-ring-spinning/);
-  const building = renderToHtml(createElement(SetupProgress, { step: 4, slow: false, waitedOut: false, done: { line: 'It’s set up.', busy: true } }));
+  const building = renderToHtml(createElement(SetupProgress, { step: 4, slow: false, waitedOut: false, done: { line: 'It’s set up.', busy: true, finished: false } }));
   assert.match(building, /data-progress-ring-spinning=""/);
+  assert.match(building, /stroke-zinc-400/);
+  assert.doesNotMatch(building, /--state-ok/);
+  // Newcomer run, 20 Oct 2026: "the ring when it's done making should be
+  // green". Made, the full ring is --state-ok, as a finished progress bar is.
+  const made_ = renderToHtml(createElement(SetupProgress, { step: 4, slow: false, waitedOut: false, done: { line: 'Ready to use.', busy: false, finished: true } }));
+  assert.match(made_, /stroke-\[color:var\(--state-ok\)\]/);
+  assert.doesNotMatch(made_, /stroke-zinc-400|data-progress-ring-spinning/);
+  // Made: it runs, and nothing more is coming for it.
+  assert.match(CODE, /const finished = !busy && !stalled && appStatus === 'running' && \(!botBuilds \|\| \(!!line && buildLineDone\(line\)\)\);/);
   // Only once it has shown here, and never over a setup that stopped.
   assert.match(CODE, /useEffect\(\(\) => \{ if \(settingUp\) setSetupShown\(true\); \}, \[settingUp\]\);/);
   assert.match(CODE, /const ranInPlace = setupShown && !settingUp && !stalled;/);
-  assert.match(CODE, /\{ranInPlace && setupCard \? <SetupProgress step=\{setupStep\} slow=\{slow\} waitedOut=\{waitedOut\} done=\{\{ line: card \? t\(SETUP_SET_UP\) : plainLine, busy \}\} \/> : null\}/);
+  assert.match(CODE, /\{ranInPlace && setupCard \? <SetupProgress step=\{setupStep\} slow=\{slow\} waitedOut=\{waitedOut\} done=\{\{ line: card \? t\(SETUP_SET_UP\) : plainLine, busy, finished \}\} \/> : null\}/);
 });
 
 test('C4: the sheet is titled with the community, a small caps label over the invite as they will see it', () => {
@@ -238,7 +247,7 @@ test('C4: the sheet is titled with the community, a small caps label over the in
 test('C5: after sharing, the line says so, and the buttons keep their places: Share again, then Go to app', () => {
   // Share again is grey where Share invite was; Go to app is blue where
   // Invite people later was.
-  const shared = CODE.slice(CODE.indexOf('{sent ? ('), CODE.indexOf('{inviting ? ('));
+  const shared = CODE.slice(CODE.indexOf('{sent ? ('), CODE.indexOf('{inviting && typeof document'));
   assert.ok(shared.indexOf('data-first-session-share-again=""') < shared.indexOf('data-first-session-continue=""'));
   assert.match(CODE, /<button type="button" data-first-session-share-again="" onClick=\{\(\) => setInviting\(true\)\} className=\{SECONDARY\}>\s*\{t\('onboarding:firstSession\.made\.shareAgain'\)\}/);
   assert.equal(message('onboarding:firstSession.made.shareAgain'), 'Share again');

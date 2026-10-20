@@ -3,8 +3,9 @@
  * place (./index.tsx draws them). One short title and one short sentence per
  * card: the card names the place, the screen behind it says the rest (#4044).
  *
- * Two tours, both on Home, and neither takes anybody anywhere: every card
- * rings its place and leads on with Next.
+ * Two tours, both on Home, and neither takes anybody anywhere while it runs:
+ * every card rings its place and leads on with Next. The maker's walk, done,
+ * then opens its project's hub (./index.tsx walkDoneLanding).
  *
  *   walk   "1, 2, 3 on Home" (Evan, 15 Oct 2026, the onboarding canvas's
  *          "A tip in the app, then 1, 2, 3 on Home"). A newcomer's first
