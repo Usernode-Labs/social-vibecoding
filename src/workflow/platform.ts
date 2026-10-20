@@ -1307,13 +1307,14 @@ export async function reportUnreachable(appId: number, requestKey: string): Prom
 }
 
 // main at a commit production does not run (the main-drift clock, keyed by
-// the commit; an admin's Check for updates, by hand): what app delivery
-// decided.
-export async function reportMainMoved(appId: number, sha: string, { byHand = false } = {}): Promise<EventOutcome> {
+// the movement: what production ran when it was seen, and the commit; an
+// admin's Check for updates, by hand): what app delivery decided. Main
+// moving back to a commit production ran before is a movement of its own.
+export async function reportMainMoved(appId: number, sha: string, { byHand = false, movement = null }: { byHand?: boolean; movement?: string | null } = {}): Promise<EventOutcome> {
   if (!runtime) throw new Error('The workflow runtime is not running in this process');
   const s = String(sha).toLowerCase();
   return runtime.appendAndWait(DELIVERY, appKey(appId), { type: 'MainMoved', payload: { appId, sha: s, byHand } },
-    { requestKey: byHand ? `check:${appId}:${s}:${randomUUID()}` : `drift:${appId}:${s}`,
+    { requestKey: byHand || !movement ? `check:${appId}:${s}:${randomUUID()}` : `drift:${appId}:${movement}`,
       source: { kind: 'system', name: byHand ? 'check_updates' : 'drift' }, appId });
 }
 

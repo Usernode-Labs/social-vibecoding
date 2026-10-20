@@ -686,6 +686,26 @@ test('app-delivery machine against the full PostgreSQL schema', { timeout: 12000
     assert.deepEqual(said.map((m) => [m.type, m.payload.message]), [['DeliveryFailed', 'the app has no repository to deploy from']]);
   });
 
+  await t.test('D8: main moving back to a commit production ran before deploys it again', async () => {
+    reset();
+    const a = await app({ mainSha: SHA('0') });
+    const A = SHA('d');
+    const B = SHA('e');
+    // Keyed as the main-drift clock keys a movement: from what production
+    // runs, to the commit.
+    deploys.next.push({ sha: A });
+    await moved(a, A, { key: `drift:${a.id}:${SHA('0')}@1:${A}` });
+    await settle();
+    deploys.next.push({ sha: B });
+    await moved(a, B, { key: `drift:${a.id}:${A}@2:${B}` });
+    await settle();
+    deploys.next.push({ sha: A });
+    await moved(a, A, { key: `drift:${a.id}:${B}@3:${A}` });
+    await settle();
+    assert.equal(deploys.calls.length, 3);
+    assert.equal((await row(a)).main_sha, A);
+  });
+
   await t.test('only the machine writes the deploying state', async () => {
     const a = await app();
     await ask(a);

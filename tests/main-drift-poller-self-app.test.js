@@ -161,7 +161,7 @@ test('the clock\'s look reads self_hosted and release_stall so the watch has wha
   pollRows = [SELF, CHILD];
   await poller.scan({}, pool);
   const select = queries.find((q) => /FROM apps\s+WHERE repo_url IS NOT NULL/.test(q.sql));
-  assert.match(select.sql, /SELECT id, slug, repo_url, main_sha, self_hosted, release_stall/);
+  assert.match(select.sql, /SELECT id, slug, repo_url, main_sha, last_deploy_at, self_hosted, release_stall/);
   assert.equal(observed.length, 1);
   assert.equal(observed[0].app.slug, 'usernode-2d5619');
   assert.deepEqual(requested, [[8, 'drift']]);

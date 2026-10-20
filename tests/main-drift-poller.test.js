@@ -48,9 +48,9 @@ stub(ids.github, {
 });
 // The workflow: what app delivery was told (and what it answers), the merge
 // queue's asks, and the commits the main check was asked about.
-const wf = { moved: [], answer: { status: 'accepted' }, wants: [], checks: [], checkFails: false };
+const wf = { moved: [], movements: [], answer: { status: 'accepted' }, wants: [], checks: [], checkFails: false };
 stub(ids.platform, {
-  reportMainMoved: async (appId, sha, o) => { wf.moved.push([appId, sha, !!o?.byHand]); return wf.answer; },
+  reportMainMoved: async (appId, sha, o) => { wf.moved.push([appId, sha, !!o?.byHand]); wf.movements.push(o?.movement ?? null); return wf.answer; },
   wantMerge: async (p) => { wf.wants.push(p); },
   requestMainCheck: async (c) => {
     if (wf.checkFails) throw new Error('The workflow runtime is not running in this process');
@@ -72,7 +72,9 @@ const poller = require('../src/services/main-drift-poller');
 
 const RED = 'e7ab4060ee62bea30536db98af7a06aff33554e9';
 const RUNNING = 'de34dda111111111111111111111111111111111';
-const app = { id: 8, slug: 'falling-sands', repo_url: 'https://github.com/example/falling-sands', main_sha: RUNNING };
+const DEPLOYED = new Date('2026-10-20T10:00:00Z');
+const app = { id: 8, slug: 'falling-sands', repo_url: 'https://github.com/example/falling-sands', main_sha: RUNNING, last_deploy_at: DEPLOYED };
+const MOVEMENT = `${RUNNING}@${DEPLOYED.getTime()}:${RED}`;
 const config = {};
 
 function reset() {
@@ -81,18 +83,43 @@ function reset() {
   remoteSha = RED;
   fetchError = null;
   wf.moved.length = 0;
+  wf.movements.length = 0;
   wf.wants.length = 0;
   wf.checks.length = 0;
   wf.checkFails = false;
   wf.answer = { status: 'accepted' };
 }
 
-test('drift tells app delivery the commit, keyed by it, and the merge queue looks once per commit', async () => {
+test('drift tells app delivery the commit, keyed by the movement, and the merge queue looks once per movement', async () => {
   reset();
   const out = await poller.checkOne(config, pool, app);
   assert.deepEqual(wf.moved, [[8, RED, false]]);
   assert.equal(out.status, 'deploy_requested');
-  assert.deepEqual(wf.wants, [{ appId: 8, reason: 'drift', requestKey: `want:drift:8:${RED}` }]);
+  assert.deepEqual(wf.wants, [{ appId: 8, reason: 'drift', requestKey: `want:drift:8:${MOVEMENT}` }]);
+  assert.deepEqual(wf.movements, [MOVEMENT]);
+});
+
+// Production at A, main moves to B (deployed), then back to A: a movement
+// of its own, so A is deployed again (the reviewer's A -> B -> A, which
+// replayed the first A and left production on B).
+test('main moving back to a commit production ran before is a new movement; looks at one movement are one', async () => {
+  reset();
+  const A = 'a'.repeat(40);
+  const B = 'b'.repeat(40);
+  const at = (iso) => new Date(iso);
+  remoteSha = A;
+  await poller.checkOne(config, pool, { ...app, main_sha: RUNNING, last_deploy_at: at('2026-10-20T10:00:00Z') });
+  poller._forTest.resetHeadCache();
+  await poller.checkOne(config, pool, { ...app, main_sha: RUNNING, last_deploy_at: at('2026-10-20T10:00:00Z') });
+  assert.equal(wf.movements[0], wf.movements[1], 'the clock\'s next look at the same movement');
+  poller._forTest.resetHeadCache();
+  remoteSha = B;
+  await poller.checkOne(config, pool, { ...app, main_sha: A, last_deploy_at: at('2026-10-20T10:05:00Z') });
+  poller._forTest.resetHeadCache();
+  remoteSha = A;
+  await poller.checkOne(config, pool, { ...app, main_sha: B, last_deploy_at: at('2026-10-20T10:10:00Z') });
+  assert.equal(new Set(wf.movements).size, 3, 'to A, to B, back to A: three movements');
+  assert.equal(new Set(wf.wants.map((w) => w.requestKey)).size, 3);
 });
 
 test('what app delivery decided is what the check reports; the merge queue is told only of an accepted drift', async () => {

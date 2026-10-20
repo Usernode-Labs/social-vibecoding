@@ -2929,7 +2929,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
       const { rows } = await pool.query(
-        'SELECT id, slug, repo_url, main_sha, self_hosted FROM apps WHERE slug = $1',
+        'SELECT id, slug, repo_url, main_sha, last_deploy_at, self_hosted FROM apps WHERE slug = $1',
         [req.params.slug]
       );
       if (!rows.length) return res.status(404).json({ error: 'App not found' });

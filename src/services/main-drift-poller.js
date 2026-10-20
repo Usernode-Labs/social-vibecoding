@@ -128,6 +128,13 @@ async function fetchRemoteHead(owner, repo) {
 //
 // `byHand` (the admin's "Check for updates"): app delivery deploys even a
 // commit that failed or was refused for running as root, without waiting.
+// One movement of main: from what production runs (its commit, and when it
+// was deployed) to `sha`. The clock's looks at one movement are one ask; a
+// return to a commit production ran before, after a deploy of another, is a
+// new one (A, then B, then A again deploys A again).
+const movementOf = (app, sha) =>
+  `${app.main_sha}@${app.last_deploy_at ? new Date(app.last_deploy_at).getTime() : 'never'}:${sha}`;
+
 async function checkOne(config, pool, app, { byHand = false } = {}) {
   const platform = require('../workflow/platform.ts');
   const parsed = github.parseGithubUrl(app.repo_url);
@@ -188,7 +195,8 @@ async function checkOne(config, pool, app, { byHand = false } = {}) {
     return releaseWatch.observe(config, pool, app, head, { octokit: head.octokit });
   }
 
-  const outcome = await platform.reportMainMoved(app.id, remoteSha, { byHand });
+  const movement = movementOf(app, remoteSha);
+  const outcome = await platform.reportMainMoved(app.id, remoteSha, { byHand, movement });
   // Unless app delivery refused it (no drift, a commit that waits for a new
   // one): accepted, answered before (a replay), or not yet answered within
   // the wait (it will be).
@@ -197,8 +205,8 @@ async function checkOne(config, pool, app, { byHand = false } = {}) {
       appId: app.id, slug: app.slug, from: app.main_sha.slice(0, 7), to: remoteSha.slice(0, 7), byHand,
     });
     // main moved out-of-band: the app's merge queue looks again (a proposal
-    // may conflict now, or merge). Once per commit.
-    await platform.wantMerge({ appId: app.id, reason: 'drift', requestKey: `want:drift:${app.id}:${remoteSha}` }).catch((err) => {
+    // may conflict now, or merge). Once per movement.
+    await platform.wantMerge({ appId: app.id, reason: 'drift', requestKey: `want:drift:${app.id}:${movement}` }).catch((err) => {
       log.error('drift-poller', 'Post-drift merge ask failed', { slug: app.slug, err: err.message });
     });
   }
@@ -219,7 +227,7 @@ async function checkOne(config, pool, app, { byHand = false } = {}) {
 async function scan(config, pool, { shouldStop = () => false } = {}) {
   if (!enabled()) return { off: true };
   const { rows } = await pool.query(
-    `SELECT id, slug, repo_url, main_sha, self_hosted, release_stall, release_run, main_check_sha, main_check_state
+    `SELECT id, slug, repo_url, main_sha, last_deploy_at, self_hosted, release_stall, release_run, main_check_sha, main_check_state
        FROM apps
       WHERE repo_url IS NOT NULL AND status = 'running'
       ORDER BY id`

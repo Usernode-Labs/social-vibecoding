@@ -16,8 +16,9 @@ export interface Facts {
   // The one-line reason of the failure the row records.
   failureReason: string | null;
   // Its first deploy, as app delivery holds it (read at a deadline and at a
-  // Retry): a request of this machine's still open there, and when app
-  // delivery last deployed the app.
+  // Retry): a request of this machine's it still owes an answer (one it
+  // answered DeliveryFailed stays open there for a later deploy, but that
+  // deploy failed), and when app delivery last deployed the app.
   delivery: { asked: boolean; lastDeployAt: string | null } | null;
 }
 
@@ -44,7 +45,8 @@ export async function readFacts(tx: Tx, appId: number, { firstRequest = false, d
   if (delivery && app) {
     const { rows: [d] } = await tx.query(
       `SELECT EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(data->'requests', '[]'::jsonb)) r
-                       WHERE r->'from'->>'machine' = 'app-creation') AS asked,
+                       WHERE r->'from'->>'machine' = 'app-creation'
+                         AND COALESCE((r->>'told')::boolean, false) = false) AS asked,
               data->'last'->>'at' AS last_at
          FROM wf_instances WHERE machine = 'app-delivery' AND key = 'app:' || $1::text`, [appId]);
     held = { asked: !!d?.asked, lastDeployAt: d?.last_at ?? null };

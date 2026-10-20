@@ -413,6 +413,23 @@ test('app-creation machine against the full PostgreSQL schema', { timeout: 12000
     assert.equal(await inst(n), undefined);
   });
 
+  await t.test('C13: a first deploy that failed is tried again by a Retry, though app delivery keeps its request open', async () => {
+    reset();
+    deploys.next.push({ throw: 'npm ERR! build' });
+    const a = await project();
+    await settle();
+    assert.equal((await row(a)).status, 'error');
+    assert.equal((await inst(a)).state, 'failed');
+    const { rows: [d] } = await pool.query(`SELECT data FROM wf_instances WHERE machine = $1 AND key = $2`, [delivery.MACHINE, delivery.appKey(a.id)]);
+    assert.deepEqual(d.data.requests.map((r) => [r.from?.machine, r.told]), [[MACHINE, true]], 'told, and kept for the next deploy');
+    const again = await retry(a);
+    await settle();
+    assert.equal((await outcomeOf(again)).result, 'accepted');
+    assert.deepEqual(setups.calls.map((c) => c.key), ['setup:1', 'setup:2']);
+    assert.equal(deploys.calls.length, 2);
+    assert.equal((await row(a)).status, 'running');
+  });
+
   await t.test('C10: the step a project is on is read from its making, in any process', async () => {
     reset();
     const phase = require('../src/services/app-creation-phase');
