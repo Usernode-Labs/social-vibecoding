@@ -169,6 +169,9 @@ type DetailView = {
   cta: CtaView | null;
   // #3186: the Me screen's "Your feedback", on the feedback challenge only.
   feedbackLink?: boolean;
+  // #4036: on the feedback challenge, what makes a report count, under the
+  // rail the way the invite challenge's note is.
+  feedbackNote?: string | null;
   // #3650: the invite challenge's plain-language line under the rail, and
   // the per-person list of who the viewer invited and why each counts.
   invitesNote?: string | null;
@@ -606,6 +609,9 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
       {/* #3650: what makes an invite count, in plain words, right under the
           rail that shows the count. */}
       {view.invitesNote ? <p className={PROSE}>{view.invitesNote}</p> : null}
+      {/* #4036: the same for a feedback report, whose own project and
+          scheduled, graded count are what a stuck rail is usually about. */}
+      {view.feedbackNote ? <p className={PROSE}>{view.feedbackNote}</p> : null}
       {view.blockProduction ? <BlockProductionStep view={view.blockProduction} /> : null}
       {view.cta ? <Cta view={view.cta} /> : null}
       {/* #3186: the feedback challenge's count is the viewer's own reports;
