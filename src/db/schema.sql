@@ -13112,6 +13112,13 @@ COMMENT ON TABLE test_phone_sign_ins IS 'staging:private';
 -- so existing databases need nothing; nothing reads it.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_ask_answered_at TIMESTAMPTZ;
 
+-- "Share usage analytics" (#5097): whether this person lets Homeroom record
+-- how they use it (the shell's UI telemetry and the other usage events
+-- services/usage-analytics.js lists). Off for everyone, existing accounts and
+-- new ones, until they switch it on in Settings > Privacy; with it off the
+-- server drops those events on arrival and the shell does not send them.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS usage_analytics BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- "Are you 18 or older?" (#5095, compliance A-02): when the account said
 -- yes, asked the first time it opens a wallet, staking, node or passport
 -- feature. NULL until then, including "I'm under 18", which records
