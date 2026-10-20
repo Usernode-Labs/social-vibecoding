@@ -1090,6 +1090,13 @@
     {
       "source": "src/services/homeroom-bot-dm.js",
       "kind": "structural-template",
+      "fingerprint": "489298861dae26782c81",
+      "count": 1,
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS} FROM apps WHERE id = $1`"
+    },
+    {
+      "source": "src/services/homeroom-bot-dm.js",
+      "kind": "structural-template",
       "fingerprint": "c913b1f251da2021e1da",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.approval_epoch, COALESCE(cs.promoted_at, cs.created_at) AS opened_at, COALESCE(cs.requires_explicit_approval, FALSE) AS"
