@@ -18,6 +18,7 @@
 // reconcileAppTopics), and a change to it is a proposal (topics-pr.js).
 
 const appChat = require('./app-chat');
+const channelMutes = require('./channel-mutes');
 const log = require('./logger');
 const topicFigures = require('./topic-figures');
 
@@ -162,7 +163,7 @@ async function topicRequestCounts(pool, appId, keys) {
  *
  *   { owed, channels: [{ id, kind, key, handle, aliases, name, about, icon,
  *                        state, merged_into, merged_at, requests, unread,
- *                        figures }] }
+ *                        muted?, figures }] }
  *
  * Best-effort per part: a count that fails to read is null, never a failed
  * page.
@@ -197,6 +198,18 @@ async function placesFor(pool, app, viewer, { general = null, member = false, sh
       log.warn('places', 'Could not read the topic channels\' unread', { slug: app.slug, message: err.message });
     }
   }
+  // #5303: the channels this viewer muted. A muted channel's unread counts
+  // nowhere (the list's count, the bar's dot, the sidebar): it says
+  // `muted` instead, for the channel's own Mute to show.
+  let muted = new Set();
+  if (viewerId) {
+    try {
+      muted = await channelMutes.mutedRefs(pool, viewerId, app.id);
+    } catch (err) {
+      log.warn('places', 'Could not read the muted channels', { slug: app.slug, message: err.message });
+    }
+  }
+  const generalMuted = muted.has(channelMutes.GENERAL);
   const channels = [];
   if (general) {
     channels.push({
@@ -212,7 +225,8 @@ async function placesFor(pool, app, viewer, { general = null, member = false, sh
       merged_into: null,
       merged_at: null,
       requests: null,
-      unread: Number(general.unread_count) || 0,
+      unread: generalMuted ? 0 : (Number(general.unread_count) || 0),
+      muted: generalMuted,
       figures: [],
     });
   }

@@ -4751,6 +4751,38 @@
     "text": "{{about}} · <0>{{requests}}</0>",
     "description": "Line at the top of a topic's chat channel. {{about}} is what the topic is for, as its members wrote it; <0></0> is a link to the requests filed under it, and {{requests}} its words, already worded, for example \"14 requests ›\"."
   },
+  "places.generalHead.about": {
+    "text": "Where everyone in {{project}} talks",
+    "description": "Line at the top of a project's #general chat channel, saying what the channel is for. {{project}} is the project's name."
+  },
+  "places.generalHead.aboutThenMembers": {
+    "text": "{{about}} · {{members}}",
+    "description": "Line at the top of a project's #general chat channel: what the channel is for, then how many members it reaches. {{about}} is the first part, already worded (\"Where everyone in Homeroom talks\"); {{members}} the second, already worded (\"263 members\")."
+  },
+  "places.generalHead.members_one": {
+    "text": "{{count}} member",
+    "description": "Part of the line at the top of a project's #general chat channel: how many people are members of the project, so how many the channel reaches."
+  },
+  "places.generalHead.members_other": {
+    "text": "{{count}} members",
+    "description": "Part of the line at the top of a project's #general chat channel: how many people are members of the project, so how many the channel reaches."
+  },
+  "places.generalHead.mute": {
+    "text": "Mute",
+    "description": "Button at the top of a project's #general chat channel: mutes the channel for you, so its unread messages stop counting and it stops notifying you about every message. Mentions and replies still reach you."
+  },
+  "places.generalHead.muted": {
+    "text": "Muted",
+    "description": "The same button at the top of a project's #general chat channel once you have muted it; pressing it again unmutes the channel."
+  },
+  "places.generalHead.muteHint": {
+    "text": "Stop counting unread messages here and stop notifications for every message. Mentions and replies still reach you.",
+    "description": "Hover text of the Mute button at the top of a project's #general chat channel: says what muting does."
+  },
+  "places.generalHead.unmuteHint": {
+    "text": "Muted: unread messages here are not counted. Press to unmute.",
+    "description": "Hover text of the button at the top of a project's #general chat channel while the channel is muted for you."
+  },
   "places.topicFigures.label": {
     "text": "This topic's figures",
     "description": "Accessible name of the card of numbers at the top of a topic's chat channel, such as how long checks take or how often the bot's answers fail."

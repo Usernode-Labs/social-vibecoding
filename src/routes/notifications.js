@@ -9,6 +9,7 @@ const { notificationBookmarkLimiter } = require('../middleware/rate-limits');
 const mobilePushPreferences = require('../services/mobile-push-preferences');
 const notificationPreferences = require('../services/notification-preferences');
 const groupChannelNotify = require('../services/group-channel-notify');
+const channelMutes = require('../services/channel-mutes');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
@@ -486,6 +487,34 @@ function notificationsRoutes(config) {
       });
     } catch (err) {
       log.error('notification-preferences', 'app write failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── A channel's Mute (#5303) ────────────────────────────────────────
+  //
+  // The viewer's own: their unread in the channel stops counting and a small
+  // group's "every message" ring passes them by; mentions and replies still
+  // reach them (services/channel-mutes.js). #general only for now, so any
+  // other handle is a 404. For anyone who may see the project: muting is
+  // not taking part, so it needs no membership.
+  router.put('/api/apps/:slug/channels/:handle/mute', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      if (req.params.handle !== 'general') return res.status(404).json({ error: 'Channel not found' });
+      const muted = req.body ? req.body.muted : undefined;
+      if (typeof muted !== 'boolean') {
+        return res.status(422).json({ error: 'The given data was invalid.', details: { muted: 'must be true or false' } });
+      }
+      const app = await resolveApp(req.params.slug, req.user);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const now = await channelMutes.setMuted(pool, {
+        userId: req.user.id, appId: app.id, ref: channelMutes.GENERAL, muted,
+      });
+      return res.json({ handle: 'general', muted: now });
+    } catch (err) {
+      log.error('channel-mutes', 'write failed', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
