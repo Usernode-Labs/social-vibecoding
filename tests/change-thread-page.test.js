@@ -243,6 +243,39 @@ test('a moving bar is the lit ink, a finished one green with its check, and AGEN
   assert.match(read('AGENTS.md'), /A finished progress bar may be green \(`--state-ok`/);
 });
 
+// #5712: on a phone the gate cards' buttons took the auto column's width,
+// squeezing the name and figure into a sliver where their words overlapped
+// and spilled over the bar. Under 640px the card is one column, the buttons
+// take a row of their own under the note, and the head wraps.
+function cssBlock(css, at) {
+  const start = css.indexOf('{', at);
+  let depth = 0;
+  for (let i = start; i < css.length; i += 1) {
+    if (css[i] === '{') depth += 1;
+    else if (css[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return css.slice(at, i + 1);
+    }
+  }
+  throw new Error('unterminated CSS block');
+}
+
+test('on a phone the gate card stacks its buttons under its line', () => {
+  const css = read('public/css/app.css');
+  // The change page's own phone block, the one that holds the chips rules.
+  const anchor = css.indexOf('.dev-change-chips { grid-template-columns: auto minmax(0, 1fr); }');
+  assert.ok(anchor > 0, 'the change page has a phone block');
+  const phone = cssBlock(css, css.lastIndexOf('@media (max-width: 640px) {', anchor));
+  assert.match(phone, /\.dev-change-gate \{ grid-template-columns: minmax\(0, 1fr\); \}/);
+  assert.match(phone, /\.dev-change-gate-act \{[^}]*order: 1;[^}]*\}/);
+  assert.match(phone, /\.dev-change-gate-act \{[^}]*flex-wrap: wrap;[^}]*\}/);
+  assert.match(phone, /\.dev-change-gate-head \{[^}]*flex-wrap: wrap;[^}]*\}/);
+  assert.match(phone, /\.dev-change-gate-name \{[^}]*min-width: 0;[^}]*\}/);
+  assert.match(phone, /\.dev-change-gate-figure \{[^}]*white-space: nowrap;[^}]*\}/);
+  // Desktop keeps today's two columns: text on the left, buttons on the right.
+  assert.match(css, /\.dev-change-gate \{\n  min-width: 0;\n  display: grid;\n  grid-template-columns: minmax\(0, 1fr\) auto;/);
+});
+
 // Issue #5178: the sheet's header shows the change's status pill beside
 // "Change #N", in the board card's own words and capsule form — so the page
 // answers "is it live?" where the reader first looks. The thread view

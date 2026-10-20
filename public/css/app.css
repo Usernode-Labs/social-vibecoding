@@ -17213,6 +17213,13 @@ p.dev-change-issue-pointer {
   .dev-change-chips { grid-template-columns: auto minmax(0, 1fr); }
   .dev-change-chips .dev-change-thanks { grid-area: 3 / 1 / 4 / -1; justify-self: start; margin-left: 0; }
   .dev-change-chips:not(:has(.dev-change-chips-first)) .dev-change-thanks { grid-area: 1 / 1 / 2 / -1; }
+  /* The card's buttons take a row of their own, under its line, so the
+     name, figure and bar keep the card's width. */
+  .dev-change-gate { grid-template-columns: minmax(0, 1fr); }
+  .dev-change-gate-act { order: 1; flex-wrap: wrap; margin-top: 10px; }
+  .dev-change-gate-head { flex-wrap: wrap; row-gap: 2px; }
+  .dev-change-gate-name { min-width: 0; }
+  .dev-change-gate-figure { white-space: nowrap; }
   /* The post's body takes the sheet's width: a small avatar beside the
      name, then the title, the summary and its cards at full width. */
   .dev-change-root { position: relative; display: block; }
