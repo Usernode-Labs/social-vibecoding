@@ -40,6 +40,33 @@ test('a Stop with no turn here forwards nothing over the bus: its turn\'s machin
   assert.equal(require('../src/routes/sessions').receiveSessionStop, undefined, 'and nothing receives one');
 });
 
+test('ROLLOUT-ONLY: a Stop for a turn an older release\'s process holds is forwarded to it, and answered as stopping, never "nothing to stop"', async (t) => {
+  const bus = capturePublishes();
+  t.after(() => { bus.restore(); });
+  const { requestSessionStop } = require('../src/routes/sessions');
+  const asked = [];
+  const pool = {
+    query: async (sql, params = []) => {
+      if (/FROM process_holds h JOIN platform_processes p/.test(String(sql))) {
+        asked.push(params);
+        return { rows: [{ process_id: 'pod-old' }] };
+      }
+      return { rows: [{ id: 4242, user_id: 7 }] };
+    },
+  };
+  const out = await requestSessionStop({ pool, sessionId: 4242, user: { id: 7, username: 'alice' }, expectedTurnId: null });
+  assert.equal(out.status, 202);
+  assert.deepEqual(out.body, { ok: true, stopped: true, stopping: true, phase: null });
+  assert.deepEqual(bus.sent.filter((m) => m.kind === 'session_stop').map((m) => m.data), [{
+    sessionId: 4242, user: { id: 7, username: 'alice', canAdminWrite: false }, force: false, immediate: false, expectedTurnId: null,
+  }], 'in the shape that release\'s receiver reads');
+  assert.equal(asked[0][2], true, 'only a process of another release: this release\'s turns are their machine\'s');
+  // A forwarded stop is never forwarded again.
+  bus.sent.length = 0;
+  await requestSessionStop({ pool, sessionId: 4242, user: { id: 7, username: 'alice' }, forwarded: true });
+  assert.deepEqual(bus.sent.filter((m) => m.kind === 'session_stop'), []);
+});
+
 test('a Stop for shots is no bus message: the shots machine cancels the agent\'s step wherever it runs', () => {
   // src/workflow/shots/: StopRequested fails the run and cancels its work
   // item, whose process stops at its next lease renewal; the run's cleanup

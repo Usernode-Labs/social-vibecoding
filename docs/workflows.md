@@ -730,8 +730,11 @@ stream (`agent:<id>`, a conversation; `session:<id>`, a change), one `turn.run` 
 per turn, run whole in whichever workflow process claims it.
 - **Asked with the message.** The route writes the person's message, the conversation's
   claim and the turn's `Asked` in one transaction (`platform.askTurn`), then follows the
-  turn's stream to its end from any process (`services/session-bus.js`, rows in
-  `stream_events`). Turns asked while one runs wait, in order; the same turn twice is
+  turn's stream from any process (`services/session-bus.js`, rows in `stream_events`)
+  until that turn's own end: a `done` carrying its `turnId`, published when its item ends
+  (`turns.js`) or, for a turn that failed for good or ran out of time, by the machine's
+  `released` write. An agent turn whose claim no longer names it when its item starts
+  runs nothing. Turns asked while one runs wait, in order; the same turn twice is
   one. Kinds: `agent` (a conversation's Mayor, the coding run it dispatches, its
   wrap-up), `classic` (a change's own dev chat: a CLI hand-off, a request's spec),
   `headless` (an auto session on a request), `recover` (a coding record nothing carries).
@@ -739,28 +742,38 @@ per turn, run whole in whichever workflow process claims it.
   turn name it (`turnOwner`); the claim lasts as long as the turn, released when the item
   ends; a turn that failed for good ends interrupted, with Retry. Its spend is kept as it
   happens (`turn_spend`), its worker by `session_workers` and the worker-eviction clock.
-- **Resumed, not recovered.** A process that goes loses only the item's lease. The next
-  claim carries the turn on (`resume`): the coding run its record names it the owner of
+- **Resumed, not recovered.** A process that goes loses only the item's lease. A process
+  that loses a lease while it runs on (the database out of reach for most of a lease)
+  exits rather than follow the turn beside the next claim, unless the item was cancelled
+  or the process is stopping (`turns.js endOnLostLease`). The next claim carries the
+  turn on (`resume`): the coding run its record names it the owner of
   is followed to its end (the leader's old adoption, `services/turn-recovery.js`), a
   local agent's turn is taken over by its waiter, a Mayor turn cut before its answer
   ends interrupted with Retry, a dev chat cut before its reply gets its note once.
 - **Stop.** `StopRequested` on the instance; the turn hears it (an agent turn from its
-  claim, a classic turn by polling its instance) and `turn.stop` kills a coding run by its
-  journal. Past six hours the turn is ended (`Tick`).
+  claim, a dev chat turn by polling its instance until its handle takes it) and `turn.stop`
+  kills a coding run by its journal. A headless run between its steps is no Stop's target
+  (its Stop takes the person's own path, as before). Past six hours the turn is ended
+  (`Tick`).
 - **Busy, for every process.** Whether a change is worked on is read from these records
   (`session-work.ts` `workedOnSql`: a turn's record, a running turn instance, a local
   turn, shots, a live operation, a build, a sync, the bot's look), never from another
   process's memory. A process's holds (`services/processes.js`) are its own drain's.
 - **Leftovers** (`services/turn-leftovers.js`, the `turn-leftovers` clock, every minute):
-  a coding record whose item settled without releasing it gets a `recover` turn, once.
+  a coding record whose item settled without releasing it gets a `recover` turn, asked
+  again ten minutes after the last while it is still there, four times at most; the last
+  ends it as a forced Stop would (`RECORD_RETRY`).
 - **Rollout-only, while a release from before the turn machine can run beside this one:**
   the same clock ends that release's stale conversation claims, asks `recover` and
   `headless` turns for what it left, finishes its local turns, and repairs its dev chats
   cut before their reply once none of its processes is live; it does none of that while
   one of them still serves (its leader recovers them). For that release to read, this one
   writes its holds to `process_holds`, renews a running conversation's claim every 30
-  seconds, takes the session's hold for a headless run, answers its forwarded Stop
-  (`session_stop`) through the turn's machine, and keeps `leader_sweeps`. The list of what
+  seconds, holds a headless run's session for its whole item, marks its own turn records
+  (`spendKept`) so that release's turns are not billed twice, forwards a Stop to that
+  release's process holding the session and answers its forwarded Stop (`session_stop`)
+  through the turn's machine, and keeps `leader_sweeps`. A rollback to it needs one step
+  (docs/kubernetes-operations.md, "Rolling back past this release"). The list of what
   to delete is the header of `services/turn-leftovers.js`.
 
 ### Turns workflow work runs

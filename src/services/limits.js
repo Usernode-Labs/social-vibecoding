@@ -817,9 +817,14 @@ async function noteTurnSpend(pool, { sessionId = null, userId, cents, byok = fal
   const n = Number(cents);
   if (!userId || !(Number.isFinite(n) && n > 0)) return;
   try {
+    // ROLLOUT-ONLY: not a turn an older release recorded (no `spendKept`:
+    // turn-lifecycle.js persistNewTurn), which settles its own spend from
+    // Claude Code's report and never these rows.
     await pool.query(
       `INSERT INTO turn_spend (turn_id, session_id, user_id, cents, byok)
-       SELECT (SELECT cs.active_turn->>'turnId' FROM chat_sessions cs WHERE cs.id = $1), $1, $2, $3::numeric, $4`,
+       SELECT r.rec->>'turnId', $1, $2, $3::numeric, $4
+         FROM (SELECT (SELECT cs.active_turn FROM chat_sessions cs WHERE cs.id = $1) AS rec) r
+        WHERE r.rec IS NULL OR r.rec->>'turnId' IS NULL OR r.rec->>'spendKept' = 'true'`,
       [sessionId ? Number(sessionId) : null, Number(userId), n, !!byok]);
   } catch (err) {
     log.warn('limits', 'Failed to keep a turn\'s call spend', { sessionId, userId, cents: n, byok, err: err.message });

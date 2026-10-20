@@ -14909,11 +14909,12 @@ CREATE TABLE IF NOT EXISTS platform_processes (
 CREATE INDEX IF NOT EXISTS idx_platform_processes_heartbeat ON platform_processes (heartbeat_at);
 COMMENT ON TABLE platform_processes IS 'staging:private';
 
--- What a process of a release from before the turn machine holds: `kind` (a
--- session's turn, a sync, ...) for `ref` (its id), written as it works. This
--- release writes none (services/processes.js keeps its holds in memory, for
--- its own drain); ROLLOUT-ONLY readers (services/turn-leftovers.js) leave
--- alone what an older release's live process still holds. Drop once no such
+-- ROLLOUT-ONLY: what a process holds, `kind` (a session's turn, a sync, ...)
+-- for `ref` (its id), written as it works. A release from before the turn
+-- machine reads it to decide what is left behind; this one keeps its holds
+-- in memory for its own drain and writes them here only for that release
+-- (services/processes.js writeHolds), and reads it only to leave alone what
+-- another live process holds (services/turn-leftovers.js). Drop once no such
 -- release can run.
 CREATE TABLE IF NOT EXISTS process_holds (
   process_id TEXT NOT NULL REFERENCES platform_processes(id) ON DELETE CASCADE,

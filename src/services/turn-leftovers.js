@@ -10,8 +10,11 @@
 // the claims, headless and local passes, the `resume` flag in turns.js,
 // heldByLiveProcess, olderProcessHolding, receiveOlderStop (and ws.js's
 // `session_stop`), the hold writes in processes.js, the claim's renewal
-// in turns.js (renewClaim), the leader_sweeps table (schema.sql), and the
-// wait for an older release's serving process (otherRelease).
+// and the headless run's hold in turns.js (renewClaim, holdHeadlessRun),
+// the turn record's `spendKept` mark (turn-lifecycle.js, limits.js
+// noteTurnSpend), the Stop forward in routes/sessions.js
+// (forwardStopToOlder), the leader_sweeps table (schema.sql), and the wait
+// for an older release's serving process (otherRelease).
 //
 // Every turn this release starts belongs to the turn machine
 // (src/workflow/turn/): its work item owns its conversation's claim, its
@@ -94,9 +97,18 @@ const IDENTITY = `COALESCE(cs.active_turn->>'turnId', cs.active_turn->>'logicalT
 // A record that has not moved for this long (a dispatch just made by an
 // older release has its hold written long before then).
 const QUIET_SECONDS = 120;
+// A record a `recover` turn left (its adoption failed, or kept it) is asked
+// for again, `minutes` after the last ask, up to `asks` times; the last ask
+// ends it if it is still there (services/turns.js runRecover), as the stale
+// turn watchdog reaped one.
+const RECORD_RETRY = Object.freeze({ asks: 4, minutes: 10 });
 const RECORDS_SQL = `
-  SELECT cs.id, cs.app_id, ${IDENTITY} AS identity
+  SELECT cs.id, cs.app_id, ${IDENTITY} AS identity, ra.asks
     FROM chat_sessions cs
+    CROSS JOIN LATERAL (
+      SELECT COUNT(*)::int AS asks, MAX(e.created_at) AS last_at FROM wf_events e
+       WHERE e.machine = 'turn' AND e.key = 'session:' || cs.id AND e.type = 'Asked'
+         AND e.payload->>'kind' = 'recover' AND e.payload->'input'->>'identity' = ${IDENTITY}) ra
    WHERE cs.active_turn IS NOT NULL
      -- No work item holds it: none owns it, or the one that did has settled.
      AND NOT ${workflowTurnHeldSql('cs.active_turn')}
@@ -111,10 +123,10 @@ const RECORDS_SQL = `
      AND NOT ${heldByLiveProcess('cs.id')}
      AND NOT EXISTS (SELECT 1 FROM wf_instances t
                       WHERE t.machine = 'turn' AND t.key = 'session:' || cs.id AND t.state = 'running')
-     -- Asked once: a pass that finds it again adds nothing.
-     AND NOT EXISTS (SELECT 1 FROM wf_events e
-                      WHERE e.machine = 'turn' AND e.key = 'session:' || cs.id AND e.type = 'Asked'
-                        AND e.payload->>'kind' = 'recover' AND e.payload->'input'->>'identity' = ${IDENTITY})
+     -- Asked again only a while after the last ask, and a bounded number of
+     -- times: a pass that finds it in between adds nothing.
+     AND ra.asks < ${RECORD_RETRY.asks}
+     AND (ra.last_at IS NULL OR ra.last_at < NOW() - make_interval(mins => ${RECORD_RETRY.minutes}))
    ORDER BY cs.id
    LIMIT ${LIMIT}`;
 
@@ -155,9 +167,12 @@ async function endOldClaims(pool, d) {
 async function askForRecords(pool, d) {
   const { rows } = await pool.query(RECORDS_SQL);
   for (const r of rows) {
+    const asks = Number(r.asks) || 0;
     await d.platform.askTurn(pool, {
-      key: `session:${Number(r.id)}`, turnId: leftoverId('leftover', r.identity), kind: 'recover', appId: r.app_id,
-      input: { sessionId: Number(r.id), identity: r.identity },
+      key: `session:${Number(r.id)}`,
+      turnId: leftoverId('leftover', asks ? `${r.identity}-${asks + 1}` : r.identity),
+      kind: 'recover', appId: r.app_id,
+      input: { sessionId: Number(r.id), identity: r.identity, last: asks + 1 >= RECORD_RETRY.asks },
     });
   }
   return rows.length;
@@ -266,12 +281,14 @@ async function sweep(pool, { config, previous = null, deps = {} } = {}) {
  * process's own rows (processes.js writeHolds) are not read back. Rejects on
  * a database error: a caller that cannot tell must not act.
  */
-async function olderProcessHolding(pool, sessionId) {
+async function olderProcessHolding(pool, sessionId, { otherRelease = false } = {}) {
   const { rows: [r] } = await pool.query(
     `SELECT h.process_id FROM process_holds h JOIN platform_processes p ON p.id = h.process_id
       WHERE h.kind IN ('session', 'sync') AND h.ref = $1::text AND h.process_id <> $2
         AND p.heartbeat_at > NOW() - make_interval(secs => ${LIVE_SECONDS})
-      LIMIT 1`, [Number(sessionId), require('./processes').ID]);
+        AND (NOT $3::boolean OR p.release IS DISTINCT FROM $4::text)
+      LIMIT 1`, [Number(sessionId), require('./processes').ID, !!otherRelease,
+      process.env.GIT_SHA || null]);
   return r ? r.process_id : null;
 }
 
@@ -295,4 +312,4 @@ async function receiveOlderStop(payload, {
   return out;
 }
 
-module.exports = { sweep, backfillUnanswered, olderProcessHolding, receiveOlderStop, STALE_SECONDS, CLAIMS_SQL, RECORDS_SQL, HEADLESS_SQL, UNANSWERED_SQL };
+module.exports = { sweep, backfillUnanswered, olderProcessHolding, receiveOlderStop, RECORD_RETRY, STALE_SECONDS, CLAIMS_SQL, RECORDS_SQL, HEADLESS_SQL, UNANSWERED_SQL };

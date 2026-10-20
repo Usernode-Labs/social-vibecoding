@@ -27,10 +27,13 @@
  * ROLLOUT-ONLY: the holds are also written to process_holds, the whole set
  * at once, on every change and every beat (writeHolds), for a release from
  * before the turn machine while it runs beside this one. That release reads
- * them to decide what is left behind: a worker it would evict as idle, a
- * turn it would adopt, a Stop it forwards to the process running the turn
- * (services/turn-leftovers.js receiveOlderStop). Nothing here reads them
- * back but turn-leftovers' own rollout-only read of that release's rows.
+ * them to decide what is left behind: a session busy elsewhere (its idle
+ * eviction skips one), a turn or headless run it would adopt or resume, a
+ * Stop it forwards to the process running the turn (services/turn-
+ * leftovers.js receiveOlderStop). (A worker kept warm is no hold any more:
+ * that release may adopt and evict an idle one of this release's, which
+ * costs its next turn a re-warm.) Nothing here reads them back but
+ * turn-leftovers' own rollout-only reads of other processes' rows.
  * Delete the write once no release older than this one can run.
  */
 

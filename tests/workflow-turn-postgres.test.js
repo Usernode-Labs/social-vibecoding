@@ -161,6 +161,9 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     assert.equal((await claim(c)).active_turn, null);
     assert.deepEqual((await notes(c)).map((n) => [n.content, n.metadata.agentSessionEvent, n.metadata.retryable, n.metadata.agentTurnId]),
       [[INTERRUPTED_TEXT, 'turn_interrupted', true, 'turn-f']]);
+    const { rows: ends } = await pool.query(`SELECT event FROM stream_events WHERE stream_key = $1 AND seq = 'end-turn-f'`, [c.key]);
+    assert.deepEqual(ends.map((r) => [r.event.type, r.event.turnId, r.event.agentSessionId]), [['done', 'turn-f', c.id]],
+      'its end on its stream, which the request that asked for it waits for, in the transaction that ends it');
 
     // The run released its claim early and the next turn has taken one: the
     // item's end leaves the new claim alone.
@@ -283,7 +286,14 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
   recovery.releaseLeftRecord = async (args) => { seen.released.push(args.workId); return null; };
   localRecovery.finishAdoptedTurn = async (args) => { seen.local.push(args); return { outcome: 'completed' }; };
   t.after(() => { localRecovery.finishAdoptedTurn = saved.finishAdoptedTurn; });
-  const ctxFor = (c, turnId, { lost = 0, aborted = false, input = {} } = {}) => {
+  // The turn's context, its claim written as the route writes it with the
+  // turn's Asked (a turn runs only while its claim names it).
+  const ctxFor = async (c, turnId, { lost = 0, aborted = false, input = {}, claim = true } = {}) => {
+    if (claim) {
+      await pool.query(
+        `UPDATE agent_sessions SET active_turn = jsonb_build_object('id', $2::text, 'startedAt', NOW(), 'phase', 'mayor') WHERE id = $1`,
+        [c.id, turnId]);
+    }
     const abort = new AbortController();
     if (aborted) abort.abort();
     return {
@@ -300,7 +310,7 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
   await t.test('H1 a run hands the Mayor what was asked, and its coding run\'s owner is this item', async () => {
     reset();
     const c = await conversation();
-    const ctx = ctxFor(c, 'h1', { input: { messageText: 'hi', attachments: [{ id: 'f' }], recorded: { id: 9, clientMessageId: null }, model: 'claude-x' } });
+    const ctx = await ctxFor(c, 'h1', { input: { messageText: 'hi', attachments: [{ id: 'f' }], recorded: { id: 9, clientMessageId: null }, model: 'claude-x' } });
     assert.deepEqual(await turns.run(ctx, { config: {}, pool }), { ended: 'done' });
     const [r] = seen.runs;
     assert.deepEqual([r.agentSessionId, r.user.id, r.turnId, r.messageText, r.attachments, r.recorded, r.retry, r.followUp, r.res],
@@ -309,12 +319,15 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
       'a person\'s Stop and the next claim find the coding run by it');
     assert.deepEqual(seen.recovered, []);
     assert.deepEqual(seen.released, [ctx.workId], 'a record it still holds as it ends is released');
+    await sessionBus.flush();
+    const { rows: ends } = await pool.query(`SELECT event FROM stream_events WHERE stream_key = $1 AND seq = 'end-h1'`, [c.key]);
+    assert.deepEqual(ends.map((r) => r.event.turnId), ['h1'], 'its end on its stream, once its item has done everything');
   });
 
   await t.test('H2 a coding run still owned when the Mayor returned is carried to its end here', async () => {
     reset();
     const c = await conversation();
-    const ctx = ctxFor(c, 'h2');
+    const ctx = await ctxFor(c, 'h2');
     let change = null;
     mayorRun = async () => { change = await ownedChange(c, ctx.workId); };
     await turns.run(ctx, { config: {}, pool });
@@ -326,11 +339,11 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     const c = await conversation();
     agentTurn.resolveAgentMayor = async () => ({ ok: false, error: 'Weekly limit reached.' });
     try {
-      assert.deepEqual(await turns.run(ctxFor(c, 'h3'), { config: {}, pool }), { ended: 'no_payer' });
+      assert.deepEqual(await turns.run(await ctxFor(c, 'h3'), { config: {}, pool }), { ended: 'no_payer' });
     } finally { agentTurn.resolveAgentMayor = async () => ({ ok: true }); }
-    assert.deepEqual(await streamTypes(c), ['error', 'done']);
+    assert.deepEqual(await streamTypes(c), ['error', 'done', 'done']);
     assert.deepEqual(seen.runs, []);
-    const ctx = ctxFor(await conversation(), 'h3b');
+    const ctx = await ctxFor(await conversation(), 'h3b');
     ctx.input.userId = 2147483000;
     assert.deepEqual(await turns.run(ctx, { config: {}, pool }), { ended: 'no_user' }, 'the account that asked is gone');
   });
@@ -338,7 +351,7 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
   await t.test('H4 resumed after its process went: its coding run carried on from its record', async () => {
     reset();
     const c = await conversation();
-    const ctx = ctxFor(c, 'h4', { lost: 1 });
+    const ctx = await ctxFor(c, 'h4', { lost: 1 });
     const change = await ownedChange(c, ctx.workId);
     assert.deepEqual(await turns.run(ctx, { config: {}, pool }), { ended: 'recovered' });
     assert.deepEqual(seen.recovered, [change]);
@@ -348,7 +361,7 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
   await t.test('H4b resumed: a local agent\'s turn it dispatched is taken over and finished here, the coding run\'s retries bounded', async () => {
     reset();
     const c = await conversation();
-    const ctx = ctxFor(c, 'h4b', { lost: 1 });
+    const ctx = await ctxFor(c, 'h4b', { lost: 1 });
     const change = await ownedChange(c, ctx.workId);
     const { rows: [lease] } = await pool.query(
       `INSERT INTO session_agent_leases (session_id, user_id, label, expires_at) VALUES ($1, $2, 'laptop', NOW() + interval '2 minutes') RETURNING id`,
@@ -368,7 +381,7 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     // A coding run whose recovery cannot read the worker yet: tried again.
     reset();
     const d = await conversation();
-    const ctx2 = ctxFor(d, 'h4c', { lost: 1 });
+    const ctx2 = await ctxFor(d, 'h4c', { lost: 1 });
     await ownedChange(d, ctx2.workId);
     let fails = 2;
     recovery.recoverOwnedTurn = async (args) => {
@@ -381,7 +394,7 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
       assert.deepEqual(await turns.run(ctx2, { config: {}, pool }), { ended: 'recovered' });
       assert.equal(seen.recovered.length, 3);
       fails = 5;
-      const ctx3 = ctxFor(d, 'h4e', { lost: 1 });
+      const ctx3 = await ctxFor(d, 'h4e', { lost: 1 });
       await ownedChange(d, ctx3.workId);
       seen.recovered.length = 0;
       await assert.rejects(turns.run(ctx3, { config: {}, pool }), /runtime unavailable/);
@@ -399,26 +412,26 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     await pool.query(
       `INSERT INTO chat_session_messages (agent_session_id, role, content, metadata) VALUES ($1, 'assistant', 'Done.', $2::jsonb)`,
       [c.id, JSON.stringify({ agentTurnId: 'h5' })]);
-    assert.deepEqual(await turns.run(ctxFor(c, 'h5', { lost: 1 }), { config: {}, pool }), { ended: 'done' });
+    assert.deepEqual(await turns.run(await ctxFor(c, 'h5', { lost: 1 }), { config: {}, pool }), { ended: 'done' });
     assert.deepEqual(await notes(c), []);
-    assert.deepEqual(await streamTypes(c), ['done']);
+    assert.deepEqual(await streamTypes(c), ['done', 'done']);
 
     const d = await conversation();
     await agentSessions.acquireTurnLease(pool, { agentSessionId: d.id, userId: d.user.id, turnId: 'h5b' });
     await pool.query(
       `INSERT INTO chat_session_messages (agent_session_id, role, content, metadata) VALUES ($1, 'assistant', 'On it.', $2::jsonb)`,
       [d.id, JSON.stringify({ agentTurnId: 'h5b', dispatch: { tool: 'start_build' } })]);
-    assert.deepEqual(await turns.run(ctxFor(d, 'h5b', { lost: 1 }), { config: {}, pool }), { ended: 'interrupted' },
+    assert.deepEqual(await turns.run(await ctxFor(d, 'h5b', { lost: 1 }), { config: {}, pool }), { ended: 'interrupted' },
       'a dispatch whose coding run never started is not an answer');
     assert.deepEqual((await notes(d)).map((n) => [n.content, n.metadata.retryable]), [[INTERRUPTED_TEXT, true]]);
     assert.equal((await claim(d)).active_turn, null);
-    assert.deepEqual(await streamTypes(d), ['done']);
+    assert.deepEqual(await streamTypes(d), ['done', 'done']);
   });
 
   await t.test('H6 a process that lost the item leaves its record to the next claim', async () => {
     reset();
     const c = await conversation();
-    await turns.run(ctxFor(c, 'h6', { aborted: true }), { config: {}, pool });
+    await turns.run(await ctxFor(c, 'h6', { aborted: true }), { config: {}, pool });
     assert.deepEqual(seen.released, [], 'released only by the attempt that ends the item');
   });
 
@@ -444,7 +457,7 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
         await new Promise((r) => setTimeout(r, 80));
         during.push(await claimOf(c));
       };
-      await turns.run(ctxFor(c, 'h8'), { config: {}, pool });
+      await turns.run(await ctxFor(c, 'h8', { claim: false }), { config: {}, pool });
       assert.equal(during[0].live, true, 'renewed as it starts, though asked five minutes ago');
       assert.ok(during[1].renewed > during[0].renewed, 'and again while it runs');
       const after = (await claimOf(c)).renewed;
@@ -453,12 +466,66 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
 
       const other = await conversation();
       await claim(other, 'someone-else');
-      await turns.run(ctxFor(other, 'h8b'), { config: {}, pool });
+      await turns.run(await ctxFor(other, 'h8b', { claim: false }), { config: {}, pool });
       assert.equal((await claimOf(other)).renewed, null, 'a claim another turn holds is not its to renew');
       // Nothing left for the leftover pass below to count.
       await pool.query('UPDATE agent_sessions SET active_turn = NULL WHERE id = ANY($1::int[])', [[c.id, other.id]]);
     } finally {
       turns.CLAIM_RENEW.ms = was;
+    }
+  });
+
+  await t.test('H9 a turn whose claim was ended while it waited runs nothing, and its stream settles', async () => {
+    // ROLLOUT-ONLY cause: a release from before the turn machine ends a
+    // claim not renewed for 90 seconds, and its lease may take it after.
+    reset();
+    const c = await conversation();
+    const ctx = await ctxFor(c, 'h9', { claim: false });
+    assert.deepEqual(await turns.run(ctx, { config: {}, pool }), { ended: 'claim_gone' }, 'no claim');
+    await pool.query(`UPDATE agent_sessions SET active_turn = jsonb_build_object('id', 'theirs', 'startedAt', NOW()) WHERE id = $1`, [c.id]);
+    assert.deepEqual(await turns.run(await ctxFor(c, 'h9b', { claim: false }), { config: {}, pool }), { ended: 'claim_gone' }, 'another turn\'s claim');
+    assert.deepEqual(seen.runs, [], 'the Mayor never ran');
+    assert.equal((await streamTypes(c)).at(-1), 'done');
+    assert.equal((await pool.query('SELECT active_turn->>\'id\' AS id FROM agent_sessions WHERE id = $1', [c.id])).rows[0].id, 'theirs', 'nor touched the claim');
+    await pool.query('UPDATE agent_sessions SET active_turn = NULL WHERE id = $1', [c.id]);
+  });
+
+  await t.test('H10 a turn whose item loses its lease while it runs on ends its process, unless the item was settled or the process is stopping', async () => {
+    const { LeaseLost } = require('../src/workflow/kernel/services.ts');
+    const exits = [];
+    const was = turns.LOST_LEASE.exit;
+    turns.LOST_LEASE.exit = (code) => { exits.push(code); };
+    const withItem = async (status) => {
+      const c = await conversation();
+      const ctx = await ctxFor(c, `h10-${status}`);
+      const abort = new AbortController();
+      const db = await pool.connect();
+      try {
+        await db.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+        await db.query(
+          `INSERT INTO wf_work (id, machine, key, kind, work_key, input, status, claim_id, lease_until)
+           VALUES ($1, 'turn', $2, 'turn.run', $3, '{}', $4, CASE WHEN $4 = 'running' THEN gen_random_uuid() END,
+                   CASE WHEN $4 = 'running' THEN NOW() + interval '1 minute' END)`,
+          [ctx.workId, c.key, ctx.key, status]);
+        await db.query('COMMIT');
+      } finally { db.release(); }
+      return { ctx: { ...ctx, signal: abort.signal }, abort };
+    };
+    const runAborting = async ({ ctx, abort }, reason) => {
+      reset();
+      mayorRun = async () => { abort.abort(reason); await new Promise((r) => setTimeout(r, 150)); };
+      await turns.run(ctx, { config: {}, pool });
+    };
+    try {
+      await runAborting(await withItem('running'), new LeaseLost());
+      assert.deepEqual(exits, [1], 'its lease lost, its item still outstanding: the process ends');
+      exits.length = 0;
+      await runAborting(await withItem('settled'), new LeaseLost());
+      assert.deepEqual(exits, [], 'a cancelled item runs nowhere again');
+      await runAborting(await withItem('running'), new LeaseLost({ stopping: true }));
+      assert.deepEqual(exits, [], 'a process stopping ends by itself');
+    } finally {
+      turns.LOST_LEASE.exit = was;
     }
   });
 
@@ -544,7 +611,7 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [c.id]);
     assert.deepEqual(await turns.run(classicCtx(c, 'c1b'), { config: {}, pool }), { ended: 'gone' });
     assert.deepEqual(classic.turns, []);
-    assert.deepEqual((await sessionBus.snapshot(c.id)).map((e) => (e.event || e).type).slice(-2), ['error', 'done']);
+    assert.deepEqual((await sessionBus.snapshot(c.id)).map((e) => (e.event || e).type).slice(-3), ['error', 'done', 'done']);
   });
 
   await t.test('C2 a person\'s Stop reaches the running turn from its instance, wherever it runs, once', async () => {
@@ -595,6 +662,41 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     assert.equal(await isSessionBusyAnywhere(c.id, { pool, exceptTurn: true }), false, 'the turn does not count itself');
     await settle();
     assert.equal(await isSessionBusyAnywhere(c.id, { pool }), false, 'and once it ended, nothing works on it');
+  });
+
+  await t.test('C2b a Stop that lands before the turn\'s handle exists is applied once it does', async () => {
+    classic.turns.length = 0; classic.stops.length = 0;
+    const c = await change();
+    const was = { ms: turns.STOP_POLL.ms, stop: sessionsRoutes.requestSessionStop };
+    turns.STOP_POLL.ms = 20;
+    let handle = false;
+    sessionsRoutes.requestSessionStop = async (args) => {
+      classic.stops.push(args);
+      return handle ? { status: 202, body: { ok: true, stopped: true } } : { status: 200, body: { ok: true, stopped: false, reason: 'no active turn' } };
+    };
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    classicRun = () => gate;
+    work.answer = () => new Promise(() => {});
+    try {
+      await send(c, 'Asked', { turnId: 'c2b', kind: 'classic', input: {} });
+      await rt.drain();
+      const running = turns.run(classicCtx(c, 'c2b'), { config: {}, pool });
+      await send(c, 'StopRequested', { by: 'ada' });
+      await rt.drain();
+      await new Promise((r) => setTimeout(r, 100));
+      assert.ok(classic.stops.length >= 2, 'asked again while there is no handle');
+      handle = true;
+      await new Promise((r) => setTimeout(r, 100));
+      const applied = classic.stops.length;
+      await new Promise((r) => setTimeout(r, 100));
+      assert.equal(classic.stops.length, applied, 'and not again once it landed');
+      release();
+      await running;
+    } finally {
+      turns.STOP_POLL.ms = was.ms; sessionsRoutes.requestSessionStop = was.stop;
+      classicRun = async () => {}; work.answer = null; release();
+    }
   });
 
   await t.test('C3 resumed: what it dispatched is carried on; a turn cut before its reply gets the dev chat\'s note, once', async () => {
@@ -718,6 +820,19 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
       headlessResume = async () => { throw new Error('a bug'); };
       await turns.run(headlessCtx(c, 'a2d', { lost: 1 }), { config: {}, pool });
       assert.deepEqual([headless.resumes.length, headless.failed.length], [1, 1], 'anything else fails the run at once');
+
+      // Stopped while it waits between tries: nothing reported (a normal
+      // return would settle the item as done, its run still 'generating').
+      resetHeadless();
+      turns.RECOVERY_RETRY.ms = 500;
+      headlessRun = async (args) => { args.onRetained(new Error('worker unreachable')); };
+      headlessResume = async (args) => { args.onRetained(new Error('still')); };
+      const abort = new AbortController();
+      const stopped = turns.run({ ...headlessCtx(c, 'a2e'), signal: abort.signal }, { config: {}, pool });
+      const { LeaseLost } = require('../src/workflow/kernel/services.ts');
+      setTimeout(() => abort.abort(new LeaseLost({ stopping: true })), 50);
+      await assert.rejects(stopped, /work stopped with its process/);
+      assert.equal(headless.failed.length, 0, 'nor failed: the next claim carries it on');
     } finally {
       Object.assign(turns.RECOVERY_RETRY, was);
     }
@@ -727,7 +842,14 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     resetHeadless();
     const c = await autoRun();
     const ctx = headlessCtx(c, 'a3', { lost: 1 });
+    // ROLLOUT-ONLY: held for the whole item, its reads before the run
+    // included, as an older release reads before it resumes a run.
+    const processes = require('../src/services/processes');
+    let held = null;
+    headlessResume = async () => { held = processes.heldHere('session', c.id); };
     assert.deepEqual(await turns.run(ctx, { config: {}, pool }), { ended: 'recovered' });
+    assert.equal(held, true);
+    assert.equal(processes.heldHere('session', c.id), false);
     assert.deepEqual(headless.runs, [], 'not started again');
     assert.equal(headless.resumes.length, 1);
     assert.equal(headless.resumes[0].session.id, c.id);
@@ -735,6 +857,21 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     await pool.query(`UPDATE chat_sessions SET headless_status = 'ready' WHERE id = $1`, [c.id]);
     await turns.run(headlessCtx(c, 'a3b', { lost: 1 }), { config: {}, pool });
     assert.deepEqual(headless.resumes, []);
+  });
+
+  await t.test('A4 a headless run between its steps is no Stop\'s target: only a dev chat turn hears one from its instance', async () => {
+    const c = await autoRun();
+    work.answer = () => new Promise(() => {});
+    try {
+      await send(c, 'Asked', { turnId: 'a4', kind: 'headless', input: {} });
+      await rt.drain();
+      assert.equal((await instance(c)).state, 'running');
+      const { rows } = await pool.query(require('../src/workflow/session-work.ts').TURN_OWNER_SQL, [c.id]);
+      assert.deepEqual(rows, [], 'its Stop takes the person\'s own path, as before the turn machine');
+    } finally {
+      work.answer = null;
+      await pool.query(`UPDATE chat_sessions SET headless_status = 'failed' WHERE id = $1`, [c.id]);
+    }
   });
 
   // ── 5. ROLLOUT-ONLY: what an older release leaves (turn-leftovers.js) ─
@@ -833,6 +970,52 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
         { config: {}, pool }), { ended: 'recovered' });
     } finally { recovery.recoverOwnedTurn = was; }
     assert.deepEqual(args.map((a) => [a.sessionId, a.owned]), [[c.id, false]]);
+  });
+
+  await t.test('L6 a record a recover turn left is asked for again after a while, a bounded number of times, and the last ask ends it', async () => {
+    const quiet = (turnId) => JSON.stringify({ turnId, mode: 'build', startedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString() });
+    const c = await change();
+    await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`, [c.id, quiet('stuck-job')]);
+    const backdate = async () => {
+      const db = await pool.connect();
+      try {
+        await db.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+        await db.query(
+          `UPDATE wf_events SET created_at = created_at - make_interval(mins => $2) WHERE machine = 'turn' AND key = $1 AND type = 'Asked'`,
+          [c.key, leftovers.RECORD_RETRY.minutes + 1]);
+        await db.query('COMMIT');
+      } finally { db.release(); }
+    };
+    await leftoverPass();
+    await leftoverPass();
+    assert.equal((await askedOn(c.key)).length, 1, 'not again at once');
+    for (let i = 1; i < leftovers.RECORD_RETRY.asks + 2; i += 1) { await backdate(); await leftoverPass(); }
+    const asked = await askedOn(c.key);
+    assert.equal(asked.length, leftovers.RECORD_RETRY.asks, 'a bounded number of times');
+    assert.deepEqual(asked.map((p) => [p.turnId, p.input.last]), [
+      ['leftover-stuck-job', false], ['leftover-stuck-job-2', false], ['leftover-stuck-job-3', false], ['leftover-stuck-job-4', true]]);
+    // The last ask: recovery leaves the record, so it is ended; a record
+    // that moved on (another turn's) is not.
+    const wasRecover = recovery.recoverOwnedTurn;
+    const wasForce = sessionsRoutes.forceStopSession;
+    const forced = [];
+    recovery.recoverOwnedTurn = async () => {};
+    sessionsRoutes.forceStopSession = async (_pool, id, by) => { forced.push([id, by]); };
+    const lastCtx = (identity) => ({ ...classicCtx(c, 'leftover-x'), input: { sessionId: c.id, kind: 'recover', turnId: 'x', instanceKey: c.key, identity, last: true } });
+    try {
+      assert.deepEqual(await turns.run(lastCtx('stuck-job'), { config: {}, pool }), { ended: 'ended' });
+      assert.deepEqual(forced, [[c.id, 'homeroom']]);
+      assert.deepEqual(await turns.run(lastCtx('some-other-job'), { config: {}, pool }), { ended: 'recovered' });
+      assert.equal(forced.length, 1, 'only the record it was asked for');
+      recovery.recoverOwnedTurn = async () => { throw new Error('the cluster did not answer'); };
+      assert.deepEqual(await turns.run(lastCtx('stuck-job'), { config: {}, pool }), { ended: 'ended' }, 'a recovery that fails on the last ask ends it too');
+      assert.deepEqual(await turns.run({ ...lastCtx('stuck-job'), input: { ...lastCtx('stuck-job').input, last: false } }, { config: {}, pool })
+        .then(() => 'returned', (err) => err.message), 'the cluster did not answer', 'an earlier ask fails as its item, to be asked again');
+    } finally {
+      recovery.recoverOwnedTurn = wasRecover;
+      sessionsRoutes.forceStopSession = wasForce;
+      await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [c.id]);
+    }
   });
 
   await t.test('L3 a headless run no turn carries is resumed by one asked once; a run with its turn is left', async () => {

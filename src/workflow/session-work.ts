@@ -174,8 +174,12 @@ export const TURN_OWNER_SQL = `
      WHERE bl.machine = 'bot-request' AND bl.state IN (${BOT_LOOKING_STATES.map((st) => `'${st}'`).join(', ')})
        AND (bl.data->'look'->>'sessionId')::int = $1
     UNION ALL
+    -- A dev chat turn before its record: the turn hears its Stop from its
+    -- instance (services/turns.js watchClassicStop). A headless run between
+    -- its steps has no such ear: its Stop takes the person's own path.
     SELECT 6, 'turn', t.key FROM wf_instances t
      WHERE t.machine = 'turn' AND t.key = 'session:' || $1 AND t.state = 'running'
+       AND t.data->'running'->>'kind' = 'classic'
   ) o WHERE rank = 1 OR ${NO_RECORD} ORDER BY rank LIMIT 1`;
 
 // True while anything above works on the session `sessionId` (an SQL

@@ -617,7 +617,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
       });
       // Followed on the conversation's stream until its end, from wherever
       // the workflow runs it.
-      await sessionBus.relay(req, res, agentTurn.busKey(id), { afterId: from });
+      await sessionBus.relay(req, res, agentTurn.busKey(id), { afterId: from, turnId });
       return undefined;
     } catch (err) {
       if (res.headersSent) {

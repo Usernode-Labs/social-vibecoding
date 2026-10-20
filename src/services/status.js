@@ -329,13 +329,16 @@ async function gatherFull(config) {
   // handoffs normally have one before submitting anything. Report missing
   // previews only after a PR/build exists and work has stopped. Keep the
   // legacy payload key for clients, but never call this worker liveness.
+  // Worked on by any process (a turn's record, a running turn instance, ...:
+  // session-work.ts workedOnSql), not only this one.
+  const working = await activeWorkers.busySessionsAnywhere(sessions.map((s) => s.id), { pool });
   const stuckSessions = sessions
     .filter((s) =>
       runtimeAvailable && s.branch_name &&
       !s.staging_url &&
       (s.pr_number || s.staging_build_ref || s.staging_runtime_name || s.staging_container_id) &&
       !s.has_active_turn &&
-      !activeWorkers.isSessionBusy(s.id) &&
+      !working.has(Number(s.id)) &&
       !s.building &&
       Date.now() - new Date(s.last_activity_at || s.created_at).getTime() > MISSING_PREVIEW_THRESHOLD_MS
     )

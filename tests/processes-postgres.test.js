@@ -119,6 +119,11 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
     assert.equal(await leftovers.olderProcessHolding(pool, 13), null, 'not this process\'s own');
     await other('pod-old', { holds: [['session', 13]] });
     assert.equal(await leftovers.olderProcessHolding(pool, 13), 'pod-old', 'another live process\'s');
+    // A Stop is forwarded only to a process of another release (routes/
+    // sessions.js forwardStopToOlder): this release's turns are machines'.
+    assert.equal(await leftovers.olderProcessHolding(pool, 13, { otherRelease: true }), null, 'pod-old runs this release');
+    await other('pod-prev-release', { holds: [['session', 13]], release: 'older-release' });
+    assert.equal(await leftovers.olderProcessHolding(pool, 13, { otherRelease: true }), 'pod-prev-release');
     again();
     await written([], 'released');
     // A row the process-reap clock reaped while this process stalled comes

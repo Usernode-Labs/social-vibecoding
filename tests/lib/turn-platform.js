@@ -42,7 +42,7 @@ function installTurnPlatform({ finish = true, run = null, extra = {} } = {}) {
       if (finish && /^agent:\d+$/.test(ask.key)) {
         const agentSessionId = Number(ask.key.slice('agent:'.length));
         const key = require('../../src/services/mayor/agent-turn').busKey(agentSessionId);
-        sessionBus.publish(key, { type: 'done', _seq: `${String(ask.turnId).slice(0, 8)}-z`, agentSessionId });
+        sessionBus.publish(key, { type: 'done', _seq: `end-${ask.turnId}`, turnId: String(ask.turnId), agentSessionId });
       }
       return { ok: true };
     },

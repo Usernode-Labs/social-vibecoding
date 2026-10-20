@@ -22,6 +22,22 @@
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type { Event, Json, Outcome, State, TransitionContext, Tx, WorkRequest, WorkResultPayload } from '../kernel/index.ts';
 import { isTurnStop, turnStop } from '../rules/turn-stop.ts';
+import { BUS_CHANNEL, WORKFLOW_SENDER } from '../pushes.ts';
+
+// The stream a turn's events go to (services/session-bus.js): the
+// conversation's own key, or a change's id.
+const streamKeyOf = (key: string): string => (key.startsWith('agent:') ? key : key.replace(/^session:/, ''));
+// A turn's end on its stream, in the transaction that ends it: what the
+// request following it waits for (session-bus.js relay, by `turnId`), and
+// announced on the bus as session-bus.js announces every event.
+export const TURN_END_SQL = `
+  WITH e AS (INSERT INTO stream_events (stream_key, seq, event) VALUES ($1, $2, $3::jsonb) RETURNING id)
+  SELECT pg_notify($4, json_build_object('i', $5::text, 'k', 'stream',
+           'r', json_build_object('key', $1::text, 'id', e.id), 'd', json_build_object())::text) FROM e`;
+export function turnEndEvent(key: string, turnId: string): Record<string, unknown> {
+  const m = /^agent:(\d+)$/.exec(key);
+  return { type: 'done', _seq: `end-${turnId}`, turnId, ...(m ? { agentSessionId: Number(m[1]) } : {}) };
+}
 
 export const MACHINE = 'turn';
 export const WORK = Object.freeze({ run: 'turn.run' });
@@ -191,6 +207,12 @@ export function turnMachine() {
       // A change's turn has no claim of its own here: its record is its
       // run's to release.
       released: async (tx, w) => {
+        // Ended other than its own way (its run failed for good, or ran out
+        // of time): nothing of the run said so on its stream.
+        if (w.how !== 'done') {
+          const event = turnEndEvent(String(w.key), String(w.turnId));
+          await tx.query(TURN_END_SQL, [streamKeyOf(String(w.key)), event._seq, JSON.stringify(event), BUS_CHANNEL, WORKFLOW_SENDER]);
+        }
         const m = /^agent:(\d+)$/.exec(String(w.key));
         if (!m) return;
         const { rows: [was] } = await tx.query(

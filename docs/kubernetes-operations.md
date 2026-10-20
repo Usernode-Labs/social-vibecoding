@@ -755,8 +755,20 @@ person".
 
 **Rolling back past this release.** Older code reads the conductor as the leader's
 process; a second replica is a standby with slots, which is safe. A release from before
-the turn machine elects a leader again among its own processes; until no such release
-can run, this one keeps what that leader reads (`services/turn-leftovers.js` lists it). Argo CD does not prune
+the turn machine elects a leader again among its own processes, and this one, while it
+drains beside it, keeps what that leader reads (`services/turn-leftovers.js` lists it).
+That release cannot run the `turn` machine's work: a person's turn asked in the overlap,
+or one still running when this release's last Pod is gone, is held by its work item and
+left alone by every sweep of that release (the change reads busy, the conversation takes
+no message). Once no process of this release is live (`platform_processes`), give those
+items up so that release's own recovery takes their coding runs over, its interrupted
+sweep their conversations, and a dev chat message left unanswered can be sent again:
+
+```sql
+UPDATE wf_work SET status = 'settled', settled_at = NOW(), claim_id = NULL, lease_until = NULL,
+       result = '{"ended":"rolled_back"}'::jsonb
+ WHERE machine = 'turn' AND status <> 'settled';
+``` Argo CD does not prune
 here, so the conductor's PodDisruptionBudget, the PodMonitor and the PrometheusRule stay;
 the budget (`maxUnavailable: 1`) blocks no drain, and the metrics rules find nothing to
 scrape: delete `pdb/social-vibecoding-conductor`, `podmonitor/` and

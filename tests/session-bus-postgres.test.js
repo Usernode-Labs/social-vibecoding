@@ -133,12 +133,42 @@ test('a turn\'s stream against the full PostgreSQL schema', { timeout: 120000 },
     assert.equal(pruned.watchers, 1);
   });
 
+  await t.test('a request follows its own turn to that turn\'s end: an earlier turn\'s done, or an untagged one, does not end it', async () => {
+    const { EventEmitter } = require('node:events');
+    const req = new EventEmitter();
+    const written = [];
+    let ended = false;
+    const res = { write: (chunk) => { written.push(String(chunk)); }, end: () => { ended = true; } };
+    const from = await a.position('agent:77');
+    const following = a.relay(req, res, 'agent:77', { afterId: from, turnId: 'mine', heartbeatMs: 60000 });
+    b.publish('agent:77', { type: 'done', _seq: 'end-theirs', turnId: 'theirs', agentSessionId: 77 });
+    b.publish('agent:77', { type: 'done', _seq: 'old-z', agentSessionId: 77 });
+    b.publish('agent:77', ev('token', { text: 'hello' }));
+    await b.flush();
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(ended, false, 'still following');
+    b.publish('agent:77', { type: 'done', _seq: 'end-mine', turnId: 'mine', agentSessionId: 77 });
+    await b.flush();
+    await following;
+    assert.equal(ended, true);
+    assert.ok(written.some((w) => w.includes('hello')), 'what came in between reached it');
+  });
+
   await t.test('a finished turn\'s rows go, a turn just started keeps its own; old streams are pruned', async () => {
     await pool.query("INSERT INTO stream_events (stream_key, seq, event, created_at) VALUES ('44', 'x-1', '{\"type\":\"done\",\"_seq\":\"x-1\"}', NOW() - interval '1 minute')");
     a.publish(44, ev('status', { text: 'next turn' }));
     await a.flush();
     a.clearSession(44);
     await until(async () => (await pool.query("SELECT COUNT(*)::int AS n FROM stream_events WHERE stream_key = '44'")).rows[0].n === 1, { label: 'cleared' });
+    // A next turn that started past the grace, on another process: its rows
+    // stay, however old; only what came up to the finished turn's end goes.
+    await pool.query(`INSERT INTO stream_events (stream_key, seq, event, created_at) VALUES
+      ('46', 'a-1', '{"type":"token","_seq":"a-1"}', NOW() - interval '3 minutes'),
+      ('46', 'a-z', '{"type":"done","_seq":"a-z"}', NOW() - interval '2 minutes'),
+      ('46', 'b-1', '{"type":"status","_seq":"b-1"}', NOW() - interval '1 minute')`);
+    a.clearSession(46);
+    await until(async () => (await pool.query("SELECT COUNT(*)::int AS n FROM stream_events WHERE stream_key = '46'")).rows[0].n === 1, { label: 'cleared to its end' });
+    assert.deepEqual((await pool.query("SELECT seq FROM stream_events WHERE stream_key = '46'")).rows.map((r) => r.seq), ['b-1']);
     await pool.query("INSERT INTO stream_events (stream_key, seq, event, created_at) VALUES ('45', 'y-1', '{}', NOW() - interval '7 hours')");
     const pruned = await a.prune(pool);
     assert.ok(pruned.events >= 1);

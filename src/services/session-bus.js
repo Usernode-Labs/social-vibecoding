@@ -117,8 +117,10 @@ function memoryPool() {
       }
       if (sql.startsWith('DELETE FROM stream_events WHERE stream_key')) {
         const cutoff = Date.now() - p[1] * 1000;
+        const upTo = ofKey(p[0]).filter((e) => e.event && e.event.type === 'done' && e.at < cutoff)
+          .reduce((max, e) => Math.max(max, e.id), 0);
         for (let i = events.length - 1; i >= 0; i -= 1) {
-          if (events[i].stream_key === p[0] && events[i].at < cutoff) events.splice(i, 1);
+          if (events[i].stream_key === p[0] && events[i].id <= upTo) events.splice(i, 1);
         }
         return rows([]);
       }
@@ -389,16 +391,20 @@ async function findLast(sessionId, predicate) {
 }
 
 /**
- * A turn ended: its stream's rows go (a turn that started on the stream in
- * the last few seconds keeps its own). Callers wait the grace a browser
- * needs to replay the end first.
+ * A turn ended: its stream's rows go, up to its newest `done` past the
+ * grace (a turn's end). A turn that started after it keeps every row of its
+ * own, however long ago it started, wherever it runs. Callers wait the grace
+ * a browser needs to replay the end first.
  */
 function clearSession(sessionId) {
   const pool = db();
   if (!pool) return;
   const key = String(sessionId);
   void flush().then(() => pool.query(
-    'DELETE FROM stream_events WHERE stream_key = $1 AND created_at < NOW() - make_interval(secs => $2)',
+    `DELETE FROM stream_events WHERE stream_key = $1
+        AND id <= COALESCE((SELECT MAX(d.id) FROM stream_events d
+                             WHERE d.stream_key = $1 AND d.event->>'type' = 'done'
+                               AND d.created_at < NOW() - make_interval(secs => $2)), 0)`,
     [key, CLEAR_KEEP_SECONDS])).catch((err) => log.warn('session-bus', 'A finished turn\'s stream was not cleared', { key, err: err.message }));
 }
 
@@ -418,12 +424,12 @@ async function prune(pool = db(), { maxAgeHours = 6 } = {}) {
 /**
  * A turn a request asked for, relayed to it as server-sent events from
  * `afterId` (a `position` read before the turn was asked) until the turn's
- * `done`: the turn runs in a workflow process (services/turns.js), and its
+ * own end (its `done` carrying `turnId`): the turn runs in a workflow process (services/turns.js), and its
  * events reach the request whichever process that is. A request that goes
  * leaves the turn running, as a dropped stream always did. The caller has
  * written the response's head.
  */
-function relay(req, res, key, { afterId = 0, heartbeatMs = 15000 } = {}) {
+function relay(req, res, key, { afterId = 0, turnId = null, heartbeatMs = 15000 } = {}) {
   return new Promise((resolve) => {
     let ended = false;
     let off = () => {};
@@ -439,7 +445,10 @@ function relay(req, res, key, { afterId = 0, heartbeatMs = 15000 } = {}) {
     off = subscribe(key, (event) => {
       if (ended) return;
       try { res.write(`data: ${JSON.stringify(event)}\n\n`); } catch { /* client gone */ }
-      if (event.type === 'done') end();
+      // Its own turn's end (services/turns.js, turn/machine.ts
+      // turnEndEvent): never an earlier turn's, still ending as this one is
+      // asked, nor a later one's.
+      if (event.type === 'done' && (turnId == null || event.turnId === String(turnId))) end();
     }, { afterId });
     req.on('close', end);
   });

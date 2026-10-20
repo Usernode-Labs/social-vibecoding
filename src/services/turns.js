@@ -114,6 +114,17 @@ function endUnstarted({ agentSessionId, turnId, error }) {
 async function runAgent(ctx, { config, pool }, input) {
   const agentTurn = require('./mayor/agent-turn');
   const agentSessionId = Number(input.agentSessionId);
+  // Asked with its claim, so the claim names it until it ends. One that no
+  // longer does was ended while it waited (ROLLOUT-ONLY: a release from
+  // before the turn machine ends a claim not renewed for 90 seconds, and its
+  // lease may then take it for a turn of its own): over, without running.
+  const { rows: [claim] } = await pool.query(
+    `SELECT active_turn->>'id' AS turn_id FROM agent_sessions WHERE id = $1`, [agentSessionId]);
+  if (!claim || claim.turn_id !== String(input.turnId)) {
+    require('./session-bus').publish(agentTurn.busKey(agentSessionId),
+      { type: 'done', _seq: `${String(input.turnId).slice(0, 8)}-z`, agentSessionId });
+    return { ended: 'claim_gone' };
+  }
   const user = await loadUser(pool, input.userId);
   if (!user) {
     endUnstarted({ agentSessionId, turnId: input.turnId, error: 'The account that asked for this turn is gone.' });
@@ -221,12 +232,15 @@ function watchClassicStop({ pool, key, turnId, session }) {
         `SELECT data->'running'->>'stoppedBy' AS by FROM wf_instances
           WHERE machine = 'turn' AND key = $1 AND data->'running'->>'turnId' = $2`, [key, String(turnId)]);
       if (!r || !r.by) return;
-      acted = true;
-      log.info('turns', 'A person stopped a dev chat turn', { sessionId: session.id, by: r.by });
-      await require('../routes/sessions').requestSessionStop({
+      const out = await require('../routes/sessions').requestSessionStop({
         pool, sessionId: Number(session.id), forwarded: true,
         user: { id: Number(session.user_id), username: r.by, canAdminWrite: true },
       });
+      // A turn whose handle is not registered yet (a Stop at its very
+      // start) answers "no active turn": asked again at the next poll.
+      if (out && out.body && out.body.stopped === false && out.body.reason === 'no active turn') return;
+      acted = true;
+      log.info('turns', 'A person stopped a dev chat turn', { sessionId: session.id, by: r.by });
     } catch (err) {
       log.warn('turns', 'Could not read or apply a dev chat turn\'s stop', { sessionId: session.id, err: err.message });
     } finally {
@@ -323,7 +337,9 @@ async function carryHeadlessOn(ctx, { config, pool }, sessionId, owner) {
       log.warn('turns', 'A headless run will be carried on again', { sessionId, tried, err: err.message });
     }
     await pause(RECOVERY_RETRY.ms, ctx.signal);
-    if (ctx.signal?.aborted) return;
+    // Stopped between tries: nothing to report, so the next claim carries
+    // it on (a normal return would settle the item as done).
+    if (ctx.signal?.aborted) throw ctx.signal.reason || new Error('stopped between tries');
   }
 }
 
@@ -353,26 +369,16 @@ async function runHeadless(ctx, { config, pool }, input) {
     ? { apiKey: null }
     : await require('./limits').resolveBillingPath(pool, config.dataEncryptionKey, session.user_id);
   let retained = false;
-  // ROLLOUT-ONLY: the session's hold, as the run held it before the turn
-  // machine (routes/sessions.js runHeadlessSession; a resumed run takes it
-  // in resumeOneHeadlessRun). A release from before it resumes a
-  // 'generating' run no process holds (its resumeHeadlessRuns), and reads
-  // this process's holds as processes.js writes them for it.
-  const release = require('./processes').hold('session', sessionId);
-  try {
-    await sessions.runHeadlessSessionInner({
-      pool, config, session,
-      user: { id: Number(session.user_id), username: session.username },
-      selectedModel: input.selectedModel,
-      repoOwner, repoName,
-      userApiKey: billing.error ? null : billing.apiKey,
-      issueNumber, issue, comments, botUsername,
-      owner,
-      onRetained: () => { retained = true; },
-    });
-  } finally {
-    release();
-  }
+  await sessions.runHeadlessSessionInner({
+    pool, config, session,
+    user: { id: Number(session.user_id), username: session.username },
+    selectedModel: input.selectedModel,
+    repoOwner, repoName,
+    userApiKey: billing.error ? null : billing.apiKey,
+    issueNumber, issue, comments, botUsername,
+    owner,
+    onRetained: () => { retained = true; },
+  });
   if (retained) await carryHeadlessOn(ctx, { config, pool }, sessionId, owner);
   return { ended: 'done' };
 }
@@ -389,8 +395,24 @@ async function resumeHeadless(ctx, { config, pool }, input) {
 // leader ran, as it ran it (a turn a live process still runs is left alone
 // there too), tried again as an owned one is.
 async function runRecover(ctx, { config, pool }, input) {
-  await recoverChange(ctx, { config, pool }, Number(input.sessionId), { owned: false });
-  return { ended: 'recovered' };
+  const sessionId = Number(input.sessionId);
+  try {
+    await recoverChange(ctx, { config, pool }, sessionId, { owned: false });
+  } catch (err) {
+    if (!input.last || ctx.signal?.aborted) throw err;
+    log.warn('turns', 'A record nothing carries could not be recovered on its last ask', { sessionId, err: err.message });
+  }
+  if (!input.last) return { ended: 'recovered' };
+  // The last ask (turn-leftovers.js RECORD_RETRY): a record still there,
+  // the same one, is ended as a forced Stop ends one nobody runs.
+  const { rows: [left] } = await pool.query(
+    `SELECT 1 FROM chat_sessions WHERE id = $1 AND active_turn IS NOT NULL
+        AND COALESCE(active_turn->>'turnId', active_turn->>'logicalTurnId', active_turn->>'turnUuid', 'record') = $2`,
+    [sessionId, String(input.identity)]);
+  if (!left) return { ended: 'recovered' };
+  log.error('turns', 'Ending a turn record no recovery could take to its end', { sessionId, identity: input.identity });
+  await require('../routes/sessions').forceStopSession(pool, sessionId, 'homeroom', null);
+  return { ended: 'ended' };
 }
 
 // ROLLOUT-ONLY: a release from before the turn machine reads a
@@ -415,12 +437,58 @@ function renewClaim(pool, input) {
   return () => clearInterval(timer);
 }
 
+// ROLLOUT-ONLY: a headless run holds its session for the whole of its item,
+// as it held it before the turn machine (routes/sessions.js
+// runHeadlessSession): a release from before it resumes a 'generating' run
+// no process holds (its resumeHeadlessRuns, at its leader's election and
+// every few minutes), and reads this process's holds as processes.js writes
+// them for it. Delete with turn-leftovers.js's rollout parts.
+function holdHeadlessRun(input) {
+  if (input.kind !== 'headless' || !(Number(input.sessionId) > 0)) return () => {};
+  return require('./processes').hold('session', Number(input.sessionId));
+}
+
 const KINDS = new Map([
   ['agent', { run: runAgent, resume: resumeAgent }],
   ['classic', { run: runClassic, resume: resumeClassic }],
   ['headless', { run: runHeadless, resume: resumeHeadless }],
   ['recover', { run: runRecover, resume: runRecover }],
 ]);
+
+// A turn's item that loses its lease while this process runs on (the
+// database out of reach for most of a lease, or this process stalled): the
+// next claim carries the turn on from its record, and nothing here can stop
+// the run part way (its coding run's journal is followed to its end), so two
+// would follow one turn. Unless the item was settled (a cancel: nothing runs
+// it again) or this process is stopping (its runtime's stop, or a shutdown:
+// it exits by itself), this process
+// ends here, as one that died would; the platform restarts it. A database it
+// cannot read counts as not settled.
+const LOST_LEASE = { exit: (code) => process.exit(code) };
+
+function endOnLostLease(ctx, pool) {
+  const signal = ctx.signal;
+  if (!signal || signal.aborted) return () => {};
+  let running = true;
+  const onAbort = () => {
+    if (signal.reason && signal.reason.stopping === true) return;
+    void (async () => {
+      if (require('./lifecycle').isShuttingDown()) return;
+      let settled = false;
+      try {
+        const { rows: [w] } = await pool.query('SELECT status FROM wf_work WHERE id = $1', [ctx.workId]);
+        settled = !!w && w.status === 'settled';
+      } catch { /* out of reach: not known to be settled */ }
+      if (settled || !running) return;
+      log.error('turns', 'A turn lost its work item\'s lease while it ran here; ending this process so the next claim carries it on alone', {
+        workId: ctx.workId, kind: ctx.input?.kind || null, instance: ctx.input?.instanceKey || null,
+      });
+      LOST_LEASE.exit(1);
+    })();
+  };
+  signal.addEventListener('abort', onAbort, { once: true });
+  return () => { running = false; signal.removeEventListener('abort', onAbort); };
+}
 
 /** The turn machine's `turn.run` handler (src/workflow/turn/services.ts). */
 async function run(ctx, deps) {
@@ -431,9 +499,23 @@ async function run(ctx, deps) {
   // turn-leftovers.js) starts where its row says it is, as a resumed one.
   const resumed = !!ctx.resumeFrom || (Number(ctx.lostAttempts) || 0) > 0 || input.resume === true;
   const stopRenewing = renewClaim(deps.pool, input);
+  const releaseRun = holdHeadlessRun(input);
+  const settledHere = endOnLostLease(ctx, deps.pool);
   try {
-    return await (resumed ? kind.resume : kind.run)(ctx, deps, input);
+    const out = await (resumed ? kind.resume : kind.run)(ctx, deps, input);
+    // Its end, which the request that asked for it waits for (session-bus.js
+    // relay): the run's own `done` may come before the rest of its item (a
+    // coding run carried on), and another turn's never ends that request.
+    if (input.instanceKey && input.turnId != null) {
+      const { turnEndEvent } = require('../workflow/turn/machine.ts');
+      const key = String(input.instanceKey);
+      require('./session-bus').publish(key.startsWith('agent:') ? key : Number(key.replace(/^session:/, '')),
+        turnEndEvent(key, String(input.turnId)));
+    }
+    return out;
   } finally {
+    settledHere();
+    releaseRun();
     stopRenewing();
     // Unless this process lost the item (the next claim carries it on), a
     // coding record it still holds is released as it ends.
@@ -445,4 +527,4 @@ async function run(ctx, deps) {
   }
 }
 
-module.exports = { run, ownedChange, RECOVERY_RETRY, STOP_POLL, CLAIM_RENEW, NO_RESPONSE };
+module.exports = { run, ownedChange, RECOVERY_RETRY, STOP_POLL, CLAIM_RENEW, LOST_LEASE, NO_RESPONSE };
