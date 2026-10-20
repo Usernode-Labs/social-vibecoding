@@ -33,9 +33,11 @@ const MORE_BTN = 'rounded-lg px-3 py-1.5 text-xs font-medium text-violet-700 '
  * #4757: when the collapsed grid held the Create tile back (#3047) it used to
  * vanish entirely. Now the "Show all N apps" line carries a compact New
  * project entry beside the button, so creating stays one tap away without
- * expanding the grid — and without adding a tile row (#3047's point). With
- * the tile in the grid, or no more apps to show, the markup is exactly what
- * it always was.
+ * expanding the grid — and without adding a tile row (#3047's point). The
+ * line is justify-between: the Show all link sits left, under where the eye
+ * reads the icons, and the compact New project button sits right (#5654).
+ * With the tile in the grid, or no more apps to show, the markup is exactly
+ * what it always was — the button alone, left aligned like the pair's link.
  */
 export function AppsMoreBody({ moreCount, create = null }: {
   moreCount: number; create?: CreateTileView | null;
@@ -48,11 +50,11 @@ export function AppsMoreBody({ moreCount, create = null }: {
     <div id="home-apps-more" className={moreCount ? 'px-2 pb-1 sm:px-3' : 'hidden px-2 pb-1 sm:px-3'}>
       {moreCount ? (
         compact ? (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between gap-2">
             <button
               type="button"
               id="home-apps-more-btn"
-              className={`flex-1 ${MORE_BTN}`}
+              className={`shrink-0 text-left ${MORE_BTN}`}
               onClick={() => {
                 const home = controller();
                 if (!home) return;
@@ -68,7 +70,7 @@ export function AppsMoreBody({ moreCount, create = null }: {
           <button
             type="button"
             id="home-apps-more-btn"
-            className={`w-full ${MORE_BTN}`}
+            className={`text-left ${MORE_BTN}`}
             onClick={() => {
               const home = controller();
               if (!home) return;

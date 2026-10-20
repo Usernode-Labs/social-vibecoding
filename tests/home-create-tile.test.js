@@ -342,23 +342,29 @@ test('the Show-all line carries the compact entry exactly when the tile is held 
     moreCount: 93, create: { ...CREATE, heldBack: true },
   }));
   assert.match(html, /Show all 93 apps/, 'the expander keeps its place on the line');
-  assert.match(html, /class="flex items-center gap-2"/, 'both controls share one line');
+  assert.match(html, /class="flex items-center justify-between gap-2"/, 'both controls share one line, pushed apart');
   // Tile first? No: Show all, then the entry, the order the spec drew.
   assert.ok(html.indexOf('home-apps-more-btn') < html.indexOf('home-create-tile'),
     'the entry comes after the Show all button');
+  const showAll = html.match(/<button type="button" id="home-apps-more-btn" class="([^"]*)"/);
+  assert.ok(showAll, 'the Show all button is on the line');
+  assert.match(showAll[1], /\btext-left\b/, 'the Show all link sits left, not centred');
+  assert.doesNotMatch(showAll[1], /\bflex-1\b/, 'it takes its natural width, not the free space');
   const entry = html.match(/<button type="button" id="home-create-tile" class="([^"]*)"/);
   assert.ok(entry, 'the compact entry is a button carrying the Create id');
   assert.match(entry[1], /\bhome-create-btn\b/, 'the focus-ring hook app.css keys');
   assert.doesNotMatch(entry[1], /\bhome-create-tile\b/,
     'not a tile of the grid canvas: the drag-time #app-list rules do not apply');
-  // Not a filled button: dim ink at rest that turns violet on hover, and the
-  // tile's dashed face in front of the label.
+  // #5654: a light button — the app's white surface with a hairline border and
+  // rounded ends, violet only on hover. Not a filled button, and no dashed face.
+  assert.match(entry[1], /\bbg-white\b/, 'the light surface the screenshot shows');
+  assert.match(entry[1], /\brounded-full\b/, 'fully rounded ends');
+  assert.match(entry[1], /\bborder-zinc-200\b/, 'the hairline border');
+  assert.match(entry[1], /\btext-zinc-800\b/, 'dark zinc ink at rest');
+  assert.match(entry[1], /\bhover:text-violet-700\b/, 'the violet hover accent');
+  assert.doesNotMatch(entry[1], /\bborder-dashed\b/, 'the dashed face is dropped on this button');
   assert.doesNotMatch(entry[1], /\bbg-violet-600\b/, 'not a filled blue button');
-  assert.doesNotMatch(entry[1], /\btext-white\b/, 'no white ink: dim zinc text, not filled');
-  assert.match(entry[1], /\btext-zinc-600\b/, 'dim zinc ink at rest');
-  assert.match(entry[1], /\bgroup-hover:text-violet-700\b/, 'the violet hover accent');
-  assert.match(html, /<span class="[^"]*border-dashed[^"]*group-hover:border-violet-500[^"]*"/,
-    'the entry renders its dashed face, which turns violet on hover');
+  assert.doesNotMatch(entry[1], /\btext-white\b/, 'no white ink: dark zinc text, not filled');
   assert.match(html, /data-panel-slot="create"/);
   assert.match(html, /data-create-enabled="true"/);
   assert.match(html, /title="Start a project: an app for you or for a community"/);
@@ -398,7 +404,10 @@ test('without a held-back tile the Show-all line is what it always was', () => {
   const html = renderToHtml(createElement(AppsMoreBody, {
     moreCount: 9, create: { ...CREATE, heldBack: false },
   }));
-  assert.match(html, /id="home-apps-more-btn"[^>]*class="w-full /, 'the button keeps its full width');
+  const lone = html.match(/<button type="button" id="home-apps-more-btn" class="([^"]*)"/);
+  assert.ok(lone, 'the lone Show all button is in the host');
+  assert.match(lone[1], /\btext-left\b/, 'left aligned like the pair\'s link');
+  assert.doesNotMatch(lone[1], /\bw-full\b/, 'no longer stretched across the host');
   assert.doesNotMatch(html, /home-create-tile/, 'and no compact entry beside it');
   assert.doesNotMatch(html, /flex-1/);
   // The zero count is still the hidden, empty host.
