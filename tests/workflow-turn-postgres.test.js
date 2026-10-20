@@ -560,4 +560,114 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     assert.deepEqual(classic.stalled, [d.id], 'and the bell says it stopped before finishing');
     assert.equal((await sessionBus.snapshot(d.id)).map((e) => (e.event || e).type).pop(), 'done');
   });
+
+  // ── 4. A headless run (an auto session on a request) ────────────────
+  const github = require('../src/services/github');
+  const savedHeadless = {
+    runHeadlessSessionInner: sessionsRoutes.runHeadlessSessionInner, resumeOneHeadlessRun: sessionsRoutes.resumeOneHeadlessRun,
+    failHeadlessRun: sessionsRoutes.failHeadlessRun, fetchPublicIssue: github.fetchPublicIssue,
+    fetchIssueComments: github.fetchIssueComments, getBotUsername: github.getBotUsername,
+  };
+  t.after(() => { Object.assign(sessionsRoutes, {
+    runHeadlessSessionInner: savedHeadless.runHeadlessSessionInner, resumeOneHeadlessRun: savedHeadless.resumeOneHeadlessRun,
+    failHeadlessRun: savedHeadless.failHeadlessRun });
+  Object.assign(github, { fetchPublicIssue: savedHeadless.fetchPublicIssue, fetchIssueComments: savedHeadless.fetchIssueComments,
+    getBotUsername: savedHeadless.getBotUsername }); });
+  const headless = { runs: [], resumes: [], failed: [] };
+  let headlessRun = async () => {};
+  let headlessResume = async () => {};
+  sessionsRoutes.runHeadlessSessionInner = async (args) => { headless.runs.push(args); await headlessRun(args); };
+  sessionsRoutes.resumeOneHeadlessRun = async (args) => { headless.resumes.push(args); await headlessResume(args); };
+  sessionsRoutes.failHeadlessRun = async (_pool, session, message) => { headless.failed.push([session.id, message]); };
+  github.fetchPublicIssue = async (_o, _r, n) => ({ issue: { number: n, title: 'Make it better' } });
+  github.fetchIssueComments = async () => ({ comments: [{ body: 'yes please' }] });
+  github.getBotUsername = async () => 'usernode-bot';
+  const resetHeadless = () => { for (const l of Object.values(headless)) l.length = 0; headlessRun = async () => {}; headlessResume = async () => {}; };
+  async function autoRun({ status = 'generating' } = {}) {
+    const c = await change();
+    await pool.query(
+      `UPDATE chat_sessions SET is_headless = TRUE, headless_status = $2, headless_step = 'planning', headless_issue_number = 5 WHERE id = $1`,
+      [c.id, status]);
+    return c;
+  }
+  const headlessCtx = (c, turnId, { lost = 0 } = {}) => ({
+    workId: crypto.randomUUID(), kind: WORK.run, key: `run:${turnId}`, resumeFrom: null, lostAttempts: lost,
+    signal: new AbortController().signal,
+    input: { sessionId: c.id, userId: c.user.id, selectedModel: 'claude-x', turnId, kind: 'headless', instanceKey: c.key },
+  });
+
+  await t.test('A1 a headless run reads its request and payer as it runs, its coding runs owned by its item', async () => {
+    resetHeadless();
+    const c = await autoRun();
+    const ctx = headlessCtx(c, 'a1');
+    assert.deepEqual(await turns.run(ctx, { config: { dataEncryptionKey: 'k' }, pool }), { ended: 'done' });
+    const [r] = headless.runs;
+    assert.equal(r.session.id, c.id);
+    assert.deepEqual([r.user.id, r.user.username, r.selectedModel, r.repoOwner, r.repoName, r.issueNumber],
+      [c.user.id, c.user.username, 'claude-x', 'acme', 'x', 5]);
+    assert.deepEqual([r.issue.title, r.comments, r.botUsername], ['Make it better', [{ body: 'yes please' }], 'usernode-bot'],
+      'read here, never carried in what the turn was asked');
+    assert.equal(r.userApiKey, 'their-own-key');
+    assert.deepEqual(r.owner, { machine: MACHINE, key: c.key, kind: WORK.run, workKey: 'run:a1', workId: ctx.workId });
+    assert.deepEqual(headless.resumes, []);
+
+    resetHeadless();
+    const done = await autoRun({ status: 'ready' });
+    assert.deepEqual(await turns.run(headlessCtx(done, 'a1b'), { config: {}, pool }), { ended: 'gone' }, 'over before it ran');
+    await pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"t","phase":"cleanup_pending"}'::jsonb WHERE id = $1`, [done.id]);
+    assert.deepEqual(await turns.run(headlessCtx(done, 'a1c'), { config: {}, pool }), { ended: 'gone' },
+      'a finished run whose record still awaits its cleanup is not run again');
+    assert.deepEqual(headless.runs, []);
+  });
+
+  await t.test('A2 a run whose durable state is retained is carried on from its row by its own item, then failed if it never settles', async () => {
+    resetHeadless();
+    const c = await autoRun();
+    const was = { ...turns.RECOVERY_RETRY };
+    Object.assign(turns.RECOVERY_RETRY, { ms: 1, tries: 3 });
+    try {
+      headlessRun = async (args) => { args.onRetained(new Error('worker unreachable')); };
+      let retainedTimes = 1;
+      headlessResume = async (args) => { if (retainedTimes-- > 0) args.onRetained(new Error('still')); };
+      const ctx = headlessCtx(c, 'a2');
+      assert.deepEqual(await turns.run(ctx, { config: {}, pool }), { ended: 'done' });
+      assert.equal(headless.resumes.length, 2, 'carried on until it settles');
+      assert.deepEqual(headless.resumes[0].owner, { machine: MACHINE, key: c.key, kind: WORK.run, workKey: 'run:a2', workId: ctx.workId });
+      assert.deepEqual(headless.failed, []);
+
+      resetHeadless();
+      headlessRun = async (args) => { args.onRetained(new Error('worker unreachable')); };
+      headlessResume = async (args) => { args.onRetained(new Error('never')); };
+      await turns.run(headlessCtx(c, 'a2b'), { config: {}, pool });
+      assert.equal(headless.resumes.length, 3, 'its tries, no more');
+      assert.equal(headless.failed.length, 1);
+      assert.equal(headless.failed[0][0], c.id);
+
+      resetHeadless();
+      headlessResume = async () => { throw Object.assign(new Error('worker state unreadable'), { retainActiveTurn: true, retryWorkerRecovery: true }); };
+      await turns.run(headlessCtx(c, 'a2c', { lost: 1 }), { config: {}, pool });
+      assert.equal(headless.resumes.length, 3, 'a retained error is tried again too');
+      assert.equal(headless.failed.length, 1);
+      resetHeadless();
+      headlessResume = async () => { throw new Error('a bug'); };
+      await turns.run(headlessCtx(c, 'a2d', { lost: 1 }), { config: {}, pool });
+      assert.deepEqual([headless.resumes.length, headless.failed.length], [1, 1], 'anything else fails the run at once');
+    } finally {
+      Object.assign(turns.RECOVERY_RETRY, was);
+    }
+  });
+
+  await t.test('A3 resumed after its process went: carried on from its row; a run already over is left', async () => {
+    resetHeadless();
+    const c = await autoRun();
+    const ctx = headlessCtx(c, 'a3', { lost: 1 });
+    assert.deepEqual(await turns.run(ctx, { config: {}, pool }), { ended: 'recovered' });
+    assert.deepEqual(headless.runs, [], 'not started again');
+    assert.equal(headless.resumes.length, 1);
+    assert.equal(headless.resumes[0].session.id, c.id);
+    resetHeadless();
+    await pool.query(`UPDATE chat_sessions SET headless_status = 'ready' WHERE id = $1`, [c.id]);
+    await turns.run(headlessCtx(c, 'a3b', { lost: 1 }), { config: {}, pool });
+    assert.deepEqual(headless.resumes, []);
+  });
 });

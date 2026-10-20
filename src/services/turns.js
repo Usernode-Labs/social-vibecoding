@@ -279,9 +279,93 @@ async function resumeClassic(ctx, { config, pool }, input) {
   return { ended: 'interrupted' };
 }
 
+// ── A headless run (an auto session on a request) ─────────────────────
+
+// Its durable state retained after a step failed (the retained-recovery
+// path: routes/sessions.js retainOrQuarantineRecoveryError): carried on
+// from the change's row (resumeOneHeadlessRun, which reads its step and
+// follows a coding run's journal), tried again as a coding run's recovery is
+// (RECOVERY_RETRY), then failed for good.
+async function carryHeadlessOn(ctx, { config, pool }, sessionId, owner) {
+  const sessions = require('../routes/sessions');
+  const recoveryRetry = require('./recovery-retry');
+  let latest = null;
+  for (let tried = 1; ; tried += 1) {
+    let retained = false;
+    try {
+      const fresh = await sessions.reloadRecoverableHeadlessSession(pool, sessionId);
+      if (!fresh) return;
+      latest = fresh;
+      await sessions.resumeOneHeadlessRun({ pool, config, session: fresh, owner, onRetained: () => { retained = true; } });
+      if (!retained) return;
+      if (tried >= RECOVERY_RETRY.tries) throw new Error('its durable state is still retained');
+    } catch (err) {
+      const again = (err && err.retainActiveTurn && recoveryRetry.shouldRetryRecoveryError(err)) || retained;
+      if (!again || tried >= RECOVERY_RETRY.tries || ctx.signal?.aborted) {
+        if (ctx.signal?.aborted) throw err;
+        log.error('turns', 'A headless run could not be carried on; failing it', { sessionId, err: err.message });
+        if (latest) {
+          await sessions.failHeadlessRun(pool, latest,
+            `Auto session could not be completed: ${String(err.message || err).substring(0, 200)}`);
+        }
+        return;
+      }
+      log.warn('turns', 'A headless run will be carried on again', { sessionId, tried, err: err.message });
+    }
+    await pause(RECOVERY_RETRY.ms, ctx.signal);
+    if (ctx.signal?.aborted) return;
+  }
+}
+
+async function runHeadless(ctx, { config, pool }, input) {
+  const sessionId = Number(input.sessionId);
+  const sessions = require('../routes/sessions');
+  const session = await sessions.reloadRecoverableHeadlessSession(pool, sessionId);
+  // Stopped, failed or finished meanwhile: nothing to run.
+  if (!session || session.headless_status !== 'generating') return { ended: 'gone' };
+  const owner = turnOwner(ctx, 'turn', input.instanceKey);
+  const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  if (!repoOwner || !repoName) {
+    await sessions.failHeadlessRun(pool, session, 'Auto session failed: no GitHub repo configured.');
+    return { ended: 'failed' };
+  }
+  // What the run is asked with is ids only: the request is read here, as a
+  // resumed planning step reads it, and the payer is read as it runs (the
+  // run re-reads it before each model phase), never carried in the input.
+  const github = require('./github');
+  const issueNumber = Number(session.headless_issue_number);
+  const { issue } = await github.fetchPublicIssue(repoOwner, repoName, issueNumber);
+  const { comments } = await github.fetchIssueComments(repoOwner, repoName, issueNumber);
+  let botUsername = null;
+  try { botUsername = await github.getBotUsername(); } catch { /* the bot's name is optional */ }
+  const isOpenRouterSession = require('../agents/registry').resolveBackend(session.agent_backend) === 'codex_openrouter';
+  const billing = isOpenRouterSession
+    ? { apiKey: null }
+    : await require('./limits').resolveBillingPath(pool, config.dataEncryptionKey, session.user_id);
+  let retained = false;
+  await sessions.runHeadlessSessionInner({
+    pool, config, session,
+    user: { id: Number(session.user_id), username: session.username },
+    selectedModel: input.selectedModel,
+    repoOwner, repoName,
+    userApiKey: billing.error ? null : billing.apiKey,
+    issueNumber, issue, comments, botUsername,
+    owner,
+    onRetained: () => { retained = true; },
+  });
+  if (retained) await carryHeadlessOn(ctx, { config, pool }, sessionId, owner);
+  return { ended: 'done' };
+}
+
+async function resumeHeadless(ctx, { config, pool }, input) {
+  await carryHeadlessOn(ctx, { config, pool }, Number(input.sessionId), turnOwner(ctx, 'turn', input.instanceKey));
+  return { ended: 'recovered' };
+}
+
 const KINDS = new Map([
   ['agent', { run: runAgent, resume: resumeAgent }],
   ['classic', { run: runClassic, resume: resumeClassic }],
+  ['headless', { run: runHeadless, resume: resumeHeadless }],
 ]);
 
 /** The turn machine's `turn.run` handler (src/workflow/turn/services.ts). */

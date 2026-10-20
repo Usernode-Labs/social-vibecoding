@@ -3309,7 +3309,6 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           verificationRequired: !!billing.verificationRequired,
         });
       }
-      const userApiKey = billing.apiKey;
 
       // Headless sessions don't count against the clicking user's session
       // cap (they're shared, unattended work — see the cap query in POST
@@ -3326,16 +3325,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
       const selectedModel = models.resolve(req.body && req.body.model);
 
-      // Full issue text for the seed turn (cache-first; degrades to a
-      // number-only seed when GitHub can't be reached right now). The
-      // issue's comments ride along (#150) so answers to earlier
-      // auto-solve questions are visible to this run; a failed comments
-      // fetch degrades to title + body. The bot username lets the seed
-      // tag the bot's own earlier question comments.
+      // The issue, for the branch's and the run's names and the claim below
+      // (cache-first; degrades to a number-only name when GitHub can't be
+      // reached right now). The run reads the issue and its comments (#150)
+      // itself for its seed turn (services/turns.js), as a resumed planning
+      // step does.
       const { issue } = await github.fetchPublicIssue(repoOwner, repoName, issueNumber);
-      const { comments } = await github.fetchIssueComments(repoOwner, repoName, issueNumber);
-      let botUsername = null;
-      try { botUsername = await github.getBotUsername(); } catch {}
 
       // #1350 carve-out: a headless run mints its branch here, up front,
       // and deliberately does NOT defer. There is no "first message" to
@@ -3362,14 +3357,36 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // path above does the same thing now.
       // plan 9 (Commit 7): carry the final default backend/model in the
       // insert — no insert-then-patch for headless sessions either.
-      const { rows } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, headless_status, headless_issue_number, linked_issues, issue_link_seeded, session_title,
-            agent_backend, agent_provider, agent_model, agent_reasoning_effort)
-         VALUES ($1, $2, $3, 'active', TRUE, 'generating', $4, $5, TRUE, $6, $7, $8, $9, $10)
-         RETURNING *`,
-        [app.id, req.user.id, branchName, issueNumber, [issueNumber], autoTitle,
-         pref.backend, pref.provider, pref.model, pref.reasoningEffort]
-      );
+      // The run is the turn machine's work item on the change (kind
+      // headless: services/turns.js), asked for in the transaction that
+      // writes the 'generating' row, so a row that says it is being
+      // generated always has a run that will carry it to an end.
+      const db = await pool.connect();
+      let rows;
+      try {
+        await db.query('BEGIN');
+        // At its first step, 'planning', from the start: a release between
+        // this and the run's first checkpoint must find it resumable
+        // (migrate.js failOrphanedHeadlessRuns fails a step-less one).
+        ({ rows } = await db.query(
+          `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, headless_status, headless_step, headless_issue_number, linked_issues, issue_link_seeded, session_title,
+              agent_backend, agent_provider, agent_model, agent_reasoning_effort)
+           VALUES ($1, $2, $3, 'active', TRUE, 'generating', 'planning', $4, $5, TRUE, $6, $7, $8, $9, $10)
+           RETURNING *`,
+          [app.id, req.user.id, branchName, issueNumber, [issueNumber], autoTitle,
+           pref.backend, pref.provider, pref.model, pref.reasoningEffort]
+        ));
+        await require('../workflow/platform.ts').askTurn(db, {
+          key: `session:${Number(rows[0].id)}`, turnId: crypto.randomUUID(), kind: 'headless', appId: app.id,
+          input: { sessionId: Number(rows[0].id), userId: req.user.id, selectedModel },
+        });
+        await db.query('COMMIT');
+      } catch (err) {
+        await db.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        db.release();
+      }
       const session = rows[0];
       // The runner reuses chat-handler helpers that expect the app fields
       // joined onto the session row.
@@ -3405,17 +3422,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // fire-and-forget), so announce the row write itself.
       sessionState.touch(session.id);
 
-      // Fire-and-forget: the run continues after this response. Failures
-      // inside the runner mark the row 'failed' (and a platform restart
-      // mid-run is swept to 'failed' at boot — see migrate.js).
-      runHeadlessSession({
-        pool, config, session,
-        user: { id: req.user.id, username: req.user.username },
-        selectedModel, repoOwner, repoName, userApiKey,
-        issueNumber, issue, comments, botUsername,
-      }).catch((err) => {
-        log.error('sessions', 'Headless session runner crashed', { sessionId: session.id, err: err.message, stack: err.stack });
-      });
+      // The run continues after this response, as its turn's work item,
+      // wherever the workflow runs it (asked for above).
 
       log.info('sessions', 'Headless session started', { sessionId: session.id, issueNumber, model: selectedModel });
       // See POST /sessions: the same named flag/beta policy fallback.
@@ -7149,6 +7157,12 @@ async function runHeadlessSessionInner({
   repoOwner, repoName, userApiKey, issueNumber, issue,
   comments = [], botUsername = null,
   resume = false,
+  // The turn machine's work item running it (services/turns.js), named on
+  // its coding runs' records, and what it does with a run whose durable
+  // state is retained (the item carries it on itself; without an item, the
+  // retained-recovery scheduler does).
+  owner = null,
+  onRetained = null,
 }) {
   const { broadcastGlobal } = require('../services/ws');
   const seqPrefix = `h${Date.now().toString(36)}`;
@@ -7288,7 +7302,7 @@ async function runHeadlessSessionInner({
         identity.metadata,
       );
       const toolResult = await runClaudeCodeTool({
-        pool, config, req: fakeReq, res: fakeRes, session, selectedModel,
+        pool, config, req: fakeReq, res: fakeRes, session, selectedModel, owner,
         userMessage: seed,
         toolPromptArg: seed,
         repoOwner, repoName,
@@ -7490,7 +7504,7 @@ async function runHeadlessSessionInner({
         : seed;
 
       const toolArgs = {
-        pool, config, req: fakeReq, res: fakeRes, session, selectedModel,
+        pool, config, req: fakeReq, res: fakeRes, session, selectedModel, owner,
         userMessage: seed,
         toolPromptArg,
         repoOwner, repoName,
@@ -7947,7 +7961,8 @@ async function runHeadlessSessionInner({
         headlessTurnId,
         err: err.message,
       });
-      scheduleRetainedHeadlessRecovery({ pool, config, session });
+      if (onRetained) onRetained(err);
+      else scheduleRetainedHeadlessRecovery({ pool, config, session });
       return;
     }
     log.error('sessions', 'Headless session failed', { sessionId: session.id, err: err.message, stack: err.stack });
@@ -8444,6 +8459,10 @@ async function resumeHeadlessRuns(config, { minIdleMs = 0 } = {}) {
        WHERE cs.is_headless = TRUE
          AND (cs.headless_status = 'generating'
               OR cs.active_turn->>'phase' = 'cleanup_pending')
+         -- A run its turn machine carries (services/turns.js): its own item
+         -- resumes it, in whichever process claims it.
+         AND NOT EXISTS (SELECT 1 FROM wf_instances t
+                          WHERE t.machine = 'turn' AND t.key = 'session:' || cs.id AND t.state = 'running')
          AND ($1::double precision = 0
               OR cs.last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0))`,
       [Number(minIdleMs) || 0]
@@ -8716,7 +8735,7 @@ async function resumeOneHeadlessRun(args) {
   }
 }
 
-async function resumeOneHeadlessRunInner({ pool, config, session }) {
+async function resumeOneHeadlessRunInner({ pool, config, session, owner = null, onRetained = null }) {
   const { broadcastGlobal } = require('../services/ws');
   const initialRecoveryAction = turnLifecycle.recoveryAction(session.active_turn);
   if (initialRecoveryAction === 'quarantine') {
@@ -8785,6 +8804,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       repoOwner, repoName, userApiKey, issueNumber, issue,
       comments, botUsername,
       resume: true,
+      owner, onRetained,
     });
   }
 
@@ -13529,7 +13549,7 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { requestSessionStop, receiveSessionStop, resolveClassicPayer, changePlanFor, attachChangePlans, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, receiveSessionStop, resolveClassicPayer, runHeadlessSessionInner, resumeOneHeadlessRun, reloadRecoverableHeadlessSession, failHeadlessRun, changePlanFor, attachChangePlans, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
 // #4524: the topic page's fast open asks GET /api/apps/:slug/proposals/:id
 // for its item beside the board load, and production serves an active or
 // paused session there when it is the viewer's own or shared. The demo rows

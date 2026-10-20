@@ -154,9 +154,15 @@ function loadSessions(mockPool, overrides = {}) {
   delete require.cache[paths.prMetadata];
   delete require.cache[paths.syncMain];
 
+  // The route asks the turn machine for the run; its real handler
+  // (services/turns.js) runs here, as a workflow process would run it.
+  const turns = require('./lib/turn-platform').installTurnPlatform({
+    run: { config: { jwtSecret: 'test', dataEncryptionKey: 'k' }, pool: mockPool },
+  });
   const subject = require('../src/routes/sessions');
 
   const restore = () => {
+    turns.restore();
     for (const [id, original] of originals) {
       if (original) require.cache[id] = original; else delete require.cache[id];
     }
@@ -218,12 +224,19 @@ function makeRunnerPool() {
       return { rows: [] };
     }
     if (/INSERT INTO chat_sessions/i.test(s)) {
-      const row = {
+      state.session = {
         id: state.nextId++, app_id: params[0], user_id: params[1],
         branch_name: params[2], status: 'active', is_headless: true,
-        headless_status: 'generating', headless_issue_number: params[3],
+        headless_status: 'generating', headless_step: 'planning', headless_issue_number: params[3],
       };
-      return { rows: [row] };
+      return { rows: [{ ...state.session }] };
+    }
+    // The run reads its row back as it starts (services/turns.js).
+    if (/FROM chat_sessions cs/i.test(s) && /JOIN users u/i.test(s) && /cs\.id = \$1/.test(s)) {
+      return { rows: state.session ? [{
+        ...state.session, app_slug: 'my-app', app_name: 'My App', repo_url: 'https://github.com/owner/repo',
+        app_self_hosted: false, username: 'alice',
+      }] : [] };
     }
     if (/INSERT INTO chat_session_messages/i.test(s)) {
       let metadata = null;
@@ -259,7 +272,7 @@ function makeRunnerPool() {
     return { rows: [], rowCount: 0 };
   }
 
-  return { query, state, calls };
+  return { query, state, calls, connect: async () => ({ query, release() {} }) };
 }
 
 async function startSessionsServer(loaded, user = { id: 1, username: 'alice' }) {
