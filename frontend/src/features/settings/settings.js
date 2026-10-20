@@ -677,17 +677,6 @@
         bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
       }
 
-      // #4289: Comment on the page. Kept on this device, not
-      // the account (features/improve/suggest-shortcut.ts), so there is no
-      // request to fail: the change is the save.
-      const shortcutToggle = document.getElementById('suggest-shortcut-enabled');
-      if (shortcutToggle) {
-        shortcutToggle.addEventListener('change', (e) => {
-          const pref = typeof window !== 'undefined' ? window.UsernodeReact?.suggestShortcut : null;
-          pref?.setEnabled(e.target.checked);
-        });
-      }
-
       // New Needs you (an experiment), kept on the account
       // (features/review-flow/settings.ts): the change is the save, and a
       // failed save puts the switch back to what the account has.
@@ -1659,9 +1648,6 @@
       if (bridge) bridge.checked = !!this.state.sessionBridgeEnabled;
       const bridgeStatus = document.getElementById('session-bridge-status');
       if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
-      const shortcut = document.getElementById('suggest-shortcut-enabled');
-      const shortcutPref = typeof window !== 'undefined' ? window.UsernodeReact?.suggestShortcut : null;
-      if (shortcut) shortcut.checked = !!shortcutPref?.enabled();
       const review = document.getElementById('review-flow-enabled');
       const reviewPref = typeof window !== 'undefined' ? window.UsernodeReact?.reviewFlow : null;
       if (review) review.checked = !!reviewPref?.enabled();
