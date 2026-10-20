@@ -1440,11 +1440,11 @@ async function cleanup() {
   const cleanupStartedAt = Date.now();
   let finishesWork = shutdownOverrides?.finishesWork ?? finishesWorkOnShutdown();
   let drainMs = shutdownOverrides?.drainMs ?? shutdownDrainMs();
-  // Only beside a successor that says what it holds: a release from before
-  // the registry would adopt this process's live turns as orphans the moment
-  // it led (a rollback across it), and a Pod evicted before its replacement
-  // is up would leave nobody leading. Without one, the cutover it always had:
-  // a minute's drain, the lock released last.
+  // Only beside a successor that serves: with none (a scale to zero, every
+  // replica restarting), the platform is going down, and its work items are
+  // the next process's to carry on from their saved steps whenever one
+  // starts. Holding this Pod for the long drain then only delays that.
+  // Without one, the cutover it always had: a minute's drain.
   // Draining first, so a process stopping beside this one (a scale to zero,
   // a restart of every replica) never counts it as its successor.
   if (finishesWork) {
@@ -1509,8 +1509,8 @@ async function cleanup() {
   const announced = announceSuccessorBuild();
   require('./src/services/shots-gc').stopOwnCheckouts();
 
-  // Stop leading, then finish what this process started, up to its drain
-  // deadline (drainUntilIdle); only then cut what is left, as below.
+  // Finish what this process started, up to its drain deadline
+  // (drainUntilIdle); only then cut what is left, as below.
   let handlerDrainMs = drainMs;
   if (finishesWork) {
     await drainUntilIdle({ deadline: drainDeadline, announced });
@@ -1681,12 +1681,11 @@ function closeListener(timeoutMs) {
 }
 
 // A release replaced this process: send its tabs to the new Pod, and finish
-// what it holds (services/processes.js), its background work
-// (inflight-work.js), its workflow work and its requests still answering,
-// until it is idle, the deadline passes, or too many newer processes are
-// draining too (services/drain.js). Its loops stopped before this is called,
-// and it refuses anything new
-// (lifecycle.setShuttingDown).
+// what it holds (services/processes.js: its own, in memory), its background
+// work (inflight-work.js), its workflow work and its requests still
+// answering, until it is idle, the deadline passes, or too many newer
+// processes are draining too (services/drain.js). Its loops stopped before
+// this is called, and it refuses anything new (lifecycle.setShuttingDown).
 async function drainUntilIdle({ deadline, announced }) {
   const workflowPlatform = require('./src/workflow/platform.ts');
   await announced;
@@ -1707,7 +1706,7 @@ async function drainUntilIdle({ deadline, announced }) {
     idle: () => processes.localCount() === 0 && inflightWork.size() === 0
       && workflowPlatform.workflowWorkRunning() === 0 && inflightRequests.pending() === 0,
     // Too many newer processes draining, or no successor serving any more
-    // (it died, and nothing leads): hand the rest over now.
+    // (it died: the platform is going down): hand the rest over now.
     superseded: async () => {
       if ((await processes.newerDraining()) >= maxDraining) { why = 'crowded'; return true; }
       if ((await processes.servingOthers()) === 0) { why = 'alone'; return true; }
