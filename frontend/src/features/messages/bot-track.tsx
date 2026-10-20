@@ -403,8 +403,11 @@ export function shotPairOf(view: unknown): ShotPair | null {
   return null;
 }
 
-/** A plan screen drawn small: its sandboxed frame scaled to the box, cropped to what changes. */
-function DrawnSide({ screen, side, label }: { screen: SpecScreen; side: 'before' | 'after'; label: string }) {
+/**
+ * A plan screen drawn small: its sandboxed frame scaled to the box, cropped
+ * to what changes. Also a complicated change's plan card's (./bot-plan-spec.tsx).
+ */
+export function DrawnSide({ screen, side, label }: { screen: SpecScreen; side: 'before' | 'after'; label: string }) {
   const box = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(0);
   useEffect(() => {
@@ -453,7 +456,7 @@ function PictureSide({ src, label }: { src: string; label: string }) {
 }
 
 /** A frame waiting for its picture: the same box, empty. */
-function PendingSide() {
+export function PendingSide() {
   return (
     <span className="block w-full overflow-hidden rounded-lg bg-zinc-100 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-800" style={{ aspectRatio: PICTURE_RATIO }} />
   );

@@ -6928,10 +6928,17 @@ function planChoicesNote(questions) {
   return `\n\n${lines.join('\n')}`;
 }
 
-/** Pure (#4488): the bullets a complicated change's plan card shows: the read's, else one plain line. */
-function complicatedPlanBullets(plan) {
+/**
+ * Pure (#4488): the bullets a complicated change's plan card shows: the
+ * read's; else (20 Oct 2026: request #5580's card said only the last
+ * line) the spec it drafted, in its own words (live.specCardLines); else
+ * one plain line.
+ */
+function complicatedPlanBullets(plan, specMd = null) {
   const bullets = planBullets(plan?.bullets || []);
-  return bullets.length ? bullets : ['The change this request asks for, as the plan and its screens below show it'];
+  if (bullets.length) return bullets;
+  const drafted = planBullets(live.specCardLines(specMd));
+  return drafted.length ? drafted : ['The change this request asks for, as the plan and its screens below show it'];
 }
 
 /**
@@ -6992,7 +6999,7 @@ async function planBeforeBuilding({
     return acted;
   }
   const shown = {
-    bullets: complicatedPlanBullets(plan), questions, complicated: true,
+    bullets: complicatedPlanBullets(plan, drafted.specMd), questions, complicated: true,
     ...(drafted.specVersion ? { spec: { sessionId: Number(drafted.sessionId), version: Number(drafted.specVersion) } } : {}),
   };
   // Once: a plan another drafting of this run already put to its requester
@@ -9705,6 +9712,7 @@ module.exports = {
   buildItOnRequest,
   complicatedReview,
   planChoicesNote,
+  complicatedPlanBullets,
   retryUnsentPlans,
   PLAN_SEND_RETRY_MINUTES,
   PLAN_SEND_ATTEMPTS,

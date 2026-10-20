@@ -10,6 +10,7 @@ import { ensureBotActivity, useBotActivity } from './bot-activity-store';
 import { changeKey } from './bot-shared';
 import { botMeta, postedNote } from './bot-question';
 import { AnsweredChoices, PlanCardView, type AnsweredChoice, type PlanCardState, type PlanProgress } from './bot-plan-view';
+import { PlanSpec } from './bot-plan-spec';
 import { BotHeadWords, botHead } from './bot-head-card';
 import { MessageMarkdown } from './format';
 import { NotifyLive, NotifyMe, notifyMeChosen } from './notify-me';
@@ -288,6 +289,8 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
   const actionId = meta.actionId;
   const state = planState(meta, pressed);
   const card = cardId ? activity.cards.get(cardId) : null;
+  // 20 Oct 2026: a complicated change's plan shows the spec it is asking about.
+  const spec = meta.plan.complicated ? meta.plan.spec : null;
 
   function build(answers: Array<string | null>) {
     if (!actionId) return;
@@ -309,6 +312,7 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
       onBuild={build}
       onChange={() => quote(message, conversationId)}
       progress={planProgress(card, state)}
+      planSpec={spec && Number(spec.sessionId) > 0 && Number(spec.version) > 0 ? <PlanSpec sessionId={Number(spec.sessionId)} version={Number(spec.version)} /> : null}
       footer={state === 'built' && card && card.state !== 'done'
         ? notifyFooter(meta, offer, userId)
         : null}
