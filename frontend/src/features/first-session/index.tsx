@@ -926,8 +926,12 @@ export function Tour({ info, steps, onEnd: endTour, start = 0, moments = false, 
                     {step.tap}
                   </button>
                 ) : (
+                  // The walk's last card says where it goes: it ends on the
+                  // project's hub under the Communities tab (`end`,
+                  // walkDoneLanding), except a private member's, which ends
+                  // on its waitlist card and stays on Home.
                   <Button type="button" onClick={() => go(index + 1)} variant="pillAccent" size="sm" ink="solid" className="text-[15px] font-semibold">
-                    {step.last ? (numbered ? t('core:common.done') : t('onboarding:firstSession.tour.gotIt')) : t('onboarding:firstSession.tour.next')}
+                    {step.last ? (numbered ? (info.privateMember ? t('core:common.done') : t('onboarding:firstSession.walk.goToCommunity')) : t('onboarding:firstSession.tour.gotIt')) : t('onboarding:firstSession.tour.next')}
                   </Button>
                 )}
               </div>

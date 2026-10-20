@@ -1651,6 +1651,10 @@
     "text": "{{app}}'s hub is here. Invite people and decide what changes.",
     "description": "Line on the walk's Communities card, which points at the Communities tab: the project's hub page is there, where its people are invited and decide together which changes to its app go in. {{app}} is the project's name. \"Invite\" and \"decide\" are verbs."
   },
+  "firstSession.walk.goToCommunity": {
+    "text": "Go to community",
+    "description": "Button on the last card of a new member's walk on Home, which points at the Communities tab: ends the walk and opens their project's hub page under that tab, so they see why the screen changes. \"Go to\" is a verb; \"community\" is the project's community, as the app menu's \"Go to community\" row says it."
+  },
   "firstSession.walk.waitlist.title": {
     "text": "Make your own apps",
     "description": "Fourth card of the walk on Home, only for someone let in by an invite before the waitlist let them in. It points at the waitlist card on Home."
