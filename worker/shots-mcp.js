@@ -16,6 +16,7 @@ const path = require('node:path');
 const { hostedAppSlugs } = require('./shots-hosted-origins');
 const boundary = require('./shots-boundary');
 const samples = require('./shots-samples');
+const { PART_NAMES, briefAnswer } = require('./shots-brief');
 
 const platform = String(process.env.PLATFORM_URL || '').replace(/\/$/, '');
 const runId = String(process.env.SHOTS_RUN_ID || '');
@@ -228,17 +229,22 @@ const server = new McpServer(
 );
 
 server.registerTool('get_brief', {
-  description: 'Read your brief: the declared changes (with who is signed in, screen sizes, start path, steps and optional hints), the before and after addresses, which browser to use for whom and for each screen (a phone screen has a phone browser of its own), the changed files, and any deployed app slugs you may open.',
-  inputSchema: {},
+  description: 'Read your brief: the declared changes (with who is signed in, screen sizes, start path, steps and optional hints), the before and after addresses, which browser to use for whom and for each screen (a phone screen has a phone browser of its own), the changed files, and any deployed app slugs you may open. Called with no part, it answers with the brief\'s core; its moreParts names the rest (the declared checks, the diff, the changed files, and anything else too long for one answer). Read a part by calling this again with its part name, and page 2 or later for a part with more than one page.',
+  inputSchema: {
+    part: z.enum(PART_NAMES).optional()
+      .describe('A part moreParts names. Leave out for the core.'),
+    page: z.number().int().min(1).max(200).optional()
+      .describe('The page of the part, from 1 (the default) to the pages moreParts gives.'),
+  },
   annotations: { ...annotations, readOnlyHint: true },
-}, async () => {
+}, async ({ part, page } = {}) => {
   try {
     const context = (await request('/context')).context;
     const origins = context?.origins;
     if (!origins?.base || !origins?.head) throw new Error('The brief has no before and after addresses.');
     const eligibleHostedAppSlugs = hostedAppSlugs(process.env.SHOTS_HOSTED_ORIGINS_FILE,
       new URL(origins.base).origin, new URL(origins.head).origin);
-    return resultContent({ ...context, eligibleHostedAppSlugs });
+    return resultContent(briefAnswer({ ...context, eligibleHostedAppSlugs }, { part, page }));
   } catch (error) { return toolError(error); }
 });
 

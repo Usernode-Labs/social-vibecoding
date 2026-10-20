@@ -281,7 +281,7 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
 
    | Tool | What it does |
    | --- | --- |
-   | `get_brief` | The declared changes, before/after addresses, which browser to use for whom and for each screen (`screenBrowsers`), that another signed-in browser can be a second account (`secondAccount`), changed files and progress so far; on Homeroom's own copies, how phone sign-in works there (`phoneSignIn`) |
+   | `get_brief` | The declared changes, before/after addresses, which browser to use for whom and for each screen (`screenBrowsers`), that another signed-in browser can be a second account (`secondAccount`), changed files and progress so far; on Homeroom's own copies, how phone sign-in works there (`phoneSignIn`) — in answers under 24,000 characters each (`worker/shots-brief.js`): the core, declared changes first, with `moreParts` naming the declared checks, the diff and the changed files, which `get_brief({ part, page })` returns, because Claude Code saves a longer result to a file the agent cannot read |
    | `save_shot` | Publishes PNGs the browser saved with `browser_take_screenshot`, several per call, each for a change, screen, side and kind; one screenshot can be listed for several changes |
    | `save_clip` | Publishes the clip that the change's browser recorded most recently |
    | `note_change` | Records what a change's shots leave out of its claim, shown beside them |
@@ -1141,6 +1141,7 @@ and its phone browser under `SHOTS_DIR/<persona>_phone`.
 | Run-scoped control (`saveShot`, `skipChange`, `noteChange`, `noteProblem`, `noteCondition`, `summary`) | `src/services/shots-control.js` |
 | Internal routes (`/context`, raw `/shot`, `/skip`, `/note`, `/problem`, `/condition`, `/home-tile/:side`) | `src/routes/internal.js` |
 | The sample files `upload_file` may choose | `worker/shots-samples.js` |
+| The brief's core and parts (`get_brief`) | `worker/shots-brief.js` |
 | A browser's own control socket (`startControl`), and calls the shots tools send it (`inject`) | `worker/shots-browser-observer.js` |
 | The app's home-screen tile on each side (`/__shots/home-tile`) | `src/services/shots-home-tile.js` |
 | Run flow and the brief (`executeRun`, `shotsBrief`) | `src/services/shots-orchestrator.js` |
