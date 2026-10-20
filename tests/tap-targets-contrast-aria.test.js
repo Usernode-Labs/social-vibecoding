@@ -167,7 +167,7 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   // are the grouped list's rows, a full row tall each.
   has('frontend/src/features/dev-board/workshop/hub-cards.tsx', new RegExp(`className="dev-ws-hub-open ${KIT}" data-ws-recent-all=""`), 'Recently live\'s All in Workshop');
   const ui = 'frontend/src/features/home/panels/ui.tsx';
-  has(ui, new RegExp(`className="home-panel-browse [^"]*${KIT}"`), 'Browse all apps');
+  has(ui, new RegExp(`className="home-panel-browse [^"]*${KIT}"`), 'Discover\'s See all');
   has(ui, new RegExp(`className="home-panel-see-all [^"]*${KIT}"`), 'See all challenges');
   has('frontend/src/features/home/panels/discover.tsx', new RegExp(`card-add-btn absolute [^$]*${KIT} \\$\\{`), 'the Discover +');
   for (const f of ['grants-list.tsx', 'app-permissions-list.tsx', 'cli-tokens-list.tsx']) {
@@ -215,11 +215,12 @@ test('Q19: chip and Save slops never cover a neighbour\'s own box', () => {
 // ── Q20: ARIA structure ─────────────────────────────────────────────────
 
 test('Q20: form controls the audit found unnamed have names', () => {
-  const waitlist = read('frontend/src/features/auth/waitlist.tsx');
-  assert.match(waitlist, /<label className=\{SURVEY_LABEL\} htmlFor="waitlist-country">\s*\{t\('auth:waitlist\.country\.label'\)\}/,
+  // The country select moved to the waiting room with #5261.
+  const about = read('frontend/src/features/auth/waiting-about.tsx');
+  assert.match(about, /<label htmlFor="waiting-about-country"[^>]*>\s*\{t\('auth:waiting\.about\.country'\)\}/,
     'the Country label points at its select');
-  assert.equal(message('auth:waitlist.country.label'), 'Country');
-  assert.match(waitlist, /id="waitlist-country"/);
+  assert.equal(message('auth:waiting.about.country'), 'Country');
+  assert.match(about, /id="waiting-about-country"/);
   // Four text boxes that took focus announcing only "edit text".
   assert.match(read('frontend/src/features/messages/message-row.tsx'),
     /<textarea ref=\{editRef\} aria-label=\{t\('messages:row\.editLabel'\)\}/, 'the message edit box');

@@ -581,7 +581,8 @@ test('the limiter runs AFTER auth, because the key is the authenticated user', (
 // mobile route, and an earlier draft of the limiter's comment claimed to
 // cover it. It does not, deliberately — and the comment was the bug.
 test('zkpassport/complete is excluded, and cannot inflate points anyway', () => {
-  const decl = /router\.post\('\/api\/v4\/mobile\/zkpassport\/complete', mobileTokenAuth\(config\), async/;
+  // The 18+ check (#5095) sits between auth and the handler; it is not a limiter.
+  const decl = /router\.post\('\/api\/v4\/mobile\/zkpassport\/complete', mobileTokenAuth\(config\),\s*requireAdultAttestation\(pool, \{ shape: 'topochain' \}\), async/;
   assert.match(MOBILE_JS, decl,
     'if this route gains a limiter, it needs its own number, not the read budget');
 

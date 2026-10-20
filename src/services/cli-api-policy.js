@@ -240,8 +240,9 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // Every write is then limited per person and refused to a browser on
   // another origin; a launch must name its cap. They change no app: they
   // launch, steer and preview benchmark builds on the studio's own private
-  // host app, save context packs, add or edit benchmark tasks, and rate a bot
-  // run.
+  // host app, save context packs, add or edit benchmark tasks, rate a bot
+  // run, and save the bot's settings as the console's Save does (they decide
+  // what it does on every app, so the tool asks the person first).
   { method: 'GET', pattern: '/api/bot-studio' },
   { method: 'GET', pattern: '/api/bot-studio/gallery' },
   { method: 'GET', pattern: '/api/bot-studio/runs/:id/watch' },
@@ -264,6 +265,7 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'GET', pattern: '/api/bot-studio/trials/:id/transcript' },
   { method: 'GET', pattern: '/api/bot-studio/bot' },
   { method: 'POST', pattern: '/api/bot-studio/bot/runs/:id/rating' },
+  { method: 'POST', pattern: '/api/bot-studio/bot/settings' },
   { method: 'GET', pattern: '/api/bot-studio/shots' },
   { method: 'GET', pattern: '/api/bot-studio/shots/:id' },
   // The Homeroom bot's configurations, first versions' and later changes'

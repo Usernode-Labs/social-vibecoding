@@ -39,6 +39,8 @@ const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { constants: { signals } } = require('node:os');
 const { performance } = require('node:perf_hooks');
+// Copied beside this script in the worker image (worker/Dockerfile).
+const { noTrainingProvider, withNoTraining } = require('./openrouter-privacy');
 
 const MAX_REQUEST_BYTES = 64 * 1024 * 1024;
 const HOP_HEADERS = new Set([
@@ -660,7 +662,8 @@ function providerRoutingFor(model, asked = {}, { shortlist = null } = {}) {
   const routed = only.length && !brings
     ? { only: [...only], sort: base?.sort || 'throughput', allow_fallbacks: true }
     : {};
-  return { ...PROVIDER_PREFERENCES, ...routed, ...own };
+  // #5123: and never a host that trains on or keeps the prompt.
+  return noTrainingProvider({ ...PROVIDER_PREFERENCES, ...routed, ...own });
 }
 
 // The same request without the shortlist: the plain preferences and the
@@ -669,7 +672,7 @@ function withoutShortlist(provider, asked = {}) {
   if (!provider || !Array.isArray(provider.only)) return null;
   const own = asked && typeof asked === 'object' && !Array.isArray(asked) ? asked : {};
   if (own.only != null) return null;
-  return { ...PROVIDER_PREFERENCES, ...own };
+  return noTrainingProvider({ ...PROVIDER_PREFERENCES, ...own });
 }
 
 // Pair every tool result with its call, pin the model, cap the reply, keep
@@ -706,7 +709,12 @@ function applyTurnPolicy(body, {
       };
     });
   }
-  if (countTokens) return body;
+  if (countTokens) {
+    // A count carries the whole prompt too (#5123): no routing of ours, but
+    // never a host that trains on or keeps it.
+    body.provider = noTrainingProvider(body.provider);
+    return body;
+  }
   // Any preference the request already carries is kept, and the model's
   // shortlist added when it brings no routing of its own.
   const asked = body.provider && typeof body.provider === 'object' && !Array.isArray(body.provider) ? body.provider : {};
@@ -755,7 +763,7 @@ async function sendRouted({ fetchImpl, url, headers, body, serializedBody, asked
   if (!plain || !SHORTLIST_FALLBACK_STATUSES.has(response.status)) return { response, shortlistFallback: false };
   try { await response.body?.cancel(); } catch { /* the refusal is not forwarded */ }
   body.provider = plain;
-  return { response: await send(JSON.stringify(body)), shortlistFallback: true };
+  return { response: await send(JSON.stringify(withNoTraining(body))), shortlistFallback: true };
 }
 
 async function startMessagesAdapter({
@@ -826,7 +834,7 @@ async function startMessagesAdapter({
         model, maxOutputTokens, countTokens, reasoningEffort, imageInput, documentInput,
         imageCounts: images, providerShortlist, pruneToolOutput, outputCounts: toolOutput,
       });
-      const serializedBody = JSON.stringify(body);
+      const serializedBody = JSON.stringify(withNoTraining(body));
       if (onTiming && !countTokens) {
         // Sizes and counts only: the request's content never leaves here.
         const ordinal = ++requestOrdinal;

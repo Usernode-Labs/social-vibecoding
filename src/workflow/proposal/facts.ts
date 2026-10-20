@@ -58,6 +58,10 @@ export interface Row {
   createdAt: string;
   staleNotifiedAt: string | null;
   lastActivityAt: string | null;
+  // Closed: since when, and whether its CC volume is gone already (the
+  // retention purge, cc.purge).
+  archivedAt: string | null;
+  ccPurged: boolean;
   linkedIssues: number[];
   agentSessionId: number | null;
   explicitApproval: boolean;
@@ -149,7 +153,7 @@ async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): 
   const { rows: [r] } = await tx.query(
     `SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.pr_number, cs.pr_title,
             cs.branch_name, cs.reviewed_head_sha, cs.imported_pr_head_sha, cs.approval_epoch, cs.promoted_at,
-            cs.created_at, cs.stale_notified_at, cs.last_activity_at, cs.linked_issues, cs.agent_session_id,
+            cs.created_at, cs.stale_notified_at, cs.last_activity_at, cs.archived_at, cs.cc_purged, cs.linked_issues, cs.agent_session_id,
             cs.requires_explicit_approval, cs.explicit_approval_reason, cs.merge_attempt_at,
             cs.check_state, cs.checks_commit_sha, cs.boot_failure_sync_head, cs.fixed_check_sync_head, cs.fixed_check_sync_keys,
             cs.integration_head_sha, cs.integration_main_sha, cs.integration_resolved_epoch, cs.imported_pr_head_repo,
@@ -185,6 +189,8 @@ async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): 
     epoch: Number(r.approval_epoch) || 0,
     promotedAt: iso(r.promoted_at), createdAt: iso(r.created_at)!, staleNotifiedAt: iso(r.stale_notified_at),
     lastActivityAt: iso(r.last_activity_at),
+    archivedAt: iso(r.archived_at),
+    ccPurged: !!r.cc_purged,
     linkedIssues: issueNumbers(r.linked_issues), agentSessionId: r.agent_session_id ?? null,
     explicitApproval: !!r.requires_explicit_approval, explicitReason: r.explicit_approval_reason ?? null,
     mergeAttemptAt: iso(r.merge_attempt_at), shots: !!r.shots,

@@ -69,7 +69,8 @@ export function activityWhen(
     : format(date, `day-year-${z}`, { ...zone, weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
   const fullDay = format(date, `full-${z}`, { ...zone, weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   if (dateOnly) return { text: day, title: fullDay, iso: date.toISOString() };
-  const time = format(date, 'time', { hour: '2-digit', minute: '2-digit' });
+  // The hour unpadded, "4:14 AM", as every stamp is (lib/timestamp.ts).
+  const time = format(date, 'time', { hour: 'numeric', minute: '2-digit' });
   return {
     text: translate('leaderboard:activity.dayTime', { day, time }),
     title: translate('leaderboard:activity.dayTimeFull', { day: fullDay, time }),

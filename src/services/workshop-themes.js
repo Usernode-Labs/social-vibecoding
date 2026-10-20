@@ -37,8 +37,8 @@
 //
 // The reconcile runs from three triggers, all through the same function:
 // a board change (ws.pushSessionUpdate / pushIssueUpdate → noteBoardChange,
-// debounced per app), the hourly leader sweep over apps viewed in the last
-// week (sweep), and a GET that finds no draft, cards the row does not know,
+// debounced per app), the hourly workshop-themes clock over apps viewed in
+// the last week (sweepTargets, each app a target: sweepApp), and a GET that finds no draft, cards the row does not know,
 // a stage run under another prompt version or a paragraph that is due
 // (getThemes), so a first visit still starts one. GET never waits on the
 // model: it serves what the row has, with `coverage` saying how much of the
@@ -714,29 +714,38 @@ async function ensureRow(pool, appId) {
   );
 }
 
-// One reconcile per app at a time ACROSS instances: two colours serve
-// during a rollout, and a board change reaches whichever handled the
-// request. The lease lapses on its own so a crashed holder cannot wedge
-// the app.
+// One reconcile per app at a time ACROSS processes: a board change or a
+// page view reaches whichever process served it, and the sweep runs
+// wherever the workflow does. The lease lapses on its own so a crashed
+// holder cannot wedge the app. Its stamp (to the microsecond, as text) is
+// the reconcile's token: what it writes back is conditional on still
+// holding it, so one that stalled past the lease writes nothing over the
+// reconcile that took the app after it.
 async function claimLease(pool, appId) {
   const { rows } = await pool.query(
-    `UPDATE app_workshop_themes SET reconcile_started_at = NOW()
+    `UPDATE app_workshop_themes SET reconcile_started_at = clock_timestamp()
       WHERE app_id = $1
         AND (reconcile_started_at IS NULL OR reconcile_started_at < NOW() - $2::interval)
-      RETURNING app_id`,
+      RETURNING reconcile_started_at::text AS stamp`,
     [appId, LEASE_INTERVAL]
   );
+  return rows[0] ? rows[0].stamp : null;
+}
+
+async function releaseLease(pool, appId, stamp) {
+  await pool.query(
+    'UPDATE app_workshop_themes SET reconcile_started_at = NULL WHERE app_id = $1 AND reconcile_started_at = $2::timestamptz',
+    [appId, stamp]
+  );
+}
+
+async function stillLeased(pool, appId, stamp) {
+  const { rows } = await pool.query(
+    'SELECT 1 FROM app_workshop_themes WHERE app_id = $1 AND reconcile_started_at = $2::timestamptz', [appId, stamp]);
   return rows.length > 0;
 }
 
-async function releaseLease(pool, appId) {
-  await pool.query(
-    'UPDATE app_workshop_themes SET reconcile_started_at = NULL WHERE app_id = $1',
-    [appId]
-  );
-}
-
-async function writeRow(pool, appId, next) {
+async function writeRow(pool, appId, next, stamp) {
   const { rows } = await pool.query(
     `UPDATE app_workshop_themes
         SET input_hash = $2, themes_json = $3::jsonb, placements_json = $4::jsonb,
@@ -776,7 +785,7 @@ async function writeRow(pool, appId, next) {
             placement_version = CASE WHEN $16::boolean THEN $17::integer ELSE placement_version END,
             digest_version = CASE WHEN $13::boolean THEN $18::integer ELSE digest_version END,
             reconcile_started_at = NULL
-      WHERE app_id = $1
+      WHERE app_id = $1 AND reconcile_started_at = $20::timestamptz
       RETURNING ${ROW_COLUMNS}`,
     [
       appId, next.inputHash, JSON.stringify(next.themes), JSON.stringify(next.placements),
@@ -784,18 +793,18 @@ async function writeRow(pool, appId, next) {
       next.churnAdded, next.churnRemoved, next.lastError || null, next.digest || null,
       !!next.digestTried, next.digestError || null,
       llm.WORKSHOP_DISCOVERY_VERSION, !!next.placedAll, llm.WORKSHOP_PLACEMENT_VERSION, llm.WORKSHOP_DIGEST_VERSION,
-      next.digestCards ? JSON.stringify(next.digestCards) : null,
+      next.digestCards ? JSON.stringify(next.digestCards) : null, stamp,
     ]
   );
-  return shapeRow(rows[0]);
+  return rows[0] ? shapeRow(rows[0]) : null;
 }
 
-async function recordFailure(pool, appId, message) {
+async function recordFailure(pool, appId, message, stamp) {
   await pool.query(
     `UPDATE app_workshop_themes
         SET last_error = $2, last_failed_at = NOW(), reconcile_started_at = NULL
-      WHERE app_id = $1`,
-    [appId, String(message || 'failed').slice(0, 200)]
+      WHERE app_id = $1 AND reconcile_started_at = $3::timestamptz`,
+    [appId, String(message || 'failed').slice(0, 200), stamp]
   );
 }
 
@@ -1518,7 +1527,7 @@ async function reconcile({ pool, app, reason }) {
   if (inFlight.has(app.id)) { dirty.add(app.id); return { ...result, skipped: 'in-flight' }; }
   if (!llm.isEnabled()) return { ...result, skipped: 'no-model' };
   inFlight.add(app.id);
-  let leased = false;
+  let leased = null;
   try {
     const { input } = await buildThemeInput(pool, app);
     if (!input.items.length) return { ...result, skipped: 'empty' };
@@ -1528,6 +1537,7 @@ async function reconcile({ pool, app, reason }) {
     if (backingOff(row)) return { ...result, skipped: 'backoff' };
     leased = await claimLease(pool, app.id);
     if (!leased) return { ...result, skipped: 'leased' };
+    const stamp = leased;
 
     const keys = input.items.map((i) => i.key);
     const diff = diffRow(row, keys);
@@ -1571,8 +1581,8 @@ async function reconcile({ pool, app, reason }) {
     if (digestWhy === 'version') result.outdated.push('digest');
     if (result.outdated.length) log.info('workshop-themes', 'prompt version moved', { app: app.slug, stages: result.outdated });
     if (!why && !replace && !wantDigest && !diff.added.length && !diff.removed && !row.lastError) {
-      await releaseLease(pool, app.id);
-      leased = false;
+      await releaseLease(pool, app.id, stamp);
+      leased = null;
       return { ...result, skipped: 'unchanged' };
     }
 
@@ -1704,7 +1714,9 @@ async function reconcile({ pool, app, reason }) {
     //
     // Best-effort — a registry failure must not throw away a draft the
     // platform has already paid for.
-    if (themes.length) {
+    // Only while this reconcile still holds the app: one that stalled past
+    // its lease leaves the registry to the reconcile that took over.
+    if (themes.length && await stillLeased(pool, app.id, stamp)) {
       try {
         await syncCategories(pool, app.id, themes);
       } catch (err) {
@@ -1714,7 +1726,7 @@ async function reconcile({ pool, app, reason }) {
 
     const dig = wantDigest ? await makeDigest({ pool, app, input, themes }) : { digest: null, error: null };
 
-    await writeRow(pool, app.id, {
+    const written = await writeRow(pool, app.id, {
       inputHash: fingerprintKeys(keys), themes, placements: next.placements,
       unplaced: [...next.unplaced], model, discovered: next.discovered,
       discoveryKeyCount: next.discoveryKeyCount, churnAdded: next.churnAdded,
@@ -1722,8 +1734,11 @@ async function reconcile({ pool, app, reason }) {
       digest: flattenDigest(dig.digest), digestCards: dig.digest,
       digestTried: wantDigest, digestError: dig.error,
       placedAll,
-    });
-    leased = false;
+    }, stamp);
+    leased = null;
+    // Another reconcile took the app after this one's lease lapsed: its
+    // result stands, and this one's is dropped.
+    if (!written) return { ...result, skipped: 'lease-lost' };
     // What the pass DID, not what it set out to do: a draft that failed
     // published no new categories, so telling open pages otherwise would have
     // them re-fetch expecting a grouping that never changed.
@@ -1731,11 +1746,11 @@ async function reconcile({ pool, app, reason }) {
     return result;
   } catch (err) {
     log.warn('workshop-themes', 'reconcile failed', { app: app.slug, reason, message: err.message });
-    await recordFailure(pool, app.id, err && err.message).catch(() => {});
-    leased = false;
+    if (leased) await recordFailure(pool, app.id, err && err.message, leased).catch(() => {});
+    leased = null;
     return { ...result, error: String(err && err.message || err) };
   } finally {
-    if (leased) await releaseLease(pool, app.id).catch(() => {});
+    if (leased) await releaseLease(pool, app.id, leased).catch(() => {});
     inFlight.delete(app.id);
     if (dirty.delete(app.id)) noteBoardChange(pool, { appId: app.id, appSlug: app.slug });
   }
@@ -1781,13 +1796,19 @@ async function runChange(pool, info) {
   return reconcile({ pool, app, reason: 'change' });
 }
 
-// The hourly leader sweep: every app somebody opened in the last week, in
-// turn. Discovery is due for most of them at most once a day; the rest is
-// a diff that finds nothing and costs no model call.
-async function sweep({ pool, isShuttingDown }) {
-  if (!llm.isEnabled()) return { apps: 0, skipped: 'no-model' };
+// The hourly sweep (the `workshop-themes` clock, src/workflow/clock/services.ts):
+// every app somebody opened in the last week, each a target of its own, so a
+// reconcile (and its model calls) runs once per app however many passes find
+// it. Discovery is due for most of them at most once a day; the rest is a
+// diff that finds nothing and costs no model call. While GitHub's hourly
+// budget is nearly used up (each reconcile reads the app's open issues) the
+// sweep hands back none: a board change or a page view still reconciles on
+// its own trigger.
+async function sweepTargets({ pool }) {
+  if (!llm.isEnabled()) return { apps: 0, skipped: 'no-model', items: [] };
+  if (!githubBudget.budgetAllows('background')) return { apps: 0, held: true, items: [] };
   const { rows } = await pool.query(
-    `SELECT a.id, a.slug, a.name, a.repo_url
+    `SELECT a.id
        FROM app_workshop_themes t
        JOIN apps a ON a.id = t.app_id
       WHERE t.last_viewed_at IS NOT NULL AND t.last_viewed_at >= NOW() - $1::interval
@@ -1795,20 +1816,16 @@ async function sweep({ pool, isShuttingDown }) {
       LIMIT $2`,
     [SWEEP_VIEWED_INTERVAL, SWEEP_MAX_APPS]
   );
-  let apps = 0;
-  let discovered = 0;
-  for (const app of rows) {
-    if (typeof isShuttingDown === 'function' && isShuttingDown()) break;
-    // Each reconcile reads the app's open issues from GitHub. The sweep is
-    // background work, so it stops while GitHub's hourly budget is nearly
-    // used up (services/github-budget.js); a board change or a page view
-    // still reconciles on its own trigger.
-    if (!githubBudget.budgetAllows('background')) return { apps, discovered, held: true };
-    const r = await reconcile({ pool, app, reason: 'sweep' });
-    apps += 1;
-    if (r && r.discovered) discovered += 1;
-  }
-  return { apps, discovered };
+  return { apps: rows.length, items: rows.map((r) => ({ target: `app:${r.id}`, input: { appId: Number(r.id) } })) };
+}
+
+// One target of the sweep: its app reconciled.
+async function sweepApp({ pool, appId }) {
+  if (!githubBudget.budgetAllows('background')) return { held: true };
+  const app = await loadApp(pool, { appId });
+  if (!app) return { skipped: 'gone' };
+  const r = await reconcile({ pool, app, reason: 'sweep' });
+  return { discovered: !!(r && r.discovered), skipped: (r && r.skipped) || null };
 }
 
 // A GET starts a reconcile at most once a minute per app: the row's own
@@ -1934,7 +1951,7 @@ module.exports = {
   needsDiscovery, versionBehind, digestDue, digestStale, diffRow, themesWithItems,
   keepPinned, targetOfKey, loadThemeVotes, registryCategories, builtInCategories, syncCategories,
   liveTopicsOf, fixTopics,
-  getCached, getThemes, reconcile, noteBoardChange, sweep, setNotifier,
+  getCached, getThemes, reconcile, noteBoardChange, sweepTargets, sweepApp, setNotifier,
   DISCOVERY_MAX_AGE_MS, DIGEST_MAX_AGE_MS, DIGEST_RETRY_MS, DRIFT_RATIO, CHANGE_DEBOUNCE_MS, FAILURE_BACKOFF_MS, PLACEMENT_BATCH,
   // The digest’s own windows, fetched apart from the board snapshot so a
   // week is never a truncated slice of one. DIGEST_WEEK_MAX is the cap it

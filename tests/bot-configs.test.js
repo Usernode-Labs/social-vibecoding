@@ -65,7 +65,14 @@ test('a recipe is checked and put in its one shape; anything else is refused wit
     [[], /object/],
     [{ ...current(), extra: 1 }, /unknown keys: extra/],
     [{ ...current(), models: { triage: GLM, spec: OPUS } }, /models\.build/],
-    [{ ...current(), models: { triage: GLM, spec: OPUS, build: GLM, followup: GLM } }, /unknown stages: followup/],
+    [{ ...current(), models: { triage: GLM, spec: OPUS, build: GLM, review: GLM } }, /unknown stages: review/],
+    [{ ...current(), models: { triage: GLM, spec: OPUS, build: GLM, followup: 'glm' } }, /models\.followup must be an OpenRouter model id/],
+    [{ ...current(), effort: { build: 'ultra' } }, /effort\.build must be one of minimal, low, medium, high, xhigh, max/],
+    [{ ...current(), effort: { review: 'low' } }, /effort has unknown stages: review/],
+    [{ ...current(), effort: 'max' }, /effort must be an object/],
+    [{ ...current(), clocks: { build: 0 } }, /clocks\.build must be a whole number of minutes from 1 to 180/],
+    [{ ...current(), clocks: { build: 181 } }, /clocks\.build/],
+    [{ ...current(), clocks: { spec: 1.5 } }, /clocks\.spec/],
     [{ ...current(), models: { triage: 'glm', spec: OPUS, build: GLM } }, /models\.triage must be an OpenRouter model id/],
     [{ ...current(), reviewer: { model: 'nope', maxRounds: 1, budgetMinutes: 5 } }, /reviewer\.model/],
     [{ ...current(), reviewer: { model: OPUS, maxRounds: 6, budgetMinutes: 5 } }, /maxRounds must be a whole number from 0 to 5/],
@@ -83,12 +90,41 @@ test('a recipe is checked and put in its one shape; anything else is refused wit
     assert.match(v.error, re);
   }
   assert.equal(configs.recipeOf({ models: {} }), null, 'a stored recipe that no longer validates reads as none');
+  // 19 Oct 2026: the follow-ups' model, and each stage's effort and clock,
+  // each kept only where named, in one order.
+  const more = configs.validateRecipe({
+    ...current(), models: { triage: GLM, spec: OPUS, build: GLM, followup: ` ${GLM}` },
+    effort: { build: 'max', spec: ' medium', followup: null }, clocks: { build: '45', triage: 5 },
+  });
+  assert.equal(more.ok, true, more.error);
+  assert.deepEqual(more.recipe.models, { triage: GLM, spec: OPUS, build: GLM, followup: GLM });
+  assert.deepEqual(more.recipe.effort, { spec: 'medium', build: 'max' });
+  assert.deepEqual(more.recipe.clocks, { triage: 5, build: 45 });
+  assert.deepEqual(Object.keys(configs.validateRecipe({ ...current(), effort: {}, clocks: {} }).recipe), ['models', 'reviewer', 'pack'],
+    'none named is the same JSON as a recipe saved before them');
+  assert.equal(configs.stageEffort(more.recipe, 'build'), 'max');
+  assert.equal(configs.stageEffort(more.recipe, 'triage'), null);
+  assert.equal(configs.stageClockMs(more.recipe, 'build'), 45 * 60000);
+  assert.equal(configs.stageClockMs(current(), 'build'), null);
 });
 
 test('the recipe in one line, as the console shows it', () => {
   assert.equal(configs.recipeLine(current()), 'triage glm-5.3-flash · spec claude-opus-5.5 · build glm-5.3-flash · review claude-opus-5.5 ×2 in 20 min');
   assert.equal(configs.recipeLine({ ...current(), reviewer: null, pack: 7 }), 'triage glm-5.3-flash · spec claude-opus-5.5 · build glm-5.3-flash · no review · pack 7');
   assert.equal(configs.recipeLine({}), 'not a valid recipe');
+  assert.equal(configs.recipeLine({
+    ...current(), reviewer: null, models: { triage: GLM, spec: OPUS, build: GLM, followup: GLM },
+    effort: { build: 'max', spec: 'medium' }, clocks: { build: 45 },
+  }), 'triage glm-5.3-flash · spec claude-opus-5.5 · build glm-5.3-flash · follow-ups glm-5.3-flash · no review · effort spec medium, build max · clocks build 45 min');
+});
+
+test('a side that differs only in its effort or clock is built, never derived or given the live plan', () => {
+  const noReview = { ...current(), reviewer: null };
+  assert.equal(configs.derivableFrom(current(), { ...noReview, effort: { build: 'max' } }), false, 'a max build is another build');
+  assert.equal(configs.derivableFrom(current(), { ...noReview, clocks: { build: 40 } }), false);
+  assert.equal(configs.plansAlike(current(), { ...current(), effort: { build: 'max' } }), true, 'the plan is the same; only the build differs');
+  assert.equal(configs.plansAlike(current(), { ...current(), effort: { spec: 'high' } }), false, 'another spec effort writes another plan');
+  assert.equal(configs.plansAlike(current(), { ...current(), clocks: { spec: 20 } }), false);
 });
 
 test('derivableFrom: a side recipe is the current one\'s round-0 snapshot exactly when it is that recipe with no reviewer', () => {

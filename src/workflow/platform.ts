@@ -46,6 +46,9 @@ import { botLaneServices } from './bot-lane/services.ts';
 import { MACHINE as RELEASE, releaseKey, releaseMachine } from './release/machine.ts';
 import { releaseServices } from './release/services.ts';
 import type { Adoption } from './release/services.ts';
+import { MACHINE as CLOCK, clock, clockKey } from './clock/machine.ts';
+import { clockServices } from './clock/services.ts';
+import { JOBS as CLOCK_JOBS, JOB_NAMES as CLOCK_JOB_NAMES } from './clock/services.ts';
 import { requestKey as botRequestKey } from './rules/bot-loop.ts';
 import { DM as BOT_DM, VOICE as BOT_VOICE, dmKey, placeOf, voiceKey } from './rules/bot-replies.ts';
 import type { Place } from './rules/bot-replies.ts';
@@ -62,6 +65,8 @@ const pg = createRequire(import.meta.url)('pg');
 let runtime: Runtime | null = null;
 let kernelPool: Pool & { end(): Promise<void> } | null = null;
 let log: Logger | null = null;
+// The configuration the runtime started with (the release's own steps read it).
+let appConfig: any = null;
 
 // What the ownership triggers read, synced on every boot: enabled:<machine>
 // for every machine (wf_holds reads it). Every machine is the only path for
@@ -146,6 +151,7 @@ export function deadPeerOptions() {
 
 export async function startWorkflow(config: any, opts: { loops: boolean }): Promise<void> {
   log = legacy('services/logger');
+  appConfig = config;
   const appPool = legacy('db/pool').getPool(config);
   await syncSettings(appPool);
   if (runtime) return;
@@ -164,8 +170,12 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const deliveries = appDelivery();
   // A cancelled prepare learns it at its next checkpoint or lease renewal;
   // its attempt is retired, and a retirement runs, a lease and more later
-  // (and never while it serves: services.ts).
-  const previews = preview({ maxRetries: config.checkMaxAutoRetries ?? 6, retireAfterMs: PREPARE_LEASE_MS + 30000 });
+  // (and never while it serves: services.ts). A preview nobody has used for
+  // STAGING_IDLE_TEARDOWN_MS is given back (its IdleDue deadline).
+  const previews = preview({
+    maxRetries: config.checkMaxAutoRetries ?? 6, retireAfterMs: PREPARE_LEASE_MS + 30000,
+    idleMs: Number(config.stagingIdleTeardownMs) > 0 ? Number(config.stagingIdleTeardownMs) : 0,
+  });
   const shotRuns = shots({
     execute: !!config.shots?.execute,
     agentBudgetMs: Number(config.shots?.maxAgentMs) || 480_000,
@@ -187,13 +197,16 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const lane = botLane({ staging });
   // What a release runs once, whichever process claims it (release/).
   const releases = releaseMachine();
-  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, releases];
+  // The platform's scheduled jobs (clock/), armed by the release's work.
+  const clocks = clock();
+  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, releases, clocks];
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
     ...appDeliveryServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
     ...campaignServices(deps), ...botChangeServices(deps), ...botVoiceServices(deps), ...botDmServices(deps),
     ...mainCheckServices(deps), ...botRequestServices(deps), ...botLaneServices(deps),
     ...releaseServices({ adoptions: ADOPTIONS }),
+    ...clockServices(CLOCK_JOBS, { config, pool: appPool }),
   };
   const started = createRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, release: bootRelease(),
@@ -256,21 +269,28 @@ export async function startWorkflowLoops(): Promise<void> {
 }
 
 // What a new build owes what an older one left, in order (release/services.ts):
-// the bot lane's clock, open governance rows no instance holds, the sessions
-// the proposal machine does not hold, waits with no clock, the merge queues,
-// deferred DM answers, main checks mid-run, the bot's queue rows, and the
-// platform's own faults.
+// the bot lane's clock, the scheduled jobs, open governance rows no instance
+// holds, the sessions the proposal machine does not hold, waits with no
+// clock, the merge queues, deferred DM answers, main checks mid-run, the
+// previews (a deadline for each, the vote-backed rows no instance holds,
+// and the idle ones none does), the platform's own faults, and the closed
+// proposals' volumes.
 const ADOPTIONS: readonly Adoption[] = Object.freeze([
   // First: the bot's whole loop waits on its clock.
   ['botLane', (release: string) => startLaneClock(release)],
+  // The platform's scheduled jobs: each armed with this build's interval,
+  // and the ones it no longer defines retired.
+  ['clocks', (release: string) => armClocks(release)],
   ['governance', () => enrollGovernance()],
   ['proposals', () => adoptProposals()],
   ['waitingProposals', () => rearmWaitingProposals()],
   ['mergeQueues', () => adoptMergeQueues()],
   ['deferredDms', () => adoptDeferredDms()],
   ['mainChecks', () => adoptMainChecks()],
-  ['botQueue', () => adoptBotQueue()],
+  ['previews', (release: string) => restPreviews(release)],
   ['platformFaults', () => retryPlatformFaults()],
+  // Last: up to a few thousand appends on the first release.
+  ['closedProposals', (release: string) => retainClosedProposals(release)],
 ] as Adoption[]);
 
 // Every open governance row the machine does not hold yet is filed with it.
@@ -284,6 +304,85 @@ async function enrollGovernance(): Promise<number> {
   for (const r of rows) await file(r.id, r.app_id, { kind: 'system', name: 'backfill' });
   if (rows.length) log!.info('workflow', 'Enrolled open governance proposals', { count: rows.length });
   return rows.length;
+}
+
+// Every scheduled job this build defines is armed with its interval, and a
+// job it no longer defines is retired. A staging preview runs none of them
+// (config.runsClusterMaintenance, the rule the leader's duties had): its rows
+// are a copy of production's, and one that ran them before retires them.
+// Resolves how many it armed.
+async function armClocks(release: string): Promise<number> {
+  if (!runtime) return 0;
+  const runs = legacy('config').runsClusterMaintenance();
+  const { rows: existing } = await kernelPool!.query(
+    `SELECT data->>'job' AS job FROM wf_instances
+      WHERE machine = $1 AND state NOT IN ('retired', '(none)') AND data->>'job' IS NOT NULL`, [CLOCK]);
+  for (const { job } of existing) {
+    if (runs && CLOCK_JOB_NAMES.has(job)) continue;
+    await runtime.append(CLOCK, clockKey(job), { type: 'Retire', payload: {} },
+      { requestKey: `retire:${release}`, source: { kind: 'system', name: 'release' } });
+  }
+  if (!runs) return 0;
+  const { rows: swept } = await kernelPool!.query(
+    `SELECT name, last_run_at FROM leader_sweeps WHERE name = ANY($1::text[])`,
+    [CLOCK_JOBS.map((j) => j.leaderSweep).filter(Boolean)]).catch(() => ({ rows: [] as any[] }));
+  const lastRun = new Map<string, Date>(swept.map((r: any) => [r.name, new Date(r.last_run_at)]));
+  for (const job of CLOCK_JOBS) {
+    // A job first armed is due when the leader timer it replaces would have
+    // run, or within the next two minutes (spread, so they do not all start
+    // in the same second). Only the first Arm reads it.
+    const ran = job.leaderSweep ? lastRun.get(job.leaderSweep) : undefined;
+    const spread = Math.floor(Math.random() * Math.min(job.everyMs, 2 * 60 * 1000));
+    const firstDueAt = new Date(ran ? ran.getTime() + job.everyMs : Date.now() + spread).toISOString();
+    await runtime.append(CLOCK, clockKey(job.name), { type: 'Arm', payload: { job: job.name, everyMs: job.everyMs, firstDueAt } },
+      { requestKey: `arm:${release}`, source: { kind: 'system', name: 'release' } });
+  }
+  return CLOCK_JOBS.length;
+}
+
+// A scheduled job's last run, as the admin pages that once read the leader's
+// own status read it: when it last ran, its error, whether a run is under
+// way, what it found, and when the next is due. Read from any process.
+export async function clockStatus(db: Queryable, job: string): Promise<{
+  lastSweepAt: string | null; lastError: string | null; sweepInFlight: boolean; result: Json; nextDueAt: string | null;
+}> {
+  const { rows: [r] } = await db.query(
+    'SELECT state, data FROM wf_instances WHERE machine = $1 AND key = $2', [CLOCK, clockKey(job)]);
+  const last = r?.data?.last ?? null;
+  return {
+    lastSweepAt: last?.at ?? null,
+    lastError: last && !last.ok ? last.error : null,
+    sweepInFlight: r?.state === 'running',
+    result: last?.ok ? (last.result ?? null) : null,
+    nextDueAt: r?.state === 'waiting' ? r.data.due : null,
+  };
+}
+
+// An admin's "run it now" for a scheduled job, waited for: the run happens
+// on whichever process runs the workflow, one at a time with its own, and
+// the answer is its result. Null when it did not end within `timeoutMs`
+// (it still runs; its result shows on the job's page).
+export async function runClockNow(job: string, admin: { id: number }, { timeoutMs = 60000 } = {}): Promise<Awaited<ReturnType<typeof clockStatus>> | null> {
+  if (!runtime) throw new AdminActionError(409, 'The workflow runtime is not running here');
+  const outcome = await runtime.appendAndWait(CLOCK, clockKey(job), { type: 'RunNow', payload: {} },
+    { requestKey: `admin:${randomUUID()}`, source: { kind: 'admin', name: 'console' }, actor: `user:${admin.id}` });
+  if (outcome.status === 'rejected') {
+    // A job no release armed here (a staging preview): the caller decides.
+    throw Object.assign(new AdminActionError(409, `The job ${job} cannot run now (${outcome.reason})`), { code: outcome.reason });
+  }
+  if (outcome.status !== 'accepted' && outcome.status !== 'replayed') return null;
+  const read = async () => (await kernelPool!.query(
+    'SELECT state, data FROM wf_instances WHERE machine = $1 AND key = $2', [CLOCK, clockKey(job)])).rows[0];
+  const now = await read();
+  // The run this asked for: the one it started, or the next one when a run
+  // was under way.
+  const target = Number(now?.data?.n ?? 0) + (now?.data?.again ? 1 : 0);
+  const deadline = Date.now() + timeoutMs;
+  for (let r = now; Date.now() < deadline; r = await read()) {
+    if (Number(r?.data?.last?.n ?? 0) >= target) return clockStatus(kernelPool!, job);
+    await new Promise((done) => setTimeout(done, 500));
+  }
+  return null;
 }
 
 // The bot's lane starts its clock (its refresh, its grants): the same tick,
@@ -380,30 +479,6 @@ export async function botRequestState(appId: number, issueNumber: number): Promi
   const { rows: [r] } = await kernelPool!.query('SELECT state, data FROM wf_instances WHERE machine = $1 AND key = $2',
     [BOT_REQUEST, botRequestKey(appId, issueNumber)]);
   return r ? { state: r.state, data: r.data } : null;
-}
-
-// The boot (and a minute's sweep while any is left): every queue row no
-// instance holds (an older release wrote it) is adopted: an unclaimed one
-// is owed, a claimed one waits for the older release's look to end.
-export async function adoptBotQueue(): Promise<number> {
-  if (!runtime) return 0;
-  const { rows } = await kernelPool!.query(
-    `SELECT q.* FROM homeroom_bot_queue q
-      WHERE NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'request:' || q.app_id || ':' || q.issue_number)
-      ORDER BY q.id LIMIT 500`, [BOT_REQUEST]);
-  const iso = (v: unknown) => (v ? new Date(v as string).toISOString() : null);
-  for (const q of rows) {
-    await runtime.append(BOT_REQUEST, botRequestKey(q.app_id, q.issue_number), {
-      type: 'Adopted', payload: {
-        appId: q.app_id, issueNumber: q.issue_number, reason: q.reason, priority: q.priority, payer: q.payer_user_id,
-        requestedBy: q.requested_by, changedBy: q.changed_by, threadSeenAt: iso(q.thread_seen_at), enqueuedAt: iso(q.enqueued_at),
-        heldUntil: iso(q.held_until), startedAt: iso(q.started_at),
-      } as any,
-    }, { requestKey: `adopt:${q.id}:${q.enqueued_at ? new Date(q.enqueued_at).getTime() : 0}`, source: BOT_SOURCE('adopt'), appId: q.app_id })
-      .catch((err: Error) => log!.warn('workflow', 'Could not adopt a queue row of the bot', { id: q.id, message: err.message }));
-  }
-  if (rows.length) log!.info('workflow', 'Adopted the bot\'s queue rows', { count: rows.length });
-  return rows.length;
 }
 
 // ── The suite on each new main ──────────────────────────────────────────
@@ -699,8 +774,8 @@ export async function rearmWaitingProposals(): Promise<number> {
 
 // Every proposal in review or being merged (their review check) and every
 // session holding a slot (its idle check) that the proposal machine does not
-// hold yet is adopted from its row. The leader's sweep runs it again each
-// minute (server.js), for the sessions created since. Resolves how many.
+// hold yet is adopted from its row, once per release: a session's insert
+// enrols it since (schema.sql wf_enrol_proposal). Resolves how many.
 export async function adoptProposals(limit = 500): Promise<number> {
   if (!runtime) return 0;
   const { rows } = await kernelPool!.query(
@@ -714,6 +789,101 @@ export async function adoptProposals(limit = 500): Promise<number> {
   }
   if (rows.length) log!.info('workflow', 'Adopted proposals', { count: rows.length });
   return rows.length;
+}
+
+// Every preview instance an older build left with no deadline that should
+// have one gets it (the preview machine's IdleDue, taken as its own: the
+// idle give-back and the checks it owes, preview/machine.ts restTimer): one
+// that serves (when previews are given back at all), and one that rests
+// while its row owes checks. A session up for a vote that no preview
+// instance holds (from before the machine held every one) is handed to it
+// with its reviewed head, so its preview is looked after like any other.
+// And a row that still names a runtime no instance holds, unused for the
+// idle window, is retired from its row (the leader's idle GC did that).
+// Once per release (the request keys name the build). Resolves how many.
+async function restPreviews(release: string): Promise<number> {
+  if (!runtime) return 0;
+  const idleMs = Number(appConfig?.stagingIdleTeardownMs) > 0 ? Number(appConfig.stagingIdleTeardownMs) : 0;
+  const { rows } = await kernelPool!.query(
+    `SELECT w.key, w.app_id FROM wf_instances w JOIN chat_sessions cs ON w.key = 'session:' || cs.id
+      WHERE w.machine = $1 AND w.deadline_at IS NULL AND (
+        ($2::boolean AND w.state IN ('settled', 'deferred', 'failed') AND jsonb_typeof(w.data->'serving') = 'object')
+        OR (w.state IN ('settled', 'idle') AND cs.status IN ('active', 'paused', 'promoted', 'merging')
+            AND (cs.unit_suite_fresh_sha IS NOT NULL
+                 OR (cs.status = 'promoted' AND (cs.check_state IS NULL OR cs.check_state = 'pending')))))`,
+    [PREVIEW, idleMs > 0]);
+  for (const r of rows) {
+    await runtime.append(PREVIEW, r.key, { type: 'IdleDue', payload: {} },
+      { requestKey: `rest:${release}`, source: sys('release'), appId: r.app_id ?? undefined })
+      .catch((err: Error) => log!.warn('workflow', 'Could not give a preview its deadline', { key: r.key, message: err.message }));
+  }
+  const { rows: unheld } = await kernelPool!.query(
+    `SELECT cs.id, cs.app_id, cs.reviewed_head_sha FROM chat_sessions cs
+      WHERE cs.status IN ('promoted', 'merging') AND cs.branch_name IS NOT NULL
+        AND cs.reviewed_head_sha ~ '^[0-9a-f]{40}$'
+        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'session:' || cs.id
+                          AND w.state NOT IN ('retired', 'detached'))
+        -- Not one whose promote's own revision is on its way (sent in the
+        -- transition that put it up for a vote, not applied yet).
+        AND NOT EXISTS (SELECT 1 FROM wf_events e WHERE e.machine = $1 AND e.key = 'session:' || cs.id AND e.status = 'pending')`, [PREVIEW]);
+  for (const r of unheld) {
+    await runtime.append(PREVIEW, previewKey(r.id), { type: 'RevisionSubmitted', payload: {
+      sessionId: r.id, head: r.reviewed_head_sha, source: 'adopt', trigger: 'promote-kick', carryFrom: null,
+    } }, { requestKey: `adopt:${release}:${r.id}`, source: sys('adopt'), appId: r.app_id })
+      .catch((err: Error) => log!.warn('workflow', 'Could not hand a vote-backed preview to the machine', { sessionId: r.id, message: err.message }));
+  }
+  if (unheld.length) log!.info('workflow', 'Vote-backed previews handed to the preview machine', { count: unheld.length });
+  const { rows: idle } = idleMs > 0 ? await kernelPool!.query(
+    `SELECT cs.id, cs.app_id FROM chat_sessions cs
+      WHERE (cs.staging_runtime_name IS NOT NULL OR cs.staging_container_id IS NOT NULL)
+        AND cs.status NOT IN ('promoted', 'merging', 'merged')
+        AND cs.last_activity_at < now() - make_interval(secs => $2::double precision / 1000)
+        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'session:' || cs.id
+                          AND w.state NOT IN ('retired', 'detached'))`, [PREVIEW, idleMs]) : { rows: [] as any[] };
+  for (const r of idle) {
+    await runtime.append(PREVIEW, previewKey(r.id), { type: 'RetireRequested', payload: { reason: 'idle', terminal: false, sessionId: r.id } },
+      { requestKey: `idle:${release}:${r.id}`, source: sys('release'), appId: r.app_id })
+      .catch((err: Error) => log!.warn('workflow', 'Could not retire an idle preview no instance holds', { sessionId: r.id, message: err.message }));
+  }
+  return rows.length + unheld.length + idle.length;
+}
+
+// A preview built with another platform environment than the newest
+// build's (the preview-env clock, services/staging-reap.js tellStaleEnv):
+// rebuilt if it backs a vote, else given back (EnvStale). Once per attempt
+// and environment.
+export async function previewEnvStale(sessionId: number, appId: number | null, attempt: number, fingerprint: string): Promise<number> {
+  return runtime!.append(PREVIEW, previewKey(sessionId), { type: 'EnvStale', payload: { attempt } },
+    { requestKey: `env:${fingerprint}:${attempt}`, source: sys('preview-env'), appId: appId ?? undefined });
+}
+
+// A closed proposal whose CC volume is still there and that has no purge
+// queued (closed before the proposal machine queued one with the close, or
+// never held by it) gets its retention purge: a held one by Rearm, an
+// unheld one by its adoption. Once per release. Resolves how many.
+async function retainClosedProposals(release: string): Promise<number> {
+  if (!runtime || process.env.USERNODE_ENV === 'staging' || !(Number(appConfig?.archivedRetentionMs) > 0)) return 0;
+  const { rows: held } = await kernelPool!.query(
+    `SELECT w.key, w.app_id, cs.id FROM wf_instances w JOIN chat_sessions cs ON w.key = 'session:' || cs.id
+      WHERE w.machine = $1 AND w.state = 'closed' AND cs.status = 'archived' AND cs.cc_purged = FALSE
+        AND cs.archived_at IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(w.data->'doomed', '[]'::jsonb)) x
+                         WHERE x->>'kind' = 'cc.purge')`, [PROPOSAL]);
+  for (const r of held) {
+    await runtime.append(PROPOSAL, r.key, { type: 'Rearm', payload: { sessionId: r.id } },
+      { requestKey: `retain:${release}:${r.id}`, source: sys('release'), appId: r.app_id ?? undefined })
+      .catch((err: Error) => log!.warn('workflow', 'Could not queue a closed proposal\'s purge', { sessionId: r.id, message: err.message }));
+  }
+  const { rows: unheld } = await kernelPool!.query(
+    `SELECT cs.id, cs.app_id FROM chat_sessions cs
+      WHERE cs.status = 'archived' AND cs.cc_purged = FALSE AND cs.archived_at IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'session:' || cs.id)
+      ORDER BY cs.id LIMIT 2000`, [PROPOSAL]);
+  for (const r of unheld) {
+    await proposalAdopted({ sessionId: r.id, appId: r.app_id })
+      .catch((err: Error) => log!.warn('workflow', 'Could not adopt a closed proposal', { sessionId: r.id, message: err.message }));
+  }
+  return held.length + unheld.length;
 }
 
 // A release is when a fix to the platform's own fault (a check Job refused
@@ -906,8 +1076,9 @@ export async function adminApplyProposal(
 const count = (n: unknown) => (Number.isInteger(n) && (n as number) >= 0 ? n as number : null);
 
 // A merge found on GitHub that no attempt here reported (somebody merged the
-// pull request by hand while it was up for a vote: the leader looks every
-// six hours, server.js observeMergedOnGithub).
+// pull request by hand while it was up for a vote: the merged-by-hand clock
+// looks every six hours, and the imported-prs clock at each imported one,
+// services/proposal-scans.js).
 // The tally is read again: the counted Yes votes on the version that merged,
 // and the app's active members.
 export async function mergeObserved(m: { sessionId: number; appId: number; mergeSha: string | null; mergedAt: string | null }): Promise<number> {
@@ -1219,6 +1390,8 @@ function proposalDeps(config: any) {
     staleNotifyMs: ms(config.prStaleNotifyMs, 0),
     staleGraceMs: ms(config.prStaleGraceMs, 0),
     shotsEnforced: !!config.shots?.enforce,
+    // A staging copy purges nothing of production's (its rows are a copy).
+    retentionMs: process.env.USERNODE_ENV === 'staging' ? 0 : ms(config.archivedRetentionMs, 0),
   };
 }
 
@@ -1359,8 +1532,9 @@ export async function proposalInstance(sessionId: number): Promise<{ state: stri
 }
 
 // A row the machine does not hold yet, adopted (its timer armed): the
-// leader's backfill, and an insert of a row born in review, in its own
-// transaction (`db`). Asking again is a replay.
+// release's backfill of rows from before every insert enrolled itself
+// (schema.sql wf_enrol_proposal, whose request key this is), or an insert in
+// its own transaction (`db`). Asking again is a replay.
 export async function proposalAdopted(o: { sessionId: number; appId?: number | null; db?: Queryable }): Promise<void> {
   if (o.db) {
     await proposalEvent('Adopted', {}, { ...o, requestKey: `adopt:${o.sessionId}`, source: sys('adopt') });
@@ -1537,6 +1711,7 @@ const ADMIN_EVENTS = new Map<string, ReadonlySet<string>>([
   [DELIVERY, new Set(['EndDeploy'])],
   [PREVIEW, new Set(['AdminRetry', 'AdminRetire', 'AdminEnd'])],
   [BOT_CHANGE, new Set(['RetryFollowup'])],
+  [CLOCK, new Set(['RunNow'])],
 ]);
 
 // The states a machine names as waiting on something outside (its

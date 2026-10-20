@@ -284,6 +284,11 @@ const TopochainChallenges = {
           // The same event — most often the bar's own notification once its
           // event list lands. Nothing to reload, nothing to close and, since
           // the cards no longer read the event's end, nothing to redraw.
+          // Except a list that answered with no event at all: the skeleton
+          // that waited for it becomes the empty state (polish N11).
+          if (TopochainChallenges._loadedEventId == null && TopochainChallenges._challengesLoading) {
+            TopochainChallenges.loadChallenges();
+          }
           return;
         }
         TopochainChallenges.closeChallengeDetail();
@@ -401,7 +406,12 @@ const TopochainChallenges = {
     TopochainChallenges._loadedEventId = eventId;
     if (eventId == null) {
       TopochainChallenges._challenges = [];
-      TopochainChallenges._challengesLoading = false;
+      // Polish N11: before the events list's first answer there is no event
+      // YET, which is a wait, not "No challenges right now." (it flashed
+      // for a frame before the skeleton on a cold visit). Once the list has
+      // answered, a null id is the real empty state.
+      TopochainChallenges._challengesLoading = !!window.TopochainEventContext
+        && TopochainEventContext._resolved !== true;
       TopochainChallenges._challengesError = null;
       TopochainChallenges._mine = new Map();
       TopochainChallenges._onboarding = null;

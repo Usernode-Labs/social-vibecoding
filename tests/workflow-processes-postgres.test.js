@@ -387,7 +387,14 @@ test('workflow machines in a process of their own, and through its crash', { tim
     await procs.arm(pool, 'github.prCommits');
     await reportMerge({ sessionId: carrier.id, appId: a.id, mergeSha: SHA('f') });
     await procs.reached(pool, 'github.prCommits');
-    await pool.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [moved.id, SHA('7')]);
+    // As the sync's own move writes it (the row is the proposal machine's
+    // from its insert: schema.sql wf_enrol_proposal).
+    const c = await pool.connect();
+    try {
+      await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+      await c.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [moved.id, SHA('7')]);
+      await c.query('COMMIT');
+    } finally { c.release(); }
     await procs.release(pool, 'github.prCommits');
     await procs.until(() => settled('merge-followups', mergeKey(carrier), 'included.find'), 'the search for carried changes');
     const refusal = async () => (await pool.query(
@@ -580,12 +587,17 @@ test('workflow machines in a process of their own, and through its crash', { tim
   // queue's pick, the gate, the claim under the lock and GitHub's merge all
   // in the workflow process; and the same killed after GitHub merged, before
   // its answer (merge trace bug 1).
+  // Its preview serves the head its checks passed on, so a release that
+  // hands the preview machine the vote-backed rows it does not hold
+  // (platform.ts restPreviews) adopts it as it stands, building nothing.
   const inReview = async (a) => {
     const s = (await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, status, branch_name, pr_number, pr_title, reviewed_head_sha, promoted_at,
-                                  check_state, checks_commit_sha, integration_merges_clean)
-       VALUES ($1, $2, 'promoted', 'feature', $3, 'A change', $4, NOW() - interval '1 day', 'passing', $4, TRUE) RETURNING *`,
-      [a.id, author.id, ++seq, SHA('a')])).rows[0];
+                                  check_state, checks_commit_sha, integration_merges_clean,
+                                  staging_url, staging_runtime_kind, staging_runtime_name, staging_commit_sha)
+       VALUES ($1, $2, 'promoted', 'feature', $3, 'A change', $4, NOW() - interval '1 day', 'passing', $4, TRUE,
+               'https://preview.test', 'kubernetes', $5, $4) RETURNING *`,
+      [a.id, author.id, ++seq, SHA('a'), `sv-preview-${a.id}-s${seq}`])).rows[0];
     const voter = await user();
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, head_sha, approval_epoch) VALUES ($1, $2, 'yes', $3, 0)`,
       [s.id, voter.id, SHA('a')]);

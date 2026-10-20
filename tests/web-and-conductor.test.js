@@ -96,15 +96,11 @@ test('a status is read from memory where its work runs, and from the leader\'s c
 
 test('the leader publishes the admin statuses it keeps in memory, and stops as it hands over', () => {
   const body = serverJs.slice(serverJs.indexOf('async function becomeLeader()'), serverJs.indexOf('async function start()'));
-  for (const key of [
-    "'bench-lane'",
-    "'staging-reap.automatic'",
-    "'app-domains.sweep'",
-    "require('./src/services/app-storage-cap').LAST_SWEEP_STATUS_KEY",
-  ]) {
-    assert.ok(body.includes(`leaderStatus.provide(${key}`), `becomeLeader publishes ${key}`);
-  }
+  assert.ok(body.includes("leaderStatus.provide('bench-lane'"), 'becomeLeader publishes the bench lane');
   assert.match(body, /leaderStatus\.start\(\{ pool: getPool\(config\) \}\)/);
+  // The automatic stale-preview pass is the preview-gc clock now: nothing of
+  // it is kept in the leader's memory.
+  assert.ok(!body.includes("'staging-reap.automatic'"), 'no leader publishes the automatic reap');
   // The Homeroom bot's loop keeps nothing in memory to publish: its lane is
   // a workflow instance every process reads (homeroom-bot.js loopMemory).
   assert.ok(!body.includes("require('./src/services/homeroom-bot').MEMORY_STATUS_KEY"));
@@ -112,8 +108,14 @@ test('the leader publishes the admin statuses it keeps in memory, and stops as i
   assert.match(cleanupBody, /require\('\.\/src\/services\/leader-status'\)\.stop\(\)/);
   // And the routes read them wherever they are served.
   const admin = fs.readFileSync(path.join(__dirname, '..', 'src/routes/admin.js'), 'utf8');
-  assert.match(admin, /automatic: await leaderStatus\.readOr\('staging-reap\.automatic', pool, stagingReap\.readAutomatic\)/);
-  assert.match(admin, /sweep: await leaderStatus\.readOr\('app-domains\.sweep', pool, appDomains\.getStatus\)/);
+  // The custom-domain sweep, the storage cap's and the leftover-preview pass
+  // are scheduled jobs of the workflow: their status is the clock's last
+  // run, read wherever they ran.
+  assert.match(admin, /automatic: await automaticReap\(pool\)/);
+  assert.match(admin, /async function automaticReap\(pool\) \{[\s\S]*?await clocks\.status\(pool, 'preview-gc'\)/);
+  assert.match(admin, /sweep: await clocks\.status\(pool, 'app-domains'\)/);
+  assert.match(admin, /await clocks\.status\(pool, 'app-storage-cap'\)/);
+  assert.ok(!body.includes("'app-domains.sweep'") && !body.includes('LAST_SWEEP_STATUS_KEY'), 'no leader publishes them');
   const bench = fs.readFileSync(path.join(__dirname, '..', 'src/routes/homeroom-bench.js'), 'utf8');
   assert.equal(bench.match(/lane: await leaderStatus\.readOr\('bench-lane', pool, lane\.laneStatus\)/g).length, 2);
 });
@@ -249,8 +251,20 @@ test('a web process never stands for leader, and only a serving one says its mer
   // The merge-followups machine hears it from the same place, never from a
   // conductor's boot (src/workflow/platform.ts releaseServing).
   assert.match(startBody, /if \(processRole\.servesRequests\(ownRole\)\) require\('\.\/src\/workflow\/platform\.ts'\)\.releaseServing\(getPool\(config\)\);/);
-  // The sweeps that read busy before acting read it for every process.
-  assert.equal((serverJs.match(/worker\.isInFlight\(session\.id\) \|\| activeWorkersSvc\.isSessionBusy\(session\.id\)/g) || []).length, 2);
+  // The scans that read busy before acting read it for every process: the
+  // imported-PR look, the revision refresh and the measurement, clocks of
+  // the workflow now (services/proposal-scans.js). isSessionBusy is the
+  // turn here (worker.isInFlight) and a hold any other process has.
+  const scans = fs.readFileSync(path.join(__dirname, '..', 'src/services/proposal-scans.js'), 'utf8');
+  assert.match(scans, /function busy\(sessionId\) \{\n\s+return require\('\.\/active-workers'\)\.isSessionBusy\(Number\(sessionId\)\);/);
+  for (const fn of ['async function lookImported(', 'async function refreshRevision(', 'async function measurePromoted(']) {
+    const body = scans.slice(scans.indexOf(fn), scans.indexOf('\n}\n', scans.indexOf(fn)));
+    assert.match(body, /busy\(session\.id\)/, `${fn} skips a session busy anywhere`);
+  }
+  const busy = fs.readFileSync(path.join(__dirname, '..', 'src/services/active-workers.js'), 'utf8');
+  const isBusy = busy.slice(busy.indexOf('function isSessionBusy('), busy.indexOf('function isSessionBusyElsewhere('));
+  assert.match(isBusy, /worker\.isInFlight\(sessionId\)/);
+  assert.match(isBusy, /return isSessionBusyElsewhere\(sessionId\);/);
 });
 
 // ── The chart ─────────────────────────────────────────────────────────

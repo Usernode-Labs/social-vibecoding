@@ -128,7 +128,11 @@ function poolWith(row) {
   const pool = {
     async query(sql, params = []) {
       if (/SELECT id, slug, name, runtime_name FROM apps WHERE id/.test(sql)) return { rows: [APP] };
+      if (/^SELECT status FROM app_domains WHERE id = \$1$/.test(sql)) return { rows: state.row ? [{ status: state.row.status }] : [] };
       if (/^UPDATE app_domains SET/.test(sql)) {
+        // A check's write is a compare-and-set on the status it read.
+        const from = sql.match(/WHERE id = \$1 AND status = \$(\d+)/);
+        if (from && state.row.status !== params[Number(from[1]) - 1]) return { rows: [] };
         const sets = sql.match(/SET (.*) WHERE/s)[1].split(', ');
         for (const part of sets) {
           const m = part.trim().match(/^(\w+) = \$(\d+)$/);
@@ -158,6 +162,18 @@ test('pending → verified once both records answer; the error clears', async ()
   assert.equal(next.last_error, null);
   assert.equal(next.failure_count, 0);
   assert.ok(next.verified_at instanceof Date);
+});
+
+test('a check beside an admin\'s disable writes nothing over it', async () => {
+  // The custom-domain clock's run and an admin's Disable on another process:
+  // the check read `pending`, the admin wrote `disabled` before its write.
+  const { pool, state } = poolWith({ ...ROW });
+  const read = { ...state.row };
+  state.row.status = 'disabled';
+  const next = await appDomains.checkRow(pool, config, read, { resolver: good(), probe: noCert });
+  assert.equal(next, null, 'nothing written');
+  assert.equal(state.row.status, 'disabled');
+  assert.equal(state.row.verified_at, undefined);
 });
 
 test('pending stays pending with the sentence that says why, and gives up after a week', async () => {

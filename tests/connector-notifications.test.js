@@ -194,6 +194,9 @@ test('ONE-SHOT — a fired wait is never reconsidered', () => {
   // Stamped in the SAME statement that selects, so two overlapping sweeps
   // cannot both send one wait.
   assert.match(fn, /UPDATE connector_input_waits[\s\S]*?SET fired_at[\s\S]*?WHERE id IN \(/);
+  // ...and only because the outer WHERE checks again: Postgres re-reads a row
+  // another sweep stamped against the outer condition, never the subquery's.
+  assert.match(fn, /FOR UPDATE SKIP LOCKED\s*\)\s*AND cleared_at IS NULL AND fired_at IS NULL/);
   assert.match(SCHEMA, /connector_input_waits_live_idx[\s\S]*?WHERE cleared_at IS NULL AND fired_at IS NULL/,
     'and the database holds one live wait per user, so arming twice cannot stack');
 });

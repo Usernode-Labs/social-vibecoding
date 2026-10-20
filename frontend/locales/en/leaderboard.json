@@ -444,12 +444,12 @@
     "description": "Accessible name of the card at the top of the Challenges tab that shows the viewer's rank and points this season."
   },
   "standing.rankOf_one": {
-    "text": "<0>#{{rank}}</0> of {{number}} person",
-    "description": "The \"Your standing\" card at the top of the Challenges tab, e.g. \"#22 of 161 people\". <0> wraps the viewer's place, drawn large. {{rank}} is the place, {{number}} how many people the standings rank, already formatted (\"1,284\"); {{count}} is the same number, for the plural."
+    "text": "<0>#{{rank}}</0> of {{number}} ranked",
+    "description": "The \"Your standing\" card at the top of the Challenges tab, e.g. \"#22 of 161 ranked\". <0> wraps the viewer's place, drawn large. {{rank}} is the place, {{number}} how many people the standings rank, already formatted (\"1,284\"); {{count}} is the same number, for the plural. \"Ranked\" because it counts only people with points: the Standings tab's \"167 taking part\" counts everyone enrolled, so the two numbers differ."
   },
   "standing.rankOf_other": {
-    "text": "<0>#{{rank}}</0> of {{number}} people",
-    "description": "The \"Your standing\" card at the top of the Challenges tab, e.g. \"#22 of 161 people\". <0> wraps the viewer's place, drawn large. {{rank}} is the place, {{number}} how many people the standings rank, already formatted (\"1,284\"); {{count}} is the same number, for the plural."
+    "text": "<0>#{{rank}}</0> of {{number}} ranked",
+    "description": "The \"Your standing\" card at the top of the Challenges tab, e.g. \"#22 of 161 ranked\". <0> wraps the viewer's place, drawn large. {{rank}} is the place, {{number}} how many people the standings rank, already formatted (\"1,284\"); {{count}} is the same number, for the plural. \"Ranked\" because it counts only people with points: the Standings tab's \"167 taking part\" counts everyone enrolled, so the two numbers differ."
   },
   "standing.rank": {
     "text": "<0>#{{rank}}</0>",

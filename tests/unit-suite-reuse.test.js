@@ -866,7 +866,8 @@ test('postgres: a request folded into a busy session stamps the head pending and
   assert.equal(r.check_state, 'pending', 'the old pass no longer stands');
   assert.equal(r.check_trigger, 'manual-recheck');
   assert.equal(unitSuiteRow.freshSuiteOwed(r), true);
-  // Pending and owed: the stale sweep's scope takes it if this process goes.
+  // Pending and owed: in the error lane's scope, and the machine's own
+  // ChecksDue runs it if this process goes (the drain test below).
   assert.equal(require('../src/services/staging-recovery').isStuckCheckRecoveryScope({ ...r, status: 'active', source: 'native' }), true);
   for (let i = 0; i < 100 && !rechecks.length; i += 1) await new Promise((res) => setTimeout(res, 10));
   assert.deepEqual(rechecks, ['manual-recheck'], 'idle again: the owed run starts');
@@ -979,32 +980,160 @@ test('postgres, real settlement: a unit pass behind as many browser checks as th
     'the machine passes no row cap');
 });
 
-test('postgres: once the in-process drain is gone, recovery still finds every open proposal owed a fresh run of its head', async (t) => {
+test('postgres: once the in-process drain is gone, the preview machine itself runs every open proposal\'s owed fresh run of its head', async (t) => {
+  // The route's busy branch folds a person's request into what the session
+  // is doing (owePendingRun → the machine's RecheckFolded) and waits in
+  // process for it to be idle. When that process goes, the machine's own
+  // deadline (ChecksDue, src/workflow/preview/machine.ts) runs the request
+  // once nobody works on the session. It replaced the leader's stuck-checks
+  // sweeps. The real machine and kernel; the work kinds are faked, as in
+  // tests/unit-suite-reuse-machine-postgres.test.js.
   const pool = await fullSchemaDb(t);
   if (!pool) return;
-  const recovery = require('../src/services/staging-recovery');
-  const { rows: [app] } = await pool.query("INSERT INTO apps (slug, name, repo_url) VALUES ('scope-test', 'T', 'https://github.com/o/r') RETURNING id");
+  const { createRuntime } = require('../src/workflow/kernel/index.ts');
+  const { preview, sessionKey, MACHINE, WORK } = require('../src/workflow/preview/machine.ts');
+  await pool.query(`INSERT INTO wf_settings (key, value) VALUES ('enabled:${MACHINE}', '1') ON CONFLICT DO NOTHING`);
+  const unitKey = require('../src/services/app-manifest').checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH);
+  const browser = { index: 0, name: 'Loads /', path: '/', status: 'pass' };
+  const verdict = (extra = {}) => ({
+    outcome: 'verdict', state: 'passing', results: [browser], console: { state: 'clean', errors: [] },
+    history: [{ checkKey: 'k1', name: 'Loads /', path: '/', passes: 1, fails: 0 }],
+    capture: { state: 'console_only', detail: { media: false } }, visuals: false, ...extra,
+  });
+  // A person's run really runs the suite.
+  const fresh = verdict({
+    results: [browser, { index: -3, name: unitSuite.UNIT_CHECK_NAME, path: 'package.json', status: 'pass', advisory: false }],
+    unitObserved: unitKey,
+    history: [{ checkKey: 'k1', name: 'Loads /', path: '/', passes: 1, fails: 0 },
+      { checkKey: unitKey, name: unitSuite.UNIT_CHECK_NAME, path: 'package.json', passed: true }],
+  });
+  const asked = [];
+  const fake = (kind) => ({
+    maxAttempts: 2, backoffMs: () => 0, leaseMs: 600,
+    async run({ input }) {
+      if (kind === WORK.prepare) {
+        return { ok: true, url: `https://pv--s${input.sessionId}.apps.test`, runtimeKind: 'kubernetes',
+          runtimeName: `sv-preview-1-s${input.sessionId}`, containerId: null, imageRef: `img@sha256:${input.n}`, buildRef: `b-${input.n}` };
+      }
+      if (kind === WORK.run) {
+        asked.push([input.sessionId, input.trigger]);
+        return input.trigger === 'manual-recheck' ? fresh : verdict();
+      }
+      if (kind === WORK.retire) return { closed: true };
+      return { ok: true };
+    },
+  });
+  const machine = preview({ maxRetries: 6, retireAfterMs: 0 });
+  const rt = createRuntime({
+    pool, machines: [machine], pollMs: 50, publish: async () => {},
+    services: Object.fromEntries(Object.values(WORK).map((k) => [k, fake(k)])),
+  });
+  t.after(() => rt.stop());
+  let rk = 0;
+  const send = (id, appId, type, payload, source = { kind: 'system' }) => rt.append(machine, sessionKey(id), { type, payload },
+    { requestKey: `t-${++rk}`, source, appId });
+  const settle = async () => {
+    for (let i = 0; i < 20; i++) {
+      await rt.drain();
+      if (!(await rt.runServices())) { await rt.drain(); return; }
+    }
+  };
+  const instance = async (id) => (await pool.query(
+    'SELECT * FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(id)])).rows[0];
+  const row = async (id) => (await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [id])).rows[0];
+  // Bring the deadlines that are set forward, as the pipeline would write them.
+  const due = async (ids) => {
+    const c = await pool.connect();
+    try {
+      await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+      await c.query(`UPDATE wf_instances SET deadline_at = now()
+                      WHERE machine = $1 AND key = ANY($2::text[]) AND deadline_at IS NOT NULL`, [MACHINE, ids.map(sessionKey)]);
+      await c.query('COMMIT');
+    } finally { c.release(); }
+  };
+
   const { rows: [u] } = await pool.query("INSERT INTO users (username, password) VALUES ('scope-test', 'x') RETURNING id");
-  const add = async (status, source, marker, sha = SHA) => (await pool.query(
-    `INSERT INTO chat_sessions (user_id, app_id, status, source, branch_name, checks_commit_sha, check_state,
-                                check_phase, checks_checked_at, unit_suite_fresh_sha)
-     VALUES ($1, $2, $3, $4, 'b-' || md5(random()::text), $5, 'pending', 'building', NOW() - INTERVAL '1 hour', $6)
-     RETURNING id`, [u.id, app.id, status, source, sha, marker])).rows[0].id;
-  const pausedCli = await add('paused', 'cli_handoff', SHA);
-  const activeNative = await add('active', 'native', SHA);
-  const notOwed = await add('active', 'native', null);
-  const otherHead = await add('active', 'native', OTHER);
-  const archived = await add('archived', 'native', SHA);
-  const { rows } = await recovery.findStuckCheckSessions({ pool, staleMs: 60_000, maxAutoRetries: 6 });
-  const ids = rows.map((r) => Number(r.id));
-  assert.ok(ids.includes(pausedCli), 'a paused CLI proposal owed a run');
-  assert.ok(ids.includes(activeNative), 'an active native proposal owed a run');
-  assert.ok(!ids.includes(notOwed), 'an ordinary active session is still its turn tail\'s');
-  assert.ok(!ids.includes(otherHead), 'a request about another head is not this head\'s');
-  assert.ok(!ids.includes(archived), 'a closed proposal is not');
-  // The boot and live sweeps skip a session whose pipeline is running
-  // (server.js checkRecoveryInFlight), so ownership is respected.
-  assert.match(read('server.js'), /if \(checkRecoveryInFlight\(session\.id\)\) continue;[\s\S]{0,400}reason: 'stuck-checks-boot'/);
+  const { rows: [app] } = await pool.query(
+    "INSERT INTO apps (slug, name, repo_url, created_by) VALUES ('scope-test', 'T', 'https://github.com/o/r', $1) RETURNING id", [u.id]);
+  let pr = 0;
+  // A proposal whose preview the machine built and checked on SHA.
+  const add = async (status, source) => {
+    const { rows: [s] } = await pool.query(
+      `INSERT INTO chat_sessions (user_id, app_id, status, source, branch_name, pr_number)
+       VALUES ($1, $2, $3, $4, 'b-' || md5(random()::text), $5) RETURNING id`, [u.id, app.id, status, source, ++pr]);
+    await send(s.id, app.id, 'RevisionSubmitted', { sessionId: s.id, head: SHA, source: 'test', trigger: 'commit-push' });
+    await settle();
+    assert.deepEqual([(await instance(s.id)).state, (await row(s.id)).check_state], ['settled', 'passing'], `${status} ${source}`);
+    return s.id;
+  };
+  const pausedCli = await add('paused', 'cli_handoff');
+  const activeNative = await add('active', 'native');
+  const notOwed = await add('active', 'native');
+  const otherHead = await add('active', 'native');
+  assert.deepEqual(asked.map(([, trigger]) => trigger), ['commit-push', 'commit-push', 'commit-push', 'commit-push']);
+  for (const id of [pausedCli, activeNative, notOwed, otherHead]) {
+    assert.equal((await instance(id)).deadline_at, null, 'a settled preview owing nothing has no deadline');
+  }
+
+  // A person presses "Run checks again" while the session is busy: the head
+  // is marked owed, and the request folded into the machine. The process
+  // that would have started the run when the session went idle is gone.
+  await pool.query("UPDATE chat_sessions SET active_turn = jsonb_build_object('id', 'turn-1', 'startedAt', now()) WHERE id = $1", [activeNative]);
+  for (const id of [pausedCli, activeNative]) {
+    await reuse.markFreshOwed(pool, { sessionId: id, commitSha: SHA });
+    await send(id, app.id, 'RecheckFolded', { head: SHA, sessionId: id }, { kind: 'route', name: 'manual-recheck' });
+  }
+  // A request about another head is not this head's.
+  await reuse.markFreshOwed(pool, { sessionId: otherHead, commitSha: OTHER });
+  await rt.drain();
+  for (const id of [pausedCli, activeNative]) {
+    const r = await row(id);
+    assert.deepEqual([r.check_state, r.check_trigger, r.unit_suite_fresh_sha], ['pending', 'manual-recheck', SHA]);
+    const i = await instance(id);
+    assert.equal(i.deadline_event?.type, 'ChecksDue', 'the machine owes the run itself');
+    const inMs = new Date(i.deadline_at).getTime() - Date.now();
+    assert.ok(inMs > 9 * 60 * 1000 && inMs <= 10 * 60 * 1000, `ten minutes on: ${inMs}`);
+  }
+  // Any transition reads what the row owes: the release's IdleDue to an
+  // instance with no deadline arms nothing for one that owes nothing.
+  for (const id of [notOwed, otherHead]) await send(id, app.id, 'IdleDue', {});
+  await rt.drain();
+  for (const id of [notOwed, otherHead]) assert.equal((await instance(id)).deadline_at, null, `session ${id} owes nothing`);
+
+  // The deadline comes. A session someone works on is looked at again a
+  // minute later, with nothing started; the other runs the owed request as
+  // the person's.
+  await due([pausedCli, activeNative]);
+  await rt.fireTimers();
+  await settle();
+  assert.deepEqual(asked.slice(4), [[pausedCli, 'manual-recheck']]);
+  let r = await row(pausedCli);
+  assert.deepEqual([r.check_state, r.unit_suite_fresh_sha], ['passing', null], 'their run answered them');
+  const waiting = await instance(activeNative);
+  assert.equal(waiting.state, 'settled');
+  assert.equal(waiting.deadline_event?.type, 'ChecksDue');
+  assert.ok(new Date(waiting.deadline_at).getTime() - Date.now() <= 60 * 1000, 'a minute on, while the turn runs');
+
+  // The turn ends: the next look runs it.
+  await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [activeNative]);
+  await due([activeNative]);
+  await rt.fireTimers();
+  await settle();
+  assert.deepEqual(asked.slice(5), [[activeNative, 'manual-recheck']]);
+  r = await row(activeNative);
+  assert.deepEqual([r.check_state, r.unit_suite_fresh_sha], ['passing', null]);
+  assert.equal((await row(otherHead)).check_state, 'passing', 'nothing ran for a request about another head');
+
+  // Answered, nothing more is owed: a deadline still set finds nothing to
+  // run, and leaves none behind.
+  await due([pausedCli, activeNative, notOwed, otherHead]);
+  await rt.fireTimers();
+  await settle();
+  assert.equal(asked.length, 6);
+  for (const id of [pausedCli, activeNative, notOwed, otherHead]) {
+    const i = await instance(id);
+    assert.deepEqual([i.state, i.deadline_at], ['settled', null], `session ${id}`);
+  }
 });
 
 test('postgres, real settlement and the real GitHub reader: a 404 on package.json is not taken as no suite without proof', async (t) => {
@@ -1102,7 +1231,8 @@ test('postgres, real settlement: one failed marker read keeps an owed head pendi
   const { rows: [r] } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [session.id]);
   assert.equal(r.check_state, 'pending', 'no stored pass for a request nothing answered');
   assert.equal(r.unit_suite_fresh_sha, SHA);
-  // Pending and owed: the stale sweep's scope takes it once it ages.
+  // Pending and owed: in the error lane's scope, so the machine's own
+  // ChecksDue runs it.
   assert.equal(require('../src/services/staging-recovery').isStuckCheckRecoveryScope(r), true);
 
   // The same failed read on a repository whose package.json has no test

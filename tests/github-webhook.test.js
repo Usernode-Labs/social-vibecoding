@@ -199,7 +199,14 @@ test('it mounts before the body parser and outside the session gate', () => {
 });
 
 test('the poller is kept as the fallback', () => {
-  const server = read('server.js');
-  assert.match(server, /Pass 6: imported-PR head sync/,
-    'a missed delivery still heals on the sweep, so the webhook is an optimisation not a dependency');
+  // The imported-prs clock of the workflow (src/workflow/clock/services.ts)
+  // looks at every imported proposal on its own schedule, through the same
+  // sync the webhook calls: a missed delivery still heals on the next look,
+  // so the webhook is an optimisation not a dependency.
+  const clocks = read('src/workflow/clock/services.ts');
+  const job = clocks.slice(clocks.indexOf("name: 'imported-prs'"), clocks.indexOf("name: 'merged-by-hand'"));
+  assert.match(job, /run: \(ctx: WorkContext, \{ pool \}: JobDeps\) => legacy\('services\/proposal-scans'\)\.importedTargets\(pool, page\(ctx\)\),/);
+  assert.match(job, /legacy\('services\/proposal-scans'\)\.lookImported\(config, pool, Number\(ctx\.input\.input\?\.sessionId\)\)/);
+  const scans = read('src/services/proposal-scans.js');
+  assert.match(scans, /return \{ outcome: await require\('\.\/pr-import-sync'\)\.syncImportedProposal\(\{ config, pool, session \}\) \};/);
 });

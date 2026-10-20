@@ -482,7 +482,7 @@ function budgetAllows(kind = 'background', opts = {}) {
  */
 function alertFigures(kind, { now = Date.now() } = {}) {
   const creds = kind === 'installation' ? installationCredentials() : [normalizeCredential(kind)];
-  let best = { used: 0, cap: 0 };
+  let best = { used: 0, cap: 0, resetAt: null };
   let bestRatio = -1;
   for (const cred of creds) {
     const c = cred && core(cred, { now });
@@ -490,7 +490,9 @@ function alertFigures(kind, { now = Date.now() } = {}) {
     const ratio = c.limit > 0 ? c.used / c.limit : 0;
     if (ratio > bestRatio) {
       bestRatio = ratio;
-      best = { used: Math.min(c.used, c.limit), cap: c.limit };
+      // resetAt: the window these figures are about (ms), null once it has
+      // passed (a full budget again, of a window this process has not seen).
+      best = { used: Math.min(c.used, c.limit), cap: c.limit, resetAt: c.expired ? null : c.resetAt };
     }
   }
   return best;

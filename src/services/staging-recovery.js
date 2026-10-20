@@ -4,10 +4,13 @@
 // session's staging preview need rebuilding?" and for handing a rebuild or a
 // re-run of the checks to the preview machine (services/preview-workflow.js),
 // which builds, checks and announces it. The callers are observers:
-//   1. startup recovery        (server.js recoverSessions)
-//   2. periodic heal sweep     (server.js sweeper Pass 3)
-//   3. on-demand preview click (routes/sessions.js ensure-staging)
-//   4. the stuck-checks sweep  (server.js reconcileStuckChecks, Pass 4)
+//   1. the preview-runtimes clock (lookForLostPreviews: a vote-backed
+//      preview whose runtime is gone)
+//   2. on-demand preview click    (routes/sessions.js ensure-staging)
+//   3. a turn's recovery that found its code landed (server.js)
+//   4. a person's recheck         (routes, recheckSessionChecks)
+// (Checks a row owes and nothing runs are the preview machine's own
+// deadline, ChecksDue: preview/machine.ts.)
 
 const log = require('./logger');
 
@@ -35,13 +38,13 @@ function checkRunOverdue(session, { now = Date.now(), staleMs = checksStaleMs() 
   if (session?.check_phase === 'deferred') return false;
   // Nor is a run waiting for a checks slot (services/checks-queue.js): it
   // starts when one frees, and the harvest re-drives it in its place if its
-  // process dies. findStuckCheckSessions below is the backstop for one whose
-  // place in line was lost.
+  // process dies (a `queued` row is written inside the checks run, which
+  // the kernel claims again if its process dies).
   if (session?.check_phase === 'queued') return false;
   // 'pending' means the preview machine has a build or run outstanding,
-  // alive while its work lease is: nothing is overdue by clock (bug 9). A row
-  // it never touched is enrolled by the stuck-checks sweep, which still
-  // judges by clock.
+  // alive while its work lease is: nothing is overdue by clock (bug 9). A
+  // pending verdict nothing runs is the machine's own ChecksDue
+  // (preview/machine.ts).
   if (session?.check_state === 'pending') return false;
   if (!(session?.checks_commit_sha || session?.handoff_head_sha)) return false;
   const checkedAt = session?.checks_checked_at == null
@@ -77,78 +80,6 @@ function isStuckCheckRecoveryScope(session) {
   return !hasUnsubmittedUpload;
 }
 
-// One query shared by boot reconciliation and the live sweeper. Keeping the
-// scope here prevents the two recovery paths from drifting back to the old
-// promoted-only rule that stranded pre-vote CLI handoffs after a restart.
-//
-// A run waiting for a checks slot is not stuck, however long it has waited:
-// its row in the checks queue (services/checks-queue.js) is the queue's and,
-// if its process died, the harvest's. Only a 'queued' session with no row
-// left in line is overdue, by the same clock as any other.
-// A session the preview machine is building or checking is left out: its
-// work is alive while its lease is. So is an 'error' the machine's own timer
-// will run again (preview machine RetryDue, set only while the session is in
-// the retry scope): one it set no timer for (a session that was not up for
-// approval then, and is now) is the lane's, as is a verdict stored before the
-// machine held the row.
-async function findStuckCheckSessions({
-  pool,
-  staleMs = checksStaleMs(),
-  maxAutoRetries,
-  limit = 50,
-}) {
-  const boundedLimit = Math.max(1, Math.min(100, Number(limit) || 50));
-  const { rows } = await pool.query(
-    `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
-       FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
-      WHERE (cs.status = 'promoted'
-             OR (cs.status IN ('active', 'paused')
-                 AND cs.unit_suite_fresh_sha IS NOT NULL
-                 AND lower(cs.unit_suite_fresh_sha) = lower(cs.checks_commit_sha))
-             OR (cs.status = 'active'
-                 AND cs.source = 'cli_handoff'
-                 AND COALESCE(cs.checks_commit_sha, cs.handoff_head_sha) IS NOT NULL
-                 AND NOT (cs.handoff_uploaded_sha IS NOT NULL
-                          AND cs.handoff_uploaded_sha IS DISTINCT FROM cs.handoff_head_sha
-                          AND cs.checks_commit_sha IS NOT DISTINCT FROM cs.handoff_upload_checked_sha)))
-        AND cs.branch_name IS NOT NULL
-        AND (cs.check_state IS NULL
-             OR (cs.check_state = 'pending'
-                 AND cs.check_phase IS DISTINCT FROM 'deferred'
-                 AND (cs.check_phase IS DISTINCT FROM 'queued'
-                      OR NOT EXISTS (SELECT 1 FROM check_runs cr
-                                      WHERE cr.session_id = cs.id AND cr.admitted_at IS NULL))
-                 AND (cs.checks_checked_at IS NULL
-                      OR cs.checks_checked_at < NOW() - make_interval(secs => $1::double precision / 1000.0)))
-             OR (cs.check_state = 'error'
-                 AND NOT EXISTS (SELECT 1 FROM wf_instances w
-                                  WHERE w.machine = 'preview' AND w.key = 'session:' || cs.id
-                                    AND w.deadline_at IS NOT NULL)
-                 AND (cs.consecutive_check_failures < $2
-                      OR (cs.check_error_platform
-                          AND cs.first_check_failure_at > NOW() - make_interval(secs => $4::double precision / 1000.0)))
-                 AND cs.check_next_retry_at IS NOT NULL
-                 AND cs.check_next_retry_at < NOW()))
-      ORDER BY COALESCE(cs.promoted_at, cs.last_activity_at, cs.created_at) ASC
-      LIMIT $3`,
-    [staleMs, maxAutoRetries, boundedLimit, PLATFORM_FAULT_RETRY_MS]
-  );
-  // The SQL is the efficient filter; this is the executable invariant that
-  // keeps a future query refactor from widening recovery to ordinary sessions.
-  const inScope = rows.filter(isStuckCheckRecoveryScope);
-  if (!inScope.length) return { rows: inScope };
-  // Left to the machine while it builds or checks the session: a 'pending'
-  // from before it held the row is still re-driven here (and the recheck is
-  // then the machine's).
-  const { rows: held } = await pool.query(
-    `SELECT DISTINCT key FROM wf_work
-      WHERE machine = 'preview' AND key = ANY($1::text[]) AND kind IN ('preview.prepare', 'checks.run')
-        AND status IN ('queued', 'running', 'reported')`,
-    [inScope.map((r) => `session:${r.id}`)]);
-  const machines = new Set(held.map((h) => h.key));
-  return { rows: inScope.filter((r) => !machines.has(`session:${r.id}`)) };
-}
-
 // #237: how many 'error' verdicts in a row the error lane above re-runs on
 // its own. storeChecks bumps consecutive_check_failures on every 'error'
 // (and schedules check_next_retry_at, 2m → 4m → … → 30m); past this count
@@ -177,7 +108,7 @@ const PLATFORM_FAULT_RETRY_MS = 24 * 60 * 60 * 1000;
 
 // Does the error lane still run this stored 'error' again on its own, as far
 // as the streak goes? Under the cap, or a platform fault inside its day: the
-// same rule as findStuckCheckSessions' SQL. The connector reads it to say
+// same rule as the preview machine's errorTimer. The connector reads it to say
 // whether a re-run is coming (mcp-tools.erroredRunWillRetry).
 function errorWithinAutoRetries(session, { maxAutoRetries = checkMaxAutoRetries(), now = Date.now() } = {}) {
   if (!session) return false;
@@ -260,7 +191,11 @@ const ROLLOUT_RETRY_DETAIL = 'Checks ran while Homeroom was updating, so they wi
 // optional: without it (or without a recorded build commit — previews built
 // before the column existed) the commit comparison is skipped, so a caller
 // that only wants liveness, and every pre-existing preview, behave as before.
-async function stagingNeedsRebuild(session, { config = null, headSha = null } = {}) {
+// `envCheck: false` (the preview-runtimes clock): the environment is not
+// judged, because an older build running it during a rollout would judge
+// the new build's previews by its own fingerprint; the preview-env clock,
+// acting only in the newest build, does that (staging-reap tellStaleEnv).
+async function stagingNeedsRebuild(session, { config = null, headSha = null, envCheck = true } = {}) {
   if (!session.staging_url) return true;
   let state;
   if (session.staging_runtime_kind === 'kubernetes') {
@@ -291,7 +226,7 @@ async function stagingNeedsRebuild(session, { config = null, headSha = null } = 
   if (state.status !== 'running') return true;
   if (previewIsOfAnotherCommit(session, headSha)) return true;
   if (await previewDatabaseNeedsRebuild(session, state)) return true;
-  if (!config) return false;
+  if (!config || !envCheck) return false;
 
   const stagingEnv = require('./staging-env');
   const expected = stagingEnv.expectedStagingFingerprint(config);
@@ -302,6 +237,34 @@ async function stagingNeedsRebuild(session, { config = null, headSha = null } = 
     sessionId: session.id, expected, actual,
   });
   return true;
+}
+
+// The preview-runtimes clock's run (src/workflow/clock/services.ts): every
+// preview that backs a vote and that the preview machine says serves is
+// looked at, every run, and one whose runtime or database is gone is
+// reported lost, so the machine builds it again (PreviewLost). One the
+// machine is building, retiring or retrying is its own already
+// (preview-workflow.working). The leader's heal looked only at the 50
+// oldest. `signal` ends the look early (the run's lease is gone).
+async function lookForLostPreviews(config, { signal = null } = {}) {
+  const pool = require('../db/pool').getPool(config);
+  const { rows } = await pool.query(
+    `SELECT cs.id, cs.app_id, cs.staging_url, cs.staging_runtime_kind, cs.staging_runtime_name,
+            cs.staging_container_id, cs.staging_commit_sha
+       FROM wf_instances w JOIN chat_sessions cs ON w.key = 'session:' || cs.id
+      WHERE w.machine = 'preview' AND w.state IN ('settled', 'deferred')
+        AND NOT (w.state = 'settled' AND w.data->>'verdict' = 'error')
+        AND jsonb_typeof(w.data->'serving') = 'object'
+        AND cs.status IN ('promoted', 'merging')
+      ORDER BY cs.id`);
+  const previewWorkflow = require('./preview-workflow');
+  let lost = 0;
+  for (const session of rows) {
+    if (signal?.aborted) break;
+    if (!(await stagingNeedsRebuild(session, { config, envCheck: false }))) continue;
+    if (await previewWorkflow.lost({ session, detail: 'runtime gone' })) lost++;
+  }
+  return { examined: rows.length, lost };
 }
 
 // The state and labels of a session's preview runtime, as stagingNeedsRebuild
@@ -403,12 +366,8 @@ const CHECK_TRIGGER_BY_REASON = new Map(Object.entries({
   // new trigger string would need a value in visuals.CHECK_TRIGGERS and
   // reviewer-facing copy in public/js/app-view.js to render as anything.
   'testing-update': 'manual-recheck',
-  startup: 'boot-reconcile',
-  'stuck-checks-boot': 'boot-reconcile',
   tail_worker_gone: 'boot-reconcile',
   dangling_tail: 'boot-reconcile',
-  heal: 'stuck-sweep',
-  'stuck-checks-sweep': 'stuck-sweep',
   // A verdict that was deferred while the head conflicted with main, run
   // now that it merges cleanly (services/check-admission.js).
   'conflict-resolved': 'conflict-resolved',
@@ -431,14 +390,13 @@ const FORCED_RECHECK_REASONS = new Set(['manual-recheck', 'testing-update']);
 // stale (routes/sessions.js inspectPreview). Asked as a plain "ensure", the
 // machine would answer that it already serves that head, and the reviewer's
 // loader would wait for a preview nothing builds.
-const OBSERVED_REASONS = new Set(['startup', 'heal', 'preview-click']);
+const OBSERVED_REASONS = new Set(['preview-click']);
 const workflow = () => require('./preview-workflow');
 
 // Hand the rebuild of a single session's staging preview to the preview
 // machine: a session that has a branch + commits ahead of main but a
-// NULL/dead staging_url. Shared by the startup recovery sweep
-// (recoverSessions), the periodic sweeper's staging-heal pass (Pass 3), and
-// the on-demand ensure-staging route so they never drift apart.
+// NULL/dead staging_url. Shared by the on-demand ensure-staging route and a
+// turn's recovery that found its code landed, so they never drift apart.
 //
 // Returns 'handed_off' when the machine has it, 'skipped' when there's
 // nothing to build (no owner/repo, no bot token, branch not ahead of main;
@@ -698,13 +656,13 @@ module.exports = {
   checksStaleMs,
   checkRunOverdue,
   isStuckCheckRecoveryScope,
-  findStuckCheckSessions,
   DEFAULT_CHECK_MAX_AUTO_RETRIES,
   checkMaxAutoRetries,
   PLATFORM_FAULT_RETRY_MS,
   errorWithinAutoRetries,
   ROLLOUT_RETRY_DETAIL,
   stagingNeedsRebuild,
+  lookForLostPreviews,
   inspectPreviewRuntime,
   previewIsOfAnotherCommit,
   recheckHeadSha,

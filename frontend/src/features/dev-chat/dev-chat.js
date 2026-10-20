@@ -12214,8 +12214,8 @@ const DevChat = {
       const builtAt = v.built_at ? new Date(v.built_at) : null;
       const built = builtAt && !Number.isNaN(builtAt.getTime())
         ? builtAt.toLocaleString([], builtAt.getFullYear() === new Date().getFullYear()
-          ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
-          : { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+          ? { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }
+          : { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
         : '';
       const isThisLatest = latest && v.version === latest.version;
       // The latest option carries the 'latest' value so re-selecting it

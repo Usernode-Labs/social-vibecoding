@@ -113,17 +113,19 @@ export function landingIn(stops: readonly number[], from: number, offset: number
  *
  *   - the community's colour blends in with depth: none on your communities,
  *     all of it on the places and the page;
- *   - the back arrow fades in and arrives from the right (8px) as the strip
- *     leaves level 0; level 0 is the outermost, and has none;
- *   - "Communities" drifts left (−12px) as it fades, and the community's
- *     name arrives from the right (+24px) into its place beside the arrow;
+ *   - the back arrow is there on every level, level 0 included: there it
+ *     returns to the page, as the device's Back does;
+ *   - "Communities" sits beside the arrow and drifts left (−12px) as it
+ *     fades, and the community's name arrives from the right (+24px) into
+ *     its place beside the arrow;
  *   - from the places to the page the name stays, rising 7px to make room,
  *     and only the page's name slides in under it, from the right, without
  *     rising (it cancels the name's rise), and back out to the right.
  *
  * `slot` is how far left of the community's name the bar's own left edge
- * is (the arrow and its gap), where "Communities" sits with no arrow.
- * Reduce Motion keeps the fades and drops every movement.
+ * is (the arrow and its gap), where Messages' "Messages" sits with no arrow;
+ * Communities' titles no longer use it. Reduce Motion keeps the fades and
+ * drops every movement.
  *
  * MESSAGES (`messages`): two levels, the list and a conversation, and no
  * colour. The conversation's name arrives with its line under it ("Direct
@@ -155,12 +157,12 @@ export function headerFrame(f: number, slot: number, reduced = false, messages =
   }
   const frame: HeaderFrame = {
     tint: b,
-    back: { opacity: b, x: 8 * (1 - b) * move, live: b > 0.5 },
-    outer: { opacity: 0, x: -slot, y: ALONE_Y },
+    back: { opacity: 1, x: 0, live: true },
+    outer: { opacity: 0, x: -12 * move || 0, y: ALONE_Y },
     inner: { opacity: 1, x: 0, y: ALONE_Y, subOpacity: 0, subX: 24 * move, subY: -ALONE_Y },
   };
   if (d <= 1) {
-    frame.outer = { opacity: 1 - d, x: -slot - 12 * d * move, y: ALONE_Y };
+    frame.outer = { opacity: 1 - d, x: -12 * d * move || 0, y: ALONE_Y };
     frame.inner = { opacity: d, x: 24 * (1 - d) * move, y: ALONE_Y, subOpacity: 0, subX: 24 * move, subY: -ALONE_Y };
     return frame;
   }

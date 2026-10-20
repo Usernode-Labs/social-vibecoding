@@ -232,10 +232,23 @@ function scheduleBadgeSync(userId) {
   return badgeSync ? badgeSync.schedule(userId) : false;
 }
 
-function start() {
-  worker?.start();
+// The sender: one run of the push-drain clock (src/workflow/clock/services.ts),
+// on whichever process runs the workflow, one at a time across them. A
+// process that sends no pushes (push off) answers at once.
+async function drain(opts = {}) {
+  return worker ? worker.drain(opts) : { handled: 0, off: true };
 }
 
+// The sender's tables' retention (the push-retention clock).
+async function retention() {
+  if (!worker) return { off: true };
+  await worker.retention();
+  return { ok: true };
+}
+
+// A process shutting down: its drain stops at its next pass, the sends of
+// the pass under way given up to `timeoutMs` (the run's lease, given up,
+// lets another process's run take the queue on).
 async function stop({ timeoutMs = 5000 } = {}) {
   const drained = worker ? await worker.stop({ timeoutMs }) : true;
   if (!drained) {
@@ -263,7 +276,8 @@ module.exports = {
   synchronizeDeploymentState,
   disableDeploymentStates,
   initialize,
-  start,
+  drain,
+  retention,
   stop,
   scheduleBadgeSync,
   resetForTests,

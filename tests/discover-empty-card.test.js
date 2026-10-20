@@ -29,8 +29,8 @@ test('nothing to discover renders one card that links to the directory', () => {
   const classes = m[1].split(/\s+/);
   assert.ok(classes.includes('home-discover-lane'), 'it still fills the lane');
   assert.ok(classes.some((c) => /^home-tint-[1-5]$/.test(c)), 'in the rail\'s tint language');
-  assert.match(m[2], /Nothing to discover right now/, 'the wording the declared check reads');
-  assert.match(m[2], /Browse the directory/);
+  assert.match(m[2], /No communities to suggest right now/, 'the wording the declared check reads');
+  assert.match(m[2], /Discover lists every community you can join\./);
   assert.match(m[2], /<svg/, 'with a chevron');
 });
 
@@ -49,7 +49,7 @@ test('a popular card alone is enough to keep the note away', () => {
     contributors: 0,
   }]);
   assert.doesNotMatch(html, /home-discover-empty/);
-  assert.doesNotMatch(html, /Nothing to discover/);
+  assert.doesNotMatch(html, /No communities to suggest/);
   assert.match(html, /home-discover-rail/, 'the lane draws instead');
 });
 

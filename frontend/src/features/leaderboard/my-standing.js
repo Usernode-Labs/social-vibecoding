@@ -1,5 +1,5 @@
 // The viewer's own standing — the card at the top of the Challenges tab
-// (./your-standing.tsx): "#22 of 161 people".
+// (./your-standing.tsx): "#22 of 161 ranked".
 //
 // The rank and the token allocation used to lead the Me screen. The
 // navigation prototype's Me is a compact card with three stat cards and a
@@ -82,7 +82,7 @@ export function ledgerPoints(challenges) {
  * card stays and says the points are not in the standings yet.
  *
  * `rank` and `people` are numbers (null and 0 when unknown); the card spells
- * them as one message, "#22 of 161 people".
+ * them as one message, "#22 of 161 ranked".
  */
 export function standingView(state) {
   if (state.status !== 'ready' || !state.ranking) return null;

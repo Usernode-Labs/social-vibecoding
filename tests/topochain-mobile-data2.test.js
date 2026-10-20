@@ -235,6 +235,12 @@ function seasonsRows(sql, params) {
 
 function handleQuery(rawSql, params = []) {
   const sql = collapse(rawSql);
+
+  // The 18+ check in front of zkpassport/complete (#5095): every fixture
+  // account here has said yes; tests/adult-attestation.test.js covers a no.
+  if (sql.includes('adult_attested_at IS NOT NULL AS attested FROM users')) {
+    return { rows: [{ attested: true }] };
+  }
   if (sql.startsWith('/* challenge onboarding */')) return { rows: [] };
 
   if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };

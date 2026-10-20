@@ -279,6 +279,11 @@ function benchStudioRoutes(config) {
       labelVerdict: has('labelVerdict') ? b.labelVerdict : undefined, actorId: req.user.id,
     });
   }));
+  // Its settings saved, as the console's Save does (routes/admin.js PUT
+  // /api/admin/homeroom-bot/settings): the same writeSettings.
+  router.post('/api/bot-studio/bot/settings', requireAdminWrite, benchStudioLimiter, sameOriginBrowserOnly, handler('Homeroom bot settings (connector)', async (req) => (
+    data.saveSettings(pool, config, { patch: req.body || {}, actorId: req.user.id, username: req.user.username })
+  )));
 
   // The recent before/after screenshots (the console's Screenshot gallery).
   router.get('/api/bot-studio/shots', requireAdminWrite, handler('Recent shots (connector)', async (req) => {
