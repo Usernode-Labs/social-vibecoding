@@ -868,6 +868,44 @@ test('the theme switch is CSS: the pick swaps the images and keeps the arrows be
     'a dark pick swaps the image on the sides that have one');
 });
 
+// #5691: the viewer is its own popover, so a narrow pane can hand the shots
+// to the whole window. The button is a plain popovertarget: no script, so it
+// survives the innerHTML both the card and a spec's frames are drawn with.
+test('the viewer is a popover and every bar ends with the button that opens it over the window', () => {
+  const html = AppView._shotsViewerHtml({
+    key: 42,
+    screens: [{ viewport: 'desktop', afterHtml: '<span></span>', beforeHtml: '<span></span>', notesHtml: '' }],
+  });
+  assert.match(html, /^<div class="shots-viewer" id="shots-42-viewer" popover="auto">/);
+  const buttons = html.match(/<button type="button" class="shots-expand"[^>]*>/g) || [];
+  assert.equal(buttons.length, 1);
+  assert.match(buttons[0], /popovertarget="shots-42-viewer" popovertargetaction="toggle" title="Expand">$/);
+  // Both words are in the button, and CSS shows the one that matches:
+  // the arrows out with "Expand", the arrows in with "Close" once open.
+  assert.match(html, /<span class="shots-expand-out"><svg[\s\S]*?<\/svg><span class="shots-expand-word">Expand<\/span><\/span><span class="shots-expand-in"><svg[\s\S]*?<\/svg><span class="shots-expand-word">Close<\/span><\/span><\/button>/);
+  assert.doesNotMatch(html, /<script|onclick|onchange/, 'still no script');
+  // The catalogs' words are what it says.
+  assert.equal(PlatformI18n.t('changes:shots.viewer.expand'), 'Expand');
+  assert.equal(PlatformI18n.t('changes:shots.viewer.collapse'), 'Close');
+});
+
+test('the expand CSS: closed it is the same block, open a window-sized card over a dim, and hidden where popovers do not exist', () => {
+  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
+  assert.match(css, /\.shots-viewer\[popover\] \{ display: block; position: relative; inset: auto; margin: 0; padding: 0; border: 0; width: auto; height: auto;\n  overflow: hidden;/,
+    'closed, the UA popover box is neutralised and the viewer is the block it always was');
+  assert.match(css, /\.shots-viewer:popover-open \{ position: fixed; inset: 0; margin: auto; height: fit-content;[^}]*width: min\(calc\(100vw - 48px\), calc\(\(100vh - 200px\) \* 1\.6\)\); max-height: calc\(100vh - 48px\);/,
+    'open, it is nearly the window, in the top layer so a backdrop-filter ancestor cannot trap it');
+  assert.match(css, /\.shots-viewer::backdrop \{ background: rgba\(0, 0, 0, 0\.55\); \}/);
+  assert.match(css, /@supports \(height: 100dvh\) \{\n  \.shots-viewer:popover-open \{ width: min\(calc\(100vw - 48px\), calc\(\(100dvh - 200px\) \* 1\.6\)\); max-height: calc\(100dvh - 48px\); \}/);
+  assert.match(css, /\.shots-expand-in \{ display: none; \}/);
+  assert.match(css, /\.shots-viewer:popover-open \.shots-expand-out \{ display: none; \}/);
+  assert.match(css, /\.shots-viewer:popover-open \.shots-expand-in \{ display: inline-flex; \}/);
+  assert.match(css, /\.shots-theme-flip ~ \.shots-expand \{ margin-left: 0; \}/);
+  assert.match(css, /\.shots-expand ~ \.shots-screen-nav \{ margin-left: 0; \}/);
+  assert.match(css, /@supports not selector\(:popover-open\) \{ \.shots-expand \{ display: none; \} \}/,
+    'a browser without the popover API gets no button that does nothing');
+});
+
 test('the crop is CSS: it applies while both sides show, stacked or beside each other', () => {
   const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
   assert.match(css, /\.shots-crop \{ position: absolute; inset: 0; display: block; \}/,

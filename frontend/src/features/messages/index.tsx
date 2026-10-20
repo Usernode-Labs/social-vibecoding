@@ -1,6 +1,7 @@
 import { openReport } from '../dialogs/report';
 import {
-  Fragment, memo, useDeferredValue, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode,
+  Fragment, memo, useDeferredValue, useCallback, useEffect, useMemo, useRef, useState,
+  type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -2678,6 +2679,38 @@ function ReplyRowSkeleton() {
   );
 }
 
+// #5691: the divider between a chat and its open thread. The width is this
+// device's own — a key of its own, not a change session's side pane's — kept
+// between the thread's floor and the room the chat has to keep.
+const REPLY_WIDTH_KEY = 'messages-reply-width-v1';
+const REPLY_MIN_WIDTH = 320;
+const REPLY_CHAT_MIN_WIDTH = 360;
+/** The strip's margins beside the chat and right of the thread. */
+const REPLY_MARGINS = 24;
+/** How far one arrow key moves the divider. */
+const REPLY_WIDTH_STEP = 24;
+
+function clampReplyWidth(width: number, containerWidth: number | null | undefined): number {
+  const wanted = Number.isFinite(width) ? width : REPLY_MIN_WIDTH;
+  const ceiling = typeof containerWidth === 'number' && Number.isFinite(containerWidth) && containerWidth > 0
+    ? Math.max(REPLY_MIN_WIDTH, containerWidth - REPLY_CHAT_MIN_WIDTH - REPLY_MARGINS)
+    : Infinity;
+  return Math.round(Math.min(ceiling, Math.max(REPLY_MIN_WIDTH, wanted)));
+}
+
+function readReplyWidth(): number | null {
+  try {
+    const value = parseInt(window.localStorage.getItem(REPLY_WIDTH_KEY) || '', 10);
+    return Number.isFinite(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeReplyWidth(px: number): void {
+  try { window.localStorage.setItem(REPLY_WIDTH_KEY, String(Math.round(px))); } catch { /* the default next time */ }
+}
+
 function ReplyThreadPanel() {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
@@ -2739,6 +2772,64 @@ function ReplyThreadPanel() {
       clearThreadFocus();
     }, 2400);
   }, [wanted, thread?.messages.length, thread?.loading]);
+  // #5691: how wide this thread is, against the chat beside it. Read in an
+  // effect, never during the first render, so the first paint draws the CSS
+  // default (and is the same markup on every render).
+  const paneRef = useRef<HTMLElement>(null);
+  const [replyWidth, setReplyWidth] = useState<number | null>(null);
+  const stripWidth = () => paneRef.current?.parentElement?.getBoundingClientRect().width ?? null;
+  useEffect(() => {
+    const stored = readReplyWidth();
+    if (stored != null) setReplyWidth(clampReplyWidth(stored, stripWidth()));
+  }, []);
+  const hasReplyWidth = replyWidth != null;
+  // A window made narrower than a remembered width allows is re-clamped.
+  useEffect(() => {
+    if (!hasReplyWidth) return undefined;
+    const onResize = () => setReplyWidth((width) => (width == null ? width : clampReplyWidth(width, stripWidth())));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [hasReplyWidth]);
+  const commitReplyWidth = (next: number) => {
+    const clamped = clampReplyWidth(next, stripWidth());
+    setReplyWidth(clamped);
+    return clamped;
+  };
+  const onReplyResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const handle = event.currentTarget;
+    const startX = event.clientX;
+    const startWidth = paneRef.current?.getBoundingClientRect().width ?? replyWidth ?? REPLY_MIN_WIDTH;
+    let latest = startWidth;
+    event.preventDefault();
+    try { handle.setPointerCapture(event.pointerId); } catch { /* moves still arrive on the handle */ }
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    // An iframe swallows pointer moves: the spec's screen frames, while the
+    // drag runs.
+    const frames = Array.from(paneRef.current?.querySelectorAll<HTMLIFrameElement>('iframe') || []);
+    frames.forEach((frame) => { frame.style.pointerEvents = 'none'; });
+    // Dragging left widens the thread: its left edge is the divider.
+    const onMove = (move: PointerEvent) => { latest = commitReplyWidth(startWidth - (move.clientX - startX)); };
+    const onUp = () => {
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
+      try { handle.releasePointerCapture(event.pointerId); } catch { /* already released */ }
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      frames.forEach((frame) => { frame.style.pointerEvents = ''; });
+      writeReplyWidth(latest);
+    };
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+  };
+  const onReplyResizeKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const base = replyWidth ?? Math.round(paneRef.current?.getBoundingClientRect().width || REPLY_MIN_WIDTH);
+    writeReplyWidth(commitReplyWidth(base + (event.key === 'ArrowLeft' ? REPLY_WIDTH_STEP : -REPLY_WIDTH_STEP)));
+  };
   if (!conversationId || !rootId) return null;
   const active = snap.active;
   const kind = active?.kind || 'group';
@@ -2797,7 +2888,28 @@ function ReplyThreadPanel() {
     );
   };
   return (
-    <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label={t('messages:replies.paneName')} data-reply-thread={rootId}>
+    <aside
+      ref={paneRef}
+      className="messages-reply-pane platform-kb-column dc-lift dc-lift-session"
+      style={replyWidth != null ? { '--messages-reply-width': `${replyWidth}px` } as CSSProperties : undefined}
+      aria-label={t('messages:replies.paneName')}
+      data-reply-thread={rootId}
+    >
+      {/* #5691: the divider between the chat and this thread, dragged to
+          trade room between them (and stepped by the arrow keys). It is
+          drawn from 768px up only, where the two panes sit side by side. */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t('messages:replies.resize')}
+        aria-valuenow={replyWidth != null ? Math.round(replyWidth) : undefined}
+        aria-valuemin={REPLY_MIN_WIDTH}
+        tabIndex={0}
+        className="messages-reply-resizer"
+        data-reply-resizer=""
+        onPointerDown={onReplyResizeStart}
+        onKeyDown={onReplyResizeKey}
+      />
       <header className="messages-thread-header">
         <div className="min-w-0 flex-1">
           <div className="messages-thread-name flex min-w-0 items-center gap-2">
