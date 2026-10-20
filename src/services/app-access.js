@@ -230,10 +230,21 @@ function sessionCollabGuard(pool) {
       );
       if (!rows.length) return next();
       if (await isBotOwnSession(pool, req.user, id)) return next();
-      if (!(await checkAppAccess(pool, rows[0], req.user, guardLevelFor(req)))) {
-        return res.status(404).json({ error: 'Session not found' });
+      const level = guardLevelFor(req);
+      if (await checkAppAccess(pool, rows[0], req.user, level)) return next();
+      // #5506, as #3410 did for issues: a write refused only by the collab
+      // bar on a change the caller can SEE must not read "Session not
+      // found" — the ready card whose Approve said so was on their screen,
+      // its change served by the same view level that passes here. Say the
+      // refusal plainly. A caller who fails even the view level keeps the
+      // existence-hiding 404.
+      if (level !== 'view' && await checkAppAccess(pool, rows[0], req.user, 'view')) {
+        return res.status(403).json({
+          error: 'You can view this project, but only its collaborators can take part in it.',
+          code: 'collab_required',
+        });
       }
-      return next();
+      return res.status(404).json({ error: 'Session not found' });
     } catch (err) {
       log.error('app-access', 'session guard failed', { id, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });

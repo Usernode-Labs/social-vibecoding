@@ -5,6 +5,7 @@ import { IconTile } from '@/components/ui/icon-tile';
 import { ProgressRing } from '@/components/ui/progress-ring';
 
 import { changeHref } from '../../lib/change-href';
+import { confirmAction } from '../../lib/confirm';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { releaseSentence } from '../../lib/release-eta';
@@ -12,7 +13,7 @@ import { useReleaseNow } from '../../lib/use-release-now';
 
 import * as api from './api';
 import { afterYesWords, countOf, waitingWords, type AfterYes } from './approval-words';
-import { approvedHere, ensureBotActivity, noteApprovedHere, useBotActivity } from './bot-activity-store';
+import { approvedHere, ensureBotActivity, loadBotActivity, noteApprovedHere, useBotActivity } from './bot-activity-store';
 import { botMeta } from './bot-question';
 import { quoteInComposer } from './store';
 import type {
@@ -64,6 +65,17 @@ import type {
  * merged it is going live; closed, it says it was closed; and
  * while it is up for approval, who it waits on and what happens next are
  * the counts as they are now, not as they were when it was sent.
+ *
+ * #5506: WHAT THE READER CAN DO ON IT, read the same way. A Yes and a
+ * preview's rebuild are refused to anybody who does not build on the
+ * project, and a requester on a project where building is by invitation got
+ * Try it and Approve that both answered "Session not found", and no way to
+ * clear the change away. So where `fresh.canBuild` is false the card drops
+ * Approve, says approving is up to the people building it (lookOnlyLine),
+ * and its Try it opens the look-only preview; and where `fresh.canWithdraw`
+ * (they asked for it, or own the project) it adds Withdraw it, which has the
+ * bot withdraw the change after the app's confirm dialog, the same withdrawal
+ * its "Withdraw it" offer in the chat makes.
  */
 
 export type ReadyCardState = 'open' | 'approved' | 'stale' | 'updated' | 'closed' | 'live' | 'going_live' | 'withdrawn';
@@ -291,6 +303,37 @@ export function readyLine(
 }
 
 /**
+ * Pure (#5506): the line an open card says to someone who does not build on
+ * its project, or null when they do (or it is not known yet).
+ */
+export function lookOnlyLine(meta: Pick<HomeroomBotMeta, 'appName' | 'appSlug'>, fresh: HomeroomBotReadyNow | null): string | null {
+  if (fresh?.state !== 'open' || fresh.canBuild !== false) return null;
+  const project = meta.appName || meta.appSlug || '';
+  return project ? translate('messages:bot.ready.line.lookOnly', { project }) : translate('messages:bot.ready.line.lookOnlyUnnamed');
+}
+
+/**
+ * Pure (#5506): the buttons an open card shows its reader, from the ones it
+ * was sent with and what they can do now: no Approve for someone who does
+ * not build on the project, and their Try it look-only; Withdraw it after
+ * the rest when they may have the change withdrawn. Not on a first version:
+ * withdrawing it would leave the project with nothing.
+ */
+export function openReadyActions(
+  all: HomeroomBotAction[], meta: Pick<HomeroomBotMeta, 'firstVersion'>, fresh: HomeroomBotReadyNow | null, withdrawLabel: string,
+): HomeroomBotAction[] {
+  const lookOnly = fresh?.canBuild === false;
+  const out = all
+    .filter((action) => !(lookOnly && action.type === 'vote'))
+    .map((action) => (lookOnly && action.type === 'preview' ? { ...action, readOnly: true, style: 'primary' as const } : action));
+  const sessionId = all.find((action) => action.type === 'preview' && typeof action.sessionId === 'number')?.sessionId;
+  if (fresh?.canWithdraw && sessionId && !meta.firstVersion) {
+    out.push({ id: 'withdraw', label: withdrawLabel, style: 'secondary', type: 'withdraw', sessionId });
+  }
+  return out;
+}
+
+/**
  * Pure: which state a card is drawn in, from its message (`meta`, as it was
  * sent and as its updates since say), where its change stands now
  * (`fresh`, readyStates; null until read), and what happened on this device:
@@ -366,7 +409,7 @@ export function ReadyCardView({
   // A merge of Homeroom itself counts down to the platform's next release.
   const release = state === 'going_live' ? fresh?.release || null : null;
   const tick = useReleaseNow(release);
-  const line = readyLine(state, next, now || new Date(tick), locale, release);
+  const line = readyLine(state, next, now || new Date(tick), locale, release) || (state === 'open' ? lookOnlyLine(meta, fresh) : null);
   // #4564: the request this card names — "Request #N: …", what changeLine
   // leads with — so a `#N` chip elsewhere in its block finds this card
   // (./ref-cards.tsx findRequestCard) when the block's lead row dropped its
@@ -429,10 +472,12 @@ export function ReadyCardView({
  * Open a change's preview over the chat, or its page when there is no
  * preview overlay to open. Also the strip's Try it (./bot-strip.tsx).
  */
-export function tryChange(meta: Pick<HomeroomBotMeta, 'appSlug'>, sessionId: number) {
+export function tryChange(meta: Pick<HomeroomBotMeta, 'appSlug'>, sessionId: number, { readOnly = false }: { readOnly?: boolean } = {}) {
   const view = typeof window !== 'undefined' ? window.AppView : null;
   if (meta.appSlug && view && typeof view.ensureStaging === 'function') {
-    void view.ensureStaging(sessionId, null, null, { readOnly: false, app: { slug: meta.appSlug } });
+    // #5506: someone who does not build on the project opens the look-only
+    // preview (its GET twin); the rebuilding POST would be refused them.
+    void view.ensureStaging(sessionId, null, null, { readOnly, app: { slug: meta.appSlug } });
     return;
   }
   if (meta.appSlug) window.location.hash = `#app/${encodeURIComponent(meta.appSlug)}/dev/proposals/${sessionId}`;
@@ -451,6 +496,7 @@ export function BotReadyCard({ message, conversationId }: { message: Conversatio
   const [stale, setStale] = useState<{ epoch: number | null; tried: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const t = useMessages('messages');
   if (!meta?.ready) return null;
   const all = meta.actions || [];
   // #5483: a Yes cast here is kept for the page's lifetime, at the version it
@@ -462,7 +508,7 @@ export function BotReadyCard({ message, conversationId }: { message: Conversatio
   const state = readyCardState({ meta, fresh, approved: approved || !!kept, stale: !!stale });
   // Stale: Try it, and Approve back (on the version it is at now) once
   // tried. Live: none, the news under it opens the app (#4228).
-  const actions = state === 'open' ? all
+  const actions = state === 'open' ? openReadyActions(all, meta, fresh, t('messages:bot.ready.withdraw'))
     : state === 'stale' ? all.filter((action) => action.type === 'preview' || (stale?.tried && action.type === 'vote'))
       : [];
 
@@ -470,7 +516,7 @@ export function BotReadyCard({ message, conversationId }: { message: Conversatio
     if (!meta) return;
     setError(null);
     if (action.type === 'preview' && action.sessionId) {
-      tryChange(meta, action.sessionId);
+      tryChange(meta, action.sessionId, { readOnly: !!action.readOnly || fresh?.canBuild === false });
       if (stale) setStale({ ...stale, tried: true });
       return;
     }
@@ -478,6 +524,22 @@ export function BotReadyCard({ message, conversationId }: { message: Conversatio
       // Change something: quoted in the composer, its request's thread's
       // when the card is in one (store.quoteInComposer).
       quoteInComposer(message, conversationId);
+      return;
+    }
+    if (action.type === 'withdraw' && action.sessionId) {
+      const ok = await confirmAction({
+        title: t('messages:bot.ready.withdrawConfirm.title'),
+        message: t('messages:bot.ready.withdrawConfirm.message'),
+        confirmLabel: t('messages:bot.ready.withdrawConfirm.confirm'),
+        danger: true,
+      });
+      if (!ok) return;
+      setBusy(true);
+      const out = await api.withdrawChange(action.sessionId);
+      setBusy(false);
+      // Withdrawn: the card reads where its change stands again, closed now.
+      if (out.ok) { await loadBotActivity(); return; }
+      setError(out.error);
       return;
     }
     if (action.type === 'vote' && action.sessionId) {

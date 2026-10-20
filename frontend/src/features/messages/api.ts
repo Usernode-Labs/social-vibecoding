@@ -148,6 +148,8 @@ function normalizeBotActions(input: unknown): HomeroomBotAction[] {
       ...(sessionId ? { sessionId } : {}),
       ...(epoch !== null ? { epoch } : {}),
       ...(type === 'prompt' && pick(row, 'quote') === true ? { quote: true } : {}),
+      // #5506: Try it for someone who does not build there: the look-only preview.
+      ...(type === 'preview' && pick(row, 'readOnly') === true ? { readOnly: true } : {}),
     });
   }
   return out;
@@ -902,7 +904,34 @@ export async function approveChange(sessionId: number, epoch: number | null): Pr
   if (response.ok) return { ok: true, stale: false, epoch, error: null, goesLive: normalizeGoesLive(pick(data, 'goesLive')) };
   const stale = response.status === 409 && pick(data, 'headChanged') === true;
   const next = Number.isInteger(pick(data, 'approvalEpoch')) ? Number(pick(data, 'approvalEpoch')) : null;
+  // #5506: a Yes from someone who does not build on the project, said in
+  // words of the card's own, not the guard's.
+  if (response.status === 403 && pick(data, 'code') === 'collab_required') {
+    return { ok: false, stale: false, epoch: null, error: t('messages:api.approve.notBuilder') };
+  }
   return { ok: false, stale, epoch: next, error: stale ? null : (text(pick(data, 'message')) || text(pick(data, 'error')) || t('messages:api.approve.failed')) };
+}
+
+/**
+ * #5506: Withdraw it, from a ready card: the bot withdraws its change, if
+ * the reader asked for it or owns its project and it is still up for a vote
+ * (routes/conversations.js). `error` is what to say when it was not.
+ */
+export async function withdrawChange(sessionId: number): Promise<{ ok: boolean; error: string | null }> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/conversations/homeroom-bot/withdraw/${sessionId}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+  } catch {
+    return { ok: false, error: t('messages:api.withdraw.unreachable') };
+  }
+  if (response.ok) return { ok: true, error: null };
+  const data = record(await response.json().catch(() => ({})));
+  return { ok: false, error: text(pick(data, 'error')) || t('messages:api.withdraw.failed') };
 }
 
 export async function decideBotAction(actionId: number, choice: string, answers?: string[]): Promise<{ label: string | null }> {
@@ -1345,6 +1374,9 @@ export function normalizeBotReadyNow(input: unknown): HomeroomBotReadyNow[] {
       } : {}),
       ...(state === 'open' && goesLive ? { goesLive } : {}),
       ...(release ? { release } : {}),
+      // #5506: what the reader can do on a card still up for approval.
+      ...(state === 'open' && typeof pick(row, 'canBuild') === 'boolean' ? { canBuild: pick(row, 'canBuild') === true } : {}),
+      ...(state === 'open' && pick(row, 'canWithdraw') === true ? { canWithdraw: true } : {}),
     };
   }).filter((entry): entry is HomeroomBotReadyNow => !!entry);
 }
