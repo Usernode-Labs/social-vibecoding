@@ -423,6 +423,27 @@ test('a still is never shown larger than its saved pixels allow on the display',
   assert.match(view, /const density = Number\(screen\.density\) >= 1 \? Number\(screen\.density\) : 1;/);
 });
 
+test('the change page sets its shot and thumbnails in one inset card', () => {
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  assert.match(src, /const PREVIEW_INSET = 12;/);
+  const body = src.slice(src.indexOf('function PageBody'), src.indexOf('/* ── The flow'));
+  assert.match(body, /const inner = Math\.max\(0, width - PREVIEW_INSET \* 2\);/);
+  assert.match(body, /const height = Math\.round\(inner \* 0\.75\);/);
+  assert.match(body, /<div className="rf-preview">[\s\S]*<CompareSlider[\s\S]*className="rf-thumbs"[\s\S]*<\/div>\s*\{item\.line \? <p className="rf-claim">/);
+  assert.match(body, /width=\{inner\} height=\{height\}/, 'the hero is sized to the card');
+  assert.match(body, /style=\{\{ width: inner, height, background: item\.ground \}\}/);
+  // The ghost lands on the inset card in both directions, with its corners.
+  assert.match(src, /const k = \(page\.width - 2 \* PREVIEW_INSET\) \/ card\.width;/);
+  assert.match(src, /page\.left \+ PREVIEW_INSET - card\.left/);
+  assert.match(src, /page\.top \+ headH \+ PREVIEW_INSET - card\.top/);
+  assert.equal((src.match(/borderRadius: '16px'/g) || []).length, 2, 'open and close both land on the card');
+
+  const css = read('public/css/app.css');
+  assert.match(css, /\.rf-preview \{ margin: 12px 12px 0; border-radius: 16px; overflow: hidden; background: var\(--rf-sheet\); box-shadow: 0 0 0 1px var\(--rf-line\); \}/);
+  assert.match(css, /\.rf-preview \.rf-thumb\[aria-pressed="true"\] \{ box-shadow: 0 0 0 2px var\(--rf-sheet\), 0 0 0 4px var\(--lit-ink\); \}/);
+  assert.match(css, /\.rf-claim \{ margin: 0; padding: 20px 16px 0 20px;/);
+});
+
 test('the title flies between its two ends measured at rest, and transitions end on their last frame', () => {
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
   const open = src.slice(src.indexOf("open.phase !== 'opening'"), src.indexOf('/* ── Collapse'));
