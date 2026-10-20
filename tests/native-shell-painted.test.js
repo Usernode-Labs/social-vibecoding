@@ -61,10 +61,15 @@ const WIN = { innerWidth: 390, innerHeight: 844 };
 /**
  * Boot native-chrome.js inside the app (or not), with a page the test
  * controls: whether the first screen is drawn, the top inset, when
- * DOMContentLoaded fired, and what the bridge answers.
+ * DOMContentLoaded fired, and what the bridge answers. `manualClock: true`
+ * stops the sandbox clock: `performance.now` returns a value the test
+ * moves by hand with the returned `setClock`, so a test that measures the
+ * cap cannot have real time slip past it. `setTimeout` stays real.
  */
 function boot(opts = {}) {
   const calls = { painted: 0, bridgeInfo: 0, warnings: [], errors: [], selectors: 0 };
+  const manualClock = opts.manualClock === true;
+  let clock = 0;
   const page = {
     readyState: opts.readyState || 'complete',
     drawn: opts.drawn ?? true,
@@ -123,7 +128,7 @@ function boot(opts = {}) {
     localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
     getComputedStyle: () => ({ paddingTop: `${page.inset}px`, backgroundColor: 'rgb(244, 242, 228)' }),
     performance: {
-      now: () => Date.now() - t0,
+      now: manualClock ? () => clock : () => Date.now() - t0,
       getEntriesByType: () => [{ domContentLoadedEventStart: page.dclAt }],
     },
     requestAnimationFrame: opts.noFrames ? () => 0 : (fn) => setTimeout(fn, 1),
@@ -149,6 +154,9 @@ function boot(opts = {}) {
   NativeChrome._SHELL_PAINTED_POLL_MS = 5;
   return {
     sandbox, calls, page, htmlChildren, NativeChrome,
+    // With `manualClock`, moves the sandbox clock to `ms`; without, a no-op
+    // the test never calls.
+    setClock(ms) { clock = ms; },
     fireDomContentLoaded() {
       page.readyState = 'interactive';
       for (const fn of listeners.DOMContentLoaded || []) fn();
@@ -223,14 +231,20 @@ test('drawn before the inset is known: it waits for the inset', async () => {
 });
 
 test('still skeletons at the cap: sent anyway, and only counted from DOMContentLoaded', async () => {
-  const h = boot({ drawn: false, readyState: 'loading', dclAt: 0, capMs: 60 });
-  await wait(120);
+  // The clock is the test's to move: a real wait cannot cross the cap, so
+  // a loaded machine cannot send it early. The shipped 1.5 s cap is used
+  // as is, since a hand-moved clock costs no real time.
+  const h = boot({ drawn: false, readyState: 'loading', dclAt: 0, manualClock: true, capMs: 1500 });
+  h.setClock(10000);
+  await wait(40);
   assert.equal(h.calls.painted, 0, 'not parsed yet: no cap is running');
-  h.page.dclAt = h.sandbox.performance.now();
+  h.page.dclAt = 10000;
   h.fireDomContentLoaded();
-  await wait(30);
+  h.setClock(10000 + 1499);
+  await wait(40);
   assert.equal(h.calls.painted, 0, 'inside the cap');
-  await wait(80);
+  h.setClock(10000 + 1500);
+  for (let i = 0; i < 400 && h.calls.painted === 0; i += 1) await wait(5);
   assert.equal(h.calls.painted, 1, 'the cap sent it');
   assert.equal(h.NativeChrome._shellPaintedReason, 'cap');
 });
