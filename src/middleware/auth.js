@@ -525,7 +525,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
   let userRow;
   try {
     const { rows } = await pool.query(
-      'SELECT id, username, is_admin, admin_readonly, app_quota, private_member_since, ai_progress_estimate, session_bridge_enabled, locale, has_platform_access, review_flow_enabled FROM users WHERE id = $1',
+      'SELECT id, username, is_admin, admin_readonly, app_quota, private_member_since, ai_progress_estimate, review_flow_enabled, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
       [payload.id]
     );
     userRow = rows[0];
