@@ -64,7 +64,7 @@ test('a private member lands in the app with the tip, and "Go to Homeroom" opens
   assert.match(src, /const \{ slug, name, example, privateMember \} = mode\.info;\s+return homeWalkSteps\(\{ slug, name, example, privateMember: !!privateMember \}\);/);
   const welcome = src.slice(src.indexOf('welcome(info: FirstSessionInfo): boolean {'), src.indexOf('goHome('));
   assert.match(welcome, /const privateMember = !!app\?\.user\?\.privateMember;/);
-  assert.match(welcome, /if \(privateMember \|\| info\.newAccount\) oweWalk\(uid, \{ slug, name, privateMember \}\);/);
+  assert.match(welcome, /if \(\(privateMember \|\| info\.newAccount\) && oweWalk\(uid, \{ slug, name, privateMember \}\)\) app\?\._noteHomeWalk\?\.\('owed'\);/);
   assert.match(welcome, /const going = app\?\.navigateToApp\?\.\(slug, 'app'\);/);
   // Go to Homeroom: noted first (the app has its ✕ from then on), then Home,
   // where the walk runs: the app was their first visit.
@@ -75,7 +75,39 @@ test('a private member lands in the app with the tip, and "Go to Homeroom" opens
 });
 
 test('the app has no ✕ for a private member until they have gone to Homeroom, from either writer', () => {
-  assert.match(APP, /_privateNoClose\(\) \{\s+return !!App\.user\?\.privateMember && !App\._privateHomeVisited\(\);/);
+  // Nor for anybody new the first session still owes its walk on Home: their
+  // menu offers the same "Go to Homeroom", and the ✕ skipped the walk.
+  assert.match(APP, /_privateNoClose\(\) \{\s+return \(!!App\.user\?\.privateMember \|\| App\._homeWalkOwed\(\)\) && !App\._privateHomeVisited\(\);/);
+  // The walk is read as first-visit.ts owedWalk reads it, under its prefix.
+  const { WALK_PREFIX } = { WALK_PREFIX: read('frontend/src/features/first-session/first-visit.ts').match(/export const WALK_PREFIX = '([^']+)';/)[1] };
+  assert.ok(APP.includes(`FIRST_SESSION_WALK_PREFIX: '${WALK_PREFIX}'`), 'the same key as the first session writes');
+  const owed = APP.slice(APP.indexOf('  _homeWalkOwed() {'), APP.indexOf('  _privateNoClose() {'));
+  assert.match(owed, /if \(!raw \|\| raw === 'done'\) return false;/, 'a walk that has run is not owed');
+  assert.match(owed, /typeof record\.slug === 'string' && record\.slug/, 'a record with a slug, as owedWalk asks');
+  // Kept by the account, so every device agrees: /api/auth/me's marks first,
+  // this device's records beside them.
+  assert.match(owed, /if \(App\.user\?\.homeWalkOwed === true\) return true;/);
+  const visited = APP.slice(APP.indexOf('  _privateHomeVisited() {'), APP.indexOf('  _notePrivateHome() {'));
+  assert.match(visited, /if \(App\.user\?\.homeroomReached === true\) return true;/);
+  assert.match(visited, /=== 'done';/, 'the walk having run here is Homeroom reached');
+  assert.match(APP, /_notePrivateHome\(\) \{[\s\S]{0,200}App\._noteHomeWalk\('reached'\);/);
+  assert.match(APP, /HOME_WALK_PATH: '\/api\/me\/home-walk'/);
+  // The first session tells the account when the walk is owed and when it
+  // runs or is claimed; goHome tells it through _notePrivateHome.
+  const fs = read('frontend/src/features/first-session/index.tsx');
+  assert.match(fs, /if \(\(privateMember \|\| info\.newAccount\) && oweWalk\(uid, \{ slug, name, privateMember \}\)\) app\?\._noteHomeWalk\?\.\('owed'\);/);
+  assert.match(fs, /if \(oweWalk\(uid, \{ slug, name, maker: true \}\)\) legacy\(\)\.App\?\._noteHomeWalk\?\.\('owed'\);/);
+  assert.match(fs, /noteWalkRun\(uid\);\s+\/\/ On Home: they have reached Homeroom, on every device\.\s+legacy\(\)\.App\?\._noteHomeWalk\?\.\('reached'\);/);
+  assert.match(fs, /!claimWalk\(uid\)\) \{ setMode\(\{ kind: 'none' \}\); return; \}\s+legacy\(\)\.App\?\._noteHomeWalk\?\.\('reached'\);/);
+  // The menu and the tip read the account's mark too, and never once reached.
+  assert.match(read('frontend/src/features/app-context/about-data.ts'),
+    /const owed = owedWalk\(uid\) != null \|\| app\?\.user\?\.homeWalkOwed === true;\s+return owed && !app\?\._privateHomeVisited\?\.\(\);/);
+  // The account's side: the route, the marks, and /api/auth/me's two fields.
+  assert.match(read('src/routes/onboarding.js'), /router\.post\('\/api\/me\/home-walk', drainGuard, sameOriginBrowserOnly,/);
+  const auth = read('src/routes/auth.js');
+  assert.match(auth, /\(u\.getting_started_seen->>'home_walk_owed' IS NOT NULL\s+AND u\.getting_started_seen->>'homeroom_reached' IS NULL\) AS home_walk_owed,/);
+  assert.match(auth, /\(u\.getting_started_seen->>'homeroom_reached' IS NOT NULL\) AS homeroom_reached,/);
+  assert.match(auth, /\n\s+homeWalkOwed,\n\s+homeroomReached,\n/);
   const slotFor = APP.slice(APP.indexOf('  _backSlotFor(revealId) {'), APP.indexOf("return ['close', App._closeAppHref()];"));
   assert.match(slotFor, /if \(App\._privateNoClose\(\)\) return \['none'\];/);
   // switchTab's App branch publishes the table's own answer, so the two

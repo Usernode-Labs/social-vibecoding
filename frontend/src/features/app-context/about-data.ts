@@ -52,7 +52,7 @@ type G = {
   Home?: { _apps?: AppRow[]; _appsLoaded?: boolean; load?: () => Promise<unknown> } & Record<string, any>;
   Browse?: { _apps?: AppRow[] };
   AppView?: { appData?: AppRow | null };
-  App?: { _privateHomeVisited?: () => boolean; user?: { id?: number | string | null } | null };
+  App?: { _privateHomeVisited?: () => boolean; user?: { id?: number | string | null; homeWalkOwed?: boolean } | null };
 };
 
 function g(): G {
@@ -101,13 +101,21 @@ export function offeringGoToHomeroom(privateMember: boolean): boolean {
  * actions.tsx): somebody who has not reached Homeroom yet has nothing to
  * update.
  *
- * Read after mount only, as offeringGoToHomeroom: it is in this device's
+ * Kept by the account too (App.user.homeWalkOwed, POST /api/me/home-walk),
+ * so a second device agrees; read with this device's record. Read after
+ * mount only, as offeringGoToHomeroom: the record is in this device's
  * storage, which the prerender cannot see.
  */
 export function owedHomeWalk(): boolean {
   try {
-    const uid = g().App?.user?.id;
-    return uid != null && owedWalk(uid) != null;
+    const app = g().App;
+    const uid = app?.user?.id;
+    if (uid == null) return false;
+    // Owed on the account (App.user.homeWalkOwed) or on this device, and not
+    // once they have reached Homeroom on any device (App._privateHomeVisited
+    // reads the account's mark with this device's).
+    const owed = owedWalk(uid) != null || app?.user?.homeWalkOwed === true;
+    return owed && !app?._privateHomeVisited?.();
   } catch {
     return false;
   }

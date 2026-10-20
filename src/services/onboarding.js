@@ -348,6 +348,44 @@ async function markTourDone(pool, userId, body) {
   return { ok: true };
 }
 
+/**
+ * Where a newcomer is with the first session's walk on Home, kept by the
+ * account so every device agrees (Evan, sign-up test, 20 Oct 2026). Until
+ * then it lived in one browser's storage (frontend/src/features/
+ * first-session/first-visit.ts, App._privateHomeVisited), so a second
+ * device, or the phone app beside a browser, showed the app's ✕ and the menu
+ * of somebody who had been Home already, or the other way round.
+ *
+ *   'owed'     the first session owes them the walk (a maker of their first
+ *              project, somebody new by an invite: the same rule that writes
+ *              the device's record, oweWalk). Kept once, and never after they
+ *              have reached Homeroom.
+ *   'reached'  they reached Homeroom: "Go to Homeroom", the walk running, or a
+ *              maker taken Home while their app builds. Kept once.
+ *
+ * Both are timestamps in users.getting_started_seen (`home_walk_owed`,
+ * `homeroom_reached`), read back on /api/auth/me as `homeWalkOwed` (owed and
+ * not reached) and `homeroomReached`. Reset first run clears them with the
+ * rest of that column. Answers `{ ok, written }`; an unknown state is
+ * `{ ok: false }` and writes nothing.
+ */
+const HOME_WALK_STATES = Object.freeze({ owed: 'home_walk_owed', reached: 'homeroom_reached' });
+
+async function markHomeWalk(pool, userId, state) {
+  const key = Object.hasOwn(HOME_WALK_STATES, state) ? HOME_WALK_STATES[state] : null;
+  if (!key) return { ok: false, written: false };
+  const { rowCount } = await pool.query(
+    `UPDATE users
+        SET getting_started_seen = COALESCE(getting_started_seen, '{}'::jsonb)
+                                   || jsonb_build_object($2::text, NOW())
+      WHERE id = $1
+        AND getting_started_seen->>$2::text IS NULL
+        AND getting_started_seen->>'homeroom_reached' IS NULL`,
+    [userId, key]
+  );
+  return { ok: true, written: rowCount > 0 };
+}
+
 module.exports = {
   SUGGESTION_LIMIT,
   MAX_JOIN,
@@ -357,5 +395,7 @@ module.exports = {
   parseJoin,
   answerJoin,
   markTourDone,
+  HOME_WALK_STATES,
+  markHomeWalk,
   resetFirstRun,
 };

@@ -76,6 +76,64 @@ test('the tour keeps how it ended and the join screen keeps join or skip, the fi
   assert.equal((await seen(finisher.id)).seen.join_answer, 'joined', 'and changes nothing');
 });
 
+// The first session's walk on Home, kept by the account (Evan, 20 Oct 2026)
+// so every device agrees on the app's ✕ and the menu's "Go to Homeroom".
+test('the walk owed and Homeroom reached are kept once, and nothing is owed after it is reached', { timeout: 120000 }, async (t) => {
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
+  }
+  const name = 'home_walk_' + crypto.randomBytes(6).toString('hex');
+  await admin.query(`CREATE DATABASE ${name}`);
+  const url = new URL(DSN); url.pathname = '/' + name;
+  const pool = new Pool({ connectionString: String(url), max: 4 });
+  t.after(async () => {
+    await pool.end();
+    await admin.query(`DROP DATABASE IF EXISTS ${name}`);
+    await admin.end();
+  });
+  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+  const onboarding = require('../src/services/onboarding');
+  const { rows: [maker, other] } = await pool.query(
+    `INSERT INTO users (username, password, has_platform_access) VALUES ('maker', 'x', TRUE), ('other', 'x', TRUE) RETURNING id`);
+  const seen = async (id) => (await pool.query('SELECT getting_started_seen AS seen FROM users WHERE id = $1', [id])).rows[0].seen || {};
+  // What /api/auth/me reads (src/routes/auth.js).
+  const me = async (id) => (await pool.query(
+    `SELECT (u.getting_started_seen->>'home_walk_owed' IS NOT NULL
+              AND u.getting_started_seen->>'homeroom_reached' IS NULL) AS owed,
+            (u.getting_started_seen->>'homeroom_reached' IS NOT NULL) AS reached
+       FROM users u WHERE u.id = $1`, [id])).rows[0];
+
+  assert.deepEqual(await me(maker.id), { owed: false, reached: false });
+  assert.deepEqual(await onboarding.markHomeWalk(pool, maker.id, 'owed'), { ok: true, written: true });
+  const first = (await seen(maker.id)).home_walk_owed;
+  assert.ok(first);
+  assert.deepEqual(await onboarding.markHomeWalk(pool, maker.id, 'owed'), { ok: true, written: false }, 'kept once');
+  assert.equal((await seen(maker.id)).home_walk_owed, first);
+  assert.deepEqual(await me(maker.id), { owed: true, reached: false });
+  assert.deepEqual(await onboarding.markHomeWalk(pool, maker.id, 'reached'), { ok: true, written: true });
+  assert.deepEqual(await me(maker.id), { owed: false, reached: true });
+  assert.deepEqual(await onboarding.markHomeWalk(pool, maker.id, 'reached'), { ok: true, written: false });
+
+  // Reached first: never owed after it.
+  await onboarding.markHomeWalk(pool, other.id, 'reached');
+  assert.deepEqual(await onboarding.markHomeWalk(pool, other.id, 'owed'), { ok: true, written: false });
+  assert.deepEqual(await me(other.id), { owed: false, reached: true });
+  assert.equal((await seen(other.id)).home_walk_owed, undefined);
+
+  // Nothing but the two states, and other marks are kept beside them.
+  assert.deepEqual(await onboarding.markHomeWalk(pool, other.id, 'tour_ended'), { ok: false, written: false });
+  await onboarding.markTourDone(pool, other.id, { ended: 'finish', step: 2 });
+  assert.equal((await seen(other.id)).tour_ended, 'finish');
+  assert.ok((await seen(other.id)).homeroom_reached);
+
+  // Reset first run clears them with the rest of the column.
+  await onboarding.resetFirstRun(pool, maker.id);
+  assert.deepEqual(await me(maker.id), { owed: false, reached: false });
+});
+
 test('each first-run sheet and the tour report themselves as steps, and hand back the screen under them', () => {
   const username = read('frontend/src/features/auth/username-first-run.js');
   const join = read('frontend/src/features/auth/communities-first-run.js');
