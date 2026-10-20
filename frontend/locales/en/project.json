@@ -500,24 +500,28 @@
     "description": "Small-caps label over the last part of the Workshop tab of a project's page: this week's changes and requests row by row, then one row for each week before it."
   },
   "workshop.allItems.seeAll": {
-    "text": "See all",
-    "description": "Button at the end of the All items heading on a project's Workshop tab: opens the All items page, the whole board of requests and proposals."
+    "text": "Open the board",
+    "description": "Button at the end of the All items heading on a project's Workshop tab, followed by a small arrow: opens the All items page, the whole board of requests and proposals. \"The board\" is that page."
+  },
+  "workshop.allItems.newRequest": {
+    "text": "New request",
+    "description": "Button beside \"Open the board\" on the All items heading of a project's Workshop tab, after a plus sign: opens the form for asking the project for a change or reporting a problem, which files a new request."
   },
   "workshop.allItems.seeAllFiltered": {
-    "text": "See all<0></0><1> (filtered)</1>",
-    "description": "The See all button on a project's Workshop tab while a search or filter is still set on the All items page it opens. <0></0> is a small dot (keep it empty); <1></1> is read only by screen readers and adds that the list is filtered."
+    "text": "Open the board<0></0><1> (filtered)</1>",
+    "description": "The Open the board button on a project's Workshop tab while a search or filter is still set on the All items page it opens. <0></0> is a small dot (keep it empty); <1></1> is read only by screen readers and adds that the list is filtered."
   },
   "workshop.dash.open_one": {
-    "text": "open item",
+    "text": "open",
     "description": "Label under the first large figure on a project's Workshop tab: the number of open requests and proposals. The number is drawn above it, so it is not in the text."
   },
   "workshop.dash.open_other": {
-    "text": "open items",
+    "text": "open",
     "description": "Label under the first large figure on a project's Workshop tab: the number of open requests and proposals. The number is drawn above it, so it is not in the text."
   },
   "workshop.dash.unclaimed": {
-    "text": "nobody on them",
-    "description": "Label under the second large figure on a project's Workshop tab: how many of the open items nobody has taken on. The number is drawn above it; \"them\" is the open items counted by the figure before."
+    "text": "unassigned",
+    "description": "Label under the second large figure on a project's Workshop tab: how many of the open requests and proposals nobody has taken on. The number is drawn above it, so it is not in the text."
   },
   "workshop.dash.votes_one": {
     "text": "waiting on a vote",
@@ -541,11 +545,11 @@
   },
   "workshop.dash.onYou_one": {
     "text": "{{count}} on you",
-    "description": "Line under the \"waiting on votes\" figure on the Workshop tab of a project's page: how many of those proposals wait on the viewer's own vote. {{count}} is that number, never zero."
+    "description": "Words after the \"waiting on votes\" label on the Workshop tab of a project's page, after a middle dot (on a phone, on their own line under it): how many of those proposals wait on the viewer's own vote. {{count}} is that number, never zero."
   },
   "workshop.dash.onYou_other": {
     "text": "{{count}} on you",
-    "description": "Line under the \"waiting on votes\" figure on the Workshop tab of a project's page: how many of those proposals wait on the viewer's own vote. {{count}} is that number, never zero."
+    "description": "Words after the \"waiting on votes\" label on the Workshop tab of a project's page, after a middle dot (on a phone, on their own line under it): how many of those proposals wait on the viewer's own vote. {{count}} is that number, never zero."
   },
   "workshop.dash.fromLastWeek_one": {
     "text": "from {{count}}",

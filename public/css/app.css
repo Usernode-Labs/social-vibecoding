@@ -24381,6 +24381,18 @@ html.in-side-panel body {
    is green going up, muted otherwise, its glyph turned over going down. */
 .dev-ws-dash-sub[data-ws-dash-sub="owed"] { color: var(--accent-wash-ink); }
 .dev-ws-dash-sub[data-dir="up"] { color: var(--state-ok); }
+/* #5299: "waiting on votes · 3 on you", one phrase in the label. On a phone,
+   where four figures share the row, "3 on you" keeps its own line and the
+   dot goes, so the label never takes three. */
+.dev-ws-dash-label .dev-ws-dash-sub { display: inline; margin-top: 0; font-size: inherit; }
+@media (max-width: 639.98px) {
+  .dev-ws-dash-label .dev-ws-dash-sub { display: block; margin-top: 1px; }
+  .dev-ws-dash-sep { display: none; }
+}
+/* #5299: the Overview card's two ways on, "+ New request" and "Open the
+   board", at the head's far end, a gap apart. */
+.dev-ws-head > [data-ws-new-request] { gap: 3px; }
+.dev-ws-head > [data-ws-new-request] + [data-ws-all-open] { margin-left: 4px; }
 .dev-ws-dash-trend { flex: none; width: 10px; height: 10px; }
 .dev-ws-dash-sub[data-dir="down"] .dev-ws-dash-trend { transform: rotate(180deg); }
 .dev-ws-ov-rule {

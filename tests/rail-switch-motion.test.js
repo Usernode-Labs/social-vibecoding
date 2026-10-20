@@ -240,6 +240,25 @@ test('the Workshop tab\'s resume marks its navigation a tab press, for exactly i
   assert.equal(App._tabPress, false);
 });
 
+test('#5299: the Workshop tab reopens a project left on All items on its Workshop overview', () => {
+  const at = (last) => {
+    const { App, AppView } = harness();
+    const landed = [];
+    AppView._workshopTab = () => last;
+    AppView._landOnTab = (slug, tab) => landed.push(`${slug}:${tab}`);
+    App._readWorkshopView = () => ({ slug: 'notes-ab12', path: '/app/notes-ab12/workshop' });
+    App._routeSearch = () => '';
+    App.restoreFromHash = () => {};
+    assert.equal(App.resumeWorkshopView(), true);
+    return landed;
+  };
+  assert.deepEqual(at('all'), ['notes-ab12:workshop'], 'All items, a page under the Workshop, is the Workshop');
+  assert.deepEqual(at('bot'), ['notes-ab12:workshop'], 'and so is the bot\'s slots page');
+  for (const place of ['status', 'needs', 'workshop', 'discussion', 'c:onboarding']) {
+    assert.deepEqual(at(place), [], `${place} reopens as itself`);
+  }
+});
+
 test('navigateHome is a tab press only when the Home tab says so — never from an Event', () => {
   const src = read('public/js/app.js');
   const body = src.slice(src.indexOf('  navigateHome(opts) {'), src.indexOf('\n  },', src.indexOf('  navigateHome(opts) {')));

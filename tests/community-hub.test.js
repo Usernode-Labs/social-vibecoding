@@ -159,7 +159,10 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   assert.match(ws, /data-ws-mine-more=""[\s\S]{0,160}onClick=\{\(\) => setMineAll\(!mineAll\)\}/, 'and the rest behind Show N more');
   assert.match(ws, /\(freshAll \? freshRows : freshRows\.slice\(0, WORKSHOP_WORK_FIRST\)\)/, 'and so does what is new for you');
   assert.equal(message('project:workshop.allItems.title'), 'All items');
-  assert.match(ws, /<span className="dev-ws-head-title">\{t\('project:workshop\.allItems\.title'\)\}<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
+  assert.match(ws, /<span className="dev-ws-head-title">\{t\('project:workshop\.allItems\.title'\)\}<\/span>[\s\S]{0,900}?\{!actions\.readOnly \? \(\s*<button[\s\S]*?data-ws-new-request=""\s*onClick=\{\(\) => \{ \(window as any\)\.App\?\.openFeedbackModal\?\.\(\{ target: 'app' \}\); \}\}[\s\S]*?<\/button>\s*\) : null\}\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/,
+    '#5299: + New request (for anyone who may write to the board), then Open the board, beside the card\'s title');
+  assert.equal(message('project:workshop.allItems.newRequest'), 'New request');
+  assert.equal(message('project:workshop.allItems.seeAll'), 'Open the board');
   // The Overview label opens the Workshop page, All items straight under it;
   // the approval rule is the card's last line, and only there.
   assert.match(ws, /^\{tab === 'workshop' && !weekUp \? \(\n\s*<>\n\s*\{\/\*(?:(?!\*\/)[\s\S])*\*\/\}\n\s*<SectionHeader className="px-1\.5 pb-0 pt-2" data-ws-part="overview">\{t\('project:workshop\.part\.overview'\)\}<\/SectionHeader>\n\s*\{v\.dashboard \? \(\s*<section\s+className="dev-ws-strip"\s+data-ws-dashboard=""/,

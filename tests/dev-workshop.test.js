@@ -518,7 +518,9 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   assert.match(html, /data-ws-dash-cell="unclaimed"[^>]*><b>2<\/b>/);
   assert.match(html, /data-ws-dash-cell="votes"[^>]*><b>1<\/b>/);
   assert.match(html, /data-ws-dash-cell="shipped"[^>]*><b>1<\/b>/);
-  assert.match(html, /nobody on them/);
+  // #5299: plain labels, a word each where a word says it.
+  assert.match(html, /data-ws-dash-cell="open"[\s\S]{0,200}?<span>open<\/span>/);
+  assert.match(html, /data-ws-dash-cell="unclaimed"[\s\S]{0,200}?<span>unassigned<\/span>/);
   assert.match(html, /waiting on a vote/);
   // TONE IS CARRIED TWICE: a mark beside the label, and the same hue on the
   // figure. With the dot present the hue is REDUNDANT rather than
@@ -556,6 +558,12 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   // UNDER WAITING ON VOTES, HOW MANY WAIT ON YOU (After-Workshop-B): the
   // place bar's own count, in the accent, because it asks for the viewer.
   assert.match(cell('votes'), /<span class="dev-ws-dash-sub" data-ws-dash-sub="owed">1 on you<\/span>/);
+  // #5299: ...as one phrase with the label ("waiting on a vote · 1 on you"),
+  // where it read as a small link under another number; a phone, where four
+  // figures share the row, breaks it onto its own line and drops the dot.
+  assert.match(cell('votes'), /<span>waiting on a vote<span class="dev-ws-dash-sep" aria-hidden="true"> · <\/span><span class="dev-ws-dash-sub" data-ws-dash-sub="owed">1 on you<\/span><\/span>/);
+  assert.match(CSS, /\.dev-ws-dash-label \.dev-ws-dash-sub \{ display: inline; margin-top: 0; font-size: inherit; \}/);
+  assert.match(CSS, /@media \(max-width: 639\.98px\) \{\n  \.dev-ws-dash-label \.dev-ws-dash-sub \{ display: block; margin-top: 1px; \}\n  \.dev-ws-dash-sep \{ display: none; \}\n\}/);
   assert.match(CSS, /\.dev-ws-dash-sub\[data-ws-dash-sub="owed"\] \{ color: var\(--accent-wash-ink\); \}/);
   // #4745: the tile routes its own tap — one waiting ref opens that item's
   // page, anything else (several waiting, or a ref the count has but the
@@ -4673,8 +4681,8 @@ test('#2915: while a search or filter is on, a dot on the way to All items says 
   for (const over of [{ q: 'dark' }, { assignedToMe: true }, { priority: 'high' }]) {
     AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), ...over };
     const ws = workshopHtml(AppView, 'workshop');
-    assert.match(ws, /data-ws-all-open="">See all<span class="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true"><\/span><span class="sr-only"> \(filtered\)<\/span>/,
-      `workshop / ${JSON.stringify(over)}: on See all`);
+    assert.match(ws, /data-ws-all-open="">Open the board<span class="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true"><\/span><span class="sr-only"> \(filtered\)<\/span>/,
+      `workshop / ${JSON.stringify(over)}: on Open the board`);
     assert.doesNotMatch(workshopHtml(AppView, 'all'), /data-ws-filtered/, 'not while All items is up');
   }
   // Cleared, it goes.

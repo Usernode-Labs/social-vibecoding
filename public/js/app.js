@@ -6152,6 +6152,16 @@ const App = {
       App._resumingWorkshop = null;
       return false;
     }
+    // #5299: THE TAB REOPENS A PROJECT ON ITS WORKSHOP, NOT ON THE BOARD.
+    // All items (and the bot's slots) are pages under the Workshop; left on
+    // one, the press came back to it, while the Workshop row in the places
+    // opened the overview, so one place looked different by route. A switch
+    // of community already lands there (keepPlace); the tab does the same,
+    // and the board is one tap away, Open the board on the overview.
+    try {
+      const last = typeof AppView !== 'undefined' ? AppView._workshopTab?.() : null;
+      if (last === 'all' || last === 'bot') AppView._landOnTab(view.slug, 'workshop');
+    } catch (_) { /* the page opens on the place it remembers */ }
     // A PRESS ON THE WORKSHOP TAB, and it swaps like one (#2880, #2881).
     // navigateToApp reads the flag before its first await, which is where it
     // starts its transition; restoreFromHash reaches it synchronously.

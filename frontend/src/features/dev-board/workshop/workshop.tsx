@@ -57,6 +57,7 @@ import {
   ChevronUpIcon,
   EllipsisHorizontalIcon,
   PlayIcon,
+  PlusIcon,
   SparklesIcon,
   SpeechCheckIcon,
   Squares2X2Icon,
@@ -879,7 +880,7 @@ type DashStage = 'open' | 'unclaimed' | 'shipped';
 function DashTiles({ d, owed, onVotes, onStage }: { d: Dash; owed: number; onVotes?: () => void; onStage?: (stage: DashStage) => void }): ReactNode {
   const t = useMessages('project');
   const rate = !d.partial && d.shippedPrevWeek > 0 ? (d.shippedWeek > d.shippedPrevWeek ? 'up' : d.shippedWeek < d.shippedPrevWeek ? 'down' : 'same') : null;
-  const cells: { key: string; n: number; label: string; tone?: string; title?: string; sub?: ReactNode }[] = [
+  const cells: { key: string; n: number; label: string; tone?: string; title?: string; sub?: ReactNode; inline?: ReactNode }[] = [
     { key: 'open', n: d.open, label: t('project:workshop.dash.open', { count: d.open }) },
     { key: 'unclaimed', n: d.unclaimed, label: t('project:workshop.dash.unclaimed') },
     {
@@ -887,8 +888,15 @@ function DashTiles({ d, owed, onVotes, onStage }: { d: Dash; owed: number; onVot
       n: d.votesWaiting,
       label: t('project:workshop.dash.votes', { count: d.votesWaiting }),
       tone: d.votesWaiting ? 'warn' : undefined,
-      sub: owed > 0 ? (
-        <span className="dev-ws-dash-sub" data-ws-dash-sub="owed">{t('project:workshop.dash.onYou', { count: owed })}</span>
+      // #5299: "waiting on votes · 3 on you", one phrase, where the line
+      // under the label read as a small link under another number. A phone,
+      // where four figures share the row, still breaks it onto its own line
+      // (app.css), so the label never takes three.
+      inline: owed > 0 ? (
+        <>
+          <span className="dev-ws-dash-sep" aria-hidden="true">{' · '}</span>
+          <span className="dev-ws-dash-sub" data-ws-dash-sub="owed">{t('project:workshop.dash.onYou', { count: owed })}</span>
+        </>
       ) : null,
     },
     {
@@ -930,7 +938,7 @@ function DashTiles({ d, owed, onVotes, onStage }: { d: Dash; owed: number; onVot
                   widths, and a centred mark floated to the middle of a two-line
                   label while its second line ran back underneath the dot. */}
               {c.tone ? <i className={`dev-ws-dash-dot dev-ws-dash-dot-${c.tone}`} aria-hidden="true" /> : null}
-              <span>{c.label}</span>
+              <span>{c.label}{c.inline}</span>
             </span>
             {c.sub}
           </>
@@ -5156,9 +5164,27 @@ export function DevWorkshop(): ReactNode {
         >
           <div className="dev-ws-head">
             <span className="dev-ws-head-title">{t('project:workshop.allItems.title')}</span>
+            {/* #5299: THE CARD'S TWO WAYS ON, named. "+ New request" opens
+                the Suggest an improvement dialog the hub's ⋯ row opens, on
+                this project already (`target: 'app'`: the button sits on
+                it, so asking where it goes would be a second tap), for
+                anyone who may write to the board. "Open the board" was a
+                bare "See all". The Workshop opens on this overview, so the
+                board is this one tap away. */}
+            {!actions.readOnly ? (
+              <button
+                type="button"
+                className="dev-ws-hub-open dev-ws-head-end un-touch-target"
+                data-ws-new-request=""
+                onClick={() => { (window as any).App?.openFeedbackModal?.({ target: 'app' }); }}
+              >
+                <PlusIcon className="w-3.5 h-3.5" aria-hidden="true" />
+                {t('project:workshop.allItems.newRequest')}
+              </button>
+            ) : null}
             <button
               type="button"
-              className="dev-ws-hub-open dev-ws-head-end un-touch-target"
+              className={actions.readOnly ? 'dev-ws-hub-open dev-ws-head-end un-touch-target' : 'dev-ws-hub-open un-touch-target'}
               data-ws-all-open=""
               onClick={() => openTab('all')}
             >
