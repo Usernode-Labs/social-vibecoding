@@ -23,6 +23,7 @@ const { loadTsx, renderComponent } = require('./lib/render-tsx');
 const MODEL = 'frontend/src/features/dev-board/topic/request-model.ts';
 const TRANSCRIPT = 'frontend/src/features/group-chat/transcript.tsx';
 const HEAD = 'frontend/src/features/dev-board/topic/request-head.tsx';
+const SHELL = 'frontend/src/features/group-chat/thread-shell.tsx';
 
 const row = (patch) => ({
   id: null, kind: 'message', username: 'maya', time: '09:05 AM',
@@ -154,6 +155,38 @@ test('the root post: who asked and when, the title in bold, the words as a quote
   assert.equal((html.match(/data-state="next"/g) || []).length, 3);
   assert.match(html, /dev-request-say">You’re working on this\.<\/p><p class="dev-request-fine">If nothing moves by Oct 15/);
   assert.match(html, /data-act="openChangeWorkspace"[^>]*>Continue your work</);
+});
+
+test('#5301: on a narrow page where it stands sits under the words, above the screenshots', () => {
+  const html = renderComponent(HEAD, 'RequestHead', { r: requestView() });
+  // No screenshots: the words, then the status card, as siblings.
+  assert.match(html, /<div class="dev-request-ask"><div class="dev-request-ask-text line-clamp-4"[^]*?<\/div><\/div><div class="dev-request-status"/);
+  // Nothing between: the one quote it always was (a change's page).
+  const plain = renderComponent(HEAD, 'RequestWords', { html: '<div class="dev-issue-body"><p>Look.</p></div>' });
+  assert.match(plain, /^<div class="dev-request-ask"><div class="dev-request-ask-text line-clamp-4"/);
+  assert.doesNotMatch(plain, /dev-request-ask-shots/);
+});
+
+test('#5301: the request page has a side host and no chip host; a change page keeps its chip', () => {
+  const props = { fill: true, withHeader: true, readOnly: false, notice: '', placeholder: 'Reply…', maxLength: 4000 };
+  const request = renderComponent(SHELL, 'ThreadShell', { ...props, request: true });
+  assert.doesNotMatch(request, /gc-thread-back/);
+  assert.match(request, /<\/section><aside id="gc-thread-side" class="dev-request-side" aria-label="About this request"><\/aside><\/div>$/);
+  const change = renderComponent(SHELL, 'ThreadShell', { ...props, change: true });
+  assert.match(change, /<div id="gc-thread-back" class="dev-request-back"><\/div>/);
+  assert.doesNotMatch(change, /gc-thread-side/);
+  // The head fills the side only once it has measured a wide page: the
+  // first render is the one-column page.
+  const head = fs.readFileSync(path.join(__dirname, '..', HEAD), 'utf8');
+  assert.match(head, /const side = wide \? host\('gc-thread-side'\) : null;/);
+  assert.match(head, /export const WIDE_REQUEST_PX = 960;/);
+  const css = fs.readFileSync(path.join(__dirname, '../public/css/app.css'), 'utf8');
+  assert.match(css, /\.dev-request:has\(> \.dev-request-side:not\(:empty\)\) \{\n\s+display: grid;/,
+    'two columns exactly when the side is filled');
+  const catalog = JSON.parse(fs.readFileSync(path.join(__dirname, '../frontend/locales/en/project.json'), 'utf8'));
+  for (const id of ['label', 'status', 'plan', 'planNone', 'people', 'askedBy']) {
+    assert.ok(catalog[`topic.request.side.${id}`]?.description, `topic.request.side.${id} is in the catalog`);
+  }
 });
 
 test('voted in: every step is done, with no fill; a closed request says so instead of the stepper', () => {

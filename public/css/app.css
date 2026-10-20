@@ -16605,6 +16605,37 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   --messages-hair: rgba(255, 255, 255, 0.08);
   --messages-disc-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
+/* #5301: TWO COLUMNS ON A WIDE PAGE. request-head.tsx fills the side host
+   (`#gc-thread-side`, after the sheet) only when what holds the page is at
+   least 960px wide, so the layout follows the host being filled and the two
+   cannot disagree: the request and its discussion on the left, Status, Plan
+   and People down the right, each scrolling on its own. Empty, the side
+   takes no room and the page is the one centred column it was. */
+.dev-request-side:empty { display: none; }
+.dev-request:has(> .dev-request-side:not(:empty)) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-rows: minmax(0, 1fr);
+  column-gap: 20px;
+  max-width: 1180px;
+  padding: 0 20px;
+}
+.dev-request-side { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.dev-request-side-cards { display: flex; flex-direction: column; gap: 12px; padding-bottom: 16px; }
+.dev-request-side-card {
+  border-radius: 16px;
+  padding: 14px 14px 12px;
+  background: var(--messages-surface);
+}
+/* The status card's own surface is the side card's there. */
+.dev-request-side .dev-request-status { margin-top: 0; max-width: none; padding: 0; border-radius: 0; background: none; }
+.dev-request-side .dev-request-specs.messages-object-list { margin-top: 0; max-width: none; }
+.dev-request-side .dev-request-track { margin-top: 12px; }
+.dev-request-side-none { margin: 0; font-size: 15px; color: var(--text-muted); }
+.dev-request-side-line { margin: 0; font-size: 15px; color: var(--text-primary); overflow-wrap: anywhere; }
+/* A narrow page draws the status between the words and the screenshots,
+   so the quote is two halves with the status card between them. */
+.dev-request-ask-shots { margin-top: 10px; }
 .dev-request-back { flex: 0 0 auto; display: flex; padding-left: 4px; }
 .dev-request-back:empty { display: none; }
 .dev-request-back .dev-topic-back { margin: 0 0 12px; }
@@ -19412,6 +19443,19 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
    the header's code (#3271): hidden at every width, shown on a phone only,
    where the band's row is collapsed. */
 #platform-header .header-place-name { display: none; }
+/* #5301: a request's page names itself after the community's name in the
+   bar, "› Request #N" (header-title.tsx RequestCrumb), in the bar's own ink
+   and a step quieter than the name. It keeps its ground beside a long name,
+   capped, and shortens with an ellipsis past that. */
+#platform-header .header-crumb {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  flex-shrink: 0; min-width: 0; max-width: 55%;
+  overflow: hidden; white-space: nowrap;
+  font-weight: 500; opacity: .85;
+}
+#platform-header .header-crumb-here { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#platform-header .header-crumb-link { color: inherit; text-decoration: none; }
+#platform-header .header-crumb-link:hover { text-decoration: underline; }
 @media (max-width: 767.98px) {
   .dev-ws-tabs.dev-ws-band { background: none; pointer-events: none; }
   .dev-ws-placebar .dev-ws-tabtrack { height: 0; overflow: hidden; }

@@ -130,15 +130,22 @@ function Composer({ fill, readOnly, notice, placeholder, maxLength, request = fa
  * #4453: a request's page — the sheet Messages opens a reply thread in
  * (features/messages/index.tsx `ReplyThreadPanel`): its header, a scroller
  * holding the request as the root post and the replies under it, and the
- * thread's composer at its foot. The page's back chip sits above the sheet.
+ * thread's composer at its foot.
  *
- * Two more empty hosts than the topic layout, both the topic head's
- * (features/dev-board/topic/request-head.tsx portals into them), rendered
- * once with a constant className and never looked inside:
+ * More empty hosts than the topic layout, all the topic head's
+ * (features/dev-board/topic/request-head.tsx and change-head.tsx portal
+ * into them), rendered once with a constant className and never looked
+ * inside:
  *
- *   * `#gc-thread-back` — the "‹ Workshop" chip, above the sheet.
  *   * `#gc-thread-bar` — the sheet's header: "Request #N", its category,
  *     and the ⋯ disc. Outside the scroller, so it stays put.
+ *   * `#gc-thread-side`, a request's only (#5301): the column beside the
+ *     sheet on a wide page, its Status, Plan and People. Empty when the page
+ *     is narrow, and app.css lays the page out in two columns exactly when
+ *     it is filled. A request's back is the header's arrow now, so it has
+ *     no chip host.
+ *   * `#gc-thread-back`, a change's only: the "‹ Workshop" chip, above
+ *     the sheet.
  *
  * Messages' tokens (`--messages-surface` and the rest) are defined on
  * `.dev-request` in app.css, as they are on `.messages-layout`.
@@ -153,7 +160,7 @@ function RequestShell(props: ThreadShellProps) {
   const change = !!props.change;
   return (
     <div className={change ? 'dev-request dev-change platform-kb-column' : 'dev-request platform-kb-column'}>
-      <div id="gc-thread-back" className="dev-request-back" />
+      {change ? <div id="gc-thread-back" className="dev-request-back" /> : null}
       <section className="dev-request-sheet dc-lift dc-lift-session" aria-label={change ? t('project:topic.change.sheetLabel') : t('project:topic.request.sheetLabel')}>
         <div id="gc-thread-bar" className="dev-request-bar" />
         <div ref={scroll} id="gc-thread-scroll" className="messages-thread-scroll dev-request-scroll overscroll-contain">
@@ -166,6 +173,7 @@ function RequestShell(props: ThreadShellProps) {
         <StatusLine scope="thread" className="px-4 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0" />
         <Composer {...props} />
       </section>
+      {change ? null : <aside id="gc-thread-side" className="dev-request-side" aria-label={t('project:topic.request.side.label')} />}
     </div>
   );
 }

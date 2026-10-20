@@ -15,6 +15,15 @@
  *      it leaves, rather than in the platform bar above everything.
  *   3. This chip. The header draws NO back control on these routes now
  *      (../../header/platform-header.tsx), so there is still exactly one.
+ *   4. On a REQUEST'S page, the header's arrow again (#5301), with the
+ *      path after the community's name ("› Request #N"). The navigation
+ *      review found the chip above the card read as page content rather
+ *      than as the way back. The request's head publishes that it is on
+ *      screen (./request-page-store.ts) and draws no chip; the header draws
+ *      its arrow to the same `topicBackHref`, named as the chip was
+ *      (`topicBackName`). A change's page and every other topic keep the
+ *      chip. On a phone the communities drawer owns the header there
+ *      (../../nav-drawer/), and its arrow is the page's back.
  *
  * Both halves read `topicBackHref` (../../improve/improve-store.js): the chip
  * renders when it has an answer, and the header forces its own slot to 'none'
@@ -108,6 +117,21 @@ function chipFor(href: string, workshopTab: string | null): ChipKey {
   return workshopTab === 'all' && /\/workshop$/.test(href) ? 'allItems' : 'workshop';
 }
 
+/** The Workshop's open tab, as AppView says it (`'all'` on All items). */
+export function currentWorkshopTab(): string | null {
+  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+  return av && typeof av._workshopTab === 'function' ? av._workshopTab() : null;
+}
+
+/**
+ * The accessible name of a back control that goes to `href`, as a message
+ * id: "Back to Workshop", "Back to All items" or "Back to Messages". The
+ * header's arrow on a request's page (#5301) is named by it, as the chip is.
+ */
+export function topicBackName(href: string, workshopTab: string | null): string {
+  return CHIP_TEXT[chipFor(href, workshopTab)].name;
+}
+
 /** One chip: the destination's name behind the chevron. */
 function TopicChip({ href, to }: { href: string; to: ChipKey }): ReactNode {
   const t = useMessages('project');
@@ -132,9 +156,7 @@ export function TopicBack(): ReactNode {
   // says so; everywhere else the chip is the Workshop's.
   // #4486: "‹ All items" when the Workshop reopens on All items, the page
   // the item was opened from.
-  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
-  const workshopTab = av && typeof av._workshopTab === 'function' ? av._workshopTab() : null;
-  const back = <TopicChip href={href} to={chipFor(href, workshopTab)} />;
+  const back = <TopicChip href={href} to={chipFor(href, currentWorkshopTab())} />;
   // #3691: and offers its project's Workshop beside that, styled the same.
   const workshop = topicWorkshopHref({ slug, tab, subTab, boardView, topicOrigin });
   if (!workshop) return back;

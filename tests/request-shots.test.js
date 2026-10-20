@@ -407,6 +407,16 @@ test('the page folds the words and always shows the screenshots after the fold (
   const plain = renderToHtml(createElement(RequestWords, { html }));
   assert.equal(plain, `<div class="dev-request-ask"><div class="dev-request-ask-text line-clamp-4" data-request-words="">${html}</div></div>`);
   assert.equal(renderToHtml(createElement(RequestWords, { html: '' })), '');
+
+  // #5301: on a narrow page the status goes between the words and the
+  // screenshots, and the quote is drawn as two halves around it.
+  const status = createElement('div', { className: 'dev-request-status' });
+  const apart = withParser(() => renderToHtml(createElement(RequestWords, { html, between: status })));
+  assert.equal(apart, '<div class="dev-request-ask">'
+    + '<div class="dev-request-ask-text line-clamp-4" data-request-words=""><div class="dev-issue-body"><p class="dc-p">The header is too small.</p>\n</div></div>'
+    + '</div><div class="dev-request-status"></div>'
+    + `<div class="dev-request-ask dev-request-ask-shots"><div class="dev-request-shots" data-request-shots="">${shots.requestShots(html, { parse }).shots}</div></div>`,
+  'the words, then the status, then the screenshots');
 });
 
 test('the words lift the screenshots for everyone, take the toggle\'s click, and keep the viewer\'s scope', () => {
@@ -418,6 +428,6 @@ test('the words lift the screenshots for everyone, take the toggle\'s click, and
     'the same wrapper while the string is the same, so a hidden comment stays hidden');
   assert.match(src, /if \(togglePinShot\(event\.target, event\.currentTarget\)\) event\.preventDefault\(\);/);
   assert.match(src, /<div className="dev-request-ask" onClick=\{togglePin\}>/);
-  assert.match(src, /<div className="min-w-0 flex-1" \{\.\.\.images\.scope\}>[\s\S]*<RequestWords html=\{r\.bodyHtml\} \/>/,
+  assert.match(src, /<div className="min-w-0 flex-1" \{\.\.\.images\.scope\}>[\s\S]*<RequestWords html=\{r\.bodyHtml\} between=\{between\} \/>/,
     'the words are still inside the image viewer\'s scope');
 });

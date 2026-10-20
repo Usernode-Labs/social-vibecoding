@@ -49,6 +49,8 @@ import { PlatformMark } from './platform-mark';
 import { InAppActions } from './in-app-actions';
 import { SidebarToggle } from '../nav/sidebar-toggle';
 import { improveStore, topicBackHref } from '../improve/improve-store.js';
+import { requestPageStore } from '../dev-board/topic/request-page-store';
+import { currentWorkshopTab, topicBackName } from '../dev-board/topic/topic-back';
 import { useHeaderLayout } from './use-header-layout';
 import { nativeBackEnabled, useNativeBackNavigation } from './native-back-navigation';
 import { useDismissibleOpen } from '../../lib/back-stack';
@@ -166,6 +168,9 @@ function homeHref(): string {
  *                         PlatformHeader. It was a chevron here, and before
  *                         that a full-width "← Back" bar in the page one row
  *                         under it; one control, in one place, either way.
+ *   A request's page   →  THIS BAR'S AGAIN (#5301): the arrow to the same
+ *                         `topicBackHref`, named as the chip was, and the
+ *                         page draws no chip (request-page-store.ts).
  *   A dev session      →  wherever it was opened from — see `sessionOrigin`
  *                         in ../improve/improve-store.js — falling back to
  *                         Messages on a cold deep link, because a change is
@@ -257,13 +262,26 @@ export function PlatformHeader() {
   // the rule stays so that a stale arrow can never paint over the ✕. Where
   // the ✕ lands is App._closeAppHref's answer: the page the app was opened
   // from (App.closeApp), which is `backHref`.
+  // #5301: A REQUEST'S PAGE takes the arrow back. Its head publishes that it
+  // is on screen (../dev-board/topic/request-page-store.ts) and draws no
+  // chip, so this bar's arrow, to the chip's own `paneBack`, is that page's
+  // one back control. Not while the phone's communities drawer owns the bar:
+  // its own arrow is the back there (../nav-drawer/header-drawer.tsx).
+  const { number: requestNumber } = useStoreState(requestPageStore);
+  const drawerOn = useDrawerMode() === 'communities';
+  const requestBack = !!paneBack && requestNumber != null && !drawerOn;
   const mode = backMode === 'close' ? 'close'
-    : paneBack ? 'none'
+    : paneBack ? (requestBack ? 'arrow' : 'none')
       : (routeUp ? 'arrow' : backMode);
   const backArrow = mode === 'arrow';
   const backClose = mode === 'close';
   const resolvedBackHref = routeUp
-    || (mode === 'home' ? homeHref() : backHref);
+    || (requestBack ? paneBack : (mode === 'home' ? homeHref() : backHref));
+  // Named for where it goes, as the chip was: "Back to Workshop", "Back to
+  // All items", "Back to Messages".
+  const backName = requestBack && paneBack
+    ? t(topicBackName(paneBack, currentWorkshopTab()))
+    : backArrow ? t('core:header.back') : backClose ? t('core:header.closeApp') : t('core:header.home');
 
   // A LAYOUT effect, and that is load-bearing: it runs inside main.tsx's
   // flushSync(hydrateRoot), which is after hydration has adopted these nodes
@@ -283,8 +301,7 @@ export function PlatformHeader() {
   const visible = useVisibility('platform-header', true);
   useHiddenClass(headerRef, !visible);
   const dialogOpen = useDismissibleOpen();
-  // The phone's Communities drawer: its pan is the swipe back.
-  const drawerOn = useDrawerMode() === 'communities';
+  // The phone's Communities drawer (`drawerOn`, above): its pan is the swipe back.
   // The swipe follows whichever control is the page's back: this bar's
   // arrow, or on a Workshop topic the in-pane chip (#2916), which is a back
   // with a destination even though the bar shows nothing.
@@ -514,7 +531,8 @@ export function PlatformHeader() {
           <a
             id="back-btn"
             className={BACK_BTN_CLASS + (mode === 'none' ? ' hidden' : '')}
-            aria-label={backArrow ? t('core:header.back') : backClose ? t('core:header.closeApp') : t('core:header.home')}
+            aria-label={backName}
+            {...(requestBack ? { title: backName } : {})}
             {...(resolvedBackHref ? { href: resolvedBackHref } : {})}
           >
             {/*

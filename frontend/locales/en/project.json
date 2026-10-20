@@ -2803,6 +2803,30 @@
     "text": "Request",
     "description": "Accessible name of the sheet that holds a request's page. A noun: something a member asked to have built or fixed in the project."
   },
+  "topic.request.side.label": {
+    "text": "About this request",
+    "description": "Accessible name of the column beside a request's page on a wide screen, which holds where the request stands, its plan and who asked for it. \"Request\" is a noun: something a member asked to have built or fixed."
+  },
+  "topic.request.side.status": {
+    "text": "Status",
+    "description": "Small uppercase label over the card in the side column of a request's page that shows how far the request has come: asked, plan written, built, voted in."
+  },
+  "topic.request.side.plan": {
+    "text": "Plan",
+    "description": "Small uppercase label over the card in the side column of a request's page that lists the plans written for the request. A noun: a written plan for how the request will be built."
+  },
+  "topic.request.side.planNone": {
+    "text": "Not written yet",
+    "description": "Shown in the Plan card beside a request's page when nobody has written a plan for the request yet."
+  },
+  "topic.request.side.people": {
+    "text": "People",
+    "description": "Small uppercase label over the card in the side column of a request's page that says who is involved with the request."
+  },
+  "topic.request.side.askedBy": {
+    "text": "Asked by {{author}}",
+    "description": "Line in the People card beside a request's page. {{author}} is the username of the member who asked for the request."
+  },
   "topic.request.bar.title": {
     "text": "Request #{{number}}",
     "description": "Title in the header of a request's page. {{number}} is the request's number. \"Request\" is a noun: something a member asked to have built or fixed."

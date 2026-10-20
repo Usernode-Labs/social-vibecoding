@@ -161,8 +161,12 @@ test('the anchor renders both glyphs and hides exactly one', () => {
   // and that inventory is a contract (tests/shell-id-inventory.test.js).
   assert.match(HEADER, /className=\{BACK_BTN_CLASS \+ \(mode === 'none' \? ' hidden' : ''\)\}/,
     "the anchor itself hides only on 'none'");
-  assert.match(HEADER, /aria-label=\{backArrow \? t\('core:header\.back'\) : backClose \? t\('core:header\.closeApp'\) : t\('core:header\.home'\)\}/,
+  assert.match(HEADER, /: backArrow \? t\('core:header\.back'\) : backClose \? t\('core:header\.closeApp'\) : t\('core:header\.home'\);/,
     'and the accessible name follows the glyph — three meanings, three names');
+  // #5301: on a request's page the arrow is named for where it goes, as the
+  // chip it replaced was.
+  assert.match(HEADER, /const backName = requestBack && paneBack\n\s+\? t\(topicBackName\(paneBack, currentWorkshopTab\(\)\)\)/);
+  assert.match(HEADER, /aria-label=\{backName\}/);
   assert.deepEqual(['back', 'closeApp', 'home'].map((name) => message(`core:header.${name}`)), ['Back', 'Close app', 'Home']);
 });
 
@@ -223,13 +227,20 @@ test('the derived answer outranks the imperative one, and only inside an app', (
   // in the pane, so the bar's slot is 'none' there whatever setBackIcon last
   // published. It is derived from the same function the chip renders from,
   // which is what keeps the page at exactly one back control.
-  assert.match(HEADER, /const mode = backMode === 'close' \? 'close'\n\s+: paneBack \? 'none'\n\s+: \(routeUp \? 'arrow' : backMode\);/,
+  // #5301: …except a request's page, whose head draws no chip and publishes
+  // that it is up, so the bar's arrow is its back (not under the phone's
+  // drawer, whose own arrow is).
+  assert.match(HEADER, /const requestBack = !!paneBack && requestNumber != null && !drawerOn;/,
+    "a request's page takes the bar's arrow, from the page's own publish");
+  assert.match(HEADER, /const \{ number: requestNumber \} = useStoreState\(requestPageStore\);/,
+    'read from the store request-head.tsx publishes');
+  assert.match(HEADER, /const mode = backMode === 'close' \? 'close'\n\s+: paneBack \? \(requestBack \? 'arrow' : 'none'\)\n\s+: \(routeUp \? 'arrow' : backMode\);/,
     'an app view wins outright; a Workshop topic hides the bar\'s slot for the '
     + 'in-pane chip; an app route with a level above it wins over the '
     + 'imperative call; everything else keeps what setBackIcon published');
   assert.match(HEADER, /const paneBack = topicBackHref\(\{\n\s+slug: backSlug, tab: backTab, subTab: backSubTab, boardView, topicOrigin,\n\s+\}\);/,
     'and that topic answer is topicBackHref\'s, the chip\'s own');
-  assert.match(HEADER, /const resolvedBackHref = routeUp\n\s+\|\| \(mode === 'home' \? homeHref\(\) : backHref\);/,
+  assert.match(HEADER, /const resolvedBackHref = routeUp\n\s+\|\| \(requestBack \? paneBack : \(mode === 'home' \? homeHref\(\) : backHref\)\);/,
     "and 'home' resolves its own href rather than relying on a caller to "
     + 'pass one');
 });

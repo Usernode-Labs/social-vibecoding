@@ -434,10 +434,14 @@ test('"back out of an issue / proposal / governance topic" is the in-pane Worksh
     'and TopicHead, the topic page, is what asks for it');
   // #4453/#4455: a request's and a change's page are threads, and their chip
   // sits above the sheet, in the shell's own host.
-  for (const rel of ['request-head.tsx', 'change-head.tsx']) {
-    const src = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'topic', rel), 'utf8');
-    assert.match(src, /\{back \? createPortal\(<TopicBack \/>, back\) : null\}/, `${rel} portals the chip above its sheet`);
-  }
+  // #5301: a request's page has no chip; its back is the header's arrow.
+  const topicDir = path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'topic');
+  const changeHead = fs.readFileSync(path.join(topicDir, 'change-head.tsx'), 'utf8');
+  assert.match(changeHead, /\{back \? createPortal\(<TopicBack \/>, back\) : null\}/, 'change-head.tsx portals the chip above its sheet');
+  const requestHead = fs.readFileSync(path.join(topicDir, 'request-head.tsx'), 'utf8');
+  assert.doesNotMatch(requestHead, /TopicBack|gc-thread-back/, "request-head.tsx draws no chip (#5301)");
+  assert.match(requestHead, /requestPageStore\.set\(\{ number: r\.number \}\);\n\s+return \(\) => requestPageStore\.set\(\{ number: null \}\);/,
+    'and publishes that it is up, for the header, while it is mounted');
 });
 
 test('a topic page has exactly one back control: the chip, and no header arrow (#2916)', () => {
@@ -447,8 +451,8 @@ test('a topic page has exactly one back control: the chip, and no header arrow (
   // two back controls; this is agreement by construction.
   assert.match(headerTsx, /const paneBack = topicBackHref\(\{/,
     'platform-header.tsx derives the topic from topicBackHref');
-  assert.match(headerTsx, /const mode = backMode === 'close' \? 'close'\n\s+: paneBack \? 'none'/,
-    "and draws no back control where the chip is the page's back");
+  assert.match(headerTsx, /const mode = backMode === 'close' \? 'close'\n\s+: paneBack \? \(requestBack \? 'arrow' : 'none'\)/,
+    "and draws no back control where the chip is the page's back, and its arrow on a request's page, which has none (#5301)");
   // …and no longer maps a topic to the board itself: that answer is the chip's.
   assert.doesNotMatch(headerTsx, /subTab === 'topic'\) return boardHref/,
     "the header's ladder no longer sends a topic anywhere");

@@ -92,7 +92,8 @@ import { Wordmark } from '@/components/ui/wordmark';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { headerTitleStore } from './header-title-store.js';
-import { improveStore } from '../improve/improve-store.js';
+import { improveStore, topicWorkshopHref } from '../improve/improve-store.js';
+import { requestPageStore } from '../dev-board/topic/request-page-store';
 import { navStore } from '../nav/nav-store.js';
 import { sessionHeaderStore } from '../dev-chat/session-header-store';
 import { MergeStatusPill } from '../dev-chat/session-header';
@@ -109,10 +110,35 @@ import { useSidebarRows } from '../nav/sidebar-rows';
 // anything from anywhere.
 const PLATFORM_NAME = 'Homeroom';
 
+/**
+ * #5301: WHERE YOU ARE ON A REQUEST'S PAGE, after the community's name:
+ * "› Request #N". Opened from a Messages conversation, back goes to that
+ * conversation, so the path names the project's Workshop as a link in
+ * between: "› Workshop › Request #N", in place of the second chip that page
+ * used to carry. Quiet text in the bar's own ink; the page's back is the
+ * bar's arrow (./platform-header.tsx).
+ */
+function RequestCrumb({ number, workshop }: { number: number; workshop: string | null }) {
+  const t = useMessages('project');
+  return (
+    <span className="header-crumb" data-header-crumb="">
+      <span className="header-crumb-sep" aria-hidden="true">›</span>
+      {workshop ? (
+        <>
+          <a className="header-crumb-link pointer-events-auto" href={workshop}>{t('project:topic.back.workshop')}</a>
+          <span className="header-crumb-sep" aria-hidden="true">›</span>
+        </>
+      ) : null}
+      <span className="header-crumb-here">{t('project:topic.request.bar.title', { number })}</span>
+    </span>
+  );
+}
+
 export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingElement | null> }) {
   const t = useMessages();
   const { text, subtitle } = useStoreState(headerTitleStore);
-  const { slug, tab, subTab, name, iconUrl, iconEmoji, selfHosted } = useStoreState(improveStore);
+  const { slug, tab, subTab, name, iconUrl, iconEmoji, selfHosted, boardView, topicOrigin } = useStoreState(improveStore);
+  const { number: requestNumber } = useStoreState(requestPageStore);
   const { screen } = useStoreState(navStore);
   const { life } = useStoreState(sessionHeaderStore);
   const viewMode = useDevViewMode();
@@ -159,6 +185,10 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   // Beside the sidebar, the community's name where the switcher would be.
   const communityName = communityPage && sidebarRows;
   const showTile = inApp;
+  // #5301: a request's page names itself after the community.
+  const crumb = onCard && requestNumber != null ? (
+    <RequestCrumb number={requestNumber} workshop={topicWorkshopHref({ slug, tab, subTab, boardView, topicOrigin })} />
+  ) : null;
 
   /* `.app-icon-tile` + `data-icon` draw the box, and this call site adds no
      background or text colour of its own — app.css says tile call sites must
@@ -254,6 +284,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
                 from screen readers: the heading is named by the switcher's
                 drawing already. */}
             {onWorkshop ? <HeaderPlaceName slug={slug} /> : null}
+            {crumb}
           </>
         ) : (
           <span className="min-w-0 flex items-baseline gap-1.5">
@@ -276,6 +307,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
                   ? <Wordmark className="h-5 w-[77.5px]" aria-hidden="true" />
                   : text}
             </span>
+            {communityName ? crumb : null}
             {showSubtitle && !communityName ? (
               <span
                 id="header-subtitle"

@@ -1163,9 +1163,9 @@
       "expectText": "Draft ready to review"
     },
     {
-      "name": "#4453: where a request stands is one card under it: the stepper with the step it is at, one sentence for who is on it, and the date the claim lapses (#1112)",
+      "name": "#4453: where a request stands is one card, under its words or beside the request on a wide page: the stepper with the step it is at, one sentence for who is on it, and the date the claim lapses (#1112, #5301)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900014",
-      "expectSelector": "#gc-thread-head .dev-request-root .dev-request-ask + .dev-request-status[data-request-stage=\"asked\"]:has(.dev-request-step[data-state=\"now\"][aria-current=\"step\"]) .dev-request-say + .dev-request-fine",
+      "expectSelector": ":is(.dev-request-root .dev-request-ask + .dev-request-status, [data-request-side=status] > h2 + .dev-request-status)[data-request-stage=asked]:has(.dev-request-step[data-state=now][aria-current=step]) .dev-request-say + .dev-request-fine",
       "expectText": "opens up for someone else"
     },
     {
@@ -4216,14 +4216,14 @@
       "expectText": "We sent you a code. It expires in 10 minutes."
     },
     {
-      "name": "#2916: back from a request is the Workshop chip above its sheet, to the layout it was opened from, and the header draws no arrow beside it (#4453)",
+      "name": "#5301: back from a request is the header's arrow, to the layout it was opened from, with the path after the community's name, and no chip on the page (#2916, #4453)",
       "path": "/?demo=1&view=workshop#app/usernode-2d5619/dev/issues/900014",
-      "expectSelector": "body:has(#platform-header a#back-btn.hidden) #dev-topic-thread #gc-thread-back > a.dev-topic-back:first-child[aria-label=\"Back to Workshop\"][href=\"#app/usernode-2d5619/workshop\"]"
+      "expectSelector": "body:has(#dev-topic-thread .dev-request-root):not(:has(#dev-topic-thread .dev-topic-back)):has(#header-title [data-header-crumb]) #platform-header a#back-btn:not(.hidden)[aria-label=\"Back to Workshop\"][href=\"#app/usernode-2d5619/workshop\"]"
     },
     {
-      "name": "…and from a request opened on it, the same chip to the same screen (#2916)",
+      "name": "…and from a request opened on it, the same arrow to the same screen, and the page has no chip host (#2916, #5301)",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev/issues/900014",
-      "expectSelector": "body:has(#platform-header a#back-btn.hidden) #gc-thread-back:has(> a.dev-topic-back:first-child[href=\"#app/usernode-2d5619/workshop\"]) + .dev-request-sheet"
+      "expectSelector": "body:has(.dev-request > .dev-request-sheet #gc-thread-head .dev-request-root):not(:has(#gc-thread-back)) #platform-header a#back-btn:not(.hidden)[href=\"#app/usernode-2d5619/workshop\"]"
     },
     {
       "name": "The bar's two edges: nothing to leave by on Home, and the bell left of the mark",
@@ -4482,7 +4482,7 @@
     {
       "name": "#1808: a request's GitHub replies carry a day and a time, and the year once it is not this one; Homeroom bot's spec comment is the request's spec card and a line saying it was posted, not a reply (#3490, #4453)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900003",
-      "expectSelector": "body:has(#gc-thread-head .dev-request-specs > .messages-object-card.dev-request-spec .messages-object-icon ~ .dev-request-read):has(#gc-thread-messages .dev-request-event[data-request-event=\"spec\"]) #gc-thread-messages .gc-msg-github .gc-msg-time[title]",
+      "expectSelector": "body:has(.dev-request .dev-request-specs > .messages-object-card.dev-request-spec .messages-object-icon ~ .dev-request-read):has(#gc-thread-messages .dev-request-event[data-request-event=\"spec\"]) #gc-thread-messages .gc-msg-github .gc-msg-time[title]",
       "expectText": "2024"
     },
     {
@@ -4995,7 +4995,7 @@
     {
       "name": "A request Homeroom bot is building says where it is on its own page, as its thread in the chat does: its status word and try, where it is and why, and the five steps with the one it is on lit (16 Oct 2026)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900018",
-      "expectSelector": "#gc-thread-head .dev-request-root .dev-request-track[data-request-track=building] [data-bot-track=building]:has([data-bot-track-bar=building] [data-bot-track-step=build][data-state=now]) [data-bot-activity-eyebrow]",
+      "expectSelector": ":is(#gc-thread-head .dev-request-root, #gc-thread-side) .dev-request-track[data-request-track=building] [data-bot-track=building]:has([data-bot-track-bar=building] [data-bot-track-step=build][data-state=now]) [data-bot-activity-eyebrow]",
       "expectText": "Try 2"
     },
     {

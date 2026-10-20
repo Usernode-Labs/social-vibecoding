@@ -5,19 +5,27 @@
  *
  * This is the head: everything the ISSUE ROW says. It renders into
  * `#gc-thread-head`, which the thread shell's request layout puts at the top
- * of its scroller, and portals two more pieces into that layout's other
- * empty hosts (../../group-chat/thread-shell.tsx `RequestShell`):
+ * of its scroller, and portals into that layout's other empty hosts
+ * (../../group-chat/thread-shell.tsx `RequestShell`):
  *
- *   - `#gc-thread-back`: the "‹ Workshop" chip, above the sheet;
  *   - `#gc-thread-bar`: the sheet's header, "Request #N", the category in
  *     plain words, and the ⋯ disc. Its rows are the card menu's
  *     (`AppView._registerCardMenu`), so the disc carries `data-card-menu` and
  *     the document-level handler opens it, as a card's ⋯ does.
+ *   - `#gc-thread-side` (#5301), on a wide page only: the column beside the
+ *     sheet, with three cards, Status (where it stands), Plan (its specs, or
+ *     "Not written yet") and People (who asked).
  *
  * Then, in the root post: who asked and when, the title, the request in its
- * own words as a quote folded at four lines, the card that says where it
- * stands, and one card per spec (`requestThreadStore`, which the stream
- * publishes, since the specs are posted in it).
+ * own words as a quote folded at four lines, and, on a narrow page, the
+ * card that says where it stands and one card per spec
+ * (`requestThreadStore`, which the stream publishes, since the specs are
+ * posted in it). Narrow, the status sits right under the words and above
+ * the screenshots, so where it stands is in view without scrolling past them.
+ *
+ * #5301: the page has no "‹ Workshop" chip. It publishes that it is on
+ * screen (./request-page-store.ts) and the platform header draws its own
+ * arrow and the path ("› Request #N") instead; a change's page keeps its chip.
  */
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -30,6 +38,7 @@ import { t as translate } from '../../../lib/i18n/runtime';
 import { useStoreState } from '../../../lib/use-store-state';
 import { ISSUE_BODY_MAX } from '../../../lib/issue-body-limit';
 import { Button } from '@/components/ui/button';
+import { SectionHeader } from '@/components/ui/grouped-list';
 import { Avatar } from '@/components/ui/feed';
 import { CheckIcon, ChevronDownIcon, EllipsisHorizontalIcon } from '@/components/ui/icons';
 import { Textarea } from '@/components/ui/textarea';
@@ -47,8 +56,8 @@ import {
   requestThreadStore,
   type RequestSpecCard,
 } from './request-model';
+import { requestPageStore } from './request-page-store';
 import { requestShots, togglePinShot } from './request-shots';
-import { TopicBack } from './topic-back';
 import { saveIssueBody } from './topic-head';
 
 function appView(): any {
@@ -117,7 +126,12 @@ function reducedMotion(): boolean {
  * and the screenshots leave the fold and are always shown under it, so
  * "Show more" opens only the words (#4481).
  */
-export function RequestWords({ html }: { html: string }): ReactNode {
+export function RequestWords({ html, between = null }: {
+  html: string;
+  /** Drawn after the words and before the screenshots (#5301): a narrow
+      request page's status, so it is in view without scrolling past them. */
+  between?: ReactNode;
+}): ReactNode {
   const t = useMessages('project');
   const text = useRef<HTMLDivElement>(null);
   // `t` is the language on screen's: a switch lifts the pictures again, so
@@ -177,27 +191,38 @@ export function RequestWords({ html }: { html: string }): ReactNode {
   const togglePin = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (togglePinShot(event.target, event.currentTarget)) event.preventDefault();
   };
-  if (!words && !shots) return null;
+  if (!words && !shots) return between ? <>{between}</> : null;
+  const pictures = shots ? <div className="dev-request-shots" data-request-shots="" dangerouslySetInnerHTML={shotsInner} /> : null;
+  // With something between the words and the screenshots (#5301), the
+  // quote is drawn as two: the words, then that, then the screenshots, each
+  // half set apart the same way.
+  const apart = !!between;
   return (
-    <div className="dev-request-ask" onClick={togglePin}>
-      {/* DevChat.renderMarkdown's output, sanitised where it is built. The
-          clamp class is React's; the fold writes the node's height only for
-          the length of the animation, and puts the clamp back as it ends so
-          React's next render agrees with the DOM. */}
-      {words ? <div ref={text} className={`dev-request-ask-text${open ? '' : ' line-clamp-4'}`} data-request-words="" dangerouslySetInnerHTML={inner} /> : null}
-      {words && (folds || open) ? (
-        <button
-          type="button"
-          className="dev-ws-reveal dev-ws-reveal-start touch-target-32 dev-request-more"
-          aria-expanded={shown}
-          onClick={toggle}
-        >
-          <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-          {shown ? t('project:topic.request.words.showLess') : t('project:topic.request.words.showMore')}
-        </button>
+    <>
+      {words || !apart ? (
+        <div className="dev-request-ask" onClick={togglePin}>
+          {/* DevChat.renderMarkdown's output, sanitised where it is built. The
+              clamp class is React's; the fold writes the node's height only for
+              the length of the animation, and puts the clamp back as it ends so
+              React's next render agrees with the DOM. */}
+          {words ? <div ref={text} className={`dev-request-ask-text${open ? '' : ' line-clamp-4'}`} data-request-words="" dangerouslySetInnerHTML={inner} /> : null}
+          {words && (folds || open) ? (
+            <button
+              type="button"
+              className="dev-ws-reveal dev-ws-reveal-start touch-target-32 dev-request-more"
+              aria-expanded={shown}
+              onClick={toggle}
+            >
+              <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+              {shown ? t('project:topic.request.words.showLess') : t('project:topic.request.words.showMore')}
+            </button>
+          ) : null}
+          {apart ? null : pictures}
+        </div>
       ) : null}
-      {shots ? <div className="dev-request-shots" data-request-shots="" dangerouslySetInnerHTML={shotsInner} /> : null}
-    </div>
+      {between}
+      {apart && pictures ? <div className="dev-request-ask dev-request-ask-shots" onClick={togglePin}>{pictures}</div> : null}
+    </>
   );
 }
 
@@ -355,6 +380,75 @@ export function SpecCard({ card }: { card: RequestSpecCard }): ReactNode {
   );
 }
 
+/** How wide the page has to be for the request and its side column (#5301). */
+export const WIDE_REQUEST_PX = 960;
+
+/**
+ * Whether the request's page is wide enough for two columns: the width of
+ * what holds the page (`.dev-request`'s parent, the topic's host), watched.
+ * False before it is measured and where there is no ResizeObserver, so the
+ * first render is the one-column page.
+ */
+function useWideRequest(): boolean {
+  const [wide, setWide] = useState(false);
+  useEffect(() => {
+    const page = host('gc-thread-head')?.closest('.dev-request')?.parentElement;
+    if (!page || typeof ResizeObserver !== 'function') return undefined;
+    const measure = () => setWide(page.getBoundingClientRect().width >= WIDE_REQUEST_PX);
+    measure();
+    const watch = new ResizeObserver(measure);
+    watch.observe(page);
+    return () => watch.disconnect();
+  }, []);
+  return wide;
+}
+
+/** One card of the side column, under its small-caps label. */
+function SideCard({ part, label, children }: { part: string; label: string; children: ReactNode }): ReactNode {
+  return (
+    <section className="dev-request-side-card" data-request-side={part}>
+      <SectionHeader className="px-0 pt-0 pb-2">{label}</SectionHeader>
+      {children}
+    </section>
+  );
+}
+
+/**
+ * #5301: the side column of a wide request page. Where it stands (the same
+ * card as on a narrow page, and Homeroom bot's track when it is on it), its
+ * plans, and who asked.
+ */
+function RequestSide({ r, status, track, specs, scope }: {
+  r: RequestView;
+  status: ReactNode;
+  track: ReactNode;
+  specs: RequestSpecCard[];
+  /** The page's image viewer, for the track card's pictures. */
+  scope: Record<string, unknown>;
+}): ReactNode {
+  const t = useMessages('project');
+  return (
+    <div className="dev-request-side-cards" {...scope}>
+      <SideCard part="status" label={t('project:topic.request.side.status')}>
+        {status}
+        {track}
+      </SideCard>
+      <SideCard part="plan" label={t('project:topic.request.side.plan')}>
+        {specs.length ? (
+          <div className="messages-object-list dev-request-specs">
+            {specs.map((card) => <SpecCard key={card.key} card={card} />)}
+          </div>
+        ) : <p className="dev-request-side-none">{t('project:topic.request.side.planNone')}</p>}
+      </SideCard>
+      {r.asker ? (
+        <SideCard part="people" label={t('project:topic.request.side.people')}>
+          <p className="dev-request-side-line">{t('project:topic.request.side.askedBy', { author: r.asker })}</p>
+        </SideCard>
+      ) : null}
+    </div>
+  );
+}
+
 export function RequestHead({ r }: { r: RequestView }): ReactNode {
   const thread = useStoreState(requestThreadStore);
   const specs = thread.number === r.number ? thread.specs : [];
@@ -369,13 +463,32 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
     window.addEventListener('request-body-edit', open);
     return () => window.removeEventListener('request-body-edit', open);
   }, [r.number, r.editor.canEdit]);
-  const back = host('gc-thread-back');
+  // #5301: the header draws this page's back and its path while it is up.
+  useLayoutEffect(() => {
+    requestPageStore.set({ number: r.number });
+    return () => requestPageStore.set({ number: null });
+  }, [r.number]);
+  const wide = useWideRequest();
   const bar = host('gc-thread-bar');
+  const side = wide ? host('gc-thread-side') : null;
   const track = useMemo(() => (r.track ? normalizeBotTrack(r.track) : null), [r.track]);
+  const status = <RequestStatus s={r.status} specs={specs} tracked={!!track} />;
+  const trackCard = track ? (
+    // 16 Oct 2026 (C4, V3): the same card a request's thread leads
+    // with, where it is and why, its bar and its pictures, in place
+    // of having to open the chat to find out. Drawn from the board's
+    // older row it holds its place unseen (`trackPending`, app.css),
+    // and says where the work is once the fresh row lands.
+    <div className="dev-request-track" data-request-track={r.trackPending ? 'pending' : track.state} inert={!!r.trackPending}>
+      <TrackCard track={track} title={r.title} links={trackLinks(track, { request: false })} pictures />
+    </div>
+  ) : null;
+  // Narrow, where it stands sits under the words, before the screenshots.
+  const between = side ? null : <>{status}{trackCard}</>;
   return (
     <>
-      {back ? createPortal(<TopicBack />, back) : null}
       {bar ? createPortal(<RequestBar r={r} />, bar) : null}
+      {side ? createPortal(<RequestSide r={r} status={status} track={trackCard} specs={specs} scope={images.scope} />, side) : null}
       {images.viewer}
       <article className="messages-message dev-request-root" data-ref-issue={r.number} data-request-root={r.number}>
         <Avatar shape="square" size="sm" color={swatchFor(r.asker)} aria-hidden="true">
@@ -389,19 +502,8 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
           <h1 className="dev-request-title" data-issue-title={r.number}>
             <TitleContent t={{ text: r.title, title: r.title, editing: r.titleEditing || undefined }} />
           </h1>
-          {editing ? <RequestEditor r={r} onClose={() => setEditing(false)} /> : <RequestWords html={r.bodyHtml} />}
-          <RequestStatus s={r.status} specs={specs} tracked={!!track} />
-          {track ? (
-            // 16 Oct 2026 (C4, V3): the same card a request's thread leads
-            // with, where it is and why, its bar and its pictures, in place
-            // of having to open the chat to find out. Drawn from the board's
-            // older row it holds its place unseen (`trackPending`, app.css),
-            // and says where the work is once the fresh row lands.
-            <div className="dev-request-track" data-request-track={r.trackPending ? 'pending' : track.state} inert={!!r.trackPending}>
-              <TrackCard track={track} title={r.title} links={trackLinks(track, { request: false })} pictures />
-            </div>
-          ) : null}
-          {specs.length ? (
+          {editing ? <><RequestEditor r={r} onClose={() => setEditing(false)} />{between}</> : <RequestWords html={r.bodyHtml} between={between} />}
+          {!side && specs.length ? (
             <div className="messages-object-list dev-request-specs">
               {specs.map((card) => <SpecCard key={card.key} card={card} />)}
             </div>
