@@ -11,6 +11,7 @@ const log = require('../services/logger');
 const limits = require('../services/limits');
 const anthropicCredits = require('../services/anthropic-credits');
 const dbExport = require('../services/db-export');
+const adminAccessReview = require('../services/admin-access-review');
 const adminAppsUsage = require('../services/admin-apps-usage');
 const appDataRetention = require('../services/app-data-retention');
 const events = require('../services/events');
@@ -599,6 +600,20 @@ function adminRoutes(config) {
   //     two concurrent demotions can't both observe >1 and race to zero.
   //   Setting the last full admin to `view_admin` is blocked the same way
   //   as demoting them to `user`.
+  // When an account got the role it holds now, for the access review
+  // (#5133). Runs after the role write has committed: the role change is
+  // already made, so a failure to note it is logged, never turned into an
+  // error for a change that happened.
+  async function noteRoleChange(userId, role, by) {
+    try {
+      await adminAccessReview.recordRoleChange(pool, { userId, role, changedBy: by.id });
+    } catch (err) {
+      log.error('admin', 'Role change not recorded for the access review', {
+        id: userId, role, by: by.username, message: err.message,
+      });
+    }
+  }
+
   router.post('/api/admin/users/:id/is-admin', requireAdminWrite, async (req, res) => {
     const userId = parseInt(req.params.id, 10);
     if (!Number.isFinite(userId)) {
@@ -640,6 +655,7 @@ function adminRoutes(config) {
         log.info('admin', 'Role set', {
           id: rows[0].id, username: rows[0].username, role, by: req.user.username,
         });
+        await noteRoleChange(rows[0].id, role, req.user);
         return res.json({
           ok: true, role,
           isAdmin: rows[0].is_admin, adminReadonly: rows[0].admin_readonly,
@@ -687,6 +703,7 @@ function adminRoutes(config) {
       log.info('admin', 'Role set', {
         id: rows[0].id, username: rows[0].username, role, by: req.user.username,
       });
+      await noteRoleChange(rows[0].id, role, req.user);
       res.json({
         ok: true, role,
         isAdmin: rows[0].is_admin, adminReadonly: rows[0].admin_readonly,
@@ -2549,6 +2566,41 @@ function adminRoutes(config) {
       log.error('admin', 'db-export audit update failed', { message: err.message, id });
     }
   }
+
+  // ── Access review (#5133) ───────────────────────────────────────────
+  //
+  // Who holds admin rights, what each can do, and the quarterly review
+  // (services/admin-access-review.js, docs/ops/admin-access.md). Both
+  // routes are full admins only: the list says who can take the database
+  // away, and recording a review is a write.
+  router.get('/api/admin/access-review', requireAdminWrite, async (_req, res) => {
+    try {
+      res.set('Cache-Control', 'no-store');
+      res.json(await adminAccessReview.report(pool));
+    } catch (err) {
+      log.error('admin', 'Access review read failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/admin/access-review/reviews', requireAdminWrite, drainGuard, async (req, res) => {
+    const note = adminAccessReview.normaliseNote(req.body?.note);
+    if (!note.ok) return res.status(400).json({ error: note.error });
+    try {
+      const row = await adminAccessReview.recordReview(pool, {
+        reviewerId: req.user.id, note: note.value,
+      });
+      log.info('admin', 'Admin access reviewed', {
+        by: req.user.username, id: row.id,
+        fullAdmins: row.full_admins, viewOnlyAdmins: row.view_only_admins,
+      });
+      res.set('Cache-Control', 'no-store');
+      res.json(await adminAccessReview.report(pool));
+    } catch (err) {
+      log.error('admin', 'Access review record failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
 
   // Capability probe for the console. Readable by ANY admin (view-only
   // included) — it exposes no data, only whether the button should work

@@ -37,6 +37,12 @@ test('app members and hidden accounts against the full PostgreSQL schema', { tim
     await admin.end();
   });
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+  // #5104: accounts start out reachable only by people they share a project
+  // with, and out of searches. This file's people are strangers who write
+  // to, invite and find each other, which is what it pins, so here they
+  // start out open; tests/contact-privacy-postgres.test.js pins the defaults.
+  await pool.query(`ALTER TABLE users ALTER COLUMN contact_policy SET DEFAULT 'anyone',
+                                      ALTER COLUMN profile_discoverable SET DEFAULT TRUE`);
 
   const user = async (username, { synthetic = false } = {}) => (await pool.query(
     `INSERT INTO users (username, password, is_synthetic) VALUES ($1, 'x', $2) RETURNING id`,

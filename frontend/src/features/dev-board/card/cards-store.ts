@@ -108,9 +108,20 @@ export const voteSavedStore = createStore<Record<string, VoteSavedEntry>>({});
 
 let voteSavedSeq = 0;
 
-export function publishVoteSaved(sessionId: number, vote: 'yes' | 'no', epoch: number | null): void {
+export function publishVoteSaved(sessionId: number, vote: 'yes' | 'no' | null, epoch: number | null): void {
   const id = Number(sessionId);
   if (!Number.isInteger(id) || id <= 0) return;
+  // A vote taken back (AppView.retractVote, the new Needs you's Undo): the
+  // change is owed again, so no screen may keep showing it as answered.
+  if (vote === null) {
+    voteSavedStore.set((cur: Record<string, VoteSavedEntry>) => {
+      if (!(String(id) in cur)) return cur;
+      const next: Record<string, VoteSavedEntry> = { ...cur };
+      delete next[String(id)];
+      return next;
+    });
+    return;
+  }
   if (vote !== 'yes' && vote !== 'no') return;
   const e = epoch == null ? null : Number(epoch);
   voteSavedStore.set((cur: Record<string, VoteSavedEntry>) => {

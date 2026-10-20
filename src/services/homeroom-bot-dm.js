@@ -2894,6 +2894,14 @@ async function goesLiveFor(pool, sessionId, userId) {
   return goesLiveAfterYes(state.gate, waiting);
 }
 
+// The cards about one change sent to one person (noteApproved,
+// noteApprovalWithdrawn).
+const CHANGE_CARDS_SQL = `SELECT d.message_id, d.conversation_id, m.metadata->'homeroomBot' AS meta
+         FROM homeroom_bot_dm_messages d
+         JOIN conversation_messages m ON m.id = d.message_id
+         JOIN homeroom_bot_runs r ON r.id = d.run_id
+        WHERE d.user_id = $1 AND d.kind = 'proposal' AND r.proposal_session_id = $2`;
+
 /**
  * B7: `userId` said Yes to one of the bot's changes (routes/votes.js), from
  * its card, the change page or anywhere else: the "ready to try" cards they
@@ -2906,14 +2914,7 @@ async function goesLiveFor(pool, sessionId, userId) {
  */
 async function noteApproved(pool, sessionId, userId, deps = {}) {
   try {
-    const { rows } = await pool.query(
-      `SELECT d.message_id, d.conversation_id, m.metadata->'homeroomBot' AS meta
-         FROM homeroom_bot_dm_messages d
-         JOIN conversation_messages m ON m.id = d.message_id
-         JOIN homeroom_bot_runs r ON r.id = d.run_id
-        WHERE d.user_id = $1 AND d.kind = 'proposal' AND r.proposal_session_id = $2`,
-      [userId, sessionId],
-    );
+    const { rows } = await pool.query(CHANGE_CARDS_SQL, [userId, sessionId]);
     const open = rows.filter((row) => row.meta?.ready && row.meta.status === 'open');
     if (!open.length) return null;
     // Read once, for every card about it. A card still settles without it.
@@ -2932,6 +2933,32 @@ async function noteApproved(pool, sessionId, userId, deps = {}) {
   } catch (err) {
     log.warn('homeroom-bot-dm', 'Could not settle a change\'s ready card after a Yes', { sessionId, userId, err: err.message });
     return null;
+  }
+}
+
+/**
+ * The review flow's Undo: `userId` took back their Yes on one of the bot's
+ * changes (DELETE /api/sessions/:id/vote) while it was still up for a vote.
+ * The "ready to try" cards noteApproved settled for them about it offer
+ * Approve again, on every device, instead of saying it goes live. Only the
+ * cards their Yes answered: one closed for a newer version stays closed.
+ * Resolves how many were reopened. Never throws.
+ */
+async function noteApprovalWithdrawn(pool, sessionId, userId, deps = {}) {
+  try {
+    const { rows } = await pool.query(CHANGE_CARDS_SQL, [userId, sessionId]);
+    const answered = rows.filter((row) => row.meta?.ready && row.meta.status === 'answered' && row.meta.chosen === 'approve');
+    for (const row of answered) {
+      await setQuestionState(pool, Number(row.message_id), {
+        status: 'open', chosen: null, answer: null, goesLive: null,
+      }, {
+        ws: deps.ws || null, conversationId: row.conversation_id, userId,
+      });
+    }
+    return answered.length;
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not reopen a change\'s ready card after a Yes was taken back', { sessionId, userId, err: err.message });
+    return 0;
   }
 }
 
@@ -5612,6 +5639,7 @@ module.exports = {
   readyActions,
   noteApproversReady,
   noteApproved,
+  noteApprovalWithdrawn,
   goesLiveAfterYes,
   usernamesOf,
   // 5 October: a ready card read as it stands now, and the live news's way in.

@@ -98,8 +98,17 @@ async function claimEmailInvites(pool, { userId, email }) {
       try {
         const { rows: apps } = await pool.query('SELECT id, slug, name FROM apps WHERE id = $1', [invite.app_id]);
         if (!apps[0]) continue;
+        // #5104: held to the new account's contact_policy like any other
+        // invite. An address can be typed by anybody, so an invite from
+        // someone they are not connected to is dropped here, quietly: the
+        // person confirming their address did nothing wrong.
         const sent = await collabInvites.sendInvite(pool, { app: apps[0], target, inviterId: invite.invited_by });
         if (sent.ok) claimed += 1;
+        else if (sent.status === 'contact_restricted') {
+          log.info('email-invites', 'Dropped an invite the account does not take', {
+            appId: invite.app_id, userId: target.id, inviterId: invite.invited_by,
+          });
+        }
       } catch (err) {
         log.warn('email-invites', 'Claiming an invite failed', { appId: invite.app_id, err: err.message });
       }

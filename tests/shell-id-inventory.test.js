@@ -372,6 +372,8 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── New Needs you (an experiment) ──────────────────────────────────
+  'review-flow-enabled': 'New Needs you: the switch in Settings, Experimental (off by default, kept on the device by features/review-flow/settings.ts) that draws the Communities tab\'s Needs you as the new review flow. settings.js paints and saves it through window.UsernodeReact.reviewFlow.',
   // ── #5286: the admin console marks itself ─────────────────────────
   'admin-console-bar': '#5286: the admin console\'s own band at the top of #admin-root, ships hidden and is revealed through classList by AdminConsole._renderShell for an admin (never in public mode).',
   'admin-exit': '#5286: the band\'s Exit link, href #profile, which goes back to the address the console was entered from when one is known.',
@@ -427,6 +429,9 @@ const ADDED_IDS = {
   // settings.js binds inside it.
   'settings-accessibility-section': '#3969: the Accessibility page root, inside its [data-settings-section="accessibility"] wrapper.',
   'settings-text-size-track': '#3969: the Normal / Large / Larger segmented control. Reuses the .theme-seg classes app.css keys the recessed track off; deliberately no caret — --theme-caret-index belongs to the theme control.',
+  'settings-contact-privacy-section': '#5104: the Privacy page root, inside its [data-settings-section="contact-privacy"] wrapper.',
+  'settings-who-can-message': '#5104: the "Who can message or invite me" radio group (People in projects I\'m in, the default, or Anyone).',
+  'settings-profile-discoverable': '#5104: the "Let people find my profile" switch, off by default.',
   'settings-high-contrast': '#3969: the High contrast switch (the RailPinnedRow pattern, at every width).',
   // ── #2718: the platform's destinations leave the app's menu ──────
   //

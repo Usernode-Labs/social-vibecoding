@@ -16,8 +16,7 @@
  *            six, and the sixth digit sends it with no Continue to press.
  *            "Sent to <address> · Change" says where it went, a button opens
  *            the address's own mail (Gmail, Outlook, …) when it is one of
- *            theirs, "Nothing? Check spam." sits beside the resend, and the
- *            story's Get started says it is step 2 of 3.
+ *            theirs, "Nothing? Check spam." sits beside the resend.
  *   account  POST /api/auth/otp/set-password: the username when the account
  *            has none, which mints the session. No password (#4891): the
  *            account signs in with an emailed code, and adds a password in
@@ -488,17 +487,6 @@ export function mailAppFor(address: string): MailApp | null {
   const domain = address.slice(at + 1).trim().toLowerCase();
   const app = MAIL_APPS.find((a) => a.domains.includes(domain) || (a.name === 'Yahoo Mail' && domain.startsWith('yahoo.')));
   return app ? { name: app.name, url: app.url(address.trim()) } : null;
-}
-
-/**
- * Where a step is in Get started (#5253, #5255): email, code, username. Only
- * the story's sheet counts its steps, and from the first one (#5252), so
- * the three are in view before an address is typed. The first step is the
- * email, with Apple and Google above it when they are set up.
- */
-export function storyStep(step: string, from: 'invite' | 'story' | 'signin'): number | null {
-  if (from !== 'story') return null;
-  return step === 'choose' || step === 'email' ? 1 : step === 'code' ? 2 : step === 'account' ? 3 : null;
 }
 
 /** What the account step's live check says of a handle (#5255). */
@@ -1499,7 +1487,6 @@ export function SignInSheet({
     ? 'pointer-events-none translate-y-full md:-translate-x-1/2 md:-translate-y-1/2 md:opacity-0'
     : up ? 'translate-y-0 md:-translate-x-1/2 md:-translate-y-1/2' : 'translate-y-full md:-translate-x-1/2 md:-translate-y-1/2';
   const close = leaving ? undefined : requestClose;
-  const stepNumber = storyStep(step, from);
   const mailApp = step === 'code' ? mailAppFor(email) : null;
 
   return (
@@ -1538,16 +1525,6 @@ export function SignInSheet({
           <button type="button" data-sign-in-sheet-forgot-back="" className={`${QUIET} mt-2 -ml-1 flex items-center gap-0.5`} onClick={() => { identifierPrefill.current = typedIdentifier.current; toStep('password'); }}>
             <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />{t('auth:signInSheet.forgot.back')}
           </button>
-        ) : null}
-        {stepNumber ? (
-          <div data-sign-in-sheet-progress={stepNumber} className="mt-3 flex items-center gap-3">
-            <div className="flex flex-1 gap-1.5" aria-hidden="true">
-              {[1, 2, 3].map((n) => (
-                <span key={n} className={n <= stepNumber ? 'h-1 w-7 rounded-full bg-violet-600' : 'h-1 w-7 rounded-full bg-zinc-300 dark:bg-zinc-700'} />
-              ))}
-            </div>
-            <span className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.progress', { step: stepNumber, total: 3 })}</span>
-          </div>
         ) : null}
         <div className="mt-3 flex items-center gap-3">
           <h2 id="sign-in-sheet-title" className="min-w-0 flex-1 break-words text-[17px] font-semibold text-zinc-900 dark:text-zinc-100">{heading}</h2>
@@ -1714,10 +1691,12 @@ export function SignInSheet({
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.password.signingIn') : t('auth:signInSheet.password.submit')}</button>
             <div className="flex items-center justify-between">
-              {/* With the switch, the email code is its other half; Apple and Google are still a step away. */}
-              {providers.length || !methodSwitch ? (
-                <button type="button" className={QUIET} onClick={() => toStep(otherWays)}>
-                  {providers.length ? t('auth:signInSheet.password.otherWays') : t('auth:signInSheet.password.useEmailCode')}
+              {/* Picking Password is choosing how to sign in, so this step offers no way back to
+                  Apple and Google: closing the sheet does that (#5616). Without the switch, the
+                  email code is the one other way, and the link goes to that step. */}
+              {!methodSwitch ? (
+                <button type="button" className={QUIET} onClick={() => toStep('email')}>
+                  {t('auth:signInSheet.password.useEmailCode')}
                 </button>
               ) : <span aria-hidden="true" />}
               {/* The reset opens here, in the sheet (#5258), not on the sign-in screen's own page. */}
