@@ -216,7 +216,9 @@ test('ChallengeCard is one card for both surfaces: tile, the title with its poin
   const railAt = html.indexOf('role="progressbar"');
   assert.ok(html.indexOf('500 pts') < railAt, 'the points are above the rail');
   assert.doesNotMatch(html.slice(railAt), /pts/, 'the rail holds the state and nothing else');
-  assert.doesNotMatch(html.slice(html.indexOf('flex min-w-0 flex-1 flex-col')), /flex-wrap|p-0\.5|bg-zinc-100/,
+  // Up to the arrow square beside it (#4563), which is the one light square.
+  const group = html.slice(html.indexOf('flex min-w-0 flex-1 flex-col'), html.indexOf('relative flex h-9 w-9'));
+  assert.doesNotMatch(group, /flex-wrap|p-0\.5|bg-zinc-100/,
     'no capsule around the rail (the tile keeps its own neutral face)');
   assert.match(html, /aria-valuetext="2\/3 tried"/);
   assert.match(html, /style="width:max\(0\.375rem, 67%\)"/);
@@ -244,25 +246,27 @@ test('the points: amber to earn, emerald once earned, and nothing when there are
 // ── Two shapes (#4563) ────────────────────────────────────────────────
 //
 // Every card had one shape and one weight, so nothing stood out. An open
-// challenge carries a filled Start or Continue beside its rail; a finished
-// one is a single short line with no tile and no rail.
-const ACTION = (t) => `<span class="relative flex h-9 shrink-0 items-center rounded-[0.6875rem] bg-violet-600 px-3.5 text-[0.8125rem] font-semibold text-white dark:bg-violet-500">${t}</span>`;
+// challenge carries a light arrow square beside its rail (no words, no
+// accent fill); a finished one is a single short line with no tile and no
+// rail.
+const ACTION_OPEN = '<span class="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-[0.6875rem] bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"><svg';
 
-test('an open card asks: Start before it is begun, Continue once it is, beside the rail', () => {
+test('an open card points the way in: an arrow on a light square, beside the rail', () => {
   const base = { goal: 'Suggest an improvement', reward: '1,000 pts', icon: '💡', fill: 0, earned: null };
   const fresh = card({ ...base, state: 'new', stateLabel: 'Not started' });
   assert.match(fresh, /^<div class="flex items-center gap-3 [^"]*rounded-3xl[^"]*" data-challenge-state="new"/);
   assert.ok(fresh.includes('<div class="flex min-w-0 items-center gap-2"><div role="progressbar"'),
-    'the rail and the pill share one row, the rail first');
-  assert.ok(fresh.includes(`<span class="relative min-w-0 truncate">Not started</span></div>${ACTION('Start')}</div>`),
-    'Start sits right after the rail');
+    'the rail and the arrow share one row, the rail first');
+  assert.ok(fresh.includes(`<span class="relative min-w-0 truncate">Not started</span></div>${ACTION_OPEN}`),
+    'the arrow sits right after the rail');
+  assert.match(fresh, /bg-zinc-100[^"]*"><svg[^>]*aria-hidden="true"/, 'the arrow is decoration to a screen reader');
+  assert.doesNotMatch(fresh, />Start<|>Continue<|bg-violet-600/, 'no words and no accent fill');
   assert.match(fresh, />1,000 pts</, 'the reward on offer stays');
   assert.match(fresh, /h-20 w-20/, 'and the tile');
-  assert.doesNotMatch(fresh, /<button/, 'the pill is not a control inside the card’s own button');
+  assert.doesNotMatch(fresh, /<button/, 'the arrow is not a control inside the card’s own button');
 
   const going = card({ ...base, state: 'progress', stateLabel: '1/3 Apps tried', fill: 1 / 3, counted: true });
-  assert.ok(going.includes(ACTION('Continue')), 'a begun challenge says Continue');
-  assert.doesNotMatch(going, />Start</);
+  assert.ok(going.includes(ACTION_OPEN), 'a begun challenge has the same arrow');
 
   const tappable = renderToHtml(createElement(Card.ChallengeCard, {
     view: { ...base, state: 'new', stateLabel: 'Not started' }, onClick: () => {},
@@ -289,7 +293,7 @@ test('a finished card is one short line: check, title, what was earned', () => {
   assert.match(html, /role="button"/, 'it still opens the challenge');
   assert.match(html, /tabindex="0"/);
   assert.doesNotMatch(html, /role="progressbar"|h-20|<img|🗳️/, 'no rail, no tile, no artwork');
-  assert.doesNotMatch(html, /bg-violet-600|>Start<|>Continue</, 'and nothing to start');
+  assert.doesNotMatch(html, /bg-zinc-100|role="progressbar" /, 'and no arrow to start it');
   assert.match(html, /<span class="shrink-0 text-emerald-700 dark:text-emerald-400"><span aria-hidden="true" class="[^"]*rounded-full border-2 border-current"><svg/,
     'the ringed check in emerald');
   assert.ok(html.includes(`${TITLE('Vote on five proposals')}<span class="sr-only">Done</span>${POINTS_EARNED('900 pts')}`),

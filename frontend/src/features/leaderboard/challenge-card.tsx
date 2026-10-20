@@ -32,12 +32,12 @@
 // per card, nothing read from fields an admin may have left empty):
 //
 //   * UNFINISHED (`new`, `progress`): the full card, and beside its rail a
-//     filled accent pill, "Start" before the viewer has begun and "Continue"
-//     once they have. The accent marks an action (AGENTS.md, "Type and
-//     colour"): it opens the challenge's page, as tapping anywhere on the
-//     card does. It is a span, not a <button>: the card root is already the
-//     button, and a control inside a control is invalid and a second tab
-//     stop.
+//     light square with an arrow: the way into the challenge's page, as
+//     tapping anywhere on the card is. No words on it, so a row of cards is
+//     not a column of "Start"s, and no accent fill, so it does not outshout
+//     the reward. It is a span, not a <button>: the card root is already
+//     the button, and a control inside a control is invalid and a second
+//     tab stop; the arrow is decoration to a screen reader.
 //   * DONE: one short line, the ringed green check, the title and what the
 //     viewer earned in emerald, on a 20px card with no tile and no rail. A
 //     settled thing gets no fill; it gives its height to what is still open.
@@ -81,7 +81,7 @@ import { useState } from 'react';
 import type { HTMLAttributes, KeyboardEvent, ReactNode } from 'react';
 
 import { IconTile } from '@/components/ui/icon-tile';
-import { CheckIcon } from '@/components/ui/icons';
+import { ArrowRightIcon, CheckIcon } from '@/components/ui/icons';
 import { resolveIllustration } from '../../lib/challenge-illustrations';
 import { useMessages } from '../../lib/i18n/react';
 
@@ -135,12 +135,12 @@ const TILE_ART = 'bg-[var(--tint-art)] dark:bg-[var(--tint-art)]';
 // Passed through `className` on both faces, where tailwind-merge displaces the
 // xl size's own `rounded-2xl` rather than layering a second radius on it.
 const TILE_RADIUS = 'rounded-[0.6875rem]';
-// The open card's action pill: the rail's own 36px height and 11px corners
-// (RAIL_SIZE.md), so the two sit flush on one row, in the accent the detail
-// page's action button uses. It never shrinks; the rail's label truncates
-// first on a narrow phone.
-const CARD_ACTION = 'relative flex h-9 shrink-0 items-center rounded-[0.6875rem] bg-violet-600 px-3.5 '
-  + 'text-[0.8125rem] font-semibold text-white dark:bg-violet-500';
+// The open card's way in: a light square at the rail's own 36px height and
+// 11px corners (RAIL_SIZE.md), so the two sit flush on one row, one step
+// darker than the white card in both themes, with a plain arrow. It never
+// shrinks; the rail's label truncates first on a narrow phone.
+const CARD_ACTION = 'relative flex h-9 w-9 shrink-0 items-center justify-center rounded-[0.6875rem] '
+  + 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300';
 const RAIL_ROW = 'flex min-w-0 items-center gap-2';
 
 
@@ -325,7 +325,7 @@ const DONE_MARK = 'shrink-0 text-emerald-700 dark:text-emerald-400';
 const DONE_POINTS = 'max-w-[55%] shrink-0 truncate text-[0.8125rem] font-medium leading-5 text-emerald-700 dark:text-emerald-400';
 
 // The open card: tile, then the title with its points at the right of the
-// same line, and the rail with its Start or Continue pill — nothing else.
+// same line, and the rail with its arrow — nothing else.
 // A finished challenge is the one-line card instead (see the file header). The task is not on the card (the tab's
 // detail page carries it in full).
 //
@@ -346,7 +346,6 @@ export function ChallengeCard({ view, className, onClick, onKeyDown, ...rest }: 
   view: ChallengeCardView;
   className?: string;
 } & Omit<HTMLAttributes<HTMLDivElement>, 'className'>): ReactNode {
-  const t = useMessages('leaderboard');
   const reward = view.earned || view.reward;
   const pressable = onClick
     ? {
@@ -399,7 +398,7 @@ export function ChallengeCard({ view, className, onClick, onKeyDown, ...rest }: 
             counted={!!view.counted}
           />
           <span className={CARD_ACTION}>
-            {view.state === 'progress' ? t('leaderboard:challenges.card.continue') : t('leaderboard:challenges.card.start')}
+            <ArrowRightIcon className="h-4 w-4" aria-hidden="true" />
           </span>
         </div>
       </div>

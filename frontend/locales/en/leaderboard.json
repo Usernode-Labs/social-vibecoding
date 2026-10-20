@@ -127,14 +127,6 @@
     "text": "Not started",
     "description": "Label in the progress bar of a challenge the viewer has not begun."
   },
-  "challenges.card.start": {
-    "text": "Start",
-    "description": "Filled button-like label beside the progress bar on a challenge card the viewer has not begun; tapping the card opens the challenge."
-  },
-  "challenges.card.continue": {
-    "text": "Continue",
-    "description": "Filled button-like label beside the progress bar on a challenge card the viewer has begun but not finished; tapping the card opens the challenge."
-  },
   "challenges.state.named": {
     "text": "{{challenge}}: {{state}}",
     "description": "Accessible name of a challenge's progress bar. {{challenge}} is the challenge's title and {{state}} what the bar shows (\"Done\", \"3/5 changes\")."
