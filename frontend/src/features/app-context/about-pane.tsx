@@ -49,10 +49,11 @@
  *     community-card.tsx openInviteLinks), for a member as there: it turns
  *     this sheet to its invite pane (AppContext.openInvite, which waits for
  *     the link so the pane comes in at its own height), and Back there
- *     returns here. It is hidden while the menu still offers a newcomer "Go
- *     to Homeroom" (#4216, ./about-data.ts offeringGoToHomeroom), as Share
- *     was: it brings more people into the group, which a private member who
- *     has not gone to Homeroom yet is not handing out.
+ *     returns here. Every member sees it, a newcomer still offered "Go to
+ *     Homeroom" too: #4216 hid Share from them, which handed out the app's
+ *     address, but an invite link is what the hub offers every member and
+ *     what the server lets any member make, so hiding it here alone kept
+ *     nobody from inviting.
  *   - Add to home screen is a ROW now, as the design draws it, but it is the
  *     row the product already had: for an app, the per-app install page its
  *     card menu and its Discover page offer (#1508, #2320) — found in
@@ -82,7 +83,6 @@ import {
 import { useMessages } from '../../lib/i18n/react';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
-import { navStore } from '../nav/nav-store.js';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { improveStore } from '../improve/improve-store.js';
 import { A2HS_STEPS, detectMobileOs } from '../mobile-install/detect';
@@ -102,7 +102,6 @@ import {
 } from './about-model';
 import {
   listRowFor,
-  offeringGoToHomeroom,
   useAboutApp,
   useContributors,
   usePlatformAbout,
@@ -278,7 +277,6 @@ export function AboutPane({ label }: { label: string; unnamed?: boolean }): Reac
     slug, target, restricted, repoUrl, canShare, version, iconUrl, iconEmoji, tab, deploying,
   } = useStoreState(improveStore);
   const { app: parked } = useStoreState(parkedStore);
-  const { privateMember } = useStoreState(navStore);
   const platform = target === 'platform';
   const isApp = target === 'app';
 
@@ -338,9 +336,7 @@ export function AboutPane({ label }: { label: string; unnamed?: boolean }): Reac
     || (!listRow && row && ((row.is_collaborator && !row.your_apps_hidden) || row.is_favorited))
   );
   // The hub's rule for its Invite: a member's. GET /api/apps's row says so.
-  // #4216, which held Share back, holds it back too: not while the menu still
-  // offers this newcomer "Go to Homeroom".
-  const canInvite = !!row?.is_member && !offeringGoToHomeroom(!!privateMember);
+  const canInvite = !!row?.is_member;
 
   // ── More ──────────────────────────────────────────────────────────
   const repo = platform ? (about?.repoUrl || repoUrl) : (repoUrl || row?.repo_url || null);
