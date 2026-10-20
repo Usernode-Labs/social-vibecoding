@@ -313,8 +313,11 @@ function buildkitRuntime() {
 // an optimisation, and the fleet turns it on one piece at a time (the
 // foundation chart, then the node sysctl). The verdict is remembered for a
 // while so a cluster without the lane does not pay for a doomed Job per
-// build. Under `buildkit` the failure surfaces, because that setting is the
-// way to find out the lane is not actually being used.
+// build. A lane whose quota is still full after it made room (see
+// quotaRoom in kubernetes-buildkit.js) sends only that build to kpack: its
+// TTL frees the quota, so it is not a verdict to remember. Under
+// `buildkit` the failure surfaces, because that setting is the way to find
+// out the lane is not actually being used.
 async function createBuild(config, params) {
   const { engine } = buildkit.selectEngine(config, params.sourceDir);
   if (engine !== buildkit.ENGINE) return createKpackBuild(config, params);
@@ -328,8 +331,8 @@ async function createBuild(config, params) {
     return await buildkit.createBuild(config, params, buildkitRuntime());
   } catch (err) {
     if (strict || !err?.engineUnavailable) throw err;
-    buildkit.noteUnavailable(err);
-    log.warn('kubernetes', 'BuildKit lane unavailable; building with kpack', {
+    if (!err.laneFull) buildkit.noteUnavailable(err);
+    log.warn('kubernetes', err.laneFull ? 'BuildKit lane full; building this one with kpack' : 'BuildKit lane unavailable; building with kpack', {
       appId: params.app?.id, revision: params.revision, reason: err.message,
     });
     return createKpackBuild(config, params);
