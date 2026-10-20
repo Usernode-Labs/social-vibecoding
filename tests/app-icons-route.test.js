@@ -76,3 +76,43 @@ test('malformed ids 404 without querying the DB', async () => {
     server.close();
   }
 });
+
+// ── An emoji app's home-screen icon (/app-icons/emoji/…) ────────────────
+
+test('an emoji tile is drawn by its name alone, immutable, and reads no row', async () => {
+  let reads = 0;
+  poolQueryHandler = async () => { reads += 1; return { rows: [] }; };
+  const server = await startServer();
+  const base = `http://127.0.0.1:${server.address().port}/app-icons/emoji`;
+  try {
+    const res = await fetch(`${base}/1f4ca-0ea5e9.png`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'image/png');
+    assert.equal(res.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+    assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+    const { PNG } = require('pngjs');
+    const png = PNG.sync.read(Buffer.from(await res.arrayBuffer()));
+    assert.equal(png.width, 480);
+    assert.deepEqual([...png.data.subarray(0, 4)], [0x0e, 0xa5, 0xe9, 255], 'on the colour it names');
+    assert.equal((await fetch(`${base}/1f5f3.png`)).status, 200, 'no colour: the cream ground');
+    // Only the one spelling of a committed picture.
+    for (const bad of ['1f5f3_fe0f.png', '1F4CA.png', '1fa81.png', '1f4ca-0EA5E9.png', '1f4ca-fff.png',
+      '1f4ca.svg', '110000.png', '..%2F1f4ca.png', 'x.png']) {
+      assert.equal((await fetch(`${base}/${bad}`)).status, 404, bad);
+    }
+    assert.equal(reads, 0);
+  } finally {
+    server.close();
+  }
+});
+
+test('the tile path the install page offers is the one this serves', () => {
+  const tile = require('../src/services/emoji-tile');
+  assert.equal(tile.tilePath('📊', '#0EA5E9'), '/app-icons/emoji/1f4ca-0ea5e9.png');
+  assert.equal(tile.tilePath('🗳️'), '/app-icons/emoji/1f5f3.png', 'without the variation selector');
+  assert.equal(tile.tilePath('📊', 'red'), '/app-icons/emoji/1f4ca.png', 'a colour that is not hex is no colour');
+  assert.equal(tile.tilePath('🪁'), null, 'no picture, no path');
+  const fs = require('node:fs');
+  const route = fs.readFileSync(require('node:path').join(__dirname, '..', 'src', 'routes', 'app-icons.js'), 'utf8');
+  assert.match(route, /router\.get\('\/app-icons\/emoji\/:file', emojiTileLimiter,/, 'rate limited: it draws on the server');
+});

@@ -15,7 +15,8 @@
 //      settles softly on the edges of what changed.
 //   3. THE VOTE. Votes go through the platform's castVote with the epoch;
 //      a No carries its line; Undo goes through retractVote; Next change
-//      moves to the next item.
+//      moves to the next change without a vote, and Done on the last one
+//      shows the all-done message.
 //   4. THE COPY. Every message the flow asks for exists in English.
 
 const test = require('node:test');
@@ -198,6 +199,33 @@ test('the pill names the side most of the window shows, with hysteresis, and col
   assert.equal(compare.saturationFor(0), 0);
 });
 
+// ── 2b. The preview card ────────────────────────────────────────────────
+
+test('the change page sets its picture and thumbnails apart in an inset card', () => {
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  assert.match(src, /const PREVIEW_INSET = 12;/);
+  // The hero is drawn the card's inner width, one inset off each page edge.
+  assert.match(src, /const inner = Math\.max\(0, width - PREVIEW_INSET \* 2\);/);
+  assert.match(src, /width=\{inner\} height=\{height\}/, 'the slider is drawn at the card\'s inner width');
+  assert.match(src, /<div className="rf-preview">\s*\{visual \? \(/, 'the hero is inside the card');
+  assert.match(
+    src,
+    /<div className="rf-thumbs"[\s\S]*?<\/div>\s*\) : null\}\s*<\/div>\s*\{item\.line \? <p className="rf-claim">/,
+    'the thumbnails are inside the card and the claim follows it',
+  );
+  const css = read('public/css/app.css');
+  const rule = css.match(/\n\.rf-preview \{[^}]*\}/)[0];
+  assert.match(rule, /margin: 12px 12px 0;/);
+  assert.match(rule, /border-radius: 16px;/);
+  assert.match(rule, /background: var\(--rf-sheet\);/);
+  assert.match(rule, /box-shadow: 0 0 0 1px var\(--rf-line\);/);
+  assert.match(css, /\.rf-preview \.rf-thumb\[aria-pressed="true"\] \{ box-shadow: 0 0 0 2px var\(--rf-sheet\), 0 0 0 4px var\(--lit-ink\); \}/);
+  assert.match(css, /\.rf-claim \{ margin: 0; padding: 20px 16px 0 20px;/, 'the description starts further below the card');
+  // The opening ghost lands on the inset card, edges rounded like it.
+  assert.match(src, /const k = \(page\.width - PREVIEW_INSET \* 2\) \/ card\.width;/);
+  assert.equal((src.match(/heroTransform\(cr, pr, headH\), borderRadius: '16px'/g) || []).length, 2);
+});
+
 // ── 3. The vote ──────────────────────────────────────────────────────────
 
 test('votes go through castVote with the epoch, a No carries its line, Undo goes through retractVote', () => {
@@ -216,16 +244,23 @@ test('going anywhere else takes the page down at once', () => {
   assert.match(src, /window\.addEventListener\('popstate', away\)/);
 });
 
-test('Next change moves to the next item, wrapping round, and the only item has none', () => {
+test('Next change goes to the next change with no vote, wraps to an earlier one, and skips what you voted on', () => {
   const items = [{ key: 'a' }, { key: 'b' }, { key: 'c' }];
-  assert.equal(model.nextIndex(items, 0), 1);
-  assert.equal(model.nextIndex(items, 2), 0);
-  assert.equal(model.nextIndex([{ key: 'a' }], 0), -1);
+  assert.equal(model.nextIndex(items, 0, {}), 1, 'nothing voted: the next one');
+  assert.equal(model.nextIndex(items, 2, {}), 0, 'the last wraps to the first');
+  assert.equal(model.nextIndex(items, 0, { b: 'yes' }), 2, 'a voted change is skipped');
+  assert.equal(model.nextIndex(items, 1, { c: 'yes' }), 0, 'the one behind you, unvoted');
+  assert.equal(model.nextIndex(items, 0, { b: 'yes', c: 'yes' }), -1, 'every other change has a vote');
+  assert.equal(model.nextIndex([{ key: 'a' }], 0, {}), -1, 'a single change has none');
+  const withDecision = [{ key: 'a' }, { key: 'g', kind: 'governance' }, { key: 'b' }];
+  assert.equal(model.nextIndex(withDecision, 0, {}), 2, 'a group decision opens its own page and is skipped');
+  assert.equal(model.nextIndex(withDecision, 2, { a: 'yes' }), -1, 'and it does not keep all-done from showing');
 });
 
 test('the sheet covers the page only while it is open', () => {
   assert.equal(sheet.sheetOpen('ask'), false);
   assert.equal(sheet.sheetOpen('voted'), false);
+  assert.equal(sheet.sheetOpen('alldone'), false);
   for (const s of ['unsure', 'no', 'askq', 'talk', 'try', 'about', 'more']) assert.equal(sheet.sheetOpen(s), true, s);
 });
 
@@ -233,9 +268,29 @@ function sheetHtml(props) {
   const [item] = model.toReviewItems([feedItem()], () => ({ screens: [SCREEN] }));
   return renderToHtml(createElement(sheet.VoteSheet, {
     item, vote: null, state: 'ask', setState() {}, onVote: async () => true, onUndo: async () => true,
-    onNext() {}, hasNext: true, maxHeight: 600, fresh: false, ...props,
+    onNext() {}, hasNext: true, onDone() {}, doneLabel: 'Back', maxHeight: 600, fresh: false, ...props,
   }));
 }
+
+test('the all-done sheet says everything is voted on, with one way back and no Undo', () => {
+  const html = sheetHtml({ vote: 'yes', state: 'alldone', doneLabel: 'Back to your communities' });
+  assert.match(html, /data-rf-alldone=""/);
+  // The apostrophe is escaped in the markup the renderer writes.
+  assert.ok(html.replace(/&#x27;/g, "'").includes(message('communities:review.alldone.line')));
+  assert.match(html, /data-rf-alldone-btn=""/);
+  assert.ok(html.includes('Back to your communities'));
+  assert.doesNotMatch(html, /data-rf-undo/, 'nothing is left to take back from here');
+});
+
+test('Next change passes the votes, and Done on the last one opens the all-done sheet instead of closing', () => {
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  assert.match(src, /nextIndex\(list, open\.index, votes\)/);
+  assert.match(src, /setSheet\('alldone'\)/);
+  const at = src.indexOf('const goNext = ');
+  assert.ok(at > 0, 'goNext is where the test expects it');
+  const goNext = src.slice(at, src.indexOf('useLayoutEffect', at));
+  assert.doesNotMatch(goNext, /close\(\)/, 'the last Done no longer closes silently');
+});
 
 test('at rest the sheet asks Yes or No, with Not sure? under them', () => {
   const html = sheetHtml({});
@@ -430,4 +485,33 @@ test('the title flies between its two ends measured at rest, and transitions end
   assert.match(src, /whenDone\(moving, done, OPEN_MS\)/);
   assert.match(src, /whenDone\(moving, finish, OPEN_MS \* 0\.85\)/);
   assert.match(src, /whenDone\(sliding, settle, PUSH_MS\)/);
+});
+
+// ── 7. A wide window ─────────────────────────────────────────────────────
+
+test('on a wide window the feed is one column as wide as the page, and the cards are composed at that cap', () => {
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  const css = read('public/css/app.css');
+  const cap = Number((src.match(/^const COLUMN = (\d+);$/m) || [])[1]);
+  assert.equal(cap, 520, 'the change page\'s own width');
+  assert.match(src, /^const GUTTERS = 32;$/m, 'the feed\'s 16px gutters, both sides');
+  // The measured width is capped, so the composition never draws past the column.
+  assert.match(src, /setWidth\(Math\.max\(0, Math\.min\(el\.clientWidth, COLUMN\) - GUTTERS\)\)/);
+  assert.match(src, /setPageWidth\(Math\.min\(COLUMN, pr\.width\)\)/);
+  assert.match(src, /const pw = pageWidth \|\| Math\.min\(COLUMN, width \+ GUTTERS\);/);
+  assert.doesNotMatch(src, /Math\.min\(520\b/, 'one number, not two copies of it');
+  // The CSS column is the same cap, gutters included, centred.
+  const col = css.match(/\.rf-feed, \.rf-feed-note \{([^}]*)\}/);
+  assert.ok(col, 'the feed and its notes share one column rule');
+  assert.match(col[1], /box-sizing: border-box;/);
+  assert.match(col[1], new RegExp(`max-width: ${cap}px;`));
+  assert.match(col[1], /margin-left: auto; margin-right: auto;/);
+  assert.match(css, /\.rf-feed \{[^}]*padding: 4px 16px 32px;/, 'the gutters GUTTERS counts');
+  assert.match(css, new RegExp(`\\.rf-page \\{[^}]*left: max\\(0px, calc\\(50% - ${cap / 2}px\\)\\); width: min\\(100%, ${cap}px\\);`));
+  // The page centres over the pane, past the sidebar, so a card grows straight up into it.
+  assert.match(css, /\.rf-page-wrap \{ position: fixed; left: var\(--platform-rail-w, 0px\); right: 0;/);
+  // Every state of the feed sits in the column: cards and the end inside .rf-feed, the notes beside it.
+  assert.match(src, /<p className="rf-feed-note [^"]*" data-needs-error="">/);
+  assert.match(src, /<p className="rf-feed-note [^"]*" data-needs-empty="" data-review-flow="">/);
+  assert.match(src, /<div className="rf-feed rf-loading" data-review-flow=""/);
 });

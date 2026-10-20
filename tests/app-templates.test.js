@@ -208,7 +208,7 @@ test('each ready-made app is a directory of its own files; the four tier lists s
   for (const id of READY.slice(0, 4)) {
     const t = appTemplates.get(id);
     assert.equal(t.dir, 'tier-list');
-    assert.deepEqual(Object.keys(t.fill).sort(), ['ITEM_EXAMPLE', 'ITEM_ONE', 'ITEM_PLURAL']);
+    assert.deepEqual(Object.keys(t.fill).sort(), ['ITEM_EXAMPLE', 'ITEM_ONE', 'ITEM_PLURAL', 'WANT_VERB']);
     assert.match(t.fill.ITEM_EXAMPLE, /^e\.g\. /, 'the add field\'s placeholder is an example that says so');
   }
   // The platform's own build never reads the starters.
@@ -274,6 +274,20 @@ test('a tier list ranks by dragging, and tapping one shows who ranked it what', 
     assert.match(html, new RegExp(`id="${id}"`), id);
   }
   assert.match(html, /<section id="detail-sheet" role="dialog" aria-modal="true" aria-labelledby="detail-name"/);
+  // It moves as a phone's sheet does (Evan, 20 Oct 2026: it "animates up
+  // weirdly, really fast" and "doesn't animate out"): up from the bottom
+  // edge over the dim, once its rows are in (or after a moment), focusing
+  // Close without scrolling the page, and back down as the dim fades.
+  assert.match(html, /@keyframes rise \{ from \{ transform: translateY\(100%\); \} to \{ transform: none; \} \}/);
+  assert.match(html, /\.rise \{ animation: rise 340ms cubic-bezier\(0\.32, 0\.72, 0, 1\); \}/);
+  assert.match(html, /\.leaving \.rise \{ animation: sink 240ms [^;]+ forwards; \}/);
+  assert.match(html, /\.leaving \.appear \{ animation: vanish 240ms ease-in forwards; \}/);
+  assert.match(html, /id="detail-scrim" class="scrim appear /);
+  assert.match(html, /id="detail-sheet"[^>]*class="rise /);
+  assert.match(script, /loadDetail\(\)\.then\(present, present\);\s+setTimeout\(present, OPEN_WAIT_MS\);/);
+  assert.match(script, /el\.detailClose\.focus\(\{ preventScroll: true \}\);/);
+  assert.match(script, /if \(el\.detail\.hidden \|\| reducedMotion\(\)\) \{ el\.detail\.hidden = true; return; \}\s+el\.detail\.classList\.add\('leaving'\);\s+leaving = setTimeout\(finishLeaving, LEAVE_MS\);/);
+  assert.match(script, /function openDetail\(id, opener\) \{\s+finishLeaving\(\);/, 'a sheet on its way down goes at once for the next');
   assert.match(script, /api\('GET', '\/api\/items\/' \+ asked\)/);
   assert.match(script, /el\.main\.inert = true;/, 'the board behind it cannot be reached');
   assert.match(script, /if \(e\.key === 'Escape' && detail\) closeDetail\(\);/);
@@ -283,13 +297,49 @@ test('a tier list ranks by dragging, and tapping one shows who ranked it what', 
   assert.match(script, /el\.detailOff\.hidden = !signedIn \|\| !item\.yours;/);
   // A keyboard or a screen reader cannot drag: the sheet's own tiers, shown once focus reaches them.
   assert.match(html, /id="detail-yours"[^>]*class="sr-only [^"]*focus-within:not-sr-only/);
-  for (const tier of ['S', 'A', 'B', 'C', 'D', 'F', '']) assert.match(html, new RegExp(`data-set-tier="${tier}"`));
+  for (const tier of ['S', 'A', 'B', 'C', 'D', 'F', 'W', '']) assert.match(html, new RegExp(`data-set-tier="${tier}"`));
   // What the README and the made screen say.
   for (const id of READY.slice(0, 4)) {
     const t = appTemplates.get(id);
     assert.ok(t.features.some((f) => f.startsWith(`**Who ranked it what**: tap any of the ${t.fill.ITEM_PLURAL}`)), id);
     assert.doesNotMatch(JSON.stringify(t.features), /tap a tier|tap it and then/, id);
   }
+});
+
+// "Thinking it would live below F, and people could drag things there, and
+// they wouldn't impact the averages, but you could say where you want to go
+// and others could see too." (Evan, 20 Oct 2026.) Want to (W) is a person's
+// one place for an item, like a tier, but worth no score; its name ends in
+// the entry's own verb. tests/app-templates-postgres.test.js runs the API.
+test('a tier list has Want to below F, which counts toward no tier', () => {
+  const verbs = { 'tier-list-restaurants': 'go', 'tier-list-hikes': 'hike', 'tier-list-cities': 'go', 'tier-list-games': 'play' };
+  for (const [id, verb] of Object.entries(verbs)) {
+    const t = appTemplates.get(id);
+    assert.equal(t.fill.WANT_VERB, verb, id);
+    const html = file(generate(id), 'public/index.html');
+    assert.match(html, new RegExp(`<div id="want" [^>]*data-drop="W" data-verb="${verb}">`), id);
+    assert.match(html, new RegExp(`<span>Want</span> <span>to ${verb}</span>`), id);
+    assert.match(html, new RegExp(`data-set-tier="W" class="btn-secondary">Want to ${verb}</button>`), id);
+    assert.ok(t.features.some((f) => f.startsWith(`**Want to ${verb}**: a row below F for ${t.fill.ITEM_PLURAL}`)), id);
+    assert.ok(t.tests.some((c) => c.expectSelector === '#board ~ #want[data-drop="W"]'), id);
+  }
+  // Between the tiers and the tray, so the visual check's tray still follows the board.
+  const html = file(generate('tier-list-cities'), 'public/index.html');
+  assert.ok(html.indexOf('id="board"') < html.indexOf('id="want"') && html.indexOf('id="want"') < html.indexOf('id="tray"'));
+  assert.match(html, /id="detail-raters"><\/div>\s*<div id="detail-wants" [^>]*hidden>/, 'who wants to, below who ranked it');
+  const script = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'tier-list/public/app.js'), 'utf8');
+  assert.match(script, /var WANT_VERB = el\.want\.getAttribute\('data-verb'\) \|\| 'try';/);
+  // Yours: dropped on like a tier. The group's: every one somebody wants
+  // to, most people first, with how many, and no longer in its tray.
+  assert.match(script, /el\.want\.setAttribute\('data-drop', 'W'\);/);
+  assert.match(script, /el\.want\.removeAttribute\('data-drop'\);/);
+  assert.match(script, /data\.items\.filter\(function \(i\) \{ return i\.wants; \}\)\.sort\(function \(a, b\) \{ return b\.wants - a\.wants; \}\)/);
+  assert.match(script, /if \(withWants\) chip\.appendChild\(wantBadge\(item\.wants\)\);/);
+  assert.match(script, /return !placeOf\(i\) && \(view === 'yours' \|\| !i\.wants\);/);
+  const api = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'tier-list/api.js'), 'utf8');
+  assert.match(api, /CHECK \(tier IN \('S', 'A', 'B', 'C', 'D', 'F', 'W'\)\)/);
+  assert.match(api, /COUNT\(v\.user_id\) FILTER \(WHERE v\.tier <> 'W'\)::int AS votes/);
+  assert.match(api, /FROM tier_votes WHERE tier <> 'W'/, 'nor in "From N people\'s rankings"');
 });
 
 // "Add SSE to all of the templated apps. Tier list for example, changes are

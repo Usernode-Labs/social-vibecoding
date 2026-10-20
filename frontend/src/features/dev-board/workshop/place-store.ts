@@ -105,9 +105,16 @@ type AppApi = { _hubHref?: (slug: string) => string };
  * Go to `key` on `slug`'s page: in place when the page is up for it (a press
  * on its list), else as a door (the place remembered, then the page's
  * address). True when it moved the page in place.
+ *
+ * `door`: go as a door even when the page's opener is registered. A page
+ * left behind a hidden `#app-view` stays mounted (leaving for Messages or Me
+ * does not tear it down), so moving it in place moves a page nobody can see.
+ * The caller that knows the page is not on screen asks for the door (#5700).
  */
-export function openPlace(slug: string, key: PlaceKey, opts: { replace?: boolean } = {}): boolean {
-  if (opener && opener.slug === slug && placeStore.get().slug === slug) {
+export function openPlace(
+  slug: string, key: PlaceKey, opts: { replace?: boolean; door?: boolean } = {},
+): boolean {
+  if (!opts.door && opener && opener.slug === slug && placeStore.get().slug === slug) {
     opener.open(key);
     return true;
   }

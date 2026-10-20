@@ -2019,6 +2019,10 @@
     "text": "Add this app to your home screen",
     "description": "Row in the app menu (the sheet opened from the app's name in the header) shown to a newcomer on a phone: opens the page that puts the app they are in (not Homeroom) on the phone's home screen as its own icon."
   },
+  "appContext.row.addHomeroom": {
+    "text": "Add Homeroom to your home screen",
+    "description": "Row in the app menu (the sheet opened from the Homeroom mark in the header) on a phone where Homeroom is not on the home screen yet: shows how to put Homeroom itself on the phone's home screen as an icon."
+  },
   "appContext.row.community": {
     "text": "Go to community",
     "description": "Row in the app menu (the sheet opened from the app's name in the header): opens the hub page of the community that owns this app."

@@ -23,7 +23,9 @@
  * Next change PUSHES the next one in from the side: the page you leave
  * slides a little left and dims, the next one slides in, the title changes,
  * and the slider's handle and pill arrive a moment after it lands. The feed
- * behind scrolls quietly to that card, so Back lands on it.
+ * behind scrolls quietly to that card, so Back lands on it. It goes only to
+ * a change you have not voted on; with none left the button says Done, and
+ * Done shows that everything is voted on, then takes you back.
  *
  * ── Island rules ────────────────────────────────────────────────────────
  * Rendered only while the Needs you pane shows, from data the controller
@@ -47,9 +49,20 @@ import {
 import { VoteSheet, sheetOpen, type SheetState, type Vote } from './vote-sheet';
 
 const EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
+// Matches `.rf-preview`'s 12px side margin in app.css: the hero is drawn this
+// much narrower than the page, inside the card.
+const PREVIEW_INSET = 12;
 const OPEN_MS = 380;
 const PUSH_MS = 440;
 const MARKS_AFTER = 160;
+/**
+ * The feed's column and the change page are one width: 520px at most, the
+ * feed's 16px gutters included (app.css `.rf-feed`, `.rf-page`). The cards
+ * are composed at this cap, so on a wide window they keep a phone's size
+ * and grow straight into the page above them.
+ */
+const COLUMN = 520;
+const GUTTERS = 32;
 
 function reducedMotion(): boolean {
   try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
@@ -168,48 +181,52 @@ function TitleShot({ item, width }: { item: ReviewItem; width: number }): ReactN
 function PageBody({ item, width, marks, near }: { item: ReviewItem; width: number; marks: boolean; near: boolean }): ReactNode {
   const [shot, setShot] = useState(0);
   useEffect(() => setShot(0), [item.key]);
-  const height = Math.round(width * 0.75);
+  const inner = Math.max(0, width - PREVIEW_INSET * 2);
+  const height = Math.round(inner * 0.75);
   const screen = item.screens[shot] || null;
   const visual = !!screen || !!(item.pair && (item.pair.after || item.pair.before));
   const t = useMessages('communities');
   return (
     <div className="rf-page-body" data-rf-body={item.key}>
-      {visual ? (
-        <CompareSlider screen={screen} pair={screen ? null : item.pair} ground={item.ground} width={width} height={height} marks={marks} near={near} />
-      ) : (
-        <div className="rf-hero-drawn" style={{ width, height, background: item.ground }}>
-          <Drawn item={item} width={width} height={height} play={near} />
-        </div>
-      )}
-      {item.screens.length > 1 ? (
-        <div className="rf-thumbs" role="group" aria-label={t('communities:review.thumbs.label')}>
-          {item.screens.map((s, i) => {
-            const crop = titleCrop(s, { w: 52, h: 52 });
-            return (
-              <button
-                key={`${s.viewport}-${i}`}
-                type="button"
-                className="rf-thumb"
-                aria-pressed={i === shot}
-                aria-label={t('communities:review.thumbs.one', { n: i + 1, total: item.screens.length })}
-                style={{ background: item.ground }}
-                onClick={() => setShot(i)}
-              >
-                <span className="rf-thumb-in" style={{ width: crop.w, height: crop.h }}>
-                  {near ? (
-                    <img
-                      src={s.after.url}
-                      alt=""
-                      draggable={false}
-                      style={{ width: s.width, height: s.after.height, transform: `translate(${crop.place.tx}px, ${crop.place.ty}px) scale(${crop.place.scale})` }}
-                    />
-                  ) : null}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+      {/* The shot and its thumbnails read as one object, set apart from the page. */}
+      <div className="rf-preview">
+        {visual ? (
+          <CompareSlider screen={screen} pair={screen ? null : item.pair} ground={item.ground} width={inner} height={height} marks={marks} near={near} />
+        ) : (
+          <div className="rf-hero-drawn" style={{ width: inner, height, background: item.ground }}>
+            <Drawn item={item} width={inner} height={height} play={near} />
+          </div>
+        )}
+        {item.screens.length > 1 ? (
+          <div className="rf-thumbs" role="group" aria-label={t('communities:review.thumbs.label')}>
+            {item.screens.map((s, i) => {
+              const crop = titleCrop(s, { w: 52, h: 52 });
+              return (
+                <button
+                  key={`${s.viewport}-${i}`}
+                  type="button"
+                  className="rf-thumb"
+                  aria-pressed={i === shot}
+                  aria-label={t('communities:review.thumbs.one', { n: i + 1, total: item.screens.length })}
+                  style={{ background: item.ground }}
+                  onClick={() => setShot(i)}
+                >
+                  <span className="rf-thumb-in" style={{ width: crop.w, height: crop.h }}>
+                    {near ? (
+                      <img
+                        src={s.after.url}
+                        alt=""
+                        draggable={false}
+                        style={{ width: s.width, height: s.after.height, transform: `translate(${crop.place.tx}px, ${crop.place.ty}px) scale(${crop.place.scale})` }}
+                      />
+                    ) : null}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
       {item.line ? <p className="rf-claim">{item.line}</p> : null}
     </div>
   );
@@ -265,11 +282,11 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const shaped = useMemo(() => (items ? orderForReview(toReviewItems(items, shape)) : null), [items]);
   useEffect(() => { if (shaped && !open) setList(shaped); }, [shaped, open]);
 
-  // The cards' width: the pane's, less its margins.
+  // The cards' width: the column's, less its margins, never past the cap.
   useLayoutEffect(() => {
     const el = rootRef.current;
     if (!el) return undefined;
-    const measure = () => setWidth(Math.max(0, el.clientWidth - 32));
+    const measure = () => setWidth(Math.max(0, Math.min(el.clientWidth, COLUMN) - GUTTERS));
     measure();
     if (typeof ResizeObserver !== 'function') return undefined;
     const ro = new ResizeObserver(measure);
@@ -280,7 +297,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
 
   const item = open ? list[open.index] : null;
   const leaving = open && open.from != null ? list[open.from] : null;
-  const next = open ? nextIndex(list, open.index) : -1;
+  const next = open ? nextIndex(list, open.index, votes) : -1;
 
   const cardOf = (index: number) => rootRef.current?.querySelector<HTMLElement>(`[data-rf-card="${index}"]`) || null;
 
@@ -304,7 +321,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     if (!open || open.phase !== 'opening' || !pageRef.current) return;
     const page = pageRef.current;
     const pr = page.getBoundingClientRect();
-    setPageWidth(Math.min(520, pr.width));
+    setPageWidth(Math.min(COLUMN, pr.width));
     const card = cardOf(open.index);
     const cover = card?.querySelector<HTMLElement>('[data-rf-cover]');
     const done = () => {
@@ -339,7 +356,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
       { transform: 'none', borderRadius: '20px', opacity: 1 },
       { opacity: 1, offset: 0.2 },
       { opacity: 0, offset: 0.6 },
-      { transform: heroTransform(cr, pr, headH), borderRadius: '0px', opacity: 0 },
+      { transform: heroTransform(cr, pr, headH), borderRadius: '16px', opacity: 0 },
     ], { ...opts, fill: 'forwards' }).finished.catch(() => {}).finally(() => pic.remove());
     rootRef.current?.animate(
       [{ transform: 'none', filter: 'none' }, { transform: 'scale(0.96)', filter: 'brightness(0.94)' }],
@@ -397,7 +414,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     // The hero hands over to the card's own picture, which lands exactly on the card.
     const pic = coverGhost(cover, cr);
     pic.animate([
-      { transform: heroTransform(cr, pr, headH), borderRadius: '0px', opacity: 0 },
+      { transform: heroTransform(cr, pr, headH), borderRadius: '16px', opacity: 0 },
       { opacity: 0, offset: 0.2 },
       { opacity: 1, offset: 0.6 },
       { transform: 'none', borderRadius: '20px', opacity: 1 },
@@ -410,8 +427,8 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   /* ── Push: this change → the next ── */
   const goNext = () => {
     if (!open || busy.current) return;
-    const n = nextIndex(list, open.index);
-    if (n < 0) { close(); return; }
+    const n = nextIndex(list, open.index, votes);
+    if (n < 0) { setSheet('alldone'); return; }
     busy.current = true;
     setMarks(false);
     setFresh(false);
@@ -475,21 +492,31 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     return true;
   };
 
+  // The page comes down at once, with nothing left running behind it.
+  const takeDown = () => {
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    rootRef.current?.getAnimations().forEach((a) => a.cancel());
+    document.querySelectorAll('.rf-fly').forEach((el) => el.remove());
+    busy.current = false;
+    setMarks(false);
+    setOpen(null);
+    setSheet('ask');
+  };
+
+  // Done on the last change: the all-done message's button takes the page
+  // down the same way, then goes where the list's own end goes.
+  const finishAll = () => {
+    takeDown();
+    onDone();
+  };
+
   // Going anywhere else (a link on the page, a tab, Back) takes the page
   // down at once: it is fixed over the shell, and the screen under it may
   // only hide, not unmount.
   useEffect(() => {
     if (!open) return undefined;
-    const away = () => {
-      timers.current.forEach(clearTimeout);
-      timers.current = [];
-      rootRef.current?.getAnimations().forEach((a) => a.cancel());
-      document.querySelectorAll('.rf-fly').forEach((el) => el.remove());
-      busy.current = false;
-      setMarks(false);
-      setOpen(null);
-      setSheet('ask');
-    };
+    const away = takeDown;
     window.addEventListener('hashchange', away);
     window.addEventListener('popstate', away);
     return () => {
@@ -512,16 +539,16 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
 
   /* ── Drawing ── */
   if (error) {
-    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-error="">{t('communities:reel.error')}</p>;
+    return <p className="rf-feed-note px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-error="">{t('communities:reel.error')}</p>;
   }
   if (!items && !list.length) {
     return <div className="rf-feed rf-loading" data-review-flow="" aria-busy="true" aria-label={t('communities:reel.loading')} />;
   }
   if (!list.length) {
-    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="" data-review-flow="">{t('communities:reel.empty')}</p>;
+    return <p className="rf-feed-note px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="" data-review-flow="">{t('communities:reel.empty')}</p>;
   }
 
-  const pw = pageWidth || Math.min(520, width + 32);
+  const pw = pageWidth || Math.min(COLUMN, width + GUTTERS);
   const page = open && item ? createPortal(
     <div className="rf-page-wrap" data-rf-page="">
       <div ref={pageRef} className="rf-page" role="dialog" aria-modal="false" aria-label={item.title}>
@@ -555,6 +582,8 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
           onUndo={undo}
           onNext={goNext}
           hasNext={next >= 0}
+          onDone={finishAll}
+          doneLabel={doneLabel || t('communities:reel.done')}
           maxHeight={Math.max(240, (typeof window !== 'undefined' ? window.innerHeight : 800) * 0.82)}
           fresh={fresh}
         />
@@ -607,10 +636,10 @@ function coverGhost(cover: HTMLElement, at: DOMRect): HTMLElement {
   return g;
 }
 
-/** Where the card's picture lands: the page's full width, under the header. */
+/** Where the card's picture lands: the inset preview card, under the header. */
 function heroTransform(card: DOMRect, page: DOMRect, headH: number): string {
-  const k = page.width / card.width;
-  return `translate(${page.left - card.left}px, ${page.top + headH - card.top}px) scale(${k})`;
+  const k = (page.width - PREVIEW_INSET * 2) / card.width;
+  return `translate(${page.left + PREVIEW_INSET - card.left}px, ${page.top + headH + PREVIEW_INSET - card.top}px) scale(${k})`;
 }
 
 /**

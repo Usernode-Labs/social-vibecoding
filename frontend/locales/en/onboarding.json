@@ -1744,32 +1744,32 @@
     "description": "Title of the first card of the welcome tour on the Home screen, started from Settings: points at the Communities tab. The tab's name."
   },
   "tour.step.communities.body": {
-    "text": "Homeroom is made of communities that build projects together. Anyone in one can propose a change, and the group votes it in. A community is Just you, a Private community or a Public community. Yours are here.",
-    "description": "Text of the first card of the welcome tour on the Home screen, started from Settings, which points at the Communities tab. \"Just you\", \"Private community\" and \"Public community\" are the names the product gives the three kinds of community; write them as it does. \"change\" is a noun: a change to a project. Homeroom is the product's name."
+    "text": "Communities here build apps together. Anyone can propose a change, and the community votes on it. Find yours here.",
+    "description": "Text of the first card of the welcome tour on the Home screen, started from Settings, pointing at the Communities tab. \"change\" is a noun: a change to an app. \"here\" in \"Find yours here\" is the tab."
   },
   "tour.step.apps.title": {
     "text": "My apps",
     "description": "Title of the second card of the welcome tour on the Home screen, started from Settings: points at the section of Home with this heading, the person's own shortcuts to apps."
   },
   "tour.step.apps.body": {
-    "text": "The apps you keep close. A small mark says where each one lives: people for a private community, a lock for one that is just yours. The last tile starts a new project.",
-    "description": "Text of the second card of the welcome tour on the Home screen, started from Settings, about the My apps section. \"people\" and \"a lock\" describe two small icons drawn on an app's tile."
+    "text": "Open apps from your communities here, or select + New project to start your own.",
+    "description": "Text of the second card of the welcome tour on the Home screen, started from Settings, about the My apps section. \"+ New project\" is the label of the last tile in the grid; write New project as that tile is named."
   },
   "tour.step.appMenu.title": {
     "text": "The Homeroom menu",
     "description": "Title of the third card of the welcome tour on the Home screen, started from Settings: points at the Homeroom mark, the logo button that opens an app's menu. Homeroom is the product's name."
   },
   "tour.step.appMenu.body": {
-    "text": "Inside any app, this mark opens its menu. Tap it, or tap Next to open it.",
-    "description": "Text of the third card of the welcome tour on the Home screen, started from Settings, about the Homeroom mark. \"this mark\" is the logo button and \"Next\" is the name of the button on this card."
+    "text": "Select the Homeroom logo in any app to suggest an improvement or visit its community.",
+    "description": "Text of the third card of the welcome tour on the Home screen, started from Settings, about the Homeroom logo button that opens the app's menu. \"suggest an improvement\" echoes the menu's Suggest an improvement button."
   },
   "tour.step.menuActions.title": {
     "text": "Suggest an improvement",
     "description": "Title of the fourth card of the welcome tour on the Home screen, started from Settings: points at the button of this name in an app's menu, where a member says what the app should do differently."
   },
   "tour.step.menuActions.body": {
-    "text": "Say what should change. It doesn't vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group as a request, and you can follow along.",
-    "description": "Text of the fourth card of the welcome tour on the Home screen, started from Settings, about the Suggest an improvement button. \"change\" is a verb. Each \"it\" is the suggestion, and \"a request\" is an item the group votes on. Homeroom bot is the name of the assistant that builds changes."
+    "text": "Change something in any of your apps or in Homeroom itself. Start building it or share a request for someone in the community to pick up.",
+    "description": "Text of the fourth card of the welcome tour on the Home screen, started from Settings, about Suggest an improvement. \"Homeroom itself\" is the platform's own project; \"start building it\" is building the change now, and \"share a request\" is an item the community votes on. The card names neither Homeroom bot nor the person who builds: that comes on the last card."
   },
   "tour.step.settings.title": {
     "text": "Replay this any time",
@@ -1784,7 +1784,7 @@
     "description": "Title of the Home tour's stop pointing at the Messages tab, where Homeroom bot's conversation is the first row. \"Homeroom bot\" is the name of Homeroom's assistant that builds changes; keep \"Homeroom\" as it is."
   },
   "tour.step.meetBot.body": {
-    "text": "Ask it to build a change, file an idea or fix a bug for you. Find it in Messages.",
-    "description": "Body of the Home tour's stop pointing at the Messages tab: what Homeroom bot does for the reader and where to find it. \"Messages\" is the tab's name."
+    "text": "Your AI assistant to build a change, file an idea or fix a bug for you. Find it in Messages.",
+    "description": "Fifth card of the welcome tour on the Home screen, under the title \"Meet Homeroom bot\", pointing at the Messages tab. The sentence describes Homeroom bot; \"Messages\" is the tab's name."
   }
 }

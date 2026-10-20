@@ -99,10 +99,12 @@ test('the root icon files are public, and nothing broader was opened with them',
 });
 
 test('the per-app install page borrows exactly the manifest\'s icons', () => {
+  // An emoji with no committed picture (an emoji that has one is drawn as
+  // the app's own tile: tests/app-install-manifest.test.js).
   const { buildManifest, renderInstallPage } = require('../src/services/app-install-manifest');
-  const borrowed = buildManifest({ slug: 'arcade', name: 'Arcade', icon_emoji: '🎮' }).icons.slice(1);
+  const borrowed = buildManifest({ slug: 'arcade', name: 'Arcade', icon_emoji: '🪁' }).icons.slice(1);
   assert.deepEqual(borrowed, manifest.icons);
-  const page = renderInstallPage({ slug: 'arcade', name: 'Arcade', icon_emoji: '🎮' });
+  const page = renderInstallPage({ slug: 'arcade', name: 'Arcade', icon_emoji: '🪁' });
   assert.match(page, /<link rel="apple-touch-icon" href="\/apple-touch-icon\.png">/);
 });
 

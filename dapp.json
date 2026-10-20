@@ -2969,10 +2969,10 @@
       "expectSelector": "#home-tour.hidden #home-tour-card #home-tour-body #home-tour-next"
     },
     {
-      "name": "The welcome tour opens on what a community is: projects built together, changes proposed and voted in (#3567)",
+      "name": "The welcome tour opens on what a community is: apps built together, changes proposed and voted on (#3567)",
       "path": "/?shot=welcome-tour",
       "expectSelector": "#home-tour:not(.hidden) #home-tour-card:not(.opacity-0) #home-tour-body:not(.hidden) #home-tour-title",
-      "expectText": "Homeroom is made of communities that build projects together"
+      "expectText": "Communities here build apps together"
     },
     {
       "name": "Settings' About pane keeps the mobile app version and the platform version as separate rows",

@@ -53,7 +53,11 @@ const ME = { id: 1, username: 'alex' };
 const PEOPLE = [ME, { id: 2, username: 'sam' }, { id: 3, username: 'priya' }, { id: 4, username: 'jordan' }];
 const at = (iso) => new Date(iso).toISOString();
 
-/** A tier list's answer: each sample in the tier given, on your board and the group's. */
+/**
+ * A tier list's answer: each sample in the tier given, on your board and the
+ * group's. W is Want to, below F: one nobody has ranked yet, which you and
+ * two others want to get to.
+ */
 function tierAnswer(placed) {
   let id = 0;
   return {
@@ -62,8 +66,11 @@ function tierAnswer(placed) {
     rankers: 4,
     items: placed.map(([name, tier]) => {
       id += 1;
+      const by = PEOPLE[id % PEOPLE.length].username;
+      const mine = id % PEOPLE.length === 1;
+      if (tier === 'W') return { id, name, by, mine, votes: 0, wants: 3, average: null, tier: null, yours: 'W' };
       const average = { S: 5, A: 4, B: 3, C: 2, D: 1, F: 0 }[tier];
-      return { id, name, by: PEOPLE[id % PEOPLE.length].username, mine: id % PEOPLE.length === 1, votes: 4, average, tier, yours: tier };
+      return { id, name, by, mine, votes: 4, wants: 0, average, tier, yours: tier };
     }),
   };
 }
@@ -269,22 +276,22 @@ const SAMPLES = {
   'tier-list-restaurants': {
     name: 'Restaurant Tier List',
     ready: '#board .tier-s',
-    api: { '/api/items': tierAnswer([['Joe\'s Pizza', 'S'], ['Pho 88', 'A'], ['Taqueria Sol', 'A'], ['Burger Barn', 'B'], ['Noodle Bar', 'C']]) },
+    api: { '/api/items': tierAnswer([['Joe\'s Pizza', 'S'], ['Pho 88', 'A'], ['Taqueria Sol', 'A'], ['Burger Barn', 'B'], ['Noodle Bar', 'C'], ['Thai Basil', 'W']]) },
   },
   'tier-list-hikes': {
     name: 'Hiking Tier List',
     ready: '#board .tier-s',
-    api: { '/api/items': tierAnswer([['Lake Loop', 'S'], ['Ridge Trail', 'A'], ['Cedar Falls', 'A'], ['Pine Hollow', 'B'], ['Quarry Path', 'C']]) },
+    api: { '/api/items': tierAnswer([['Lake Loop', 'S'], ['Ridge Trail', 'A'], ['Cedar Falls', 'A'], ['Pine Hollow', 'B'], ['Quarry Path', 'C'], ['Summit Route', 'W']]) },
   },
   'tier-list-cities': {
     name: 'City Tier List',
     ready: '#board .tier-s',
-    api: { '/api/items': tierAnswer([['Lisbon', 'S'], ['Kyoto', 'A'], ['Montreal', 'A'], ['Chicago', 'B'], ['Rotterdam', 'C']]) },
+    api: { '/api/items': tierAnswer([['Lisbon', 'S'], ['Kyoto', 'A'], ['Montreal', 'A'], ['Chicago', 'B'], ['Rotterdam', 'C'], ['Seoul', 'W']]) },
   },
   'tier-list-games': {
     name: 'Game Tier List',
     ready: '#board .tier-s',
-    api: { '/api/items': tierAnswer([['Codenames', 'S'], ['Catan', 'A'], ['Chess', 'A'], ['Uno', 'B'], ['Monopoly', 'C']]) },
+    api: { '/api/items': tierAnswer([['Codenames', 'S'], ['Catan', 'A'], ['Chess', 'A'], ['Uno', 'B'], ['Monopoly', 'C'], ['Wingspan', 'W']]) },
   },
   'grocery-list': {
     name: 'Grocery List',

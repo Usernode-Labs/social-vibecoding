@@ -245,8 +245,9 @@ export function NewMessagesBanner({
 }
 
 /**
- * Jump to latest: a round disc with a down chevron at the right of the
- * transcript's foot, up whenever the reader is not at the bottom. The
+ * Jump to latest: a round disc with a down chevron at the transcript's
+ * foot, up whenever the reader is not at the bottom. Floating, it sits at
+ * the right edge (above); in a docked strip it is centred (#5702). The
  * disc is the language's floating control, white on the sheet; `dot` is the
  * accent, for messages that arrived while the reader was up the
  * transcript, and the button's name says how many.

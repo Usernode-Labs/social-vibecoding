@@ -58,7 +58,7 @@ test('a private member lands in the app with the tip, and "Go to Homeroom" opens
   assert.match(src, /const \{ slug, name, example \} = mode\.info;\s+return homeWalkSteps\(\{ slug, name, example \}\);/);
   const welcome = src.slice(src.indexOf('welcome(info: FirstSessionInfo): boolean {'), src.indexOf('goHome('));
   assert.match(welcome, /const privateMember = !!app\?\.user\?\.privateMember;/);
-  assert.match(welcome, /if \(\(privateMember \|\| info\.newAccount\) && oweWalk\(uid, \{ slug, name, privateMember \}\)\) app\?\._noteHomeWalk\?\.\('owed'\);/);
+  assert.match(welcome, /walkOwed = \(privateMember \|\| !!info\.newAccount\) && oweWalk\(uid, \{ slug, name, privateMember \}\);\s+if \(walkOwed\) app\?\._noteHomeWalk\?\.\('owed'\);/);
   assert.match(welcome, /const going = app\?\.navigateToApp\?\.\(slug, 'app'\);/);
   // Go to Homeroom: noted first (the app has its ✕ from then on), then Home,
   // where the walk runs: the app was their first visit.
@@ -89,7 +89,7 @@ test('the app has no ✕ for a private member until they have gone to Homeroom, 
   // The first session tells the account when the walk is owed and when it
   // runs or is claimed; goHome tells it through _notePrivateHome.
   const fs = read('frontend/src/features/first-session/index.tsx');
-  assert.match(fs, /if \(\(privateMember \|\| info\.newAccount\) && oweWalk\(uid, \{ slug, name, privateMember \}\)\) app\?\._noteHomeWalk\?\.\('owed'\);/);
+  assert.match(fs, /walkOwed = \(privateMember \|\| !!info\.newAccount\) && oweWalk\(uid, \{ slug, name, privateMember \}\);\s+if \(walkOwed\) app\?\._noteHomeWalk\?\.\('owed'\);/);
   assert.match(fs, /if \(oweWalk\(uid, \{ slug, name, maker: true \}\)\) legacy\(\)\.App\?\._noteHomeWalk\?\.\('owed'\);/);
   assert.match(fs, /noteWalkRun\(uid\);\s+\/\/ On Home: they have reached Homeroom, on every device\.\s+legacy\(\)\.App\?\._noteHomeWalk\?\.\('reached'\);/);
   assert.match(fs, /!claimWalk\(uid\)\) \{ setMode\(\{ kind: 'none' \}\); return; \}\s+legacy\(\)\.App\?\._noteHomeWalk\?\.\('reached'\);/);
@@ -173,8 +173,11 @@ test('the Go to Homeroom card carries "Add this app to your home screen", and th
   assert.match(card, /w-10 h-10 rounded-\[11px\] bg-zinc-100[^"]*"[^>]*>\s+<PhonePlusIcon/);
   assert.match(card, /text-\[15px\] font-\[650\][^>]*>\{t\('agent:appContext\.addAppToHomeScreen'\)\}</);
   assert.equal(message('agent:appContext.addAppToHomeScreen'), 'Add this app to your home screen');
-  // No steps for adding Homeroom, and no install address of its own.
-  assert.doesNotMatch(sheet, /InstallStepsSheet|useHomeScreenOffer|addHomeroomToHomeScreen|\/install['"`]/);
+  // The card's row adds the app, never Homeroom: Homeroom's steps are a row
+  // of their own further down (tests/homeroom-home-screen.test.js), and the
+  // sheet has no install address of its own.
+  assert.doesNotMatch(card, /InstallStepsSheet|setHomeroomSteps|openHomeroomInBrowser/);
+  assert.doesNotMatch(sheet, /useHomeScreenOffer|addHomeroomToHomeScreen|\/install['"`]/);
   // The banner stays down while Go to Homeroom is offered.
   const banner = read('frontend/src/features/mobile-install/install-banner.tsx');
   assert.match(banner, /if \(offeringGoToHomeroom\(!!privateMember\)\) \{ setOffer\(null\); return; \}/);

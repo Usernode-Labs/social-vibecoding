@@ -366,6 +366,23 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       item = (await app.call('GET', '/api/items', { as: ada })).data.items.find((i) => i.id === id);
       assert.deepEqual([item.votes, item.tier, item.yours], [1, 'A', null]);
 
+      // Want to: a place, not a tier. Grace moves hers there: it counts
+      // toward no average, no "ranked it" and no "From N people's
+      // rankings", and her name moves from the sheet's tiers to who wants to.
+      assert.equal((await app.call('GET', '/api/items', { as: ada })).data.rankers, 4);
+      assert.deepEqual((await app.call('PUT', `/api/items/${id}/tier`, { as: grace, body: { tier: 'W' } })).data, { tier: 'W' });
+      item = (await app.call('GET', '/api/items', { as: grace })).data.items.find((i) => i.id === id);
+      assert.deepEqual([item.votes, item.wants, item.average, item.tier, item.yours], [0, 1, null, null, 'W']);
+      assert.equal((await app.call('GET', '/api/items', { as: ada })).data.rankers, 3, 'the three staging fakes');
+      const wanted = (await app.call('GET', `/api/items/${id}`, { as: grace })).data;
+      assert.deepEqual([wanted.raters, wanted.wanters], [[], [{ name: 'grace', you: true }]]);
+      await app.call('PUT', `/api/items/${id}/tier`, { as: ada, body: { tier: 'S' } });
+      item = (await app.call('GET', '/api/items', { as: ada })).data.items.find((i) => i.id === id);
+      assert.deepEqual([item.votes, item.wants, item.average, item.tier, item.yours], [1, 1, 5, 'S', 'S']);
+      // The staging fakes: two want to get to one nobody has ranked.
+      const seededWants = (await app.call('GET', '/api/items', { as: ada })).data.items.find((i) => i.id === 900005);
+      assert.deepEqual([seededWants.votes, seededWants.wants, seededWants.tier], [0, 2, null]);
+
       assert.equal((await app.call('DELETE', `/api/items/${id}`, { as: grace })).status, 403, 'only whoever added it removes it');
       const before = graces.events();
       assert.equal((await app.call('DELETE', `/api/items/${id}`, { as: ada })).status, 200);

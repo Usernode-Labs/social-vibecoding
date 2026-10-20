@@ -332,6 +332,8 @@ const App = {
     // / waitlist screens are part of what it reviews) and because a
     // later application would repaint every inset mid-boot.
     App._applySafeAreaShot();
+    // Before anything moves the address: what opened this window.
+    App._noteLaunch();
 
     // Chrome wiring is session-independent and has no re-entry guards
     // (double listeners otherwise), so it runs exactly once per document
@@ -4713,6 +4715,20 @@ const App = {
   // sign-in that finishes in another document (_followInvite).
   INVITE_LANDING_KEY: 'usernode:invite-landing',
 
+  // The page an invite was followed on, made Home, just before the app it
+  // was for opens over it (features/first-session welcome(), for somebody
+  // owed the walk on Home). Back and the ✕ go to the entry under the app
+  // (_closeAppTarget), and a public community's link is joined on its hub
+  // (_openInvitePage), so leaving the app went to the hub and the walk did
+  // not start until they found Home. Replaced rather than pushed: Back is
+  // one step, and what was drawn there is covered by the app at once.
+  _homeUnderApp() {
+    const home = App._rootUrl('');
+    try {
+      if (`${location.pathname}${location.search}${location.hash}` !== home) history.replaceState(null, '', home);
+    } catch (_) { /* the app opens over the page as before */ }
+  },
+
   // "You're in"'s held frame (above), down; a welcome that took its place stays.
   _endWelcomeHold() {
     const island = window.UsernodeReact && window.UsernodeReact.firstSession;
@@ -5392,20 +5408,24 @@ const App = {
         // Chromeless full-screen App view (/app/<slug>/full). Old cached
         // clients that predate this route fall into the final `else`
         // below and get the regular App tab — a graceful degrade.
-        const chromeless = tab === 'full';
-        if (chromeless) tab = 'app';
+        // An app opened from its home-screen icon starts here too (its
+        // manifest's start_url) and keeps the header; the address stays
+        // /full, inside the installed app's scope.
+        const fullRoute = tab === 'full';
+        const chromeless = fullRoute && !App._installedDisplay();
+        if (fullRoute) tab = 'app';
         // Inner-path pass-through (#743): `path` is defined as the FINAL
         // fragment-query param — its value is everything after the first
         // `path=`, verbatim in wire encoding (an inner query may carry
         // `&` / `=` / `?`, and the Caddy rescue redirect can't
         // percent-encode placeholders, so no URLSearchParams here).
-        // Honored only on the chromeless route; every other route
+        // Honored only on the /full route; every other route
         // ignores the fragment-query entirely.
         let innerPath = null;
-        if (chromeless && fragQuery) {
+        if (fullRoute && fragQuery) {
           const pm = fragQuery.match(/(?:^|&)path=(.*)$/);
           if (pm) innerPath = App._validateInnerPath(pm[1]);
-        } else if (chromeless && pathRoute) {
+        } else if (fullRoute && pathRoute) {
           try {
             innerPath = App._validateInnerPath(
               new URLSearchParams(location.search).get('path') || ''
@@ -5520,7 +5540,7 @@ const App = {
         // permanent outputs. Replace before dispatch so reload/copy exposes
         // the clean canonical path without manufacturing a Back entry.
         const canonicalAppUrl = App._appUrl(slug, tab, ref, subTab, {
-          chromeless, innerPath, boardView,
+          chromeless: fullRoute, innerPath, boardView,
         });
         const currentAppUrl = `${location.pathname}${location.search}${location.hash}`;
         if (currentAppUrl !== canonicalAppUrl) {
@@ -5541,7 +5561,7 @@ const App = {
             || (tab === 'dev' && ref != null)
             // A chromeless hash carrying a DIFFERENT inner path than the
             // one already applied — re-render so the iframe moves (#743).
-            || (chromeless && innerPath !== prevInnerPath)
+            || (fullRoute && innerPath !== prevInnerPath)
             // Board ⇄ Activity: same tab, same sub-tab, different layout.
             || boardViewChanged) {
           App.switchTab(tab, ref, subTab);
@@ -5626,6 +5646,41 @@ const App = {
   // change, and it is a routing fact, not a rendering one. Publishing before
   // the deferred bundle has evaluated is fine — the store is a plain object
   // on window, and the islands read it on mount.
+  // Launched from a home-screen icon rather than a browser tab: the same
+  // two signals frontend/src/features/mobile-install/environment.ts reads
+  // (Safari's `navigator.standalone` predates the media query).
+  _installedDisplay() {
+    try {
+      if (window.matchMedia
+        && window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches) {
+        return true;
+      }
+      return window.navigator.standalone === true;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  // This window was opened from an APP's own home-screen icon (its
+  // manifest's start_url is /app/<slug>/full), not from Homeroom's. Read at
+  // boot, before the address moves, and kept for the window's life
+  // (sessionStorage survives a reload inside it): there the mark menu's "Add
+  // Homeroom to your home screen" opens Homeroom in the browser, because
+  // this window has no Share button
+  // (frontend/src/features/mobile-install/homeroom-home-screen.ts).
+  launchedFromAppIcon: false,
+
+  _noteLaunch() {
+    const KEY = 'homeroom.launchedFromAppIcon';
+    try {
+      if (sessionStorage.getItem(KEY) === '1') { App.launchedFromAppIcon = true; return; }
+    } catch (_) { /* private mode: read the address alone */ }
+    if (!App._installedDisplay()
+      || !/^\/app\/[a-z0-9][a-z0-9-]{0,254}\/full\/?$/.test(location.pathname)) return;
+    App.launchedFromAppIcon = true;
+    try { sessionStorage.setItem(KEY, '1'); } catch (_) { /* this load still knows */ }
+  },
+
   setChromeless(on) {
     const enable = !!on;
     if (App.chromeless === enable) return;

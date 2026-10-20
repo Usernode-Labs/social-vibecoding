@@ -24399,6 +24399,15 @@ const AppView = {
     const sunIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
     const closeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2M11 8.5v5M8.5 11h5"/></svg>';
     const wholeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/></svg>';
+    // #5691: the button that lifts the viewer to the top layer at window
+    // size (the popover is the viewer itself, so no script is needed).
+    const expandIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/></svg>';
+    const collapseIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14h6v6M10 14l-7 7M20 10h-6V4M14 10l7-7"/></svg>';
+    const viewerId = `shots-${key}-viewer`;
+    // Both words are in the button and CSS shows the one that matches the
+    // open state, so the spoken name follows it; the `title` cannot change,
+    // so the tooltip stays "Expand".
+    const expand = `<button type="button" class="shots-expand" popovertarget="${viewerId}" popovertargetaction="toggle" title="${PlatformI18n.htmlText('changes:shots.viewer.expand')}"><span class="shots-expand-out">${expandIcon}<span class="shots-expand-word">${PlatformI18n.htmlText('changes:shots.viewer.expand')}</span></span><span class="shots-expand-in">${collapseIcon}<span class="shots-expand-word">${PlatformI18n.htmlText('changes:shots.viewer.collapse')}</span></span></button>`;
     const stepper = (index) => {
       const same = indexesOf(list[index].viewport);
       const at = same.indexOf(index);
@@ -24428,7 +24437,7 @@ const AppView = {
         ? `<label for="${themeId('dark')}" class="shots-theme-flip shots-theme-to-dark" title="${PlatformI18n.htmlText('changes:shots.viewer.showDark')}">${moonIcon}</label><label for="${themeId('light')}" class="shots-theme-flip shots-theme-to-light" title="${PlatformI18n.htmlText('changes:shots.viewer.showLight')}">${sunIcon}</label>`
         : '';
       return `<figure class="shots-view" data-shots-screen="${attr(screen.viewport)}" data-shots-viewport="${attr(screen.viewport)}">
-        <div class="shots-bar">${barLead}<span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">${PlatformI18n.htmlText('changes:shots.viewer.before')}</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">${PlatformI18n.htmlText('changes:shots.viewer.after')}</label>${both}</span>${sizeSwitch}${zoomSwitch}${themeFlips}${stepping ? stepper(screenIndex) : ''}</div>
+        <div class="shots-bar">${barLead}<span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">${PlatformI18n.htmlText('changes:shots.viewer.before')}</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">${PlatformI18n.htmlText('changes:shots.viewer.after')}</label>${both}</span>${sizeSwitch}${zoomSwitch}${themeFlips}${expand}${stepping ? stepper(screenIndex) : ''}</div>
         <div class="shots-stage"${screen.stacked ? ' data-shots-stack="1"' : ''}>
           ${screen.afterHtml || ''}
           ${screen.beforeHtml || ''}
@@ -24457,7 +24466,7 @@ const AppView = {
     const themePicks = themes
       ? `<span class="shots-picks"><input type="radio" class="shots-theme-pick shots-theme-light" name="shots-${key}-theme" id="${themeId('light')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showLight')}"${themePick === 'light' ? ' checked' : ''} onchange="AppView._shotsThemePick('${key}', this)"><input type="radio" class="shots-theme-pick shots-theme-dark" name="shots-${key}-theme" id="${themeId('dark')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showDark')}"${themePick === 'dark' ? ' checked' : ''} onchange="AppView._shotsThemePick('${key}', this)"></span>`
       : '';
-    return `<div class="shots-viewer${className ? ` ${attr(className)}` : ''}">${sidePicks}${zoomPicks}${screenPicks}${themePicks}<div class="shots-views${list.length === 1 ? ' shots-views-one' : ''}">${views.join('')}</div></div>`;
+    return `<div class="shots-viewer${className ? ` ${attr(className)}` : ''}" id="${viewerId}" popover="auto">${sidePicks}${zoomPicks}${screenPicks}${themePicks}<div class="shots-views${list.length === 1 ? ' shots-views-one' : ''}">${views.join('')}</div></div>`;
   },
 
   // #4455: two more readings for a change's page. `thread` is its Before

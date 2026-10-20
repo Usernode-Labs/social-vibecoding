@@ -2065,8 +2065,25 @@ form.agent-session-composer:focus-within {
      (`.messages-layout-embedded`) keeps its ✕. */
   .messages-layout:not(.messages-layout-embedded) > .messages-reply-pane [data-reply-close] { display: none; }
 }
+/* #5691: the divider between a chat and its open thread, dragged to trade
+   room between them. It sits in the 8px the thread pane's own margin leaves
+   (`.messages-reply-pane` is positioned), so the layout never shifts. At
+   rest it is the sheet's hairline; under the pointer or the keyboard it is
+   the accent, as a change session's side pane divider is. Drawn from 768px
+   only, where the two panes are side by side; on a phone the thread covers
+   the chat. */
+.messages-reply-resizer { display: none; }
 @media (min-width: 768px) {
-  .messages-reply-pane { flex: 0 0 min(420px, 42%); margin: 14px 12px 0 0; }
+  .messages-reply-pane { flex: 0 0 var(--messages-reply-width, min(420px, 42%)); margin: 14px 12px 0 0; }
+  /* A community page's embedded copy of a thread (#3653) keeps its own width:
+     the divider is Messages' alone. */
+  .messages-layout-embedded > .messages-reply-pane { flex-basis: min(420px, 42%); }
+  .messages-layout-embedded > .messages-reply-pane > .messages-reply-resizer { display: none; }
+  .messages-reply-resizer { display: block; position: absolute; left: -7px; top: 0; bottom: 0; width: 6px; z-index: 1;
+    border-radius: 3px; cursor: col-resize; touch-action: none;
+    background: linear-gradient(var(--app-sheet-line), var(--app-sheet-line)) center / 1px 100% no-repeat; }
+  .messages-reply-resizer:hover, .messages-reply-resizer:focus-visible { background: var(--accent, #2563eb); outline: none; }
+  .messages-reply-resizer:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 1px; }
   .messages-layout.messages-has-reply-thread > .messages-thread-pane { margin-right: 8px; }
 }
 @media (min-width: 768px) and (max-width: 1599px) {
@@ -12756,9 +12773,17 @@ html.web-browser-chrome {
    top edge is one colour and the wallpaper below loses no texture and gains
    no seam. Browser tabs (the wash in browser-scroller mode above) and the
    native WebView are not standalone display modes, so nothing here reaches
-   them. */
+   them.
+
+   THE BAR OVER A RUNNING APP IS CLEAR TOO (it takes the app's tone, #1945),
+   so an app opened from its own home-screen icon, which keeps the header
+   (restoreFromHash), had the wallpaper's washes at its top edge and the same
+   blur through the H and the app's name. It gets the same band.
+   --home-ground follows the app's tone (the wallpaper rules repaint it for a
+   dark app under the light shell), so the band is the strip's colour. */
 @media (display-mode: standalone) {
-  #landing-header {
+  #landing-header,
+  body:has(#app-view:not(.hidden)[data-app-surface="app"]) #platform-header {
     background-image: linear-gradient(
       var(--home-ground) calc(var(--un-safe-inset-top, env(safe-area-inset-top, 0px)) + 0.5rem),
       transparent
@@ -16048,6 +16073,41 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .shots-theme-flip svg { width: 16px; height: 16px; flex: none; }
 .shots-theme-flip ~ .shots-screen-nav { margin-left: 0; }
 .shots-viewer:has(.shots-theme-pick:focus-visible) .shots-theme-flip { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
+/* The expand button (#5691): the same 30px round grey disc as the screen
+   arrows and the mode flip, at the bar's end. The viewer itself is its
+   popover, so the button opens and closes it without script; the arrow
+   pair points out while it is closed and in while it is open. */
+.shots-expand { display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 999px; cursor: pointer;
+  user-select: none; margin-left: auto; font: inherit; color: #3f3f46; background: rgba(24, 24, 27, 0.06); }
+.shots-expand:hover { background: rgba(24, 24, 27, 0.12); }
+.dark .shots-expand { color: #e4e4e7; background: rgba(255, 255, 255, 0.08); }
+.dark .shots-expand:hover { background: rgba(255, 255, 255, 0.14); }
+.shots-expand svg { width: 16px; height: 16px; flex: none; }
+.shots-theme-flip ~ .shots-expand { margin-left: 0; }
+.shots-expand ~ .shots-screen-nav { margin-left: 0; }
+.shots-expand:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
+.shots-expand-out, .shots-expand-in { display: inline-flex; align-items: center; }
+.shots-expand-in { display: none; }
+.shots-viewer:popover-open .shots-expand-out { display: none; }
+.shots-viewer:popover-open .shots-expand-in { display: inline-flex; }
+/* The word is the button's spoken name, and only the shown one counts. */
+.shots-expand-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@supports not selector(:popover-open) { .shots-expand { display: none; } }
+/* The viewer as a popover: closed it stays the block it always was (the UA
+   hides a closed popover and fixes an open one to the viewport, so both
+   boxes are neutralised); open it is drawn in the top layer at nearly the
+   window's size, over a dim on the page. It must be a popover rather than
+   position: fixed, because the reply pane and the app sheet it sits in
+   carry a backdrop-filter, which would trap a fixed viewer in the pane. */
+.shots-viewer[popover] { display: block; position: relative; inset: auto; margin: 0; padding: 0; border: 0; width: auto; height: auto;
+  overflow: hidden; color: inherit; background: transparent; }
+.shots-viewer:popover-open { position: fixed; inset: 0; margin: auto; height: fit-content; overflow: auto; overscroll-behavior: contain;
+  width: min(calc(100vw - 48px), calc((100vh - 200px) * 1.6)); max-height: calc(100vh - 48px); background: #fff; }
+.dark .shots-viewer:popover-open { background: #1c1c1e; }
+@supports (height: 100dvh) {
+  .shots-viewer:popover-open { width: min(calc(100vw - 48px), calc((100dvh - 200px) * 1.6)); max-height: calc(100dvh - 48px); }
+}
+.shots-viewer::backdrop { background: rgba(0, 0, 0, 0.55); }
 .shots-viewer:has(.shots-theme-dark:checked) .shots-theme-to-dark,
 .shots-viewer:has(.shots-theme-light:checked) .shots-theme-to-light { display: none; }
 /* Dark pick: a side that has a dark shot shows it instead of its light one;
@@ -17168,6 +17228,13 @@ p.dev-change-issue-pointer {
   .dev-change-root .messages-message-head { padding-left: 32px; min-height: 24px; align-items: center; }
   /* A taller frame for a shot on a phone. */
   .dev-change-shots .shots-stage { margin: 0 8px; aspect-ratio: 4 / 5; }
+  /* The card's buttons take a row of their own, under its line, so the
+     name, figure and bar keep the card's width. */
+  .dev-change-gate { grid-template-columns: minmax(0, 1fr); }
+  .dev-change-gate-act { order: 1; flex-wrap: wrap; margin-top: 10px; }
+  .dev-change-gate-head { flex-wrap: wrap; row-gap: 2px; }
+  .dev-change-gate-name { min-width: 0; }
+  .dev-change-gate-figure { white-space: nowrap; }
 }
 
 /* ── The Workshop ──────────────────────────────────────────────────
@@ -24847,7 +24914,13 @@ html.in-side-panel body {
 }
 .dark .rf-feed, .dark .rf-page-wrap { --rf-page: #0b0d1b; --rf-sheet: #1c1c1e; --rf-fill: #2c2c2e; }
 
-/* The feed: a title shot and a title, nothing else. */
+/* The feed: a title shot and a title, nothing else. One column, never wider
+   than the change page (520px, gutters included), centred in the pane: a
+   wide window keeps the phone's cards instead of stretching one picture
+   across the screen. review-flow.tsx composes the cards at the same cap
+   (COLUMN), so the pictures and this column agree. A phone is narrower than
+   the cap, so nothing changes there. */
+.rf-feed, .rf-feed-note { box-sizing: border-box; width: 100%; max-width: 520px; margin-left: auto; margin-right: auto; }
 .rf-feed { display: flex; flex-direction: column; gap: 28px; padding: 4px 16px 32px; transform-origin: 50% 30%; }
 .rf-loading { min-height: 50vh; }
 .rf-card { display: flex; flex-direction: column; gap: 12px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent; }
@@ -24867,8 +24940,11 @@ html.in-side-panel body {
 .rf-end-btn { align-self: stretch; height: 48px; border: 0; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
 .rf-capped { margin: -12px 0 0; font-size: 12px; color: var(--rf-muted); text-align: center; }
 
-/* The change page: fixed above the tab bar, which stays. */
-.rf-page-wrap { position: fixed; left: 0; right: 0; top: 0; bottom: var(--platform-tabs-h, 0px); z-index: 35; pointer-events: none; }
+/* The change page: fixed above the tab bar, which stays. From 768px it
+   starts after the sidebar (--platform-rail-w, 0 on a phone and while the
+   rail is folded), so it centres over the feed's column and a card grows
+   straight up into it. */
+.rf-page-wrap { position: fixed; left: var(--platform-rail-w, 0px); right: 0; top: 0; bottom: var(--platform-tabs-h, 0px); z-index: 35; pointer-events: none; }
 .rf-page { position: absolute; top: 0; bottom: 0; left: max(0px, calc(50% - 260px)); width: min(100%, 520px); display: flex; flex-direction: column; overflow: hidden; background: var(--rf-page); color: var(--rf-ink); pointer-events: auto; -webkit-font-smoothing: antialiased; }
 .rf-band { position: absolute; left: 0; right: 0; top: 0; height: 0; z-index: 3; pointer-events: none; }
 .rf-head { position: relative; z-index: 4; flex: none; display: flex; align-items: center; gap: 4px; padding: env(safe-area-inset-top, 0px) 4px 4px; min-height: 52px; background: var(--rf-page); }
@@ -24882,11 +24958,14 @@ html.in-side-panel body {
 .rf-stage-leaving { position: absolute; left: 0; right: 0; top: 0; z-index: 0; }
 .rf-stage-arriving { position: relative; z-index: 1; }
 .rf-page-body { padding-bottom: 16px; }
-.rf-claim { margin: 0; padding: 14px 16px 0 20px; font-size: 17px; font-weight: 600; line-height: 23px; text-wrap: pretty; }
+/* The shot and its thumbnails read as one object, set apart from the page. */
+.rf-preview { margin: 12px 12px 0; border-radius: 16px; overflow: hidden; background: var(--rf-sheet); box-shadow: 0 0 0 1px var(--rf-line); }
+.rf-claim { margin: 0; padding: 20px 16px 0 20px; font-size: 17px; font-weight: 600; line-height: 23px; text-wrap: pretty; }
 .rf-thumbs { display: flex; gap: 8px; padding: 10px 14px 4px; overflow-x: auto; scrollbar-width: none; }
 .rf-thumbs::-webkit-scrollbar { display: none; }
 .rf-thumb { position: relative; flex: none; width: 52px; height: 52px; margin: 4px; padding: 0; border: 0; border-radius: 12px; overflow: hidden; display: grid; place-items: center; box-shadow: inset 0 0 0 1px var(--rf-line); cursor: pointer; }
 .rf-thumb[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--rf-page), 0 0 0 4px var(--lit-ink); }
+.rf-preview .rf-thumb[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--rf-sheet), 0 0 0 4px var(--lit-ink); }
 .rf-thumb-in { position: relative; overflow: hidden; border-radius: 4px; background: #fff; }
 .rf-thumb-in img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; }
 .rf-hero-quiet { width: 100%; }

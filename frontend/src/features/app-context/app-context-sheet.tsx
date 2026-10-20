@@ -133,6 +133,9 @@ import { AboutPane } from './about-pane';
 import { offeringGoToHomeroom, owedHomeWalk, useAboutApp } from './about-data';
 import { InvitePane } from './invite-pane';
 import { isNativeApp } from '../mobile-install/environment';
+import { InstallStepsSheet } from '../mobile-install/install-steps-sheet';
+import type { MobileOs } from '../mobile-install/detect';
+import { homeroomHomeScreen, openHomeroomInBrowser, takeArrival } from '../mobile-install/homeroom-home-screen';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
@@ -407,6 +410,26 @@ export function AppsSwitcherSheet(): ReactNode {
     : (appName ? t('agent:appContext.backToMenu', { app: appName }) : t('agent:appContext.backToThisAppMenu'));
 
   const close = useCallback(() => AppContext.close(), []);
+
+  // ADD HOMEROOM TO YOUR HOME SCREEN (Evan, 20 Oct 2026): a plain row, on a
+  // phone where Homeroom is not on the home screen yet: in the browser it
+  // shows the install banner's steps, and in an app saved to the home screen
+  // (no Share button there) it opens Homeroom in the browser, whose page puts
+  // the same steps up on arrival. ../mobile-install/homeroom-home-screen.ts
+  // says which. Read after mount, for the prerender's sake.
+  const homeroomOffer = useMemo(() => (mounted ? homeroomHomeScreen() : null), [mounted, open]);
+  const [homeroomSteps, setHomeroomSteps] = useState<MobileOs | null>(null);
+  useEffect(() => {
+    if (!takeArrival()) return undefined;
+    let live = true;
+    // After the boot settles, so the steps are not drawn under the first screen.
+    const boot = (window as any).App?.bootSession?.();
+    void Promise.resolve(boot).then(() => {
+      const offer = homeroomHomeScreen();
+      if (live && offer?.via === 'steps') setHomeroomSteps(offer.os);
+    });
+    return () => { live = false; };
+  }, []);
 
   // Every way into an app funnels through improveStore.slug, so recording
   // recency here counts a home tile, an /app/<slug> deep link and a
@@ -881,6 +904,24 @@ export function AppsSwitcherSheet(): ReactNode {
           >
             <RowBody icon={<InfoCircleIcon />} label={appName ? t('agent:appContext.row.about', { app: appName }) : t('agent:appContext.row.aboutThisApp')} />
           </button>
+          {homeroomOffer ? (
+            <button
+              id="app-menu-row-add-homeroom"
+              type="button"
+              className={`${ROW} w-full text-left`}
+              onClick={() => {
+                if (homeroomOffer.via === 'browser') {
+                  openHomeroomInBrowser();
+                  void AppContext.dismissForNav();
+                  return;
+                }
+                const { os } = homeroomOffer;
+                void AppContext.close().then(() => setHomeroomSteps(os));
+              }}
+            >
+              <RowBody icon={<PhonePlusIcon />} label={t('agent:appContext.row.addHomeroom')} />
+            </button>
+          ) : null}
           {/* AGENT CHATS left the menu (#4729): see the note above
               AppsSwitcherSheet. */}
           {/*
@@ -929,6 +970,7 @@ export function AppsSwitcherSheet(): ReactNode {
         </nav>
       </div>
       <OverlayScrim panelId="apps-switcher-sheet" backdropId="apps-switcher-overlay" />
+      {homeroomSteps ? <InstallStepsSheet os={homeroomSteps} onClose={() => setHomeroomSteps(null)} /> : null}
     </>
   );
 }

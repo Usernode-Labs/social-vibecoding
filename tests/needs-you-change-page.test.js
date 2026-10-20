@@ -805,7 +805,7 @@ test('the picture: verified shots are the viewer specs use, a run under way is a
     artifacts: [{ storyId: 's1', viewport: 'desktop', side: 'base', variant: 'context', url: url('a') },
       { storyId: 's1', viewport: 'desktop', side: 'head', variant: 'context', url: url('b') }] };
   const verified = render(av, { ...PR, shots }).page;
-  assert.match(verified, /<section class="dev-change-shots" data-change-shots="verified"><div class="dev-change-shots-html"><section data-shots="1" data-shots-state="verified" aria-label="Before and after" class="dev-change-shots-body"><div class="shots-viewer shots-viewer-spec dev-change-viewer">/);
+  assert.match(verified, /<section class="dev-change-shots" data-change-shots="verified"><div class="dev-change-shots-html"><section data-shots="1" data-shots-state="verified" aria-label="Before and after" class="dev-change-shots-body"><div class="shots-viewer shots-viewer-spec dev-change-viewer" id="shots-4090-viewer" popover="auto">/);
   assert.match(verified, /<div class="shots-bar"><span class="dev-change-card-name">Before and after<\/span><span class="shots-seg shots-seg-side"/);
   assert.match(verified, /shots-seg-both/, 'side by side is one of its sides');
   assert.match(verified, /shots-side-auto/, 'and it starts side by side when there is room');

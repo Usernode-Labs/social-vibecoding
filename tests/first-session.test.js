@@ -528,8 +528,15 @@ test('"You\'re in" is gone: an invite opens the app itself, owes the tip, and th
   const welcome = src.slice(src.indexOf('welcome(info: FirstSessionInfo): boolean {'), src.indexOf('goHome('));
   assert.match(welcome, /if \(!info \|\| !info\.slug \|\| seen\(info\.slug\)\) return false;\s+markSeen\(info\.slug\);/);
   assert.match(welcome, /oweTip\(uid, \{ slug, name, who: 'invited', inviter: info\.inviterName \|\| null \}\);/);
-  assert.match(welcome, /if \(\(privateMember \|\| info\.newAccount\) && oweWalk\(uid, \{ slug, name, privateMember \}\)\) app\?\._noteHomeWalk\?\.\('owed'\);/);
+  assert.match(welcome, /walkOwed = \(privateMember \|\| !!info\.newAccount\) && oweWalk\(uid, \{ slug, name, privateMember \}\);\s+if \(walkOwed\) app\?\._noteHomeWalk\?\.\('owed'\);/);
   assert.match(welcome, /const going = app\?\.navigateToApp\?\.\(slug, 'app'\);/);
+  // Home is under the app for somebody owed the walk, so Back and the ✕ lead
+  // to it: a public community's link is joined on its hub, which was under
+  // the app before (the owner's run-through, 20 Oct 2026).
+  assert.match(welcome, /rememberCommunity\(slug\);[\s\S]{0,240}if \(walkOwed\) app\?\._homeUnderApp\?\.\(\);[\s\S]*const going = app\?\.navigateToApp/);
+  const under = read('public/js/app.js').slice(read('public/js/app.js').indexOf('_homeUnderApp() {'));
+  assert.match(under.slice(0, 300), /const home = App\._rootUrl\(''\);\s+try \{\s+if \(`\$\{location\.pathname\}\$\{location\.search\}\$\{location\.hash\}` !== home\) history\.replaceState\(null, '', home\);/,
+    'the page under it is replaced with Home, not pushed: Back is one step');
   // Both ways in hand over who sent it, by the name they go by.
   assert.match(read('public/js/app.js'), /inviter: standing\.inviter \|\| null,\s+inviterName: standing\.inviterName \|\| standing\.inviter \|\| null,/);
   assert.match(read('public/js/app.js'), /newAccount: !!standing\.newAccount,/);

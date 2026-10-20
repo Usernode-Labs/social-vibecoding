@@ -44,7 +44,7 @@ test('B8: the doors that open the chat with Homeroom bot, and what they are call
   // run-through, 5 Oct 2026). The hub's ⋯ still offers it, above.
   assert.match(read('frontend/src/features/home/tour/tour-steps.ts'), /body: 'onboarding:tour\.step\.menuActions\.body',/);
   assert.equal(require('./lib/platform-i18n').message('onboarding:tour.step.menuActions.body'),
-    'Say what should change. It doesn\'t vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group as a request, and you can follow along.');
+    'Change something in any of your apps or in Homeroom itself. Start building it or share a request for someone in the community to pick up.');
   assert.doesNotMatch(read('frontend/src/features/home/tour/tour-steps.ts'), /tap Build it now/);
   assert.doesNotMatch(JSON.stringify(JSON.parse(read('frontend/locales/en/onboarding.json'))), /tap Build it now/);
   // The made screen's plan card is the door after a new project (the
