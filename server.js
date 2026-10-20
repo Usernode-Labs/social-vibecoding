@@ -1304,6 +1304,9 @@ async function start() {
   // (docs/plans/draining-releases.md): before anything here can start work.
   // Never fatal: holds stay this process's own until the database takes them.
   await processes.start({ pool: getPool(config), role: ownRole });
+  // Turns' streams, kept where a browser served by any process reads them
+  // (services/session-bus.js).
+  sessionBus.init({ pool: getPool(config) });
   // The clients every process that runs the workflow machines makes
   // (src/workflow/setup.ts): the push sender, GitHub, the model.
   await require('./src/workflow/setup.ts').startWorkflowClients(config);

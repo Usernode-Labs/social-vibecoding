@@ -728,19 +728,19 @@ async function runAgentTurn({
     // "Session stopped before finishing" (#4729), so the notification says
     // what kind of news waits. Looking means this turn's own stream is still
     // open, or the conversation screen is following the conversation's events.
-    if (outcome.ran && outcome.changeId && !watching()) {
+    if (outcome.ran && outcome.changeId && !(await watching())) {
       await (outcome.isError ? d.notifyStalled : d.notifyDone)(pool, outcome.changeId);
     }
   };
 
-  // Is anybody watching this conversation right now?
-  const watching = () => {
+  // Is anybody watching this conversation right now: this turn's own stream,
+  // or a conversation screen following its events on any process.
+  const watching = async () => {
     const streamOpen = !!res && !res.destroyed && !res.writableEnded
       && !(res.socket && res.socket.destroyed);
-    const following = typeof d.sessionBus.subscriberCount === 'function'
-      ? d.sessionBus.subscriberCount(busKey(agentSessionId)) > 0
-      : false;
-    return streamOpen || following;
+    if (streamOpen) return true;
+    if (typeof d.sessionBus.subscriberCount !== 'function') return false;
+    return (await Promise.resolve(d.sessionBus.subscriberCount(busKey(agentSessionId))).catch(() => 0)) > 0;
   };
 
   // The wrap-up. It answers every tool call of the dispatching round, and it
@@ -1040,8 +1040,9 @@ async function runAgentTurn({
       // when nobody was watching — a stop or an interruption was answered
       // where it happened, so those stay out of the bell. Off this catch's
       // critical path: the turn is already recorded as failed.
-      if (session && session.activeChange && !watching()) {
-        d.notifyStalled(pool, session.activeChange.id).catch(() => {});
+      if (session && session.activeChange) {
+        const changeId = session.activeChange.id;
+        void watching().then((seen) => (seen ? null : d.notifyStalled(pool, changeId))).catch(() => {});
       }
     }
   } finally {

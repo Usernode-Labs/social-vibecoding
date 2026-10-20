@@ -15578,3 +15578,38 @@ CREATE TABLE IF NOT EXISTS starter_images (
 );
 CREATE INDEX IF NOT EXISTS idx_starter_images_key
   ON starter_images (context_key) WHERE image_ref IS NOT NULL;
+
+-- What a turn shows as it happens (services/session-bus.js): every event a
+-- live turn streams to a browser, for a change (`stream_key` its id) or a
+-- conversation (`agent:<id>`), kept so a browser served by any process can
+-- follow the turn and resume after a dropped connection, whichever process
+-- runs it. `seq` is the event's own `_seq` (what a browser dedupes by and
+-- sends back as Last-Event-Id); rows are read by `id`. A stream's rows go a
+-- little after its turn ends (clearSession), and the retention clock prunes
+-- whatever is left (turn-stream-retention).
+CREATE TABLE IF NOT EXISTS stream_events (
+  id          BIGSERIAL PRIMARY KEY,
+  stream_key  TEXT NOT NULL,
+  seq         TEXT NOT NULL,
+  event       JSONB NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_stream_events_key ON stream_events (stream_key, id);
+CREATE INDEX IF NOT EXISTS idx_stream_events_seq ON stream_events (stream_key, seq);
+CREATE INDEX IF NOT EXISTS idx_stream_events_created ON stream_events (created_at);
+COMMENT ON TABLE stream_events IS 'staging:private';
+
+-- Who follows a stream right now (an open GET .../events, on any process):
+-- a row per open stream, counted only while the process serving it holds
+-- its presence lock (src/workflow/rules/presence.ts), so a process that
+-- went takes its rows with it. "Is anybody watching" for a turn's
+-- done-notification reads it. The retention clock deletes rows whose
+-- process is gone.
+CREATE TABLE IF NOT EXISTS stream_watchers (
+  id          BIGSERIAL PRIMARY KEY,
+  stream_key  TEXT NOT NULL,
+  holder      TEXT NOT NULL,
+  opened_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_stream_watchers_key ON stream_watchers (stream_key);
+COMMENT ON TABLE stream_watchers IS 'staging:private';

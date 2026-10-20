@@ -54,6 +54,8 @@ let broadcasts = [];
 ws.broadcastGlobal = (payload) => { broadcasts.push(payload); };
 
 const sessionBus = require('../src/services/session-bus');
+// Its streams kept in this process: no database here (services/session-bus.js).
+sessionBus.init({ memory: true });
 const stopRegistry = require('../src/services/stop-registry');
 const chatDelivery = require('../src/services/chat-delivery');
 // #3976: classic sessions are read-only, so POST /api/sessions/:id/chat now
@@ -181,6 +183,7 @@ test('the stream opens with `accepted`, and the turn replays from its _seq', asy
     // The resume contract: /events?since=<accepted _seq> replays the rest.
     const replayed = [];
     const unsubscribe = sessionBus.subscribe(SESSION_ID, (e) => replayed.push(e), first._seq);
+    await sessionBus.settle();
     unsubscribe();
     assert.deepEqual(replayed.map((e) => e._seq), events.slice(1).map((e) => e._seq),
       'every later event of the turn, in order');

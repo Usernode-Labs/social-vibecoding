@@ -130,6 +130,12 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/cli-auth').cleanupCliAuth(pool),
   },
   {
+    // Turns' streams (stream_events) a finished turn did not clear, and the
+    // watchers of a process that went (services/session-bus.js).
+    name: 'turn-stream-retention', everyMs: 15 * MIN,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/session-bus').prune(pool),
+  },
+  {
     // #5132: a person's IP address is kept IP_RETENTION_DAYS (180 days, six
     // months, by default), then cleared from the rows that recorded it; the
     // rows stay.

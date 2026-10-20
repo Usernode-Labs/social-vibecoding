@@ -66,12 +66,12 @@ function deliveryState({ messageId, liveMessageId, turnLive, isLatestUserMessage
   return hasLaterRows ? 'done' : 'received';
 }
 
-// The `_seq` of the stored message's own `accepted` event while the ring
-// buffer still holds it, else null.
-function acceptedSeq(sessionId, messageId) {
-  const event = sessionBus.findLast(Number(sessionId), (e) => (
+// The `_seq` of the stored message's own `accepted` event while the turn's
+// stream still holds it, else null.
+async function acceptedSeq(sessionId, messageId) {
+  const event = await sessionBus.findLast(Number(sessionId), (e) => (
     e.type === 'accepted' && Number(e.messageId) === Number(messageId)
-  ));
+  )).catch(() => null);
   return event ? event._seq : null;
 }
 
@@ -108,7 +108,7 @@ async function lookup(db, { sessionId, clientMessageId, viewer }) {
     received: true,
     messageId,
     state,
-    since: acceptedSeq(sessionId, messageId),
+    since: await acceptedSeq(sessionId, messageId),
   };
 }
 

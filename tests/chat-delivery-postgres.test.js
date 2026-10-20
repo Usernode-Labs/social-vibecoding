@@ -66,6 +66,9 @@ test('chat delivery against the full schema', { timeout: 120000 }, async (t) => 
   const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
   await pool.query(schema);
   await pool.query(schema); // boot-idempotent, the new column and index included
+  // The turn's stream in this database (services/session-bus.js), as the
+  // server keeps it.
+  require('../src/services/session-bus').init({ pool });
 
   // The first delivery lookup can be made to miss, which is what two
   // retries racing past it look like to the one that inserts second.

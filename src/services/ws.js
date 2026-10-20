@@ -130,6 +130,11 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       if (!oversize) void Promise.resolve(require('../routes/sessions').receiveSessionStop?.(payload))
         .catch((err) => log.warn('ws', 'A stop for a turn here failed', { err: err.message }));
       return;
+    // A turn's stream has a new row (services/session-bus.js): this
+    // process's subscribers to it read on. Never a socket event.
+    case 'stream':
+      if (fromWorkflow && r.key != null) require('./session-bus').wake(r.key, Number(r.id) || null);
+      return;
     case 'turn_byok':
       if (!oversize) require('./worker').receiveTurnByok(payload);
       return;

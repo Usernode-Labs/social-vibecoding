@@ -1410,6 +1410,20 @@
       "preview": "`SELECT cs.pr_number, cs.pr_title, u.username, cs.created_at FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id WHERE cs.app_id = $1 AND cs.status = '"
     },
     {
+      "source": "src/services/session-bus.js",
+      "kind": "structural-template",
+      "fingerprint": "2258237abfc603d59087",
+      "count": 1,
+      "preview": "`DELETE FROM stream_watchers w WHERE w.opened_at < NOW() - interval '1 minute' AND NOT ${holderAliveSql('w.holder')}`"
+    },
+    {
+      "source": "src/services/session-bus.js",
+      "kind": "structural-template",
+      "fingerprint": "4a479c3887c1957a2b2e",
+      "count": 1,
+      "preview": "`SELECT COUNT(*)::int AS n FROM stream_watchers w WHERE w.stream_key = $1 AND ${holderAliveSql('w.holder')}`"
+    },
+    {
       "source": "src/services/shared-objects.js",
       "kind": "structural-template",
       "fingerprint": "07fc5c0dfd474d4567fc",

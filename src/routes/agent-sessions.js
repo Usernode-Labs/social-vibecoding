@@ -653,27 +653,28 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
       'X-Accel-Buffering': 'no',
     });
     try { res.write(':ok\n\n'); } catch { /* client gone */ }
-    const sinceSeq = req.headers['last-event-id'] || req.query.since || null;
+    let since = req.headers['last-event-id'] || req.query.since || null;
     const sessionBus = require('../services/session-bus');
     const write = (event) => {
+      const { _id, ...shown } = event;
       try {
-        res.write(`id: ${event._seq}\n`);
-        res.write(`data: ${JSON.stringify(event)}\n\n`);
+        res.write(`id: ${shown._seq}\n`);
+        res.write(`data: ${JSON.stringify(shown)}\n\n`);
       } catch { /* client gone */ }
     };
     // A screen that opens mid-turn gets what the running turn has said so
-    // far, and none of an earlier turn's tail. Read and subscribed in the
-    // same tick, so nothing published between the two is missed.
-    if (!sinceSeq) {
+    // far, and none of an earlier turn's tail; then follows on from the
+    // last of those rows, so nothing published meanwhile is missed.
+    if (!since) {
       const running = agentTurn.turnState(id);
       if (running && running.id) {
-        const prefix = `${String(running.id).slice(0, 8)}-`;
-        sessionBus.snapshot(agentTurn.busKey(id))
-          .filter((event) => typeof event._seq === 'string' && event._seq.startsWith(prefix))
-          .forEach(write);
+        const told = await sessionBus.snapshot(agentTurn.busKey(id), { seqPrefix: `${String(running.id).slice(0, 8)}-` })
+          .catch(() => []);
+        told.forEach(write);
+        if (told.length) since = { afterId: told[told.length - 1]._id };
       }
     }
-    const unsubscribe = sessionBus.subscribe(agentTurn.busKey(id), write, sinceSeq);
+    const unsubscribe = sessionBus.subscribe(agentTurn.busKey(id), write, since);
     const heartbeat = setInterval(() => {
       try { res.write(':heartbeat\n\n'); } catch { /* client gone */ }
     }, 15000);
