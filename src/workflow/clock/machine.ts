@@ -120,13 +120,19 @@ function itemsOf(jobName: string, run: number, result: Json, outstanding: Readon
   // A job only the newest build runs names its build: its targets are
   // claimed only by a process of it (clock/services.ts newestOnly). An item
   // an older build's run handed out is claimed by no process of this one,
-  // and its own may be gone: it is given up, and its target asked for again.
+  // and its own may be gone: once nobody works it (queued, or its lease
+  // lapsed) it is given up, and its target asked for again, carrying on from
+  // what it did (`continues`: its checkpoint, such as a paid batch already
+  // submitted). One a process of that build is working stays its own.
   const release = typeof status.release === 'string' ? status.release : null;
   const cancel: WorkRef[] = [];
   const busy = new Set<string>();
+  const handedOn = new Map<string, string>();
   for (const [target, o] of outstanding) {
-    if (release && o.release !== release) cancel.push({ kind: itemKind(jobName), key: o.key });
-    else busy.add(target);
+    if (release && o.release !== release && o.idle) {
+      cancel.push({ kind: itemKind(jobName), key: o.key });
+      handedOn.set(target, o.key);
+    } else busy.add(target);
   }
   const out: WorkRequest[] = [];
   const seen = new Set<string>();
@@ -137,15 +143,18 @@ function itemsOf(jobName: string, run: number, result: Json, outstanding: Readon
     const gen = o?.gen == null ? `run${run}` : String(o.gen);
     if (!TARGET.test(target) || !TARGET.test(gen) || busy.has(target) || seen.has(target)) continue;
     seen.add(target);
+    const from = handedOn.get(target);
     out.push({ kind: itemKind(jobName), key: itemKey(target, gen),
-      input: { job: jobName, target, input: (o!.input ?? null) as Json, ...(release ? { release } : {}) } });
+      input: { job: jobName, target, input: (o!.input ?? null) as Json, ...(release ? { release } : {}) },
+      ...(from ? { continues: from } : {}) });
   }
   return { items: out, cancel, status: { ...status, items: out.length } };
 }
 
 // What a run's result needs to know: the targets with an item outstanding,
-// with the release each was handed out for.
-interface Outstanding { key: string; release: string | null }
+// with the release each was handed out for, and whether nobody works it now
+// (queued, or claimed by a process whose lease lapsed).
+interface Outstanding { key: string; release: string | null; idle: boolean }
 export interface Facts { outstanding: ReadonlyMap<string, Outstanding> }
 const NO_FACTS: Facts = { outstanding: new Map() };
 
@@ -220,10 +229,12 @@ export function clock() {
       // busy (most jobs hand none).
       if (p.kind !== runKind(state.data.job) || !Array.isArray((p.result as any)?.items)) return NO_FACTS;
       const { rows } = await tx.query(
-        `SELECT work_key, input->>'release' AS release FROM wf_work WHERE machine = $1 AND key = $2 AND kind = $3 AND status <> 'settled'`,
+        `SELECT work_key, input->>'release' AS release,
+                (status = 'queued' OR (status = 'running' AND lease_until <= now())) AS idle
+           FROM wf_work WHERE machine = $1 AND key = $2 AND kind = $3 AND status <> 'settled'`,
         [MACHINE, ctx.key, itemKind(state.data.job)]);
-      return { outstanding: new Map(rows.map((r: { work_key: string; release: string | null }) =>
-        [targetOf(r.work_key), { key: r.work_key, release: r.release ?? null }])) };
+      return { outstanding: new Map(rows.map((r: { work_key: string; release: string | null; idle: boolean }) =>
+        [targetOf(r.work_key), { key: r.work_key, release: r.release ?? null, idle: !!r.idle }])) };
     },
     authorize: {
       Arm: (e) => (e.source.kind === 'system' ? ok() : reject('system_only')),

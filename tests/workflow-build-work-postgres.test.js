@@ -65,10 +65,16 @@ test('the build\'s own work against the full PostgreSQL schema', { timeout: 1200
 
   await t.test('B1: a newest-build clock does nothing in an older build; its targets are claimed only by the newest', async () => {
     const built = [];
+    const resumed = [];
+    let targets = [{ target: 'key-1', input: { key: 'k1' } }];
     const job = {
       name: 'build-own', everyMs: 60000, newestOnly: true,
-      run: async () => ({ items: [{ target: 'key-1', input: { key: 'k1' } }] }),
-      item: { run: async (ctx) => { built.push([process.env.GIT_SHA, ctx.input.release]); return { ok: true }; } },
+      run: async () => ({ items: targets }),
+      item: { run: async (ctx) => {
+        built.push([process.env.GIT_SHA, ctx.input.release]);
+        resumed.push(ctx.steps().get('paid') ?? null);
+        return { ok: true };
+      } },
     };
     const services = clockServices([job], { config: {}, pool });
     await serving(OLD, NEW);
@@ -105,12 +111,23 @@ test('the build\'s own work against the full PostgreSQL schema', { timeout: 1200
     await newer.runServices();
     assert.deepEqual(built, [[NEW, NEW]]);
 
-    // An item an older build's run handed out (its process gone before it
-    // ran it) is claimed by no process of this one: the next run gives it
-    // up and asks for its target again, as this build's.
-    await pool.query(`INSERT INTO wf_work (machine, key, kind, work_key, input, status)
-                      VALUES ('clock', $1, 'clock.build-own.item', 'item:key-1@run0', $2, 'queued')`,
+    // An item an older build's run handed out (its process gone after it
+    // paid for something, before it was done) is claimed by no process of
+    // this one: the next run gives it up and asks for its target again, as
+    // this build's, carrying on from what it did (a paid batch is not asked
+    // for twice). One a live process of that build is working is its own.
+    await pool.query(`INSERT INTO wf_work (machine, key, kind, work_key, input, status, checkpoint)
+                      VALUES ('clock', $1, 'clock.build-own.item', 'item:key-1@run0', $2, 'queued', '{"paid": "batch-1"}')`,
       [clockMod.clockKey('build-own'), JSON.stringify({ job: 'build-own', target: 'key-1', input: { key: 'k1' }, release: OLD })]);
+    // Claimed by a live process of the older build: its lease runs.
+    const { rows: [worked] } = await pool.query(`INSERT INTO wf_work (machine, key, kind, work_key, input, status)
+                      VALUES ('clock', $1, 'clock.build-own.item', 'item:key-2@run0', $2, 'queued') RETURNING id`,
+      [clockMod.clockKey('build-own'), JSON.stringify({ job: 'build-own', target: 'key-2', input: { key: 'k2' }, release: OLD })]);
+    await pool.query(`WITH a AS (INSERT INTO wf_work_attempts (id, work_id, service_id, number) VALUES (gen_random_uuid(), $1, 'older-pod', 1) RETURNING id)
+                      UPDATE wf_work SET status = 'running', claim_id = (SELECT id FROM a), lease_until = now() + interval '1 minute', attempt_count = 1
+                       WHERE id = $1`, [worked.id]);
+    targets = [{ target: 'key-1', input: { key: 'k1' } }, { target: 'key-2', input: { key: 'k2' } }];
+    resumed.length = 0;
     await newer.append(clockMod.MACHINE, clockMod.clockKey('build-own'), { type: 'RunNow', payload: {} },
       { requestKey: 'run-now:b1', source: { kind: 'admin' } });
     await newer.drain();
@@ -122,10 +139,14 @@ test('the build\'s own work against the full PostgreSQL schema', { timeout: 1200
     const older0 = items.find((i) => i.work_key === 'item:key-1@run0');
     assert.equal(older0.status, 'settled');
     assert.equal(older0.result.cancelled, true, 'the older build\'s item is given up');
-    const fresh = items.filter((i) => i.status !== 'settled');
-    assert.deepEqual(fresh.map((i) => i.release), [NEW], 'its target asked again, as this build\'s');
+    const fresh = items.filter((i) => i.status !== 'settled' && i.release === NEW);
+    assert.equal(fresh.length, 1, 'its target asked again, as this build\'s');
+    assert.equal(items.find((i) => i.work_key === 'item:key-2@run0').status, 'running', 'a worked item is left to its process');
     await newer.runServices();
     assert.deepEqual(built, [[NEW, NEW], [NEW, NEW]]);
+    assert.deepEqual(resumed, ['batch-1'], 'carried on from what the older build\'s item did');
+    await pool.query(`DELETE FROM wf_work WHERE work_key = 'item:key-2@run0'`);
+    targets = [{ target: 'key-1', input: { key: 'k1' } }];
 
     // A rollback: the older build serves again, started last. It is the
     // newest now, whatever was booted before it.

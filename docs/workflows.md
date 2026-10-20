@@ -1601,7 +1601,10 @@ intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
   minutes on Kubernetes). The newest build is the build of the live workflow process that
   started serving last (`platform_processes`), so a rollback, or a rollout of the same build
   with another configuration, is the newest once it serves. An item an older build's run
-  handed out is given up by the next run (cancelled), and its target asked for again.
+  handed out, once nobody works it (queued, or its lease lapsed), is given up by the next run
+  and its target asked for again, carrying on from its checkpoint (`continues`), so a paid
+  step it finished (a translation batch submitted) is not done twice. One a live process of
+  that build is working stays its own.
 - **Production apps.** `app-health` (each running app's runtime, every minute) and
   `main-drift` (each running app's main on GitHub, every 5 minutes) report to app-delivery
   (`Unhealthy`, `MainMoved`), which decides.
