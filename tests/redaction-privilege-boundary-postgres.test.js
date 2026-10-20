@@ -56,6 +56,27 @@ function rowsAsPsql(client) {
   };
 }
 
+// The full suite runs every test file in parallel against one Postgres, and
+// another file's workflow runtime can fire the orphan-staging-DB sweep
+// while this one is mid-clone: the copy is dropped between CREATE DATABASE
+// and pg_restore's first connection, which fails with "… does not exist /
+// just been dropped" (issue #5645). test-net.js now preloads the sweep's
+// off switch, so this should not fire; retry once on exactly that error as
+// belt and braces. A retry is safe because the clone starts by dropping any
+// leftover target database and role.
+const JUST_DROPPED_RE = /does not exist[\s\S]*just been dropped/;
+async function cloneRetryingIfDropped(dbManager, source, target) {
+  try {
+    return await dbManager.cloneDatabase(source, target);
+  } catch (err) {
+    const dropped = (err && err.code === '3D000')
+      || (err instanceof Error && JUST_DROPPED_RE.test(err.message));
+    if (!dropped) throw err;
+    console.warn(`cloneRetryingIfDropped: ${target} vanished mid-clone, retrying once`);
+    return dbManager.cloneDatabase(source, target);
+  }
+}
+
 async function reachable(t) {
   try { const c = await connect(BASE); await c.end(); return true; }
   catch (err) { if (REQUIRED) throw err; t.skip('a PostgreSQL server is needed; set TEST_DATABASE_URL to require this check'); return false; }
@@ -526,7 +547,7 @@ test('a trusted extension is restored as the copy\'s own owner, comment and all'
   const src = await connect(at(BASE, source));
   await src.query('CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public');
   await src.end();
-  await dbManager.cloneDatabase(source, target);
+  await cloneRetryingIfDropped(dbManager, source, target);
   // pg_extension is per database; read it inside the copy.
   const clone = await connect(at(BASE, target));
   const there = (await clone.query(

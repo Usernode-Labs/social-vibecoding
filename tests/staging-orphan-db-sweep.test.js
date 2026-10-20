@@ -297,16 +297,22 @@ test('the preview-orphan-dbs clock runs the sweep on its interval, and 0 switche
   const { JOBS } = require('../src/workflow/clock/services.ts');
   const job = JOBS.find((j) => j.name === 'preview-orphan-dbs');
   assert.ok(job, 'the preview-orphan-dbs clock exists');
-  assert.equal(reap.orphanDbSweepIntervalMs(), 6 * 60 * 60 * 1000, 'every six hours by default');
-  assert.equal(job.everyMs, reap.orphanDbSweepIntervalMs());
-  assert.equal(job.item, undefined, 'a drop is preconditioned on what it read: safe to run twice, no targets');
-
-  const summary = await job.run({ input: {} }, { config: {}, pool: null });
-  assert.equal(summary.dropped, 1);
-  assert.deepEqual(fx.dropped, ['app_a_staging_s1_aaaaaa']);
-
-  process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS = '0';
+  // tests/lib/test-net.js preloads STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS=0
+  // into every test process so no scheduled sweep races a parallel file's
+  // clone on the shared cluster. Clear it here so the default assertions
+  // below read the real default, and put back whatever was set.
+  const savedSweepInterval = process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS;
+  delete process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS;
   try {
+    assert.equal(reap.orphanDbSweepIntervalMs(), 6 * 60 * 60 * 1000, 'every six hours by default');
+    assert.equal(job.everyMs, reap.orphanDbSweepIntervalMs());
+    assert.equal(job.item, undefined, 'a drop is preconditioned on what it read: safe to run twice, no targets');
+
+    const summary = await job.run({ input: {} }, { config: {}, pool: null });
+    assert.equal(summary.dropped, 1);
+    assert.deepEqual(fx.dropped, ['app_a_staging_s1_aaaaaa']);
+
+    process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS = '0';
     assert.equal(reap.orphanDbSweepIntervalMs(), 0);
     fx.dropped = [];
     assert.deepEqual(await job.run({ input: {} }, { config: {}, pool: null }), { off: true });
@@ -314,6 +320,7 @@ test('the preview-orphan-dbs clock runs the sweep on its interval, and 0 switche
     process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS = 'banana';
     assert.equal(reap.orphanDbSweepIntervalMs(), 6 * 60 * 60 * 1000, 'junk falls back to the default');
   } finally {
-    delete process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS;
+    if (savedSweepInterval === undefined) delete process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS;
+    else process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS = savedSweepInterval;
   }
 });

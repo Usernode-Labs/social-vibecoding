@@ -1,9 +1,11 @@
 // Test-harness preload (loaded via --require in the npm test script; the
 // node test runner spawns each test file with the parent's execArgv, so
-// every test process gets this automatically). Three patches: the first two
+// every test process gets this automatically). Four patches: the first two
 // kill the rare, random `TypeError: fetch failed` flakes that hit a
-// different test file every few full-suite runs, and the third keeps a
-// Postgres connection dropped while idle from failing a whole test file.
+// different test file every few full-suite runs, the third keeps a
+// Postgres connection dropped while idle from failing a whole test file,
+// and the fourth stops the suite from racing itself over the shared
+// Postgres cluster.
 //
 // ── Patch 1: test servers bind IPv4 loopback ──────────────────────────
 //
@@ -38,6 +40,23 @@
 // being silently absorbed.
 
 'use strict';
+
+// ── Patch 4: no scheduled orphan-staging-DB sweep in test processes ─────
+//
+// The full suite runs every tests/*.test.js file in parallel against ONE
+// Postgres at 127.0.0.1:5432. Files that boot the workflow runtime arm
+// every clock job at startup with its first run due immediately, including
+// `preview-orphan-dbs`: its sweep lists every `%_staging_%` database in the
+// whole cluster and drops each one with no live session and no client —
+// which is exactly a redaction/postgres test's freshly created copy between
+// `CREATE DATABASE` and pg_restore's first connection (issue #5645: pg_restore
+// died with `database "…_staging_s1_abcdef" does not exist … just been
+// dropped`). 0 is already the interval's own kill switch, so arm the job
+// off unless a developer sets the variable themselves. The sweep's unit
+// tests call selectOrphanDbs / sweepOrphanDbs directly and keep working.
+if (process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS === undefined) {
+  process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS = '0';
+}
 
 const net = require('net');
 
