@@ -281,7 +281,7 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
 
    | Tool | What it does |
    | --- | --- |
-   | `get_brief` | The declared changes, before/after addresses, which browser to use for whom and for each screen (`screenBrowsers`), that another signed-in browser can be a second account (`secondAccount`), changed files and progress so far; on Homeroom's own copies, how phone sign-in works there (`phoneSignIn`) |
+   | `get_brief` | The declared changes, before/after addresses, which browser to use for whom and for each screen (`screenBrowsers`), that another signed-in browser can be a second account (`secondAccount`), changed files and progress so far; on Homeroom's own copies, how phone sign-in works there (`phoneSignIn`) — all in one answer within 30,000 characters (`fitBrief`), because Claude Code saves a longer result to a file the agent cannot read: the declared checks, the diff and the changed files fill the room left, best first, and say when some were left out |
    | `save_shot` | Publishes PNGs the browser saved with `browser_take_screenshot`, several per call, each for a change, screen, side and kind; one screenshot can be listed for several changes |
    | `save_clip` | Publishes the clip that the change's browser recorded most recently |
    | `note_change` | Records what a change's shots leave out of its claim, shown beside them |
