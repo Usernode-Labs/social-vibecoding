@@ -12625,14 +12625,10 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         });
       };
       if (runLocally) {
-        // Local turns do not enter the platform's Codex attempt ledger and a
-        // retry must stay on the same attached machine.
+        // Local turns do not enter the platform's Codex attempt ledger. There
+        // is no headless retry here: a headless turn never takes a lease, so
+        // it never runs locally.
         result = await dispatchLocalBuild();
-        if (headless && shouldRetryHeadlessTurn(result, stopHandle, result.ahead > 0)) {
-          await sendStatus('The coding step failed unexpectedly, retrying once…', executionAgentMeta);
-          await waitForTurnStopped(session.id, containerName);
-          result = await dispatchLocalBuild();
-        }
       } else {
         // Backend-aware per-attempt dispatch (plan §7): same contract as the
       // scout path — one logical turn, one agent_turns attempt per physical
