@@ -575,7 +575,7 @@ test('every check #5280 and #5317 marked still gets what its mark gave it', () =
   const tests = homeroomTests();
   const groups = groupTests(tests, {});
   const groupOf = (t) => groups.find((g) => g.includes(t));
-  // #5280's 22: a one-time boot link, each now a load of its own.
+  // #5280's 22 (16 since #5289): a one-time boot link, each now a load of its own.
   const boot = [
     '/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000022',
     '/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000026',
@@ -584,10 +584,12 @@ test('every check #5280 and #5317 marked still gets what its mark gave it', () =
     '/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000034',
     '/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000093',
     '/?shot=app-context&demo=1#app/usernode-2d5619/dev',
-    '/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev',
   ];
+  // #5289: the six checks on `?shot=notifications-messages#app/…/dev` moved
+  // to the Messages screen with the agent rows they check (`/?demo=1#messages`,
+  // no boot parameter), so they are switched to like any other address now.
   const at = tests.filter((t) => boot.includes(t.path));
-  assert.equal(at.length, 22);
+  assert.equal(at.length, 16);
   for (const t of at) {
     assert.equal(t.coldLoad, true, t.path);
     assert.equal(cohortsOf(groupOf(t)).length, 1, `${t.path} is its group's load`);

@@ -213,6 +213,12 @@ function taskToRow(task, appNameFallback) {
     // waiting on them is not something this side can see per work order.
     awaitingInput: false,
     sortAt: timeOf(task.created_at),
+    // #5289: the clock Messages' agents list sorts and ages its rows on (and
+    // the row's own <time> prints). Without it a work order had no time at
+    // all, sorted last and always fell behind "N older chats", so with the
+    // bell's Messages filter gone it was on screen nowhere. Handed off is
+    // the last thing this side knows happened to it.
+    lastActivityAt: task.created_at || null,
   };
 }
 

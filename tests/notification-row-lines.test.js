@@ -403,8 +403,9 @@ test('the three lines are visually ranked, not three of the same thing', () => {
   // is both larger and heavier than the two around it.
   assert.match(body, /block text-xs text-zinc-500 dark:text-zinc-400 truncate/,
     'the kind line is subordinate, in the muted ink');
-  assert.match(body, /block text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate/,
-    'the subject carries the strong ink and the larger size');
+  // #5289: the subject runs to two lines before it is cut, not one.
+  assert.match(body, /block text-sm font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2 break-words/,
+    'the subject carries the strong ink and the larger size, over up to two lines');
   assert.match(body, /block text-xs text-zinc-500 truncate/,
     'the meta line stays small and regular');
 
@@ -417,7 +418,7 @@ test('the three lines are visually ranked, not three of the same thing', () => {
   // both `font-semibold` and a muted `text-zinc-500` in different branches of
   // a ternary. The badge is not one of the three lines and has no rank here.
   const lines = (body.match(/block text-\S+[^"']*/g) || [])
-    .filter((c) => c.includes('truncate'));
+    .filter((c) => c.includes('truncate') || c.includes('line-clamp-2'));
   assert.equal(lines.length, 3, 'exactly three ranked lines');
   const strong = lines.filter((c) => /font-semibold/.test(c));
   assert.equal(strong.length, 1, 'exactly one line carries the strong weight');
@@ -426,11 +427,13 @@ test('the three lines are visually ranked, not three of the same thing', () => {
   assert.ok(lines.filter((c) => size(c) === size(strong[0])).length === 1,
     'the subject must not share its size with the lines it outranks');
 
-  // Each line truncates on its own, so a long subject cannot push the app
-  // name or the time off the row.
+  // Each line is cut on its own, so a long subject cannot push the app
+  // name or the time off the row: the kind and meta lines truncate to one
+  // line, the subject clamps at two (#5289).
   // Counted on the class strings themselves (`truncate"`), since the prose
   // beside them says the word too.
-  assert.equal((body.match(/truncate"/g) || []).length, 3, 'all three truncate');
+  assert.equal((body.match(/truncate"/g) || []).length, 2, 'the kind and meta lines truncate');
+  assert.equal((body.match(/line-clamp-2 break-words"/g) || []).length, 1, 'the subject clamps at two lines');
 });
 
 test('a push test has clear account-level copy without inventing a completed session', async () => {
@@ -520,6 +523,7 @@ test('parked, a kudos row never enters the list', async () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/notifications/notifications.js'), 'utf8');
   assert.match(src, /Notifications\.items = Array\.isArray\(data\.notifications\)\s*\? data\.notifications\.filter\(Notifications\._shown\) : \[\];/,
     'the first page is filtered');
-  assert.equal((src.match(/data\.notifications\.filter\(Notifications\._shown\)/g) || []).length, 4,
-    'and so are the three older-page loads (All, Messages, and #5527 Unread)');
+  // #5289: the Messages tab and its own older-page load went with it.
+  assert.equal((src.match(/data\.notifications\.filter\(Notifications\._shown\)/g) || []).length, 3,
+    'and so are the two older-page loads (All, and #5527 Unread)');
 });

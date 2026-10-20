@@ -211,12 +211,17 @@ test('a row with nothing left to clear asks nothing, and is redrawn from the tru
 
 test('the row click keeps its path, and the path now says whether it worked', () => {
   const body = CONTROLLER_SRC.slice(CONTROLLER_SRC.indexOf('  async _markOneRead(id) {'),
-    CONTROLLER_SRC.indexOf('  async clearNotification(id) {'));
+    CONTROLLER_SRC.indexOf('  async clearNotification(id, groupIds) {'));
   assert.match(body, /body: JSON\.stringify\(\{ id \}\)/);
   assert.match(body, /if \(!res\.ok\) return false;/);
   assert.match(body, /return true;\n/);
-  const clear = CONTROLLER_SRC.slice(CONTROLLER_SRC.indexOf('  async clearNotification(id) {'),
+  const clear = CONTROLLER_SRC.slice(CONTROLLER_SRC.indexOf('  async clearNotification(id, groupIds) {'),
     CONTROLLER_SRC.indexOf('  _rowMembers(id) {'));
+  assert.ok(clear.length > 0, 'clearNotification found');
+  // #5289: a folded row hands its other members' ids over, and each one's
+  // own row members are cleared with it, once each.
+  assert.match(clear, /const ids = \[id, \.\.\.\(Array\.isArray\(groupIds\) \? groupIds : \[\]\)\];/);
+  assert.match(clear, /ids\.flatMap\(\(rowId\) => Notifications\._rowMembers\(rowId\)\)/);
   assert.match(clear, /members\.map\(\(n\) => Notifications\._markOneRead\(n\.id\)\)/,
     'the clear reuses the click\'s request and reconcile instead of a second copy');
   assert.match(CONTROLLER_SRC, /_rowMembers\(id\) \{[\s\S]{0,300}collapseConversationRuns\(items\.slice\(at\)\)/,
@@ -246,7 +251,7 @@ const view = (id, overrides = {}) => ({
 function renderSheet({ touch, list }) {
   const notificationsStore = createStore({
     saved: [], invites: [], screenList: list, touch, loadingMore: false,
-    screenCanLoadMore: false, messagesCanLoadMore: false, loadingOlderMessages: false,
+    screenCanLoadMore: false,
   });
   const notificationsSheetStore = createStore({ open: true, adopted: false });
   const mod = loadTsx(SHEET_PATH, {
@@ -308,7 +313,8 @@ test('only an unread row offers a clear', () => {
 
 test('the swipe is the kit\'s, neutral, and a full swipe only where the row leaves', () => {
   const effect = SHEET_SRC.slice(SHEET_SRC.indexOf('const swipe = ui.swipeActions(el, {'),
-    SHEET_SRC.indexOf('}, [clearable, touch, removes, shape, view.id, t]);'));
+    SHEET_SRC.indexOf("}, [clearable, touch, removes, shape, view.id, groupIds?.join(','), t, onRelease]);"));
+  assert.ok(effect.length > 0, 'the swipe effect found');
   assert.match(effect, /label: t\('notifications:row\.clear'\)/);
   assert.equal(message('notifications:row.clear'), 'Clear');
   // The kit's full swipe belongs to its destructive action and takes the row
@@ -320,9 +326,10 @@ test('the swipe is the kit\'s, neutral, and a full swipe only where the row leav
   assert.match(effect, /color: 'var\(--un-action-neutral\)'/);
   // Polish #7: the row is let go of first (useHeldUnread), so a cleared row
   // still leaves Unread while the rows read elsewhere stay listed.
-  assert.match(effect, /handler: \(\) => \{\s*onRelease\?\.\(\[view\.id\]\);\s*void controller\(\)\?\.clearNotification\(view\.id\);\s*\}/);
-  assert.match(SHEET_SRC, /return \(\) => swipe\.detach\(\);\n {2}\}, \[clearable, touch, removes, shape, view\.id, t, onRelease\]\);/,
-    'detached when the row stops being clearable, changes tab or changes shape');
+  // #5289: a folded row lets go of, and clears, every notification it is.
+  assert.match(effect, /handler: \(\) => \{\s*onRelease\?\.\(groupIds \|\| \[view\.id\]\);\s*void controller\(\)\?\.clearNotification\(view\.id, groupIds \|\| undefined\);\s*\}/);
+  assert.match(SHEET_SRC, /return \(\) => swipe\.detach\(\);\n {2}\}, \[clearable, touch, removes, shape, view\.id, groupIds\?\.join\(','\), t, onRelease\]\);/,
+    'detached when the row stops being clearable, changes tab, shape or group');
 });
 
 test('the slot is what React places, and it is keyed on what the kit holds', () => {
@@ -331,7 +338,7 @@ test('the slot is what React places, and it is keyed on what the kit holds', () 
   // slot React places; a row whose read state or shape changes is a new slot,
   // dropped whole rather than having its row swapped out from under the kit.
   assert.match(SHEET_SRC,
-    /<div\s+key=\{`\$\{clearable \? 'unread' : 'read'\}:\$\{shape\}`\}\s+className=\{held \? 'notifications-row-slot group\/notif relative opacity-60' : 'notifications-row-slot group\/notif relative'\}/,
+    /<div\s+key=\{`\$\{clearable \? 'unread' : 'read'\}:\$\{shape\}\$\{groupIds \? ':group' : ''\}`\}\s+className=\{held \? 'notifications-row-slot group\/notif relative opacity-60' : 'notifications-row-slot group\/notif relative'\}/,
     'polish #7: a row read while the sheet is open stays on Unread, dim');
   // #4769: the kit must hold whichever node translates — the row itself on
   // desktop, the swipe host (row + bookmark) on touch — so the rows hand it
@@ -346,7 +353,7 @@ test('the × is its own click, and keyboard focus has somewhere to go after it',
   const handler = SHEET_SRC.slice(SHEET_SRC.indexOf('data-notification-clear={view.id}'),
     SHEET_SRC.indexOf('<XIcon aria-hidden="true" className="h-3 w-3"'));
   assert.match(handler, /event\.stopPropagation\(\);/);
-  assert.match(handler, /void controller\(\)\?\.clearNotification\(view\.id\);/);
+  assert.match(handler, /void controller\(\)\?\.clearNotification\(view\.id, groupIds \|\| undefined\);/);
   assert.doesNotMatch(handler, /_onItemClick/, 'the × never opens the row');
   // A keyboard-made click (detail 0) moves focus off the × it just removed:
   // to the row if it stayed, else its neighbour, else the sheet's close.
@@ -361,14 +368,14 @@ test('the hairline between rows follows the slot', () => {
   assert.match(APP_CSS, /\.dark \.notifications-row-slot:not\(:last-child\) \.notifications-row::after \{ background: rgba\(255, 255, 255, 0\.08\); \}/);
 });
 
-test('a declared check sees the ×, and the Messages-tab check sees through the slot', () => {
+test('a declared check sees the ×, and a folded row\'s × names the group', () => {
   const has = (fragment) => dapp.tests.some((t) => (t.expectSelector || '').includes(fragment));
   // Folded into an existing check on the same route rather than taking a
   // slot (the fold-first rule in services/app-manifest.js). The checks run
   // at 1280x800, where the kit reports a desktop and the × is rendered.
-  assert.ok(has('.notifications-row-slot > [data-notif-id="990201"] + button[data-notification-clear="990201"][aria-label="Clear notification"]'));
-  // The rows are not siblings of #notifications-all-messages any more; their
-  // slots are.
-  assert.ok(has('#notifications-all-messages ~ .notifications-row-slot [data-notif-id="990209"]'));
-  assert.ok(!has('#notifications-all-messages ~ [data-notif-id='));
+  // #5289: 990201 folds with 990205 ("2 sessions finished"), so the plain
+  // row this pins is 990211, and the folded one names both.
+  assert.ok(has('.notifications-row-slot > [data-notif-id="990211"] + button[data-notification-clear="990211"][aria-label="Clear notification"]'));
+  assert.ok(has('.notifications-row-slot > [data-notif-id="990201"] + button[data-notification-clear="990201"][aria-label="Clear 2 notifications"]'));
+  assert.ok(!has('#notifications-all-messages'));
 });

@@ -133,13 +133,14 @@ test('_renderList publishes one row descriptor per notification, in feed order',
 });
 
 test('the renderer maps rows directly, with no between-apps divider', () => {
-  // #2815: through renderEntry, which draws a notification as <ScreenRow>
-  // and a Messages-tab session as <SessionRow> — still one child per entry.
+  // Through renderEntry, one <ScreenRow> per entry. (#2815 had it draw a
+  // Messages-tab session as <SessionRow> too; #5289 took that tab out.)
   assert.match(listBlock(), /\.map\(renderEntry\)/, 'renders one child per row');
   // #3538: the row also takes `touch` and `removes` now, which decide how it
   // is cleared (a swipe or a ×, and whether a full swipe takes it away), so
   // the element spans lines; it is still one <ScreenRow> per entry.
-  assert.match(LIST_CODE, /: \(\s*<ScreenRow\s+key=\{entry\.key\}\s+view=\{entry\.view\}\s/);
+  assert.match(LIST_CODE, /const renderEntry = \(entry: Entry\): ReactNode => \(\s*<ScreenRow\s+key=\{entry\.key\}\s+view=\{entry\.view\}\s/);
+  assert.doesNotMatch(LIST_CODE, /<SessionRow/, 'no session rows in the bell since #5289');
   assert.doesNotMatch(LIST_CODE, /DIVIDER/,
     'the heavier between-apps divider is gone — rows carry their own border');
 });
@@ -187,26 +188,26 @@ test('the pager renders after the rows and is wired to loadOlder', () => {
 
 // ── #4700: the Unread footer reveals older rows IN PLACE ────────────────
 //
-// The footer used to jump a filtered tab to All. Messages keeps that jump;
-// Unread now reveals the older rows under the unread ones and collapses
-// again, which is what the four tests below pin.
+// The footer used to jump a filtered tab to All. Unread reveals the older
+// rows under the unread ones and collapses again, which is what the four
+// tests below pin. (The Messages filter kept the jump until #5289 took the
+// filter out.)
 
 test('the Unread footer reveals older notifications on the tab instead of jumping to All', () => {
   const block = listBlock();
-  // The collapsed Unread footer, found by its guard so the Messages branch
-  // (which shares the button id) cannot satisfy this test. #5527 put a
+  // The collapsed Unread footer, found by its guard. #5527 put a
   // load-unread button above it, so the span reaches past that to the
   // see-older button this test pins.
-  const m = block.match(/\) : tab === 'unread' && !olderShown[\s\S]*?id="notifications-see-older"[\s\S]*?<\/button>/);
+  const m = block.match(/\(tab === 'unread' && !olderShown \? \([\s\S]*?id="notifications-see-older"[\s\S]*?<\/button>/);
   assert.ok(m, 'the collapsed Unread footer branch found');
   assert.match(m[0], /id="notifications-see-older"/, 'same id the footer always used');
   assert.match(m[0], /setOlderShown\(true\);\s*\n\s*controller\(\)\?\.loadOlder\(\)/,
     'expands in place and walks the existing loadOlder cursor');
   assert.doesNotMatch(m[0], /setTab\('all'\)/, 'stays on Unread — no jump to All');
-  // Exactly one jump remains in the footer: the Messages branch's, which the
-  // request did not touch. (The other is the All tab button itself.)
-  assert.equal((block.match(/setTab\('all'\)/g) || []).length, 2,
-    'one setTab(\'all\') is the All tab button, one is the Messages footer');
+  // No footer jumps to All any more: the Messages filter's did, and #5289
+  // took that filter out. The one left is the All tab button itself.
+  assert.equal((block.match(/setTab\('all'\)/g) || []).length, 1,
+    'the only setTab(\'all\') in the list is the All tab button');
 });
 
 test('Hide older notifications collapses the expanded Unread list', () => {
@@ -216,8 +217,8 @@ test('Hide older notifications collapses the expanded Unread list', () => {
   // The list drawn on Unread expands to `all` only through this one
   // expression, and only while the reveal is showing.
   assert.match(LIST_CODE, /const shown = tab === 'unread' && olderShown \? all : rows/);
-  assert.match(LIST_CODE, /: shown\.map\(\(view\) => \(\{ type: 'notif'/,
-    'the non-Messages entries render from `shown`');
+  assert.match(LIST_CODE, /const entries: Entry\[\] = shown\.map\(\(view\) => \(\s*\{ type: 'notif'/,
+    'the entries render from `shown`');
 });
 
 test('the expanded Unread view is a per-visit state, forgotten on close or tab change', () => {
@@ -234,8 +235,9 @@ test('the expanded Unread view is a per-visit state, forgotten on close or tab c
 test('the Unread footer reads its words from the catalog', () => {
   assert.equal(message('notifications:sheet.older.reveal'), 'See older notifications');
   assert.equal(message('notifications:sheet.older.hide'), 'Hide older notifications');
-  // The old label is the Messages footer's alone now; the words are unchanged.
-  assert.equal(message('notifications:sheet.older.showAll'), 'See older notifications');
+  // #5289: the Messages footer's jump to All, and its label, went with the
+  // Messages filter.
+  assert.throws(() => message('notifications:sheet.older.showAll'), /No English catalog entry/);
 });
 
 // ── staging seed (unchanged) ────────────────────────────────────────────
