@@ -34,6 +34,8 @@ import { Switch } from '@/components/ui/switch';
 import { useMessages } from '../../../lib/i18n/react';
 import { useWindowEvent } from '../../../lib/legacy-dom';
 
+import { UsageAnalyticsSection } from './usage-analytics';
+
 type WhoCanContact = 'shared' | 'anyone';
 
 interface ContactPrivacy {
@@ -187,6 +189,9 @@ export function PrivacySection() {
           </p>
         ) : null}
       </div>
+      {/* #5097: Share usage analytics, the page's last block; its own state
+          and its own endpoint (./usage-analytics.tsx). */}
+      <UsageAnalyticsSection />
     </div>
   );
 }

@@ -1567,6 +1567,26 @@
     "text": "Couldn't save that change. Try again in a moment.",
     "description": "Error on the Settings > Privacy page when saving a change failed; the control goes back to what it was."
   },
+  "privacy.usageAnalytics.title": {
+    "text": "Usage analytics",
+    "description": "Heading of the last block of Settings > Privacy, above the Share usage analytics switch."
+  },
+  "privacy.usageAnalytics.intro": {
+    "text": "Whether Homeroom may record how you use it.",
+    "description": "One line under the Usage analytics heading in Settings > Privacy."
+  },
+  "privacy.usageAnalytics.label": {
+    "text": "Share usage analytics",
+    "description": "Label of the switch in Settings > Privacy that lets Homeroom record how the person uses it. Off unless they turn it on."
+  },
+  "privacy.usageAnalytics.description": {
+    "text": "Off unless you turn it on. When it is on, Homeroom keeps a record linked to your account of the screens you open and in what order, which apps you open, how long pages take to load and whether a few actions worked, to see where people get stuck or lost. It never records what you type or what is on screen. Turning it off stops this from then on.",
+    "description": "Explanation under the Share usage analytics switch in Settings > Privacy: what is recorded when it is on. \"Lost\" means unable to find their way around."
+  },
+  "privacy.usageAnalytics.saveFailed": {
+    "text": "Could not save that. Try again.",
+    "description": "Error under the Share usage analytics switch in Settings > Privacy when saving the choice failed; the switch goes back to how it was."
+  },
   "devConsole.title": {
     "text": "Developer console",
     "description": "Heading of the section in Settings about the log panel that shows an app's console output and errors."
@@ -2236,7 +2256,7 @@
     "description": "Not shown on screen. Extra search words for \"Linked accounts\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.contactPrivacy": {
-    "text": "privacy messages message dm invite invitations contact strangers safety find search discoverable profile friend requests",
+    "text": "privacy messages message dm invite invitations contact strangers safety find search discoverable profile friend requests analytics usage tracking telemetry",
     "description": "Not shown on screen. Extra search words for \"Privacy\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.wallet": {

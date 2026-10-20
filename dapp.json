@@ -952,9 +952,9 @@
       "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-platform[aria-checked=\"true\"]):has(#feedback-target-hint.hidden) #feedback-submit:not(:disabled)"
     },
     {
-      "name": "Challenges: every Home card draws the shared progress rail (Iteration 03 card)",
+      "name": "Challenges: every unfinished Home card draws the shared progress rail beside its arrow (Iteration 03 card, #4563)",
       "path": "/?demo=1",
-      "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card [role=progressbar][aria-valuetext]"
+      "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card:not([data-challenge-state=done]) [role=progressbar][aria-valuetext] + span.bg-zinc-100 > svg[aria-hidden=true]"
     },
     {
       "name": "Challenges: Home names the block by what it holds, with no season progress above the cards",
@@ -988,7 +988,7 @@
     {
       "name": "Challenges: on Home, Next challenges lists only unfinished ones, under no group headers",
       "path": "/?demo=1",
-      "expectSelector": "#home-challenges-section .home-panel-rows:not(:has(h3)):not(:has(.home-challenge-card [role=progressbar][aria-valuetext=\"Done\"])) > .home-challenge-card"
+      "expectSelector": "#home-challenges-section .home-panel-rows:not(:has(h3)):not(:has(.home-challenge-card[data-challenge-state=done])) > .home-challenge-card"
     },
     {
       "name": "Dev board: one composite status pill and a menu trigger per card (card-as-pointer)",

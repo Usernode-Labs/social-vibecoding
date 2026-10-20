@@ -73,9 +73,18 @@ test('the browser sends each moment as it happens, and a shown one once', async 
   const real = globalThis.fetch;
   const sent = [];
   globalThis.fetch = (url, opts) => { sent.push({ url, opts }); return Promise.resolve({ ok: true }); };
+  const realApp = globalThis.App;
   try {
     const m = loadTsx(`${DIR}/made-moments.ts`);
     m.resetMomentsForTests();
+    // #5097: nothing goes for somebody who does not share usage analytics,
+    // or before the server has said they do.
+    globalThis.App = { user: { id: 7, uiTelemetryEligible: false } };
+    assert.equal(m.noteMoment('club-votes', 'made_shown'), false);
+    globalThis.App = undefined;
+    assert.equal(m.noteMoment('club-votes', 'made_shown'), false);
+    assert.equal(sent.length, 0, 'not shared: nothing sent');
+    globalThis.App = { user: { id: 7, uiTelemetryEligible: true } };
     assert.equal(m.momentsUrl('club votes'), '/api/apps/club%20votes/first-version/moments');
     assert.equal(m.noteMoment('club-votes', 'questions_shown', { count: 2 }, { once: true }), true);
     assert.equal(m.noteMoment('club-votes', 'questions_shown', { count: 2 }, { once: true }), false, 'drawn again: not sent again');
@@ -107,6 +116,7 @@ test('the browser sends each moment as it happens, and a shown one once', async 
     for (const kind of moments.KINDS) assert.match(src, new RegExp(`'${kind}'`), kind);
   } finally {
     globalThis.fetch = real;
+    globalThis.App = realApp;
   }
 });
 

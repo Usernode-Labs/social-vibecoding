@@ -59,6 +59,9 @@ test('app discussion history and inbox preview skip blocked authors', async (t) 
       CREATE TABLE issue_votes (issue_id int, user_id int);
       CREATE TABLE app_chat_reads (app_id int, user_id int, last_read_message_id int NOT NULL,
         updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (app_id, user_id));
+      CREATE TABLE channel_mutes (user_id int NOT NULL, app_id int NOT NULL,
+        channel_ref int NOT NULL DEFAULT 0, muted_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (user_id, app_id, channel_ref));
       INSERT INTO users VALUES (1, 'reader'), (2, 'blocked'), (3, 'visible');
       INSERT INTO apps (id, slug, name) VALUES (7, 'demo', 'Demo');
       INSERT INTO app_collaborators VALUES (7, 1, 'member');

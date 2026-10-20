@@ -69,4 +69,13 @@ export const browseStore = createStore({
    * so the chip appears on screen entry, never in the first render.
    */
   adminFilters: false,
+  /**
+   * The "Filter by type" row (#3962): the type chips Browse.presentCategories
+   * found ({ key, label } each), in order. Empty hides the whole row, and is
+   * the PRERENDER value: which types the directory holds is known only once
+   * /api/apps answers, so the row never appears in the first render.
+   */
+  categories: [],
+  /** The pressed type chip: 'all' or a key of Browse.CATEGORIES. */
+  category: 'all',
 });

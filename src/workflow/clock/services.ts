@@ -217,6 +217,16 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/repo-privacy-audit').audit(pool, { shouldStop: stopped(ctx) }),
   },
   {
+    // #5634: the compliance report's scan, every
+    // COMPLIANCE_SCAN_INTERVAL_DAYS (a week by default), and an admin's
+    // Scan now: each check's result kept as one more scan, one GitHub read
+    // per project for the LICENSE check.
+    name: 'compliance-scan',
+    get everyMs() { return legacy('services/compliance').scanIntervalDays() * 24 * HOUR; },
+    leaseMs: 10 * MIN,
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/compliance').runScan(pool, { shouldStop: stopped(ctx) }),
+  },
+  {
     // Custom domains: DNS for a claim, the certificate, the live host's
     // health. Each step a compare-and-set on the status it read.
     name: 'app-domains', everyMs: MIN,

@@ -506,7 +506,7 @@ test('the tab takes the target and opens a project\'s own reply thread in place'
   assert.match(SCREEN, /function AppReplyThreadPanel[\s\S]*?<AppReplyThreadPane/, 'Messages draws the same pane');
   // The host's class string never changes; only the section says a thread is up.
   assert.match(PD, /<div ref=\{host\} className="dev-ws-discussion-host" \/>/);
-  assert.match(PD, /className=\{`dev-ws-discussion\$\{thread \? ' dev-ws-discussion-threaded' : ''\}`\}/);
+  assert.match(PD, /className=\{`dev-ws-discussion dev-ws-general-channel\$\{thread \? ' dev-ws-discussion-threaded' : ''\}`\}/);
   assert.match(CSS, /\.dev-ws-discussion-threaded > \.messages-reply-pane \{ margin: 0; \}/);
   assert.match(CSS, /\.messages-layout,\s*\.dev-ws-discussion \{/, 'the pane\'s surface tokens reach the tab');
 });

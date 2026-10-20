@@ -30,6 +30,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Replayer } from 'rrweb';
 
 import { useMessages } from '../../lib/i18n/react';
+import { sharesUsageAnalytics } from '../../lib/usage-analytics';
 import { DrawnLook, isDrawnLook } from '../first-session/drawn-look';
 import type { FirstVersionScreens } from './first-version-screens';
 import { GLOW_RULES, GlowTracker } from './live-glow';
@@ -130,6 +131,9 @@ export function phaseOf(state: LiveAnswer['state'] | null, drawn: boolean, ended
 }
 
 function post(slug: string, body: Record<string, unknown>): void {
+  // #5097: watching Live is usage analytics, sent only for somebody who
+  // shares it.
+  if (!sharesUsageAnalytics()) return;
   void fetch(`/api/apps/${encodeURIComponent(slug)}/first-version/live/seen`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

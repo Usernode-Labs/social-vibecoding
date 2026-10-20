@@ -47,6 +47,7 @@ const SETTINGS_READ_PATHS = Object.freeze({
   theme: [],
   language: ['/api/auth/me'],
   alerts: ['/api/me/notification-preferences', '/api/me/mobile-push-preferences'],
+  privacy: ['/api/me/usage-analytics'],
   username: ['/api/auth/me'],
   email: ['/api/me/email'],
   password: [],
@@ -74,6 +75,7 @@ const SETTINGS_READ_PATHS = Object.freeze({
 const SETTINGS_ACTION_MATCHERS = Object.freeze({
   language: [/\/api\/me\/locale$/],
   alerts: [/notification-preferences/, /mobile-push-preferences/, /test-alert/],
+  privacy: [/\/api\/me\/usage-analytics$/],
   username: [/\/api\/me\/username$/],
   email: [/\/api\/me\/email/],
   password: [/\/api\/me\/(?:password|wallet-change-password)$/],

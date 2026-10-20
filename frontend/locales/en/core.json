@@ -43,13 +43,29 @@
     "text": "Communities, on {{community}}",
     "description": "Accessible name of the Communities tab while it is showing one community. {{community}} is that community's name. Keep the word for Communities first."
   },
+  "tabs.communitiesVotes_one": {
+    "text": "Communities, {{count}} vote waiting on you",
+    "description": "Accessible name of the Communities tab on All communities while votes are waiting: the tab's word, then what its blue number counts. Keep the word for Communities first."
+  },
+  "tabs.communitiesVotes_other": {
+    "text": "Communities, {{count}} votes waiting on you",
+    "description": "Accessible name of the Communities tab on All communities while votes are waiting: the tab's word, then what its blue number counts. Keep the word for Communities first."
+  },
+  "tabs.communitiesOnVotes_one": {
+    "text": "Communities, on {{community}}, {{count}} vote waiting on you",
+    "description": "Accessible name of the Communities tab while it is showing one community and votes are waiting there. {{community}} is that community's name; the count is its blue number. Keep the word for Communities first."
+  },
+  "tabs.communitiesOnVotes_other": {
+    "text": "Communities, on {{community}}, {{count}} votes waiting on you",
+    "description": "Accessible name of the Communities tab while it is showing one community and votes are waiting there. {{community}} is that community's name; the count is its blue number. Keep the word for Communities first."
+  },
   "tabs.votesWaiting_one": {
     "text": "{{count}} vote waiting on you",
-    "description": "Accessible name of the number badge on the Communities tab: how many proposals are waiting for this person's vote."
+    "description": "Accessible name and tooltip of the number badge on the Communities tab: how many proposals are waiting for this person's vote."
   },
   "tabs.votesWaiting_other": {
     "text": "{{count}} votes waiting on you",
-    "description": "Accessible name of the number badge on the Communities tab: how many proposals are waiting for this person's vote."
+    "description": "Accessible name and tooltip of the number badge on the Communities tab: how many proposals are waiting for this person's vote."
   },
   "tabs.unreadConversations": {
     "text": "Unread conversations",

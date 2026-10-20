@@ -61,6 +61,31 @@ test('a clean diff passes, reviewed against the conventions section itself', asy
   assert.ok(calls.system.includes(section.content), 'the rules are read from the conventions, never copied');
 });
 
+test('the review holds a change to the data rules too, read from their section (#5117)', async () => {
+  const prompts = require('../src/services/prompts');
+  const data = prompts.getConventionSection(contentReview.DATA_RULES_SLUG);
+  assert.ok(data && data.content, 'the data rules resolve by their slug');
+  const { deps, calls } = fakeDeps();
+  await run({ deps });
+  assert.ok(calls.system.includes(data.content), 'the data rules are read from the conventions, never copied');
+  assert.match(calls.system, /content rules and data rules/);
+  for (const term of [/trackers/, /special-category data/, /children/, /passwords or payment card data/, /login, signup or outside sign-in/]) {
+    assert.match(calls.system, term);
+  }
+  // Without the section the review still runs on the content rules alone.
+  const plain = contentReview.buildSystemPrompt('RULES');
+  assert.match(plain, /against the platform's content rules below/);
+  assert.doesNotMatch(plain, /data rules/);
+});
+
+test('a data-rule break is flagged like a content-rule one, naming the rule', async () => {
+  const { deps } = fakeDeps({ review: { verdict: 'flag', category: 'Third-party trackers or external scripts', file: 'public/index.html', reason: 'It loads an analytics script from another origin.' } });
+  const out = await run({ deps });
+  assert.equal(out.row.status, 'fail');
+  assert.equal(out.row.advisory, true);
+  assert.match(out.row.failureReason, /^Flagged: Third-party trackers or external scripts in public\/index\.html\./);
+});
+
 test('a flag is advisory by default and names the category and file', async () => {
   const { deps } = fakeDeps({ review: { verdict: 'flag', category: 'Sexual content or nudity', file: 'src/pages/dares.js', reason: 'The dares are sexual.' } });
   const out = await run({ deps });

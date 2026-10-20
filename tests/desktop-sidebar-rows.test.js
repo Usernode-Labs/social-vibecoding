@@ -146,7 +146,7 @@ test('the width: one block on every desktop window, from 768px; the phone\'s bar
   assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen' && !sidebarRows;/);
   // The tab's own name follows what it shows.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
-  assert.match(bar, /\? \(sidebarRows \? undefined : communitiesAriaLabel\(scoped\)\)/);
+  assert.match(bar, /\? \(sidebarRows \? undefined : communitiesAriaLabel\(scoped, votes\)\)/);
   // v3: there is no section column beside the sidebar, which nests the
   // places; since the strip went, there is none at all.
   assert.ok(!fs.existsSync(path.join(ROOT, 'frontend/src/features/nav/section-column.tsx')), 'the column is gone');

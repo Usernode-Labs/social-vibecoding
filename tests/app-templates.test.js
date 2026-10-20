@@ -42,7 +42,7 @@ const vm = require('node:vm');
 
 const appTemplates = require('../src/services/app-templates');
 const { parseCreateOptions } = require('../src/services/create-options');
-const { getTemplateFiles } = require('../src/services/template');
+const { getTemplateFiles, fillAppName } = require('../src/services/template');
 const appManifest = require('../src/services/app-manifest');
 
 const ROOT = path.join(__dirname, '..');
@@ -158,7 +158,7 @@ test('Empty is the scaffold every project always got, byte for byte', () => {
   assert.doesNotMatch(server, /require\('\.\/api'\)/);
   // The key a first version's checks go under is there from the first
   // commit (App bench run 191: builds wrote theirs under `checks`).
-  assert.deepEqual(JSON.parse(file(plain, 'dapp.json')), { secrets: [], tests: [] });
+  assert.deepEqual(JSON.parse(file(plain, 'dapp.json')), { category: 'other', secrets: [], tests: [] });
   // #4047: the welcome card opens with the app's thumbnail tile (no sketch,
   // no starter here, so the name's letter falls back the way the home tile
   // does).
@@ -223,13 +223,17 @@ test('a tier list ranks what its entry says, escaped where it lands, and its scr
   assert.match(html, /<p class="text-heading">No hikes yet<\/p>/);
   assert.doesNotMatch(file(generate('tier-list-cities'), 'public/index.html'), /hike/);
   // The fill is the entry's, never the maker's, but it is escaped all the same,
-  // like the name.
+  // like the name. The name is the one placeholder left: the page keeps
+  // {{APP_NAME}} for its server.js to fill in, escaped, at runtime
+  // (tests/starter-images.test.js), and fillAppName writes it in, escaped,
+  // for a page served as it is.
   const odd = getTemplateFiles('A <b>"Best"</b> & co', 'x', 'postgres://x', null, { template: 'tier-list-games' });
-  const oddHtml = file(odd, 'public/index.html');
+  assert.match(file(odd, 'public/index.html'), /<title>\{\{APP_NAME\}\}<\/title>/);
+  const oddHtml = file(fillAppName(odd, 'A <b>"Best"</b> & co'), 'public/index.html');
   assert.match(oddHtml, /<title>A &lt;b&gt;&quot;Best&quot;&lt;\/b&gt; &amp; co<\/title>/);
   assert.doesNotMatch(oddHtml, /<b>"Best"/);
   for (const id of READY) {
-    for (const f of generate(id)) assert.doesNotMatch(f.content, /\{\{[A-Z_]+\}\}/, `${id}: ${f.path} has every placeholder filled`);
+    for (const f of generate(id)) assert.doesNotMatch(f.content, /\{\{(?!APP_NAME\}\})[A-Z_]+\}\}/, `${id}: ${f.path} has every placeholder but the name filled`);
   }
   const script = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'tier-list/public/app.js'), 'utf8');
   assert.doesNotMatch(script, /\{\{/, 'the script is the same for every tier list');
@@ -259,8 +263,8 @@ for (const id of READY) {
     assert.match(html, /<script src="\/usernode-bridge\/v1\/bridge\.js"><\/script>/);
     assert.match(html, /window\.usernode && window\.usernode\.theme/);
     assert.match(html, /<script src="\/app\.js"><\/script>\s*<\/body>/);
-    assert.match(html, /<title>Demo App<\/title>/);
-    assert.match(html, /<h1 class="text-title">Demo App<\/h1>/);
+    assert.match(html, /<title>\{\{APP_NAME\}\}<\/title>/);
+    assert.match(html, /<h1 class="text-title">\{\{APP_NAME\}\}<\/h1>/);
     // No CDN: every script and stylesheet is the app's own or the platform's, by path.
     for (const m of html.matchAll(/<(?:script|link)[^>]+(?:src|href)="([^"]+)"/g)) {
       assert.ok(m[1].startsWith('/') || m[1].startsWith('data:'), `${id}: ${m[1]} is not fetched from another origin`);
@@ -423,7 +427,7 @@ for (const id of GAMES) {
       'the game room\'s page side, then the game');
     // A title screen with the game's name, and the game's own scene,
     // styled after the kit (public/scene.css).
-    assert.match(html, /<h1 class="[^"]*">Demo App<\/h1>/);
+    assert.match(html, /<h1 class="[^"]*">\{\{APP_NAME\}\}<\/h1>/);
     assert.match(html, /<link rel="stylesheet" href="\/tailwind\.css">\s*<link rel="stylesheet" href="\/scene\.css">/);
     assert.match(file(files, 'public/scene.css'), /CLAUDE\.md "## Design"/, 'the scene says where its look is written down');
     assert.match(html, /id="title"[^>]*>/, 'a title screen');
