@@ -17,6 +17,9 @@
  *   is calm. Hold it to peek at the other side.
  * - Each side keeps its colour while it holds at least half the window and
  *   fades to grey below that, so the eye goes to the side being looked at.
+ * - Press and hold the shot still to open a round magnifier under the finger,
+ *   showing whichever side is there at 2.5x. It follows the finger and closes
+ *   when you let go; a sideways drag still moves the seam as before.
  *
  * Arrow keys move the seam, Enter or Space flips.
  */
@@ -38,8 +41,15 @@ const HANDLE_DELAY = 350;
 const HOLD_TO_PEEK = 180;
 const FLICK = 700;
 const SNAP = 24;
+const HOLD_TO_ZOOM = 300;
+const LENS_ZOOM = 2.5;
+const LENS_D = 132;
+/** The gap between a touch point and the lens's lower edge. */
+const LENS_LIFT = 24;
+const HOLD_SLOP = 6;
 
 const easeOut = (p: number) => 1 - Math.pow(1 - p, 3);
+const IDENTITY: Placement = { scale: 1, tx: 0, ty: 0 };
 
 /** Full colour while a side holds at least half the window, grey toward none. */
 export function saturationFor(share: number): number {
@@ -51,6 +61,34 @@ export function viewFor(share: number, current: 'after' | 'before'): 'after' | '
   if (current === 'after' && share >= SWITCH_AT) return 'before';
   if (current === 'before' && share <= 1 - SWITCH_AT) return 'after';
   return current;
+}
+
+/**
+ * Where the shot goes inside the lens so that the window point under the
+ * finger lands at the lens's centre, at `zoom` times the drawn scale. The
+ * same maths as `layerStyle`, so the lens shows the same picture, larger.
+ */
+export function lensPlace(place: Placement, point: { x: number; y: number }, zoom: number, d: number): Placement {
+  return {
+    scale: place.scale * zoom,
+    tx: d / 2 - (point.x - place.tx) * zoom,
+    ty: d / 2 - (point.y - place.ty) * zoom,
+  };
+}
+
+/**
+ * The lens's top-left: centred on the point, lifted clear of a finger, and
+ * kept fully inside the window so the root's overflow never cuts it.
+ */
+export function lensBox(
+  point: { x: number; y: number }, size: { w: number; h: number }, d: number, lift: number,
+): { x: number; y: number } {
+  const x = point.x - d / 2;
+  const y = point.y - d / 2 - (lift > 0 ? d / 2 + lift : 0);
+  return {
+    x: Math.max(0, Math.min(size.w - d, x)),
+    y: Math.max(0, Math.min(size.h - d, y)),
+  };
 }
 
 function Chevrons({ dir }: { dir: 'right' | 'left' | 'bars' }) {
@@ -88,11 +126,21 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
   const [peek, setPeek] = useState(false);
   // The handle's own edge while it travels after a flip ('hidden' while away).
   const [handle, setHandle] = useState<'shown' | 'hidden'>('shown');
+  // The magnifier's point, in the window's own coordinates.
+  const [lens, setLens] = useState<{ x: number; y: number; touch: boolean } | null>(null);
   const posRef = useRef(0);
   const anim = useRef(0);
   const handleTimer = useRef(0);
   const holdTimer = useRef(0);
   const peeked = useRef(false);
+  const lensRef = useRef<{ x: number; y: number; touch: boolean } | null>(null);
+  const zoomTimer = useRef(0);
+  const shell = useRef<HTMLDivElement>(null);
+
+  const putLens = useCallback((next: { x: number; y: number; touch: boolean } | null) => {
+    lensRef.current = next;
+    setLens(next);
+  }, []);
 
   const put = useCallback((x: number) => {
     posRef.current = x;
@@ -103,9 +151,24 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
   // A new screen starts at rest.
   useLayoutEffect(() => {
     cancelAnimationFrame(anim.current);
+    clearTimeout(zoomTimer.current);
+    lensRef.current = null; setLens(null);
     posRef.current = 0; setPos(0); setView('after'); setHandle('shown'); setPeek(false);
   }, [before, after]);
-  useEffect(() => () => { cancelAnimationFrame(anim.current); clearTimeout(handleTimer.current); clearTimeout(holdTimer.current); }, []);
+  useEffect(() => () => {
+    cancelAnimationFrame(anim.current);
+    clearTimeout(handleTimer.current); clearTimeout(holdTimer.current); clearTimeout(zoomTimer.current);
+  }, []);
+
+  // `touch-action: pan-y` is fixed when a touch starts, so CSS alone cannot
+  // hold the page still once the magnifier is open. This native listener can.
+  useEffect(() => {
+    const el = shell.current;
+    if (!el) return undefined;
+    const holdPage = (e: TouchEvent) => { if (lensRef.current) e.preventDefault(); };
+    el.addEventListener('touchmove', holdPage, { passive: false });
+    return () => el.removeEventListener('touchmove', holdPage);
+  }, []);
 
   const glide = useCallback((to: number, ms = 300) => {
     cancelAnimationFrame(anim.current);
@@ -119,21 +182,51 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
     anim.current = requestAnimationFrame(step);
   }, [put]);
 
-  /* ── Drag ── */
-  const drag = useRef<{ id: number; x0: number; y0: number; from: number; live: boolean; lastX: number; lastT: number; v: number } | null>(null);
+  /* ── Drag, and hold to magnify ── */
+  const drag = useRef<{
+    id: number; x0: number; y0: number; from: number; live: boolean;
+    lastX: number; lastT: number; v: number; lx: number; ly: number;
+  } | null>(null);
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!canCompare || !marks || (e.target as HTMLElement).closest('[data-rf-pill]')) return;
+    if (!marks || !near || !(before || after) || (e.target as HTMLElement).closest('[data-rf-pill]')) return;
+    // A mouse press is the main button only; a finger's pointerdown has no button.
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     cancelAnimationFrame(anim.current);
-    drag.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, from: posRef.current, live: false, lastX: e.clientX, lastT: performance.now(), v: 0 };
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    drag.current = {
+      id: e.pointerId, x0: e.clientX, y0: e.clientY, from: posRef.current, live: false,
+      lastX: e.clientX, lastT: performance.now(), v: 0,
+      lx: e.clientX - rect.left, ly: e.clientY - rect.top,
+    };
+    clearTimeout(zoomTimer.current);
+    const pointerId = e.pointerId;
+    const touch = e.pointerType === 'touch';
+    zoomTimer.current = window.setTimeout(() => {
+      const g = drag.current;
+      if (!g || g.id !== pointerId || g.live) return;
+      putLens({ x: g.lx, y: g.ly, touch });
+      try { shell.current?.setPointerCapture(pointerId); } catch { /* fine */ }
+    }, HOLD_TO_ZOOM);
   };
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     if (!d || d.id !== e.pointerId) return;
+    if (lensRef.current) {
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      putLens({
+        ...lensRef.current,
+        x: Math.max(0, Math.min(W, e.clientX - rect.left)),
+        y: Math.max(0, Math.min(height, e.clientY - rect.top)),
+      });
+      return;
+    }
     const dx = e.clientX - d.x0;
     const dy = e.clientY - d.y0;
     if (!d.live) {
+      if (Math.hypot(dx, dy) > HOLD_SLOP) clearTimeout(zoomTimer.current);
       if (Math.abs(dy) > 8 && Math.abs(dy) > Math.abs(dx)) { drag.current = null; return; }
-      if (Math.abs(dx) < 6) return;
+      // One side only: the press is a hold, never a drag.
+      if (!canCompare || Math.abs(dx) < 6) return;
       d.live = true;
       setDragging(true);
       try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* fine */ }
@@ -148,6 +241,12 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
     put(x);
   };
   const onPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    clearTimeout(zoomTimer.current);
+    if (lensRef.current) {
+      drag.current = null;
+      putLens(null);
+      return;
+    }
     const d = drag.current;
     drag.current = null;
     if (!d || d.id !== e.pointerId || !d.live) return;
@@ -227,8 +326,16 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
     />
   ) : null);
 
+  // The magnifier shows whichever side is under the finger, in full colour.
+  const lensSide: 'before' | 'after' | null = lens
+    ? (canCompare ? (lens.x < shown ? 'before' : 'after') : (after ? 'after' : 'before'))
+    : null;
+  const lensAt = lens ? lensPlace(place || IDENTITY, lens, LENS_ZOOM, LENS_D) : null;
+  const lensPos = lens ? lensBox(lens, { w: W, h: height }, LENS_D, lens.touch ? LENS_LIFT : 0) : null;
+
   return (
     <div
+      ref={shell}
       className={`rf-compare${dragging ? ' rf-dragging' : ''}${canCompare ? '' : ' rf-compare-still'}`}
       style={{ width: W, height, background: ground }}
       role={canCompare ? 'slider' : 'img'}
@@ -243,6 +350,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
       onKeyDown={onKeyDown}
+      onContextMenu={(e) => e.preventDefault()}
       data-rf-compare=""
     >
       <div className="rf-layer" style={layerStyle(satAfter)} aria-hidden="true">{img(after || before, after ? 'after' : 'before')}</div>
@@ -285,6 +393,24 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
             </span>
           </button>
         </>
+      ) : null}
+      {lens && lensSide && lensAt && lensPos ? (
+        <span
+          className="rf-lens"
+          aria-hidden="true"
+          style={{ transform: `translate(${lensPos.x}px, ${lensPos.y}px)`, background: ground }}
+        >
+          <span
+            className="rf-layer"
+            style={{
+              width: place ? screen!.width : W,
+              transform: `translate(${lensAt.tx}px, ${lensAt.ty}px) scale(${lensAt.scale})`,
+              transformOrigin: '0 0',
+            }}
+          >
+            {img(lensSide === 'after' ? (after || before) : (before || after), lensSide)}
+          </span>
+        </span>
       ) : null}
     </div>
   );

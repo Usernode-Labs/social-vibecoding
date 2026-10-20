@@ -199,6 +199,45 @@ test('the pill names the side most of the window shows, with hysteresis, and col
   assert.equal(compare.saturationFor(0), 0);
 });
 
+test('the held lens shows what is under the finger, larger, and stays inside the shot', () => {
+  // The same maths as layerStyle: the point under the finger lands at the
+  // lens's centre (66, 66), at zoom times the drawn scale.
+  const place = { scale: 1.2, tx: -10, ty: -40 };
+  const at = compare.lensPlace(place, { x: 100, y: 80 }, 2.5, 132);
+  assert.ok(Math.abs(at.scale - 3) < 1e-9, 'the drawn scale times the zoom');
+  const sx = ((100 - place.tx) / place.scale) * at.scale + at.tx;
+  const sy = ((80 - place.ty) / place.scale) * at.scale + at.ty;
+  assert.ok(Math.abs(sx - 66) < 1e-9, `x at ${sx}`);
+  assert.ok(Math.abs(sy - 66) < 1e-9, `y at ${sy}`);
+  assert.equal(compare.lensPlace({ scale: 1, tx: 0, ty: 0 }, { x: 0, y: 0 }, 2.5, 132).scale, 2.5);
+
+  // Centred on a mouse, lifted clear of a finger, never cut by the frame.
+  const frame = { w: 366, h: 275 };
+  assert.deepEqual(compare.lensBox({ x: 100, y: 200 }, frame, 132, 0), { x: 34, y: 134 });
+  assert.deepEqual(compare.lensBox({ x: 100, y: 200 }, frame, 132, 24), { x: 34, y: 44 });
+  assert.equal(compare.lensBox({ x: -50, y: 200 }, frame, 132, 0).x, 0, 'left edge');
+  assert.equal(compare.lensBox({ x: 1000, y: 200 }, frame, 132, 0).x, 366 - 132, 'right edge');
+  assert.equal(compare.lensBox({ x: 100, y: 0 }, frame, 132, 24).y, 0, 'top edge');
+  assert.equal(compare.lensBox({ x: 100, y: 400 }, frame, 132, 0).y, 275 - 132, 'bottom edge');
+  assert.deepEqual(compare.lensBox({ x: 10, y: 10 }, { w: 100, h: 100 }, 132, 0), { x: 0, y: 0 }, 'a frame smaller than the lens');
+});
+
+test('a still press of about a third of a second holds the lens; moving sooner keeps the old drag', () => {
+  const src = read('frontend/src/features/review-flow/compare.tsx');
+  assert.match(src, /const HOLD_TO_ZOOM = 300;/);
+  assert.match(src, /const LENS_ZOOM = 2\.5;/);
+  assert.match(src, /Math\.abs\(dy\) > 8 && Math\.abs\(dy\) > Math\.abs\(dx\)/, 'the vertical abandon is unchanged');
+  assert.match(src, /Math\.abs\(dx\) < 6/, 'the sideways go-live is unchanged');
+  assert.match(src, /addEventListener\('touchmove', [^,]+, \{ passive: false \}\)/, 'a held lens stops the page scrolling');
+  const css = read('public/css/app.css');
+  assert.match(css, /\.rf-lens \{[^}]*border-radius: 999px;[^}]*\}/);
+  assert.match(
+    css,
+    /@media \(prefers-reduced-motion: reduce\) \{\s*\.rf-sheet, \.rf-scrim, \.rf-seam, \.rf-tab, \.rf-pill, \.rf-lens \{ transition: none; \}\s*\.rf-lens \{ animation: none; \}/,
+    'reduced motion skips the lens grow',
+  );
+});
+
 // ── 2b. The preview card ────────────────────────────────────────────────
 
 test('the change page sets its picture and thumbnails apart in an inset card', () => {
