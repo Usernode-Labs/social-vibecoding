@@ -1,8 +1,7 @@
 /**
- * Comment mode (#4289 and its follow-ups). Experimental, behind Settings,
- * Experimental's switch: C turns it on (../improve/suggest-shortcut.ts
- * decides when C counts), and so does "Suggest an improvement" when comment
- * mode is the way this device suggested last, or its form's Comment switch.
+ * Comment mode (#4289 and its follow-ups). On by default: C turns it on
+ * (../improve/suggest-shortcut.ts decides when C counts), and "Suggest an
+ * improvement" opens it, or the form's Comment switch.
  *
  * ── What it looks like ────────────────────────────────────────────────
  *
@@ -2537,7 +2536,7 @@ function dropAhead(): void {
 /**
  * Fetch the drawing library now, so the first picture of this session does
  * not wait for it (../improve/suggest-shortcut.ts `warmComment`, a few
- * seconds after the page loads where the comment switch is on). This
+ * seconds after the page loads unless this device turned it off). This
  * module's own code is loaded by the import that calls it. Nothing is drawn.
  */
 export function warmCommentMode(): void {

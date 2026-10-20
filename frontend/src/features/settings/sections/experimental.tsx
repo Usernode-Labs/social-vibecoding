@@ -27,18 +27,16 @@ import { LocalAgentsList } from '../local-agents-list';
  * #3624 Homeroom bot used to have a switch here too, while it was tried out
  * one person at a time. It works for everyone now, so the switch is gone.
  *
- * #4289 Comment on the page (default OFF; "Press C to comment on the page"
- * until 13 Oct 2026, a name with no meaning on a phone) is the one switch
- * here kept on the DEVICE, not the account: a keyboard shortcut belongs to
- * the keyboard in front of you. C turns on comment mode, where a click leaves
- * a comment (../../comment-pin/), and Suggest an improvement opens it too,
- * with its form one switch away. ../../improve/suggest-settings.ts keeps the
- * switch (localStorage), and
+ * #4289 Comment on the page used to have a switch here too, while comment
+ * mode was an experiment. It is how "Suggest an improvement" opens now, with
+ * its form one switch away, so the switch is gone. The setting is still kept
+ * on the DEVICE (localStorage, on unless this device turned it off) by
+ * ../../improve/suggest-settings.ts, and
  * ../../improve/suggest-shortcut.ts publishes window.UsernodeReact.suggestShortcut,
- * which settings.js paints and saves the switch through.
+ * which the feedback dialog's controller reads.
  *
- * New Needs you (default OFF) is kept on the DEVICE too, for the same
- * reason as Comment on the page: there is nothing to save or fail. When on,
+ * New Needs you (default OFF) is kept on the DEVICE too: there is nothing
+ * to save or fail. When on,
  * the Communities tab's Needs you draws ../../review-flow/review-flow.tsx
  * (a feed of title shots, a page per change with a before/after slider and
  * a vote sheet) instead of the reel. ../../review-flow/settings.ts keeps the
@@ -78,14 +76,6 @@ export function ExperimentalSection() {
             />
           </p>
           <StatusLine id="session-bridge-status" size="xs" />
-        </div>
-        <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
-          <SwitchRow id="suggest-shortcut-enabled">
-            {t('settings:experimental.suggestShortcut.label')}
-          </SwitchRow>
-          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-            {t('settings:experimental.suggestShortcut.description')}
-          </p>
         </div>
         <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
           <SwitchRow id="review-flow-enabled">

@@ -161,10 +161,10 @@ import './lib/live-reads';
 // file dropped where nothing takes it no longer opens in place of the app.
 import './features/attachments/file-drag';
 import './lib/file-drop-guard';
-// #4289: the C key comments on the page (a pin where the pointer is), behind
-// Settings, Experimental's switch (off by default). Listeners on the document
-// (the shell's own keys and pointer, and the bridge's message from inside an
-// app); the comment itself (features/comment-pin/) loads on the first C.
+// #4289: the C key comments on the page (a pin where the pointer is), on by
+// default and kept per device. Listeners on the document (the shell's own
+// keys and pointer, and the bridge's message from inside an app); the
+// comment itself (features/comment-pin/) loads on the first C.
 import './features/improve/suggest-shortcut';
 // New Needs you (an experiment, Settings, Experimental): the switch's bridge
 // for settings.js, window.UsernodeReact.reviewFlow.

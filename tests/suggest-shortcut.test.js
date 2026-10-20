@@ -3,12 +3,12 @@
 // #4289 and its follow-up: the C key comments on the page (a pin where the
 // pointer is, ../frontend/src/features/comment-pin/, tested in
 // tests/comment-pin.test.js), on a computer, with nothing selected.
-// Experimental, off by default, kept on the device.
+// On by default, and kept on the device.
 //
 // What is pinned, and each is a way it can be quietly wrong:
 //
-//   1. THE SWITCH. Off until a person turns it on, and stored where the
-//      shortcut reads it.
+//   1. THE SWITCH. On by default, off only when this device stored '0', and
+//      stored where the shortcut reads it.
 //   2. ONLY A C NOBODY ELSE USED. Typing, a selection, a modifier, a dialog
 //      on screen, or a screen that claimed the key (preventDefault) leaves it
 //      alone, and the claim is read AFTER every listener has had the key.
@@ -47,7 +47,7 @@ const inTextbox = { tagName: 'SPAN', closest: (sel) => (sel.includes('textbox') 
 const shadowHost = { tagName: 'MY-WIDGET', closest: () => null };
 
 function memoryStorage(on) {
-  const map = new Map(on ? [[shortcut.SUGGEST_SHORTCUT_STORAGE_KEY, '1']] : []);
+  const map = new Map(on === undefined ? [] : [[shortcut.SUGGEST_SHORTCUT_STORAGE_KEY, on ? '1' : '0']]);
   return {
     getItem: (k) => (map.has(k) ? map.get(k) : null),
     setItem: (k, v) => { map.set(k, String(v)); },
@@ -159,20 +159,23 @@ function bridgeHarness({ top = false, platformShell = false, active = body, poin
 
 // ── 1. The switch ─────────────────────────────────────────────────────
 
-test('the shortcut is off until it is turned on, and the switch is what it reads', () => {
+test('the setting is on by default, and a stored off is what it reads', () => {
+  assert.equal(shortcut.suggestShortcutEnabled(memoryStorage()), true, 'nothing stored is on');
   const storage = memoryStorage(false);
-  assert.equal(shortcut.suggestShortcutEnabled(storage), false, 'off by default');
+  assert.equal(shortcut.suggestShortcutEnabled(storage), false, 'a stored off is off');
   shortcut.setSuggestShortcutEnabled(true, storage);
   assert.equal(shortcut.suggestShortcutEnabled(storage), true);
+  assert.equal(storage.getItem(shortcut.SUGGEST_SHORTCUT_STORAGE_KEY), '1');
   shortcut.setSuggestShortcutEnabled(false, storage);
   assert.equal(shortcut.suggestShortcutEnabled(storage), false);
-  assert.equal(shortcut.suggestShortcutEnabled(null), false, 'no storage reads as off');
+  assert.equal(storage.getItem(shortcut.SUGGEST_SHORTCUT_STORAGE_KEY), '0', 'off is stored, not removed');
+  assert.equal(shortcut.suggestShortcutEnabled(null), true, 'no storage reads as on');
   const broken = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); }, removeItem() {} };
-  assert.equal(shortcut.suggestShortcutEnabled(broken), false, 'unreadable storage reads as off');
+  assert.equal(shortcut.suggestShortcutEnabled(broken), true, 'unreadable storage reads as on');
   assert.doesNotThrow(() => shortcut.setSuggestShortcutEnabled(true, broken));
 
   const h = shellHarness({ enabled: false });
-  assert.equal(h.press().opened, 0, 'a C with the switch off does nothing');
+  assert.equal(h.press().opened, 0, 'a C with the setting off does nothing');
   shortcut.setSuggestShortcutEnabled(true, h.storage);
   assert.equal(h.press().opened, 1, 'and opens once it is on, with no reload');
 });
@@ -360,27 +363,22 @@ test('the bundle installs the shortcut, which loads comment mode on the first C'
   assert.match(src, /bridge\.suggestShortcut = \{/, 'published for settings.js, which cannot import');
 });
 
-test('Settings, Experimental has the switch, unchecked as shipped, painted and saved through the module', () => {
+test('Settings, Experimental no longer has the switch: comment mode is the default', () => {
   const { ExperimentalSection } = loadTsx('frontend/src/features/settings/sections/experimental.tsx', {
     stubs: { '../local-agents-list': { LocalAgentsList: () => null } },
   });
   const html = renderToHtml(createElement(ExperimentalSection));
-  assert.match(html,
-    /<label[^>]*><input id="suggest-shortcut-enabled" type="checkbox" class="un-switch"\/><span[^>]*>Comment on the page<\/span><\/label>/);
-  // Named for what it does on every device: on a phone there is no C key,
-  // and what the switch changes is where "Suggest an improvement" goes.
-  assert.match(html, /Suggest an improvement opens on a screenshot of the page\./);
-  assert.match(html, /On a computer, pressing C opens it too\./);
-  assert.match(html, /The form is one switch away\./);
-  assert.match(html, /Saved on this device only\./);
-  assert.ok(html.indexOf('id="suggest-shortcut-enabled"') < html.indexOf('id="settings-local-agents-section"'),
-    'inside the Experimental block');
+  assert.doesNotMatch(html, /suggest-shortcut-enabled/);
+  assert.doesNotMatch(html, /Comment on the page/);
+  // Its other switches stay, in the same order.
+  assert.match(html, /<label[^>]*><input id="ai-progress-estimate"/);
+  assert.match(html, /<label[^>]*><input id="session-bridge-enabled"/);
+  assert.match(html, /<label[^>]*><input id="review-flow-enabled"/);
+  assert.ok(html.indexOf('id="session-bridge-enabled"') < html.indexOf('id="review-flow-enabled"'),
+    'the section keeps its order');
 
   const settings = read('frontend/src/features/settings/settings.js');
-  const render = settings.match(/_renderExperimentalSection\(\) \{[\s\S]*?\n    \},/);
-  assert.match(render[0], /getElementById\('suggest-shortcut-enabled'\)/, 'every paint shows the stored value');
-  assert.match(render[0], /shortcut\.checked = !!shortcutPref\?\.enabled\(\)/);
-  assert.match(settings, /pref\?\.setEnabled\(e\.target\.checked\)/, 'saved on change');
+  assert.doesNotMatch(settings, /suggest-shortcut-enabled/, 'nothing paints or saves the removed switch');
 });
 
 // ── 6. Suggest an improvement opens comment mode (#4289 follow-up) ─────
@@ -395,18 +393,18 @@ function modeStorage(entries = {}) {
   };
 }
 
-test('with the switch on, Suggest an improvement opens comment mode, on a phone too, but not in the side panel', () => {
-  const on = { [shortcut.SUGGEST_SHORTCUT_STORAGE_KEY]: '1' };
+test('with comment mode the default, Suggest an improvement opens it, on a phone too, but not in the side panel', () => {
+  const off = { [shortcut.SUGGEST_SHORTCUT_STORAGE_KEY]: '0' };
   const page = { document: { documentElement: { classList: { contains: () => false } } } };
   const panel = { document: { documentElement: { classList: { contains: (c) => c === 'in-side-panel' } } } };
-  assert.equal(shortcut.suggestOpensComment(page, modeStorage(on)), true);
-  assert.equal(shortcut.suggestOpensComment(page, modeStorage()), false, 'the form, with the switch off');
-  assert.equal(shortcut.suggestOpensComment(panel, modeStorage(on)), false, 'the side panel keeps the form');
-  assert.equal(shortcut.suggestOpensComment(null, modeStorage(on)), false, 'no window, no comment mode');
-  assert.equal(shortcut.formOffersComment(page, modeStorage(on)), true);
-  assert.equal(shortcut.formOffersComment(page, modeStorage()), false, 'the form offers nothing with the switch off');
-  assert.equal(shortcut.formOffersComment(panel, modeStorage(on)), false);
-  assert.equal(shortcut.SUGGEST_MODE_STORAGE_KEY, undefined, 'nothing remembers a last way: the switch decides');
+  assert.equal(shortcut.suggestOpensComment(page, modeStorage()), true, 'nothing stored is on');
+  assert.equal(shortcut.suggestOpensComment(page, modeStorage(off)), false, 'a stored off is honoured');
+  assert.equal(shortcut.suggestOpensComment(panel, modeStorage()), false, 'the side panel keeps the form');
+  assert.equal(shortcut.suggestOpensComment(null, modeStorage()), false, 'no window, no comment mode');
+  assert.equal(shortcut.formOffersComment(page, modeStorage()), true);
+  assert.equal(shortcut.formOffersComment(page, modeStorage(off)), false, 'the form offers nothing when the device turned it off');
+  assert.equal(shortcut.formOffersComment(panel, modeStorage()), false);
+  assert.equal(shortcut.SUGGEST_MODE_STORAGE_KEY, undefined, 'nothing remembers a last way: the setting decides');
 });
 
 test('a plain open of the form goes to comment mode where the switch says so, and nothing else does', () => {

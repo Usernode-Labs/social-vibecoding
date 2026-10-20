@@ -800,10 +800,11 @@ const ADDED_IDS = {
   // live: Settings → Experimental, beside the other per-user preview flag.
   'session-bridge-enabled': 'Opt-in switch for the session-CLI bridge venue (#1281).',
   'session-bridge-status': 'Save/error line for the session-bridge switch (#1281).',
-  // #4289 — the experimental C shortcut for Suggest an improvement, beside
-  // the other opt-ins in Settings → Experimental. Kept on the device
-  // (features/improve/suggest-shortcut.ts), so it has no save/error line.
-  'suggest-shortcut-enabled': 'Opt-in switch for pressing C to open Suggest an improvement on a computer (#4289).',
+  // #4289 — the C shortcut's "Comment on the page" switch left this map. It
+  // was never in the frozen baseline (it arrived through ADDED_IDS), so it is
+  // not in RETIRED_IDS either: comment mode is how "Suggest an improvement"
+  // opens now, and the switch in Settings, Experimental is gone
+  // (frontend/src/features/settings/sections/experimental.tsx).
   // Username changes — Settings -> Username, the change-your-@handle form. It sits in
   // Settings rather than the profile edit sheet because the endpoint requires
   // the current password, which is the same reason Change password is here.

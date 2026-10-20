@@ -2557,7 +2557,7 @@ export function init() {
       // not a guess about intent, so asking again would only be a second tap.
       // Only when "This app" is really there to choose.
       if (opts.target === 'app' && canTargetApp) setFeedbackTarget('app');
-      // The experimental C comment (features/comment-pin/) hands itself over
+      // The C comment (features/comment-pin/) hands itself over
       // here when it cannot post on its own (offline, the server failing):
       // its words, its screenshot and the destination the person already
       // chose, so the outbox below takes it from there and nothing is lost.
@@ -2803,12 +2803,12 @@ export function init() {
   // for the ?shot=feedback deep links. Forwards to the island so React state
   // stays the source of truth.
   //
-  // Experimental (#4289's comment mode): where the device's switch is on, a
-  // plain open is comment mode instead (features/improve/suggest-shortcut.ts
-  // decides, `opensComment`), and this form is one switch away from it. Not
-  // an open that carries something for the form (a handed-over comment, the
-  // first-request moment) or that asks for the form by name (`mode: 'form'`,
-  // comment mode's Form).
+  // #4289's comment mode: by default a plain open is comment mode instead
+  // (features/improve/suggest-shortcut.ts decides, `opensComment`), and this
+  // form is one switch away from it; a device that turned the mode off gets
+  // the form. Not an open that carries something for the form (a handed-over
+  // comment, the first-request moment) or that asks for the form by name
+  // (`mode: 'form'`, comment mode's Form).
   App.openFeedbackModal = (opts = {}) => {
     const shortcut = window.UsernodeReact?.suggestShortcut;
     const plain = !opts.edit && !opts.firstFeedback && !opts.description && !opts.screenshotBlob && !opts.screenshots
