@@ -18,6 +18,7 @@ const appCreationPhase = require('./app-creation-phase');
 const journeyEvents = require('./journey-events');
 const appSketch = require('./app-sketch');
 const creationTiming = require('./app-creation-timing');
+const starterImages = require('./starter-images');
 const { pushAppStatusUpdate, pushAppCreationPhase } = require('./ws');
 
 const SHA_RE = /^[a-f0-9]{40}$/i;
@@ -162,6 +163,9 @@ async function createApp(config, appRow) {
     // The starter commit this attempt made, when it made one into a fresh
     // repository: its files and sha stand in for cloning it back (step 3).
     let seeded = null;
+    // A ready-made app's: the key of what its image is built from, under
+    // which one is built already (services/starter-images.js).
+    let prebuiltKey = null;
 
     if (!repoUrl && github.isEnabled()) {
       try {
@@ -206,6 +210,9 @@ async function createApp(config, appRow) {
         // hold more: it is cloned back as before.
         if (!repo.adopted && SHA_RE.test(commit?.sha || '')) {
           seeded = { sha: commit.sha.toLowerCase(), files };
+          if (appTemplates.isReadyMade(templateOf(appRow))) {
+            prebuiltKey = starterImages.contextKey(files, starterImages.buildRecipe(config));
+          }
         }
         if (sketch) {
           await appSketch.markCommitted(pool, appId).catch(() => {});
@@ -378,7 +385,7 @@ async function createApp(config, appRow) {
     // clone back (an import, an adopted repository) never says so.
     await finalizeDeploy(config, {
       appId, name, slug, tempDir, dbUrl, repoUrl, mainSha, timing,
-      template: appRow.template || null, starterTree: Boolean(seeded),
+      template: appRow.template || null, starterTree: Boolean(seeded), prebuiltKey,
     });
   } catch (err) {
     log.error('app-creator', 'App creation failed', { appId, slug, err: err.message });
@@ -434,6 +441,11 @@ function writeTree(dir, files) {
 // that starter exactly as just generated. The build reads the starter's
 // shared layer cache for the first and writes it only for the second. A
 // fork passes neither: it is somebody's app, not a starter.
+//
+// `prebuiltKey` (optional; createApp passes it for a ready-made app it has
+// just committed): the key of what its image is built from. With an image
+// already built under it (services/starter-images.js), that image is
+// deployed and nothing is built.
 async function finalizeDeploy(config, options) {
   const timing = options.timing || creationTiming.IDLE;
   timing.start('lock');
@@ -445,6 +457,7 @@ async function finalizeDeploy(config, options) {
 
 async function finalizeDeployInner(config, {
   appId, name, slug, tempDir, dbUrl, repoUrl, mainSha, timing, template = null, starterTree = false,
+  prebuiltKey = null,
 }) {
   const pool = getPool(config);
   const containerName = `usernode-app-${slug}`;
@@ -540,7 +553,11 @@ async function finalizeDeployInner(config, {
     const buildStartedAt = Date.now();
     let solveStartMs = null;
     timing.start('build');
-    const build = await applicationRuntime.build(config, {
+    // A ready-made app's image is built already, from exactly what this
+    // project committed (the same key): deployed as it is, labelled with
+    // this project's own commit below.
+    const prebuilt = prebuiltKey ? await starterImages.imageFor(config, pool, { key: prebuiltKey, slug }) : null;
+    const build = prebuilt || await applicationRuntime.build(config, {
       app: { id: appId, slug, repo_url: repoUrl, template },
       revision: mainSha,
       environment: 'production',
@@ -555,7 +572,7 @@ async function finalizeDeployInner(config, {
     });
     timing.end('build');
     timing.note('build', creationTiming.buildNote({
-      engine: applicationRuntime.mode(config) === 'docker' ? 'docker' : (build.engine || 'kpack'),
+      engine: prebuilt ? 'prebuilt' : applicationRuntime.mode(config) === 'docker' ? 'docker' : (build.engine || 'kpack'),
       result: build, solveStartMs,
     }));
     await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
@@ -580,7 +597,7 @@ async function finalizeDeployInner(config, {
         ? { 'social.usernode.io/source-revision': mainSha.toLowerCase() } : {},
       env: {
         DATABASE_URL: dbUrl,
-        ...appIdentityEnv({ id: appId }, config),
+        ...appIdentityEnv({ id: appId, slug, name }, config),
         PORT: '3000',
         USERNODE_ENV: 'production',
         ...llmEnv,
