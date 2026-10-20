@@ -172,9 +172,12 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // confusing; the step says what the button does. B8: the request goes
     // to Homeroom bot, which builds it (or, where it does not build, it
     // goes to the community). #4225: and it says so against what people
-    // expect of a feedback button elsewhere, honestly: the bot can start
+    // expect of a feedback button elsewhere, honestly: it can start
     // building it or share your request with the community, never "it
-    // builds it" as a promise (#5676).
+    // builds it" as a promise (#5676). The card itself no longer names the
+    // bot (#5676): it is introduced on the next one, so this one says
+    // "start building it or share a request for someone in the community
+    // to pick up".
     //
     // NO "BUILD IT YOURSELF" SENTENCE (first-session run-through, 5 Oct
     // 2026). It said "To build it yourself with a coding agent, tap Build it

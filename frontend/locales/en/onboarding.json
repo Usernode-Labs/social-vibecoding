@@ -1768,8 +1768,8 @@
     "description": "Title of the fourth card of the welcome tour on the Home screen, started from Settings: points at the button of this name in an app's menu, where a member says what the app should do differently."
   },
   "tour.step.menuActions.body": {
-    "text": "Tell Homeroom bot what you'd change. It can start building or share your request with the community.",
-    "description": "Text of the fourth card of the welcome tour on the Home screen, started from Settings, about Suggest an improvement. Homeroom bot is the assistant's name. \"It\" is Homeroom bot; \"your request\" is an item the community votes on."
+    "text": "Change something in any of your apps or in Homeroom itself. Start building it or share a request for someone in the community to pick up.",
+    "description": "Text of the fourth card of the welcome tour on the Home screen, started from Settings, about Suggest an improvement. \"Homeroom itself\" is the platform's own project; \"start building it\" is building the change now, and \"share a request\" is an item the community votes on. The card names neither Homeroom bot nor the person who builds: that comes on the last card."
   },
   "tour.step.settings.title": {
     "text": "Replay this any time",
