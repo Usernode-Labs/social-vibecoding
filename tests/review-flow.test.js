@@ -431,3 +431,32 @@ test('the title flies between its two ends measured at rest, and transitions end
   assert.match(src, /whenDone\(moving, finish, OPEN_MS \* 0\.85\)/);
   assert.match(src, /whenDone\(sliding, settle, PUSH_MS\)/);
 });
+
+// ── 7. A wide window ─────────────────────────────────────────────────────
+
+test('on a wide window the feed is one column as wide as the page, and the cards are composed at that cap', () => {
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  const css = read('public/css/app.css');
+  const cap = Number((src.match(/^const COLUMN = (\d+);$/m) || [])[1]);
+  assert.equal(cap, 520, 'the change page\'s own width');
+  assert.match(src, /^const GUTTERS = 32;$/m, 'the feed\'s 16px gutters, both sides');
+  // The measured width is capped, so the composition never draws past the column.
+  assert.match(src, /setWidth\(Math\.max\(0, Math\.min\(el\.clientWidth, COLUMN\) - GUTTERS\)\)/);
+  assert.match(src, /setPageWidth\(Math\.min\(COLUMN, pr\.width\)\)/);
+  assert.match(src, /const pw = pageWidth \|\| Math\.min\(COLUMN, width \+ GUTTERS\);/);
+  assert.doesNotMatch(src, /Math\.min\(520\b/, 'one number, not two copies of it');
+  // The CSS column is the same cap, gutters included, centred.
+  const col = css.match(/\.rf-feed, \.rf-feed-note \{([^}]*)\}/);
+  assert.ok(col, 'the feed and its notes share one column rule');
+  assert.match(col[1], /box-sizing: border-box;/);
+  assert.match(col[1], new RegExp(`max-width: ${cap}px;`));
+  assert.match(col[1], /margin-left: auto; margin-right: auto;/);
+  assert.match(css, /\.rf-feed \{[^}]*padding: 4px 16px 32px;/, 'the gutters GUTTERS counts');
+  assert.match(css, new RegExp(`\\.rf-page \\{[^}]*left: max\\(0px, calc\\(50% - ${cap / 2}px\\)\\); width: min\\(100%, ${cap}px\\);`));
+  // The page centres over the pane, past the sidebar, so a card grows straight up into it.
+  assert.match(css, /\.rf-page-wrap \{ position: fixed; left: var\(--platform-rail-w, 0px\); right: 0;/);
+  // Every state of the feed sits in the column: cards and the end inside .rf-feed, the notes beside it.
+  assert.match(src, /<p className="rf-feed-note [^"]*" data-needs-error="">/);
+  assert.match(src, /<p className="rf-feed-note [^"]*" data-needs-empty="" data-review-flow="">/);
+  assert.match(src, /<div className="rf-feed rf-loading" data-review-flow=""/);
+});

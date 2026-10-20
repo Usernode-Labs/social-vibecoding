@@ -24847,7 +24847,13 @@ html.in-side-panel body {
 }
 .dark .rf-feed, .dark .rf-page-wrap { --rf-page: #0b0d1b; --rf-sheet: #1c1c1e; --rf-fill: #2c2c2e; }
 
-/* The feed: a title shot and a title, nothing else. */
+/* The feed: a title shot and a title, nothing else. One column, never wider
+   than the change page (520px, gutters included), centred in the pane: a
+   wide window keeps the phone's cards instead of stretching one picture
+   across the screen. review-flow.tsx composes the cards at the same cap
+   (COLUMN), so the pictures and this column agree. A phone is narrower than
+   the cap, so nothing changes there. */
+.rf-feed, .rf-feed-note { box-sizing: border-box; width: 100%; max-width: 520px; margin-left: auto; margin-right: auto; }
 .rf-feed { display: flex; flex-direction: column; gap: 28px; padding: 4px 16px 32px; transform-origin: 50% 30%; }
 .rf-loading { min-height: 50vh; }
 .rf-card { display: flex; flex-direction: column; gap: 12px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent; }
@@ -24867,8 +24873,11 @@ html.in-side-panel body {
 .rf-end-btn { align-self: stretch; height: 48px; border: 0; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
 .rf-capped { margin: -12px 0 0; font-size: 12px; color: var(--rf-muted); text-align: center; }
 
-/* The change page: fixed above the tab bar, which stays. */
-.rf-page-wrap { position: fixed; left: 0; right: 0; top: 0; bottom: var(--platform-tabs-h, 0px); z-index: 35; pointer-events: none; }
+/* The change page: fixed above the tab bar, which stays. From 768px it
+   starts after the sidebar (--platform-rail-w, 0 on a phone and while the
+   rail is folded), so it centres over the feed's column and a card grows
+   straight up into it. */
+.rf-page-wrap { position: fixed; left: var(--platform-rail-w, 0px); right: 0; top: 0; bottom: var(--platform-tabs-h, 0px); z-index: 35; pointer-events: none; }
 .rf-page { position: absolute; top: 0; bottom: 0; left: max(0px, calc(50% - 260px)); width: min(100%, 520px); display: flex; flex-direction: column; overflow: hidden; background: var(--rf-page); color: var(--rf-ink); pointer-events: auto; -webkit-font-smoothing: antialiased; }
 .rf-band { position: absolute; left: 0; right: 0; top: 0; height: 0; z-index: 3; pointer-events: none; }
 .rf-head { position: relative; z-index: 4; flex: none; display: flex; align-items: center; gap: 4px; padding: env(safe-area-inset-top, 0px) 4px 4px; min-height: 52px; background: var(--rf-page); }
