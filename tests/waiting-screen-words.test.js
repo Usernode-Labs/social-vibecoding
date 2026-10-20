@@ -145,8 +145,9 @@ test('the waitlist pitch and form keep the email promise, without batches or gro
   assert.match(code(read(LANDING)), /\{t\('auth:landing\.pitch\.body'\)\}/);
   assert.match(message('auth:landing.pitch.body'), /We're letting people in a few at a time, and we'll email you when your spot is ready\./);
   const form = code(read('frontend/src/features/auth/waitlist.tsx'));
-  assert.match(form, /t\('auth:waitlist\.status\.leadWaiting'\)/);
-  assert.match(message('auth:waitlist.status.leadWaiting'), /We\u2019re letting people in a few at a time\. We\u2019ll email you when yours comes up\./);
+  // The answer to check-your-status uses the waiting room's own lead (#5262).
+  assert.match(form, /t\('auth:waiting\.lead'\)/);
+  assert.match(message('auth:waiting.lead'), /We let people in a few at a time, and we'll email you when your spot is ready\./);
   assert.doesNotMatch(form, /small groups|next group/);
   for (const text of catalogTexts('waitlist.')) assert.doesNotMatch(text, /small groups|next group/);
 });

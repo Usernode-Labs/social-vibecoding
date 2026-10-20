@@ -43,6 +43,20 @@
  * nothing ranks the waitlist (services/waitlist-signals.js computes no
  * score), so a number here would be invented.
  *
+ * ── One waitlist room (#5262) ────────────────────────────────────────
+ *
+ * This was a second page about the same wait, in its own words: a "Step 1
+ * of 2" bar, "Check your status" over the answer, the daily code cap printed
+ * before anybody had asked for one. A signed-in account never reaches it:
+ * the router sends any `#waitlist` a waiting session opens to the waiting
+ * room (App.restoreFromHash → AuthScreens.showWaiting), which shows their
+ * spot with no code. The code check stays for an address with no session
+ * (the status mail's `?status=1` button lands here), and once it answers it
+ * speaks as the room does: "You're on the waitlist" over the room's own lead
+ * (auth:waiting.*), in the room's card. The step bar is gone (the code step
+ * carries its own label and way back), and the cap is said only when a
+ * request is actually refused for it (a 429, auth:waitlist.code.limited).
+ *
  * ── Screenshot state ─────────────────────────────────────────────────
  *
  * One per settled state, because a shot can only navigate:
@@ -136,18 +150,18 @@ function formatJoinedOn(iso: string | null | undefined): string {
 }
 
 /**
- * The advisory printed beside both send controls (#2201).
+ * The daily code cap (#2201), said only on a refused request (#5262).
  *
  * A CONSTANT, and deliberately so: a per-address "you have 3 left today"
  * would be a membership test readable straight off the page, which is the
- * same oracle the resend endpoint's fixed cooldown exists to avoid. This
+ * same oracle the resend endpoint's fixed cooldown exists to avoid. It
  * states the ceiling in services/mail/rate-limit.js's waitlist_code rule
- * (ten per address per day) without saying anything about any address.
- *
- * One string for both sites, because two copies is how the two stop
- * agreeing with each other and with the rule.
+ * (ten per address per day) without saying anything about any address. It
+ * used to sit under both send controls before anybody had asked for a
+ * code; now it is the one message both sends show on a 429, the answer the
+ * request limiters (middleware/rate-limits.js) give every caller alike.
  */
-// The cap's words are auth:waitlist.request.cap, and the last sentence of auth:waitlist.resend.*.
+// The cap's words are auth:waitlist.code.limited.
 
 export function WaitlistScreen() {
   const rootRef = useRef<HTMLElement>(null);
@@ -404,6 +418,9 @@ export function WaitlistScreen() {
         });
         setSentTo(emailVal.toLowerCase());
         startCooldown();
+      } else if (res.status === 429) {
+        // The daily cap is said when it is the reason, not before (#5262).
+        setResendNote({ text: translate('auth:waitlist.code.limited'), tone: 'error' });
       } else {
         setResendNote({
           text: (data && data.error) || translate('auth:waitlist.resend.failed'),
@@ -497,6 +514,12 @@ export function WaitlistScreen() {
         startCooldown();
         setResending(false);
         goToCodeStep();
+        return;
+      }
+      // The daily cap is said when it is the reason, not before (#5262).
+      if (res.status === 429) {
+        setRequestNote({ text: translate('auth:waitlist.code.limited'), tone: 'error' });
+        setResending(false);
         return;
       }
       setRequestNote({
@@ -630,20 +653,19 @@ export function WaitlistScreen() {
       */}
       <AuthBackButton href="#landing" />
       <div className="max-w-2xl mx-auto px-6 py-16">
-        {/* Where you are in the errand. */}
-        <p
-          id="waitlist-step"
-          className="text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400"
-        >
-          {confirmed
-            ? t('auth:waitlist.step.status')
-            : flowStep === 'code'
-              ? t('auth:waitlist.step.enterCode')
-              : t('auth:waitlist.step.emailAddress')}
-        </p>
-        <div id="waitlist-joined" className="mt-1">
-          <h1 className={hiddenLast(confirmed, 'text-2xl font-bold')}>
-            {t('auth:waitlist.joined.titleStatus')}
+        <div id="waitlist-joined">
+          {/*
+              Once the state is known the heading is the waiting room's own
+              (#5262), so a person who checked by code reads the same words
+              as one who is signed in, rather than "Check your status" over
+              the answer.
+          */}
+          <h1 className="text-2xl font-bold">
+            {!confirmed
+              ? t('auth:waitlist.joined.titleStatus')
+              : admitted
+                ? t('auth:waitlist.status.titleAdmitted')
+                : t('auth:waiting.title')}
           </h1>
           <p className={hiddenLast(confirmed, 'mt-1 text-sm text-zinc-500 dark:text-zinc-400')}>
             {/*
@@ -697,9 +719,6 @@ export function WaitlistScreen() {
                     ? t('auth:waitlist.request.sending')
                     : t('auth:waitlist.request.submit')}
               </Button>
-              <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                {t('auth:waitlist.request.cap')}
-              </p>
               {/*
                   For the reader who arrived from the status mail, which
                   carries a code already. Sends nothing on purpose.
@@ -841,7 +860,9 @@ export function WaitlistScreen() {
             id="waitlist-confirmed"
             className={hiddenFirst(
               !confirmed,
-              'mt-4 rounded-lg border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-500/10 p-4',
+              // The waiting room's card (#5262): plane white, 20px, one
+              // hairline, so the answer looks like the room it describes.
+              'mt-4 rounded-[20px] bg-white p-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900',
             )}
           >
             <p className="text-sm text-zinc-600 dark:text-zinc-300">
@@ -849,7 +870,7 @@ export function WaitlistScreen() {
                 ? (status?.has_account
                   ? t('auth:waitlist.status.leadHasAccount')
                   : t('auth:waitlist.status.leadAdmitted'))
-                : t('auth:waitlist.status.leadWaiting')}
+                : t('auth:waiting.lead')}
             </p>
             {/*
                 The same three-state vocabulary the stage-2 screen shows, from

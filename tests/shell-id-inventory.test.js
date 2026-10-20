@@ -721,7 +721,10 @@ const ADDED_IDS = {
   // merely HID #waitlist-confirm with nothing taking its place. Five ids,
   // all additive — nothing is retired, so every dapp.json selector on this
   // screen still resolves.
-  'waitlist-step': 'The step line above the title: "Step 1 of 2 \u00b7 Your email" \u2192 "Step 2 of 2 \u00b7 Confirm your email" \u2192 "All done". Hidden for a waiting-room session, which gets #waitlist-queued instead of a flow it is already past. Two steps, not three: the stage-2 survey is optional and counting it would read as required.',
+  // #waitlist-step, the "Step 1 of 2" line, left with #5262: the code
+  // step carries its own label and way back, and the answer speaks as the
+  // waiting room does. Added after the frozen baseline, so it leaves this
+  // map rather than entering RETIRED_IDS.
   'waitlist-confirmed': 'The panel that replaces #waitlist-confirm once the six-digit code is accepted. Before it, `confirmed` only removed the block being typed into, and a control that disappears without a word reads as a failure.',
   'more-saved': 'The stage-2 survey\'s ending. A successful save wrote one line into #more-msg and left the whole three-minute form on screen under a heading still asking "Want in sooner?"; this panel takes the screen instead. #more-msg survives for the error and ?connect= cases.',
   'more-saved-edit': 'Returns to that form with every value still in place \u2014 the form is hidden, never unmounted, and answers merge server-side, so adding to them later is the intended path rather than a recovery.',
