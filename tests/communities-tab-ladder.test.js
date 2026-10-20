@@ -254,7 +254,7 @@ function loadVotesLadder({ shown = { slug: null, place: 'status' }, workshopTab 
         closeSwitcher: () => calls.push(['closeSwitcher']),
       },
       '../dev-board/workshop/place-store': {
-        openPlace: (slug, key) => { calls.push(['openPlace', slug, key]); return false; },
+        openPlace: (slug, key, opts) => { calls.push(['openPlace', slug, key, opts]); return false; },
         placeStore: { get: () => shown },
       },
       './workshop-store.js': { workshopStore: { get: () => ({ tab: workshopTab }) } },
@@ -267,7 +267,8 @@ test('#5040: goToVotes opens Needs you, the community\'s or every community\'s',
   const { mod, calls } = loadVotesLadder();
   withPage({}, (location) => {
     mod.goToVotes('flat-4b');
-    assert.deepEqual(calls, [['closeSwitcher'], ['openPlace', 'flat-4b', 'needs']], 'the community\'s Needs you place');
+    assert.deepEqual(calls, [['closeSwitcher'], ['openPlace', 'flat-4b', 'needs', { door: true }]],
+      'the community\'s Needs you place, as a door: its page is not on screen');
     assert.equal(location.hash, '', 'openPlace is the door; nothing else routes');
   });
   calls.length = 0;
@@ -279,6 +280,38 @@ test('#5040: goToVotes opens Needs you, the community\'s or every community\'s',
     assert.equal(location.hash, '#communities');
   });
   assert.deepEqual(calls, [['closeSwitcher']], 'never the drawer\'s list or the ladder');
+});
+
+test('#5700: the votes press is a door unless the community\'s page is on screen', () => {
+  // Leaving for Messages (App.currentApp null) or Me leaves the page mounted
+  // behind the hidden #app-view: goToVotes must route rather than move a page
+  // nobody can see, or the tab lights and the other screen stays up.
+  const left = loadVotesLadder();
+  withPage({}, () => {
+    left.mod.goToVotes('flat-4b');
+  });
+  assert.deepEqual(left.calls.at(-1), ['openPlace', 'flat-4b', 'needs', { door: true }],
+    'the page is behind the hidden #app-view: a door');
+  const another = loadVotesLadder();
+  withPage({ app: { currentApp: 'recipes' } }, () => {
+    another.mod.goToVotes('flat-4b');
+  });
+  assert.deepEqual(another.calls.at(-1), ['openPlace', 'flat-4b', 'needs', { door: true }],
+    'another community is the one on the router: a door');
+  // Its page is up, under a revealed #app-view: it moves in place, as before.
+  const onPage = loadVotesLadder();
+  withPage({ app: { currentApp: 'flat-4b' } }, () => {
+    global.document.querySelector = () => ({});
+    onPage.mod.goToVotes('flat-4b');
+  });
+  assert.deepEqual(onPage.calls.at(-1), ['openPlace', 'flat-4b', 'needs', { door: false }],
+    'its page is on screen: in place, one press moves it');
+  // A page without a querySelector answers "not on screen", never throws.
+  const bare = loadVotesLadder();
+  withPage({ app: { currentApp: 'flat-4b' } }, () => {
+    bare.mod.goToVotes('flat-4b');
+  });
+  assert.deepEqual(bare.calls.at(-1), ['openPlace', 'flat-4b', 'needs', { door: true }]);
 });
 
 test('#5040: onVotes is true only where the counted votes are on screen', () => {
