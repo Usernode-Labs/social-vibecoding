@@ -314,3 +314,91 @@ test('the replay plan contract is gone from the declaration module', () => {
     assert.equal(Object.hasOwn(shots, name), false, name);
   }
 });
+
+// ── What people gain, and a claim short enough for the line under a picture ──
+
+const noneIntent = (extra = {}) => ({ version: 1, impact: 'none', rationale: 'Server only.', stories: [], ...extra });
+
+test('a declared benefit names what people feel, where, and a measured before and after', () => {
+  const benefit = { kind: 'speed', area: 'platform', before: '259 s', after: '200 s' };
+  assert.deepEqual(shots.parseIntent(noneIntent({ benefit })).benefit, benefit);
+  assert.deepEqual(shots.parseIntent(noneIntent({ benefit: { kind: 'behind' } })).benefit, { kind: 'behind' });
+  // Allowed beside a visible change too, never required there or anywhere.
+  assert.deepEqual(shots.parseIntent(intent({ benefit: { kind: 'clarity', area: 'proposals' } })).benefit,
+    { kind: 'clarity', area: 'proposals' });
+  assert.equal(Object.hasOwn(shots.parseIntent(noneIntent()), 'benefit'), false);
+  assert.deepEqual(shots.BENEFIT_KINDS,
+    ['fixed', 'stability', 'clarity', 'more', 'results', 'speed', 'effort', 'security', 'behind']);
+  assert.deepEqual(shots.BENEFIT_AREAS,
+    ['agents', 'proposals', 'platform', 'projects', 'accounts', 'admin', 'messages', 'challenges', 'app']);
+});
+
+test('a benefit outside the taxonomy, half a figure, or a long figure is refused', () => {
+  const refused = (benefit) => shots.safeParseIntent(noneIntent({ benefit }));
+  assert.deepEqual(refused({ kind: 'faster' }).errors[0].path, ['benefit', 'kind']);
+  assert.deepEqual(refused({ kind: 'speed', area: 'everywhere' }).errors[0].path, ['benefit', 'area']);
+  assert.deepEqual(refused({ kind: 'speed', before: '259 s' }).errors,
+    [{ path: ['benefit', 'after'], message: 'A measured benefit needs both before and after' }]);
+  assert.deepEqual(refused({ kind: 'speed', after: '200 s' }).errors[0].path, ['benefit', 'before']);
+  assert.equal(refused({ kind: 'speed', before: '1234567890123456', after: '2 s' }).ok, true, '16 characters fit');
+  assert.deepEqual(refused({ kind: 'speed', before: '12345678901234567', after: '2 s' }).errors[0].path, ['benefit', 'before']);
+  assert.equal(refused({ kind: 'speed', before: ' 259 s', after: '200 s' }).ok, false, 'a figure is trimmed text');
+  assert.deepEqual(refused({ kind: 'speed', unit: 's' }).errors[0].message,
+    'Unexpected field(s); use only the documented declaration fields');
+});
+
+test('a declaration without a benefit parses and hashes exactly as it did before the field', () => {
+  const crypto = require('node:crypto');
+  const hash = (value) => crypto.createHash('sha256').update(shots.canonicalJson(shots.parseIntent(value))).digest('hex');
+  // Computed at cb1b457d6, before `benefit` existed: the plan hash a stored
+  // declaration carries must not move.
+  assert.equal(hash(intent()), 'bfe68f14a8b0b6f9b2f77f3c6993a206439e68fed4929a2234b80ce2f88eeb36');
+  assert.equal(hash(motionIntent()), '6d98d7649c19445f582cb11bd3fd3a436b32d5ba00f7a441097b23cbc2382313');
+  assert.equal(hash(noneIntent()), '9cadc2a998910b84cc19db04c0ac6fbfe025127e3eff8a7b5cb6499871fd8835');
+});
+
+test('a long claim still parses, and the declare answer asks for a shorter one and for a benefit', () => {
+  const long = 'Typing a username in the invite dialog now shows matching members beside the invite action.';
+  assert.ok(long.length > shots.CLAIM_ADVISED_MAX);
+  const candidate = intent();
+  candidate.stories[0].claim = long;
+  const parsed = shots.parseIntent(candidate);
+  assert.equal(parsed.stories[0].claim, long, 'existing longer claims stay valid');
+  const [note] = shots.declarationNotes(parsed);
+  assert.match(note, /^invite-suggestions's claim is \d+ characters\. Say it as one plain sentence of at most 90/);
+  assert.deepEqual(shots.declarationNotes(shots.parseIntent(intent())), []);
+
+  const [benefitNote] = shots.declarationNotes(shots.parseIntent(noneIntent()));
+  assert.match(benefitNote, /declare what people gain: benefit \{kind, area\}/);
+  for (const kind of shots.BENEFIT_KINDS) assert.ok(benefitNote.includes(kind), kind);
+  assert.deepEqual(shots.declarationNotes(shots.parseIntent(noneIntent({ benefit: { kind: 'stability' } }))), []);
+  assert.deepEqual(shots.declarationNotes(shots.parseIntent(intent())), [], 'a visible change is not asked for one');
+});
+
+test('every surface an author declares through names the same benefit kinds and asks for short claims', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+  const kinds = `z.enum([${shots.BENEFIT_KINDS.map((k) => `'${k}'`).join(', ')}])`;
+  const areas = `z.enum([${shots.BENEFIT_AREAS.map((a) => `'${a}'`).join(', ')}])`;
+  for (const file of ['worker/visible-changes-mcp.js', 'src/cli/main.js', 'src/services/mcp-tools.js']) {
+    const source = read(file);
+    assert.ok(source.includes(`kind: ${kinds}`), `${file} lists the benefit kinds`);
+    assert.ok(source.includes(`area: ${areas}`), `${file} lists the benefit areas`);
+  }
+  // The hosted worker's tool: the field, its figures and the claim rule.
+  const worker = read('worker/visible-changes-mcp.js');
+  assert.match(worker, /benefit: benefit\.optional\(\)\s*\.describe\('What people gain\. Declare it whenever impact is none/);
+  assert.match(worker, /const figure = z\.string\(\)\.min\(1\)\.max\(16\);/);
+  assert.match(worker, /claim: z\.string\(\)\.min\(1\)\.max\(1000\)\s*\.describe\('One plain sentence of at most 90 characters/);
+  // Prose surfaces: the work order, the hosted guidance, the bot's build
+  // lines, the conventions, and the external agent's instructions.
+  const prose = (file) => read(file).replace(/',\s*'\s*/g, ' ').replace(/\\'/g, "'").replace(/\s+/g, ' ');
+  for (const file of ['src/services/mcp-tools.js', 'src/services/external-agent-tasks.js', 'src/services/homeroom-bot-live.js',
+    'src/routes/sessions.js', 'src/prompts/app-conventions.md', 'AGENTS.md', '.agents/skills/usernode-proposal/SKILL.md',
+    'docs/proposal-visuals/before-after-shots.md']) {
+    const text = prose(file);
+    assert.match(text, /at most 90 characters/, `${file} asks for a short claim`);
+    assert.match(text, /benefit/, `${file} asks for a benefit`);
+  }
+});

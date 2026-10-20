@@ -28,6 +28,7 @@ const shotsControl = require('../services/shots-control');
 const shotsState = require('../services/shots-state');
 const shotsIdentities = require('../services/shots-identities');
 const shotsReadyStates = require('../services/shots-ready-states');
+const visibleChangesContract = require('../services/visible-changes');
 
 // On-demand-TLS gate for Caddy. Caddy GETs this before issuing a Let's
 // Encrypt cert for a hostname it has never seen (see Caddyfile's
@@ -272,6 +273,9 @@ function internalRoutes(_config) {
       log.warn('internal-api', 'Could not check the declared personas', { sessionId, err: err.message });
     }
     if (advice) warnings = [...warnings, ...advice.warnings];
+    // A claim too long for the line under its picture, and a change nobody
+    // can see that names no benefit (visible-changes.js declarationNotes).
+    warnings = [...warnings, ...visibleChangesContract.declarationNotes(result.intent)];
     return res.json({
       ok: true,
       shots: result,

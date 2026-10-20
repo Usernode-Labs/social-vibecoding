@@ -2131,7 +2131,8 @@ async function runMcp(args, launcherPath) {
     rationale: z.string().min(1).max(1000),
     stories: z.array(z.object({
       id: z.string().regex(/^[a-z0-9](?:[a-z0-9_-]{0,94}[a-z0-9])?$/),
-      claim: z.string().min(1).max(1000),
+      claim: z.string().min(1).max(1000)
+        .describe('One plain sentence of at most 90 characters on what changes for people; no file names or PR numbers. The first claim is the line under the picture.'),
       persona: z.enum(['member', 'read_only_admin', 'full_admin', 'guest', 'invited_member', 'invited_member_listed']),
       viewports: z.array(visibleChangesViewportSchema).min(1).max(2),
       intent: z.object({
@@ -2154,7 +2155,14 @@ async function runMcp(args, launcherPath) {
           .describe('What you learned reaching this state: data to create first, short text that shows it was reached, and the element to point at. Guidance only; never executed.'),
       }).strict(),
     }).strict()).max(3),
-  }).strict().describe('Version-1 before & after shots declaration. Use impact ui or motion with 1-3 real user flows; use none with a concrete rationale and no stories. On an app built on Homeroom no persona is the app\'s creator or one of its admins (an app is told who is signed in, never their role), so a screen it keeps for particular accounts cannot be shot. Never include credentials or screenshot-only application routes.');
+    benefit: z.object({
+      kind: z.enum(['fixed', 'stability', 'clarity', 'more', 'results', 'speed', 'effort', 'security', 'behind']),
+      area: z.enum(['agents', 'proposals', 'platform', 'projects', 'accounts', 'admin', 'messages', 'challenges', 'app']).optional(),
+      before: z.string().min(1).max(16).optional(),
+      after: z.string().min(1).max(16).optional(),
+    }).strict().optional()
+      .describe('What people gain, by what they feel: fixed (failed every time, now works), stability (failed sometimes, now holds), clarity (says things more clearly), more (can do something new), results (better output), speed (faster or lighter), effort (fewer steps), security (security and privacy), behind (nothing a member would notice). area is where it is felt (app: the project\'s own app). before and after, both or neither, only for a figure you measured, e.g. "259 s" and "200 s". Declare it whenever impact is none; optional otherwise.'),
+  }).strict().describe('Version-1 before & after shots declaration. Use impact ui or motion with 1-3 real user flows, each claim one plain sentence of at most 90 characters; use none with a concrete rationale, a benefit, and no stories. On an app built on Homeroom no persona is the app\'s creator or one of its admins (an app is told who is signed in, never their role), so a screen it keeps for particular accounts cannot be shot. Never include credentials or screenshot-only application routes.');
   // chat_sessions.id is PostgreSQL INTEGER. Keep the MCP contract aligned
   // with the HTTP route's canonical-ID parser so an accepted tool argument
   // cannot later turn into a misleading 404.
@@ -2264,7 +2272,7 @@ async function runMcp(args, launcherPath) {
   });
 
   server.registerTool('social_vibecoding.proposal_submit_build', {
-    description: 'Submit an implemented local build to the native proposal. First run proposal_push_commit and use its returned bot-owned head SHA. Declare visible_changes while implementation context is fresh: describe the real UI flow for ui/motion changes (changes that show on the same screen are one declared change), or explicitly use impact none with a rationale. Homeroom verifies the pinned head, deploys staging, runs checks, and its shots agent follows each declared change on the exact base and head builds to take before/after shots. Poll proposal_status afterward; for an already-promoted revision, poll revisionState instead of the lifecycle state.',
+    description: 'Submit an implemented local build to the native proposal. First run proposal_push_commit and use its returned bot-owned head SHA. Declare visible_changes while implementation context is fresh: describe the real UI flow for ui/motion changes (changes that show on the same screen are one declared change), or explicitly use impact none with a rationale and a benefit. Homeroom verifies the pinned head, deploys staging, runs checks, and its shots agent follows each declared change on the exact base and head builds to take before/after shots. Poll proposal_status afterward; for an already-promoted revision, poll revisionState instead of the lifecycle state.',
     inputSchema: {
       session_id: sessionIdSchema,
       head_sha: z.string().regex(/^[0-9a-fA-F]{40}$/),

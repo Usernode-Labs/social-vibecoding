@@ -24815,7 +24815,8 @@ html.in-side-panel body {
 .rf-scrim { position: absolute; inset: 0; z-index: 5; background: rgba(0,0,0,.62); opacity: 0; pointer-events: none; transition: opacity .22s cubic-bezier(0.22,1,0.36,1); }
 .rf-scrim-on { opacity: 1; pointer-events: auto; }
 
-/* The slider. */
+/* The slider. The pill sits at the foot of the picture, where a thumb
+   pressing it covers the least of the shot. */
 .rf-compare { position: relative; overflow: hidden; touch-action: pan-y; user-select: none; -webkit-user-select: none; outline: none; }
 .rf-compare:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
 .rf-layer, .rf-layer-clip { position: absolute; left: 0; top: 0; }
@@ -24828,7 +24829,7 @@ html.in-side-panel body {
 .rf-tab-right { border-radius: 14px 0 0 14px; }
 .rf-tab-mid { border-radius: 14px; }
 .rf-dragging .rf-tab { opacity: 0 !important; transition: opacity .12s cubic-bezier(0.22,1,0.36,1); }
-.rf-pill { position: absolute; left: 50%; top: 12px; z-index: 5; width: 104px; height: 36px; margin-left: -52px; padding: 0; border: 0; border-radius: 999px; overflow: hidden; background: var(--rf-cream); color: var(--rf-black); box-shadow: inset 0 0 0 1px var(--rf-black); font: 560 14px/36px var(--font-sans, ui-sans-serif, system-ui, sans-serif); cursor: pointer; touch-action: manipulation; -webkit-touch-callout: none; transition: opacity .3s cubic-bezier(0.22,1,0.36,1), scale .12s; }
+.rf-pill { position: absolute; left: 50%; bottom: 12px; z-index: 5; width: 104px; height: 36px; margin-left: -52px; padding: 0; border: 0; border-radius: 999px; overflow: hidden; background: var(--rf-cream); color: var(--rf-black); box-shadow: inset 0 0 0 1px var(--rf-black); font: 560 14px/36px var(--font-sans, ui-sans-serif, system-ui, sans-serif); cursor: pointer; touch-action: manipulation; -webkit-touch-callout: none; transition: opacity .3s cubic-bezier(0.22,1,0.36,1), scale .12s; }
 .rf-pill::before { content: ''; position: absolute; left: 50%; top: 50%; width: 120px; height: 44px; transform: translate(-50%, -50%); }
 .rf-pill:active { scale: .96; }
 .rf-pill-word { position: relative; display: block; text-align: center; }
@@ -24907,4 +24908,32 @@ html.in-side-panel body {
 @media (prefers-reduced-motion: reduce) {
   .rf-sheet, .rf-scrim, .rf-seam, .rf-tab, .rf-pill { transition: none; }
   .rf-fresh .rf-said-mark, .rf-fresh .rf-said-mark path, .rf-fresh h2 { animation: none; }
+}
+
+/* New Needs you (an experiment), pictures for every card: a drawn picture
+   fills its card or hero; the shots run's own crop sits on a plate. */
+.rf-cover-drawn, .rf-hero-drawn { display: block; position: relative; overflow: hidden; }
+.rf-cover-drawn { border-radius: 20px; }
+.rf-plate-fill { position: static !important; display: block; width: 100%; height: 100%; object-fit: cover; object-position: center; transform: none !important; }
+.rf-plate-strip { object-fit: contain; }
+.rf-claim { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* ── Review flow: drawn pictures (features/review-flow/illustrations.tsx) ──
+   One outlined object per benefit or group decision, on the ground the caller
+   paints. Sizes are set inline from the box; these rules are the fixed parts.
+   The hero replays the sage part once (rf-ill-play), never with reduced motion. */
+.rf-ill { position: relative; display: block; overflow: hidden; }
+.rf-ill-stage { position: absolute; display: block; overflow: visible; }
+.rf-ill-label { position: absolute; display: block; margin: 0; line-height: 1.25; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: rgba(27,27,29,.86); }
+.rf-ill-area { color: rgba(27,27,29,.62); }
+.rf-ill-token { position: absolute; left: 50%; transform: translateX(-50%); display: flex; align-items: stretch; border-radius: 999px; overflow: hidden; white-space: nowrap; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -.005em; }
+.rf-ill-token > span { display: flex; align-items: center; }
+.rf-ill-before { background: #1b1b1d; color: #FFFEEA; font-weight: 500; }
+.rf-ill-after { background: #A9CF97; color: #1b1b1d; font-weight: 700; }
+@keyframes rf-ill-fill { 0%, 30% { fill: #FFFEEA; } 100% { fill: #A9CF97; } }
+@keyframes rf-ill-pop { 0%, 30% { transform: scale(.92); } 70% { transform: scale(1.05); } 100% { transform: none; } }
+.rf-ill-play .rf-ill-sage { animation: rf-ill-fill .84s cubic-bezier(0.22,1,0.36,1) both; }
+.rf-ill-play .rf-ill-gain { transform-box: fill-box; transform-origin: center; animation: rf-ill-pop .84s cubic-bezier(0.22,1,0.36,1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .rf-ill-play .rf-ill-sage, .rf-ill-play .rf-ill-gain { animation: none; }
 }

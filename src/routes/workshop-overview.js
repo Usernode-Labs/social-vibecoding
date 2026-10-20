@@ -649,6 +649,10 @@ function pictureFields(row) {
   }
   const impact = row.shots_detail && row.shots_detail.intent && row.shots_detail.intent.impact;
   if (impact === 'none') out.nothing_visible = true;
+  // What people gain, as declared (visible-changes.js benefit): read off the
+  // declaration like nothing_visible, so a feed without shots has it too.
+  const benefit = shotsView.cleanBenefit(row.shots_detail && row.shots_detail.intent && row.shots_detail.intent.benefit);
+  if (benefit) out.benefit = benefit;
   return out;
 }
 

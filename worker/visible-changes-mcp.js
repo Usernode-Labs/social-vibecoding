@@ -26,7 +26,7 @@ const viewport = z.object({
 const story = z.object({
   id: z.string().min(1).max(96),
   claim: z.string().min(1).max(1000)
-    .describe('The change in plain words, as a person reading the proposal would say it.'),
+    .describe('One plain sentence of at most 90 characters saying what changes for people, as a person reading the proposal would say it; no file names or PR numbers. The first claim is the line people read under the picture.'),
   persona: z.enum(['member', 'read_only_admin', 'full_admin', 'guest', 'invited_member', 'invited_member_listed'])
     .describe('Who is signed in. Use full_admin only for Homeroom controls that are hidden from read-only administrators; that identity exists only inside the disposable before/after builds. Use guest, a visitor who is not signed in, for what signed-out people see (a landing or sign-in page, a public app\'s guest view). On an app built on Homeroom no persona is the app\'s creator or one of its admins: the app is told who is signed in, never their role, so a screen it keeps for particular accounts cannot be shot. invited_member and invited_member_listed are Homeroom\'s own invited fixtures: private members without platform access, only on the platform\'s own paired copies.'),
   viewports: z.array(viewport).min(1).max(2),
@@ -62,11 +62,24 @@ const story = z.object({
       .describe('Optional shot-list hints from what you observed while building, so the shots agent can go straight to this state.'),
   }).strict(),
 }).strict();
+const figure = z.string().min(1).max(16);
+const benefit = z.object({
+  kind: z.enum(['fixed', 'stability', 'clarity', 'more', 'results', 'speed', 'effort', 'security', 'behind'])
+    .describe('What people feel, not how it was built: fixed (something that failed every time now works), stability (failed sometimes or on restart, now holds), clarity (says or explains things more clearly), more (people can do something new), results (better output or quality), speed (faster or lighter), effort (fewer steps, less work), security (security and privacy), behind (behind the scenes: nothing a member would notice).'),
+  area: z.enum(['agents', 'proposals', 'platform', 'projects', 'accounts', 'admin', 'messages', 'challenges', 'app']).optional()
+    .describe('Where people feel it; app is the project\'s own app, for a change to an app built on Homeroom.'),
+  before: figure.optional()
+    .describe('Only with after, and only for a figure you measured: the number before, with its unit, e.g. "259 s" or "85 KB".'),
+  after: figure.optional()
+    .describe('Only with before: the same figure after the change, e.g. "200 s" or "46 KB".'),
+}).strict();
 const intentSchema = {
   version: z.literal(1),
   impact: z.enum(['ui', 'motion', 'none']),
   rationale: z.string().min(1).max(1000),
   stories: z.array(story).max(3),
+  benefit: benefit.optional()
+    .describe('What people gain. Declare it whenever impact is none: nobody can see the change, so people see its benefit instead of before and after shots. Optional beside a visible change.'),
 };
 
 async function record(intent) {
@@ -95,7 +108,7 @@ const server = new McpServer(
   { instructions: 'After implementing a change, declare what a person will see change, only for a visible state you reached in the running local app with representative test data. When a fresh staging copy lacks the state, seed it in this same change (the answer\'s dataNote says how); report a state you can neither reach nor seed instead of guessing. This only records the declared changes; Homeroom\'s shots agent later follows them on the before and after builds and takes the shots.' }
 );
 server.registerTool('declare_visible_changes', {
-  description: 'Declare 1-3 visible changes and how a person reaches each one, as you reached them in the running local app with representative test data, or impact=none with a specific rationale for a truly non-visual change. Changes that show on the same screen are one declared change: name everything that differs there in its claim. Add hints (setup, expectText, focusTarget) when they would help someone else find the same state. A state that needs a server fault or background job needs a repeatable staging fixture; report that rather than guessing the steps. The answer lists the ready-made states the before/after copies hold (availableStates) and where other data comes from (dataNote), and its warnings name a persona that cannot show a change or a change that needs data the copies lack: fix that (hints.setup, or a staging seed, in this same change for a state new in it) and declare again. Call once after implementation and before finishing the build turn.',
+  description: 'Declare 1-3 visible changes and how a person reaches each one, as you reached them in the running local app with representative test data, or impact=none with a specific rationale and a benefit (kind, area, and before/after only for a figure you measured) for a truly non-visual change. Each claim is one plain sentence of at most 90 characters on what changes for people; the first is the line under the picture. Changes that show on the same screen are one declared change: name everything that differs there in its claim. Add hints (setup, expectText, focusTarget) when they would help someone else find the same state. A state that needs a server fault or background job needs a repeatable staging fixture; report that rather than guessing the steps. The answer lists the ready-made states the before/after copies hold (availableStates) and where other data comes from (dataNote), and its warnings name a persona that cannot show a change, a change that needs data the copies lack (fix that with hints.setup, or a staging seed, in this same change for a state new in it), a claim that is too long, or a missing benefit: fix what they name and declare again. Call once after implementation and before finishing the build turn.',
   inputSchema: intentSchema,
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 }, async (intent) => {

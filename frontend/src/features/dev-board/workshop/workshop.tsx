@@ -105,6 +105,8 @@ import { PlaceBar } from './place-bar';
 import { PlacesTray, useEdgeSwipe } from './places-tray';
 import { drawerStore } from '../../nav-drawer/drawer-store';
 import { ProjectPlaces } from './project-places';
+import { ProjectReviewFlow } from '../../review-flow/review-flow';
+import { useReviewFlowEnabled } from '../../review-flow/settings';
 import { clearPlace, publishPlace, registerPlaceOpener, registerTrayToggle, trayButton } from './place-store';
 import { PlanPage } from './plan-page';
 import { PrivateRequests } from './private-requests';
@@ -4287,6 +4289,8 @@ function useWorkshopHostState(
 export function DevWorkshop(): ReactNode {
   const t = useMessages('project');
   const v = useStoreState(devWorkshopStore);
+  // The new Needs you, when this device has it switched on (an experiment).
+  const reviewFlow = useReviewFlowEnabled();
   // THE OPEN APP'S NAME AND ARTWORK, for the hero and the channel below. The
   // same store the header's own tile draws from, so the two cannot disagree
   // about which app this is, and no second fetch: the controller publishes
@@ -5445,7 +5449,12 @@ export function DevWorkshop(): ReactNode {
       {/* ── The item's page, beside the list (#4457) or the board (#4486) ── ./side-panel.tsx */}
       {sideOpen && sideItem ? <TopicSidePanel item={sideItem} onClose={closeSide} /> : null}
 
-      {tab === 'needs' ? (
+      {tab === 'needs' && reviewFlow && slug ? (
+        // EXPERIMENTAL (Settings, Experimental, "New Needs you"): the
+        // project's Needs you drawn by the new review flow, the same one the
+        // Communities tab draws. ../../review-flow/.
+        <ProjectReviewFlow slug={slug} onDone={() => openTab('workshop')} />
+      ) : tab === 'needs' ? (
         <NeedsFeed
           rows={v.queue}
           models={v.models}

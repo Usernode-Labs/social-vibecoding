@@ -5,6 +5,7 @@
 // view model.
 
 const state = require('./shots-state');
+const { BENEFIT_KINDS, BENEFIT_AREAS, MAX_BENEFIT_FIGURE } = require('./visible-changes');
 const shotsFiles = require('./shots-files');
 const { visualHeadForSession } = require('./pr-vote-revision');
 
@@ -33,6 +34,27 @@ function cleanClaims(value) {
     baseState: claim?.baseState === 'not_present' ? 'not_present' : 'present',
     animation: ['none', 'steps', 'motion'].includes(claim?.animation) ? claim.animation : 'none',
   })).filter((claim) => claim.id && claim.claim);
+}
+
+// What people gain from the change, as its author declared it
+// (visible-changes.js benefit): the review flow draws it for a change
+// nobody can see. Read off the declaration the slot keeps, both before a
+// run (pendingDetail) and after (showRun); null when none was declared.
+function cleanBenefit(value) {
+  if (!value || typeof value !== 'object' || !BENEFIT_KINDS.includes(value.kind)) return null;
+  const figure = (text) => (typeof text === 'string' && text.trim() ? text.trim().slice(0, MAX_BENEFIT_FIGURE) : null);
+  const before = figure(value.before);
+  const after = figure(value.after);
+  return {
+    kind: value.kind,
+    area: BENEFIT_AREAS.includes(value.area) ? value.area : null,
+    ...(before && after ? { before, after } : {}),
+  };
+}
+
+function benefitOf(detail) {
+  const benefit = cleanBenefit(detail && typeof detail === 'object' ? detail.intent?.benefit : null);
+  return benefit ? { benefit } : {};
 }
 
 // One result per declared change: its shots are ready, or unchanged (shown,
@@ -183,6 +205,7 @@ function fromSnapshot(session, currentHead) {
     required: detail.required !== false,
     impact: ['ui', 'motion', 'none'].includes(detail.impact) ? detail.impact : null,
     rationale: typeof detail.rationale === 'string' ? detail.rationale.slice(0, 1000) : null,
+    ...benefitOf(detail),
     claims: cleanClaims(detail.claims),
     baseSha: typeof detail.baseSha === 'string' ? detail.baseSha : null,
     headSha: recordedHead,
@@ -217,6 +240,7 @@ function serialize(run, session, slug, currentHead) {
     required: run.required !== false,
     impact: session?.shots_detail?.impact || null,
     rationale: session?.shots_detail?.rationale || null,
+    ...benefitOf(session?.shots_detail),
     claims: cleanClaims(run.claims),
     baseSha: run.baseSha || null,
     headSha: run.headSha || null,
@@ -307,6 +331,7 @@ async function getForSessions(pool, sessions, slug) {
 
 module.exports = {
   PUBLIC_STATES,
+  cleanBenefit,
   cleanClaims,
   cleanShotResults,
   cleanShotNotices,

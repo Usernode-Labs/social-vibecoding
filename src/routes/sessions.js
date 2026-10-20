@@ -11494,7 +11494,9 @@ function buildHostedCodingWorkflowGuidance({ runLocally = false } = {}) {
   submission tools from this worker.
 - For a committed change, call the provided declare_visible_changes MCP
   tool with concrete reviewer-facing claims and real user flows (or impact
-  "none" with a specific reason for a non-visual change). If the tool fails,
+  "none" with a specific reason and a benefit for a non-visual change). Each
+  claim is one plain sentence of at most 90 characters on what changes for
+  people; the first is the line under the picture. If the tool fails,
   report the failure; never claim that intent was recorded when it was not.
 - When the change is a rename, a changed flow, a data or settings change, or
   a measured improvement, also call declare_diagram once with that kind; it

@@ -39,9 +39,10 @@ import { useMessages } from '../../lib/i18n/react';
 import { callAppView } from '../dev-board/card/fold';
 import type { NeedsFeedItem } from '../workshop/needs-reel';
 import { CompareSlider } from './compare';
+import { Illustration } from './illustrations';
 import {
-  nextIndex, titleCrop, toReviewItems,
-  type ReviewItem, type ReviewScreen,
+  nextIndex, orderForReview, titleCrop, toReviewItems,
+  type AreaKind, type BenefitKind, type DecisionKind, type ReviewItem, type ReviewScreen,
 } from './model';
 import { VoteSheet, sheetOpen, type SheetState, type Vote } from './vote-sheet';
 
@@ -61,13 +62,102 @@ function shape(visuals: unknown, shots: unknown) {
 
 /* ── The title shot ────────────────────────────────────────────────────── */
 
-function TitleShot({ item, width }: { item: ReviewItem; width: number }): ReactNode {
+// Each label is a whole message id, so the language tools can find it.
+const BENEFIT_LABEL: Record<BenefitKind, string> = {
+  fixed: 'communities:review.benefit.fixed',
+  stability: 'communities:review.benefit.stability',
+  clarity: 'communities:review.benefit.clarity',
+  more: 'communities:review.benefit.more',
+  results: 'communities:review.benefit.results',
+  speed: 'communities:review.benefit.speed',
+  effort: 'communities:review.benefit.effort',
+  security: 'communities:review.benefit.security',
+  behind: 'communities:review.benefit.behind',
+};
+const AREA_LABEL: Record<Exclude<AreaKind, 'app'>, string> = {
+  agents: 'communities:review.area.agents',
+  proposals: 'communities:review.area.proposals',
+  platform: 'communities:review.area.platform',
+  projects: 'communities:review.area.projects',
+  accounts: 'communities:review.area.accounts',
+  admin: 'communities:review.area.admin',
+  messages: 'communities:review.area.messages',
+  challenges: 'communities:review.area.challenges',
+};
+const DECISION_LABEL: Record<DecisionKind, string> = {
+  close_issue: 'communities:review.decision.closeIssue',
+  rename: 'communities:review.decision.rename',
+  secret_change: 'communities:review.decision.secret',
+  decision: 'communities:review.decision.other',
+};
+
+/**
+ * A drawn picture: a benefit object for a change with nothing (yet) to show,
+ * a decision object for a group decision. Every card has a picture.
+ */
+function Drawn({ item, width, height, play }: { item: ReviewItem; width: number; height: number; play?: boolean }): ReactNode {
   const t = useMessages('communities');
+  const p = item.picture;
+  if (p.kind !== 'benefit' && p.kind !== 'decision') return null;
+  const area = p.kind === 'benefit' && p.area !== 'app' ? t(AREA_LABEL[p.area]) : item.app?.name || null;
+  return (
+    <Illustration
+      kind={p.kind === 'benefit' ? { benefit: p.benefit } : { decision: p.decision }}
+      label={{ main: p.kind === 'benefit' ? t(BENEFIT_LABEL[p.benefit]) : t(DECISION_LABEL[p.decision]), area }}
+      token={p.kind === 'benefit' ? p.token : null}
+      ground={item.ground}
+      width={width}
+      height={height}
+      play={play}
+    />
+  );
+}
+
+/* ── The title shot ────────────────────────────────────────────────────── */
+
+/**
+ * The plate for the run's own crop of a change: never taller than it is wide
+ * (a tall crop shown whole came out as a shrunken page), never a sliver. The
+ * crop is centred on the change, so a plate narrower than the crop keeps its
+ * middle.
+ */
+export function cropPlate(img: { width: number; height: number }, room: { w: number; h: number }): { w: number; h: number; whole: boolean } {
+  const raw = img.width / img.height;
+  const ratio = Math.max(1.25, Math.min(4.5, raw));
+  const w = Math.min(room.w, room.h * ratio, img.width * 2);
+  // A thin strip (a top bar, a band) is shown whole: trimming its sides
+  // trims away the very button that changed.
+  return { w: Math.round(w), h: Math.round(w / ratio), whole: raw > 4.5 };
+}
+
+function TitleShot({ item, width }: { item: ReviewItem; width: number }): ReactNode {
   const height = Math.round(width * 0.75);
   const screen: ReviewScreen | undefined = item.screens[0];
+  const room = { w: width * 0.86, h: height * 0.72 };
   let inner: ReactNode;
-  if (screen) {
-    const crop = titleCrop(screen, { w: width * 0.86, h: height * 0.72 });
+  if (item.picture.kind === 'benefit' || item.picture.kind === 'decision') {
+    return (
+      <span className="rf-cover rf-cover-drawn" style={{ width, height, background: item.ground }} data-rf-cover="">
+        <Drawn item={item} width={width} height={height} />
+      </span>
+    );
+  }
+  const r = item.titleImage ? item.titleImage.width / item.titleImage.height : 0;
+  // The run's own crop when it has a good shape; else, when the run found the
+  // screens, the changed area itself, zoomed in (a thin strip or a whole tall
+  // page reads as nothing at card size).
+  const cropFits = !!item.titleImage && (r >= 1 && r <= 4.5);
+  if (item.titleImage && (cropFits || !screen)) {
+    // The shots run's own crop of the change: the tightest true picture of it.
+    const img = item.titleImage;
+    const plate = cropPlate(img, room);
+    inner = (
+      <span className="rf-plate" style={{ width: plate.w, height: plate.h }}>
+        <img src={img.url} alt="" draggable={false} loading="lazy" className={plate.whole ? 'rf-plate-fill rf-plate-strip' : 'rf-plate-fill'} />
+      </span>
+    );
+  } else if (screen) {
+    const crop = titleCrop(screen, room);
     inner = (
       <span className="rf-plate" style={{ width: crop.w, height: crop.h }}>
         <img
@@ -79,17 +169,10 @@ function TitleShot({ item, width }: { item: ReviewItem; width: number }): ReactN
         />
       </span>
     );
-  } else if (item.pair && (item.pair.after || item.pair.before)) {
-    inner = (
-      <span className="rf-plate rf-plate-whole" style={{ width: width * 0.86, height: height * 0.72 }}>
-        <img src={(item.pair.after || item.pair.before)!} alt="" draggable={false} loading="lazy" />
-      </span>
-    );
   } else {
     inner = (
-      <span className="rf-quiet-card">
-        <span className="rf-quiet-over">{item.kind === 'governance' ? t('communities:review.card.decision') : t('communities:review.card.behindTheScenes')}</span>
-        <span className="rf-quiet-text">{item.summary || item.title}</span>
+      <span className="rf-plate rf-plate-whole" style={{ width: room.w, height: room.h }}>
+        <img src={(item.pair && (item.pair.after || item.pair.before)) || ''} alt="" draggable={false} loading="lazy" />
       </span>
     );
   }
@@ -114,9 +197,8 @@ function PageBody({ item, width, marks, near }: { item: ReviewItem; width: numbe
       {visual ? (
         <CompareSlider screen={screen} pair={screen ? null : item.pair} ground={item.ground} width={width} height={height} marks={marks} near={near} />
       ) : (
-        <div className="rf-hero-quiet" style={{ width, height, background: item.ground }}>
-          <span className="rf-quiet-over">{t('communities:review.card.behindTheScenes')}</span>
-          <span className="rf-quiet-text">{item.title}</span>
+        <div className="rf-hero-drawn" style={{ width, height, background: item.ground }}>
+          <Drawn item={item} width={width} height={height} play={near} />
         </div>
       )}
       {item.screens.length > 1 ? (
@@ -148,7 +230,7 @@ function PageBody({ item, width, marks, near }: { item: ReviewItem; width: numbe
           })}
         </div>
       ) : null}
-      {item.summary && visual ? <p className="rf-claim">{item.summary}</p> : null}
+      {item.line ? <p className="rf-claim">{item.line}</p> : null}
     </div>
   );
 }
@@ -158,11 +240,13 @@ function PageBody({ item, width, marks, near }: { item: ReviewItem; width: numbe
 /** `opening` expands from the card, `pushing` slides in beside the last one, `open` rests. */
 type Open = { index: number; from: number | null; phase: 'opening' | 'pushing' | 'open' };
 
-export function ReviewFlow({ items, error, capped, onDone, onAnswered, onRetracted }: {
+export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered, onRetracted }: {
   items: NeedsFeedItem[] | null;
   error: boolean;
   capped: boolean;
   onDone: () => void;
+  /** The end's way on; "Back to your communities" when not given. */
+  doneLabel?: string;
   onAnswered?: (id: number, epoch: number | null) => void;
   onRetracted?: (id: number) => void;
 }) {
@@ -188,7 +272,7 @@ export function ReviewFlow({ items, error, capped, onDone, onAnswered, onRetract
   const later = (fn: () => void, ms: number) => { timers.current.push(window.setTimeout(fn, ms)); };
   useEffect(() => () => { timers.current.forEach(clearTimeout); }, []);
 
-  const shaped = useMemo(() => (items ? toReviewItems(items, shape) : null), [items]);
+  const shaped = useMemo(() => (items ? orderForReview(toReviewItems(items, shape)) : null), [items]);
   useEffect(() => { if (shaped && !open) setList(shaped); }, [shaped, open]);
 
   // The cards' width: the pane's, less its margins.
@@ -491,7 +575,7 @@ export function ReviewFlow({ items, error, capped, onDone, onAnswered, onRetract
 <CheckIcon width={24} height={24} strokeWidth="2.2" />
           </span>
           <p className="rf-end-line">{t('communities:review.end.line')}</p>
-          <button type="button" className="rf-end-btn" onClick={onDone}>{t('communities:reel.done')}</button>
+          <button type="button" className="rf-end-btn" onClick={onDone}>{doneLabel || t('communities:reel.done')}</button>
         </div>
         {capped ? <p className="rf-capped" data-needs-capped="">{t('communities:reel.capped', { count: list.length })}</p> : null}
       </div>
@@ -529,4 +613,40 @@ function flyTitle(from: HTMLElement, to: HTMLElement, ms: number): void {
     from.style.visibility = '';
     to.style.visibility = '';
   });
+}
+
+/**
+ * A project's own Needs you, drawn by the same flow: the cross-project feed
+ * (GET /api/workshop/needs-feed) narrowed to this project, so the two never
+ * draw a change differently. Read in an effect, as every island does.
+ */
+export function ProjectReviewFlow({ slug, onDone }: { slug: string; onDone: () => void }) {
+  const t = useMessages('communities');
+  const [items, setItems] = useState<NeedsFeedItem[] | null>(null);
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    let live = true;
+    let demo = '';
+    try { demo = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : ''; } catch { /* no query */ }
+    fetch(`/api/workshop/needs-feed${demo}`, { cache: 'no-cache', credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((data) => {
+        if (!live) return;
+        const all: NeedsFeedItem[] = Array.isArray(data?.items) ? data.items : [];
+        setItems(all.filter((it) => it.app && it.app.slug === slug));
+      })
+      .catch(() => { if (live) setError(true); });
+    return () => { live = false; };
+  }, [slug]);
+  return (
+    <div className="rf-project" data-rf-project={slug}>
+      <ReviewFlow
+        items={items}
+        error={error}
+        capped={false}
+        onDone={onDone}
+        doneLabel={t('communities:review.end.backToProject')}
+      />
+    </div>
+  );
 }

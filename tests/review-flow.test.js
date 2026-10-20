@@ -132,10 +132,11 @@ test('feed items become review items: plain summary, shaped screens, phone first
 
 test('the title shot crops the after side to what changed, at its own proportions', () => {
   const crop = model.titleCrop(SCREEN, { w: 300, h: 200 });
-  // The after box (20,300,240,60) with 20px of room: 280 x 100 at x=0..280? left clamps at 0.
+  // The after box (20,300,240,60) with 24px of room, clamped at the left
+  // edge: 284 x 108.
   assert.ok(crop.w <= 300 && crop.h <= 200);
-  assert.ok(Math.abs(crop.w / crop.h - 280 / 100) < 0.05, 'the plate keeps the crop\'s proportions');
-  assert.ok(crop.place.scale > 1 && crop.place.scale <= 2, 'a small spot is enlarged, at most twice');
+  assert.ok(Math.abs(crop.w / crop.h - 284 / 108) < 0.05, 'the plate keeps the crop\'s proportions');
+  assert.ok(crop.place.scale >= 1 && crop.place.scale <= 2, 'a small spot is shown at least at its size, at most twice');
   assert.ok(crop.place.ty < 0, 'the screen is moved up so the spot shows');
 });
 
@@ -268,4 +269,86 @@ test('a vote taken back leaves the saved-vote store, so no screen keeps it answe
   const before = cards.voteSavedStore.get();
   cards.publishVoteSaved(9002, null, null);
   assert.equal(cards.voteSavedStore.get(), before, 'nothing to forget: the store is untouched');
+});
+
+// ── 5. A picture for every card, a short line, changes first ──────────
+
+test('every item gets a picture: shots, a pair, a drawn benefit or a drawn decision', () => {
+  const shape = (v, shots) => (shots && shots.screens ? { screens: shots.screens } : null);
+  const items = model.toReviewItems([
+    feedItem({ id: 1, shots: { screens: [SCREEN] } }),
+    feedItem({ id: 2, title: 'Fix the invite link that never opened', shots: null }),
+    feedItem({ id: 3, kind: 'governance', shots: null, decision: { kind: 'close_issue', issueNumber: 5 } }),
+    feedItem({ id: 4, kind: 'governance', shots: null, decision: { kind: 'something_new' } }),
+    feedItem({ id: 5, shots: { claims: [], benefit: { kind: 'speed', area: 'messages', before: '85 KB', after: '46 KB' } } }),
+    feedItem({ id: 6, shots: null, benefit: { kind: 'security', area: 'accounts' } }),
+  ], shape);
+  assert.deepEqual(items.pop().picture, { kind: 'benefit', benefit: 'security', area: 'accounts', token: null }, 'the feed row\'s own benefit counts too');
+  assert.deepEqual(items.map((i) => i.picture.kind), ['shots', 'benefit', 'decision', 'decision', 'benefit']);
+  assert.equal(items[1].picture.benefit, 'fixed');
+  assert.equal(items[2].picture.decision, 'close_issue');
+  assert.equal(items[3].picture.decision, 'decision', 'an unknown decision kind is drawn as a group decision');
+  assert.deepEqual(items[4].picture, { kind: 'benefit', benefit: 'speed', area: 'messages', token: { before: '85 KB', after: '46 KB' } }, 'a declared benefit wins over the guess');
+  for (const i of items) assert.match(i.ground, /^#[0-9A-F]{6}$/i);
+});
+
+test('the benefit is read from the title first, the summary only for work nobody sees', () => {
+  const g = model.guessBenefit;
+  assert.equal(g('Make the deferred tap-save tests run on mock timers'), 'behind');
+  assert.equal(g('Add a one-tap light/dark switch to the top bar'), 'effort');
+  assert.equal(g('Usage analytics are off by default, with a Share usage analytics switch'), 'security');
+  assert.equal(g('Add rest timer to Gym Tracker'), 'more', '"Tracker" in a name is not privacy');
+  assert.equal(g('Stop the rest timer when you go back from a workout'), 'fixed');
+  assert.equal(g('Explain retry limit with last deploy error in Build log panel'), 'clarity');
+  assert.equal(g('Polish the home lobby'), 'results');
+  assert.equal(g('Category', 'Nothing in the game changes.'), 'behind');
+  assert.equal(g('Category'), 'more');
+});
+
+test('the area is the project for an app, and named for Homeroom itself', () => {
+  assert.equal(model.guessArea('Add a timer', 'gym-tracker-1'), 'app');
+  assert.equal(model.guessArea('The Mayor answers in threads', model.PLATFORM_SLUG), 'agents');
+  assert.equal(model.guessArea('Votes show at once', model.PLATFORM_SLUG), 'proposals');
+  assert.equal(model.guessArea('Something else', model.PLATFORM_SLUG), 'platform');
+});
+
+test('the change line is the first declared change, else the first sentence, never a wall', () => {
+  assert.equal(model.changeLine('A link nobody used says so.', 'Long summary. More.'), 'A link nobody used says so.');
+  assert.equal(model.changeLine('', 'What changes for people Nothing in the game changes. The tests do.'), 'Nothing in the game changes.');
+  const long = model.changeLine('', 'word '.repeat(80));
+  assert.ok(long.length <= 141 && long.endsWith('…'), long);
+  assert.equal(model.cleanTitle('implement this change in the app: TITLE: Add comments'), 'Add comments');
+});
+
+test('changes come first, group decisions after', () => {
+  const order = model.orderForReview([{ key: 'g1', kind: 'governance' }, { key: 'p1', kind: 'proposal' }, { key: 'g2', kind: 'governance' }, { key: 'p2', kind: 'proposal' }]);
+  assert.deepEqual(order.map((i) => i.key), ['p1', 'p2', 'g1', 'g2']);
+});
+
+test('the title shot zooms in on the biggest change, not every change at once', () => {
+  const busy = { ...SCREEN, regions: [{ n: 1, a: [10, 10, 40, 20], b: null }, { n: 2, a: [20, 600, 300, 120], b: null }] };
+  assert.deepEqual(model.largestRegion(busy), { x: 20, y: 600, w: 300, h: 120 });
+  const crop = model.titleCrop(busy, { w: 300, h: 200 });
+  assert.ok(crop.place.ty < -400, 'it moves to the big change far down the screen');
+});
+
+test('a project\'s Needs you draws the same flow when the switch is on', () => {
+  const src = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.match(src, /const reviewFlow = useReviewFlowEnabled\(\);/);
+  assert.match(src, /tab === 'needs' && reviewFlow && slug \? \([\s\S]*?<ProjectReviewFlow slug=\{slug\}/);
+  const flow = read('frontend/src/features/review-flow/review-flow.tsx');
+  assert.match(flow, /export function ProjectReviewFlow\(/);
+  assert.match(flow, /all\.filter\(\(it\) => it\.app && it\.app\.slug === slug\)/);
+});
+
+test('a title shot from the run\'s own crop is never a shrunken tall page', () => {
+  const flow = loadTsx('frontend/src/features/review-flow/review-flow.tsx');
+  const room = { w: 300, h: 200 };
+  const tall = flow.cropPlate({ width: 390, height: 844 }, room);
+  assert.ok(tall.w / tall.h >= 1.24, `landscape plate, got ${tall.w}x${tall.h}`);
+  assert.ok(tall.w <= 300 && tall.h <= 200);
+  const wide = flow.cropPlate({ width: 600, height: 200 }, room);
+  assert.ok(Math.abs(wide.w / wide.h - 3) < 0.05, 'a wide crop keeps its shape');
+  assert.equal(wide.whole, false);
+  assert.equal(flow.cropPlate({ width: 780, height: 90 }, room).whole, true, 'a thin strip is shown whole, not trimmed');
 });

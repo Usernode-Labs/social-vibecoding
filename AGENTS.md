@@ -182,7 +182,9 @@ is no replay plan to write and nothing to verify locally.
 
 - Declare one to three changes, each as a person would say it, with the real
   `startPath` and `steps` that reach it and the persona and screen sizes
-  it needs. Declare only a state you actually reached in the running app.
+  it needs. A claim is one plain sentence of at most 90 characters on what
+  changes for people, with no file names or PR numbers: the first is the
+  line under the picture. Declare only a state you actually reached in the running app.
   Changes that show on the same screen are one declared change: name
   everything that differs there in its claim, and one screen of shots shows
   it, outlined where it differs.
@@ -198,7 +200,11 @@ is no replay plan to write and nothing to verify locally.
   the code reads to decide something, and a bot's reply as the stored message,
   never asked for. A change to a state that already existed needs it on both
   sides: its seed merges first, in its own proposal.
-- `impact: none` applies only when no user-visible state changes. Changed
+- `impact: none` applies only when no user-visible state changes. Declare
+  `benefit` with it, which people see instead of shots: `kind` by what they
+  feel (`fixed`, `stability`, `clarity`, `more`, `results`, `speed`,
+  `effort`, `security`, `behind`), `area` where, and `before`/`after` only
+  for a figure you measured. Changed
   text, counts, loading, error, and status states need a `ui` change even if
   the code reuses existing markup and styles. If a required state can be
   neither reached nor seeded, report that blocker instead of declaring `none`.

@@ -29,7 +29,7 @@ program failed replay on a locator, an assertion, or a fingerprint.
 | failed | A change the shots agent tried on the after build, where the app itself broke (a server error, an error on screen, the effect never appearing) | `hard_verdict.stories[].status` |
 | noticed problem | A clear problem the shots agent saw on the after build while taking the shots, apart from the declared changes (content cut off, controls overlapping, an error on screen); advisory only | `hard_verdict.notices[]` |
 | shots agent | The hosted model that takes the shots (Claude Sonnet 5.5 for every proposal) | shots worker turn |
-| visible changes | The author's declaration of the changes (`impact`, `rationale`, `stories`) | `visibleChanges` on the way in, `intent` once stored |
+| visible changes | The author's declaration of the changes (`impact`, `rationale`, `stories`, optional `benefit`) | `visibleChanges` on the way in, `intent` once stored |
 | preview | The running staging build of a proposal, and only that | |
 
 On screen the feature is **Before & after**. In code, the API and storage,
@@ -68,7 +68,7 @@ still work, so nothing outside this repository breaks on the rename:
 
 The implementing agent declares changes with `declare_visible_changes`
 on a hosted build turn, or with `visibleChanges` on `submit_work` from an
-external agent (`visible_changes` on the CLI's `proposal_submit_build`). The shape is unchanged from version 1:
+external agent (`visible_changes` on the CLI's `proposal_submit_build`). The shape is version 1, with an optional `benefit`:
 
 ```json
 {
@@ -98,6 +98,36 @@ external agent (`visible_changes` on the CLI's `proposal_submit_build`). The sha
 
 - `impact: "none"` with a specific `rationale` means nothing visible changed.
   No run starts and the proposal says so.
+- Each `claim` is one plain sentence of at most 90 characters saying what
+  changes for people, with no file names or PR numbers. The first claim is
+  the change's short description and the line under its picture in the
+  review flow. The contract still takes up to 1,000 characters, so claims
+  stored before this rule still read; the declare answer warns about a
+  longer one (`visible-changes.declarationNotes`).
+- `benefit` says what people gain, by what they feel rather than how it was
+  built. Declare it whenever `impact` is `"none"`: nobody can see the
+  change, so the review flow draws its benefit instead of shots. It is
+  optional beside a visible change, and never required, so an agent that
+  does not know it yet is not refused; the declare answer asks for it when
+  impact is `"none"`.
+
+  ```json
+  "benefit": { "kind": "speed", "area": "platform", "before": "259 s", "after": "200 s" }
+  ```
+
+  `kind` is one of `fixed` (failed every time, now works), `stability`
+  (failed sometimes or on restart, now holds), `clarity` (says or explains
+  things more clearly), `more` (people can do something new), `results`
+  (better output or quality), `speed` (faster or lighter), `effort` (fewer
+  steps, less work), `security` (security and privacy) or `behind` (nothing
+  a member would notice). `area`, optional, is where it is felt: `agents`,
+  `proposals`, `platform`, `projects`, `accounts`, `admin`, `messages`,
+  `challenges`, or `app` for a project's own app. `before` and `after`,
+  each at most 16 characters, come together or not at all, and only for a
+  figure the author measured (about 4% of changes have one). A declaration
+  without `benefit` parses, and so hashes, exactly as before. The shots
+  view carries it as `shots.benefit` and a Needs-you feed row
+  (`GET /api/workshop/needs-feed`) as `benefit`, each only when declared.
 - `animation: "motion"` asks for clips as well as stills.
 - `persona` is who is signed in: `member`, `read_only_admin`, `full_admin`
   (Homeroom controls hidden from read-only admins), or `guest`, a visitor who
