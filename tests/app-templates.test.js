@@ -274,6 +274,20 @@ test('a tier list ranks by dragging, and tapping one shows who ranked it what', 
     assert.match(html, new RegExp(`id="${id}"`), id);
   }
   assert.match(html, /<section id="detail-sheet" role="dialog" aria-modal="true" aria-labelledby="detail-name"/);
+  // It moves as a phone's sheet does (Evan, 20 Oct 2026: it "animates up
+  // weirdly, really fast" and "doesn't animate out"): up from the bottom
+  // edge over the dim, once its rows are in (or after a moment), focusing
+  // Close without scrolling the page, and back down as the dim fades.
+  assert.match(html, /@keyframes rise \{ from \{ transform: translateY\(100%\); \} to \{ transform: none; \} \}/);
+  assert.match(html, /\.rise \{ animation: rise 340ms cubic-bezier\(0\.32, 0\.72, 0, 1\); \}/);
+  assert.match(html, /\.leaving \.rise \{ animation: sink 240ms [^;]+ forwards; \}/);
+  assert.match(html, /\.leaving \.appear \{ animation: vanish 240ms ease-in forwards; \}/);
+  assert.match(html, /id="detail-scrim" class="scrim appear /);
+  assert.match(html, /id="detail-sheet"[^>]*class="rise /);
+  assert.match(script, /loadDetail\(\)\.then\(present, present\);\s+setTimeout\(present, OPEN_WAIT_MS\);/);
+  assert.match(script, /el\.detailClose\.focus\(\{ preventScroll: true \}\);/);
+  assert.match(script, /if \(el\.detail\.hidden \|\| reducedMotion\(\)\) \{ el\.detail\.hidden = true; return; \}\s+el\.detail\.classList\.add\('leaving'\);\s+leaving = setTimeout\(finishLeaving, LEAVE_MS\);/);
+  assert.match(script, /function openDetail\(id, opener\) \{\s+finishLeaving\(\);/, 'a sheet on its way down goes at once for the next');
   assert.match(script, /api\('GET', '\/api\/items\/' \+ asked\)/);
   assert.match(script, /el\.main\.inert = true;/, 'the board behind it cannot be reached');
   assert.match(script, /if \(e\.key === 'Escape' && detail\) closeDetail\(\);/);
