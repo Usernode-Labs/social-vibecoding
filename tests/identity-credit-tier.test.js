@@ -46,7 +46,7 @@ function poolFor({ override = null, hasIdentity = false, spent = 0, globalSpent 
       }
       // #1788: week-to-date for one user. Matched before the global sum
       // below, which is the same aggregate without the user predicate.
-      if (/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/.test(text)) {
+      if (/llm_usage WHERE user_id = \$1 AND date >= \$2/.test(text)) {
         return { rows: [{ total: weeklySpent }] };
       }
       if (/SELECT SUM\(total_cost_cents\)/.test(text)) return { rows: [{ total: globalSpent }] };

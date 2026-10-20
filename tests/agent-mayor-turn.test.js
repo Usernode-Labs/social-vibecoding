@@ -180,7 +180,8 @@ test('a read turn: the tool runs through the shim, the reply is recorded and bil
   assert.equal(assistant.params[2], 'Let me look.\n\nThere are two open requests.');
   assert.equal(assistant.params[4], 8, 'both model calls are costed');
   assert.deepEqual(JSON.parse(assistant.params[5]).tools, [{ name: 'list_requests', ok: true }]);
-  assert.deepEqual(spend, [[pool, 7, 8, { byok: false }]]);
+  assert.deepEqual(spend, [[pool, 7, 4, { byok: false }], [pool, 7, 4, { byok: false }]],
+    'each model call recorded as it is made, not once the reply is stored');
 
   // The model saw the tool's answer against its own tool_use id.
   const second = model.requests[1].messages.at(-1);

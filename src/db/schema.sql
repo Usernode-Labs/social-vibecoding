@@ -15613,3 +15613,26 @@ CREATE TABLE IF NOT EXISTS stream_watchers (
 );
 CREATE INDEX IF NOT EXISTS idx_stream_watchers_key ON stream_watchers (stream_key);
 COMMENT ON TABLE stream_watchers IS 'staging:private';
+
+-- What a turn's model calls cost, one row per call as it is made (the coding
+-- agent's calls through the platform's Anthropic proxy, keyed by the turn
+-- record's `turnId`), so a running turn counts against the caps at once and a
+-- turn whose process went loses none of it (services/limits.js). The turn's
+-- end settles it into llm_usage once (settleTurnSpend, under its receipt) and
+-- marks its rows settled; rows no live turn will settle are settled by the
+-- turn-spend-settle clock. `byok`: the call was paid with the person's own
+-- key (display only, never capped).
+CREATE TABLE IF NOT EXISTS turn_spend (
+  id          BIGSERIAL PRIMARY KEY,
+  turn_id     TEXT,
+  session_id  INTEGER,
+  user_id     INTEGER NOT NULL,
+  cents       NUMERIC(12,4) NOT NULL,
+  byok        BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  settled_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_turn_spend_open_user ON turn_spend (user_id, created_at) WHERE settled_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_turn_spend_open_day ON turn_spend (created_at) WHERE settled_at IS NULL AND NOT byok;
+CREATE INDEX IF NOT EXISTS idx_turn_spend_turn ON turn_spend (turn_id) WHERE turn_id IS NOT NULL;
+COMMENT ON TABLE turn_spend IS 'staging:private';

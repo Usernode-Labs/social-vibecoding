@@ -130,6 +130,13 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/cli-auth').cleanupCliAuth(pool),
   },
   {
+    // Model calls no live turn will settle into llm_usage (its record went
+    // without settling them, or there was none), after two hours
+    // (services/limits.js settleOpenTurnSpend).
+    name: 'turn-spend-settle', everyMs: 15 * MIN,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/limits').settleOpenTurnSpend(pool),
+  },
+  {
     // Turns' streams (stream_events) a finished turn did not clear, and the
     // watchers of a process that went (services/session-bus.js).
     name: 'turn-stream-retention', everyMs: 15 * MIN,

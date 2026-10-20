@@ -494,7 +494,6 @@ async function runAgentTurn({
   if (typeof leaseTimer.unref === 'function') leaseTimer.unref();
 
   let shim = null;
-  let unbilled = 0;
   let phaseOneCost = 0;
   let totalCost = 0;
   let visibleText = '';
@@ -515,14 +514,11 @@ async function runAgentTurn({
       log.warn('agent-mayor', 'Could not record Mayor spend', { agentSessionId, err: err.message });
     });
   };
-  const bill = (cents) => {
+  // Each model call is recorded as it is made (the caps see it at once, and
+  // a turn whose process went loses none of it), by whoever paid for it.
+  const bill = async (cents, byok = mayor.byok) => {
     if (!(cents > 0)) return;
-    unbilled += cents;
     totalCost += cents;
-  };
-  const flushSpend = async (byok) => {
-    const cents = unbilled;
-    unbilled = 0;
     await recordSpend(cents, byok);
   };
 
@@ -780,7 +776,7 @@ async function runAgentTurn({
           },
         });
         wrapCost = costOf(mayor, wrap, d);
-        bill(wrapCost);
+        await bill(wrapCost, wrapByok);
         const written = d.takeTextualReplies(d.stripFakeCompletionMarker(wrap.text || '').trim());
         wrapText = written.text;
         const repliesUse = (wrap.toolUses || []).find((u) => u.name === SUGGEST_REPLIES);
@@ -826,7 +822,6 @@ async function runAgentTurn({
       send('mayor_reasoning', { text: wrapText, messageId: wrapId, wrapUp: true });
       if (wrapReplies) send('quick_replies', { replies: wrapReplies });
     }
-    await flushSpend(wrapByok);
     return true;
   };
 
@@ -912,7 +907,7 @@ async function runAgentTurn({
         },
       });
       const cents = costOf(mayor, result, d);
-      bill(cents);
+      await bill(cents);
       phaseOneCost += cents;
       roundText = '';
       const text = replyText(result.text);
@@ -1000,7 +995,6 @@ async function runAgentTurn({
     const messageId = await persistReply(stop.stopped ? { stopped: true } : (dispatchKind ? { dispatch: dispatchKind } : {}));
     if (messageId || cards.length) send('mayor_reasoning', { text: visibleText, messageId, cards });
     if (quickReplies && !dispatchUse) send('quick_replies', { replies: quickReplies });
-    await flushSpend();
 
     if (dispatchUse && !stop.stopped) {
       await runDispatchAndWrapUp({ dispatchUse, pendingResults, convo, rows: history, systemPrompt });
@@ -1008,7 +1002,6 @@ async function runAgentTurn({
     send('usage', { costCents: totalCost });
   } catch (err) {
     failed = true;
-    await flushSpend();
     if (stop.stopped || stop.interrupted) keepStreamedText();
     const flag = stop.stopped ? { stopped: true } : (stop.interrupted ? { interrupted: true } : { failed: true });
     const messageId = await persistReply(flag).catch((persistErr) => {

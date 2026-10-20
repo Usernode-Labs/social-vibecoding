@@ -40,6 +40,10 @@ function makePool() {
         row.result = JSON.parse(params[2]);
         return { rows: [{ result: row.result }], rowCount: 1 };
       }
+      // A turn's kept calls (turn_spend), settled with its receipt: none here.
+      if (/UPDATE turn_spend SET settled_at/.test(text)) {
+        return { rows: [{ platform: 0, byok: 0 }], rowCount: 0 };
+      }
       if (/MUTATE/.test(text)) {
         mutations += 1;
         return { rows: [], rowCount: 1 };

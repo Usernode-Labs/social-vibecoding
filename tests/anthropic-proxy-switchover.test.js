@@ -94,7 +94,7 @@ function makePool({
       }
       // Week-to-date for one user. Matched BEFORE the global sum below,
       // which is the same aggregate without the user predicate.
-      if (/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/.test(sql)) {
+      if (/llm_usage WHERE user_id = \$1 AND date >= \$2/.test(sql)) {
         return { rows: [{ total: weeklySpent, byok: 0 }] };
       }
       if (/SELECT SUM\(total_cost_cents\)/.test(sql)) {
@@ -463,7 +463,7 @@ test('weekly cap exhausted + NO key → 429 naming the WEEK, not the day', async
     assert.equal(r.body.message, 'Weekly limit reached ($175.00). Resets Monday 00:00 UTC.',
       'the refusal names the boundary the user actually has to wait for');
     assert.equal(p.state.forwards.length, 0);
-    assert.ok(pool.issued(/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/),
+    assert.ok(pool.issued(/llm_usage WHERE user_id = \$1 AND date >= \$2/),
       'and it got there by reading the week, not by inferring it from today');
   } finally {
     p.restore();

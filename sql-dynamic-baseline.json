@@ -150,6 +150,20 @@
       "preview": "`SELECT i.id, i.app_id, i.github_issue_number, i.title, i.description, i.kind, i.status, i.created_at, i.created_by, u.username AS created_by_username, a.slug A"
     },
     {
+      "source": "src/routes/anthropic-proxy.js",
+      "kind": "structural-template",
+      "fingerprint": "537e15e2ddcc8e4a9103",
+      "count": 1,
+      "preview": "`SELECT ${limits.TODAY_USER_SPEND_SQL} AS total_cost_cents`"
+    },
+    {
+      "source": "src/routes/anthropic-proxy.js",
+      "kind": "structural-template",
+      "fingerprint": "96659719fc9831d52285",
+      "count": 1,
+      "preview": "`SELECT ${limits.TODAY_GLOBAL_SPEND_SQL} AS total`"
+    },
+    {
       "source": "src/routes/app-llm-proxy.js",
       "kind": "structural-template",
       "fingerprint": "1c787716552bf5b4f404",
