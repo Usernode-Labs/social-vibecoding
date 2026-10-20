@@ -240,3 +240,78 @@ test('the pages say what is below their tabs: All items on the project page, a r
   assert.doesNotMatch(switcher, /lit sidebar row goes back/);
   assert.match(switcher, /t\.closest\('\[data-community-switch\]'\)/, 'a press on the rail row closes the menu like any other');
 });
+
+// ── #5040: the blue number goes to what it counts ────────────────────
+
+/** The ladder with the place store and the Communities screen's store stood in. */
+function loadVotesLadder({ shown = { slug: null, place: 'status' }, workshopTab = 'status' } = {}) {
+  const calls = [];
+  const mod = loadTsx(LADDER_PATH, {
+    cache: false,
+    stubs: {
+      './community-scope': {
+        goToCommunity: (slug) => calls.push(['goToCommunity', slug]),
+        closeSwitcher: () => calls.push(['closeSwitcher']),
+      },
+      '../dev-board/workshop/place-store': {
+        openPlace: (slug, key) => { calls.push(['openPlace', slug, key]); return false; },
+        placeStore: { get: () => shown },
+      },
+      './workshop-store.js': { workshopStore: { get: () => ({ tab: workshopTab }) } },
+    },
+  });
+  return { mod, calls };
+}
+
+test('#5040: goToVotes opens Needs you, the community\'s or every community\'s', () => {
+  const { mod, calls } = loadVotesLadder();
+  withPage({}, (location) => {
+    mod.goToVotes('flat-4b');
+    assert.deepEqual(calls, [['closeSwitcher'], ['openPlace', 'flat-4b', 'needs']], 'the community\'s Needs you place');
+    assert.equal(location.hash, '', 'openPlace is the door; nothing else routes');
+  });
+  calls.length = 0;
+  const tabs = [];
+  withPage({}, (location) => {
+    global.window.UsernodeReact = { workshop: { setTab: (t) => tabs.push(t) } };
+    mod.goToVotes(null);
+    assert.deepEqual(tabs, ['needs'], 'the Communities screen opens on its Needs you feed');
+    assert.equal(location.hash, '#communities');
+  });
+  assert.deepEqual(calls, [['closeSwitcher']], 'never the drawer\'s list or the ladder');
+});
+
+test('#5040: onVotes is true only where the counted votes are on screen', () => {
+  const app = { currentApp: 'garden' };
+  const onNeeds = loadVotesLadder({ shown: { slug: 'garden', place: 'needs' } }).mod;
+  const onHub = loadVotesLadder({ shown: { slug: 'garden', place: 'status' } }).mod;
+  withPage({ app }, () => {
+    assert.equal(onNeeds.onVotes('app-view', 'garden'), true, 'the community\'s Needs you place');
+    assert.equal(onHub.onVotes('app-view', 'garden'), false, 'the Hub is not the votes');
+    assert.equal(onNeeds.onVotes('app-view', 'recipes'), false, 'another community\'s page');
+    assert.equal(onNeeds.onVotes('workshop-screen', 'garden'), false);
+  });
+  const feed = loadVotesLadder({ workshopTab: 'needs' }).mod;
+  const list = loadVotesLadder({ workshopTab: 'status' }).mod;
+  withPage({}, () => {
+    assert.equal(feed.onVotes('workshop-screen', null), true, 'All communities\' Needs you feed');
+    assert.equal(list.onVotes('workshop-screen', null), false, 'the list of communities');
+    assert.equal(feed.onVotes('app-view', null), false);
+  });
+});
+
+test('#5040: the tab bar sends a press to the votes while the blue number shows, before the ladder', () => {
+  const src = read('frontend/src/features/nav/tab-bar.tsx');
+  const votesAt = src.indexOf("if (key === 'workshop' && key !== lit && votes > 0 && !onVotes(screen, scope.slug))");
+  const ladderAt = src.indexOf("if (key === 'workshop' && lit === 'workshop' && tab === 'workshop')");
+  assert.ok(votesAt > 0 && ladderAt > votesAt, 'the votes branch runs before the lit tab\'s ladder');
+  assert.match(src.slice(votesAt, ladderAt), /goToVotes\(slug\)/);
+  // The lit tab keeps its ladder whatever the number says: one level up per
+  // press (#3701), never bounced back to Needs you from the Hub.
+  const sidebarAt = src.indexOf("if (key === 'workshop' && sidebarRows)");
+  assert.ok(sidebarAt > 0 && sidebarAt < votesAt, 'the sidebar row\'s press is decided first, and unchanged');
+  assert.match(src.slice(ladderAt, ladderAt + 200), /pressLitTab\(screen\)/, 'the lit tab is the ladder');
+  assert.doesNotMatch(src.slice(ladderAt, src.indexOf('now?.(event)', ladderAt)), /goToVotes/, 'no votes detour on the lit tab');
+  assert.match(src, /title=\{key === 'workshop' && titleVotes > 0 \? t\('core:tabs\.votesWaiting', \{ count: titleVotes \}\) : undefined\}/,
+    'pointed at, the tab says what the number counts, and nothing at zero');
+});

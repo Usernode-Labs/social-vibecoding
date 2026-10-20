@@ -129,6 +129,8 @@ export function BrowseScreen() {
     grouped: boolean;
     moreExpanded: boolean;
     adminFilters?: boolean;
+    categories?: Array<{ key: string; label: string }>;
+    category?: string;
   };
   const onDetail = state.level === 'detail';
 
@@ -266,6 +268,45 @@ export function BrowseScreen() {
             </Chip>
           )) : null}
         </ChipRail>
+        {/*
+            THE TYPE CHIPS (#3962): a second row, All types and then each
+            kind of app the directory holds, read from each project's own
+            dapp.json `category`. It narrows the set the chips above picked,
+            before Sort orders it and the search narrows it. Drawn only once
+            the store lists a type, which the prerender never does, so the
+            shipped markup has no row and hydration is silent; a directory
+            where no project has said what it is keeps the row absent.
+        */}
+        {state.categories && state.categories.length ? (
+          <ChipRail
+            id="browse-category-chips"
+            role="group"
+            aria-label={t('discover:category.groupLabel')}
+            className="mt-2 max-w-xl gap-2 px-0 py-0"
+          >
+            <Chip
+              size="bar"
+              className="browse-category-chip px-4"
+              selected={(state.category || 'all') === 'all'}
+              data-category="all"
+              onClick={() => browse()?.setCategory('all')}
+            >
+              {t('discover:category.all')}
+            </Chip>
+            {state.categories.map((c) => (
+              <Chip
+                key={c.key}
+                size="bar"
+                className="browse-category-chip px-4"
+                selected={state.category === c.key}
+                data-category={c.key}
+                onClick={() => browse()?.setCategory(c.key)}
+              >
+                {t(c.label)}
+              </Chip>
+            ))}
+          </ChipRail>
+        ) : null}
         {/*
             Sort (#1383). Rides the search bar rather than sitting in its own
             strip: both narrow the same list, and one sticky row costs the

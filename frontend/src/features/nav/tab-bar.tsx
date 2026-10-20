@@ -87,7 +87,7 @@ import {
   type CommunityInfo,
 } from '../workshop/community-scope';
 import { CommunitySwitcher } from '../workshop/community-switcher';
-import { pressLitTab } from '../workshop/tab-ladder';
+import { goToVotes, onVotes, pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
 import { RailCommunities, useRailCommunities } from './rail-communities';
 import { RailConversations } from './rail-conversations';
@@ -193,7 +193,13 @@ export function tabLabel(
  * word is the whole of it, and the anchor carries no label of its own, as
  * the prerender ships it.
  */
-export function communitiesAriaLabel(scoped: { name: string } | null): string | undefined {
+export function communitiesAriaLabel(scoped: { name: string } | null, votes = 0): string | undefined {
+  // #5040: the blue number is said in words too, after the tab's own name.
+  if (votes > 0) {
+    return scoped
+      ? translate('core:tabs.communitiesOnVotes', { community: scoped.name, count: votes })
+      : translate('core:tabs.communitiesVotes', { count: votes });
+  }
   return scoped ? translate('core:tabs.communitiesOn', { community: scoped.name }) : undefined;
 }
 
@@ -814,6 +820,8 @@ export function PlatformTabs() {
   const railShown = useRailCommunities();
   const allVotes = Number(scope.badgeNeeds) || 0;
   const allCount = scope.list ? scope.list.length : 0;
+  // #5040: the blue number the tab shows at this width, which its tooltip names.
+  const titleVotes = sidebarRows ? allVotes : votes;
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
   // fold the one there is (../header/../nav/sidebar-toggle.tsx). The peek
@@ -877,6 +885,19 @@ export function PlatformTabs() {
       event.preventDefault();
       if (screen === 'workshop-screen') pressLitTab(screen);
       else goToCommunity(null);
+      return;
+    }
+    // #5040: WHILE THE BLUE NUMBER SHOWS, THE TAB OPENS WHAT IT COUNTS:
+    // Needs you, the community's or every community's (tab-ladder.ts
+    // goToVotes). Only from another tab: the LIT tab keeps its ladder below,
+    // one level up per press (#3701), or Needs you → Hub → Needs you would
+    // be a loop that never reaches All communities. Phone bar only; the
+    // sidebar's row above is unchanged.
+    if (key === 'workshop' && key !== lit && votes > 0 && !onVotes(screen, scope.slug)) {
+      event.preventDefault();
+      const slug = scope.slug;
+      if (press(event.currentTarget, key, () => goToVotes(slug))) return;
+      goToVotes(slug);
       return;
     }
     if (key === 'workshop' && lit === 'workshop' && tab === 'workshop') {
@@ -992,8 +1013,12 @@ export function PlatformTabs() {
           // Beside the sidebar's list the tab is its All row, and named by
           // the words it shows ("All 13 communities"), not the community.
           aria-label={key === 'workshop'
-            ? (sidebarRows ? undefined : communitiesAriaLabel(scoped))
+            ? (sidebarRows ? undefined : communitiesAriaLabel(scoped, votes))
             : tabLabel(key, t(label), viewer).ariaLabel}
+          // #5040: pointed at, the tab says what its blue number counts (on
+          // the sidebar's All row, every vote waiting on you). None at zero,
+          // as the prerender ships it.
+          title={key === 'workshop' && titleVotes > 0 ? t('core:tabs.votesWaiting', { count: titleVotes }) : undefined}
           onClick={(event) => onTabClick(event, key, href)}
         >
           <span className="platform-tab-mark">

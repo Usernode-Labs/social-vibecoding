@@ -177,9 +177,9 @@ test('the icon is saved only to a project with none, and open home screens are t
 test('dapp.json gets the card\'s icon at the first commit, or in the late commit, and never over one set', () => {
   const file = (list, p) => list.find((f) => f.path === p)?.content;
   const files = getTemplateFiles('Run Club', 'run-club-abc', 'postgres://x', null, { sketch: ROW });
-  assert.deepEqual(JSON.parse(file(files, 'dapp.json')), { icon: { emoji: '🏃' }, secrets: [], tests: [] });
+  assert.deepEqual(JSON.parse(file(files, 'dapp.json')), { category: 'other', icon: { emoji: '🏃' }, secrets: [], tests: [] });
   const plain = getTemplateFiles('Run Club', 'run-club-abc', 'postgres://x');
-  assert.deepEqual(JSON.parse(file(plain, 'dapp.json')), { secrets: [], tests: [] }, 'no card, no icon');
+  assert.deepEqual(JSON.parse(file(plain, 'dapp.json')), { category: 'other', secrets: [], tests: [] }, 'no card, no icon');
   // (A starter's own icon came first; the starters were deleted with the
   // create dialog, so Empty and the card are all there is.)
   // The late commit's dapp.json: the icon added beside the description, or nothing.

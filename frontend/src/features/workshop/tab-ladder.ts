@@ -48,6 +48,18 @@
  * replaced back over it, so the hold was removed (18 Oct 2026). A held tab
  * is an ordinary press.
  *
+ * ── A blue number goes to what it counts (#5040) ──────────────────────
+ *
+ * The tab's blue number is the votes waiting on you (./community-scope.ts
+ * `tabVotes`). Nothing said so, and pressing the tab took you to the Hub or
+ * up to All communities, neither of which lists them. So while the number
+ * shows and its votes are not already on screen, a press of the tab from
+ * another tab opens Needs you (`goToVotes`): the community's own on a
+ * community, the cross-community feed on All communities. A press of the
+ * LIT tab is always the ladder above, one level up, or Needs you → Hub →
+ * Needs you would loop. Phone bar only: the desktop sidebar's row is
+ * unchanged. With no blue number nothing here runs.
+ *
  * ── Who knows where you are ───────────────────────────────────────────
  *
  * The router knows the screen and the app (`App.currentApp`, and whether the
@@ -60,7 +72,9 @@
  */
 
 import { drawerStore, pressTab as pressDrawerTab } from '../nav-drawer/drawer-store';
-import { goToCommunity } from './community-scope';
+import { closeSwitcher, goToCommunity } from './community-scope';
+import { openPlace, placeStore } from '../dev-board/workshop/place-store';
+import { workshopStore } from './workshop-store.js';
 
 /** The pages under a place (../dev-board/workshop/places.ts): a step above them is the place. */
 const PAGES_UNDER_A_PLACE = ['all', 'bot', 'plan'];
@@ -259,4 +273,37 @@ export function pressLitTab(screen: string | null, { stopAtCommunity = false }: 
     goToCommunity(null);
   }
   return rung;
+}
+
+/**
+ * #5040: the votes the tab's blue number counts are already on screen: the
+ * community's Needs you place on its page, or, on All communities (no
+ * slug), the Communities screen's Needs you feed.
+ */
+export function onVotes(screen: string | null, slug: string | null): boolean {
+  if (!slug) {
+    if (screen !== 'workshop-screen') return false;
+    try { return (workshopStore.get() as { tab?: string }).tab === 'needs'; } catch { return false; }
+  }
+  if (screen !== 'app-view' || app()?.currentApp !== slug) return false;
+  const shown = placeStore.get();
+  return shown.slug === slug && shown.place === 'needs';
+}
+
+/**
+ * #5040: a press of the tab while its blue number shows: the list it counts.
+ * A community's Needs you place (openPlace moves the page in place when it
+ * is up, and is a door with its own entry otherwise), or on All communities
+ * the cross-community feed, the page the drawer's own "Needs you" row and a
+ * vote digest open.
+ */
+export function goToVotes(slug: string | null): void {
+  closeSwitcher();
+  if (slug) {
+    openPlace(slug, 'needs');
+    return;
+  }
+  const w = window as unknown as { UsernodeReact?: { workshop?: { setTab?: (tab: string) => void } } };
+  try { w.UsernodeReact?.workshop?.setTab?.('needs'); } catch { /* the screen opens on its list */ }
+  if (window.location.hash !== '#communities') window.location.hash = '#communities';
 }

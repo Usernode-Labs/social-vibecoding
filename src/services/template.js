@@ -606,7 +606,7 @@ api.routes(app, pool);
 // non-default rule is written into dapp.json's `governance` block, the
 // rule's source of truth, so the repository says what the row says from its
 // first commit. The default rule writes nothing: dapp.json stays
-// `{ "secrets": [] }`.
+// `{ "category": "other", "secrets": [], "tests": [] }`.
 //
 // `description` is the create screen's optional "What is it?" line. It
 // becomes dapp.json's top-level `description` (what the join screen,
@@ -1043,6 +1043,11 @@ value = "build"
       content: JSON.stringify(
         {
           ...(about ? { description: about } : {}),
+          // What kind of app it is, for Discover's "Filter by type" chips
+          // (#3962; app-manifest.js APP_CATEGORIES has the set). A game
+          // starter is a game; anything else starts as `other`, a line the
+          // group changes by proposal once it knows what it is making.
+          category: starter && starter.kind === 'game' ? 'games' : 'other',
           // A starter's tile icon, else the first session card's, and the
           // checks a starter's first proposal runs. The empty starter ships
           // an empty `tests` array, so the key its checks go under is there
