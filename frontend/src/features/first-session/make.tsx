@@ -279,10 +279,14 @@ export function neededLine(missing: Missing, brief: string, finishing = false): 
   return null;
 }
 
-/** Over the question: hello on the first session, what this is from Create. */
-export function makeEyebrow(entry: MakeEntry, who: string): string {
-  if (entry === 'create') return translate('onboarding:firstSession.make.eyebrow.create');
-  return who ? translate('onboarding:firstSession.make.eyebrow.hello', { name: who }) : translate('onboarding:firstSession.make.eyebrow.youreIn');
+/**
+ * The question itself (#5617): hello on the first session when the name is
+ * known, the plain question from Create or without one. One title, no
+ * eyebrow above it.
+ */
+export function makeTitle(entry: MakeEntry, who: string): string {
+  if (entry !== 'create' && who) return translate('onboarding:firstSession.make.titleHello', { name: who });
+  return translate('onboarding:firstSession.make.title');
 }
 
 /**
@@ -734,7 +738,6 @@ export function MakeScreen({
             className={formClass}
             header={(
               <div className="text-center">
-                <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">{makeEyebrow(entry, who)}</p>
                 <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">{t(IMPORT_TITLE)}</h1>
                 <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">{t(IMPORT_LINE)}</p>
               </div>
@@ -750,10 +753,7 @@ export function MakeScreen({
           onSubmit={(e) => { e.preventDefault(); void make(); }}
         >
           <div className="text-center">
-            <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
-              {makeEyebrow(entry, who)}
-            </p>
-            <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">{t('onboarding:firstSession.make.title')}</h1>
+            <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">{makeTitle(entry, who)}</h1>
           </div>
           <p className="mt-6 pb-2 text-[13px] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.make.startFromIdea')}</p>
           <div className="grid grid-cols-2 gap-2" role="group" aria-label={t('onboarding:firstSession.make.ideasLabel')}>
