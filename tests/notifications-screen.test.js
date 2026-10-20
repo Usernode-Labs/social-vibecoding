@@ -107,7 +107,8 @@ test('the screen renders from the store: all rows, tabs, sections, pager', () =>
   assert.match(controllerSrc, /createdAtMs: Date\.parse\(n\.createdAt\) \|\| 0/);
   // The screen partitions client-side and acts through the controller.
   // #5289: two tabs, Unread and All; the Messages filter is gone.
-  assert.match(screen, /const rows = tab === 'unread' \? unread : all;/);
+  // #3206: on All a kind chip may narrow it (tests/notifications-kind-filter.test.js).
+  assert.match(screen, /const rows = tab === 'unread' \? unread\s*: kindOn \? all\.filter\(/);
   assert.match(screen, /at: view\.createdAtMs \|\| 0/);
   assert.match(screen, /entry\.at >= boundary/);
   assert.match(screen, /_onItemClick\(view\.id\)/);

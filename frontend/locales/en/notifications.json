@@ -77,7 +77,27 @@
   },
   "sheet.older.load": {
     "text": "See older notifications",
-    "description": "Button at the foot of the notifications sheet's All filter: fetches the next page of older notifications."
+    "description": "Button at the foot of the notifications sheet's All filter: fetches the next page of older notifications (with a kind filter on, the older ones of that kind join the list)."
+  },
+  "sheet.kinds": {
+    "text": "Show one kind",
+    "description": "Accessible name of the row of kind filters (Votes, Mentions & replies, Invites) under the Unread and All filters, on the All filter of the notifications sheet."
+  },
+  "sheet.kind.votes": {
+    "text": "Votes",
+    "description": "Filter chip on the notifications sheet's All filter: shows only notifications about votes (a change up for your vote, going stale, ready to try, a vote on your change, a change you voted on going live)."
+  },
+  "sheet.kind.mentions": {
+    "text": "Mentions & replies",
+    "description": "Filter chip on the notifications sheet's All filter: shows only notifications where someone named you with @ or replied to you, in a project's chat, a request or a conversation."
+  },
+  "sheet.kind.invites": {
+    "text": "Invites",
+    "description": "Filter chip on the notifications sheet's All filter: shows only invitations (to build or approve on a project, to join a conversation) and friend requests."
+  },
+  "sheet.empty.kind": {
+    "text": "Nothing of this kind yet.",
+    "description": "Shown in the notifications sheet when a kind filter (Votes, Mentions & replies or Invites) on the All filter has nothing in it among the notifications loaded so far."
   },
   "sheet.search.placeholder": {
     "text": "Search notifications…",
