@@ -291,16 +291,35 @@ export function onVotes(screen: string | null, slug: string | null): boolean {
 }
 
 /**
+ * `slug`'s page is on screen: the router is on it and its places are up
+ * under a revealed `#app-view`. The same test goToCommunity's `onPage` makes
+ * (./community-scope.ts).
+ */
+export function pageOnScreen(slug: string): boolean {
+  try {
+    return app()?.currentApp === slug
+      && !!document.querySelector?.('#app-view:not(.hidden) #dev-workshop > .dev-ws');
+  } catch {
+    return false;
+  }
+}
+
+/**
  * #5040: a press of the tab while its blue number shows: the list it counts.
  * A community's Needs you place (openPlace moves the page in place when it
  * is up, and is a door with its own entry otherwise), or on All communities
  * the cross-community feed, the page the drawer's own "Needs you" row and a
  * vote digest open.
+ *
+ * #5700: unless its page is on screen, the press is a door. Leaving the
+ * community for Messages or Me leaves its page mounted behind the hidden
+ * `#app-view`, so moving it in place would move a page nobody can see while
+ * the other screen stays up.
  */
 export function goToVotes(slug: string | null): void {
   closeSwitcher();
   if (slug) {
-    openPlace(slug, 'needs');
+    openPlace(slug, 'needs', { door: !pageOnScreen(slug) });
     return;
   }
   const w = window as unknown as { UsernodeReact?: { workshop?: { setTab?: (tab: string) => void } } };
