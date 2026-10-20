@@ -530,6 +530,78 @@ const Browse = {
     Browse.render();
   },
 
+  // ── Type chips (#3962) ────────────────────────────────────────────
+  //
+  // A second row under the filter chips: All types, then one chip per KIND
+  // of app (dapp.json's top-level `category`, which the deploy reads into
+  // the manifest snapshot GET /api/apps already carries). Nothing guesses a
+  // type: an app is under a type only when its own dapp.json says so, so an
+  // app that says nothing is listed under All types alone.
+  //
+  // A COPY of app-manifest.js APP_CATEGORIES, labelled, in its order; the
+  // server's list is the authority on which words are valid and
+  // tests/browse-screen.test.js pins the two together. The screen draws the
+  // row from the `categories` the list render publishes, never from this
+  // array directly, so the chips are only the types some app has.
+  CATEGORIES: [
+    { key: 'games', label: 'discover:category.games' },
+    { key: 'social', label: 'discover:category.social' },
+    { key: 'tools', label: 'discover:category.tools' },
+    { key: 'learning', label: 'discover:category.learning' },
+    { key: 'creative', label: 'discover:category.creative' },
+    { key: 'other', label: 'discover:category.other' },
+  ],
+
+  // Remembered for the session only, like _filter, and for the same reason.
+  _category: 'all',
+
+  // An app's type, or null: the snapshot's `category` when it is one of
+  // CATEGORIES. Pure — unit-tested.
+  appCategory(app) {
+    const snap = app && app.manifest_snapshot;
+    const raw = snap && typeof snap === 'object' ? snap.category : null;
+    const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    return Browse.CATEGORIES.some((c) => c.key === key) ? key : null;
+  },
+
+  // The chips the row shows: every type at least one app in the directory
+  // has, in CATEGORIES order. Read off the whole directory, not the filtered
+  // list, so the row stays put while the other controls change. Empty while
+  // no app has a type other than `other`: a row of All types and Other
+  // alone would sort nothing, so it stays absent until projects tag
+  // themselves. Pure — unit-tested.
+  presentCategories(apps) {
+    const have = new Set();
+    for (const a of apps || []) {
+      const key = Browse.appCategory(a);
+      if (key) have.add(key);
+    }
+    if (![...have].some((key) => key !== 'other')) return [];
+    return Browse.CATEGORIES.filter((c) => have.has(c.key));
+  },
+
+  // A type the directory has, else All types: a chip that is gone (its last
+  // app retagged) cannot stay pressed over an empty list.
+  resolveCategory(raw, apps) {
+    const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    const present = Browse.presentCategories(apps === undefined ? Browse._apps : apps);
+    return present.some((c) => c.key === key) ? key : 'all';
+  },
+
+  // A type chip's onClick.
+  setCategory(key) {
+    Browse._category = Browse.resolveCategory(key);
+    if (Browse._store) Browse._store.set({ category: Browse._category });
+    Browse.render();
+  },
+
+  // The type's set. 'all' is the list unchanged. Pure — unit-tested.
+  categoryApps(apps, key) {
+    const list = (apps || []).filter(Boolean);
+    if (!key || key === 'all') return list;
+    return list.filter((a) => Browse.appCategory(a) === key);
+  },
+
   // The New chip's set: see NEW_WINDOW_DAYS. `now` is injectable for the
   // tests. Pure — unit-tested.
   newApps(apps, now) {
@@ -579,10 +651,13 @@ const Browse = {
     return list;
   },
 
-  // The nothing-to-show line, per chip. Pure — unit-tested.
-  emptyText(query, key) {
+  // The nothing-to-show line, per chip. With a type picked and no search,
+  // it says the type has nothing here, since the type row only offers types
+  // some app has: it is the filter chip that emptied it. Pure — unit-tested.
+  emptyText(query, key, category) {
     const filter = Browse.resolveFilter(key == null ? Browse._filter : key);
     const q = String(query || '').trim();
+    if (!q && category && category !== 'all') return PlatformI18n.t('discover:empty.category');
     if (q) {
       if (filter === 'featured') return PlatformI18n.t('discover:empty.search.featured', { query: q });
       if (filter === 'notjoined') return PlatformI18n.t('discover:empty.search.notJoined', { query: q });
@@ -751,7 +826,8 @@ const Browse = {
   // order with one exception (#4793): an app whose name or slug IS the
   // query moves to the top, the rest staying where the sort put them.
   visibleApps() {
-    const pool = Browse.filterApps(Browse._apps, Browse._filter);
+    const chipped = Browse.filterApps(Browse._apps, Browse._filter);
+    const pool = Browse.categoryApps(chipped, Browse.resolveCategory(Browse._category));
     const sorted = Browse.sortApps(pool, Browse._sort);
     return Home.filterApps(sorted, Browse._query);
   },
@@ -859,7 +935,9 @@ const Browse = {
     // The DEFAULT list (#5267): Recommended order, the All chip, no search.
     // Only it is grouped, and it leads with "Recommended for you"; every
     // other chip and sort is one list in its own order.
-    const grouped = Browse._sort === 'recommended' && !query && Browse._filter === 'all';
+    const categories = Browse.presentCategories(Browse._apps);
+    const category = Browse.resolveCategory(Browse._category);
+    const grouped = Browse._sort === 'recommended' && !query && Browse._filter === 'all' && category === 'all';
     const picked = grouped ? Browse.recommendedApps(apps) : [];
     const pickedSlugs = new Set(picked.map((a) => a.slug));
     const rest = picked.length ? apps.filter((a) => !pickedSlugs.has(a.slug)) : apps;
@@ -877,6 +955,10 @@ const Browse = {
       sort: Browse._sort,
       // …and the chips and #browse-list[data-filter], for the same reason.
       filter: Browse._filter,
+      // The type row (#3962): the chips it holds (none hides it) and the
+      // pressed one, published together with the rows they picked.
+      categories,
+      category,
       // #1912: EVERY sort tucks the demos and apps needing fixes behind
       // Show more — the disclosure used to exist on Recommended only, so
       // switching to a metric sort suddenly showed everything. Only
@@ -891,7 +973,7 @@ const Browse = {
       error: false,
       // The site row IS a result, so the "No apps match" line never shows
       // right under it.
-      empty: site ? null : (rows.length ? null : Browse.emptyText(query, Browse._filter)),
+      empty: site ? null : (rows.length ? null : Browse.emptyText(query, Browse._filter, category)),
     });
 
     Browse._maybeShotDetail(rows);

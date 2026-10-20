@@ -710,6 +710,87 @@ test('an empty chip says which set is empty', () => {
   assert.equal(state.empty, 'No apps match “zzz”.', 'All keeps the sentence it always had');
 });
 
+// ── Type chips (#3962) ────────────────────────────────────────────
+
+const typed = (slug, category, over) => app({ slug, name: slug, manifest_snapshot: { secrets: [], category }, ...over });
+
+test('the type chips are a labelled copy of dapp.json\'s category list, in its order', () => {
+  const { Browse } = makeBrowse();
+  const { APP_CATEGORIES } = require('../src/services/app-manifest');
+  assert.deepEqual(Array.from(Browse.CATEGORIES, (c) => c.key), Array.from(APP_CATEGORIES));
+  assert.deepEqual(Array.from(Browse.CATEGORIES, (c) => message(c.label)),
+    ['Games', 'Social', 'Tools', 'Learning', 'Creative', 'Other']);
+  assert.equal(message('discover:category.all'), 'All types');
+  assert.equal(message('discover:category.groupLabel'), 'Filter by type');
+});
+
+test('appCategory reads the manifest snapshot and nothing else', () => {
+  const { Browse } = makeBrowse();
+  assert.equal(Browse.appCategory(typed('a', 'games')), 'games');
+  assert.equal(Browse.appCategory(typed('a', ' Social ')), 'social');
+  // No guessing from words: a chess app that says nothing has no type.
+  assert.equal(Browse.appCategory(app({ name: 'Chess Arena' })), null);
+  assert.equal(Browse.appCategory(typed('a', 'casino')), null);
+  assert.equal(Browse.appCategory(app({ manifest_snapshot: null })), null);
+  assert.equal(Browse.appCategory(null), null);
+});
+
+test('presentCategories: only types some app has, and no row for Other alone', () => {
+  const { Browse } = makeBrowse();
+  const keys = (list) => Array.from(list, (c) => c.key);
+  assert.deepEqual(keys(Browse.presentCategories([app({}), app({ slug: 'b' })])), [], 'nobody tagged: no row');
+  assert.deepEqual(keys(Browse.presentCategories([typed('a', 'other'), typed('b', 'other')])), [],
+    'All types and Other alone would sort nothing');
+  assert.deepEqual(keys(Browse.presentCategories([typed('a', 'tools'), typed('b', 'other'), typed('c', 'games'), app({})])),
+    ['games', 'tools', 'other'], 'in the list\'s order');
+});
+
+test('a type narrows the chip\'s set, before Sort and the search', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [
+    typed('chess', 'games', { active_users: 5, is_member: true }),
+    typed('quiz', 'games', { active_users: 50 }),
+    typed('notes', 'tools', { active_users: 99 }),
+    app({ slug: 'untagged', name: 'untagged', active_users: 7 }),
+  ];
+  Browse.setSort('users');
+  assert.deepEqual(Array.from(state.categories, (c) => c.key), ['games', 'tools']);
+  assert.equal(state.category, 'all');
+  assert.deepEqual(slugs(state), ['notes', 'quiz', 'untagged', 'chess'], 'All types is everything');
+  Browse.setCategory('games');
+  assert.equal(state.category, 'games');
+  assert.deepEqual(slugs(state), ['quiz', 'chess'], 'only games, still in Sort\'s order');
+  Browse.setFilter('yours');
+  assert.deepEqual(slugs(state), ['chess'], 'composes with the filter chip');
+  Browse.setFilter('all');
+  Browse.setQuery('qu', { immediate: true });
+  assert.deepEqual(slugs(state), ['quiz'], 'and with the search');
+  Browse.setQuery('', { immediate: true });
+  // A type no app has is not a chip, and asking for one lands on All types.
+  Browse.setCategory('learning');
+  assert.equal(state.category, 'all');
+  assert.equal(slugs(state).length, 4);
+});
+
+test('an emptied type says so, and a search keeps its own sentence', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [typed('quiz', 'games'), typed('notes', 'tools')];
+  Browse.setCategory('games');
+  Browse.setFilter('featured');
+  assert.equal(state.empty, 'No apps of this type here.');
+  Browse.setQuery('zzz', { immediate: true });
+  assert.equal(state.empty, 'No featured apps match “zzz”.');
+});
+
+test('the type row is absent from the prerender and drawn from the store', () => {
+  const store = read('frontend/src/features/apps/browse-store.js');
+  assert.match(store, /categories: \[\],/);
+  assert.match(store, /category: 'all',/);
+  assert.doesNotMatch(INDEX, /browse-category-chips/, 'which types exist is known only after /api/apps');
+  const src = read('frontend/src/features/apps/browse-screen.tsx');
+  assert.match(src, /\{state\.categories && state\.categories\.length \? \(\s*<ChipRail\s+id="browse-category-chips"/);
+});
+
 // ── Open site (#5364) ─────────────────────────────────────────────
 
 // siteFor decides when the "Open site" row shows. Its rules ARE the feature:

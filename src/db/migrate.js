@@ -137,6 +137,8 @@ async function migrate(config) {
   // Must run AFTER seedStagingDemoAppCard — it focuses the demo app row.
   await seedStagingAgentOpenAppSession(pool, config);
   await seedStagingLandingDirectory(pool);
+  // After both: it tags their demo apps with a type.
+  await seedStagingAppCategories(pool);
   await seedStagingFailedApp(pool, config);
   await seedStagingForkLineage(pool, config);
   // After the fork fixtures: it switches one of them into demo mode.
@@ -6353,6 +6355,32 @@ async function seedStagingLandingDirectory(pool) {
     log.info('db', 'Staging landing-directory fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging landing-directory seeding failed', { message: err.message });
+  }
+}
+
+// #3962: Discover's "Filter by type" row appears only once some app's
+// dapp.json says what kind of app it is, and a staging copy of production
+// has none that do yet (nothing backfills real repositories). This writes a
+// `category` into the manifest snapshot of three demo fixture apps the two
+// seeds above make, so the row and its chips can be seen and pressed: the
+// open landing tile is a game, the demo app a tool, the gated tile a social
+// app. Display data on fake apps only; the snapshot is what a deploy of
+// those apps' dapp.json would have written. Idempotent: `||` sets the same
+// key to the same value on every boot. Strictly a no-op outside staging.
+async function seedStagingAppCategories(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `UPDATE apps AS a
+          SET manifest_snapshot = COALESCE(a.manifest_snapshot, '{"secrets": []}'::jsonb)
+                || jsonb_build_object('category', v.category)
+         FROM (VALUES (900100, 'games'), (900001, 'tools'), (900101, 'social'))
+              AS v(id, category)
+        WHERE a.id = v.id`
+    );
+    log.info('db', 'Staging app categories seeded');
+  } catch (err) {
+    log.warn('db', 'Staging app categories seeding failed', { message: err.message });
   }
 }
 
