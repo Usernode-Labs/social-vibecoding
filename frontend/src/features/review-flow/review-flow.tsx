@@ -55,6 +55,14 @@ const PREVIEW_INSET = 12;
 const OPEN_MS = 380;
 const PUSH_MS = 440;
 const MARKS_AFTER = 160;
+/**
+ * The feed's column and the change page are one width: 520px at most, the
+ * feed's 16px gutters included (app.css `.rf-feed`, `.rf-page`). The cards
+ * are composed at this cap, so on a wide window they keep a phone's size
+ * and grow straight into the page above them.
+ */
+const COLUMN = 520;
+const GUTTERS = 32;
 
 function reducedMotion(): boolean {
   try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
@@ -274,11 +282,11 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const shaped = useMemo(() => (items ? orderForReview(toReviewItems(items, shape)) : null), [items]);
   useEffect(() => { if (shaped && !open) setList(shaped); }, [shaped, open]);
 
-  // The cards' width: the pane's, less its margins.
+  // The cards' width: the column's, less its margins, never past the cap.
   useLayoutEffect(() => {
     const el = rootRef.current;
     if (!el) return undefined;
-    const measure = () => setWidth(Math.max(0, el.clientWidth - 32));
+    const measure = () => setWidth(Math.max(0, Math.min(el.clientWidth, COLUMN) - GUTTERS));
     measure();
     if (typeof ResizeObserver !== 'function') return undefined;
     const ro = new ResizeObserver(measure);
@@ -313,7 +321,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     if (!open || open.phase !== 'opening' || !pageRef.current) return;
     const page = pageRef.current;
     const pr = page.getBoundingClientRect();
-    setPageWidth(Math.min(520, pr.width));
+    setPageWidth(Math.min(COLUMN, pr.width));
     const card = cardOf(open.index);
     const cover = card?.querySelector<HTMLElement>('[data-rf-cover]');
     const done = () => {
@@ -531,16 +539,16 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
 
   /* ── Drawing ── */
   if (error) {
-    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-error="">{t('communities:reel.error')}</p>;
+    return <p className="rf-feed-note px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-error="">{t('communities:reel.error')}</p>;
   }
   if (!items && !list.length) {
     return <div className="rf-feed rf-loading" data-review-flow="" aria-busy="true" aria-label={t('communities:reel.loading')} />;
   }
   if (!list.length) {
-    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="" data-review-flow="">{t('communities:reel.empty')}</p>;
+    return <p className="rf-feed-note px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="" data-review-flow="">{t('communities:reel.empty')}</p>;
   }
 
-  const pw = pageWidth || Math.min(520, width + 32);
+  const pw = pageWidth || Math.min(COLUMN, width + GUTTERS);
   const page = open && item ? createPortal(
     <div className="rf-page-wrap" data-rf-page="">
       <div ref={pageRef} className="rf-page" role="dialog" aria-modal="false" aria-label={item.title}>
