@@ -552,8 +552,8 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
     assert.equal(bill.overCap(0), false);
     await bill.noteSpend(350);
     assert.equal(bill.overCap(100), true, 'past the eval\'s $4 cap');
-    const { rows: [t1] } = await pool.query('SELECT proxy_cents::float8 AS p FROM shots_eval_trials WHERE id = $1', [trial.id]);
-    assert.equal(t1.p, 350);
+    const { rows: [t1] } = await pool.query('SELECT proxy_cents::float8 AS p FROM shots_eval_attempt_costs WHERE attempt_id = $1', [trial.attempt_id]);
+    assert.equal(t1.p, 350, 'on its attempt\'s costs');
     // The proposal's own shots turn on the same session: never the eval's.
     await turn({ machine: 'shots', key: `session:${MERGED_TWO}`, kind: 'shots.agent', workKey: 'agent:1', workId: 'w' });
     assert.equal(await evals.billFor(pool, MERGED_TWO), null);
@@ -675,37 +675,85 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
     await closeEvals();
   });
 
+  const costOf = async (attemptId) => (await pool.query(
+    `SELECT proxy_cents::float8 AS proxy, reported_cents::float8 AS reported, charged_cents::float8 AS charged, settled_at IS NOT NULL AS settled
+       FROM shots_eval_attempt_costs WHERE attempt_id = $1`, [attemptId])).rows[0];
+  const ownedTurn = (trial) => ({ turnId: 't', mode: 'shots', owner: { machine: 'shots-eval', key: 'evals', kind: 'eval.agent', workKey: `agent:${trial.id}:${trial.attempt_id}:1`, workId: 'w' } });
+  const setTurn = (sessionId, t2) => pool.query('UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1', [sessionId, JSON.stringify(t2)]);
+  // An attempt ended (settled) by the machine's own end, as its cleanup writes it.
+  const settle1 = async (trial) => {
+    const c = await pool.connect();
+    try {
+      await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+      await require('../src/workflow/shots-eval/costs.ts').settleAttempt(c, { trialId: trial.id, attemptId: trial.attempt_id });
+      await c.query(`UPDATE shots_eval_trials SET state = 'failed', completed_at = NOW() WHERE id = $1`, [trial.id]);
+      await c.query('COMMIT');
+    } finally { c.release(); }
+  };
+
   await t.test('E3: a call reaching any process bills the trial: an older runner\'s turn, a straggler, a trial put back', async () => {
     await closeEvals();
     const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
     const [trial] = await trialsOf(launched.eval.id);
     await asTransition(pool, `UPDATE shots_eval_trials SET state = 'exploring' WHERE id = $1`, [trial.id]);
-    const turn = (t2) => pool.query('UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1', [MERGED_TWO, JSON.stringify(t2)]);
-    // An older release's runner's turn: no owner, correlated with the attempt.
-    await turn({ turnId: 't', mode: 'shots', telemetryCorrelationId: trial.attempt_id });
+    // An older release's runner's turn: no owner, correlated with the attempt;
+    // on the trial's row, which that runner settles (or this machine, adopting it).
+    await setTurn(MERGED_TWO, { turnId: 't', mode: 'shots', telemetryCorrelationId: trial.attempt_id });
     const old = await evals.billFor(pool, MERGED_TWO);
     assert.equal(old?.trialId, trial.id);
     await old.noteSpend(40);
+    assert.equal((await pool.query('SELECT proxy_cents::float8 AS p FROM shots_eval_trials WHERE id = $1', [trial.id])).rows[0].p, 40);
     // Correlated with nothing of an eval's: not the eval's.
-    await turn({ turnId: 't', mode: 'shots', telemetryCorrelationId: '7'.repeat(32) });
+    await setTurn(MERGED_TWO, { turnId: 't', mode: 'shots', telemetryCorrelationId: '7'.repeat(32) });
     assert.equal(await evals.billFor(pool, MERGED_TWO), null);
-    // A straggler after its end: on the trial's cost and its eval's spend at once.
-    await turn({ turnId: 't', mode: 'shots', owner: { machine: 'shots-eval', key: 'evals', kind: 'eval.agent', workKey: `agent:${trial.id}:${trial.attempt_id}:1`, workId: 'w' } });
+    // The machine's turn: on its attempt's costs; its end takes the row's too.
+    await setTurn(MERGED_TWO, ownedTurn(trial));
     const bill = await evals.billFor(pool, MERGED_TWO);
-    await asTransition(pool, `UPDATE shots_eval_trials SET state = 'failed', cost_cents = proxy_cents, proxy_cents = 0 WHERE id = $1`, [trial.id]);
-    await pool.query('UPDATE shots_eval_runs SET spent_cents = 40 WHERE id = $1', [launched.eval.id]);
     await bill.noteSpend(5);
-    let [row] = await trialsOf(launched.eval.id);
-    assert.equal(row.cost, 45);
-    assert.equal((await evalRow(launched.eval.id)).spent, 45);
+    await settle1(trial);
+    assert.equal((await trialsOf(launched.eval.id))[0].cost, 45);
+    // A straggler after its end: what it adds charged at once.
+    await bill.noteSpend(5);
+    assert.equal((await trialsOf(launched.eval.id))[0].cost, 50);
+    assert.equal((await evalRow(launched.eval.id)).spent, 50);
     // Put back under a new attempt meanwhile: the old attempt's call is still the trial's.
     await asTransition(pool, `UPDATE shots_eval_trials SET state = 'planned', attempt_id = $2 WHERE id = $1`, [trial.id, '6'.repeat(32)]);
     const again = await evals.billFor(pool, MERGED_TWO);
     assert.equal(again?.trialId, trial.id, 'never the author\'s');
     await again.noteSpend(5);
-    [row] = await trialsOf(launched.eval.id);
-    assert.equal(row.cost, 50);
-    assert.equal((await evalRow(launched.eval.id)).spent, 50);
+    assert.equal((await trialsOf(launched.eval.id))[0].cost, 55);
+    assert.equal((await evalRow(launched.eval.id)).spent, 55);
+    await closeEvals();
+  });
+
+  await t.test('E3b: a cost reported after the trial ended is charged; a late call charges only what it adds to the larger total', async () => {
+    await closeEvals();
+    const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
+    const [trial] = await trialsOf(launched.eval.id);
+    await asTransition(pool, `UPDATE shots_eval_trials SET state = 'exploring' WHERE id = $1`, [trial.id]);
+    // Cancelled and cleaned up before its agent's dispatch returned: then it reports 37.
+    await settle1(trial);
+    assert.equal((await trialsOf(launched.eval.id))[0].cost, 0);
+    await evals.noteReported(pool, trial.id, trial.attempt_id, 37);
+    assert.equal((await trialsOf(launched.eval.id))[0].cost, 37, 'the late report charged');
+    assert.equal((await evalRow(launched.eval.id)).spent, 37);
+    await closeEvals();
+
+    const second = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
+    const [t2] = await trialsOf(second.eval.id);
+    await asTransition(pool, `UPDATE shots_eval_trials SET state = 'exploring' WHERE id = $1`, [t2.id]);
+    await setTurn(MERGED_TWO, ownedTurn(t2));
+    const bill = await evals.billFor(pool, MERGED_TWO);
+    await evals.noteReported(pool, t2.id, t2.attempt_id, 50);
+    await bill.noteSpend(10);
+    await settle1(t2);
+    assert.equal((await trialsOf(second.eval.id))[0].cost, 50, 'the larger of 50 reported and 10 proxied');
+    await bill.noteSpend(10);
+    assert.equal((await trialsOf(second.eval.id))[0].cost, 50, '20 proxied is still under the 50 charged: nothing more');
+    await bill.noteSpend(40);
+    assert.equal((await trialsOf(second.eval.id))[0].cost, 60, '60 proxied: only the 10 it adds over 50');
+    assert.equal((await evalRow(second.eval.id)).spent, 60);
+    assert.deepEqual(await costOf(t2.attempt_id), { proxy: 60, reported: 50, charged: 60, settled: true });
     await closeEvals();
   });
 
@@ -849,7 +897,7 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
     await closeEvals();
   });
 
-  await t.test('E11: what Claude Code reported a dispatch cost is on the trial\'s row as it returns', async () => {
+  await t.test('E11: what Claude Code reported a dispatch cost is on its attempt\'s costs as it returns', async () => {
     await closeEvals();
     const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
     world.restore();
@@ -862,10 +910,10 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
       await rt.drain();
       await rt.runServices(); // agent
       const [trial] = await trialsOf(launched.eval.id);
-      reported = (await pool.query('SELECT reported_cents::float8 AS r FROM shots_eval_trials WHERE id = $1', [trial.id])).rows[0].r;
+      reported = (await costOf(trial.attempt_id)).reported;
       await settle();
     } finally { world.restore(); world = fakeOutsideWorld({ dispatched }); }
-    assert.equal(reported, 37, 'kept on the row before the trial ends');
+    assert.equal(reported, 37, 'kept before the trial ends');
     const [ended] = await trialsOf(launched.eval.id);
     assert.equal(ended.cost, 37, 'charged the larger of what the proxy saw (nothing) and what was reported');
     await closeEvals();

@@ -887,15 +887,18 @@ trial running at what it has spent or its estimate, the larger, plus the next on
   (an older one's proxy would bill its calls to the author). The rows of the trials it
   runs beat every two minutes, so an older release's runner never takes one for its own
   lost one; a row ended elsewhere (an older release's write) ends its trial here too.
-- **Its end** is written once its cleanup is done, with its cost: the larger of what the
-  proxy billed and what Claude Code reported (each kept on the row as it comes), charged to
-  it and its eval in one write that empties both, and counted in that transition's own cap
-  check.
+- **Its end** is written once its cleanup is done, and settles its attempt's cost
+  (`shots_eval_attempt_costs`, `workflow/shots-eval/costs.ts`): what the proxy billed and
+  what Claude Code reported, each a running total for the attempt, and the larger charged to
+  the trial and its eval, counted in that transition's own cap check. A call or a report
+  that comes after (a straggler, a dispatch that returns after a cancel) charges only what it
+  adds to the larger total.
 - **Billing**: the proxy reads the session's turn record; a shots turn the eval machine's
   work owns is that trial's (`shots-eval.billFor`), on whatever attempt; one nothing owns
   (an older release's runner) is the trial its correlation names on that session. The
-  platform key, the eval's cap from rows, each call added to the trial, or, after its
-  attempt ended, to its cost and its eval's spend at once. Never this process's memory, and
+  platform key, the eval's cap from rows, each call added to its attempt's costs (an older
+  runner's on the trial's row, which that runner settles, or this machine when it adopts
+  the trial). Never this process's memory, and
   never the session alone (the proposal's own shots rerun is its author's).
 - **Cancel** (`EvalCancelled`): the eval and its trials not ended read cancelled at once;
   what runs is stopped (its work cancelled, its turn stopped) and cleaned up, an older

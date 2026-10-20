@@ -32,6 +32,7 @@
 
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type { Event, Json, Outcome, TransitionContext, WorkRequest, WorkRef, WorkResultPayload } from '../kernel/index.ts';
+import { settleAttempt } from './costs.ts';
 import { ACTIVE_STATES, readFacts } from './facts.ts';
 import type { Facts } from './facts.ts';
 
@@ -187,11 +188,11 @@ function decide(s0: Step, f: Facts, ctx: TransitionContext, deps: Deps): Outcome
   let running = activeIds.size;
   // An eval's money: what it spent, plus each trial of it running at what
   // it has spent so far or its estimate, the larger.
-  const proxyOf = new Map(active.map((a) => [a.id, a.proxyCents]));
+  const spentSoFar = new Map(active.map((a) => [a.id, Math.max(a.proxyCents, a.reportedCents)]));
   const evalOf = (id: number) => active.find((a) => a.id === id)?.evalId ?? d.trials[id]?.evalId;
   const committed = (evalId: number) => [...activeIds]
     .filter((id) => evalOf(id) === evalId)
-    .reduce((sum, id) => sum + Math.max(proxyOf.get(id) || 0, f.estimateCents), 0);
+    .reduce((sum, id) => sum + Math.max(spentSoFar.get(id) || 0, f.estimateCents), 0);
   const skip = new Set<number>();
   let waiting = false;
   // Two releases serving: nothing new until the rollout is over.
@@ -436,22 +437,13 @@ export function shotsEval(deps: Deps) {
             WHERE id = $1 AND attempt_id = $2 AND state IN ('provisioning', 'exploring', 'reviewing')`,
           [w.trialId, w.attemptId, w.state, w.verdict == null ? null : JSON.stringify(w.verdict), w.planHash ?? null]);
       },
-      // The trial's end, with its cost on it and on its eval, once: what
-      // the proxy billed and what Claude Code reported (each on its row),
-      // the larger, both emptied in the same write. Put back (a restart cut it): a fresh
+      // The trial's end, its attempt's cost settled on it and on its eval
+      // (costs.ts: the larger of what the proxy billed and what Claude Code
+      // reported; what comes later charges only what it adds). Put back (a restart cut it): a fresh
       // attempt, its earlier files gone.
       ended: async (tx, w) => {
         const e = (w.end || { state: 'failed', code: 'shots_eval_failed', reason: 'The trial ended without shots.' }) as End;
-        const { rows: [cost] } = await tx.query(
-          `WITH t AS (
-             SELECT id, eval_run_id, GREATEST(proxy_cents, reported_cents) AS cents
-               FROM shots_eval_trials WHERE id = $1 AND attempt_id = $2 FOR UPDATE),
-           trial AS (
-             UPDATE shots_eval_trials s SET cost_cents = s.cost_cents + t.cents, proxy_cents = 0, reported_cents = 0
-               FROM t WHERE s.id = t.id RETURNING t.eval_run_id, t.cents)
-           UPDATE shots_eval_runs r SET spent_cents = r.spent_cents + trial.cents FROM trial WHERE r.id = trial.eval_run_id
-           RETURNING trial.cents`, [w.trialId, w.attemptId]);
-        void cost;
+        await settleAttempt(tx, { trialId: w.trialId, attemptId: w.attemptId });
         const trace = { ...((e.trace as object) || {}), ...(w.cleaned ? {} : { cleanupFailed: true }) };
         if (e.state === 'requeue') {
           await tx.query('DELETE FROM shots_eval_artifacts WHERE trial_id = $1', [w.trialId]);

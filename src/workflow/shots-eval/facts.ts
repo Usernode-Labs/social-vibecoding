@@ -23,6 +23,7 @@ export interface Planned {
   id: number; evalId: number; sessionId: number; attemptId: string; attempts: number; agentMs: number | null;
   baseSha: string; headSha: string; intent: unknown; appSlug: string | null;
 }
+// `proxyCents` / `reportedCents`: what its attempt has cost so far, not yet charged.
 export interface Active { id: number; evalId: number; sessionId: number; attemptId: string; attempts: number; proxyCents: number; reportedCents: number; stale: boolean; appSlug: string | null; evalStatus: string }
 export interface Facts {
   evals: Eval[];
@@ -53,10 +54,12 @@ export async function readFacts(tx: Tx, p: { evalId?: number | null; mine?: numb
   const { rows: evalRows } = await tx.query(
     `SELECT id, cap_cents::float8 AS cap, spent_cents::float8 AS spent FROM shots_eval_runs WHERE status = 'running' ORDER BY id`);
   const { rows: activeRows } = await tx.query(
-    `SELECT t.id, t.eval_run_id, t.session_id, t.attempt_id, t.attempts, t.proxy_cents::float8 AS proxy, t.reported_cents::float8 AS reported,
+    `SELECT t.id, t.eval_run_id, t.session_id, t.attempt_id, t.attempts,
+            (t.proxy_cents + COALESCE(c.proxy_cents, 0))::float8 AS proxy, COALESCE(c.reported_cents, 0)::float8 AS reported,
             t.updated_at < NOW() - make_interval(secs => $2) AS stale, a.slug AS app_slug, r.status AS eval_status
        FROM shots_eval_trials t
        JOIN shots_eval_runs r ON r.id = t.eval_run_id
+       LEFT JOIN shots_eval_attempt_costs c ON c.attempt_id = t.attempt_id AND c.settled_at IS NULL
        LEFT JOIN chat_sessions cs ON cs.id = t.session_id
        LEFT JOIN apps a ON a.id = cs.app_id
       WHERE t.state = ANY($1::text[])`, [ACTIVE_STATES, STALE_SECONDS]);

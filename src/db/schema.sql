@@ -15033,15 +15033,12 @@ CREATE TABLE IF NOT EXISTS shots_eval_trials (
     CHECK (state IN ('planned', 'provisioning', 'exploring', 'reviewing', 'verified', 'failed', 'cancelled')),
   CONSTRAINT shots_eval_trials_repetition_check CHECK (repetition BETWEEN 1 AND 3)
 );
--- What the Anthropic proxy billed for the trial's turns, on whichever
--- process each call reached (services/shots-eval.js billFor): settled into
--- cost_cents when the trial ends, and emptied in the same write.
+-- What the Anthropic proxy billed for a trial an older release's runner
+-- runs (during a rollout; that runner settles it itself), on whichever
+-- process each call reached (services/shots-eval.js billFor). The shots-eval
+-- machine's trials are billed per attempt (shots_eval_attempt_costs); when
+-- one ends, what is here for its attempt moves there and is emptied.
 ALTER TABLE shots_eval_trials ADD COLUMN IF NOT EXISTS proxy_cents NUMERIC(12,4) NOT NULL DEFAULT 0;
--- What Claude Code itself reported a trial's turns cost (the shots-eval
--- machine's agent work adds each dispatch's as it returns): the trial is
--- charged the larger of this and proxy_cents, both emptied in the write
--- that charges it.
-ALTER TABLE shots_eval_trials ADD COLUMN IF NOT EXISTS reported_cents NUMERIC(12,4) NOT NULL DEFAULT 0;
 -- When the shots-eval machine decided a running trial ends (a cancel, a
 -- phase past its time, its row ended elsewhere): its work stops at its next
 -- step from then, though the row reads active until its cleanup is done
@@ -15074,6 +15071,23 @@ CREATE INDEX IF NOT EXISTS idx_shots_eval_trials_planned
 CREATE INDEX IF NOT EXISTS idx_shots_eval_trials_active
   ON shots_eval_trials (session_id) WHERE state IN ('provisioning', 'exploring', 'reviewing');
 COMMENT ON TABLE shots_eval_trials IS 'staging:private';
+
+-- What one attempt of a shots-eval machine's trial cost, as it comes
+-- (src/workflow/shots-eval/costs.ts): what the proxy billed for its calls
+-- and what Claude Code reported its dispatches cost, each a running total,
+-- and what its trial and eval were charged for it. Settled by the trial's
+-- end (`settled_at`): charged the larger total; anything that comes after
+-- charges only what it adds to that larger total.
+CREATE TABLE IF NOT EXISTS shots_eval_attempt_costs (
+  attempt_id      VARCHAR(32) PRIMARY KEY CHECK (attempt_id ~ '^[0-9a-f]{32}$'),
+  trial_id        INTEGER NOT NULL REFERENCES shots_eval_trials(id) ON DELETE CASCADE,
+  proxy_cents     NUMERIC(12,4) NOT NULL DEFAULT 0,
+  reported_cents  NUMERIC(12,4) NOT NULL DEFAULT 0,
+  charged_cents   NUMERIC(12,4) NOT NULL DEFAULT 0,
+  settled_at      TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_shots_eval_attempt_costs_trial ON shots_eval_attempt_costs (trial_id);
+COMMENT ON TABLE shots_eval_attempt_costs IS 'staging:private';
 
 -- What a trial saved, stored the way a shots run's files are
 -- (shot_artifacts): one row per file, gone with the trial. Read only

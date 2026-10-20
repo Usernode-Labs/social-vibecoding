@@ -510,16 +510,16 @@ async function storeTrialFiles(pool, trialId, attemptId, slots) {
  * platform's to pay, bounded by the eval's cap (routes/anthropic-proxy.js).
  * Read from the session's turn record, whichever process the call reaches
  * and whether or not the process that dispatched it is still alive: a shots
- * turn the eval machine's work owns is the trial its work names (on any
- * attempt); a shots turn nothing owns, which an older release's runner
- * dispatched (its calls reach a newer process during a rollout), is the
- * trial whose attempt it is correlated with on this session. Any other turn
- * on the session (the proposal's own shots, a person's) is not. Resolves
- * null, or `{ trialId, overCap(extraCents), noteSpend(cents) }`: the cap
- * read from the eval's spend and every trial of it running. A call while
- * the attempt runs is kept on the trial's row until its end charges it; one
- * after (a straggler, or the trial put back since) is charged to the trial
- * and its eval at once.
+ * turn the eval machine's work owns is the attempt its work names, on any
+ * attempt of its trial; a shots turn nothing owns, which an older release's
+ * runner dispatched (its calls reach a newer process during a rollout), is
+ * the trial whose attempt it is correlated with on this session. Any other
+ * turn on the session (the proposal's own shots, a person's) is not.
+ * Resolves null, or `{ trialId, overCap(extraCents), noteSpend(cents) }`:
+ * the cap read from the eval's spend and what its attempts not yet settled
+ * have cost. A machine's attempt's calls go on its costs
+ * (workflow/shots-eval/costs.ts: one after its end charges only what it
+ * adds); an older runner's on the trial's row, which that runner settles.
  */
 async function billFor(pool, sessionId) {
   const { rows: [s] } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [Number(sessionId)]);
@@ -540,15 +540,19 @@ async function billFor(pool, sessionId) {
   }
   const { rows: [t] } = await pool.query(
     `SELECT t.id, r.cap_cents::float8 AS cap,
-            r.spent_cents::float8 + COALESCE((SELECT SUM(GREATEST(o.proxy_cents, o.reported_cents)) FROM shots_eval_trials o
-                                               WHERE o.eval_run_id = r.id AND o.state IN ('provisioning', 'exploring', 'reviewing', 'cancelled')
-                                                 AND (o.proxy_cents > 0 OR o.reported_cents > 0)), 0)::float8 AS spent
+            (r.spent_cents
+             + COALESCE((SELECT SUM(GREATEST(c.proxy_cents, c.reported_cents)) FROM shots_eval_attempt_costs c
+                          JOIN shots_eval_trials o ON o.id = c.trial_id
+                         WHERE o.eval_run_id = r.id AND c.settled_at IS NULL), 0)
+             + COALESCE((SELECT SUM(o.proxy_cents) FROM shots_eval_trials o
+                          WHERE o.eval_run_id = r.id AND o.state = ANY($4::text[])), 0))::float8 AS spent
        FROM shots_eval_trials t JOIN shots_eval_runs r ON r.id = t.eval_run_id
       WHERE ($1::int IS NOT NULL AND t.id = $1) OR ($1::int IS NULL AND t.session_id = $3 AND t.attempt_id = $2)`,
-    [trialId, attemptId, Number(sessionId)]);
+    [trialId, attemptId, Number(sessionId), ACTIVE_STATES]);
   if (!t) return null;
   const capCents = num(t.cap);
   let spentCents = num(t.spent);
+  const machineTrial = trialId != null;
   return {
     trialId: Number(t.id),
     overCap: (extraCents = 0) => capCents > 0 && spentCents + (Number(extraCents) || 0) > capCents,
@@ -556,27 +560,33 @@ async function billFor(pool, sessionId) {
       const cents = Number(costCents);
       if (!(Number.isFinite(cents) && cents > 0)) return;
       spentCents += cents;
-      await pool.query(
-        `WITH t AS (
-           SELECT id, eval_run_id, (attempt_id = $3 AND state = ANY($4::text[])) AS running
-             FROM shots_eval_trials WHERE id = $1 FOR UPDATE),
-         running AS (
-           UPDATE shots_eval_trials s SET proxy_cents = s.proxy_cents + $2::numeric FROM t WHERE s.id = t.id AND t.running),
-         late AS (
-           UPDATE shots_eval_trials s SET cost_cents = s.cost_cents + $2::numeric FROM t WHERE s.id = t.id AND NOT t.running
-           RETURNING t.eval_run_id)
-         UPDATE shots_eval_runs r SET spent_cents = r.spent_cents + $2::numeric FROM late WHERE r.id = late.eval_run_id`,
-        [Number(t.id), cents, attemptId, ACTIVE_STATES]);
+      if (!machineTrial) {
+        await pool.query('UPDATE shots_eval_trials SET proxy_cents = proxy_cents + $2::numeric WHERE id = $1', [Number(t.id), cents]);
+        return;
+      }
+      await addCost(pool, { trialId: Number(t.id), attemptId, proxyCents: cents });
     },
   };
 }
 
-/** What Claude Code reported a dispatch of a trial's attempt cost, kept on its row (the eval machine's agent work). */
+/** What Claude Code reported a dispatch of a trial's attempt cost, on its costs (the eval machine's agent work). */
 async function noteReported(pool, trialId, attemptId, cents) {
-  const n = Number(cents);
-  if (!(Number.isFinite(n) && n > 0)) return;
-  await pool.query('UPDATE shots_eval_trials SET reported_cents = reported_cents + $3::numeric WHERE id = $1 AND attempt_id = $2',
-    [Number(trialId), String(attemptId), n]);
+  await addCost(pool, { trialId: Number(trialId), attemptId: String(attemptId), reportedCents: Number(cents) });
+}
+
+// An attempt's costs added to, in a transaction of their own (costs.ts).
+async function addCost(pool, p) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await require('../workflow/shots-eval/costs.ts').addCost(client, p);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // ── Reading results ─────────────────────────────────────────────────────
