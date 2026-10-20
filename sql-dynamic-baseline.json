@@ -957,7 +957,7 @@
     {
       "source": "src/services/community-invites.js",
       "kind": "structural-template",
-      "fingerprint": "cb8be7324b69a371ce8c",
+      "fingerprint": "c7a9d3cb1610f632fbe6",
       "count": 1,
       "preview": "`SELECT i.id, i.token, i.community_id, i.app_id, i.created_by, i.max_uses, i.uses, i.expires_at, i.revoked_at, i.note, a.slug, a.name, a.icon_emoji, a.icon_imag"
     },
