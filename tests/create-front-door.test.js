@@ -204,7 +204,7 @@ test('the make screen from Create: New project, a close, a small "Import from a 
   const first = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
   assert.match(first, /data-make-entry="first-session"/);
   assert.doesNotMatch(first, /uppercase tracking-\[0\.8px\]/, 'no eyebrow above the question');
-  const hello = `<h1 id="first-session-make-title" class="mt-4 text-balance text-[30px] font-extrabold leading-[34px]">${message('onboarding:firstSession.make.titleHello', { name: 'Jordan' })}</h1>`;
+  const hello = `<h1 id="first-session-make-title" class="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">${message('onboarding:firstSession.make.titleHello', { name: 'Jordan' })}</h1>`;
   assert.ok(first.includes(hello), hello);
   assert.match(first, /Look around first/);
   assert.doesNotMatch(first, /data-make-close|data-make-import-link|Import from a GitHub repo/, 'the first session does not offer an import');
