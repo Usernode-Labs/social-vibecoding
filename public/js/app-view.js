@@ -11279,7 +11279,7 @@ const AppView = {
       // null suppresses the legacy capture instead of substituting a picture
       // that may have nothing to do with the claim.
       if (shots.state !== 'verified') return null;
-      const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}$/.test(String(url || ''));
+      const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}(?:\?density=device)?$/.test(String(url || ''));
       const find = (claimValue, viewportName, side, variant) => (Array.isArray(shots.artifacts) ? shots.artifacts : []).find((a) => (
         a && a.storyId === claimValue?.id && a.viewport === viewportName
         && a.side === side && a.variant === variant && a.media === 'png' && urlOk(a.url)
@@ -24447,7 +24447,9 @@ const AppView = {
       ? String(sha).slice(0, 8) : PlatformI18n.t('changes:shots.card.unknownCommit');
     const shotsUrl = (url) => {
       const value = String(url || '');
-      const match = /^\/api\/apps\/[^/?#]+\/proposals\/(\d+)\/shots\/[0-9a-f]{32}$/.exec(value);
+      // A sharp still has its own address, `?density=device` (shots-view.js
+      // shotUrl); nothing else may follow the id.
+      const match = /^\/api\/apps\/[^/?#]+\/proposals\/(\d+)\/shots\/[0-9a-f]{32}(?:\?density=device)?$/.exec(value);
       if (!match || (Number.isInteger(sessionId) && sessionId > 0 && Number(match[1]) !== sessionId)) return '';
       return value;
     };
@@ -24849,7 +24851,7 @@ const AppView = {
   openShotsComparison(triggerEl) {
     if (!triggerEl) return;
     const d = triggerEl.dataset || {};
-    const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}$/.test(String(url || ''));
+    const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}(?:\?density=device)?$/.test(String(url || ''));
     const before = urlOk(d.beforeUrl) ? d.beforeUrl : '';
     const head = urlOk(d.headUrl) ? d.headUrl : '';
     if (!before && !head) return;
