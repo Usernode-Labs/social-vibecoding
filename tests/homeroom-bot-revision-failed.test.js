@@ -168,7 +168,7 @@ test('"Reply here (or on the GitHub issue)" is true: a reply there is read by th
   assert.deepEqual(replies.map((r) => [r.where, r.body]), [['proposal', 'Green, please'], ['issue', 'Try again please']],
     'the bot\'s own post is not a reply; a person\'s, here or on GitHub, is');
   const bot = read('src/services/homeroom-bot.js');
-  assert.match(bot, /if \(open\.status === 'promoted'\) \{\s*followUpTurn = true;\s*return runFollowUp\(pool, config, \{/,
+  assert.match(bot, /if \(open\.status === 'promoted'\) \{\s*followUpTurn = true;[\s\S]{0,400}?return runFollowUp\(pool, config, \{/,
     'a request with the bot\'s change up for a vote is followed up, not triaged again');
 });
 

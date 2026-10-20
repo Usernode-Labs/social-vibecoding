@@ -232,9 +232,9 @@ async function refreshFreshness(deps, session, options = {}) {
     error: null,
   };
 
-  // GitHub only when the leader's own measurement cannot answer: it measures
-  // every promoted proposal from its mirror of the repository every minute
-  // (services/integration.js, server.js measurePromotedProposals), for no
+  // GitHub only when the platform's own measurement cannot answer: it
+  // measures every promoted proposal from its mirror of the repository every
+  // minute (the proposal-measure clock, services/proposal-scans.js), for no
   // GitHub request at all. Each refresh here cost four to seven, every
   // minute a proposal was open.
   if (!measured) {

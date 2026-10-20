@@ -14,7 +14,6 @@
 
 const log = require('./logger');
 const staging = require('./staging');
-const worker = require('./worker');
 const github = require('./github');
 const branchNames = require('./branch-names');
 
@@ -231,16 +230,11 @@ async function claimGlobalSlot({
   return { ok: false };
 }
 
-// Tear down a session's staging preview (container + cloned DB + Caddy
-// route) WITHOUT changing the session's status. This is the staging GC
-// path — pausing no longer does it, so a separate, longer-horizon
-// sweeper reclaims staging from sessions that have gone cold. Nulls the
-// staging_* columns so a repeat sweep treats it as already reclaimed and
-// so a later /resume + push rebuilds fresh.
-//
-// Never call this for 'promoted'/'merging' sessions — their preview
-// backs the group's PR vote. The sweeper query enforces that; this
-// function just does the teardown it's told to.
+// Give back a session's staging preview WITHOUT changing the session's
+// status: the preview machine retires it, and refuses (reported as a leak
+// here) one under review, worked on, building or checking. `reason` is the
+// machine's (the card and the logs name it). A later push rebuilds fresh.
+// (A preview nobody uses is the machine's own idle deadline.)
 async function teardownStagingForSession({ pool, sessionId, reason = 'idle' }) {
   const { rows } = await pool.query(
     `SELECT cs.*, a.slug as app_slug
@@ -257,7 +251,7 @@ async function teardownStagingForSession({ pool, sessionId, reason = 'idle' }) {
   // chokepoint — so this must NOT null the columns behind its back (which is
   // exactly how ten production previews became untracked orphans) and must
   // not announce a teardown that didn't happen.
-  const result = await staging.teardownStaging(session, { slug: session.app_slug })
+  const result = await staging.teardownStaging(session, { slug: session.app_slug }, { reason })
     .catch((err) => {
       log.warn('session-lifecycle', 'Staging teardown threw', { sessionId, err: err.message });
       return { removed: false, leaked: true };
@@ -370,17 +364,6 @@ async function closeOwnSession({ pool, sessionId, reason, waitMs }) {
   if (!now || !['active', 'paused', 'promoted'].includes(now.status)) return false;
   const { archived } = await archiveSession({ pool, sessionId, reason, from: now.status, waitMs });
   return archived;
-}
-
-// Hard GC for the retention window: destroy the CC volume of an archived
-// session so its conversation memory stops occupying disk. Idempotent —
-// flips cc_purged so the sweeper won't revisit it. The row + branch
-// survive; /unarchive still works but with fresh Claude memory.
-async function purgeArchivedCc({ pool, sessionId }) {
-  await worker.destroyCcVolume(sessionId).catch(() => {});
-  await pool.query(`UPDATE chat_sessions SET cc_purged = TRUE WHERE id = $1`, [sessionId]);
-  log.info('session-lifecycle', 'Archived CC volume purged (retention elapsed)', { sessionId });
-  return { purged: true };
 }
 
 
@@ -507,7 +490,6 @@ module.exports = {
   teardownStagingForSession,
   archiveSession,
   unarchiveSession,
-  purgeArchivedCc,
   GLOBAL_VICTIMS_SQL,
   USER_VICTIMS_SQL,
   takeSlot,

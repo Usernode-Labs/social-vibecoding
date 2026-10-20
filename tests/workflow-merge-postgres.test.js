@@ -856,7 +856,9 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     await want(a, { sessionId: s.id });
     await settle();
     assert.deepEqual(calls(WORK.attempt).map((c) => c.input.sessionId), [s.id]);
-    await pool.query(`UPDATE chat_sessions SET status = 'archived' WHERE app_id = $1 AND branch_name LIKE 'waiting-%'`, [a.id]);
+    // Each is the proposal machine's from its insert (its Adopted): taken out
+    // of the line as the kernel writes it.
+    await asTransition((x) => x.query(`UPDATE chat_sessions SET status = 'archived' WHERE app_id = $1 AND branch_name LIKE 'waiting-%'`, [a.id]));
   });
 
   await t.test('M26 GitHub\'s hourly limit: back up for its vote with nothing remembered against the head; the next look asks again (PR review)', async () => {

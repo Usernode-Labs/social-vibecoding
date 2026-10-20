@@ -771,8 +771,10 @@ async function buildStage(ctx) {
     // A studio trial an admin cancelled stops before its build turn.
     ...(ctx.skipCheck ? { skipCheck: ctx.skipCheck } : {}),
     // A configuration's (services/bot-configs.js, through the lane's
-    // studioContext): which CLI each model runs in, and its review.
+    // studioContext): which CLI each model runs in, its effort for the spec
+    // and the build, and its review.
     ...(ctx.harnessOf ? { harnessOf: ctx.harnessOf } : {}),
+    ...(ctx.efforts ? { efforts: { spec: ctx.efforts.spec || null, build: ctx.efforts.build || null } } : {}),
     ...(ctx.reviewer ? { review: { reviewer: ctx.reviewer, owner: { trialId: trial.id }, onState: null } } : {}),
     // And its build-speed tweaks (bot-configs.js TWEAKS), a first version's.
     ...(ctx.tweaks?.length ? { tweaks: ctx.tweaks } : {}),
@@ -1550,17 +1552,30 @@ async function runStage(ctx) {
   return { ...out, duration_ms: Date.now() - startedMs };
 }
 
-/** The clocks a trial gets: the bot's own, from its settings and the app. */
-function budgetsFor(settings, app, config, stage) {
+/**
+ * The clocks a trial gets: the bot's own, from its settings and the app,
+ * and a configuration's own (`clocks`, recipe.clocks in minutes) for the
+ * stages it names, as homeroom-bot.js recipeBudgets gives a live build: the
+ * scope's own minutes, times PLATFORM_BUILD_TIME_FACTOR on the platform's
+ * repository.
+ */
+function budgetsFor(settings, app, config, stage, clocks = null) {
   const bot = require('../homeroom-bot');
   const turnMs = 1000 * (Number(settings?.turnSeconds) || bot.DEFAULTS.turnSeconds);
+  const factor = bot.isPlatformRepo(app, config) ? bot.PLATFORM_BUILD_TIME_FACTOR : 1;
+  const own = (st, fallback) => (clocks && Number(clocks[st]) > 0 ? Number(clocks[st]) * 60 * 1000 * factor : fallback);
+  const triageMs = clocks && Number(clocks.triage) > 0 ? Number(clocks.triage) * 60 * 1000 : turnMs;
   const built = bot.buildBudgets(app, config, turnMs);
-  const budgets = { turnMs: stage === 'build' || stage === 'spec' ? built.turnBudgetMs : turnMs, buildMs: built.turnBudgetMs, specMs: built.specBudgetMs };
+  const buildMs = own('build', built.turnBudgetMs);
+  const budgets = { turnMs: stage === 'build' || stage === 'spec' ? buildMs : triageMs, buildMs, specMs: own('spec', built.specBudgetMs) };
   if (stage !== 'first_version') return budgets;
   // A first version's triage has a triage's clock; its spec and build get
   // the longer ones the bot gives a first version.
   const first = bot.buildBudgets(app, config, turnMs, { firstVersion: true });
-  return { ...budgets, firstVersion: { turnMs, buildMs: first.turnBudgetMs, specMs: first.specBudgetMs } };
+  return {
+    ...budgets,
+    firstVersion: { turnMs: triageMs, buildMs: own('build', first.turnBudgetMs), specMs: own('spec', first.specBudgetMs) },
+  };
 }
 
 module.exports = {

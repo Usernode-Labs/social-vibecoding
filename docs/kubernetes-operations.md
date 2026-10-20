@@ -284,16 +284,20 @@ rollback past the preview machine's deletion recreates it empty).
 
 ## Preview cleanup
 
-Merge, archive and the idle reclaim (`STAGING_IDLE_TEARDOWN_MS`) tear a preview
-down through its session row. Anything those paths leave behind is found by the
-stale-preview sweep (`services/staging-reap.js`), which lists the
+Merge, archive and the preview machine's idle give-back
+(`STAGING_IDLE_TEARDOWN_MS`) retire a preview through the preview machine.
+Anything those paths leave behind is found by the `preview-gc` clock
+(`services/staging-reap.js` `leftovers`), which lists the
 `sv-preview-<appId>-s<sessionId>` Deployments in the app namespace and joins
 them back to `chat_sessions`. Every `STAGING_STALE_SWEEP_INTERVAL_MS` (15 min)
-it tears down at most `STAGING_STALE_SWEEP_LIMIT` (10) previews whose session
-merged, was archived or no longer exists, or whose `usernode.env.fp` label is
-out of date. It never takes a preview backing a live vote (`promoted` or
-`merging`); the heal pass rebuilds those in place when they go out of date.
-Admin → Stale previews takes the same selection without the per-pass limit. A
+it takes each preview whose session merged, was archived or no longer exists,
+and each one its row no longer names that the machine does not hold, one
+target at a time. A preview whose `usernode.env.fp` label is out of date is
+the release's to find: the new build's release work tells the preview
+machine, which rebuilds one backing a live vote (`promoted` or `merging`) and
+gives the rest back. The `preview-runtimes` clock reports a vote-backed
+preview whose runtime or database is gone, and the machine builds it again.
+Admin → Stale previews takes the out-of-date and finished ones at once. A
 preview whose row no longer names it keeps its staging database until the
 orphan database pass (`STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS`, 6 h) finds nothing
 connected to it.

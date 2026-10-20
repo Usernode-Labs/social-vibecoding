@@ -5185,6 +5185,14 @@ const App = {
             } catch (err) { /* non-fatal: navigation below still works */ }
           }
         }
+        // Bot configurations became the Homeroom bot's Configurations tab:
+        // its old address opens that tab, the bookmark rewritten first.
+        if (_adminSection === 'bot-configs') {
+          _adminSection = 'homeroom-bot';
+          try {
+            history.replaceState(null, '', '#admin/homeroom-bot/configs');
+          } catch (err) { /* non-fatal: navigation below still works */ }
+        }
         App.navigateToAdminConsole(_adminSection);
         return;
       }

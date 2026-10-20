@@ -536,8 +536,8 @@
     "description": "Title of the second column of the Workshop board: requests and changes somebody is working on now."
   },
   "board.column.underwayHint": {
-    "text": "Somebody or something is on these: being worked on, auto-solving, paused, waiting on an answer, or just claimed. The chip on each card says which.",
-    "description": "Explanation shown with the \"Underway\" column of the Workshop board. \"Something\" refers to an AI agent; \"auto-solving\" means an agent is working on it without a person; \"claimed\" means a person said they will work on it. The \"chip\" is the small status label on each card."
+    "text": "A person or an agent is on each of these. The chip on each card says how.",
+    "description": "Explanation shown with the \"Underway\" column of the Workshop board: each card there is being handled by a person or an AI agent. The \"chip\" is the small status label on each card (worked on, auto-solving, paused, waiting on an answer, claimed). Keep it short."
   },
   "board.column.review": {
     "text": "Waiting for approval",

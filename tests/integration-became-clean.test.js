@@ -48,15 +48,16 @@ function stubMirror({ clean, head = HEAD }) {
   return () => { for (const [k, v] of Object.entries(real)) mirror[k] = v; };
 }
 
-// A pool whose UPDATE ... RETURNING answers with what the row said BEFORE.
-function fakePool({ wasClean, wasHead }) {
+// A pool whose UPDATE ... RETURNING answers with what the row said BEFORE,
+// and the block reasons it holds after the write.
+function fakePool({ wasClean, wasHead, blockReasons = [] }) {
   const calls = [];
   return {
     calls,
     async query(sql, params) {
       calls.push({ sql, params });
       if (/UPDATE chat_sessions/.test(sql) && /RETURNING/.test(sql)) {
-        return { rows: [{ was_clean: wasClean, was_head: wasHead }], rowCount: 1 };
+        return { rows: [{ was_clean: wasClean, was_head: wasHead, block_reasons: blockReasons }], rowCount: 1 };
       }
       return { rows: [], rowCount: 1 };
     },
@@ -130,16 +131,31 @@ test('a hook that throws is logged, not propagated into the measurement', async 
   } finally { integration.onBecameClean(null); restore(); }
 });
 
-test('the block reasons written are the caller\'s when given, the row\'s otherwise', async () => {
+// The merge gate writes the block reasons. A measurement that copied the
+// caller's row back (a row the measure pass read minutes before) wrote a
+// stale copy over the gate's newer answer: without `blockReasons` the
+// column keeps what is stored, and the answer reads it back.
+test('the block reasons written are the caller\'s when given; otherwise the stored ones stay and are returned', async () => {
   const restore = stubMirror({ clean: true });
   try {
-    const kept = fakePool({ wasClean: true, wasHead: HEAD });
-    await integration.measure({ pool: kept, session }, { force: true });
+    const kept = fakePool({ wasClean: true, wasHead: HEAD, blockReasons: ['behind_main'] });
+    const out = await integration.measure({ pool: kept, session }, { force: true });
     const w1 = kept.calls.find((c) => /RETURNING/.test(c.sql));
-    assert.equal(w1.params[10], JSON.stringify(['awaiting_approval']), 'measuring does not forget the lane\'s answer');
+    assert.equal(w1.params[10], null, 'the caller\'s copy (awaiting_approval) is not written back');
+    assert.match(w1.sql, /integration_block_reasons = COALESCE\(\$11::jsonb, integration_block_reasons\)/,
+      'measuring does not forget the lane\'s answer');
+    assert.match(w1.sql, /integration_block_reasons AS block_reasons/);
+    assert.deepEqual(out.blockReasons, ['behind_main'], 'the answer is what is stored, not the caller\'s copy');
+
     const cleared = fakePool({ wasClean: true, wasHead: HEAD });
-    await integration.measure({ pool: cleared, session }, { force: true, blockReasons: [] });
+    const out2 = await integration.measure({ pool: cleared, session }, { force: true, blockReasons: [] });
     const w2 = cleared.calls.find((c) => /RETURNING/.test(c.sql));
     assert.equal(w2.params[10], '[]');
+    assert.deepEqual(out2.blockReasons, []);
+
+    const given = fakePool({ wasClean: true, wasHead: HEAD, blockReasons: ['stale'] });
+    const out3 = await integration.measure({ pool: given, session }, { force: true, blockReasons: 'conflicts' });
+    assert.equal(given.calls.find((c) => /RETURNING/.test(c.sql)).params[10], JSON.stringify(['conflicts']));
+    assert.deepEqual(out3.blockReasons, ['conflicts'], 'the caller\'s, when given');
   } finally { restore(); }
 });

@@ -122,7 +122,7 @@ test('the prompt treats the diff as data and the tool takes only the three field
 
 // ── One head, end to end, against fakes ─────────────────────────────────
 
-function harness({ compare, stored = null, flagged = false, key = 'sk-or-test', model, modelError, manifest = {} } = {}) {
+function harness({ compare, stored = null, flagged = false, key = 'sk-or-test', model, modelError, manifest = {}, helperModel = null } = {}) {
   const calls = { compare: 0, model: 0, request: null, files: [], stored: [] };
   const pool = {
     async query(sql, params) {
@@ -133,6 +133,7 @@ function harness({ compare, stored = null, flagged = false, key = 'sk-or-test', 
       }
       if (/requires_explicit_approval FROM chat_sessions/.test(sql)) return { rows: [{ requires_explicit_approval: flagged }] };
       if (/FROM users WHERE username/.test(sql)) return { rows: [{ id: 77 }] };
+      if (/FROM platform_settings/.test(sql)) return { rows: helperModel ? [{ value: helperModel }] : [] };
       return { rows: [] };
     },
   };
@@ -165,6 +166,7 @@ function harness({ compare, stored = null, flagged = false, key = 'sk-or-test', 
     const prev = process.env.SMALL_CHANGE_TAG_MODE;
     if ('mode' in env) process.env.SMALL_CHANGE_TAG_MODE = env.mode; else delete process.env.SMALL_CHANGE_TAG_MODE;
     smallChange._resetInflight();
+    require('../src/services/helper-model').invalidate();
     return smallChange.maybeTagSmallChange({
       config: { openrouterApiBase: 'https://openrouter.example/api/v1' },
       pool, sessionId: 5, appId: 9, repoOwner: 'o', repoName: 'r', commitHash: SHA.toUpperCase(), deps,
@@ -188,6 +190,16 @@ test('a head that passes every veto gets one forced GLM call and its verdict is 
   assert.equal(h.calls.stored.length, 1);
   assert.equal(h.calls.stored[0].verdict, 'small');
   assert.equal(h.calls.stored[0].kind, 'wording');
+});
+
+test('the helper model an admin picked is asked instead, with its thinking off', async () => {
+  const h = harness({ helperModel: 'deepseek/deepseek-v4.1-flash-1017' });
+  assert.equal(await h.run(), 'small');
+  assert.equal(h.calls.request.model, 'deepseek/deepseek-v4.1-flash-1017');
+  assert.equal(h.calls.request.reasoning, 'none');
+  const glm = harness();
+  await glm.run();
+  assert.equal(glm.calls.request.reasoning, 'low', 'GLM as before');
 });
 
 test('a vetoed head is stored with its vetoes and never reaches the model', async () => {
