@@ -6301,6 +6301,21 @@
     },
     {
       "source": "src/routes/conversations.js",
+      "method": "POST",
+      "path": "/api/conversations/homeroom-bot/withdraw/:sessionId",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "messages.post.conversations.homeroom.bot.withdraw.item.95ed2ede",
+      "domain": "messages",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "conversation",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#messages"
+    },
+    {
+      "source": "src/routes/conversations.js",
       "method": "GET",
       "path": "/api/conversations/homeroom-bot/first-versions/:slug/notify",
       "expression": null,

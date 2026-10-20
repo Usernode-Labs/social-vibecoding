@@ -224,6 +224,32 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // #5506: Withdraw it, from a ready card in the person's DM with the bot
+  // (frontend/src/features/messages/bot-ready.tsx): one of the bot's own
+  // proposals, still up for a vote, that they asked for or whose project
+  // they own (homeroom-bot-mayor.js withdrawFromCard, the gates the DM's
+  // "Withdraw it" offer keeps). Their tap only, as the route above.
+  //
+  //   POST /api/conversations/homeroom-bot/withdraw/:sessionId
+  //   → 200 { ok } | 409 { error, code } (not theirs, or past withdrawing) | 404
+  router.post('/api/conversations/homeroom-bot/withdraw/:sessionId', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const sessionId = Number(req.params.sessionId);
+      if (!Number.isInteger(sessionId) || sessionId <= 0 || sessionId > 2147483647) return res.status(404).json({ error: 'No such change' });
+      if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
+      // The staging demo's cards are fixtures: there is nothing to withdraw.
+      if (isDemo(req)) return res.json({ ok: true, demo: true });
+      const out = await require('../services/homeroom-bot-mayor').withdrawFromCard(pool, { user: req.user, sessionId });
+      if (!out.ok) {
+        return res.status(out.code === 'not_found' ? 404 : 409).json({ error: `Couldn't withdraw it: ${out.error}`, code: out.code });
+      }
+      return res.json({ ok: true });
+    } catch (err) {
+      log.error('conversations', 'homeroom bot withdraw failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Run six (14 Oct 2026): "We'll tell you when it's live" under a first
   // version's plan (frontend/src/features/messages/notify-me.tsx): whether
   // its maker is told when it is ready and live, on from Make it

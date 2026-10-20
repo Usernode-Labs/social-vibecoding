@@ -170,6 +170,7 @@ test('the Yes is recorded in the ok branches alone, and the drawer\'s row reads 
     'the record has a React reader: the strip\'s row does not subscribe to the cards\' snapshot');
   assert.match(strip, /const approved = useApprovedHere\(sessionId, ready\?\.epoch \?\? null\);/,
     'the row subscribes to the record, so a Yes cast anywhere on the page (the card\'s included) redraws it at once');
-  assert.match(strip, /const canApprove = !!ready\?\.approve && !!sessionId && !approved;/,
+  // #5506: nor to someone who does not build on the project (lookOnly).
+  assert.match(strip, /const canApprove = !!ready\?\.approve && !!sessionId && !approved && !lookOnly;/,
     'a row whose Yes is in stops offering Approve');
 });

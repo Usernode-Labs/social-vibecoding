@@ -1774,7 +1774,7 @@ async function relayIssuePost({
       },
       sessionId: Number(dm.sessionId),
       epoch: Number(dm.epoch) || 0,
-      actions: readyActions({ sessionId: dm.sessionId, epoch: dm.epoch, approve: !!dm.card.approve }),
+      actions: readyActions({ sessionId: dm.sessionId, epoch: dm.epoch, approve: !!dm.card.approve, readOnly: !!dm.card.lookOnly }),
       status: 'open',
       // #3870: what the change is, so the card says more than "is ready".
       ...(typeof dm.title === 'string' && dm.title.trim() ? { changeTitle: clip(dm.title.trim(), 200) } : {}),
@@ -2664,6 +2664,11 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
   // B7: what its asker can do on the card, and who else must approve it.
   const requester = await requesterOf(pool, run.id, Number(run.issue_number));
   const approval = await approvalState(pool, { sessionId: id, userId: requester?.userId || null });
+  // #5506: a Yes from someone who does not build on the project is refused
+  // by the session guard ("Session not found"), whatever its governance
+  // says, so their card offers no Approve. Its Try it opens the look-only
+  // preview (readyActions `readOnly`), the one a non-builder may open.
+  const canBuild = await requesterCanBuild(pool, run.id, requester?.userId);
   // A first version goes live without a vote (D1): nobody is waited on,
   // and the card offers Try it and Change something, never Approve.
   const noVote = !!approval?.firstVersion;
@@ -2677,7 +2682,8 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
       link, sessionId: id, epoch: state.epoch,
       ...(state.title ? { title: state.title } : {}),
       card: {
-        approve: !noVote && !!(approval?.counts && !approval.already),
+        approve: canBuild && !noVote && !!(approval?.counts && !approval.already),
+        ...(canBuild ? {} : { lookOnly: true }),
         // D1: a project's first version goes live without a vote.
         ...(noVote ? { noVote: true } : {}),
         last: !!approval?.last,
@@ -2705,6 +2711,28 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
     appId: run.id, issueNumber: Number(run.issue_number), status: 'ready', sessionId: id, deps: { strict: true },
   });
   return told;
+}
+
+/**
+ * #5506: whether whoever asked for a change builds on its project: passes
+ * the session guard's collab bar (app-access.js checkAppAccess 'collab'),
+ * which every POST on a change (a Yes, a preview's rebuild) goes through.
+ * True when nobody is named, so a card for nobody changes nothing.
+ */
+async function requesterCanBuild(pool, appId, userId) {
+  if (!userId) return true;
+  try {
+    const appAccess = require('./app-access');
+    const [{ rows: [app] }, { rows: [person] }] = await Promise.all([
+      pool.query(`SELECT ${appAccess.ACCESS_COLUMNS} FROM apps WHERE id = $1`, [appId]),
+      pool.query('SELECT id, is_admin AS "isAdmin" FROM users WHERE id = $1', [userId]),
+    ]);
+    if (!app || !person) return true;
+    return await appAccess.checkAppAccess(pool, app, person, 'collab');
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not read whether a requester builds on the project', { appId, userId, err: err.message });
+    return true;
+  }
 }
 
 // ── B7: ready to try, and who approves it ───────────────────────────────
@@ -2817,10 +2845,10 @@ async function needsYesFrom(pool, state, { except = [] } = {}) {
  * own Yes, cast from their own browser), and Change something (a reply to
  * the card). One is filled: Approve when there is one, else Try it.
  */
-function readyActions({ sessionId, epoch, approve }) {
+function readyActions({ sessionId, epoch, approve, readOnly = false }) {
   const id = Number(sessionId);
   return [
-    { id: 'try', label: 'Try it', style: approve ? 'secondary' : 'primary', type: 'preview', sessionId: id },
+    { id: 'try', label: 'Try it', style: approve ? 'secondary' : 'primary', type: 'preview', sessionId: id, ...(readOnly ? { readOnly: true } : {}) },
     ...(approve ? [{ id: 'approve', label: 'Approve', style: 'primary', type: 'vote', sessionId: id, epoch: Number(epoch) || 0 }] : []),
     { id: 'change', label: 'Change something', style: 'secondary', type: 'reply' },
   ];
@@ -3066,8 +3094,27 @@ async function readyApproval(pool, sessionId, userId) {
 }
 
 /**
+ * #5506: whether `user` may have the bot withdraw the change `sessionId`, by
+ * the gate its "Withdraw it" offer keeps (homeroom-bot-mayor.js
+ * withdrawGate): the bot's own, still up for a vote, and theirs to withdraw
+ * (they asked for its request, or own its project). False on any doubt.
+ */
+async function canWithdrawReady(pool, user, sessionId) {
+  try {
+    const bot = await botAccount(pool);
+    if (!bot) return false;
+    const gate = await require('./homeroom-bot-mayor').withdrawGate(pool, { bot, user, sessionId });
+    return !!gate?.ok;
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not read whether a ready card\'s change can be withdrawn', { sessionId, err: err.message });
+    return false;
+  }
+}
+
+/**
  * The signed-in person's ready cards as they stand now (see the note above):
- * [{ messageId, state, actions, approval?, goesLive? }], newest first. Their
+ * [{ messageId, state, actions, approval?, goesLive?, canBuild?, canWithdraw? }],
+ * newest first. Their
  * own cards only, on projects they can still view. A change whose approval
  * could not be read is left out, and its card says what it was sent with.
  */
@@ -3078,7 +3125,9 @@ async function readyStates(pool, { user }) {
   if (!rows.length) return [];
   const appAccess = require('./app-access');
   const viewable = new Map();
+  const canBuild = new Map();
   const approvals = new Map();
+  const withdrawable = new Map();
   const out = [];
   // Cards going live, by their change: a merge of Homeroom itself says
   // when the platform's next release carries it (below).
@@ -3101,6 +3150,19 @@ async function readyStates(pool, { user }) {
       const read = approvals.get(sessionId);
       if (!read) continue;
       Object.assign(state, read);
+      // #5506: what the reader can do on it. A Yes and the preview's
+      // rebuild are POSTs behind the session guard, which lets only the
+      // project's builders through: on a project where building is by
+      // invitation, anybody else's Approve and Try it were refused with
+      // "Session not found". So the card says whether they build there
+      // (`canBuild`), and drops Approve and opens the look-only preview
+      // when they do not. And whether they may have the bot withdraw the
+      // change (`canWithdraw`, the gate the DM's own "Withdraw it" offer
+      // keeps), so the card can offer that instead of a dead end.
+      if (!canBuild.has(appId)) canBuild.set(appId, await appAccess.checkAppAccess(pool, row, user, 'collab').catch(() => false));
+      state.canBuild = canBuild.get(appId);
+      if (!withdrawable.has(sessionId)) withdrawable.set(sessionId, await canWithdrawReady(pool, user, sessionId));
+      state.canWithdraw = withdrawable.get(sessionId);
     }
     if (state.state === 'going_live' && row.status === 'merged' && row.self_hosted) {
       goingLive.set(state, Number(row.session_id));

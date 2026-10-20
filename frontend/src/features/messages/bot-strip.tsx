@@ -10,7 +10,7 @@ import { t as translate } from '../../lib/i18n/runtime';
 import { useResolvedCommunityColor } from '../../lib/community-color';
 import { useDismiss } from '../message-actions/use-dismiss';
 import * as api from './api';
-import { noteApprovedHere, useApprovedHere } from './bot-activity-store';
+import { noteApprovedHere, useApprovedHere, useBotActivity } from './bot-activity-store';
 import { tryChange } from './bot-ready';
 import { requestHue, requestKey, storyRootIn } from './bot-request';
 import { ENDED_STATES, trackEnding, trackLine, trackShort, trackStateWord } from './bot-track';
@@ -652,10 +652,14 @@ function ReadyRow({ row, onOpen }: { row: StripRow; onOpen: (row: StripRow) => v
   // the moment the Yes lands, wherever on the page it was cast (the card's
   // included; a bare read would wait for the tray's next read to re-render).
   const approved = useApprovedHere(sessionId, ready?.epoch ?? null);
-  const canApprove = !!ready?.approve && !!sessionId && !approved;
+  // #5506: as its card, read as it stands (bot-ready.tsx): someone who does
+  // not build on the project gets no Approve, and Try it look-only.
+  const fresh = useBotActivity().ready.get(Number(ready?.messageId)) || null;
+  const lookOnly = fresh?.canBuild === false;
+  const canApprove = !!ready?.approve && !!sessionId && !approved && !lookOnly;
 
   function tryIt() {
-    if (sessionId && row.job.appSlug) { tryChange({ appSlug: row.job.appSlug }, sessionId); return; }
+    if (sessionId && row.job.appSlug) { tryChange({ appSlug: row.job.appSlug }, sessionId, { readOnly: lookOnly }); return; }
     openRow(row);
   }
 

@@ -1219,6 +1219,30 @@
     "text": "No longer needed.",
     "description": "Line on Homeroom bot's \"ready to try\" card once the card's buttons no longer apply."
   },
+  "bot.ready.line.lookOnly": {
+    "text": "You can try it. Approving it is up to the people building {{project}}.",
+    "description": "Line on Homeroom bot's \"ready to try\" card for someone who asked for a change on a project they do not build on: they can open its preview, but only the project's builders can approve it. {{project}} is the project's name."
+  },
+  "bot.ready.line.lookOnlyUnnamed": {
+    "text": "You can try it. Approving it is up to the people building this project.",
+    "description": "Line on Homeroom bot's \"ready to try\" card for someone who asked for a change on a project they do not build on, when the card does not know the project's name: they can open its preview, but only the project's builders can approve it."
+  },
+  "bot.ready.withdraw": {
+    "text": "Withdraw it",
+    "description": "Button on Homeroom bot's \"ready to try\" card: has the bot withdraw the change (close it without it going live). Shown to the person who asked for it or the project's owner."
+  },
+  "bot.ready.withdrawConfirm.title": {
+    "text": "Withdraw this change?",
+    "description": "Title of the confirm dialog after tapping Withdraw it on Homeroom bot's \"ready to try\" card."
+  },
+  "bot.ready.withdrawConfirm.message": {
+    "text": "It will be closed without going live, and Homeroom bot leaves a note on its request saying so.",
+    "description": "Body of the confirm dialog after tapping Withdraw it on Homeroom bot's \"ready to try\" card: what withdrawing the change does."
+  },
+  "bot.ready.withdrawConfirm.confirm": {
+    "text": "Withdraw it",
+    "description": "Confirm button of the dialog that withdraws a change from Homeroom bot's \"ready to try\" card."
+  },
   "bot.ready.approved.soon": {
     "text": "You approved it. It goes live in a minute or two.",
     "description": "Line on Homeroom bot's card after the reader approved a change and nothing else is needed: the change is put into use shortly."
@@ -2022,6 +2046,18 @@
   "api.approve.failed": {
     "text": "Couldn’t approve it just now.",
     "description": "Error on Homeroom bot's \"ready to try\" card when approving the change failed and the server gave no reason."
+  },
+  "api.approve.notBuilder": {
+    "text": "Only the people building this project can approve it. You can still try it.",
+    "description": "Error on Homeroom bot's \"ready to try\" card when someone who does not build on the project tapped Approve."
+  },
+  "api.withdraw.unreachable": {
+    "text": "Couldn’t reach Homeroom. Try again.",
+    "description": "Error on Homeroom bot's \"ready to try\" card when withdrawing the change failed because the server could not be reached. Homeroom is the product's name."
+  },
+  "api.withdraw.failed": {
+    "text": "Couldn’t withdraw it just now.",
+    "description": "Error on Homeroom bot's \"ready to try\" card when withdrawing the change failed and the server gave no reason."
   },
   "create.error.direct": {
     "text": "Couldn’t start this conversation.",
