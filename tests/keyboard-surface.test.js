@@ -212,7 +212,13 @@ function rig({ platform = 'ios', keysUp = false, reduced = false } = {}) {
     scroller.fire('touchend', event);
     return event;
   };
-  return { scroller, field, submit, win, doc, vv, rootClasses, scrolls, animations, advance, flush, tap };
+  // A finger dragging the scroller: past the slop, still down (touchend is
+  // the caller's when it wants one).
+  const drag = (dy = 30) => {
+    scroller.fire('touchstart', { touches: [{ clientX: 10, clientY: 10 }] });
+    scroller.fire('touchmove', { touches: [{ clientX: 10, clientY: 10 + dy }] });
+  };
+  return { scroller, field, submit, win, doc, vv, rootClasses, scrolls, animations, advance, flush, tap, drag };
 }
 
 test('a tap on a field is taken: focused with preventScroll, so iOS does not pan the page', () => {
@@ -349,6 +355,87 @@ test('a sheet rides the keys: one transform from where it was, the keys\' quarte
   still.scroller.offsetTop = 163;
   still.vv.fire('resize');
   assert.equal(still.animations.length, 0);
+});
+
+test('a drag in the scroller is the person\'s: a viewport event after it reveals nothing', () => {
+  // On iOS a drag fires visualViewport events as Safari's toolbar collapses:
+  // the burst used to end in a reveal of the description box, near the top,
+  // and the form snapped back after every drag (iPhone, 20 Oct 2026).
+  const r = rig();
+  surface.attachKeyboardSurface(r.scroller, r.win, r.doc);
+  r.doc.activeElement = r.field; // the form put the caret there
+  r.drag();
+  r.vv.fire('resize');
+  r.advance(surface.SETTLE_MS);
+  assert.deepEqual(r.scrolls, [], 'the drag is not undone');
+});
+
+test('after a drag, viewport scrolls and a content size change reveal nothing either', () => {
+  const r = rig({ keysUp: true });
+  let observe = null;
+  r.win.ResizeObserver = class { constructor(cb) { observe = cb; } observe() {} disconnect() {} };
+  r.scroller.children = [{ nodeType: 1 }];
+  surface.attachKeyboardSurface(r.scroller, r.win, r.doc);
+  r.doc.activeElement = r.field;
+  r.drag();
+  r.vv.fire('scroll');
+  r.advance(surface.SETTLE_MS);
+  observe(); // content grew under the finger, e.g. a hint line
+  r.flush();
+  assert.deepEqual(r.scrolls, [], 'neither the pan nor the size change reveals');
+});
+
+test('after a drag, the next focus is revealed as it always was', () => {
+  // A tap: focused without the pan, then revealed once the keys settle.
+  const r = rig();
+  surface.attachKeyboardSurface(r.scroller, r.win, r.doc);
+  r.doc.activeElement = r.field;
+  r.drag();
+  r.vv.fire('resize');
+  r.advance(surface.SETTLE_MS);
+  assert.deepEqual(r.scrolls, []);
+  r.tap(r.field);
+  r.advance(surface.FALLBACK_MS);
+  assert.deepEqual(r.scrolls, [155], 'a tap of the person\'s reveals again');
+
+  // A focus moved by code with the keys up (Return to the next field).
+  const up = rig({ keysUp: true });
+  surface.attachKeyboardSurface(up.scroller, up.win, up.doc);
+  up.doc.activeElement = up.field;
+  up.drag();
+  up.vv.fire('scroll');
+  up.advance(surface.SETTLE_MS);
+  assert.deepEqual(up.scrolls, []);
+  up.scroller.fire('focusin', { target: up.field });
+  up.flush();
+  assert.deepEqual(up.scrolls, [155], 'a focus of its own reveals again');
+});
+
+test('a focus waiting for the keys is still revealed after a drag (a tap clears the flag)', () => {
+  const r = rig();
+  surface.attachKeyboardSurface(r.scroller, r.win, r.doc);
+  r.doc.activeElement = r.field;
+  r.drag();
+  r.advance(surface.SETTLE_MS);
+  r.tap(r.field); // the keys come up on this focus, not the drag
+  r.vv.fire('resize');
+  r.advance(surface.SETTLE_MS - 1);
+  assert.deepEqual(r.scrolls, [], 'not per event');
+  r.advance(1);
+  assert.deepEqual(r.scrolls, [155], 'one settled reveal');
+});
+
+test('a drag does not stop the sheet riding the keys', () => {
+  const r = rig();
+  surface.attachKeyboardSurface(r.scroller, r.win, r.doc, { ride: true });
+  r.doc.activeElement = r.field;
+  r.drag();
+  r.scroller.offsetTop = 163;
+  r.vv.fire('resize');
+  assert.equal(r.animations.length, 1);
+  assert.deepEqual(r.animations[0].keyframes, [{ translate: '0 337px' }, { translate: '0 0' }]);
+  r.advance(surface.SETTLE_MS);
+  assert.deepEqual(r.scrolls, [], 'the ride moves the sheet, not its fields');
 });
 
 // ── 4. app.css ──────────────────────────────────────────────────────────

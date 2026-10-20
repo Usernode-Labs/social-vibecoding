@@ -119,6 +119,10 @@ test('app.css bottoms the card, slides it, and clears the keyboard', () => {
     'the grabber shows on a phone only');
   assert.match(block, /\[data-dialog-sheet\] \.feedback-actions \{[\s\S]*?position: sticky;/,
     'the actions row stays at the foot while the form scrolls');
+  // #5701: the card is the sheet's one scroller, and a drag past its end is
+  // not handed to the page behind it: the form stays where it was dragged.
+  assert.match(block, /\[data-dialog-sheet\] \[data-modal-backdrop\] > div \{[\s\S]*?overflow-y: auto;[\s\S]*?overscroll-behavior: contain;/,
+    'the card scrolls itself and keeps its drag');
 });
 
 test('the form takes the keyboard without panning the page', () => {
