@@ -175,6 +175,29 @@ test('the store: one level at a time, the search first, nothing while it does no
   assert.equal(store.liveDepth(), 2);
 });
 
+test('#5581: asked for the list, the drawer opens on your communities, not the page', () => {
+  const store = loadTsx(`${DIR}/drawer-store.ts`);
+  let recorded = 0;
+  store.setBackRecords((close) => { recorded += 1; return () => {}; });
+  store.requestOuter();
+  store.setOn(true);
+  assert.equal(store.drawerStore.get().level, 0, 'the list, as a sidebar');
+  assert.equal(store.liveDepth(), 0, 'and the header is drawn for it at once');
+  assert.equal(recorded, 1, 'and Back returns to the page it was opened over');
+  store.setOn(false);
+  store.setOn(true);
+  assert.equal(store.drawerStore.get().level, 2, 'the request was spent: the next open is the page');
+  // A request whose page never came does not outlive its moment.
+  store.setOn(false);
+  const now = Date.now;
+  Date.now = () => 5_000;
+  store.requestOuter();
+  Date.now = () => 5_000 + 10_001;
+  store.setOn(true);
+  Date.now = now;
+  assert.equal(store.drawerStore.get().level, 2, 'stale: ignored');
+});
+
 test('while it is off the page it holds a Back record, and a navigating press leaves it', () => {
   const src = read(`${DIR}/drawer-store.ts`);
   assert.match(src, /if \(level < 2\) holdBack\(\);\s*else if \(!opts\.viaBack\) letGoBack\(!!opts\.navigating\);/);
@@ -233,6 +256,58 @@ test('level 0 searches your communities by name, in the list\'s order, an exact 
   // screen back would be a cycle).
   const screen = read('frontend/src/features/workshop/index.tsx');
   assert.match(screen, /return matchRows\(inAudience, query\);/);
+});
+
+test('#5581: level 0 is one list under the page\'s audience chips, with no sections', async () => {
+  const mod = loadTsx(`${DIR}/outer-level.tsx`);
+  // The two reads the level asks for: three member apps, one per audience,
+  // and counts that say nothing (so no Needs you row stands in the way).
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/api/workshop/counts')) {
+      return { ok: true, json: async () => ({ counts: {} }) };
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        apps: [
+          { slug: 'solo-row', name: 'Just mine', audience: 'solo', is_member: true, last_active_at: '2026-10-16T12:00:00Z' },
+          { slug: 'priv-row', name: 'Private one', audience: 'invited', is_member: true, member_count: 7, last_active_at: '2026-10-17T12:00:00Z' },
+          { slug: 'pub-row', name: 'Public one', audience: 'open', is_member: true, member_count: 12, last_active_at: '2026-10-18T12:00:00Z' },
+        ],
+      }),
+    };
+  };
+  const hadWindow = typeof globalThis.window !== 'undefined';
+  if (!hadWindow) globalThis.window = {};
+  try {
+    await mod.readCommunities();
+  } finally {
+    globalThis.fetch = realFetch;
+    if (!hadWindow) delete globalThis.window;
+  }
+  const html = renderToHtml(createElement(mod.OuterLevel, { current: null, searching: false, wanted: false, onPick() {}, listRef: null }));
+  assert.doesNotMatch(html, /data-workshop-section=/, 'no sections in the drawer');
+  assert.doesNotMatch(html, /data-workshop-more=/, 'and no "Show N more"');
+  assert.deepEqual(
+    [...html.matchAll(/data-nav-drawer-chip="([^"]+)"/g)].map((m) => m[1]),
+    ['all', 'open', 'invited', 'solo'],
+    'the page\'s chips, in the page\'s order',
+  );
+  assert.match(html, /aria-pressed="true"[^>]*data-nav-drawer-chip="all"|data-nav-drawer-chip="all"[^>]*aria-pressed="true"/,
+    'All pressed on arrival');
+  assert.match(html, /aria-label="All, 3 communities"/, 'each chip carries its count');
+  const cards = [...html.matchAll(/data-nav-drawer-rows="([^"]*)"/g)];
+  assert.equal(cards.length, 1, 'one card of rows');
+  assert.equal(cards[0][1], 'all', 'and it says which chip it shows');
+  const rest = html.slice(cards[0].index);
+  assert.deepEqual(
+    [...rest.matchAll(/data-workshop-app="([^"]+)"/g)].map((m) => m[1]),
+    ['pub-row', 'priv-row', 'solo-row'],
+    'every community in the one list, most recent first',
+  );
+  // And the source no longer names the sectioned drawing.
+  assert.doesNotMatch(read(`${DIR}/outer-level.tsx`), /groupRows|<Section\b/);
 });
 
 test('the header takes the drawer\'s arrow and titles only while it applies', () => {

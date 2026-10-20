@@ -227,12 +227,29 @@ function onHomeClick(event: React.MouseEvent<HTMLAnchorElement>): void {
  * where the tab pops to the selector as it always did — it answers false and
  * the href does exactly what it did before. A modified click is left alone,
  * as Home's is.
+ *
+ * ON A PHONE THE HREF IS NOT WHAT IT DID BEFORE (#5581). `#communities` is
+ * the full-screen Communities page, with the header's "Communities ⌄" and
+ * the list drawn as a page; the list on a phone is the drawer's own level 0
+ * (../nav-drawer/), as the lit tab already opens it from a community's page.
+ * So the tab takes the switcher's "All communities" door instead
+ * (../workshop/community-scope.ts `goToCommunity`), which opens the drawer's
+ * list over a community. A new account with no community to show it over
+ * still lands on the page, which is where Join and Start are.
  */
 function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
   const nav = (window as unknown as { NavLink?: { isNativeClick?: (e: unknown) => boolean } }).NavLink;
   if (nav?.isNativeClick?.(event)) return;
   const app = (window as unknown as { App?: { resumeWorkshopView?: () => boolean } }).App;
-  if (app?.resumeWorkshopView?.()) event.preventDefault();
+  if (app?.resumeWorkshopView?.()) { event.preventDefault(); return; }
+  if (wideWindow()) return;
+  event.preventDefault();
+  goToCommunity(null);
+}
+
+/** The desktop's sidebar, where the tab's href (the full-screen list) is right. */
+function wideWindow(): boolean {
+  try { return !window.matchMedia || window.matchMedia('(min-width: 768px)').matches; } catch { return true; }
 }
 
 /**
@@ -755,6 +772,11 @@ function goToTab(key: string, href: string): void {
     return;
   }
   if (key === 'workshop' && app?.resumeWorkshopView?.()) return;
+  // #5581: on a phone the list is the drawer's, not the page the href names.
+  if (key === 'workshop' && !wideWindow()) {
+    goToCommunity(null);
+    return;
+  }
   window.location.assign(href);
 }
 

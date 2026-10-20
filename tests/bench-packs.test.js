@@ -157,7 +157,12 @@ test('a turn\'s replayed lines are counted as a tracker counts them', () => {
   assert.deepEqual(progress.looksIn(null), { screenshots: 0, snapshots: 0, navigations: 0 });
 });
 
-test('a tracker keeps its looks where the trial goes on from at each step and at most every interval as they change, never after close', async () => {
+test('a tracker keeps its looks where the trial goes on from at each step and at most every interval as they change, never after close', async (t) => {
+  // The injected clock and the mocked setTimeout together make the hold-back
+  // deterministic: the test moves the clock and fires the timer instead of
+  // racing real time. setImmediate stays real, so `settle()` still drains the
+  // keep's promise chain.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   // What the caller keeps (lane.js executeTrial: a durable step): the
   // counts as they are when it is told to, read off the tracker.
   const kept = [];
@@ -169,10 +174,10 @@ test('a tracker keeps its looks where the trial goes on from at each step and at
     kept.push({ part, looks: tr.looks() });
   };
   const log = { warn: (_c, msg) => warned.push(msg) };
-  let t = 0;
+  let clock = 0;
   const pool = { async query() { return { rows: [] }; } };
   tr = progress.tracker(pool, 7, {
-    now: () => t, writeEveryMs: 60_000, keepEveryMs: 20, keep, log, looks: { screenshots: 1, snapshots: 0, navigations: 2 },
+    now: () => clock, writeEveryMs: 60_000, keepEveryMs: 20, keep, log, looks: { screenshots: 1, snapshots: 0, navigations: 2 },
   });
   const settle = () => new Promise((r) => { setImmediate(r); });
 
@@ -192,18 +197,23 @@ test('a tracker keeps its looks where the trial goes on from at each step and at
   assert.deepEqual(kept[1], { part: {}, looks: { screenshots: 1, snapshots: 0, navigations: 3 } });
 
   // More within the interval: held back, then kept once for all of them.
-  t = 5;
+  clock = 5;
   tr.note('Using browser_take_screenshot');
   tr.note('Using browser_take_screenshot');
   tr.note('Using skill warm-theme');
   await settle();
   assert.equal(kept.length, 2, 'not on every line');
-  await new Promise((r) => { setTimeout(r, 40); });
+  t.mock.timers.tick(14);
+  await settle();
+  assert.equal(kept.length, 2, 'still held back before the interval is up');
+  clock = 20;
+  t.mock.timers.tick(1);
+  await settle();
   assert.equal(kept.length, 3, 'once, when the interval is up');
   assert.deepEqual(tr.looks(), { screenshots: 3, snapshots: 0, navigations: 3 });
 
   // Past the interval: at once again.
-  t = 1000;
+  clock = 1000;
   tr.note('Using browser_snapshot');
   await settle();
   assert.equal(kept.length, 4);
@@ -212,12 +222,13 @@ test('a tracker keeps its looks where the trial goes on from at each step and at
   tr.note('Using browser_snapshot');
   await tr.step('capture');
   assert.deepEqual(kept[4], { part: {}, looks: { screenshots: 3, snapshots: 2, navigations: 3 } });
-  await new Promise((r) => { setTimeout(r, 40); });
+  t.mock.timers.tick(40);
+  await settle();
   assert.equal(kept.length, 5, 'its looks rode on the step\'s keep');
 
   // A keep that fails is logged and never thrown.
   failing = true;
-  t = 2000;
+  clock = 2000;
   tr.note('Using browser_navigate');
   await settle();
   await settle();
@@ -225,10 +236,11 @@ test('a tracker keeps its looks where the trial goes on from at each step and at
   failing = false;
 
   // Close drops a held-back keep: the trial's record has the counts.
-  t = 2005;
+  clock = 2005;
   tr.note('Using browser_navigate');
   await tr.close();
-  await new Promise((r) => { setTimeout(r, 40); });
+  t.mock.timers.tick(40);
+  await settle();
   tr.note('Using browser_navigate');
   await settle();
   assert.equal(kept.length, 5, 'nothing after close');
