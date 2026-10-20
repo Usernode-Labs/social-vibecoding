@@ -61,6 +61,22 @@ test('a local turn is never routed for a headless run', () => {
   assert.match(sessions, /const runLocally = !!lease;/);
 });
 
+test('an abandoned local turn is reported, not re-run on a worker', () => {
+  // Since headless turns never run locally, the local build has no headless
+  // retry to make: a branch for one could never run.
+  const call = 'result = await dispatchLocalBuild();';
+  const at = sessions.indexOf(call);
+  assert.ok(at > 0, 'found the local build dispatch');
+  const branch = sessions.slice(at + call.length, sessions.indexOf('} else {', at));
+  assert.equal(branch.includes('shouldRetryHeadlessTurn'), false, 'no headless retry on the local path');
+  assert.equal(branch.includes('dispatchLocalBuild'), false, 'the local build is dispatched once');
+  // Nothing re-routes an abandoned turn to a worker container; its result is
+  // the "disconnected before finishing" card, so no comment may promise one.
+  const service = fs.readFileSync(path.join(root, 'src/services/local-agent.js'), 'utf8');
+  assert.doesNotMatch(service, /re-routes an\s+(?:\/\/\s*)?abandoned turn/);
+  assert.doesNotMatch(service, /platform-worker fallback/);
+});
+
 test('a lease lookup failure downgrades to a worker rather than failing the turn', () => {
   // Anchored FROM the build gate's own comment: runScoutTool now has its own
   // `const runLocally =` earlier in the file, so a bare indexOf would slice
