@@ -436,6 +436,8 @@ const ADDED_IDS = {
   'settings-contact-privacy-section': '#5104: the Privacy page root, inside its [data-settings-section="contact-privacy"] wrapper.',
   'settings-who-can-message': '#5104: the "Who can message or invite me" radio group (People in projects I\'m in, the default, or Anyone).',
   'settings-profile-discoverable': '#5104: the "Let people find my profile" switch, off by default.',
+  'settings-phones-section': '#4938: the Linked phones page root, inside its [data-settings-section="phones"] wrapper.',
+  'settings-phones-list': '#4938: the list of phones signed in with the Homeroom app, one row per phone with Unlink; empty until the account is read.',
   'settings-high-contrast': '#3969: the High contrast switch (the RailPinnedRow pattern, at every width).',
   // ── #2718: the platform's destinations leave the app's menu ──────
   //

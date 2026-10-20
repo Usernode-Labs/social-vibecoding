@@ -18,10 +18,11 @@
  *    subtrees would be the same failure, so every component here is STATIC:
  *    no state, no props, no effects. They render once, at hydration, and are
  *    never reconciled again. ThemeSection, AccessibilitySection,
- *    ProfileSection and PrivacySection are the exceptions, and they earn it
- *    the same way: settings.js binds nothing inside them, so React is the
- *    only writer there. See ./theme.tsx, ./accessibility.tsx, ./profile.tsx
- *    and ./privacy.tsx.
+ *    ProfileSection, PrivacySection and LinkedPhonesSection are the
+ *    exceptions, and they earn it the same way: settings.js binds nothing
+ *    inside them, so React is the only writer there. See ./theme.tsx,
+ *    ./accessibility.tsx, ./profile.tsx, ./privacy.tsx and
+ *    ./linked-phones.tsx.
  *    The one thing every pane does subscribe to is the language
  *    (`useMessages`): a new language re-renders the pane, and React then
  *    patches only the text nodes whose words changed. The elements, their
@@ -54,6 +55,7 @@ import { DevConsoleSection } from './dev-console';
 import { ExperimentalSection } from './experimental';
 import { GlobalChatSettingsSection } from './global-chat';
 import { LanguageSection } from './language';
+import { LinkedPhonesSection } from './linked-phones';
 import { OpenRouterSection } from './openrouter';
 import { PasswordSection } from './password';
 import { PrivacySection } from './privacy';
@@ -92,6 +94,9 @@ export function SettingsSections() {
           #5097's Share usage analytics under them. A stateful pane; see
           ./privacy.tsx. */}
       <PrivacySection />
+      {/* ── #4938: the phones signed in with the Homeroom app, and Unlink
+          for each. A stateful pane; see ./linked-phones.tsx. */}
+      <LinkedPhonesSection />
       <WalletSection />
       {/* ── AI & building ── */}
       <UsageSection />

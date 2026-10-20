@@ -324,6 +324,10 @@
       // about other people reaching your account, so they sit with it. A
       // stateful pane; settings.js binds nothing inside it.
       { key: 'contact-privacy', label: 'settings:nav.part.contactPrivacy', group: 'settings:nav.group.account' },
+      // #4938: the phones signed in with the Homeroom app, and Unlink for
+      // each. Also about who can use your account, so it sits with Privacy.
+      // A stateful pane; settings.js binds nothing inside it.
+      { key: 'phones', label: 'settings:nav.part.phones', group: 'settings:nav.group.account' },
       { key: 'wallet', label: 'settings:nav.part.wallet', group: 'settings:nav.group.account', gate: 'wallet-section' },
 
       // ── AI & building ───────────────────────────────────────────────────
@@ -416,6 +420,7 @@
       'delete-account': 'settings:nav.keywords.deleteAccount',
       'linked-accounts': 'settings:nav.keywords.linkedAccounts',
       'contact-privacy': 'settings:nav.keywords.contactPrivacy',
+      phones: 'settings:nav.keywords.phones',
       wallet: 'settings:nav.keywords.wallet',
       usage: 'settings:nav.keywords.usage',
       'api-key': 'settings:nav.keywords.apiKey',
