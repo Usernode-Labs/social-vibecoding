@@ -4376,6 +4376,49 @@ CREATE INDEX IF NOT EXISTS idx_db_exports_user ON db_exports (user_id, requested
 -- able to read the export log; that's an audit trail, not a secret.
 COMMENT ON TABLE db_exports IS 'staging:private';
 
+-- ── Admin access review (#5133) ────────────────────────────────────────
+--
+-- Two append-only records behind the console's Access review section
+-- (services/admin-access-review.js, #admin/access-review).
+--
+-- admin_role_changes: one row per role set through
+-- POST /api/admin/users/:id/is-admin, so the review can say when an
+-- account got the role it holds now and who gave it. Roles set before this
+-- table existed (or straight in SQL) have no row, and the review says
+-- "not recorded" for them rather than guessing a date.
+--
+-- admin_access_reviews: one row each time a full admin presses Reviewed.
+-- `admins` is the list they looked at, as [{ "id": n, "role": "admin" }],
+-- ids and roles only, so the record says what was reviewed without
+-- copying anyone's name. The next review is due 90 days after the latest.
+--
+-- Both point at users(id): a deleted reviewer leaves the review with a
+-- NULL reviewer (ON DELETE SET NULL), and a deleted account takes its role
+-- history with it. user-merge.js re-points both, like every FK to users.
+CREATE TABLE IF NOT EXISTS admin_role_changes (
+  id          BIGSERIAL PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role        VARCHAR(16) NOT NULL CHECK (role IN ('user', 'view_admin', 'admin')),
+  changed_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  changed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_admin_role_changes_user
+  ON admin_role_changes (user_id, changed_at DESC);
+COMMENT ON TABLE admin_role_changes IS 'staging:private';
+
+CREATE TABLE IF NOT EXISTS admin_access_reviews (
+  id                BIGSERIAL PRIMARY KEY,
+  reviewed_by       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  reviewed_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  full_admins       INTEGER NOT NULL DEFAULT 0 CHECK (full_admins >= 0),
+  view_only_admins  INTEGER NOT NULL DEFAULT 0 CHECK (view_only_admins >= 0),
+  admins            JSONB NOT NULL DEFAULT '[]'::jsonb,
+  note              TEXT CHECK (note IS NULL OR char_length(note) <= 500)
+);
+CREATE INDEX IF NOT EXISTS idx_admin_access_reviews_at
+  ON admin_access_reviews (reviewed_at DESC);
+COMMENT ON TABLE admin_access_reviews IS 'staging:private';
+
 -- ── Platform environment variables ───────────────────────────────────
 --
 -- In-platform management of the *platform's own* env vars — the ones
