@@ -64,18 +64,42 @@ function feedItem(over = {}) {
 
 // ── 1. The switch ────────────────────────────────────────────────────────
 
-test('the switch is off by default and kept under its own key on the device', () => {
-  assert.equal(settings.REVIEW_FLOW_STORAGE_KEY, 'usernode:review-flow');
-  const store = memoryStorage(false);
-  assert.equal(settings.reviewFlowEnabled(store), false);
-  settings.setReviewFlowEnabled(true, store);
-  assert.equal(store.map.get('usernode:review-flow'), '1');
-  assert.equal(settings.reviewFlowEnabled(store), true);
-  settings.setReviewFlowEnabled(false, store);
-  assert.equal(store.map.has('usernode:review-flow'), false);
-  assert.equal(settings.reviewFlowEnabled(null), false, 'unreadable storage reads as off');
-  const broken = { getItem() { throw new Error('denied'); } };
-  assert.equal(settings.reviewFlowEnabled(broken), false);
+test('the switch is off by default and kept on the account; a failed save changes nothing', async () => {
+  assert.equal(settings.reviewFlowEnabled({ user: {} }), false);
+  assert.equal(settings.reviewFlowEnabled(null), false, 'signed out reads as off');
+  const app = { user: { reviewFlowEnabled: false } };
+  const sent = [];
+  const ok = (v) => { sent.push(v); return Promise.resolve(true); };
+  assert.equal(await settings.setReviewFlowEnabled(true, app, ok), true);
+  assert.deepEqual(sent, [true]);
+  assert.equal(settings.reviewFlowEnabled(app), true);
+  assert.equal(await settings.setReviewFlowEnabled(false, app, () => Promise.resolve(false)), false);
+  assert.equal(settings.reviewFlowEnabled(app), true, 'the account keeps what the server has');
+});
+
+test('a device that had it on carries it over to the account once, then forgets it', async () => {
+  const app = { user: { reviewFlowEnabled: false } };
+  const store = memoryStorage(true);
+  const sent = [];
+  await settings.carryOverDeviceSwitch(app, store, (v) => { sent.push(v); return Promise.resolve(true); });
+  assert.deepEqual(sent, [true]);
+  assert.equal(app.user.reviewFlowEnabled, true);
+  assert.equal(store.map.has(settings.REVIEW_FLOW_STORAGE_KEY), false);
+  await settings.carryOverDeviceSwitch(app, store, (v) => { sent.push(v); return Promise.resolve(true); });
+  assert.deepEqual(sent, [true], 'nothing left to carry');
+  const failing = memoryStorage(true);
+  await settings.carryOverDeviceSwitch({ user: { reviewFlowEnabled: false } }, failing, () => Promise.resolve(false));
+  assert.equal(failing.map.get(settings.REVIEW_FLOW_STORAGE_KEY), '1', 'kept to try again when the save failed');
+});
+
+test('the server keeps the switch on the account and serves it with the user', () => {
+  assert.match(read('src/db/schema.sql'), /ALTER TABLE users ADD COLUMN IF NOT EXISTS review_flow_enabled BOOLEAN NOT NULL DEFAULT FALSE;/);
+  const routes = read('src/routes/auth.js');
+  assert.match(routes, /router\.post\('\/api\/me\/review-flow'[\s\S]{0,400}UPDATE users SET review_flow_enabled = \$1 WHERE id = \$2/);
+  assert.match(routes, /reviewFlowEnabled: !!req\.user\.reviewFlowEnabled/);
+  const mw = read('src/middleware/auth.js');
+  assert.equal((mw.match(/review_flow_enabled/g) || []).length, 4, 'both reads select it and both shapes carry it');
+  assert.match(read('src/services/global-chat/classic-capabilities.js'), /experimental: \['aiProgressEstimate', 'sessionBridgeEnabled', 'reviewFlowEnabled'\]/);
 });
 
 test('the bridge settings.js reads and saves the switch through', () => {
@@ -90,7 +114,7 @@ test('Settings, Experimental carries the switch, and settings.js paints and save
   assert.match(section, /<SwitchRow id="review-flow-enabled">/);
   assert.match(section, /settings:experimental\.reviewFlow\.label/);
   const js = read('frontend/src/features/settings/settings.js');
-  assert.match(js, /getElementById\('review-flow-enabled'\)[\s\S]{0,400}UsernodeReact\?\.reviewFlow[\s\S]{0,80}setEnabled\(e\.target\.checked\)/);
+  assert.match(js, /getElementById\('review-flow-enabled'\)[\s\S]{0,400}UsernodeReact\?\.reviewFlow[\s\S]{0,80}setEnabled\(e\.target\.checked\)[\s\S]{0,80}if \(!ok\) reviewToggle\.checked = !!pref\?\.enabled\(\)/);
   assert.match(js, /review\.checked = !!reviewPref\?\.enabled\(\)/);
   assert.match(read('frontend/src/main.tsx'), /import '\.\/features\/review-flow\/settings';/);
   assert.equal(message('settings:experimental.reviewFlow.label'), 'New Needs you');

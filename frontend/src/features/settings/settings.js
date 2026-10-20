@@ -683,13 +683,15 @@
         });
       }
 
-      // New Needs you (an experiment), kept on this device like the switch
-      // above (features/review-flow/settings.ts): the change is the save.
+      // New Needs you (an experiment), kept on the account
+      // (features/review-flow/settings.ts): the change is the save, and a
+      // failed save puts the switch back to what the account has.
       const reviewToggle = document.getElementById('review-flow-enabled');
       if (reviewToggle) {
-        reviewToggle.addEventListener('change', (e) => {
+        reviewToggle.addEventListener('change', async (e) => {
           const pref = typeof window !== 'undefined' ? window.UsernodeReact?.reviewFlow : null;
-          pref?.setEnabled(e.target.checked);
+          const ok = pref ? await pref.setEnabled(e.target.checked) : false;
+          if (!ok) reviewToggle.checked = !!pref?.enabled();
         });
       }
 

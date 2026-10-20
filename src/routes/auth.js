@@ -1008,6 +1008,9 @@ function authRoutes(config) {
         // spec's routing tree. build-venues.js requires this AND the
         // deployment's cliAuthEnabled before offering the `local` venue.
         sessionBridgeEnabled: !!req.user.sessionBridgeEnabled,
+        // New Needs you, the experimental review flow (Settings ->
+        // Experimental). Default OFF; features/review-flow/settings.ts.
+        reviewFlowEnabled: !!req.user.reviewFlowEnabled,
         // #2779: new work starts in an agent session for everyone; the
         // per-user flag and its Settings switch are retired. Still reported
         // as true for a shell cached before that, whose entry points read it
@@ -1362,6 +1365,28 @@ function authRoutes(config) {
       res.json({ ok: true, enabled });
     } catch (err) {
       log.error('settings', 'Failed to toggle session bridge', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // New Needs you, the experimental review flow (Settings -> Experimental).
+  // Same shape as the session-bridge toggle above; see
+  // users.review_flow_enabled in schema.sql for why it is on the account.
+  router.post('/api/me/review-flow', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const { enabled } = req.body || {};
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled must be a boolean' });
+    }
+    try {
+      await pool.query(
+        'UPDATE users SET review_flow_enabled = $1 WHERE id = $2',
+        [enabled, req.user.id]
+      );
+      log.info('settings', 'Review flow toggled', { userId: req.user.id, enabled });
+      res.json({ ok: true, enabled });
+    } catch (err) {
+      log.error('settings', 'Failed to toggle review flow', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

@@ -156,6 +156,8 @@ const EXEMPT = new Map([
   ['auth.js POST /api/me/password', JSON_FIELD],
   ['auth.js POST /api/me/ai-progress-estimate', JSON_FIELD],
   ['auth.js POST /api/me/session-bridge', JSON_FIELD],
+  // New Needs you, the experimental review flow: the same JSON `enabled`.
+  ['auth.js POST /api/me/review-flow', JSON_FIELD],
   ['auth.js POST /api/auth/wallet-check', JSON_FIELD],
   ['auth.js POST /api/auth/wallet-verify', JSON_FIELD],
   ['auth.js POST /api/auth/wallet-reset-verify', JSON_FIELD],

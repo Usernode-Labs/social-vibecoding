@@ -107,6 +107,12 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL
 -- it on; the deployment gate still applies on top.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS session_bridge_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- New Needs you, the experimental review flow (Settings -> Experimental).
+-- On the account rather than the device, so it follows the person and the
+-- server knows who is in the experiment: only they are served before/after
+-- stills at the density they were captured at. Default FALSE: an experiment.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS review_flow_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- Home sections are permanent (#1801). Remove the obsolete preference from
 -- existing databases; IF EXISTS also makes fresh installs and repeat boots safe.
 ALTER TABLE users DROP COLUMN IF EXISTS home_panels_hidden;
