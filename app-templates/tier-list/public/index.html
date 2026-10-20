@@ -63,14 +63,23 @@
     .scrim { background-color: rgb(var(--scrim) / 0.45); }
   </style>
   <!-- What takes the loading shapes' place fades in, briefly, rather than
-       cutting over, and a place's sheet rises into view: an animation
-       replays whenever [hidden] comes off, so nothing has to start it. None
-       under reduced motion. -->
+       cutting over: an animation replays whenever [hidden] comes off, so
+       nothing has to start it. A place's sheet slides up from the bottom
+       edge as a phone's own sheets do, over the dim fading in, and slides
+       back down as the dim fades out (.leaving, which app.js puts on while
+       it goes). None under reduced motion. -->
   <style>
     @keyframes appear { from { opacity: 0; } to { opacity: 1; } }
     @media (prefers-reduced-motion: no-preference) { .appear { animation: appear 200ms ease-out; } }
-    @keyframes rise { from { opacity: 0; transform: translateY(1.5rem); } to { opacity: 1; transform: none; } }
-    @media (prefers-reduced-motion: no-preference) { .rise { animation: rise 200ms ease-out; } }
+    @keyframes rise { from { transform: translateY(100%); } to { transform: none; } }
+    @keyframes sink { from { transform: none; } to { transform: translateY(100%); } }
+    @keyframes vanish { from { opacity: 1; } to { opacity: 0; } }
+    @media (prefers-reduced-motion: no-preference) {
+      .rise { animation: rise 340ms cubic-bezier(0.32, 0.72, 0, 1); }
+      .leaving { pointer-events: none; }
+      .leaving .rise { animation: sink 240ms cubic-bezier(0.4, 0, 1, 1) forwards; }
+      .leaving .appear { animation: vanish 240ms ease-in forwards; }
+    }
   </style>
 </head>
 <body class="min-h-screen bg-ground text-fg">

@@ -60,6 +60,12 @@
   var justDragged = false;
   // The sheet that is open, if any: { id, opener, data, failed }.
   var detail = null;
+  // A sheet on its way down: the timer that hides it once it is gone.
+  var leaving = null;
+  // How long a sheet waits for who ranked it what before it comes up without
+  // it, and how long its way down takes (index.html's .leaving).
+  var OPEN_WAIT_MS = 250;
+  var LEAVE_MS = 240;
   // Removals waiting for their second tap: a refresh would put the button back.
   var armed = 0;
   // Live updates (public/live-updates.js), wired up at the bottom.
@@ -327,15 +333,41 @@
 
   // ── One item's sheet: who ranked it what ───────────────────────────────
 
+  function reducedMotion() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+
+  // A sheet still on its way down goes at once: another is coming up.
+  function finishLeaving() {
+    if (!leaving) return;
+    clearTimeout(leaving);
+    leaving = null;
+    el.detail.classList.remove('leaving');
+    el.detail.hidden = true;
+  }
+
   function openDetail(id, opener) {
-    detail = { id: id, opener: opener, data: null, failed: false };
+    finishLeaving();
+    var opened = { id: id, opener: opener, data: null, failed: false };
+    detail = opened;
     renderDetail();
-    el.detail.hidden = false;
-    // The board behind it can be neither reached nor scrolled.
-    el.main.inert = true;
-    document.body.classList.add('overflow-hidden');
-    el.detailClose.focus();
-    loadDetail();
+    // It comes up once who ranked it what is in, so it rises at its full
+    // height rather than growing under the finger as the rows arrive; a slow
+    // read gets OPEN_WAIT_MS, then the sheet comes up with its loading rows.
+    var shown = false;
+    function present() {
+      if (shown || detail !== opened) return;
+      shown = true;
+      el.detail.hidden = false;
+      // The board behind it can be neither reached nor scrolled.
+      el.main.inert = true;
+      document.body.classList.add('overflow-hidden');
+      // Without scrolling: a phone scrolls the page to a focused button,
+      // which jolted the sheet as it rose.
+      el.detailClose.focus({ preventScroll: true });
+    }
+    loadDetail().then(present, present);
+    setTimeout(present, OPEN_WAIT_MS);
   }
 
   function closeDetail() {
@@ -344,12 +376,16 @@
     var opener = detail.opener;
     detail = null;
     removing.disarm();
-    el.detail.hidden = true;
     el.main.inert = false;
     document.body.classList.remove('overflow-hidden');
     // Back to the item it opened from, or the same item redrawn since.
     var back = opener && opener.isConnected ? opener : el.ranking.querySelector('[data-item="' + id + '"]');
-    if (back) back.focus();
+    if (back) back.focus({ preventScroll: true });
+    // Down the way it came, then hidden; at once if it never came up, or
+    // under reduced motion.
+    if (el.detail.hidden || reducedMotion()) { el.detail.hidden = true; return; }
+    el.detail.classList.add('leaving');
+    leaving = setTimeout(finishLeaving, LEAVE_MS);
   }
 
   var detailLoading = null;
