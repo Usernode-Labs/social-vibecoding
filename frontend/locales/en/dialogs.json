@@ -1231,6 +1231,10 @@
     "text": "Image {{number}} preview",
     "description": "Text alternative of an attached image's thumbnail in the \"Suggest an improvement\" dialog. {{number}} is its position among the attached images, starting at 1."
   },
+  "feedback.screenshot.view": {
+    "text": "View image {{number}}",
+    "description": "Accessible name of an attached image's thumbnail in the \"Suggest an improvement\" dialog, which opens the image full size when tapped. {{number}} is its position among the attached images, starting at 1."
+  },
   "feedback.screenshot.remove": {
     "text": "Remove image {{number}}",
     "description": "Accessible name of the X button on an attached image's thumbnail in the \"Suggest an improvement\" dialog. {{number}} is its position among the attached images, starting at 1."
@@ -1342,6 +1346,14 @@
   "feedback.video.replace": {
     "text": "Replace video",
     "description": "The Video row of the paperclip menu in the \"Suggest an improvement\" dialog once a clip is attached: picks a different clip in its place."
+  },
+  "feedback.video.view": {
+    "text": "View video",
+    "description": "Accessible name of the attached video's thumbnail in the \"Suggest an improvement\" dialog, which opens the clip full size when tapped."
+  },
+  "feedback.video.previewLabel": {
+    "text": "Attached video",
+    "description": "Spoken name of the full-size preview of an attached video clip, opened from its thumbnail in the \"Suggest an improvement\" dialog."
   },
   "feedback.video.remove": {
     "text": "Remove video",

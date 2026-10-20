@@ -189,6 +189,18 @@ test('?shot=feedback-sent poses the sent confirmation without filing anything', 
   assert.match(app, /shot !== 'feedback-sent' && shot !== 'feedback-bot'\) return;/, 'the shot names are accepted');
   assert.match(app, /App\._simulateFeedbackSent\?\.\(\);/);
 });
+// #5687: the sheet's one job is to confirm the request was posted, so Done
+// is the filled primary button and comes first; Open chat, See your requests
+// and Edit are the secondary buttons under it.
+test('#5687: Done leads the sent confirmation as its filled primary button', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dialogs/feedback.tsx'), 'utf8');
+  const at = (id) => src.indexOf(`id="${id}"`);
+  const order = ['feedback-sent-done', 'feedback-sent-chat', 'feedback-sent-mine', 'feedback-sent-edit', 'feedback-sent-fix'].map(at);
+  assert.ok(order.every((pos) => pos > 0), 'every action is there');
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'Done, then Open chat, See your requests, Edit and the small link');
+  assert.match(src, /<Button id="feedback-sent-done" className="min-h-\[44px\]">/, 'the filled, default variant');
+  assert.match(src, /<Button id="feedback-sent-chat" variant="neutral" ink="neutral"/, 'Open chat is a secondary button');
+});
 test('Done closes the sent confirmation and goes nowhere', async () => {
   const h = harness({ response: {} }); await h.submit();
   h.el('feedback-sent-done').click();
@@ -307,7 +319,7 @@ test('B8: a request Homeroom bot builds is answered with its idea underway, how 
   assert.equal(h.el('feedback-sent-title').textContent, BOT_TITLE);
   assert.equal(h.el('feedback-sent-line').textContent, botLine(6));
   assert.ok(h.el('feedback-sent-first').classList.contains('hidden'), 'not a first request, so no first-request line');
-  assert.equal(h.el('feedback-sent-chat').classList.contains('hidden'), false, 'Open chat leads');
+  assert.equal(h.el('feedback-sent-chat').classList.contains('hidden'), false, 'Open chat shows, under Done');
   assert.ok(h.el('feedback-sent-mine').classList.contains('hidden'), 'the chat is where to find it');
   assert.equal(h.el('feedback-sent-fix').classList.contains('hidden'), false, 'building it yourself is the small link');
   h.el('feedback-sent-chat').click();
@@ -323,7 +335,7 @@ test('#3971: a first request the bot builds is the bot\'s answer, with the first
   assert.equal(h.el('feedback-sent-line').textContent, botLine(6));
   assert.equal(h.el('feedback-sent-first').classList.contains('hidden'), false, 'the first request says so');
   assert.equal(h.el('feedback-sent-first-line').textContent, 'You just helped shape Other App.');
-  assert.equal(h.el('feedback-sent-chat').classList.contains('hidden'), false, 'Open chat still leads');
+  assert.equal(h.el('feedback-sent-chat').classList.contains('hidden'), false, 'Open chat is still there, under Done');
   // Another account's moment is not this person's first request.
   const other = harness({ response: { firstFeedback: { ...moment, userId: 8 }, homeroomBot: BOT } });
   await other.submit();

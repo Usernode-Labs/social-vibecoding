@@ -120,6 +120,10 @@ export const Feedback = {
   // the island's legacy `{ fromDev }` payload in the public signature.
   _open: (_opts = {}) => {},
   _reset: () => {},
+  // #5687: the full-size preview of an attached picture or clip. The island
+  // replaces it with its own state setter (`_preview = setPreview`), the same
+  // split as `_open`; the thumbnails built below call it on a tap.
+  _preview: (_item = null) => {},
   /** @returns {{ text: string, title: string, images: Blob[], bounty: boolean, target: 'app' | 'platform' | null }} */
   _takeDraft: () => ({ text: '', title: '', images: [], bounty: false, target: null }),
 };
@@ -1123,6 +1127,7 @@ export function init() {
       screenshots.forEach((shot, i) => {
         shot.img.alt = t('dialogs:feedback.screenshot.previewAlt', { number: i + 1 });
         shot.removeBtn.setAttribute('aria-label', t('dialogs:feedback.screenshot.remove', { number: i + 1 }));
+        shot.openBtn.setAttribute('aria-label', t('dialogs:feedback.screenshot.view', { number: i + 1 }));
       });
     };
 
@@ -1165,6 +1170,16 @@ export function init() {
       const img = document.createElement('img');
       img.className = 'h-14 max-w-[8rem] rounded-md border border-zinc-300 dark:border-zinc-700 object-cover';
       img.src = shot.objectUrl;
+      // #5687: the thumbnail opens its picture full size, over the form, so
+      // what was attached can be checked before the request is posted. The
+      // ✕ beside it stays its own target.
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.className = 'shrink-0 rounded-md';
+      openBtn.setAttribute('data-feedback-screenshot-open', '');
+      openBtn.addEventListener('click', () => {
+        Feedback._preview({ kind: 'image', src: shot.objectUrl, alt: shot.img.alt, pins: shot.pins || null });
+      });
       const stateEl = document.createElement('span');
       stateEl.className = 'text-xs text-zinc-500 dark:text-zinc-400';
       const removeBtn = document.createElement('button');
@@ -1186,14 +1201,15 @@ export function init() {
           dot.setAttribute('aria-hidden', 'true');
           frame.appendChild(dot);
         }
-        item.appendChild(frame);
+        openBtn.appendChild(frame);
       } else {
-        item.appendChild(img);
+        openBtn.appendChild(img);
       }
+      item.appendChild(openBtn);
       item.appendChild(stateEl);
       item.appendChild(removeBtn);
       screenshotPreview.appendChild(item);
-      Object.assign(shot, { node: item, img, stateEl, removeBtn });
+      Object.assign(shot, { node: item, img, stateEl, removeBtn, openBtn });
     };
 
     const uploadScreenshot = (blob) => fetch('/api/feedback/screenshot', {
@@ -1549,6 +1565,17 @@ export function init() {
       v.muted = true;
       v.preload = 'metadata';
       v.playsInline = true;
+      // #5687: the first frame is a button too, opening the clip full size
+      // with the device's own video controls (it does not start on its own).
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.className = 'shrink-0 rounded-md';
+      openBtn.setAttribute('data-feedback-video-open', '');
+      openBtn.setAttribute('aria-label', t('dialogs:feedback.video.view'));
+      openBtn.addEventListener('click', () => {
+        Feedback._preview({ kind: 'video', src: entry.objectUrl });
+      });
+      openBtn.appendChild(v);
       const progressEl = document.createElement('span');
       progressEl.className = 'hidden h-1 w-16 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700';
       const bar = document.createElement('span');
@@ -1562,11 +1589,11 @@ export function init() {
       removeBtn.textContent = '✕';
       removeBtn.setAttribute('aria-label', t('dialogs:feedback.video.remove'));
       removeBtn.addEventListener('click', () => removeVideo(entry));
-      item.appendChild(v);
+      item.appendChild(openBtn);
       item.appendChild(progressEl);
       item.appendChild(stateEl);
       item.appendChild(removeBtn);
-      Object.assign(entry, { node: item, video: v, stateEl, progressEl, bar, removeBtn });
+      Object.assign(entry, { node: item, video: v, stateEl, progressEl, bar, removeBtn, openBtn });
     };
 
     const showVideo = (entry) => {

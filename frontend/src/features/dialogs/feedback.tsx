@@ -45,6 +45,7 @@ import { returnKeyHandler } from '../../lib/return-to-next';
 import { formOffersComment, openCommentMode, prepareComment } from '../improve/suggest-shortcut';
 import { ControllerText } from './controller-text';
 import { Feedback, init as initFeedback } from './feedback-controller';
+import { FeedbackPreview, type FeedbackPreviewItem } from './feedback-preview';
 import { useDialog } from './use-dialog';
 
 /** Reserved for callers that still pass `{ fromDev: true }` — see #226/#312. */
@@ -102,6 +103,9 @@ export function FeedbackDialog() {
   // the device's switch is on (not in the side panel). Read on every open,
   // since the setting lives on the device and can change between opens.
   const [offersComment, setOffersComment] = useState(false);
+  // #5687: the attached picture or clip a thumbnail asked to see full size.
+  // Null until a tap, so the prerendered document never carries it.
+  const [preview, setPreview] = useState<FeedbackPreviewItem | null>(null);
   // The card, as a bottom sheet on a phone (#4554): `useKeyboardSurface`
   // rides the keyboard with it the way the sign-in sheet's does, and the
   // sheet's slide-up is `useStaticModal`'s `phoneSheet` presentation.
@@ -116,7 +120,12 @@ export function FeedbackDialog() {
       // menu does for "Suggest an improvement" (a no-op where the switch is off).
       if (!opts?.edit) prepareComment();
     },
-    onClose: () => Feedback._reset(),
+    // A closed dialog never leaves a preview behind: `_reset` revokes the
+    // object URLs the preview would be reading.
+    onClose: () => {
+      setPreview(null);
+      Feedback._reset();
+    },
   });
   useKeyboardSurface(cardRef, { ride: true });
   // Comment mode instead, taking the form's draft: the words wait for the
@@ -133,10 +142,15 @@ export function FeedbackDialog() {
   // speech-bubble button and the ?shot=feedback deep link are both live
   // before the first paint that could act on them.
   useIsomorphicLayoutEffect(() => {
+    // The controller builds the thumbnails, so it asks the island to show
+    // one (#5687); the placeholder in the module is where a tap before
+    // wiring lands.
+    Feedback._preview = (item) => setPreview(item);
     initFeedback();
   }, []);
 
   return (
+    <>
     <DialogRoot
       id="feedback-modal"
       ref={dialog.rootRef}
@@ -622,9 +636,10 @@ export function FeedbackDialog() {
           </h2>
           <p id="feedback-sent-notice" className="hidden text-sm text-emerald-700 dark:text-emerald-400 mb-2" role="status"></p>
           {/* B8: where Homeroom bot builds it, this says so ("Homeroom bot is
-              building it now, usually about 8 minutes. ...", #3971), Open
-              chat leads, and building it yourself is the small link at the
-              foot. The controller words the line and shows the two. */}
+              building it now, usually about 8 minutes. ...", #3971); Open
+              chat is a neutral button under Done now (#5687), and building
+              it yourself is the small link at the foot. The controller words
+              the line and shows the two. */}
           <p id="feedback-sent-line" className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
             <ControllerText id="dialogs:feedback.sent.line" />
           </p>
@@ -642,11 +657,14 @@ export function FeedbackDialog() {
               <ControllerText id="dialogs:feedback.sent.firstLine.unnamed" />
             </p>
           </div>
+          {/* #5687: Done is what the sheet is for, so it is the filled
+              primary button and comes first; everything else is a neutral
+              button under it. */}
           <div className="flex flex-col gap-3">
-            <Button id="feedback-sent-chat" className="hidden min-h-[44px]">{t('dialogs:feedback.sent.chat')}</Button>
+            <Button id="feedback-sent-done" className="min-h-[44px]">{t('core:common.done')}</Button>
+            <Button id="feedback-sent-chat" variant="neutral" ink="neutral" className="hidden min-h-[44px]">{t('dialogs:feedback.sent.chat')}</Button>
             <Button id="feedback-sent-mine" variant="neutral" ink="neutral" className="min-h-[44px]">{t('dialogs:feedback.sent.mine')}</Button>
             <Button id="feedback-sent-edit" variant="neutral" ink="neutral" className="hidden min-h-[44px]">{t('dialogs:feedback.edit.button')}</Button>
-            <Button id="feedback-sent-done" variant="unstyled" ink="muted" className="min-h-[44px]">{t('core:common.done')}</Button>
             <button id="feedback-sent-fix" type="button" className="hidden self-center text-xs text-zinc-500 underline underline-offset-2 dark:text-zinc-400">
               {t('dialogs:feedback.sent.fix')}
             </button>
@@ -654,5 +672,9 @@ export function FeedbackDialog() {
         </section>
       </DialogCard>
     </DialogRoot>
+    {/* #5687: beside the dialog root rather than inside it, so a tap on the
+        dark around the picture is the preview's alone. */}
+    {preview ? <FeedbackPreview item={preview} onClose={() => setPreview(null)} /> : null}
+    </>
   );
 }
