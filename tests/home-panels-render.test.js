@@ -215,6 +215,12 @@ const challenge = (over = {}) => ({
 // The first challenge card and everything after it: the card markup without
 // the heading above it.
 const cardOf = (html) => html.slice(html.indexOf('home-challenge-card'));
+// The first card alone, up to where the next one starts.
+const firstCardOf = (html) => {
+  const card = cardOf(html);
+  const next = card.indexOf('home-challenge-card', 1);
+  return next < 0 ? card : card.slice(0, next);
+};
 
 const panel = (over = {}) => ({
   key: 'challenges',
@@ -666,11 +672,12 @@ test('render: a done row reads Done and says what the viewer earned', () => {
       earned_points: 250,
     }), challenge({ id: 2, label: 'ONBOARDING' })],
   });
-  const card = cardOf(renderWith({ registry: [], hidden: [], panels: [p] }).html);
-  assert.match(card, /aria-valuetext="Done"/);
-  assert.match(card, /bg-emerald-500\/10 text-emerald-700 dark:text-emerald-400/, 'the green done rail');
+  const card = firstCardOf(renderWith({ registry: [], hidden: [], panels: [p] }).html);
+  assert.match(card, /data-challenge-state="done"/);
+  assert.doesNotMatch(card, /role="progressbar"/, 'a finished card is one line, with no rail (#4563)');
+  assert.match(card, /<span class="sr-only">Done<\/span>/, 'it still says Done to a screen reader');
   assert.match(card, /text-emerald-700 dark:text-emerald-400">250 pts<\/span>/,
-    'and the meta line says it in emerald ink');
+    'and says what was earned in emerald ink');
   assert.match(card, />250 pts</, 'the chip says what was earned, not what is on offer');
   assert.doesNotMatch(card, /home-panel-glyph/, 'the old filled ✓ disc is retired');
 });
@@ -841,7 +848,7 @@ test("a row carries the Challenges tab's rail descriptor", () => {
   assert.equal(row.label, undefined, 'no category: the tile never shows it');
 });
 
-test('a numeric challenge at full target reads Done on a green rail', () => {
+test('a numeric challenge at full target is a finished line, not a count (#4563)', () => {
   const { html } = renderWith({
     registry: [], hidden: [],
     panels: [panel({
@@ -854,10 +861,11 @@ test('a numeric challenge at full target reads Done on a green rail', () => {
       }), challenge({ id: 2, label: 'ONBOARDING' })],
     })],
   });
-  const card = cardOf(html);
-  assert.match(card, /aria-valuetext="Done"/);
-  assert.match(card, /aria-valuenow="100"/);
-  assert.match(card, />900 pts</);
+  const card = firstCardOf(html);
+  assert.match(card, /data-challenge-state="done"/);
+  assert.doesNotMatch(card, /role="progressbar"/, 'no rail on a finished card');
+  assert.match(card, /<span class="sr-only">Done<\/span>/);
+  assert.match(card, /text-emerald-700 dark:text-emerald-400">900 pts</);
   assert.doesNotMatch(card, />5\/5</, "finished reads the tab's word, not a count");
 });
 

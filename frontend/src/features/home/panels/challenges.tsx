@@ -6,8 +6,8 @@
  * HomePanels.challengesView decides, and the section heading says it:
  *
  *   First challenges — every First challenge while any is unfinished, in the
- *                      admin's order, the done ones in place with their Done
- *                      rail.
+ *                      admin's order, the done ones in place as the card's
+ *                      one-line finished shape (#4563).
  *   Next challenges  — once those are done: up to three open challenges,
  *                      in the Challenges tab's order (polish N11: not by
  *                      progress, which reshuffled them on screen).
