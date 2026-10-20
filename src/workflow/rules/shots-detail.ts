@@ -52,19 +52,6 @@ export function claimsFromIntent(intent: Obj | null): Obj[] {
     : [];
 }
 
-// Each declared change's screens' widths in CSS pixels, keyed
-// `<change id>:<screen name>`: a saved still's density is its width over its
-// screen's (services/shots-files.js densityFor).
-export function screenWidthsOf(intent: Obj | null): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const story of Array.isArray(intent?.stories) ? intent!.stories.slice(0, MAX_STORIES) : []) {
-    for (const viewport of Array.isArray(story?.viewports) ? story.viewports : []) {
-      if (Number.isSafeInteger(viewport?.width) && viewport.width > 0) out[`${story.id}:${viewport.name}`] = viewport.width;
-    }
-  }
-  return out;
-}
-
 // The changed-file heuristic only decides whether a MISSING declaration is
 // needed. It cannot overrule an explicit `impact: none`: that intent has no
 // stories by contract.
@@ -130,7 +117,6 @@ export function runSummary(row: Obj | null, artifactSummary: unknown[] = [],
     state: row.state,
     required: row.state !== 'not_required',
     claims: claimsFromIntent(intent),
-    screenWidths: screenWidthsOf(intent),
     baseSha: row.base_sha,
     headSha: row.head_sha,
     failureCode: currentCode(row.failure_code) || null,

@@ -4169,7 +4169,7 @@ function voteRoutes(config) {
           && row.integration_block_reasons.includes('integrating');
       }
       const shotsBySession = config.shots?.present
-        ? await shotsView.getForSessions(pool, rows, req.params.slug)
+        ? await shotsView.getForSessions(pool, rows, req.params.slug, { viewer: req.user })
         : new Map();
       for (const row of rows) row.shots = shotsBySession.get(Number(row.id)) || null;
 
@@ -4502,7 +4502,7 @@ function voteRoutes(config) {
         prParams
       );
       const mergedShots = config.shots?.present
-        ? await shotsView.getForSessions(pool, prRows, req.params.slug)
+        ? await shotsView.getForSessions(pool, prRows, req.params.slug, { viewer: req.user })
         : new Map();
       for (const row of prRows) {
         row.shots = mergedShots.get(Number(row.id)) || null;
@@ -4860,7 +4860,7 @@ function voteRoutes(config) {
         proposal.assignee = s.assignee;
         proposal.category = s.category;
         proposal.shots = config.shots?.present
-          ? await shotsView.getForSession(pool, proposal, req.params.slug)
+          ? await shotsView.getForSession(pool, proposal, req.params.slug, { viewer: req.user })
           : null;
         // #4490: the author's diagram, which leads the change's page.
         const drawn = await pool.query(

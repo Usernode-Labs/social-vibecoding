@@ -1433,7 +1433,7 @@
     {
       "source": "src/services/shots-state.js",
       "kind": "structural-template",
-      "fingerprint": "1c7bcee924702f029300",
+      "fingerprint": "060de6054d396398bae7",
       "count": 1,
       "preview": "`SELECT r.*, COALESCE(( SELECT jsonb_agg(jsonb_build_object( 'id', a.id, 'storyId', a.story_id, 'viewport', a.viewport, 'side', a.side, 'variant', a.variant, 'm"
     },

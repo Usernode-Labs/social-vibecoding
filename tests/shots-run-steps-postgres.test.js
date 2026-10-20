@@ -267,11 +267,18 @@ test('the steps of a shots run against the full PostgreSQL schema', { timeout: 1
     const id = await prepared(s, { deviceDensity: true });
     const { deps, calls } = agentDeps(async (options) => {
       await save(options, 'invite-suggestions', 'before', 10);
-      await save(options, 'invite-suggestions', 'after', 200);
+      // The worker says this one was saved at 2x: kept as its 1x copy and its original.
+      await shotsControl.withControl(other, { runId: options.runId, sessionId: options.session.id },
+        (c) => c.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen', density: '2' },
+          fixtures.png({ width: 2560, height: 1600, shade: 200 })));
       return { backend: 'claude_code', model: 'claude-sonnet-5-5', result: { exitCode: 0 } };
     });
     await agent(s, id, deps);
     assert.equal(calls.dispatches[0].deviceDensity, true);
+    const { rows: [file] } = await pool.query(
+      `SELECT width, height, density, dense_width, dense_height, octet_length(dense_data) > 0 AS kept
+         FROM shot_run_files WHERE run_id = $1 AND side = 'head'`, [id]);
+    assert.deepEqual(file, { width: 1280, height: 800, density: 2, dense_width: 2560, dense_height: 1600, kept: true });
     assert.equal((await shotsControl.read(pool, id)).agent.deviceDensity, true, 'the run keeps its own choice');
   });
 

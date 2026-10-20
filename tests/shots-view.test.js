@@ -486,42 +486,46 @@ test('a verified run\'s screens reach the card as integers and its own story ids
   assert.deepEqual(view.fromSnapshot(session(), HEAD).screens, []);
 });
 
-test('a screen says how many device pixels its stills hold per CSS pixel; an older run\'s are 1x', () => {
-  const at = (density) => view.serialize(run({ screens: [{
-    viewport: 'phone', shot: 'dialog', stories: ['dialog'], width: 390, heightBefore: 844, heightAfter: 844,
-    ...(density === undefined ? {} : { density }), regions: [],
-  }] }), session(), 'demo', HEAD).screens[0];
-  assert.equal(at(3).density, 3);
-  assert.equal(at(2).density, 2);
-  assert.deepEqual([at(3).width, at(3).heightAfter], [390, 844], 'the geometry stays in CSS pixels');
-  for (const odd of [undefined, 0, 2.5, '3', 9]) assert.equal(at(odd).density, 1, String(odd));
+test('only a viewer in the experiment is shown dense stills; everyone else exactly what they were shown before', () => {
+  const id = (n) => String(n).repeat(32).slice(0, 32);
+  const still = (n, viewport, side, variant, extra = {}) => ({
+    id: id(n), storyId: 'dialog', viewport, side, variant, media: 'png', contentType: 'image/png',
+    width: viewport === 'phone' ? 390 : 1280, height: 100, bytes: 120, density: 1, ...extra,
+  });
+  const screens = [{ viewport: 'phone', shot: 'dialog', stories: ['dialog'], width: 390, heightBefore: 844, heightAfter: 844, regions: [] }];
+  const value = run({
+    claims: [{ ...run().claims[0], viewports: ['desktop', 'phone'] }],
+    screens,
+    artifactSummary: [
+      still(1, 'phone', 'head', 'context', { density: 3, denseWidth: 1170, denseHeight: 300 }),
+      still(2, 'phone', 'head', 'focus', { width: 200, density: 3, denseWidth: 600, denseHeight: 300 }),
+      still(3, 'desktop', 'head', 'context', { density: 2, denseWidth: 2560, denseHeight: 200 }),
+      // A run from before, and a clip.
+      still(4, 'desktop', 'base', 'context'),
+      { ...still(5, 'phone', 'head', 'animation', { width: null }), media: 'webm', contentType: 'video/webm' },
+    ],
+  });
+  const plain = view.serialize(value, session(), 'demo', HEAD);
+  assert.deepEqual(plain.artifacts.map((a) => [a.width, a.density]), [[390, 1], [200, 1], [1280, 1], [1280, 1], [null, 1]]);
+  assert.ok(plain.artifacts.every((a) => !a.url.includes('?')), 'the 1x copies keep their addresses');
+  assert.deepEqual(plain.screens.map((s) => [s.width, s.density]), [[390, 1]]);
+  const dense = view.serialize(value, session(), 'demo', HEAD, { dense: true });
+  assert.deepEqual(dense.artifacts.map((a) => [a.width, a.height, a.density]),
+    [[1170, 300, 3], [600, 300, 3], [2560, 200, 2], [1280, 100, 1], [null, 100, 1]]);
+  assert.match(dense.artifacts[0].url, /\/shots\/1{32}\?density=device$/, 'a dense still has an address of its own');
+  assert.equal(dense.artifacts[3].url.includes('?'), false);
+  assert.deepEqual(dense.screens.map((s) => [s.width, s.heightAfter, s.density]), [[390, 844, 3]], 'geometry stays CSS pixels');
+  // A malformed density is no dense still.
+  const odd = run({ artifactSummary: [still(1, 'desktop', 'head', 'context', { density: 9, denseWidth: 1, denseHeight: 1 })] });
+  assert.equal(view.serialize(odd, session(), 'demo', HEAD, { dense: true }).artifacts[0].density, 1);
 });
 
-test('every still says its density: a screen\'s from its declared width, an element\'s from its screen', () => {
-  const id = (n) => String(n).repeat(32).slice(0, 32);
-  const still = (n, viewport, side, variant, width, extra = {}) => ({
-    id: id(n), storyId: 'dialog', viewport, side, variant, media: 'png', contentType: 'image/png',
-    width, height: 100, bytes: 120, ...extra,
-  });
-  const shown = view.serialize(run({
-    screenWidths: { 'dialog:desktop': 1280, 'dialog:phone': 390 },
-    artifactSummary: [
-      still(1, 'desktop', 'head', 'context', 2560),
-      still(2, 'desktop', 'head', 'focus', 900),
-      still(3, 'phone', 'head', 'context', 1170),
-      still(4, 'phone', 'head', 'context', 1170, { theme: 'dark' }),
-      still(5, 'phone', 'head', 'focus', 600),
-      // A run from before device-scale stills, and a phone element whose
-      // screen shot is missing.
-      still(6, 'desktop', 'base', 'context', 1280),
-      still(7, 'phone', 'base', 'focus', 600),
-      { ...still(8, 'phone', 'head', 'animation', null), media: 'webm', contentType: 'video/webm' },
-    ],
-  }), session(), 'demo', HEAD).artifacts;
-  assert.deepEqual(shown.map((artifact) => artifact.density), [2, 2, 3, 3, 3, 1, 1, 1]);
-  assert.equal(shown[0].width, 2560, 'width stays the file\'s own pixels');
-  // A run summary with no widths (an older row) reads every still as 1x.
-  assert.ok(view.serialize(run(), session(), 'demo', HEAD).artifacts.every((artifact) => artifact.density === 1));
+test('a viewer sees dense stills only with the experiment on their account', async () => {
+  const pool = (value) => ({ query: async () => ({ rows: value === undefined ? [] : [{ review_flow_enabled: value }] }) });
+  assert.equal(await view.viewerSeesDense(pool(true), { id: 4 }), true);
+  for (const value of [false, null, undefined, 'true']) assert.equal(await view.viewerSeesDense(pool(value), { id: 4 }), false);
+  assert.equal(await view.viewerSeesDense(pool(true), null), false, 'a guest');
+  assert.equal(await view.viewerSeesDense({ query: async () => { throw new Error('no column yet'); } }, { id: 4 }), false);
 });
 
 test('a note or reason the agent wrote with escaped quotation marks reads with plain ones', () => {

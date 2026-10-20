@@ -243,8 +243,17 @@ test('a stored file carries its slot, type, bytes and digest', () => {
     storyId: 'invite-suggestions', viewport: 'desktop', side: 'head', variant: 'context', media: 'png',
     theme: 'light',
     contentType: 'image/png', data: true, width: 5, height: 2, bytes: image.length, sha256: sha256(image),
+    density: 1, dense: null,
     focusRect: null, stageLabels: null,
   });
+  // A still of a run taken at device density keeps its original beside the
+  // 1x copy it is stored as.
+  const original = fixtures.png({ width: 15, height: 6 });
+  const dense = shots.stored(
+    shots.shotTarget(intent, { change: 'invite-suggestions', screen: 'desktop', side: 'after' }),
+    image, shots.inspectImage(image), { density: 3, data: original, ...shots.inspectImage(original) });
+  assert.deepEqual([dense.width, dense.density, dense.dense.width, dense.dense.height, dense.dense.data === original],
+    [5, 3, 15, 6, true]);
   const clip = fixtures.webm();
   const recording = shots.stored(
     shots.shotTarget(intent, { change: 'saved-toast', screen: 'desktop', side: 'before', kind: 'clip' }),

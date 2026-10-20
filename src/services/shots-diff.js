@@ -72,6 +72,16 @@ function decode(buffer, density = 1) {
   return k === 1 ? { w: png.width, h: png.height, d: png.data } : averageDown(png, k);
 }
 
+// A still saved at `density` device pixels per CSS pixel, as the 1x PNG
+// everyone outside the density experiment is shown (services/shots-density.js):
+// each block averaged, as `decode` does, then written back as a PNG.
+function flatten(buffer, density) {
+  const px = decode(buffer, density);
+  const png = new PNG({ width: px.w, height: px.h });
+  png.data = Buffer.from(px.d.buffer, px.d.byteOffset, px.d.length);
+  return PNG.sync.write(png);
+}
+
 // One hash per row, with the low bits of each channel dropped so that noise
 // does not split rows that look the same.
 function rowHashes(px) {
@@ -462,6 +472,7 @@ module.exports = {
   MAX_REGIONS,
   decode,
   averageDown,
+  flatten,
   rowHashes,
   align,
   regions,

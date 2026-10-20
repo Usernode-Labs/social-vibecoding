@@ -283,6 +283,7 @@ async function getForSession(pool, sessionId, { headSha = null } = {}) {
                 'theme', a.theme,
                 'contentType', a.content_type, 'width', a.width,
                 'height', a.height, 'bytes', a.bytes,
+                'density', a.density, 'denseWidth', a.dense_width, 'denseHeight', a.dense_height,
                 'sha256', a.sha256,
                 'focusRect', a.focus_rect, 'stageLabels', a.stage_labels
               ) ORDER BY a.story_id, a.viewport, a.side, a.variant, a.theme)

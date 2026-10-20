@@ -1191,3 +1191,25 @@ test('a shots turn samples the worker\'s memory through the proxy, which the ima
   assert.ok(asked > 0, 'the runner sets the interval');
   assert.ok(asked < runner.indexOf('node /usr/local/bin/shots-origin-proxy.js &'), 'before the proxy starts');
 });
+
+test('in a run taken at device density each saved still says its density: 3 from a phone browser, 2 from a desktop one', async (t) => {
+  for (const [density, expected] of [['1', { desktop: '2', phone: '3' }], [undefined, { desktop: undefined, phone: undefined }]]) {
+    const bridge = bridgeFixture(t);
+    const env = { ...bridge.env, ...(density ? { SHOTS_DEVICE_DENSITY: density } : {}) };
+    const { tools } = loadBridge(env, bridge.platformFetch);
+    const phoneDir = path.join(bridge.shotsDir, 'member_phone');
+    fs.mkdirSync(phoneDir);
+    fs.writeFileSync(path.join(bridge.shotsDir, 'member', 'wide.png'), 'desktop still');
+    stamp(bridge, 'member', 'wide.png', `${HEAD}/`);
+    fs.writeFileSync(path.join(phoneDir, 'narrow.png'), 'phone still');
+    stamp(bridge, 'member_phone', 'narrow.png', `${HEAD}/`);
+    const result = await tools.get('save_shot')({ shots: [
+      { change: 'invite-suggestions', screen: 'desktop', side: 'after', file: 'wide.png' },
+      { change: 'invite-suggestions', screen: 'phone', side: 'after', file: 'narrow.png' },
+    ] });
+    assert.equal(result.isError === true, false);
+    const [wide, narrow] = uploads(bridge).slice(-2);
+    assert.equal(wide.query.density, expected.desktop, `desktop, ${density}`);
+    assert.equal(narrow.query.density, expected.phone, `phone, ${density}`);
+  }
+});

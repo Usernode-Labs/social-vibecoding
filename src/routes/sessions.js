@@ -3785,7 +3785,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         }
         detail.shots = config.shots?.present
           ? await require('../services/shots-view')
-            .getForSession(pool, detail, detail.app_slug)
+            .getForSession(pool, detail, detail.app_slug, { viewer: req.user })
           : null;
         // #4452: how long testing usually takes on this app.
         detail.checks_estimate = await require('../services/checks-estimate').forApp(pool, session.app_id);
@@ -4036,7 +4036,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       try {
         session.shots = config.shots?.present
           ? await require('../services/shots-view')
-            .getForSession(pool, session, session.app_slug)
+            .getForSession(pool, session, session.app_slug, { viewer: req.user })
           : null;
       } catch { session.shots = null; }
       // #3249: the meter's "this change $X" — what this change has cost so

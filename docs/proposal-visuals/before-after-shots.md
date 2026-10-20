@@ -815,7 +815,9 @@ each declared screen as before).
   takes every still at 1x exactly as before. A run reads it once as it
   starts and keeps it in its `agent` (the shots control), so it never
   changes density halfway, and its saves follow its own choice (the 12 MB
-  cap, the element allowance). The worker learns it as
+  cap, the element allowance). A worker image without this change
+  takes 1x shots whatever it says (its build log says `shots at 3x` /
+  `shots at 2x` once it has it). The worker learns it as
   `SHOTS_DEVICE_DENSITY=1`, and its browsers as `SHOTS_SCREENSHOT_SCALE`.
 
 - **The screenshot tool.** The pinned Playwright MCP hard-codes
@@ -833,14 +835,25 @@ each declared screen as before).
   a `scale` argument, but it also renames the element target and stops
   answering with the image of a named screenshot; moving to it is its own
   change.
-- **Geometry stays in CSS pixels.** A still's density is its width over its
-  declared screen's, a whole multiple only (`shots-files.densityFor`); any
-  other width is a screen shot at the wrong size, read as 1. The diff
-  averages each still down to CSS pixels before comparing, so a screen's
-  `width`, `heightBefore`, `heightAfter` and `regions` are CSS pixels and
-  mean the same at any density; each screen says its `density`. Every
-  artifact also says its `density`; its `width` and `height` stay the file's
-  own pixels. Runs from before are density 1.
+- **Two copies of each dense still.** The bridge says what each still was
+  saved at (`density`, 3 from a phone browser, 2 from a desktop one, only in
+  a run taken at device density); a whole screen's must match its width
+  over its declared screen's (`shots-files.densityFor`). The platform keeps
+  such a still twice (`shots-control.saveShot`): `data` is the same still
+  averaged down to 1x (`shots-diff.flatten`), and `dense_*` its original.
+  Everything that reads `data` (the diff, the invite picture, the eval, the
+  connectors, the export) sees exactly what it saw before, and every
+  comparison of two stills compares their 1x copies. An older worker says
+  nothing, so its stills stay single and 1x.
+- **Who is shown them.** Only an account in the New Needs you experiment
+  (`users.review_flow_enabled`, `shots-view.viewerSeesDense`). For it, the
+  shots view gives each dense still its original's `width` and `height`, its
+  `density`, and an address of its own (`?density=device`, which the
+  artifact route serves only to such an account); each screen's `density` is
+  that of the still it shows. Everyone else, guests included, is shown the
+  1x copies at their usual addresses with `density: 1`. Screen geometry
+  (`width`, `heightBefore`, `heightAfter`, `regions`) is CSS pixels either
+  way.
 - **Clients** read sizes in CSS pixels: the change page's "Phone, 390 x 844"
   line and the Workshop feed's readable element shot divide by the density.
   A card that zooms into a change caps the zoom at the still's density over

@@ -18,6 +18,7 @@
 
 const planContract = require('./visible-changes');
 const shots = require('./shots-files');
+const shotsDiff = require('./shots-diff');
 const homeTile = require('./shots-home-tile');
 
 class ShotsControlError extends Error {
@@ -113,6 +114,19 @@ class RunControl {
     return homeTile.renderPage(tile, { side });
   }
 
+  // Device pixels per CSS pixel in a still, as the worker reported it: only
+  // in a run taken at device density, only from a worker whose screenshot
+  // tool saves at device scale (the bridge that reports it ships with that
+  // tool, so an older worker reports nothing and its stills stay 1x), and,
+  // for a whole screen, only when its width says the same.
+  stillDensity(target, info, reported, deviceDensity) {
+    const said = Number(reported);
+    if (!deviceDensity || ![2, 3, 4].includes(said)) return 1;
+    if (target.variant !== 'context') return said;
+    const viewport = this.declaredChange(target.storyId).viewports.find((v) => v.name === target.viewport);
+    return viewport && shots.densityFor(info.width, viewport.width) === said ? said : 1;
+  }
+
   // One file the agent saved: a screen or element shot, or a clip. Saving the
   // same slot again replaces it, so the agent can retake a poor shot, and
   // saving for a change it skipped takes that skip back.
@@ -130,12 +144,19 @@ class RunControl {
       const deviceDensity = this.agent?.deviceDensity === true;
       const info = target.media === 'webm' ? shots.inspectClip(buffer)
         : shots.inspectImage(buffer, deviceDensity ? { maxBytes: shots.MAX_DENSE_IMAGE_BYTES } : {});
+      // Such a run's still is kept twice: its original, and the same still
+      // averaged down to 1x, which is all anyone outside the experiment is
+      // shown and what every comparison below and later reads.
+      const density = target.media === 'png' ? this.stillDensity(target, info, rawTarget?.density, deviceDensity) : 1;
+      const flatBuffer = density > 1 ? shotsDiff.flatten(buffer, density) : null;
+      const flat = flatBuffer ? shots.inspectImage(flatBuffer) : null;
+      const sha256 = flat ? flat.sha256 : info.sha256;
       // A dark shot identical to its light one is not kept (#4459): there
       // would be nothing to switch to, and the answer tells the agent this
       // app does not change with the mode, so it can stop taking dark shots.
       if (target.theme === 'dark') {
         const light = this.saved.get(shots.slotKey({ ...target, theme: 'light' }));
-        if (light && light.sha256 === info.sha256) {
+        if (light && light.sha256 === sha256) {
           return {
             saved: false,
             change: target.storyId,
@@ -151,10 +172,12 @@ class RunControl {
       shots.checkElementSize(
         this.declaredChange(target.storyId), target, info,
         this.saved.get(shots.slotKey({ ...target, variant: 'context' })),
-        { deviceDensity },
+        { deviceDensity, density },
       );
       const slot = shots.slotKey(target);
-      this.saved.set(slot, shots.stored(target, buffer, info));
+      this.saved.set(slot, flat
+        ? shots.stored(target, flatBuffer, flat, { density, data: buffer, ...info })
+        : shots.stored(target, buffer, info));
       this.dirty.add(slot);
       this.skipped.delete(target.storyId);
       this.failed.delete(target.storyId);
@@ -164,7 +187,7 @@ class RunControl {
       const otherSide = target.media === 'png'
         ? this.saved.get(shots.slotKey({ ...target, side: target.side === 'base' ? 'head' : 'base' }))
         : null;
-      const sameAsOtherSide = !!otherSide && otherSide.sha256 === info.sha256;
+      const sameAsOtherSide = !!otherSide && otherSide.sha256 === sha256;
       return {
         saved: true,
         change: target.storyId,
@@ -347,6 +370,12 @@ function fileEntry(row) {
     // Rows written before the column existed read as light.
     theme: row.theme === 'dark' ? 'dark' : 'light',
     contentType: row.content_type, width: row.width, height: row.height, bytes: row.bytes, sha256: row.sha256,
+    // A still kept at device density as well (services/shots-density.js):
+    // its original's size, whose bytes also stay in the database.
+    density: Number.isInteger(row.density) && row.density > 1 ? row.density : 1,
+    dense: Number.isInteger(row.density) && row.density > 1 ? {
+      width: row.dense_width, height: row.dense_height, bytes: row.dense_bytes, sha256: row.dense_sha256,
+    } : null,
     focusRect: null, stageLabels: null,
   };
 }
@@ -400,7 +429,8 @@ async function load(db, runId, { lock = false } = {}) {
     `SELECT * FROM shot_run_control WHERE run_id = $1${lock ? ' FOR UPDATE' : ''}`, [runId]);
   if (!row) return null;
   const { rows: files } = await db.query(
-    `SELECT slot, story_id, viewport, side, variant, media, theme, content_type, width, height, bytes, sha256
+    `SELECT slot, story_id, viewport, side, variant, media, theme, content_type, width, height, bytes, sha256,
+            density, dense_width, dense_height, dense_bytes, dense_sha256
        FROM shot_run_files WHERE run_id = $1`, [runId]);
   return { row, control: fromRow(row, files) };
 }
@@ -421,14 +451,18 @@ async function persist(db, control) {
     const slot = dbSlot(f);
     await db.query(
       `INSERT INTO shot_run_files
-         (run_id, slot, story_id, viewport, side, variant, media, theme, content_type, data, width, height, bytes, sha256)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         (run_id, slot, story_id, viewport, side, variant, media, theme, content_type, data, width, height, bytes, sha256,
+          density, dense_data, dense_width, dense_height, dense_bytes, dense_sha256)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
        ON CONFLICT (run_id, slot) DO UPDATE
          SET data = EXCLUDED.data, content_type = EXCLUDED.content_type, media = EXCLUDED.media,
              theme = EXCLUDED.theme, width = EXCLUDED.width, height = EXCLUDED.height, bytes = EXCLUDED.bytes,
-             sha256 = EXCLUDED.sha256, saved_at = NOW()`,
+             sha256 = EXCLUDED.sha256, density = EXCLUDED.density, dense_data = EXCLUDED.dense_data,
+             dense_width = EXCLUDED.dense_width, dense_height = EXCLUDED.dense_height,
+             dense_bytes = EXCLUDED.dense_bytes, dense_sha256 = EXCLUDED.dense_sha256, saved_at = NOW()`,
       [control.runId, slot, f.storyId, f.viewport, f.side, f.variant, f.media, f.theme || 'light', f.contentType, f.data,
-        f.width, f.height, f.bytes, f.sha256]);
+        f.width, f.height, f.bytes, f.sha256, f.density > 1 ? f.density : 1, f.dense?.data || null,
+        f.dense?.width || null, f.dense?.height || null, f.dense?.bytes ?? null, f.dense?.sha256 || null]);
   }
   control.dirty.clear();
 }

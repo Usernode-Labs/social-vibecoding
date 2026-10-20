@@ -276,7 +276,11 @@ function cleanConditions(value) {
   }).filter(Boolean);
 }
 
-function stored(target, buffer, info) {
+// `dense`, for a still saved at more than one device pixel per CSS pixel in
+// a run taken at device density (services/shots-density.js): its original,
+// `{ density, data, width, height, bytes, sha256 }`. `buffer` and `info` are
+// then its 1x copy, what everyone outside the experiment is shown.
+function stored(target, buffer, info, dense = null) {
   return {
     ...target,
     contentType: target.media === 'webm' ? 'video/webm' : 'image/png',
@@ -285,6 +289,8 @@ function stored(target, buffer, info) {
     height: info.height,
     bytes: info.bytes,
     sha256: info.sha256,
+    density: dense ? dense.density : 1,
+    dense: dense ? { data: dense.data, width: dense.width, height: dense.height, bytes: dense.bytes, sha256: dense.sha256 } : null,
     focusRect: null,
     stageLabels: null,
   };
@@ -317,12 +323,16 @@ function densityFor(imageWidth, screenWidth) {
 // first), the element may be as dense as the screen's browser saves in a
 // run taken at device density (`deviceDensity`), else 1x.
 // Sizes in the messages are CSS pixels, the screen's own.
-function checkElementSize(story, target, info, screenFile = null, { deviceDensity = false } = {}) {
+function checkElementSize(story, target, info, screenFile = null, { deviceDensity = false, density = 1 } = {}) {
   if (target.variant !== 'focus' || !info?.width) return;
   const viewport = story.viewports.find((candidate) => candidate.name === target.viewport);
   if (!viewport) return;
-  const scale = screenFile?.width ? densityFor(screenFile.width, viewport.width)
-    : deviceDensity ? browserDensity(viewport) : 1;
+  // `density`: what the worker said this element shot was saved at, in a
+  // run taken at device density. A saved screen shot of such a run holds
+  // its 1x copy, so its width says nothing about the element's.
+  const scale = density > 1 ? density
+    : screenFile?.width ? densityFor(screenFile.width, viewport.width)
+      : deviceDensity ? browserDensity(viewport) : 1;
   const maxWidth = Math.round(viewport.width * scale) + 1;
   const maxHeight = Math.round(viewport.height * scale * MAX_ELEMENT_SCREENS_TALL) + 1;
   if (info.width > maxWidth) {
