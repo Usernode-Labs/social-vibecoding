@@ -427,10 +427,19 @@ export function largestRegion(screen: ReviewScreen): Box | null {
   return best;
 }
 
-/** The next change after `index`, wrapping round; -1 when there is only this one. */
-export function nextIndex(items: ReviewItem[], index: number): number {
-  if (items.length < 2) return -1;
-  return (index + 1) % items.length;
+/**
+ * The next change after `index` that still has no vote, wrapping round once
+ * to the ones behind you; -1 when every other one has a vote from you. Group
+ * decisions are skipped: they open their own page and none is voted on here.
+ */
+export function nextIndex(items: ReviewItem[], index: number, votes: Record<string, unknown> = {}): number {
+  for (let step = 1; step < items.length; step++) {
+    const i = (index + step) % items.length;
+    const it = items[i];
+    if (!it || it.kind === 'governance' || votes[it.key]) continue;
+    return i;
+  }
+  return -1;
 }
 
 /* ── The title shot's composition (the factory prototype's rules) ─────────

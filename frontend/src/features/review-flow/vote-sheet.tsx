@@ -7,6 +7,9 @@
  * sheet says what you said, with a large check to land on, and offers Undo
  * (the server takes the vote back while voting is open, DELETE
  * /api/sessions/:id/vote through `AppView.retractVote`) beside Next change.
+ * Next change goes to the next change still waiting on you; once none is
+ * left the button says Done, and Done shows that nothing else is waiting,
+ * under a check, with the way back.
  *
  * Votes go through the platform's own `AppView.castVote`, with the approval
  * epoch the server checks, so every other screen hears about them the usual
@@ -25,15 +28,15 @@ import { FeedThread } from '../dev-board/card/feed-thread';
 import { readAskStream } from '../dev-board/workshop/ask-stream';
 import type { ReviewItem } from './model';
 
-export type SheetState = 'ask' | 'unsure' | 'no' | 'voted' | 'askq' | 'talk' | 'try' | 'about' | 'more';
+export type SheetState = 'ask' | 'unsure' | 'no' | 'voted' | 'alldone' | 'askq' | 'talk' | 'try' | 'about' | 'more';
 export type Vote = 'yes' | 'no';
 
 /** The longest line a No may carry (the server's VOTE_REASON_MAX). */
 export const NO_LINE_MAX = 280;
 
-/** Whether the sheet covers the page (everything but its resting and voted states). */
+/** Whether the sheet covers the page (everything but its resting, voted and all-done states). */
 export function sheetOpen(state: SheetState): boolean {
-  return state !== 'ask' && state !== 'voted';
+  return state !== 'ask' && state !== 'voted' && state !== 'alldone';
 }
 
 const Icon = {
@@ -51,7 +54,7 @@ const Icon = {
 
 type AskMsg = { who: 'you' | 'ai'; text: string; pending?: boolean };
 
-export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext, hasNext, maxHeight, fresh }: {
+export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext, hasNext, onDone, doneLabel, maxHeight, fresh }: {
   item: ReviewItem;
   vote: Vote | null;
   state: SheetState;
@@ -61,6 +64,10 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
   onUndo: () => Promise<boolean>;
   onNext: () => void;
   hasNext: boolean;
+  /** The way back from the all-done message: closes the page and goes where the list's own end goes. */
+  onDone: () => void;
+  /** The all-done message's button: "Back to your communities", or the project's own way back. */
+  doneLabel: string;
   maxHeight: number;
   /** The vote was cast this moment: the check draws itself in. */
   fresh: boolean;
@@ -207,6 +214,20 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
           {t('communities:review.more.cancel')}
         </button>
       </div>
+    );
+  } else if (state === 'alldone') {
+    body = (
+      <>
+        <div className="rf-said" role="status" data-rf-alldone="">
+          <span className="rf-said-mark" aria-hidden="true">
+            <CheckIcon width={40} height={40} strokeWidth="2.4" />
+          </span>
+          <h2>{t('communities:review.alldone.line')}</h2>
+        </div>
+        <div className="rf-yn">
+          <button type="button" className="rf-pill-btn rf-pill-primary" data-rf-alldone-btn="" onClick={onDone}>{doneLabel}</button>
+        </div>
+      </>
     );
   } else if (vote && (state === 'ask' || state === 'voted')) {
     body = (
