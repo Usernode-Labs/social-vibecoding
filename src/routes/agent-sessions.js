@@ -299,7 +299,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
           if (n > 0) require('../services/ws').pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
         })
         .catch((err) => log.warn('agent-sessions', 'session_done dismiss failed', { err: err.message }));
-      const { lease: _lease, stale: _stale, activeChangeId: _change, ...answer } = state;
+      const { lease: _lease, activeChangeId: _change, ...answer } = state;
       return res.json({
         ...answer,
         session: busy && !state.session.busy ? { ...state.session, busy: true, doneUnseen: false } : state.session,

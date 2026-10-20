@@ -3,10 +3,10 @@
 // The workflow side of a two-process test (tests/lib/workflow-processes.js):
 // install the fixture's fakes for outside services, then boot server.js
 // itself as a conductor (PROCESS_ROLE=conductor): what production runs where
-// the workflow runs, its bus, its process row and holds, its listener and the
-// hooks its module registers included, so nothing a workflow process needs
-// is set up by the test instead. The test holds the leader lock, so this
-// process never runs the leader's remaining work. It says when it is ready,
+// the workflow runs, its bus, its process row, its listener and the hooks its
+// module registers included, so nothing a workflow process needs is set up
+// by the test instead. There is no leader: every workflow process runs the
+// same work, under the workflow's leases. It says when it is ready,
 // and stops as a release stops it (SIGTERM: server.js cleanup). What it is
 // given comes in WF_TEST_CHILD: { databaseUrl, env, fixture }.
 

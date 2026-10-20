@@ -60,12 +60,12 @@ const TURN_TIMEOUT_MS = 60 * 60 * 1000;
 
 // The platform's own side of a turn is a waiter in the process that
 // dispatched it (awaitTurnResult), and a restart kills it while the laptop
-// keeps working. The waiter says it is alive every WAITER_RENEW_MS; one
-// silent for WAITER_STALE_SECONDS is taken over by the leader's recovery
-// pass (services/local-agent-recovery.js), which then finishes the turn.
-// The window is under the agent session's 90-second Mayor lease, so a
-// conversation whose build is being taken over is not first ended as
-// interrupted (mayor/agent-turn.js sweepInterruptedTurns checks too).
+// keeps working. The waiter says it is alive every WAITER_RENEW_MS. A turn
+// a work item dispatched is that item's (its `owner`), which takes it over
+// when it is claimed again; one silent for WAITER_STALE_SECONDS that no item
+// dispatched (an older release's) is taken over by the turn-leftovers
+// clock's local pass (services/local-agent-recovery.js), which then
+// finishes the turn.
 const WAITER_RENEW_MS = 10 * 1000;
 const WAITER_STALE_SECONDS = 45;
 

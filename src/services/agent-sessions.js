@@ -627,14 +627,12 @@ async function readState(pool, { userId, id, version = null, rev = null }) {
   );
   if (!head.length) return null;
   const current = Number(head[0].state_version) || 0;
-  // The running turn as its lease records it, for a screen on any pod.
+  // The running turn as its claim records it, for a screen on any pod. The
+  // claim lasts exactly as long as its turn (src/workflow/turn/).
   const lease = head[0].turn_live && head[0].active_turn ? leaseTurn(head[0].active_turn) : null;
-  // A lease nobody renews any more: its process died mid-turn, and nothing
-  // has said so yet (the route ends it before answering).
-  const stale = !!head[0].active_turn && !head[0].turn_live;
   const activeChangeId = head[0].active_change_id == null ? null : Number(head[0].active_change_id);
   if (version != null && Number(version) === current) {
-    return { unchanged: true, version: current, busy: !!head[0].turn_live, lease, stale, activeChangeId };
+    return { unchanged: true, version: current, busy: !!head[0].turn_live, lease, activeChangeId };
   }
   const since = rev == null || !Number.isSafeInteger(Number(rev)) || Number(rev) < 0 ? null : Number(rev);
   const read = async (db) => {
@@ -674,7 +672,6 @@ async function readState(pool, { userId, id, version = null, rev = null }) {
       unchanged: false,
       version: session.version,
       lease,
-      stale,
       activeChangeId,
       session,
       messages,
@@ -876,8 +873,10 @@ async function setFocusApp(pool, { agentSessionId, user, slug }) {
 // src/workflow/turn/), in one transaction, and released when the turn's work
 // item ends, whichever process ran it (the machine's `released` write; the
 // turn releases it itself a moment earlier when it finishes its own way).
-// So it is never stale, never renewed, and a conversation reads busy while,
-// and only while, its turn runs.
+// So it never goes stale, and a conversation reads busy while, and only
+// while, its turn runs. (Its `renewedAt` is stamped while it runs only for a
+// release from before the turn machine, which reads it: services/turns.js
+// renewClaim, rollout-only.)
 //
 // `ask(db)`: what starts the turn, in the claim's transaction (the route's
 // `Asked`): a claim with no turn behind it cannot be written.

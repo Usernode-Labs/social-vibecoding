@@ -432,7 +432,7 @@ always `unknown_event`.
    machines makes at boot (activity mail, the account-deletion guard on workers, the
    phone push sender, GitHub, the model); `server.js` runs it, and so does the
    two-process tests' child. Nothing only the web server has (its sockets, the
-   Workshop's board-change listener, the leader's sweepers and loops) may be needed:
+   Workshop's board-change listener) may be needed:
    a machine relying on one fails its two-process tests.
 5. **States are phases a person would recognise.** I/O progress belongs in the work
    item's checkpoint, not in more states.
@@ -455,8 +455,8 @@ append and answer with the outcome.
 
 **Where it runs.** On Kubernetes the workflow runs on the conductor
 (`PROCESS_ROLE=conductor`, docs/plans/web-and-conductor.md), in as many replicas as the
-chart runs (two in production), and nothing in it needs the leader lock. The web Pods only
-append and wait. Locally, in docker-compose and on a staging preview, one process (`all`)
+chart runs (two in production). No process leads: every replica runs the same work, under
+the workflow's leases and locks. The web Pods only append and wait. Locally, in docker-compose and on a staging preview, one process (`all`)
 does both.
 
 - **Every process** turns every machine's ownership guard on at boot (`enabled:<machine>`
@@ -493,8 +493,9 @@ does both.
   quarters of a lease pass without a renewal, before another process may claim it, so two
   replicas never run one item side by side.
 - **A process lost with its node** gives its locks up within about 40 seconds: the
-  runtime's sessions carry the server keepalives the leader lock's session has, and an
-  idle-in-transaction timeout of 30 seconds (`deadPeerOptions` in platform.ts).
+  runtime's sessions carry the server keepalives (`services/db-locks.js`
+  `SERVER_KEEPALIVE`), and an idle-in-transaction timeout of 30 seconds (`deadPeerOptions`
+  in platform.ts).
 - **What a release owes what an older one left** (open governance rows, sessions the
   proposal machine does not hold, claims with no clock, merge queues, deferred DM answers,
   main checks mid-run, the bot's queue rows, the platform's own faults, the bot lane's clock,
@@ -597,9 +598,10 @@ reviewed, `--all` everything).
   evict one at a time.
 - **During a rollout.** Each Deployment rolls `maxSurge: 1, maxUnavailable: 0`: a new
   conductor is Ready, its loops running, before an old one drains, so the workflow never
-  stops. `PLATFORM_LEADER_LOCK` still elects one conductor for the leader's remaining
-  work (docs/plans/web-and-conductor.md); an old replica may win it for a minute during a
-  rollout, which runs that work's election-time recovery twice, harmlessly.
+  stops. Nothing is elected (`PLATFORM_LEADER_LOCK` now only serializes a boot migration
+  where one runs: `services/db-locks.js`). A release from before the turn machine still
+  has a leader while it runs beside this one; what this release does for it until no
+  such release can run is listed under [turn](#turn) (rollout-only).
 - **Schema.** The `wf_*` tables and triggers come from `schema.sql`. The chart's
   migration Job applies it before the Deployment rolls.
 - **Connections.** The runtime's pool adds `WF_POOL_MAX` connections per Pod, beside the
@@ -667,7 +669,7 @@ release (`docs/kubernetes-operations.md`).
 | `tests/workflow-bot-replies-postgres.test.js` | The Homeroom bot's reply machines (`bot-voice`, `bot-dm`), one subtest per rule, with their work faked. |
 | `tests/workflow-main-check-postgres.test.js` | The main-check machine, one subtest per rule (a provisional first red, flakes, a confirmed red, rechecks, Resume, a superseded run, a run carried on after a crash, adopting an older release's row). |
 | `tests/app-teardown-mark-postgres.test.js` | An app's teardown is marked on its row, which a deploy in any process reads. |
-| `tests/workflow-processes-postgres.test.js` | Each machine's flows with every decision and work item in a child process, the test process being the web side (no pipeline slot, as a web Pod); the same flows with the child killed (SIGKILL) mid-item, restarted, and compared with an uninterrupted run; and two children at once. The child is server.js itself, booted as a conductor (`tests/lib/workflow-child.js`; the test holds the leader lock), so its bus, its process row and its listener are production's. Only outside services are faked (`tests/fixtures/workflow-outside-fakes.js`); the harness is `tests/lib/workflow-processes.js`. |
+| `tests/workflow-processes-postgres.test.js` | Each machine's flows with every decision and work item in a child process, the test process being the web side (no pipeline slot, as a web Pod); the same flows with the child killed (SIGKILL) mid-item, restarted, and compared with an uninterrupted run; and two children at once. The child is server.js itself, booted as a conductor (`tests/lib/workflow-child.js`), so its bus, its process row and its listener are production's. Only outside services are faked (`tests/fixtures/workflow-outside-fakes.js`); the harness is `tests/lib/workflow-processes.js`. |
 | `tests/workflow-release-postgres.test.js` | The release machine: a release's adoptions run once between its processes, a failed step is tried again without the done ones, adoptions that keep failing are shown. |
 | `tests/workflow-dead-peer-postgres.test.js` | The runtime's sessions reap a dead peer and an abandoned transaction. |
 | `tests/workflow-metrics.test.js` | The metrics a conductor serves, and that every metric an alert rule names is served. |
@@ -719,6 +721,47 @@ A new machine brings the same two layers:
 | `shots-eval` | `evals`, one for the shots evals | `open` | Grants eval trials and runs each one's phases; the leader's eval runner is deleted |
 | `release` | `release:<GIT_SHA>`, one per release of the platform | `adopting` → `done`, `failed` or `abandoned` | Runs the boot adoptions once per release (`release.adopt`), in that release's own processes |
 | `clock` | `clock:<job>`, one per scheduled platform job | `waiting` ⇄ `running`; `retired` | Runs each job on its schedule (`clock.<job>`), wherever the workflow runs; its old leader timers are deleted |
+| `turn` | `agent:<id>` for a conversation, `session:<id>` for a change | `idle` ⇄ `running` | A person's turn is its `turn.run` work item; the leader's turn recovery, its watchdog, the conversation lease's renewal and the process holds' mirror are deleted |
+
+### turn
+
+A person's turn (`src/workflow/turn/`, the handler `services/turns.js`): one instance per
+stream (`agent:<id>`, a conversation; `session:<id>`, a change), one `turn.run` work item
+per turn, run whole in whichever workflow process claims it.
+- **Asked with the message.** The route writes the person's message, the conversation's
+  claim and the turn's `Asked` in one transaction (`platform.askTurn`), then follows the
+  turn's stream to its end from any process (`services/session-bus.js`, rows in
+  `stream_events`). Turns asked while one runs wait, in order; the same turn twice is
+  one. Kinds: `agent` (a conversation's Mayor, the coding run it dispatches, its
+  wrap-up), `classic` (a change's own dev chat: a CLI hand-off, a request's spec),
+  `headless` (an auto session on a request), `recover` (a coding record nothing carries).
+- **The item owns what the turn writes.** Its coding run's record and its local agent's
+  turn name it (`turnOwner`); the claim lasts as long as the turn, released when the item
+  ends; a turn that failed for good ends interrupted, with Retry. Its spend is kept as it
+  happens (`turn_spend`), its worker by `session_workers` and the worker-eviction clock.
+- **Resumed, not recovered.** A process that goes loses only the item's lease. The next
+  claim carries the turn on (`resume`): the coding run its record names it the owner of
+  is followed to its end (the leader's old adoption, `services/turn-recovery.js`), a
+  local agent's turn is taken over by its waiter, a Mayor turn cut before its answer
+  ends interrupted with Retry, a dev chat cut before its reply gets its note once.
+- **Stop.** `StopRequested` on the instance; the turn hears it (an agent turn from its
+  claim, a classic turn by polling its instance) and `turn.stop` kills a coding run by its
+  journal. Past six hours the turn is ended (`Tick`).
+- **Busy, for every process.** Whether a change is worked on is read from these records
+  (`session-work.ts` `workedOnSql`: a turn's record, a running turn instance, a local
+  turn, shots, a live operation, a build, a sync, the bot's look), never from another
+  process's memory. A process's holds (`services/processes.js`) are its own drain's.
+- **Leftovers** (`services/turn-leftovers.js`, the `turn-leftovers` clock, every minute):
+  a coding record whose item settled without releasing it gets a `recover` turn, once.
+- **Rollout-only, while a release from before the turn machine can run beside this one:**
+  the same clock ends that release's stale conversation claims, asks `recover` and
+  `headless` turns for what it left, finishes its local turns, and repairs its dev chats
+  cut before their reply once none of its processes is live; it does none of that while
+  one of them still serves (its leader recovers them). For that release to read, this one
+  writes its holds to `process_holds`, renews a running conversation's claim every 30
+  seconds, takes the session's hold for a headless run, answers its forwarded Stop
+  (`session_stop`) through the turn's machine, and keeps `leader_sweeps`. The list of what
+  to delete is the header of `services/turn-leftovers.js`.
 
 ### Turns workflow work runs
 
@@ -736,9 +779,10 @@ the Homeroom bot's builds, reads and fixes, a bench trial) is its work item's:
   /api/sessions/:id/stop`, the agent conversation's Stop) finds the instance whose turn it
   is (`TURN_OWNER_SQL`: the record's owner; else, only while the session has no turn record,
   the sync, shots run, build or bot look spinning one up) and appends `StopRequested` there
-  (`platform.stopWorkflowTurn`). A record that is not a workflow's held turn (a person's
-  own, an orphan) answers nothing there, so that Stop stays on the old path and never ends
-  a platform job that merely waits beside the person's turn. The machine records it as
+  (`platform.stopWorkflowTurn`). A person's turn is the `turn` machine's, found the same
+  way (a running `turn` instance on the session, for a dev chat turn before its record).
+  A record no work item holds (an older release's) answers nothing there, so that Stop
+  takes the durable path and never ends a platform job that merely waits beside it. The machine records it as
   stopped by that person (never a failure or a conflict), ends its work, and queues
   `turn.stop`.
 - **`turn.stop`** (`src/workflow/turn-stop.ts`, one handler for every machine): stamps the
@@ -1590,7 +1634,7 @@ bot owes them there. One instance per person (`person:<userId>`).
   that sends it (`sendDm`'s `hello`), so none is claimed and then not sent, and a person
   has one.
 - **During a rollout** the later tries an older release promised (its turn rows say so)
-  are adopted at the leader's boot, for people with no instance yet (`adoptDeferredDms`). DM keys and wording are
+  are adopted by the release machine, for people with no instance yet (`adoptDeferredDms`). DM keys and wording are
   unchanged, so an older leader and this machine asking the same message send one answer.
 
 ### main-check
@@ -1624,7 +1668,7 @@ board's banner read them.
 - **A newer commit** while a run is under way starts its own first run; the older run's
   verdict is recorded as superseded and changes nothing.
 - **During a rollout** a row an older release left running, confirming or paused is
-  adopted at the leader's boot (`adoptMainChecks`, reading that release's own run's Jobs
+  adopted by the release machine (`adoptMainChecks`, reading that release's own run's Jobs
   when it was admitted), and an older release's `main.check` item hands the merge over
   (merge-followups).
 - **Rolling back past it.** The guard stays on (its `enabled:main-check` row and the

@@ -302,14 +302,15 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.deepEqual(busy.map((s) => s.id).sort(), [demoStates.IDS.runningSession, demoStates.IDS.stoppingSession]);
   assert.ok(busy.every((s) => !s.title && !s.activeChange));
   assert.equal(sessions.filter((s) => s.title).length, 6, 'the preview change and five more');
-  // Nothing in a copy renews a lease, and one not renewed for 90 seconds
-  // reads as interrupted: the fixture's is renewed past the pair's life.
+  // Nothing in a copy renews a claim, and a build from before the turn
+  // machine (a pair's before side may run one) reads one not renewed for 90
+  // seconds as interrupted: the fixture's is renewed past the pair's life.
   const { rows: leases } = await pool.query(
     `SELECT (active_turn->>'renewedAt')::timestamptz > NOW() + INTERVAL '1 hour' AS ahead
        FROM agent_sessions WHERE active_turn IS NOT NULL`);
   assert.deepEqual(leases.map((row) => row.ahead), [true, true]);
   const running = await agentSessions.readState(pool, { userId: member, id: demoStates.IDS.runningSession });
-  assert.equal(running.stale, false);
+  assert.equal(running.busy !== false && !!running.lease, true, 'its turn reads as running');
   assert.equal(running.lease.stopping, false);
   const stopping = await agentSessions.readState(pool, { userId: member, id: demoStates.IDS.stoppingSession });
   assert.equal(stopping.lease.stopping, true);

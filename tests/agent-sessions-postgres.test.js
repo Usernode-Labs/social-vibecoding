@@ -918,7 +918,7 @@ test('the state read is one snapshot: unchanged when the screen is current, the 
     assert.equal(await agentSessions.readState(pool, { userId: 8, id: session.id }), null, 'another user\'s conversation reads as none');
 
     const current = await agentSessions.readState(pool, { userId: 7, id: session.id, version: whole.version, rev: whole.rev });
-    assert.deepEqual(current, { unchanged: true, version: whole.version, busy: false, lease: null, stale: false, activeChangeId: null });
+    assert.deepEqual(current, { unchanged: true, version: whole.version, busy: false, lease: null, activeChangeId: null });
 
     await client.query(`UPDATE chat_session_messages SET content = 'one, edited' WHERE agent_session_id = $1 AND role = 'user'`, [session.id]);
     await client.query(`INSERT INTO chat_session_messages (agent_session_id, role, content) VALUES ($1, 'user', 'three')`, [session.id]);
