@@ -65,7 +65,7 @@ function scroller(id, scrollTop) {
 }
 
 /** Run `fn` with a stand-in window and document, then put the globals back. */
-function withPage({ app = {}, view = {}, screens = {}, reduced = false } = {}, fn) {
+function withPage({ app = {}, view = {}, screens = {}, reduced = false, projectPage = null } = {}, fn) {
   const had = { window: global.window, document: global.document };
   const location = { hash: '' };
   global.window = {
@@ -75,7 +75,11 @@ function withPage({ app = {}, view = {}, screens = {}, reduced = false } = {}, f
     PlatformUI: { scrollElement: (el) => el },
     matchMedia: (q) => ({ matches: q.includes('reduced-motion') ? reduced : false }),
   };
-  global.document = { getElementById: (id) => screens[id] || null };
+  global.document = {
+    getElementById: (id) => screens[id] || null,
+    // The mounted project page, when a test says it is on screen (#5700).
+    querySelector: (sel) => (sel === '#app-view:not(.hidden) #dev-workshop > .dev-ws' ? projectPage : null),
+  };
   try {
     return fn(location);
   } finally {
@@ -254,7 +258,7 @@ function loadVotesLadder({ shown = { slug: null, place: 'status' }, workshopTab 
         closeSwitcher: () => calls.push(['closeSwitcher']),
       },
       '../dev-board/workshop/place-store': {
-        openPlace: (slug, key) => { calls.push(['openPlace', slug, key]); return false; },
+        openPlace: (slug, key, opts) => { calls.push(['openPlace', slug, key, opts]); return false; },
         placeStore: { get: () => shown },
       },
       './workshop-store.js': { workshopStore: { get: () => ({ tab: workshopTab }) } },
@@ -267,7 +271,8 @@ test('#5040: goToVotes opens Needs you, the community\'s or every community\'s',
   const { mod, calls } = loadVotesLadder();
   withPage({}, (location) => {
     mod.goToVotes('flat-4b');
-    assert.deepEqual(calls, [['closeSwitcher'], ['openPlace', 'flat-4b', 'needs']], 'the community\'s Needs you place');
+    assert.deepEqual(calls, [['closeSwitcher'], ['openPlace', 'flat-4b', 'needs', { door: true }]],
+      'the community\'s Needs you place, by the door: no page is on screen');
     assert.equal(location.hash, '', 'openPlace is the door; nothing else routes');
   });
   calls.length = 0;
@@ -279,6 +284,29 @@ test('#5040: goToVotes opens Needs you, the community\'s or every community\'s',
     assert.equal(location.hash, '#communities');
   });
   assert.deepEqual(calls, [['closeSwitcher']], 'never the drawer\'s list or the ladder');
+});
+
+test('#5700: the votes press is a door unless the community page itself is on screen', () => {
+  // The state after Messages: `#app-view` is hidden but its page is still
+  // mounted with its opener registered, so an in-place move would move a page
+  // nobody can see and the tab press would light with no route behind it.
+  const { mod, calls } = loadVotesLadder();
+  withPage({ app: { currentApp: null } }, () => {
+    mod.goToVotes('flat-4b');
+    assert.deepEqual(calls, [['closeSwitcher'], ['openPlace', 'flat-4b', 'needs', { door: true }]]);
+  });
+  // The page is up: its Needs you place is moved in place, as before.
+  calls.length = 0;
+  withPage({ app: { currentApp: 'flat-4b' }, projectPage: {} }, () => {
+    mod.goToVotes('flat-4b');
+    assert.deepEqual(calls, [['closeSwitcher'], ['openPlace', 'flat-4b', 'needs', { door: false }]]);
+  });
+  // Its address is current but the page is hidden behind another screen: a door.
+  calls.length = 0;
+  withPage({ app: { currentApp: 'flat-4b' } }, () => {
+    mod.goToVotes('flat-4b');
+    assert.deepEqual(calls, [['closeSwitcher'], ['openPlace', 'flat-4b', 'needs', { door: true }]]);
+  });
 });
 
 test('#5040: onVotes is true only where the counted votes are on screen', () => {

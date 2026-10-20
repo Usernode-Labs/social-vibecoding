@@ -385,6 +385,45 @@ test('a topic\'s line: what it is for and its requests, nothing for none, and wh
 // another community opens on the place you were on when it has it, else its
 // hub. keepPlace is the phone drawer's rule; the place is the one the project
 // page remembers (AppView._workshopTab).
+// #5700: a page left behind a hidden #app-view stays mounted with its opener
+// registered, so `openPlace` must be able to take the door regardless — the
+// votes press routes rather than moving a page nobody can see.
+test('openPlace with door routes to the page even while its opener is registered', () => {
+  const store = loadTsx(`${DIR}/place-store.ts`, {
+    stubs: {
+      './community-card': {
+        cachedCommunity: () => null,
+        communityInflight: () => false,
+        reloadCommunity: async () => {},
+      },
+    },
+  });
+  const had = Object.prototype.hasOwnProperty.call(globalThis, 'window');
+  const was = globalThis.window;
+  const opened = [];
+  const landed = [];
+  globalThis.window = {
+    location: { hash: '' },
+    AppView: { _landOnTab: (slug, key) => landed.push([slug, key]) },
+    App: { _hubHref: (slug) => `#app/${slug}/workshop` },
+  };
+  try {
+    const undo = store.registerPlaceOpener('garden', (key) => opened.push(key));
+    store.publishPlace('garden', 'status', 0);
+    assert.equal(store.openPlace('garden', 'needs', { door: true }), false, 'a door, not an in-place move');
+    assert.deepEqual(opened, [], 'the mounted page is left where it is');
+    assert.deepEqual(landed, [['garden', 'needs']], 'the place is remembered for the page it routes to');
+    assert.equal(globalThis.window.location.hash, '#app/garden/workshop', 'and the page\'s own address is pushed');
+    // Without `door` it is still the in-place press the places list makes.
+    assert.equal(store.openPlace('garden', 'needs'), true);
+    assert.deepEqual(opened, ['needs']);
+    assert.deepEqual(landed, [['garden', 'needs']], 'no second door');
+    undo();
+  } finally {
+    if (had) globalThis.window = was; else delete globalThis.window;
+  }
+});
+
 test('a switch opens another community on the place you were on, else its hub', () => {
   const records = { homeroom: { places: PLACES_PAYLOAD } };
   const store = loadTsx(`${DIR}/place-store.ts`, {
