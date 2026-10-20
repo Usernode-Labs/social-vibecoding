@@ -218,7 +218,7 @@ test('a used link\'s Get started sends the code, says why, and the right code le
 
 // ─── the full-page Welcome ──────────────────────────────────────────────
 
-test('the Welcome is a page in the make screen\'s frame: picture, eyebrow, heading, what Homeroom is, address, username, note, Continue, terms', () => {
+test('the Welcome is a page in the make screen\'s frame: picture, eyebrow and address, heading, what Homeroom is, username, Continue, terms', () => {
   const html = renderComponent(WELCOME, 'WelcomePage', {
     account: { email: 'ada@example.com', needsUsername: true, suggestedUsername: 'ada' },
     beforeFinish() { return true; },
@@ -232,7 +232,9 @@ test('the Welcome is a page in the make screen\'s frame: picture, eyebrow, headi
   // Top to bottom, in this order.
   const order = [
     /<img src="\/brand\/people\.png" alt="" width="816" height="612" draggable="false" class="mx-auto mt-2 block h-auto w-\[140px\] max-w-full [^"]*"\/>/,
-    /<p class="mt-4 text-\[13px\] font-semibold uppercase tracking-\[0\.8px\] text-zinc-500 dark:text-zinc-400">You(?:&#x27;|')re in<\/p>/,
+    // The address rides the eyebrow (Evan, 20 Oct 2026): in its own case,
+    // a step darker, after a dot a screen reader skips.
+    /<p class="mt-4 text-\[13px\] font-semibold uppercase tracking-\[0\.8px\] text-zinc-500 dark:text-zinc-400">You(?:&#x27;|')re in<span aria-hidden="true"> · <\/span><span data-welcome-page-email="" class="normal-case tracking-normal font-medium text-zinc-700 dark:text-zinc-300 \[overflow-wrap:anywhere\]">ada@example\.com<\/span><\/p>/,
     /<h1 id="welcome-page-title" class="mt-2\.5 text-balance text-\[30px\] font-extrabold leading-\[34px\]">Welcome to Homeroom<\/h1>/,
     // What Homeroom is: the line, then one grouped card of three rows.
     /<p class="mt-2\.5 text-pretty text-\[16px\] leading-\[22px\] text-zinc-500 dark:text-zinc-400 text-center">Where groups make their own apps\.<\/p>/,
@@ -240,11 +242,9 @@ test('the Welcome is a page in the make screen\'s frame: picture, eyebrow, headi
     /data-welcome-page-point="make">.*?>Make an app for your group<\/div><div [^>]*>Pick an idea or describe your own\.<\/div>/,
     /data-welcome-page-point="ask">.*?>Change it by asking<\/div><div [^>]*>Homeroom bot builds what anyone suggests\.<\/div>/,
     /data-welcome-page-point="decide">.*?>Decide together<\/div><div [^>]*>Your group votes on what changes\.<\/div>/,
-    /<p data-welcome-page-email="" class="mt-2 max-w-full text-\[15px\] leading-5 font-semibold text-zinc-700 dark:text-zinc-300 \[overflow-wrap:anywhere\]">ada@example\.com<\/p>/,
     /<p class="mt-6 pb-2 text-\[13px\] text-zinc-500 dark:text-zinc-400">Pick a username\. It is public on Homeroom\.<\/p>/,
     /<div class="overflow-hidden rounded-2xl bg-white shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\] dark:bg-zinc-900">/,
     /<input id="welcome-page-username" autoComplete="username" enterKeyHint="go" class="[^"]*" placeholder="[^"]*" autoCapitalize="none" autoCorrect="off" spellCheck="false" value="ada"\/>/,
-    /<p data-welcome-page-code-note="" class="mt-2 text-\[13px\] text-zinc-500 dark:text-zinc-400">You sign in with a code we email you\. You can add a password later in Settings\.<\/p>/,
     /<div class="grow"><\/div>/,
     /<div data-welcome-page-continue=""><button[^>]*type="submit"[^>]*>Continue<\/button>/,
     /<p class="text-center text-\[13px\] text-zinc-500 dark:text-zinc-400 mt-3">By continuing, you agree to Homeroom(?:&#x27;|')s terms and acknowledge the privacy notice\.<\/p><\/div><\/form>/,
@@ -257,15 +257,17 @@ test('the Welcome is a page in the make screen\'s frame: picture, eyebrow, headi
   }
   // No sheet: no handle, no ✕, no dim. No password field (#4891).
   assert.doesNotMatch(html, /data-sign-in-sheet|aria-label="Close"|bg-black\/40|type="password"/);
-  // The Continue pill is the make screen's, 16px under the note rather
-  // than 24 so it is on screen in Safari's visible area.
+  // The Continue pill is the make screen's, 16px under the field rather
+  // than 24 so it is on screen in Safari's visible area. No line about
+  // signing in with a code (Evan, 20 Oct 2026): the page is for the name.
   assert.match(html, /<button type="submit" class="[^"]*mt-4 flex items-center justify-center disabled:opacity-50">Continue<\/button>/);
+  assert.doesNotMatch(html, /data-welcome-page-code-note|You sign in with a code/);
   // Nothing on the page is a dash.
   assert.doesNotMatch(html, /—/);
 
   // The card is the shell's grouped list on the plane colour: 20px corners,
   // one hairline, hairlines between its rows.
-  const card = html.slice(html.indexOf('data-welcome-page-points=""') - 200, html.indexOf('data-welcome-page-email'));
+  const card = html.slice(html.indexOf('data-welcome-page-points=""') - 200, html.indexOf('welcome-page-username'));
   assert.match(card, /<div class="overflow-hidden rounded-\[20px\] shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\] bg-\[color:var\(--dc-sheet-solid\)\] mx-0 mb-1 mt-3" role="list" data-welcome-page-points="">/);
   assert.equal((card.match(/role="listitem"/g) || []).length, 3, 'three rows');
   assert.equal((card.match(/\[&amp;:not\(:last-child\)\]:after:h-px/g) || []).length, 3, 'each row carries the hairline the last one drops');
@@ -280,7 +282,7 @@ test('the Welcome is a page in the make screen\'s frame: picture, eyebrow, headi
     beforeFinish() { return true; },
   });
   assert.doesNotMatch(named, /welcome-page-username|Pick a username/);
-  assert.match(named, /data-welcome-page-code-note=""/);
+  assert.match(named, /data-welcome-page-email=""[^>]*>ada@example\.com<\/span>/);
 });
 
 test('with the keys up the page moves once: the picture and what Homeroom is fold, the spacer goes, Continue rides (onboarding run two)', () => {
@@ -298,8 +300,10 @@ test('with the keys up the page moves once: the picture and what Homeroom is fol
   assert.match(src, /data-welcome-page-about=\{typing \? 'folded' : 'shown'\}\s+aria-hidden=\{typing \|\| undefined\}\s+className=\{typing \? ABOUT_FOLDED : ABOUT_SHOWN\}/);
   assert.match(src, /const ABOUT_FOLDED = 'grid grid-rows-\[0fr\] opacity-0 transition-\[grid-template-rows,opacity\] duration-300 ease-out motion-reduce:transition-none';/);
   assert.match(src, /className=\{typing \? PICTURE_FOLDED : PICTURE_SHOWN\}/);
-  // The card (the line and its rows) is inside the fold; the address is not.
-  const about = src.slice(src.indexOf('data-welcome-page-about='), src.indexOf('data-welcome-page-email'));
+  // The card (the line and its rows) is inside the fold; the address, on
+  // the eyebrow above it, is not.
+  assert.ok(src.indexOf('data-welcome-page-email') < src.indexOf('data-welcome-page-about='));
+  const about = src.slice(src.indexOf('data-welcome-page-about='), src.indexOf('auth:signInSheet.account.leadWithUsername'));
   assert.match(about, /t\('auth:welcomePage\.lead'\)/);
   assert.match(about, /<GroupedList tone="plane"/);
   // Only on a touch screen, and never while it hands off to the make screen.
@@ -419,15 +423,17 @@ test('the copy: the page\'s own lines, the rest the sheet\'s and the story\'s ow
   assert.equal(message('auth:welcomePage.decide.line'), 'Your group votes on what changes.');
   assert.equal(message('auth:story.welcome'), 'Welcome to Homeroom');
   assert.equal(message('auth:signInSheet.account.leadWithUsername'), 'Pick a username. It is public on Homeroom.');
+  // Still the sign-in sheet's own line; the Welcome page no longer says it.
   assert.equal(message('auth:signInSheet.account.codeNote'), 'You sign in with a code we email you. You can add a password later in Settings.');
   assert.equal(message('auth:signInSheet.account.submit'), 'Continue');
   assert.equal(message('auth:signInSheet.account.finishing'), 'Finishing…');
   assert.equal(message('auth:landing.signingIn'), 'Signing you in…');
   const src = read(WELCOME);
   for (const id of ['auth:welcomePage.eyebrow', 'auth:story.welcome', 'auth:welcomePage.lead', 'auth:signInSheet.account.leadWithUsername',
-    'auth:signInSheet.account.usernameLabel', 'auth:signInSheet.account.codeNote']) {
+    'auth:signInSheet.account.usernameLabel']) {
     assert.ok(src.includes(`t('${id}')`), id);
   }
+  assert.ok(!src.includes("t('auth:signInSheet.account.codeNote')"));
   // The three rows, in order, read through their ids.
   const { WELCOME_POINTS } = loadTsx(WELCOME);
   assert.deepEqual(WELCOME_POINTS.map((p) => [p.key, p.title, p.line]), [

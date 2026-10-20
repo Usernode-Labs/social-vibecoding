@@ -68,7 +68,12 @@ test('the invite\'s Join sheet starts with a phone number when the server offers
   // No lead, no line about who sees the number, no separate reCAPTCHA line (#4207).
   assert.doesNotMatch(phone, /No app, no password|sees your|never your number|This is protected by reCAPTCHA|data-sign-in-sheet-recaptcha/);
   assert.doesNotMatch(phone, /<p class="mt-1 text-\[15px\]/, 'an empty lead draws no paragraph');
-  assert.doesNotMatch(phone, /username/i, 'no username is asked for');
+  assert.doesNotMatch(phone, /sign-in-sheet-provider-username|>Username</, 'no username is asked for');
+  // Above the name, one line on who sees it (Evan, 20 Oct 2026): only the
+  // group joined, as a provisional handle, and a public app asks for a
+  // username first (username-first-run.js askForPublic).
+  assert.match(phone, /<p data-sign-in-sheet-name-note=""[^>]*class="text-\[13px\] text-zinc-500 dark:text-zinc-400">Your name is private to the app you are joining\. You will be asked to make a username before using public apps\.<\/p>/);
+  assert.ok(phone.indexOf('data-sign-in-sheet-name-note') < phone.indexOf('sign-in-sheet-name"'), 'the line sits above the name');
   assert.match(phone, /id="sign-in-sheet-phone"[^>]*type="tel"[^>]*autoComplete="tel"|id="sign-in-sheet-phone"[^>]*type="tel"/);
   assert.match(phone, />Text me a code</);
   // Under the phone step, past an "or", Apple and Google as the first step
@@ -132,8 +137,9 @@ test('the sheet\'s phone steps: the code, then the username on the phone\'s own 
   assert.equal(message('auth:signInSheet.phoneCode.title'), 'Check your texts');
   assert.match(src, /t\('auth:signInSheet\.phoneCode\.lead', \{ lastDigits: phoneNumber\.slice\(-4\) \}\)/);
   assert.equal(message('auth:signInSheet.phoneCode.lead', { lastDigits: '0123' }), 'We sent a 6-digit code to the number ending 0123.');
-  assert.match(src, /\{t\('auth:signInSheet\.phoneCode\.autofill'\)\}/);
-  assert.equal(message('auth:signInSheet.phoneCode.autofill'), 'The code fills itself in on most phones.');
+  // No line under the code about phones filling it in (Evan, 20 Oct 2026):
+  // it does, or it does not.
+  assert.doesNotMatch(src, /phoneCode\.autofill/);
   // The landing hands the offer to the invite's sheet only.
   const landing = read('frontend/src/features/auth/landing.tsx');
   assert.match(landing, /const phoneSignIn = waitlistPayload\?\.phone_sign_in === true;/);

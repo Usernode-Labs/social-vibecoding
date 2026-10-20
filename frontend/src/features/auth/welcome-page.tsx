@@ -11,12 +11,19 @@
  * (at least 32px under the status bar's inset), and a centred 384px column
  * with the 16px gutter. Top to bottom: the people picture (140px wide,
  * 96px under 800px tall, folded away under 700px), "You're in" in the make
- * screen's eyebrow, "Welcome to Homeroom" in its heading, what Homeroom is
- * ("Where groups make their own apps." in the make screen's line under a
- * heading, over one grouped card of three rows: make an app, change it by
- * asking, decide together), the address, the username label and its field
- * card, the note on how they sign in, then, past a flexible spacer,
- * Continue and the terms. The class literals are the make screen's own,
+ * screen's eyebrow with the address beside it ("You're in · ada@…"),
+ * "Welcome to Homeroom" in its heading, what Homeroom is ("Where groups
+ * make their own apps." in the make screen's line under a heading, over one
+ * grouped card of three rows: make an app, change it by asking, decide
+ * together), the username label and its field card, then, past a flexible
+ * spacer, Continue and the terms.
+ *
+ * THE ADDRESS RIDES THE EYEBROW (Evan, 20 Oct 2026). It stood alone between
+ * the card and the username, and a note under the field said how they sign
+ * in ("You sign in with a code we email you…"). "You're in" is what the
+ * address is about, so it sits there, in its own case, and the note is
+ * gone: the page is for picking a name, and the sign-in sheet still says
+ * how signing in works where it is asked. The class literals are the make screen's own,
  * spelled again here rather than shared so that file is untouched;
  * tests/release-link-straight-flow.test.js holds the two to the same
  * values.
@@ -76,8 +83,9 @@ export const WELCOME_CARD = 'overflow-hidden rounded-2xl bg-white shadow-[inset_
 const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
 const LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
 const INPUT = 'w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
-// The address, as the story greets it (./story.tsx).
-export const WELCOME_EMAIL = 'mt-2 max-w-full text-[15px] leading-5 font-semibold text-zinc-700 dark:text-zinc-300 [overflow-wrap:anywhere]';
+// The address beside "You're in": the eyebrow's size, in its own case and
+// spacing, a step darker, so it reads as the account rather than a label.
+export const WELCOME_EMAIL = 'normal-case tracking-normal font-medium text-zinc-700 dark:text-zinc-300 [overflow-wrap:anywhere]';
 // The make screen's line under a heading (its import form's): here, what
 // Homeroom is.
 export const WELCOME_LEAD = 'mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400';
@@ -102,8 +110,8 @@ const POINT_TILE = 'text-zinc-500 dark:text-zinc-400';
  * bottom toolbar the page gets about 402x717 on an iPhone 17 and 390x664 on
  * a smaller iPhone, not the 844 the app gives it, and Continue was below
  * the fold at both. The sections sit a little closer than the make screen's
- * (the card 12px over the address, the note 8px under the field, Continue
- * 16px under the note), and two heights take away what is not needed to
+ * (the username 24px under the card, Continue 16px under the field), and
+ * two heights take away what is not needed to
  * act (the product lead's pick, of three drawn at 402x717):
  *
  *   * 800px tall and up: all of it, the picture at 140px and the rows with
@@ -270,7 +278,11 @@ export function WelcomePage({ account, beforeFinish }: {
                 className={`mx-auto mt-2 block h-auto w-[140px] max-w-full ${SHORT_PICTURE_WIDTH}`}
               />
             </div>
-            <p className={WELCOME_EYEBROW}>{t('auth:welcomePage.eyebrow')}</p>
+            <p className={WELCOME_EYEBROW}>
+              {t('auth:welcomePage.eyebrow')}
+              <span aria-hidden="true">{' \u00b7 '}</span>
+              <span data-welcome-page-email="" className={WELCOME_EMAIL}>{account.email}</span>
+            </p>
             <h1 id="welcome-page-title" className={WELCOME_TITLE}>{t('auth:story.welcome')}</h1>
           </div>
           {/* What Homeroom is: folded with the picture while the keys are up. */}
@@ -302,9 +314,6 @@ export function WelcomePage({ account, beforeFinish }: {
               </GroupedList>
             </div>
           </div>
-          <div className="text-center">
-            <p data-welcome-page-email="" className={WELCOME_EMAIL}>{account.email}</p>
-          </div>
           {account.needsUsername ? (
             <>
               <p className={WELCOME_LABEL}>{t('auth:signInSheet.account.leadWithUsername')}</p>
@@ -327,8 +336,6 @@ export function WelcomePage({ account, beforeFinish }: {
               </div>
             </>
           ) : null}
-          {/* No password here (#4891): how they sign in, and where a password is added. */}
-          <p data-welcome-page-code-note="" className="mt-2 text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.account.codeNote')}</p>
           {error ? <p role="alert" className="mt-3 text-[14px] text-red-700 dark:text-red-400">{error}</p> : null}
           <SessionConfirmationNotice completion={completion} />
           {typing ? null : <div className="grow" />}
