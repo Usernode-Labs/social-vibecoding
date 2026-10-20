@@ -165,7 +165,7 @@ test('the query is written to the session key when set and removed when cleared 
 
 test('while searching the headings, pinned sections and pager step aside', () => {
   assert.ok(
-    SHEET_SRC.includes('{searching ? null : <NotificationsPinnedSections />}'),
+    SHEET_SRC.includes('{searching || kindOn ? null : <NotificationsPinnedSections />}'),
     'the pinned sections are skipped while searching'
   );
   // The merged Unread grouping (#5406) folds the flat list's Today/Earlier

@@ -40,6 +40,14 @@
  * member; tapping it opens that one and reads the whole group
  * (Notifications.openGroupRow), and clearing it clears them all.
  *
+ * ── #3206: All narrows by kind ─────────────────────────────────────────
+ *
+ * On All, a row of three chips under the tabs (Votes, Mentions & replies,
+ * Invites) narrows the archive to one kind of thing that waits on you, across
+ * every project; tapping the lit chip again shows everything. One at a time,
+ * forgotten when the sheet closes. The kinds and why there are three live in
+ * ./notifications-kinds.js. It is not a Messages filter: that one stays gone.
+ *
  * ── It was a screen, and a screen needed a back button ─────────────────
  *
  * The bell is in the header on every route, so a full-screen Notifications
@@ -95,6 +103,7 @@ import { OverlayScrim } from '../../lib/overlay-scrim-view';
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { Chip, ChipRail } from '@/components/ui/chip';
 import { IconTile } from '@/components/ui/icon-tile';
 import {
   BookmarkIcon, BookmarkSolidIcon, ChevronRightIcon, SearchIcon, XIcon,
@@ -108,6 +117,7 @@ import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from './notifications-store.js';
 import { matchesNotificationQuery, normalizeNotificationQuery } from './notifications-search.js';
+import { NOTIFICATION_KIND_FILTER_KEYS, matchesKindFilter } from './notifications-kinds.js';
 import { notificationsSheetStore } from './notifications-sheet-store.js';
 import { NotificationsSheet } from './notifications-sheet-controller.js';
 import { NotificationsPinnedSections } from './notifications-list';
@@ -161,6 +171,15 @@ type ScreenRowView = NotificationRowView & {
 };
 
 type Tab = 'all' | 'unread';
+
+/** #3206: the All tab's kind chips (./notifications-kinds.js). */
+type KindFilter = 'votes' | 'mentions' | 'invites';
+
+const KIND_FILTER_LABELS: Record<KindFilter, string> = {
+  votes: 'notifications:sheet.kind.votes',
+  mentions: 'notifications:sheet.kind.mentions',
+  invites: 'notifications:sheet.kind.invites',
+};
 
 /** One row of the list, with its time (ms) for the Today/Earlier split. */
 type Entry = { type: 'notif'; key: string; at: number; view: ScreenRowView };
@@ -897,6 +916,10 @@ export function NotificationsSheetView() {
   // closes or the tab changes, so coming back to Unread starts collapsed
   // again. It starts false, so the prerendered markup is unchanged.
   const [olderShown, setOlderShown] = useState(false);
+  // #3206: the All tab's kind chip, or null for every kind. Per visit, like
+  // the reveal above: it starts null (the prerender has no chips anyway, as
+  // the sheet opens on Unread) and is forgotten when the sheet closes.
+  const [kindFilter, setKindFilter] = useState<KindFilter | null>(null);
   // #5405: what the search field holds. It narrows the tab that is open —
   // both tabs, and a tab change keeps it. It starts '' so the
   // prerendered markup is an empty field; the restore effect below reads
@@ -960,6 +983,7 @@ export function NotificationsSheetView() {
   useEffect(() => {
     if (!open) setOlderShown(false);
     else if (tab !== 'unread') setOlderShown(false);
+    if (!open) setKindFilter(null);
   }, [open, tab]);
 
   // #5527: the Unread tab fills itself up to the bell's number. The badge
@@ -1007,7 +1031,10 @@ export function NotificationsSheetView() {
   // has them.
   const unread = all.filter((view) => held.listed(view) && !view.plainMessage);
   const unreadNow = all.filter((view) => view.unread && !view.plainMessage);
-  const rows = tab === 'unread' ? unread : all;
+  // #3206: a kind chip narrows All only; Unread is grouped by project instead.
+  const kindOn = tab === 'all' ? kindFilter : null;
+  const rows = tab === 'unread' ? unread
+    : kindOn ? all.filter((view) => matchesKindFilter(view.kind, kindOn)) : all;
   // What the tab DRAWS. On Unread expanded (#4700) the older rows — the read
   // ones already in hand, plus any further page the server still has — show
   // UNDER the unread ones, on the same tab. `rows` stays the tab's own filter:
@@ -1213,6 +1240,32 @@ export function NotificationsSheetView() {
           {t('notifications:sheet.tab.all')}
         </button>
       </div>
+      {/* #3206: All's kind chips, the Discover filter rail's chips at the
+          bar's size. A toggle each (aria-pressed), one lit at a time. */}
+      {tab === 'all' ? (
+        <ChipRail
+          id="notifications-kind-filters"
+          role="group"
+          aria-label={t('notifications:sheet.kinds')}
+          className="gap-2 pt-0 pb-2 shrink-0"
+        >
+          {(NOTIFICATION_KIND_FILTER_KEYS as readonly KindFilter[]).map((key) => (
+            <Chip
+              key={key}
+              id={`notifications-kind-${key}`}
+              size="bar"
+              className="px-4"
+              selected={kindFilter === key}
+              onClick={(event) => {
+                event.stopPropagation();
+                setKindFilter(kindFilter === key ? null : key);
+              }}
+            >
+              {t(KIND_FILTER_LABELS[key])}
+            </Chip>
+          ))}
+        </ChipRail>
+      ) : null}
       {/* The sheet's own scroller. The screen root used to be the scroller;
           a sheet's head has to stay put while its rows move, so the rows get
           a box of their own. */}
@@ -1239,7 +1292,8 @@ export function NotificationsSheetView() {
           with nothing unread (disabled), so the row does not reflow the
           first time you clear the list.
       */}
-      {searching ? null : <NotificationsPinnedSections />}
+      {/* A kind chip shows only that kind, so the pinned sections step aside too. */}
+      {searching || kindOn ? null : <NotificationsPinnedSections />}
       {/* #5405: while searching the list is ONLY the matches — no headings,
           no pager — and a query with no matches gets one line saying so. */}
       {searching ? (
@@ -1271,7 +1325,8 @@ export function NotificationsSheetView() {
       ))}
       {!searching && !entries.length ? (
         <p className="px-4 py-8 text-sm text-zinc-500 text-center">
-          {tab === 'unread' ? t('notifications:sheet.empty.unread') : t('notifications:sheet.empty.other')}
+          {tab === 'unread' ? t('notifications:sheet.empty.unread')
+            : kindOn ? t('notifications:sheet.empty.kind') : t('notifications:sheet.empty.other')}
         </p>
       ) : null}
       {/*
