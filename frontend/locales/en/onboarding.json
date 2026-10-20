@@ -963,21 +963,13 @@
     "text": "Describe it, and Homeroom bot builds it",
     "description": "Line under \"Your own idea\" in the \"Something else\" sheet on the \"What do you want to make?\" screen: the member writes a description and Homeroom bot (the platform's AI helper, keep its name) builds the first version."
   },
-  "firstSession.make.eyebrow.create": {
-    "text": "New project",
-    "description": "Small heading above the question on the \"What do you want to make?\" screen, where a member describes a new project, when the screen was opened from the Create button. A noun phrase: this is a new project."
-  },
-  "firstSession.make.eyebrow.hello": {
-    "text": "Hi {{name}}!",
-    "description": "Small greeting above the question on the \"What do you want to make?\" screen, where a member describes a new project, the first time a new member signs in. {{name}} is the member's display name or username."
-  },
-  "firstSession.make.eyebrow.youreIn": {
-    "text": "You're in!",
-    "description": "Small greeting above the question on the \"What do you want to make?\" screen, where a member describes a new project, the first time a new member signs in, when their name is not known: they now have access to Homeroom."
-  },
   "firstSession.make.title": {
     "text": "What do you want to make?",
     "description": "Heading of the screen where a member starts a new project by describing what the app should be."
+  },
+  "firstSession.make.titleHello": {
+    "text": "Hi {{name}}, what do you want to make?",
+    "description": "Heading of the screen where a member starts a new project by describing what the app should be, the first time a new member signs in. {{name}} is the member's display name or username."
   },
   "firstSession.make.startFromIdea": {
     "text": "Start from an idea",
