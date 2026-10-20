@@ -1,9 +1,11 @@
 // Test-harness preload (loaded via --require in the npm test script; the
 // node test runner spawns each test file with the parent's execArgv, so
-// every test process gets this automatically). Three patches: the first two
+// every test process gets this automatically). Four patches: the first two
 // kill the rare, random `TypeError: fetch failed` flakes that hit a
-// different test file every few full-suite runs, and the third keeps a
-// Postgres connection dropped while idle from failing a whole test file.
+// different test file every few full-suite runs, the third keeps a
+// Postgres connection dropped while idle from failing a whole test file,
+// and the fourth keeps one file's background staging-database sweep from
+// deleting another file's database copy.
 //
 // ── Patch 1: test servers bind IPv4 loopback ──────────────────────────
 //
@@ -133,4 +135,26 @@ try {
   };
 } catch {
   // pg-pool not resolvable: nothing here constructs a real one. Skip.
+}
+
+// ── Patch 4: no orphan staging-database sweep in a test process ─────────
+//
+// The unit suite runs every test file in parallel against one Postgres.
+// Files that boot the real workflow runtime (src/workflow/platform.ts) arm
+// every clock job at startup, and with no leader-sweep history the first
+// run is due within about two minutes — including the preview-orphan-dbs
+// clock, which runs sweepOrphanDbs (src/services/staging-reap.js). That
+// sweep lists every `%_staging_%` database in the CLUSTER and drops each
+// one that has no live session and no connected client, in that process's
+// view. A clone another test file is building
+// (CREATE DATABASE … TEMPLATE template0, then pg_dump | pg_restore) has
+// nobody connected between those steps, so it looks like an orphan: the
+// sweep drops it and pg_restore then reports
+// `database "…" does not exist — It seems to have just been dropped or
+// renamed` (the flake behind issue #5645). 0 already means "off" to
+// orphanDbSweepIntervalMs and the clock's run then touches no database, so
+// tests turn it off here, in the preload every test process loads and every
+// child inherits. A value set by hand (to exercise the clock) is kept.
+if (process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS === undefined) {
+  process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS = '0';
 }
