@@ -14963,7 +14963,7 @@ async function migrateAppDbsToPerRole(pool, config) {
   log.info('db', 'Running per-app role migration');
 
   const { rows } = await pool.query(
-    `SELECT id, slug, container_id, manifest_snapshot, db_password, status, self_hosted
+    `SELECT id, slug, name, container_id, manifest_snapshot, db_password, status, self_hosted
        FROM apps
        WHERE COALESCE(self_hosted, FALSE) = FALSE
          AND status NOT IN ('deleted', 'creating', 'awaiting_secrets')`

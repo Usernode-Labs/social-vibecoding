@@ -28,7 +28,9 @@
 //   manifest    dapp.json read and reconciled, required secrets checked
 //   build       the image build; `build` beside it says which engine and
 //               where its time went (BuildKit's slowest steps, kpack's
-//               lifecycle phases)
+//               lifecycle phases). A ready-made app's is finding the image
+//               already built for it (engine `prebuilt`, services/
+//               starter-images.js), with any wait for it to finish
 //   deploy      the runtime's objects applied: env, Service, Deployment,
 //               Ingress (Docker: the container run)
 //   rollout     waiting for the container to answer /health; on Kubernetes
@@ -145,6 +147,15 @@ function buildNote({ engine, result, solveStartMs = null } = {}) {
   if (Number.isFinite(solveStartMs)) note.solveStartMs = ms(solveStartMs);
   if (Number.isFinite(result?.baseImageMs)) note.baseImageMs = ms(result.baseImageMs);
   if (typeof result?.cacheUpload === 'string') note.cacheUpload = result.cacheUpload;
+  // A ready-made app's prebuilt image (services/starter-images.js): which,
+  // and how long creation waited for it to finish building.
+  if (result?.prebuilt && typeof result.prebuilt.template === 'string') {
+    note.prebuilt = {
+      template: result.prebuilt.template,
+      ...(typeof result.prebuilt.key === 'string' ? { key: result.prebuilt.key } : {}),
+      ...(Number.isFinite(result.prebuilt.waitedMs) ? { waitedMs: ms(result.prebuilt.waitedMs) } : {}),
+    };
+  }
   if (result?.starterCache && typeof result.starterCache.starter === 'string') {
     note.starterCache = {
       starter: result.starterCache.starter,

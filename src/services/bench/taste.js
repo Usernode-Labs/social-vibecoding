@@ -152,11 +152,12 @@ function seedFor(input, botLogin = null, card = null) {
  * agent to its later history.
  */
 function scaffoldFiles(input) {
-  const { getTemplateFiles } = require('../template');
-  return getTemplateFiles(input.appName, slugOf(input.appName), '', null, {
+  const { getTemplateFiles, fillAppName } = require('../template');
+  // Its name in the page, as bench/scaffold.js writes it (template.js fillAppName).
+  return fillAppName(getTemplateFiles(input.appName, slugOf(input.appName), '', null, {
     template: input.template || null,
     description: input.description || null,
-  });
+  }), input.appName);
 }
 
 /** Record a task's inputs as its snapshot. Resolves the snapshot's id. */

@@ -536,6 +536,9 @@ const EMPTY_SERVER = {
   health: `app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 `,
   routes: '',
+  page: '',
+  staticOptions: '',
+  sendPage: `res.sendFile(path.join(__dirname, 'public', 'index.html'));`,
   start: `async function start() {
   const server = app.listen(port, () => console.log(\`Listening on :\${port}\`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
@@ -545,7 +548,37 @@ const EMPTY_SERVER = {
 `,
 };
 
+// A starter's page carries no project's name: `{{APP_NAME}}` stands where
+// it shows, and server.js fills it in from USERNODE_APP_NAME each time the
+// page is served (starterPage). So every project made from one ready-made
+// app is the same code, and runs the same prebuilt image
+// (services/starter-images.js); `fallback` is the name a plain local
+// `node server.js`, with no platform around it, shows instead.
+function starterPage(fallback) {
+  return `// The screen, with this project's name in it. The name is not written into
+// public/index.html: the platform hands it to the container
+// (USERNODE_APP_NAME), so every project made from the same Homeroom starter
+// runs the same code, and a renamed project shows its new name from its next
+// deploy. {{APP_NAME}} in the page is where it goes, escaped for HTML.
+// Served here rather than by express.static below, which would send the
+// placeholder; like the static file it replaces, it needs no sign-in.
+const fs = require('fs');
+const APP_NAME = process.env.USERNODE_APP_NAME || ${JSON.stringify(fallback)};
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function page() {
+  return fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8')
+    .replace(/\\{\\{APP_NAME\\}\\}/g, escapeHtml(APP_NAME));
+}
+app.get(['/', '/index.html'], (_req, res) => res.type('html').send(page()));
+
+`;
+}
+
 const STARTER_SERVER = {
+  staticOptions: ', { index: false }',
+  sendPage: `res.type('html').send(page());`,
   health: `// 503 once a shutdown has begun, so anything polling readiness sees the
 // container leaving rotation rather than a connection reset.
 let shuttingDown = false;
@@ -620,7 +653,7 @@ function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = n
   // starter swaps in its own screen, api.js, README and checks.
   const starter = template == null || template === appTemplates.DEFAULT_TEMPLATE ? null : appTemplates.get(template);
   if (template != null && !appTemplates.isTemplate(template)) throw new Error(`Unknown app template: ${template}`);
-  const server = starter ? STARTER_SERVER : EMPTY_SERVER;
+  const server = starter ? { ...STARTER_SERVER, page: starterPage(starter.title) } : EMPTY_SERVER;
   // A starter's own packages (a game's `ws`), added to package.json and its
   // lockfile so the image's `npm ci` installs them.
   const extraDeps = starter && starter.dependencies ? extraDependencies(starter) : null;
@@ -965,6 +998,12 @@ module.exports = {
 ${DESIGN_KIT_CSS}`,
     },
     {
+      // What the image leaves out. Past the usual, the files only people and
+      // the platform read from the repository (its README, notes, licence,
+      // manifest and the first session's card), which name the project: the
+      // image then holds nothing of one project's, so every project made
+      // from the same starter builds the same image, and a ready-made app
+      // deploys the one already built (services/starter-images.js).
       path: '.dockerignore',
       content: `.env
 .env.*
@@ -972,6 +1011,11 @@ ${DESIGN_KIT_CSS}`,
 .claude
 node_modules
 public/tailwind.css
+README.md
+CLAUDE.md
+LICENSE
+dapp.json
+design
 `,
     },
     {
@@ -1140,6 +1184,10 @@ app.use(express.json());
 // USERNODE_PLATFORM_ORIGIN there too if you want the hosted assets locally.
 const PLATFORM_ORIGIN = (process.env.USERNODE_PLATFORM_ORIGIN || '')
   .replace(/\\/+$/, '');
+// This project's address on the platform (/app/<slug>), from the variable the
+// platform injects, and not written in here either: every project made from
+// the same starter is then the same code. Unset only outside the platform.
+const APP_SLUG = process.env.USERNODE_APP_SLUG || '';
 
 app.get(/^\\/usernode-(?:bridge|native|tailwind)\\//, async (req, res) => {
   try {
@@ -1238,7 +1286,7 @@ ${server.health}
 // fresh load.
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
-${server.routes}app.use(express.static(path.join(__dirname, 'public')));
+${server.routes}${server.page}app.use(express.static(path.join(__dirname, 'public')${server.staticOptions}));
 
 // HTML shell: serve the app if authenticated. Unauthenticated top-level
 // visits (share links pasted into a browser — Sec-Fetch-Dest: document)
@@ -1260,19 +1308,20 @@ app.get('*', (req, res) => {
     // unusual falls back to the bare link.
     const deepPath = /^\\/[A-Za-z0-9\\-._~!$&()*+,;=:@\\/%?]*$/.test(req.originalUrl)
       ? '?path=' + encodeURIComponent(req.originalUrl) : '';
+    const appPath = APP_SLUG ? '/app/' + encodeURIComponent(APP_SLUG) + '/full' + deepPath : '';
     if (PLATFORM_ORIGIN && req.get('sec-fetch-dest') === 'document') {
-      return res.redirect(302, PLATFORM_ORIGIN + '/app/${slug}/full' + deepPath);
+      return res.redirect(302, PLATFORM_ORIGIN + appPath);
     }
     return res.status(401).send(\`<!doctype html><meta charset=utf-8><title>Open in Homeroom</title>
 <body style="font-family:system-ui;background:#09090b;color:#e4e4e7;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">
   <div style="max-width:24rem;padding:2rem;text-align:center">
     <h1 style="font-size:1.25rem;margin:0 0 0.5rem">Open this app inside Homeroom</h1>
     <p style="color:#a1a1aa;font-size:0.9rem;margin:0 0 1.25rem">This page is served via the platform; direct visits aren't authenticated.</p>
-    <a href="\${PLATFORM_ORIGIN}/app/${slug}/full\${deepPath}" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Open in Homeroom</a>
+    <a href="\${PLATFORM_ORIGIN}\${appPath}" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Open in Homeroom</a>
   </div>
 </body>\`);
   }
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  ${server.sendPage}
 });
 
 ${server.start}start().catch(err => { console.error(err); process.exit(1); });
@@ -1363,15 +1412,27 @@ ${server.start}start().catch(err => { console.error(err); process.exit(1); });
   // A starter's own screen replaces the Press! page, and its api.js and
   // scripts join the shared plumbing.
   // The entry's own `fill` (what a tier list ranks) lands in the page's
-  // markup, so it is escaped like the name.
+  // markup, so it is escaped. The project's name is not filled in: its
+  // `{{APP_NAME}}` stays for server.js to fill at runtime (starterPage).
   const own = appTemplates.starterFiles(template, {
     ...Object.fromEntries(Object.entries(starter.fill || {}).map(([key, value]) => [key, escapeHtml(value)])),
-    APP_NAME: escapeHtml(appName),
     DEV_CONSOLE_FORWARDER: DEV_CONSOLE_FORWARDER.trim(),
   });
   const ownPaths = new Set(own.map((f) => f.path));
   const all = [...files.filter((f) => !ownPaths.has(f.path)), ...own];
   return card ? withCard(all, appName, sketch) : all;
+}
+
+// A starter's files with the project's name written into its page, for a
+// caller that serves the page itself or runs it under another project's
+// name: the App bench, whose previews run as its host app
+// (services/bench/scaffold.js, taste.js), and the example pictures
+// (scripts/render-starter-examples.js). A new project keeps `{{APP_NAME}}`
+// for its server.js (starterPage); the empty scaffold has none to fill.
+function fillAppName(files, appName) {
+  return files.map((f) => (f.path === 'public/index.html'
+    ? { ...f, content: f.content.replace(/\{\{APP_NAME\}\}/g, escapeHtml(appName)) }
+    : f));
 }
 
 // The first session's card (services/app-sketch.js), when it was ready in
@@ -1410,6 +1471,11 @@ Where things are:
   and change them when you change what they look for.
 
 Update \`README.md\` when what the app does changes.
+
+\`{{APP_NAME}}\` in \`public/index.html\` is not a leftover: \`server.js\` fills
+it in with the project's name (\`USERNODE_APP_NAME\`, which the platform
+sets) each time it serves the page, so the name follows the project when it
+is renamed. Keep it wherever the name shows.
 
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` and the bridge
 \`<script>\` when rewriting the HTML: both are platform infrastructure.
@@ -1472,6 +1538,11 @@ Rules the room keeps for you, and a new game should too:
   building and quizzes are fine.
 
 Update \`README.md\` when what the game does changes.
+
+\`{{APP_NAME}}\` in \`public/index.html\` is not a leftover: \`server.js\` fills
+it in with the project's name (\`USERNODE_APP_NAME\`, which the platform
+sets) each time it serves the page, so the name follows the project when it
+is renamed. Keep it wherever the name shows.
 
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` and the bridge
 \`<script>\` when rewriting the HTML: both are platform infrastructure.
@@ -1605,6 +1676,7 @@ function escapeHtml(str) {
 
 module.exports = {
   getTemplateFiles,
+  fillAppName,
   getConnectorScaffoldFiles,
   // The Empty starter's design kit (its tokens and components), for the
   // early first look's prompt (first-version-early-look.js).
