@@ -15,10 +15,9 @@
 //     looks once and writes its transcript's lines once, and records the
 //     trial once, charged once: no PR, no staging, no notification, no chat
 //     row;
-//   * a trial no durable build owns (it ran with no workflow runtime) has its
-//     turn abandoned and is put back in the queue, what it spent charged;
-//     after a second interruption it fails; one whose worker had already
-//     exited is put back too.
+//   * a trial's worker no build holds any more (its build ended or failed)
+//     has its turn abandoned and its session archived; the trial is its
+//     build's to record (bot-build's build.lost), never put back here.
 //
 // server.js only boots when run as the entry point, so requiring it exposes
 // adoptOrphanWorker without starting anything. The worker, the agent-turn
@@ -32,6 +31,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
+const { asTransition } = require('./lib/as-transition');
 
 process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgres://test:test@localhost:5/test';
 process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'test-session';
@@ -129,7 +129,6 @@ test('benchmark trials across a restart, against the full PostgreSQL schema', { 
   const platform = require('../src/workflow/platform.ts');
   require('../src/db/pool').getPool = () => pool;
   t.after(async () => {
-    lane._resetForTests();
     await platform.stopWorkflow();
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
@@ -182,7 +181,8 @@ test('benchmark trials across a restart, against the full PostgreSQL schema', { 
     );
     return { run, trials: rows };
   };
-  const claimAs = (trialId, sessionId, { claims = 1 } = {}) => pool.query(
+  // A claim as the bench lane's transition writes it (only it may).
+  const claimAs = (trialId, sessionId, { claims = 1 } = {}) => asTransition(pool,
     `UPDATE bench_trials SET status = 'running', claims = $2, started_at = NOW() - INTERVAL '3 minutes',
             session_id = $3, base_sha = $4, build_branch = 'bench/r' || run_id || '-t' || id
       WHERE id = $1`,
@@ -207,7 +207,6 @@ test('benchmark trials across a restart, against the full PostgreSQL schema', { 
   const asKernel = (sql) => pool.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'; ${sql}; COMMIT`);
   const reset = () => {
     workerCalls.length = 0; outward.length = 0; debits.length = 0;
-    lane._resetForTests();
   };
 
   await t.test('a durable trial\'s worker and turn are left to the build that owns it; once that build is over, the turn is an orphan\'s', async () => {
@@ -227,55 +226,22 @@ test('benchmark trials across a restart, against the full PostgreSQL schema', { 
     assert.deepEqual(outward, []);
 
     // A build that is over owns nothing: what it left is abandoned as any
-    // orphan's is, and the trial put back.
+    // orphan's is. The trial is its build's to record (build.lost), never
+    // put back here: a second run of it would pay twice.
     reset();
     await asKernel(`UPDATE wf_instances SET state = 'failed' WHERE machine = 'bot-build' AND key = '${key}'`);
     await adopt(sid);
     assert.deepEqual(workerCalls.map((c) => c[0]), ['adoptWarmWorker', 'stopTurn', 'finishTurn', 'destroyWorker'],
       'its turn stopped and its record cleared, then its worker removed');
     assert.equal((await sessionRow(sid)).status, 'archived');
-    assert.equal((await trialRow(trial.id)).status, 'pending');
+    assert.equal((await trialRow(trial.id)).status, 'running', 'left to its build\'s record');
     assert.deepEqual(outward, []);
-  });
-
-  await t.test('a trial no durable build owns is put back in the queue, charged once; a second interruption fails it; an exited worker is not followed', async () => {
-    reset();
-    const { run, trials: [first, twice] } = await launch(['build']);
-    const s1 = await newSession(turnOf('build'));
-    await claimAs(first.id, s1);
-    await spend(s1, 0.15);
-    await adopt(s1);
-    assert.deepEqual(workerCalls.map((c) => c[0]), ['adoptWarmWorker', 'stopTurn', 'finishTurn', 'destroyWorker'], 'abandoned, never followed');
-    let row = await trialRow(first.id);
-    assert.equal(row.status, 'pending', 'back in the queue, to run again from the start');
-    assert.equal(row.session_id, null);
-    assert.equal(row.claims, 1, 'the claim it took is spent');
-    assert.equal(row.interrupted, 0.15, 'what the interrupted attempt spent, kept on it');
-    assert.equal(await spent(run.id), 0.15, 'and charged to its run');
-    assert.deepEqual(debits, [15]);
-    assert.equal((await sessionRow(s1)).status, 'archived');
-    assert.equal(await chatRows(s1), 0, 'no completion card, breadcrumb or wrap-up row');
-
-    const s2 = await newSession(turnOf('build'));
-    await claimAs(twice.id, s2, { claims: 2 });
-    await adopt(s2);
-    row = await trialRow(twice.id);
-    assert.equal(row.status, 'infra_fail');
-    assert.match(row.error, /restarted during it twice/);
-
-    reset();
-    const s3 = await newSession(turnOf('build'));
-    await claimAs(first.id, s3, { claims: 1 });
-    await adopt(s3, 'exited');
-    assert.equal(workerCalls.filter((c) => c[0] === 'resume').length, 0, 'an exited worker is not followed');
-    assert.equal((await trialRow(first.id)).status, 'pending');
-    assert.deepEqual(outward, [], 'no PR, staging or notification');
   });
 
   await t.test('a durable triage trial a restart caught mid-turn: the next attempt follows the turn to its end, its looks and lines once, and records the trial once', async () => {
     reset();
     const { run, trials: [trial] } = await launch(['triage']);
-    await pool.query("UPDATE bench_trials SET status = 'running', claims = 1, started_at = NOW() WHERE id = $1", [trial.id]);
+    await asTransition(pool, "UPDATE bench_trials SET status = 'running', claims = 1, started_at = NOW() WHERE id = $1", [trial.id]);
     const branch = `bench/r${run.id}-t${trial.id}`;
     const gh = { pinned: [], deleted: [] };
     const github = {

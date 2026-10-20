@@ -1165,9 +1165,7 @@ function startProcessDuties() {
 // PR/merge rows, staging, Postgres roles, GitHub) or is a singleton
 // poller/sweeper that must never double-run across the two colors. The
 // follower serves HTTP from boot, and so does a web process, which never
-// leads (docs/plans/web-and-conductor.md): what the leader keeps in memory
-// and a route reads (the admin statuses) is recorded for them
-// (services/leader-status.js).
+// leads (docs/plans/web-and-conductor.md).
 async function becomeLeader() {
   log.info('server', 'Running leader duties (recovery, sweepers)', {
     identity: leadership && leadership.identity,
@@ -1186,14 +1184,6 @@ async function becomeLeader() {
   // translation of the build's new text: clocks that only the newest build
   // runs.)
 
-  // What leader work keeps in memory and an admin screen reads, written for
-  // the processes that do not lead (services/leader-status.js): a web process
-  // never does (docs/plans/web-and-conductor.md), and a follower of a rollout
-  // reads the same copy.
-  const leaderStatus = require('./src/services/leader-status');
-  leaderStatus.provide('bench-lane', () => require('./src/services/bench/lane').laneStatus());
-  leaderStatus.start({ pool: getPool(config) });
-
   // #892: resolve progress-estimate rows orphaned by a server restart
   // mid-run. The live backfill only exists inside the turn, so ~10% of runs
   // historically stayed unscored forever — which the v1-vs-v2 accuracy
@@ -1202,9 +1192,7 @@ async function becomeLeader() {
   // (The Homeroom bot's loop is no leader work: it is the bot-request and
   // bot-lane machines, src/workflow/, whose work runs wherever workflow work
   // runs.)
-  // #3654: its benchmark lane. Leader-only like the bot (a trial runs a
-  // container turn that costs money) and inert until an admin launches a run.
-  require('./src/services/bench/lane').start(config);
+  // (Nor is the App bench's lane: the bench-lane machine, src/workflow/.)
   // Before & after shots evals' runner (services/shots-eval-runner.js).
   // Leader-only for the same reason: a trial builds two copies and runs the
   // shots agent, which costs money. Inert until an admin launches an eval.
@@ -2131,11 +2119,10 @@ async function abandonOrphanShotsTurn({
 }
 
 // #3654: a benchmark trial's worker that outlived a restart and that no
-// durable trial owns (trials are durable builds: services/build-runs.js; this
-// is one that started before they were). The same abandonment as a shots
-// turn's (above), then the session is archived and the trial put straight
-// back in the lane's queue, what the attempt spent charged to its run: the
-// lane runs it again from the start.
+// durable build holds any more (its build ended, or failed: bot-build's
+// `build.lost` records the trial, services/bench/lane.js recordLostTrial).
+// The same abandonment as a shots turn's (above), then the session is
+// archived. The trial is its build's: nothing here puts it back.
 async function abandonOrphanBenchTurn({
   pool, session, sessionId, containerName, containerRunning, retryRuntimeRecovery,
 }) {
@@ -2169,11 +2156,6 @@ async function abandonOrphanBenchTurn({
   }
   await worker.destroyWorker(containerName).catch(() => {});
   log.warn('server', 'Abandoned a benchmark trial\'s worker after restart', { containerName, sessionId });
-  // After the attempt is terminalized, so the ledger it is charged from is
-  // final. Never throws.
-  await require('./src/services/bench/lane').releaseTrialOfSession(pool, sessionId, {
-    why: 'its turn was abandoned after a restart',
-  });
 }
 
 function homeroomBotRecovery() {
@@ -4564,14 +4546,9 @@ async function cleanup() {
     .catch((err) => log.warn('server', 'Interrupting agent turns failed', { err: err.message }));
   let agentTurnsEnded = finishesWork ? null : endAgentTurns();
   require('./src/services/mayor/agent-turn').stopInterruptedTurnSweeper();
-  // The Homeroom bot's loops and its benchmark lane: nothing new is claimed
-  // or dispatched on a process whose pool is about to close. Their turns
-  // already running are restart recovery's to finish.
-  // The leader's statuses stop being written: the new leader's replace them.
-  require('./src/services/leader-status').stop();
-  try { require('./src/services/bench/lane').stop(); } catch (err) {
-    log.warn('server', 'Stopping the benchmark lane failed', { err: err.message });
-  }
+  // The leader's loops: nothing new is claimed or dispatched on a process
+  // whose pool is about to close. Their turns already running are restart
+  // recovery's to finish.
   try { require('./src/services/shots-eval-runner').stopRunner(); } catch (err) {
     log.warn('server', 'Stopping the shots eval runner failed', { err: err.message });
   }

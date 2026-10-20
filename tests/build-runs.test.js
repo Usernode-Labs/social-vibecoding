@@ -142,10 +142,6 @@ test('a build that failed for good is recorded where it is read, and its end ann
   assert.deepEqual(await heard, { state: 'failed' });
 });
 
-test('with no workflow runtime there are no builds under way to hold slots for', async () => {
-  assert.deepEqual(await buildRuns.underWay('trial'), []);
-});
-
 // 14 Oct 2026: a step the platform refuses for now (the proposal, which a
 // draining process once refused its own build) throws while the kernel gives
 // the build another try, and ends as it always did on its last. The steps

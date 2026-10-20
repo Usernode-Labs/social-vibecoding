@@ -535,17 +535,17 @@ test('a later side that plans alike goes on after a restart from the live spec i
   assert.deepEqual(again.calls.prompts.map((p) => p.mode), ['build']);
 });
 
-test('a later change\'s side builds take only the live slots live work leaves free', async () => {
-  const settings = { buildConcurrency: 2, liveAtOnce: 12 };
-  assert.equal(await bot.isLiveLaneSaturated(settings, { live: 2, besides: 1 }), false, 'two live builds no longer hold side builds back');
-  assert.equal(await bot.isLiveLaneSaturated(settings, { live: 9, besides: 2 }), false);
-  assert.equal(await bot.isLiveLaneSaturated(settings, { live: 9, besides: 3 }), true, 'live work and side builds fill the twelve slots');
-  assert.equal(await bot.isLiveLaneSaturated(settings, { live: 0, besides: 11 }), false);
-  assert.equal(await bot.isLiveLaneSaturated(settings, { live: 12 }), true, 'live work never waits for side builds: they are not counted against it');
-  const src = require('node:fs').readFileSync(require.resolve('../src/services/bench/lane'), 'utf8');
-  assert.match(src, /if \(run\.kind === LATER_SIDE_RUN_KIND\) \{\n\s+const besides = \[\.\.\.inFlight\.values\(\)\]\.filter\(\(f\) => f\.laterSide\)\.length;/);
-  assert.match(src, /laterSide: run\.kind === LATER_SIDE_RUN_KIND,/);
-  assert.match(src, /const LATER_SIDE_RUN_KIND = 'bot_config_later';/);
+test('a later change\'s side builds take only the live slots live work leaves free', () => {
+  // The bench lane's machine counts them beside the live bot's slots in use
+  // (rules/bot-loop.ts SLOTS_IN_USE_SQL), against its \`liveAtOnce\`; live
+  // work never waits for them (bot-lane does not count them).
+  // tests/bench-lane-postgres.test.js L7 runs it.
+  const fs = require('node:fs');
+  const machine = fs.readFileSync(require.resolve('../src/workflow/bench-lane/machine.ts'), 'utf8');
+  assert.match(machine, /if \(run\.kind === LATER_SIDE_RUN_KIND && f\.liveInUse \+ running\.filter\(\(t\) => t\.laterSide\)\.length >= f\.liveAtOnce\)/);
+  const facts = fs.readFileSync(require.resolve('../src/workflow/bench-lane/facts.ts'), 'utf8');
+  assert.match(facts, /laterSide: r\.run_kind === LATER_SIDE_RUN_KIND,/);
+  assert.match(facts, /export const LATER_SIDE_RUN_KIND = 'bot_config_later';/);
   assert.equal(configs.LATER_SIDE_RUN_KIND, 'bot_config_later');
 });
 

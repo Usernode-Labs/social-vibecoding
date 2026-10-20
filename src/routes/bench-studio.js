@@ -99,7 +99,7 @@ function benchStudioRoutes(config) {
     if (!id) return bad('Invalid trial id');
     let out;
     if (what === 'rerun') out = await studio.rerunTrial(pool, id);
-    else if (what === 'cancel') out = await require('../services/bench/lane').cancelTrial(pool, id);
+    else if (what === 'cancel') out = await require('../services/bench/lane').cancelTrial(pool, id, { by: req.user.username });
     else if (what === 'keep') out = await studio.keepTrial(pool, id, (req.body || {}).keep !== false);
     else out = await studio.deployPreview(pool, config, { trialId: id, user: req.user });
     if (out.ok) log.info('bench', `Studio trial ${what}`, { by: req.user.username, trialId: id });

@@ -13607,6 +13607,33 @@ ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS bot_config_version_id INTEGER
 CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_trials_side_build
   ON bench_trials(bot_run_id, bot_config_version_id, attempt) WHERE bot_run_id IS NOT NULL;
 
+-- The App bench lane's machine (src/workflow/bench-lane/) claims a trial in
+-- the transition that sends its build: `build_key` names that build
+-- (bot-build `trial:<id>@<nonce>`), and only it records the trial
+-- (bench/lane.js recordTrial). `session_ids`: every session the trial
+-- opened (a first version's triage, then its build), so a lost one is
+-- charged for all of them.
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS build_key TEXT;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS session_ids INTEGER[] NOT NULL DEFAULT '{}';
+-- A trial is claimed by the lane's machine only. An older build's lane,
+-- still running during a rollout, counts only its own process's claims, so
+-- its claims could pass the limits and the caps the machine keeps: they are
+-- refused, and its passes start nothing.
+CREATE OR REPLACE FUNCTION wf_guard_bench_claim() RETURNS TRIGGER AS $$
+BEGIN
+  IF current_setting('app.wf_writer', true) IS DISTINCT FROM 'transition' THEN
+    RAISE EXCEPTION 'WF_OWNERSHIP_VIOLATION: a bench trial is claimed only by the bench lane''s machine';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS bench_trials_wf_claim ON bench_trials;
+CREATE TRIGGER bench_trials_wf_claim
+  BEFORE UPDATE OF status ON bench_trials
+  FOR EACH ROW
+  WHEN (OLD.status = 'pending' AND NEW.status = 'running')
+  EXECUTE FUNCTION wf_guard_bench_claim();
+
 -- What one configuration version made of one live first version: the
 -- current version's from the live build itself (source 'live'), a side
 -- version equal to it with no reviewer from the live build's round-0
@@ -14907,18 +14934,10 @@ CREATE TABLE IF NOT EXISTS platform_db_roles (
 );
 COMMENT ON TABLE platform_db_roles IS 'staging:private';
 
--- What the leader keeps in memory and an admin screen reads, written by the
--- leader for the processes that do not lead (services/leader-status.js,
--- docs/plans/web-and-conductor.md): the bench lane, the domain sweep, the
--- preview reaper, ... One row per status, rewritten every few seconds while
--- its leader leads; a row nobody rewrote for two minutes is read as none.
-CREATE TABLE IF NOT EXISTS leader_status (
-  key          TEXT PRIMARY KEY,
-  value        JSONB NOT NULL,
-  process_id   TEXT,
-  published_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE leader_status IS 'staging:private';
+-- What the leader kept in memory for the processes that did not lead
+-- (the bench lane's status was the last): its machines read Postgres now.
+-- An older build's writes and reads of it, during a rollout, log and carry on.
+DROP TABLE IF EXISTS leader_status;
 
 -- Before & after shots EVALS (services/shots-eval.js, its runner in
 -- services/shots-eval-runner.js): an admin trying the shots agent with

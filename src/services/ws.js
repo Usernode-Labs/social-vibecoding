@@ -133,15 +133,8 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
     case 'turn_byok':
       if (!oversize) require('./worker').receiveTurnByok(payload);
       return;
-    case 'bench_cancel':
-      if (!oversize) void Promise.resolve(require('./bench/lane').receiveCancel(payload))
-        .catch((err) => log.warn('ws', 'A bench cancel here failed', { err: err.message }));
-      return;
     // Wakes for the leader's loops, asked by a process that does not run
     // them (docs/plans/web-and-conductor.md): the one running each passes.
-    case 'bench_wake':
-      require('./bench/lane').wakeHere();
-      return;
     case 'shots_eval_wake':
       require('./shots-eval-runner').wakeHere();
       return;

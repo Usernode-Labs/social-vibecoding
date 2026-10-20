@@ -54,7 +54,6 @@ const KINDS = Object.freeze([
   'agent_turn',     // the Mayor's turn in an agent session (mayor/agent-turn.js)
   'shots_eval',     // a shots eval trial (shots-eval-runner.js)
   'global_turn',    // a Global Chat turn (routes/global-chat.js)
-  'bench_trial',    // a bench trial run here (bench/lane.js)
   'warm',           // a session's worker this process keeps warm (worker.js): a MARKER
 ]);
 const KNOWN = new Set(KINDS);

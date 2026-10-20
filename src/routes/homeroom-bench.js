@@ -15,7 +15,6 @@ const suites = require('../services/bench/suites');
 const catalog = require('../services/bench/catalog');
 const lane = require('../services/bench/lane');
 // The lane runs on the leader; its state reaches the others (docs/plans/web-and-conductor.md).
-const leaderStatus = require('../services/leader-status');
 const runner = require('../services/bench/runner');
 const grading = require('../services/bench/grading');
 const { benchGradingLimiter, benchRunLimiter } = require('../middleware/rate-limits');
@@ -64,7 +63,7 @@ function homeroomBenchRoutes(config) {
               (SELECT COUNT(*)::int FROM bench_runs) AS runs,
               (SELECT COUNT(*)::int FROM bench_runs WHERE status IN ('queued', 'running')) AS open_runs`,
     );
-    return { suites: c.suites, runs: c.runs, openRuns: c.open_runs, lane: await leaderStatus.readOr('bench-lane', pool, lane.laneStatus), hiddenChecks: runner.HIDDEN_CHECKS_GAP };
+    return { suites: c.suites, runs: c.runs, openRuns: c.open_runs, lane: await lane.laneStatus(), hiddenChecks: runner.HIDDEN_CHECKS_GAP };
   }));
 
   // ── Suites and tasks (#3654 B) ──────────────────────────────────────
@@ -245,7 +244,7 @@ function homeroomBenchRoutes(config) {
 
   router.get('/api/admin/homeroom-bot/bench/runs', handler('List bench runs', async () => ({
     runs: await lane.listRuns(pool),
-    lane: await leaderStatus.readOr('bench-lane', pool, lane.laneStatus),
+    lane: await lane.laneStatus(),
     defaults: { capUsd: lane.DEFAULT_CAP_USD, repeats: lane.DEFAULT_REPEATS, maxConcurrency: lane.MAX_CONCURRENCY },
     // What the launcher starts from: Core v1 with the candidate models
     // (services/bench/lane.js launcherDefaults).
@@ -273,7 +272,7 @@ function homeroomBenchRoutes(config) {
   router.post('/api/admin/homeroom-bot/bench/runs/:id/cancel', requireAdminWrite, handler('Cancel bench run', async (req) => {
     const id = idParam(req.params.id);
     if (!id) return { ok: false, status: 400, error: 'Invalid run id' };
-    const out = await lane.cancelRun(pool, id);
+    const out = await lane.cancelRun(pool, id, { by: req.user.username });
     if (out.ok) log.info('bench', 'Run cancelled', { by: req.user.username, runId: id });
     return out;
   }));
@@ -464,7 +463,7 @@ function homeroomBenchRoutes(config) {
   router.post('/api/bot-bench/runs/:id/cancel', requireAdminWrite, benchRunLimiter, sameOriginBrowserOnly, handler('Cancel bench run (connector)', async (req) => {
     const id = idParam(req.params.id);
     if (!id) return { ok: false, status: 400, error: 'Invalid run id' };
-    const out = await lane.cancelRun(pool, id);
+    const out = await lane.cancelRun(pool, id, { by: req.user.username });
     if (out.ok) log.info('bench', 'Run cancelled', { by: req.user.username, via: 'connector', runId: id });
     return out;
   }));

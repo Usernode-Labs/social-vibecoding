@@ -4617,38 +4617,6 @@ async function sayBuildLost(pool, settings, run, deps = {}) {
  * Only the lane's own builds: every one was queued, and a live build, whose
  * outcome is recorded in the same columns (#3509), never is.
  */
-/**
- * #3654: whether the bot's live work (the requests on apps it is live on,
- * which a person is waiting for: reads and builds) fills every live slot it
- * has right now, in this process: `liveAtOnce`, which dispatch fills, each
- * slot a worker from the pool people's own sessions use. The benchmark's
- * lane (services/bench/lane.js) starts nothing while it does, so a benchmark
- * never takes a worker a person is waiting on. Shadow builds in the lane do
- * not count: like a benchmark trial they are an experiment nobody waits for,
- * and counting them let a busy shadow lane hold the benchmark back
- * indefinitely. `counts.besides` adds work that shares the live slots: a
- * later change's side builds use only the slots live work leaves free
- * (lane.js), so live work and side builds together stay inside
- * `liveAtOnce`; live work never waits for them, since dispatch does not
- * count them. `counts.live` is for tests.
- *
- * The limit was `buildConcurrency` (2), from when live builds had that many
- * slots. They have had `liveAtOnce` (12) since, and any two of them held
- * every side build and benchmark trial back: on 9 Oct 2026 none started for
- * hours with twenty queued.
- */
-async function isLiveLaneSaturated(settings = null, counts = null, pool = null) {
-  const limit = clampInt(settings?.liveAtOnce, DEFAULTS.liveAtOnce, 1, MAX_LIVE_AT_ONCE);
-  // What the bot's lane has in use, read from its requests (rules/bot-loop.ts
-  // SLOTS_IN_USE_SQL): the same count in every process and after a restart.
-  let live = counts && Number.isFinite(counts.live) ? counts.live : 0;
-  if (!(counts && Number.isFinite(counts.live)) && pool) {
-    const { rows } = await pool.query(`SELECT COUNT(*)::int AS n FROM (${loopRules.SLOTS_IN_USE_SQL}) s`).catch(() => ({ rows: [] }));
-    live = Number(rows[0]?.n) || 0;
-  }
-  return live + (Number(counts?.besides) || 0) >= limit;
-}
-
 async function buildLaneSummary(pool, memory = null) {
   const mem = memory || {};
   const { rows } = await pool.query(
@@ -9666,7 +9634,6 @@ module.exports = {
   projectMembers,
   headShaOf,
   INFRA_ERRORS,
-  isLiveLaneSaturated,
   mentionOptOutList,
   removeMentionOptOut,
   clearStaleTurn,

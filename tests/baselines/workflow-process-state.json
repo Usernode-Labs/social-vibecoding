@@ -235,12 +235,17 @@
       "services | uses src/services/starter-images.js:targets": "the starter-images clock's run (newest build only): a row for each of this build's keys, and each key owed a build as a target",
       "services | uses src/services/starter-images.js:buildTarget": "one key's build (a target of the clock, one at a time under its lease, claimed only by the build that found it): its row building, then ready or failed; a key not this build's is skipped",
       "services | uses src/services/language-sync-runner.js:look": "the language-sync clock's run (newest build only): the one pass owed, as a target (a batch to collect, or this build's catalogs not yet translated); reads, never spends",
-      "services | uses src/services/language-sync-runner.js:runOnce": "one translation pass (a target of the clock, one at a time): direct translations or a Message Batch submitted once per catalog (a step), or an ended batch's answers kept; its state is the platform_settings row it writes",
-      "services | uses src/services/kubernetes.js:reconcileAppGateIngresses": "the app-gate clock (a job only the newest build runs): every managed Ingress routed through the app gate or straight back, per the newest build's APP_GATE, so a change of it alone or a rollback is applied and an older build never routes the fleet back; each Ingress replaced on its own, a conflict read again; keeps nothing"
+      "services | uses src/services/language-sync-runner.js:runOnce": "one translation pass (a target of the clock, one at a time): direct translations or a Message Batch paid for once (its `batch` step, which a pass carried on from an unfinished one records rather than submitting again), or an ended batch's answers kept; its state is the platform_settings row it writes",
+      "services | uses src/services/kubernetes.js:reconcileAppGateIngresses": "the app-gate clock (a job only the newest build runs): every managed Ingress routed through the app gate or straight back, per the newest build's APP_GATE, so a change of it alone or a rollback is applied and an older build never routes the fleet back; each Ingress replaced on its own, a conflict read again; keeps nothing",
+      "services | uses src/services/bench/lane.js:sweep": "the bench-sweep clock: kept bench/ branches past their time deleted within GitHub's background budget, side builds' results left waiting finished, the studio's previews past their day taken down; each idempotent on rows, keeps nothing"
     },
     "app-creation": {
       "services | uses src/services/app-creator.js:setUp": "the setup (app.setup): the database, the card, the repository and its first commit, each a step of the work's checkpoint (a resumed attempt runs none it kept; the first commit is not pushed again when it is the repository's head); keeps nothing in a process",
       "services | uses src/services/homeroom-bot-dm.js:fileFirstRequest": "the first request (app.firstRequest): the GitHub issue asked for once (a step), a resumed try finding its own by the marker in its body, then its rows in one transaction; keeps nothing in a process"
+    },
+    "bench-lane": {
+      "services | uses src/services/bench/lane.js:allowanceGate": "the bench user's allowance (bench.gate): the user made with its included key if missing, then limits.checkBudget read; keeps nothing, and the lane holds the answer a minute in its own data",
+      "services | uses src/services/bench/lane.js:settleSideResults": "a run's side builds' results a cap or a cancel left waiting, finished skipped (bench.sides): an upsert per result that is done once, reading the trials' rows; keeps nothing"
     }
   }
 }

@@ -735,16 +735,14 @@ test('preStop, the drain and the rest of cleanup fit inside the platform Pod\'s 
 // its loops as shutdown begins (the test above), and a build already under
 // way is its work item's, which the next leader carries on. A build asked
 // for in this process with no runtime starts nothing.
-test('the gate: once shutdown has begun no bot build starts here, and the bench lane starts no trial', async () => {
-  const fs = require('node:fs');
-  const path = require('node:path');
+test('the gate: once shutdown has begun no bot build starts here', async () => {
   const buildRuns = require('../src/services/build-runs');
   lifecycleModule.setShuttingDown();
   await assert.rejects(buildRuns.start({ pool: null, config: {}, target: 'live', id: 79 }), (err) => err.notStarted === true,
     'a build asked for while the process stops is left for the next leader');
-  const bench = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'bench', 'lane.js'), 'utf8');
-  assert.match(bench, /function shuttingDown\(\) \{\n\s+try \{ return !!require\('\.\.\/lifecycle'\)\.isShuttingDown\(\); \} catch \{ return false; \}\n\}/);
-  assert.match(bench, /if \(shuttingDown\(\)\) \{ out\.paused = 'stopped'; break; \}/, 'checked before each trial the lane would start');
+  // (A bench trial is granted by the bench lane's machine, its build the
+  // kernel's work, which any process running the workflow takes: nothing
+  // starts here for a stopping process to hold.)
 });
 
 // docs/plans/draining-releases.md: on the platform's own Kubernetes Pods a

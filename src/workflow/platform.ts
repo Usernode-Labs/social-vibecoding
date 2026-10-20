@@ -46,6 +46,8 @@ import { MACHINE as BOT_REQUEST, botRequest } from './bot-request/machine.ts';
 import { botRequestServices } from './bot-request/services.ts';
 import { MACHINE as BOT_LANE, KEY as LANE_KEY, botLane } from './bot-lane/machine.ts';
 import { botLaneServices } from './bot-lane/services.ts';
+import { MACHINE as BENCH_LANE, KEY as BENCH_LANE_KEY, benchLane } from './bench-lane/machine.ts';
+import { benchLaneServices } from './bench-lane/services.ts';
 import { MACHINE as RELEASE, releaseKey, releaseMachine } from './release/machine.ts';
 import { releaseServices } from './release/services.ts';
 import type { Adoption } from './release/services.ts';
@@ -210,12 +212,14 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const releases = releaseMachine();
   // The platform's scheduled jobs (clock/), armed by the release's work.
   const clocks = clock();
-  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, releases, clocks];
+  // The App bench's lane: which trials run, and when (bench-lane/).
+  const bench = benchLane();
+  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, releases, clocks];
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
     ...appDeliveryServices(deps), ...appCreationServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
     ...campaignServices(deps), ...botChangeServices(deps), ...botVoiceServices(deps), ...botDmServices(deps),
-    ...mainCheckServices(deps), ...botRequestServices(deps), ...botLaneServices(deps),
+    ...mainCheckServices(deps), ...botRequestServices(deps), ...botLaneServices(deps), ...benchLaneServices({ config, pool: appPool }),
     ...releaseServices({ adoptions: ADOPTIONS }),
     ...clockServices(CLOCK_JOBS, { config, pool: appPool }),
   };
@@ -284,6 +288,9 @@ export async function startWorkflowLoops(): Promise<void> {
 const ADOPTIONS: readonly Adoption[] = Object.freeze([
   // First: the bot's whole loop waits on its clock.
   ['botLane', (release: string) => startLaneClock(release)],
+  // The App bench's lane looks at what is waiting (and holds the slots of
+  // trials an older build's lane claimed: they are running rows).
+  ['benchLane', (release: string) => startBenchLane(release)],
   // The platform's scheduled jobs: each armed with this build's interval,
   // and the ones it no longer defines retired.
   ['clocks', (release: string) => armClocks(release)],
@@ -386,6 +393,44 @@ async function adoptFirstRequests(): Promise<number> {
   }
   if (rows.length) log!.info('workflow', 'Adopted first requests left open', { count: rows.length });
   return rows.length;
+}
+
+// ── The App bench's lane (bench-lane) ──────────────────────────────────
+
+async function startBenchLane(release: string): Promise<void> {
+  if (!runtime) return;
+  await runtime.append(BENCH_LANE, BENCH_LANE_KEY, { type: 'Tick', payload: {} },
+    { requestKey: `boot:${release}`, source: { kind: 'system', name: 'boot' } });
+}
+
+// Look again (services/bench/lane.js look): a run launched, a trial added
+// (`runId`: reopened if it had ended), a lost build recorded.
+export async function benchLook(p: { runId?: number | null } = {}): Promise<void> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  await runtime.append(BENCH_LANE, BENCH_LANE_KEY, { type: 'Look', payload: { runId: p.runId ?? null } as any },
+    { requestKey: `look:${randomUUID()}`, source: { kind: 'system', name: 'bench' } });
+}
+
+// An admin's cancel of a run, or of one trial: what the lane decided.
+export async function benchCancelRun(runId: number, o: { by?: string | null } = {}): Promise<EventOutcome> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  return runtime.appendAndWait(BENCH_LANE, BENCH_LANE_KEY, { type: 'RunCancelled', payload: { runId, by: o.by ?? null } as any },
+    { requestKey: `cancel-run:${runId}:${randomUUID()}`, source: { kind: 'admin', name: 'bench' }, actor: o.by ?? undefined });
+}
+export async function benchCancelTrial(trialId: number, o: { by?: string | null; why?: string | null } = {}): Promise<EventOutcome> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  return runtime.appendAndWait(BENCH_LANE, BENCH_LANE_KEY, { type: 'TrialCancelled', payload: { trialId, by: o.by ?? null, why: o.why ?? null } as any },
+    { requestKey: `cancel-trial:${trialId}:${randomUUID()}`, source: { kind: 'admin', name: 'bench' }, actor: o.by ?? undefined });
+}
+
+// The lane as the bench console shows it: on, how many trials run, and its
+// last decision.
+export async function benchLaneStatus(): Promise<{ on: boolean; inFlight: number; lastTick: { at: string } | null }> {
+  if (!kernelPool) return { on: false, inFlight: 0, lastTick: null };
+  const { rows: [r] } = await kernelPool.query(
+    `SELECT (SELECT updated_at FROM wf_instances WHERE machine = $1 AND key = $2) AS at,
+            (SELECT COUNT(*)::int FROM bench_trials WHERE status = 'running') AS running`, [BENCH_LANE, BENCH_LANE_KEY]);
+  return { on: !!runtime, inFlight: Number(r?.running) || 0, lastTick: r?.at ? { at: new Date(r.at).toISOString() } : null };
 }
 
 // A person asks again for a project whose making failed (POST
