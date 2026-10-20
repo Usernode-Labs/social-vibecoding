@@ -76,18 +76,24 @@ function render(props) {
   return renderToHtml(createElement(BotConfigsView, { canWrite: true, onRole() {}, onToggleRetired() {}, ...props }));
 }
 
-test('the section is registered everywhere the console reads, inside the registry rules', () => {
+test('it is the Homeroom bot\'s Configurations tab, and its old address opens that tab', () => {
   const consoleJs = read('frontend/src/features/admin/admin-console.js');
   const sectionBlock = consoleJs.slice(consoleJs.indexOf('SECTIONS: ['), consoleJs.indexOf('isOpen()'));
-  assert.match(sectionBlock, /\{ key: 'bot-configs', label: 'Bot configurations', group: 'Platform' \}/);
-  assert.match(consoleJs, /'bot-configs': 'AdminBotConfigs'/);
-  assert.match(consoleJs, /'bot-configs': '<svg class="w-5 h-5 shrink-0"/, 'it has a nav icon');
-  assert.ok(read('frontend/src/features/admin/sections.ts').includes("import './admin-bot-configs.tsx';"));
+  assert.doesNotMatch(sectionBlock, /key: 'bot-configs'/, 'no longer a section of its own');
+  assert.doesNotMatch(consoleJs, /'bot-configs': 'AdminBotConfigs'/);
+  assert.match(consoleJs, /LEGACY_SECTION_KEYS: \{[\s\S]*?'bot-configs': 'homeroom-bot',/, 'the retired key resolves to the bot\'s section');
+  assert.ok(!read('frontend/src/features/admin/sections.ts').includes("import './admin-bot-configs.tsx';"),
+    'loaded with the Homeroom bot section, which imports it');
+  assert.match(read('public/js/app.js'), /if \(_adminSection === 'bot-configs'\) \{\n\s+_adminSection = 'homeroom-bot';\n\s+try \{\n\s+history\.replaceState\(null, '', '#admin\/homeroom-bot\/configs'\);/,
+    'a bookmark to #admin/bot-configs lands on the Configurations tab');
+  const bot = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  assert.match(bot, /import \{ BotConfigsSection \} from '\.\/admin-bot-configs';/);
+  assert.match(bot, /configs: '#admin\/homeroom-bot\/configs',/);
+  assert.match(bot, /\{configsSeen \? <BotConfigsSection onOpenBenchmark=\{\(\) => showTab\('benchmark'\)\} asked=\{configAsk\} \/> : null\}/);
 
   const tsx = read(TSX);
-  assert.match(tsx, /window as any\)\.AdminBotConfigs = AdminBotConfigs/);
-  assert.match(tsx, /render\(el: Element\) \{\n\s+host = el;\n\s+mountLegacyPortal\(el, <BotConfigsSection \/>\);/);
-  assert.match(tsx, /destroy\(\) \{\n\s+unmountLegacyPortal\(host\);/);
+  assert.match(tsx, /export \{ BotConfigsSection \};/);
+  assert.doesNotMatch(tsx, /AdminBotConfigs/, 'no section module of its own any more');
   assert.match(tsx, /import \{ AdminUI \} from '\.\/admin-console\.js';/);
   assert.ok(!/from '@\/components\/ui\//.test(tsx), 'the console never reaches for the shell primitives');
   assert.ok(!/\b(gray|indigo)-\d/.test(tsx), 'the platform palette only');
@@ -100,9 +106,13 @@ test('the section is registered everywhere the console reads, inside the registr
   assert.match(tsx, /body: JSON\.stringify\(\{ scope, weeklyUsd \}\)/);
   assert.match(tsx, /_confirm\(confirmCopy\(v, role, current\)\)/, 'every role change is confirmed first');
 
+  // A side version is saved from the console, only ever as a side version.
+  assert.match(tsx, /fetch\('\/api\/admin\/homeroom-bot\/configs', \{/);
+  assert.match(tsx, /body: JSON\.stringify\(\{ label: draft\.label\.trim\(\), scope: draft\.scope, recipe, role: 'side' \}\)/);
+
   const audit = read('scripts/audit-react-ownership.mjs');
-  assert.match(audit, /\{ sel: '#admin-section-content', when: '#admin\/bot-configs' \}/);
-  assert.match(audit, /'#admin\/bot-configs'/, 'and the audit visits the route');
+  assert.doesNotMatch(audit, /when: '#admin\/bot-configs'/, 'the host is the Homeroom bot section\'s');
+  assert.match(audit, /'#admin\/homeroom-bot\/configs', '#admin\/homeroom-bot\/calls'/, 'and the audit visits the tabs');
 });
 
 test('one row per active version, the current one first; its numbers in words', () => {
@@ -124,7 +134,9 @@ test('one row per active version, the current one first; its numbers in words', 
   assert.match(html, /Side builds in the last 7 days: \$4\.20 of \$25\.00 spent, about \$0\.80 more under way\. 1 side build was skipped/);
   assert.match(html, /Show 1 retired version/);
   assert.match(html, /never shown to the person/);
-  assert.match(html, /Recipes are saved and pairs are picked\s+through the connector\./);
+  assert.match(html, /Pairs are picked through the connector\./);
+  assert.match(html, /<th class="th">Benchmark<\/th>/);
+  assert.match(html, /data-bot-config-bench="2"><span class="muted">Not run<\/span>/);
 
   const all = render({ payload: PAYLOAD, showRetired: true });
   assert.equal((all.match(/data-bot-config="/g) || []).length, 4);
@@ -181,7 +193,7 @@ test('the scope switch: First versions or Later changes, each with its own words
   };
   const html = render({ payload: later, scope: 'later' });
   assert.match(html, /aria-pressed="true"[^>]*data-bot-config-scope="later"|data-bot-config-scope="later"[^>]*aria-pressed="true"/);
-  assert.match(html, /How the Homeroom bot builds every later change, live or shadow/);
+  assert.match(html, /How the Homeroom bot handles every request that is not a first version: the current configuration decides\s+its triage, its plan, its build and its follow-ups/);
   assert.match(html, /pairs compare the two sides(&#x27;|')\s+plans and diffs/);
   assert.match(html, /Builds every later change/);
   assert.match(html, /88% built/);
@@ -266,4 +278,86 @@ test('staging seeds a few obviously fake first versions with every configuration
   assert.match(body, /process\.env\.USERNODE_ENV !== 'staging'\) return false;/);
   assert.match(body, /'Staging demo: a first version for the configurations table'/);
   assert.match(body, /ON CONFLICT \(current_result_id, side_result_id\) DO NOTHING/);
+});
+
+// ── A new side version, and a comparison on the benchmark ───────────────
+
+const FV = {
+  id: 16, key: 'fv', label: 'First versions', version: 2, role: 'current', scope: 'first_version',
+  recipe: {
+    models: { triage: 'deepseek/deepseek-v4.1-flash-1017', spec: 'anthropic/claude-opus-5.5', build: 'deepseek/deepseek-v4.1-flash-1017' },
+    reviewer: { model: 'anthropic/claude-opus-5.5', maxRounds: 2, budgetMinutes: 20 }, pack: null, tweaks: ['lean_plan'],
+  },
+  recipeLine: '', notes: null, createdAt: null,
+  stats: { builds: 0, built: 0, avgCostUsd: null, medianActiveMs: null, bootRate: null, pairsWaiting: 0, vsCurrent: null },
+};
+const LATER = {
+  ...FV, id: 14, key: 'later', label: 'Later', version: 1, scope: 'later',
+  recipe: {
+    models: { triage: 'deepseek/deepseek-v4.1-flash-1017', spec: 'anthropic/claude-opus-5.5', build: 'deepseek/deepseek-v4.1-flash-1017', followup: 'deepseek/deepseek-v4.1-flash-1017' },
+    reviewer: null, pack: null,
+  },
+};
+
+test('a draft copies a version, a stage\'s model swapped in where asked, and saves a recipe in its one shape', () => {
+  const { draftFrom, recipeOfDraft, stagesOf } = loadSection();
+  assert.deepEqual(stagesOf('first_version').map((s) => s.key), ['triage', 'spec', 'build'], 'a first version has no follow-ups');
+  assert.deepEqual(stagesOf('later').map((s) => s.key), ['triage', 'spec', 'build', 'followup']);
+  const copy = draftFrom(FV);
+  assert.equal(copy.label, 'First versions (copy)');
+  assert.equal(copy.scope, 'first_version');
+  assert.deepEqual(copy.base, { reviewer: FV.recipe.reviewer, pack: null, tweaks: ['lean_plan'] }, 'its review, pack and tweaks kept');
+  const max = { ...copy, effort: { ...copy.effort, build: 'max' }, clocks: { ...copy.clocks, build: '45' } };
+  assert.deepEqual(recipeOfDraft(max), {
+    recipe: { models: FV.recipe.models, reviewer: FV.recipe.reviewer, pack: null, tweaks: ['lean_plan'], effort: { build: 'max' }, clocks: { build: 45 } },
+    error: null,
+  }, 'a max-effort build of today\'s first versions');
+  assert.deepEqual(recipeOfDraft(copy).recipe, { models: FV.recipe.models, reviewer: FV.recipe.reviewer, pack: null, tweaks: ['lean_plan'] },
+    'nothing named, nothing added');
+  assert.match(recipeOfDraft({ ...copy, clocks: { ...copy.clocks, spec: '0' } }).error, /^Plan: a clock is a whole number of minutes from 1 to 180/);
+  assert.match(recipeOfDraft({ ...copy, models: { ...copy.models, build: '' } }).error, /^Build: name a model/);
+  assert.match(recipeOfDraft({ ...copy, label: ' ' }).error, /name/);
+
+  const asked = draftFrom(LATER, { stage: 'build', model: 'z-ai/glm-5.3-flash' });
+  assert.equal(asked.models.build, 'z-ai/glm-5.3-flash', 'the Benchmark\'s Use for: that stage on that model');
+  assert.equal(asked.label, 'Later, build on glm-5.3-flash');
+  assert.equal(recipeOfDraft(asked).recipe.models.followup, 'deepseek/deepseek-v4.1-flash-1017');
+  assert.equal(draftFrom(FV, { stage: 'followup', model: 'a/b' }).models.followup, '', 'a first version takes no follow-up model');
+});
+
+test('the draft form names every stage the scope decides, with effort and clock, and saves as a side version', () => {
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const { draftFrom, DraftForm } = loadSection();
+  const html = renderToHtml(createElement(DraftForm, { draft: draftFrom(LATER), busy: false, onChange() {}, onSave() {}, onCancel() {} }));
+  assert.match(html, /id="admin-bot-configs-draft"/);
+  for (const st of ['triage', 'spec', 'build', 'followup']) assert.match(html, new RegExp(`data-draft-stage="${st}"`));
+  assert.match(html, /<option value="max">max<\/option>/);
+  assert.match(html, /Effort max reaches Claude Code turns only/);
+  assert.match(html, /id="admin-bot-configs-draft-save"[^>]*>Save as a side version</);
+  const first = renderToHtml(createElement(DraftForm, { draft: draftFrom(FV), busy: false, onChange() {}, onSave() {}, onCancel() {} }));
+  assert.doesNotMatch(first, /data-draft-stage="followup"/);
+  assert.match(first, /Kept as they are: review claude-opus-5\.5 ×2 in 20 min · tweaks lean_plan/);
+});
+
+test('compare on the benchmark: a first version in the studio beside the current one; a later change at the stages it differs', () => {
+  const { benchRequestFor, benchText } = loadSection();
+  const side = { ...FV, id: 20, role: 'side' };
+  assert.deepEqual(benchRequestFor(side, FV), { view: 'studio', models: 'config:20, config:16' });
+  const laterSide = { ...LATER, id: 21, role: 'side', recipe: { ...LATER.recipe, models: { ...LATER.recipe.models, build: 'z-ai/glm-5.3-flash' } } };
+  assert.deepEqual(benchRequestFor(laterSide, LATER), {
+    view: 'launch', preset: { stages: ['build'], models: ['z-ai/glm-5.3-flash', 'deepseek/deepseek-v4.1-flash-1017'] },
+  });
+  const effortOnly = { ...LATER, id: 22, role: 'side', recipe: { ...LATER.recipe, effort: { build: 'max' } } };
+  assert.equal(benchRequestFor(effortOnly, LATER), null, 'the benchmark compares models; effort alone is for the blind pairs');
+  assert.equal(benchText(null), '');
+  assert.equal(benchText({ runs: 2, trials: 10, ok: 9, avgCostUsd: 1.1, medianMs: 18 * 60000, lastRunId: 245 }), '2 runs: 9 of 10 built, $1.10, 18 min');
+});
+
+test('a side version saved from the console is only ever a side version, behind the write gate', () => {
+  const routes = read('src/routes/bot-configs.js');
+  const at = routes.indexOf("router.post('/api/admin/homeroom-bot/configs', requireAdminWrite,");
+  assert.ok(at > 0, 'a full admin\'s write');
+  const body = routes.slice(at, routes.indexOf('}));', at));
+  assert.match(body, /if \(b\.role != null && b\.role !== 'side'\) return bad\(/);
+  assert.match(body, /role: 'side',/);
 });

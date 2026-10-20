@@ -663,6 +663,10 @@ async function studioContext(pool, config, row, settings) {
     // Its build-speed tweaks, which a first version's build applies.
     const tweaks = botConfigs.tweaksOf(recipe);
     if (tweaks.length) out.tweaks = tweaks;
+    // Its effort and clocks per stage, where it names them (recipe.effort,
+    // recipe.clocks), as a live build of it gets them.
+    if (recipe.effort) out.efforts = { ...recipe.effort };
+    if (recipe.clocks) out.clocks = { ...recipe.clocks };
     if (recipe.pack && !row.context_pack_id) {
       const packs = require('./packs');
       const pack = await packs.packRow(pool, recipe.pack);
@@ -880,7 +884,7 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
         reference_label: row.reference_label || null, capture_sha: row.capture_sha || null,
         base_sha: row.base_sha || null, build_commits: row.build_commits ?? null,
       },
-      deps: d, budgets: runner.budgetsFor(settings, app, config, row.stage),
+      deps: d, budgets: runner.budgetsFor(settings, app, config, row.stage, studio.clocks || null),
       title: `Homeroom benchmark: run ${row.run_id}, trial ${row.id}`,
       ...studio,
       onStep: (name) => watch.step(name),

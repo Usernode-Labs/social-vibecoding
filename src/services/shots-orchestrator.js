@@ -27,7 +27,7 @@ const planContract = require('./visible-changes');
 const previewClock = require('./preview-clock');
 const state = require('./shots-state');
 const turnLifecycle = require('./turn-lifecycle');
-const { isUiAffecting: uiFileHeuristic } = require('./visual-file-classifier');
+const { isFrontendFile, isUiAffecting: uiFileHeuristic } = require('./visual-file-classifier');
 const worker = require('./worker');
 const { SAMPLE_FILES } = require('../../worker/shots-samples');
 
@@ -373,10 +373,10 @@ function declaredCheckSummary(checkout, intent = null, testingPaths = []) {
       }
       return { test, index, score };
     }).sort((a, b) => b.score - a.score || a.index - b.index);
+    // Every check runs as read_only_admin; the system prompt says so once.
     return ranked.slice(0, 80).map(({ test }) => ({
       name: String(test.name || '').slice(0, 120),
       path: String(test.path || '').slice(0, 512),
-      testedAs: 'read_only_admin',
       ...(test.id ? { visualScenarioId: test.id } : {}),
     }));
   } catch {
@@ -556,9 +556,101 @@ const AFTER_ONLY = Object.freeze({
 // use to find the screens. Everything from the proposal is marked untrusted.
 // `childApp` is an app built on Homeroom rather than Homeroom itself.
 // `afterOnly` is a project's first version: only the after side is taken.
+// How long the brief may be, in characters of JSON (20 Oct 2026). Claude
+// Code saves an MCP result over about 50,000 characters to a file and shows
+// the model its first 2,000, and a shots turn has no tool that reads files:
+// proposal 10613's 55 KB brief left its agent with the preview and no shots.
+// Everything the agent acts on goes in whole; the reference lists (the
+// declared checks, the diff, the changed files) fill the room left, best
+// first, each saying when some of it was left out.
+const BRIEF_BUDGET = 30_000;
+// Each list's first share of that room. What one does not need goes to the
+// others, in this order.
+const REFERENCE_SHARES = Object.freeze({ declaredChecks: 0.45, diff: 0.3, changedFiles: 0.25 });
+// Room kept for the fields that say what was left out.
+const LEFT_OUT_FIELDS = 64;
+
+const jsonLength = (value) => JSON.stringify(value).length;
+
+// How many of `items`, from the first, fit in `room` characters of JSON.
+function itemsThatFit(items, room) {
+  let size = 2;
+  let count = 0;
+  for (const item of items) {
+    const next = size + jsonLength(item) + (count ? 1 : 0);
+    if (next > room) break;
+    size = next;
+    count += 1;
+  }
+  return count;
+}
+
+// The longest start of `text` that fits in `room` characters of JSON.
+function textThatFits(text, room) {
+  if (jsonLength(text) <= room) return text;
+  let low = 0;
+  let high = text.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (jsonLength(text.slice(0, middle)) <= room) low = middle;
+    else high = middle - 1;
+  }
+  return text.slice(0, low);
+}
+
+// The brief within BRIEF_BUDGET. Declared changes that alone fill it first
+// shorten the author's testing steps and then the specification, so even
+// three changes of 40 steps each stay well under the save-to-file limit.
+function fitBrief(brief, budget = BRIEF_BUDGET) {
+  const checks = brief.declaredChecks;
+  const files = brief.changedFiles.items;
+  const diff = brief.changeContext.diff;
+  const text = diff?.text || '';
+  const skeleton = {
+    ...brief,
+    declaredChecks: [],
+    changedFiles: { ...brief.changedFiles, items: [] },
+    changeContext: { ...brief.changeContext, ...(diff ? { diff: { ...diff, text: '' } } : {}) },
+  };
+  for (const field of ['testingSteps', 'specification']) {
+    const over = jsonLength(skeleton) + LEFT_OUT_FIELDS - budget;
+    const value = skeleton.changeContext[field];
+    if (over > 0 && value) {
+      skeleton.changeContext[field] = textThatFits(value, Math.max(0, jsonLength(value) - over)) || null;
+    }
+  }
+  const room = Math.max(0, budget - jsonLength(skeleton) - LEFT_OUT_FIELDS);
+  const want = { declaredChecks: jsonLength(checks), diff: jsonLength(text), changedFiles: jsonLength(files) };
+  const give = {};
+  for (const [key, share] of Object.entries(REFERENCE_SHARES)) give[key] = Math.min(want[key], Math.floor(room * share));
+  let spare = room - Object.values(give).reduce((sum, value) => sum + value, 0);
+  for (const key of Object.keys(REFERENCE_SHARES)) {
+    const more = Math.min(spare, want[key] - give[key]);
+    give[key] += more;
+    spare -= more;
+  }
+  const shownChecks = itemsThatFit(checks, give.declaredChecks);
+  const shownFiles = itemsThatFit(files, give.changedFiles);
+  const shownText = textThatFits(text, give.diff);
+  return {
+    ...skeleton,
+    declaredChecks: checks.slice(0, shownChecks),
+    ...(shownChecks < checks.length ? { declaredChecksLeftOut: checks.length - shownChecks } : {}),
+    changedFiles: {
+      ...brief.changedFiles,
+      items: files.slice(0, shownFiles),
+      complete: brief.changedFiles.complete && shownFiles === files.length,
+    },
+    changeContext: {
+      ...skeleton.changeContext,
+      ...(diff ? { diff: { ...diff, text: shownText, truncated: diff.truncated || shownText.length < text.length } } : {}),
+    },
+  };
+}
+
 function shotsBrief({
   run, session, revision, pair, deployment, intent, guestKind = null, homeTile = null, selfApp = false,
-  childApp = false, afterOnly = false,
+  childApp = false, afterOnly = false, declaredChecks = null,
 }) {
   const testingPaths = testingPathsForSession(session);
   const phones = new Set(planContract.phonePersonas(intent));
@@ -575,7 +667,9 @@ function shotsBrief({
   // at that moment when `un-now` is on its address. Parsed to a fixed shape
   // here, so nothing the author wrote reaches the agent as free text.
   const moment = previewClock.forSession(session);
-  return {
+  // The screens' own files first: they say most about where a change shows.
+  const files = [...revision.files.filter(isFrontendFile), ...revision.files.filter((file) => !isFrontendFile(file))];
+  return fitBrief({
     version: 2,
     runId: run.id,
     declaredChanges: intent.stories,
@@ -612,7 +706,7 @@ function shotsBrief({
     ...(childApp ? { appRoles: { ...CHILD_APP_ROLES } } : {}),
     ...(afterOnly ? { afterOnly: { ...AFTER_ONLY } } : {}),
     changedFiles: {
-      items: revision.files.slice(0, 200),
+      items: files.slice(0, 200),
       complete: revision.filesComplete && revision.files.length <= 200,
       totalKnown: revision.files.length,
     },
@@ -624,7 +718,7 @@ function shotsBrief({
       diff: revision.diffSummary,
       untrusted: true,
     },
-    declaredChecks: declaredCheckSummary(pair.sides.head.checkout, intent, testingPaths),
+    declaredChecks: declaredChecks || declaredCheckSummary(pair.sides.head.checkout, intent, testingPaths),
     availableFixtures: deployment.availableFixtures || [],
     // The only files upload_file can choose where a page asks for one, the
     // same on both copies (worker/shots-samples.js).
@@ -660,7 +754,7 @@ function shotsBrief({
       allowedOriginsOnly: true,
       productionData: false,
     },
-  };
+  });
 }
 
 function sameProvenance(actual, expected) {
@@ -1295,6 +1389,9 @@ async function buildCopies(config, pool, {
         log.warn('shots', 'Could not tell whether the before build is the starter', { sessionId, runId, error: error.message });
       }
     }
+    // Ranked once: the brief shows as many as its budget has room for, and
+    // the run's diagnostics rank a visit against all of them.
+    const declaredChecks = declaredCheckSummary(pair.sides.head.checkout, intent, testingPathsForSession(session));
     const context = shotsBrief({
       run, session, revision, pair, deployment: exploration, intent,
       guestKind: guest.kind,
@@ -1302,6 +1399,7 @@ async function buildCopies(config, pool, {
       selfApp,
       childApp: !selfApp,
       afterOnly,
+      declaredChecks,
     });
     const agent = {
       origins: exploration.origins,
@@ -1309,7 +1407,7 @@ async function buildCopies(config, pool, {
       navigationHints: {
         intentPaths: intent.stories.map((story) => story.intent.startPath),
         testingPaths: context.changeContext.testingPaths,
-        declaredPaths: context.declaredChecks.map((check) => check.path),
+        declaredPaths: declaredChecks.map((check) => check.path),
       },
       recordClips: planContract.clipSize(intent) != null,
       // The desktop browsers record at the other motion screens' size and
@@ -1719,6 +1817,7 @@ module.exports = {
   MAKE_PROJECT,
   AFTER_ONLY,
   shotsBrief,
+  BRIEF_BUDGET,
   sameProvenance,
   waitForSessionIdle,
   agentBusyRetryable,
