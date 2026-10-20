@@ -138,10 +138,49 @@ test('a code step reached with no address goes back instead of posting', () => {
   assert.ok(!guard.includes('fetch('), 'and it does so before any POST');
 });
 
-test('the eyebrow names which step you are on', () => {
-  assert.match(WAITLIST, /\? t\('auth:waitlist\.step\.enterCode'\)\s*\n\s*: t\('auth:waitlist\.step\.emailAddress'\)/);
-  assert.equal(message('auth:waitlist.step.enterCode'), 'Step 2 of 2 · Enter your code');
-  assert.equal(message('auth:waitlist.step.emailAddress'), 'Step 1 of 2 · Your email address');
+test('no step bar: the code step carries its own label and way back (#5262)', () => {
+  assert.doesNotMatch(WAITLIST, /id="waitlist-step"/);
+  assert.doesNotMatch(WAITLIST, /auth:waitlist\.step\./);
+  assert.ok(!DAPP.tests.some((t) => /#waitlist-step\b/.test(t.expectSelector || '')),
+    'a declared check still selects the retired step bar');
+});
+
+test('the daily code cap is said only when a request is refused for it (#5262)', () => {
+  // Not up front: no line under the send, no sentence after the resend.
+  const render = WAITLIST.slice(WAITLIST.indexOf('return (\n    <main'));
+  assert.doesNotMatch(render, /auth:waitlist\.code\.limited/);
+  for (const id of ['auth:waitlist.resend.ready', 'auth:waitlist.resend.sending']) {
+    assert.doesNotMatch(message(id), /a day/, `${id} still states the cap up front`);
+  }
+  assert.doesNotMatch(message('auth:waitlist.resend.cooldown', { count: 9 }), /a day/);
+  // On a 429, both sends say it, in the one message.
+  for (const [name, setter] of [['onRequestCode', 'setRequestNote'], ['onResend', 'setResendNote']]) {
+    const body = callback(WAITLIST, name);
+    assert.match(body,
+      new RegExp(`res\\.status === 429\\)\\s*\\{[\\s\\S]{0,160}?${setter}\\(\\{ text: translate\\('auth:waitlist\\.code\\.limited'\\), tone: 'error' \\}\\)`),
+      `${name} does not name the cap on a 429`);
+  }
+  assert.match(message('auth:waitlist.code.limited'), /up to 10 a day/);
+});
+
+test('a signed-in waiting account is sent to the waiting room, never asked for a code (#5262)', () => {
+  // App.restoreFromHash's gated branch: #waitlist (with or without
+  // confirm=1) falls through to showWaiting, the room that shows their spot.
+  const gated = APP.slice(APP.indexOf('if (App.user.hasPlatformAccess === false) {'));
+  const branch = gated.slice(0, gated.indexOf('AuthScreens.showWaiting();') + 30);
+  assert.ok(branch.length > 100, 'located the gated branch');
+  assert.match(branch, /if \(authRoute === 'waitlist'\) AuthScreens\.keepWaitlistRef\(fragQuery\);/);
+  assert.doesNotMatch(branch, /AuthScreens\.show\('waitlist'/, 'a waiting session is shown the code check');
+});
+
+test('the answer speaks as the waiting room does (#5262)', () => {
+  // Heading and lead are the room's own catalog entries, not a second set.
+  assert.match(WAITLIST, /: admitted\s*\n\s*\? t\('auth:waitlist\.status\.titleAdmitted'\)\s*\n\s*: t\('auth:waiting\.title'\)/);
+  assert.match(WAITLIST, /: t\('auth:waiting\.lead'\)\}/);
+  assert.doesNotMatch(WAITLIST, /emerald/, 'the answer is drawn in the room\'s card, not a green box');
+  assert.ok(DAPP.tests.some((t) => t.path === '/?shot=waitlist-status'
+    && /#waitlist-joined > h1/.test(t.expectSelector) && t.expectText === "You're on the waitlist"));
+  assert.equal(message('auth:waiting.title'), "You're on the waitlist");
 });
 
 test('the lede stops instructing the reader to use a field they cannot see', () => {
@@ -152,11 +191,9 @@ test('the lede stops instructing the reader to use a field they cannot see', () 
   // Read the branch itself rather than a slice around it: the change's own doc
   // comment quotes the sentence that moved, and the step-1 branch beside it
   // still says "email you a code" on purpose.
-  // Two things branch on the step; the eyebrow's arm is a "Step N of 2" label.
-  const arms = Array.from(
+  // One thing branches on the step now: the step bar went with #5262.
+  const lede = Array.from(
     WAITLIST.matchAll(/[?:{]\s*flowStep === 'code'\s*\n\s*\? t\('([^']*)'\)/g), (m) => message(m[1]));
-  assert.equal(arms.length, 2, 'the eyebrow and the lede both branch on the step');
-  const lede = arms.filter((text) => !text.startsWith('Step '));
   assert.equal(lede.length, 1, 'exactly one step-2 sentence, not a label');
   assert.equal(lede[0],
     'This shows where you stand, and confirms your address if it still needs it.');

@@ -1889,10 +1889,10 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Waitlist check-my-status names which step you are on (#1876)",
-      "path": "/?shot=waitlist-code-entry",
-      "expectSelector": "#waitlist-step:not(.hidden)",
-      "expectText": "Step 1 of 2 · Your email address",
+      "name": "A status read-back speaks as the waiting room does (#5262)",
+      "path": "/?shot=waitlist-status",
+      "expectSelector": "#waitlist-joined > h1",
+      "expectText": "You're on the waitlist",
       "allowConsoleErrors": true
     },
     {
@@ -1908,10 +1908,10 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Waitlist step 2 says so (#1876)",
-      "path": "/?shot=waitlist-code-step",
-      "expectSelector": "#waitlist-step:not(.hidden)",
-      "expectText": "Step 2 of 2 · Enter your code",
+      "name": "A released signup's read-back is headed as the room would say it (#5262)",
+      "path": "/?shot=waitlist-admitted",
+      "expectSelector": "#waitlist-joined > h1",
+      "expectText": "Your spot is ready",
       "allowConsoleErrors": true
     },
     {
