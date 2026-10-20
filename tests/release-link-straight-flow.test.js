@@ -372,9 +372,16 @@ test('in Safari\'s visible area Continue is on screen: under 800px a 96px pictur
 test('its frame is the make screen\'s own literals', () => {
   const welcome = loadTsx(WELCOME);
   const make = read(MAKE);
-  for (const name of ['WELCOME_BAR', 'WELCOME_COLUMN', 'WELCOME_EYEBROW', 'WELCOME_TITLE', 'WELCOME_LEAD', 'WELCOME_LABEL', 'WELCOME_CARD']) {
+  // WELCOME_EYEBROW is no longer the make screen's literal (#5617): the make
+  // screen has no eyebrow line now, so its own class string lives only here.
+  // WELCOME_TITLE keeps the type scale, not the top margin: the make screen's
+  // title takes the eyebrow's old mt-4, the welcome page's still sits under
+  // its own eyebrow at mt-2.5.
+  for (const name of ['WELCOME_BAR', 'WELCOME_COLUMN', 'WELCOME_LEAD', 'WELCOME_LABEL', 'WELCOME_CARD']) {
     assert.ok(make.includes(welcome[name]), `${name} is the make screen's: ${welcome[name]}`);
   }
+  assert.ok(welcome.WELCOME_TITLE.endsWith('text-balance text-[30px] font-extrabold leading-[34px]'),
+    `WELCOME_TITLE keeps the make screen's type scale: ${welcome.WELCOME_TITLE}`);
   // The make screen's root, at the landing's own layer.
   assert.equal(welcome.WELCOME_ROOT, loadTsx(MAKE).MAKE_ROOT.replace('z-[9000]', 'z-[60]'));
   assert.match(make, /style=\{\{ background: 'var\(--home-wallpaper, #f4f2e4\)' \}\}/);
