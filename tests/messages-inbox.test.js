@@ -305,7 +305,8 @@ test('one row shape per kind, under two headed sections; Agents shows the bot, t
   // A search opens Agents and shows every match.
   assert.match(SCREEN, /const folded = !searching && FOLDABLE\.includes\(section\) && snap\.folded\.includes\(section\);/);
   assert.match(SCREEN, /expanded: agentsExpanded, searching, folded, openKey, keep: asksForYou,/);
-  assert.match(SCREEN, /return !!session && \(session\.awaitingInput \|\| session\.busy\);/);
+  // #5289: an open work order is kept too (it is listed nowhere else).
+  assert.match(SCREEN, /return !!session && \(session\.kind === 'task' \|\| session\.awaitingInput \|\| session\.busy\);/);
 
   const NOW = Date.parse('2026-10-16T12:00:00Z');
   const daysAgo = (d) => new Date(NOW - d * 24 * 60 * 60 * 1000).toISOString();

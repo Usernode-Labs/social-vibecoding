@@ -378,7 +378,7 @@ const ADDED_IDS = {
   'admin-console-bar': '#5286: the admin console\'s own band at the top of #admin-root, ships hidden and is revealed through classList by AdminConsole._renderShell for an admin (never in public mode).',
   'admin-exit': '#5286: the band\'s Exit link, href #profile, which goes back to the address the console was entered from when one is known.',
   // ── #5405: search over the loaded notifications ───────────────────
-  'notifications-search': '#5405: the search field\'s block between the notifications sheet\'s title and the Unread | Messages | All tabs.',
+  'notifications-search': '#5405: the search field\'s block between the notifications sheet\'s title and the Unread | All tabs.',
   'notifications-search-input': '#5405: the field itself (type="search"). Filters the tab that is open, over the rows already loaded, by project, kind and subject; Escape with text empties it.',
   // #notifications-search-empty (the "No notifications match “…”" line) is
   // NOT here: it renders only while a query is active and nothing matches,
@@ -721,7 +721,10 @@ const ADDED_IDS = {
   // merely HID #waitlist-confirm with nothing taking its place. Five ids,
   // all additive — nothing is retired, so every dapp.json selector on this
   // screen still resolves.
-  'waitlist-step': 'The step line above the title: "Step 1 of 2 \u00b7 Your email" \u2192 "Step 2 of 2 \u00b7 Confirm your email" \u2192 "All done". Hidden for a waiting-room session, which gets #waitlist-queued instead of a flow it is already past. Two steps, not three: the stage-2 survey is optional and counting it would read as required.',
+  // #waitlist-step, the "Step 1 of 2" line, left with #5262: the code
+  // step carries its own label and way back, and the answer speaks as the
+  // waiting room does. Added after the frozen baseline, so it leaves this
+  // map rather than entering RETIRED_IDS.
   'waitlist-confirmed': 'The panel that replaces #waitlist-confirm once the six-digit code is accepted. Before it, `confirmed` only removed the block being typed into, and a control that disappears without a word reads as a failure.',
   'more-saved': 'The stage-2 survey\'s ending. A successful save wrote one line into #more-msg and left the whole three-minute form on screen under a heading still asking "Want in sooner?"; this panel takes the screen instead. #more-msg survives for the error and ?connect= cases.',
   'more-saved-edit': 'Returns to that form with every value still in place \u2014 the form is hidden, never unmounted, and answers merge server-side, so adding to them later is the intended path rather than a recovery.',
@@ -1013,18 +1016,20 @@ const ADDED_IDS = {
   'notifications-sheet': 'The Notifications SHEET root. It was #notifications-screen, a screen root in App.SCREEN_IDS — but the bell is in the header on every route, so a full-screen view had to answer "back to where?" and answered "home", wrong every time it was opened from anywhere else. A sheet presents over the current screen and dismisses back to it.',
   'notifications-sheet-overlay': 'Its backdrop.',
   'notifications-sheet-close': 'Its close control — the desktop slide-over needs a visible dismiss, as the Apps sheet has.',
-  'notifications-screen-tabs': 'The sheet\'s sticky Unread | Messages | All tab row. Keeps the `-screen-` id it was born with: the declared checks select on it, and renaming a node that did not move would be churn. It no longer carries Mark-all-read — see #notifications-screen-mark-all below.',
+  'notifications-screen-tabs': 'The sheet\'s sticky Unread | All tab row (#5289 took Messages out). Keeps the `-screen-` id it was born with: the declared checks select on it, and renaming a node that did not move would be churn. It no longer carries Mark-all-read — see #notifications-screen-mark-all below.',
   'notifications-tab-unread': 'The sheet\'s FIRST tab, and the one it opens on. All led for a round, which meant opening an inbox on everything you had already read: the bell is tapped because it has a count, and the count is the unread.',
   // (#notifications-see-older and #notifications-hide-older, the Unread
   // footer's reveal and collapse pair, are NOT here: they render only when
   // there is something more to see — rows the Unread filter is hiding, or
-  // another server page — and the prerendered sheet has no rows at all. Same
-  // reason #notifications-all-messages is absent. The Unread footer stays on
-  // Unread (#4700); the Messages footer's jump to All shares the
-  // #notifications-see-older id, and its counterpart #notifications-load-older,
-  // the real pager, renders on All and under an expanded Unread.)
-  'notifications-tab-all': 'The whole archive, LAST. The strip narrows left to right — the count you came for, the one kind you answer, then the archive holding both — so the unfiltered tab sits behind the two filtered ones rather than between them, and it is the only tab that pages more rows in on its own cursor. The Unread footer\'s reveal stays on Unread (#4700); only the Messages footer still steps sideways into this tab.',
-  'notifications-tab-messages': 'The sheet\'s SECOND tab, between Unread and All. A message notification is one row in a flat chronological feed that also carries every session, proposal and kudos row, so it sinks fast on a busy account; this is the one place to catch up on conversations regardless. Its own \'All messages\' entry (#notifications-all-messages, rendered only while the tab is active and so not in the static markup) leads to the #messages screen the app chip\'s Messages row also opens.',
+  // another server page — and the prerendered sheet has no rows at all. The
+  // Unread footer stays on Unread (#4700); its counterpart
+  // #notifications-load-older, the real pager, renders on All and under an
+  // expanded Unread.)
+  'notifications-tab-all': 'The whole archive, LAST: the count you came for, then the archive holding it, and it is the only tab that pages more rows in on its own cursor. The Unread footer\'s reveal stays on Unread (#4700).',
+  // #notifications-tab-messages, the sheet's Messages filter, leaves this
+  // map (it was never in the baseline). #5289: it repeated the Messages tab
+  // in the bar, which lists the same conversations and the agents beside
+  // them; its 'All messages' row and its pager went with it.
   'notifications-screen-mark-all': 'Mark-all-read on the sheet — same controller action as the drawer\'s #notifications-mark-all, React-wired instead of id-bound. Same naming note as the tab row above. It sat at the far RIGHT END of that tab row, in tab-sized ink on the same baseline as the three tabs, so a control that changes data read as a fourth place to go; it is a row UNDER the Unread tab now, with the list it empties, and renders nowhere else.',
   // ── #2377: Global Chat (experimental) ───────────────────────────
   'global-chat-screen': '#2377/#2543: the React-owned conversational screen. It ships hidden for hydration parity, then the hash router reveals the durable session selected from Improve.',

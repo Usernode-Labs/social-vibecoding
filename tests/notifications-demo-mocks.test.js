@@ -159,9 +159,16 @@ test('staging + ?demo=1: twelve mock rows prepend, and only the unread ones bump
       'and it is obviously fake, like the rest');
     assert.ok(
       mocks.filter((n) => !['conversation_message', 'platform_limit', 'app_quota_changed'].includes(n.kind))
-        .every((n) => n.appSlug === 'staging-demo'),
+        .every((n) => /^staging-demo(?:-|$)/.test(n.appSlug) && /^Staging demo /.test(n.appName)),
       'obviously-fake app attribution on every APP-scoped row',
     );
+    // #5289: one of them is in a second fake project, so the Unread tab's
+    // per-project fold does not swallow the date it exists to show, and a
+    // preview has a second project's group to look at.
+    const archive = mocks.filter((n) => n.appSlug === 'staging-demo-archive');
+    assert.deepEqual(archive.map((n) => n.id), [990209], 'one row, in its own project');
+    assert.equal(archive[0].appName, 'Staging demo archive');
+    assert.ok(archive[0].appId >= 990000 && archive[0].appId < 1000000, 'a mock-range app id');
     // The platform limit row is the server's, not an app's, like the real one.
     const limit = mocks.find((n) => n.kind === 'platform_limit');
     assert.equal(limit.appSlug, null);
@@ -247,7 +254,7 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
     // describing something the real pipeline never emits.
     assert.equal(r.appName,
       ['conversation_message', 'platform_limit', 'app_quota_changed'].includes(r.kind)
-        ? null : 'Staging demo app');
+        ? null : r.id === 990209 ? 'Staging demo archive' : 'Staging demo app');
     assert.ok('sessionTitle' in r, '#971: every mock row carries the sessionTitle field');
   }
 

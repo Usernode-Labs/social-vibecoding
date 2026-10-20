@@ -3274,23 +3274,28 @@ html.dark[data-contrast="more"] .dark\:border-zinc-800 { border-color: #48484a; 
   visibility: visible !important;
 }
 
-/* THE BELL IS A FIXED TWO THIRDS, and that is the whole point of it.
+/* THE BELL IS A FIXED HEIGHT, and that is the whole point of it.
    Every other surface here is `height:auto` under a cap, so it is as tall as
    whatever it happens to contain. On the notifications sheet that content
-   changes under the viewer's feet: Unread, All and Messages are three filters
-   over one list, so switching tabs re-sized the sheet — a two-row Unread tab
+   changes under the viewer's feet: Unread and All are two filters over one
+   list, so switching tabs re-sized the sheet: a two-row Unread tab
    was a short sheet and All was a tall one, and the kit seeds its slide-up
    spring from a single measurement at present time (lib/sheet-controller.js),
    so the panel jumped rather than resized. A definite height takes the
-   content out of the decision entirely: the sheet is the same object on all
-   three tabs and only the rows inside it change. The inner scroller
+   content out of the decision entirely: the sheet is the same object on both
+   tabs and only the rows inside it change. The inner scroller
    (`flex-1 min-h-0` on the row list) already handles the overflow this
    creates on a full All tab.
+   #5289: the WHOLE screen, less the status bar and a sliver above the kit's
+   grabber (21px) that keeps it reading as a sheet you can pull down. It was
+   two thirds, which on a phone fit five rows: the bell is a list you read
+   down, and a third of the screen spent on the page behind it bought
+   nothing. The bottom safe inset is the kit's own padding under the sheet.
    `height` has to beat `height: auto !important` above, hence the
-   !important, and the min() keeps the safe-area ceiling for a short viewport
-   where two thirds would still reach the status bar. */
+   !important. */
 .platform-sheet-adopted#notifications-sheet {
-  height: min(66dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 3rem)) !important;
+  height: calc(100dvh - env(safe-area-inset-top, 0px)
+    - var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)) - 2.25rem) !important;
   max-height: none !important;
 }
 
@@ -13280,13 +13285,12 @@ a.drawer-ver--fork:hover {
     max-width: none;
     /* `dvh`, not `vh`: a mobile browser's collapsing toolbar must not push
        the foot of the sheet under itself.
-       Two thirds, matching the kit-adopted rule near the top of this file —
-       see the note there for why the bell in particular gets a DEFINITE
-       height rather than a cap. This was very nearly full-screen (3rem of
-       ground), which made the sheet a de-facto screen; the same number on
-       both paths is what keeps the surface one object at every width. The
-       min() preserves the old safe-area ceiling on a short viewport. */
-    height: min(66dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 3rem));
+       Full height less the status bar and a sliver, matching the kit-adopted
+       rule near the top of this file. See the note there for why the bell
+       in particular gets a DEFINITE height rather than a cap, and why it
+       stopped being two thirds (#5289). The same height on both paths is
+       what keeps the surface one object at every width. */
+    height: calc(100dvh - env(safe-area-inset-top, 0px) - 0.75rem);
     border-left-width: 0;
     border-top-width: 1px;
     border-top-left-radius: 1.75rem;
