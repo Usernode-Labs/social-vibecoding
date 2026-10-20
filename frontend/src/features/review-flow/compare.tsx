@@ -27,7 +27,7 @@ import { ChevronDoubleLeftIcon, ChevronDoubleRightIcon, GripBarsIcon } from '@/c
 
 import { useMessages } from '../../lib/i18n/react';
 import {
-  focusBox, magnet, placeBox, rubberBand, seamStops,
+  densityOf, focusBox, magnet, placeBox, rubberBand, seamStops,
   type Placement, type ReviewScreen,
 } from './model';
 
@@ -77,7 +77,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
   const canCompare = !!before && !!after;
 
   const place: Placement | null = screen && W > 0
-    ? placeBox(screen, focusBox(screen, ['before', 'after'], 16), { w: W, h: height }, 1.6)
+    ? placeBox(screen, focusBox(screen, ['before', 'after'], 16), { w: W, h: height }, densityOf(screen))
     : null;
   const stops = screen && place ? seamStops(screen, place, W) : [];
 

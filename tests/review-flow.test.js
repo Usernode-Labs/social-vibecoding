@@ -341,14 +341,50 @@ test('a project\'s Needs you draws the same flow when the switch is on', () => {
   assert.match(flow, /all\.filter\(\(it\) => it\.app && it\.app\.slug === slug\)/);
 });
 
-test('a title shot from the run\'s own crop is never a shrunken tall page', () => {
-  const flow = loadTsx('frontend/src/features/review-flow/review-flow.tsx');
-  const room = { w: 300, h: 200 };
-  const tall = flow.cropPlate({ width: 390, height: 844 }, room);
-  assert.ok(tall.w / tall.h >= 1.24, `landscape plate, got ${tall.w}x${tall.h}`);
-  assert.ok(tall.w <= 300 && tall.h <= 200);
-  const wide = flow.cropPlate({ width: 600, height: 200 }, room);
-  assert.ok(Math.abs(wide.w / wide.h - 3) < 0.05, 'a wide crop keeps its shape');
-  assert.equal(wide.whole, false);
-  assert.equal(flow.cropPlate({ width: 780, height: 90 }, room).whole, true, 'a thin strip is shown whole, not trimmed');
+
+// ── 6. The title shot's composition (the prototype's rules) ─────────────
+
+const CARD = { w: 358, h: 268 };
+function screenWith(regions, over = {}) {
+  return { viewport: 'phone', width: 390, before: { url: 'b.png', height: 844 }, after: { url: 'a.png', height: 844 }, regions, ...over };
+}
+
+test('one change: 62% of the binding side, or real size when it fits, centred at 48%, never past the captured pixels', () => {
+  // A small control (60x30): real size fits, so it is not blown up past 1x.
+  const small = model.composeTitle(model.piecesOf([screenWith([{ n: 1, a: [100, 200, 60, 30], b: null }])]), CARD, '#ECE6CE');
+  assert.equal(small.rule, 'single');
+  const p = small.plates[0];
+  assert.ok(Math.abs(p.img.width - 390) < 0.5, 'shown at 1x: the still has one pixel per point');
+  assert.ok(Math.abs((p.y + p.h / 2) - CARD.h * 0.48) < 0.5, 'centred 48% down');
+  // A wide section (370x300): framed at 62% of the binding side.
+  const big = model.composeTitle(model.piecesOf([screenWith([{ n: 1, a: [10, 100, 370, 300], b: null }])]), CARD, '#ECE6CE');
+  const q = big.plates[0];
+  assert.ok(q.w <= CARD.w * 0.92 + 0.5 && q.h <= CARD.h * 0.92 + 0.5, 'inside the wide allowance');
+  assert.ok(Math.max(q.w / CARD.w, q.h / CARD.h) >= 0.62 - 0.01, 'binding side at least 62%');
+});
+
+test('a thin strip gets real context, never a sliver', () => {
+  const [piece] = model.piecesOf([screenWith([{ n: 1, a: [0, 400, 390, 20], b: null }])]);
+  assert.ok(piece.box.w / piece.box.h <= 3.3, `strip widened to ${piece.box.w}x${piece.box.h}`);
+});
+
+test('noise is dropped and near areas are one piece', () => {
+  const pieces = model.piecesOf([screenWith([
+    { n: 1, a: [20, 100, 200, 60], b: null },
+    { n: 1, a: [20, 170, 200, 40], b: null },
+    { n: 0, a: [300, 700, 10, 10], b: null },
+  ])]);
+  assert.equal(pieces.length, 1, 'the two named areas 10px apart merge; the unnamed speck goes');
+});
+
+test('two to four changes: a grid at one common scale; too small becomes a deck', () => {
+  const two = model.composeTitle(model.piecesOf([screenWith([{ n: 1, a: [20, 100, 160, 60], b: null }, { n: 2, a: [20, 500, 160, 60], b: null }])]), CARD, '#F7E07A');
+  assert.equal(two.rule, 'grid');
+  assert.equal(two.plates.length, 2);
+  assert.ok(Math.abs(two.plates[0].img.width - two.plates[1].img.width) < 0.01, 'one common scale');
+  const many = model.composeTitle(model.piecesOf([1, 2, 3, 4, 5].map(() => null).map((_, i) => screenWith([{ n: 1, a: [10, 50, 370, 300], b: null }], { after: { url: `s${i}.png`, height: 844 } }))), CARD, '#F2958A');
+  assert.equal(many.rule, 'deck');
+  assert.equal(many.plates.length, 4, 'a lead and three back plates at most');
+  assert.ok(many.plates.slice(1).every((p) => p.img === null && /^#[0-9a-f]{6}$/.test(p.fill)), 'back plates are plain tones');
+  assert.ok(many.plates[1].w < many.plates[0].w && many.plates[2].w < many.plates[1].w, 'each back plate narrower');
 });

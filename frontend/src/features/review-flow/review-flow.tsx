@@ -41,7 +41,7 @@ import type { NeedsFeedItem } from '../workshop/needs-reel';
 import { CompareSlider } from './compare';
 import { Illustration } from './illustrations';
 import {
-  nextIndex, orderForReview, titleCrop, toReviewItems,
+  composeTitle, nextIndex, orderForReview, piecesOf, titleCrop, toReviewItems,
   type AreaKind, type BenefitKind, type DecisionKind, type ReviewItem, type ReviewScreen,
 } from './model';
 import { VoteSheet, sheetOpen, type SheetState, type Vote } from './vote-sheet';
@@ -115,26 +115,9 @@ function Drawn({ item, width, height, play }: { item: ReviewItem; width: number;
 
 /* ── The title shot ────────────────────────────────────────────────────── */
 
-/**
- * The plate for the run's own crop of a change: never taller than it is wide
- * (a tall crop shown whole came out as a shrunken page), never a sliver. The
- * crop is centred on the change, so a plate narrower than the crop keeps its
- * middle.
- */
-export function cropPlate(img: { width: number; height: number }, room: { w: number; h: number }): { w: number; h: number; whole: boolean } {
-  const raw = img.width / img.height;
-  const ratio = Math.max(1.25, Math.min(4.5, raw));
-  const w = Math.min(room.w, room.h * ratio, img.width * 2);
-  // A thin strip (a top bar, a band) is shown whole: trimming its sides
-  // trims away the very button that changed.
-  return { w: Math.round(w), h: Math.round(w / ratio), whole: raw > 4.5 };
-}
 
 function TitleShot({ item, width }: { item: ReviewItem; width: number }): ReactNode {
   const height = Math.round(width * 0.75);
-  const screen: ReviewScreen | undefined = item.screens[0];
-  const room = { w: width * 0.86, h: height * 0.72 };
-  let inner: ReactNode;
   if (item.picture.kind === 'benefit' || item.picture.kind === 'decision') {
     return (
       <span className="rf-cover rf-cover-drawn" style={{ width, height, background: item.ground }} data-rf-cover="">
@@ -142,43 +125,40 @@ function TitleShot({ item, width }: { item: ReviewItem; width: number }): ReactN
       </span>
     );
   }
-  const r = item.titleImage ? item.titleImage.width / item.titleImage.height : 0;
-  // The run's own crop when it has a good shape; else, when the run found the
-  // screens, the changed area itself, zoomed in (a thin strip or a whole tall
-  // page reads as nothing at card size).
-  const cropFits = !!item.titleImage && (r >= 1 && r <= 4.5);
-  if (item.titleImage && (cropFits || !screen)) {
-    // The shots run's own crop of the change: the tightest true picture of it.
+  // The changed areas the run found, composed by the prototype's rules
+  // (model.ts composeTitle); without them, the run's own crop of the change
+  // (or an older capture) as the one piece.
+  let pieces = piecesOf(item.screens);
+  if (!pieces.length) {
     const img = item.titleImage;
-    const plate = cropPlate(img, room);
-    inner = (
-      <span className="rf-plate" style={{ width: plate.w, height: plate.h }}>
-        <img src={img.url} alt="" draggable={false} loading="lazy" className={plate.whole ? 'rf-plate-fill rf-plate-strip' : 'rf-plate-fill'} />
-      </span>
-    );
-  } else if (screen) {
-    const crop = titleCrop(screen, room);
-    inner = (
-      <span className="rf-plate" style={{ width: crop.w, height: crop.h }}>
-        <img
-          src={screen.after.url}
-          alt=""
-          draggable={false}
-          loading="lazy"
-          style={{ width: screen.width, height: screen.after.height, transform: `translate(${crop.place.tx}px, ${crop.place.ty}px) scale(${crop.place.scale})` }}
-        />
-      </span>
-    );
-  } else {
-    inner = (
-      <span className="rf-plate rf-plate-whole" style={{ width: room.w, height: room.h }}>
-        <img src={(item.pair && (item.pair.after || item.pair.before)) || ''} alt="" draggable={false} loading="lazy" />
-      </span>
-    );
+    if (img) {
+      pieces = [{ screen: { viewport: 'crop', width: img.width, before: { url: img.url, height: img.height }, after: { url: img.url, height: img.height }, regions: [] }, box: { x: 0, y: 0, w: img.width, h: img.height } }];
+    }
   }
+  const comp = composeTitle(pieces, { w: width, h: height }, item.ground);
   return (
-    <span className="rf-cover" style={{ width, height, background: item.ground }} data-rf-cover="">
-      {inner}
+    <span className="rf-cover" style={{ width, height, background: item.ground }} data-rf-cover="" data-rf-rule={comp ? comp.rule : 'pair'}>
+      {comp ? comp.plates.slice().sort((p, q) => p.z - q.z).map((p, i) => (
+        <span
+          key={i}
+          className="rf-tplate"
+          style={{ left: p.x, top: p.y, width: p.w, height: p.h, borderRadius: p.r, background: p.fill || undefined }}
+        >
+          {p.img ? (
+            <img
+              src={p.img.url}
+              alt=""
+              draggable={false}
+              loading="lazy"
+              style={{ left: p.img.left, top: p.img.top, width: p.img.width, height: p.img.height }}
+            />
+          ) : null}
+        </span>
+      )) : item.pair && (item.pair.after || item.pair.before) ? (
+        <span className="rf-tplate rf-tplate-pair" style={{ left: width * 0.07, top: height * 0.14, width: width * 0.86, height: height * 0.68, borderRadius: 16 }}>
+          <img src={(item.pair.after || item.pair.before)!} alt="" draggable={false} loading="lazy" className="rf-plate-fill" />
+        </span>
+      ) : null}
     </span>
   );
 }

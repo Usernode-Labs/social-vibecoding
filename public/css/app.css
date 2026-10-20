@@ -24937,3 +24937,10 @@ html.in-side-panel body {
 @media (prefers-reduced-motion: reduce) {
   .rf-ill-play .rf-ill-sage, .rf-ill-play .rf-ill-gain { animation: none; }
 }
+
+/* New Needs you (an experiment), the title shot's plates: real pixels of the
+   changed area and 16px of its surroundings, flat (no shadow, no card of
+   their own), the house radius; a deck's back plates are plain tones. */
+.rf-tplate { position: absolute; overflow: hidden; display: block; }
+.rf-tplate img { position: absolute; display: block; max-width: none; }
+.rf-tplate-pair img { position: static; width: 100%; height: 100%; object-fit: cover; object-position: center; }
