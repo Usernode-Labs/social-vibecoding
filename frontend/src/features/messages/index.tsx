@@ -1020,7 +1020,11 @@ function ConversationList({ drawer = false, litId = null }: {
   const asksForYou = (entry: { kind: string; key: string }) => {
     if (entry.kind === 'session') {
       const session = bySession.get(entry.key.slice('session:'.length));
-      return !!session && (session.awaitingInput || session.busy);
+      // #5289: an open work order is work in flight on the person's own
+      // machine, and since the bell lost its Messages filter this list is the
+      // only place it shows, so it is never folded behind "N older chats".
+      // There are few of them: each closes once it is shared or submitted.
+      return !!session && (session.kind === 'task' || session.awaitingInput || session.busy);
     }
     if (entry.kind === 'mayor') return !!byMayor.get(entry.key.slice('mayor:'.length))?.busy;
     if (entry.kind === 'agent') return !!byAgent.get(entry.key.slice('agent:'.length))?.busy;
