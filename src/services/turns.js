@@ -22,6 +22,11 @@
 //             its reply gets the dev chat's own repair (the reply's pills,
 //             or the "didn't answer" note: turn-recovery.js
 //             repairUnansweredTurn).
+//   headless  an auto session on a request (routes/sessions.js
+//             runHeadlessSessionInner). Resumed: carried on from the
+//             change's row (resumeOneHeadlessRun).
+//   recover   ROLLOUT-ONLY: an older release's coding record with no owner,
+//             taken through the leader's adoption (turn-leftovers.js).
 //
 // What the turn shows goes to its stream (services/session-bus.js), which
 // the request that asked for it follows from any process. A coding record
@@ -55,10 +60,10 @@ function pause(ms, signal) {
   });
 }
 
-async function recoverChange(ctx, { config, pool }, sessionId) {
+async function recoverChange(ctx, { config, pool }, sessionId, { owned = true } = {}) {
   for (let tried = 1; ; tried += 1) {
     try {
-      return await require('./turn-recovery').recoverOwnedTurn({ config, pool, sessionId });
+      return await require('./turn-recovery').recoverOwnedTurn({ config, pool, sessionId, owned });
     } catch (err) {
       if (!err || !err.retryWorkerRecovery || tried >= RECOVERY_RETRY.tries || ctx.signal?.aborted) throw err;
       log.warn('turns', 'A coding run\'s recovery will be tried again', { sessionId, tried, err: err.message });
@@ -362,10 +367,22 @@ async function resumeHeadless(ctx, { config, pool }, input) {
   return { ended: 'recovered' };
 }
 
+// ── ROLLOUT-ONLY: a turn an older release left (services/turn-leftovers.js)
+
+// A coding run's record with no owner, left by a release from before the
+// turn machine: the adoption its leader ran, as that leader ran it (a turn a
+// live process still runs is left alone there too), tried again as an owned
+// one is. Delete with turn-leftovers.js.
+async function runRecover(ctx, { config, pool }, input) {
+  await recoverChange(ctx, { config, pool }, Number(input.sessionId), { owned: false });
+  return { ended: 'recovered' };
+}
+
 const KINDS = new Map([
   ['agent', { run: runAgent, resume: resumeAgent }],
   ['classic', { run: runClassic, resume: resumeClassic }],
   ['headless', { run: runHeadless, resume: resumeHeadless }],
+  ['recover', { run: runRecover, resume: runRecover }],
 ]);
 
 /** The turn machine's `turn.run` handler (src/workflow/turn/services.ts). */
@@ -373,7 +390,9 @@ async function run(ctx, deps) {
   const input = ctx.input || {};
   const kind = KINDS.get(input.kind);
   if (!kind) throw Object.assign(new Error(`not a turn kind: ${input.kind}`), { permanent: true });
-  const resumed = !!ctx.resumeFrom || (Number(ctx.lostAttempts) || 0) > 0;
+  // A turn asked to resume (an older release's headless run:
+  // turn-leftovers.js) starts where its row says it is, as a resumed one.
+  const resumed = !!ctx.resumeFrom || (Number(ctx.lostAttempts) || 0) > 0 || input.resume === true;
   try {
     return await (resumed ? kind.resume : kind.run)(ctx, deps, input);
   } finally {

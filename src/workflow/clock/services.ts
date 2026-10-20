@@ -145,6 +145,14 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/limits').settleOpenTurnSpend(pool),
   },
   {
+    // ROLLOUT-ONLY: what a release from before the turn machine leaves (its
+    // conversations' claims, coding records with no owner, headless runs,
+    // local agents' turns), taken to an end once no live process of it holds
+    // them (services/turn-leftovers.js). Delete with that module.
+    name: 'turn-leftovers', everyMs: MIN, leaseMs: 5 * MIN,
+    run: (_ctx: WorkContext, { config, pool }: JobDeps) => legacy('services/turn-leftovers').sweep(pool, { config }),
+  },
+  {
     // Turns' streams (stream_events) a finished turn did not clear, and the
     // watchers of a process that went (services/session-bus.js).
     name: 'turn-stream-retention', everyMs: 15 * MIN,

@@ -2299,7 +2299,7 @@ async function repairUnansweredTurn(pool, session) {
  * end, its tail and wrap-up finished; or, its worker gone, abandoned with
  * what it left. What the leader's adoption did for an orphaned turn.
  */
-async function recoverOwnedTurn({ config = sharedConfig(), pool, sessionId }) {
+async function recoverOwnedTurn({ config = sharedConfig(), pool, sessionId, owned = true }) {
   const containerName = worker.workerContainerName(sessionId);
   let state = 'not_found';
   try {
@@ -2310,7 +2310,7 @@ async function recoverOwnedTurn({ config = sharedConfig(), pool, sessionId }) {
   }
   await adoptOrphanWorker({ name: containerName, sessionId: Number(sessionId), state }, {
     config, pool, staging: stagingSvc, ghub: github, broadcastGlobal: ws.broadcastGlobal,
-  }, { owned: true });
+  }, { owned });
 }
 
 /**

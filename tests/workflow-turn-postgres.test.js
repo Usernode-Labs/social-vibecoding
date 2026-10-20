@@ -670,4 +670,105 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     await turns.run(headlessCtx(c, 'a3b', { lost: 1 }), { config: {}, pool });
     assert.deepEqual(headless.resumes, []);
   });
+
+  // ── 5. ROLLOUT-ONLY: what an older release leaves (turn-leftovers.js) ─
+  const leftovers = require('../src/services/turn-leftovers');
+  const leftoverPass = () => leftovers.sweep(pool, { config: {}, deps: { localPass: async () => ({ adopted: 0 }) } });
+  const askedOn = async (key) => (await pool.query(
+    `SELECT payload FROM wf_events WHERE machine = 'turn' AND key = $1 AND type = 'Asked' ORDER BY id`, [key])).rows.map((r) => r.payload);
+  const oldClaim = async (c, { turnId, renewedSecondsAgo }) => pool.query(
+    `UPDATE agent_sessions SET active_turn = jsonb_build_object('id', $2::text, 'phase', 'mayor',
+        'startedAt', NOW() - make_interval(secs => $3 + 60), 'renewedAt', NOW() - make_interval(secs => $3)) WHERE id = $1`,
+    [c.id, turnId, renewedSecondsAgo]);
+
+  await t.test('L1 an older release\'s conversation claim: ended once stale, quietly when it was answered, never one still renewed or still working', async () => {
+    const dead = await conversation();
+    await oldClaim(dead, { turnId: 'old-1', renewedSecondsAgo: 200 });
+    const answered = await conversation();
+    await oldClaim(answered, { turnId: 'old-2', renewedSecondsAgo: 200 });
+    await pool.query(`INSERT INTO chat_session_messages (agent_session_id, role, content, metadata) VALUES ($1, 'assistant', 'Done.', '{}')`, [answered.id]);
+    const live = await conversation();
+    await oldClaim(live, { turnId: 'old-3', renewedSecondsAgo: 10 });
+    const building = await conversation();
+    await oldClaim(building, { turnId: 'old-4', renewedSecondsAgo: 200 });
+    const change = await ownedChange(building, 'someone');
+    await pool.query(`UPDATE chat_sessions SET active_turn = active_turn - 'owner' WHERE id = $1`, [change]);
+    await pool.query('UPDATE agent_sessions SET active_change_id = $2 WHERE id = $1', [building.id, change]);
+    const mine = await conversation();
+    await ask(mine, 'new-1');
+    const running = await conversation();
+    work.answer = () => new Promise(() => {});
+    await ask(running, 'new-2');
+    await rt.drain();
+    // A long turn of this release: its claim is old and never renewed, and
+    // its instance runs it.
+    await pool.query(`UPDATE agent_sessions SET active_turn = active_turn || jsonb_build_object('startedAt', NOW() - interval '2 hours') WHERE id = $1`, [running.id]);
+
+    const out = await leftoverPass();
+    assert.equal(out.claims, 2);
+    assert.equal((await claim(dead)).active_turn, null);
+    assert.deepEqual((await notes(dead)).map((n) => [n.metadata.agentTurnId, n.metadata.retryable]), [['old-1', true]], 'interrupted, with Retry');
+    const a = await claim(answered);
+    assert.equal(a.active_turn, null);
+    assert.ok(a.last_done_at, 'finished: the dot');
+    assert.deepEqual(await notes(answered), [], 'and no note');
+    assert.equal((await claim(live)).active_turn.id, 'old-3', 'still renewed: its process runs it');
+    assert.equal((await claim(building)).active_turn.id, 'old-4', 'its build is still to be recovered');
+    assert.equal((await claim(mine)).active_turn.id, 'new-1', 'a turn the machine was asked for is the machine\'s');
+    assert.equal((await claim(running)).active_turn.id, 'new-2', 'and one it runs, however long');
+    work.answer = null;
+    assert.equal((await leftoverPass()).claims, 0, 'once');
+    await rt.drain();
+  });
+
+  await t.test('L2 a coding record with no owner: a recover turn asked once, never while a live process holds its change', async () => {
+    const c = await change();
+    await pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"old-job","mode":"build"}'::jsonb WHERE id = $1`, [c.id]);
+    const held = await change();
+    await pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"held-job","mode":"build"}'::jsonb WHERE id = $1`, [held.id]);
+    await pool.query(`INSERT INTO platform_processes (id, release) VALUES ('old-pod', 'old')`);
+    await pool.query(`INSERT INTO process_holds (process_id, kind, ref) VALUES ('old-pod', 'session', $1::text)`, [held.id]);
+    const owned = await change();
+    await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`, [owned.id, JSON.stringify({
+      turnId: 'owned-job', mode: 'build', owner: { machine: MACHINE, key: owned.key, kind: WORK.run, workKey: 'run:o', workId: 'item' } })]);
+    const before = (await leftoverPass()).records;
+    assert.ok(before >= 1);
+    assert.deepEqual((await askedOn(c.key)).map((p) => [p.kind, p.turnId, p.input.sessionId]), [['recover', 'leftover-old-job', c.id]]);
+    assert.deepEqual(await askedOn(held.key), [], 'its process finishes it');
+    assert.deepEqual(await askedOn(owned.key), [], 'an owned record is its item\'s');
+    await leftoverPass();
+    assert.equal((await askedOn(c.key)).length, 1, 'asked once');
+    await pool.query(`UPDATE platform_processes SET heartbeat_at = NOW() - interval '5 minutes' WHERE id = 'old-pod'`);
+    await leftoverPass();
+    assert.deepEqual((await askedOn(held.key)).map((p) => p.kind), ['recover'], 'once its process is gone');
+    await pool.query(`DELETE FROM platform_processes WHERE id = 'old-pod'`);
+    for (const x of [c, held, owned]) await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [x.id]);
+    // A recover turn runs the leader's adoption, as an unowned one.
+    reset();
+    const was = recovery.recoverOwnedTurn;
+    const args = [];
+    recovery.recoverOwnedTurn = async (a) => { args.push(a); };
+    try {
+      assert.deepEqual(await turns.run({ ...classicCtx(c, 'leftover-old-job'), input: { sessionId: c.id, kind: 'recover', turnId: 'x', instanceKey: c.key } },
+        { config: {}, pool }), { ended: 'recovered' });
+    } finally { recovery.recoverOwnedTurn = was; }
+    assert.deepEqual(args.map((a) => [a.sessionId, a.owned]), [[c.id, false]]);
+  });
+
+  await t.test('L3 a headless run no turn carries is resumed by one asked once; a run with its turn is left', async () => {
+    resetHeadless();
+    const old = await autoRun();
+    const carried = await autoRun();
+    await send(carried, 'Asked', { turnId: 'mine', kind: 'headless', input: {} });
+    await rt.drain();
+    await leftoverPass();
+    await leftoverPass();
+    assert.deepEqual((await askedOn(old.key)).map((p) => [p.kind, p.input.resume]), [['headless', true]]);
+    assert.equal((await askedOn(carried.key)).length, 1, 'only its own');
+    // Asked to resume, it resumes rather than starting the run again.
+    const ctx = { ...headlessCtx(old, 'leftover-headless'), input: { ...headlessCtx(old, 'x').input, resume: true } };
+    assert.deepEqual(await turns.run(ctx, { config: {}, pool }), { ended: 'recovered' });
+    assert.deepEqual([headless.runs.length, headless.resumes.length], [0, 1]);
+    for (const x of [old, carried]) await pool.query(`UPDATE chat_sessions SET headless_status = 'failed' WHERE id = $1`, [x.id]);
+  });
 });

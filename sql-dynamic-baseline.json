@@ -1606,6 +1606,20 @@
       "preview": "`SET LOCAL ROLE ${consoleRole.ROLE}`"
     },
     {
+      "source": "src/services/turn-leftovers.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "528c5e57ddc255f11e3e",
+      "count": 1,
+      "preview": "HEADLESS_SQL"
+    },
+    {
+      "source": "src/services/turn-leftovers.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "de0efc08a362c023a0c6",
+      "count": 1,
+      "preview": "RECORDS_SQL"
+    },
+    {
       "source": "src/services/turn-lifecycle.js",
       "kind": "structural-template",
       "fingerprint": "544d173eb6008737473d",
