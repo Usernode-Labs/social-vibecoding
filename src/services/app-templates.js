@@ -97,9 +97,11 @@ const IMPACT = Object.freeze(['public/**', 'api.js']);
 /**
  * One tier list per category: the same app (app-templates/tier-list), with
  * what it ranks filled in. `example` is the add field's placeholder;
- * `change` its example change (see the header).
+ * `want` finishes the name of the row below F, "Want to …", for one you
+ * have not got to yet (it counts toward no tier); `change` its example
+ * change (see the header).
  */
-function tierList(id, { plural, one, example, title, change }) {
+function tierList(id, { plural, one, example, want, title, change }) {
   return Object.freeze({
     id,
     dir: 'tier-list',
@@ -109,11 +111,12 @@ function tierList(id, { plural, one, example, title, change }) {
     title,
     summary: `A tier list of the group's favorite ${plural}: anyone adds one, everyone drags them into tiers, and the group's ranking shows where each lands.`,
     icon: '📊',
-    fill: Object.freeze({ ITEM_PLURAL: plural, ITEM_ONE: one, ITEM_EXAMPLE: example }),
+    fill: Object.freeze({ ITEM_PLURAL: plural, ITEM_ONE: one, ITEM_EXAMPLE: example, WANT_VERB: want }),
     features: Object.freeze([
       `**Add ${plural}**: anyone in the project adds one; a name already on the list is not added twice.`,
       '**Your ranking**: drag each one into S, A, B, C, D or F. Change your mind any time.',
       '**The group\'s ranking**: the same board, with every item in the tier its average lands in (a tie goes up). One tap switches between the two.',
+      `**Want to ${want}**: a row below F for ${plural} you have not got to yet. It counts toward no tier, and the group's board shows how many people want to ${want}, for each one.`,
       `**Who ranked it what**: tap any of the ${plural}, on either board, to see the group's tier and the tier each person gave it, live as people rank.`,
     ]),
     tables: '`tier_items` and `tier_votes`',
@@ -129,6 +132,7 @@ function tierList(id, { plural, one, example, title, change }) {
         impact: IMPACT,
       },
       { name: 'The board switches to the group\'s ranking', path: '/', expectSelector: '#view-toggle button[data-view="group"]' },
+      { name: 'Below F, a Want to row takes the ones not got to yet', path: '/', expectSelector: '#board ~ #want[data-drop="W"]' },
       { name: 'A new item can be added', path: '/', expectSelector: '#add-form input[name="name"]' },
     ]),
   });
@@ -283,10 +287,10 @@ const TEMPLATES = Object.freeze([
     title: 'Empty',
     summary: 'The starter screen with one example to replace.',
   }),
-  tierList('tier-list-restaurants', { plural: 'restaurants', one: 'restaurant', example: 'e.g. the taco place on Main St', title: 'Restaurant tier list', change: 'add a cheap eats tier' }),
-  tierList('tier-list-hikes', { plural: 'hikes', one: 'hike', example: 'e.g. the lake loop', title: 'Hiking tier list', change: 'add each hike\'s distance' }),
-  tierList('tier-list-cities', { plural: 'cities', one: 'city', example: 'e.g. Lisbon', title: 'City tier list', change: 'add a photo of each city' }),
-  tierList('tier-list-games', { plural: 'games', one: 'game', example: 'e.g. chess', title: 'Game tier list', change: 'add each game\'s player count' }),
+  tierList('tier-list-restaurants', { plural: 'restaurants', one: 'restaurant', example: 'e.g. the taco place on Main St', want: 'go', title: 'Restaurant tier list', change: 'add a cheap eats tier' }),
+  tierList('tier-list-hikes', { plural: 'hikes', one: 'hike', example: 'e.g. the lake loop', want: 'hike', title: 'Hiking tier list', change: 'add each hike\'s distance' }),
+  tierList('tier-list-cities', { plural: 'cities', one: 'city', example: 'e.g. Lisbon', want: 'go', title: 'City tier list', change: 'add a photo of each city' }),
+  tierList('tier-list-games', { plural: 'games', one: 'game', example: 'e.g. chess', want: 'play', title: 'Game tier list', change: 'add each game\'s player count' }),
   groupPoll('poll-dinner', { title: 'Dinner poll', about: 'where we eat', question: 'e.g. Where should we eat Friday?', option: 'e.g. the taco place on Main', change: 'add a price range to each place' }),
   groupPoll('poll-spending', { title: 'Spending poll', about: 'what we spend on', question: 'e.g. What should we do with the extra $300?', option: 'e.g. new chairs for the lobby', change: 'add a cost to each option' }),
   groupPoll('poll-movies', { title: 'Movie night poll', about: 'what we watch', question: 'e.g. What are we watching Friday?', option: 'e.g. Arrival', change: 'add each movie\'s runtime' }),

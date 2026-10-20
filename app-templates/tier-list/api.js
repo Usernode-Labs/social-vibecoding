@@ -1,6 +1,7 @@
 // This app's API: a shared tier list. Anyone in the project adds things to
-// rank, each person puts each one in a tier, the group's tier list is where
-// the average lands, and anyone can see who put each one where. server.js
+// rank, each person puts each one in a tier (or in Want to, below F, for one
+// they have not got to yet), the group's tier list is where the average
+// lands, and anyone can see who put each one where. server.js
 // mounts it after the sign-in check: a write always has req.user ({ id,
 // username }); a read may come from a guest with no account (req.guest, no
 // req.user). Live updates (live-updates.js) are mounted before it, so every
@@ -17,6 +18,12 @@ const ITEMS_SHOWN = 300;
 // query below), and an item's place on the group's list is the tier its
 // average score is nearest, a tie going up: 4.5 is S, 4.4 is A.
 const TIERS = ['S', 'A', 'B', 'C', 'D', 'F'];
+// W is not a tier: Want to, the row below F (index.html says what to: go,
+// hike, play). It is a person's one place for an item like a tier is, but
+// worth no score, so no average, no "N people ranked it" and no "From N
+// people's rankings" counts it.
+const WANT = 'W';
+const PLACES = [...TIERS, WANT];
 
 const GONE = 'That one is not on the list any more.';
 
@@ -56,7 +63,7 @@ async function migrate(pool) {
     CREATE TABLE IF NOT EXISTS tier_votes (
       item_id INTEGER NOT NULL REFERENCES tier_items(id) ON DELETE CASCADE,
       user_id INTEGER NOT NULL,
-      tier CHAR(1) NOT NULL CHECK (tier IN ('S', 'A', 'B', 'C', 'D', 'F')),
+      tier CHAR(1) NOT NULL CHECK (tier IN ('S', 'A', 'B', 'C', 'D', 'F', 'W')),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (item_id, user_id)
     )
@@ -73,8 +80,9 @@ async function migrate(pool) {
 
   // A staging preview starts with no rows, so seed a few obviously fake
   // ones for the checks in dapp.json to find: items, and tiers from three
-  // fake people (negative ids, never a real account). Fixed ids and
-  // ON CONFLICT keep it idempotent across rebuilds. Never runs in production.
+  // fake people (negative ids, never a real account), two of whom want to
+  // get to one nobody has ranked. Fixed ids and ON CONFLICT keep it
+  // idempotent across rebuilds. Never runs in production.
   if (IS_STAGING) {
     await pool.query(`
       INSERT INTO tier_items (id, name, created_by, created_by_name)
@@ -92,17 +100,21 @@ async function migrate(pool) {
         (900001, -1, 'staging-demo-ana', 'S'), (900001, -2, 'staging-demo-ben', 'S'), (900001, -3, 'staging-demo-cy', 'A'),
         (900002, -1, 'staging-demo-ana', 'A'), (900002, -2, 'staging-demo-ben', 'B'),
         (900003, -1, 'staging-demo-ana', 'B'), (900003, -2, 'staging-demo-ben', 'C'), (900003, -3, 'staging-demo-cy', 'B'),
-        (900004, -1, 'staging-demo-ana', 'F'), (900004, -3, 'staging-demo-cy', 'D')
+        (900004, -1, 'staging-demo-ana', 'F'), (900004, -3, 'staging-demo-cy', 'D'),
+        (900005, -1, 'staging-demo-ana', 'W'), (900005, -2, 'staging-demo-ben', 'W'),
+        (900002, -3, 'staging-demo-cy', 'W')
       ON CONFLICT DO NOTHING
     `);
   }
 }
 
-// Items with the group's tier, how many people ranked each, and the
-// viewer's own tier ($1); the caller adds its WHERE, GROUP BY and ORDER.
+// Items with the group's tier, how many people ranked each and how many
+// want to, and the viewer's own place ($1); the caller adds its WHERE,
+// GROUP BY and ORDER. A W is worth no score, so AVG leaves it out.
 const SUMMARY = `
   SELECT i.id, i.name, i.created_by, i.created_by_name,
-         COUNT(v.user_id)::int AS votes,
+         COUNT(v.user_id) FILTER (WHERE v.tier <> 'W')::int AS votes,
+         COUNT(v.user_id) FILTER (WHERE v.tier = 'W')::int AS wants,
          AVG(CASE v.tier WHEN 'S' THEN 5 WHEN 'A' THEN 4 WHEN 'B' THEN 3
                          WHEN 'C' THEN 2 WHEN 'D' THEN 1 WHEN 'F' THEN 0 END)::float AS average,
          MAX(CASE WHEN v.user_id = $1 THEN v.tier END) AS yours
@@ -116,6 +128,7 @@ function shape(r, me) {
     by: r.created_by_name,
     mine: r.created_by === me,
     votes: r.votes,
+    wants: r.wants,
     average: r.votes ? Math.round(r.average * 100) / 100 : null,
     tier: r.votes ? tierOf(r.average) : null,
     yours: r.yours || null,
@@ -123,9 +136,9 @@ function shape(r, me) {
 }
 
 function routes(app, pool) {
-  // Every item, with the group's tier, how many people ranked it, and the
-  // viewer's own tier. Oldest first, so the list does not reshuffle under
-  // somebody who is sorting it.
+  // Every item, with the group's tier, how many people ranked it and how
+  // many want to, and the viewer's own place. Oldest first, so the list
+  // does not reshuffle under somebody who is sorting it.
   app.get('/api/items', async (req, res) => {
     try {
       const me = req.user ? req.user.id : null;
@@ -136,7 +149,7 @@ function routes(app, pool) {
           LIMIT $2`,
         [me, ITEMS_SHOWN]
       );
-      const { rows: people } = await pool.query('SELECT COUNT(DISTINCT user_id)::int AS n FROM tier_votes');
+      const { rows: people } = await pool.query("SELECT COUNT(DISTINCT user_id)::int AS n FROM tier_votes WHERE tier <> 'W'");
       res.json({
         me: req.user ? { id: me, username: req.user.username } : null,
         tiers: TIERS,
@@ -148,9 +161,9 @@ function routes(app, pool) {
     }
   });
 
-  // One item, and who put it in which tier: what tapping it shows. Best
-  // tier first, then by name. A tier from before names were kept, whose
-  // person has not ranked anything since, has no name (null).
+  // One item, who put it in which tier and who wants to: what tapping it
+  // shows. Best tier first, then by name. A tier from before names were
+  // kept, whose person has not ranked anything since, has no name (null).
   app.get('/api/items/:id', async (req, res) => {
     const id = idParam(req);
     if (!id) return res.status(404).json({ error: GONE });
@@ -160,12 +173,14 @@ function routes(app, pool) {
       if (!rows.length) return res.status(404).json({ error: GONE });
       const { rows: votes } = await pool.query(
         `SELECT user_id, username, tier FROM tier_votes WHERE item_id = $1
-          ORDER BY POSITION(tier IN 'SABCDF'), LOWER(username) NULLS LAST, user_id`,
+          ORDER BY POSITION(tier IN 'SABCDFW'), LOWER(username) NULLS LAST, user_id`,
         [id]
       );
+      const person = (v) => ({ name: v.username || null, you: v.user_id === me });
       res.json({
         item: shape(rows[0], me),
-        raters: votes.map((v) => ({ name: v.username || null, you: v.user_id === me, tier: v.tier })),
+        raters: votes.filter((v) => v.tier !== WANT).map((v) => ({ ...person(v), tier: v.tier })),
+        wanters: votes.filter((v) => v.tier === WANT).map(person),
       });
     } catch (err) {
       fail(res, err);
@@ -188,12 +203,13 @@ function routes(app, pool) {
     }
   });
 
-  // Put an item in one of your tiers, or take it out again with tier null.
+  // Put an item in one of your tiers or in Want to (W), or take it out
+  // again with tier null.
   app.put('/api/items/:id/tier', async (req, res) => {
     const id = idParam(req);
     if (!id) return res.status(404).json({ error: GONE });
     const tier = req.body ? req.body.tier : undefined;
-    if (tier !== null && !TIERS.includes(tier)) return res.status(400).json({ error: 'Pick S, A, B, C, D or F.' });
+    if (tier !== null && !PLACES.includes(tier)) return res.status(400).json({ error: 'Pick S, A, B, C, D or F, or Want to.' });
     try {
       if (tier === null) {
         await pool.query('DELETE FROM tier_votes WHERE item_id = $1 AND user_id = $2', [id, req.user.id]);
