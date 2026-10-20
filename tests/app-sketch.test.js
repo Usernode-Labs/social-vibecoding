@@ -222,25 +222,50 @@ test('dapp.json gets the card\'s icon at the first commit, or in the late commit
 
 // ── 3. Always a card ─────────────────────────────────────────────────────
 
-function fakePool({ usersFail = false } = {}) {
+// A pool that keeps the sketch rows: what startSketch owes, drawFor reads
+// and makes. `names`: each app's name, as its row has it.
+function fakePool({ usersFail = false, names = new Map() } = {}) {
   const queries = [];
+  const rows = new Map();
   let saved;
   const done = new Promise((resolve) => { saved = resolve; });
   return {
     queries,
     done,
+    names,
     async query(sql, params) {
       queries.push({ sql, params });
       if (/^SELECT username, display_name FROM users WHERE id = \$1$/.test(sql)) {
         if (usersFail) throw new Error('db down');
         return { rows: [{ username: 'jordan_t1004', display_name: 'Jordan' }] };
       }
-      if (/INSERT INTO app_sketches/.test(sql)) return { rows: [{ app_id: params[0] }] };
-      if (/SET status = 'ready'/.test(sql)) return { rows: [] };
+      if (/INSERT INTO app_sketches/.test(sql)) {
+        rows.set(params[0], { app_id: params[0], user_id: params[1], status: /'ready'/.test(sql) ? 'ready' : 'pending',
+          request: /'pending'/.test(sql) ? JSON.parse(params[2]) : null, created_at: new Date().toISOString() });
+        return { rows: [{ app_id: params[0] }] };
+      }
+      if (/FROM app_sketches s JOIN apps a/.test(sql)) {
+        const r = rows.get(params[0]);
+        return { rows: r ? [{ user_id: r.user_id, request: r.request, id: r.app_id, name: names.get(r.app_id) }] : [] };
+      }
+      if (/FROM app_sketches WHERE app_id = \$1/.test(sql)) return { rows: rows.has(params[0]) ? [rows.get(params[0])] : [] };
+      if (/SET status = 'ready'/.test(sql)) {
+        const r = rows.get(params[0]);
+        if (r) Object.assign(r, { status: 'ready', design: JSON.parse(params[1]), model: params[2], error: params[3] });
+        return { rows: [] };
+      }
       if (/UPDATE apps SET icon_emoji/.test(sql)) { saved({ params, queries }); return { rows: [] }; }
       return { rows: [] };
     },
   };
+}
+
+// A card owed (the route) and made (the project's setup, its `card` step).
+async function oweAndDraw(pool, start, deps) {
+  pool.names.set(start.app.id, start.app.name);
+  const owed = await sketch.startSketch(pool, start, deps);
+  if (owed && deps.llm?.isEnabled?.() !== false) await sketch.drawFor(pool, start.app.id, deps);
+  return owed;
 }
 
 function fakeLlm({ text = null, fail = null, gate = null } = {}) {
@@ -276,7 +301,7 @@ test('the model\'s card is saved with its spend, and its emoji becomes the proje
   const llm = fakeLlm({ text: JSON.stringify({ emoji: '📚', tagline: 'Our book club, every month', points: ['See this month\'s book', 'Suggest the next one'] }) });
   const spends = [];
   const limits = { async recordSpend(_pool, userId, cents, opts) { spends.push({ userId, cents, opts }); } };
-  assert.equal(await sketch.startSketch(pool, { app: { id: 9104, name: 'Page Turners' }, user: { id: 7 }, brief: BOOK_CLUB_BRIEF, timeZone: 'Europe/London' },
+  assert.equal(await oweAndDraw(pool, { app: { id: 9104, name: 'Page Turners' }, user: { id: 7 }, brief: BOOK_CLUB_BRIEF, timeZone: 'Europe/London' },
     { llm, limits, ws: { pushAppUpdate() {} }, now: () => new Date('2026-10-05T09:00:00Z') }), true);
   const args = await llm.asked;
   assert.equal(args.system, sketch.SKETCH_SYSTEM);
@@ -297,13 +322,13 @@ test('a refusal, an error or a slow model gives the description\'s card, with wh
   const deps = { limits: { async recordSpend() {} }, ws: { pushAppUpdate() {} } };
 
   const refused = fakePool();
-  await sketch.startSketch(refused, start, { ...deps, llm: fakeLlm({ text: 'I cannot help with that.' }) });
+  await oweAndDraw(refused, start, { ...deps, llm: fakeLlm({ text: 'I cannot help with that.' }) });
   await refused.done;
   assert.deepEqual([saved(refused).card.source, saved(refused).model, saved(refused).error], ['fallback', 'fallback', 'unusable_reply']);
   assert.equal(saved(refused).card.emoji, '🏃');
 
   const broken = fakePool();
-  await sketch.startSketch(broken, { ...start, app: { id: 9106, name: 'Sunday Run Club' } }, { ...deps, llm: fakeLlm({ fail: 'overloaded' }) });
+  await oweAndDraw(broken, { ...start, app: { id: 9106, name: 'Sunday Run Club' } }, { ...deps, llm: fakeLlm({ fail: 'overloaded' }) });
   await broken.done;
   assert.deepEqual([saved(broken).card.tagline, saved(broken).error], ['A tracker for our weekly miles', 'overloaded']);
 
@@ -311,12 +336,11 @@ test('a refusal, an error or a slow model gives the description\'s card, with wh
   const gate = new Promise((resolve) => { release = resolve; });
   const slow = fakePool();
   const began = Date.now();
-  await sketch.startSketch(slow, { ...start, app: { id: 9107, name: 'Sunday Run Club' } }, { ...deps, llm: fakeLlm({ text: '{}', gate }), modelWaitMs: 50 });
+  await oweAndDraw(slow, { ...start, app: { id: 9107, name: 'Sunday Run Club' } }, { ...deps, llm: fakeLlm({ text: '{}', gate }), modelWaitMs: 50 });
   await slow.done;
   assert.ok(Date.now() - began < 2000, 'not held by the model');
   assert.deepEqual([saved(slow).card.source, saved(slow).error], ['fallback', 'timeout']);
   release();
-  assert.ok(sketch.MODEL_WAIT_MS < sketch.SKETCH_WAIT_MS, 'the card is ready before creation stops waiting for it');
 }));
 
 test('without a model the card is made on the spot, ready, with its icon', () => held(async () => {
@@ -329,31 +353,6 @@ test('without a model the card is made on the spot, ready, with its icon', () =>
   assert.match(insert.sql, /VALUES \(\$1, \$2, 'ready', \$3::jsonb, 'fallback', NOW\(\)\)/);
   assert.equal(JSON.parse(insert.params[2]).emoji, '🎬');
   assert.ok(pool.queries.some((q) => /UPDATE apps SET icon_emoji/.test(q.sql) && q.params[1] === '🎬'));
-}));
-
-test('a late card is committed on its own, with dapp.json\'s icon and description when it has none', () => held(async () => {
-  const pushes = [];
-  const marks = [];
-  const pool = {
-    async query(sql, params) {
-      if (/FROM app_sketches WHERE app_id = \$1/.test(sql)) return { rows: [{ ...ROW, app_id: params[0], committed_at: null, created_at: new Date().toISOString() }] };
-      if (/SET committed_at = NOW\(\)/.test(sql)) { marks.push(params[0]); return { rows: [] }; }
-      return { rows: [] };
-    },
-  };
-  const github = {
-    async getFileContent(owner, repo, file, ref) { assert.deepEqual([file, ref], ['dapp.json', 'main']); return '{\n  "secrets": []\n}'; },
-    async pushFiles(owner, repo, files, opts) { pushes.push({ owner, repo, files, opts }); },
-  };
-  assert.equal(await sketch.commitWhenReady(pool, { appId: 31, name: 'Run Club', owner: 'usernode-bot', repo: 'run-club' }, { github }), true);
-  assert.deepEqual(pushes[0].files.map((f) => f.path), ['design/sketch.json', 'dapp.json']);
-  assert.deepEqual(JSON.parse(pushes[0].files[1].content), { description: 'Weekly miles for the whole club', icon: { emoji: '🏃' }, secrets: [] });
-  assert.equal(pushes[0].opts.message, 'Add the card Run Club was made with');
-  assert.deepEqual(marks, [31]);
-  // A dapp.json with an icon and a description of its own keeps them.
-  github.getFileContent = async () => JSON.stringify({ description: 'Ours', icon: { emoji: '🎲' }, secrets: [] });
-  await sketch.commitWhenReady(pool, { appId: 32, name: 'Run Club', owner: 'o', repo: 'r' }, { github });
-  assert.deepEqual(pushes[1].files.map((f) => f.path), ['design/sketch.json']);
 }));
 
 // ── 4. Not a screen ──────────────────────────────────────────────────────
@@ -463,7 +462,7 @@ test('making a card reads the creator\'s display name and the maker\'s own today
   const deps = { limits: { async recordSpend() {} }, ws: { pushAppUpdate() {} }, now };
   const llm = fakeLlm({ text: 'not json' });
   const pool = fakePool();
-  await sketch.startSketch(pool, { app: { id: 9111, name: 'Chore Rota' }, user: { id: 7, username: 'jordan_t1004' }, brief: 'A chore rota' }, { ...deps, llm });
+  await oweAndDraw(pool, { app: { id: 9111, name: 'Chore Rota' }, user: { id: 7, username: 'jordan_t1004' }, brief: 'A chore rota' }, { ...deps, llm });
   const args = await llm.asked;
   assert.match(args.user, /TODAY:\nSunday 4 October 2026 \(2026-10-04\), UTC\n\nCALENDAR /);
   assert.match(args.user, /THE CREATOR \(called "you" on the card\):\nJordan \(@jordan_t1004\)/);
@@ -471,33 +470,35 @@ test('making a card reads the creator\'s display name and the maker\'s own today
   // A creator that cannot be read is still named, by the session's username.
   const llm2 = fakeLlm({ text: 'not json' });
   const down = fakePool({ usersFail: true });
-  await sketch.startSketch(down, { app: { id: 9112, name: 'Chore Rota' }, user: { id: 7, username: 'jordan_t1004' }, brief: 'A chore rota' }, { ...deps, llm: llm2 });
+  await oweAndDraw(down, { app: { id: 9112, name: 'Chore Rota' }, user: { id: 7, username: 'jordan_t1004' }, brief: 'A chore rota' }, { ...deps, llm: llm2 });
   assert.match((await llm2.asked).user, /THE CREATOR \(called "you" on the card\):\n@jordan_t1004/);
   await down.done;
   // The maker's device's zone makes "today" theirs: 09:30 UTC on the 4th is
   // still the evening of the 3rd in Honolulu.
   const llm3 = fakeLlm({ text: 'not json' });
   const far = fakePool();
-  await sketch.startSketch(far, { app: { id: 9113, name: 'Chore Rota' }, user: { id: 7 }, brief: 'A chore rota', timeZone: 'Pacific/Honolulu' }, { ...deps, llm: llm3 });
+  await oweAndDraw(far, { app: { id: 9113, name: 'Chore Rota' }, user: { id: 7 }, brief: 'A chore rota', timeZone: 'Pacific/Honolulu' }, { ...deps, llm: llm3 });
   assert.match((await llm3.asked).user, /TODAY:\nSaturday 3 October 2026 \(2026-10-03\), Pacific\/Honolulu\n\nCALENDAR /);
   await far.done;
 }));
 
 // ── Where it is started and waited for ──────────────────────────────────
 
-test('creation waits a little for the card, the route starts it with the maker\'s time zone, and the make screen sends it', () => {
+test('the setup makes the card before its first commit, the route owes it with the maker\'s time zone, and the make screen sends it', () => {
   const creator = read('src/services/app-creator.js');
-  assert.match(creator, /const sketch = await appSketch\.whenReady\(pool, appId\)\.catch\(\(\) => null\);/);
-  assert.match(creator, /template: templateOf\(appRow\), sketch \}\);/);
+  // A step of the project's setup (a restart neither loses it nor makes it
+  // twice), before the repository, whose first commit carries it.
+  assert.match(creator, /await steps\.once\('card', \(\) => timing\.time\('card', \(\) => appSketch\.drawFor\(pool, appId\)\)\)/);
+  assert.match(creator, /return steps\.once\('repository',/);
+  assert.match(creator, /template: templateOf\(row\), sketch,/);
   // The first dapp.json's description: the creator's line, else the card's tagline (#4235).
-  assert.match(creator, /description: descriptionOf\(appRow\) \|\| appSketch\.taglineOf\(sketch\), template/);
-  assert.match(creator, /appSketch\.commitWhenReady\(pool, \{ appId, name, owner: botUsername, repo: slug \}\);/);
-  assert.equal(sketch.SKETCH_WAIT_MS, 30 * 1000);
+  assert.match(creator, /description: descriptionOf\(row\) \|\| appSketch\.taglineOf\(sketch\),/);
+  assert.doesNotMatch(creator, /commitWhenReady|whenReady/, 'no late commit: the card is never late');
   const routes = read('src/routes/apps.js');
   // Both doors that land on the made screen: the first session's and the
   // Create button's (MAKE_ORIGINS; tests/create-front-door.test.js).
   // A ready-made app (services/app-templates.js) has its own icon and nothing to sketch.
-  assert.match(routes, /const readyMade = appTemplates\.isReadyMade\(template\);\s+if \(MAKE_ORIGINS\.has\(req\.body\.from\) && !repoUrlNormalized && !readyMade\s+&& require\('\.\.\/services\/homeroom-bot-dm'\)\.normalizeBrief\(req\.body\.brief\)\) \{\s+await require\('\.\.\/services\/app-sketch'\)\.startSketch\(pool, \{/);
+  assert.match(routes, /if \(MAKE_ORIGINS\.has\(req\.body\.from\) && !repoUrlNormalized && !readyMade\s+&& homeroomBotDm\.normalizeBrief\(req\.body\.brief\)\) \{\s+await optional\('sketch', 'Sketch not owed', \(\) => require\('\.\.\/services\/app-sketch'\)\.startSketch\(db, \{/);
   assert.match(routes, /app: appRow, user: req\.user, brief: req\.body\.brief,\s+timeZone: typeof req\.body\.timeZone === 'string' \? req\.body\.timeZone\.slice\(0, 64\) : null,/);
   // A game's or Your own choice's line, the card's fallback tagline.
   assert.match(routes, /fallbackTagline: typeof req\.body\.taglineFallback === 'string' \? req\.body\.taglineFallback\.slice\(0, 200\) : null,/);

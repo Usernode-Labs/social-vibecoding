@@ -535,8 +535,8 @@ async function startContainer(nameOrId) {
   log.info('docker', 'Container started in place', { nameOrId });
 }
 
-// `docker restart` — used by the on-demand heal path (app-heal.js
-// requestHeal) for a container whose state is 'running' but whose HTTP
+// `docker restart` — used by app delivery's heal (app-heal.js heal, for an
+// app a person could not reach) for a container whose state is 'running' but whose HTTP
 // health endpoint stopped answering (hung process). Deliberately keeps the
 // long 10s grace where stopAndRemove now uses STOP_GRACE_SEC: heal stops a
 // container that is (nominally) live and may be mid-request, and it is not

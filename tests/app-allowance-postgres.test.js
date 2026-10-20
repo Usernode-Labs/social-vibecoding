@@ -21,12 +21,13 @@ const pool = {
     if (failNotifications && /INSERT INTO notifications/.test(sql)) throw new Error('Notification write failed');
     return client.query(sql, params);
   },
+  // The create route writes a project in one transaction: on the one
+  // connection this test has, one statement after another.
+  async connect() { return { query: (sql, params) => pool.query(sql, params), release() {} }; },
 };
 require('../src/db/pool').getPool = () => pool;
 require('../src/services/notifications').hydrateAndPush = async (_pool, row) => { pushes.push(row); };
 require('../src/services/ws').pushNotificationToUser = (id, event) => { pushes.push({ userId: id, ...event }); };
-require('../src/services/app-creator').createApp = async () => {};
-require('../src/services/app-forker').forkApp = async () => {};
 require('../src/services/events').record = async () => {};
 const allowance = require('../src/services/app-allowance');
 const { appRoutes } = require('../src/routes/apps');
@@ -62,7 +63,9 @@ test('app allowances: migration, create/fork, requests and admin review', async 
         collab_visibility VARCHAR(16) DEFAULT 'public', view_visibility VARCHAR(16) DEFAULT 'public',
         self_hosted BOOLEAN DEFAULT FALSE, forked_from JSONB,
         -- #4666: a new project's approval rule (You or the group) is written on create.
-        governance_rules JSONB);
+        governance_rules JSONB,
+        -- The workflow makes a new project (src/workflow/app-creation/).
+        creating_owner TEXT, creating_heartbeat_at TIMESTAMPTZ);
       CREATE TABLE user_app_blocks (user_id INTEGER, app_id INTEGER, PRIMARY KEY (user_id, app_id));
       CREATE TABLE app_collaborators (app_id INTEGER, user_id INTEGER, status TEXT,
         accepted_at TIMESTAMPTZ, PRIMARY KEY(app_id, user_id));

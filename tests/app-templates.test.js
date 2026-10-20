@@ -105,7 +105,7 @@ test('the allow-list: Empty, the default, the twenty ready-made apps and the fou
 // with, so that reconcile finds nothing to change.
 test('a ready-made app\'s icon is on its record from the start', () => {
   const route = fs.readFileSync(path.join(ROOT, 'src/routes/apps.js'), 'utf8');
-  assert.match(route, /const readyIcon = appTemplates\.isReadyMade\(template\) \? appTemplates\.get\(template\)\.icon \|\| null : null;\s+const \{ rows: templated \} = await pool\.query\(\s+`UPDATE apps SET template = \$1, icon_emoji = COALESCE\(\$3, icon_emoji\) WHERE id = \$2 RETURNING \*`,\s+\[template, appRow\.id, readyIcon\]/);
+  assert.match(route, /const readyIcon = appTemplates\.isReadyMade\(template\) \? appTemplates\.get\(template\)\.icon \|\| null : null;\s+const \{ rows: templated \} = await db\.query\(\s+`UPDATE apps SET template = \$1, icon_emoji = COALESCE\(\$3, icon_emoji\) WHERE id = \$2 RETURNING \*`,\s+\[template, appRow\.id, readyIcon\]/);
   for (const id of READY) {
     const dapp = JSON.parse(file(getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, { template: id }), 'dapp.json'));
     assert.deepEqual(dapp.icon, { emoji: appTemplates.get(id).icon }, id);
@@ -171,7 +171,9 @@ test('Empty is the scaffold every project always got, byte for byte', () => {
 test('app-creator scaffolds from the row, and a deleted starter\'s row retries as Empty', () => {
   const creator = fs.readFileSync(path.join(ROOT, 'src/services/app-creator.js'), 'utf8');
   assert.match(creator, /function templateOf\(row\) \{\s*const t = row\?\.template;\s*return typeof t === 'string' && appTemplates\.isTemplate\(t\) \? t : appTemplates\.DEFAULT_TEMPLATE;/);
-  assert.equal((creator.match(/template: templateOf\(appRow\)/g) || []).length, 2, 'both the GitHub and the local path');
+  // The starter's files come from the row (starterFiles), for the setup's
+  // first commit and for a deploy without GitHub alike.
+  assert.match(creator, /function starterFiles\(row, \{ repoUrl = null, sketch = null \} = \{\}\) \{[\s\S]{0,300}template: templateOf\(row\), sketch,/);
   // What templateOf answers for a project made from a starter before they went.
   for (const id of DELETED) assert.equal(appTemplates.isTemplate(id), false, id);
 });

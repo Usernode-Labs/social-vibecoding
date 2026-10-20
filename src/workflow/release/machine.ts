@@ -37,23 +37,35 @@ const ended = (name: 'done' | 'failed') => (s: RState, e: Event<WorkResultPayloa
     : { next: { name, data: { ...data, error: e.payload.error?.message ?? null } }, timer: null };
 };
 
-// Whether a process of the release is running its work now (Expired then
-// waits for it rather than give it up under it).
+// Whether the release's work is still its own to finish (Expired then
+// waits for it rather than give it up under it): a process of the release
+// is running it now, or one that may run it is alive, its work waiting out a
+// retry's backoff (a release whose processes stay is never abandoned for a
+// failed try of its work).
 interface Facts { running: boolean }
+const LIVE_SECONDS = 45;
 
 export function releaseMachine() {
   return defineMachine<RState, Facts>({
     name: MACHINE,
-    version: 1,
+    // 2: Expired waits for a release whose processes live (its facts).
+    version: 2,
     events: { Booted: release, Expired: () => ({}) },
     create: ['Booted'],
     terminal: ['done', 'failed', 'abandoned'],
     decode: (row) => (row.state === NONE ? { name: NONE, data: null } : { name: row.state as Name, data: row.data as Data }),
     async facts(tx, state, event, ctx) {
       if (event.type !== 'Expired') return { running: false };
+      const release = (state as { data?: Data }).data?.release ?? null;
       const { rows: [w] } = await tx.query(
-        `SELECT 1 FROM wf_work WHERE machine = $1 AND key = $2 AND kind = $3 AND status = 'running' AND lease_until > now()`,
-        [MACHINE, ctx.key, WORK.adopt]);
+        `SELECT 1 FROM wf_work WHERE machine = $1 AND key = $2 AND kind = $3
+            AND ((status = 'running' AND lease_until > now())
+              OR (status = 'queued' AND EXISTS (
+                    SELECT 1 FROM platform_processes p
+                     WHERE (p.release = $4 OR ($4 LIKE 'dev:%' AND p.release IS NULL))
+                       AND p.role <> 'web' AND p.state = 'serving'
+                       AND p.heartbeat_at > now() - make_interval(secs => $5))))`,
+        [MACHINE, ctx.key, WORK.adopt, release, LIVE_SECONDS]);
       return { running: !!w };
     },
     authorize: {

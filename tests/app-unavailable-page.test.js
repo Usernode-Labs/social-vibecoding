@@ -47,7 +47,7 @@ function stub(id, exports) {
 const poolPath = require.resolve('../src/db/pool');
 const appHealPath = require.resolve('../src/services/app-heal');
 stub(poolPath, { getPool: () => fakePool });
-stub(appHealPath, { requestHeal: (slug) => healCalls.push(slug) });
+stub(appHealPath, { reportVisit: (pool, slug) => healCalls.push(slug) });
 delete require.cache[require.resolve('../src/services/app-access')];
 delete require.cache[require.resolve('../src/routes/app-error')];
 
@@ -129,7 +129,7 @@ test('unknown hosts still render the generic page instead of erroring', async ()
   assert.match(res.body, /This app is restarting/);
 });
 
-test('a production-host hit kicks the on-demand heal for the slug', async () => {
+test('a production-host hit tells app delivery it could not be reached', async () => {
   healCalls.length = 0;
   await get({ host: PUB_HOST, 'sec-fetch-dest': 'document' });
   assert.deepEqual(healCalls, ['puzzle-chain']);

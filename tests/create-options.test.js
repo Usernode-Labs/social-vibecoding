@@ -100,10 +100,12 @@ test('the new repository\'s dapp.json carries a non-default rule, and only then'
   assert.deepEqual(readGovernance(dapp({ approverPolicy: 'invited', approvalsRequired: 3 })),
     { approvers: 'invited', approvals: 3 });
   const creator = fs.readFileSync(path.join(__dirname, '../src/services/app-creator.js'), 'utf8');
-  // The GitHub path also passes the first session's sketch, and its tagline
-  // when the row has no line (tests/app-sketch.test.js).
-  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\)(?: \|\| appSketch\.taglineOf\(sketch\))?, template: templateOf\(appRow\)(?:, sketch)? \}/g) || []).length, 2,
-    'both template paths (GitHub and local) pass the row\'s rule, its line and its starter');
+  // One place makes a project's starter files (starterFiles), for the
+  // setup's first commit and for a deploy without GitHub: the row's rule,
+  // its line (else the first session's card's tagline,
+  // tests/app-sketch.test.js) and its starter.
+  assert.match(creator, /governance: governanceOf\(row\), description: descriptionOf\(row\) \|\| appSketch\.taglineOf\(sketch\),\s+template: templateOf\(row\), sketch,/);
+  assert.match(fs.readFileSync(path.join(__dirname, '../src/services/staging.js'), 'utf8'), /require\('\.\/app-creator'\)\.starterFiles\(app, \{/);
 });
 
 test('"What is it?" is one optional line, tidied and bounded', () => {

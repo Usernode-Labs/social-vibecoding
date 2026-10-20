@@ -1281,7 +1281,7 @@ const STATES = [
     // for a new project's first version (#4392): the plan, built, and under
     // it the bot's thanks for answering over the project's card and its
     // build line. The records are the real flow's: the project (Just you),
-    // its first request (homeroom-bot-dm.js fileFirstVersion), the look that
+    // its first request (homeroom-bot-dm.js fileFirstRequest), the look that
     // wrote the plan and, once Build it was tapped, waits its turn to build
     // (homeroom-bot.js awaitGo, goAhead), the plan's card with its button
     // decided (sendPlanCard, decidePlanTap) and the thanks

@@ -6,6 +6,7 @@
 import type { Json, WorkContext, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { itemKind, runKind, MAX_ITEMS } from './machine.ts';
+import { bootRelease } from '../release/boot.ts';
 
 // What a job's I/O reads: the platform's configuration and its pool.
 export interface JobDeps { config: any; pool: any }
@@ -18,6 +19,11 @@ export interface Job {
   // due time once (a six-hourly job is not run at every first boot).
   leaderSweep?: string;
   leaseMs?: number;
+  // What it does depends on the build (its keys, its catalogs, its
+  // environment): only the newest release's processes run it. An older
+  // build's run during a rollout does nothing (`skipped: older_build`), and
+  // its targets are claimed only by a process of the build that found them.
+  newestOnly?: boolean;
   // One run: what it found is its result (its status, and `items`: the
   // targets owed an effect of their own). `ctx.input.previous` is the last
   // successful run's result.
@@ -28,6 +34,22 @@ export interface Job {
     leaseMs?: number;
     maxAttempts?: number;
   };
+}
+
+// Whether this process runs the newest build: the build of the workflow
+// process that started serving last (`platform_processes`, live). By when it
+// started, not by when its release was first seen, so a rollback to an older
+// build, or a rollout of the same build with another configuration, is the
+// newest once it serves. A platform with no process recorded (a test) has no
+// older build.
+const LIVE_SECONDS = 45;
+async function newestBuild(pool: any): Promise<boolean> {
+  const own = String(process.env.GIT_SHA || '').trim().slice(0, 40) || null;
+  const { rows: [newest] } = await pool.query(
+    `SELECT release FROM platform_processes
+      WHERE state = 'serving' AND role <> 'web' AND heartbeat_at > now() - make_interval(secs => $1)
+      ORDER BY started_at DESC LIMIT 1`, [LIVE_SECONDS]);
+  return !newest || (newest.release ?? null) === own;
 }
 
 // A result is stored as instance data: JSON, and nothing a Date or an
@@ -47,7 +69,13 @@ export function clockServices(jobs: readonly Job[], deps: JobDeps): Record<strin
       maxLostAttempts: 3,
       leaseMs: job.leaseMs ?? 120000,
       concurrency: 1,
-      async run(ctx) { return json(await job.run(ctx, deps)); },
+      async run(ctx) {
+        if (!job.newestOnly) return json(await job.run(ctx, deps));
+        const release = bootRelease();
+        if (!await newestBuild(deps.pool)) return { skipped: 'older_build' };
+        const result = await job.run(ctx, deps);
+        return json(result && typeof result === 'object' && !Array.isArray(result) ? { ...result, release } : result);
+      },
     };
     if (job.item) {
       const item = job.item;
@@ -59,6 +87,7 @@ export function clockServices(jobs: readonly Job[], deps: JobDeps): Record<strin
         backoffMs: (a) => Math.min(10 * 60 * 1000, 60 * 1000 * 2 ** (a - 1)),
         leaseMs: item.leaseMs ?? 120000,
         concurrency: item.concurrency ?? 2,
+        ...(job.newestOnly ? { ownRelease: true } : {}),
         async run(ctx) { return json(await item.run(ctx, deps)); },
       };
     }
@@ -298,6 +327,75 @@ export const JOBS: readonly Job[] = Object.freeze([
     },
   },
 
+  // ── Production apps: what their runtimes and repositories say ────────
+  // (What follows from it is app delivery's: app-delivery/.)
+  {
+    // Every running app's runtime: one not running is reported Unhealthy,
+    // keyed by the run; app delivery decides whether to heal it.
+    // APP_HEAL_INTERVAL_MS=0 switches it off.
+    name: 'app-health',
+    get everyMs() { return legacy('services/app-heal').intervalMs(null) || 24 * HOUR; },
+    leaseMs: 5 * MIN,
+    run: (ctx: WorkContext, { pool, config }: JobDeps) => {
+      const heal = legacy('services/app-heal');
+      return heal.intervalMs(config) ? heal.scan(config, pool, { n: ctx.input.n, shouldStop: stopped(ctx) }) : { off: true };
+    },
+  },
+  {
+    // Every running app's main on GitHub: a commit production does not run
+    // is reported MainMoved, keyed by the commit; app delivery decides
+    // whether to deploy it. MAIN_DRIFT_POLL_MS sets how often.
+    name: 'main-drift',
+    get everyMs() { return legacy('services/main-drift-poller').intervalMs(); },
+    leaseMs: 10 * MIN,
+    run: (ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/main-drift-poller').scan(config, pool, { shouldStop: stopped(ctx) }),
+  },
+
+  // ── The build's own: what only the newest build may do ──────────────
+  {
+    // Ready-made apps' images, built ahead under this build's keys
+    // (services/starter-images.js): each key owed a build a target of its
+    // own, one build of it at a time.
+    name: 'starter-images', everyMs: MIN, newestOnly: true,
+    run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/starter-images').targets(config, pool),
+    item: {
+      concurrency: 3,
+      maxAttempts: 1,
+      leaseMs: 5 * MIN,
+      run: (ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/starter-images').buildTarget(config, pool, ctx.input.input),
+    },
+  },
+  {
+    // The app-host gate follows APP_GATE, in both directions: on brings it up
+    // and routes every app through it, off routes them all straight back
+    // (services/kubernetes.js reconcileAppGateIngresses). The newest build's
+    // setting (a change of APP_GATE alone, a rollback): an older build still
+    // running during a rollout never routes the fleet back by its own. On
+    // Kubernetes, where the platform runs its cluster's maintenance.
+    name: 'app-gate', everyMs: 10 * MIN, newestOnly: true, leaseMs: 5 * MIN,
+    run: (_ctx: WorkContext, { config }: JobDeps) => (legacy('services/application-runtime').mode(config) === 'kubernetes'
+      ? legacy('services/kubernetes').reconcileAppGateIngresses(config)
+      : { off: true }),
+  },
+  {
+    // The translation of this build's new interface text
+    // (services/language-sync-runner.js): a catalog not yet translated, or a
+    // batch to collect, is a target, one pass at a time. Paid: a batch is
+    // submitted once per catalog. LANGUAGE_SYNC_ENABLED=false switches it
+    // off.
+    name: 'language-sync', everyMs: 10 * MIN, newestOnly: true,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/language-sync-runner').look({ pool }),
+    item: {
+      concurrency: 1,
+      leaseMs: 10 * MIN,
+      run: async (ctx: WorkContext, { pool, config }: JobDeps) => {
+        const out = await legacy('services/language-sync-runner').runOnce({ config, pool, deps: { steps: ctx.steps() } });
+        if (!out?.skipped) legacy('services/logger').info('language-sync', 'Translation pass', out);
+        return out;
+      },
+    },
+  },
+
   // ── Previews: outside facts about the runtimes and the servers ───────
   // (What the preview machine decides about a preview it holds, its idle
   // give-back and the checks it owes, is its own deadline: preview/.)
@@ -334,16 +432,8 @@ export const JOBS: readonly Job[] = Object.freeze([
     // build's, handed to the preview machine. Only the newest build acts: an
     // older Pod still running during a rollout would judge the new build's
     // previews by its own environment, so its run looks at nothing.
-    name: 'preview-env', everyMs: 15 * MIN, leaseMs: 10 * MIN,
-    run: async (_ctx: WorkContext, { pool, config }: JobDeps) => {
-      const own = String(process.env.GIT_SHA || '').trim().slice(0, 40);
-      if (own && own !== 'dev') {
-        const { rows: [newest] } = await pool.query(
-          `SELECT key FROM wf_instances WHERE machine = 'release' ORDER BY created_at DESC LIMIT 1`);
-        if (newest && newest.key !== `release:${own}`) return { skipped: 'older_build' };
-      }
-      return legacy('services/staging-reap').tellStaleEnv(config);
-    },
+    name: 'preview-env', everyMs: 15 * MIN, leaseMs: 10 * MIN, newestOnly: true,
+    run: (_ctx: WorkContext, { config }: JobDeps) => legacy('services/staging-reap').tellStaleEnv(config),
   },
   {
     // Staging databases nothing can reach any more (no session, build or

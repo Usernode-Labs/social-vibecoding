@@ -16,7 +16,7 @@
 // workflow-foundation's design-leader-duties.md is the design.
 
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
-import type { Event, Json, Outcome, TransitionContext, WorkRequest, WorkResultPayload } from '../kernel/index.ts';
+import type { Event, Json, Outcome, TransitionContext, WorkRef, WorkRequest, WorkResultPayload } from '../kernel/index.ts';
 
 export const MACHINE = 'clock';
 export const clockKey = (job: string) => `clock:${job}`;
@@ -111,11 +111,30 @@ const TARGET = /^[A-Za-z0-9:._-]{1,160}$/;
 export const itemKey = (target: string, gen: string) => `item:${target}@${gen}`;
 const targetOf = (workKey: string) => workKey.slice('item:'.length, workKey.lastIndexOf('@'));
 
-function itemsOf(jobName: string, run: number, result: Json, busy: ReadonlySet<string>): { items: WorkRequest[]; status: Json } {
+function itemsOf(jobName: string, run: number, result: Json, f: Facts):
+  { items: WorkRequest[]; cancel: WorkRef[]; status: Json } {
+  const { outstanding, unfinished } = f;
   if (!result || typeof result !== 'object' || Array.isArray(result) || !Array.isArray((result as any).items)) {
-    return { items: [], status: result ?? null };
+    return { items: [], cancel: [], status: result ?? null };
   }
   const { items, ...status } = result as { items: Json[] } & Record<string, Json>;
+  // A job only the newest build runs names its build: its targets are
+  // claimed only by a process of it (clock/services.ts newestOnly). An item
+  // an older build's run handed out is claimed by no process of this one,
+  // and its own may be gone: once nobody works it (queued, or its lease
+  // lapsed) it is given up, and its target asked for again. One a live
+  // process of that build is working stays its own. (Its row was read
+  // locked, so no process claims it between this read and the cancel.)
+  const release = typeof status.release === 'string' ? status.release : null;
+  const cancel: WorkRef[] = [];
+  const busy = new Set<string>();
+  const handedOn = new Map<string, string>();
+  for (const [target, o] of outstanding) {
+    if (release && o.release !== release && o.idle) {
+      cancel.push({ kind: itemKind(jobName), key: o.key });
+      handedOn.set(target, o.key);
+    } else busy.add(target);
+  }
   const out: WorkRequest[] = [];
   const seen = new Set<string>();
   for (const it of items) {
@@ -125,14 +144,27 @@ function itemsOf(jobName: string, run: number, result: Json, busy: ReadonlySet<s
     const gen = o?.gen == null ? `run${run}` : String(o.gen);
     if (!TARGET.test(target) || !TARGET.test(gen) || busy.has(target) || seen.has(target)) continue;
     seen.add(target);
-    out.push({ kind: itemKind(jobName), key: itemKey(target, gen), input: { job: jobName, target, input: (o!.input ?? null) as Json } });
+    // What the target's last item did, when it did not finish (given up
+    // here, cancelled, failed, out of tries): the new item carries on from
+    // its checkpoint (`continues`), so an effect it made (a paid batch
+    // submitted) is not made again. A target's progress is the target's,
+    // not one item's.
+    const from = handedOn.get(target) ?? unfinished.get(target);
+    out.push({ kind: itemKind(jobName), key: itemKey(target, gen),
+      input: { job: jobName, target, input: (o!.input ?? null) as Json, ...(release ? { release } : {}) },
+      ...(from ? { continues: from } : {}) });
   }
-  return { items: out, status: { ...status, items: out.length } };
+  return { items: out, cancel, status: { ...status, items: out.length } };
 }
 
-// What a run's result needs to know: the targets with an item outstanding.
-export interface Facts { busy: ReadonlySet<string> }
-const NO_FACTS: Facts = { busy: new Set() };
+// What a run's result needs to know: the targets with an item outstanding,
+// with the release each was handed out for, and whether nobody works it now
+// (queued, or claimed by a process whose lease lapsed).
+interface Outstanding { key: string; release: string | null; idle: boolean }
+// And, by target, the key of its latest item when that item ended without
+// succeeding and kept a checkpoint.
+export interface Facts { outstanding: ReadonlyMap<string, Outstanding>; unfinished: ReadonlyMap<string, string> }
+const NO_FACTS: Facts = { outstanding: new Map(), unfinished: new Map() };
 
 function ran(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext): Outcome<CState> {
   const p = e.payload;
@@ -140,7 +172,7 @@ function ran(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionCont
   // An earlier run's late result (Run now raced it, a retired run): nothing.
   if (d.running == null || p.workKey !== `run:${d.running}`) return { next: s };
   const okRun = e.type === 'WorkSucceeded';
-  const { items, status } = okRun ? itemsOf(d.job, d.running, p.result ?? null, f.busy) : { items: [], status: null };
+  const { items, cancel, status } = okRun ? itemsOf(d.job, d.running, p.result ?? null, f) : { items: [], cancel: [], status: null };
   const ms = d.startedAt ? ctx.now.getTime() - Date.parse(d.startedAt) : null;
   const failures = okRun ? 0 : d.failures + 1;
   const last: Last = { n: d.running, at: iso(ctx.now), ok: okRun, ms, result: status, error: okRun ? null : (p.error?.message ?? 'failed').slice(0, 500) };
@@ -148,17 +180,18 @@ function ran(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionCont
     ...d, failures, last, kept: okRun ? status : d.kept,
     due: iso(okRun ? at(ctx, d.everyMs) : at(ctx, retryInMs(d, failures))),
   };
-  if (s.name === 'retired') return { next: { name: 'retired', data: { ...next, running: null, startedAt: null } }, work: items };
+  const given = cancel.length ? { cancel } : {};
+  if (s.name === 'retired') return { next: { name: 'retired', data: { ...next, running: null, startedAt: null } }, work: items, ...given };
   // An admin's Run now during the run: at once.
-  if (d.again) return start({ ...next, due: iso(ctx.now) }, ctx, items);
+  if (d.again) return { ...start({ ...next, due: iso(ctx.now) }, ctx, items), ...given };
   if (okRun && d.everyMs === 0) {
     // A continuous job runs again at once, unless it had nothing to do and
     // asked to rest (`restMs`: the push sender of a process that sends none).
     const rest = Math.min(Math.max(0, Number((status as any)?.restMs) || 0), CONTINUOUS_RETRY_MAX_MS);
-    if (!rest) return start({ ...next, due: iso(ctx.now) }, ctx, items);
-    return wait({ ...next, due: iso(at(ctx, rest)) }, { work: items });
+    if (!rest) return { ...start({ ...next, due: iso(ctx.now) }, ctx, items), ...given };
+    return wait({ ...next, due: iso(at(ctx, rest)) }, { work: items, ...given });
   }
-  return wait(next, { work: items });
+  return wait(next, { work: items, ...given });
 }
 
 function itemDone(s: Live, e: Event<WorkResultPayload>, _f: Facts, ctx: TransitionContext): Outcome<CState> {
@@ -187,7 +220,9 @@ export function clock() {
   const results = { WorkSucceeded: { to: workResult }, WorkFailed: { to: workResult }, WorkExhausted: { to: workResult } };
   return defineMachine<CState, Facts>({
     name: MACHINE,
-    version: 1,
+    // 2: a newest-build job's targets carry its release (an older build's
+    // transition would hand them out without it, unclaimable).
+    version: 2,
     // A job that runs every minute writes two events a run: a week of them is
     // history enough.
     retainDays: 7,
@@ -201,10 +236,34 @@ export function clock() {
       // Only a run's result that hands targets back needs to know which are
       // busy (most jobs hand none).
       if (p.kind !== runKind(state.data.job) || !Array.isArray((p.result as any)?.items)) return NO_FACTS;
+      // Locked: a process claims an item only while nobody holds its row
+      // (services.ts claim, SKIP LOCKED), so what is read idle here stays
+      // idle until this transition has given it up.
       const { rows } = await tx.query(
-        `SELECT work_key FROM wf_work WHERE machine = $1 AND key = $2 AND kind = $3 AND status <> 'settled'`,
+        `SELECT work_key, input->>'release' AS release,
+                (status = 'queued' OR (status = 'running' AND lease_until <= now())) AS idle
+           FROM wf_work WHERE machine = $1 AND key = $2 AND kind = $3 AND status <> 'settled'
+            FOR UPDATE`,
         [MACHINE, ctx.key, itemKind(state.data.job)]);
-      return { busy: new Set(rows.map((r: { work_key: string }) => targetOf(r.work_key))) };
+      // Each target's latest settled item that kept a checkpoint and did not
+      // succeed, unless an item of that target succeeded after it.
+      const { rows: left } = await tx.query(
+        `SELECT DISTINCT ON (t) t, work_key FROM (
+            SELECT split_part(substr(w.work_key, 6), '@', 1) AS t, w.work_key, w.created_at FROM wf_work w
+             WHERE w.machine = $1 AND w.key = $2 AND w.kind = $3 AND w.status = 'settled' AND w.checkpoint IS NOT NULL
+               AND COALESCE(w.result->>'outcome', '') <> 'succeeded'
+               AND NOT EXISTS (
+                 SELECT 1 FROM wf_work n
+                  WHERE n.machine = w.machine AND n.key = w.key AND n.kind = w.kind AND n.status = 'settled'
+                    AND n.result->>'outcome' = 'succeeded' AND n.created_at > w.created_at
+                    AND split_part(substr(n.work_key, 6), '@', 1) = split_part(substr(w.work_key, 6), '@', 1))) c
+          ORDER BY t, created_at DESC`,
+        [MACHINE, ctx.key, itemKind(state.data.job)]);
+      return {
+        outstanding: new Map(rows.map((r: { work_key: string; release: string | null; idle: boolean }) =>
+          [targetOf(r.work_key), { key: r.work_key, release: r.release ?? null, idle: !!r.idle }])),
+        unfinished: new Map(left.map((r: { t: string; work_key: string }) => [r.t, r.work_key])),
+      };
     },
     authorize: {
       Arm: (e) => (e.source.kind === 'system' ? ok() : reject('system_only')),

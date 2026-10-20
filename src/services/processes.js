@@ -52,11 +52,9 @@ const KINDS = Object.freeze([
   'teardown',       // an app being torn down (app-teardown.js)
   'deploy',         // a production deploy, by app slug (app-deploy-status.js)
   'agent_turn',     // the Mayor's turn in an agent session (mayor/agent-turn.js)
-  'app_creation',   // an app being created (app-creation-owner.js)
   'shots_eval',     // a shots eval trial (shots-eval-runner.js)
   'global_turn',    // a Global Chat turn (routes/global-chat.js)
   'bench_trial',    // a bench trial run here (bench/lane.js)
-  'app_heal',       // an app being healed, by slug (app-heal.js)
   'warm',           // a session's worker this process keeps warm (worker.js): a MARKER
 ]);
 const KNOWN = new Set(KINDS);

@@ -1178,7 +1178,13 @@ async function becomeLeader() {
   // start(). Nor are the platform's scheduled jobs, retention to digests to
   // the push sender: each is a clock of the workflow, src/workflow/clock/;
   // nor the read-only database roles, set up with the schema,
-  // services/db-roles.js.)
+  // services/db-roles.js. Nor are production apps' health and main's
+  // drift: clocks that tell app delivery, src/workflow/app-delivery/; a new
+  // project's making: src/workflow/app-creation/; the hosted-asset
+  // backend, the app-host gate's routing and the bench suites: the
+  // release's work, in the new build; the ready-made apps' images and the
+  // translation of the build's new text: clocks that only the newest build
+  // runs.)
 
   // What leader work keeps in memory and an admin screen reads, written for
   // the processes that do not lead (services/leader-status.js): a web process
@@ -1188,64 +1194,6 @@ async function becomeLeader() {
   leaderStatus.provide('bench-lane', () => require('./src/services/bench/lane').laneStatus());
   leaderStatus.start({ pool: getPool(config) });
 
-  // #2045: reconcile the shared hosted-asset backend once per rollout.
-  //
-  // It is otherwise only reconciled from deployApplication, which means a
-  // fix to how it is BUILT does not reach a backend that already exists
-  // until some child app happens to deploy. An app whose Ingress already
-  // carries the asset paths then answers 503 on every one of them — it
-  // cannot detect that, cannot serve those paths itself because the Ingress
-  // rule wins, and cannot fix it from app code. That is the state #2042
-  // left the fleet in, and it is what this call ends.
-  //
-  // Leader-only and fire-and-forget: the backend is singleton
-  // infrastructure, so reconciling it from both colors during a rollout
-  // would race two read-then-replace writes at the same Deployment for no
-  // benefit. Failure is logged and nothing else — an app deploy retries it,
-  // and a platform that cannot reach its own cluster has louder problems.
-  if (require('./src/services/application-runtime').mode(config) === 'kubernetes') {
-    require('./src/services/kubernetes').ensurePlatformAssetBackend(config)
-      .then((name) => log.info('server', 'Hosted-asset backend reconciled', { name }))
-      .catch((err) => log.warn('server', 'Hosted-asset backend reconcile deferred', { err: err.message }));
-    // The app-host gate follows APP_GATE on every boot, in both directions:
-    // on brings it up and routes every app through it, off routes them all
-    // straight back (services/kubernetes.js reconcileAppGateIngresses).
-    require('./src/services/kubernetes').reconcileAppGateIngresses(config)
-      .then((r) => log.info('server', 'App-host gate routing reconciled', r))
-      .catch((err) => log.warn('server', 'App-host gate routing reconcile deferred', { err: err.message }));
-  }
-
-  // A project being set up when its process died is resumed, not failed
-  // (services/app-creation-owner.js): each attempt keeps a heartbeat on its
-  // row, and the leader takes over one that went quiet, at boot and every
-  // minute after. A row nobody owns (from before that) is taken by the old
-  // boot rule: at boot, once it is ten minutes old.
-  await require('./src/services/app-creation-owner').start(config).catch(() => {});
-  // And the first session's card a restart kept out of a new repository
-  // (services/app-sketch.js sweepUncommitted): every quarter hour.
-  require('./src/services/app-sketch').startCommitSweep(config);
-  // Ready-made apps' images, built before anybody makes a project from one
-  // (services/starter-images.js): at boot every one whose code this release
-  // changed, then every minute what is queued (Admin > Templates' Rebuild) or
-  // failed. Not in a staging preview, nor with STARTER_PREBUILDS=off.
-  require('./src/services/starter-images').start(config, getPool(config));
-
-  // Interface text merged in English and not yet in Homeroom's other
-  // languages is translated and put to the community as one proposal. Every
-  // three hours; a whole language goes as a Message Batch. See
-  // services/language-sync-runner.js.
-  require('./src/services/language-sync-runner').start(config, getPool(config));
-
-  // Periodically check imported / bot-owned repos for new commits on
-  // `main` we didn't make ourselves and redeploy via the same path
-  // that the dev-chat merge flow uses. See main-drift-poller.js.
-  require('./src/services/main-drift-poller').start(config);
-  // Production app-container watchdog (#426): restart/rebuild
-  // status='running' apps whose `usernode-app-<slug>` container is
-  // stopped or missing — the drift poller above only acts on new
-  // commits, so without this a dead container 502s forever. Not gated
-  // on GitHub config: the fast `docker start` path needs none.
-  require('./src/services/app-heal').start(config);
   // #892: resolve progress-estimate rows orphaned by a server restart
   // mid-run. The live backfill only exists inside the turn, so ~10% of runs
   // historically stayed unscored forever — which the v1-vs-v2 accuracy
@@ -1261,13 +1209,6 @@ async function becomeLeader() {
   // Leader-only for the same reason: a trial builds two copies and runs the
   // shots agent, which costs money. Inert until an admin launches an eval.
   require('./src/services/shots-eval-runner').startRunner(config);
-  // #3654 Core v1: the default suite, made from its checked-in definition in
-  // the background a little after boot (reads GitHub only; a no-op once it
-  // is done). Production and staging, when GitHub is configured.
-  require('./src/services/bench/core').startOnBoot(config);
-  // #3737: and the taste eval's suite, from its checked-in briefs (rows
-  // only: no GitHub, model or worker; nothing runs until an admin launches).
-  require('./src/services/bench/taste').startOnBoot(config);
   // Adopt any worker containers left over from a previous server run —
   // either still executing or already exited but un-finalized. These
   // orphans are a feature, not a bug: workers are intentionally detached
@@ -1323,18 +1264,6 @@ async function becomeLeader() {
   leaderTimers.every('left-warm-worker-sweep', () => sweepLeftWarmWorkers(config)
     .catch((err) => log.warn('server', 'Left-behind warm worker sweep failed', { err: err.message })),
   LEFT_WARM_SWEEP_MS, { firstDelayMs: LEFT_WARM_SWEEP_MS });
-
-  // A project created with a description files it as its first request once
-  // its repository holds the starter (services/homeroom-bot-dm.js
-  // FILEABLE_SQL; 15 Oct 2026, while it is still being set up). The
-  // creation hooks in app-creator.js do it; this files one the hooks missed
-  // or could not file yet, whether or not the Homeroom bot is on. A no-op on
-  // staging.
-  const runFirstRequestSweep = () => require('./src/services/homeroom-bot-dm')
-    .sweepFirstVersions(getPool(config), config)
-    .then((n) => { if (n) log.info('apps', 'First requests filed', { filed: n }); })
-    .catch((err) => log.warn('apps', 'First-request sweep failed', { err: err.message }));
-  leaderTimers.every('first-request-sweep', runFirstRequestSweep, 5 * 60 * 1000);
 
   // A turn whose process died, reaped (the auto-pause, the stale-PR policy
   // and the archived volume GC are the proposal machine's: src/workflow/
@@ -4646,16 +4575,6 @@ async function cleanup() {
   try { require('./src/services/shots-eval-runner').stopRunner(); } catch (err) {
     log.warn('server', 'Stopping the shots eval runner failed', { err: err.message });
   }
-  // The leader's sweeps on timers of their own: none may run beside the new
-  // leader's while this process finishes its work. A creation under way here
-  // keeps its own heartbeat until it ends.
-  for (const [name, stop] of [
-    ['app creation', () => require('./src/services/app-creation-owner').stop()],
-    ['sketch commit', () => require('./src/services/app-sketch').stopCommitSweep()],
-    ['starter image', () => require('./src/services/starter-images').stop()],
-  ]) {
-    try { stop(); } catch (err) { log.warn('server', `Stopping the ${name} sweep failed`, { err: err.message }); }
-  }
   // The bot's builds and the bench's trials under way here are durable
   // builds (services/build-runs.js). A process finishing its work only
   // quiesces the workflow runtime below, so each goes on here to its end,
@@ -4665,7 +4584,6 @@ async function cleanup() {
   // once without a drain or at the drain's deadline, stops each at its next
   // step, its turn left running in its worker, and gives its work item up, so
   // the next leader carries it on from the step it saved.
-  const languageSyncStop = require('./src/services/language-sync-runner').stop();
   // The workflow runtime has its own pool; its running work reports nothing,
   // and gives its lease up so the next leader claims it at once.
   // A process finishing its work only quiesces it here (no slot, timer or
@@ -4825,7 +4743,7 @@ async function cleanup() {
     let poolTimer = null;
     try {
       await Promise.race([
-        Promise.all([languageSyncStop, workflowStop]).then(() => shutdownPool.end()),
+        workflowStop.then(() => shutdownPool.end()),
         new Promise((resolve) => { poolTimer = setTimeout(resolve, POOL_CLOSE_TIMEOUT_MS); }),
       ]);
       log.info('server', 'Pool closed', { durationMs: Date.now() - poolStartedAt });

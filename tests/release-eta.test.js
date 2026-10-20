@@ -391,7 +391,7 @@ test('converged clears the recorded run with the stall', async () => {
 
 test('the drift poller reads the column the watch clears', () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'services', 'main-drift-poller.js'), 'utf8');
-  assert.match(src, /SELECT id, slug, repo_url, main_sha, self_hosted, release_stall, release_run,/);
+  assert.match(src, /SELECT id, slug, repo_url, main_sha, last_deploy_at, self_hosted, release_stall, release_run,/);
   const schema = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'db', 'schema.sql'), 'utf8');
   assert.match(schema, /ALTER TABLE apps ADD COLUMN IF NOT EXISTS release_run JSONB;/);
 });

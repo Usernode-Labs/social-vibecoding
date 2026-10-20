@@ -8,8 +8,8 @@
  * as it was made: City Tier List (newcomer run, 20 Oct 2026) took 32.2 s
  * from Make it to live, 19.1 s of it the image build, for code every city
  * tier list shares. Now each ready-made app's image is built once, here,
- * and a new project made from it deploys that image instead
- * (services/app-creator.js finalizeDeploy).
+ * and a new project made from it deploys that image instead (its first
+ * deploy, services/staging.js deployProduction `starter`).
  *
  * THE SAME CODE. services/template.js writes nothing of one project's into
  * what its image is built from: the page's name is filled in at runtime
@@ -23,11 +23,14 @@
  * builds from its repository as every change does.
  *
  * BUILT AHEAD, NEVER ON A PERSON'S FIRST PROJECT (Evan, 20 Oct 2026). The
- * leader builds every ready-made app whose current key has no image yet:
- * when it starts (a release that changes a starter or the generator changes
- * the keys), and every SWEEP_MS after, which also retries a failed build
- * (MAX_ATTEMPTS, RETRY_AFTER_MS apart) and takes over one whose builder went
- * quiet (LAPSE_SECONDS). Admin > Templates lists them and queues a Rebuild.
+ * starter-images clock (src/workflow/clock/) builds every ready-made app
+ * whose current key has no image yet, each key a target of its own (one
+ * build of it at a time, under the workflow's lease): its first run after a
+ * release (a release that changes a starter or the generator changes the
+ * keys), and every minute after, which also retries a failed build
+ * (MAX_ATTEMPTS, RETRY_AFTER_SECONDS apart) and one whose process went away
+ * mid-build. Only the newest build runs it: the keys are its own. Admin >
+ * Templates lists them and queues a Rebuild.
  * A project made while its image is still building waits for it, up to
  * WAIT_MS; one with no image (queued, failed, prebuilds off) builds its own
  * as before, so nobody waits on a build that has not started.
@@ -43,9 +46,8 @@
  * written, and a project tags the image as its own (app-respawn.js runs
  * `usernode-app-<slug>:latest`).
  *
- * NOT IN A STAGING PREVIEW, which runs the leader against a clone of
- * production's database (app-creation-owner.js has the same rule), and not
- * with STARTER_PREBUILDS=off. A preview still uses an image production
+ * NOT IN A STAGING PREVIEW, which runs against a clone of production's
+ * database (and arms no clock), and not with STARTER_PREBUILDS=off. A preview still uses an image production
  * built under the same key.
  *
  * The platform never deletes a registry image (docs/app-data-retention.md),
@@ -64,14 +66,17 @@ const appTemplates = require('./app-templates');
 // built that neither the files nor the recipe show.
 const VERSION = 'v1';
 const SOURCE_REPO = 'homeroom-starter-images';
-const SWEEP_MS = 60 * 1000;
-const HEARTBEAT_MS = 20 * 1000;
-const LAPSE_SECONDS = 120;
 const MAX_ATTEMPTS = 3;
+// An older build's builder (its owner token and heartbeat, before the
+// clock) is gone after this long without a beat.
+const OLD_OWNER_LAPSE_SECONDS = 120;
 // After the n-th failed attempt, the next waits n times this.
 const RETRY_AFTER_SECONDS = 5 * 60;
 // Builds run at once: a release that changes the generator changes every key.
 const CONCURRENCY = 3;
+// The clock's targets, as the workflow keeps them (src/workflow/clock/).
+const CLOCK_KEY = 'clock:starter-images';
+const ITEM_KIND = 'clock.starter-images.item';
 const WAIT_MS = 60 * 1000;
 const WAIT_POLL_MS = 2000;
 const ERROR_CHARS = 2000;
@@ -186,23 +191,32 @@ async function ensureRows(pool, list) {
   }
 }
 
-// Take a row to build, if it is due: queued, a builder gone quiet, or a
-// failure whose wait is over. A compare-and-set, so two processes never
-// build one row.
-async function take(pool, t, owner) {
+// The keys a build of runs for now: an item of the clock's, queued or
+// running (src/workflow/clock/).
+async function liveKeys(pool) {
   const { rows } = await pool.query(
-    `UPDATE starter_images
-        SET status = 'building', owner = $3, heartbeat_at = NOW(), started_at = NOW(),
-            attempts = attempts + 1, updated_at = NOW()
-      WHERE template = $1 AND context_key = $2
-        AND (status = 'queued'
-             OR (status = 'building' AND (heartbeat_at IS NULL OR heartbeat_at < NOW() - make_interval(secs => $4)))
-             OR (status = 'failed' AND attempts < $5
-                 AND updated_at < NOW() - make_interval(secs => attempts * $6)))
-      RETURNING template`,
-    [t.id, t.key, owner, LAPSE_SECONDS, MAX_ATTEMPTS, RETRY_AFTER_SECONDS]
+    `SELECT DISTINCT input->'input'->>'key' AS key FROM wf_work
+      WHERE machine = 'clock' AND key = $1 AND kind = $2 AND status IN ('queued', 'running')`,
+    [CLOCK_KEY, ITEM_KIND]);
+  return new Set(rows.map((r) => r.key).filter(Boolean));
+}
+
+// The rows owed a build now: queued (a new key, an admin's Rebuild), a
+// failure whose wait is over, or one marked building whose build stopped
+// with its process. The clock gives a target with a build still running no
+// second one.
+async function dueRows(pool, list) {
+  if (!list.length) return [];
+  const { rows } = await pool.query(
+    `SELECT template, context_key FROM starter_images
+      WHERE (template, context_key) IN (SELECT * FROM unnest($1::text[], $2::text[]))
+        AND (status IN ('queued', 'building')
+             OR (status = 'failed' AND attempts < $3
+                 AND updated_at < NOW() - make_interval(secs => attempts * $4)))`,
+    [list.map((t) => t.id), list.map((t) => t.key), MAX_ATTEMPTS, RETRY_AFTER_SECONDS]
   );
-  return rows.length > 0;
+  const due = new Set(rows.map((r) => `${r.template}\0${r.context_key}`));
+  return list.filter((t) => due.has(`${t.id}\0${t.key}`));
 }
 
 /** The ready image for a key, as a row, or null. */
@@ -219,14 +233,7 @@ async function readyRow(pool, key) {
 }
 
 async function buildingNow(pool, key) {
-  const { rows } = await pool.query(
-    `SELECT 1 FROM starter_images
-      WHERE context_key = $1 AND status = 'building'
-        AND heartbeat_at > NOW() - make_interval(secs => $2)
-      LIMIT 1`,
-    [key, LAPSE_SECONDS]
-  );
-  return rows.length > 0;
+  return (await liveKeys(pool)).has(key);
 }
 
 // ── Building ──────────────────────────────────────────────────────────────
@@ -264,17 +271,33 @@ async function pushSource(t) {
   return { repoUrl: sourceRepo.url, sha: String(sha).toLowerCase() };
 }
 
-/** Build one template's image under its key; `owner` holds its row. Never throws. */
-async function buildOne(config, pool, t, owner) {
+/**
+ * Build one template's image under its key: a target of the clock's
+ * (`input`: its template and key). Its row says building while it runs,
+ * then ready or failed (the clock asks again after the failure's wait).
+ * Resolves what it did; never throws for a failed build.
+ */
+async function buildTarget(config, pool, input) {
+  const t = currentTrees(config).find((x) => x.id === input?.template && x.key === input?.key && x.files);
+  // Not a key of this build: an older one asked for it, or the starter
+  // changed since. Nothing to build.
+  if (!t) return { skipped: 'not_current' };
+  // Taken unless it is ready, or an older build's process is building it
+  // (its owner's heartbeat is live: during a rollout its leader still
+  // sweeps). Marked the workflow's with a heartbeat that never lapses, so
+  // that older sweep never takes it either.
+  const { rows } = await pool.query(
+    `UPDATE starter_images
+        SET status = 'building', started_at = NOW(), attempts = attempts + 1, updated_at = NOW(),
+            owner = 'workflow', heartbeat_at = 'infinity'
+      WHERE template = $1 AND context_key = $2 AND status <> 'ready'
+        AND NOT (status = 'building' AND owner IS DISTINCT FROM 'workflow'
+                 AND heartbeat_at > NOW() - make_interval(secs => $3))
+      RETURNING template`,
+    [t.id, t.key, OLD_OWNER_LAPSE_SECONDS]);
+  if (!rows.length) return { skipped: 'ready_or_building' };
   const applicationRuntime = require('./application-runtime');
   const startedAt = Date.now();
-  const beat = setInterval(() => {
-    pool.query(
-      'UPDATE starter_images SET heartbeat_at = NOW() WHERE template = $1 AND context_key = $2 AND owner = $3',
-      [t.id, t.key, owner]
-    ).catch(() => {});
-  }, HEARTBEAT_MS);
-  if (typeof beat.unref === 'function') beat.unref();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `usernode-starter-${t.id}-`));
   try {
     writeTree(dir, t.files);
@@ -293,90 +316,43 @@ async function buildOne(config, pool, t, owner) {
     const engine = kubernetes ? (build.engine || 'kpack') : 'docker';
     await pool.query(
       `UPDATE starter_images
-          SET status = 'ready', image_ref = $4, build_ref = $5, engine = $6, source_sha = $7,
-              build_ms = $8, error = NULL, built_at = NOW(), owner = NULL, heartbeat_at = NULL, updated_at = NOW()
-        WHERE template = $1 AND context_key = $2 AND owner = $3`,
-      [t.id, t.key, owner, build.imageRef, build.buildRef || null, engine,
+          SET status = 'ready', image_ref = $3, build_ref = $4, engine = $5, source_sha = $6,
+              build_ms = $7, error = NULL, built_at = NOW(), updated_at = NOW(), owner = NULL, heartbeat_at = NULL
+        WHERE template = $1 AND context_key = $2`,
+      [t.id, t.key, build.imageRef, build.buildRef || null, engine,
         source ? source.sha : null, Date.now() - startedAt]
     );
     log.info('starter-images', 'Prebuilt image ready', {
       template: t.id, key: t.key.slice(0, 12), imageRef: build.imageRef, engine, ms: Date.now() - startedAt,
     });
+    return { ready: t.id, ms: Date.now() - startedAt };
   } catch (err) {
     const message = String((err && (err.buildLog || err.message)) || err).slice(-ERROR_CHARS);
     log.warn('starter-images', 'Prebuilt image failed', { template: t.id, key: t.key.slice(0, 12), err: err && err.message });
     await pool.query(
-      `UPDATE starter_images
-          SET status = 'failed', error = $4, owner = NULL, heartbeat_at = NULL, updated_at = NOW()
-        WHERE template = $1 AND context_key = $2 AND owner = $3`,
-      [t.id, t.key, owner, message]
+      `UPDATE starter_images SET status = 'failed', error = $3, updated_at = NOW(), owner = NULL, heartbeat_at = NULL
+        WHERE template = $1 AND context_key = $2 AND status = 'building'`,
+      [t.id, t.key, message]
     ).catch((dbErr) => log.warn('starter-images', 'Prebuild failure not recorded', { template: t.id, err: dbErr.message }));
+    return { failed: t.id };
   } finally {
-    clearInterval(beat);
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
 
-const building = new Set();
-
 /**
- * One pass: a row for every current key, then build what is due, at most
- * CONCURRENCY at once. A row is taken only as its build starts, so one
- * waiting its turn here is never marked building, and never looks to
- * another process like a builder gone quiet. Resolves once this pass's
- * builds have ended.
+ * The clock's run: a row for every current key, and each key owed a build
+ * as a target. Off in a staging preview and with STARTER_PREBUILDS=off.
  */
-async function sweep(config, pool, { owner = processOwner() } = {}) {
+async function targets(config, pool) {
+  if (!prebuildsOn()) return { off: true };
   const list = currentTrees(config).filter((t) => t.key && t.files);
   await ensureRows(pool, list);
-  const queue = list.filter((t) => !building.has(t.key));
-  const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
-    while (queue.length) {
-      const t = queue.shift();
-      if (building.has(t.key) || !(await take(pool, t, owner))) continue;
-      building.add(t.key);
-      try {
-        await buildOne(config, pool, t, owner);
-      } finally {
-        building.delete(t.key);
-      }
-    }
-  });
-  await Promise.all(workers);
-}
-
-let ownerToken = null;
-function processOwner() {
-  if (!ownerToken) ownerToken = `${os.hostname()}:${process.pid}:${crypto.randomBytes(4).toString('hex')}`;
-  return ownerToken;
-}
-
-let timer = null;
-let running = null;
-/**
- * The leader's loop (server.js becomeLeader): a sweep now and every SWEEP_MS,
- * one at a time. Nothing here throws.
- */
-function start(config, pool) {
-  if (!prebuildsOn()) {
-    log.info('starter-images', 'Prebuilt images off here', { staging: process.env.USERNODE_ENV === 'staging' });
-    return;
-  }
-  if (timer) return;
-  const pass = () => {
-    if (running) return;
-    running = sweep(config, pool)
-      .catch((err) => log.warn('starter-images', 'Prebuild sweep failed', { err: err.message }))
-      .finally(() => { running = null; });
+  const due = await dueRows(pool, list);
+  return {
+    templates: list.length,
+    items: due.map((t) => ({ target: `${t.id}:${t.key}`, input: { template: t.id, key: t.key } })),
   };
-  pass();
-  timer = setInterval(pass, SWEEP_MS);
-  if (typeof timer.unref === 'function') timer.unref();
-}
-
-function stop() {
-  if (timer) clearInterval(timer);
-  timer = null;
 }
 
 // ── A new project ─────────────────────────────────────────────────────────
@@ -428,17 +404,19 @@ async function list(config, pool) {
   const current = currentTrees(config);
   const { rows } = await pool.query(
     `SELECT template, context_key, status, image_ref, build_ref, engine, source_sha, build_ms,
-            error, attempts, heartbeat_at, started_at, built_at, updated_at
+            error, attempts, started_at, built_at, updated_at
        FROM starter_images
       ORDER BY updated_at DESC`
   );
+  const live = await liveKeys(pool);
   return {
     prebuilds: prebuildsOn(),
     templates: current.map((t) => {
       const mine = rows.filter((r) => r.template === t.id);
       const row = t.key ? mine.find((r) => r.context_key === t.key) || null : null;
-      const stale = row && row.status === 'building'
-        && (!row.heartbeat_at || Date.now() - new Date(row.heartbeat_at).getTime() > LAPSE_SECONDS * 1000);
+      // Building, with no build running: its process went; the clock asks
+      // again.
+      const stale = row && row.status === 'building' && !live.has(row.context_key);
       const previous = mine.find((r) => r.context_key !== t.key && r.image_ref) || null;
       return {
         id: t.id,
@@ -492,21 +470,21 @@ function demoList(config, now = Date.now()) {
 
 /**
  * Queue a template's image to be built again under its current key: the
- * leader's next sweep builds it, and its ready image stays in use until
- * the new one replaces it. Answers false for a template that is not a
+ * clock's next run builds it, and its ready image stays in use until the
+ * new one replaces it. Answers false for a template that is not a
  * ready-made app or has no key, or whose build is under way.
  */
 async function requestRebuild(config, pool, id) {
   const t = currentTrees(config).find((x) => x.id === id);
   if (!t || !t.key) return false;
+  if ((await liveKeys(pool)).has(t.key)) return false;
   await ensureRows(pool, [t]);
   const { rows } = await pool.query(
     `UPDATE starter_images
-        SET status = 'queued', attempts = 0, error = NULL, owner = NULL, heartbeat_at = NULL, updated_at = NOW()
+        SET status = 'queued', attempts = 0, error = NULL, updated_at = NOW()
       WHERE template = $1 AND context_key = $2
-        AND NOT (status = 'building' AND heartbeat_at > NOW() - make_interval(secs => $3))
       RETURNING template`,
-    [t.id, t.key, LAPSE_SECONDS]
+    [t.id, t.key]
   );
   return rows.length > 0;
 }
@@ -514,7 +492,7 @@ async function requestRebuild(config, pool, id) {
 module.exports = {
   STATUSES,
   SOURCE_REPO,
-  SWEEP_MS,
+  CONCURRENCY,
   WAIT_MS,
   MAX_ATTEMPTS,
   buildRecipe,
@@ -527,8 +505,7 @@ module.exports = {
   list,
   prebuildsOn,
   requestRebuild,
-  start,
-  stop,
-  sweep,
-  _forTest: { take, buildOne, pushSource, resetTrees: () => trees.clear(), resetSource: () => { sourceRepo = null; } },
+  targets,
+  buildTarget,
+  _forTest: { pushSource, resetTrees: () => trees.clear(), resetSource: () => { sourceRepo = null; } },
 };

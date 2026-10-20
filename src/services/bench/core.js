@@ -78,7 +78,6 @@ const STAGE_RANGES = Object.freeze({
   followups: [3, 8], // followup + checks_fix
   dm: [3, 8],
 });
-const BOOT_DELAY_MS = 90 * 1000;
 const DEFAULT_RATE_MS = 1000;
 // A pass beats at least this often while it works (see beat()); a running
 // row whose last beat is older than STALE_RUNNING_MINUTES was left by a
@@ -970,31 +969,12 @@ function materializeInBackground(pool, config, opts = {}) {
   return { ok: true, started: true, promise: inProcess };
 }
 
-/** Whether this deployment materializes Core on boot: production and staging, unless switched off. */
+/** Whether this deployment materializes Core with each release (platform.ts materializeBenchSuites): production and staging, unless switched off. */
 function bootEnabled(env = process.env) {
   if (String(env.BENCH_CORE_MATERIALIZE || '').toLowerCase() === 'off') return false;
   return env.USERNODE_ENV === 'staging' || env.NODE_ENV === 'production';
 }
 
-/** On the leader: materialize Core in the background a little after boot. */
-function startOnBoot(config, { env = process.env, delayMs = BOOT_DELAY_MS } = {}) {
-  if (!bootEnabled(env)) return false;
-  const timer = setTimeout(() => {
-    try {
-      const github = require('../github');
-      if (!github.isEnabled()) {
-        log.info('bench', 'Core suite not materialized: GitHub is not configured');
-        return;
-      }
-      const { getPool } = require('../../db/pool');
-      materializeInBackground(getPool(config), config);
-    } catch (err) {
-      log.warn('bench', 'Core suite boot pass failed to start', { err: err.message });
-    }
-  }, delayMs);
-  if (typeof timer.unref === 'function') timer.unref();
-  return true;
-}
 
 module.exports = {
   DEFINITION_FILE,
@@ -1011,6 +991,5 @@ module.exports = {
   coreSuiteId,
   materializeInBackground,
   bootEnabled,
-  startOnBoot,
   _awaitForTests: () => inProcess || Promise.resolve(null),
 };

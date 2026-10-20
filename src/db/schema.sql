@@ -766,24 +766,20 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS manifest_snapshot JSONB;
 --   log    : ANSI-stripped tail of the docker build / boot output (<= 16 kB)
 --   interrupted : true on a creation the platform's restarts ended, whose
 --            Retry is not counted against the creator
--- Written by the deploy catch paths (services/app-creator.js,
--- services/staging.js deployProduction, the creation watchdog in
--- services/app-creation-owner.js);
+-- Written by the deploy catch paths (services/staging.js deployProduction)
+-- and a project's making (src/workflow/app-creation/: its setup's failure,
+-- its time limit);
 -- cleared (NULL) on every successful deploy. Exposed API-side only to
 -- the app's creator / collaborators / admins — see routes/apps.js.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS last_failure JSONB;
 
--- Who is setting a project up, so a platform restart cannot lose it
--- (services/app-creation-owner.js). Creation runs for minutes after the
--- request that started it has answered, in whichever process served it, and
--- dies with that process. `creating_owner` is the token of the attempt
--- driving the row and `creating_heartbeat_at` when it last said so (every
--- 20 seconds while it runs); both NULL once it ends. The leader resumes a
--- 'creating' row whose owner went quiet, by running the same idempotent
--- create path again under a new token, at most three times an attempt
--- (`creating_redrives`, back to 0 when a person starts a new attempt), and
--- only then flips it to 'error'. A row whose owner is alive is never swept,
--- and Retry takes the row only from nobody, or from an owner gone quiet.
+-- Who is setting a project up. A project's making is the app-creation
+-- machine's (src/workflow/app-creation/): `creating_owner = 'workflow'`
+-- says so, and an insert that names it starts its making (the
+-- apps_wf_enrol_creation trigger). Before it, an owner token of the process
+-- driving the row with its heartbeat (`creating_heartbeat_at`) and its
+-- redrives (`creating_redrives`): read now only to wait for a row an older
+-- build is still making during a rollout. To drop once no older build runs.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_owner TEXT;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_heartbeat_at TIMESTAMPTZ;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_redrives INTEGER NOT NULL DEFAULT 0;
@@ -10935,6 +10931,10 @@ CREATE TABLE IF NOT EXISTS app_sketches (
   ready_at      TIMESTAMPTZ
 );
 COMMENT ON TABLE app_sketches IS 'staging:private';
+-- What a card owed is made from (its description, audience, Just me, the
+-- maker's time zone): the project's setup makes it (app-creator.js, the
+-- `card` step), not the process that answered Make it.
+ALTER TABLE app_sketches ADD COLUMN IF NOT EXISTS request JSONB;
 
 -- A project somebody the bot works for made with no description to build
 -- from: imported from GitHub, forked, or created without one (a connector
@@ -14376,6 +14376,39 @@ CREATE TRIGGER chat_sessions_wf_enrol_proposal
   FOR EACH ROW
   WHEN (NEW.status IN ('active', 'promoted', 'merging'))
   EXECUTE FUNCTION wf_enrol_proposal();
+
+-- A new project is the app-creation machine's from its insert
+-- (src/workflow/app-creation/): its row's insert appends Started, keyed as
+-- one, in the inserting transaction, so its setup starts once everything the
+-- route wrote with it has committed. Every door inserts it so: Make it, an
+-- import, a ready-made app, a remix, the bench studio's host, naming the
+-- workflow as its maker (creating_owner = 'workflow'). A row an older build
+-- inserts during a rollout (no such owner yet) appends Adopted instead: the
+-- machine waits for that build's own process to let it go, and makes it
+-- only if it was left unfinished.
+CREATE OR REPLACE FUNCTION wf_enrol_app_creation() RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.creating_owner IS NOT DISTINCT FROM 'workflow' THEN
+    INSERT INTO wf_events (machine, key, app_id, type, payload, source, request_key)
+    VALUES ('app-creation', 'app:' || NEW.id, NEW.id, 'Started',
+            jsonb_build_object('appId', NEW.id), '{"kind": "system", "name": "create"}'::jsonb,
+            'start:' || NEW.id);
+  ELSE
+    INSERT INTO wf_events (machine, key, app_id, type, payload, source, request_key)
+    VALUES ('app-creation', 'app:' || NEW.id, NEW.id, 'Adopted',
+            jsonb_build_object('appId', NEW.id), '{"kind": "system", "name": "older-build"}'::jsonb,
+            'adopt:' || NEW.id);
+  END IF;
+  PERFORM pg_notify('wf_events', 'app-creation');
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS apps_wf_enrol_creation ON apps;
+CREATE TRIGGER apps_wf_enrol_creation
+  AFTER INSERT ON apps
+  FOR EACH ROW
+  WHEN (NEW.status = 'creating' AND NEW.self_hosted IS NOT TRUE)
+  EXECUTE FUNCTION wf_enrol_app_creation();
 
 -- campaign (src/workflow/campaign/) owns a fleet maintenance campaign once it
 -- holds it: the campaign's status, when it ended, and each app's record (its

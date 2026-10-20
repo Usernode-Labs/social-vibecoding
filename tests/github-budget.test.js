@@ -377,7 +377,6 @@ test('the timer-driven GitHub callers ask before they spend', () => {
     'src/services/main-drift-poller.js',
     'src/services/homeroom-bot.js',
     'src/services/workshop-themes.js',
-    'src/services/app-heal.js',
     'src/services/bench/lane.js',
   ]) {
     assert.match(read(rel), asks, `${rel} asks services/github-budget.js`);

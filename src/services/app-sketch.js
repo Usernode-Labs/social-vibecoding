@@ -54,13 +54,10 @@ const sketchDates = require('./sketch-dates');
 // GLM 5.3 Flash, and Haiku 5.5 when it does not answer in time (llm.js
 // helperMessage); the card row keeps the model that answered.
 const SKETCH_MODEL = 'z-ai/glm-5.3-flash';
-// How long app creation waits for the card before seeding the repository
-// without it (app-creator.js). A late card is committed on its own.
-const SKETCH_WAIT_MS = 30 * 1000;
 // How long the card waits on the model before it is made from the
-// description instead: well inside SKETCH_WAIT_MS, so the first commit has it.
+// description instead. It is a step of the project's setup (app-creator.js),
+// before its first commit, so the first commit always has it.
 const MODEL_WAIT_MS = 15 * 1000;
-const LATE_COMMIT_WAIT_MS = 3 * 60 * 1000;
 // A reply is three short lines of JSON.
 const CARD_MAX_TOKENS = 400;
 // The card's shape, for a model that answers through a schema (GLM); the
@@ -473,10 +470,9 @@ function manifestWithCard(text, { emoji = null, tagline = null } = {}) {
 
 // ── Generation ───────────────────────────────────────────────────────────
 
-const pending = new Map();
-
-// A pending row older than this was left by a process that stopped while
-// making it; it reads as failed, and nothing waits on it.
+// A pending row older than this was left by a setup that stopped while
+// making it; it reads as failed on the made screen until the setup, carried
+// on, makes it.
 const STALE_PENDING_MS = 3 * 60 * 1000;
 
 function stillDrawing(row, now = Date.now()) {
@@ -655,31 +651,25 @@ async function makeCard(pool, { name, brief, audience = null, solo = false, time
   return { card, model, error };
 }
 
-async function generate(pool, { app, user, brief, audience, solo, timeZone, fallbackTagline, deps }) {
-  const maker = await makerOf(pool, user).catch(() => null);
-  const { card, model, error } = await makeCard(pool, {
-    name: app.name, brief, audience, solo, timeZone, user, maker, appId: app.id, fallbackTagline, deps,
-  });
-  await saveCard(pool, { app, card, model, error, deps });
-  log.info('app-sketch', 'Card ready', { appId: app.id, source: card.source });
-  return readSketch(pool, app.id);
-}
-
 /**
- * Start a project's card, once. Returns at once; the work runs on. A project
- * with a sketch row already (a retried create) is left alone. Without a model
- * (no key: a staging preview, a local stack) the card is made from the
- * description on the spot. `timeZone` is the creator's device's IANA zone, so
- * "today" is theirs; anything else reads as UTC. `solo`: made for Just me, so
- * a fallback card does not say it is shared with anyone (SHARED_POINT).
+ * Owe a project its card, once: POST /api/apps, before the project's setup
+ * starts. The card is made by the setup itself (drawFor, a step of its
+ * work), so a restart neither loses it nor makes it twice; what it is made
+ * from is kept on the row (`request`). A project with a sketch row already
+ * (a retried create) is left alone. Without a model (no key: a staging
+ * preview, a local stack) the card is made from the description on the
+ * spot. `timeZone` is the creator's device's IANA zone, so "today" is
+ * theirs; anything else reads as UTC. `solo`: made for Just me, so a
+ * fallback card does not say it is shared with anyone (SHARED_POINT).
  * `fallbackTagline`: the make screen's line for a game or Your own choice,
  * the tagline when the model gives none (fallbackCard).
+ * `db`: the route's transaction, which also inserts the project.
  */
-async function startSketch(pool, { app, user, brief, audience = null, solo = false, timeZone = null, fallbackTagline = null }, deps = {}) {
+async function startSketch(db, { app, user, brief, audience = null, solo = false, timeZone = null, fallbackTagline = null }, deps = {}) {
   const llm = deps.llm || require('./llm');
   if (!llm.isEnabled()) {
     const card = fallbackCard({ name: app.name, brief, solo, tagline: fallbackTagline, today: sketchDates.localToday(deps.now ? deps.now() : new Date(), timeZone) });
-    const { rows } = await pool.query(
+    const { rows } = await db.query(
       `INSERT INTO app_sketches (app_id, user_id, status, design, model, ready_at)
        VALUES ($1, $2, 'ready', $3::jsonb, 'fallback', NOW())
        ON CONFLICT (app_id) DO NOTHING
@@ -687,47 +677,53 @@ async function startSketch(pool, { app, user, brief, audience = null, solo = fal
       [app.id, user.id, JSON.stringify(card)]
     );
     if (!rows.length) return false;
-    await saveIcon(pool, app, card.emoji, deps);
-    await saveDescription(pool, app, card.tagline);
+    await saveIcon(db, app, card.emoji, deps);
+    await saveDescription(db, app, card.tagline);
     return true;
   }
-  const { rows } = await pool.query(
-    `INSERT INTO app_sketches (app_id, user_id, status)
-     VALUES ($1, $2, 'pending')
+  const { rows } = await db.query(
+    `INSERT INTO app_sketches (app_id, user_id, status, request)
+     VALUES ($1, $2, 'pending', $3::jsonb)
      ON CONFLICT (app_id) DO NOTHING
      RETURNING app_id`,
-    [app.id, user.id]
+    // The maker's username too: the card names them by it when their row
+    // cannot be read (makerOf).
+    [app.id, user.id, JSON.stringify({ brief, audience, solo: !!solo, timeZone, fallbackTagline: fallbackTagline || null, username: user.username || null })]
   );
-  if (!rows.length) return false;
-  const work = generate(pool, { app, user, brief, audience, solo, timeZone, fallbackTagline, deps }).catch((err) => {
-    log.warn('app-sketch', 'Card failed', { appId: app.id, err: err.message });
-    return null;
-  });
-  pending.set(app.id, work);
-  work.finally(() => setTimeout(() => pending.delete(app.id), LATE_COMMIT_WAIT_MS).unref?.());
-  return true;
+  return rows.length > 0;
 }
 
 /**
- * The project's card once it is ready, waiting up to `ms` for one still
- * being made by this process; null when there is none (or not in time).
+ * The project's card, for its setup's `card` step: made now when it is owed
+ * (the model's within MODEL_WAIT_MS, else the fallback), and saved with its
+ * icon and description. Null when none is owed. A ready card is returned as
+ * it is, so a setup that resumes gets the one it committed.
  */
-async function whenReady(pool, appId, ms = SKETCH_WAIT_MS, { pollMs = 1000 } = {}) {
-  const deadline = Date.now() + ms;
-  const work = pending.get(appId);
-  if (work) {
-    let timer;
-    await Promise.race([work, new Promise((resolve) => { timer = setTimeout(resolve, ms); })]);
-    clearTimeout(timer);
+async function drawFor(pool, appId, deps = {}) {
+  const row = await readSketch(pool, appId);
+  if (!row || row.status === 'failed') return null;
+  if (row.status === 'ready') return row;
+  const { rows: [owed] } = await pool.query(
+    `SELECT s.user_id, s.request, a.id, a.name FROM app_sketches s JOIN apps a ON a.id = s.app_id WHERE s.app_id = $1`, [appId]);
+  const request = owed?.request || {};
+  const app = { id: owed.id, name: owed.name };
+  const user = owed.user_id ? { id: owed.user_id, username: request.username || null } : null;
+  try {
+    const maker = user ? await makerOf(pool, user).catch(() => null) : null;
+    const { card, model, error } = await makeCard(pool, {
+      name: app.name, brief: request.brief || '', audience: request.audience ?? null, solo: !!request.solo,
+      timeZone: request.timeZone ?? null, fallbackTagline: request.fallbackTagline ?? null, user, maker, appId, deps,
+    });
+    await saveCard(pool, { app, card, model, error, deps });
+    log.info('app-sketch', 'Card ready', { appId, source: card.source });
+  } catch (err) {
+    log.warn('app-sketch', 'Card failed', { appId, err: err.message });
+    await pool.query(`UPDATE app_sketches SET status = 'failed', error = $2 WHERE app_id = $1 AND status = 'pending'`,
+      [appId, String(err.message).slice(0, 200)]).catch(() => {});
+    return null;
   }
-  let row = await readSketch(pool, appId).catch(() => null);
-  // Made by another process (a create retried on another Pod): watch the
-  // row instead, until the same deadline.
-  while (stillDrawing(row) && Date.now() + pollMs <= deadline) {
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-    row = await readSketch(pool, appId).catch(() => null);
-  }
-  return row && row.status === 'ready' ? row : null;
+  const ready = await readSketch(pool, appId);
+  return ready && ready.status === 'ready' ? ready : null;
 }
 
 /** The repository's design file for a ready card: design/sketch.json, or nothing for a row without a card. */
@@ -742,126 +738,9 @@ async function markCommitted(pool, appId) {
   await pool.query('UPDATE app_sketches SET committed_at = NOW() WHERE app_id = $1 AND committed_at IS NULL', [appId]);
 }
 
-/**
- * A card that missed the repository's first commit: committed on its own
- * when it is ready, design/sketch.json and, when the repository's dapp.json
- * has no icon yet, the card's emoji as its `icon` (else the next deploy would
- * clear the icon saved to the project), and likewise its tagline as the
- * `description` when it has none. Best effort, never throws.
- */
-async function commitWhenReady(pool, { appId, name, owner, repo }, deps = {}) {
-  try {
-    const sketch = await whenReady(pool, appId, LATE_COMMIT_WAIT_MS);
-    if (!sketch || sketch.committed_at) return false;
-    return await commitCard(pool, sketch, { appId, name, owner, repo }, deps);
-  } catch (err) {
-    log.warn('app-sketch', 'Late card not committed', { appId, err: err.message });
-    return false;
-  }
-}
-
-// The late commit itself, for a ready card: commitWhenReady's, and the
-// leader's sweep's below. Throws what GitHub throws.
-async function commitCard(pool, sketch, { appId, name, owner, repo }, deps = {}) {
-  const files = designFiles({ sketch });
-  if (!files.length) return false;
-  const github = deps.github || require('./github');
-  const card = cardOf(sketch.design);
-  const manifest = typeof github.getFileContent === 'function'
-    ? await github.getFileContent(owner, repo, 'dapp.json', 'main').catch(() => null)
-    : null;
-  const withCard = manifest ? manifestWithCard(manifest, { emoji: card.emoji, tagline: card.tagline }) : null;
-  if (withCard) files.push({ path: 'dapp.json', content: withCard });
-  await github.pushFiles(owner, repo, files, {
-    message: `Add the card ${name} was made with`,
-  });
-  await markCommitted(pool, appId);
-  return true;
-}
-
-// ── Cards a restart kept out of the repository ──────────────────────────
-//
-// commitWhenReady runs in the process that made the repository, and dies
-// with it; and a creation the leader resumes after a restart
-// (app-creation-owner.js) finds the repository already made and clones it,
-// so it commits no card at all. The leader's sweep commits such a card: one
-// ready for SWEEP_AFTER_MINUTES (well past LATE_COMMIT_WAIT_MS, so a late
-// commit still running in a live process lands first), made in the last
-// SWEEP_WITHIN_HOURS (which also bounds how often one GitHub keeps refusing
-// is tried), for a project now running on the repository made for it. A
-// repository that already holds design/sketch.json (a commit that landed
-// before its process could mark it) is only marked, never committed twice.
-const SWEEP_AFTER_MINUTES = 10;
-const SWEEP_WITHIN_HOURS = 6;
-const COMMIT_SWEEP_MS = 15 * 60 * 1000;
-const COMMIT_SWEEP_BATCH = 10;
-
-/** One pass: resolves how many cards it committed (or found committed). Never throws. */
-async function sweepUncommitted(pool, deps = {}) {
-  const github = deps.github || require('./github');
-  if (typeof github.isEnabled === 'function' && !github.isEnabled()) return 0;
-  let done = 0;
-  try {
-    const { rows } = await pool.query(
-      `SELECT s.app_id, s.design, s.model, s.ready_at, s.committed_at, s.status,
-              a.name, a.repo_url
-         FROM app_sketches s JOIN apps a ON a.id = s.app_id
-        WHERE s.status = 'ready' AND s.committed_at IS NULL AND s.design->>'kind' = 'card'
-          AND s.ready_at < NOW() - make_interval(mins => $1)
-          AND s.created_at > NOW() - make_interval(hours => $2)
-          AND a.repo_url IS NOT NULL AND a.self_hosted IS NOT TRUE AND a.forked_from IS NULL
-          AND a.status IN ('running', 'awaiting_secrets')
-        ORDER BY s.created_at
-        LIMIT $3`,
-      [SWEEP_AFTER_MINUTES, SWEEP_WITHIN_HOURS, COMMIT_SWEEP_BATCH]
-    );
-    for (const row of rows) {
-      const parsed = github.parseGithubUrl(row.repo_url);
-      if (!parsed) continue;
-      try {
-        const existing = await github.getFileContent(parsed.owner, parsed.repo, 'design/sketch.json', 'main');
-        if (existing !== null) {
-          await markCommitted(pool, row.app_id);
-        } else if (!(await commitCard(pool, row, {
-          appId: row.app_id, name: row.name, owner: parsed.owner, repo: parsed.repo,
-        }, deps))) {
-          continue;
-        }
-        done += 1;
-        log.info('app-sketch', 'Card a restart kept out of the repository committed', { appId: row.app_id });
-      } catch (err) {
-        log.warn('app-sketch', 'Late card not committed by the sweep', { appId: row.app_id, err: err.message });
-      }
-    }
-  } catch (err) {
-    log.warn('app-sketch', 'Card commit sweep failed', { err: err.message });
-  }
-  return done;
-}
-
-let commitSweepHandle = null;
-let commitSweeping = false;
-
-/** The leader's half (server.js becomeLeader): a pass every COMMIT_SWEEP_MS. */
-function startCommitSweep(config, deps = {}) {
-  if (commitSweepHandle) return;
-  const pool = deps.pool || require('../db/pool').getPool(config);
-  commitSweepHandle = setInterval(() => {
-    if (commitSweeping) return;
-    commitSweeping = true;
-    sweepUncommitted(pool, deps).finally(() => { commitSweeping = false; });
-  }, COMMIT_SWEEP_MS);
-  commitSweepHandle.unref?.();
-}
-
-function stopCommitSweep() {
-  if (commitSweepHandle) { clearInterval(commitSweepHandle); commitSweepHandle = null; }
-}
-
 module.exports = {
   SKETCH_MODEL,
   CARD_SCHEMA,
-  SKETCH_WAIT_MS,
   MODEL_WAIT_MS,
   SKETCH_SYSTEM,
   DEFAULT_EMOJI,
@@ -891,11 +770,7 @@ module.exports = {
   taglineOf,
   makeCard,
   startSketch,
-  whenReady,
+  drawFor,
   designFiles,
   markCommitted,
-  commitWhenReady,
-  sweepUncommitted,
-  startCommitSweep,
-  stopCommitSweep,
 };

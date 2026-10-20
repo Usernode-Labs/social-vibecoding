@@ -73,9 +73,6 @@ const MIN_BRIEF_CHARS = 10;
 // How often a person the bot does not work for (an account not let in yet)
 // hears why the bot does not answer: once a day is enough.
 const NOT_ENABLED_KEY_HOURS = 24;
-// A first version that could not be filed is tried again on the next
-// sweep, this many times.
-const MAX_FILE_ATTEMPTS = 3;
 // How often somebody writing to the bot with nothing open hears its help.
 const HELP_EVERY_MS = 10 * 60 * 1000;
 
@@ -4966,7 +4963,7 @@ function firstVersionStartedText({ name, hello = false, earlyPlan = false, off =
 /**
  * A project was just created with a description (routes/apps.js): what the
  * create dialog asks as "What should it do?". Recorded, so it is filed as
- * the project's first request once its repository is made (FILEABLE_SQL),
+ * the project's first request once its repository is made (app-creation),
  * under its creator's name. When the creator is somebody the bot talks to
  * in a DM, the bot builds that first version and the person is told in their
  * DM; for anybody else the request is filed and left to the group, with no
@@ -4977,6 +4974,24 @@ function firstVersionStartedText({ name, hello = false, earlyPlan = false, off =
 // (routes/apps.js MAKE_ORIGINS), so its plan is written now, while the
 // project is set up, for its maker to answer there
 // (services/first-version-plan.js).
+// The first request owed, written in the route's transaction (`db`) with
+// the project, so its making (src/workflow/app-creation/) finds it once its
+// setup ends. startFirstVersion, after the commit, says so.
+async function recordFirstVersion(db, pool, config, { app, user, brief }) {
+  const text = normalizeBrief(brief);
+  if (!text || !app?.id || !user?.id) return false;
+  const settings = await settingsModule().readSettings(pool);
+  const botBuilds = hasBot(settings, user);
+  const { rows } = await db.query(
+    `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, bot_builds)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (app_id) DO NOTHING
+     RETURNING app_id`,
+    [app.id, user.id, text, botBuilds],
+  );
+  return rows.length > 0;
+}
+
 async function startFirstVersion(pool, config, { app, user, brief, earlyPlan = false }) {
   const text = normalizeBrief(brief);
   if (!text || !app?.id || !user?.id) return null;
@@ -5097,47 +5112,52 @@ function firstVersionIssue({ name, username, brief, botBuilds = true, card = nul
 // Newcomer run nine (15 Oct 2026): Submit to the first version's spec took
 // 40 s, 18 of them waiting for the starter app to be built, deployed and
 // answering before its request was filed, though the request needs only the
-// repository. A project is filed for as soon as its repository holds the
-// starter (app-creator.js writes repo_url only after that push) and the card
-// its request names is settled: committed with that first push (or no card,
-// or one that failed), never one still being drawn (a pending row younger
-// than app-sketch.js STALE_PENDING_MS) or not yet committed, which the late
-// commit (app-sketch.js commitWhenReady) is still to push. Once it runs,
-// nothing is waited for, as before. Never a project whose creation failed:
-// its Retry files it once it is being set up again. The bot's build waits
-// for the project to run before it is proposed (homeroom-bot.js
+// repository. A project's first request is filed by its making
+// (src/workflow/app-creation/): once its setup has made the repository with
+// the starter and its card, beside its first deploy. Never a project whose
+// creation failed: its Retry files it once it is set up again. The bot's
+// build waits for the project to run before it is proposed (homeroom-bot.js
 // projectSetUpStop): its preview copies the project's database and its merge
 // deploys over the project's container.
-// `a` is the project's row.
-const FILEABLE_SQL = `a.repo_url IS NOT NULL AND (
-         a.status = 'running'
-         OR (a.status = 'creating' AND NOT EXISTS (
-           SELECT 1 FROM app_sketches s
-            WHERE s.app_id = a.id AND s.committed_at IS NULL
-              AND ((s.status = 'ready' AND s.design->>'kind' = 'card')
-                OR (s.status = 'pending' AND s.created_at > NOW() - INTERVAL '3 minutes')))))`;
+
+// What a first request's GitHub issue carries so a filing cut between
+// GitHub's answer and its record finds it rather than filing a second.
+const firstRequestMarker = (appId) => `<!-- homeroom-first-version:app-${appId} -->`;
+
+// The claim: a waiting row, or one left filing that nothing else can be
+// filing. An older build's filing holds no lease; it is over once no
+// process of another build is alive (draining or serving), and that build's
+// own sweep let a filing row go after FILING_LAPSE_MINUTES. Two processes of
+// this build never file one project: its making's work item is the one.
+const FILING_LAPSE_MINUTES = 30;
+const CLAIM_SQL = `UPDATE homeroom_bot_first_versions f SET status = 'filing', attempts = f.attempts + 1
+   WHERE f.app_id = $1 AND (f.status = 'waiting' OR (f.status = 'filing' AND (
+     f.created_at < NOW() - make_interval(mins => $3)
+     OR NOT EXISTS (SELECT 1 FROM platform_processes p
+                     WHERE p.heartbeat_at > NOW() - INTERVAL '45 seconds' AND p.release IS DISTINCT FROM $2::text))))`;
 
 /**
- * File one project's first request, once its repository holds the starter
- * (FILEABLE_SQL): a GitHub issue under the creator's name and the platform's
+ * File one project's first request (app-creation's `app.firstRequest`
+ * work, once): a GitHub issue under the creator's name and the platform's
  * issue row. When the bot builds it, the creator is recorded as its
  * requester (so the bot's news reaches their DM) and the bot is woken for
- * it; otherwise nothing of the bot's is touched. Claimed by a status flip,
- * so two Pods (or the creation hooks and the sweep) file it once.
+ * it; otherwise nothing of the bot's is touched. Each part is a step of the
+ * work (`steps`): the issue is asked for once, and a try that resumes after
+ * GitHub answered looks for it (its marker) before asking again. A failure
+ * throws while tries are left; the last one (`last`) is recorded and told
+ * to the maker. Resolves what it did.
  */
-async function fileFirstVersion(pool, config, appId, deps = {}) {
-  if (isStaging() && !deps.allowStaging) return null;
-  const { rows: claimed } = await pool.query(
-    `UPDATE homeroom_bot_first_versions f
-        SET status = 'filing', attempts = f.attempts + 1
-       FROM apps a
-      WHERE f.app_id = $1 AND a.id = f.app_id AND f.status = 'waiting'
-        AND ${FILEABLE_SQL}
-      RETURNING f.app_id, f.user_id, f.brief, f.attempts, f.bot_builds, a.slug, a.name, a.repo_url`,
+async function fileFirstRequest(pool, config, appId, { steps, last = false, deps = {} } = {}) {
+  if (isStaging() && !deps.allowStaging) return { skipped: 'staging' };
+  const { rows: [row] } = await pool.query(
+    `SELECT f.app_id, f.user_id, f.brief, f.bot_builds, f.status, a.slug, a.name, a.repo_url
+       FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
+      WHERE f.app_id = $1`,
     [appId],
   );
-  const row = claimed[0];
-  if (!row) return null;
+  // Filed, unless this work filed it and stopped before saying so (its
+  // `record` step kept, its `announce` not): then it says so now.
+  if (!row || row.status === 'failed' || (row.status === 'filed' && !steps.has('record'))) return { skipped: row ? row.status : 'none' };
   const github = deps.github || require('./github');
   const ws = deps.ws || require('./ws');
   const { rows: people } = await pool.query('SELECT username FROM users WHERE id = $1', [row.user_id]);
@@ -5150,56 +5170,106 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
   const card = cardRow ? { ...cardRow, committed: !!sketchRow.committed_at } : null;
   const { title, body } = firstVersionIssue({ name, username, brief: row.brief, botBuilds, card });
   try {
-    const parsed = (typeof github.parseGithubUrl === 'function' && github.parseGithubUrl(row.repo_url))
+    // Claimed once, from waiting: an older build's sweep, still running
+    // during a rollout, claims the same way, so the two never both file it.
+    // A row left filing (a process that died filing it: an older build's,
+    // or this work's own try that stopped before it kept its claim) is
+    // taken once nothing else can be filing it; until then this waits.
+    await steps.once('claim', async () => {
+      for (;;) {
+        const { rowCount } = await pool.query(CLAIM_SQL, [appId, process.env.GIT_SHA || null, FILING_LAPSE_MINUTES]);
+        if (rowCount) return true;
+        const { rows: [now] } = await pool.query('SELECT status FROM homeroom_bot_first_versions WHERE app_id = $1', [appId]);
+        if (now?.status !== 'filing') throw Object.assign(new Error(`it is ${now?.status ?? 'gone'}`), { settled: now?.status ?? 'none' });
+        await steps.race(new Promise((r) => setTimeout(r, deps.claimWaitMs ?? 15000)));
+      }
+    });
+    const parsed = (typeof github.parseGithubUrl === 'function' && row.repo_url && github.parseGithubUrl(row.repo_url))
       || (() => {
-        const m = String(row.repo_url).match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+        const m = String(row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
         return m ? { owner: m[1], repo: m[2] } : null;
       })();
     if (!parsed || !github.isEnabled()) throw new Error('github_unavailable');
-    const created = await github.createIssue(parsed.owner, parsed.repo, {
-      title, body: typeof github.safeMention === 'function' ? github.safeMention(body) : body,
+    const marker = firstRequestMarker(appId);
+    const issueNumber = await steps.once('issue', async () => {
+      // Asked before, by a try that stopped before it kept the answer: the
+      // issue is there if GitHub made it.
+      if (steps.get('asked')) {
+        const found = await github.findIssueByMarker(parsed.owner, parsed.repo, marker);
+        if (found) return found.number;
+      }
+      await steps.set('asked', true);
+      const filedBody = `${typeof github.safeMention === 'function' ? github.safeMention(body) : body}\n\n${marker}`;
+      const created = await github.createIssue(parsed.owner, parsed.repo, { title, body: filedBody });
+      const number = Number(created?.number);
+      if (!Number.isInteger(number) || number <= 0) throw new Error('invalid issue number');
+      try { github.noteIssueCreated?.(parsed.owner, parsed.repo, created); } catch {}
+      return number;
     });
-    const issueNumber = Number(created?.number);
-    if (!Number.isInteger(issueNumber) || issueNumber <= 0) throw new Error('invalid issue number');
-    try { github.noteIssueCreated?.(parsed.owner, parsed.repo, created); } catch {}
-    const { rows: issueRows } = await pool.query(
-      `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by)
-       VALUES ($1, $2, $3, $4, 'general', '{}', $5) RETURNING id`,
-      [row.app_id, issueNumber, title, body, row.user_id],
-    );
-    if (botBuilds) {
-      await pool.query(
-        `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, first_version, asked_text)
-         VALUES ($1, $2, $3, $4, TRUE, $5)
-         ON CONFLICT (app_id, issue_number) DO UPDATE SET user_id = EXCLUDED.user_id, first_version = TRUE,
-           asked_text = COALESCE(homeroom_bot_requesters.asked_text, EXCLUDED.asked_text)`,
-        // B4: the brief they wrote is what they asked for.
-        [row.app_id, issueNumber, row.user_id, title, clip(row.brief, 2000) || null],
-      );
-    }
-    await pool.query(
-      `UPDATE homeroom_bot_first_versions SET status = 'filed', issue_number = $2, filed_at = NOW(), error = NULL
-        WHERE app_id = $1`,
-      [row.app_id, issueNumber],
-    );
-    await ws.sendSystemMessage(pool, row.app_id, `${username} created issue: "${title}" (#${issueNumber})`,
-      'system', null, { type: 'issue', ref: issueNumber }).catch(() => {});
-    ws.pushIssueUpdate({ action: 'created', appSlug: row.slug, appId: row.app_id, issueId: issueRows[0]?.id, kind: 'general' });
-    // #3952: the people the creator's description names with @. Never rejects.
-    (deps.notifications || require('./notifications')).notifyIssueMentions?.(pool, {
-      appId: row.app_id, issueNumber, authorId: row.user_id, text: `${title}\n\n${body}`,
+    const issueId = await steps.once('record', async () => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        // A try that committed this and stopped before it kept the step
+        // finds its own row.
+        const { rows: had } = await client.query(
+          'SELECT id FROM issues WHERE app_id = $1 AND github_issue_number = $2 ORDER BY id LIMIT 1', [row.app_id, issueNumber]);
+        const { rows: issueRows } = had.length ? { rows: had } : await client.query(
+          `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by)
+           VALUES ($1, $2, $3, $4, 'general', '{}', $5) RETURNING id`,
+          [row.app_id, issueNumber, title, body, row.user_id],
+        );
+        if (botBuilds) {
+          await client.query(
+            `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, first_version, asked_text)
+             VALUES ($1, $2, $3, $4, TRUE, $5)
+             ON CONFLICT (app_id, issue_number) DO UPDATE SET user_id = EXCLUDED.user_id, first_version = TRUE,
+               asked_text = COALESCE(homeroom_bot_requesters.asked_text, EXCLUDED.asked_text)`,
+            // B4: the brief they wrote is what they asked for.
+            [row.app_id, issueNumber, row.user_id, title, clip(row.brief, 2000) || null],
+          );
+        }
+        await client.query(
+          `UPDATE homeroom_bot_first_versions SET status = 'filed', issue_number = $2, filed_at = NOW(), error = NULL
+            WHERE app_id = $1`,
+          [row.app_id, issueNumber],
+        );
+        await client.query('COMMIT');
+        return issueRows[0]?.id ?? null;
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
     });
-    if (botBuilds) settingsModule().noteIssueActivity({ appId: row.app_id, issueNumber, reason: 'first_version' });
+    await steps.once('announce', async () => {
+      await ws.sendSystemMessage(pool, row.app_id, `${username} created issue: "${title}" (#${issueNumber})`,
+        'system', null, { type: 'issue', ref: issueNumber }).catch(() => {});
+      ws.pushIssueUpdate({ action: 'created', appSlug: row.slug, appId: row.app_id, issueId, kind: 'general' });
+      // #3952: the people the creator's description names with @. Never rejects.
+      (deps.notifications || require('./notifications')).notifyIssueMentions?.(pool, {
+        appId: row.app_id, issueNumber, authorId: row.user_id, text: `${title}\n\n${body}`,
+      });
+      if (botBuilds) settingsModule().noteIssueActivity({ appId: row.app_id, issueNumber, reason: 'first_version' });
+      return true;
+    });
     log.info('homeroom-bot-dm', 'Filed a first version', { app: row.slug, issueNumber, userId: row.user_id, botBuilds });
     return { issueNumber };
   } catch (err) {
-    const final = row.attempts >= MAX_FILE_ATTEMPTS;
+    if (steps.stopped) throw err;
+    // Another process filed it, or gave it up, meanwhile: its outcome is
+    // its own to tell.
+    if (err.settled) return { skipped: err.settled };
+    // Held while this work tries again (its claim is kept), given up on its
+    // last try.
     await pool.query(
-      `UPDATE homeroom_bot_first_versions SET status = $2, error = $3 WHERE app_id = $1`,
-      [row.app_id, final ? 'failed' : 'waiting', clip(err.message, 300)],
+      `UPDATE homeroom_bot_first_versions SET status = $2, error = $3 WHERE app_id = $1 AND status <> 'filed'`,
+      [row.app_id, last ? 'failed' : 'filing', clip(err.message, 300)],
     ).catch(() => {});
-    log.warn('homeroom-bot-dm', 'Could not file a first version', { app: row.slug, err: err.message, final });
-    if (final && botBuilds) {
+    log.warn('homeroom-bot-dm', 'Could not file a first version', { app: row.slug, err: err.message, final: last });
+    if (!last) throw err;
+    if (botBuilds) {
       const bot = await botAccount(pool);
       if (bot) {
         await sendDm(pool, {
@@ -5210,36 +5280,8 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
         }).catch(() => null);
       }
     }
-    return null;
+    return { failed: clip(err.message, 300) };
   }
-}
-
-/**
- * Every project waiting for its first request that can be filed for now
- * (FILEABLE_SQL: its repository holds the starter, while it is set up or
- * once it runs), the bot's or not. The bot's loop runs it before its
- * refresh, and the leader runs it on its own timer (server.js), so a request
- * the creation hooks missed is filed whether or not the bot is on.
- */
-async function sweepFirstVersions(pool, config, deps = {}) {
-  if (isStaging() && !deps.allowStaging) return 0;
-  // A filing a restart interrupted is tried again, within its attempts.
-  await pool.query(
-    `UPDATE homeroom_bot_first_versions SET status = 'waiting'
-      WHERE status = 'filing' AND attempts < $1 AND created_at < NOW() - INTERVAL '30 minutes'`,
-    [MAX_FILE_ATTEMPTS],
-  );
-  const { rows } = await pool.query(
-    `SELECT f.app_id FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
-      WHERE f.status = 'waiting' AND ${FILEABLE_SQL}
-      ORDER BY f.created_at
-      LIMIT 20`,
-  );
-  let filed = 0;
-  for (const r of rows) {
-    if (await fileFirstVersion(pool, config, r.app_id, deps).catch(() => null)) filed += 1;
-  }
-  return filed;
 }
 
 /**
@@ -5802,8 +5844,8 @@ module.exports = {
   startFirstVersion,
   firstVersionNotify,
   setFirstVersionNotify,
-  fileFirstVersion,
-  sweepFirstVersions,
+  fileFirstRequest,
+  recordFirstVersion,
   firstVersionApproval,
   firstVersionState,
   suggestShortDescription,

@@ -50,6 +50,25 @@ export function appVersion(d: { appId: number; appSlug: string; sha: string | nu
     data: { type: 'app_version_changed', appSlug: d.appSlug, sha: d.sha || null, prNumber: d.prNumber || null } };
 }
 
+// A project's status changed while it is made (app-creation): services/ws.js
+// pushAppStatusUpdate's frame, scoped as it is (a new project may be
+// view-private).
+export function appStatus(d: {
+  appId: number; appSlug: string; status: string; url?: string | null; errorReason?: string | null; missingSecrets?: string[] | null;
+}): Push {
+  const data: JsonObject = { type: 'app_status', appId: d.appId, slug: d.appSlug, status: d.status, url: d.url ?? null,
+    errorReason: d.errorReason ?? null };
+  if (d.missingSecrets) data.missingSecrets = d.missingSecrets;
+  return { kind: 'scoped', routing: { appId: d.appId, appSlug: d.appSlug }, data };
+}
+
+// The step a project being made is on: services/ws.js
+// pushAppCreationPhase's frame (database, repository, build, deploy).
+export function creationPhase(d: { appId: number; appSlug: string; phase: string }): Push {
+  return { kind: 'scoped', routing: { appId: d.appId, appSlug: d.appSlug },
+    data: { type: 'app_status', appId: d.appId, slug: d.appSlug, status: 'creating', url: null, errorReason: null, phase: d.phase } };
+}
+
 // The version pill's "deploying", started or ended: services/app-deploy-status.js
 // markStart/markEnd's broadcast, to everyone (ws.broadcastGlobal).
 export function redeployStatus(d: {

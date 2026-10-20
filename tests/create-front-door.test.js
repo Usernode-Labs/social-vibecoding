@@ -375,7 +375,7 @@ test('a setup that stopped says so on the made screen, with Try again or Set sec
 test('the server sketches the idea for both doors, and only the first session answers the join screen and counts in the Journey', () => {
   const src = read('src/routes/apps.js');
   assert.match(src, /const MAKE_ORIGINS = new Set\(\['first-session', 'create'\]\);/);
-  assert.match(src, /if \(MAKE_ORIGINS\.has\(req\.body\.from\) && !repoUrlNormalized && !readyMade\s+&& require\('\.\.\/services\/homeroom-bot-dm'\)\.normalizeBrief\(req\.body\.brief\)\) \{/);
+  assert.match(src, /if \(MAKE_ORIGINS\.has\(req\.body\.from\) && !repoUrlNormalized && !readyMade\s+&& homeroomBotDm\.normalizeBrief\(req\.body\.brief\)\) \{/);
   assert.match(src, /\.\.\.\(MAKE_ORIGINS\.has\(req\.body\.from\) \? \{ from: req\.body\.from \} : \{\}\),/);
   // Answering the join screen stays the first session's.
   assert.match(src, /if \(req\.body\.from === 'first-session'\) \{\s+await require\('\.\.\/services\/first-session'\)\.answerJoinScreenByMaking/);
@@ -408,9 +408,16 @@ test('a stopped setup is not "Ready to try", and a Just me sketch is shared with
   assert.ok(!sketch.fallbackCard({ name: 'Run Club', brief, solo: true }).points.includes(sketch.SHARED_POINT));
   assert.deepEqual(sketch.fallbackCard({ name: 'Run Club', brief: '', solo: true }).points, [], 'not padded with it either');
   const route = read('src/routes/apps.js');
-  assert.match(route, /solo: options\.audience === 'solo',\s+\}\)\.catch\(\(err\) => log\.warn\('apps', 'Sketch not started'/);
+  // Owed in the route's transaction; a failure to owe it never fails the create.
+  assert.match(route, /await optional\('sketch', 'Sketch not owed', \(\) => require\('\.\.\/services\/app-sketch'\)\.startSketch\(db, \{[\s\S]{0,700}solo: options\.audience === 'solo',\s+\}\)\);/);
+  assert.match(route, /await db\.query\(`SAVEPOINT \$\{name\}`\);\s+try \{\s+await fn\(\);\s+await db\.query\(`RELEASE SAVEPOINT \$\{name\}`\);\s+\} catch \(err\) \{\s+await db\.query\(`ROLLBACK TO SAVEPOINT \$\{name\}`\);/);
   const service = read('src/services/app-sketch.js');
   assert.match(service, /if \(points\.length < 2 && !solo\) points = distinctPoints\(\[\.\.\.points, SHARED_POINT\], tagline\);/);
   assert.match(service, /card = parseCardReply\(reply\.text, \{ name, brief, today, solo, fallbackTagline \}\);/);
-  assert.match(service, /const work = generate\(pool, \{ app, user, brief, audience, solo, timeZone, fallbackTagline, deps \}\)/);
+  // What the card is made from, kept for the setup that makes it, the make
+  // screen's own tagline with it.
+  assert.match(service, /JSON\.stringify\(\{ brief, audience, solo: !!solo, timeZone, fallbackTagline: fallbackTagline \|\| null, username: user\.username \|\| null \}\)/);
+  assert.match(service, /solo: !!request\.solo,/);
+  assert.match(service, /fallbackTagline: request\.fallbackTagline \?\? null,/);
+  assert.match(route, /fallbackTagline: typeof req\.body\.taglineFallback === 'string' \? req\.body\.taglineFallback\.slice\(0, 200\) : null,/);
 });

@@ -17,7 +17,13 @@
     "uses src/services/leadership.js:SERVER_KEEPALIVE": "constants: the server-side keepalive settings the runtime pool's sessions start with, as the leader lock's session does, so a process lost with its node gives its locks up within a minute; wiring, never a decision",
     "timer src/workflow/platform.ts#runClockNow setTimeout": "an admin's \"run it now\" waiting a bounded time for the clock's run it asked for to end (Measure now on the storage page); it answers \"still running\" when it runs out, and the run goes on wherever the workflow runs",
     "uses src/config.js:runsClusterMaintenance": "whether this platform is one whose scheduled jobs run (not a staging preview, whose rows are a copy of production's): the release's work arms the clocks only where it is, the rule the leader's duties had; read from the environment, deciding nothing in a process",
-    "state src/workflow/platform.ts#appConfig": "the configuration startWorkflow was given, read by the release's own steps (restPreviews' idle window, retainClosedProposals' retention); set once from the environment, deciding nothing"
+    "state src/workflow/platform.ts#appConfig": "the configuration startWorkflow was given, read by the release's own steps (restPreviews' idle window, retainClosedProposals' retention); set once from the environment, deciding nothing",
+    "uses src/services/application-runtime.js:mode": "where apps run on this platform (docker or kubernetes), from the configuration: app delivery's default runtime for an app whose row names none, and whether the release's cluster steps apply; deciding nothing in a process",
+    "uses src/services/github.js:isEnabled": "whether GitHub is configured (the environment): app delivery serves an app without a repository only when it is not; deciding nothing in a process",
+    "uses src/services/kubernetes.js:ensurePlatformAssetBackend": "the release's assetBackend step: the shared hosted-asset backend upserted (resourceVersion-checked) to what the cluster's platform Deployment runs, once per release in its own build; the same call every app deploy makes",
+    "uses src/services/bench/core.js:bootEnabled": "whether this deployment makes the bench suites (BENCH_CORE_MATERIALIZE, the environment): the release's benchSuites step; deciding nothing in a process",
+    "uses src/services/bench/core.js:materializeInBackground": "the release's benchSuites step: the Core suite made from this build's checked-in definition, claimed by its own bench_materializations row (a stale claim taken again), awaited; a no-op once that definition is made",
+    "uses src/services/bench/taste.js:materialize": "the release's benchSuites step: the taste suite made from this build's checked-in briefs (rows only), claimed by its bench_materializations row (a running row left by a dead process taken again after ten minutes)"
   },
   "io": {
     "app-delivery": {
@@ -25,7 +31,8 @@
       "services | uses src/services/deploy-failure.js:isRootImageRefusal": "whether a failed deploy's image runs as root, from the error (pure): the same commit fails that way every time, so it is an answer, not a retry",
       "services | uses src/services/deploy-failure.js:ROOT_IMAGE_FIX": "the words saying what to change in the Dockerfile (a constant), the answer a merge's thread shows",
       "services | uses src/services/github.js:getCommitTree": "reads a commit's tree from GitHub, so demo mode offers the deploy the preview's image when its tree is the merged tree; one read (the credential cache only picks the token)",
-      "services | uses src/services/staging.js:deployProduction": "the production deploy of one app (app.deploy), under the Postgres advisory lock PRODUCTION_BUILD_LOCK across processes; its in-process chain only orders it after this process's own rollover respawn, and the machine runs one deploy of an app at a time; keeps nothing"
+      "services | uses src/services/staging.js:deployProduction": "the production deploy of one app (app.deploy), under the Postgres advisory lock PRODUCTION_BUILD_LOCK across processes; its in-process chain only orders it after this process's own rollover respawn, and the machine runs one deploy of an app at a time; keeps nothing",
+      "services | uses src/services/app-heal.js:heal": "the heal (app.heal): the cheapest cure for an app reported down (a Kubernetes restart, a Docker start or restart, its image run again when it has no repository), or `needs_deploy`; reads the runtime and the row at the time, keeps nothing (when to heal is the machine's backoff)"
     },
     "bot-change": {
       "services | uses src/services/homeroom-bot-dm.js:noteChangeStopped": "the quiet line when a change's preview will not start (bot.stopped), keyed per change and epoch; its settings are read strictly, so a failed read is retried, never taken for \"no bot\"; keeps nothing",
@@ -54,7 +61,6 @@
       "services | uses src/services/fleet-maintenance.js:parseRepo": "owner and name from an app's repository address (pure), for the change's GitHub calls",
       "services | uses src/services/fleet-maintenance.js:pushChange": "the change as one commit on the campaign's branch for the app, set to main first (campaign.change), cut out of runCampaign's openCampaignProposal; checkpointed by the item once pushed",
       "services | uses src/services/fleet-maintenance.js:runAppChange": "the AI's bounded tool loop over the app's repository through the GitHub API (campaign.change), cut out of runCampaign's leased in-process loop; stops at the item's signal, keeps nothing between attempts",
-      "services | uses src/services/github.js:isEnabled": "whether GitHub is configured on this platform (pure, configuration): a campaign's change fails at once without it",
       "services | uses src/services/limits.js:recordSpend": "records what the AI's calls cost against the platform account (campaign.change), as runCampaign's loop did; a row, non-fatal",
       "services | uses src/services/llm.js:estimateCostCents": "what one model call cost, from its usage (pure), for the spend record",
       "services | uses src/services/llm.js:isEnabled": "whether the model is configured on this platform (pure, configuration): a campaign's change fails at once without it"
@@ -65,18 +71,15 @@
       "services | uses src/services/github.js:createIssueComment": "posts the closing comment once, marked so that a retry finds it (github-work.ts closeAndComment)",
       "services | uses src/services/github.js:fetchIssueComments": "reads the comments since the attempt began, for the marker a retry may have posted already (github-work.ts closeAndComment)",
       "services | uses src/services/github.js:getIssue": "reads whether a close proposal's target is still open on GitHub (governance.checkTarget); one uncached read",
-      "services | uses src/services/github.js:isEnabled": "whether GitHub is configured on this platform (pure, from the configuration)",
       "services | uses src/services/homeroom-bot-closed-requests.js:noteRequestsClosed": "a close vote closed a request (bot.requestsClosed): the Homeroom bot's proposals for it are withdrawn through the proposal machine's Close, the closes recorded where the bot's loop reads them, the requesters told once (keyed DMs); strict, so a failure (the DM's too) is retried; its wake of the loop is a hint over ws-bus; keeps nothing"
     },
     "merge-followups": {
-      "services | uses src/services/application-runtime.js:mode": "which runtime this platform deploys to, from the configuration (pure)",
       "services | uses src/services/deploy-nudge.js:nudgeHostDeployer": "touches the host deployer's nudge file (write, then rename) so a self-hosted Docker host fetches main at once (host.nudgeDeployer); a hint, keeps nothing, false where there is no mount",
       "services | uses src/services/github.js:closeIssue": "closes a request on GitHub, named in github-work.ts closeAndComment (github.closeIssue) and checkpointed before its comment; one API call; shared with governance, merge-followups closes pull requests there",
       "services | uses src/services/github.js:closePR": "closes an included change's own pull request, named in github-work.ts closeAndComment (github.closePullRequest) and checkpointed before its comment; one API call",
       "services | uses src/services/github.js:compareCommitAncestry": "reads from GitHub's compare whether the build production runs contains the merge commit (delivery.verify); one read",
       "services | uses src/services/github.js:createIssueComment": "posts the closing comment once, marked so that a retry finds it (github-work.ts closeAndComment)",
       "services | uses src/services/github.js:fetchIssueComments": "reads the comments since the attempt began, for the marker a retry may have posted already (github-work.ts closeAndComment)",
-      "services | uses src/services/github.js:isEnabled": "whether GitHub is configured on this platform (pure, from the configuration)",
       "services | uses src/services/github.js:listPullRequestCommitShas": "the merged pull request's commits from GitHub (included.find), naming the changes whose head went in with it; up to three reads",
       "services | uses src/services/issue-close-watcher.js:closeAfterMerge": "one look at the requests a merged pull request closes (issues.closeAfterMerge): their state on GitHub, the linked ones closed at the second look, their twin rows and the Homeroom bot's proposals for them settled (strict), the close proposals named for the transition to tell; cut out of the watcher's in-item polls and broadcasts, keeps nothing",
       "services | uses src/services/issue-close-watcher.js:closeIncluded": "closes an included change's linked requests on GitHub (issues.closeAfterMerge, closeOnly), their twin rows and the Homeroom bot's proposals for them settled (strict), the close proposals named for the transition to tell; moved out of included-changes.js closeRequests, keeps nothing",
@@ -84,7 +87,6 @@
       "services | uses src/services/worker.js:removeCcVolume": "removes a merged change's worker and its Claude Code volume (worker.retire), the proposal machine's strict, fenced core: what is removed is read by identity, the shots run is read again before it is, and it answers once they are gone"
     },
     "preview": {
-      "services | uses src/services/application-runtime.js:mode": "which runtime this platform deploys to, from the configuration (pure)",
       "services | uses src/services/application-runtime.js:remove": "removes a Docker preview's container by name (local development and tests), for a retirement",
       "services | uses src/services/boot-failure-sync.js:afterBootFailure": "measures whether a preview that will not start is behind main and merges with it cleanly (preview.prepare), so the failure note can say so and the machine can ask the proposal for its one sync; the plan half of the boot-failure sync cut out of the in-process job that also ran it, keeping nothing",
       "services | uses src/services/boot-failure-sync.js:explain": "the wording of what a sync with main will do about a failed boot (pure)",
@@ -98,7 +100,6 @@
       "services | uses src/services/docker.js:execFileAsync": "removes an attempt's checkout directory (rm -rf) after it is retired",
       "services | uses src/services/docker.js:inspectContainer": "reads the attempt number on a Docker preview's container (local development and tests), so nothing that serves is retired",
       "services | uses src/services/docker.js:STAGING_STOP_GRACE_SEC": "a preview's short stop grace in seconds, a constant (pure), passed when retiring a Docker preview",
-      "services | uses src/services/github.js:isEnabled": "whether GitHub is configured (pure), before the PR body and the merge queue",
       "services | uses src/services/kubernetes.js:appResourceName": "the name of a session's preview runtime on Kubernetes, from its app and session (pure)",
       "services | uses src/services/kubernetes.js:attemptFence": "parses the label a preview container or Deployment carries (`n.k`) into its attempt and claim (pure)",
       "services | uses src/services/kubernetes.js:attemptSecretName": "the name of an attempt's env Secret, computed from the runtime's name (pure)",
@@ -135,7 +136,6 @@
       "services | uses src/services/github.js (whole module)": "the GitHub client handed to proposal-update.updateLinkedIssues (review.open), which writes a session's originating request into its pull request's Closes lines; no process state",
       "services | uses src/services/github.js:closePR": "closes a closed proposal's pull request on GitHub (pr.close), the call finalizeArchivedSession made best-effort after the archive; one API call",
       "services | uses src/services/github.js:getPR": "reads the pull request as GitHub has it (review.open: merged, closed, a draft, its head; pr.reopen: closed for good), outside the promote route that read it before its claim",
-      "services | uses src/services/github.js:isEnabled": "whether GitHub is configured (pure), before a pull request is read, opened, closed or reopened",
       "services | uses src/services/github.js:markPrReadyForReview": "marks a native proposal's draft pull request ready for review (review.open), before the proposal is in review, never after it (bug 9); one GraphQL mutation",
       "services | uses src/services/github.js:reopenPR": "reopens a pull request: a closed native one going up for a vote (review.open), a reopened proposal's (pr.reopen), as the promote route and unarchiveSession did; one API call",
       "services | uses src/services/limits.js:resolveBillingPath": "reads who pays for the model call that titles a new pull request (review.open), from the owner's stored keys, as the promote route did; no process state",
@@ -227,7 +227,20 @@
       "services | uses src/services/welcome-dm.js:sweep": "the welcome group a person let in is owed (welcome-dm clock): each queue row claimed FOR UPDATE SKIP LOCKED with the group it made, the message under an idempotency key with a unique index; keeps nothing",
       "services | uses src/services/worker-volume-reclaim.js:reclaimWorkerVolumes": "a merged change's Kubernetes worker volume that outlived its merge, deleted (worker-volumes clock); reads the volumes and their rows fresh, a delete of one gone is a no-op, keeps nothing",
       "services | uses src/services/workshop-themes.js:sweepApp": "one app's Workshop themes reconciled, a target of the workshop-themes clock: under the row's lease, whose stamp fences every write it makes back (a reconcile that outlived its lease writes nothing); this process's in-flight set only turns a second reconcile of an app it is already running into one more pass after it; keeps nothing",
-      "services | uses src/services/workshop-themes.js:sweepTargets": "the apps opened in the last week, as targets (workshop-themes clock), none while GitHub's hourly budget is nearly used up; no model call; keeps nothing"
+      "services | uses src/services/workshop-themes.js:sweepTargets": "the apps opened in the last week, as targets (workshop-themes clock), none while GitHub's hourly budget is nearly used up; no model call; keeps nothing",
+      "services | uses src/services/app-heal.js:intervalMs": "APP_HEAL_INTERVAL_MS, the app-health clock's interval (the environment)",
+      "services | uses src/services/app-heal.js:scan": "the app-health clock's run: each running app's runtime state read, and app delivery told about each one not running (Unhealthy, keyed by the run); decides nothing",
+      "services | uses src/services/main-drift-poller.js:intervalMs": "MAIN_DRIFT_POLL_MS, the main-drift clock's interval (the environment)",
+      "services | uses src/services/main-drift-poller.js:scan": "the main-drift clock's run: each running app's main read from GitHub (conditional reads; the ETag cache saves budget only), app delivery told about a commit it does not run (MainMoved, keyed by the commit), the main check asked; the platform's own row to release-watch; decides nothing about a deploy",
+      "services | uses src/services/starter-images.js:targets": "the starter-images clock's run (newest build only): a row for each of this build's keys, and each key owed a build as a target",
+      "services | uses src/services/starter-images.js:buildTarget": "one key's build (a target of the clock, one at a time under its lease, claimed only by the build that found it): its row building, then ready or failed; a key not this build's is skipped",
+      "services | uses src/services/language-sync-runner.js:look": "the language-sync clock's run (newest build only): the one pass owed, as a target (a batch to collect, or this build's catalogs not yet translated); reads, never spends",
+      "services | uses src/services/language-sync-runner.js:runOnce": "one translation pass (a target of the clock, one at a time): direct translations or a Message Batch submitted once per catalog (a step), or an ended batch's answers kept; its state is the platform_settings row it writes",
+      "services | uses src/services/kubernetes.js:reconcileAppGateIngresses": "the app-gate clock (a job only the newest build runs): every managed Ingress routed through the app gate or straight back, per the newest build's APP_GATE, so a change of it alone or a rollback is applied and an older build never routes the fleet back; each Ingress replaced on its own, a conflict read again; keeps nothing"
+    },
+    "app-creation": {
+      "services | uses src/services/app-creator.js:setUp": "the setup (app.setup): the database, the card, the repository and its first commit, each a step of the work's checkpoint (a resumed attempt runs none it kept; the first commit is not pushed again when it is the repository's head); keeps nothing in a process",
+      "services | uses src/services/homeroom-bot-dm.js:fileFirstRequest": "the first request (app.firstRequest): the GitHub issue asked for once (a step), a resumed try finding its own by the marker in its body, then its rows in one transaction; keeps nothing in a process"
     }
   }
 }

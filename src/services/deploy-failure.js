@@ -3,8 +3,8 @@
 /**
  * Shared classifier for build/deploy failures (issue #416).
  *
- * Every production deploy path (createApp / finalizeDeploy /
- * deployProduction) funnels its caught error through classify() to get
+ * Every production deploy path (a new project's setup, app-creator.js,
+ * and deployProduction) funnels its caught error through classify() to get
  * a persistable `apps.last_failure` record:
  *
  *   { stage, reason, log, at, sha }

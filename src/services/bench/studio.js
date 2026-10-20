@@ -124,9 +124,9 @@ async function hostRow(pool) {
 
 /**
  * The studio's host app, made the first time it is needed: a private
- * project of the benchmark user's, created through app creation's own path
- * (services/app-creator.js createApp: its database, its repository, its
- * first deploy). Waits for its repository, which creation makes within
+ * project of the benchmark user's, made by app creation's own path (its
+ * insert starts the app-creation machine: its database, its repository,
+ * its first deploy). Waits for its repository, which creation makes within
  * seconds; never for its deploy. Resolves { ok, app } or a refusal.
  */
 async function ensureHost(pool, config, { deps = {}, waitMs = HOST_WAIT_MS, pollMs = 2000 } = {}) {
@@ -144,10 +144,11 @@ async function ensureHost(pool, config, { deps = {}, waitMs = HOST_WAIT_MS, poll
         const slug = `app-bench-${crypto.randomBytes(3).toString('hex')}`;
         // The create route's own insert (routes/apps.js POST /api/apps):
         // the row and its creator's membership together, private to them.
+        // Its insert starts its making (src/workflow/app-creation/).
         const { rows: [app] } = await client.query(
           `WITH new_app AS (
-             INSERT INTO apps (name, slug, created_by, status, collab_visibility, view_visibility)
-             VALUES ($1, $2, $3, 'creating', 'private', 'private')
+             INSERT INTO apps (name, slug, created_by, status, collab_visibility, view_visibility, creating_owner, creating_heartbeat_at)
+             VALUES ($1, $2, $3, 'creating', 'private', 'private', 'workflow', 'infinity')
              RETURNING *
            ), membership AS (
              INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
@@ -171,14 +172,7 @@ async function ensureHost(pool, config, { deps = {}, waitMs = HOST_WAIT_MS, poll
     } finally {
       client.release();
     }
-    if (created) {
-      const createApp = deps.createApp || require('../app-creator').createApp;
-      Promise.resolve().then(() => createApp(config, created)).catch(async (err) => {
-        log.error('bench', 'The studio host app could not be made', { appId: created.id, err: err.message });
-        await pool.query("UPDATE apps SET status = 'error' WHERE id = $1 AND status = 'creating'", [created.id]).catch(() => {});
-      });
-      log.info('bench', 'Studio host app being made', { appId: created.id, slug: created.slug });
-    }
+    if (created) log.info('bench', 'Studio host app being made', { appId: created.id, slug: created.slug });
     host = await hostRow(pool);
   }
   const deadline = Date.now() + waitMs;
