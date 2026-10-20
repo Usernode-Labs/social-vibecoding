@@ -49,7 +49,9 @@
  *
  *   phone       Your name and a phone number. POST /api/auth/phone/request
  *               texts a code, after an invisible reCAPTCHA (./recaptcha.ts)
- *               Firebase asks of a web caller.
+ *               Firebase asks of a web caller. Above the name, one line
+ *               says who sees it and that a public app asks for a
+ *               username first (Evan, 20 Oct 2026).
  *   phone-code  POST /api/auth/phone/verify with the code and the name. A
  *               number already on an account signs it straight in; a new
  *               one is made with that name, and a PROVISIONAL handle picked
@@ -1598,6 +1600,9 @@ export function SignInSheet({
 
         {step === 'phone' ? (
           <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void submitPhoneStep(); }}>
+            {askName ? (
+              <p data-sign-in-sheet-name-note="" className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.phone.namePrivate')}</p>
+            ) : null}
             <div className={FIELD_GROUP}>
               {askName ? (
                 <div className={FIELD}>
@@ -1622,7 +1627,6 @@ export function SignInSheet({
                 <input ref={phoneCodeField} id="sign-in-sheet-phone-code" {...ONE_TIME_CODE_FIELD} enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
               </div>
             </div>
-            <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.phoneCode.autofill')}</p>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.phoneCode.checking') : t('auth:signInSheet.phoneCode.submit')}</button>
             <div className="flex items-center justify-between">
               <button type="button" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>{t('auth:signInSheet.phoneCode.changeNumber')}</button>
