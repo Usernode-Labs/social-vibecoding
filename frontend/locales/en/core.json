@@ -185,7 +185,7 @@
   },
   "header.back": {
     "text": "Back",
-    "description": "Accessible name of the header's back button when it returns to the previous screen, including on a phone the Communities list's arrow back to the community page you came from."
+    "description": "Accessible name of the header's back button when it returns to the previous screen."
   },
   "header.closeApp": {
     "text": "Close app",

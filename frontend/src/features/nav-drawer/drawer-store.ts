@@ -243,10 +243,7 @@ export function go(to: number, opts: GoOptions = {}): void {
   else communitiesDepth.slide(level);
 }
 
-/**
- * The header's arrow: up one level; on your communities, back to the page.
- * A widened search narrows first.
- */
+/** The header's arrow: up one level. A widened search narrows first. */
 export function back(): void {
   const s = drawerStore.get();
   if (!s.on) return;
@@ -254,12 +251,7 @@ export function back(): void {
     setSearching(false);
     return;
   }
-  // Level 0's is the way out: the page it came from, as the device's Back.
-  if (s.level === 0) {
-    go(2);
-    return;
-  }
-  go(s.level - 1);
+  if (s.level > 0) go(s.level - 1);
 }
 
 /**

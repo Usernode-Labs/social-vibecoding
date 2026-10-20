@@ -205,6 +205,17 @@ function DrawerSurface({ slug, name, place, owed, selfHosted = false }: { slug: 
   // Level 0's list is drawn the first time it is wanted, then kept.
   const [warm, setWarm] = useState(false);
   useEffect(() => { if (level < 2 || moving) setWarm(true); }, [level, moving]);
+  // The arrow has no level 0 to show on: focus that pressed it moves onto
+  // the community you are on in the list (never the search, which would
+  // raise a keyboard).
+  useEffect(() => {
+    if (level !== 0) return;
+    const active = document.activeElement as HTMLElement | null;
+    if (!active || !active.matches?.('[data-nav-drawer-back]')) return;
+    const here = rootRef.current?.querySelector<HTMLElement>('.nav-drawer-outer [aria-current="true"]')
+      || outerListRef.current;
+    here?.focus({ preventScroll: true });
+  }, [level, warm]);
 
   // ── Putting the strip and the page somewhere ──
   const put = (offset: number, transition: string, pageToo = true) => {
