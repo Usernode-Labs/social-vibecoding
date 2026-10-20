@@ -736,9 +736,10 @@ test('Jump to latest alone: hidden until the reader is up the transcript, and a 
   const docked = renderToHtml(createElement(mod.JumpToLatest, { scroller: { current: null }, docked: true }));
   assert.match(docked, /^<div data-transcript-strip="foot" class="hidden"><button type="button" inert="" data-jump-latest=""/);
   assert.doesNotMatch(docked, /data-transcript-overlay/);
-  // Shown, the strip puts it at the right edge too, the one place it has.
+  // Shown, the strip centres it in the one place it has (#5702), while the
+  // floating overlay above keeps its button at the right edge.
   const SOURCE = read('frontend/src/features/messages/jump-to-latest.tsx');
-  assert.match(SOURCE, /className=\{view\.jump \? 'flex shrink-0 justify-end px-3 py-1' : 'hidden'\}/);
+  assert.match(SOURCE, /className=\{view\.jump \? 'flex shrink-0 justify-center px-3 py-1' : 'hidden'\}/);
 
   assert.match(THREAD, /<\/div>\s*<JumpToLatest scroller=\{scroller\} \/>\s*<MessageComposer threadRootId=\{rootId\} \/>/, 'a reply thread beside a conversation');
 });

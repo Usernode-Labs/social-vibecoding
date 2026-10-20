@@ -245,11 +245,13 @@ export function NewMessagesBanner({
 }
 
 /**
- * Jump to latest: a round disc with a down chevron at the right of the
- * transcript's foot, up whenever the reader is not at the bottom. The
- * disc is the language's floating control, white on the sheet; `dot` is the
- * accent, for messages that arrived while the reader was up the
- * transcript, and the button's name says how many.
+ * Jump to latest: a round disc with a down chevron, up whenever the reader
+ * is not at the bottom. Floating, the overlay puts it at the right of the
+ * transcript's foot (run six); a docked strip (#4553 pages) centres it in
+ * the one place it has (#5702). The disc is the language's floating
+ * control, white on the sheet; `dot` is the accent, for messages that
+ * arrived while the reader was up the transcript, and the button's name
+ * says how many.
  */
 export function JumpToLatestButton({
   className, shown, dot = false, ...props

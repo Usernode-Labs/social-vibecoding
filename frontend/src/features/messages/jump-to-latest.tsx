@@ -19,9 +19,10 @@ import { jumpLabel, useUnreadAffordances, type UnreadRow } from './unread-anchor
  * its own thin strip between the scroller and the composer instead of
  * floating over the transcript's foot, and the strip goes with it at the
  * bottom, so the page gets its full height back. Chats keep the floating
- * disc: floating over messages is the normal pattern there. Either way it
- * sits at the right edge, just above the composer (run six, 14 Oct 2026;
- * @/components/ui/chat TranscriptOverlay).
+ * disc: floating over messages is the normal pattern there. Docked, the
+ * button is centred in its strip (#5702), like the "new messages" banner
+ * over the top; floating, it stays at the right edge, just above the
+ * composer (run six, 14 Oct 2026; @/components/ui/chat TranscriptOverlay).
  *
  * The conversation itself (./index.tsx) draws the same button from the same
  * hook beside its banner.
@@ -50,7 +51,7 @@ export function JumpToLatest({ scroller, slack, rows = NO_ROWS, docked = false }
     // One class string or the other, never both on the node: `hidden` beside
     // a display utility is the clap-chip bug again — the utility wins.
     return (
-      <div data-transcript-strip="foot" className={view.jump ? 'flex shrink-0 justify-end px-3 py-1' : 'hidden'}>
+      <div data-transcript-strip="foot" className={view.jump ? 'flex shrink-0 justify-center px-3 py-1' : 'hidden'}>
         {button}
       </div>
     );
