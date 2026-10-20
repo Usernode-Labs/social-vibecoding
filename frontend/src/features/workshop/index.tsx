@@ -48,7 +48,8 @@
  * the order: an ordering by urgency is how a quiet project you care about
  * falls off the bottom and is lost, and each row's vote pill already says
  * which ones are asking for you. The drawer (../nav-drawer/outer-level.tsx)
- * still draws the sections (`Section` below).
+ * draws the same chips and the same one list, through `AudienceChips` and
+ * `AppRow` below.
  *
  * ── Where the numbers come from ────────────────────────────────────────
  *
@@ -99,7 +100,7 @@ import { IconTile } from '@/components/ui/icon-tile';
 import { Chip, ChipRail } from '@/components/ui/chip';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
-  BallotIcon, ChevronLeftIcon, HandRaisedIcon, LockIcon, PlusIcon, SearchIcon, SpeechCheckIcon, UserGroupIcon, UserIcon,
+  BallotIcon, ChevronLeftIcon, HandRaisedIcon, PlusIcon, SearchIcon, SpeechCheckIcon,
 } from '@/components/ui/icons';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { AppsLoadError } from '../apps/load-error';
@@ -123,9 +124,7 @@ import { takeCounts, votesWaiting } from './community-scope';
 import { communityScopeStore } from './community-scope';
 import { NeedsReel, type NeedsFeedItem } from './needs-reel';
 import { unseenNeeds, useNeedsSeen } from './needs-seen';
-import {
-  matchRows, orderRows, SECTION_LIMIT, SECTIONS, sectionFold, type Audience,
-} from './sections';
+import { matchRows, orderRows, SECTIONS, type Audience } from './sections';
 import { workshopStore } from './workshop-store.js';
 
 // The legacy router reads the DOM on the line after it routes — the ?shot=
@@ -167,13 +166,6 @@ export type WorkshopRow = {
   unchosen?: boolean;
 };
 
-function SectionGlyph({ audience }: { audience: Audience }) {
-  const cls = 'w-4 h-4 shrink-0';
-  if (audience === 'solo') return <UserIcon className={cls} aria-hidden="true" />;
-  if (audience === 'invited') return <LockIcon className={cls} aria-hidden="true" />;
-  return <UserGroupIcon className={cls} aria-hidden="true" />;
-}
-
 type Counts = Record<string, { working?: number; needs?: number; owed?: unknown; unchosen?: boolean } | undefined>;
 
 /** Which chip is pressed above the list: every community, or one audience. */
@@ -201,6 +193,58 @@ const CHIP_LABELS: Record<AudienceFilter, string> = {
   invited: 'communities:filter.invited',
   solo: 'communities:filter.solo',
 };
+
+/**
+ * THE AUDIENCE CHIPS (#5296): All, Public, Private and Just you, in the
+ * order the sections were, above the one list. A filter, so `aria-pressed`
+ * (the Chip primitive), selection the solid inversion and not the accent.
+ * Each carries its count, and a chip with nothing in it is hidden but kept,
+ * so the order check finds all four.
+ *
+ * Drawn by the screen and by the phone drawer's level 0
+ * (../nav-drawer/outer-level.tsx), which takes the page's list wholesale;
+ * `scope` names the surface in its data attributes (`data-workshop-chip`
+ * there, `data-nav-drawer-chip` in the drawer), so each place's selectors
+ * keep pointing only at it.
+ */
+export function AudienceChips({ tallies, pressed, onPress, scope }: {
+  tallies: Record<AudienceFilter, number>;
+  pressed: AudienceFilter;
+  onPress: (key: AudienceFilter) => void;
+  /** The surface drawing it: the data attribute prefix. */
+  scope: string;
+}) {
+  const t = useMessages('communities');
+  return (
+    <ChipRail
+      className="gap-2 pt-0 pb-3"
+      role="group"
+      aria-label={t('communities:filter.label')}
+      {...{ [`data-${scope}-chips`]: '' }}
+    >
+      {(['all', ...SECTIONS.map((section) => section.key)] as AudienceFilter[]).map((key) => {
+        const count = tallies[key];
+        const label = key === 'all'
+          ? t('communities:filter.allCount', { count })
+          : t(SECTIONS.find((section) => section.key === key)!.count, { count });
+        return (
+          <Chip
+            key={key}
+            size="bar"
+            className={key !== 'all' && !count ? 'hidden' : 'gap-1.5 px-4'}
+            selected={pressed === key}
+            aria-label={label}
+            onClick={() => onPress(key)}
+            {...{ [`data-${scope}-chip`]: key }}
+          >
+            <span>{t(CHIP_LABELS[key])}</span>
+            <span className="tabular-nums opacity-60" aria-hidden="true">{count}</span>
+          </Chip>
+        );
+      })}
+    </ChipRail>
+  );
+}
 
 /** How many communities each chip would show. */
 export function audienceTallies(rows: readonly WorkshopRow[]): Record<AudienceFilter, number> {
@@ -546,73 +590,6 @@ export function RowSkeletons(): ReactNode {
   );
 }
 
-/**
- * One audience: its label, its count, a card of its three most recent rows,
- * and the rest behind "Show N more".
- *
- * `SectionHeader` over `GroupedList` — the language's label-over-card shape,
- * the same pair Discover's tiers use. The header carries the count of the
- * whole section, not of the rows showing, so "Private communities 5" over
- * three rows is what tells you there are two more before you find the
- * button.
- *
- * THE FOLD IS A ROW OF THE CARD, not a link under it: the language's "Show
- * more" (Messages' channels, Discover's tiers) is the last row of the group it
- * extends, full-width with no tile, so it reads as more of the same list. It
- * reveals SECTION_STEP rows a press and says how many ("Show 5 more"), and
- * becomes "Show fewer" once the section is all out (#3269). A
- * `button`, not an anchor, because it navigates nowhere — which also keeps it
- * out of `a[data-workshop-app]:first-of-type` for good.
- */
-export function Section({ audience, label, count, rows, idPrefix = 'workshop-section', onOpen, current }: {
-  audience: Audience;
-  /** The section's heading and its count's accessible name, as message ids. */
-  label: string;
-  count: string;
-  rows: WorkshopRow[];
-  /** The heading's id is `<idPrefix>-<audience>`: the drawer draws its own copy. */
-  idPrefix?: string;
-  /** AppRow's: a press that is not a door to the hub. */
-  onOpen?: (row: WorkshopRow) => void;
-  /** The community the drawer is on. */
-  current?: string | null;
-}) {
-  // Subscribed: the heading and the fold row (sectionFold) follow the language.
-  const t = useMessages('communities');
-  // How many rows are out. Each press of "Show N more" adds SECTION_STEP;
-  // once every row is out the same row folds the section back to three.
-  const [limit, setLimit] = useState(SECTION_LIMIT);
-  const fold = sectionFold(rows.length, limit);
-  const shown = rows.slice(0, fold.shown);
-  const expanded = fold.shown === rows.length;
-  const tally = sectionCount(rows.length, fold.shown, count);
-  const headingId = `${idPrefix}-${audience}`;
-  return (
-    <section data-workshop-section={audience} aria-labelledby={headingId}>
-      <SectionHeader id={headingId} className="flex items-center gap-1.5">
-        <SectionGlyph audience={audience} />
-        <span>{t(label)}</span>
-        <span className="ml-auto tabular-nums" aria-label={tally.label}>{tally.text}</span>
-      </SectionHeader>
-      <GroupedList tone="plane">
-        {shown.map((row) => <AppRow key={row.slug} row={row} onOpen={onOpen} current={!!current && current === row.slug} />)}
-        {rows.length > SECTION_LIMIT ? (
-          <ListRow
-            as="button"
-            inset="none"
-            chevron={false}
-            data-workshop-more={audience}
-            aria-expanded={expanded}
-            onClick={() => setLimit(fold.next)}
-            title={fold.label || ''}
-            titleClassName="text-center font-semibold text-violet-700 dark:text-violet-300"
-          />
-        ) : null}
-      </GroupedList>
-    </section>
-  );
-}
-
 export function WorkshopScreen() {
   const t = useMessages('communities');
   const screenRef = useRef<HTMLElement | null>(null);
@@ -804,35 +781,11 @@ export function WorkshopScreen() {
               />
             </div>
           </div>
-          {/* #5296: THE AUDIENCE CHIPS, All, Public, Private and Just you,
-              in the order the sections were: a filter, so `aria-pressed`
-              (the Chip primitive), selection the solid inversion and not the
-              accent. Each carries its count, and a chip with nothing in it
-              is hidden but kept, so the order check finds all four. Drawn
-              once the list has loaded, so never in the prerender. */}
+          {/* #5296: THE AUDIENCE CHIPS, All, Public, Private and Just you —
+              the one rail the drawer draws too (AudienceChips). Drawn once
+              the list has loaded, so never in the prerender. */}
           {tallies && tallies.all > 0 && !state.error ? (
-            <ChipRail className="gap-2 pt-0 pb-3" role="group" aria-label={t('communities:filter.label')} data-workshop-chips="">
-              {(['all', ...SECTIONS.map((section) => section.key)] as AudienceFilter[]).map((key) => {
-                const count = tallies[key];
-                const label = key === 'all'
-                  ? t('communities:filter.allCount', { count })
-                  : t(SECTIONS.find((section) => section.key === key)!.count, { count });
-                return (
-                  <Chip
-                    key={key}
-                    size="bar"
-                    className={key !== 'all' && !count ? 'hidden' : 'gap-1.5 px-4'}
-                    data-workshop-chip={key}
-                    selected={pressed === key}
-                    aria-label={label}
-                    onClick={() => setAudience(key)}
-                  >
-                    <span>{t(CHIP_LABELS[key])}</span>
-                    <span className="tabular-nums opacity-60" aria-hidden="true">{count}</span>
-                  </Chip>
-                );
-              })}
-            </ChipRail>
+            <AudienceChips scope="workshop" tallies={tallies} pressed={pressed} onPress={setAudience} />
           ) : null}
           {/* `#workshop-list` IS A PLAIN WRAPPER, not the card. It holds the
               empty card and then the ONE card of rows (#5296; it held one
