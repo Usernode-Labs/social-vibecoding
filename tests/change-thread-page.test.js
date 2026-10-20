@@ -243,6 +243,23 @@ test('a moving bar is the lit ink, a finished one green with its check, and AGEN
   assert.match(read('AGENTS.md'), /A finished progress bar may be green \(`--state-ok`/);
 });
 
+// Issue #5712: at phone width the Testing card's buttons took the auto
+// column, squeezing "Testing" and "Found a problem" into a sliver where they
+// drew over each other and the bar. The phone rules stack the card.
+test('on a phone the gate card stacks its buttons under its line', () => {
+  const css = read('public/css/app.css');
+  const blocks = [...css.matchAll(/@media \(max-width: 640px\) \{([\s\S]*?)\n\}/g)].map((m) => m[1]);
+  const phone = blocks.find((b) => b.includes('.dev-change-chips'));
+  assert.ok(phone, 'the change page has a phone block');
+  assert.match(phone, /\.dev-change-gate \{ grid-template-columns: minmax\(0, 1fr\); \}/);
+  assert.match(phone, /\.dev-change-gate-act \{[^}]*order: 1;[^}]*flex-wrap: wrap;[^}]*\}/);
+  assert.match(phone, /\.dev-change-gate-head \{ flex-wrap: wrap; row-gap: 2px; \}/);
+  assert.match(phone, /\.dev-change-gate-name \{ min-width: 0; \}/);
+  assert.match(phone, /\.dev-change-gate-figure \{ white-space: nowrap; \}/);
+  // Desktop keeps today's two columns: one for the text, one for the buttons.
+  assert.match(css, /\.dev-change-gate \{[^}]*grid-template-columns: minmax\(0, 1fr\) auto;/);
+});
+
 // Issue #5178: the sheet's header shows the change's status pill beside
 // "Change #N", in the board card's own words and capsule form — so the page
 // answers "is it live?" where the reader first looks. The thread view
