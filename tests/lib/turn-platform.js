@@ -35,8 +35,14 @@ function installTurnPlatform({ finish = true, run = null, extra = {} } = {}) {
           signal: new AbortController().signal,
           input: { ...ask.input, turnId: ask.turnId, kind: ask.kind, instanceKey: ask.key },
         };
+        // Then its end on its stream, as the machine writes it when it
+        // settles the item (turn/machine.ts `released`), however it ended.
+        const { turnEndEvent } = require('../../src/workflow/turn/machine.ts');
+        const end = () => sessionBus.publish(ask.key.startsWith('agent:') ? ask.key : Number(ask.key.replace(/^session:/, '')),
+          turnEndEvent(ask.key, String(ask.turnId)));
         ran.push(new Promise((resolve) => setImmediate(resolve))
-          .then(() => require('../../src/services/turns').run(ctx, run)));
+          .then(() => require('../../src/services/turns').run(ctx, run))
+          .finally(end));
         return { ok: true };
       }
       if (finish && /^agent:\d+$/.test(ask.key)) {

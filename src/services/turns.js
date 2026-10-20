@@ -502,17 +502,11 @@ async function run(ctx, deps) {
   const releaseRun = holdHeadlessRun(input);
   const settledHere = endOnLostLease(ctx, deps.pool);
   try {
-    const out = await (resumed ? kind.resume : kind.run)(ctx, deps, input);
-    // Its end, which the request that asked for it waits for (session-bus.js
-    // relay): the run's own `done` may come before the rest of its item (a
-    // coding run carried on), and another turn's never ends that request.
-    if (input.instanceKey && input.turnId != null) {
-      const { turnEndEvent } = require('../workflow/turn/machine.ts');
-      const key = String(input.instanceKey);
-      require('./session-bus').publish(key.startsWith('agent:') ? key : Number(key.replace(/^session:/, '')),
-        turnEndEvent(key, String(input.turnId)));
-    }
-    return out;
+    // Its end on its stream, which the request that asked for it waits for,
+    // is the machine's to write as it settles the item (turn/machine.ts
+    // `released`): the run's own `done` may come before the rest of its item
+    // (a coding run carried on), and another turn's never ends that request.
+    return await (resumed ? kind.resume : kind.run)(ctx, deps, input);
   } finally {
     settledHere();
     releaseRun();

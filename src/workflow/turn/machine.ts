@@ -207,12 +207,10 @@ export function turnMachine() {
       // A change's turn has no claim of its own here: its record is its
       // run's to release.
       released: async (tx, w) => {
-        // Ended other than its own way (its run failed for good, or ran out
-        // of time): nothing of the run said so on its stream.
-        if (w.how !== 'done') {
-          const event = turnEndEvent(String(w.key), String(w.turnId));
-          await tx.query(TURN_END_SQL, [streamKeyOf(String(w.key)), event._seq, JSON.stringify(event), BUS_CHANNEL, WORKFLOW_SENDER]);
-        }
+        // Its end on its stream, however it ended, in the transaction that
+        // ends it: what the request that asked for it waits for.
+        const event = turnEndEvent(String(w.key), String(w.turnId));
+        await tx.query(TURN_END_SQL, [streamKeyOf(String(w.key)), event._seq, JSON.stringify(event), BUS_CHANNEL, WORKFLOW_SENDER]);
         const m = /^agent:(\d+)$/.exec(String(w.key));
         if (!m) return;
         const { rows: [was] } = await tx.query(

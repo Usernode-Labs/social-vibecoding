@@ -2199,8 +2199,12 @@ async function recoverOwnedTurn({ config = sharedConfig(), pool, sessionId, owne
  * A coding turn record the work item `workId` still holds as it ends (a
  * record its recovery could not take to an end: written, then cut before its
  * agent started): released, with the unfinished-turn note and its retry
- * pills, so the change is not left busy for good. Resolves the session id,
- * or null when the item holds none.
+ * pills, so the change is not left busy for good. Only once its worker is
+ * known not to run it: a turn that may still run (its worker executing, or
+ * not readable) keeps its record, the pointer its recovery follows, and the
+ * turn-leftovers clock asks a `recover` turn for it (services/turns.js
+ * runRecover), which follows it to its end or, on its last ask, ends it with
+ * a confirmed stop. Resolves the session id released, or null.
  */
 async function releaseLeftRecord({ pool, workId }) {
   const { rows: [r] } = await pool.query(
@@ -2208,6 +2212,13 @@ async function releaseLeftRecord({ pool, workId }) {
     [String(workId)]);
   if (!r) return null;
   const sessionId = Number(r.id);
+  const executing = await worker.isWorkerExecuting(worker.workerContainerName(sessionId)).catch(() => null);
+  if (executing !== false) {
+    log.warn('server', 'A turn ended holding its coding record, which may still run; keeping it for recovery', {
+      sessionId, workId, executing,
+    });
+    return null;
+  }
   log.warn('server', 'A turn ended holding its coding record; releasing it', { sessionId, workId });
   await worker.clearActiveTurn(sessionId, turnCleanupArgs(r.active_turn));
   await appendTerminalProgressLine(pool, sessionId, '[interrupted]');
