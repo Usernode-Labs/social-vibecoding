@@ -437,7 +437,7 @@ async function updateProposalFromForkBranch(deps, params) {
     const forkRepo = forkRepoName || repo;
 
     const busy = deps.busy || defaultBusyCheck;
-    if (busy(session)) {
+    if (await busy(session, { pool })) {
       return fail(
         'session_busy',
         'This proposal is in the middle of a build right now. Retry in a minute. Pushing onto it mid-build '
@@ -1457,14 +1457,15 @@ function ownershipGate(session, user) {
   return null;
 }
 
-// Is the platform itself mid-write on this proposal? The questions the
-// commit-upload route asks: a turn or an operation, or a hand-off being
-// adopted. A build or checks run of the current head needs no refusal: the
-// new head reaches the preview machine as a revision, which cancels it.
-function defaultBusyCheck(session) {
-  const { isSessionBusy } = require('./active-workers');
+// Is the platform itself mid-write on this proposal, on any process? The
+// questions the commit-upload route asks: a turn or an operation, or a
+// hand-off being adopted (it records an operation too). A build or checks run
+// of the current head needs no refusal: the new head reaches the preview
+// machine as a revision, which cancels it.
+async function defaultBusyCheck(session, { pool = null } = {}) {
+  const { isSessionBusyAnywhere } = require('./active-workers');
   const { hasInFlightHandoffPipeline } = require('./handoff-pipeline');
-  return isSessionBusy(Number(session.id)) || hasInFlightHandoffPipeline(session.id);
+  return hasInFlightHandoffPipeline(session.id) || isSessionBusyAnywhere(Number(session.id), { pool });
 }
 
 // ── The bot-owned branch ───────────────────────────────────────────────

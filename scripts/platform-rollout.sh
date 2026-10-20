@@ -15,12 +15,11 @@
 #
 # HTTP request handling is stateless against the shared Postgres, so both
 # colors can serve simultaneously during the brief cutover overlap. The
-# singleton background work (worker adoption, headless resume, recovery,
-# sweepers, the main-drift poller) is gated behind a Postgres advisory lock
-# (src/services/leadership.js): the OLD color stays leader until it stops and
-# releases the lock, then the NEW color promotes itself. That ordering is why
-# we flip traffic BEFORE stopping the old color, and stop the old color only
-# after the new one is healthy.
+# background work is the workflow's (src/workflow/): its work items and
+# clocks are claimed under leases in Postgres, so both colors run it at once
+# without doubling any of it, and what the old color leaves when it stops is
+# claimed by the new one. We flip traffic BEFORE stopping the old color, and
+# stop the old color only after the new one is healthy.
 #
 # Invoked by scripts/deploy.sh (both the host deployer and the GHA
 # fallback converge there) after the .env write + infra `compose up`.

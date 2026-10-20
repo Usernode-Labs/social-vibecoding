@@ -52,14 +52,38 @@ export function previewWorkingSql(sessionId: string): string {
 // process. `exceptParam`: an SQL value naming one operation not to count (a
 // caller's own record, read by a decision it asks for while it holds it);
 // `exceptKinds`: kinds not to count (constants of services/active-workers.js).
-export function operationsLiveSql(sessionId: string, exceptParam: string | null = null, exceptKinds: readonly string[] = []): string {
+// A process's holder (services/process-presence.js holder()) as an SQL
+// literal, for a reader that answers its own process's part from memory:
+// its operations ended there before their OperationEnded reaches the
+// preview machine.
+export function holderLiteral(holder: string): string {
+  return `'${String(holder).replace(/'/g, "''")}'`;
+}
+
+export function operationsLiveSql(sessionId: string, exceptParam: string | null = null, exceptKinds: readonly string[] = [],
+  exceptHolder: string | null = null): string {
   for (const k of exceptKinds) if (!/^[a-z][a-z-]*$/.test(k)) throw new Error(`bad operation kind ${k}`);
   return `EXISTS (SELECT 1 FROM wf_instances p,
                          jsonb_array_elements(COALESCE(p.data->'operations', '[]'::jsonb)) AS o
                    WHERE p.machine = 'preview' AND p.key = 'session:' || ${sessionId}
                      AND p.state NOT IN ('detached', 'retired')${exceptParam ? `
                      AND (o->>'id') IS DISTINCT FROM ${exceptParam}` : ''}${exceptKinds.length ? `
-                     AND (o->>'kind') NOT IN (${exceptKinds.map((k) => `'${k}'`).join(', ')})` : ''}
+                     AND (o->>'kind') NOT IN (${exceptKinds.map((k) => `'${k}'`).join(', ')})` : ''}${exceptHolder ? `
+                     AND (o->>'holder') IS DISTINCT FROM ${holderLiteral(exceptHolder)}` : ''}
+                     AND ${holderAliveSql(`(o->>'holder')`)})`;
+}
+
+// True while a live process runs an operation of `kind` on the session
+// `sessionId` (an SQL expression), as its preview instance records it: a
+// hand-off pipeline ('handoff-pipeline'), on whichever process.
+export function operationOfKindLiveSql(sessionId: string, kind: string, exceptHolder: string | null = null): string {
+  if (!/^[a-z][a-z-]*$/.test(kind)) throw new Error(`bad operation kind ${kind}`);
+  return `EXISTS (SELECT 1 FROM wf_instances p,
+                         jsonb_array_elements(COALESCE(p.data->'operations', '[]'::jsonb)) AS o
+                   WHERE p.machine = 'preview' AND p.key = 'session:' || ${sessionId}
+                     AND p.state NOT IN ('detached', 'retired')
+                     AND (o->>'kind') = '${kind}'${exceptHolder ? `
+                     AND (o->>'holder') IS DISTINCT FROM ${holderLiteral(exceptHolder)}` : ''}
                      AND ${holderAliveSql(`(o->>'holder')`)})`;
 }
 
@@ -127,7 +151,8 @@ export function botLookingSql(sessionId: string): string {
 // The instance whose workflow turn is on the session `$1`, starting or
 // running, for a Stop (one row: machine, key), most specific first: the
 // record's owner, then, only while no turn record is on the session (a
-// workflow turn spinning up), a sync, a shots run, a durable build, the bot.
+// workflow turn spinning up), a sync, a shots run, a durable build, the bot,
+// a person's own dev chat turn (the turn machine's, in its Mayor's phase).
 // A record that is not a workflow's held turn (a person's own, an orphan)
 // answers nothing here: that Stop is the person's turn's, on the old path,
 // and never ends a platform job that merely waits beside it.
@@ -148,20 +173,34 @@ export const TURN_OWNER_SQL = `
     SELECT 5, 'bot-request', bl.key FROM wf_instances bl
      WHERE bl.machine = 'bot-request' AND bl.state IN (${BOT_LOOKING_STATES.map((st) => `'${st}'`).join(', ')})
        AND (bl.data->'look'->>'sessionId')::int = $1
+    UNION ALL
+    -- A dev chat turn before its record: the turn hears its Stop from its
+    -- instance (services/turns.js watchClassicStop). A headless run between
+    -- its steps has no such ear: its Stop takes the person's own path.
+    SELECT 6, 'turn', t.key FROM wf_instances t
+     WHERE t.machine = 'turn' AND t.key = 'session:' || $1 AND t.state = 'running'
+       AND t.data->'running'->>'kind' = 'classic'
   ) o WHERE rank = 1 OR ${NO_RECORD} ORDER BY rank LIMIT 1`;
 
 // True while anything above works on the session `sessionId` (an SQL
 // expression over chat_sessions as `cs`): a coding turn, a turn on a local
-// agent, a shots run, a durable build, or an old flow's recorded operation.
+// agent, a shots run, a durable build, a person's turn its machine runs (the
+// dev chat's Mayor before it dispatches, a headless run between its steps:
+// src/workflow/turn/), or an old flow's recorded operation. `turns: false`
+// leaves the turn machine's instance out: what a person's turn asks of its
+// own change, which that instance is. `exceptHolder` leaves out the
+// operations of one process: the reader's own, which it answers from memory.
 // The same in every process and after a restart (the Homeroom bot's voice
 // reads it to say whether a run is going on a change).
-export function workedOnSql(): string {
+export function workedOnSql({ turns = true, exceptHolder = null }: { turns?: boolean; exceptHolder?: string | null } = {}): string {
   return `(cs.active_turn IS NOT NULL
            OR EXISTS (SELECT 1 FROM local_agent_turns t
                        WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))
            OR ${shotsRunningSql('cs.id')}
-           OR ${operationsLiveSql('cs.id')}
+           OR ${operationsLiveSql('cs.id', null, [], exceptHolder)}
            OR ${buildHoldSql('cs')}
            OR ${syncWorkingSql('cs.id')}
-           OR ${botLookingSql('cs.id')})`;
+           OR ${botLookingSql('cs.id')}${turns ? `
+           OR EXISTS (SELECT 1 FROM wf_instances tm
+                       WHERE tm.machine = 'turn' AND tm.key = 'session:' || cs.id AND tm.state = 'running')` : ''})`;
 }

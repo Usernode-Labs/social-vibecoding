@@ -22,13 +22,14 @@ test('a value that names no role fails boot rather than guess', () => {
   assert.throws(() => processRole.processRole({ PROCESS_ROLE: 'conductr' }), /PROCESS_ROLE must be one of all, web, conductor/);
 });
 
-test('a web process never stands for leader; the others do', () => {
-  assert.equal(processRole.standsForLeader('web'), false);
-  assert.equal(processRole.standsForLeader('conductor'), true);
-  assert.equal(processRole.standsForLeader('all'), true);
+test('a web process runs no workflow; the others do, and none is elected', () => {
+  assert.equal(processRole.runsWorkflow('web'), false);
+  assert.equal(processRole.runsWorkflow('conductor'), true);
+  assert.equal(processRole.runsWorkflow('all'), true);
+  assert.equal(processRole.standsForLeader, undefined);
 });
 
-test('a release replaces a leader with a leader and a web process with a server', () => {
+test('a release replaces a workflow process with a workflow process and a web process with a server', () => {
   assert.deepEqual([...processRole.successorRoles('conductor')].sort(), ['all', 'conductor']);
   assert.deepEqual([...processRole.successorRoles('all')].sort(), ['all', 'conductor']);
   assert.deepEqual([...processRole.successorRoles('web')].sort(), ['all', 'web']);

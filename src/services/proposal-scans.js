@@ -38,8 +38,8 @@ async function rowOf(pool, sessionId) {
 
 // A turn on the session, on any process: it is about to move the head, so
 // what is read now is wrong before it is used.
-function busy(sessionId) {
-  return require('./active-workers').isSessionBusy(Number(sessionId));
+function busy(sessionId, pool) {
+  return require('./active-workers').isSessionBusyAnywhere(Number(sessionId), { pool });
 }
 
 // GitHub's hourly budget is shared: background reads wait while it is
@@ -72,7 +72,7 @@ async function lookImported(config, pool, sessionId) {
   if (!session || session.source !== 'imported' || !['active', 'promoted', 'merging'].includes(session.status) || !session.pr_number) {
     return { skipped: 'gone' };
   }
-  if (busy(session.id)) return { skipped: 'busy' };
+  if (await busy(session.id, pool)) return { skipped: 'busy' };
   if (!budgetAllows()) return { skipped: 'budget' };
   return { outcome: await require('./pr-import-sync').syncImportedProposal({ config, pool, session }) };
 }
@@ -136,7 +136,7 @@ async function revisionTargets(pool, page = {}) {
 async function refreshRevision(config, pool, sessionId) {
   const session = await rowOf(pool, sessionId);
   if (!session || session.status !== 'promoted' || session.is_headless) return { skipped: 'gone' };
-  if (busy(session.id)) return { skipped: 'busy' };
+  if (await busy(session.id, pool)) return { skipped: 'busy' };
   const revision = await require('../routes/votes').reconcilePromotedSweepHead({ config, pool, session });
   if (revision.blocked) {
     log.warn('proposal-scans', 'Revision refresh skipped: native revision unavailable', {
@@ -172,7 +172,8 @@ async function measurePromoted(pool, { shouldStop = () => false } = {}) {
   let measured = 0;
   for (const sessions of byApp.values()) {
     if (shouldStop()) break;
-    const ready = sessions.filter((session) => !busy(session.id));
+    const working = await require('./active-workers').busySessionsAnywhere(sessions.map((s) => s.id), { pool });
+    const ready = sessions.filter((session) => !working.has(Number(session.id)));
     if (!ready.length) continue;
     // A fetch that fails leaves each measurement to fetch for itself, so
     // each records the failure as its own.

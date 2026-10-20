@@ -1704,6 +1704,15 @@ ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS tail_finished_at TIMESTAM
 CREATE INDEX IF NOT EXISTS local_agent_turns_waiting_idx
   ON local_agent_turns (waiter_seen_at)
   WHERE waiter_id IS NOT NULL AND tail_claimed_at IS NULL;
+-- The work item whose turn dispatched it (src/workflow/turn/: its
+-- `turnOwner`, as a coding turn's record names it). Its waiter is that item:
+-- when the item's process goes, the process that claims the item next takes
+-- the waiter id over and finishes the turn (services/turns.js), and no
+-- recovery pass touches it. NULL on a turn no item dispatched.
+ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS owner JSONB;
+CREATE INDEX IF NOT EXISTS local_agent_turns_owner_idx
+  ON local_agent_turns ((owner->>'workId'))
+  WHERE owner IS NOT NULL AND tail_claimed_at IS NULL;
 
 -- Both tables describe a specific person's machine and the prompts sent to
 -- it, so a staging clone must never carry them. See tools/clone-db.
@@ -1782,7 +1791,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS chat_session_messages_client_message_idx
 --   headless_step = where the headless auto-session loop last checkpointed:
 --                   'planning' (Mayor phase-1) | 'cc_running' (CC turn
 --                   dispatched) | 'wrapping' (Mayor phase-2). Lets
---                   resumeHeadlessRuns continue a 'generating' row after a
+--                   a resumed run continue a 'generating' row after a
 --                   restart instead of blanket-failing it. NULL on ordinary
 --                   sessions and on headless rows finished before this column
 --                   existed.
@@ -10288,6 +10297,10 @@ CREATE TABLE IF NOT EXISTS global_chat_threads (
 );
 ALTER TABLE global_chat_threads ADD COLUMN IF NOT EXISTS active_turn_id UUID;
 ALTER TABLE global_chat_threads ADD COLUMN IF NOT EXISTS active_turn_started_at TIMESTAMPTZ;
+-- A person's Stop of the thread's running turn: the turn it stopped, read by
+-- the request running that turn, on whichever process (routes/global-chat.js).
+-- A turn claimed after it is not stopped by it.
+ALTER TABLE global_chat_threads ADD COLUMN IF NOT EXISTS cancel_turn_id UUID;
 -- #2543: chats are durable sessions in Improve, not a single replaceable
 -- full-application mode. Drop the original one-live-thread constraint so a
 -- user can keep and resume several conversations. Rows archived by the old
@@ -12268,7 +12281,8 @@ END;
 $$;
 
 -- `busy` is a hint for the lists' spinner; the screen re-reads for the
--- truth. 90 seconds is services/agent-sessions.js TURN_LEASE_STALE_SECONDS.
+-- truth. A conversation's claim lasts exactly as long as its turn
+-- (services/agent-sessions.js, the turn machine releases it).
 CREATE OR REPLACE FUNCTION agent_session_state_announce() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -12280,9 +12294,7 @@ BEGIN
       'type', 'agent_session_changed',
       'agentSessionId', NEW.id,
       'version', NEW.state_version,
-      'busy', (NEW.active_turn IS NOT NULL
-               AND COALESCE(NEW.active_turn->>'renewedAt', NEW.active_turn->>'startedAt')::timestamptz
-                   >= NOW() - interval '90 seconds')
+      'busy', (NEW.active_turn IS NOT NULL)
     )
   )::text);
   RETURN NULL;
@@ -14860,15 +14872,11 @@ CREATE INDEX IF NOT EXISTS idx_private_request_comments_request
   ON private_request_comments (private_request_id, id);
 COMMENT ON TABLE private_request_comments IS 'staging:private';
 
--- When each of the leader's long-interval sweeps last completed
--- (services/leader-timers.js, a `durable` timer). The leader changes with
--- every release, about every twenty minutes on a busy day, and an hourly
--- setInterval restarts its clock at each election, so the stale-proposal
--- sweep, the Workshop theme sweep and the grant prune went days without
--- running. On election each one now runs when this says it is due. One row
--- per sweep, written by the leader after each completed run; a sweep with
--- no row has never run and is due at once. Nothing private: names and
--- times.
+-- The leader's sweep times, gone with the leader: every scheduled job is a
+-- clock of the workflow now (src/workflow/clock/services.ts), whose instance
+-- keeps its last run. ROLLOUT-ONLY: a release from before it still leads
+-- while it runs beside this one, and records its sweeps here; drop the
+-- table with the other rollout-only parts (services/turn-leftovers.js).
 CREATE TABLE IF NOT EXISTS leader_sweeps (
   name        TEXT PRIMARY KEY,
   last_run_at TIMESTAMPTZ NOT NULL
@@ -14901,10 +14909,13 @@ CREATE TABLE IF NOT EXISTS platform_processes (
 CREATE INDEX IF NOT EXISTS idx_platform_processes_heartbeat ON platform_processes (heartbeat_at);
 COMMENT ON TABLE platform_processes IS 'staging:private';
 
--- One row per thing a process holds: `kind` (a session's turn, a preview
--- build, a shots run, ...; processes.js KINDS) for `ref` (its id). Written
--- on the process's first hold of it and removed on its last release, and the
--- whole set written again with every beat.
+-- ROLLOUT-ONLY: what a process holds, `kind` (a session's turn, a sync, ...)
+-- for `ref` (its id), written as it works. A release from before the turn
+-- machine reads it to decide what is left behind; this one keeps its holds
+-- in memory for its own drain and writes them here only for that release
+-- (services/processes.js writeHolds), and reads it only to leave alone what
+-- another live process holds (services/turn-leftovers.js). Drop once no such
+-- release can run.
 CREATE TABLE IF NOT EXISTS process_holds (
   process_id TEXT NOT NULL REFERENCES platform_processes(id) ON DELETE CASCADE,
   kind       TEXT NOT NULL,
@@ -15578,3 +15589,92 @@ CREATE TABLE IF NOT EXISTS starter_images (
 );
 CREATE INDEX IF NOT EXISTS idx_starter_images_key
   ON starter_images (context_key) WHERE image_ref IS NOT NULL;
+
+-- What a turn shows as it happens (services/session-bus.js): every event a
+-- live turn streams to a browser, for a change (`stream_key` its id) or a
+-- conversation (`agent:<id>`), kept so a browser served by any process can
+-- follow the turn and resume after a dropped connection, whichever process
+-- runs it. `seq` is the event's own `_seq` (what a browser dedupes by and
+-- sends back as Last-Event-Id); rows are read by `id`. A stream's rows go a
+-- little after its turn ends (clearSession), and the retention clock prunes
+-- whatever is left (turn-stream-retention).
+CREATE TABLE IF NOT EXISTS stream_events (
+  id          BIGSERIAL PRIMARY KEY,
+  stream_key  TEXT NOT NULL,
+  seq         TEXT NOT NULL,
+  event       JSONB NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_stream_events_key ON stream_events (stream_key, id);
+CREATE INDEX IF NOT EXISTS idx_stream_events_seq ON stream_events (stream_key, seq);
+CREATE INDEX IF NOT EXISTS idx_stream_events_created ON stream_events (created_at);
+COMMENT ON TABLE stream_events IS 'staging:private';
+
+-- Who follows a stream right now (an open GET .../events, on any process):
+-- a row per open stream, counted only while the process serving it holds
+-- its presence lock (src/workflow/rules/presence.ts), so a process that
+-- went takes its rows with it. "Is anybody watching" for a turn's
+-- done-notification reads it. The retention clock deletes rows whose
+-- process is gone.
+CREATE TABLE IF NOT EXISTS stream_watchers (
+  id          BIGSERIAL PRIMARY KEY,
+  stream_key  TEXT NOT NULL,
+  holder      TEXT NOT NULL,
+  opened_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_stream_watchers_key ON stream_watchers (stream_key);
+COMMENT ON TABLE stream_watchers IS 'staging:private';
+
+-- What a turn's model calls cost, one row per call as it is made (the coding
+-- agent's calls through the platform's Anthropic proxy, keyed by the turn
+-- record's `turnId`), so a running turn counts against the caps at once and a
+-- turn whose process went loses none of it (services/limits.js). The turn's
+-- end settles it into llm_usage once (settleTurnSpend, under its receipt) and
+-- marks its rows settled; rows no live turn will settle are settled by the
+-- turn-spend-settle clock. `byok`: the call was paid with the person's own
+-- key (display only, never capped).
+CREATE TABLE IF NOT EXISTS turn_spend (
+  id          BIGSERIAL PRIMARY KEY,
+  turn_id     TEXT,
+  session_id  INTEGER,
+  user_id     INTEGER NOT NULL,
+  cents       NUMERIC(12,4) NOT NULL,
+  byok        BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  settled_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_turn_spend_open_user ON turn_spend (user_id, created_at) WHERE settled_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_turn_spend_open_day ON turn_spend (created_at) WHERE settled_at IS NULL AND NOT byok;
+CREATE INDEX IF NOT EXISTS idx_turn_spend_turn ON turn_spend (turn_id) WHERE turn_id IS NOT NULL;
+COMMENT ON TABLE turn_spend IS 'staging:private';
+
+-- A coding turn whose kept calls its settlement closed (limits.js
+-- settleTurnSpend), and on what it billed: Claude Code's reported total
+-- (`reported`, which already holds every call of the turn) or the kept calls.
+-- A call of that turn whose write lands after it (proxy writes are not
+-- awaited) is reconciled with it under the same lock (noteTurnSpend): kept as
+-- settled, and charged then only when the settlement charged the kept calls,
+-- never counted again by the caps or billed again by the clock. Kept two
+-- days (the turn-spend-settle clock).
+CREATE TABLE IF NOT EXISTS turn_spend_closed (
+  turn_id    TEXT PRIMARY KEY,
+  reported   BOOLEAN NOT NULL,
+  closed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE turn_spend_closed IS 'staging:private';
+
+-- A change's worker (services/worker.js: a container, or a Kubernetes
+-- Deployment, named by the session), and when anything last used it: written
+-- by every process that ensures it or runs something in it, and read by the
+-- worker-eviction clock, which evicts a worker nothing has used for
+-- WORKER_IDLE_EVICTION_MS and nothing works on (session-work.ts
+-- workedOnSql). Before, each process kept its own registry of the workers it
+-- kept warm and evicted those; a worker a process left behind was the
+-- leader's to adopt.
+CREATE TABLE IF NOT EXISTS session_workers (
+  session_id    INTEGER PRIMARY KEY REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  last_used_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_session_workers_used ON session_workers (last_used_at);
+COMMENT ON TABLE session_workers IS 'staging:private';

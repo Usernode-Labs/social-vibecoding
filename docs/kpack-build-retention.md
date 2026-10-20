@@ -3,8 +3,8 @@
 The platform creates standalone kpack Builds. Their completed Pods previously
 remained until app deletion; the Job TTL used by checks does not apply to them.
 
-The leader previews eligible Builds at startup, then immediately runs a cleanup
-pass. Further sweeps run hourly. Each pass deletes at most 20 unreferenced
+The `build-retention` clock (`src/workflow/clock/services.ts`) runs a cleanup
+pass hourly, wherever the workflow runs, one pass at a time. Each pass deletes at most 20 unreferenced
 successful Builds, oldest completion first. `KPACK_SUCCESS_RETENTION_HOURS` defaults to `48` and
 must be a finite number of at least `1`. Age is measured from the successful
 condition's `lastTransitionTime`, never from creation time.
@@ -32,8 +32,8 @@ Preview builds, production rebuilds and app creation hold a PostgreSQL shared
 advisory lock through deployment and reference persistence. Overlapping builds
 share one dedicated connection per platform process, avoiding exhaustion of
 the application connection pool. This also protects builds served by a follower
-during a platform rollout. As with leader election, losing that lock's connection
-during deployment restarts the process so it cannot continue unprotected.
+during a platform rollout. Losing that lock's connection during deployment
+restarts the process so it cannot continue unprotected.
 
 Cleanup tries the exclusive lock per candidate and skips the remainder of a
 pass if a deployment is active. It rechecks the Build and database references

@@ -300,7 +300,7 @@ test('both push-failure tails describe the failure instead of a fixed sentence',
     'sessions.js must not hardcode the retry sentence'
   );
 
-  const server = read('server.js');
+  const server = read('server.js') + read('src/services/turn-recovery.js');
   assert.match(server, /worker\.describePushFailure\(err\)/);
   assert.equal(
     server.includes('send your request again to re-push and open the PR.'), false,

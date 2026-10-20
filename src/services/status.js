@@ -137,6 +137,11 @@ async function gatherFull(config) {
     warmByName.set(meta.containerName, meta);
   }
 
+  // Workers some process used lately (session_workers: what the
+  // worker-eviction clock reads), for a worker this process has not
+  // registered.
+  const usedElsewhere = new Set((await pool.query('SELECT session_id FROM session_workers').catch(() => ({ rows: [] })))
+    .rows.map((r) => Number(r.session_id)));
   const workerContainers = containers.filter((c) =>
     c.resourceType === 'worker' || c.name.startsWith(WORKER_PREFIX)
   );
@@ -161,8 +166,8 @@ async function gatherFull(config) {
     // workerMode classifies what the worker is doing right now:
     //   - 'in-flight'  : a `docker exec` is running run-cc.sh
     //   - 'warm-idle'  : sleep wrapper is alive, waiting for the next
-    //                    dispatch. Costs ~256MB until the idle sweeper
-    //                    evicts it.
+    //                    dispatch. Costs ~256MB until the
+    //                    worker-eviction clock evicts it.
     //   - 'bootstrapping' : ensureWorker is racing through clone +
     //                       checkout + warm-ready
     //   - 'unregistered'  : container exists but isn't in the warm
@@ -174,12 +179,12 @@ async function gatherFull(config) {
       else if (warm.inFlight) workerMode = 'in-flight';
       else workerMode = 'warm-idle';
     } else if (sessionId != null) {
-      // Another live process's worker (a web process's, or the conductor's:
-      // docs/plans/web-and-conductor.md), not an orphan: what it holds says
-      // what it is doing (services/processes.js).
-      const processes = require('./processes');
-      if (processes.heldElsewhere('session', sessionId)) workerMode = 'in-flight';
-      else if (processes.heldElsewhere('warm', sessionId)) workerMode = 'warm-idle';
+      // Another process's worker (a workflow process's, where a person's
+      // turn runs: docs/plans/web-and-conductor.md), not an orphan: its
+      // session's turn record says it is running, session_workers that it
+      // was used.
+      if (sess && sess.has_active_turn) workerMode = 'in-flight';
+      else if (usedElsewhere.has(Number(sessionId))) workerMode = 'warm-idle';
     }
     const idleMs = warm && !warm.inFlight ? Date.now() - warm.lastUsedMs : null;
     return {
@@ -324,13 +329,16 @@ async function gatherFull(config) {
   // handoffs normally have one before submitting anything. Report missing
   // previews only after a PR/build exists and work has stopped. Keep the
   // legacy payload key for clients, but never call this worker liveness.
+  // Worked on by any process (a turn's record, a running turn instance, ...:
+  // session-work.ts workedOnSql), not only this one.
+  const working = await activeWorkers.busySessionsAnywhere(sessions.map((s) => s.id), { pool });
   const stuckSessions = sessions
     .filter((s) =>
       runtimeAvailable && s.branch_name &&
       !s.staging_url &&
       (s.pr_number || s.staging_build_ref || s.staging_runtime_name || s.staging_container_id) &&
       !s.has_active_turn &&
-      !activeWorkers.isSessionBusy(s.id) &&
+      !working.has(Number(s.id)) &&
       !s.building &&
       Date.now() - new Date(s.last_activity_at || s.created_at).getTime() > MISSING_PREVIEW_THRESHOLD_MS
     )

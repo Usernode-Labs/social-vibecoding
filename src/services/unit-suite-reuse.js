@@ -410,7 +410,7 @@ async function owePendingRun({
   const later = (fn) => { const t = setTimeout(fn, pollMs); if (typeof t.unref === 'function') t.unref(); };
   const tick = async () => {
     try {
-      if (busy()) {
+      if (await busy()) {
         if (Date.now() - started < maxWaitMs) later(tick);
         return;
       }

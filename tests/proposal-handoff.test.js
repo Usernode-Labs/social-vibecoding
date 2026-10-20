@@ -120,7 +120,7 @@ function makeHarness() {
         transactionState = null;
         return { rows: [], rowCount: 0 };
       }
-      if (/SELECT cs\.\*, a\.slug AS app_slug\s+FROM chat_sessions/.test(text)
+      if (/SELECT cs\.\*, a\.slug AS app_slug[\s\S]*?FROM chat_sessions/.test(text)
           && /handoff_request_id = \$2/.test(text)) {
         const row = state.sessions.find((s) => s.user_id === params[0]
           && s.handoff_request_id === params[1]);
@@ -898,6 +898,39 @@ test('build adoption is serialized per handoff session', async () => {
     await Promise.all([first, second]);
     assert.deepEqual(order, ['first:start', 'first:end', 'second:start', 'second:end']);
   } finally { restore(); }
+});
+
+test('a build is refused while another process works on the change, as its durable records say', async () => {
+  // No process mirrors its holds any more: the session's row carries
+  // worked_on, read from the workflow's own records (session-work.ts). A
+  // change a turn or pipeline on another process is still writing to must not
+  // be handed a new revision underneath it.
+  const { router, state, restore } = makeHarness();
+  try {
+    const start = routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post');
+    await start({
+      params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true,
+      user: { id: 7, username: 'maker' },
+    }, mockRes());
+    markUploaded(state);
+    state.sessions[0].worked_on = true;
+    const build = routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post');
+    const res = mockRes();
+    await build({
+      params: { id: '101' },
+      body: {
+        schemaVersion: 1, headSha: HEAD,
+        history: [{ id: 'busy-elsewhere', kind: 'summary', content: 'Built it.', phase: 'build' }],
+        tests: [],
+      },
+      cliAuthenticated: true, user: { id: 7, username: 'maker' },
+    }, res);
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.body.error, 'session_busy');
+    assert.deepEqual(state.revisions, [], 'nothing reached the preview machine');
+  } finally {
+    restore();
+  }
 });
 
 test('an accepted local pipeline is idempotent by head and blocks a competing revision', async () => {

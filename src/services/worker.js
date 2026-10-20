@@ -2736,13 +2736,12 @@ async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
 //   - adoptWarmWorker() → server restart picked up an existing warm
 //                         container; register it so the next exec
 //                         doesn't try to re-bootstrap on top.
-// docs/plans/draining-releases.md: a turn this process is executing holds
-// its session (services/processes.js) for as long as `inFlight` is set,
-// whatever started it (a person's turn, a sync, the shots agent, an eval
-// trial, a bot build): the cross-process twin of isInFlight, so another
-// process's leader never adopts or tears it down, and another process's
-// proxy reads its mode (remoteTurn). Taken on the flag's rise, given back on
-// its fall or when the entry goes.
+// docs/plans/draining-releases.md: a turn this process is executing is
+// counted for its drain (services/processes.js) for as long as `inFlight` is
+// set, whatever started it (a person's turn, a sync, the shots agent, an eval
+// trial, a bot build). Another process reads the turn's durable record, never
+// this count (remoteTurn, session-work.ts workedOnSql). Taken on the flag's
+// rise, given back on its fall or when the entry goes.
 const _inFlightHolds = new Map(); // sessionId -> release
 function _inFlightHold(sessionId, inFlight) {
   if (inFlight && !_inFlightHolds.has(sessionId)) {
@@ -2753,26 +2752,29 @@ function _inFlightHold(sessionId, inFlight) {
     release();
   }
 }
-// And while it is registered at all, its worker is warm here: a marker
-// (services/processes.js 'warm', which no drain waits for) so another
-// process neither reports the worker as an orphan, nor adopts it, nor
-// evicts it from under this one (docs/plans/web-and-conductor.md).
-const _warmHolds = new Map(); // sessionId -> release
-function _warmHold(sessionId, warm) {
-  if (warm && !_warmHolds.has(sessionId)) {
-    try { _warmHolds.set(sessionId, require('./processes').hold('warm', Number(sessionId))); } catch { /* no ref */ }
-  } else if (!warm && _warmHolds.has(sessionId)) {
-    const release = _warmHolds.get(sessionId);
-    _warmHolds.delete(sessionId);
-    release();
-  }
+// When anything last used a session's worker, for every process
+// (session_workers, read by the worker-eviction clock: services/
+// worker-eviction.js): a worker is evicted by how long nobody used it,
+// never by which process's registry has it. Written as it is used; a write
+// that fails is logged (the clock counts an unknown running worker as used
+// when it first sees it).
+function noteWorkerUsed(sessionId) {
+  const pool = _getPoolSafe();
+  if (!pool) return;
+  pool.query(
+    `INSERT INTO session_workers (session_id, last_used_at) SELECT id, NOW() FROM chat_sessions WHERE id = $1
+     ON CONFLICT (session_id) DO UPDATE SET last_used_at = NOW()`, [Number(sessionId)],
+  ).catch((err) => log.warn('worker', 'Could not note a worker as used', { sessionId, err: err.message }));
+}
+function noteWorkerGone(sessionId) {
+  const pool = _getPoolSafe();
+  if (!pool) return;
+  pool.query('DELETE FROM session_workers WHERE session_id = $1', [Number(sessionId)]).catch(() => {});
 }
 class WarmRegistry extends Map {
-  set(sessionId, value) { _warmHold(sessionId, true); return super.set(sessionId, value); }
-  delete(sessionId) { _inFlightHold(sessionId, false); _warmHold(sessionId, false); return super.delete(sessionId); }
+  delete(sessionId) { _inFlightHold(sessionId, false); return super.delete(sessionId); }
   clear() {
     for (const id of [..._inFlightHolds.keys()]) _inFlightHold(id, false);
-    for (const id of [..._warmHolds.keys()]) _warmHold(id, false);
     super.clear();
   }
 }
@@ -2794,6 +2796,7 @@ function _registryUpsert(sessionId, patch) {
   const next = { ...prev, ...patch };
   _warmRegistry.set(sessionId, next);
   _inFlightHold(sessionId, !!next.inFlight);
+  if (patch.lastUsedMs != null || !!prev.inFlight !== !!next.inFlight || !existing) noteWorkerUsed(sessionId);
   // #1038: the inner docker-exec window is one of the two signals
   // isSessionBusy() ORs together, so a change here can flip a session's
   // working state for every client. Only the actual transition notifies —
@@ -2845,12 +2848,6 @@ function warmRegistrySnapshot() {
 
 // Register a warm container that already exists (either spawned by us
 // earlier in this process, or adopted from a previous server run).
-// Drop this process's record of a session's worker and leave the worker
-// as it is: another process keeps it warm too (server.js idle eviction).
-function forgetWorker(sessionId) {
-  return _warmRegistry.delete(sessionId);
-}
-
 function adoptWarmWorker(sessionId, containerName = null) {
   _registryUpsert(sessionId, {
     containerName: containerName || workerContainerName(sessionId),
@@ -4373,7 +4370,7 @@ function getActiveTurnMode(sessionId) {
 // calls back through whichever process the Service picks. What the proxy
 // must know about it (its mode, its id) comes from its durable record, cached
 // for REMOTE_TURN_TTL_MS: the proxy asks on every model call. Null for a turn
-// this process runs, and for a session no live process holds.
+// this process runs, and for a session with no turn record.
 const REMOTE_TURN_TTL_MS = 5000;
 const _remoteTurns = new Map(); // sessionId -> { at, turn: { mode, turnId } | null }
 
@@ -4381,8 +4378,6 @@ async function remoteTurn(sessionId) {
   const sid = Number(sessionId);
   const meta = _warmRegistry.get(sid);
   if (meta && meta.inFlight) return null;
-  const processes = require('./processes');
-  if (!processes.heldElsewhere('session', sid)) return null;
   const cached = _remoteTurns.get(sid);
   if (cached && Date.now() - cached.at < REMOTE_TURN_TTL_MS) return cached.turn;
   const pool = _getPoolSafe();
@@ -4423,9 +4418,10 @@ function noteTurnByokSpend(sessionId, cents) {
   const sid = Number(sessionId);
   if (!(cents > 0)) return;
   const meta = _warmRegistry.get(sid);
-  // A turn another process runs: the durable mirror here, and that process's
-  // tally for its settlement told over the bus (receiveTurnByok).
-  if (!(meta && meta.inFlight) && require('./processes').heldElsewhere('session', sid)) {
+  // A turn this process does not run (another process's, as its durable
+  // record says): the durable mirror here, and that process's tally for its
+  // settlement told over the bus (receiveTurnByok).
+  if (!(meta && meta.inFlight)) {
     void remoteTurn(sid).then(async (turn) => {
       if (!turn?.turnId) return;
       const pool = _getPoolSafe();
@@ -4463,9 +4459,9 @@ function getTurnByokCents(sessionId) {
 function markTurnByokSwitched(sessionId) {
   const sid = Number(sessionId);
   const meta = _warmRegistry.get(sid);
-  // A turn another process runs: no registry entry is made for it here; once
-  // per session per REMOTE_SWITCH_MS stands in for once per turn.
-  if (!(meta && meta.inFlight) && require('./processes').heldElsewhere('session', sid)) {
+  // A turn this process does not run: no registry entry is made for it here;
+  // once per session per REMOTE_SWITCH_MS stands in for once per turn.
+  if (!(meta && meta.inFlight)) {
     const at = _remoteByokSwitched.get(sid);
     if (at && Date.now() - at < REMOTE_SWITCH_MS) return false;
     if (_remoteByokSwitched.size > 500) _remoteByokSwitched.clear();
@@ -5487,14 +5483,14 @@ async function clearDetachedCapture(containerName, id) {
 }
 
 /**
- * Keep a warm worker from the idle sweeper while a detached step runs in it:
- * no turn is in flight, so nothing else marks it used. A worker this process
- * has not registered is left alone.
+ * Keep a warm worker from the worker-eviction clock while a detached step
+ * runs in it: no turn is in flight, so nothing else marks it used.
  */
 function touchWorker(sessionId) {
   for (const key of [sessionId, Number(sessionId)]) {
     if (_warmRegistry.has(key)) { _registryUpsert(key, { lastUsedMs: Date.now() }); return; }
   }
+  noteWorkerUsed(sessionId);
 }
 
 // Tear down a warm worker container (eviction). Volume is preserved so
@@ -5532,6 +5528,7 @@ async function evictWorker(sessionId) {
     await docker.stopAndRemove(containerName).catch(() => {});
   }
   _warmRegistry.delete(sessionId);
+  noteWorkerGone(sessionId);
   log.info('worker', 'Worker evicted (volume preserved)', { containerName });
 }
 
@@ -5807,7 +5804,10 @@ async function destroyWorker(containerName) {
   } else {
     await docker.stopAndRemove(containerName).catch(() => {});
   }
-  if (m) _warmRegistry.delete(parseInt(m[1], 10));
+  if (m) {
+    _warmRegistry.delete(parseInt(m[1], 10));
+    noteWorkerGone(parseInt(m[1], 10));
+  }
   log.info('worker', 'Worker destroyed', { containerName });
 }
 
@@ -5863,6 +5863,7 @@ async function removeSessionRuntime(sessionId, {
     }
   }
   _warmRegistry.delete(sessionId);
+  noteWorkerGone(sessionId);
   log.info('worker', volume ? 'Worker and its Claude Code volume removed' : 'Worker destroyed', { sessionId });
   return { removed: true };
 }
@@ -6190,7 +6191,6 @@ module.exports = {
   BENCH_CAPTURE_SCRIPT_PATH,
   warmRegistrySnapshot,
   adoptWarmWorker,
-  forgetWorker,
   isInFlight,
   isWorkerExecuting,
   getActiveTurnMode,
@@ -6218,6 +6218,9 @@ module.exports = {
   newWatchState,
   _recordClaudeCodingRunForTests: recordClaudeCodingRun,
   _registryUpsertForTests: _registryUpsert,
+  // A process with no record of a session's worker (a restart, or another
+  // process), for tests.
+  _registryForgetForTests: (sessionId) => _warmRegistry.delete(sessionId),
   _mintHomeroomReadGrantForTests: mintHomeroomReadGrant,
   parseLine,
   newWatchdogCounters,

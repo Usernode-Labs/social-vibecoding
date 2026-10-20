@@ -322,14 +322,13 @@ test('the weekly read sums the capped column of the day rows, from the Monday', 
   assert.equal(spent, 412.75, 'fractional cents survive, same as the day read');
   assert.equal(calls.length, 1);
   const { sql, params } = calls[0];
-  assert.match(sql, /FROM llm_usage/);
-  assert.match(sql, /SUM\(total_cost_cents\), 0\) AS total/,
-    'the capped column — BYOK spend is display-only and must not consume a cap');
+  assert.match(sql, /SELECT SUM\(total_cost_cents\) FROM llm_usage WHERE user_id = \$1 AND date >= \$2\), 0\)\s*\+ COALESCE\(\(SELECT SUM\(cents\) FROM turn_spend\s+WHERE user_id = \$1 AND settled_at IS NULL AND NOT byok AND created_at >= \$2::date\), 0\) AS total/,
+    'the capped column, with what running turns spent and no turn settled yet (turn_spend) — BYOK spend is display-only and must not consume a cap');
   // #2571: the same statement also sums the BYOK column, under its own
   // alias, because the drawer's own-key figure moved to this window too.
   // getWeeklySpentCents returns only the capped half, which is what this
   // test just asserted.
-  assert.match(sql, /SUM\(byok_cost_cents\), 0\)\s+AS byok/,
+  assert.match(sql, /SELECT SUM\(byok_cost_cents\) FROM llm_usage[\s\S]*AND byok AND created_at >= \$2::date\), 0\) AS byok/,
     'the display figure rides along rather than costing a second round trip');
   assert.match(sql, /user_id = \$1/, 'one user, not the platform pool');
   assert.deepEqual(params, [7, '2026-09-07'], 'the Monday of that Thursday, inclusive');

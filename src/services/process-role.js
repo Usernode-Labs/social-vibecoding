@@ -3,25 +3,22 @@
 // What a platform process runs (docs/plans/web-and-conductor.md).
 //
 //   all        everything, as every platform process did before the split:
-//              it serves HTTP and WebSockets and stands for the leader lock.
-//              The default, so docker-compose, local development, tests and
+//              it serves HTTP and WebSockets and runs the workflow. The
+//              default, so docker-compose, local development, tests and
 //              staging previews are unchanged.
-//   web        serves HTTP and WebSockets and never stands for leader. A
-//              route still starts what it always started (a turn, a preview
-//              build, a shots run) and finishes it on a release, as any
-//              process does (docs/plans/draining-releases.md).
+//   web        serves HTTP and WebSockets and runs no workflow: a route
+//              appends to a machine and waits for its outcome (a person's
+//              turn is the turn machine's work item: src/workflow/turn/).
 //   conductor  runs the workflow (src/workflow/: every machine's pipeline
-//              slots, timers and work), in as many replicas as the chart
-//              runs, none of it needing the leader lock; and stands for
-//              leader, for what is still leader work (the timers and
-//              sweeps of server.js becomeLeader, the bench lane). It
-//              listens on HTTP too, for its own loopback calls (the bot's
-//              platform tools, services/mayor/mcp-shim.js) and probes, but
-//              no Service sends it people's requests.
+//              slots, timers and work, a person's turns among it), in as
+//              many replicas as the chart runs; nothing elects one of them.
+//              It listens on HTTP too, for its own loopback calls (the
+//              bot's platform tools, services/mayor/mcp-shim.js) and
+//              probes, but no Service sends it people's requests.
 //
 // Read from PROCESS_ROLE. An unknown value fails boot rather than guess: a
 // typo that ran as 'all' would serve, and a typo that ran as 'web' on the
-// only process would leave nothing leading.
+// only process would leave nothing running the workflow.
 
 const ROLES = Object.freeze(['all', 'web', 'conductor']);
 
@@ -32,10 +29,6 @@ function processRole(env = process.env) {
     throw new Error(`PROCESS_ROLE must be one of ${ROLES.join(', ')} (got ${JSON.stringify(env.PROCESS_ROLE)})`);
   }
   return raw;
-}
-
-function standsForLeader(role) {
-  return role !== 'web';
 }
 
 // Whether this process runs the workflow's loops: pipeline slots, timers and
@@ -54,7 +47,7 @@ function servesRequests(role) {
 // The roles that take over what a process of `role` does when a release
 // replaces it, and that count among its successors and its fellow drainers
 // (services/processes.js servingOthers, newerDraining). What a release must
-// not leave without is the leader: a conductor or an 'all' is replaced by
+// not leave without is the workflow: a conductor or an 'all' is replaced by
 // either, so the split can be switched on and off by a release of its own.
 // People's requests are Kubernetes' to move (a Pod leaves the Service when
 // it terminates), so a web process is replaced by a web or an 'all'.
@@ -68,4 +61,4 @@ function successorRoles(role) {
   return SUCCESSORS[role] || SUCCESSORS.all;
 }
 
-module.exports = { ROLES, processRole, standsForLeader, runsWorkflow, servesRequests, successorRoles };
+module.exports = { ROLES, processRole, runsWorkflow, servesRequests, successorRoles };

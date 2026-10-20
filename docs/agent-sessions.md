@@ -218,8 +218,8 @@ A new `getAgentMayorPrompt`, with shared blocks moved out of the classic prompt:
 
 - **Model.** `mayor_model` is separate from the coding agent's model. The provider follows the user's default backend: Anthropic by default, or OpenRouter through `openrouter-mayor.js`, keyed `homeroom-agent-<id>`. Per-user budgets and BYOK are unchanged.
 - **Streaming.** The event protocol is the same, on `POST /api/agent-sessions/:id/turns` with bus key `agent:<id>` and a resumable `GET /api/agent-sessions/:id/events`. The active change's `cc_progress`, `staging_ready`, `pr_created` and similar events are forwarded to the agent bus.
-- **Durability.** `agent_sessions.active_turn` leases mayor1 and mayor2. The dispatch turn stays durable on the change (`chat_sessions.active_turn`) exactly as today. Recovered wrap-ups land in the change's transcript, and the trigger surfaces them in the conversation. The dispatching Mayor turn died with its process, so recovery then hands its stale lease back and sends the conversation's `done` in its place (`handBackAfterRecovery`); a stale lease is never shown as busy, and stop clears one.
-- **Stop.** Stop ends the agent session's turn and forwards to the active change's stop registry, with today's rule that wrap-up cannot be stopped.
+- **Durability.** A turn is the `turn` machine's work item (`agent:<id>`, docs/workflows.md), run whole (mayor1, the dispatch, the coding run, mayor2) in whichever workflow process claims it. `agent_sessions.active_turn` is the conversation's claim: written with the message and the turn's `Asked` in one transaction, it lasts exactly as long as the turn. The coding run stays durable on the change (`chat_sessions.active_turn`), owned by the item. A process that goes loses only the item's lease: the next claim follows the coding run to its end and writes its wrap-up in the change's transcript (the trigger surfaces it in the conversation), then hands the claim back (`handBackAfterRecovery`); a Mayor turn cut before its dispatch is ended interrupted, with Retry.
+- **Stop.** Stop stamps the claim and appends `StopRequested` to the turn's instance; the turn reads it from its claim, and a coding run is stopped by its journal, with today's rule that wrap-up cannot be stopped.
 
 ### Keeping every screen in step with the server
 
@@ -233,13 +233,13 @@ The screen also guessed "the Mayor is working" from those events. The results we
 
 - **The server is the one source of truth, and says when it moved.**
   - `agent_sessions.state_version` is bumped by database triggers on every write a screen draws: a message written or edited, the active change's status, checks or preview, the turn lease taken, moving phase or released, a card, the title, the model, the archive.
-  - A lease renewal and a read (`seen_at`) do not bump it.
+  - A claim's `renewedAt` (stamped only for an older release during a rollout) and a read (`seen_at`) do not bump it.
   - Every message row carries `rev`, taken from one sequence on insert and on update.
   - Each bump is announced by the trigger itself, as a `pg_notify` in `services/ws-bus.js`'s own envelope, so every pod delivers `agent_session_changed { agentSessionId, version, busy }` to the owner's sockets.
 - **One consistent read.** `GET /api/agent-sessions/:id/state?version=&rev=` reads the session with its changes, the running turn, the messages and the cards in one `REPEATABLE READ` snapshot.
   - A screen that holds the current version gets `{ unchanged, busy, turn }`, a one-row read.
   - Given a rev, it gets only the rows written or edited since.
-  - The running turn comes from this process's registry, a recovered build, or the lease, whose `phase` and `phaseStartedAt` the turn writes as it moves. That way a screen on any pod can draw it.
+  - The running turn comes from the claim, whose `phase` and `phaseStartedAt` the turn writes as it moves. That way a screen on any pod can draw it.
 - **The screen converges on it.** The store (`frontend/src/features/agent-session/store.ts`, `requestSync`) runs one read at a time. A trigger that arrives mid-read asks for one more, so an older answer can never land over a newer one. It reads:
   - on every route into a conversation, the same one included;
   - on a notice with a newer version;
@@ -250,18 +250,16 @@ The screen also guessed "the Mayor is working" from those events. The results we
   Whether the Mayor is working is the server's answer, never the screen's guess.
 - **Events only animate.** Tokens, the tool line and the build's progress are drawn from the turn's events. The streamed words stay until the read that brings the saved row replaces them, in one publish. `GET .../events` replays the running turn's events to a screen that opens mid-turn, and a turn's 30-second buffer cleanup no longer empties a newer turn's buffer.
 - **Durable, idempotent sends.**
-  - `POST .../turns` takes the screen's `clientMessageId`. It writes the message and takes the lease in one transaction (`startTurnWithMessage`) before the stream opens, then answers `accepted`.
+  - `POST .../turns` takes the screen's `clientMessageId`. It writes the message, takes the claim and asks for the turn in one transaction (`startTurnWithMessage`) before the stream opens, then answers `accepted`.
   - A resend of the same id answers `{ duplicate }` and runs no second turn (a per-conversation unique index on `client_message_id`).
   - Who pays is decided before anything is written, so every refusal writes nothing.
   - On the screen, a message is drawn at once as the conversation's outbox row (`outbox.ts`). The server's row with its id replaces it in place.
   - A send with no answer is tried again under the same id: twice, and after 20 seconds of silence, or on a 503 from a restarting server.
   - A send the server did not take stays in the conversation, Not sent, with Retry, Edit and Discard. It is never handed back to the box and never turned into a draft. The outbox is kept per conversation in `localStorage`, so a reload finds it.
   - Leaving a conversation no longer aborts a send on its way.
-- **Turns that end with their process.**
-  - A lease is renewed every 15 seconds and is stale after 90 (`TURN_LEASE_STALE_SECONDS`).
-  - A shutting-down process ends its own Mayor turns as interrupted (`interruptLocalTurns`). What was said is kept, a `turn_interrupted` note is written, and the lease is handed back. A running build is left to restart recovery.
-  - A process that died leaves its leases to the sweeper (`sweepInterruptedTurns`, every 30 seconds on every pod). It ends each stale lease and writes the same note in one transaction (`endInterruptedTurn`), unless the active change still has a run on record, which recovery hands back.
-  - A read of the conversation that finds its lease stale sweeps that conversation first (`GET .../state`, `sweepInterruptedTurns({ agentSessionId })`) and answers with the result. The screen goes from working straight to the note with Retry, never through an idle conversation with no answer while it waits for the next sweep.
+- **Turns that outlive their process.**
+  - A draining process finishes the turns it runs; at its deadline, or when it dies, it gives their items up, and the next claim carries each on from what it saved (above).
+  - A turn whose item fails for good is ended as interrupted when the machine releases its claim: what was said is kept, a `turn_interrupted` note is written (`endInterruptedTurn`). Past six hours a turn is ended the same way.
   - The conversation's last `turn_interrupted` or `turn_failed` note offers Retry. `POST .../turns { retry: true }` re-runs the turn with no new message, and the Mayor is told why.
 - **Save for later, unmistakable.** While the Mayor works, typing shows "The Mayor is still working, so this will be saved as a draft, not sent" above the box. The button reads "Save draft", and the drafts list says "Ready to send" once the turn ends.
 

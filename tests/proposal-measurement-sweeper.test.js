@@ -73,7 +73,7 @@ test('every promoted proposal is measured — no per-tick cap, no per-row cooldo
     'the candidate set is every promoted proposal');
 
   const rows = Array.from({ length: 60 }, (_, i) => row(i + 1, (i % 3) + 1));
-  t.mock.method(activeWorkers, 'isSessionBusy', () => false);
+  t.mock.method(activeWorkers, 'busySessionsAnywhere', async () => new Set());
   t.mock.method(integration, 'fetchAppMirror', async () => '/tmp/mirror');
   const measure = t.mock.method(integration, 'measure', async () => ({ ok: true }));
   const out = await scans.measurePromoted(poolOf(rows));
@@ -85,11 +85,12 @@ test('a session mid-turn is skipped', async (t) => {
   // Its head is about to move; an answer written now describes a commit that
   // will not exist by the time anybody reads it. Mid-turn on any process: a
   // web process runs the turns its routes start
-  // (docs/plans/web-and-conductor.md), and isSessionBusy reads them all.
-  assert.match(SCANS, /function busy\(sessionId\) \{\n\s+return require\('\.\/active-workers'\)\.isSessionBusy\(Number\(sessionId\)\);/);
-  assert.match(pass(), /const ready = sessions\.filter\(\(session\) => !busy\(session\.id\)\);/);
+  // (docs/plans/web-and-conductor.md), and the workflow's records say which
+  // (busySessionsAnywhere, session-work.ts workedOnSql).
+  assert.match(pass(), /const working = await require\('\.\/active-workers'\)\.busySessionsAnywhere\(sessions\.map\(\(s\) => s\.id\), \{ pool \}\);/);
+  assert.match(pass(), /const ready = sessions\.filter\(\(session\) => !working\.has\(Number\(session\.id\)\)\);/);
 
-  t.mock.method(activeWorkers, 'isSessionBusy', (id) => id === 2 || id === 3);
+  t.mock.method(activeWorkers, 'busySessionsAnywhere', async (ids) => new Set(ids.filter((id) => id === 2 || id === 3)));
   const fetched = t.mock.method(integration, 'fetchAppMirror', async () => '/tmp/mirror');
   const measure = t.mock.method(integration, 'measure', async () => ({ ok: true }));
   // Session 3 is the only one on app 2: a busy app's mirror is not fetched.
@@ -106,7 +107,7 @@ test('candidates are grouped by app so one fetch serves them all', async (t) => 
     + 'open proposal on it');
   assert.match(block, /for \(const sessions of byApp\.values\(\)\)/);
 
-  t.mock.method(activeWorkers, 'isSessionBusy', () => false);
+  t.mock.method(activeWorkers, 'busySessionsAnywhere', async () => new Set());
   const fetched = t.mock.method(integration, 'fetchAppMirror', async (ready) => `/tmp/mirror-${ready[0].app_id}`);
   const measure = t.mock.method(integration, 'measure', async () => ({ ok: true }));
   await scans.measurePromoted(poolOf([row(1, 1), row(2, 1), row(3, 2), row(4, 2), row(5, 2)]));
@@ -125,7 +126,7 @@ test('the sweep degrades rather than throwing, and says so', async (t) => {
   assert.match(block, /fetchAppMirror\(ready\)\.catch\(\(err\) => \{\s+log\.warn\(/,
     'an app whose fetch fails is recorded, and its proposals still measured');
 
-  t.mock.method(activeWorkers, 'isSessionBusy', () => false);
+  t.mock.method(activeWorkers, 'busySessionsAnywhere', async () => new Set());
   t.mock.method(integration, 'fetchAppMirror', async () => { throw new Error('fetch failed'); });
   const measure = t.mock.method(integration, 'measure', async () => ({ ok: true }));
   const out = await scans.measurePromoted(poolOf([row(1, 1), row(2, 1)]));
@@ -149,7 +150,7 @@ test('it runs one pass at a time across every process, and stops at its next pro
   assert.equal(job.everyMs, 60 * 1000);
   assert.equal(job.item, undefined, 'one pass, not a target per proposal: the fetch is shared');
 
-  t.mock.method(activeWorkers, 'isSessionBusy', () => false);
+  t.mock.method(activeWorkers, 'busySessionsAnywhere', async () => new Set());
   t.mock.method(integration, 'fetchAppMirror', async () => '/tmp/mirror');
   const stop = new AbortController();
   const measure = t.mock.method(integration, 'measure', async () => { stop.abort(); return { ok: true }; });

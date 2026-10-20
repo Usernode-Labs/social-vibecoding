@@ -180,7 +180,8 @@ test('a read turn: the tool runs through the shim, the reply is recorded and bil
   assert.equal(assistant.params[2], 'Let me look.\n\nThere are two open requests.');
   assert.equal(assistant.params[4], 8, 'both model calls are costed');
   assert.deepEqual(JSON.parse(assistant.params[5]).tools, [{ name: 'list_requests', ok: true }]);
-  assert.deepEqual(spend, [[pool, 7, 8, { byok: false }]]);
+  assert.deepEqual(spend, [[pool, 7, 4, { byok: false }], [pool, 7, 4, { byok: false }]],
+    'each model call recorded as it is made, not once the reply is stored');
 
   // The model saw the tool's answer against its own tool_use id.
   const second = model.requests[1].messages.at(-1);
@@ -941,68 +942,6 @@ test('Retry answers the conversation as it stands, told why, with no message of 
   assert.match(JSON.stringify(sent), /interrupted by a platform update/, 'and sees the interruption as a note');
 });
 
-test('a process shutting down ends its Mayor turns as interrupted, with Retry, and hands the lease back', async () => {
-  // A model call that runs until it is aborted.
-  const model = {
-    requests: [],
-    streamChat(args) {
-      this.requests.push(args);
-      if (args.onToken) args.onToken('Working on');
-      return new Promise((_resolve, reject) => {
-        args.signal.addEventListener('abort', () => reject(new Error('aborted')));
-      });
-    },
-    estimateCostCents: () => 3,
-  };
-  const released = [];
-  const { deps, events } = turnDeps({ model, shim: fakeShim(), agentSessions: {
-    releaseTurnLease: async (_pool, args) => { released.push(args); },
-  } });
-  const pool = recordingPool({ 'RETURNING id': () => ({ rows: [{ id: 99 }] }) });
-  const res = fakeRes();
-  const running = agentTurn.runAgentTurn({
-    pool, config: CONFIG, user: USER, agentSessionId: 5, turnId: 'turn-0003-cccc',
-    messageText: 'Make it blue', recorded: { id: 41, clientMessageId: null }, mayor: mayorFor(model), res, deps,
-  });
-  for (let i = 0; i < 20 && !model.requests.length; i += 1) {
-    // eslint-disable-next-line no-await-in-loop
-    await new Promise((resolve) => { setImmediate(resolve); });
-  }
-  assert.equal(await agentTurn.interruptLocalTurns({ timeoutMs: 2000 }), 1);
-  await running;
-  const types = res.events().map((e) => e.type);
-  assert.ok(!types.includes('error'), 'not reported as a failure');
-  assert.equal(types[types.length - 1], 'done');
-  assert.deepEqual(events.map((e) => [e.event, e.metadata.retryable]), [['turn_interrupted', true]]);
-  assert.equal(events[0].content, agentTurn.INTERRUPTED_TEXT);
-  const kept = pool.calls.find((c) => /'assistant'/.test(c.sql) && /INSERT INTO chat_session_messages/.test(c.sql));
-  assert.equal(kept.params[2], 'Working on', 'what it had said is kept');
-  assert.equal(JSON.parse(kept.params[5]).interrupted, true);
-  assert.deepEqual(released.map((r) => r.turnId), ['turn-0003-cccc']);
-});
-
-test('the sweeper ends each turn its process left behind, but not a build restart recovery owns', async () => {
-  const ended = [];
-  const published = [];
-  const told = [];
-  const deps = {
-    agentSessions: {
-      staleTurnLeases: async () => [
-        { agentSessionId: 11, userId: 7, turnId: 'dead-1', activeChangeId: null, changeTurn: false },
-        { agentSessionId: 12, userId: 7, turnId: 'dead-2', activeChangeId: 90, changeTurn: true },
-        { agentSessionId: 13, userId: 8, turnId: 'dead-3', activeChangeId: null, changeTurn: false },
-      ],
-      endInterruptedTurn: async (_pool, args) => { ended.push(args); return args.agentSessionId !== 13; },
-    },
-    sessionBus: { publish: (key, event) => published.push([key, event.type]) },
-    notifyUser: (userId, payload) => told.push([userId, payload.agentSessionId, payload.busy]),
-    isChangeBusy: () => false,
-  };
-  assert.equal(await agentTurn.sweepInterruptedTurns({ pool: {}, deps }), 1);
-  assert.deepEqual(ended.map((e) => [e.agentSessionId, e.turnId, e.content]), [
-    [11, 'dead-1', agentTurn.INTERRUPTED_TEXT],
-    [13, 'dead-3', agentTurn.INTERRUPTED_TEXT],
-  ], 'the one with a build on record is left to recovery');
-  assert.deepEqual(published, [['agent:11', 'done']], 'screens following it on this pod settle; 13 was ended by another sweeper');
-  assert.deepEqual(told, [[7, 11, false]]);
-});
+// (A turn that does not finish its own way, its process gone, is its work
+// item's to carry on or end as interrupted: services/turns.js, tested in
+// tests/workflow-turn-postgres.test.js.)

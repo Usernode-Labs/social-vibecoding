@@ -356,6 +356,30 @@ async function claimTurn(pool, {
   return turnId;
 }
 
+// A person's Stop of the turn running on the thread: stamped on it, so the
+// request running it hears it on any process. Resolves the turn it stopped,
+// or null when none runs.
+async function requestTurnCancel(pool, { userId: requestedUserId, threadId }) {
+  const { rows } = await pool.query(
+    `UPDATE global_chat_threads SET cancel_turn_id = active_turn_id
+      WHERE id = $1 AND user_id = $2 AND active_turn_id IS NOT NULL
+      RETURNING active_turn_id`,
+    [uuid(threadId, 'thread id'), userId(requestedUserId)],
+  );
+  return rows[0] ? rows[0].active_turn_id : null;
+}
+
+// Whether the turn running on the thread was stopped, or its thread deleted
+// or archived: what the request running it reads between its steps.
+async function turnCancelled(pool, { userId: requestedUserId, threadId }) {
+  const { rows } = await pool.query(
+    `SELECT (cancel_turn_id IS NOT NULL AND cancel_turn_id = active_turn_id) AS stopped, archived_at IS NOT NULL AS archived
+       FROM global_chat_threads WHERE id = $1 AND user_id = $2`,
+    [uuid(threadId, 'thread id'), userId(requestedUserId)],
+  );
+  return !rows[0] || rows[0].stopped || rows[0].archived;
+}
+
 async function releaseTurn(pool, { userId: requestedUserId, threadId, turnId }) {
   const result = await pool.query(
     `UPDATE global_chat_threads
@@ -515,6 +539,8 @@ module.exports = {
   messageShape,
   openJson,
   releaseTurn,
+  requestTurnCancel,
+  turnCancelled,
   sealJson,
   startToolRun,
   threadForUser,

@@ -1,9 +1,10 @@
 'use strict';
 
 // What a process a release replaced waits for before it exits
-// (services/drain.js, docs/plans/draining-releases.md), and the registries'
-// write-through to this process's holds (services/processes.js heldMap and
-// heldSet). On a fake clock: nothing here waits for real.
+// (services/drain.js, docs/plans/draining-releases.md), and the registries
+// whose keys are this process's holds (services/processes.js heldMap and
+// heldSet): in memory, for its own drain, read by no other process. On a fake
+// clock: nothing here waits for real.
 //
 // Run with: node --test tests/drain.test.js
 
@@ -96,11 +97,11 @@ test('a held Map can map its keys to refs, and a key with no ref is kept but hol
 
 test('a held Set holds what it contains', () => {
   processes._reset();
-  const s = processes.heldSet('teardown');
+  const s = processes.heldSet('handoff');
   s.add('app-1'); s.add('app-1');
-  assert.equal(processes.heldHere('teardown', 'app-1'), true);
+  assert.equal(processes.heldHere('handoff', 'app-1'), true);
   s.delete('app-1');
-  assert.equal(processes.heldHere('teardown', 'app-1'), false);
+  assert.equal(processes.heldHere('handoff', 'app-1'), false);
 });
 
 test('what a session is doing here holds it, and isSessionBusyHere tells this process\'s part apart', () => {
@@ -114,7 +115,11 @@ test('what a session is doing here holds it, and isSessionBusyHere tells this pr
   assert.equal(processes.heldHere('session', 78), true);
   release(); release();
   assert.equal(processes.heldHere('session', 78), false, 'an operation released twice releases its hold once');
-  assert.equal(aw.isSessionBusyElsewhere(79), false, 'nothing elsewhere while the registry has not started');
+  // What another process runs is read from the database, never from here.
+  assert.equal(aw.isSessionBusyElsewhere, undefined);
+  assert.equal(typeof aw.isSessionBusyAnywhere, 'function');
+  assert.equal(processes.heldElsewhere, undefined);
+  assert.equal(processes.holders, undefined);
 });
 
 test('a turn this process executes holds its session for as long as it is in flight, whatever started it', () => {

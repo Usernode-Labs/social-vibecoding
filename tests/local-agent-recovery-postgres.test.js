@@ -128,7 +128,6 @@ test('a row from before waiters had ids is left alone', async (t) => {
     INSERT INTO local_agent_turns (session_id, lease_id, user_id, prompt, status, finished_at)
     SELECT 42, id, 5, 'old', 'completed', NOW() FROM session_agent_leases LIMIT 1`);
   assert.deepEqual(await localAgent.adoptOrphanedTurns(client, { staleSeconds: 0 }), []);
-  assert.equal(await localAgent.hasUnfinishedTurn(client, 42), false);
 });
 
 test('a turn the lease sweeper failed is still finished: the sweep and the takeover compose', async (t) => {
@@ -152,25 +151,26 @@ test('a turn the lease sweeper failed is still finished: the sweep and the takeo
     /Evan's laptop disconnected before finishing this turn: The local coding agent stopped responding\./);
 });
 
-test('a conversation reads a local turn as unfinished until its recovered tail is done', async (t) => {
+test('a turn its work item dispatched is its item\'s: no pass takes it, and the item\'s next claim takes it over once', async (t) => {
   const client = await connect(t);
   if (!client) return;
-  const queued = await enqueue(client);
-  assert.equal(await localAgent.hasUnfinishedTurn(client, 42), true, 'waited for');
+  const workId = '11111111-2222-3333-4444-555555555555';
+  const owner = { machine: 'turn', key: 'agent:9', kind: 'turn.run', workKey: 'run:t', workId };
+  const queued = await localAgent.enqueueTurn(client, {
+    sessionId: 42, userId: 5, prompt: 'add a toggle', baseSha: 'b'.repeat(40), branchName: 'dev/x', owner,
+  });
+  assert.deepEqual(queued.turn.owner, owner);
   await silence(client, queued.turn.id, 600);
-  assert.equal(await localAgent.hasUnfinishedTurn(client, 42), true, 'waiting to be taken over');
+  assert.deepEqual(await localAgent.adoptOrphanedTurns(client), [], 'however quiet: the item is its waiter');
 
-  const [adopted] = await localAgent.adoptOrphanedTurns(client);
-  await client.query(`UPDATE local_agent_turns SET status = 'completed', finished_at = NOW() WHERE id = $1`, [adopted.id]);
-  assert.ok(await localAgent.claimTail(client, adopted.id, adopted.waiter_id));
-  assert.equal(await localAgent.hasUnfinishedTurn(client, 42), true, 'its tail is running');
+  assert.equal(await localAgent.takeOverOwnedTurn(client, 'another-item'), null, 'only its own item');
+  const taken = await localAgent.takeOverOwnedTurn(client, workId);
+  assert.equal(String(taken.id), String(queued.turn.id));
+  assert.notEqual(taken.waiter_id, queued.waiterId, 'the next claim waits under an id of its own');
+  assert.equal(await localAgent.renewWaiter(client, queued.turn.id, queued.waiterId), false,
+    'so the waiter a process that lost the item left answers \'adopted\' and leaves the tail');
 
-  await silence(client, adopted.id, 600);
-  assert.equal(await localAgent.hasUnfinishedTurn(client, 42), false, 'a tail whose runner went quiet stops counting');
-  await localAgent.touchWaiter(client, adopted.id, adopted.waiter_id);
-  assert.equal(await localAgent.hasUnfinishedTurn(client, 42), true);
-
-  await localAgent.markTailFinished(client, adopted.id);
-  assert.equal(await localAgent.hasUnfinishedTurn(client, 42), false, 'finished');
-  assert.equal(await localAgent.hasUnfinishedTurn(client, 43), false, 'and only for its own change');
+  await client.query(`UPDATE local_agent_turns SET status = 'completed', finished_at = NOW() WHERE id = $1`, [taken.id]);
+  assert.ok(await localAgent.claimTail(client, taken.id, taken.waiter_id));
+  assert.equal(await localAgent.takeOverOwnedTurn(client, workId), null, 'a claimed tail is never taken over');
 });

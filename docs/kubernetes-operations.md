@@ -143,23 +143,22 @@ revision when comparing source behavior with a live failure.
 
 A platform Pod a release replaces keeps finishing the work it started rather
 than cutting it (`docs/plans/draining-releases.md`), once another platform
-process that records what it holds is serving (it waits up to a minute for
-one; without one, as after a rollback to a release from before this, it cuts
-over as it always did). On `SIGTERM` it:
+process of its role is serving (it waits up to a minute for one; without one,
+as on a scale to zero, it cuts over as it always did). No process leads. On
+`SIGTERM` it:
 
 1. refuses anything new and marks its row in `platform_processes` `draining`;
-2. stops its leader work (every sweeper and timer still on the leader), quiesces the workflow runtime (no slot, timer or
-   claim; its running work goes on) and resigns the leader lock, so the new
-   Pod is promoted within a poll;
+2. quiesces the workflow runtime (no slot, timer or claim; its running work
+   goes on: a person's turn, a build, a merge under way);
 3. announces the new build to its tabs and closes their sockets;
 4. keeps its listener open (a request it still answers, and its own loopback
-   calls) and waits until it holds nothing (`process_holds`), has no
-   registered background work, no running workflow work and no request still
-   answering;
-5. then does what shutdown always did: closes the listener, ends the Mayor's
-   turns still running, stops the workflow runtime (its work items are given
-   up to the next claim), marks what is left interrupted, hands back checks
-   runs, deletes its row and exits.
+   calls) and waits until it holds nothing (its own holds, in its memory),
+   has no registered background work, no running workflow work and no
+   request still answering;
+5. then does what shutdown always did: closes the listener, stops the
+   workflow runtime (its work items are given up to the next claim, which
+   carries each on from what it saved), hands back checks runs, deletes its
+   row and exits.
 
 It waits at most `platform.drainMinutes` (`PLATFORM_DRAIN_TIMEOUT_MS`), and
 ends early when `platform.drainingMax` (`PLATFORM_DRAINING_MAX`) newer releases
@@ -167,18 +166,19 @@ are draining too: counted by release, since one release drains every conductor
 replica (a `rollout restart` of the same build is no newer release). The log says what it is still finishing every minute
 (`Still finishing work before exiting`), and how it ended: `Finished this
 process's work`, or `Drain deadline passed` / `Newer processes are draining
-too`, with what it handed over. What it hands over is adopted by the leader's
-`orphan-turn-sweep` and `orphan-headless-sweep` within a minute or two, and by
-the existing heartbeat sweeps for checks, shots runs, local-agent turns, the
-Mayor's turns, app creation and owed redeploys.
+too`, with what it handed over. What it hands over is claimed again once each
+item's lease lapses (a person's turn follows its coding run's journal to its
+end), and a coding record nothing carries is taken to an end by the
+`turn-leftovers` clock within a few minutes.
 
-The live processes and what each holds:
+The live processes, and the workflow work running now:
 
 ```sql
-SELECT p.id, p.release, p.state, p.drain_deadline_at, h.kind, h.ref
-  FROM platform_processes p LEFT JOIN process_holds h ON h.process_id = p.id
- WHERE p.heartbeat_at > NOW() - interval '45 seconds'
- ORDER BY p.started_at, h.kind, h.ref;
+SELECT id, release, role, state, drain_deadline_at FROM platform_processes
+ WHERE heartbeat_at > NOW() - interval '45 seconds' ORDER BY started_at;
+
+SELECT machine, key, kind, work_key, attempt_count, lease_until FROM wf_work
+ WHERE status = 'running' ORDER BY machine, key;
 ```
 
 A schema change has to stay compatible with the code of the release before it
@@ -212,7 +212,7 @@ issuance-limit recovery and explicit retirement of legacy Certificates.
 A project's manager can serve it at a web address they own (#4405,
 `services/app-domains.js`): they add a CNAME from `app.example.com` to
 `<slug>.USERNODE_APPS_DOMAIN` and a TXT record `_homeroom.app.example.com`
-carrying the claim's token, and the leader's sweep verifies both against
+carrying the claim's token, and the `app-domains` clock verifies both against
 public resolvers every minute. Once verified, `deployCustomDomain`
 (`services/kubernetes.js`) writes a second Ingress, `sv-domain-<id>`, beside
 the app's own: the same asset prefixes and gate routing, the custom host, and
@@ -543,7 +543,8 @@ retirement deletes its Jobs.
 
 The main-watch suite after a direct merge keeps its own hand-over: a platform
 process that shuts down stamps its `check_runs` rows' heartbeat as long past,
-so the next leader adopts them at once instead of a minute later.
+so the next attempt of the main-check machine's `main.suite` work adopts them at once
+instead of a minute later (`main-watch.adoptRun`).
 
 Every capture rechecks the exact deployed revision, image, environment
 fingerprint, completed rollout, application health and public edge before
@@ -561,10 +562,10 @@ background propagation, which takes their Pods and Secrets too; a run
 collected after a lost claim does the same once it settles. The Jobs' `ttlSecondsAfterFinished`
 (3600 s) covers everything else: superseded or failed runs, the main-watch
 suite, and whatever a crash leaves. Keep it at least that long, because it is
-how late a retry can still read a run after a slow leader handover.
+how late a retry can still read a run after a slow hand-over between processes.
 
-`services/check-retention.js` removes what no owner will. On the leader, every
-15 minutes and at most 50 deletions a pass, it deletes:
+`services/check-retention.js` removes what no owner will. As the `check-retention`
+clock, every 15 minutes and at most 50 deletions a pass, it deletes:
 
 - check input Secrets (`sv-capture-…-input`, `sv-unit-suite-…-input`) with no
   owner, older than two hours, that no Pod or Job in the namespace names;
@@ -596,7 +597,7 @@ Pass 0b, the apply functions in `routes/issues.js`) are deleted.
 - **Ownership is enforced.** A write to an enrolled governance proposal's status or audit
   keys from outside the machine is refused (`WF_OWNERSHIP_VIOLATION`). A row is enrolled
   when it is filed, or
-  by the leader's boot backfill if filing failed.
+  by the release machine's adoption if filing failed (`enrollGovernance`).
 - **Rolling back past this release** is no longer possible: every release a rollback
   could reach postdates it, and the infra values no longer carry
   `platform.workflowGovernanceEnabled` (Usernode-Labs/infra 352b03d).
@@ -617,9 +618,9 @@ has no flag: the old merge tail (`finalizeMerge` and its follow-ups), the
 - **A merge is only reported.** The proposal machine's merge attempt (`merge.attempt`)
   tells merge-followups `Merged` in the transition that records GitHub's answer. An
   answer that never came leaves the proposal `merging` (`unconfirmed`), and it asks
-  GitHub again until GitHub says; the leader also looks on GitHub for merges of promoted
-  rows every six hours (`observeMergedOnGithub`, the durable `merged-by-hand-lookup`
-  timer), so a pull request merged by hand is recorded within six hours.
+  GitHub again until GitHub says; the `merged-by-hand` clock also looks on GitHub for
+  merges of promoted rows every six hours (`proposal-scans.js lookMergedByHand`), so a
+  pull request merged by hand is recorded within six hours.
 - **Ownership is enforced.** Only the machine moves a proposal into `merged`, and a write
   to a merged row's `merged_at`, `merge_commit_sha`, `included_in_session_id` or `live_at`
   from outside it is refused (`WF_OWNERSHIP_VIOLATION`).
@@ -705,9 +706,9 @@ explains the machine.
 
 The workflow (docs/workflows.md) runs on the conductor's replicas
 (`platform.conductor.replicas`, two in production, set in the infra values): every
-replica runs every machine's pipeline slots, timers and work, with no leader lock. The
-web Pods decide nothing; they append and wait. One conductor still holds the leader lock,
-for the leader's remaining work (docs/plans/web-and-conductor.md).
+replica runs every machine's pipeline slots, timers and work. No process leads: what the
+leader ran is workflow work or a clock (`src/workflow/clock/`), and a person's turn is the
+`turn` machine's work item. The web Pods decide nothing; they append and wait.
 
 - **Limits hold across the replicas.** A work kind's limit (four deploys, four shots
   copy builds, ten preview builds, ...) counts every replica's running items, a draining
@@ -753,7 +754,21 @@ process, is not "nobody takes it". Admin → Workflows shows the same signs unde
 person".
 
 **Rolling back past this release.** Older code reads the conductor as the leader's
-process; a second replica is a standby with slots, which is safe. Argo CD does not prune
+process; a second replica is a standby with slots, which is safe. A release from before
+the turn machine elects a leader again among its own processes, and this one, while it
+drains beside it, keeps what that leader reads (`services/turn-leftovers.js` lists it).
+That release cannot run the `turn` machine's work: a person's turn asked in the overlap,
+or one still running when this release's last Pod is gone, is held by its work item and
+left alone by every sweep of that release (the change reads busy, the conversation takes
+no message). Once no process of this release is live (`platform_processes`), give those
+items up so that release's own recovery takes their coding runs over, its interrupted
+sweep their conversations, and a dev chat message left unanswered can be sent again:
+
+```sql
+UPDATE wf_work SET status = 'settled', settled_at = NOW(), claim_id = NULL, lease_until = NULL,
+       result = '{"ended":"rolled_back"}'::jsonb
+ WHERE machine = 'turn' AND status <> 'settled';
+``` Argo CD does not prune
 here, so the conductor's PodDisruptionBudget, the PodMonitor and the PrometheusRule stay;
 the budget (`maxUnavailable: 1`) blocks no drain, and the metrics rules find nothing to
 scrape: delete `pdb/social-vibecoding-conductor`, `podmonitor/` and
@@ -860,8 +875,8 @@ usage null when measured usage is unavailable.
 
 The platform keeps a person's IP address for `IP_RETENTION_DAYS` (default
 180, six months; whole days from 1 to 3650; any other value keeps 180). The
-privacy notice states the same period, so change the two together. The leader clears older addresses
-once a day (`ip-retention` in `leader_sweeps`; `src/services/ip-retention.js`
+privacy notice states the same period, so change the two together. The `ip-retention`
+clock clears older addresses once a day (`src/services/ip-retention.js`
 lists each column) and keeps the rows. A pass that cleared anything logs
 `Cleared expired IP addresses` with a count per table.
 

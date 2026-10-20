@@ -3,27 +3,6 @@
   "description": "Runtime-built .query() calls reviewed outside the static PostgreSQL validator.",
   "queries": [
     {
-      "source": "server.js",
-      "kind": "structural-template",
-      "fingerprint": "1439fe9c893bb33f9501",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.user_id, cs.app_id, cs.status, cs.pr_number, cs.active_turn, cs.workflow_owner, u.username, u.is_synthetic AS user_is_synthetic FROM chat_sess"
-    },
-    {
-      "source": "server.js",
-      "kind": "structural-template",
-      "fingerprint": "856f867d06e5b2aabdcc",
-      "count": 1,
-      "preview": "`SELECT cs.id FROM chat_sessions cs WHERE cs.active_turn IS NOT NULL AND cs.active_turn->>'phase' = ANY($1::text[]) AND COALESCE(cs.active_turn->>'lifecycleUpda"
-    },
-    {
-      "source": "server.js",
-      "kind": "structural-template",
-      "fingerprint": "f61373012d6b3e42df26",
-      "count": 1,
-      "preview": "`SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted AS app_self_hosted, u.username, u.is_synthetic AS user_is_synthetic, ((cs.workfl"
-    },
-    {
       "source": "src/db/migrate.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",
@@ -148,6 +127,20 @@
       "fingerprint": "a3cf1733039850959932",
       "count": 1,
       "preview": "`SELECT i.id, i.app_id, i.github_issue_number, i.title, i.description, i.kind, i.status, i.created_at, i.created_by, u.username AS created_by_username, a.slug A"
+    },
+    {
+      "source": "src/routes/anthropic-proxy.js",
+      "kind": "structural-template",
+      "fingerprint": "537e15e2ddcc8e4a9103",
+      "count": 1,
+      "preview": "`SELECT ${limits.TODAY_USER_SPEND_SQL} AS total_cost_cents`"
+    },
+    {
+      "source": "src/routes/anthropic-proxy.js",
+      "kind": "structural-template",
+      "fingerprint": "96659719fc9831d52285",
+      "count": 1,
+      "preview": "`SELECT ${limits.TODAY_GLOBAL_SPEND_SQL} AS total`"
     },
     {
       "source": "src/routes/app-llm-proxy.js",
@@ -416,6 +409,13 @@
       "preview": "`SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total, COUNT(*)::int AS all_total, ${allDoneSql} AS all_done, COUNT(*) FILTER ( WHERE ${scopeFilter} AND "
     },
     {
+      "source": "src/routes/issues.js",
+      "kind": "structural-template",
+      "fingerprint": "1ed079d9e52e665be2be",
+      "count": 1,
+      "preview": "`SELECT UNNEST(cs.linked_issues) AS n, cs.id, cs.user_id, cs.status, cs.shared_at, cs.last_activity_at, cs.created_at, u.username, ${workedOnSql()} AS worked_on"
+    },
+    {
       "source": "src/routes/kudos.js",
       "kind": "structural-template",
       "fingerprint": "23e047220a859a119a96",
@@ -481,9 +481,58 @@
     {
       "source": "src/routes/proposal-handoff.js",
       "kind": "structural-template",
+      "fingerprint": "14e100b27085ad0a7fe8",
+      "count": 1,
+      "preview": "`SELECT cs.*, a.slug AS app_slug, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.user_id = $1 AND cs.handoff_request_id "
+    },
+    {
+      "source": "src/routes/proposal-handoff.js",
+      "kind": "structural-template",
+      "fingerprint": "476bc6cbc89e56feb04a",
+      "count": 1,
+      "preview": "`SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.collab_visibility, a.view_visibility, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN app"
+    },
+    {
+      "source": "src/routes/proposal-handoff.js",
+      "kind": "structural-template",
+      "fingerprint": "5e36542ef8458d49531f",
+      "count": 1,
+      "preview": "`SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.collab_visibility, a.view_visibility, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN app"
+    },
+    {
+      "source": "src/routes/proposal-handoff.js",
+      "kind": "structural-template",
+      "fingerprint": "88f4499c338d7f3adb7a",
+      "count": 1,
+      "preview": "`SELECT cs.*, a.slug AS app_slug, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 AND cs.user_id = $2 AND cs.app_"
+    },
+    {
+      "source": "src/routes/proposal-handoff.js",
+      "kind": "structural-template",
+      "fingerprint": "bf63b7bb71ed94aa961b",
+      "count": 1,
+      "preview": "`SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.collab_visibility, a.view_visibility, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN app"
+    },
+    {
+      "source": "src/routes/proposal-handoff.js",
+      "kind": "structural-template",
       "fingerprint": "c9542dc200bfb852bb1e",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5, ${summaryFreshness.INVALIDATE_SQL}, handoff_upload_checked_sha = checks_comm"
+    },
+    {
+      "source": "src/routes/proposal-handoff.js",
+      "kind": "structural-template",
+      "fingerprint": "d230be33a081416081b2",
+      "count": 1,
+      "preview": "`SELECT cs.*, a.slug AS app_slug, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.user_id = $1 AND cs.app_id = $2 AND cs."
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
+      "fingerprint": "0882e61966e68334f071",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.status, cs.linked_issues, cs.shared_at, cs.transcript_shar"
     },
     {
       "source": "src/routes/sessions.js",
@@ -519,6 +568,13 @@
       "fingerprint": "ba8110c429c6037d85c2",
       "count": 1,
       "preview": "`SELECT s.version, s.built_at FROM chat_session_specs s WHERE s.session_id = $1 AND ($2::int = $3::int OR ${specVersionSharedVisibilitySql('s', '$3')}) ORDER BY"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
+      "fingerprint": "d6def8d6230e5b0888e6",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.session_title, cs.pr_title, cs.pr_number, cs.pr_url, cs.branch_name, cs.status, cs.staging_url, -- #2069, as above: a shared draft has neither"
     },
     {
       "source": "src/routes/sessions.js",
@@ -899,11 +955,32 @@
       "preview": "`DELETE FROM ${table} WHERE user_id = $1 AND message_id IS NULL`"
     },
     {
+      "source": "src/services/active-workers.js",
+      "kind": "structural-template",
+      "fingerprint": "9f56324a99752da672e8",
+      "count": 1,
+      "preview": "`SELECT ${require('../workflow/session-work.ts').workedOnSql({ turns: !exceptTurn, exceptHolder: ownHolder() })} AS busy FROM chat_sessions cs WHERE cs.id = $1`"
+    },
+    {
+      "source": "src/services/active-workers.js",
+      "kind": "structural-template",
+      "fingerprint": "b15a92d206772610996c",
+      "count": 1,
+      "preview": "`SELECT cs.id FROM chat_sessions cs WHERE cs.id = ANY($1::int[]) AND ${require('../workflow/session-work.ts').workedOnSql({ exceptHolder: ownHolder() })}`"
+    },
+    {
       "source": "src/services/admin-approval.js",
       "kind": "structural-template",
       "fingerprint": "eccf2f5dfb3499411ebb",
       "count": 1,
       "preview": "`SELECT 1 FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id JOIN users u ON u.id = pv.user_id WHERE pv.session_id = $1 AND pv.vote = 'yes' AND ${c"
+    },
+    {
+      "source": "src/services/agent-sessions.js",
+      "kind": "runtime-expression",
+      "fingerprint": "6c88e7a28c84e859a76f",
+      "count": 1,
+      "preview": "claimed ? 'COMMIT' : 'ROLLBACK'"
     },
     {
       "source": "src/services/agent-turn.js",
@@ -1410,6 +1487,20 @@
       "preview": "`SELECT cs.pr_number, cs.pr_title, u.username, cs.created_at FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id WHERE cs.app_id = $1 AND cs.status = '"
     },
     {
+      "source": "src/services/session-bus.js",
+      "kind": "structural-template",
+      "fingerprint": "2258237abfc603d59087",
+      "count": 1,
+      "preview": "`DELETE FROM stream_watchers w WHERE w.opened_at < NOW() - interval '1 minute' AND NOT ${holderAliveSql('w.holder')}`"
+    },
+    {
+      "source": "src/services/session-bus.js",
+      "kind": "structural-template",
+      "fingerprint": "4a479c3887c1957a2b2e",
+      "count": 1,
+      "preview": "`SELECT COUNT(*)::int AS n FROM stream_watchers w WHERE w.stream_key = $1 AND ${holderAliveSql('w.holder')}`"
+    },
+    {
       "source": "src/services/shared-objects.js",
       "kind": "structural-template",
       "fingerprint": "07fc5c0dfd474d4567fc",
@@ -1578,6 +1669,20 @@
       "preview": "`SET LOCAL ROLE ${consoleRole.ROLE}`"
     },
     {
+      "source": "src/services/turn-leftovers.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "528c5e57ddc255f11e3e",
+      "count": 1,
+      "preview": "HEADLESS_SQL"
+    },
+    {
+      "source": "src/services/turn-leftovers.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "de0efc08a362c023a0c6",
+      "count": 1,
+      "preview": "RECORDS_SQL"
+    },
+    {
       "source": "src/services/turn-lifecycle.js",
       "kind": "structural-template",
       "fingerprint": "544d173eb6008737473d",
@@ -1618,6 +1723,13 @@
       "fingerprint": "ffdbcfbaa56765b4a618",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET headless_status = $4, headless_outcome = COALESCE($5, headless_outcome), headless_step = NULL, headless_turn_id = NULL, last_activity_"
+    },
+    {
+      "source": "src/services/turn-recovery.js",
+      "kind": "structural-template",
+      "fingerprint": "f61373012d6b3e42df26",
+      "count": 1,
+      "preview": "`SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted AS app_self_hosted, u.username, u.is_synthetic AS user_is_synthetic, ((cs.workfl"
     },
     {
       "source": "src/services/ui-telemetry.js",
@@ -1737,6 +1849,13 @@
       "fingerprint": "9d1082139d72c4cb203f",
       "count": 1,
       "preview": "PENDING_SQL"
+    },
+    {
+      "source": "src/services/worker-eviction.js",
+      "kind": "structural-template",
+      "fingerprint": "c4aead63358129d5b7a9",
+      "count": 1,
+      "preview": "`SELECT sw.session_id, sw.last_used_at::text AS last_used_at FROM session_workers sw JOIN chat_sessions cs ON cs.id = sw.session_id WHERE sw.last_used_at < NOW("
     },
     {
       "source": "src/services/workshop-themes.js",

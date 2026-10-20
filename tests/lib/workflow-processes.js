@@ -43,18 +43,6 @@ function freePort() {
   });
 }
 
-// The test holds the leader lock (services/leadership.js), so a workflow
-// process it starts stands for leader and never leads: the workflow needs no
-// leader, and the leader's remaining work is not what these tests run.
-async function holdLeadership(databaseUrl) {
-  const { LEADER_LOCK_KEY } = require('../../src/services/leadership');
-  const client = new Client({ connectionString: databaseUrl });
-  client.on('error', () => {});
-  await client.connect();
-  await client.query('SELECT pg_advisory_lock($1)', [LEADER_LOCK_KEY]);
-  return client;
-}
-
 // Start the workflow side: server.js booted as a conductor. `env` is what the
 // chart would set for it (the data key, the workflow's slots and pool, the
 // shots and phone-push switches); the child adds the database URL, and this
@@ -137,4 +125,4 @@ async function until(check, what, timeoutMs = 20000) {
   }
 }
 
-module.exports = { prepare, holdLeadership, startWorkflowProcess, expireLeases, arm, reached, release, effects, until };
+module.exports = { prepare, startWorkflowProcess, expireLeases, arm, reached, release, effects, until };

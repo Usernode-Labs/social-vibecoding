@@ -4463,16 +4463,6 @@ async function abandonRecoveredTurn({ pool, session, why }) {
   return 'released';
 }
 
-/**
- * A bot turn the stale-turn watchdog reaped (server.js). A durable build's
- * turn is its build's: the step following it reads the turn's end. Any
- * other is a read the queue takes again.
- */
-async function settleReapedTurn({ pool, session }) {
-  if (session?.workflow_owner) return 'durable';
-  return abandonRecoveredTurn({ pool, session, why: 'the stale-turn watchdog reaped its turn' });
-}
-
 // ── Live and shadow builds on the kernel ─────────────────────────────────
 
 /** What a build runs with: the caller's injected modules, else the real ones. */
@@ -9727,7 +9717,6 @@ module.exports = {
   liveBuildInput,
   liveBuildNonce,
   runPosted,
-  settleReapedTurn,
   // #4662: put a live run back in line with its kept plan, markdown and HTML.
   liveSayer,
   announceBuilt,

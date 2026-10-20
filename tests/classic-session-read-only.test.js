@@ -119,7 +119,7 @@ test('the chat refuses a classic session, and never resumes a paused one first',
   const refusal = body.indexOf('if (classicSessions.isClassicSession(session)) {');
   assert.ok(refusal > 0, 'the loaded session is refused');
   assert.ok(body.indexOf('chatDelivery.answerDuplicate(res, delivery)') < refusal);
-  assert.ok(refusal < body.indexOf('limits.resolveBillingPath('), 'nothing is billed');
+  assert.ok(refusal < body.indexOf('resolveClassicPayer('), 'nothing is billed');
   assert.ok(refusal < body.indexOf("INSERT INTO chat_session_messages"), 'nothing is stored');
   // An agent session's change keeps its own answer, which names the
   // conversation to continue in.

@@ -2,8 +2,8 @@
 // self-reported costUsd into the spend ledger, routed to the bucket the
 // turn actually billed.
 //
-// Drives the real resume path (resumeHeadlessRuns → resumeOneHeadlessRun,
-// cc_running branch) with a stubbed worker whose resumeTurnFromJournal
+// Drives the real resume path (a headless run's turn item resumed after its
+// process went: services/turns.js → resumeOneHeadlessRun, cc_running branch) with a stubbed worker whose resumeTurnFromJournal
 // returns a recovered result carrying costUsd, and asserts on the
 // limits.recordSpend call it produces:
 //   1. active_turn.byok: true  → debit lands in the BYOK bucket, even if
@@ -316,14 +316,21 @@ async function runResume(activeTurn, {
     workerCalls,
   });
   try {
-    await loaded.subject.resumeHeadlessRuns({ jwtSecret: 'test' });
+    const turns = require('../src/services/turns');
+    const retry = { ...turns.RECOVERY_RETRY };
+    Object.assign(turns.RECOVERY_RETRY, { ms: 1 });
+    try {
+      await turns.run({
+        workId: 'w-42', kind: 'turn.run', key: 'run:t', resumeFrom: null, lostAttempts: 1,
+        signal: new AbortController().signal,
+        input: { kind: 'headless', sessionId: 42, userId: 7, turnId: 't', instanceKey: 'session:42' },
+      }, { config: { jwtSecret: 'test' }, pool });
+    } finally {
+      Object.assign(turns.RECOVERY_RETRY, retry);
+    }
     assert.ok(await waitFor(() => pool.state.terminal), 'run reached a terminal state');
     if (waitForCleanupRetry) {
-      const recoveryRetry = require('../src/services/recovery-retry');
-      assert.ok(await waitFor(
-        () => workerCalls.finishes >= 2 && !recoveryRetry.isScheduled('headless:42'),
-        3000,
-      ), 'cleanup-only retry completed');
+      assert.ok(await waitFor(() => workerCalls.finishes >= 2, 3000), 'cleanup-only retry completed');
     }
     return loaded.spendCalls.filter((c) => c.costCents > 0);
   } finally {

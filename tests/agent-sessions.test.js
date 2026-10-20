@@ -534,12 +534,12 @@ test('a confirmed card gets the Mayor a follow-up turn when the conversation is 
   const agentTurnMod = require('../src/services/mayor/agent-turn');
   const actionsMod = require('../src/services/agent-session-actions');
   const saved = {
-    runAgentTurn: agentTurnMod.runAgentTurn,
     resolveAgentMayor: agentTurnMod.resolveAgentMayor,
     confirmAction: actionsMod.confirmAction,
   };
-  const turns = [];
-  agentTurnMod.runAgentTurn = async (args) => { turns.push(args); };
+  // The follow-up is asked of the conversation's turn machine with its claim.
+  const machine = require('./lib/turn-platform').installTurnPlatform({ finish: false });
+  const turns = machine.asks;
   agentTurnMod.resolveAgentMayor = async () => ({ ok: true, provider: 'anthropic', model: 'm' });
   actionsMod.confirmAction = async () => ({ id: 'a', toolName: 'start_change', status: 'done', result: { ok: true } });
   const ACTION = '11111111-2222-3333-4444-555555555555';
@@ -554,9 +554,10 @@ test('a confirmed card gets the Mayor a follow-up turn when the conversation is 
       assert.equal(confirmed.body.status, 'done');
       assert.match(confirmed.body.followUp.turnId, /^[0-9a-f-]{36}$/);
       assert.equal(turns.length, 1);
-      assert.equal(turns[0].messageText, undefined, 'no user message');
-      assert.deepEqual(turns[0].followUp, { toolName: 'start_change', title: 'Start a change', ok: true });
-      assert.equal(turns[0].res, null, 'it streams on the conversation\'s bus');
+      assert.deepEqual([turns[0].key, turns[0].kind], ['agent:5', 'agent']);
+      assert.equal(turns[0].input.messageText, undefined, 'no user message');
+      assert.deepEqual(turns[0].input.followUp, { toolName: 'start_change', title: 'Start a change', ok: true });
+      assert.deepEqual([turns[0].input.agentSessionId, turns[0].input.userId], [5, 7]);
       assert.equal(turns[0].turnId, confirmed.body.followUp.turnId);
 
       free = false;
@@ -566,7 +567,8 @@ test('a confirmed card gets the Mayor a follow-up turn when the conversation is 
       assert.equal(turns.length, 1);
     });
   } finally {
-    Object.assign(agentTurnMod, { runAgentTurn: saved.runAgentTurn, resolveAgentMayor: saved.resolveAgentMayor });
+    machine.restore();
+    Object.assign(agentTurnMod, { resolveAgentMayor: saved.resolveAgentMayor });
     actionsMod.confirmAction = saved.confirmAction;
   }
 });
@@ -592,23 +594,15 @@ test('one stop route calls the coding stop server-side and returns its error', a
   } finally { jobs.requestSessionStop = saved; }
 });
 
-test('stop with no turn running hands back only a stale lease', async () => {
-  const mod = require('../src/services/mayor/agent-turn');
-  const saved = mod.handBackOrphanedTurn;
-  const handBacks = [];
-  mod.handBackOrphanedTurn = async (args) => { handBacks.push(args); return true; };
+test('stop with no turn running says so, tells no machine and writes nothing', async () => {
+  const machine = require('./lib/turn-platform').installTurnPlatform({ finish: false });
   try {
-    let lease = { id: 'dead-turn' };
-    await withRoutes({ id: 7, username: 'ada' }, { 'FROM agent_sessions s': () => ({ rows: [{ active_turn: lease, turn_live: false }] }) }, async (call) => {
-      const stopped = await call('POST', '/api/agent-sessions/5/stop');
-      assert.deepEqual(stopped.body, { stopped: false, reason: 'no_active_turn', released: true });
-      assert.equal(handBacks.length, 1);
-      assert.equal(handBacks[0].userId, 7);
-      lease = null;
+    await withRoutes({ id: 7, username: 'ada' }, { 'FROM agent_sessions s': () => ({ rows: [{ active_turn: null, turn_live: false }] }) }, async (call, pool) => {
       assert.deepEqual((await call('POST', '/api/agent-sessions/5/stop')).body, { stopped: false, reason: 'no_active_turn' });
-      assert.equal(handBacks.length, 1);
+      assert.deepEqual(machine.stops, []);
+      assert.ok(!pool.calls.some((c) => /^\s*(UPDATE|INSERT|DELETE)/i.test(c.sql)), 'a claim is its turn\'s to release, never a Stop\'s');
     });
-  } finally { mod.handBackOrphanedTurn = saved; }
+  } finally { machine.restore(); }
 });
 
 test('a build recovery adopted on the active change reads as the conversation\'s running dispatch', async () => {

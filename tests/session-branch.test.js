@@ -431,7 +431,7 @@ test('a branch mismatch reaches chat as its own message, live and after a restar
   const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
   const sessions = read('src/routes/sessions.js');
   assert.match(sessions, /\} else if \(result\.branchMismatch\) \{[\s\S]{0,400}ended up working on a different branch that doesn't build on this change, `\n\s+\+ 'so nothing from this turn was saved\. Send your request again to redo it here\.';/);
-  const server = read('server.js');
+  const server = read('server.js') + read('src/services/turn-recovery.js');
   assert.match(server, /\} else if \(result\.branchMismatch\) \{\n\s+summaryParts\.push\('The coding agent ended up working on a different branch/);
   const host = read('src/services/worker.js');
   assert.match(host, /else if \(k === 'branch_mismatch'\) state\.branchMismatch = v === '1';/);

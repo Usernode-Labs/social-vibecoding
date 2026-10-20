@@ -4,7 +4,7 @@
 // workflow runtime would keep a slot's row locks and a claim's advisory lock
 // until the server's OS keepalive gave up (hours). The runtime's pool
 // (src/workflow/platform.ts deadPeerOptions) makes every session reap a dead
-// peer as the leader lock's does, and end a transaction its client stopped
+// peer within a minute (services/db-locks.js), and end a transaction its client stopped
 // talking in.
 
 const test = require('node:test');
@@ -15,7 +15,7 @@ const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgr
 
 test('the workflow runtime\'s sessions reap a dead peer and an abandoned transaction', async (t) => {
   const { deadPeerOptions } = require('../src/workflow/platform.ts');
-  const { SERVER_KEEPALIVE, KEEPALIVE_INITIAL_DELAY_MS, serverReapSeconds } = require('../src/services/leadership');
+  const { SERVER_KEEPALIVE, KEEPALIVE_INITIAL_DELAY_MS, serverReapSeconds } = require('../src/services/db-locks');
   const options = deadPeerOptions();
   assert.equal(options.keepAlive, true);
   assert.equal(options.keepAliveInitialDelayMillis, KEEPALIVE_INITIAL_DELAY_MS);

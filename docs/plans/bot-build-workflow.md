@@ -3,7 +3,7 @@
 The Homeroom bot's builds and the App bench's trials run as one workflow
 machine, `bot-build` (`src/workflow/bot-build/`). A restart no longer has
 recovery code of its own to run for them: the build's work item outlives the
-process, the next leader claims it, and the same code carries the build on
+process, the next workflow process claims it, and the same code carries the build on
 from the last step it saved. This replaces the checkpoint module
 (`homeroom-bot-checkpoint.js`), the shutdown drain (`homeroom-bot-drain.js`),
 the bot's and the bench's recovery paths (`completeRecoveredLive`,
@@ -52,7 +52,7 @@ bench. Each restart bug of October 2026 was one of three shapes:
   its pipeline is the work item's checkpoint, as the kernel's rules ask.
 - **The work item is the build's owner.** It is claimed under a lease that
   is renewed while the pipeline runs. A restart ends the lease (the stopping
-  process gives it up at once); the next leader claims it and runs the
+  process gives it up at once); the next workflow process claims it and runs the
   handler again with the last checkpoint. Nothing else adopts, holds or
   sweeps a build. Two processes can never both drive one build: the lease
   says who may, and every step after an abort is fenced.

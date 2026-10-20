@@ -32,8 +32,7 @@
 
 const { normalizeIdempotencyKey } = require('./conversations');
 const sessionBus = require('./session-bus');
-const stopRegistry = require('./stop-registry');
-const { isSessionBusy } = require('./active-workers');
+const { isSessionBusyAnywhere } = require('./active-workers');
 
 // Read the optional id from a request body or query string. It has the same
 // shape as a conversation message's idempotency_key (8 to 64 of
@@ -50,10 +49,10 @@ const BAD_CLIENT_MESSAGE_ID = 'Bad client_message_id: use 8 to 64 letters, digit
 
 // Where the turn a stored message started stands.
 //
-//   running   this process is running it. The live stop handle names the
-//             message; or a live turn whose handle names none (one adopted
-//             after a restart) is running and this is the newest message the
-//             user sent.
+//   running   its turn is running, in whichever process: the running turn
+//             names the message; or a live turn that names none (one
+//             carried on after a restart) is running and this is the newest
+//             message the user sent.
 //   done      nothing is running it and the transcript has moved past it: the
 //             turn's reply or status rows, or a later message.
 //   received  stored, and nothing has happened after it yet.
@@ -66,12 +65,12 @@ function deliveryState({ messageId, liveMessageId, turnLive, isLatestUserMessage
   return hasLaterRows ? 'done' : 'received';
 }
 
-// The `_seq` of the stored message's own `accepted` event while the ring
-// buffer still holds it, else null.
-function acceptedSeq(sessionId, messageId) {
-  const event = sessionBus.findLast(Number(sessionId), (e) => (
+// The `_seq` of the stored message's own `accepted` event while the turn's
+// stream still holds it, else null.
+async function acceptedSeq(sessionId, messageId) {
+  const event = await sessionBus.findLast(Number(sessionId), (e) => (
     e.type === 'accepted' && Number(e.messageId) === Number(messageId)
-  ));
+  )).catch(() => null);
   return event ? event._seq : null;
 }
 
@@ -95,11 +94,15 @@ async function lookup(db, { sessionId, clientMessageId, viewer }) {
   if (!rows.length) return { clientMessageId, received: false };
   const row = rows[0];
   const messageId = Number(row.id);
-  const handle = stopRegistry.get(sessionId);
+  // The dev chat turn running on the change, in whichever process: its
+  // machine's instance names the message it answers (services/turns.js).
+  const { rows: [live] } = await db.query(
+    `SELECT data->'running'->'input'->>'userMessageId' AS message_id FROM wf_instances
+      WHERE machine = 'turn' AND key = $1 AND state = 'running'`, [`session:${Number(sessionId)}`]);
   const state = deliveryState({
     messageId,
-    liveMessageId: handle?.userMessageId ?? null,
-    turnLive: !!handle || isSessionBusy(Number(sessionId)),
+    liveMessageId: live?.message_id ?? null,
+    turnLive: !!live || await isSessionBusyAnywhere(Number(sessionId), { pool: db }),
     isLatestUserMessage: !!row.latest_user,
     hasLaterRows: !!row.has_later,
   });
@@ -108,7 +111,7 @@ async function lookup(db, { sessionId, clientMessageId, viewer }) {
     received: true,
     messageId,
     state,
-    since: acceptedSeq(sessionId, messageId),
+    since: await acceptedSeq(sessionId, messageId),
   };
 }
 

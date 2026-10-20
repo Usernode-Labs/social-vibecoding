@@ -595,10 +595,9 @@ async function auditDuplicatePrSessions(pool) {
 // here because the loop lived entirely in the dead process. They are now
 // resumable: runHeadlessSession checkpoints its position in
 // chat_sessions.headless_step ('planning' / 'cc_running' / 'wrapping'),
-// and resumeHeadlessRuns (src/routes/sessions.js, called from server.js
-// boot after worker adoption) carries any 'generating' row forward from
-// that checkpoint — marking 'failed' only the rows it explicitly gives
-// up on. The sweep below is narrowed to rows with NO checkpoint, i.e.
+// and the run's turn work item (services/turns.js) carries a 'generating'
+// row forward from that checkpoint — marking 'failed' only the rows it
+// explicitly gives up on. The sweep below is narrowed to rows with NO checkpoint, i.e.
 // runs started before the step machine existed; those genuinely cannot
 // be resumed. Idempotent; no-ops when nothing is stuck.
 async function failOrphanedHeadlessRuns(pool) {
@@ -11283,8 +11282,9 @@ async function seedStagingSpecUserShareFixtures(pool, config) {
 // two auto_solve_done notifications (notifications is staging:private,
 // copied schema-only).
 //
-// user_id is deliberately NULL on every fixture session: boot-time
-// resumeHeadlessRuns INNER JOINs users, so NULL keeps the 'generating'
+// user_id is deliberately NULL on every fixture session: a headless run is
+// only resumed for a user (services/turn-leftovers.js, routes/sessions.js
+// reloadRecoverableHeadlessSession), so NULL keeps the 'generating'
 // fixture from being "resumed" (which would hit GitHub for a mock issue
 // number and fail the run); the issue panel and notification queries both
 // LEFT JOIN and degrade gracefully. headless_step is set on the

@@ -449,11 +449,10 @@ test('server.js counts every request and flushes on every process; the prune is 
   const startBody = src.slice(src.indexOf('async function start()'), src.indexOf('// Boot only when run as the entry point'));
   assert.match(startBody, /require\('\.\/src\/services\/server-error-counts'\)\.start\(\{ pool: getPool\(config\) \}\);/,
     'every process flushes its own counts');
-  // A scheduled job of the workflow (src/workflow/clock/services.ts), first
-  // due when the leader timer it replaced would have run.
+  // A scheduled job of the workflow (src/workflow/clock/services.ts).
   assert.match(read('src/workflow/clock/services.ts'),
-    /name: 'server-error-prune', everyMs: 24 \* HOUR, leaderSweep: 'server-error-prune',/, 'pruned daily');
-  assert.ok(!src.includes("'server-error-prune'"), 'no leader prunes them');
+    /name: 'server-error-prune', everyMs: 24 \* HOUR,/, 'pruned daily');
+  assert.ok(!src.includes("'server-error-prune'"), 'no process prunes them on its own');
   const handler = read('src/middleware/error-handler.js');
   assert.match(handler, /if \(status >= 500 && res\.locals\) res\.locals\.serverError = errorFacts\(err\);/);
 });

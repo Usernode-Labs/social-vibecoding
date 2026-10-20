@@ -78,14 +78,14 @@ const BUDGET_CACHE_TTL_MS = 10_000;
 const sessionUserCache = new Map(); // sessionId -> userId
 
 // Per-user spend tracker. `totalAtCheckpointCents` is the most recent
-// `llm_usage.total_cost_cents` we read from the DB; `liveDeltaCents`
-// is the sum of finalized Anthropic-call costs we've observed via the
-// SSE tee since that checkpoint. On each refresh we re-read the DB
-// and reset liveDeltaCents to 0 — once a CC turn ends, sessions.js
-// writes the turn's full cost to llm_usage and the next refresh picks
-// it up. There is a brief race window (turn-end write vs proxy
-// refresh) where new costs aren't accounted for; bounded to
-// BUDGET_CACHE_TTL_MS worth of generation, i.e. cents.
+// spend we read from the DB: what llm_usage has settled plus what
+// running turns' calls have cost and no turn's end has settled yet
+// (turn_spend, written per call below, whichever process the call
+// reached); `liveDeltaCents` is the sum of finalized Anthropic-call costs
+// this process observed via the SSE tee since that checkpoint. On each
+// refresh we re-read the DB and reset liveDeltaCents to 0: a call this
+// process saw is in turn_spend by then. A call whose row is still being
+// written at the refresh is missed for one window, i.e. cents.
 const userBudgetCache = new Map();
 //   userId -> { totalAtCheckpointCents, fetchedAt, liveDeltaCents }
 
@@ -138,10 +138,7 @@ async function refreshUserBudget(pool, userId) {
   const now = Date.now();
   if (cached && now - cached.fetchedAt < BUDGET_CACHE_TTL_MS) return cached;
   try {
-    const { rows } = await pool.query(
-      'SELECT total_cost_cents FROM llm_usage WHERE user_id = $1 AND date = CURRENT_DATE',
-      [userId]
-    );
+    const { rows } = await pool.query(`SELECT ${limits.TODAY_USER_SPEND_SQL} AS total_cost_cents`, [userId]);
     const totalAtCheckpointCents = parseFloat(rows[0]?.total_cost_cents || 0);
     const fresh = { totalAtCheckpointCents, fetchedAt: now, liveDeltaCents: 0 };
     userBudgetCache.set(userId, fresh);
@@ -172,13 +169,7 @@ async function refreshUserWeeklySpend(pool, userId) {
   const now = Date.now();
   if (cached && now - cached.fetchedAt < BUDGET_CACHE_TTL_MS) return cached;
   try {
-    const { rows } = await pool.query(
-      `SELECT COALESCE(SUM(total_cost_cents), 0) AS total
-         FROM llm_usage
-        WHERE user_id = $1 AND date >= $2`,
-      [userId, limits.weekStartUtc()]
-    );
-    const totalAtCheckpointCents = parseFloat(rows[0]?.total || 0);
+    const totalAtCheckpointCents = (await limits.getWeeklyTotalsCents(pool, userId)).platformCents;
     const fresh = { totalAtCheckpointCents, fetchedAt: now, liveDeltaCents: 0 };
     weeklyBudgetCache.set(userId, fresh);
     return fresh;
@@ -211,9 +202,7 @@ async function refreshGlobalSpend(pool) {
     return globalBudgetCache;
   }
   try {
-    const { rows } = await pool.query(
-      'SELECT SUM(total_cost_cents) as total FROM llm_usage WHERE date = CURRENT_DATE'
-    );
+    const { rows } = await pool.query(`SELECT ${limits.TODAY_GLOBAL_SPEND_SQL} AS total`);
     const totalAtCheckpointCents = parseFloat(rows[0]?.total || 0);
     globalBudgetCache = { totalAtCheckpointCents, fetchedAt: now, liveDeltaCents: 0 };
     return globalBudgetCache;
@@ -482,6 +471,10 @@ function anthropicProxyRoutes(config) {
     }
 
     const isSyncTurn = turnMode === 'sync';
+    // The turn this call belongs to, read as it starts: its cost is kept
+    // against that turn however late its write lands (limits.js
+    // noteTurnSpend reconciles one that lands after the turn settled).
+    const spendTurn = !isSyncTurn && turnMode !== 'shots' ? await limits.turnSpendTarget(pool, sessionId) : null;
 
     // Resolve effective cap + current spend snapshot. Both come from
     // small caches (limits.js's own 10s cache for the cap, our
@@ -610,6 +603,9 @@ function anthropicProxyRoutes(config) {
           });
           if (workerMod && result.costCents > 0) {
             workerMod.noteTurnByokSpend(sessionId, result.costCents);
+          }
+          if (turnMode !== 'shots') {
+            void limits.noteTurnSpend(pool, { sessionId, userId, cents: result.costCents, byok: true, turn: spendTurn });
           }
           // #800: BYOK-paid work still costs the change the same at list
           // price, so it lands on the ledger identically.
@@ -750,6 +746,13 @@ function anthropicProxyRoutes(config) {
       if (!isSyncTurn && globalBudgetCache) {
         globalBudgetCache.liveDeltaCents += result.costCents;
       }
+    }
+    // The call, kept against its turn as it is made: the caps count it at
+    // once, in every process, and its turn's end settles it. Not a sync
+    // turn's (the system bucket), nor a person's shots run's (gated by the
+    // owner's caps, never settled into their allowance).
+    if (!isSyncTurn && turnMode !== 'shots') {
+      void limits.noteTurnSpend(pool, { sessionId, userId, cents: result.costCents, byok: false, turn: spendTurn });
     }
     // #800: same cost, recorded durably against the change rather than
     // only in the in-memory trackers above. Counted on kills too, for the

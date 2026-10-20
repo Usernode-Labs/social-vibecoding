@@ -101,6 +101,23 @@ test('reports only non-idle sessions — an idle row is simply absent', async ()
   }
 });
 
+test('a turn another process runs is reported busy, as the workflow\'s records say', async () => {
+  // Every turn runs as a work item on a workflow process: absent from this
+  // process's memory, busy in its records (session-work.ts workedOnSql).
+  poolQueryHandler = async (sql, params) => {
+    if (sql.includes('cs.id = ANY($1::int[])')) return { rows: params[0].includes(12) ? [{ id: 12 }] : [] };
+    if (sql.includes('cs.user_id = $1')) return { rows: [sessionRow({ id: 11 }), sessionRow({ id: 12 })] };
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const { body } = await get(server, '/api/me/session-state');
+    assert.deepStrictEqual(body.sessions.map((x) => [x.id, x.busy]), [[12, true]]);
+  } finally {
+    server.close();
+  }
+});
+
 test('carries a bootId so a client can detect a platform restart', async () => {
   routeQueries({ mine: [] });
   const server = await startServer();

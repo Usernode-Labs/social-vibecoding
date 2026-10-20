@@ -50,14 +50,12 @@ test('a board-change reconcile under way is held for the drain; none starts once
 
 // 14 Oct 2026, 16:39: holding the whole sweeper tick held the drain to its
 // 60s deadline while one pass was minutes into a staging rebuild, which a
-// shutdown leaves to be re-driven anyway. The session sweeper is gone: what
-// is left of it is the turn watchdog, a leader timer (held for the drain
-// while a tick runs, none started once shutdown has begun), and the
-// measurement is a clock of the workflow, whose run stops at its next row
-// when the workflow runtime is stopped.
-test('the turn watchdog starts nothing on shutdown, and the measurement stops at its next row', () => {
-  assert.doesNotMatch(SERVER, /sessionSweeperHandle|singleFlight\('session-sweeper'/, 'the session sweeper is gone');
-  assert.match(SERVER, /leaderTimers\.every\('turn-watchdog', singleFlight\('turn-watchdog', async \(\) => \{\s+if \(lifecycle\.isShuttingDown\(\)\) return;/);
+// shutdown leaves to be re-driven anyway. The session sweeper and the turn
+// watchdog are gone (a turn's own work item, and the turn-leftovers clock,
+// end what they ended), and the measurement is a clock of the workflow,
+// whose run stops at its next row when the workflow runtime is stopped.
+test('no sweeper runs in a process, and the measurement stops at its next row', () => {
+  assert.doesNotMatch(SERVER, /sessionSweeperHandle|singleFlight\('session-sweeper'|turn-watchdog|leaderTimers/, 'the sweepers are gone');
   assert.doesNotMatch(SERVER, /inflightWork\.track\('proposal-measure'/, 'the measurement is not the drain\'s to wait for');
 
   const scans = fs.readFileSync(path.join(__dirname, '..', 'src/services/proposal-scans.js'), 'utf8');

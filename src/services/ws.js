@@ -82,8 +82,8 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
         .catch(() => log.warn('ws', 'Account stream cleanup will retry'));
       return;
     case 'agent_stop':
-      if (!oversize) void require('./mayor/agent-turn').receiveStopRequest(_pool, payload)
-        .catch(() => log.warn('ws', 'Agent stop notification will retry from durable state'));
+      // An older release's wake for a Mayor turn's stop: a turn's Stop is its
+      // machine's now (src/workflow/turn/), read from the turn's claim.
       return;
     case 'issues_closed':
       // From a workflow transition only: issues it closed on GitHub, for
@@ -122,13 +122,17 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       // An older release's wake for the bot's loop, which is the workflow's
       // now (bot-request, bot-lane): nothing to do.
       return;
-    // Stops for work another platform process runs (docs/plans/
-    // draining-releases.md): the process that holds it does what a stop in
-    // its own process does; every other one finds nothing and ignores it.
-    // Never a socket event, and the sender has already checked who may stop.
+    // ROLLOUT-ONLY: an older release's stop forward, for a turn it saw this
+    // release hold: the process running it asks the turn's machine
+    // (turn-leftovers.js receiveOlderStop). Never a socket event.
     case 'session_stop':
-      if (!oversize) void Promise.resolve(require('../routes/sessions').receiveSessionStop?.(payload))
-        .catch((err) => log.warn('ws', 'A stop for a turn here failed', { err: err.message }));
+      if (!oversize) void require('./turn-leftovers').receiveOlderStop(payload)
+        .catch((err) => log.warn('ws', 'A stop an older release forwarded failed', { err: err.message }));
+      return;
+    // A turn's stream has a new row (services/session-bus.js): this
+    // process's subscribers to it read on. Never a socket event.
+    case 'stream':
+      if (fromWorkflow && r.key != null) require('./session-bus').wake(r.key, Number(r.id) || null);
       return;
     case 'turn_byok':
       if (!oversize) require('./worker').receiveTurnByok(payload);

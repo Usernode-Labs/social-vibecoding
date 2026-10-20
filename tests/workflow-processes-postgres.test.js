@@ -45,13 +45,11 @@ test('workflow machines in a process of their own, and through its crash', { tim
   let second = null;
   let listener = null;
   let platform = null;
-  let leader = null;
   t.after(async () => {
     await workflow?.stop();
     await second?.stop();
     await platform?.stopWorkflow();
     await listener?.end();
-    await leader?.end();
     await pool.end();
     await admin.query(`DROP DATABASE ${dbName} WITH (FORCE)`);
     await admin.end();
@@ -84,8 +82,6 @@ test('workflow machines in a process of their own, and through its crash', { tim
     workflow = await startConductor(env);
     return workflow;
   };
-  // The leader lock is the test's: a conductor runs the workflow without it.
-  leader = await procs.holdLeadership(databaseUrl);
 
   // The web side: appends and waits, decides nothing (no pipeline slot).
   const stub = (p, exports) => { const id = require.resolve(p); require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] }; };
@@ -130,7 +126,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
     [machine, key, kind])).rows[0]?.status === 'settled';
 
   // GitHub merged it: merge-followups is created by Merged, here as the
-  // leader's merged-by-hand lookup reports it (the merge itself, below).
+  // merged-by-hand clock reports it (the merge itself, below).
   const reportMerge = async (m) => { await platform.mergeObserved({ ...m, mergedAt: null }); return { status: 'accepted' }; };
 
   await platform.startWorkflow({ ...flags, databaseUrl, wfSlots: 0 }, { loops: false });

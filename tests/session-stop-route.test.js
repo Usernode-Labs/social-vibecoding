@@ -41,6 +41,8 @@ const stopRegistry = require('../src/services/stop-registry');
 const workerMod = require('../src/services/worker');
 const wsMod = require('../src/services/ws');
 const sessionBus = require('../src/services/session-bus');
+// Its streams kept in this process: no database here (services/session-bus.js).
+sessionBus.init({ memory: true });
 
 const { sessionRoutes, requestSessionStop } = require('../src/routes/sessions');
 
@@ -392,6 +394,7 @@ test('force-stopping a handle-less turn still announces it on both channels', as
   } finally {
     wsMod.broadcastGlobal = realBroadcast;
     workerMod.isWorkerExecuting = realExecuting;
+    await sessionBus.settle();
     if (typeof unsub === 'function') unsub();
     server.close();
   }

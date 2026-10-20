@@ -50,7 +50,11 @@ function fakes({ volumes, busy = [] }) {
         listWorkerVolumes: async () => volumes,
         destroyCcVolume: async (id) => { destroyed.push(id); },
       },
-      activeWorkers: { isSessionBusy: (id) => busy.includes(id) },
+      activeWorkers: {
+        isSessionBusy: (id) => busy.includes(id),
+        // What works on the sessions on any process, read once for the pass.
+        busySessionsAnywhere: async (ids) => new Set(ids.filter((id) => busy.includes(id))),
+      },
     },
   };
 }

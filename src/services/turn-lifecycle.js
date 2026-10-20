@@ -122,10 +122,18 @@ async function persistNewTurn(db, sessionId, turn, {
   expectedTurnId = null,
   expectedJournal = null,
 } = {}) {
-  const record = withLifecycle(turn, {
-    turnId: turn?.turnId || turn?.logicalTurnId || turn?.turnUuid || null,
-    phase: turn?.phase || PHASE_DISPATCH_PENDING,
-  });
+  const record = {
+    ...withLifecycle(turn, {
+      turnId: turn?.turnId || turn?.logicalTurnId || turn?.turnUuid || null,
+      phase: turn?.phase || PHASE_DISPATCH_PENDING,
+    }),
+    // ROLLOUT-ONLY: this release keeps the turn's calls as they are made and
+    // settles them at its end (limits.js noteTurnSpend, settleTurnSpend). A
+    // release from before it settles its turns from Claude Code's report
+    // alone, so the calls of a turn without this mark are not kept, or they
+    // would be billed twice. Delete with turn-leftovers.js's rollout parts.
+    spendKept: true,
+  };
   const params = [sessionId, JSON.stringify(record)];
   let predicate = 'active_turn IS NULL';
   if (allowReplace) {

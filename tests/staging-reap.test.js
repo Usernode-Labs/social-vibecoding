@@ -89,6 +89,11 @@ function freshFixtures() {
 const fakePool = {
   async query(sql, params = []) {
     fx.queries.push({ sql, params });
+    // What works on the sessions on any process (active-workers
+    // busySessionsAnywhere): the fixtures' `working` ids.
+    if (/cs\.id = ANY\(\$1::int\[\]\) AND \(cs\.active_turn IS NOT NULL/.test(sql)) {
+      return { rows: (fx.working || []).filter((id) => (params[0] || []).includes(id)).map((id) => ({ id })) };
+    }
     if (/FROM chat_sessions/.test(sql)) {
       const ids_ = params[0] || [];
       return { rows: fx.sessions.filter((s) => ids_.includes(s.id)) };
@@ -1061,6 +1066,19 @@ test('Kubernetes: the admin sweep takes everything due at once, nothing more', a
   assert.deepEqual(job.previews.filter((p) => p.outOfDate).map((p) => p.sessionId), [5806],
     'a live session\'s row says why it was taken');
   assert.equal(fx.dockerExecCalls, 0);
+});
+
+test('Kubernetes: the admin sweep leaves a session another process works on, as its durable records say', async () => {
+  const reap = setup();
+  kubeFleet(currentFp());
+  // Not in this process's memory: a turn or an operation elsewhere
+  // (session-work.ts workedOnSql), read once for the pass.
+  fx.working = [5080];
+  const job = await runSweep(reap, {}, KUBE);
+  const taken = job.previews.map((p) => p.sessionId).sort((a, b) => a - b);
+  assert.deepEqual(taken, [3711, 4001, 4658, 5806], 'not the session worked on elsewhere');
+  const busyRead = fx.queries.find((q) => /cs\.id = ANY\(\$1::int\[\]\) AND \(cs\.active_turn IS NOT NULL/.test(q.sql));
+  assert.ok(busyRead && busyRead.params[0].includes(5080));
 });
 
 test('Kubernetes: the console counts come from the Deployments', async () => {

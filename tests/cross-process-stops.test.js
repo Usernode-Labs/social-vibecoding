@@ -2,37 +2,21 @@
 
 // Stops for work another platform process runs (docs/plans/
 // draining-releases.md): a turn, and the BYOK spend a proxy saw for a turn
-// it does not run. (A bench trial's or run's cancel is the bench lane's
-// machine's, which stops a trial through its build wherever it runs: never
-// the bus.) The process that holds
-// the work does what a stop in its own process does; the one asked forwards
-// it over the WebSocket bus and answers as if it had. Here the other process
-// is played by the registry's copy of its holds (a fake database answers the
-// mirror's read) and the bus by a stub of its publish.
+// it does not run. A person's turn is its machine's work item
+// (src/workflow/turn/): a Stop reaches it through its machine, and the
+// durable path (the stamp, the kill inside the worker) reaches the rest from
+// any process. Nothing is forwarded over the WebSocket bus any more, and no
+// process reads another's memory. (A bench trial's or run's cancel is the
+// bench lane's machine's; shots are the shots machine's.) ROLLOUT-ONLY: an
+// older release still forwards a Stop to the process holding the session,
+// which this release answers through the turn's machine.
 //
 // Run with: node --test tests/cross-process-stops.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const processes = require('../src/services/processes');
 const wsBus = require('../src/services/ws-bus');
-
-// The registry, started over a database whose only other process holds `held`.
-async function elsewhere(held) {
-  processes._reset();
-  const pool = {
-    query: async (sql) => {
-      if (/FROM process_holds h\s+JOIN platform_processes p ON p\.id = h\.process_id\s+WHERE h\.process_id <> \$1/.test(sql)) {
-        return { rows: held.map(([kind, ref]) => ({ kind, ref: String(ref), process_id: 'pod-old' })) };
-      }
-      if (/SELECT DISTINCT h\.process_id/.test(sql)) return { rows: held.length ? [{ process_id: 'pod-old' }] : [] };
-      return { rows: [], rowCount: 0 };
-    },
-  };
-  await processes.start({ pool, role: 'all' });
-  return pool;
-}
 
 function capturePublishes() {
   const sent = [];
@@ -41,38 +25,46 @@ function capturePublishes() {
   return { sent, restore: () => { wsBus.publish = real; } };
 }
 
-test('a Stop for a turn another process runs is forwarded to it, and answered as stopping', async (t) => {
-  await elsewhere([['session', 4242]]);
+test('a Stop with no turn here forwards nothing over the bus: its turn\'s machine, or the durable path, reaches it', async (t) => {
   const bus = capturePublishes();
-  t.after(() => { bus.restore(); processes._reset(); });
+  t.after(() => { bus.restore(); });
   const { requestSessionStop } = require('../src/routes/sessions');
-  const queries = [];
-  const pool = { query: async (sql, params) => { queries.push(sql); return { rows: [{ id: 4242, user_id: 7 }] }; } };
-  const result = await requestSessionStop({ pool, sessionId: 4242, user: { id: 7, username: 'alice' } });
-  assert.equal(result.status, 202);
-  assert.equal(result.body.stopping, true);
-  assert.deepEqual(bus.sent, [{
-    kind: 'session_stop', routing: null,
-    data: { sessionId: 4242, user: { id: 7, username: 'alice', canAdminWrite: false }, force: false, immediate: false, expectedTurnId: null },
-  }]);
-  // The stop's user is checked here first: someone else's session is not forwarded.
-  bus.sent.length = 0;
+  const pool = { query: async () => ({ rows: [{ id: 4242, user_id: 7 }] }) };
+  await requestSessionStop({ pool, sessionId: 4242, user: { id: 7, username: 'alice' } });
+  assert.deepEqual(bus.sent.filter((m) => m.kind === 'session_stop'), []);
+  // The stop's user is checked first: someone else's session is refused.
   const denied = await requestSessionStop({
     pool: { query: async () => ({ rows: [] }) }, sessionId: 4242, user: { id: 8, username: 'mallory' },
   });
   assert.equal(denied.status, 404);
-  assert.deepEqual(bus.sent, []);
+  assert.equal(require('../src/routes/sessions').receiveSessionStop, undefined, 'and nothing receives one');
 });
 
-test('a forwarded stop is run where the turn is, and never forwarded again', async (t) => {
-  await elsewhere([['session', 4242]]);
+test('ROLLOUT-ONLY: a Stop for a turn an older release\'s process holds is forwarded to it, and answered as stopping, never "nothing to stop"', async (t) => {
   const bus = capturePublishes();
-  t.after(() => { bus.restore(); processes._reset(); });
-  const sessions = require('../src/routes/sessions');
-  // Not held here: nothing to do, nothing published.
-  assert.equal(await sessions.receiveSessionStop({ sessionId: 4242, user: { id: 7, username: 'alice' } }), null);
-  assert.deepEqual(bus.sent, []);
-  assert.equal(await sessions.receiveSessionStop({ sessionId: 'x', user: { id: 7 } }), null, 'a malformed one is ignored');
+  t.after(() => { bus.restore(); });
+  const { requestSessionStop } = require('../src/routes/sessions');
+  const asked = [];
+  const pool = {
+    query: async (sql, params = []) => {
+      if (/FROM process_holds h JOIN platform_processes p/.test(String(sql))) {
+        asked.push(params);
+        return { rows: [{ process_id: 'pod-old' }] };
+      }
+      return { rows: [{ id: 4242, user_id: 7 }] };
+    },
+  };
+  const out = await requestSessionStop({ pool, sessionId: 4242, user: { id: 7, username: 'alice' }, expectedTurnId: null });
+  assert.equal(out.status, 202);
+  assert.deepEqual(out.body, { ok: true, stopped: true, stopping: true, phase: null });
+  assert.deepEqual(bus.sent.filter((m) => m.kind === 'session_stop').map((m) => m.data), [{
+    sessionId: 4242, user: { id: 7, username: 'alice', canAdminWrite: false }, force: false, immediate: false, expectedTurnId: null,
+  }], 'in the shape that release\'s receiver reads');
+  assert.equal(asked[0][2], true, 'only a process of another release: this release\'s turns are their machine\'s');
+  // A forwarded stop is never forwarded again.
+  bus.sent.length = 0;
+  await requestSessionStop({ pool, sessionId: 4242, user: { id: 7, username: 'alice' }, forwarded: true });
+  assert.deepEqual(bus.sent.filter((m) => m.kind === 'session_stop'), []);
 });
 
 test('a Stop for shots is no bus message: the shots machine cancels the agent\'s step wherever it runs', () => {
@@ -95,27 +87,46 @@ test('a bench cancel is the bench lane\'s machine\'s, never the bus\'s', () => {
   assert.doesNotMatch(ws, /bench_cancel|bench_wake/);
 });
 
-test('the bus delivers each stop to its receiver, and a turn\'s BYOK spend to the process running it', async (t) => {
+test('the bus delivers a turn\'s BYOK spend to the process running it, and an older release\'s stop forward to the stop\'s receiver', async (t) => {
   const ws = require('../src/services/ws');
-  const sessions = require('../src/routes/sessions');
   const worker = require('../src/services/worker');
+  const leftovers = require('../src/services/turn-leftovers');
   const got = [];
-  const saved = { s: sessions.receiveSessionStop, w: worker.receiveTurnByok };
-  sessions.receiveSessionStop = async (p) => { got.push(['session', p.sessionId]); };
+  const saved = worker.receiveTurnByok;
+  const savedStop = leftovers.receiveOlderStop;
   worker.receiveTurnByok = (p) => { got.push(['byok', p.cents]); };
-  t.after(() => {
-    sessions.receiveSessionStop = saved.s; worker.receiveTurnByok = saved.w;
-  });
+  leftovers.receiveOlderStop = async (p) => { got.push(['stop', p.sessionId]); };
+  t.after(() => { worker.receiveTurnByok = saved; leftovers.receiveOlderStop = savedStop; });
   ws._onBusMessage({ kind: 'session_stop', data: { sessionId: 1 } });
-  ws._onBusMessage({ kind: 'turn_byok', data: { cents: 12 } });
   ws._onBusMessage({ kind: 'session_stop', data: { sessionId: 2 }, oversize: true });
+  ws._onBusMessage({ kind: 'turn_byok', data: { cents: 12 } });
   await new Promise((r) => setImmediate(r));
-  assert.deepEqual(got, [['session', 1], ['byok', 12]], 'an oversize one carries nothing to act on');
+  assert.deepEqual(got, [['stop', 1], ['byok', 12]], 'a payload too big for the bus is never one');
 });
 
-test('BYOK spend the proxy here saw for a turn another process runs is not kept here', async (t) => {
-  await elsewhere([['session', 515]]);
-  t.after(() => processes._reset());
+test('ROLLOUT-ONLY: a Stop an older release forwarded is asked of the turn\'s machine by the process running the turn alone', async () => {
+  const { receiveOlderStop } = require('../src/services/turn-leftovers');
+  const asked = [];
+  const deps = {
+    running: (id) => id === 4242,
+    stopTurn: async (p) => { asked.push(p); return { status: 202 }; },
+  };
+  const user = { id: 7, username: 'alice', canAdminWrite: false };
+  assert.deepEqual(await receiveOlderStop({ sessionId: 4242, user, expectedTurnId: 'job-1', force: false }, deps), { status: 202 });
+  assert.deepEqual(asked, [{ sessionId: 4242, by: 'alice', expectedTurnId: 'job-1' }],
+    'as this release\'s Stop route asks it, by the person who pressed it');
+  assert.equal(await receiveOlderStop({ sessionId: 5151, user }, deps), null, 'a process not running the turn leaves it');
+  assert.equal(await receiveOlderStop({ sessionId: 4242 }, deps), null, 'nor a stop with nobody pressing it');
+  assert.equal(asked.length, 1);
+  // Its default: the turn's handle here, then the machine's Stop.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/turn-leftovers.js'), 'utf8');
+  assert.match(src, /running = \(id\) => !!require\('\.\/stop-registry'\)\.get\(id\),/);
+  assert.match(src, /stopTurn = \(p\) => require\('\.\.\/workflow\/platform\.ts'\)\.stopWorkflowTurn\(p\),/);
+});
+
+test('BYOK spend the proxy here saw for a turn this process does not run is not kept here', async () => {
   const worker = require('../src/services/worker');
   worker.noteTurnByokSpend(515, 40);
   assert.equal(worker.getTurnByokCents(515), 0, 'this process runs no turn on the session: no tally of its own');

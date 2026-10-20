@@ -204,6 +204,20 @@ test('the local scout dispatch returns every field the scout tail reads', () => 
   assert.match(scoutDispatch, /mode: 'scout'/, 'the turn is enqueued as a scout turn');
 });
 
+test('both dispatches name the turn work item that waits for them, so its next claim carries them on', () => {
+  // services/turns.js: a conversation's turn is one work item, and the local
+  // turn it dispatched is taken over by that item's next claim when its
+  // process goes (localAgent.takeOverOwnedTurn), never by the leader's pass.
+  for (const [name, block] of [['build', dispatch], ['scout', scoutDispatch]]) {
+    const enqueue = block.slice(block.indexOf('localAgent.enqueueTurn(pool, {'));
+    assert.match(enqueue.slice(0, enqueue.indexOf('});')), /\n\s+owner,\n/, `the ${name} dispatch passes its owner`);
+  }
+  for (const fn of ['async function runClaudeCodeTool(', 'async function runScoutTool(']) {
+    const head = sessions.slice(sessions.indexOf(fn), sessions.indexOf(') {', sessions.indexOf(fn)));
+    assert.match(head, /\n\s+owner = null,\n/, `${fn} takes the owner its caller hands it`);
+  }
+});
+
 test('a local scout invokes NONE of the commit or staging machinery', () => {
   // This is the read-only completion path stated as an absence. A scout turn
   // that reached any of these would be putting unreviewed code on the managed

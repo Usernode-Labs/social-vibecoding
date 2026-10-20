@@ -12,11 +12,16 @@
 // uploaded sat on the branch with no PR, preview, card or wrap-up, and the
 // conversation offered Retry, which could build it all again.
 //
-// The waiter now keeps a heartbeat on the turn row (waiter_id,
-// waiter_seen_at). This pass, run by the leader at boot and after every
-// lease sweep (server.js startLocalAgentLeaseSweeper), takes over each turn
-// whose waiter has gone quiet (localAgent.adoptOrphanedTurns: a new waiter id,
-// one conditional UPDATE, so no turn has two waiters), waits for it like
+// A turn a work item dispatched (a conversation's turn: src/workflow/turn/)
+// names that item as its owner, and the item is its waiter: when the item's
+// process goes, the process that claims the item next takes the waiter id
+// over (localAgent.takeOverOwnedTurn) and runs finishAdoptedTurn below
+// (services/turns.js). For a turn no item dispatched, the waiter keeps a
+// heartbeat on the turn row (waiter_id, waiter_seen_at), and this pass, run
+// by the leader at boot and after every lease sweep (server.js
+// startLocalAgentLeaseSweeper), takes over each one whose waiter has gone
+// quiet (localAgent.adoptOrphanedTurns: a new waiter id, one conditional
+// UPDATE, so no turn has two waiters), waits for it like
 // the dead waiter would have, claims its tail once with that id, and runs
 // the post-turn path restart recovery runs for a worker's turn: server.js
 // finalizeRecoveredTurn for a build, the spec publication for a scout, then
@@ -120,7 +125,6 @@ async function finishAdoptedTurn({ config, pool, turn, deps = {} }) {
   const emit = handle.send;
   const agentMeta = { agentBackend: 'claude_code', agentModel: null, runner: 'local', localAgentLabel: label, localMode: mode };
 
-  let finishedToEnd = false;
   let tailHeartbeat = null;
   try {
     // ── Wait, as the dead waiter would have ────────────────────────────
@@ -197,7 +201,6 @@ async function finishAdoptedTurn({ config, pool, turn, deps = {} }) {
       emit('stopped', { by: null });
       await d.localAgent.recordTurnRunner(pool, sessionId, 'local', label);
       await d.localAgent.markTailFinished(pool, turn.id);
-      finishedToEnd = true;
       return { outcome };
     }
 
@@ -303,7 +306,6 @@ async function finishAdoptedTurn({ config, pool, turn, deps = {} }) {
       runtime: turn.runtime || 'claude-code', durationMs: Date.now() - createdMs, mode,
     })?.catch?.(() => {});
     await d.localAgent.markTailFinished(pool, turn.id);
-    finishedToEnd = true;
     log.info('local-agent', 'Recovered local turn finished', {
       turnId: String(turn.id), sessionId, outcome, mode, wrapUp: wrapUpOutcome,
     });
@@ -313,9 +315,9 @@ async function finishAdoptedTurn({ config, pool, turn, deps = {} }) {
     d.stopRegistry.deleteIf(sessionId, handle);
     d.activeWorkers.activeWorkers.delete(sessionId);
     emit('done', {});
-    // The conversation whose Mayor dispatched this build is still leased to
-    // that Mayor's dead turn; whatever happened, the build is over.
-    await d.agentTurn.handBackAfterRecovery({ pool, changeId: sessionId, finished: finishedToEnd })
+    // The conversation whose Mayor dispatched this build hears it is over;
+    // its claim is its turn machine's to release.
+    await d.agentTurn.handBackAfterRecovery({ pool, changeId: sessionId })
       .catch((err) => log.warn('local-agent', 'Recovered local turn: conversation hand-back failed', {
         sessionId, err: err.message,
       }));

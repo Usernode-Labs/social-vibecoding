@@ -50,6 +50,8 @@ import { MACHINE as BENCH_LANE, KEY as BENCH_LANE_KEY, benchLane } from './bench
 import { benchLaneServices } from './bench-lane/services.ts';
 import { DEFAULT_CONCURRENCY as EVAL_DEFAULT_CONCURRENCY, KEY as EVAL_KEY, MACHINE as SHOTS_EVAL, MAX_CONCURRENCY as EVAL_MAX_CONCURRENCY, shotsEval } from './shots-eval/machine.ts';
 import { shotsEvalServices } from './shots-eval/services.ts';
+import { MACHINE as TURN, turnMachine } from './turn/machine.ts';
+import { turnServices } from './turn/services.ts';
 import { MACHINE as RELEASE, releaseKey, releaseMachine } from './release/machine.ts';
 import { releaseServices } from './release/services.ts';
 import type { Adoption } from './release/services.ts';
@@ -141,13 +143,13 @@ export async function publishPushes(q: Queryable, pushes: Push[], { badges = fal
 // sessions, with the row locks a slot holds and a claim's advisory lock,
 // would live on until the server's OS keepalive gave up on them: two hours
 // and more, while every other process's slots time out on that instance. So
-// the runtime's sessions reap a dead peer as the leader lock's session does
-// (services/leadership.js): the server probes a silent client and drops it
+// the runtime's sessions reap a dead peer (services/db-locks.js): the server
+// probes a silent client and drops it
 // within about 40 s, and a transaction left open by a client that stopped
 // talking ends after 30 s (a transition never waits outside the database
 // inside one: docs/workflows.md).
 export function deadPeerOptions() {
-  const { KEEPALIVE_INITIAL_DELAY_MS, SERVER_KEEPALIVE } = legacy('services/leadership');
+  const { KEEPALIVE_INITIAL_DELAY_MS, SERVER_KEEPALIVE } = legacy('services/db-locks');
   const settings = { ...SERVER_KEEPALIVE, idle_in_transaction_session_timeout: 30000 };
   return {
     keepAlive: true,
@@ -219,13 +221,16 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   // The shots evals' trials (shots-eval/), as many at once as the
   // deployment says (SHOTS_EVAL_CONCURRENCY).
   const trials = shotsEval(evalDeps(config));
-  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, trials, releases, clocks];
+  // People's turns: a conversation's, a change's (turn/).
+  const turns = turnMachine();
+  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, trials, turns, releases, clocks];
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
     ...appDeliveryServices(deps), ...appCreationServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
     ...campaignServices(deps), ...botChangeServices(deps), ...botVoiceServices(deps), ...botDmServices(deps),
     ...mainCheckServices(deps), ...botRequestServices(deps), ...botLaneServices(deps), ...benchLaneServices({ config, pool: appPool }),
     ...shotsEvalServices({ config, pool: appPool }),
+    ...turnServices({ config, pool: appPool }),
     ...releaseServices({ adoptions: ADOPTIONS }),
     ...clockServices(CLOCK_JOBS, { config, pool: appPool }),
   };
@@ -510,17 +515,11 @@ async function armClocks(release: string): Promise<number> {
       { requestKey: `retire:${release}`, source: { kind: 'system', name: 'release' } });
   }
   if (!runs) return 0;
-  const { rows: swept } = await kernelPool!.query(
-    `SELECT name, last_run_at FROM leader_sweeps WHERE name = ANY($1::text[])`,
-    [CLOCK_JOBS.map((j) => j.leaderSweep).filter(Boolean)]).catch(() => ({ rows: [] as any[] }));
-  const lastRun = new Map<string, Date>(swept.map((r: any) => [r.name, new Date(r.last_run_at)]));
   for (const job of CLOCK_JOBS) {
-    // A job first armed is due when the leader timer it replaces would have
-    // run, or within the next two minutes (spread, so they do not all start
-    // in the same second). Only the first Arm reads it.
-    const ran = job.leaderSweep ? lastRun.get(job.leaderSweep) : undefined;
+    // A job first armed is due within the next two minutes (spread, so they
+    // do not all start in the same second). Only the first Arm reads it.
     const spread = Math.floor(Math.random() * Math.min(job.everyMs, 2 * 60 * 1000));
-    const firstDueAt = new Date(ran ? ran.getTime() + job.everyMs : Date.now() + spread).toISOString();
+    const firstDueAt = new Date(Date.now() + spread).toISOString();
     await runtime.append(CLOCK, clockKey(job.name), { type: 'Arm', payload: { job: job.name, everyMs: job.everyMs, firstDueAt } },
       { requestKey: `arm:${release}`, source: { kind: 'system', name: 'release' } });
   }
@@ -763,6 +762,28 @@ export async function stopWorkflowTurn(p: { sessionId: number; by: string | null
     return { status: 200, body: { ok: true, stopped: false, reason: 'no active turn', code: outcome.reason || null } };
   }
   return { status: outcome.status === 'pending' ? 202 : 200, body: { ok: true, stopped: true, stopping: true, phase: null, machine: owner.machine } };
+}
+
+// ── People's turns (turn/) ─────────────────────────────────────────────
+
+// A person's turn asked for on `key` (`agent:<id>`, `session:<id>`), in the
+// route's own transaction (`db`), with what makes it owed: the person's
+// message and the conversation's claim. `input` is what the turn's work
+// needs (JSON; never a key or a secret: those are read when it runs).
+export async function askTurn(db: Queryable, p: {
+  key: string; turnId: string; kind: string; input: Record<string, unknown>; appId?: number | null;
+}): Promise<void> {
+  await appendEvent(db, TURN, p.key,
+    { type: 'Asked', payload: { turnId: p.turnId, kind: p.kind, input: p.input } as any },
+    { requestKey: `ask:${p.key}:${p.turnId}`, source: { kind: 'route', name: 'turn' }, appId: p.appId ?? null });
+}
+
+// A person's Stop of the turn running on `key`: the machine stops its coding
+// agent by its journal; the turn hears it from its claim (stamped first).
+export async function stopTurn(p: { key: string; by: string | null }): Promise<void> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  await runtime.append(TURN, p.key, { type: 'StopRequested', payload: { by: p.by ?? null } as any },
+    { requestKey: `stop:${p.key}:${randomUUID()}`, source: { kind: 'route', name: 'stop' }, actor: p.by ?? undefined });
 }
 
 // ── The Homeroom bot's replies (bot-voice, bot-dm) ─────────────────────

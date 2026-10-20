@@ -8,79 +8,69 @@ recover what it could. A coding turn, its tail (push, pull request, preview
 build, checks, shots), a merge, an app being created: whatever was under way
 was cut, and recovered afterwards if it could be.
 
-Now the Pod being replaced keeps working. It hands leadership to the new Pod
-at once, refuses anything new, finishes what it had started, and exits when
-it holds nothing, or at a deadline. Work started under the old release
-finishes there; new work goes to the new one. Releases come every few
-minutes, so several Pods may be finishing at once, each with its own work.
+Now the Pod being replaced keeps working. It refuses anything new, finishes
+what it had started, and exits when it is idle, or at a deadline. Work
+started under the old release finishes there; new work goes to the new one.
+Releases come every few minutes, so several Pods may be finishing at once,
+each with its own work.
 
-This needs one thing the platform did not have: a way for one process to
-know what another is doing. The old Pod and the new one each run live work
-for as long as the old one drains, and every "is this session busy", "is a
-build in flight" or "stop this turn" used to read this process's memory only.
+The old Pod and the new one each run live work for as long as the old one
+drains, so nothing may answer "is this session busy", "is a build in flight"
+or "stop this turn" from one process's memory. It is answered from Postgres:
+the work is the workflow's (docs/workflows.md), and no process leads.
 
-## Processes and what they hold
+## Processes, and who works on what
 
-`src/services/processes.js`, two tables (`platform_processes`,
-`process_holds`, both private to staging clones):
+`src/services/processes.js` keeps the roster, `platform_processes` (private
+to staging clones):
 
 - Every platform process registers at boot (`serving`), beats every
   `HEARTBEAT_MS`, says when it starts draining (`draining`, with its
   deadline) and deletes its row as it exits. A process whose beat is older
-  than `LIVE_SECONDS` is gone, whatever its row says; the leader deletes such
-  rows (their holds go with them). In a Kubernetes Pod a process starting
-  deletes the rows of its Pod's previous process: the container restarted.
-- A HOLD is a thing a process is doing that nothing elsewhere may adopt,
-  tear down, duplicate or call idle: `hold(kind, ref)` returns its release,
-  counted per process, written to `process_holds` on the first hold and
-  removed on the last release. The registries that already said this for one
-  process write through to it: a session with a turn or an operation under
-  way (`active-workers.js`), a preview build (`staging.js`), a checks
-  capture (`visuals.js`), a sync, a hand-off pipeline, a shots run, a
-  teardown, a production deploy. Their readers (`isSessionBusy`,
-  `hasInFlightBuild`, `hasInFlightCapture`, ...) answer for every live
-  process: their own memory, then a copy of the other processes' holds that
-  each process refreshes every `MIRROR_MS`. Recovery that would adopt or
-  redo something reads the holders exactly, from the database
-  (`holders(kind, ref)`).
-- What a process holds is also what its drain waits for: `localCount()`.
+  than `LIVE_SECONDS` is gone, whatever its row says; the `process-reap`
+  clock deletes such rows. In a Kubernetes Pod a process starting deletes
+  the rows of its Pod's previous process: the container restarted. The
+  roster says which build serves, which processes run the workflow, and
+  whether a draining process has a successor.
+- A HOLD (`hold(kind, ref)`, the `heldMap`/`heldSet` registries) is a thing
+  this process is doing, kept in its memory: what its drain waits for
+  (`localCount()`). No process reads another's.
+- Who works on a session, for every process, is read from durable records
+  (`src/workflow/session-work.ts` `workedOnSql`): a turn's record (named by
+  its owner, a work item), a running `turn` instance, a local agent's turn, a
+  shots run, a live operation on the preview instance (a hand-off pipeline,
+  an upload: its record names the process, counted while that process holds
+  its presence lock), a build, a sync, the bot's look. `isSessionBusyAnywhere`
+  and `busySessionsAnywhere` (`active-workers.js`) read this process's memory,
+  then those records.
 
-A stop for something another process runs travels to it over the WebSocket
-bus (`ws-bus.js`), and the holder does exactly what a stop in its own process
-does: a turn (`session_stop`, acted on by the process with the turn's stop
-handle, while the one asked still takes its durable path: the stamp, and the
-kill inside the worker). (A bench trial's or run's cancel, and a shots eval's,
-is its machine's: the trial's work is cancelled and its turn stopped by its
-record, wherever it runs.) A worker turn in flight holds its session whatever started
-it (the warm registry's `inFlight`), so the shots agent and an eval trial are
-seen too. What a worker turn calls back (the Anthropic proxy, its
-BYOK spend, a shots eval's bill, a shots agent's tool calls) reaches whichever Pod the Service picks, so
-those read the turn from the database when it is not in this process.
+A person's Stop is an event to the machine whose work runs the turn
+(`StopRequested`), which stops it wherever its work item runs; a coding run
+is killed by its journal. Nothing is forwarded over the WebSocket bus. What a
+worker turn calls back (the Anthropic proxy, its BYOK spend, a shots eval's
+bill, a shots agent's tool calls) reaches whichever Pod the Service picks,
+so those read the turn from the database when it is not in this process.
 
 ## Draining
 
 On SIGTERM, on the platform's own Kubernetes Pods (`server.js cleanup`),
-once another process of its role is serving and writes what it holds
-(`processes.servingOthers`, waited for up to `SUCCESSOR_WAIT_MS`): a release
-from before the registry would adopt this process's live turns as orphans the
-moment it led (a rollback across this change), and a Pod evicted before its
-replacement is up would leave nobody leading. Without one, the cutover it
-always had: a minute's drain, the lock released last.
+once another process of its role is serving (`processes.servingOthers`,
+waited for up to `SUCCESSOR_WAIT_MS`). With none (a scale to zero, every
+replica restarting), the platform is going down, and its work items are the
+next process's to carry on whenever one starts: the cutover it always had,
+a minute's drain.
 
 1. Refuse new work (`lifecycle.setShuttingDown`: the drain-guarded routes
-   answer 503, leader timers start nothing, the loops claim nothing) and say
-   so (`processes.markDraining`). A step of work the process already holds
-   is not new: the Homeroom bot's build proposes in-process
-   (`promoteAsBot`), and that request carries `lifecycle.OWN_WORK`, which
-   the drain guard lets through. On 14 Oct 2026 a first version built to the
-   end in a draining Pod was refused its own promote and stopped. A request
-   over HTTP never carries the mark.
-2. Stop being leader: the sweepers and timers stop starting things; the workflow
-   runtime stops its loops (`quiesceWorkflow`: no slot, timer or claim) but
-   not its running work; the leader timer ticks and merge passes under way
-   finish (up to the deadline); then the leader lock is released
-   (`leadership.resign`). The new Pod is promoted within a poll and starts its
-   leader work.
+   answer 503, the workflow's loops claim nothing) and say so
+   (`processes.markDraining`). A step of work the process already holds is
+   not new: the Homeroom bot's build proposes in-process (`promoteAsBot`),
+   and that request carries `lifecycle.OWN_WORK`, which the drain guard lets
+   through. On 14 Oct 2026 a first version built to the end in a draining
+   Pod was refused its own promote and stopped. A request over HTTP never
+   carries the mark.
+2. Quiesce the workflow runtime (`quiesceWorkflow`: no slot, timer or
+   claim), not its running work: a person's turn, a build, a merge under way
+   goes on to its end here.
 3. Tell open tabs where traffic went and close their sockets, so they
    reconnect to the new Pod. The listener stays open: Kubernetes has already
    taken this Pod out of the Service, and a request it still answers
@@ -92,11 +82,11 @@ always had: a minute's drain, the lock released last.
    default `KUBERNETES_DRAIN_DEFAULT_MS`); or until `PLATFORM_DRAINING_MAX`
    newer processes are draining too (releases faster than work finishes:
    the oldest hands its work over rather than pile up Pods); or until no
-   successor is serving any more (it died, and nothing leads).
-5. Then what shutdown always did: close the listener, end the Mayor's turns,
-   stop the workflow runtime (its work items given up to the next claim),
-   mark what is left interrupted, hand back checks runs, close the pool,
-   delete this process's row, exit.
+   successor is serving any more.
+5. Then what shutdown always did: close the listener, stop the workflow
+   runtime (its work items given up to the next claim, which carries each
+   turn on from its saved step: `services/turns.js`), hand back checks runs,
+   close the pool, delete this process's row, exit.
 
 `terminationGracePeriodSeconds` comes from `platform.drainMinutes`, with
 room for the steps after the drain (`tests/server-graceful-shutdown.test.js`
@@ -104,28 +94,27 @@ pins it). A staging preview and a docker-compose color keep the short drain:
 neither has a grace to spend. A node drain (`kubectl drain`) now waits for a
 platform Pod's drain too; pass `--grace-period` to cut it short.
 
-## The new leader, while the old Pod drains
+## What a process leaves
 
-Recovery used to run against a process that had already exited. Now it runs
-while the old Pod still works, so each path that adopts, redoes or tears down
-leaves what a live process holds:
+Nothing recovers work at an election: there is none. A work item whose
+process went (its drain deadline passed, or it died) is claimed again once
+its lease lapses, and carried on from what it saved (a person's turn follows
+its coding run's journal to its end: docs/workflows.md, `turn`). A coding
+record whose item settled without releasing it is taken to an end by the
+`turn-leftovers` clock. Leases and heartbeats decide the rest (checks runs,
+shots runs, local-agent turns, app creation, owed redeploys, fleet
+campaigns).
 
-- worker adoption (`adoptOrphanWorker`), headless runs, pending turn
-  cleanups, missing previews: skipped while a live process holds the session;
-- the session sweeper (auto-pause, stale-turn watchdog, preview heal), the
-  stuck-checks reconcile, the preview reaper, the heal: `isSessionBusy` and
-  friends already answer for every process;
-- what is handed over later (the old Pod's drain deadline, or a crash) is
-  adopted by a leader sweep that runs every `ORPHAN_SWEEP_MS`, not only at
-  election: a turn whose session nobody live holds and whose worker is still
-  there.
+## Beside a release from before the turn machine (rollout-only)
 
-Leases and heartbeats already decided the rest (checks runs, shots runs,
-local-agent turns, the Mayor's agent turns, app creation, owed redeploys,
-fleet campaigns, workflow work).
-
-## Not in this change
-
-The web and conductor split (piece 1 of the review) builds on this: with the
-registry, a route on a web Pod sees the conductor's work and the other way
-round. It is a separate change.
+That release still has a leader, renews its conversations' claims, settles a
+turn's spend from Claude Code's report and reads `process_holds`. Until no
+such release can run, this one writes its holds there, renews a running
+conversation's claim, holds a headless run's session for its whole item,
+marks its own turn records (`spendKept`) so a call of that release's turn is
+not billed twice, forwards a Stop to that release's process holding the
+session and answers its forwarded Stop through the turn's machine, keeps
+`leader_sweeps`, and leaves what that release left to its leader while one
+of its processes serves (`services/turn-leftovers.js`, whose header lists
+what to delete). A rollback to it needs one step once this release is gone:
+docs/kubernetes-operations.md, "Rolling back past this release".

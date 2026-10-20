@@ -10,7 +10,14 @@ import type { Json, Logger, Pool, WorkHandler } from './types.ts';
 import { millis } from './pipeline.ts';
 
 export class LeaseLost extends Error {
-  constructor() { super('work lease lost'); }
+  // True when this process is stopping (its runtime's stop), not when its
+  // lease lapsed or its item was taken from it: a handler that cannot stop
+  // part way tells the two apart (services/turns.js endOnLostLease).
+  readonly stopping: boolean;
+  constructor({ stopping = false }: { stopping?: boolean } = {}) {
+    super(stopping ? 'work stopped with its process' : 'work lease lost');
+    this.stopping = stopping;
+  }
 }
 
 export interface ServiceOptions {
@@ -263,7 +270,7 @@ export async function execute(opts: ServiceOptions, w: Claimed, stopping?: Abort
     return;
   }
   const abort = new AbortController();
-  const onStop = () => abort.abort(new LeaseLost());
+  const onStop = () => abort.abort(new LeaseLost({ stopping: true }));
   stopping?.addEventListener('abort', onStop, { once: true });
   // The lease is read at the time of the check, not of the statement's start:
   // a write that waited on the row while this process gave its lease up is
