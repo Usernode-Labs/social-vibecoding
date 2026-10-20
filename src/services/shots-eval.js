@@ -519,7 +519,9 @@ async function storeTrialFiles(pool, trialId, attemptId, slots) {
  * the cap read from the eval's spend and what its attempts not yet settled
  * have cost. A machine's attempt's calls go on its costs
  * (workflow/shots-eval/costs.ts: one after its end charges only what it
- * adds); an older runner's on the trial's row, which that runner settles.
+ * adds); an older runner's on the trial's row, which that runner settles,
+ * until the machine has settled that attempt (adopting it): then on its
+ * costs too.
  */
 async function billFor(pool, sessionId) {
   const { rows: [s] } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [Number(sessionId)]);
@@ -560,13 +562,34 @@ async function billFor(pool, sessionId) {
       const cents = Number(costCents);
       if (!(Number.isFinite(cents) && cents > 0)) return;
       spentCents += cents;
-      if (!machineTrial) {
-        await pool.query('UPDATE shots_eval_trials SET proxy_cents = proxy_cents + $2::numeric WHERE id = $1', [Number(t.id), cents]);
-        return;
-      }
+      if (!machineTrial && await noteOnRow(pool, Number(t.id), attemptId, cents)) return;
       await addCost(pool, { trialId: Number(t.id), attemptId, proxyCents: cents });
     },
   };
+}
+
+// An older release's runner's call, on the trial's row, while that runner
+// (or this machine's end, adopting it) has yet to settle the attempt.
+// Resolves false once the machine has settled it: the call then charges
+// what it adds (addCost). The trial's row is taken first, so an end
+// settling it at the same moment either takes this call with the row's
+// amount or is seen settled here.
+async function noteOnRow(pool, trialId, attemptId, cents) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT 1 FROM shots_eval_trials WHERE id = $1 FOR UPDATE', [trialId]);
+    // (On the row whatever attempt it is on now: the trial's either way.)
+    const { rows: [kept] } = await client.query('SELECT 1 FROM shots_eval_attempt_costs WHERE attempt_id = $1', [attemptId]);
+    if (!kept) await client.query('UPDATE shots_eval_trials SET proxy_cents = proxy_cents + $2::numeric WHERE id = $1', [trialId, cents]);
+    await client.query('COMMIT');
+    return !kept;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /** What Claude Code reported a dispatch of a trial's attempt cost, on its costs (the eval machine's agent work). */

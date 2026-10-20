@@ -726,6 +726,26 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
     await closeEvals();
   });
 
+  await t.test('E3c: an older runner\'s call that lands after the machine settled its adopted attempt is charged to it', async () => {
+    await closeEvals();
+    const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
+    const [trial] = await trialsOf(launched.eval.id);
+    await asTransition(pool, `UPDATE shots_eval_trials SET state = 'exploring' WHERE id = $1`, [trial.id]);
+    await setTurn(MERGED_TWO, { turnId: 't', mode: 'shots', telemetryCorrelationId: trial.attempt_id });
+    const bill = await evals.billFor(pool, MERGED_TWO);
+    await bill.noteSpend(40);
+    // The machine adopted it and its end settled the attempt, the row's 40 with it.
+    await settle1(trial);
+    assert.equal((await trialsOf(launched.eval.id))[0].cost, 40);
+    // A call already in flight lands now.
+    await bill.noteSpend(5);
+    assert.equal((await trialsOf(launched.eval.id))[0].cost, 45);
+    assert.equal((await evalRow(launched.eval.id)).spent, 45);
+    assert.equal((await pool.query('SELECT proxy_cents::float8 AS p FROM shots_eval_trials WHERE id = $1', [trial.id])).rows[0].p, 0,
+      'nothing left on the row that nobody settles');
+    await closeEvals();
+  });
+
   await t.test('E3b: a cost reported after the trial ended is charged; a late call charges only what it adds to the larger total', async () => {
     await closeEvals();
     const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
