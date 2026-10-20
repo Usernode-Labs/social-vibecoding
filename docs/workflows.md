@@ -497,12 +497,15 @@ does both.
   idle-in-transaction timeout of 30 seconds (`deadPeerOptions` in platform.ts).
 - **What a release owes what an older one left** (open governance rows, sessions the
   proposal machine does not hold, claims with no clock, merge queues, deferred DM answers,
-  main checks mid-run, the bot's queue rows, the platform's own faults, the bot lane's clock)
-  is the `release` machine's: `release:<GIT_SHA>`, one `release.adopt` work item per
-  release, run by whichever process of that release claims it (never an older build's),
-  each adoption a step. Booting waits for none of it. A release none of whose processes
-  took it within 10 minutes (it was replaced first) is `abandoned`, and the next release
-  adopts what is left. A route that meets an open row the machine does not hold enrolls it itself,
+  main checks mid-run, the bot's queue rows, the platform's own faults, the bot lane's clock,
+  projects an older build was making) is the `release` machine's: `release:<GIT_SHA>`, one
+  `release.adopt` work item per release, run by whichever process of that release claims it
+  (never an older build's), each adoption a step. So is what the cluster runs for every app as
+  this build says (the shared hosted-asset backend, the app-host gate's routing per
+  `APP_GATE`) and the bench suites from this build's definitions, on no staging preview.
+  Booting waits for none of it. A release none of whose processes took it within 10 minutes
+  (it was replaced first) is `abandoned`, and the next release adopts what is left; one whose
+  processes live while its work waits out a retry is waited for. A route that meets an open row the machine does not hold enrolls it itself,
   and a session's insert enrols it in the proposal machine (`wf_enrol_proposal`, a trigger on
   `chat_sessions` that appends `Adopted` in the insert's own statement).
 - **The platform's scheduled jobs** (retention, probes, digests, the push sender, title heal,
@@ -699,7 +702,8 @@ A new machine brings the same two layers:
 |---|---|---|---|
 | `governance-proposal` | `issue:<id>`, for the five governance kinds (rename, secret change, close issue, maintenance campaign, featured illustration) | `open` → `applied` / `refused` / `withdrawn` / `superseded` | On everywhere; its old paths are deleted |
 | `merge-followups` | `session:<id>`, for each merged proposal and each change that went live inside one | `delivering` → `live`, or `deploy_failed` → `live` | On everywhere; its old paths are deleted |
-| `app-delivery` | `app:<id>`, for each app a production deploy was asked for | `idle` ⇄ `deploying` | On everywhere; its old paths are deleted |
+| `app-delivery` | `app:<id>`, for each app a deploy was asked for, main moved for, or that was reported down | `idle` ⇄ `deploying`, `idle` ⇄ `healing` | On everywhere; its old paths are deleted |
+| `app-creation` | `app:<id>`, for each project made since (its row's insert enrols it) | `setting_up` → `deploying` → `running` / `awaiting_secrets`; `failed` (⇄ `setting_up` on a Retry); `waiting` for a row an older build makes | On everywhere; its old paths are deleted |
 | `preview` | `session:<id>`, for each proposal with a preview, a checks run or work recorded on it, and each App bench studio preview | `idle`, `preparing`, `checking`, `deferred`, `settled`, `failed`, `retiring` → `retired` | On everywhere; its old paths are deleted |
 | `shots` | `session:<id>`, for each proposal that declares visible changes or whose UI change owes a declaration | `undeclared`, `not_needed`, `waiting_for_preview`, `building_copies`, `waiting_for_agent`, `taking_shots`, `publishing`, `published`, `failed`, `waived`, `closed` | On everywhere; its old paths are deleted |
 | `proposal` | `session:<id>`, for every session (a proposal from its start), adopted from its row by its first event | `underway` → `proposing` → `in_review` ⇄ `merging` (⇄ `unconfirmed`) → `merged`; `closed` (reopened to `underway`) | On everywhere; its old paths are deleted |
@@ -932,45 +936,102 @@ What a merged pull request still has to do once GitHub has merged it
 
 ### app-delivery
 
-An app's production deploys (`src/workflow/app-delivery/`), one at a time per app, for
-everyone who asks: a merge and a secret change (by message, from merge-followups and
-governance-proposal), the drift poller and **Check for updates**, **Redeploy**, heal's
-rebuild, rollover's rebuild and a demo reset (`platform.requestDeploy`).
+An app's production runtime (`src/workflow/app-delivery/`): its deploys and its heals, one
+thing at a time per app, for everyone who asks: a merge and a secret change (by message,
+from merge-followups and governance-proposal), a project's first deploy (by message, from
+app-creation), **Redeploy**, rollover's rebuild and a demo reset
+(`platform.requestDeploy`); main moving (the `main-drift` clock and **Check for updates**,
+`MainMoved`); and an app reported down (the `app-health` clock, `Unhealthy`, and the error
+page, `Unreachable`).
 
 - **A request** (`DeployRequested`) is recorded on the app's instance. The rule for every
   request is the same: it is satisfied by the first successful deploy that started after
   it was recorded. A deploy takes main's tip as it starts, so that deploy contains every
   merge confirmed and every setting or key stored before the request.
-- **One deploy at a time.** Requests that arrive during a deploy are served by one more
-  deploy after it, however many there are. The deploy is the work item `app.deploy`
-  (`staging.deployProduction`, under the cross-process build lock), at most four at a time
-  in the leading process. A merge's commit already running is not deployed again, and demo mode's
-  preview image is reused, only when every request the deploy serves offers it. A deploy
-  serving a request made by hand (Redeploy, Check for updates, a demo reset) retries even
-  a commit refused for running as root; missing keys and an image that runs as root are
-  answers, not errors to retry. An app deleted while it deploys keeps no runtime
-  (`app-teardown.removeRuntimeIfDeleted`).
+- **One thing at a time.** Requests that arrive during a deploy or a heal are served by one
+  more deploy after it, however many there are. The deploy is the work item `app.deploy`
+  (`staging.deployProduction`, under the cross-process build lock), at most four at a time.
+  A merge's commit already running is not deployed again, and an offered image is reused
+  (demo mode's preview image; a ready-made project's image built ahead, for its first
+  deploy of the starter commit), only when every request the deploy serves offers it. A
+  deploy serving a request made by hand (Redeploy, Check for updates, a demo reset) retries
+  even a commit refused for running as root; missing keys and an image that runs as root
+  are answers, not errors to retry. An app deleted while it deploys keeps no runtime
+  (`app-teardown.removeRuntimeIfDeleted`). Without GitHub an app has no repository: its
+  deploy builds its starter's files.
 - **The answer.** On success the transition writes `main_sha`, `main_pr_number`,
   `last_deploy_at` and `status`, pushes the end and the version, and answers every
-  request it served.
-  A failure (missing keys, a broken build, retries spent) is told once to whoever asked;
-  their request stays open, so the next deploy that succeeds, whoever asks for it, still
-  answers it. A request with nobody to tell goes: the drift poller, heal or an admin asks
-  again. Every merge of the app still waiting to go live hears each deploy that did not
-  answer it (`Deployed`), so one whose own answer was not yet shown to contain it goes
-  live with a later one. A request another machine sent that no deploy here can serve
-  (no repository, no app) is answered `DeliveryFailed`.
-- **A deploy that never answers** (a hung build or lock, a result skipped in Admin →
-  Workflows) is ended by an admin there (`EndDeploy`): read as a failure, its late result
-  stale.
+  request it served (`Delivered`, with where it runs and, for a first deploy, where its
+  time went). A failure (missing keys, a broken build, retries spent) is told once to whoever
+  asked; their request stays open, so the next deploy that succeeds, whoever asks for it,
+  still answers it. Every merge of the app still waiting to go live hears each deploy that
+  did not answer it (`Deployed`). A request another machine sent that no deploy here can
+  serve (no repository, no app) is answered `DeliveryFailed`.
+- **Main moving.** `MainMoved` is keyed by the commit, so the clock's next look adds
+  nothing; one for the commit production runs, or for one a deploy already owes, is
+  refused. A drift whose deploy fails is kept and tried again by the instance's own
+  deadline (`RetryDue`: 30 minutes, doubling to 6 hours), unless no retry can help (its
+  image runs as root, keys are missing): the next commit, or the keys' change, asks again.
+  A commit whose deploy failed in the last 30 minutes (a merge's, or one that failed before
+  it knew its commit) waits the same before a drift deploys it. By hand, it goes now.
+- **Health.** An app reported down is healed as the machine's own work (`app.heal`,
+  `services/app-heal.js heal`): a Kubernetes restart (a conflict read again, not a
+  rebuild), a Docker start or restart, a probe first when a person could not reach an app
+  its runtime calls running, its image run again when it has no repository; or
+  `needs_deploy`, which the machine answers with a deploy. A report during a deploy or a
+  heal is ignored. Heals back off: the next may start 10 minutes after the last
+  (`APP_HEAL_COOLDOWN_MS`), doubling while they follow one another, to 6 hours; an app that
+  stayed up an hour past its backoff starts a new count. A Docker container seen
+  restarting is given a minute's grace. Nothing else restarts an app: the error page only
+  reports.
+- **A deploy or a heal that never answers** (a hung build or lock, a result skipped in
+  Admin → Workflows) is ended by an admin there (`EndDeploy`): read as a failure, its late
+  result stale.
 - **"Deploying" is durable.** `apps.deploy_state`, `deploy_started_at` and
   `deploy_from_sha` are its projection, owned by the machine, with its
-  `app_redeploy_status` pushes. The version pill, heal, rollover, the drift poller and the
-  merged list read it (`app-deploy-status.read(slug, row)`), on every Pod and after a
-  restart. Heal's restart and start and rollover's respawn of an existing image stay old
-  flows, and leave an app alone while it reads deploying (the respawn marks itself in its
-  process's memory, `app-deploy-status.markStart`); app creation's first deploy and the
-  boot respawn stay old flows too (no request is made for an app still being created).
+  `app_redeploy_status` pushes. The version pill, rollover and the merged list read it
+  (`app-deploy-status.read(slug, row)`), on every Pod and after a restart. Rollover's respawn
+  of an existing image and the boot respawn stay old flows, and leave an app alone while it
+  reads deploying.
+
+### app-creation
+
+A new project's making (`src/workflow/app-creation/`), whichever door it came through:
+Make it, an import, a ready-made app, a remix, the bench studio's host.
+
+- **Enrolled by its insert.** A row inserted `creating` with `creating_owner = 'workflow'`
+  appends `Started` in the insert's own transaction (`wf_enrol_app_creation`, a trigger on
+  `apps`), so its setup starts once everything the route wrote with it has committed (the
+  create route writes the row, its rule, its description, its starter, the card it owes
+  and the first request it owes in one transaction).
+- **Its setup** is one resumable work item (`app.setup`, `services/app-creator.js setUp`):
+  the database (and the card, then the repository, side by side with it), each a step a
+  restart carries on from, never done twice. The card (`app-sketch.drawFor`) is made before
+  the first commit, which carries it. A resumed setup finds its first commit at the
+  repository's head and does not push it again. A remix copies its source; an import adds
+  its scaffold and the create answers. Its failure is a record the machine writes to
+  `last_failure`; processes that kept going away under it make it `interrupted` (a free
+  Retry).
+- **Its first deploy** is app-delivery's, asked by message with the starter commit
+  offered (its layer cache, a ready-made app's image built ahead); `Delivered` makes it
+  `running` (and marks its first run), missing keys `awaiting_secrets`, anything else
+  `failed`.
+- **Its first request**, when it was made with a description, is filed once beside the
+  first deploy (`app.firstRequest`, `homeroom-bot-dm.fileFirstRequest`): the GitHub issue a
+  step, a resumed try finding its own by the marker in its body, its rows in one write;
+  three tries, the last failure told to its maker.
+- **One deadline: its time limit** (15 minutes from its setup's start). Past it a setup
+  still running is cancelled and the project reads failed; a first deploy still to come
+  makes it run when it answers.
+- **Retry** (`POST /api/apps/:slug/retry`, after its permission and count checks) sets a
+  failed project up again (`setup:<n+1>`), only from `failed`.
+- **Every status a person sees while it is made** is the transition's write, with the
+  `app_status` frames the made screen follows; the step it is on is read from the machine
+  (`services/app-creation-phase.js`: its setup's steps, or its first deploy).
+- **Where its time went** is one `app_creation_timed` event from both halves
+  (`app-creation/timing.ts`).
+- **A row an older build is still making** during a rollout is adopted by the release
+  (`appCreations`) and waited for (`Recheck`) until its owner's heartbeat lapses.
 
 ### preview
 
@@ -1434,7 +1495,7 @@ history in `services/main-watch.js`). One instance per app (`app:<id>`), which o
 board's banner read them.
 
 - **Asked.** Every merge sends `CheckRequested` with its commit (merge-followups), and the
-  drift poller appends one for any new main it sees (`platform.requestMainCheck`). A
+  `main-drift` clock appends one for any new main it sees (`platform.requestMainCheck`). A
   commit the row is already about is not checked twice; one whose last run could not
   happen is.
 - **A run** is durable work (`main.suite`): a checks-queue slot, the repo's unit suite as
@@ -1507,8 +1568,17 @@ intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
   nothing is armed, it measures on the spot). During a run it runs once more after it.
 - **First runs** are due when the leader timer a job replaces would have run, else spread over
   the next two minutes.
-- **Previews and proposals.** `preview-runtimes`, `preview-gc`, `preview-env` (acting only in the
-  newest build), `preview-orphan-dbs`, `preview-pressure` and `worker-volumes` read the runtimes
+- **The newest build only** (`newestOnly`): a job whose work depends on the build (its
+  keys, its catalogs, its environment) does nothing in an older build still running during a
+  rollout (`skipped: older_build`), and its targets name the release that found them, so only
+  a process of it claims them (`WorkHandler.ownRelease`): `preview-env`, `starter-images` (the
+  ready-made apps' images, each key a target), `language-sync` (the translation of the
+  build's new text: the catalog, or a batch to collect, a target).
+- **Production apps.** `app-health` (each running app's runtime, every minute) and
+  `main-drift` (each running app's main on GitHub, every 5 minutes) report to app-delivery
+  (`Unhealthy`, `MainMoved`), which decides.
+- **Previews and proposals.** `preview-runtimes`, `preview-gc`, `preview-env`,
+  `preview-orphan-dbs`, `preview-pressure` and `worker-volumes` read the runtimes
   and the database servers;
   `imported-prs`, `merged-by-hand`, `proposal-revisions`, `proposal-measure` and
   `fixed-check-sync` read GitHub and the mirrors. Each hands what it found to the preview or

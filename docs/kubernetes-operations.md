@@ -91,7 +91,7 @@ A merged platform PR is therefore "merged" on its card before it is running,
 and nothing in that chain reports back to the platform when a link fails. The
 platform watches the gap itself: `services/release-watch.js` compares the
 self-hosted app row's `main_sha` (the running build) with GitHub's `main` on the
-drift poller's cadence, reads the `Build Kubernetes images` run for the merged
+main-drift clock's cadence, reads the `Build Kubernetes images` run for the merged
 commit, and once (per commit and verdict) records the stall on
 `apps.release_stall`, posts to the app's group chat, and notifies the app's
 admins. The Dev board shows an amber banner with the workflow run linked until
@@ -636,10 +636,11 @@ has no flag: the old merge tail (`finalizeMerge` and its follow-ups), the
 
 The app-delivery machine in `src/workflow/app-delivery/` runs every production deploy of
 an app, one at a time per app and at most four at a time across the conductors, for everyone who
-asks (a merge, a secret change, the drift poller, Check for updates, Redeploy, heal, a
-rollover whose image is gone, a demo reset). It has no flag: each caller used to deploy
-itself, in its own process, with "deploying" in that process's memory; now it records a
-request and the machine deploys. `docs/workflows.md` explains the machine.
+asks (a merge, a secret change, a project's first deploy, main moving, Check for updates,
+Redeploy, a rollover whose image is gone, a demo reset), and heals an app reported down,
+never beside a deploy. It has no flag: each caller used to deploy itself, in its own
+process, with "deploying" in that process's memory; now it records a request and the
+machine deploys. `docs/workflows.md` explains the machine.
 
 - **Where the deploys run.** `app.deploy` is a work item, run by whichever conductor
   replica claims it. Each deploy clones the app into that Pod's `/tmp` and builds there,

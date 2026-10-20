@@ -226,8 +226,8 @@ No screen draws it yet.
 
 - **Notifying owners.** It needs a notification kind, its copy and a decision
   on who counts as an owner of a shared project; the report gives the list.
-- **Stopping a runtime.** There is no "stopped" app state today. The heal
-  sweep (`services/app-heal.js`) rebuilds a running app whose runtime is
-  missing, so an app stopped by hand comes back within minutes. A stop needs
-  a state the heal sweep and the deploy path both respect, and a way to
-  start it again; that is a product change of its own.
+- **Stopping a runtime.** There is no "stopped" app state today. App
+  delivery heals a running app whose runtime is missing (the app-health clock
+  reports it, `services/app-heal.js`), so an app stopped by hand comes back
+  within minutes. A stop needs a state the heal and the deploy path both
+  respect, and a way to start it again; that is a product change of its own.

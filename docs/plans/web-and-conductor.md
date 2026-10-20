@@ -72,14 +72,13 @@ is one for its whole life, so what a follower could not do had to move:
   leader adopts them, and the leader adopts every five minutes the idle
   workers nobody live holds (`sweepLeftWarmWorkers`): a web process's release
   elects nobody.
-- **A heal or a drift rebuild under way** is held (`app_heal`,
-  `drift_rebuild`), so a request on a web process and the conductor's sweep
-  no longer both start one (the copy they read is up to two seconds old, so
-  two that start within that window still can; each heal's cooldown is its
-  process's own).
+- **A heal or a drift rebuild** is app delivery's (`src/workflow/app-delivery/`):
+  the error page on a web process and the conductor's clocks only report, and
+  the machine runs one heal or deploy of an app at a time, its backoff in the
+  instance rather than any process's memory.
 - **An app's merge queue pass is single-flight across processes**
   (`services/merge-queue.js`): a vote lands on a web process, and the
-  eligible-merge sweep and the drift poller run on the conductor. A pass
+  eligible-merge sweep and the main-drift clock run on the conductor. A pass
   holds the app's advisory lock (`MERGE_QUEUE_PASS_LOCK`) on a client of its
   own and is held in the registry (`merge_pass`, and `merge_resolve` for a
   proposal's conflict resolution in it), so status reads see it from any
