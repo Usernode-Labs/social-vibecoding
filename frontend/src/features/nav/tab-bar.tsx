@@ -87,7 +87,7 @@ import {
   type CommunityInfo,
 } from '../workshop/community-scope';
 import { CommunitySwitcher } from '../workshop/community-switcher';
-import { goToVotes, onVotes, pressLitTab } from '../workshop/tab-ladder';
+import { pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
 import { RailCommunities, useRailCommunities } from './rail-communities';
 import { RailConversations } from './rail-conversations';
@@ -887,24 +887,13 @@ export function PlatformTabs() {
       else goToCommunity(null);
       return;
     }
-    // #5040: WHILE THE BLUE NUMBER SHOWS, THE TAB OPENS WHAT IT COUNTS:
-    // Needs you, the community's or every community's (tab-ladder.ts
-    // goToVotes). Only from another tab: the LIT tab keeps its ladder below,
-    // one level up per press (#3701), or Needs you → Hub → Needs you would
-    // be a loop that never reaches All communities. Phone bar only; the
-    // sidebar's row above is unchanged.
-    if (key === 'workshop' && key !== lit && votes > 0 && !onVotes(screen, scope.slug)) {
-      event.preventDefault();
-      const slug = scope.slug;
-      if (press(event.currentTarget, key, () => goToVotes(slug))) return;
-      goToVotes(slug);
-      return;
-    }
     if (key === 'workshop' && lit === 'workshop' && tab === 'workshop') {
       event.preventDefault();
       pressLitTab(screen);
       return;
     }
+    // A press from another tab always resumes the view left, whatever the
+    // blue number says (#5708): the Needs you detour overwrote the place.
     if (key !== lit && press(event.currentTarget, key, () => goToTab(key, href))) {
       event.preventDefault();
       return;
