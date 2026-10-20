@@ -145,6 +145,13 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/limits').settleOpenTurnSpend(pool),
   },
   {
+    // Global Chat usage a turn never settled (its request's process went
+    // mid-call): an error at its estimate, once no turn could still settle
+    // it (services/global-chat/accounting.js).
+    name: 'global-chat-usage-settle', everyMs: 15 * MIN,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/global-chat/accounting').settleAbandonedReservations(pool),
+  },
+  {
     // ROLLOUT-ONLY: what a release from before the turn machine leaves (its
     // conversations' claims, coding records with no owner, headless runs,
     // local agents' turns), taken to an end once no live process of it holds

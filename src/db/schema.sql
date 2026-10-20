@@ -10297,6 +10297,10 @@ CREATE TABLE IF NOT EXISTS global_chat_threads (
 );
 ALTER TABLE global_chat_threads ADD COLUMN IF NOT EXISTS active_turn_id UUID;
 ALTER TABLE global_chat_threads ADD COLUMN IF NOT EXISTS active_turn_started_at TIMESTAMPTZ;
+-- A person's Stop of the thread's running turn: the turn it stopped, read by
+-- the request running that turn, on whichever process (routes/global-chat.js).
+-- A turn claimed after it is not stopped by it.
+ALTER TABLE global_chat_threads ADD COLUMN IF NOT EXISTS cancel_turn_id UUID;
 -- #2543: chats are durable sessions in Improve, not a single replaceable
 -- full-application mode. Drop the original one-live-thread constraint so a
 -- user can keep and resume several conversations. Rows archived by the old

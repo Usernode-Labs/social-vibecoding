@@ -52,7 +52,6 @@ const KINDS = Object.freeze([
   'teardown',       // an app being torn down (app-teardown.js)
   'deploy',         // a production deploy, by app slug (app-deploy-status.js)
   'agent_turn',     // the Mayor's turn in an agent session (mayor/agent-turn.js)
-  'global_turn',    // a Global Chat turn (routes/global-chat.js)
 ]);
 const KNOWN = new Set(KINDS);
 // What a process has rather than does: none now (a worker kept warm was one,
