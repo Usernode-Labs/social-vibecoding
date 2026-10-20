@@ -161,13 +161,12 @@ test('Invite is a member\'s: a pill beside Open, the filled button inside the ap
     { apps: [{ ...ROW, is_member: false }] });
   assert.doesNotMatch(outsider, /app-about-invite/, 'not a member, no Invite');
 
-  // #4216, which held Share back from a newcomer offered "Go to Homeroom",
-  // holds Invite back the same way, until they have used it or are let in.
+  // A newcomer still offered "Go to Homeroom" has it too. #4216 hid Share
+  // from them; an invite link is the hub's for every member, and the server
+  // lets any member make one, so About does not hold it back alone.
   const patch = { target: 'app', slug: 'notes-ab12', name: 'Notes', tab: 'dev' };
-  assert.doesNotMatch(render(patch, { privateMember: true }), /app-about-invite/,
+  assert.match(render(patch, { privateMember: true }), /id="app-about-invite"/,
     'a private member who has not gone to Homeroom yet');
-  assert.match(render(patch, { privateMember: true, homeVisited: true }), /id="app-about-invite"/,
-    'back once they have used Go to Homeroom');
 
   // It turns the sheet to the invite pane, and Back from there returns here.
   const src = read('frontend/src/features/app-context/about-pane.tsx');
