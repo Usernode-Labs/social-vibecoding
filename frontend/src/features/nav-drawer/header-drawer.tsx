@@ -5,8 +5,8 @@
  * page), the platform header draws three things of its own in place of the
  * places button and the community switcher:
  *
- *   DrawerBack     the back arrow, in the left group: up one level. None on
- *                  level 0, the outermost. A button, not an href'd #back-btn:
+ *   DrawerBack     the back arrow, in the left group: up one level, and on
+ *                  level 0 back to the page. A button, not an href'd #back-btn:
  *                  an arrow with an address is what turns on WebKit's own
  *                  history swipe (../header/native-back-navigation.ts), which
  *                  would fight the drawer's pan.
@@ -93,7 +93,10 @@ export function DrawerBack(): ReactNode {
   const { level, shown } = useStoreState(drawerStore);
   if (mode === 'messages') return <BackDisc mode={mode} label={t('core:header.drawer.toMessages')} onBack={messagesBack} />;
   if (mode !== 'communities') return null;
-  return <BackDisc mode={mode} label={level === 2 ? t('core:header.drawer.toPlaces', { community: shown.name }) : t('core:header.drawer.toCommunities')} onBack={back} />;
+  const label = level === 2 ? t('core:header.drawer.toPlaces', { community: shown.name })
+    : level === 1 ? t('core:header.drawer.toCommunities')
+      : t('core:header.back');
+  return <BackDisc mode={mode} label={label} onBack={back} />;
 }
 
 function BackDisc({ mode, label, onBack }: { mode: Mode; label: string; onBack: () => void }): ReactNode {
@@ -129,7 +132,7 @@ export function DrawerTitles(): ReactNode {
   const inner = useRef<HTMLSpanElement>(null);
   const sub = useRef<HTMLElement>(null);
   // How far the bar's left edge is from where the name sits: the arrow and
-  // its gap. "Communities" sits there, with no arrow beside it.
+  // its gap. Messages' "Messages" sits there, with no arrow beside it.
   // Measured when it mounts and when the window changes, never per frame.
   const slot = useRef(44);
   const redraw = useRef(() => {});
