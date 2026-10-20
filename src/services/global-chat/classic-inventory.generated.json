@@ -9779,6 +9779,21 @@
     {
       "source": "src/routes/onboarding.js",
       "method": "POST",
+      "path": "/api/me/home-walk",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.me.home.walk.810f9f75",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/onboarding.js",
+      "method": "POST",
       "path": "/api/me/tour-done",
       "expression": null,
       "status": "mapped",

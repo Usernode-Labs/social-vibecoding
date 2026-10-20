@@ -879,6 +879,13 @@ function authRoutes(config) {
     // direction here is the one it had before the server kept it: the
     // browser's answer alone.
     let tourDone = false;
+    // The first session's walk on Home, kept by the account (POST
+    // /api/me/home-walk, services/onboarding.js markHomeWalk): still owed
+    // to this newcomer, and whether they have reached Homeroom yet. The
+    // shell ORs each with its own device's record, so unreadable here
+    // leaves the device's answer, as before the account kept it.
+    let homeWalkOwed = false;
+    let homeroomReached = false;
     // The first session's question in place of the join screen: an account
     // still due the join screen is asked "What do you want to make?"
     // instead whenever the story landing is on, however it signed in (the
@@ -914,6 +921,9 @@ function authRoutes(config) {
                 u.password_set,
                 (u.username_provisional_since IS NOT NULL) AS username_provisional,
                 (u.tour_done_at IS NOT NULL) AS tour_done,
+                (u.getting_started_seen->>'home_walk_owed' IS NOT NULL
+                  AND u.getting_started_seen->>'homeroom_reached' IS NULL) AS home_walk_owed,
+                (u.getting_started_seen->>'homeroom_reached' IS NOT NULL) AS homeroom_reached,
                 identity_needed(u.id) AS identity_needed,
                 (u.adult_attested_at IS NOT NULL) AS adult_attested,
                 EXISTS (
@@ -943,6 +953,8 @@ function authRoutes(config) {
       usernameProvisional = rows[0]?.username_provisional === true;
       needsCommunitiesChoice = rows[0]?.needs_communities_choice === true;
       tourDone = rows[0]?.tour_done === true;
+      homeWalkOwed = rows[0]?.home_walk_owed === true;
+      homeroomReached = rows[0]?.homeroom_reached === true;
       adultAttested = rows[0]?.adult_attested === true;
       // A member let in (not a private member, who waits for that).
       identityNeeded = rows[0]?.identity_needed === true && !!req.user.hasPlatformAccess;
@@ -1070,6 +1082,13 @@ function authRoutes(config) {
         // tour counts it done when this OR the browser's own flag says so
         // (frontend/src/features/home/tour/tour-done.ts).
         tourDone,
+        // The first session's walk on Home: owed to this newcomer and not
+        // run, and whether they have reached Homeroom, on any device (see
+        // above). The app's ✕, the mark menu's "Go to Homeroom" and the
+        // app tip read them with the device's own record
+        // (public/js/app.js _privateNoClose, features/app-context/about-data.ts).
+        homeWalkOwed,
+        homeroomReached,
         hasApiKey,
         keyLast4,
         // In-chat venue availability: feature flag + beta eligibility + a

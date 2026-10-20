@@ -122,6 +122,8 @@ type Legacy = {
       waitlistIdea?: string | null;
     } | null;
     _notePrivateHome?: () => void;
+    /** The walk owed, or Homeroom reached, kept by the account too (public/js/app.js). */
+    _noteHomeWalk?: (state: 'owed' | 'reached') => void;
     saveSessionSnapshot?: (user: unknown) => void;
     navigateHome?: (opts?: unknown) => void;
     navigateToApp?: (slug: string, tab: string) => unknown;
@@ -926,8 +928,12 @@ export function Tour({ info, steps, onEnd: endTour, start = 0, moments = false, 
                     {step.tap}
                   </button>
                 ) : (
+                  // The walk's last card says where it goes: it ends on the
+                  // project's hub under the Communities tab (`end`,
+                  // walkDoneLanding), except a private member's, which ends
+                  // on its waitlist card and stays on Home.
                   <Button type="button" onClick={() => go(index + 1)} variant="pillAccent" size="sm" ink="solid" className="text-[15px] font-semibold">
-                    {step.last ? (numbered ? t('core:common.done') : t('onboarding:firstSession.tour.gotIt')) : t('onboarding:firstSession.tour.next')}
+                    {step.last ? (numbered ? (info.privateMember ? t('core:common.done') : t('onboarding:firstSession.walk.goToCommunity')) : t('onboarding:firstSession.tour.gotIt')) : t('onboarding:firstSession.tour.next')}
                   </Button>
                 )}
               </div>
@@ -1304,7 +1310,7 @@ export function FirstSession() {
         const uid = app?.user?.id;
         if (uid != null) {
           oweTip(uid, { slug, name, who: 'invited', inviter: info.inviterName || null });
-          if (privateMember || info.newAccount) oweWalk(uid, { slug, name, privateMember });
+          if ((privateMember || info.newAccount) && oweWalk(uid, { slug, name, privateMember })) app?._noteHomeWalk?.('owed');
           setOwing((n) => n + 1);
         }
         rememberCommunity(slug);
@@ -1434,6 +1440,8 @@ export function FirstSession() {
       if (owed.walk && walkArms(owed.walk, screen)) armWalk(uid);
       else if (owed.walk && walkDue(owed.walk, screen)) {
         noteWalkRun(uid);
+        // On Home: they have reached Homeroom, on every device.
+        legacy().App?._noteHomeWalk?.('reached');
         startWalk(owed.walk);
         return;
       }
@@ -1611,6 +1619,7 @@ export function FirstSession() {
             setOwing((n) => n + 1);
             enterScreen('home', slug);
             if (uid != null && !claimWalk(uid)) { setMode({ kind: 'none' }); return; }
+            legacy().App?._noteHomeWalk?.('reached');
             setMode({ kind: 'tour', info: { slug, name }, path: 'walk', moments: true });
             return;
           }
@@ -1618,7 +1627,7 @@ export function FirstSession() {
           // on the first Home after it.
           if (uid != null) {
             oweTip(uid, { slug, name, who: 'maker' });
-            oweWalk(uid, { slug, name, maker: true });
+            if (oweWalk(uid, { slug, name, maker: true })) legacy().App?._noteHomeWalk?.('owed');
           }
           setOwing((n) => n + 1);
           setMode({ kind: 'none' });

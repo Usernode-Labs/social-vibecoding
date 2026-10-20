@@ -294,14 +294,21 @@ function distinctPoints(points, tagline) {
 
 /**
  * The card made from the name and the description alone: the description's
- * first piece as the tagline, the pieces after it as points (with one true
- * of every project when it has fewer than two), and the keyword map's emoji.
+ * first piece as the tagline (or the make screen's own line for the choice,
+ * when it sent one), the pieces after it as points (with one true of every
+ * project when it has fewer than two), and the keyword map's emoji.
  * Deterministic, and never null.
  */
-function fallbackCard({ name = '', brief = '', today = null, solo = false } = {}) {
+function fallbackCard({ name = '', brief = '', today = null, solo = false, tagline: fixed = null } = {}) {
   const clauses = clausesOf(checkedDates(brief, { today, brief })).map((c) => cleanLine(c, 400)).filter(Boolean);
-  const tagline = clauses.length ? clipWords(clauses[0], TAGLINE_MAX) : cleanLine(`Made for ${name || 'your group'}`, TAGLINE_MAX);
-  let points = distinctPoints(clauses.slice(1).map((c) => clipWords(c, POINT_MAX)), tagline).slice(0, POINTS_MAX);
+  // `fixed`: the make screen's own line for the choice the sentence came
+  // from (a game, or Your own words in a template), written for when the
+  // model gives none. The card says that rather than the sentence's first
+  // clause, which for those choices is the template's opening words.
+  const given = cleanLine(fixed, TAGLINE_MAX);
+  const tagline = given
+    || (clauses.length ? clipWords(clauses[0], TAGLINE_MAX) : cleanLine(`Made for ${name || 'your group'}`, TAGLINE_MAX));
+  let points = distinctPoints(clauses.slice(given ? 0 : 1).map((c) => clipWords(c, POINT_MAX)), tagline).slice(0, POINTS_MAX);
   if (points.length < 2 && !solo) points = distinctPoints([...points, SHARED_POINT], tagline);
   return { kind: 'card', emoji: keywordEmoji(name, brief), tagline, points, source: 'fallback' };
 }
@@ -366,7 +373,7 @@ function sketchUserPrompt({ name, brief, audience, today = null, zone = null, ma
  * where the creator is (`today`, sketch-dates.localToday; `brief`, their
  * description).
  */
-function parseCardReply(text, { name = '', brief = '', today = null, solo = false } = {}) {
+function parseCardReply(text, { name = '', brief = '', today = null, solo = false, fallbackTagline = null } = {}) {
   const out = String(text || '');
   const first = out.indexOf('{');
   const last = out.lastIndexOf('}');
@@ -384,7 +391,7 @@ function parseCardReply(text, { name = '', brief = '', today = null, solo = fals
   const points = distinctPoints((Array.isArray(obj.points) ? obj.points : []).map((p) => line(p, POINT_MAX)), tagline)
     .slice(0, POINTS_MAX);
   if (!tagline && points.length < 2) return null;
-  const fallback = (!tagline || points.length < 2) ? fallbackCard({ name, brief, today, solo }) : null;
+  const fallback = (!tagline || points.length < 2) ? fallbackCard({ name, brief, today, solo, tagline: fallbackTagline }) : null;
   return {
     kind: 'card',
     emoji: chooseEmoji(obj.emoji, { name, brief }),
@@ -600,7 +607,7 @@ async function saveCard(pool, { app, card, model, error, deps }) {
  * trial's first commit, from the same call. `maker` is who the card is for,
  * as makerOf reads it (null: nobody named). Resolves { card, model, error }.
  */
-async function makeCard(pool, { name, brief, audience = null, solo = false, timeZone = null, user, maker = null, appId = null, deps = {} }) {
+async function makeCard(pool, { name, brief, audience = null, solo = false, timeZone = null, user, maker = null, appId = null, fallbackTagline = null, deps = {} }) {
   const llm = deps.llm || require('./llm');
   const limits = deps.limits || require('./limits');
   const now = deps.now ? deps.now() : new Date();
@@ -634,24 +641,24 @@ async function makeCard(pool, { name, brief, audience = null, solo = false, time
     } else {
       await recordSpend(reply);
       model = reply.model || SKETCH_MODEL;
-      card = parseCardReply(reply.text, { name, brief, today, solo });
+      card = parseCardReply(reply.text, { name, brief, today, solo, fallbackTagline });
       if (!card) error = 'unusable_reply';
     }
   } catch (err) {
     error = String(err && err.message || 'failed').slice(0, 200);
   }
   if (!card) {
-    card = fallbackCard({ name, brief, today, solo });
+    card = fallbackCard({ name, brief, today, solo, tagline: fallbackTagline });
     model = 'fallback';
     log.warn('app-sketch', 'Card made without the model', { appId, error });
   }
   return { card, model, error };
 }
 
-async function generate(pool, { app, user, brief, audience, solo, timeZone, deps }) {
+async function generate(pool, { app, user, brief, audience, solo, timeZone, fallbackTagline, deps }) {
   const maker = await makerOf(pool, user).catch(() => null);
   const { card, model, error } = await makeCard(pool, {
-    name: app.name, brief, audience, solo, timeZone, user, maker, appId: app.id, deps,
+    name: app.name, brief, audience, solo, timeZone, user, maker, appId: app.id, fallbackTagline, deps,
   });
   await saveCard(pool, { app, card, model, error, deps });
   log.info('app-sketch', 'Card ready', { appId: app.id, source: card.source });
@@ -665,11 +672,13 @@ async function generate(pool, { app, user, brief, audience, solo, timeZone, deps
  * description on the spot. `timeZone` is the creator's device's IANA zone, so
  * "today" is theirs; anything else reads as UTC. `solo`: made for Just me, so
  * a fallback card does not say it is shared with anyone (SHARED_POINT).
+ * `fallbackTagline`: the make screen's line for a game or Your own choice,
+ * the tagline when the model gives none (fallbackCard).
  */
-async function startSketch(pool, { app, user, brief, audience = null, solo = false, timeZone = null }, deps = {}) {
+async function startSketch(pool, { app, user, brief, audience = null, solo = false, timeZone = null, fallbackTagline = null }, deps = {}) {
   const llm = deps.llm || require('./llm');
   if (!llm.isEnabled()) {
-    const card = fallbackCard({ name: app.name, brief, solo, today: sketchDates.localToday(deps.now ? deps.now() : new Date(), timeZone) });
+    const card = fallbackCard({ name: app.name, brief, solo, tagline: fallbackTagline, today: sketchDates.localToday(deps.now ? deps.now() : new Date(), timeZone) });
     const { rows } = await pool.query(
       `INSERT INTO app_sketches (app_id, user_id, status, design, model, ready_at)
        VALUES ($1, $2, 'ready', $3::jsonb, 'fallback', NOW())
@@ -690,7 +699,7 @@ async function startSketch(pool, { app, user, brief, audience = null, solo = fal
     [app.id, user.id]
   );
   if (!rows.length) return false;
-  const work = generate(pool, { app, user, brief, audience, solo, timeZone, deps }).catch((err) => {
+  const work = generate(pool, { app, user, brief, audience, solo, timeZone, fallbackTagline, deps }).catch((err) => {
     log.warn('app-sketch', 'Card failed', { appId: app.id, err: err.message });
     return null;
   });

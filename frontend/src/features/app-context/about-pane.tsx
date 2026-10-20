@@ -56,12 +56,15 @@
  *     nobody from inviting.
  *   - Add to home screen is a ROW now, as the design draws it, but it is the
  *     row the product already had: for an app, the per-app install page its
- *     card menu and its Discover page offer (#1508, #2320) — found in
- *     Home.menuItemsFor by key, not rebuilt; for Homeroom, which IS this
+ *     card menu and its Discover page offer (#1508, #2320) — Home.menuItemsFor's
+ *     `install`, found by key, not rebuilt; for Homeroom, which IS this
  *     page's PWA, the OS's own steps, because iOS exposes no install API and
  *     Android's prompt fires only when Chrome decides it should
- *     (../mobile-install/detect.ts). Wherever there is no home screen — a
- *     laptop, or an app already launched from one — there is no row.
+ *     (../mobile-install/detect.ts). Not the native app's widget pin
+ *     (`add-to-homescreen`), which Discover leaves out too: it shows its
+ *     result in Home's widget strip, which is not on screen from here, so
+ *     the tap looked like nothing. Where there is no home screen (a laptop)
+ *     there is no row, and none for Homeroom once it is launched from one.
  *
  * ── A viewer who is not served the platform's row ──────────────────────
  *
@@ -302,7 +305,7 @@ export function AboutPane({ label }: { label: string; unnamed?: boolean }): Reac
     if (!isApp || !row || typeof menuItemsFor !== 'function') return [];
     try { return menuItemsFor(row) || []; } catch { return []; }
   }, [isApp, row]);
-  const homeScreenItem = items.find((i) => i && (i.key === 'add-to-homescreen' || i.key === 'install'));
+  const homeScreenItem = items.find((i) => i && i.key === 'install');
   const forkItem = items.find((i) => i && i.key === 'fork');
 
   // ── Identity ──────────────────────────────────────────────────────

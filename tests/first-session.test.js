@@ -246,7 +246,7 @@ function drawTour(props) {
   }
 }
 
-test('the walk\'s cards: numbered circles for the counter, Skip and Next, no Back, and Done on the last', () => {
+test('the walk\'s cards: numbered circles for the counter, Skip and Next, no Back, and where it goes on the last', () => {
   const { homeWalkSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const steps = homeWalkSteps({ slug: 'film', name: 'Friday Film Crew' });
   const first = drawTour({ steps, numbered: true });
@@ -262,26 +262,32 @@ test('the walk\'s cards: numbered circles for the counter, Skip and Next, no Bac
   assert.match(first, />Friday Film Crew lives here, on Home\.</);
   assert.match(first, />Skip</);
   assert.match(first, />Next</);
-  assert.doesNotMatch(first, />Back<|>Done<|data-first-session-tap/);
+  assert.doesNotMatch(first, />Back<|>Done<|>Go to community<|data-first-session-tap/);
   // The second card: still no Back.
   assert.doesNotMatch(drawTour({ steps, numbered: true, start: 1 }), />Back</);
-  // The last: Done, and nothing else.
+  // The last says where it goes, and nothing else: the walk ends on the
+  // project's hub under the Communities tab (walkDoneLanding), so the button
+  // says so rather than "Done" and a page that changes without a reason.
   const last = drawTour({ steps, numbered: true, start: 2 });
   assert.match(last, /aria-label="Step 3 of 3"/);
   assert.match(last, /<li aria-current="step" [^>]*>3<\/li>/);
-  assert.match(last, />Done</);
-  assert.doesNotMatch(last, />Skip<|>Back<|>Next<|>Got it<|data-first-session-tap/);
-  // A private member's: four circles, the waitlist card last.
-  const four = drawTour({ steps: homeWalkSteps({ slug: 'film', privateMember: true }), numbered: true, start: 3 });
+  assert.match(last, />Go to community</);
+  assert.doesNotMatch(last, />Done<|>Skip<|>Back<|>Next<|>Got it<|data-first-session-tap/);
+  // A private member's: four circles, the waitlist card last, and Done, as
+  // their walk stays on Home.
+  const four = drawTour({ info: { slug: 'film', privateMember: true }, steps: homeWalkSteps({ slug: 'film', privateMember: true }), numbered: true, start: 3 });
   assert.equal((four.match(/<li /g) || []).length, 4);
   assert.match(four, /aria-label="Step 4 of 4"/);
   assert.match(four, />Make your own apps</);
   assert.match(four, />Done</);
+  assert.doesNotMatch(four, />Go to community</);
   // Only the walk is numbered this way; "Look around first" keeps its counter.
   const src = read(`${DIR}/index.tsx`);
   assert.match(src, /numbered=\{mode\.path === 'walk'\}/);
   assert.match(src, /\{index > 0 && !numbered \? \(/);
-  assert.match(src, /\{step\.last \? \(numbered \? t\('core:common\.done'\) : t\('onboarding:firstSession\.tour\.gotIt'\)\) : t\('onboarding:firstSession\.tour\.next'\)\}/);
+  assert.match(src, /\{step\.last \? \(numbered \? \(info\.privateMember \? t\('core:common\.done'\) : t\('onboarding:firstSession\.walk\.goToCommunity'\)\) : t\('onboarding:firstSession\.tour\.gotIt'\)\) : t\('onboarding:firstSession\.tour\.next'\)\}/);
+  // The same condition `end` reads to choose the hub as the walk's landing.
+  assert.match(src, /how === 'done' && mode\.kind === 'tour' && mode\.path === 'walk' && !mode\.info\.privateMember/);
 });
 
 /** A document of fixed boxes, by selector, for as long as `fn` runs. */
@@ -528,7 +534,7 @@ test('"You\'re in" is gone: an invite opens the app itself, owes the tip, and th
   const welcome = src.slice(src.indexOf('welcome(info: FirstSessionInfo): boolean {'), src.indexOf('goHome('));
   assert.match(welcome, /if \(!info \|\| !info\.slug \|\| seen\(info\.slug\)\) return false;\s+markSeen\(info\.slug\);/);
   assert.match(welcome, /oweTip\(uid, \{ slug, name, who: 'invited', inviter: info\.inviterName \|\| null \}\);/);
-  assert.match(welcome, /if \(privateMember \|\| info\.newAccount\) oweWalk\(uid, \{ slug, name, privateMember \}\);/);
+  assert.match(welcome, /if \(\(privateMember \|\| info\.newAccount\) && oweWalk\(uid, \{ slug, name, privateMember \}\)\) app\?\._noteHomeWalk\?\.\('owed'\);/);
   assert.match(welcome, /const going = app\?\.navigateToApp\?\.\(slug, 'app'\);/);
   // Both ways in hand over who sent it, by the name they go by.
   assert.match(read('public/js/app.js'), /inviter: standing\.inviter \|\| null,\s+inviterName: standing\.inviterName \|\| standing\.inviter \|\| null,/);
