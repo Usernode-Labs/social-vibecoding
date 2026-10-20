@@ -4554,14 +4554,14 @@ const READY_MADE_PROMPTS = Object.freeze(['What can I ask for?', 'How do I invit
 /**
  * Pure: the hello a maker hears with a ready-made app: the maker's hello,
  * the project's name as a line of its own (Messages draws it as the
- * project's card, as with a described project's), and that it works as it
- * is ("It": the card above names it), with `example` as the change to ask
- * for when the starter has one.
+ * project's card, as with a described project's), and what to ask for, with
+ * `example` as the change when the starter has one. It no longer opens "It
+ * works as it is." (Evan, sign-up test, 20 Oct 2026: it read as random).
  */
 function readyMadeHello(appName, example = null) {
   const name = appName || 'Your app';
   const ask = example ? `Ask me here for changes, like “${example}”.` : 'Ask me here for any change you\'d like.';
-  return `${MAKER_HELLO}\n\n**${name}**\n\nIt works as it is. ${ask}`;
+  return `${MAKER_HELLO}\n\n**${name}**\n\n${ask}`;
 }
 
 /**

@@ -427,12 +427,17 @@ export function madeLine(fv: FirstVersion, botBuilds: boolean, live = false, sta
  * it only that it messages you. Evan, 5 October 2026: one plain line, the
  * same before and after the plan, that says it asks when it has questions.
  * While the plan waits, a project that is not sketched says so instead.
+ *
+ * A ready-made app has none (Evan, sign-up test, 20 Oct 2026): it said "It
+ * works as it is. You and anyone you invite can change it from there.",
+ * which read as random under a card whose name and description already say
+ * what it is, beside a setup card that says it is ready to use.
  */
-export function buildNote(botBuilds: boolean, planWaits = false, stalled: Stalled = null, imported = false, readyMade = false): string {
+export function buildNote(botBuilds: boolean, planWaits = false, stalled: Stalled = null, imported = false, readyMade = false): string | null {
   if (stalled === 'failed') return translate('onboarding:firstSession.made.note.failed');
   if (stalled === 'needs-secrets') return translate('onboarding:firstSession.made.note.needsSecrets');
   if (imported) return translate('onboarding:firstSession.made.note.imported');
-  if (readyMade) return translate('onboarding:firstSession.made.note.readyMade');
+  if (readyMade) return null;
   if (!botBuilds) return translate('onboarding:firstSession.made.note.noBot');
   if (planWaits) return translate('onboarding:firstSession.made.note.planWaits');
   return translate('onboarding:firstSession.made.note.making');
@@ -1980,7 +1985,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
                   <span data-first-session-build="" className="min-w-0 truncate">{plainLine}</span>
                 </div>
               )}
-              <p className={rowHidden ? 'mt-3 text-[13px] text-zinc-500 dark:text-zinc-400' : 'mt-1 text-[13px] text-zinc-500 dark:text-zinc-400'}>{note}</p>
+              {note ? <p className={rowHidden ? 'mt-3 text-[13px] text-zinc-500 dark:text-zinc-400' : 'mt-1 text-[13px] text-zinc-500 dark:text-zinc-400'}>{note}</p> : null}
             </PlainCard>
           )}
           {/* Under the project, never above it: the thumbnail stays where it is. */}

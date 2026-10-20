@@ -1475,10 +1475,6 @@
     "text": "Its repo says what it does. You and anyone you invite build on it from here.",
     "description": "Second line under the new project's card on the screen shown right after a project is made, for a project imported from a GitHub repository. \"Its repo\" is the project's repository; \"build on it\" means making changes to the app."
   },
-  "firstSession.made.note.readyMade": {
-    "text": "It works as it is. You and anyone you invite can change it from there.",
-    "description": "Second line under the new project's card on the screen shown right after a project is made, for a project made from one of Homeroom's ready-made apps. \"change\" is a verb: to alter the app."
-  },
   "firstSession.made.note.noBot": {
     "text": "You or anyone you invite can build it from there.",
     "description": "Second line under the new project's card on the screen shown right after a project is made, when Homeroom bot is not building the project: members build it themselves, starting from the first request. \"build\" is a verb."

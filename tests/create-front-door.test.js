@@ -309,7 +309,7 @@ test('a ready-made app lands on the made screen like an import: set up, then rea
   assert.equal(made.buildLine(null, 'creating', false, false, true), 'Setting it up…');
   assert.equal(made.buildLine(null, 'running', false, false, true), 'Ready to use.');
   assert.equal(made.buildLine(null, 'error', false, false, true), 'Setting it up didn’t finish.', 'a stopped setup says so first');
-  assert.equal(made.buildNote(false, false, null, false, true), 'It works as it is. You and anyone you invite can change it from there.');
+  assert.equal(made.buildNote(false, false, null, false, true), null, 'a ready-made app has no second line (20 Oct 2026)');
   assert.equal(made.madeLine(null, false), null, 'Homeroom bot builds nothing, so there is no build line');
   const html = renderToHtml(createElement(made.MadeScreen, {
     made: { slug: 'groceries-1', name: 'Grocery List', emoji: '🛒', description: 'A grocery list', example: null, conversationId: null, readyMade: true },

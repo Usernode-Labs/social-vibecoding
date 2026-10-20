@@ -113,7 +113,7 @@ test('sign-up test, 19 Oct 2026: a ready-made app\'s maker hears hello over the 
   const head = botHead(dm.readyMadeHello('City Tier List', 'add a photo of each city'), meta);
   assert.equal(head.kind, 'project');
   assert.equal(head.before, dm.MAKER_HELLO);
-  assert.equal(head.rest, 'It works as it is. Ask me here for changes, like “add a photo of each city”.');
+  assert.equal(head.rest, 'Ask me here for changes, like “add a photo of each city”.');
   assert.deepEqual(shape(head).link, { key: 'app:city-tier-list:', href: '#app/city-tier-list/app' }, 'its card opens the app');
 });
 
