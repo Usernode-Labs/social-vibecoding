@@ -607,6 +607,10 @@ test('#4400: the sheet is presented through the kit sheet seam, and back closes 
   // The panel the kit adopts keeps one class string, or React would erase the
   // kit's `platform-sheet-adopted` on the re-render that adoption causes.
   assert.match(src, /id="mobile-install-steps"[\s\S]*?className="w-full max-w-md rounded-t-\[20px\]/);
+  // Stacked once adopted: `.platform-sheet-adopted` is `display: flex`, and
+  // in its default row the title, the steps and Got it stood side by side.
+  assert.match(fs.readFileSync(path.join(ROOT, 'public/css/app.css'), 'utf8'), /\.platform-sheet-adopted \{[^}]*display: flex !important;/);
+  assert.match(src, /id="mobile-install-steps"[\s\S]*?className="[^"]*\bflex flex-col"/);
 });
 
 test('#1513: the first render is still the hidden, offer-less strip', () => {
