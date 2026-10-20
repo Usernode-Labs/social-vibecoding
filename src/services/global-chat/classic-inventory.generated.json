@@ -4041,6 +4041,21 @@
     },
     {
       "source": "src/routes/auth.js",
+      "method": "POST",
+      "path": "/api/me/review-flow",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.me.review.flow.dca27636",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/auth.js",
       "method": "GET",
       "path": "/api/me/contact-privacy",
       "expression": null,

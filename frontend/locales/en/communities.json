@@ -399,14 +399,6 @@
     "text": "None of your communities match “{{query}}”.",
     "description": "Shown in the phone's navigation drawer when no community the person is in has the searched words in its name. {{query}} is what they typed."
   },
-  "review.card.decision": {
-    "text": "Group decision",
-    "description": "Small label over a group decision's card in the new Needs you feed (an experiment), above its summary. The card opens the decision's own page."
-  },
-  "review.card.behindTheScenes": {
-    "text": "Behind the scenes",
-    "description": "Small label over the card of a change with nothing visible to compare in the new Needs you feed (an experiment), above what it does."
-  },
   "review.end.line": {
     "text": "That's everything for now",
     "description": "Quiet line at the end of the new Needs you feed (an experiment), under a check mark, once every waiting change has been shown."
@@ -682,5 +674,93 @@
   "review.more.cancel": {
     "text": "Cancel",
     "description": "Menu entry that closes the ⋯ menu on a change's page."
+  },
+  "review.benefit.fixed": {
+    "text": "Fixed",
+    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+  },
+  "review.benefit.stability": {
+    "text": "Stability",
+    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+  },
+  "review.benefit.clarity": {
+    "text": "Clarity",
+    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+  },
+  "review.benefit.more": {
+    "text": "Can do more",
+    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+  },
+  "review.benefit.results": {
+    "text": "Better results",
+    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+  },
+  "review.benefit.speed": {
+    "text": "Speed",
+    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+  },
+  "review.benefit.effort": {
+    "text": "Less effort",
+    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+  },
+  "review.benefit.security": {
+    "text": "Security & privacy",
+    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+  },
+  "review.benefit.behind": {
+    "text": "Behind the scenes",
+    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+  },
+  "review.area.agents": {
+    "text": "Agents",
+    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+  },
+  "review.area.proposals": {
+    "text": "Proposals",
+    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+  },
+  "review.area.platform": {
+    "text": "Platform",
+    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+  },
+  "review.area.projects": {
+    "text": "Projects",
+    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+  },
+  "review.area.accounts": {
+    "text": "Accounts",
+    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+  },
+  "review.area.admin": {
+    "text": "Admin",
+    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+  },
+  "review.area.messages": {
+    "text": "Messages",
+    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+  },
+  "review.area.challenges": {
+    "text": "Challenges",
+    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+  },
+  "review.decision.closeIssue": {
+    "text": "Close a request",
+    "description": "Label over a group decision's drawn picture in the new Needs you (an experiment): what kind of decision it is. Shown in small capitals beside the project's name."
+  },
+  "review.decision.rename": {
+    "text": "Rename",
+    "description": "Label over a group decision's drawn picture in the new Needs you (an experiment): what kind of decision it is. Shown in small capitals beside the project's name."
+  },
+  "review.decision.secret": {
+    "text": "Secret",
+    "description": "Label over a group decision's drawn picture in the new Needs you (an experiment): what kind of decision it is. Shown in small capitals beside the project's name."
+  },
+  "review.decision.other": {
+    "text": "Group decision",
+    "description": "Label over a group decision's drawn picture in the new Needs you (an experiment): what kind of decision it is. Shown in small capitals beside the project's name."
+  },
+  "review.end.backToProject": {
+    "text": "Back to the Workshop",
+    "description": "Button at the end of a project's Needs you in the new review flow (an experiment), once every waiting change has been shown: opens the project's Workshop."
   }
 }

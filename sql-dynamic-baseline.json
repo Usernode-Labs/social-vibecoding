@@ -96,9 +96,9 @@
     {
       "source": "src/middleware/auth.js",
       "kind": "structural-template",
-      "fingerprint": "b0f855e9f99e9e79bc84",
+      "fingerprint": "5fd8911b72f65232db2a",
       "count": 1,
-      "preview": "`SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.privat"
+      "preview": "`SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.review"
     },
     {
       "source": "src/middleware/topochain-auth.js",

@@ -39,9 +39,10 @@ import { useMessages } from '../../lib/i18n/react';
 import { callAppView } from '../dev-board/card/fold';
 import type { NeedsFeedItem } from '../workshop/needs-reel';
 import { CompareSlider } from './compare';
+import { Illustration } from './illustrations';
 import {
-  nextIndex, titleCrop, toReviewItems,
-  type ReviewItem, type ReviewScreen,
+  composeTitle, nextIndex, orderForReview, piecesOf, titleCrop, toReviewItems,
+  type AreaKind, type BenefitKind, type DecisionKind, type ReviewItem, type ReviewScreen,
 } from './model';
 import { VoteSheet, sheetOpen, type SheetState, type Vote } from './vote-sheet';
 
@@ -61,41 +62,103 @@ function shape(visuals: unknown, shots: unknown) {
 
 /* ── The title shot ────────────────────────────────────────────────────── */
 
-function TitleShot({ item, width }: { item: ReviewItem; width: number }): ReactNode {
+// Each label is a whole message id, so the language tools can find it.
+const BENEFIT_LABEL: Record<BenefitKind, string> = {
+  fixed: 'communities:review.benefit.fixed',
+  stability: 'communities:review.benefit.stability',
+  clarity: 'communities:review.benefit.clarity',
+  more: 'communities:review.benefit.more',
+  results: 'communities:review.benefit.results',
+  speed: 'communities:review.benefit.speed',
+  effort: 'communities:review.benefit.effort',
+  security: 'communities:review.benefit.security',
+  behind: 'communities:review.benefit.behind',
+};
+const AREA_LABEL: Record<Exclude<AreaKind, 'app'>, string> = {
+  agents: 'communities:review.area.agents',
+  proposals: 'communities:review.area.proposals',
+  platform: 'communities:review.area.platform',
+  projects: 'communities:review.area.projects',
+  accounts: 'communities:review.area.accounts',
+  admin: 'communities:review.area.admin',
+  messages: 'communities:review.area.messages',
+  challenges: 'communities:review.area.challenges',
+};
+const DECISION_LABEL: Record<DecisionKind, string> = {
+  close_issue: 'communities:review.decision.closeIssue',
+  rename: 'communities:review.decision.rename',
+  secret_change: 'communities:review.decision.secret',
+  decision: 'communities:review.decision.other',
+};
+
+/**
+ * A drawn picture: a benefit object for a change with nothing (yet) to show,
+ * a decision object for a group decision. Every card has a picture.
+ */
+function Drawn({ item, width, height, play }: { item: ReviewItem; width: number; height: number; play?: boolean }): ReactNode {
   const t = useMessages('communities');
+  const p = item.picture;
+  if (p.kind !== 'benefit' && p.kind !== 'decision') return null;
+  const area = p.kind === 'benefit' && p.area !== 'app' ? t(AREA_LABEL[p.area]) : item.app?.name || null;
+  return (
+    <Illustration
+      kind={p.kind === 'benefit' ? { benefit: p.benefit } : { decision: p.decision }}
+      label={{ main: p.kind === 'benefit' ? t(BENEFIT_LABEL[p.benefit]) : t(DECISION_LABEL[p.decision]), area }}
+      token={p.kind === 'benefit' ? p.token : null}
+      ground={item.ground}
+      width={width}
+      height={height}
+      play={play}
+    />
+  );
+}
+
+/* ── The title shot ────────────────────────────────────────────────────── */
+
+
+function TitleShot({ item, width }: { item: ReviewItem; width: number }): ReactNode {
   const height = Math.round(width * 0.75);
-  const screen: ReviewScreen | undefined = item.screens[0];
-  let inner: ReactNode;
-  if (screen) {
-    const crop = titleCrop(screen, { w: width * 0.86, h: height * 0.72 });
-    inner = (
-      <span className="rf-plate" style={{ width: crop.w, height: crop.h }}>
-        <img
-          src={screen.after.url}
-          alt=""
-          draggable={false}
-          loading="lazy"
-          style={{ width: screen.width, height: screen.after.height, transform: `translate(${crop.place.tx}px, ${crop.place.ty}px) scale(${crop.place.scale})` }}
-        />
-      </span>
-    );
-  } else if (item.pair && (item.pair.after || item.pair.before)) {
-    inner = (
-      <span className="rf-plate rf-plate-whole" style={{ width: width * 0.86, height: height * 0.72 }}>
-        <img src={(item.pair.after || item.pair.before)!} alt="" draggable={false} loading="lazy" />
-      </span>
-    );
-  } else {
-    inner = (
-      <span className="rf-quiet-card">
-        <span className="rf-quiet-over">{item.kind === 'governance' ? t('communities:review.card.decision') : t('communities:review.card.behindTheScenes')}</span>
-        <span className="rf-quiet-text">{item.summary || item.title}</span>
+  if (item.picture.kind === 'benefit' || item.picture.kind === 'decision') {
+    return (
+      <span className="rf-cover rf-cover-drawn" style={{ width, height, background: item.ground }} data-rf-cover="">
+        <Drawn item={item} width={width} height={height} />
       </span>
     );
   }
+  // The changed areas the run found, composed by the prototype's rules
+  // (model.ts composeTitle); without them, the run's own crop of the change
+  // (or an older capture) as the one piece.
+  let pieces = piecesOf(item.screens);
+  if (!pieces.length) {
+    const img = item.titleImage;
+    if (img) {
+      pieces = [{ screen: { viewport: 'crop', width: img.width, before: { url: img.url, height: img.height }, after: { url: img.url, height: img.height }, regions: [] }, box: { x: 0, y: 0, w: img.width, h: img.height } }];
+    }
+  }
+  const comp = composeTitle(pieces, { w: width, h: height }, item.ground);
   return (
-    <span className="rf-cover" style={{ width, height, background: item.ground }} data-rf-cover="">
-      {inner}
+    <span className="rf-cover" style={{ width, height, background: item.ground }} data-rf-cover="" data-rf-rule={comp ? comp.rule : 'pair'}>
+      {comp ? comp.plates.slice().sort((p, q) => p.z - q.z).map((p, i) => (
+        <span
+          key={i}
+          className="rf-tplate"
+          style={{ left: p.x, top: p.y, width: p.w, height: p.h, borderRadius: p.r, background: p.fill || undefined }}
+        >
+          {p.img ? (
+            <img
+              src={p.img.url}
+              alt=""
+              draggable={false}
+              loading="lazy"
+              style={{ left: p.img.left, top: p.img.top, width: p.img.width, height: p.img.height }}
+            />
+          ) : null}
+        </span>
+      )) : item.pair && (item.pair.after || item.pair.before) ? (
+        <span className="rf-tplate rf-tplate-pair" style={{ left: width * 0.07, top: height * 0.14, width: width * 0.86, height: height * 0.68, borderRadius: 16 }}>
+          <img src={(item.pair.after || item.pair.before)!} alt="" draggable={false} loading="lazy" className="rf-plate-fill" />
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -114,9 +177,8 @@ function PageBody({ item, width, marks, near }: { item: ReviewItem; width: numbe
       {visual ? (
         <CompareSlider screen={screen} pair={screen ? null : item.pair} ground={item.ground} width={width} height={height} marks={marks} near={near} />
       ) : (
-        <div className="rf-hero-quiet" style={{ width, height, background: item.ground }}>
-          <span className="rf-quiet-over">{t('communities:review.card.behindTheScenes')}</span>
-          <span className="rf-quiet-text">{item.title}</span>
+        <div className="rf-hero-drawn" style={{ width, height, background: item.ground }}>
+          <Drawn item={item} width={width} height={height} play={near} />
         </div>
       )}
       {item.screens.length > 1 ? (
@@ -148,7 +210,7 @@ function PageBody({ item, width, marks, near }: { item: ReviewItem; width: numbe
           })}
         </div>
       ) : null}
-      {item.summary && visual ? <p className="rf-claim">{item.summary}</p> : null}
+      {item.line ? <p className="rf-claim">{item.line}</p> : null}
     </div>
   );
 }
@@ -158,11 +220,13 @@ function PageBody({ item, width, marks, near }: { item: ReviewItem; width: numbe
 /** `opening` expands from the card, `pushing` slides in beside the last one, `open` rests. */
 type Open = { index: number; from: number | null; phase: 'opening' | 'pushing' | 'open' };
 
-export function ReviewFlow({ items, error, capped, onDone, onAnswered, onRetracted }: {
+export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered, onRetracted }: {
   items: NeedsFeedItem[] | null;
   error: boolean;
   capped: boolean;
   onDone: () => void;
+  /** The end's way on; "Back to your communities" when not given. */
+  doneLabel?: string;
   onAnswered?: (id: number, epoch: number | null) => void;
   onRetracted?: (id: number) => void;
 }) {
@@ -185,10 +249,20 @@ export function ReviewFlow({ items, error, capped, onDone, onAnswered, onRetract
   const [sheet, setSheet] = useState<SheetState>('ask');
   const busy = useRef(false);
   const timers = useRef<number[]>([]);
+  const ghosts = useRef<HTMLElement[]>([]);
+  useEffect(() => () => { ghosts.current.forEach((g) => g.remove()); }, []);
   const later = (fn: () => void, ms: number) => { timers.current.push(window.setTimeout(fn, ms)); };
+  // A transition ends on its animation's last frame, not on a timer that a
+  // busy phone can fire a frame early; the timer only rescues a stalled one.
+  const whenDone = (anim: Animation | undefined, fn: () => void, ms: number) => {
+    let ran = false;
+    const once = () => { if (!ran) { ran = true; fn(); } };
+    anim?.finished.then(once, once);
+    later(once, ms + 1500);
+  };
   useEffect(() => () => { timers.current.forEach(clearTimeout); }, []);
 
-  const shaped = useMemo(() => (items ? toReviewItems(items, shape) : null), [items]);
+  const shaped = useMemo(() => (items ? orderForReview(toReviewItems(items, shape)) : null), [items]);
   useEffect(() => { if (shaped && !open) setList(shaped); }, [shaped, open]);
 
   // The cards' width: the pane's, less its margins.
@@ -241,11 +315,14 @@ export function ReviewFlow({ items, error, capped, onDone, onAnswered, onRetract
     if (!cover || reducedMotion()) { done(); return; }
     const cr = cover.getBoundingClientRect();
     const headH = headRef.current ? headRef.current.getBoundingClientRect().height : 56;
+    // Both ends of the title's flight are measured at rest, before anything moves.
+    const titleFrom = card?.querySelector<HTMLElement>('[data-rf-title]');
+    const flight = titleFrom && titleRef.current ? planTitleFlight(titleFrom, titleRef.current) : null;
     const dx = cr.left - pr.left;
     const dy = cr.top - pr.top;
     const clipFrom = `inset(0px ${Math.max(0, pr.width - cr.width)}px ${Math.max(0, pr.height - cr.height)}px 0px round 20px)`;
     const opts = { duration: OPEN_MS, easing: EASE };
-    page.animate(
+    const moving = page.animate(
       [{ transform: `translate(${dx}px, ${dy}px)`, clipPath: clipFrom }, { transform: 'none', clipPath: 'inset(0px 0px 0px 0px round 0px)' }],
       opts,
     );
@@ -255,16 +332,22 @@ export function ReviewFlow({ items, error, capped, onDone, onAnswered, onRetract
       { ...opts, fill: 'none' },
     );
     headRef.current?.animate([{ opacity: 0 }, { opacity: 0, offset: 0.6 }, { opacity: 1 }], opts);
-    stageRef.current?.animate([{ opacity: 0 }, { opacity: 0, offset: 0.35 }, { opacity: 1 }], opts);
+    stageRef.current?.animate([{ opacity: 0 }, { opacity: 0, offset: 0.15 }, { opacity: 1, offset: 0.55 }, { opacity: 1 }], opts);
+    // The card's picture grows into the hero's place as the hero shows through it.
+    const pic = coverGhost(cover, cr);
+    pic.animate([
+      { transform: 'none', borderRadius: '20px', opacity: 1 },
+      { opacity: 1, offset: 0.2 },
+      { opacity: 0, offset: 0.6 },
+      { transform: heroTransform(cr, pr, headH), borderRadius: '0px', opacity: 0 },
+    ], { ...opts, fill: 'forwards' }).finished.catch(() => {}).finally(() => pic.remove());
     rootRef.current?.animate(
       [{ transform: 'none', filter: 'none' }, { transform: 'scale(0.96)', filter: 'brightness(0.94)' }],
       { ...opts, fill: 'forwards' },
     );
     // The card's title travels into the header.
-    const from = card?.querySelector<HTMLElement>('[data-rf-title]');
-    const to = titleRef.current;
-    if (from && to) flyTitle(from, to, OPEN_MS);
-    later(done, OPEN_MS);
+    flight?.(OPEN_MS);
+    whenDone(moving, done, OPEN_MS);
   }, [open && open.index, open && open.phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Collapse: page → card ── */
@@ -277,6 +360,9 @@ export function ReviewFlow({ items, error, capped, onDone, onAnswered, onRetract
     const cover = card?.querySelector<HTMLElement>('[data-rf-cover]');
     const finish = () => {
       rootRef.current?.getAnimations().forEach((a) => a.cancel());
+      // Gone once the card under them is drawn again, not a frame before.
+      const left = ghosts.current.splice(0);
+      requestAnimationFrame(() => requestAnimationFrame(() => left.forEach((g) => g.remove())));
       setOpen(null);
       setSheet('ask');
       busy.current = false;
@@ -286,6 +372,8 @@ export function ReviewFlow({ items, error, capped, onDone, onAnswered, onRetract
     // Measure against the feed at rest, not as it is drawn receded.
     rootRef.current?.getAnimations().forEach((a) => a.cancel());
     const cr = cover.getBoundingClientRect();
+    const titleTo = card?.querySelector<HTMLElement>('[data-rf-title]');
+    const flight = titleRef.current && titleTo ? planTitleFlight(titleRef.current, titleTo) : null;
     rootRef.current?.animate(
       [{ transform: 'scale(0.96)', filter: 'brightness(0.94)' }, { transform: 'none', filter: 'none' }],
       { duration: OPEN_MS * 0.85, easing: EASE },
@@ -293,7 +381,7 @@ export function ReviewFlow({ items, error, capped, onDone, onAnswered, onRetract
     const pr = page.getBoundingClientRect();
     const headH = headRef.current ? headRef.current.getBoundingClientRect().height : 56;
     const opts = { duration: OPEN_MS * 0.85, easing: EASE, fill: 'forwards' as FillMode };
-    page.animate(
+    const moving = page.animate(
       [{ transform: 'none', clipPath: 'inset(0px 0px 0px 0px round 0px)' }, {
         transform: `translate(${cr.left - pr.left}px, ${cr.top - pr.top}px)`,
         clipPath: `inset(0px ${Math.max(0, pr.width - cr.width)}px ${Math.max(0, pr.height - cr.height)}px 0px round 20px)`,
@@ -306,10 +394,17 @@ export function ReviewFlow({ items, error, capped, onDone, onAnswered, onRetract
     );
     headRef.current?.animate([{ opacity: 1 }, { opacity: 0, offset: 0.3 }, { opacity: 0 }], opts);
     stageRef.current?.animate([{ opacity: 1 }, { opacity: 0, offset: 0.5 }, { opacity: 0 }], opts);
-    const from = titleRef.current;
-    const to = card?.querySelector<HTMLElement>('[data-rf-title]');
-    if (from && to) flyTitle(from, to, OPEN_MS * 0.85);
-    later(finish, OPEN_MS * 0.85);
+    // The hero hands over to the card's own picture, which lands exactly on the card.
+    const pic = coverGhost(cover, cr);
+    pic.animate([
+      { transform: heroTransform(cr, pr, headH), borderRadius: '0px', opacity: 0 },
+      { opacity: 0, offset: 0.2 },
+      { opacity: 1, offset: 0.6 },
+      { transform: 'none', borderRadius: '20px', opacity: 1 },
+    ], opts);
+    ghosts.current.push(pic);
+    flight?.(OPEN_MS * 0.85);
+    whenDone(moving, finish, OPEN_MS * 0.85);
   }, [open, list]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Push: this change → the next ── */
@@ -339,10 +434,10 @@ export function ReviewFlow({ items, error, capped, onDone, onAnswered, onRetract
     const arriving = stage.querySelector<HTMLElement>('[data-rf-arriving]');
     const gone = stage.querySelector<HTMLElement>('[data-rf-leaving]');
     const opts = { duration: PUSH_MS, easing: EASE };
-    arriving?.animate([{ transform: `translateX(${w}px)`, boxShadow: '-12px 0 32px rgba(0,0,0,.4)' }, { transform: 'none', boxShadow: '-12px 0 32px rgba(0,0,0,0)' }], opts);
+    const sliding = arriving?.animate([{ transform: `translateX(${w}px)`, boxShadow: '-12px 0 32px rgba(0,0,0,.4)' }, { transform: 'none', boxShadow: '-12px 0 32px rgba(0,0,0,0)' }], opts);
     gone?.animate([{ transform: 'none', filter: 'none' }, { transform: `translateX(${-0.3 * w}px)`, filter: 'brightness(0.55)' }], { ...opts, fill: 'forwards' });
     titleRef.current?.animate([{ opacity: 0, transform: 'translateX(32px)' }, { opacity: 1, transform: 'none' }], { duration: PUSH_MS * 0.8, easing: EASE });
-    later(settle, PUSH_MS);
+    whenDone(sliding, settle, PUSH_MS);
   }, [open && open.index, open && open.phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Votes ── */
@@ -491,7 +586,7 @@ export function ReviewFlow({ items, error, capped, onDone, onAnswered, onRetract
 <CheckIcon width={24} height={24} strokeWidth="2.2" />
           </span>
           <p className="rf-end-line">{t('communities:review.end.line')}</p>
-          <button type="button" className="rf-end-btn" onClick={onDone}>{t('communities:reel.done')}</button>
+          <button type="button" className="rf-end-btn" onClick={onDone}>{doneLabel || t('communities:reel.done')}</button>
         </div>
         {capped ? <p className="rf-capped" data-needs-capped="">{t('communities:reel.capped', { count: list.length })}</p> : null}
       </div>
@@ -500,33 +595,131 @@ export function ReviewFlow({ items, error, capped, onDone, onAnswered, onRetract
   );
 }
 
+/** A fixed copy of a card's picture, laid exactly over the card. */
+function coverGhost(cover: HTMLElement, at: DOMRect): HTMLElement {
+  const g = cover.cloneNode(true) as HTMLElement;
+  g.removeAttribute('data-rf-cover');
+  g.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+  g.classList.add('rf-ghost-cover');
+  g.setAttribute('aria-hidden', 'true');
+  Object.assign(g.style, { left: `${at.left}px`, top: `${at.top}px`, width: `${at.width}px`, height: `${at.height}px` });
+  document.body.appendChild(g);
+  return g;
+}
+
+/** Where the card's picture lands: the page's full width, under the header. */
+function heroTransform(card: DOMRect, page: DOMRect, headH: number): string {
+  const k = page.width / card.width;
+  return `translate(${page.left - card.left}px, ${page.top + headH - card.top}px) scale(${k})`;
+}
+
 /**
- * The card's title travelling to the header (and back): a copy flies from
- * one to the other while both originals hide, so the words never jump.
+ * Where an element's title text actually sits: its first line's box, as
+ * wrapped (the card's two lines) or as centred and cut short (the header).
  */
-function flyTitle(from: HTMLElement, to: HTMLElement, ms: number): void {
-  const a = from.getBoundingClientRect();
-  const b = to.getBoundingClientRect();
-  if (!a.width || !b.width) return;
-  const cs = getComputedStyle(to);
-  const k = parseFloat(getComputedStyle(from).fontSize) / parseFloat(cs.fontSize || '16');
-  const fly = document.createElement('span');
-  fly.className = 'rf-fly';
-  fly.textContent = to.textContent || from.textContent || '';
-  Object.assign(fly.style, {
-    left: `${b.left}px`, top: `${b.top}px`,
-    font: cs.font, color: getComputedStyle(from).color,
+function textBox(el: HTMLElement): { left: number; top: number; width: number; height: number } {
+  const box = el.getBoundingClientRect();
+  const cs = getComputedStyle(el);
+  const padL = parseFloat(cs.paddingLeft) || 0;
+  const padR = parseFloat(cs.paddingRight) || 0;
+  const inner = box.width - padL - padR;
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const first = range.getClientRects()[0];
+  const width = Math.min(inner, range.getBoundingClientRect().width || inner);
+  const centred = cs.textAlign === 'center' || getComputedStyle(el.parentElement || el).textAlign === 'center';
+  const left = centred ? box.left + padL + (inner - width) / 2 : box.left + padL;
+  return { left, top: first ? first.top : box.top, width: cs.whiteSpace === 'nowrap' ? width : inner, height: box.height };
+}
+
+/** A fixed copy of an element's title, drawn in its own type and wrapping. */
+function titleGhost(el: HTMLElement, at: { left: number; top: number; width: number }): HTMLElement {
+  const cs = getComputedStyle(el);
+  const g = document.createElement('span');
+  g.className = 'rf-fly';
+  g.textContent = el.textContent || '';
+  Object.assign(g.style, {
+    left: `${at.left}px`, top: `${at.top}px`, width: `${Math.ceil(at.width) + 1}px`,
+    font: cs.font, letterSpacing: cs.letterSpacing, color: cs.color,
+    whiteSpace: cs.whiteSpace === 'nowrap' ? 'nowrap' : 'normal',
+    textOverflow: cs.whiteSpace === 'nowrap' ? 'ellipsis' : 'clip',
+    WebkitLineClamp: cs.webkitLineClamp || 'none',
+    display: cs.whiteSpace === 'nowrap' ? 'block' : '-webkit-box',
   });
-  document.body.appendChild(fly);
-  from.style.visibility = 'hidden';
-  to.style.visibility = 'hidden';
-  const pad = parseFloat(getComputedStyle(from).paddingLeft) || 0;
-  fly.animate(
-    [{ transform: `translate(${a.left + pad - b.left}px, ${a.top - b.top}px) scale(${k})` }, { transform: 'none' }],
-    { duration: ms, easing: EASE, fill: 'forwards' },
-  ).finished.catch(() => {}).finally(() => {
-    fly.remove();
-    from.style.visibility = '';
-    to.style.visibility = '';
-  });
+  return g;
+}
+
+/**
+ * The title travelling from the card to the header (and back). Both ends are
+ * measured before anything moves; the returned function flies it. Two copies
+ * take one path: the departing one in its own wrapping fades out as the
+ * arriving one fades in, so the words never reflow or jump at either end.
+ */
+function planTitleFlight(from: HTMLElement, to: HTMLElement): ((ms: number) => void) | null {
+  const a = textBox(from);
+  const b = textBox(to);
+  if (!a.width || !b.width) return null;
+  const k = parseFloat(getComputedStyle(to).fontSize) / parseFloat(getComputedStyle(from).fontSize || '16');
+  return (ms) => {
+    const leaving = titleGhost(from, a);
+    const arriving = titleGhost(to, b);
+    document.body.append(leaving, arriving);
+    from.style.visibility = 'hidden';
+    to.style.visibility = 'hidden';
+    const dx = b.left - a.left;
+    const dy = b.top - a.top;
+    const opts = { duration: ms, easing: EASE, fill: 'forwards' as FillMode };
+    leaving.animate([
+      { transform: 'none', opacity: 1 },
+      { opacity: 0, offset: 0.3 },
+      { transform: `translate(${dx}px, ${dy}px) scale(${k})`, opacity: 0 },
+    ], opts);
+    arriving.animate([
+      { transform: `translate(${-dx}px, ${-dy}px) scale(${1 / k})`, opacity: 0 },
+      { opacity: 0, offset: 0.12 },
+      { opacity: 1, offset: 0.4 },
+      { transform: 'none', opacity: 1 },
+    ], opts).finished.catch(() => {}).finally(() => {
+      leaving.remove();
+      arriving.remove();
+      from.style.visibility = '';
+      to.style.visibility = '';
+    });
+  };
+}
+
+/**
+ * A project's own Needs you, drawn by the same flow: the cross-project feed
+ * (GET /api/workshop/needs-feed) narrowed to this project, so the two never
+ * draw a change differently. Read in an effect, as every island does.
+ */
+export function ProjectReviewFlow({ slug, onDone }: { slug: string; onDone: () => void }) {
+  const t = useMessages('communities');
+  const [items, setItems] = useState<NeedsFeedItem[] | null>(null);
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    let live = true;
+    let demo = '';
+    try { demo = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : ''; } catch { /* no query */ }
+    fetch(`/api/workshop/needs-feed${demo}`, { cache: 'no-cache', credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((data) => {
+        if (!live) return;
+        const all: NeedsFeedItem[] = Array.isArray(data?.items) ? data.items : [];
+        setItems(all.filter((it) => it.app && it.app.slug === slug));
+      })
+      .catch(() => { if (live) setError(true); });
+    return () => { live = false; };
+  }, [slug]);
+  return (
+    <div className="rf-project" data-rf-project={slug}>
+      <ReviewFlow
+        items={items}
+        error={error}
+        capped={false}
+        onDone={onDone}
+        doneLabel={t('communities:review.end.backToProject')}
+      />
+    </div>
+  );
 }

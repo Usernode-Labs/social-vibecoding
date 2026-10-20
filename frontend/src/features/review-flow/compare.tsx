@@ -9,7 +9,8 @@
  *   iOS does (rubber band); near the edges of what changed it settles softly
  *   (soft stops); a quick flick goes all the way. While it moves, the handle
  *   fades and the line thins, so the picture has the room.
- * - The pill at the top centre names what most of the window shows (it
+ * - The pill at the bottom centre (where a thumb on it hides the least of
+ *   the shot) names what most of the window shows (it
  *   changes at 60/40, not 50/50, so it never flickers). Its dark part is a
  *   little map of the seam. Tap it to flip the whole view at once; only the
  *   handle travels, a moment later, so tapping again and again to compare
@@ -26,7 +27,7 @@ import { ChevronDoubleLeftIcon, ChevronDoubleRightIcon, GripBarsIcon } from '@/c
 
 import { useMessages } from '../../lib/i18n/react';
 import {
-  focusBox, magnet, placeBox, rubberBand, seamStops,
+  densityOf, focusBox, magnet, placeBox, rubberBand, seamStops,
   type Placement, type ReviewScreen,
 } from './model';
 
@@ -76,7 +77,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
   const canCompare = !!before && !!after;
 
   const place: Placement | null = screen && W > 0
-    ? placeBox(screen, focusBox(screen, ['before', 'after'], 16), { w: W, h: height }, 1.6)
+    ? placeBox(screen, focusBox(screen, ['before', 'after'], 16), { w: W, h: height }, densityOf(screen))
     : null;
   const stops = screen && place ? seamStops(screen, place, W) : [];
 

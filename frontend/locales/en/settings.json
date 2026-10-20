@@ -1452,7 +1452,7 @@
     "description": "Label of a switch in Settings, Experimental. When on, the Needs you list on the Communities tab becomes a calm list of changes, each opening into its own page with a before and after slider and a vote sheet."
   },
   "experimental.reviewFlow.description": {
-    "text": "Try a calmer way through what's waiting on you: one change at a time, with its before and after side by side. Kept on this device.",
+    "text": "Try a calmer way through what's waiting on you: one change at a time, with its before and after side by side. On for your account on every device.",
     "description": "Explanation under the New Needs you switch in Settings, Experimental."
   },
   "experimental.localAgents.title": {
