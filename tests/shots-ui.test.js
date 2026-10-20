@@ -853,6 +853,22 @@ test('a side with no dark shot keeps its light one in both modes', () => {
   assert.match(html, /shots-theme-flip/);
 });
 
+test('the card viewer carries Expand in each bar, opening it as a popover over the page (#5691)', () => {
+  const html = AppView.shotsHtml(shots(), { sessionId: 42 });
+  assert.match(html, /id="shots-42-viewer" popover="auto"/, 'the popover is keyed like the viewer it opens');
+  const bars = html.match(/<div class="shots-bar">[\s\S]*?<\/div>/g) || [];
+  assert.ok(bars.length > 0);
+  for (const bar of bars) {
+    assert.match(bar, /<button type="button" class="shots-expand" popovertarget="shots-42-viewer" popovertargetaction="toggle" title="Expand">/);
+  }
+  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
+  assert.match(css, /\.shots-expand \{ display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 999px; cursor: pointer;\n  margin-left: auto;/,
+    'the same 30px round grey disc as the arrows, at the bar\'s end');
+  assert.match(css, /\.shots-theme-flip ~ \.shots-expand \{ margin-left: 0; \}/, 'beside the mode switch when there is one');
+  assert.match(css, /\.shots-expand ~ \.shots-screen-nav \{ margin-left: 0; \}/, 'the stepping arrows stay beside it');
+  assert.match(css, /\.shots-expand:focus-visible \{ outline: 2px solid var\(--accent, #2563eb\); outline-offset: 2px; \}/);
+});
+
 test('the theme switch is CSS: the pick swaps the images and keeps the arrows beside the button', () => {
   const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
   const rule = (selector) => new RegExp(`\\n${selector.replace(/[.]/g, '\\.')} \\{([^}]*)\\}`).exec(css)?.[1] || '';

@@ -35,13 +35,13 @@ test('the shared viewer, with the card\'s options, is the card\'s markup: two si
   assert.equal(picks.length, 2);
   assert.match(picks[1], /shots-side-after" name="shots-7-side" id="shots-7-side-after" aria-label="Show the screen after the change" checked>$/);
   assert.doesNotMatch(html, /shots-seg-both|shots-zoom-pick|shots-side-auto/);
-  assert.match(html, /^<div class="shots-viewer">/);
+  assert.match(html, /^<div class="shots-viewer" id="shots-7-viewer" popover="auto">/);
   assert.equal(AppView._shotsViewerHtml({ key: 7, screens: [] }), '', 'no screens, no viewer');
 });
 
 test('a spec\'s viewer adds side by side, starts on auto, and offers close-up only where a screen has one', () => {
   const html = AppView._shotsViewerHtml({ key: 'spec-dc-9-2-0', screens: screens(), sideBySide: true, autoSide: true, zoom: true, className: 'shots-viewer-spec' });
-  assert.match(html, /^<div class="shots-viewer shots-viewer-spec">/);
+  assert.match(html, /^<div class="shots-viewer shots-viewer-spec" id="shots-spec-dc-9-2-0-viewer" popover="auto">/);
   const picks = html.match(/<input type="radio" class="shots-side-pick[^>]*>/g) || [];
   assert.deepEqual(picks.map((p) => /shots-side-(before|after|both|auto)/.exec(p)[1]), ['before', 'after', 'both', 'auto']);
   assert.doesNotMatch(picks[1], /checked/, 'After is not the start on a spec');
@@ -60,6 +60,34 @@ test('a spec\'s viewer adds side by side, starts on auto, and offers close-up on
     assert.match(bar, /<span class="shots-screen-nav"[\s\S]*<\/span><\/div>$/);
   }
   assert.doesNotMatch(html, /<script|onclick|onchange/, 'still radios and labels');
+});
+
+test('every bar carries Expand, which opens the viewer as a popover over the page (#5691)', () => {
+  const html = AppView._shotsViewerHtml({ key: 'spec-dc-9-2-0', screens: screens(), sideBySide: true, autoSide: true, zoom: true, className: 'shots-viewer-spec' });
+  const buttons = html.match(/<button type="button" class="shots-expand"[^>]*>/g) || [];
+  assert.equal(buttons.length, 3, 'one per screen, as the bar\'s other controls are');
+  for (const button of buttons) {
+    assert.match(button, /popovertarget="shots-spec-dc-9-2-0-viewer" popovertargetaction="toggle"/);
+    assert.match(button, /title="Expand"/);
+  }
+  // Both words are in the button; CSS shows the one that matches the state.
+  assert.match(html, /<span class="shots-expand-out">[\s\S]*?shots-expand-word">Expand<\/span><\/span>/);
+  assert.match(html, /<span class="shots-expand-in">[\s\S]*?shots-expand-word">Close<\/span><\/span>/);
+  // It sits at the bar's end, before the screen arrows.
+  for (const bar of html.match(/<div class="shots-bar">[\s\S]*?<\/div>/g)) {
+    assert.ok(bar.indexOf('shots-expand') < bar.indexOf('shots-screen-nav'));
+  }
+  const css = read('public/css/app.css');
+  assert.match(css, /\.shots-viewer\[popover\] \{ display: block; position: relative; inset: auto; margin: 0; padding: 0; border: 0;/,
+    'closed, the viewer reads as the plain viewer it always was');
+  assert.match(css, /\.shots-viewer:popover-open \{ position: fixed; inset: 0; margin: auto; padding: 0; border: 0;/,
+    'open, it is drawn in the top layer at nearly the window\'s size');
+  assert.match(css, /\.shots-viewer::backdrop \{ background: rgba\(0, 0, 0, 0\.55\); \}/);
+  assert.match(css, /\.dark \.shots-viewer:popover-open \{ background: #1c1c1e; \}/);
+  assert.match(css, /\.shots-viewer:popover-open \.shots-expand-out \{ display: none; \}/);
+  assert.match(css, /\.shots-viewer:popover-open \.shots-expand-in \{ display: inline; \}/);
+  assert.match(css, /@supports not selector\(:popover-open\) \{\s*\.shots-expand \{ display: none; \}/,
+    'a browser without popovers shows no button');
 });
 
 test('the viewer CSS: the card\'s rules are untouched; side by side, auto and zoom are added beside them', () => {

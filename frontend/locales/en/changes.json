@@ -5999,6 +5999,14 @@
     "text": "Whole screen",
     "description": "Button in the before/after viewer, and its tooltip: shows the entire screenshot instead of the close-up."
   },
+  "shots.viewer.expand": {
+    "text": "Expand",
+    "description": "Tooltip of the small round button at the end of the before/after viewer's toolbar, and the spoken name of the button before it is pressed: opens the screenshots over the page at nearly the size of the window."
+  },
+  "shots.viewer.collapse": {
+    "text": "Close",
+    "description": "Spoken name of the small round button at the end of the before/after viewer's toolbar once the screenshots are open over the page: closes the enlarged view and returns to the page."
+  },
   "shots.viewer.before": {
     "text": "Before",
     "description": "Button in the before/after viewer on a proposal: shows the screenshot taken before the change."

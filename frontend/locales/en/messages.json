@@ -3339,6 +3339,10 @@
     "text": "Close thread",
     "description": "Accessible name and tooltip of the X button on the thread side pane: closes the thread and returns to the conversation."
   },
+  "replies.resize": {
+    "text": "Resize the thread",
+    "description": "Spoken name of the thin divider between a chat and its open thread on a computer: dragging it left makes the thread and its preview wider, and dragging it right gives the chat more room."
+  },
   "replies.count_one": {
     "text": "{{count}} reply",
     "description": "Divider under the first message in the thread side pane: how many replies the thread has. {{count}} is that number."

@@ -2057,6 +2057,28 @@ form.agent-session-composer:focus-within {
 }
 .messages-reply-host { display: flex; flex-direction: column; }
 .messages-reply-host > * { flex: 1 1 auto; min-height: 0; }
+/* #5691: the divider on the thread's left edge, in Messages only. On a phone
+   the thread covers the chat, so there is nothing to split and it stays out
+   of the way. The resting state is a hairline in the gap the chat's
+   margin-right leaves; hover and focus draw it in the accent. */
+.messages-reply-resizer { display: none; }
+@media (min-width: 768px) {
+  .messages-reply-resizer {
+    display: block;
+    position: absolute;
+    left: -7px;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    border-radius: 3px;
+    cursor: col-resize;
+    touch-action: none;
+    background: var(--app-sheet-line);
+    z-index: 1;
+  }
+  .messages-reply-resizer:hover,
+  .messages-reply-resizer:focus-visible { background: var(--accent); outline: none; }
+}
 @media (max-width: 767px) {
   .messages-layout.messages-has-reply-thread > .messages-thread-pane { display: none; }
   .messages-reply-pane { flex: 1 1 auto; width: 100%; margin-top: 12px; }
@@ -16050,6 +16072,39 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .shots-viewer:has(.shots-theme-pick:focus-visible) .shots-theme-flip { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
 .shots-viewer:has(.shots-theme-dark:checked) .shots-theme-to-dark,
 .shots-viewer:has(.shots-theme-light:checked) .shots-theme-to-light { display: none; }
+/* Expand (#5691): the viewer is a popover, so opening it draws it in the top
+   layer, over the page, instead of inside the narrow pane it sits in (a
+   request's thread, whose backdrop-filter would trap a fixed box). Closed,
+   these rules undo the user agent's popover box so it reads as the plain
+   viewer it always was. */
+.shots-viewer[popover] { display: block; position: relative; inset: auto; margin: 0; padding: 0; border: 0;
+  width: auto; height: auto; overflow: hidden; color: inherit; background: transparent; }
+.shots-viewer:popover-open { position: fixed; inset: 0; margin: auto; padding: 0; border: 0; color: inherit;
+  width: min(calc(100vw - 48px), calc((100vh - 200px) * 1.6)); max-height: calc(100vh - 48px); overflow: auto;
+  background: #fff; }
+@supports (height: 100dvh) {
+  .shots-viewer:popover-open { width: min(calc(100vw - 48px), calc((100dvh - 200px) * 1.6)); max-height: calc(100dvh - 48px); }
+}
+.dark .shots-viewer:popover-open { background: #1c1c1e; }
+.shots-viewer::backdrop { background: rgba(0, 0, 0, 0.55); }
+/* The Expand disc: the same 30px round grey button as the screen arrows and
+   the light/dark switch, at the bar's end beside them. */
+.shots-expand { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 999px; cursor: pointer;
+  margin-left: auto; color: #3f3f46; background: rgba(24, 24, 27, 0.06); }
+.shots-expand:hover { background: rgba(24, 24, 27, 0.12); }
+.dark .shots-expand { color: #e4e4e7; background: rgba(255, 255, 255, 0.08); }
+.dark .shots-expand:hover { background: rgba(255, 255, 255, 0.14); }
+.shots-expand:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
+.shots-expand svg { width: 16px; height: 16px; flex: none; }
+.shots-theme-flip ~ .shots-expand { margin-left: 0; }
+.shots-expand ~ .shots-screen-nav { margin-left: 0; }
+.shots-expand-in { display: none; }
+.shots-viewer:popover-open .shots-expand-out { display: none; }
+.shots-viewer:popover-open .shots-expand-in { display: inline; }
+.shots-expand-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@supports not selector(:popover-open) {
+  .shots-expand { display: none; }
+}
 /* Dark pick: a side that has a dark shot shows it instead of its light one;
    one that has not keeps its light shot in both modes. */
 .shots-viewer:has(.shots-theme-dark:checked) .shots-flip-side:has(.shots-img-dark) .shots-img-light,
