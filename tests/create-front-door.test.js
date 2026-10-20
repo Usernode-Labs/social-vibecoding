@@ -407,6 +407,6 @@ test('a stopped setup is not "Ready to try", and a Just me sketch is shared with
   assert.match(route, /solo: options\.audience === 'solo',\s+\}\)\.catch\(\(err\) => log\.warn\('apps', 'Sketch not started'/);
   const service = read('src/services/app-sketch.js');
   assert.match(service, /if \(points\.length < 2 && !solo\) points = distinctPoints\(\[\.\.\.points, SHARED_POINT\], tagline\);/);
-  assert.match(service, /card = parseCardReply\(reply\.text, \{ name, brief, today, solo \}\);/);
-  assert.match(service, /const work = generate\(pool, \{ app, user, brief, audience, solo, timeZone, deps \}\)/);
+  assert.match(service, /card = parseCardReply\(reply\.text, \{ name, brief, today, solo, fallbackTagline \}\);/);
+  assert.match(service, /const work = generate\(pool, \{ app, user, brief, audience, solo, timeZone, fallbackTagline, deps \}\)/);
 });

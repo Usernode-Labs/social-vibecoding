@@ -1500,6 +1500,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         await require('../services/app-sketch').startSketch(pool, {
           app: appRow, user: req.user, brief: req.body.brief,
           timeZone: typeof req.body.timeZone === 'string' ? req.body.timeZone.slice(0, 64) : null,
+          // The make screen's line for a game or Your own choice: the card's
+          // tagline, and so the project's description, when the model gives
+          // none. The model's, from their own words, otherwise.
+          fallbackTagline: typeof req.body.taglineFallback === 'string' ? req.body.taglineFallback.slice(0, 200) : null,
           // Just me, from More options: nobody to share it with.
           solo: options.audience === 'solo',
         }).catch((err) => log.warn('apps', 'Sketch not started', { appId: appRow.id, err: err.message }));

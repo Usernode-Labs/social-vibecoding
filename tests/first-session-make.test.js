@@ -492,9 +492,12 @@ test('a template fills in the description and the name; words of their own let g
   // A tile is marked from `picked` alone, so it is unmarked with it.
   assert.match(src, /const on = picked === example;/);
   assert.match(src, /aria-pressed=\{on\}/);
-  // Make it sends the template's description only while it is still picked.
+  // Make it sends the template's description only while it is still picked:
+  // a ready-made app's as its description, a game's or Your own words' as
+  // the card's fallback tagline (the model writes the description from what
+  // they typed; tests/app-sketch.test.js).
   assert.match(src, /const example = template;/);
-  assert.match(src, /\.\.\.\(example \? \{ description: descriptionOf\(example, choice\) \} : \{\}\),/);
+  assert.match(src, /\.\.\.\(example \? \{ \[ready \? 'description' : 'taglineFallback'\]: descriptionOf\(example, choice\) \} : \{\}\),/);
   // The name field is not cleared by letting go of the template.
   const onChange = src.slice(src.indexOf('const next = e.target.value;'), src.indexOf("placeholder={t('onboarding:firstSession.make.briefPlaceholder')}"));
   assert.doesNotMatch(onChange, /setName\(/);

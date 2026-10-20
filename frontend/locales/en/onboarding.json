@@ -320,8 +320,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Restaurants\" option of the tier list idea is picked. A title; the maker can change it."
   },
   "firstSession.template.tier.restaurants.description": {
-    "text": "A restaurant tier list",
-    "description": "One-line description saved with a new project made from the \"Restaurants\" option of the tier list idea, shown under the project's name. At most 90 characters."
+    "text": "The best places to eat, ranked by the whole group",
+    "description": "One-line tagline saved as the description of a new project made from the \"Restaurants\" option of the tier list idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.tier.hikes.label": {
     "text": "Hikes",
@@ -336,8 +336,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Hikes\" option of the tier list idea is picked. A title; the maker can change it."
   },
   "firstSession.template.tier.hikes.description": {
-    "text": "A hiking tier list",
-    "description": "One-line description saved with a new project made from the \"Hikes\" option of the tier list idea, shown under the project's name. At most 90 characters."
+    "text": "Our favorite trails, sorted into tiers together",
+    "description": "One-line tagline saved as the description of a new project made from the \"Hikes\" option of the tier list idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.tier.cities.label": {
     "text": "Cities",
@@ -352,8 +352,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Cities\" option of the tier list idea is picked. A title; the maker can change it."
   },
   "firstSession.template.tier.cities.description": {
-    "text": "A city tier list",
-    "description": "One-line description saved with a new project made from the \"Cities\" option of the tier list idea, shown under the project's name. At most 90 characters."
+    "text": "Every city we love, ranked by the group",
+    "description": "One-line tagline saved as the description of a new project made from the \"Cities\" option of the tier list idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.tier.games.label": {
     "text": "Games",
@@ -368,8 +368,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Games\" option of the tier list idea is picked. A title; the maker can change it."
   },
   "firstSession.template.tier.games.description": {
-    "text": "A game tier list",
-    "description": "One-line description saved with a new project made from the \"Games\" option of the tier list idea, shown under the project's name. At most 90 characters."
+    "text": "The games we play, ranked by everyone",
+    "description": "One-line tagline saved as the description of a new project made from the \"Games\" option of the tier list idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.tier.own.sentence": {
     "text": "A tier list for our favorite <0>{{words}}</0>. Anyone can add items, everyone sorts them, and we can see where they land.",
@@ -384,8 +384,8 @@
     "description": "Name suggested for a new project made from the tier list idea with the maker's own words. {{words}} is what they typed in the sentence's blank, with each word capitalized, for example \"Taco Spots\"."
   },
   "firstSession.template.tier.own.description": {
-    "text": "A tier list",
-    "description": "One-line description saved with a new project made from the tier list idea with the maker's own words, shown under the project's name. At most 90 characters."
+    "text": "Anyone adds one, everyone ranks it",
+    "description": "One-line tagline saved as the description of a new project made from the tier list idea with the maker's own words, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.game.title": {
     "text": "A game",
@@ -420,8 +420,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Board game\" option of the game idea is picked. A title; the maker can change it."
   },
   "firstSession.template.game.board.description": {
-    "text": "A board game",
-    "description": "One-line description saved with a new project made from the \"Board game\" option of the game idea, shown under the project's name. At most 90 characters."
+    "text": "A dice race: ladders take you up, slides take you back",
+    "description": "One-line tagline saved as the description of a new project made from the \"Board game\" option of the game idea, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.game.board.example": {
     "text": "For example, we roll dice and race each other around the board",
@@ -440,8 +440,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Space shooter\" option of the game idea is picked. A title; the maker can change it."
   },
   "firstSession.template.game.shooter.description": {
-    "text": "An arcade space shooter",
-    "description": "One-line description saved with a new project made from the \"Space shooter\" option of the game idea, shown under the project's name. At most 90 characters."
+    "text": "Weave through storms of sparks",
+    "description": "One-line tagline saved as the description of a new project made from the \"Space shooter\" option of the game idea, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.game.shooter.example": {
     "text": "For example, we fly together through storms of sparks and collect stardust",
@@ -460,8 +460,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"3D blocks\" option of the game idea is picked. A title; the maker can change it."
   },
   "firstSession.template.game.blocks.description": {
-    "text": "A 3D block game",
-    "description": "One-line description saved with a new project made from the \"3D blocks\" option of the game idea, shown under the project's name. At most 90 characters."
+    "text": "One block world everyone builds in together",
+    "description": "One-line tagline saved as the description of a new project made from the \"3D blocks\" option of the game idea, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.game.blocks.example": {
     "text": "For example, we build whatever we want together",
@@ -480,8 +480,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Trivia\" option of the game idea is picked. A title; the maker can change it."
   },
   "firstSession.template.game.trivia.description": {
-    "text": "A trivia game",
-    "description": "One-line description saved with a new project made from the \"Trivia\" option of the game idea, shown under the project's name. At most 90 characters."
+    "text": "A game show about each other: who knows the group best?",
+    "description": "One-line tagline saved as the description of a new project made from the \"Trivia\" option of the game idea, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.game.trivia.example": {
     "text": "For example, every question is about one of us",
@@ -508,8 +508,8 @@
     "description": "Placeholder in the box where the maker describes their own game, finishing the sentence that ends \"For the first version, …\". An example of an ending; no full stop."
   },
   "firstSession.template.game.own.description": {
-    "text": "A game",
-    "description": "One-line description saved with a new project made from the game idea in the maker's own words, shown under the project's name. At most 90 characters."
+    "text": "A game the group builds and plays together",
+    "description": "One-line tagline saved as the description of a new project made from the game idea in the maker's own words, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.organizer.title": {
     "text": "An organizer",
@@ -544,8 +544,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Groceries\" option of the organizer idea is picked. A title; the maker can change it."
   },
   "firstSession.template.organizer.groceries.description": {
-    "text": "A grocery list",
-    "description": "One-line description saved with a new project made from the \"Groceries\" option of the organizer idea, shown under the project's name. At most 90 characters."
+    "text": "A shared grocery list",
+    "description": "One-line tagline saved as the description of a new project made from the \"Groceries\" option of the organizer idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.organizer.chores.label": {
     "text": "Chores",
@@ -560,8 +560,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Chores\" option of the organizer idea is picked. A title; the maker can change it."
   },
   "firstSession.template.organizer.chores.description": {
-    "text": "A chore list",
-    "description": "One-line description saved with a new project made from the \"Chores\" option of the organizer idea, shown under the project's name. At most 90 characters."
+    "text": "Who does what chores and when",
+    "description": "One-line tagline saved as the description of a new project made from the \"Chores\" option of the organizer idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.organizer.library.label": {
     "text": "Shared library",
@@ -576,8 +576,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Shared library\" option of the organizer idea is picked. A title; the maker can change it."
   },
   "firstSession.template.organizer.library.description": {
-    "text": "A lending library",
-    "description": "One-line description saved with a new project made from the \"Shared library\" option of the organizer idea, shown under the project's name. At most 90 characters."
+    "text": "Things we lend each other, and who has them now",
+    "description": "One-line tagline saved as the description of a new project made from the \"Shared library\" option of the organizer idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.organizer.study.label": {
     "text": "Study timer",
@@ -592,8 +592,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Study timer\" option of the organizer idea is picked. A title; the maker can change it."
   },
   "firstSession.template.organizer.study.description": {
-    "text": "A study timer",
-    "description": "One-line description saved with a new project made from the \"Study timer\" option of the organizer idea, shown under the project's name. At most 90 characters."
+    "text": "25 minute focus sessions, and how many you did today",
+    "description": "One-line tagline saved as the description of a new project made from the \"Study timer\" option of the organizer idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.organizer.own.sentence": {
     "text": "An app to organize our <0>{{words}}</0>, so everyone can see what's where and who's on it.",
@@ -608,8 +608,8 @@
     "description": "Name suggested for a new project made from the organizer idea with the maker's own words. {{words}} is what they typed in the sentence's blank, with each word capitalized, for example \"Camping Gear\"."
   },
   "firstSession.template.organizer.own.description": {
-    "text": "An organizer",
-    "description": "One-line description saved with a new project made from the organizer idea with the maker's own words, shown under the project's name. At most 90 characters."
+    "text": "The group's things, kept in one place",
+    "description": "One-line tagline saved as the description of a new project made from the organizer idea with the maker's own words, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.poll.title": {
     "text": "A group poll",
@@ -644,8 +644,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Where to eat\" option of the a group poll idea is picked. A title; the maker can change it."
   },
   "firstSession.template.poll.dinner.description": {
-    "text": "A poll for where we eat",
-    "description": "One-line description saved with a new project made from the \"Where to eat\" option of the a group poll idea, shown under the project's name. At most 90 characters."
+    "text": "Vote on where we eat next",
+    "description": "One-line tagline saved as the description of a new project made from the \"Where to eat\" option of the a group poll idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.poll.spending.label": {
     "text": "What to spend on",
@@ -660,8 +660,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"What to spend on\" option of the a group poll idea is picked. A title; the maker can change it."
   },
   "firstSession.template.poll.spending.description": {
-    "text": "A poll for what we spend on",
-    "description": "One-line description saved with a new project made from the \"What to spend on\" option of the a group poll idea, shown under the project's name. At most 90 characters."
+    "text": "Decide together where we spend together",
+    "description": "One-line tagline saved as the description of a new project made from the \"What to spend on\" option of the a group poll idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.poll.movies.label": {
     "text": "Movie night",
@@ -676,8 +676,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Movie night\" option of the a group poll idea is picked. A title; the maker can change it."
   },
   "firstSession.template.poll.movies.description": {
-    "text": "A poll for what we watch",
-    "description": "One-line description saved with a new project made from the \"Movie night\" option of the a group poll idea, shown under the project's name. At most 90 characters."
+    "text": "Pick what movie we watch",
+    "description": "One-line tagline saved as the description of a new project made from the \"Movie night\" option of the a group poll idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.poll.own.sentence": {
     "text": "An app for us to decide <0>{{words}}</0>: anyone can suggest options, everyone votes, and we see what wins.",
@@ -688,8 +688,8 @@
     "description": "Placeholder in the blank of the a group poll sentence when the maker fills it in themselves: an example. It must read naturally in that blank."
   },
   "firstSession.template.poll.own.description": {
-    "text": "A group poll",
-    "description": "One-line description saved with a new project made from the a group poll idea in the maker's own words, shown under the project's name. At most 90 characters."
+    "text": "Add options, vote, and the group decides",
+    "description": "One-line tagline saved as the description of a new project made from the a group poll idea in the maker's own words, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.findtime.title": {
     "text": "A time to meet",
@@ -724,8 +724,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Book club\" option of the finding a time idea is picked. A title; the maker can change it."
   },
   "firstSession.template.findtime.bookclub.description": {
-    "text": "Finding a time for book club",
-    "description": "One-line description saved with a new project made from the \"Book club\" option of the finding a time idea, shown under the project's name. At most 90 characters."
+    "text": "Mark when you're free, and we find the best time",
+    "description": "One-line tagline saved as the description of a new project made from the \"Book club\" option of the finding a time idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.findtime.gamenight.label": {
     "text": "Game night",
@@ -740,8 +740,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Game night\" option of the finding a time idea is picked. A title; the maker can change it."
   },
   "firstSession.template.findtime.gamenight.description": {
-    "text": "Finding a time for game night",
-    "description": "One-line description saved with a new project made from the \"Game night\" option of the finding a time idea, shown under the project's name. At most 90 characters."
+    "text": "Find the game night that works for everyone",
+    "description": "One-line tagline saved as the description of a new project made from the \"Game night\" option of the finding a time idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.findtime.trip.label": {
     "text": "Trip",
@@ -756,8 +756,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Trip\" option of the finding a time idea is picked. A title; the maker can change it."
   },
   "firstSession.template.findtime.trip.description": {
-    "text": "Finding dates for our trip",
-    "description": "One-line description saved with a new project made from the \"Trip\" option of the finding a time idea, shown under the project's name. At most 90 characters."
+    "text": "Find the dates the whole group is free",
+    "description": "One-line tagline saved as the description of a new project made from the \"Trip\" option of the finding a time idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.findtime.own.sentence": {
     "text": "An app to find a time for our <0>{{words}}</0>: everyone marks when they're free, and we see what works.",
@@ -772,8 +772,8 @@
     "description": "Name suggested for a new project made from the finding a time idea with the maker's own words. {{words}} is what they typed in the sentence's blank, with each word capitalized."
   },
   "firstSession.template.findtime.own.description": {
-    "text": "Finding a time that works",
-    "description": "One-line description saved with a new project made from the finding a time idea in the maker's own words, shown under the project's name. At most 90 characters."
+    "text": "Suggest a few times and see which works best",
+    "description": "One-line tagline saved as the description of a new project made from the finding a time idea in the maker's own words, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.signup.title": {
     "text": "A sign-up sheet",
@@ -808,8 +808,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Potluck\" option of the a sign-up sheet idea is picked. A title; the maker can change it."
   },
   "firstSession.template.signup.potluck.description": {
-    "text": "A potluck planner",
-    "description": "One-line description saved with a new project made from the \"Potluck\" option of the a sign-up sheet idea, shown under the project's name. At most 90 characters."
+    "text": "Who's bringing what, so the table isn't six salads",
+    "description": "One-line tagline saved as the description of a new project made from the \"Potluck\" option of the a sign-up sheet idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.signup.shifts.label": {
     "text": "Volunteer shifts",
@@ -824,8 +824,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Volunteer shifts\" option of the a sign-up sheet idea is picked. A title; the maker can change it."
   },
   "firstSession.template.signup.shifts.description": {
-    "text": "A volunteer sign-up sheet",
-    "description": "One-line description saved with a new project made from the \"Volunteer shifts\" option of the a sign-up sheet idea, shown under the project's name. At most 90 characters."
+    "text": "The shifts that need people, and who's on which",
+    "description": "One-line tagline saved as the description of a new project made from the \"Volunteer shifts\" option of the a sign-up sheet idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.signup.rsvp.label": {
     "text": "Who's coming",
@@ -840,8 +840,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Who's coming\" option of the a sign-up sheet idea is picked. A title; the maker can change it."
   },
   "firstSession.template.signup.rsvp.description": {
-    "text": "Who's coming",
-    "description": "One-line description saved with a new project made from the \"Who's coming\" option of the a sign-up sheet idea, shown under the project's name. At most 90 characters."
+    "text": "Who is going, is a maybe, or can't come",
+    "description": "One-line tagline saved as the description of a new project made from the \"Who's coming\" option of the a sign-up sheet idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.signup.own.sentence": {
     "text": "A sign-up sheet for our <0>{{words}}</0>: everyone takes a slot, and we see what's still needed.",
@@ -856,8 +856,8 @@
     "description": "Name suggested for a new project made from the a sign-up sheet idea with the maker's own words. {{words}} is what they typed in the sentence's blank, with each word capitalized."
   },
   "firstSession.template.signup.own.description": {
-    "text": "A sign-up sheet",
-    "description": "One-line description saved with a new project made from the a sign-up sheet idea in the maker's own words, shown under the project's name. At most 90 characters."
+    "text": "Times that need people, and who's taken each slot",
+    "description": "One-line tagline saved as the description of a new project made from the a sign-up sheet idea in the maker's own words, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.challenge.title": {
     "text": "A group challenge",
@@ -892,8 +892,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Miles\" option of the a group challenge idea is picked. A title; the maker can change it."
   },
   "firstSession.template.challenge.miles.description": {
-    "text": "A monthly miles challenge",
-    "description": "One-line description saved with a new project made from the \"Miles\" option of the a group challenge idea, shown under the project's name. At most 90 characters."
+    "text": "Log your miles each month and see who goes farthest",
+    "description": "One-line tagline saved as the description of a new project made from the \"Miles\" option of the a group challenge idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.challenge.steps.label": {
     "text": "Steps",
@@ -908,8 +908,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Steps\" option of the a group challenge idea is picked. A title; the maker can change it."
   },
   "firstSession.template.challenge.steps.description": {
-    "text": "A monthly steps challenge",
-    "description": "One-line description saved with a new project made from the \"Steps\" option of the a group challenge idea, shown under the project's name. At most 90 characters."
+    "text": "Count steps together and chase a group goal each month",
+    "description": "One-line tagline saved as the description of a new project made from the \"Steps\" option of the a group challenge idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.challenge.books.label": {
     "text": "Books",
@@ -924,8 +924,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Books\" option of the a group challenge idea is picked. A title; the maker can change it."
   },
   "firstSession.template.challenge.books.description": {
-    "text": "A monthly reading challenge",
-    "description": "One-line description saved with a new project made from the \"Books\" option of the a group challenge idea, shown under the project's name. At most 90 characters."
+    "text": "Who reads the most this month, and how much we've read as a group",
+    "description": "One-line tagline saved as the description of a new project made from the \"Books\" option of the a group challenge idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.challenge.own.sentence": {
     "text": "A challenge for our group: who logs the most <0>{{words}}</0> this month, with a leaderboard.",
@@ -940,8 +940,8 @@
     "description": "Name suggested for a new project made from the a group challenge idea with the maker's own words. {{words}} is what they typed in the sentence's blank, with each word capitalized."
   },
   "firstSession.template.challenge.own.description": {
-    "text": "A group challenge",
-    "description": "One-line description saved with a new project made from the a group challenge idea in the maker's own words, shown under the project's name. At most 90 characters."
+    "text": "A monthly goal the whole group chases together",
+    "description": "One-line tagline saved as the description of a new project made from the a group challenge idea in the maker's own words, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.make.somethingElse": {
     "text": "Something else…",
