@@ -326,11 +326,15 @@ function PacksCard({ packs, canWrite, say, onSaved }: { packs: Pack[]; canWrite:
 
 // ── New run ─────────────────────────────────────────────────────────────
 
-function LaunchForm({ home, say, onLaunched }: { home: Home; say: Say; onLaunched: (runId: number) => void }) {
+function LaunchForm({ home, say, onLaunched, initialModels = null }: {
+  home: Home; say: Say; onLaunched: (runId: number) => void;
+  // The arms a Configurations hand-off filled in ("config:<side>, config:<current>").
+  initialModels?: string | null;
+}) {
   const [refs, setRefs] = useState<string[]>(() => home.starter.map((s) => s.ref));
   const [ownName, setOwnName] = useState('');
   const [ownBrief, setOwnBrief] = useState('');
-  const [models, setModels] = useState('today');
+  const [models, setModels] = useState(initialModels || 'today');
   const [packIds, setPackIds] = useState<number[]>([0]);
   const [references, setReferences] = useState(0);
   const [cap, setCap] = useState('20');
@@ -419,7 +423,7 @@ function Card({ title, description, children, id }: { title: string; description
   );
 }
 
-export function StudioPage({ canWrite, say }: { canWrite: boolean; say: Say }) {
+export function StudioPage({ canWrite, say, initialModels = null }: { canWrite: boolean; say: Say; initialModels?: string | null }) {
   const [home, setHome] = useState<Home | null>(null);
   const [briefs, setBriefs] = useState<Brief[] | null>(null);
   const [watching, setWatching] = useState<number | null>(null);
@@ -486,7 +490,8 @@ export function StudioPage({ canWrite, say }: { canWrite: boolean; say: Say }) {
       </Card>
       {canWrite && home ? (
         <Card title="New studio run" description="It spends the platform's money, up to the cap">
-          <LaunchForm home={home} say={say} onLaunched={(id) => { load(); setWatching(id); }} />
+          <LaunchForm key={initialModels || 'today'} home={home} say={say} initialModels={initialModels}
+            onLaunched={(id) => { load(); setWatching(id); }} />
         </Card>
       ) : null}
     </div>

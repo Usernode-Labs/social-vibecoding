@@ -243,7 +243,10 @@ export function go(to: number, opts: GoOptions = {}): void {
   else communitiesDepth.slide(level);
 }
 
-/** The header's arrow: up one level. A widened search narrows first. */
+/**
+ * The header's arrow: up one level; on your communities, back to the page.
+ * A widened search narrows first.
+ */
 export function back(): void {
   const s = drawerStore.get();
   if (!s.on) return;
@@ -251,7 +254,12 @@ export function back(): void {
     setSearching(false);
     return;
   }
-  if (s.level > 0) go(s.level - 1);
+  // Level 0's is the way out: the page it came from, as the device's Back.
+  if (s.level === 0) {
+    go(2);
+    return;
+  }
+  go(s.level - 1);
 }
 
 /**
@@ -291,7 +299,10 @@ export function setSearching(searching: boolean): void {
 
 /** The strip is out of its rest (a pan), or back in it (a slide ended). */
 export function setMoving(moving: boolean): void {
-  if (drawerStore.get().moving !== moving) drawerStore.set({ moving });
+  const s = drawerStore.get();
+  if (s.moving !== moving) drawerStore.set({ moving });
+  // Settled: whatever a slide did, the header lands on the resting frame.
+  if (!moving && communitiesDepth.live() !== s.level) communitiesDepth.cut(s.level);
 }
 
 export function setPending(pending: Pending | null): void {

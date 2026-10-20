@@ -1155,7 +1155,24 @@ export function estimateNote(e: Pick<Estimate, 'byStage'>): string {
   return parts.join(' ');
 }
 
-type LaunchPreset = { suiteId?: number | null; stages?: Stage[] };
+type LaunchPreset = { suiteId?: number | null; stages?: Stage[]; models?: string[] };
+
+/**
+ * A launch another tab of the Homeroom bot asks the Benchmark for: the
+ * Configurations' "Compare on the benchmark", which opens the Studio's
+ * launch with a version and the current one as its arms (a first version's)
+ * or the launcher on the stages two versions differ at, with their models
+ * (a later change's). Taken once, by the area, when it is next on screen;
+ * nothing launches until a person presses Launch there.
+ */
+export type BenchRequest = { view: 'studio'; models: string } | { view: 'launch'; preset: LaunchPreset };
+let pendingBenchRequest: BenchRequest | null = null;
+export function requestBenchLaunch(request: BenchRequest) { pendingBenchRequest = request; }
+export function takeBenchRequest(): BenchRequest | null {
+  const r = pendingBenchRequest;
+  pendingBenchRequest = null;
+  return r;
+}
 const LEGEND = 'text-sm font-semibold text-zinc-900 dark:text-zinc-100';
 
 /**
@@ -1176,8 +1193,12 @@ export function Launcher({ suites, models, defaults, launcher, hiddenChecks, pre
   onLaunched: (runId?: number) => void; say: Say;
 }) {
   const [suiteId, setSuiteId] = useState(preset?.suiteId ? String(preset.suiteId) : launcher?.suiteId ? String(launcher.suiteId) : '');
-  const [chosen, setChosen] = useState<Record<string, boolean>>(() => Object.fromEntries((launcher?.models || []).map((id) => [id, true])));
-  const [extra, setExtra] = useState('');
+  // Every candidate, or what the launcher was opened for (a preset's models:
+  // the listed ones ticked, any other typed in).
+  const [chosen, setChosen] = useState<Record<string, boolean>>(() => (preset?.models?.length
+    ? Object.fromEntries((launcher?.models || []).map((id) => [id, preset.models!.includes(id)]))
+    : Object.fromEntries((launcher?.models || []).map((id) => [id, true]))));
+  const [extra, setExtra] = useState(() => (preset?.models || []).filter((id) => !(launcher?.models || []).includes(id)).join(', '));
   // null: every stage the picked suite has tasks at. An object once ticked by hand.
   const [stagesPicked, setStagesPicked] = useState<Record<string, boolean> | null>(
     () => (preset?.stages?.length ? Object.fromEntries(preset.stages.map((st) => [st, true])) : null),
@@ -2388,7 +2409,7 @@ function HowItWorks() {
         <li>Nothing is posted, messaged or proposed, and every run stops at its dollar cap.</li>
         <li>Rules grade what a rule can tell; Claude Opus grades the rest on an admin&apos;s own plan through the Homeroom connector, blind to the model.</li>
         <li>The recommended model is the cheapest success among the models within five points of the most accurate. A stage with too few graded tasks is not called.</li>
-        <li>Use for a stage fills in the bot&apos;s Settings; nothing changes until you press Save there. A checks fix runs on the bot&apos;s follow-up model; DM answers run on the platform default.</li>
+        <li>Use for a stage drafts a side version of the later changes&apos; configuration with that model there, in Configurations; nothing changes until it is saved there, and nothing live uses it until it is made current. A checks fix runs on the configuration&apos;s follow-up model; DM answers run on the platform default.</li>
       </ul>
     </details>
   );
@@ -2495,6 +2516,8 @@ export function BenchmarkArea({ canWrite, active = true, inUse = null, defaultMo
   const [reports, setReports] = useState<Record<number, Report>>({});
   const [reportsRead, setReportsRead] = useState(false);
   const [sheet, setSheet] = useState<{ preset?: LaunchPreset } | null>(null);
+  // The Studio's arms a Configurations hand-off asked for (takeBenchRequest).
+  const [studioModels, setStudioModels] = useState<string | null>(null);
   const [status, setStatus] = useState<{ text: string; tone: Tone } | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
@@ -2514,6 +2537,19 @@ export function BenchmarkArea({ canWrite, active = true, inUse = null, defaultMo
       (window as any).AdminConsole?._markRouted?.();
     } catch { /* non-fatal */ }
   }, [active, route]);
+  // A launch the Configurations tab handed over, taken as this tab shows.
+  useEffect(() => {
+    if (!active) return;
+    const asked = takeBenchRequest();
+    if (!asked) return;
+    if (asked.view === 'studio') {
+      setStudioModels(asked.models);
+      setRoute({ view: 'studio' });
+    } else {
+      setRoute({ view: 'overview' });
+      setSheet({ preset: asked.preset });
+    }
+  }, [active]);
   const go = useCallback<Go>((next) => {
     setRoute(next);
     try {
@@ -2625,7 +2661,7 @@ export function BenchmarkArea({ canWrite, active = true, inUse = null, defaultMo
     page = runs == null ? <p className={AdminUI.loading}>Loading…</p>
       : <RunsPage runs={runs} models={models} canWrite={canWrite} pendingOf={pendingOf} go={go} onCancel={cancelRun} />;
   } else if (route.view === 'studio') {
-    page = <StudioPage canWrite={canWrite} say={say} />;
+    page = <StudioPage canWrite={canWrite} say={say} initialModels={studioModels} />;
   } else if (route.view === 'suites') {
     page = suites == null ? <p className={AdminUI.loading}>Loading…</p> : (
       <SuitesPage suites={suites} selectedId={route.id} core={core} coreSuiteId={core?.suite?.id ?? null} canWrite={canWrite} go={go}

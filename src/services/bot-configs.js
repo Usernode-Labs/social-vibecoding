@@ -92,6 +92,21 @@ const ROLES = Object.freeze(['current', 'side', 'retired']);
 const SCOPES = Object.freeze(['first_version', 'later']);
 const SCOPE_LABELS = Object.freeze({ first_version: 'First versions', later: 'Later changes' });
 const STAGES = Object.freeze(['triage', 'spec', 'build']);
+// What a recipe may also decide (19 Oct 2026), each optional so a recipe
+// saved before them is the same JSON: the follow-ups' model (replies on a
+// proposal and fixes of its checks, a later change's only), the reasoning
+// effort of each stage's turns, and each stage's clock. Left out, a stage
+// runs as it did before: the follow-ups on the per-stage setting, the
+// effort the deployment gives every bot turn (OPENROUTER_DEFAULT_CODEX_REASONING,
+// an Anthropic spec at 'medium'), and the clocks from Settings' turn length.
+const FOLLOWUP_STAGE = 'followup';
+const EFFORT_STAGES = Object.freeze(['triage', 'spec', 'build', 'followup']);
+// The levels a bot turn's CLI takes (worker/claude-openrouter-request.js
+// REASONING_EFFORTS); 'max' reaches Claude Code turns only, and a Codex
+// turn asked for it runs at 'xhigh' (agent-turn.js).
+const EFFORTS = Object.freeze(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+const CLOCK_STAGES = Object.freeze(['triage', 'spec', 'build', 'followup']);
+const MAX_CLOCK_MINUTES = 180;
 const KEY_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const MAX_ROUNDS = 5;
 const MIN_BUDGET_MINUTES = 1;
@@ -266,11 +281,11 @@ function badScope() {
 function validateRecipe(raw) {
   const re = modelIdRe();
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return httpError(400, 'recipe must be an object');
-  const extra = Object.keys(raw).filter((k) => !['models', 'reviewer', 'pack', 'tweaks'].includes(k));
+  const extra = Object.keys(raw).filter((k) => !['models', 'reviewer', 'pack', 'tweaks', 'effort', 'clocks'].includes(k));
   if (extra.length) return httpError(400, `recipe has unknown keys: ${extra.join(', ')}`);
   const m = raw.models;
   if (!m || typeof m !== 'object' || Array.isArray(m)) return httpError(400, 'recipe.models must name a model for triage, spec and build');
-  const extraStages = Object.keys(m).filter((k) => !STAGES.includes(k));
+  const extraStages = Object.keys(m).filter((k) => !STAGES.includes(k) && k !== FOLLOWUP_STAGE);
   if (extraStages.length) return httpError(400, `recipe.models has unknown stages: ${extraStages.join(', ')}`);
   const models = {};
   for (const stage of STAGES) {
@@ -278,6 +293,35 @@ function validateRecipe(raw) {
     if (!re.test(id)) return httpError(400, `recipe.models.${stage} must be an OpenRouter model id (vendor/model)`);
     models[stage] = id;
   }
+  if (m[FOLLOWUP_STAGE] != null) {
+    const id = typeof m[FOLLOWUP_STAGE] === 'string' ? m[FOLLOWUP_STAGE].trim() : '';
+    if (!re.test(id)) return httpError(400, 'recipe.models.followup must be an OpenRouter model id (vendor/model), or left out');
+    models[FOLLOWUP_STAGE] = id;
+  }
+  // Per stage, each optional: kept only for the stages it names, in one
+  // order, so two recipes that say the same are the same JSON.
+  const perStage = (value, name, stages, check) => {
+    if (value == null) return { ok: true, out: null };
+    if (typeof value !== 'object' || Array.isArray(value)) return httpError(400, `recipe.${name} must be an object of stage to value`);
+    const unknown = Object.keys(value).filter((k) => !stages.includes(k));
+    if (unknown.length) return httpError(400, `recipe.${name} has unknown stages: ${unknown.join(', ')} (known: ${stages.join(', ')})`);
+    const out = {};
+    for (const stage of stages) {
+      if (value[stage] == null) continue;
+      const v = check(value[stage]);
+      if (v === undefined) return httpError(400, `recipe.${name}.${stage} ${check.rule}`);
+      out[stage] = v;
+    }
+    return { ok: true, out: Object.keys(out).length ? out : null };
+  };
+  const effortOf = (v) => (typeof v === 'string' && EFFORTS.includes(v.trim()) ? v.trim() : undefined);
+  effortOf.rule = `must be one of ${EFFORTS.join(', ')}`;
+  const minutesOf = (v) => (Number.isInteger(Number(v)) && Number(v) >= 1 && Number(v) <= MAX_CLOCK_MINUTES ? Number(v) : undefined);
+  minutesOf.rule = `must be a whole number of minutes from 1 to ${MAX_CLOCK_MINUTES}`;
+  const effort = perStage(raw.effort, 'effort', EFFORT_STAGES, effortOf);
+  if (!effort.ok) return effort;
+  const clocks = perStage(raw.clocks, 'clocks', CLOCK_STAGES, minutesOf);
+  if (!clocks.ok) return clocks;
   let reviewer = null;
   if (raw.reviewer != null) {
     const r = raw.reviewer;
@@ -317,7 +361,26 @@ function validateRecipe(raw) {
   if (tweaks.includes('one_look') && !(reviewer && reviewer.maxRounds > 0)) {
     return httpError(400, 'recipe.tweaks one_look leaves the sweep to the review, so it needs a reviewer with at least one round');
   }
-  return { ok: true, recipe: { models, reviewer, pack, ...(tweaks.length ? { tweaks } : {}) } };
+  return {
+    ok: true,
+    recipe: {
+      models, reviewer, pack, ...(tweaks.length ? { tweaks } : {}),
+      ...(effort.out ? { effort: effort.out } : {}), ...(clocks.out ? { clocks: clocks.out } : {}),
+    },
+  };
+}
+
+/** The effort a recipe gives `stage`'s turns, or null for the deployment's. Pure. */
+function stageEffort(recipe, stage) {
+  const r = recipeOf(recipe);
+  return (r && r.effort && r.effort[stage]) || null;
+}
+
+/** The clock, in ms, a recipe gives `stage`'s turn, or null for the default. Pure. */
+function stageClockMs(recipe, stage) {
+  const r = recipeOf(recipe);
+  const minutes = r && r.clocks && r.clocks[stage];
+  return minutes ? minutes * 60 * 1000 : null;
 }
 
 /** A recipe's tweaks, [] for none or a recipe that does not validate. Pure. */
@@ -338,11 +401,14 @@ function recipeLine(recipe) {
   if (!r) return 'not a valid recipe';
   const short = (id) => String(id).split('/').pop();
   const parts = [`triage ${short(r.models.triage)}`, `spec ${short(r.models.spec)}`, `build ${short(r.models.build)}`];
+  if (r.models.followup) parts.push(`follow-ups ${short(r.models.followup)}`);
   parts.push(r.reviewer
     ? `review ${short(r.reviewer.model)} ×${r.reviewer.maxRounds} in ${r.reviewer.budgetMinutes} min`
     : 'no review');
   if (r.pack) parts.push(`pack ${r.pack}`);
   if (r.tweaks?.length) parts.push(`tweaks ${r.tweaks.join(', ')}`);
+  if (r.effort) parts.push(`effort ${EFFORT_STAGES.filter((st) => r.effort[st]).map((st) => `${st} ${r.effort[st]}`).join(', ')}`);
+  if (r.clocks) parts.push(`clocks ${CLOCK_STAGES.filter((st) => r.clocks[st]).map((st) => `${st} ${r.clocks[st]} min`).join(', ')}`);
   return parts.join(' · ');
 }
 
@@ -359,7 +425,8 @@ function derivableFrom(current, side) {
   const s = recipeOf(side);
   if (!c || !s || s.reviewer !== null) return false;
   return STAGES.every((st) => c.models[st] === s.models[st]) && (c.pack || null) === (s.pack || null)
-    && tweaksOf(c).join(',') === tweaksOf(s).join(',');
+    && tweaksOf(c).join(',') === tweaksOf(s).join(',')
+    && STAGES.every((st) => stageEffort(c, st) === stageEffort(s, st) && stageClockMs(c, st) === stageClockMs(s, st));
 }
 
 /**
@@ -375,7 +442,8 @@ function plansAlike(current, side) {
   const s = recipeOf(side);
   if (!c || !s) return false;
   return c.models.spec === s.models.spec && (c.pack || null) === (s.pack || null)
-    && tweaksOf(c).join(',') === tweaksOf(s).join(',');
+    && tweaksOf(c).join(',') === tweaksOf(s).join(',')
+    && stageEffort(c, 'spec') === stageEffort(s, 'spec') && stageClockMs(c, 'spec') === stageClockMs(s, 'spec');
 }
 
 /**
@@ -402,7 +470,10 @@ async function checkRecipeModels(pool, recipe) {
     return httpError(503, 'The OpenRouter model catalog is not available to check this recipe\'s models against, so it cannot be made current now. It can be saved as a side version.', { code: 'catalog_unavailable' });
   }
   const byId = new Map(models.filter((m) => m && typeof m.id === 'string').map((m) => [m.id, m]));
-  const named = [...new Set([...STAGES.map((st) => r.models[st]), ...(r.reviewer ? [r.reviewer.model] : [])])];
+  const named = [...new Set([
+    ...STAGES.map((st) => r.models[st]), ...(r.models.followup ? [r.models.followup] : []),
+    ...(r.reviewer ? [r.reviewer.model] : []),
+  ])];
   const missing = named.filter((id) => !byId.has(id));
   if (missing.length) {
     return httpError(400, `Not in the OpenRouter catalog: ${missing.join(', ')}. A current configuration names only models OpenRouter lists.`, { code: 'unknown_model' });
@@ -569,6 +640,9 @@ async function saveVersion(pool, {
   }
   if (scope === 'later' && v.recipe.tweaks) {
     return httpError(400, 'A later-changes recipe has no tweaks: they change how a first version is built');
+  }
+  if (scope === 'first_version' && (v.recipe.models.followup || v.recipe.effort?.followup || v.recipe.clocks?.followup)) {
+    return httpError(400, 'A first-version recipe has no follow-ups: replies on a proposal and fixes of its checks are the later changes\' configuration\'s');
   }
   const cleanLabel = label == null ? null : String(label).replace(/\s+/g, ' ').trim();
   if (cleanLabel != null && (!cleanLabel || cleanLabel.length > MAX_LABEL_CHARS)) {
@@ -1509,6 +1583,49 @@ function platformFailureOf(r) {
  * version, what became of its live builds' proposals. Per version, never
  * across versions. Also the scope's side builds' week.
  */
+/**
+ * Each version's benchmark trials as an arm of its own: a studio run's
+ * `config:<id>` arm (studio.js launch), never a side build (which names its
+ * version on the trial and is counted in the version's live numbers). Per
+ * version id: its runs, its trials, how many finished ('ok'), their average
+ * cost and median time, and its latest run. A read that fails is none.
+ */
+async function benchOfVersions(pool, ids) {
+  const out = new Map();
+  const wanted = (ids || []).map(Number).filter((n) => Number.isInteger(n) && n > 0).map((n) => `config:${n}`);
+  if (!wanted.length) return out;
+  try {
+    const { rows } = await pool.query(
+      `SELECT t.model,
+              COUNT(DISTINCT t.run_id)::int AS runs,
+              COUNT(*)::int AS trials,
+              COUNT(*) FILTER (WHERE t.status = 'ok')::int AS ok,
+              AVG(t.cost_usd) FILTER (WHERE t.status = 'ok')::float8 AS avg_cost,
+              percentile_cont(0.5) WITHIN GROUP (ORDER BY t.duration_ms) FILTER (WHERE t.status = 'ok') AS median_ms,
+              MAX(t.run_id)::int AS last_run_id
+         FROM bench_trials t
+        WHERE t.model = ANY($1::text[]) AND t.bot_config_version_id IS NULL AND t.reference_label IS NULL
+        GROUP BY t.model`,
+      [wanted],
+    );
+    for (const r of rows) {
+      const id = configIdOfModel(r.model);
+      if (!id) continue;
+      out.set(id, {
+        runs: Number(r.runs) || 0,
+        trials: Number(r.trials) || 0,
+        ok: Number(r.ok) || 0,
+        avgCostUsd: num(r.avg_cost),
+        medianMs: num(r.median_ms),
+        lastRunId: Number(r.last_run_id) || null,
+      });
+    }
+  } catch (err) {
+    log.warn('bot-configs', 'Could not read the versions\' benchmark runs', { err: err.message });
+  }
+  return out;
+}
+
 async function listWithStats(pool, { scope: rawScope = null } = {}) {
   const scope = scopeOf(rawScope);
   if (!scope) return badScope();
@@ -1539,6 +1656,7 @@ async function listWithStats(pool, { scope: rawScope = null } = {}) {
       WHERE r.status = 'skipped' AND v.scope = $1`,
     [scope],
   );
+  const bench = await benchOfVersions(pool, versions.map((v) => v.id));
   const out = versions.map((v) => {
     const ofVersion = results.filter((r) => Number(r.config_version_id) === v.id);
     const mine = ofVersion.filter((r) => r.status === 'done');
@@ -1597,6 +1715,8 @@ async function listWithStats(pool, { scope: rawScope = null } = {}) {
         bootRate: bootKnown.length ? bootKnown.filter((r) => r.booted === true).length / bootKnown.length : null,
         pairsWaiting: involving.filter((p) => p.status === 'waiting').length,
         vsCurrent,
+        // Its benchmark runs as an arm of its own (benchOfVersions), or null.
+        bench: bench.get(v.id) || null,
       },
     };
   });
@@ -2070,6 +2190,45 @@ function configIdOfModel(model) {
   return m ? Number(m[1]) : null;
 }
 
+/**
+ * Once (19 Oct 2026, when a recipe came to decide every stage): the later
+ * changes' CURRENT version is made to name what its triage and follow-ups
+ * run on today. Until now the per-stage settings decided both, and the
+ * triage model its recipe named was never read. Its recipe is filled in
+ * place rather than saved as a next version, because nothing it runs
+ * changes, and a next version would start its numbers and its pairs over.
+ * A current version that already names its follow-ups is left alone, so
+ * this runs once. Never throws; resolves whether it filled one.
+ */
+async function fillLaterStages(pool, config = {}) {
+  try {
+    const { rows } = await pool.query(
+      "SELECT id, recipe FROM bot_config_versions WHERE scope = 'later' AND role = 'current' LIMIT 1",
+    );
+    const r = rows[0] ? recipeOf(rows[0].recipe) : null;
+    if (!r || r.models.followup) return false;
+    const bot = require('./homeroom-bot');
+    const settings = await bot.readSettings(pool);
+    const triage = bot.stageModel(settings, config, 'triage');
+    const followup = bot.stageModel(settings, config, 'followup');
+    const next = validateRecipe({ ...r, models: { ...r.models, triage, followup } });
+    if (!next.ok) {
+      log.warn('bot-configs', 'The later changes\' current version could not name its triage and follow-ups', { error: next.error });
+      return false;
+    }
+    const { rowCount } = await pool.query(
+      `UPDATE bot_config_versions SET recipe = $2::jsonb
+        WHERE id = $1 AND role = 'current' AND NOT (recipe->'models' ? 'followup')`,
+      [rows[0].id, JSON.stringify(next.recipe)],
+    );
+    if (rowCount) log.info('bot-configs', 'The later changes\' current version now names its triage and follow-ups', { id: rows[0].id, triage, followup });
+    return !!rowCount;
+  } catch (err) {
+    log.warn('bot-configs', 'Could not fill in the later changes\' triage and follow-ups', { err: err.message });
+    return false;
+  }
+}
+
 module.exports = {
   platformFailureOf,
   GLM,
@@ -2107,6 +2266,14 @@ module.exports = {
   checkRecipeModels,
   seedConfigs,
   upgradeSeedConfigs,
+  fillLaterStages,
+  benchOfVersions,
+  stageEffort,
+  stageClockMs,
+  EFFORTS,
+  EFFORT_STAGES,
+  CLOCK_STAGES,
+  MAX_CLOCK_MINUTES,
   SEED_UPGRADES,
   recordResult,
   finishLive,

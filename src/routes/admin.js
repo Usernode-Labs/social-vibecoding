@@ -112,6 +112,31 @@ function adminRoutes(config) {
     }
   });
 
+  // The helper calls per helper and first model (Admin → Homeroom bot →
+  // Calls): how fast, how often Haiku answered instead, what they cost.
+  // Read-only and aggregate-only, like the report above.
+  router.get('/api/admin/homeroom-bot/calls', async (req, res) => {
+    const days = Number(req.query.days == null ? 7 : req.query.days);
+    if (!Number.isInteger(days) || days < 1 || days > llmTelemetry.MAX_REPORT_DAYS) {
+      return res.status(400).json({ error: `days must be an integer between 1 and ${llmTelemetry.MAX_REPORT_DAYS}` });
+    }
+    try {
+      const report = await llmTelemetry.helperCallsReport(pool, { days });
+      // Beside each helper its time limit, and the model the helpers ask now.
+      const limits = require('../services/llm').HELPER_TIME_LIMIT_MS || {};
+      return res.json({
+        ...report,
+        helperModel: await require('../services/helper-model').current(config, { pool }),
+        helpers: report.helpers.map((h) => ({ ...h, limitMs: limits[h.component] || null })),
+      });
+    } catch (err) {
+      log.warn('admin', 'Helper calls report failed', {
+        code: err && err.code ? String(err.code).slice(0, 64) : 'query_failed',
+      });
+      return res.status(500).json({ error: 'Could not load the helper calls' });
+    }
+  });
+
   // ── Operations Overview ────────────────────────────────────
   //
   // A lightweight summary for the admin dashboard. The full tree lives on

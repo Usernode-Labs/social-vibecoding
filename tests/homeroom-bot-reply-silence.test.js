@@ -108,8 +108,8 @@ test('fixes and replies on the platform\'s own repository get the clock its buil
   assert.equal(bot.followUpBudgetMs(APP, {}, 1200_000), 1200_000, 'any other app keeps its turn');
   assert.equal(bot.followUpBudgetMs(PLATFORM, {}, 1200_000), bot.buildBudgets(PLATFORM, {}, 1200_000).turnBudgetMs);
   const src = read('src/services/homeroom-bot.js');
-  assert.match(src, /return runFollowUp\(pool, config, \{[\s\S]{0,300}?turnBudgetMs: followUpBudgetMs\(app, config, turnBudgetMs\)/,
-    'runTriage hands the follow-up (and so its checks fix) that clock');
+  assert.match(src, /const f = recipeStage\(await laterRecipe\(pool\), 'followup', \{\n\s+fallback: stageModel\(settings, config, 'followup'\), fallbackMs: turnBudgetMs,\n\s+\}\);\n\s+return runFollowUp\(pool, config, \{[\s\S]{0,300}?turnBudgetMs: followUpBudgetMs\(app, config, f\.clockMs\)/,
+    'runTriage hands the follow-up (and so its checks fix) that clock, on the configuration\'s own where it names one');
 });
 
 test('a reply turn is told the change\'s failing checks, so it can fix them when asked', () => {

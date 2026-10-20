@@ -8,6 +8,8 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 import { BenchmarkArea, loadBenchSummary } from './admin-homeroom-bench';
 import type { Best, BenchModel } from './admin-homeroom-bench';
 import { RolloutHealth } from './admin-homeroom-bot-health';
+import { BotConfigsSection } from './admin-bot-configs';
+import { HelperCalls } from './admin-homeroom-bot-calls';
 import type { ChatFailure, Incidents, RolloutHealthData } from './admin-homeroom-bot-health';
 
 // Homeroom bot (#admin/homeroom-bot) — #2684, and laid out again in #3710.
@@ -131,47 +133,97 @@ const MODEL_STAGES: { key: ModelStage; label: string }[] = [
   { key: 'build', label: 'Build' },
   { key: 'followup', label: 'Follow-ups and check fixes' },
 ];
-// The current bot configurations' models (Admin → Bot configurations): a
-// first version's triage, plan and build, and a later change's plan and
-// build. Each decides over the stage's own setting while it is current.
+// The current bot configurations (the Configurations tab): a first
+// version's triage, plan and build, and a later change's triage, plan,
+// build and follow-ups, each with the reasoning effort and the clock in
+// minutes its recipe gives it (null: the defaults). While one is current it
+// decides its stages; the per-stage settings apply only where none is.
 interface ConfiguredModels {
   id: number;
   key: string;
   label: string;
   version: number;
   models: Partial<Record<ModelStage, string | null>>;
+  effort?: Partial<Record<ModelStage, string | null>>;
+  clocks?: Partial<Record<ModelStage, number | null>>;
 }
 interface Configurations {
   firstVersion: ConfiguredModels | null;
   later: ConfiguredModels | null;
 }
 
-const CONFIGURED_VERB: Partial<Record<ModelStage, string>> = { spec: 'plan', build: 'build' };
+/**
+ * What one stage runs on in one scope, in words: the current
+ * configuration's model, with its effort and clock where it names them, or
+ * the per-stage setting it falls back to when no configuration is current.
+ * A first version has no follow-ups of its own: a proposal's follow-ups
+ * are the later changes' configuration's. Pure.
+ */
+export function stageCell(
+  stage: ModelStage, scope: 'firstVersion' | 'later', c: Configurations | null | undefined,
+  fallback: string | null, nameOf: (id: string) => string = (id) => id,
+): string {
+  if (scope === 'firstVersion' && stage === 'followup') return 'As later changes';
+  const conf = c?.[scope] || null;
+  const model = conf?.models?.[stage] || null;
+  if (!model) {
+    return fallback ? `${nameOf(fallback)} (the per-stage setting)` : 'The per-stage setting';
+  }
+  const effort = conf?.effort?.[stage] || null;
+  const clock = conf?.clocks?.[stage] || null;
+  return [nameOf(model), effort ? `effort ${effort}` : '', clock ? `${clock} min` : ''].filter(Boolean).join(' · ');
+}
 
 /**
- * What a stage's row says runs while a bot configuration is current, or ''
- * when its picker decides. Plan and Build: each scope with a current
- * configuration, and who the picker below is still for. Triage: only a
- * project's first version (a later change's triage is the picker's).
- * Follow-ups: always the picker's. Pure.
+ * Settings' read of what each stage runs on, per scope, from the current
+ * configurations. It changes in the Configurations tab, where a version is
+ * copied to a side version, measured and made current.
  */
-export function configuredLine(stage: ModelStage, c: Configurations | null | undefined, nameOf: (id: string) => string = (id) => id): string {
-  const first = c?.firstVersion?.models?.[stage] || null;
-  if (stage === 'triage') {
-    return first ? `A project's first version is triaged on ${nameOf(first)}, as its bot configuration says. Every other request uses the picker below.` : '';
-  }
-  const verb = CONFIGURED_VERB[stage];
-  if (!verb) return '';
-  const later = c?.later?.models?.[stage] || null;
-  if (!first && !later) return '';
-  const parts = [
-    first ? `first versions ${verb} on ${nameOf(first)}` : '',
-    later ? `later changes ${verb} on ${nameOf(later)}` : '',
-  ].filter(Boolean).join(' and ');
-  const rest = first && later
-    ? 'The picker below applies only when no configuration is current.'
-    : `${first ? 'Later changes' : 'First versions'} use the picker below.`;
-  return `${parts.charAt(0).toUpperCase()}${parts.slice(1)}, as the current bot configurations say. ${rest}`;
+export function StagesInUse({ configurations, fallback, nameOf, onOpen }: {
+  configurations: Configurations | null | undefined;
+  fallback: (stage: ModelStage) => string | null;
+  nameOf?: (id: string) => string;
+  onOpen?: () => void;
+}) {
+  const head = (scope: 'firstVersion' | 'later', label: string) => {
+    const conf = configurations?.[scope] || null;
+    return (
+      <th className={AdminUI.th} data-stage-scope={scope}>
+        <div>{label}</div>
+        <div className="normal-case font-normal tracking-normal">{conf ? `${conf.label} v${conf.version}` : 'No configuration current'}</div>
+      </th>
+    );
+  };
+  return (
+    <div id="admin-homeroom-bot-stages">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+        <h4 className={AdminUI.label}>What each stage runs on</h4>
+        {onOpen ? (
+          <button type="button" className={`${AdminUI.btn.link} text-sm`} id="admin-homeroom-bot-stages-open" onClick={onOpen}>Change it in Configurations</button>
+        ) : null}
+      </div>
+      <div className={AdminUI.tableWrap}>
+        <table className={`${AdminUI.table} min-w-[36rem]`}>
+          <thead className={AdminUI.thead}>
+            <tr>
+              <th className={AdminUI.th}>Stage</th>
+              {head('firstVersion', 'First versions')}
+              {head('later', 'Later changes')}
+            </tr>
+          </thead>
+          <tbody>
+            {MODEL_STAGES.map((m) => (
+              <tr key={m.key} className={AdminUI.trHover} data-stage-row={m.key}>
+                <td className={AdminUI.td}>{m.label}</td>
+                <td className={`${AdminUI.td} text-xs`}>{stageCell(m.key, 'firstVersion', configurations, fallback(m.key), nameOf)}</td>
+                <td className={`${AdminUI.td} text-xs`}>{stageCell(m.key, 'later', configurations, fallback(m.key), nameOf)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -184,11 +236,8 @@ export function modelsInUse(p: Pick<Payload, 'bot' | 'configurations'> | null | 
   const stages = p?.bot?.models;
   if (!stages) return null;
   const later = p?.configurations?.later?.models || null;
-  return {
-    ...stages,
-    ...(later?.spec ? { spec: later.spec } : {}),
-    ...(later?.build ? { build: later.build } : {}),
-  };
+  const named = Object.fromEntries(Object.entries(later || {}).filter(([, id]) => !!id));
+  return { ...stages, ...named };
 }
 
 // The server's own rule (MODEL_ID_RE in services/homeroom-bot.js).
@@ -1181,15 +1230,17 @@ export function benchHint(best: Best | null, stage: ModelStage, modelId: string 
 }
 
 /**
- * One stage's model: the platform default, a model from the benchmark's
- * catalog (with its price), or any other OpenRouter id typed in. The
- * platform default's own picker (`stage` "default") offers the
- * deployment's default in that first place, and has no benchmark line; so
- * does the helper calls' (`stage` "helper"), with the built-in model there.
+ * A model setting: blank (`blankLabel`, naming `defaultModel`), a model from
+ * the benchmark's catalog (with its price), or any other OpenRouter id
+ * typed in. Two remain since the configurations decide the stages: the
+ * platform default (`stage` "default", the deployment's default in the
+ * blank place) and the helper calls' (`stage` "helper", the built-in model
+ * there). A stage's own picker, which it was drawn for, adds the
+ * benchmark's line for its model.
  */
-function ModelPicker({ stage, label, value, defaultModel, blankLabel = 'Platform default', models, best, canWrite, configurations = null, onChange }: {
+function ModelPicker({ stage, label, value, defaultModel, blankLabel = 'Platform default', models, best, canWrite, onChange }: {
   stage: ModelStage | 'default' | 'helper'; label: string; value: string; defaultModel: string | null; blankLabel?: string;
-  models: BenchModel[] | null; best: Best | null; canWrite: boolean; configurations?: Configurations | null; onChange: (id: string) => void;
+  models: BenchModel[] | null; best: Best | null; canWrite: boolean; onChange: (id: string) => void;
 }) {
   const listed = !value || (models || []).some((m) => m.id === value);
   const [typing, setTyping] = useState(!listed);
@@ -1197,16 +1248,9 @@ function ModelPicker({ stage, label, value, defaultModel, blankLabel = 'Platform
   const nameOf = (id: string) => (models || []).find((m) => m.id === id)?.label || id;
   const price = (m: BenchModel) => (m.inputPerMillion != null && m.outputPerMillion != null
     ? ` · $${m.inputPerMillion.toFixed(2)} / $${m.outputPerMillion.toFixed(2)}` : '');
-  const configured = stage === 'default' || stage === 'helper' ? '' : configuredLine(stage, configurations, nameOf);
   return (
     <div data-model-stage={stage}>
       <label className={AdminUI.label} htmlFor={`admin-homeroom-bot-model-${stage}`}>{label}</label>
-      {configured ? (
-        <p className="text-sm mt-1 mb-2" id={`admin-homeroom-bot-model-${stage}-configured`} data-model-configured={stage}>
-          {`${configured} `}
-          <a className={AdminUI.btn.link} href="#admin/bot-configs">Bot configurations</a>
-        </p>
-      ) : null}
       <select
         id={`admin-homeroom-bot-model-${stage}`}
         className={`${AdminUI.select} mt-1`}
@@ -1400,17 +1444,28 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
   return { patch, error: null };
 }
 
-type Tab = 'overview' | 'settings' | 'benchmark';
+// Five tabs, in the order the strip shows them: what it is doing, what it
+// runs on (its configurations, which used to be a section of their own,
+// #admin/bot-configs), how candidates measure up, the operating controls,
+// and its helper calls.
+type Tab = 'overview' | 'configs' | 'benchmark' | 'settings' | 'calls';
+const TABS: readonly Tab[] = ['overview', 'configs', 'benchmark', 'settings', 'calls'];
 const TAB_HASH: Record<Tab, string> = {
   overview: '#admin/homeroom-bot',
+  configs: '#admin/homeroom-bot/configs',
   settings: '#admin/homeroom-bot/settings',
   benchmark: '#admin/homeroom-bot/benchmark',
+  calls: '#admin/homeroom-bot/calls',
 };
-const TAB_LABEL: Record<Tab, string> = { overview: 'Overview', settings: 'Settings', benchmark: 'Benchmark' };
+const TAB_LABEL: Record<Tab, string> = {
+  overview: 'Overview', configs: 'Configurations', benchmark: 'Benchmark', settings: 'Settings', calls: 'Calls',
+};
 
-function tabFromHash(hash: string): Tab {
+export function tabFromHash(hash: string): Tab {
   if (/^#admin\/homeroom-bot\/benchmark\b/.test(hash)) return 'benchmark';
   if (/^#admin\/homeroom-bot\/settings\b/.test(hash)) return 'settings';
+  if (/^#admin\/homeroom-bot\/configs\b/.test(hash)) return 'configs';
+  if (/^#admin\/homeroom-bot\/calls\b/.test(hash)) return 'calls';
   return 'overview';
 }
 
@@ -1464,9 +1519,16 @@ function HomeroomBotSection() {
   // re-route the console.
   const [tab, setTab] = useState<Tab>(() => (typeof location !== 'undefined' ? tabFromHash(location.hash) : 'overview'));
   const [benchSeen, setBenchSeen] = useState(tab === 'benchmark');
+  // The Configurations and Calls tabs read their own data, from their first visit.
+  const [configsSeen, setConfigsSeen] = useState(tab === 'configs');
+  // What the Benchmark's "Use for <stage>" asked the Configurations tab to draft.
+  const [configAsk, setConfigAsk] = useState<{ stage: ModelStage; model: string; nonce: number } | null>(null);
+  const [callsSeen, setCallsSeen] = useState(tab === 'calls');
   const showTab = (next: Tab) => {
     setTab(next);
     if (next === 'benchmark') setBenchSeen(true);
+    if (next === 'configs') setConfigsSeen(true);
+    if (next === 'calls') setCallsSeen(true);
     try { history.replaceState(null, '', TAB_HASH[next]); } catch { /* non-fatal */ }
   };
   const alive = useRef(true);
@@ -1596,10 +1658,6 @@ function HomeroomBotSection() {
   const form: Form | null = saved ? { ...saved, ...edits } : null;
   const dirty = saved ? dirtyFields(edits, saved) : [];
   const setField = <K extends FormKey>(key: K, value: Form[K]) => setEdits((e) => ({ ...e, [key]: value }));
-  const setModel = (stage: ModelStage, id: string) => {
-    if (!saved) return;
-    setEdits((e) => ({ ...e, models: { ...(e.models || saved.models), [stage]: id } }));
-  };
   // What the save bar and the saved message call each change; a model
   // change names its stages ("the Build model").
   const changeLabels = () => [...new Set(dirty.map((k) => {
@@ -1623,15 +1681,15 @@ function HomeroomBotSection() {
       apply(data as Payload);
     }
   };
-  // #3710: the Benchmark's "Use for <stage>" fills the form in; Save is still a person's.
+  // The Benchmark's "Use for <stage>": a stage's model is its
+  // configuration's, so it drafts a new side version of the later changes'
+  // current one with that model there, in the Configurations tab. Saving it
+  // is still a person's, and it builds nothing live until made current.
   const applyBenchModel = (stage: ModelStage, id: string) => {
-    setModel(stage, id);
-    showTab('settings');
+    setConfigAsk({ stage, model: id, nonce: Date.now() });
+    showTab('configs');
     const name = MODEL_STAGES.find((m) => m.key === stage)?.label || stage;
-    // A plan or build a configuration decides: the picker is its fallback.
-    const fallback = configuredLine(stage, payload?.configurations) ? ' Builds use it only where no bot configuration is current.' : '';
-    setStatus({ text: `${name} is set to ${id} in the form below.${fallback} Nothing changes until you press Save changes.`, tone: 'ok' });
-    try { window.requestAnimationFrame(() => document.getElementById('admin-homeroom-bot-models')?.scrollIntoView({ block: 'center' })); } catch { /* non-fatal */ }
+    setStatus({ text: `${name} on ${id}: a new side version of the later changes' configuration is drafted in Configurations. Nothing changes until it is saved there.`, tone: 'ok' });
   };
 
   const chip = health(settings, payload?.loop);
@@ -1651,7 +1709,7 @@ function HomeroomBotSection() {
     <div className="space-y-4" id="admin-homeroom-bot">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex gap-1" role="tablist" aria-label="Homeroom bot" id="admin-homeroom-bot-tabs">
-          {(['overview', 'settings', 'benchmark'] as const).map((key) => (
+          {TABS.map((key) => (
             <button
               key={key} type="button" role="tab" id={`admin-homeroom-bot-tab-${key}`}
               aria-selected={tab === key} aria-controls={`admin-homeroom-bot-panel-${key}`}
@@ -1684,8 +1742,8 @@ function HomeroomBotSection() {
             The bot reads each open request, its discussion and the app&apos;s code, and decides what to do: ask one question,
             build it, or leave it to a person. It works for everyone with platform access and acts on every app but the
             paused ones, Homeroom&apos;s own included: it posts on the request, asks its questions there and builds the clear
-            ones into proposals for the group to vote on. Rate its verdicts below. Settings has the paused apps, its models
-            and its budget.
+            ones into proposals for the group to vote on. Rate its verdicts below. Configurations has what each of its stages
+            runs on, Settings the paused apps and its budget, and Calls its helper calls.
           </p>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -2106,27 +2164,18 @@ function HomeroomBotSection() {
                 />
               </div>
               <p className={`${AdminUI.muted} mt-1 mb-4`} id="admin-homeroom-bot-default-model-note">
-                What every stage below left on the platform default runs on (plans and builds only where no bot configuration is
-                current), the bot&apos;s answers in DMs and chats, and a new agent chat for anyone who has not picked a model. Every
-                server follows a change within 10 seconds, with no deploy.
+                What the bot&apos;s answers in DMs and chats run on, a new agent chat for anyone who has not picked a model, and any
+                stage of the bot&apos;s when no configuration is current. Every server follows a change within 10 seconds, with no
+                deploy.
               </p>
-              <div className="grid gap-4 md:grid-cols-2">
-                {MODEL_STAGES.map((m) => (
-                  <ModelPicker
-                    key={`${m.key}-${formRound}`}
-                    stage={m.key} label={m.label}
-                    value={form.models[m.key] || ''}
-                    defaultModel={form.defaultModel || payload?.deploymentDefaultModel || payload?.defaultModel || bench?.defaultModel || null}
-                    models={bench ? bench.models : null}
-                    best={bench?.best || null}
-                    canWrite={canWrite}
-                    configurations={payload?.configurations || null}
-                    onChange={(id) => setModel(m.key, id)}
-                  />
-                ))}
-              </div>
-              <p className={`${AdminUI.muted} mt-3`} id="admin-homeroom-bot-models-note">
-                {`A stage on the platform default runs on ${payload?.defaultModel || 'the deployment\'s OpenRouter default'} now. A change applies from the next turn, and each run records the model it ran on.`}
+              <StagesInUse
+                configurations={payload?.configurations || null}
+                fallback={(stage) => saved.models[stage] || payload?.defaultModel || null}
+                nameOf={(id) => (bench?.models || []).find((m) => m.id === id)?.label || id}
+                onOpen={() => showTab('configs')}
+              />
+              <p className={`${AdminUI.muted} mt-2`} id="admin-homeroom-bot-models-note">
+                {`The current configurations decide every stage, with its effort and its clock where they name them. A stage of a scope with none runs on its per-stage setting, else the platform default (${payload?.defaultModel || 'the deployment\'s OpenRouter default'} now). A change applies from the next turn, and each run records the model it ran on.`}
               </p>
               <div className="grid gap-4 md:grid-cols-2 mt-4">
                 <ModelPicker
@@ -2308,6 +2357,16 @@ function HomeroomBotSection() {
           <BenchmarkArea canWrite={canWrite} active={tab === 'benchmark'} inUse={modelsInUse(payload)}
             defaultModel={payload?.defaultModel || null} onUseModel={applyBenchModel} />
         ) : null}
+      </div>
+
+      {/* ── Configurations ───────────────────────────────────────────── */}
+      <div id="admin-homeroom-bot-panel-configs" role="tabpanel" aria-labelledby="admin-homeroom-bot-tab-configs" hidden={tab !== 'configs'}>
+        {configsSeen ? <BotConfigsSection onOpenBenchmark={() => showTab('benchmark')} asked={configAsk} /> : null}
+      </div>
+
+      {/* ── Calls ────────────────────────────────────────────────────── */}
+      <div id="admin-homeroom-bot-panel-calls" role="tabpanel" aria-labelledby="admin-homeroom-bot-tab-calls" hidden={tab !== 'calls'}>
+        {callsSeen ? <HelperCalls /> : null}
       </div>
     </div>
   );
