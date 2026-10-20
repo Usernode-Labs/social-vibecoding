@@ -122,6 +122,8 @@ type Legacy = {
     _notePrivateHome?: () => void;
     /** The walk owed, or Homeroom reached, kept by the account too (public/js/app.js). */
     _noteHomeWalk?: (state: 'owed' | 'reached') => void;
+    /** The page under the app, made Home (public/js/app.js). */
+    _homeUnderApp?: () => void;
     saveSessionSnapshot?: (user: unknown) => void;
     navigateHome?: (opts?: unknown) => void;
     navigateToApp?: (slug: string, tab: string) => unknown;
@@ -1310,12 +1312,18 @@ export function FirstSession() {
         const name = info.name || slug;
         const privateMember = !!app?.user?.privateMember;
         const uid = app?.user?.id;
+        let walkOwed = false;
         if (uid != null) {
           oweTip(uid, { slug, name, who: 'invited', inviter: info.inviterName || null });
-          if ((privateMember || info.newAccount) && oweWalk(uid, { slug, name, privateMember })) app?._noteHomeWalk?.('owed');
+          walkOwed = (privateMember || !!info.newAccount) && oweWalk(uid, { slug, name, privateMember });
+          if (walkOwed) app?._noteHomeWalk?.('owed');
           setOwing((n) => n + 1);
         }
         rememberCommunity(slug);
+        // Home under the app, where the walk runs: Back and the ✕ go there.
+        // A public community's link is joined on its hub, and leaving the
+        // app went back to the hub, with the walk not started.
+        if (walkOwed) app?._homeUnderApp?.();
         // A frame held for the welcome goes once the app is on screen, not
         // before (appDrawn): never Home in between. The follow's own ending
         // (endHold) leaves a frame handed on.

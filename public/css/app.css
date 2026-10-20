@@ -12756,9 +12756,17 @@ html.web-browser-chrome {
    top edge is one colour and the wallpaper below loses no texture and gains
    no seam. Browser tabs (the wash in browser-scroller mode above) and the
    native WebView are not standalone display modes, so nothing here reaches
-   them. */
+   them.
+
+   THE BAR OVER A RUNNING APP IS CLEAR TOO (it takes the app's tone, #1945),
+   so an app opened from its own home-screen icon, which keeps the header
+   (restoreFromHash), had the wallpaper's washes at its top edge and the same
+   blur through the H and the app's name. It gets the same band.
+   --home-ground follows the app's tone (the wallpaper rules repaint it for a
+   dark app under the light shell), so the band is the strip's colour. */
 @media (display-mode: standalone) {
-  #landing-header {
+  #landing-header,
+  body:has(#app-view:not(.hidden)[data-app-surface="app"]) #platform-header {
     background-image: linear-gradient(
       var(--home-ground) calc(var(--un-safe-inset-top, env(safe-area-inset-top, 0px)) + 0.5rem),
       transparent
