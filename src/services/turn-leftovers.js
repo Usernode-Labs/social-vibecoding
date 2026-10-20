@@ -9,7 +9,8 @@
 // release from before the turn machine can run, delete the rollout parts:
 // the claims, headless and local passes, the `resume` flag in turns.js,
 // heldByLiveProcess, olderProcessHolding, receiveOlderStop (and ws.js's
-// `session_stop`) and the hold writes in processes.js.
+// `session_stop`), the hold writes in processes.js and the claim's renewal
+// in turns.js (renewClaim).
 //
 // Every turn this release starts belongs to the turn machine
 // (src/workflow/turn/): its work item owns its conversation's claim, its

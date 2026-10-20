@@ -422,6 +422,46 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     assert.deepEqual(seen.released, [], 'released only by the attempt that ends the item');
   });
 
+  await t.test('H8 ROLLOUT-ONLY: while its item runs, the conversation\'s claim is renewed as an older release reads it, and only its own', async () => {
+    // A release from before the turn machine reads a claim not renewed for
+    // 90 seconds as abandoned: its leader would end the turn as interrupted
+    // beside this release, and its lease take the claim.
+    reset();
+    const was = turns.CLAIM_RENEW.ms;
+    turns.CLAIM_RENEW.ms = 20;
+    const claimOf = async (c) => (await pool.query(
+      `SELECT active_turn->>'renewedAt' AS renewed,
+              COALESCE(active_turn->>'renewedAt', active_turn->>'startedAt')::timestamptz >= NOW() - interval '90 seconds' AS live
+         FROM agent_sessions WHERE id = $1`, [c.id])).rows[0];
+    const claim = (c, id) => pool.query(
+      `UPDATE agent_sessions SET active_turn = jsonb_build_object('id', $2::text, 'startedAt', NOW() - interval '5 minutes') WHERE id = $1`, [c.id, id]);
+    try {
+      const c = await conversation();
+      await claim(c, 'h8');
+      const during = [];
+      mayorRun = async () => {
+        during.push(await claimOf(c));
+        await new Promise((r) => setTimeout(r, 80));
+        during.push(await claimOf(c));
+      };
+      await turns.run(ctxFor(c, 'h8'), { config: {}, pool });
+      assert.equal(during[0].live, true, 'renewed as it starts, though asked five minutes ago');
+      assert.ok(during[1].renewed > during[0].renewed, 'and again while it runs');
+      const after = (await claimOf(c)).renewed;
+      await new Promise((r) => setTimeout(r, 60));
+      assert.equal((await claimOf(c)).renewed, after, 'not once its item ended');
+
+      const other = await conversation();
+      await claim(other, 'someone-else');
+      await turns.run(ctxFor(other, 'h8b'), { config: {}, pool });
+      assert.equal((await claimOf(other)).renewed, null, 'a claim another turn holds is not its to renew');
+      // Nothing left for the leftover pass below to count.
+      await pool.query('UPDATE agent_sessions SET active_turn = NULL WHERE id = ANY($1::int[])', [[c.id, other.id]]);
+    } finally {
+      turns.CLAIM_RENEW.ms = was;
+    }
+  });
+
   await t.test('H7 the item runs the real handler through the workflow', async () => {
     reset();
     const c = await conversation();

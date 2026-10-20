@@ -383,6 +383,28 @@ async function runRecover(ctx, { config, pool }, input) {
   return { ended: 'recovered' };
 }
 
+// ROLLOUT-ONLY: a release from before the turn machine reads a
+// conversation's claim as abandoned once it has not been renewed for 90
+// seconds: its leader ends the turn as interrupted, and its lease takes the
+// claim for a turn of its own. While a process of that release may run
+// beside this one, the claim of the turn this item runs is renewed as that
+// release renewed it (agent-sessions.js renewTurnLease, before the turn
+// machine), which no screen redraws for (schema.sql agent_session_state_touch).
+// Delete with turn-leftovers.js's rollout parts.
+const CLAIM_RENEW = { ms: 30 * 1000 };
+
+function renewClaim(pool, input) {
+  if (input.kind !== 'agent') return () => {};
+  const renew = () => pool.query(
+    `UPDATE agent_sessions SET active_turn = active_turn || jsonb_build_object('renewedAt', NOW())
+      WHERE id = $1 AND active_turn->>'id' = $2`, [Number(input.agentSessionId), String(input.turnId)])
+    .catch((err) => log.warn('turns', 'Could not renew the conversation\'s claim', { agentSessionId: input.agentSessionId, err: err.message }));
+  renew();
+  const timer = setInterval(renew, CLAIM_RENEW.ms);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
 const KINDS = new Map([
   ['agent', { run: runAgent, resume: resumeAgent }],
   ['classic', { run: runClassic, resume: resumeClassic }],
@@ -398,9 +420,11 @@ async function run(ctx, deps) {
   // A turn asked to resume (an older release's headless run:
   // turn-leftovers.js) starts where its row says it is, as a resumed one.
   const resumed = !!ctx.resumeFrom || (Number(ctx.lostAttempts) || 0) > 0 || input.resume === true;
+  const stopRenewing = renewClaim(deps.pool, input);
   try {
     return await (resumed ? kind.resume : kind.run)(ctx, deps, input);
   } finally {
+    stopRenewing();
     // Unless this process lost the item (the next claim carries it on), a
     // coding record it still holds is released as it ends.
     if (!(ctx.signal && ctx.signal.aborted)) {
@@ -411,4 +435,4 @@ async function run(ctx, deps) {
   }
 }
 
-module.exports = { run, ownedChange, RECOVERY_RETRY, STOP_POLL, NO_RESPONSE };
+module.exports = { run, ownedChange, RECOVERY_RETRY, STOP_POLL, CLAIM_RENEW, NO_RESPONSE };
