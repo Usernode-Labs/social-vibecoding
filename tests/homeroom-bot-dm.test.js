@@ -509,7 +509,7 @@ test('the short description is suggested for everyone making a project, and ever
   // Owed with the project, in the route's transaction (its making files it),
   // then said (startFirstVersion: the bot's DM, the early plan).
   assert.match(create, /const owesFirstVersion = !repoUrlNormalized && !readyMade && !!homeroomBotDm\.normalizeBrief\(req\.body\.brief\);/);
-  assert.match(create, /if \(owesFirstVersion\) await homeroomBotDm\.recordFirstVersion\(db, pool, config, \{ app: appRow, user: req\.user, brief: req\.body\.brief \}\);/);
+  assert.match(create, /homeroomBotDm\.recordFirstVersion\(db, pool, config, \{ app: appRow, user: req\.user, brief: req\.body\.brief \}\)/);
   assert.match(create, /if \(owesFirstVersion\) \{[\s\S]{0,200}startFirstVersion\(pool, config, \{/);
   // #3624: an import, a ready-made app or a project with no description is
   // recorded for the bot instead (so an import's backlog waits), and so is a
@@ -518,7 +518,7 @@ test('the short description is suggested for everyone making a project, and ever
   const fork = routes.slice(routes.indexOf("router.post('/api/apps/:slug/fork'"), routes.indexOf("router.get('/api/apps/:slug'"));
   // Recorded for the bot; its insert started its copy (src/workflow/app-creation/).
   assert.match(fork, /noteProjectMade\(pool, \{ app: appRow, user: req\.user, origin: 'fork' \}\)/);
-  assert.match(fork, /forked_from, creating_owner\)\s+VALUES \(\$1, \$2, \$3, 'creating', 'private', 'private', \$4::jsonb, 'workflow'\)/);
+  assert.match(fork, /forked_from, creating_owner, creating_heartbeat_at\)\s+VALUES \(\$1, \$2, \$3, 'creating', 'private', 'private', \$4::jsonb, 'workflow', 'infinity'\)/);
   // Every project is live, so nothing reads who made which any more; what
   // was made without a description is recorded only for somebody the bot
   // works for, and an import's record is what holds its backlog back.

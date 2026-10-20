@@ -5034,6 +5034,18 @@ function firstVersionIssue({ name, username, brief, botBuilds = true, card = nul
 // GitHub's answer and its record finds it rather than filing a second.
 const firstRequestMarker = (appId) => `<!-- homeroom-first-version:app-${appId} -->`;
 
+// The claim: a waiting row, or one left filing that nothing else can be
+// filing. An older build's filing holds no lease; it is over once no
+// process of another build is alive (draining or serving), and that build's
+// own sweep let a filing row go after FILING_LAPSE_MINUTES. Two processes of
+// this build never file one project: its making's work item is the one.
+const FILING_LAPSE_MINUTES = 30;
+const CLAIM_SQL = `UPDATE homeroom_bot_first_versions f SET status = 'filing', attempts = f.attempts + 1
+   WHERE f.app_id = $1 AND (f.status = 'waiting' OR (f.status = 'filing' AND (
+     f.created_at < NOW() - make_interval(mins => $3)
+     OR NOT EXISTS (SELECT 1 FROM platform_processes p
+                     WHERE p.heartbeat_at > NOW() - INTERVAL '45 seconds' AND p.release IS DISTINCT FROM $2::text))))`;
+
 /**
  * File one project's first request (app-creation's `app.firstRequest`
  * work, once): a GitHub issue under the creator's name and the platform's
@@ -5053,7 +5065,9 @@ async function fileFirstRequest(pool, config, appId, { steps, last = false, deps
       WHERE f.app_id = $1`,
     [appId],
   );
-  if (!row || row.status === 'filed' || row.status === 'failed') return { skipped: row ? row.status : 'none' };
+  // Filed, unless this work filed it and stopped before saying so (its
+  // `record` step kept, its `announce` not): then it says so now.
+  if (!row || row.status === 'failed' || (row.status === 'filed' && !steps.has('record'))) return { skipped: row ? row.status : 'none' };
   const github = deps.github || require('./github');
   const ws = deps.ws || require('./ws');
   const { rows: people } = await pool.query('SELECT username FROM users WHERE id = $1', [row.user_id]);
@@ -5066,7 +5080,20 @@ async function fileFirstRequest(pool, config, appId, { steps, last = false, deps
   const card = cardRow ? { ...cardRow, committed: !!sketchRow.committed_at } : null;
   const { title, body } = firstVersionIssue({ name, username, brief: row.brief, botBuilds, card });
   try {
-    await pool.query(`UPDATE homeroom_bot_first_versions SET status = 'filing', attempts = attempts + 1 WHERE app_id = $1 AND status <> 'filed'`, [appId]);
+    // Claimed once, from waiting: an older build's sweep, still running
+    // during a rollout, claims the same way, so the two never both file it.
+    // A row left filing (a process that died filing it: an older build's,
+    // or this work's own try that stopped before it kept its claim) is
+    // taken once nothing else can be filing it; until then this waits.
+    await steps.once('claim', async () => {
+      for (;;) {
+        const { rowCount } = await pool.query(CLAIM_SQL, [appId, process.env.GIT_SHA || null, FILING_LAPSE_MINUTES]);
+        if (rowCount) return true;
+        const { rows: [now] } = await pool.query('SELECT status FROM homeroom_bot_first_versions WHERE app_id = $1', [appId]);
+        if (now?.status !== 'filing') throw Object.assign(new Error(`it is ${now?.status ?? 'gone'}`), { settled: now?.status ?? 'none' });
+        await steps.race(new Promise((r) => setTimeout(r, deps.claimWaitMs ?? 15000)));
+      }
+    });
     const parsed = (typeof github.parseGithubUrl === 'function' && row.repo_url && github.parseGithubUrl(row.repo_url))
       || (() => {
         const m = String(row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
@@ -5141,9 +5168,14 @@ async function fileFirstRequest(pool, config, appId, { steps, last = false, deps
     return { issueNumber };
   } catch (err) {
     if (steps.stopped) throw err;
+    // Another process filed it, or gave it up, meanwhile: its outcome is
+    // its own to tell.
+    if (err.settled) return { skipped: err.settled };
+    // Held while this work tries again (its claim is kept), given up on its
+    // last try.
     await pool.query(
       `UPDATE homeroom_bot_first_versions SET status = $2, error = $3 WHERE app_id = $1 AND status <> 'filed'`,
-      [row.app_id, last ? 'failed' : 'waiting', clip(err.message, 300)],
+      [row.app_id, last ? 'failed' : 'filing', clip(err.message, 300)],
     ).catch(() => {});
     log.warn('homeroom-bot-dm', 'Could not file a first version', { app: row.slug, err: err.message, final: last });
     if (!last) throw err;

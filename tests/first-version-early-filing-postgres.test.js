@@ -200,13 +200,67 @@ test('a first version filed while its project is set up', { timeout: 180000 }, a
     delete github.findIssueByMarker;
   });
 
+  await t.test('a row left filing is taken once nothing else can be filing it; one filed meanwhile is left to its filer', async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const ours = process.env.GIT_SHA;
+    process.env.GIT_SHA = 'this-build';
+    const older = () => pool.query(`INSERT INTO platform_processes (id, release, role, state) VALUES ('older-pod', 'older-build', 'conductor', 'draining')`);
+    const gone = () => pool.query(`DELETE FROM platform_processes WHERE id IN ('older-pod', 'our-pod')`);
+    const filing = (app) => dm.fileFirstRequest(pool, {}, app.id, {
+      steps: makeSteps({ resumeFrom: null, checkpoint: async () => {} }), deps: { github, claimWaitMs: 10 },
+    });
+    try {
+      // An older build's process died filing it, or is filing it still.
+      const app = await project('cv-left');
+      await pool.query(`UPDATE homeroom_bot_first_versions SET status = 'filing' WHERE app_id = $1`, [app.id]);
+      await older();
+      await pool.query(`INSERT INTO platform_processes (id, release, role, state) VALUES ('our-pod', 'this-build', 'conductor', 'serving')`);
+      const left = filing(app);
+      await sleep(60);
+      assert.equal(created.filter((c) => c.repo === 'cv-left').length, 0, 'waits while a process of the older build lives');
+      await pool.query(`DELETE FROM platform_processes WHERE id = 'older-pod'`);
+      assert.deepEqual(await left, { issueNumber: 1 }, 'taken once it is gone');
+      assert.equal(created.filter((c) => c.repo === 'cv-left').length, 1);
+      // Past that build's own lapse, taken whatever lives.
+      const stale = await project('cv-stale');
+      await pool.query(`UPDATE homeroom_bot_first_versions SET status = 'filing', created_at = now() - interval '31 minutes' WHERE app_id = $1`, [stale.id]);
+      await older();
+      assert.deepEqual(await filing(stale), { issueNumber: 1 });
+      // One the older build filed while this waited is its own.
+      const done = await project('cv-done');
+      await pool.query(`UPDATE homeroom_bot_first_versions SET status = 'filing' WHERE app_id = $1`, [done.id]);
+      const waiting = filing(done);
+      await sleep(30);
+      await pool.query(`UPDATE homeroom_bot_first_versions SET status = 'filed', issue_number = 3 WHERE app_id = $1`, [done.id]);
+      assert.deepEqual(await waiting, { skipped: 'filed' });
+      assert.equal(created.filter((c) => c.repo === 'cv-done').length, 0);
+    } finally {
+      await gone();
+      if (ours === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = ours;
+    }
+  });
+
+  await t.test('a try that stopped after recording the issue still tells of it; a filed one with nothing kept is left', async () => {
+    const app = await project('cv-told');
+    const kept = { value: null };
+    assert.deepEqual(await file(app, { kept }), { issueNumber: 1 });
+    // Stopped before its announcement was kept.
+    const { announce, ...rest } = kept.value;
+    assert.equal(announce, true);
+    woken.length = 0;
+    assert.deepEqual(await file(app, { kept: { value: rest } }), { issueNumber: 1 });
+    assert.deepEqual(woken, [{ appId: app.id, issueNumber: 1, reason: 'first_version' }]);
+    assert.deepEqual(await file(app), { skipped: 'filed' });
+    assert.equal(created.filter((c) => c.repo === 'cv-told').length, 1);
+  });
+
   await t.test('a failure is tried again while tries are left; the last is recorded and told to its maker', async () => {
     const app = await project('cv-fails');
     const realCreate = github.createIssue;
     github.createIssue = async () => { throw new Error('GitHub is down'); };
     try {
       await assert.rejects(file(app), /GitHub is down/);
-      assert.equal((await fvOf(app)).status, 'waiting', 'tried again');
+      assert.equal((await fvOf(app)).status, 'filing', 'held while it is tried again');
       assert.deepEqual(await file(app, { last: true }), { failed: 'GitHub is down' });
       assert.equal((await fvOf(app)).status, 'failed');
     } finally {

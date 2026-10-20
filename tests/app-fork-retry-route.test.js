@@ -179,6 +179,25 @@ test('a retry its making refuses (an attempt still finishing) is a 409', async (
   }
 });
 
+test('a retry while its first deploy is still on its way, or one its making could not decide, is a 409 that says so', async () => {
+  const server = await startServer();
+  try {
+    retryAnswer = { status: 'rejected', reason: 'still_deploying' };
+    let { res, body } = await post(server, '/api/apps/forked-app/retry');
+    assert.equal(res.status, 409);
+    assert.match(body.error, /first deploy is still on its way/);
+    retryAnswer = { status: 'faulted', reason: 'transition_threw' };
+    ({ res, body } = await post(server, '/api/apps/forked-app/retry'));
+    assert.equal(res.status, 409);
+    // Not answered within the wait: its making will.
+    retryAnswer = { status: 'pending' };
+    ({ res } = await post(server, '/api/apps/forked-app/retry'));
+    assert.equal(res.status, 200);
+  } finally {
+    server.close();
+  }
+});
+
 test('an interrupted failure\'s retry is free', async () => {
   failedApp = app({ retry_count: 3, last_failure: { reason: 'interrupted', interrupted: true } });
   const server = await startServer();
@@ -246,7 +265,7 @@ test('a remix is inserted as Just you with reference-only lineage', async () => 
     assert.equal(res.status, 201, JSON.stringify(body));
     const insert = queries.find((q) => /WITH new_app AS/.test(q.sql));
     assert.ok(insert, 'the copy row is inserted');
-    assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, 'creating', 'private', 'private', \$4::jsonb, 'workflow'\)/,
+    assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, 'creating', 'private', 'private', \$4::jsonb, 'workflow', 'infinity'\)/,
       'private to build and to view: Just you; the workflow makes it');
     assert.ok(!insert.params.includes('public'), 'the original\'s audience is not passed through');
     const lineage = JSON.parse(insert.params[3]);

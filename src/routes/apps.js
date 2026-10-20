@@ -1354,6 +1354,18 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const owesFirstVersion = !repoUrlNormalized && !readyMade && !!homeroomBotDm.normalizeBrief(req.body.brief);
       const db = await pool.connect();
       let appRow;
+      // A part of the create that is never a reason it fails: under a
+      // savepoint, so its failure leaves the rest of the transaction whole.
+      const optional = async (name, said, fn) => {
+        await db.query(`SAVEPOINT ${name}`);
+        try {
+          await fn();
+          await db.query(`RELEASE SAVEPOINT ${name}`);
+        } catch (err) {
+          await db.query(`ROLLBACK TO SAVEPOINT ${name}`);
+          log.warn('apps', said, { appId: appRow?.id, err: err.message });
+        }
+      };
       try {
         await db.query('BEGIN');
         // The CTE makes app row + creator membership atomic — the creator
@@ -1363,8 +1375,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         const { rows } = await db.query(
           `WITH new_app AS (
              INSERT INTO apps (name, slug, repo_url, created_by, status,
-                               collab_visibility, view_visibility, creating_owner)
-             VALUES ($1, $2, $3, $4, 'creating', $5, $6, 'workflow')
+                               collab_visibility, view_visibility, creating_owner, creating_heartbeat_at)
+             VALUES ($1, $2, $3, $4, 'creating', $5, $6, 'workflow', 'infinity')
              RETURNING *
            ), membership AS (
              INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
@@ -1457,20 +1469,20 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         // nothing to sketch.
         if (MAKE_ORIGINS.has(req.body.from) && !repoUrlNormalized && !readyMade
             && homeroomBotDm.normalizeBrief(req.body.brief)) {
-          await db.query('SAVEPOINT sketch');
-          await require('../services/app-sketch').startSketch(db, {
+          await optional('sketch', 'Sketch not owed', () => require('../services/app-sketch').startSketch(db, {
             app: appRow, user: req.user, brief: req.body.brief,
             timeZone: typeof req.body.timeZone === 'string' ? req.body.timeZone.slice(0, 64) : null,
             // Just me, from More options: nobody to share it with.
             solo: options.audience === 'solo',
-          }).then(() => db.query('RELEASE SAVEPOINT sketch'), async (err) => {
-            await db.query('ROLLBACK TO SAVEPOINT sketch');
-            log.warn('apps', 'Sketch not owed', { appId: appRow.id, err: err.message });
-          });
+          }));
         }
         // What the project should do, owed as its first request: its making
-        // files it once its repository holds the starter.
-        if (owesFirstVersion) await homeroomBotDm.recordFirstVersion(db, pool, config, { app: appRow, user: req.user, brief: req.body.brief });
+        // files it once its repository holds the starter. Never a reason the
+        // create fails.
+        if (owesFirstVersion) {
+          await optional('first_version', 'Homeroom bot first version not owed',
+            () => homeroomBotDm.recordFirstVersion(db, pool, config, { app: appRow, user: req.user, brief: req.body.brief }));
+        }
         await db.query('COMMIT');
       } catch (err) {
         await db.query('ROLLBACK').catch(() => {});
@@ -1682,8 +1694,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const { rows } = await pool.query(
         `WITH new_app AS (
            INSERT INTO apps (name, slug, created_by, status,
-                             collab_visibility, view_visibility, forked_from, creating_owner)
-           VALUES ($1, $2, $3, 'creating', 'private', 'private', $4::jsonb, 'workflow')
+                             collab_visibility, view_visibility, forked_from, creating_owner, creating_heartbeat_at)
+           VALUES ($1, $2, $3, 'creating', 'private', 'private', $4::jsonb, 'workflow', 'infinity')
            RETURNING *
          ), membership AS (
            INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
@@ -4019,10 +4031,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         }
       }
 
+      // Pending: its making has not answered within the wait, and will.
       const out = await require('../workflow/platform.ts').retryCreation(appRow.id, { counted: !interrupted, actor: req.user.username });
-      if (out.status !== 'accepted' && out.status !== 'replayed') {
+      if (out.status === 'rejected' || out.status === 'faulted') {
         return res.status(409).json({
-          error: 'The last attempt to set this app up is still finishing. Try again in a minute.',
+          error: out.reason === 'still_deploying'
+            ? 'Its first deploy is still on its way. It will be live when it lands; try again if it fails.'
+            : 'The last attempt to set this app up is still finishing. Try again in a minute.',
         });
       }
 

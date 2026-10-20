@@ -159,7 +159,10 @@ async function seedStarter(config, pool, row, sketch, ctx) {
     // (.claude/homeroom-canonical-repo, read by the freshness check). No
     // database URL: none goes into a repository.
     const files = starterFiles(row, { repoUrl, sketch });
-    const head = repo.adopted ? await github.headCommit(botUsername, row.slug).catch(() => null) : null;
+    // An adopted repository's head is read, never guessed: a read that fails
+    // fails the setup (Retry makes it again), rather than push the commit
+    // twice.
+    const head = repo.adopted ? await github.headCommit(botUsername, row.slug) : null;
     const commit = head && head.message === initMessage(row.name)
       ? head
       : await github.pushFiles(botUsername, row.slug, files, { message: initMessage(row.name) });

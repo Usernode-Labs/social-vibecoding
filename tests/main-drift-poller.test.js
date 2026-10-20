@@ -103,6 +103,21 @@ test('what app delivery decided is what the check reports; the merge queue is to
   assert.deepEqual(wf.wants, []);
 });
 
+test('a commit told before is already asked; one not answered within the wait is asked; a fault holds the merge queue', async () => {
+  reset();
+  wf.answer = { status: 'replayed' };
+  assert.equal((await poller.checkOne(config, pool, app)).status, 'already_asked');
+  assert.equal(wf.wants.length, 1, 'the merge queue looks once per commit: its own key');
+  reset();
+  wf.answer = { status: 'pending' };
+  assert.equal((await poller.checkOne(config, pool, app)).status, 'deploy_requested');
+  assert.equal(wf.wants.length, 1);
+  reset();
+  wf.answer = { status: 'faulted', reason: 'transition_threw' };
+  assert.equal((await poller.checkOne(config, pool, app)).status, 'transition_threw');
+  assert.deepEqual(wf.wants, []);
+});
+
 test('the admin\'s check tells it by hand', async () => {
   reset();
   await poller.checkByHand(config, pool, app);

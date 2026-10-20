@@ -320,7 +320,10 @@ function deployed(s: Going, e: Event<WorkResultPayload>, f: Facts, ctx: Transiti
   const push: Push[] = [
     redeployStatus({ appSlug: d.appSlug, deploying: false, startedAt: d.attempt!.startedAt, fromSha: d.attempt!.fromSha, toSha: sha }),
   ];
-  const next: Data = { ...d, requests: left, attempt: null, last: { sha, at: ctx.now.toISOString() }, failure: null, retry: null };
+  // A deploy that succeeded is a new runtime: the next heal is not held
+  // back by the heals before it (its number, the work's key, stays).
+  const heal = d.heal ? { ...d.heal, streak: 0, seenRestarting: null } : d.heal;
+  const next: Data = { ...d, requests: left, attempt: null, last: { sha, at: ctx.now.toISOString() }, failure: null, retry: null, heal };
   const writes = [{ type: 'deployed', appId: d.appId, appSlug: d.appSlug, sha, prNumber }];
   if (left.length) return { ...start(next, f, ctx, { messages, push, fromSha: sha ?? f.app?.mainSha ?? null }), writes };
   return { ...rest(next, { messages, push }), writes };
@@ -348,7 +351,7 @@ function failed(s: Going, e: Event<any>, f: Facts, ctx: TransitionContext): Outc
   for (const r of d.requests) {
     if (!covered.has(r.id)) { requests.push(r); continue; }
     if (!r.from) {
-      if (RETRIED.has(r.reason) && !FINAL.has(kind ?? '') && e.type !== 'EndDeploy') { requests.push(r); held.push(r.id); }
+      if (RETRIED.has(r.reason) && !FINAL.has(kind ?? '')) { requests.push(r); held.push(r.id); }
       continue;
     }
     if (!r.told) messages.push(...answer(r, 'DeliveryFailed', { message, missingSecrets }));
@@ -379,7 +382,12 @@ function retryDue(s: Going, e: Event<any>, f: Facts, ctx: TransitionContext): Ou
   if (!d.retry || !d.requests.some((r) => d.retry!.held.includes(r.id))) return { next: s, timer: null };
   // An older deadline a newer failure moved: the newer one stays.
   if (Date.parse(d.retry.at) > ctx.now.getTime()) return { next: s, timer: { at: new Date(d.retry.at), event: { type: 'RetryDue' } } };
-  if (unservable(f)) return { next: { name: 'idle', data: { ...d, requests: [], retry: null } }, timer: null };
+  if (unservable(f)) {
+    // Nothing here can serve them now: whoever waits is told.
+    const cannot = UNSERVABLE.get(unservable(f)!)!;
+    const messages = d.requests.filter((r) => !r.told).flatMap((r) => answer(r, 'DeliveryFailed', { message: cannot, missingSecrets: null }));
+    return { next: { name: 'idle', data: { ...d, requests: [], retry: null } }, messages, timer: null };
+  }
   return start(d, f, ctx);
 }
 
@@ -398,22 +406,32 @@ function mayHeal(d: Data, ctx: TransitionContext, deps: Deps): boolean {
 }
 
 // A report that the app is not up: healed now, unless its backoff runs.
+// What a report comes to: a container's grace starting (`grace`), a heal
+// (`heal`), or nothing, refused with why (a refusal keeps no receipt: a
+// dead app reported every minute for days writes none).
+type Verdict = 'grace' | 'heal' | { refuse: string };
+function judgeReport(s: DeliveryState, e: Event<any>, f: Facts, ctx: TransitionContext, deps: Deps): Verdict {
+  const p = e.payload as { appId: number; state?: string };
+  const d = dataOf(s, p.appId, f);
+  // Docker's own restart policy is usually mid-backoff: a container seen
+  // restarting is given its grace, and healed only if it still is.
+  if (p.state === 'restarting' && f.runtimeKind === 'docker') {
+    const seen = d.heal?.seenRestarting ? Date.parse(d.heal.seenRestarting) : null;
+    if (seen === null || ctx.now.getTime() - seen > RESTART_GRACE_MS * 3) return 'grace';
+    if (ctx.now.getTime() - seen < RESTART_GRACE_MS) return { refuse: 'grace' };
+  }
+  return mayHeal(d, ctx, deps) ? 'heal' : { refuse: 'backoff' };
+}
+
 function reported(deps: Deps) {
   return (s: DeliveryState, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<DeliveryState> => {
     const p = e.payload as { appId: number; state?: string };
     const d = dataOf(s, p.appId, f);
     const via = e.type === 'Unreachable' ? 'visit' : 'sweep';
-    // Docker's own restart policy is usually mid-backoff: a container seen
-    // restarting is given its grace, and healed only if it still is.
-    if (p.state === 'restarting' && f.runtimeKind === 'docker') {
-      const seen = d.heal?.seenRestarting ? Date.parse(d.heal.seenRestarting) : null;
-      if (seen === null || ctx.now.getTime() - seen > RESTART_GRACE_MS * 3) {
-        const heal: Heal = { ...(d.heal ?? { n: 0, at: ctx.now.toISOString(), streak: 0, via }), seenRestarting: ctx.now.toISOString() };
-        return { next: { name: 'idle', data: { ...d, heal } } };
-      }
-      if (ctx.now.getTime() - seen < RESTART_GRACE_MS) return { next: { name: 'idle', data: d } };
+    if (judgeReport(s, e, f, ctx, deps) === 'grace') {
+      const heal: Heal = { ...(d.heal ?? { n: 0, at: ctx.now.toISOString(), streak: 0, via }), seenRestarting: ctx.now.toISOString() };
+      return { next: { name: 'idle', data: { ...d, heal } } };
     }
-    if (!mayHeal(d, ctx, deps)) return { next: { name: 'idle', data: d } };
     const prev = d.heal;
     const quiet = prev?.streak ? ctx.now.getTime() - Date.parse(prev.at) - backoffMs(prev, deps) : Infinity;
     const streak = prev?.streak && quiet < QUIET_MS ? prev.streak + 1 : 1;
@@ -474,7 +492,11 @@ export function appDelivery(deps: Deps = {}): Machine<DeliveryState, Facts> {
   const report = {
     guard: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext): Check => {
       const k = keyed(ctx, e);
-      return k !== true ? k : reportGuard(f);
+      if (k !== true) return k;
+      const g = reportGuard(f);
+      if (g !== true) return g;
+      const v = judgeReport(s, e, f, ctx, deps);
+      return typeof v === 'object' ? reject(v.refuse) : ok();
     },
     to: reported(deps),
   };
@@ -529,7 +551,10 @@ export function appDelivery(deps: Deps = {}): Machine<DeliveryState, Facts> {
         Unhealthy: { ignore: 'deploying' },
         Unreachable: { ignore: 'deploying' },
         RetryDue: { ignore: 'deploying' },
-        EndDeploy: { to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => failed(s, e, f, ctx) },
+        // Its work is given up too, so the next deploy or heal never runs
+        // beside it.
+        EndDeploy: { to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) =>
+          ({ ...failed(s, e, f, ctx), cancel: [{ kind: WORK.deploy, key: `deploy:${s.data.attempt.n}` }] }) },
         WorkSucceeded: succeeded,
         WorkFailed: result(failed),
         WorkExhausted: result(failed),
@@ -541,7 +566,8 @@ export function appDelivery(deps: Deps = {}): Machine<DeliveryState, Facts> {
         Unreachable: { ignore: 'healing' },
         RetryDue: { ignore: 'healing' },
         // An admin ends a heal that never answers: the cure did not happen.
-        EndDeploy: { to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => healed(s, { ...e, type: 'WorkFailed' }, f, ctx) },
+        EndDeploy: { to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) =>
+          ({ ...healed(s, { ...e, type: 'WorkFailed' }, f, ctx), cancel: [{ kind: WORK.heal, key: `heal:${s.data.healing.n}` }] }) },
         WorkSucceeded: heal,
         WorkFailed: heal,
         WorkExhausted: heal,

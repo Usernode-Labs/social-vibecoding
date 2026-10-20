@@ -36,12 +36,20 @@ export interface Job {
   };
 }
 
-// Whether `release` is the newest release the platform has booted: the
-// release machine's newest instance.
-async function newestBuild(pool: any, release: string): Promise<boolean> {
+// Whether this process runs the newest build: the build of the workflow
+// process that started serving last (`platform_processes`, live). By when it
+// started, not by when its release was first seen, so a rollback to an older
+// build, or a rollout of the same build with another configuration, is the
+// newest once it serves. A platform with no process recorded (a test) has no
+// older build.
+const LIVE_SECONDS = 45;
+async function newestBuild(pool: any): Promise<boolean> {
+  const own = String(process.env.GIT_SHA || '').trim().slice(0, 40) || null;
   const { rows: [newest] } = await pool.query(
-    `SELECT key FROM wf_instances WHERE machine = 'release' ORDER BY created_at DESC LIMIT 1`);
-  return !newest || newest.key === `release:${release}`;
+    `SELECT release FROM platform_processes
+      WHERE state = 'serving' AND role <> 'web' AND heartbeat_at > now() - make_interval(secs => $1)
+      ORDER BY started_at DESC LIMIT 1`, [LIVE_SECONDS]);
+  return !newest || (newest.release ?? null) === own;
 }
 
 // A result is stored as instance data: JSON, and nothing a Date or an
@@ -64,7 +72,7 @@ export function clockServices(jobs: readonly Job[], deps: JobDeps): Record<strin
       async run(ctx) {
         if (!job.newestOnly) return json(await job.run(ctx, deps));
         const release = bootRelease();
-        if (!await newestBuild(deps.pool, release)) return { skipped: 'older_build' };
+        if (!await newestBuild(deps.pool)) return { skipped: 'older_build' };
         const result = await job.run(ctx, deps);
         return json(result && typeof result === 'object' && !Array.isArray(result) ? { ...result, release } : result);
       },
@@ -356,6 +364,18 @@ export const JOBS: readonly Job[] = Object.freeze([
       leaseMs: 5 * MIN,
       run: (ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/starter-images').buildTarget(config, pool, ctx.input.input),
     },
+  },
+  {
+    // The app-host gate follows APP_GATE, in both directions: on brings it up
+    // and routes every app through it, off routes them all straight back
+    // (services/kubernetes.js reconcileAppGateIngresses). The newest build's
+    // setting (a change of APP_GATE alone, a rollback): an older build still
+    // running during a rollout never routes the fleet back by its own. On
+    // Kubernetes, where the platform runs its cluster's maintenance.
+    name: 'app-gate', everyMs: 10 * MIN, newestOnly: true, leaseMs: 5 * MIN,
+    run: (_ctx: WorkContext, { config }: JobDeps) => (legacy('services/application-runtime').mode(config) === 'kubernetes'
+      ? legacy('services/kubernetes').reconcileAppGateIngresses(config)
+      : { off: true }),
   },
   {
     // The translation of this build's new interface text

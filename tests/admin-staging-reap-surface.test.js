@@ -398,8 +398,11 @@ test('the newest build hands the previews another env built to the preview machi
   assert.match(job, /everyMs: 15 \* MIN/);
   // newestOnly: the clock's rule for a job only the newest build runs.
   assert.match(job, /newestOnly: true/);
-  assert.match(clocks, /machine = 'release' ORDER BY created_at DESC LIMIT 1/);
-  assert.match(clocks, /if \(!await newestBuild\(deps\.pool, release\)\) return \{ skipped: 'older_build' \};/);
+  // The newest build: that of the live workflow process that started
+  // serving last (a rollback, or the same build with another environment,
+  // is the newest once it serves).
+  assert.match(clocks, /FROM platform_processes\s+WHERE state = 'serving' AND role <> 'web' AND heartbeat_at > now\(\) - make_interval\(secs => \$1\)\s+ORDER BY started_at DESC LIMIT 1/);
+  assert.match(clocks, /if \(!await newestBuild\(deps\.pool\)\) return \{ skipped: 'older_build' \};/);
   assert.match(job, /legacy\('services\/staging-reap'\)\.tellStaleEnv\(config\)/);
   const reap = read('src/services/staging-reap.js');
   const fn = reap.slice(reap.indexOf('async function tellStaleEnv('));

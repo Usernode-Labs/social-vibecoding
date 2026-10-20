@@ -14332,15 +14332,24 @@ CREATE TRIGGER chat_sessions_wf_enrol_proposal
 -- (src/workflow/app-creation/): its row's insert appends Started, keyed as
 -- one, in the inserting transaction, so its setup starts once everything the
 -- route wrote with it has committed. Every door inserts it so: Make it, an
--- import, a ready-made app, a remix, the bench studio's host. An insert that
--- names the workflow as its maker (creating_owner = 'workflow'): a row an
--- older build inserts during a rollout is that build's to make.
+-- import, a ready-made app, a remix, the bench studio's host, naming the
+-- workflow as its maker (creating_owner = 'workflow'). A row an older build
+-- inserts during a rollout (no such owner yet) appends Adopted instead: the
+-- machine waits for that build's own process to let it go, and makes it
+-- only if it was left unfinished.
 CREATE OR REPLACE FUNCTION wf_enrol_app_creation() RETURNS TRIGGER AS $$
 BEGIN
-  INSERT INTO wf_events (machine, key, app_id, type, payload, source, request_key)
-  VALUES ('app-creation', 'app:' || NEW.id, NEW.id, 'Started',
-          jsonb_build_object('appId', NEW.id), '{"kind": "system", "name": "create"}'::jsonb,
-          'start:' || NEW.id);
+  IF NEW.creating_owner IS NOT DISTINCT FROM 'workflow' THEN
+    INSERT INTO wf_events (machine, key, app_id, type, payload, source, request_key)
+    VALUES ('app-creation', 'app:' || NEW.id, NEW.id, 'Started',
+            jsonb_build_object('appId', NEW.id), '{"kind": "system", "name": "create"}'::jsonb,
+            'start:' || NEW.id);
+  ELSE
+    INSERT INTO wf_events (machine, key, app_id, type, payload, source, request_key)
+    VALUES ('app-creation', 'app:' || NEW.id, NEW.id, 'Adopted',
+            jsonb_build_object('appId', NEW.id), '{"kind": "system", "name": "older-build"}'::jsonb,
+            'adopt:' || NEW.id);
+  END IF;
   PERFORM pg_notify('wf_events', 'app-creation');
   RETURN NULL;
 END;
@@ -14349,7 +14358,7 @@ DROP TRIGGER IF EXISTS apps_wf_enrol_creation ON apps;
 CREATE TRIGGER apps_wf_enrol_creation
   AFTER INSERT ON apps
   FOR EACH ROW
-  WHEN (NEW.status = 'creating' AND NEW.creating_owner = 'workflow' AND NEW.self_hosted IS NOT TRUE)
+  WHEN (NEW.status = 'creating' AND NEW.self_hosted IS NOT TRUE)
   EXECUTE FUNCTION wf_enrol_app_creation();
 
 -- campaign (src/workflow/campaign/) owns a fleet maintenance campaign once it

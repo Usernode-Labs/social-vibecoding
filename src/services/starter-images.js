@@ -67,6 +67,9 @@ const appTemplates = require('./app-templates');
 const VERSION = 'v1';
 const SOURCE_REPO = 'homeroom-starter-images';
 const MAX_ATTEMPTS = 3;
+// An older build's builder (its owner token and heartbeat, before the
+// clock) is gone after this long without a beat.
+const OLD_OWNER_LAPSE_SECONDS = 120;
 // After the n-th failed attempt, the next waits n times this.
 const RETRY_AFTER_SECONDS = 5 * 60;
 // Builds run at once: a release that changes the generator changes every key.
@@ -279,14 +282,20 @@ async function buildTarget(config, pool, input) {
   // Not a key of this build: an older one asked for it, or the starter
   // changed since. Nothing to build.
   if (!t) return { skipped: 'not_current' };
+  // Taken unless it is ready, or an older build's process is building it
+  // (its owner's heartbeat is live: during a rollout its leader still
+  // sweeps). Marked the workflow's with a heartbeat that never lapses, so
+  // that older sweep never takes it either.
   const { rows } = await pool.query(
     `UPDATE starter_images
         SET status = 'building', started_at = NOW(), attempts = attempts + 1, updated_at = NOW(),
-            owner = NULL, heartbeat_at = NULL
+            owner = 'workflow', heartbeat_at = 'infinity'
       WHERE template = $1 AND context_key = $2 AND status <> 'ready'
+        AND NOT (status = 'building' AND owner IS DISTINCT FROM 'workflow'
+                 AND heartbeat_at > NOW() - make_interval(secs => $3))
       RETURNING template`,
-    [t.id, t.key]);
-  if (!rows.length) return { skipped: 'ready' };
+    [t.id, t.key, OLD_OWNER_LAPSE_SECONDS]);
+  if (!rows.length) return { skipped: 'ready_or_building' };
   const applicationRuntime = require('./application-runtime');
   const startedAt = Date.now();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `usernode-starter-${t.id}-`));
@@ -308,7 +317,7 @@ async function buildTarget(config, pool, input) {
     await pool.query(
       `UPDATE starter_images
           SET status = 'ready', image_ref = $3, build_ref = $4, engine = $5, source_sha = $6,
-              build_ms = $7, error = NULL, built_at = NOW(), updated_at = NOW()
+              build_ms = $7, error = NULL, built_at = NOW(), updated_at = NOW(), owner = NULL, heartbeat_at = NULL
         WHERE template = $1 AND context_key = $2`,
       [t.id, t.key, build.imageRef, build.buildRef || null, engine,
         source ? source.sha : null, Date.now() - startedAt]
@@ -321,7 +330,7 @@ async function buildTarget(config, pool, input) {
     const message = String((err && (err.buildLog || err.message)) || err).slice(-ERROR_CHARS);
     log.warn('starter-images', 'Prebuilt image failed', { template: t.id, key: t.key.slice(0, 12), err: err && err.message });
     await pool.query(
-      `UPDATE starter_images SET status = 'failed', error = $3, updated_at = NOW()
+      `UPDATE starter_images SET status = 'failed', error = $3, updated_at = NOW(), owner = NULL, heartbeat_at = NULL
         WHERE template = $1 AND context_key = $2 AND status = 'building'`,
       [t.id, t.key, message]
     ).catch((dbErr) => log.warn('starter-images', 'Prebuild failure not recorded', { template: t.id, err: dbErr.message }));

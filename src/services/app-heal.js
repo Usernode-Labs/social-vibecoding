@@ -77,12 +77,19 @@ async function scan(config, pool, { n, shouldStop = () => false,
 // The error page: a person reached it instead of the app. App delivery
 // probes and heals it if it should. Keyed per app and minute: the page's
 // retries and other visitors add nothing. Never throws; fire-and-forget.
+// This process's last report per app (its minute): the page re-checks every
+// few seconds and other visitors arrive, and one report a minute says it.
+// Cost only: the key makes a second report a replay anyway.
+const visited = new Map();
 function reportVisit(pool, slug) {
+  const minute = Math.floor(Date.now() / 60_000);
+  if (visited.get(slug) === minute) return;
+  visited.set(slug, minute);
+  if (visited.size > 1000) visited.clear();
   (async () => {
     const { rows: [app] } = await pool.query(
       `SELECT id FROM apps WHERE slug = $1 AND status = 'running' AND self_hosted IS NOT TRUE`, [slug]);
     if (!app) return;
-    const minute = Math.floor(Date.now() / 60_000);
     await require('../workflow/platform.ts').reportUnreachable(app.id, `visit:${app.id}:${minute}`);
   })().catch((err) => {
     log.warn('app-heal', 'Could not report an unreachable app', { slug, err: err.message });
@@ -113,7 +120,7 @@ async function heal(config, pool, appId, { probe = false, via = 'sweep', signal 
 // What only a new runtime cures: a deploy for an app with a repository; for
 // one without (GitHub is off), its built image run again.
 async function replace(config, pool, app) {
-  if (app.repo_url) return { status: 'needs_deploy' };
+  if (app.repo_url && require('./github').isEnabled()) return { status: 'needs_deploy' };
   try {
     const containerId = await require('./app-respawn').runExistingImage(config, app);
     // Missing required secrets: unrunnable until a person adds them.

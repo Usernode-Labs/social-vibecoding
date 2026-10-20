@@ -476,7 +476,7 @@ test('the setup makes the card before its first commit, the route owes it with t
   // Both doors that land on the made screen: the first session's and the
   // Create button's (MAKE_ORIGINS; tests/create-front-door.test.js).
   // A ready-made app (services/app-templates.js) has its own icon and nothing to sketch.
-  assert.match(routes, /if \(MAKE_ORIGINS\.has\(req\.body\.from\) && !repoUrlNormalized && !readyMade\s+&& homeroomBotDm\.normalizeBrief\(req\.body\.brief\)\) \{\s+await db\.query\('SAVEPOINT sketch'\);\s+await require\('\.\.\/services\/app-sketch'\)\.startSketch\(db, \{/);
+  assert.match(routes, /if \(MAKE_ORIGINS\.has\(req\.body\.from\) && !repoUrlNormalized && !readyMade\s+&& homeroomBotDm\.normalizeBrief\(req\.body\.brief\)\) \{\s+await optional\('sketch', 'Sketch not owed', \(\) => require\('\.\.\/services\/app-sketch'\)\.startSketch\(db, \{/);
   assert.match(routes, /app: appRow, user: req\.user, brief: req\.body\.brief,\s+timeZone: typeof req\.body\.timeZone === 'string' \? req\.body\.timeZone\.slice\(0, 64\) : null,/);
   assert.doesNotMatch(routes, /sketch\.html/, 'no framed page: the card is drawn by the made screen');
   const make = read('frontend/src/features/first-session/make.tsx');

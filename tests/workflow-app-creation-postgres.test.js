@@ -73,36 +73,51 @@ test('app-creation machine against the full PostgreSQL schema', { timeout: 12000
   const machine = creation.appCreation();
   const deliveries = delivery.appDelivery({ githubOn: () => true, runtimeMode: 'kubernetes' });
   const pushed = [];
-  const rt = createRuntime({
-    pool, machines: [machine, deliveries], pollMs: 50, publish: async (q, list) => { pushed.push(...list); },
-    services: {
-      [WORK.setup]: {
-        maxAttempts: 1, resumable: true, maxLostAttempts: 3,
-        async run({ input, key }) {
-          setups.calls.push({ key, input });
-          const answer = setups.next.shift() || { sha: SHA('1'), repoUrl: 'https://github.com/bot/x', offer: { starter: { sha: SHA('1'), template: 'blank' } }, timing: { stages: { database: 10 } } };
-          if (answer.throw) throw new Error(answer.throw);
-          if (answer.hang) await new Promise((r) => setTimeout(r, answer.hang));
-          if (answer.repoUrl) await pool.query('UPDATE apps SET repo_url = $2 WHERE id = $1', [input.appId, answer.repoUrl]);
-          return answer;
-        },
-      },
-      [WORK.firstRequest]: {
-        maxAttempts: 1,
-        async run({ input, key }) { filings.calls.push({ key, input }); return { issueNumber: 1 }; },
-      },
-      [delivery.WORK.deploy]: {
-        maxAttempts: 1,
-        async run({ input, key }) {
-          deploys.calls.push({ key, input });
-          const answer = deploys.next.shift() || { sha: SHA('1'), url: 'https://made.example' };
-          if (answer.throw) throw Object.assign(new Error(answer.throw), { permanent: true });
-          return answer;
-        },
+  const services = {
+    [WORK.setup]: {
+      maxAttempts: 1, resumable: true, maxLostAttempts: 3,
+      async run({ input, key }) {
+        setups.calls.push({ key, input });
+        const answer = setups.next.shift() || { sha: SHA('1'), repoUrl: 'https://github.com/bot/x', offer: { starter: { sha: SHA('1'), template: 'blank' } }, timing: { stages: { database: 10 } } };
+        if (answer.throw) throw new Error(answer.throw);
+        if (answer.hang) await new Promise((r) => setTimeout(r, answer.hang));
+        if (answer.repoUrl) await pool.query('UPDATE apps SET repo_url = $2 WHERE id = $1', [input.appId, answer.repoUrl]);
+        return answer;
       },
     },
-  });
+    [WORK.firstRequest]: {
+      maxAttempts: 1,
+      async run({ input, key }) { filings.calls.push({ key, input }); return { issueNumber: 1 }; },
+    },
+    [delivery.WORK.deploy]: {
+      maxAttempts: 1,
+      async run({ input, key }) {
+        deploys.calls.push({ key, input });
+        const answer = deploys.next.shift() || { sha: SHA('1'), url: 'https://made.example' };
+        if (answer.throw) throw Object.assign(new Error(answer.throw), { permanent: true });
+        return answer;
+      },
+    },
+  };
+  const publish = async (q, list) => { pushed.push(...list); };
+  const rt = createRuntime({ pool, machines: [machine, deliveries], pollMs: 50, publish, services });
   runtimes.push(rt);
+  // A process that makes projects but whose app delivery is an older
+  // build's: what it asks of app delivery waits for the test to answer.
+  const solo = createRuntime({ pool, machines: [machine], pollMs: 50, publish, services: { [WORK.setup]: services[WORK.setup] } });
+  runtimes.push(solo);
+  // An older build's app delivery refused the asks (it knew no app-creation).
+  const refuseAsks = async (a) => {
+    const c = await pool.connect();
+    try {
+      await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+      const { rowCount } = await c.query(
+        `UPDATE wf_events SET status = 'processed', result = 'rejected', reason = 'unknown_asker'
+          WHERE machine = $1 AND key = $2 AND type = 'DeployRequested' AND status = 'pending'`, [delivery.MACHINE, delivery.appKey(a.id)]);
+      await c.query('COMMIT');
+      return rowCount;
+    } finally { c.release(); }
+  };
 
   const settle = async () => { for (let i = 0; i < 30; i++) { await rt.drain(); if (!(await rt.runServices())) { await rt.drain(); return; } } };
   const inst = async (a) => (await pool.query('SELECT * FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, creationKey(a.id)])).rows[0];
@@ -121,6 +136,15 @@ test('app-creation machine against the full PostgreSQL schema', { timeout: 12000
       await c.query(`UPDATE wf_instances SET deadline_at = now(),
                              data = data || jsonb_build_object('deadline', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
                       WHERE machine = $1 AND key = $2`, [MACHINE, creationKey(a.id)]);
+      await c.query('COMMIT');
+    } finally { c.release(); }
+  };
+
+  const due = async (a) => {
+    const c = await pool.connect();
+    try {
+      await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+      await c.query('UPDATE wf_instances SET deadline_at = now() WHERE machine = $1 AND key = $2', [MACHINE, creationKey(a.id)]);
       await c.query('COMMIT');
     } finally { c.release(); }
   };
@@ -150,12 +174,38 @@ test('app-creation machine against the full PostgreSQL schema', { timeout: 12000
     assert.deepEqual(phases, ['database', 'build'], 'the made screen hears its making start, and its first deploy start');
   });
 
-  await t.test('C2: a row an older build inserts during a rollout is that build\'s to make', async () => {
+  await t.test('C2: a row an older build inserts during a rollout is waited for: that build makes it, or it is made here once left', async () => {
     reset();
+    // Inserted without an owner: that build writes its owner just after.
     const a = await project({ by: null });
     await settle();
-    assert.equal(await inst(a), undefined);
+    assert.equal((await inst(a)).state, 'waiting');
+    assert.equal(setups.calls.length, 0, 'that build makes it');
+    // That build finished it: the instance lands where the row is.
+    await pool.query(`UPDATE apps SET status = 'running' WHERE id = $1`, [a.id]);
+    await due(a);
+    await rt.fireTimers();
+    await settle();
+    assert.equal((await inst(a)).state, 'running');
     assert.equal(setups.calls.length, 0);
+    // One its build finished as failed reads failed (a Retry is the way on).
+    const f = await project({ by: null });
+    await rt.drain();
+    await pool.query(`UPDATE apps SET status = 'error' WHERE id = $1`, [f.id]);
+    await due(f);
+    await rt.fireTimers();
+    await settle();
+    assert.equal((await inst(f)).state, 'failed');
+    // One left ownerless past that build's ten minutes: made here.
+    const b = await project({ by: null });
+    await rt.drain();
+    await pool.query(`UPDATE apps SET created_at = now() - interval '11 minutes' WHERE id = $1`, [b.id]);
+    await due(b);
+    await rt.fireTimers();
+    await settle();
+    assert.equal((await inst(b)).state, 'running');
+    assert.deepEqual(setups.calls.map((c) => c.key), ['setup:1']);
+    assert.equal((await row(b)).creating_owner, 'workflow');
   });
 
   await t.test('C3: a failed setup reads failed with its record; Retry sets it up again, counted', async () => {
@@ -240,6 +290,12 @@ test('app-creation machine against the full PostgreSQL schema', { timeout: 12000
     await rt.fireTimers();
     await rt.drain();
     assert.equal((await row(b)).status, 'error');
+    assert.equal((await row(b)).last_failure.reason, creation.TIMED_OUT, 'app delivery holds its deploy: timed out, not interrupted');
+    // A Retry now would set it up again under that deploy.
+    const early = await retry(b);
+    await rt.drain();
+    assert.equal((await outcomeOf(early)).reason, 'still_deploying');
+    assert.equal((await inst(b)).data.attempt, 1);
     await settle();          // the deploy answers after all
     r = await row(b);
     assert.equal(r.status, 'running');
@@ -267,17 +323,94 @@ test('app-creation machine against the full PostgreSQL schema', { timeout: 12000
     assert.equal(setups.calls.length, 0);
     // Its owner went quiet.
     await pool.query(`UPDATE apps SET creating_heartbeat_at = now() - interval '5 minutes' WHERE id = $1`, [a.id]);
-    const c = await pool.connect();
-    try {
-      await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
-      await c.query('UPDATE wf_instances SET deadline_at = now() WHERE machine = $1 AND key = $2', [MACHINE, creationKey(a.id)]);
-      await c.query('COMMIT');
-    } finally { c.release(); }
+    await due(a);
     await rt.fireTimers();
     await settle();
     i = await inst(a);
     assert.equal(i.state, 'running');
     assert.equal((await row(a)).creating_owner, 'workflow', 'the workflow\'s now: an older sweep never takes it');
+    assert.equal(Number((await row(a)).creating_heartbeat_at), Infinity, 'its heartbeat never lapses (an older sweep takes a lapsed one)');
+  });
+
+  await t.test('C11: a first deploy an older build\'s app delivery refused is asked again; never taken up by its time limit, it was interrupted', async () => {
+    reset();
+    const a = await project();
+    await solo.drain();
+    await solo.runServices();   // the setup
+    await solo.drain();
+    assert.equal((await inst(a)).state, 'deploying');
+    assert.equal(await refuseAsks(a), 1);
+    // Its look, before its time limit: app delivery does not hold it.
+    await due(a);
+    await solo.fireTimers();
+    await solo.drain();
+    assert.equal((await inst(a)).state, 'deploying');
+    const { rows: asks } = await pool.query(`SELECT status FROM wf_events WHERE machine = $1 AND key = $2 AND type = 'DeployRequested' ORDER BY id`,
+      [delivery.MACHINE, delivery.appKey(a.id)]);
+    assert.deepEqual(asks.map((x) => x.status), ['processed', 'pending'], 'asked again');
+    // A process of this build's app delivery takes it up: it runs.
+    await settle();
+    assert.equal(deploys.calls.length, 1);
+    assert.equal((await row(a)).status, 'running');
+    assert.equal((await inst(a)).state, 'running');
+    // Held, it is not asked again.
+    reset();
+    const h = await project();
+    await settle();
+    assert.equal((await inst(h)).state, 'running');
+
+    // One whose ask nothing took up when its time ran out: the platform's
+    // doing, so its Retry is free.
+    reset();
+    const b = await project();
+    await solo.drain();
+    await solo.runServices();
+    await solo.drain();
+    await refuseAsks(b);
+    await dueNow(b);
+    await solo.fireTimers();
+    await solo.drain();
+    const r = await row(b);
+    assert.equal(r.status, 'error');
+    assert.equal(r.last_failure.reason, creation.INTERRUPTED);
+    assert.equal(r.last_failure.interrupted, true);
+  });
+
+  await t.test('C12: a first request an older build left open is filed here, once, in the state its row is in', async () => {
+    reset();
+    // Made by an older build: running, with a repository, no instance.
+    const { rows: [a] } = await pool.query(
+      `INSERT INTO apps (name, slug, created_by, status, repo_url) VALUES ('owed-1', 'owed-1', $1, 'running', 'https://github.com/bot/owed-1') RETURNING *`,
+      [owner.id]);
+    await owe(a);
+    const ask = (key) => rt.append(machine, creationKey(a.id), { type: 'FirstRequestOwed', payload: { appId: a.id } },
+      { requestKey: key, appId: a.id, source: { kind: 'system', name: 'release' } });
+    const first = await ask('owed-1');
+    await settle();
+    assert.equal((await outcomeOf(first)).result, 'accepted');
+    assert.equal((await inst(a)).state, 'running');
+    assert.deepEqual(filings.calls.map((c) => c.key), ['first-request']);
+    await ask('owed-2');
+    await settle();
+    assert.equal(filings.calls.length, 1, 'once: its key');
+    // One this machine made, running, whose filing an older build's sweep
+    // left open.
+    const m = await project();
+    await settle();
+    await owe(m);
+    await rt.append(machine, creationKey(m.id), { type: 'FirstRequestOwed', payload: { appId: m.id } },
+      { requestKey: 'owed-m', appId: m.id, source: { kind: 'system', name: 'release' } });
+    await settle();
+    assert.deepEqual(filings.calls.map((c) => c.input.appId), [a.id, m.id]);
+    // Owed nothing: no repository to file it in, or nothing described.
+    const { rows: [n] } = await pool.query(
+      `INSERT INTO apps (name, slug, created_by, status) VALUES ('owed-2', 'owed-2', $1, 'running') RETURNING *`, [owner.id]);
+    await owe(n);
+    const none = await rt.append(machine, creationKey(n.id), { type: 'FirstRequestOwed', payload: { appId: n.id } },
+      { requestKey: 'owed-3', appId: n.id, source: { kind: 'system', name: 'release' } });
+    await rt.drain();
+    assert.equal((await outcomeOf(none)).reason, 'not_owed');
+    assert.equal(await inst(n), undefined);
   });
 
   await t.test('C10: the step a project is on is read from its making, in any process', async () => {

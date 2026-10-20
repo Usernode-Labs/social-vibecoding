@@ -65,7 +65,7 @@ test('app allowances: migration, create/fork, requests and admin review', async 
         -- #4666: a new project's approval rule (You or the group) is written on create.
         governance_rules JSONB,
         -- The workflow makes a new project (src/workflow/app-creation/).
-        creating_owner TEXT);
+        creating_owner TEXT, creating_heartbeat_at TIMESTAMPTZ);
       CREATE TABLE user_app_blocks (user_id INTEGER, app_id INTEGER, PRIMARY KEY (user_id, app_id));
       CREATE TABLE app_collaborators (app_id INTEGER, user_id INTEGER, status TEXT,
         accepted_at TIMESTAMPTZ, PRIMARY KEY(app_id, user_id));

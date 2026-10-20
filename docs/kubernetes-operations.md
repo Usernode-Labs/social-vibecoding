@@ -968,24 +968,27 @@ Before turning it on:
 2. `PLATFORM_INTERNAL_URL` must be set (the chart sets it from
    `config.internalUrl`).
 
-Turning it on: set `config.appGate: "on"` and sync. The platform leader brings
-the gate up, waits for it to be ready, and only then repoints every managed
-Ingress's catch-all path at it. If the gate does not come up, no Ingress is
+Turning it on: set `config.appGate: "on"` and sync. The app-gate clock (a
+workflow job only the newest build runs, every ten minutes) brings the gate
+up, waits for it to be ready, and only then repoints every managed Ingress's
+catch-all path at it. If the gate does not come up, no Ingress is
 touched. New deploys follow the same rule.
 
 Check: `kubectl -n social-apps get deploy usernode-app-gate`, then open a
 private app's own address signed out (expect the platform's view of the app)
 and signed in (expect the app, signed in).
 
-Turning it off, the fallback: set `config.appGate: "off"` and sync. The
-leader repoints every Ingress straight back to its own Service on boot. In an
-incident, without waiting for a sync:
+Turning it off, the fallback: set `config.appGate: "off"` and sync. Within
+ten minutes of the new build serving, the app-gate clock repoints every
+Ingress straight back to its own Service. An older build still running during
+the rollout never routes them back through the gate, and a rollback is
+applied the same way. In an incident, without waiting for a sync:
 
 ```sh
 kubectl -n social-platform exec deploy/social-vibecoding -- node scripts/app-gate-switch.js off
 ```
 
-This applies at once. Then set `config.appGate: "off"` too, or the next boot
-or app deploy routes through the gate again. `config.appHostSignin: "off"`
+This applies at once. Then set `config.appGate: "off"` too, or the clock's
+next run, or an app deploy, routes through the gate again. `config.appHostSignin: "off"`
 (`APP_HOST_SIGNIN`) separately turns off signing people in at an app's own
 address, on both runtimes; the gate still keeps private apps members-only.

@@ -297,12 +297,14 @@ const ADOPTIONS: readonly Adoption[] = Object.freeze([
   ['platformFaults', () => retryPlatformFaults()],
   // Projects an older build was making: made here once its owner lets go.
   ['appCreations', () => adoptAppCreations()],
+  ['firstRequests', () => adoptFirstRequests()],
   // Up to a few thousand appends on the first release.
   ['closedProposals', (release: string) => retainClosedProposals(release)],
   // What the cluster runs for every app, as this build says: the shared
-  // hosted-asset backend and the app-host gate's routing (APP_GATE).
+  // hosted-asset backend. (The app-host gate's routing is a clock only the
+  // newest build runs, so a change of APP_GATE alone, or a rollback, is
+  // applied too: clock/services.ts app-gate.)
   ['assetBackend', () => reconcileAssetBackend()],
-  ['appGate', () => reconcileAppGate()],
   // Last, and long the first time: the bench suites from this build's
   // checked-in definitions.
   ['benchSuites', () => materializeBenchSuites()],
@@ -323,16 +325,6 @@ const clusterRelease = () => legacy('config').runsClusterMaintenance()
 async function reconcileAssetBackend(): Promise<Json> {
   if (!clusterRelease()) return null;
   return { backend: await legacy('services/kubernetes').ensurePlatformAssetBackend(appConfig) };
-}
-
-// The app-host gate follows this build's APP_GATE, in both directions: on
-// brings it up and routes every app through it, off routes them all
-// straight back (services/kubernetes.js reconcileAppGateIngresses). An
-// older build never runs it (the release's work is its own build's), so it
-// never routes the fleet back by its own setting during a rollout.
-async function reconcileAppGate(): Promise<Json> {
-  if (!clusterRelease()) return null;
-  return legacy('services/kubernetes').reconcileAppGateIngresses(appConfig);
 }
 
 // #3654, #3737: the benchmark's Core suite (reads GitHub; a no-op once
@@ -360,8 +352,10 @@ async function materializeBenchSuites(): Promise<Json> {
 // and its process may still be at it. Its instance waits until that owner's
 // heartbeat lapses, then makes it from where the row is. Keyed per row, so
 // an older release's adoption appends nothing twice.
+// Not on a staging preview: its rows are a copy of production's, and a
+// production project is never made from a preview.
 async function adoptAppCreations(): Promise<number> {
-  if (!runtime) return 0;
+  if (!runtime || !legacy('config').runsClusterMaintenance()) return 0;
   const { rows } = await kernelPool!.query(
     `SELECT a.id FROM apps a
       WHERE a.status = 'creating' AND a.self_hosted IS NOT TRUE
@@ -372,6 +366,25 @@ async function adoptAppCreations(): Promise<number> {
       { requestKey: `adopt:${r.id}`, source: { kind: 'system', name: 'release' }, appId: r.id });
   }
   if (rows.length) log!.info('workflow', 'Adopted projects being made', { count: rows.length });
+  return rows.length;
+}
+
+// Every first request an older build left open (a try that failed, a
+// process that died filing it) on a project with a repository, which
+// nothing files now its sweeps are gone: its project's making files it.
+async function adoptFirstRequests(): Promise<number> {
+  if (!runtime || !legacy('config').runsClusterMaintenance()) return 0;
+  const { rows } = await kernelPool!.query(
+    `SELECT f.app_id FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
+      WHERE f.status IN ('waiting', 'filing') AND a.repo_url IS NOT NULL
+        AND a.status IN ('running', 'awaiting_secrets')
+        AND NOT EXISTS (SELECT 1 FROM wf_work w WHERE w.machine = $1 AND w.key = 'app:' || a.id AND w.kind = 'app.firstRequest')
+      ORDER BY f.app_id LIMIT 500`, [CREATION]);
+  for (const r of rows) {
+    await runtime.append(CREATION, creationKey(r.app_id), { type: 'FirstRequestOwed', payload: { appId: r.app_id } },
+      { requestKey: `owed:${r.app_id}`, source: { kind: 'system', name: 'release' }, appId: r.app_id });
+  }
+  if (rows.length) log!.info('workflow', 'Adopted first requests left open', { count: rows.length });
   return rows.length;
 }
 

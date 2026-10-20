@@ -21,6 +21,7 @@ const ids = {
   pool: require.resolve('../src/db/pool'),
   appHeal: require.resolve('../src/services/app-heal'),
   platform: require.resolve('../src/workflow/platform.ts'),
+  github: require.resolve('../src/services/github'),
 };
 
 let fx;
@@ -41,6 +42,7 @@ function freshFixtures() {
     rows: [],
     reported: [],
     healed: [],
+    githubOn: true,
   };
 }
 
@@ -57,6 +59,7 @@ const fakePool = {
 
 stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
 stub(ids.pool, { getPool: () => fakePool });
+stub(ids.github, { isEnabled: () => fx.githubOn });
 stub(ids.docker, {
   execFileAsync: async () => ({ stdout: '', stderr: '' }),
   getContainerStatus: async () => fx.containerStatus,
@@ -133,6 +136,17 @@ for (const [scenario, state, repo, want, restarts] of [
     }
   });
 }
+
+// A repository's deploy clones it: with GitHub off since it was made, the
+// app's built image is run again instead (a deploy would fail every time).
+test('Kubernetes heal: gone, with a repository but GitHub off: its image again', async (t) => {
+  noDocker(t);
+  fx.githubOn = false;
+  fx.respawnResult = 'sv-app-1-puzzle-chain';
+  fx.row = app();
+  t.mock.method(kube(), 'getApplicationStatus', async () => 'not_found');
+  assert.equal((await appHeal.heal(kubeConfig, fakePool, 1)).status, 'respawned');
+});
 
 test('Kubernetes heal: a restart that fails needs a new runtime, never retried here', async (t) => {
   noDocker(t);
@@ -293,6 +307,23 @@ test('the error page reports a running app it could not reach, keyed by the minu
   assert.equal(type, 'Unreachable');
   assert.equal(appId, 4);
   assert.match(key, /^visit:4:\d+$/);
+});
+
+// Every request to a down app shows the error page: a burst of them reads
+// the database once a minute, not once a request.
+test('the error page reports an app once a minute, however many requests it serves', async (t) => {
+  fx.rows = [{ id: 5, slug: 'busy' }];
+  let now = 1_800_000_000_000;
+  t.mock.method(Date, 'now', () => now);
+  const looked = () => fx.queries.filter((q) => /SELECT id FROM apps WHERE slug/.test(q.sql)).length;
+  for (let i = 0; i < 20; i++) appHeal.reportVisit(fakePool, 'busy');
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(looked(), 1);
+  now += 60_000;
+  appHeal.reportVisit(fakePool, 'busy');
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(looked(), 2, 'the next minute, again');
+  assert.deepEqual(fx.reported.map(([, , key]) => key), ['visit:5:30000000', 'visit:5:30000001']);
 });
 
 test('APP_HEAL_INTERVAL_MS=0 switches the clock off', () => {

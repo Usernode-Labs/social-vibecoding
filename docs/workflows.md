@@ -498,11 +498,11 @@ does both.
 - **What a release owes what an older one left** (open governance rows, sessions the
   proposal machine does not hold, claims with no clock, merge queues, deferred DM answers,
   main checks mid-run, the bot's queue rows, the platform's own faults, the bot lane's clock,
-  projects an older build was making) is the `release` machine's: `release:<GIT_SHA>`, one
+  projects an older build was making, first requests it left open) is the `release` machine's: `release:<GIT_SHA>`, one
   `release.adopt` work item per release, run by whichever process of that release claims it
   (never an older build's), each adoption a step. So is what the cluster runs for every app as
-  this build says (the shared hosted-asset backend, the app-host gate's routing per
-  `APP_GATE`) and the bench suites from this build's definitions, on no staging preview.
+  this build says (the shared hosted-asset backend) and the bench suites from this build's
+  definitions, on no staging preview.
   Booting waits for none of it. A release none of whose processes took it within 10 minutes
   (it was replaced first) is `abandoned`, and the next release adopts what is left; one whose
   processes live while its work waits out a retry is waited for. A route that meets an open row the machine does not hold enrolls it itself,
@@ -973,20 +973,24 @@ page, `Unreachable`).
   deadline (`RetryDue`: 30 minutes, doubling to 6 hours), unless no retry can help (its
   image runs as root, keys are missing): the next commit, or the keys' change, asks again.
   A commit whose deploy failed in the last 30 minutes (a merge's, or one that failed before
-  it knew its commit) waits the same before a drift deploys it. By hand, it goes now.
+  it knew its commit) waits the same before a drift deploys it. By hand, it goes now. A
+  retry that nothing here can serve any more (the app lost its repository, or is gone)
+  tells whoever waits and ends.
 - **Health.** An app reported down is healed as the machine's own work (`app.heal`,
   `services/app-heal.js heal`): a Kubernetes restart (a conflict read again, not a
   rebuild), a Docker start or restart, a probe first when a person could not reach an app
-  its runtime calls running, its image run again when it has no repository; or
-  `needs_deploy`, which the machine answers with a deploy. A report during a deploy or a
-  heal is ignored. Heals back off: the next may start 10 minutes after the last
+  its runtime calls running, its image run again when it has no repository (or GitHub is
+  off); or `needs_deploy`, which the machine answers with a deploy. A report during a deploy
+  or a heal is ignored. Heals back off: the next may start 10 minutes after the last
   (`APP_HEAL_COOLDOWN_MS`), doubling while they follow one another, to 6 hours; an app that
-  stayed up an hour past its backoff starts a new count. A Docker container seen
-  restarting is given a minute's grace. Nothing else restarts an app: the error page only
-  reports.
+  stayed up an hour past its backoff starts a new count, and so does a deploy that succeeds
+  (a new runtime). A Docker container seen restarting is given a minute's grace. A report
+  inside the backoff or the grace is refused and keeps no receipt (a dead app is reported
+  every minute for days), and the error page reports an app at most once a minute. Nothing
+  else restarts an app: the error page only reports.
 - **A deploy or a heal that never answers** (a hung build or lock, a result skipped in
-  Admin → Workflows) is ended by an admin there (`EndDeploy`): read as a failure, its late
-  result stale.
+  Admin → Workflows) is ended by an admin there (`EndDeploy`): read as a failure, its work
+  cancelled, its late result stale. A drift it was deploying is kept for its retry.
 - **"Deploying" is durable.** `apps.deploy_state`, `deploy_started_at` and
   `deploy_from_sha` are its projection, owned by the machine, with its
   `app_redeploy_status` pushes. The version pill, rollover and the merged list read it
@@ -1003,7 +1007,12 @@ Make it, an import, a ready-made app, a remix, the bench studio's host.
   appends `Started` in the insert's own transaction (`wf_enrol_app_creation`, a trigger on
   `apps`), so its setup starts once everything the route wrote with it has committed (the
   create route writes the row, its rule, its description, its starter, the card it owes
-  and the first request it owes in one transaction).
+  and the first request it owes in one transaction; the card and the first request are
+  savepoints, so neither failing loses the project). Any other insert is an older build's,
+  during a rollout: it appends `Adopted` (below).
+- **The row is the workflow's.** Its setup claims it with `creating_owner = 'workflow'` and a
+  heartbeat of `infinity`, so an older build's sweep or Retry, still running during a
+  rollout, never takes it (they take an owned row whose heartbeat is missing or old).
 - **Its setup** is one resumable work item (`app.setup`, `services/app-creator.js setUp`):
   the database (and the card, then the repository, side by side with it), each a step a
   restart carries on from, never done twice. The card (`app-sketch.drawFor`) is made before
@@ -1015,23 +1024,37 @@ Make it, an import, a ready-made app, a remix, the bench studio's host.
 - **Its first deploy** is app-delivery's, asked by message with the starter commit
   offered (its layer cache, a ready-made app's image built ahead); `Delivered` makes it
   `running` (and marks its first run), missing keys `awaiting_secrets`, anything else
-  `failed`.
+  `failed`. Every 2 minutes until it answers, the machine looks whether app-delivery holds
+  the ask (a request of its own open there, or a deploy since it asked), and asks again if
+  not: an older build's app-delivery, during a rollout, refuses an asker it does not
+  know.
 - **Its first request**, when it was made with a description, is filed once beside the
   first deploy (`app.firstRequest`, `homeroom-bot-dm.fileFirstRequest`): the GitHub issue a
-  step, a resumed try finding its own by the marker in its body, its rows in one write;
-  three tries, the last failure told to its maker.
+  step, a resumed try finding its own by the marker in its body, its rows in one write, its
+  announcement a step of its own; three tries, the last failure told to its maker. It is
+  claimed from `waiting`, or from `filing` once nothing else can be filing it (no process of
+  another build is alive, or the row is older than the 30 minutes an older build's sweep
+  allowed one); until then the work waits. A first request an older build left open on a
+  made project is adopted by the release (`firstRequests`: `FirstRequestOwed`).
 - **One deadline: its time limit** (15 minutes from its setup's start). Past it a setup
   still running is cancelled and the project reads failed; a first deploy still to come
-  makes it run when it answers.
+  makes it run when it answers. One whose ask app-delivery never took up reads
+  `interrupted` (the platform's doing: a free Retry).
 - **Retry** (`POST /api/apps/:slug/retry`, after its permission and count checks) sets a
-  failed project up again (`setup:<n+1>`), only from `failed`.
+  failed project up again (`setup:<n+1>`), only from `failed`, and not while app-delivery
+  still holds its first deploy (`still_deploying`, a 409 that says so): a new setup would
+  make its database again under that deploy.
 - **Every status a person sees while it is made** is the transition's write, with the
   `app_status` frames the made screen follows; the step it is on is read from the machine
   (`services/app-creation-phase.js`: its setup's steps, or its first deploy).
 - **Where its time went** is one `app_creation_timed` event from both halves
   (`app-creation/timing.ts`).
-- **A row an older build is still making** during a rollout is adopted by the release
-  (`appCreations`) and waited for (`Recheck`) until its owner's heartbeat lapses.
+- **A row an older build is still making** during a rollout (its insert's `Adopted`, or the
+  release's `appCreations` for one made before this machine) is waited for (`Recheck`, every
+  30 seconds) while its owner's heartbeat lives, or, with no owner yet, for the 10 minutes
+  that build allows between its insert and its owner's first write. Then it is set up here,
+  or, if that build finished it, the instance lands where its row is (`running`,
+  `awaiting_secrets`, `failed`).
 
 ### preview
 
@@ -1573,7 +1596,12 @@ intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
   rollout (`skipped: older_build`), and its targets name the release that found them, so only
   a process of it claims them (`WorkHandler.ownRelease`): `preview-env`, `starter-images` (the
   ready-made apps' images, each key a target), `language-sync` (the translation of the
-  build's new text: the catalog, or a batch to collect, a target).
+  build's new text: the catalog, or a batch to collect, a target), `app-gate` (every managed
+  Ingress routed through the app-host gate or straight back, per `APP_GATE`, every 10
+  minutes on Kubernetes). The newest build is the build of the live workflow process that
+  started serving last (`platform_processes`), so a rollback, or a rollout of the same build
+  with another configuration, is the newest once it serves. An item an older build's run
+  handed out is given up by the next run (cancelled), and its target asked for again.
 - **Production apps.** `app-health` (each running app's runtime, every minute) and
   `main-drift` (each running app's main on GitHub, every 5 minutes) report to app-delivery
   (`Unhealthy`, `MainMoved`), which decides.

@@ -189,7 +189,10 @@ async function checkOne(config, pool, app, { byHand = false } = {}) {
   }
 
   const outcome = await platform.reportMainMoved(app.id, remoteSha, { byHand });
-  if (outcome.status === 'accepted') {
+  // Unless app delivery refused it (no drift, a commit that waits for a new
+  // one): accepted, answered before (a replay), or not yet answered within
+  // the wait (it will be).
+  if (outcome.status !== 'rejected' && outcome.status !== 'faulted') {
     log.info('drift-poller', 'main moved; app delivery told', {
       appId: app.id, slug: app.slug, from: app.main_sha.slice(0, 7), to: remoteSha.slice(0, 7), byHand,
     });
@@ -201,7 +204,8 @@ async function checkOne(config, pool, app, { byHand = false } = {}) {
   }
   // What app delivery decided: deploy_requested, or why not (already_asked:
   // a deploy for it is owed; waits_for_new_commit: its image runs as root).
-  return { status: outcome.status === 'accepted' ? 'deploy_requested' : (outcome.reason || outcome.status),
+  return { status: outcome.status === 'accepted' || outcome.status === 'pending' ? 'deploy_requested'
+    : outcome.status === 'replayed' ? 'already_asked' : (outcome.reason || outcome.status),
     slug: app.slug, from: app.main_sha, to: remoteSha };
 }
 

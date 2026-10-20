@@ -104,6 +104,26 @@ test('a repository that already exists is adopted, and the starter is pushed ont
   assert.equal(queries.find((q) => /SET repo_url = \$1/.test(q.sql)).params[0], 'https://github.com/usernode-bot/test-app');
 });
 
+// Its head unread, the starter could be pushed a second time on top of the
+// one a try before already pushed: the setup fails instead (Retry reads it
+// again).
+test('an adopted repository whose head cannot be read fails the setup, and pushes nothing', async () => {
+  const pushed = [];
+  const { appCreator, pool, queries } = loadAppCreator({
+    app: row(),
+    githubStubs: {
+      createRepo: async (owner, slug) => ({ html_url: `https://github.com/${owner}/${slug}`, adopted: true }),
+      headCommit: async () => { throw Object.assign(new Error('Server Error'), { status: 502 }); },
+      pushFiles: async (...args) => { pushed.push(args); return { sha: 'c'.repeat(40) }; },
+    },
+  });
+  const out = await appCreator.setUp({}, pool, 42, workContext());
+  assert.equal(out.failed.stage, 'repo');
+  assert.match(out.failed.reason, /Server Error/);
+  assert.deepEqual(pushed, []);
+  assert.ok(!queries.some((q) => /SET repo_url/.test(q.sql)));
+});
+
 test('a remix whose source is gone, or not ready to copy, fails without touching the starter', async () => {
   let made = loadAppCreator({ app: row({ forked_from: { appId: 7, slug: 'source-app' } }) });
   let out = await made.appCreator.setUp({}, made.pool, 42, workContext());

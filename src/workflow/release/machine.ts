@@ -48,7 +48,8 @@ const LIVE_SECONDS = 45;
 export function releaseMachine() {
   return defineMachine<RState, Facts>({
     name: MACHINE,
-    version: 1,
+    // 2: Expired waits for a release whose processes live (its facts).
+    version: 2,
     events: { Booted: release, Expired: () => ({}) },
     create: ['Booted'],
     terminal: ['done', 'failed', 'abandoned'],
@@ -61,7 +62,8 @@ export function releaseMachine() {
             AND ((status = 'running' AND lease_until > now())
               OR (status = 'queued' AND EXISTS (
                     SELECT 1 FROM platform_processes p
-                     WHERE p.release = $4 AND p.role <> 'web' AND p.state = 'serving'
+                     WHERE (p.release = $4 OR ($4 LIKE 'dev:%' AND p.release IS NULL))
+                       AND p.role <> 'web' AND p.state = 'serving'
                        AND p.heartbeat_at > now() - make_interval(secs => $5))))`,
         [MACHINE, ctx.key, WORK.adopt, release, LIVE_SECONDS]);
       return { running: !!w };

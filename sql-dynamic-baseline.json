@@ -187,9 +187,30 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
+      "fingerprint": "58934a77d0b7e4b0f3da",
+      "count": 1,
+      "preview": "`SAVEPOINT ${name}`"
+    },
+    {
+      "source": "src/routes/apps.js",
+      "kind": "structural-template",
       "fingerprint": "606267a1970143fe0d00",
       "count": 1,
       "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`"
+    },
+    {
+      "source": "src/routes/apps.js",
+      "kind": "structural-template",
+      "fingerprint": "754fca8a1ae2d400255a",
+      "count": 1,
+      "preview": "`ROLLBACK TO SAVEPOINT ${name}`"
+    },
+    {
+      "source": "src/routes/apps.js",
+      "kind": "structural-template",
+      "fingerprint": "8dc36094433f87d5b732",
+      "count": 1,
+      "preview": "`RELEASE SAVEPOINT ${name}`"
     },
     {
       "source": "src/routes/apps.js",

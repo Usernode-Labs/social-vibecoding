@@ -405,7 +405,8 @@ test('a stopped setup is not "Ready to try", and a Just me sketch is shared with
   assert.deepEqual(sketch.fallbackCard({ name: 'Run Club', brief: '', solo: true }).points, [], 'not padded with it either');
   const route = read('src/routes/apps.js');
   // Owed in the route's transaction; a failure to owe it never fails the create.
-  assert.match(route, /solo: options\.audience === 'solo',\s+\}\)\.then\(\(\) => db\.query\('RELEASE SAVEPOINT sketch'\), async \(err\) => \{\s+await db\.query\('ROLLBACK TO SAVEPOINT sketch'\);\s+log\.warn\('apps', 'Sketch not owed'/);
+  assert.match(route, /await optional\('sketch', 'Sketch not owed', \(\) => require\('\.\.\/services\/app-sketch'\)\.startSketch\(db, \{[\s\S]{0,300}solo: options\.audience === 'solo',\s+\}\)\);/);
+  assert.match(route, /await db\.query\(`SAVEPOINT \$\{name\}`\);\s+try \{\s+await fn\(\);\s+await db\.query\(`RELEASE SAVEPOINT \$\{name\}`\);\s+\} catch \(err\) \{\s+await db\.query\(`ROLLBACK TO SAVEPOINT \$\{name\}`\);/);
   const service = read('src/services/app-sketch.js');
   assert.match(service, /if \(points\.length < 2 && !solo\) points = distinctPoints\(\[\.\.\.points, SHARED_POINT\], tagline\);/);
   assert.match(service, /card = parseCardReply\(reply\.text, \{ name, brief, today, solo \}\);/);
