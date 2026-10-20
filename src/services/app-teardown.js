@@ -13,8 +13,10 @@
 //
 // Every step before the row delete is best-effort, as it always was: a
 // runtime or database that is already gone must not stop the row going, and a
-// failed object-store sweep leaves orphans under app/<id>/ for manual cleanup
-// rather than a half-deleted app. Two steps throw: the previews' retirement,
+// failed object-store sweep leaves orphans under app/<id>/ rather than a
+// half-deleted app. What each step left is recorded in deleted_app_purges
+// (#5121, services/app-data-retention.js), which outlives the row, and the
+// app-data-purges clock retries a data step that failed. Two steps throw: the previews' retirement,
 // first (the preview machine must have applied it before the rows go, or a
 // preview it adopts from its row is never retired), and the row delete.
 
@@ -75,20 +77,32 @@ async function removeApp(pool, config, app) {
   await retirePreviews(pool, app);
   // From here on the app is being removed (isTearingDown above).
   await pool.query('UPDATE apps SET teardown_started_at = COALESCE(teardown_started_at, NOW()) WHERE id = $1', [app.id]);
+  // The receipt of what this app leaves in storage (#5121,
+  // services/app-data-retention.js): each step below is stamped on it, and a
+  // data step that fails is retried by the app-data-purges clock after the row is gone.
+  const retention = require('./app-data-retention');
+  const dbManager = require('./db-manager');
+  const dbName = dbManager.appDbName(app.slug);
+  await retention.recordDeletion(pool, app, { dbName });
+
   // Teardown through the backend that owns this app. Historical rows
   // without runtime_kind/runtime_name remain Docker-compatible.
   if (app.runtime_name || app.container_id) {
     const applicationRuntime = require('./application-runtime');
+    let runtimeError = null;
     await applicationRuntime.remove(config, {
       runtimeKind: app.runtime_kind || 'docker',
       runtimeName: app.runtime_name || app.container_id,
       appId: app.id,
-    }, { deleteBuilds: app.runtime_kind === 'kubernetes' }).catch(() => {});
+    }, { deleteBuilds: app.runtime_kind === 'kubernetes' }).catch((err) => { runtimeError = err; });
     if (!app.runtime_kind || app.runtime_kind === 'docker') {
       await applicationRuntime.remove(config, {
         runtimeKind: 'docker', runtimeName: `usernode-app-${app.slug}`,
       }).catch(() => {});
     }
+    await retention.markStep(pool, app.id, 'runtime', runtimeError);
+  } else {
+    await retention.markStep(pool, app.id, 'runtime');
   }
 
   // The custom domain's edge resources (#4405): its Ingress and the
@@ -110,27 +124,13 @@ async function removeApp(pool, config, app) {
   // takes the app offline. The on-demand cert lingers harmlessly and
   // the ask endpoint stops vouching once the app row is deleted below.
 
-  // Drop app database
-  const dbManager = require('./db-manager');
-  await dbManager.dropDatabase(dbManager.appDbName(app.slug)).catch(() => {});
-
-  // Remove the app's stored user files from the object store (#752)
-  // BEFORE the row delete cascades away the app_files metadata.
-  // Best-effort with a loud log: a failure here leaves orphaned
-  // objects under app/<id>/ for manual cleanup, never a broken
-  // delete.
-  try {
-    const appFilesSvc = require('./app-files');
-    const store = appFilesSvc.getStore(config);
-    if (store) {
-      const removed = await store.removeAppPrefix(app.id);
-      if (removed) log.info('apps', 'Removed app files from object store', { appId: app.id, count: removed });
-    }
-  } catch (err) {
-    log.warn('apps', 'Object-store cleanup failed on app delete (orphans remain under app/<id>/)', {
-      appId: app.id, err: err.message,
-    });
-  }
+  // The app's data: its database and owner role, the redacted staging
+  // template made from it, and its stored files (#752) under app/<id>/,
+  // the files BEFORE the row delete cascades away the app_files metadata.
+  // Each is best-effort, as always, so a failure never leaves a
+  // half-deleted app; now each failure is kept on the receipt, and the
+  // app-data-purges clock retries it (services/app-data-retention.js).
+  await retention.purgeData(pool, config, { appId: app.id, dbName });
 
   // Delete from DB (cascades to chat_messages, sessions, etc.)
   await pool.query('DELETE FROM apps WHERE id = $1', [app.id]);

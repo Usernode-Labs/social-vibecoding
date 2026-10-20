@@ -15129,6 +15129,78 @@ CREATE TABLE IF NOT EXISTS server_error_minutes (
 CREATE INDEX IF NOT EXISTS idx_server_error_minutes_minute ON server_error_minutes (minute DESC);
 COMMENT ON COLUMN server_error_minutes.sample IS 'staging:private';
 
+-- ── Deleted apps' data, purged (#5121) ──────────────────────────────────
+--
+-- One receipt per deleted app, written by the teardown
+-- (services/app-teardown.js) once the app is marked as being removed, and
+-- kept after the apps row is gone (no foreign key on purpose). It names what
+-- the app left in storage: its database (`db_name`, whose owner role is
+-- `<db_name>_owner`), the redacted staging template made from it
+-- (`<db_name>_stgtmpl`), and its stored files (`storage_prefix` in the
+-- object store). Each step's column is stamped once that step is done; a
+-- step that failed keeps its message in `errors` under the step's key, and
+-- the reap sweep retries it (services/app-data-retention.js) unless a live
+-- app now holds the same database name. Backups are physical, so a deleted
+-- app stays in them until they expire: this table is also the list an
+-- operator replays after a restore (docs/app-data-retention.md).
+-- Holds no personal data: an app id, its slug and storage names.
+CREATE TABLE IF NOT EXISTS deleted_app_purges (
+  app_id               INTEGER PRIMARY KEY,
+  slug                 VARCHAR(255) NOT NULL,
+  db_name              VARCHAR(63) NOT NULL,
+  storage_prefix       VARCHAR(255) NOT NULL,
+  deleted_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  runtime_removed_at   TIMESTAMPTZ,
+  database_dropped_at  TIMESTAMPTZ,
+  template_dropped_at  TIMESTAMPTZ,
+  files_removed_at     TIMESTAMPTZ,
+  errors               JSONB NOT NULL DEFAULT '{}',
+  attempts             INTEGER NOT NULL DEFAULT 0,
+  last_attempt_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_deleted_app_purges_pending
+  ON deleted_app_purges (last_attempt_at)
+  WHERE database_dropped_at IS NULL OR template_dropped_at IS NULL OR files_removed_at IS NULL;
+
+-- A deleted app's database name is reserved while its purge is unfinished
+-- (#5121). The purge retry drops `db_name` once no live app holds it; a new
+-- app (or a renamed slug) taking the same name in between would have its
+-- own database dropped. So taking a name waits on the same transaction-scoped
+-- advisory lock the purge holds around its re-check and drop (classifier
+-- 991019, APP_NAME_PURGE_LOCK in services/advisory-locks.js), and is refused
+-- while a receipt for that name still has its database or template step
+-- undone. The name is `app_` plus the slug with every character outside
+-- [a-z0-9_] made `_`, exactly as db-manager.appDbName builds it. A trigger,
+-- so every path that writes apps.slug (create, fork, import, seeds) is held
+-- to it. SQLSTATE UP121; routes/apps.js answers it with a 409.
+CREATE OR REPLACE FUNCTION reserve_purged_app_name() RETURNS trigger AS $$
+DECLARE
+  db TEXT := 'app_' || regexp_replace(NEW.slug, '[^a-z0-9_]', '_', 'g');
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.slug IS NOT DISTINCT FROM OLD.slug THEN
+    RETURN NEW;
+  END IF;
+  PERFORM pg_advisory_xact_lock(991019, hashtext(db));
+  IF EXISTS (SELECT 1 FROM deleted_app_purges p
+              WHERE p.db_name = db
+                AND (p.database_dropped_at IS NULL OR p.template_dropped_at IS NULL)) THEN
+    RAISE EXCEPTION 'This name is still being cleaned up; try again later or pick another name'
+      USING ERRCODE = 'UP121', DETAIL = 'database name ' || db || ' has an unfinished purge';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+-- Created once, not dropped and made again on every boot: that would take
+-- an exclusive lock on apps each time the schema runs.
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'apps_reserve_purged_name'
+                  AND tgrelid = 'apps'::regclass) THEN
+    CREATE TRIGGER apps_reserve_purged_name
+      BEFORE INSERT OR UPDATE OF slug ON apps
+      FOR EACH ROW EXECUTE FUNCTION reserve_purged_app_name();
+  END IF;
+END $$;
+
 -- ── Who can reach you, and who can find you (#5104) ───────────────────
 --
 -- Teen-safe defaults for everyone, existing accounts included (ADD COLUMN

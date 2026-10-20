@@ -42,7 +42,9 @@ const pool = { async query(text, params) {
   if (/FROM chat_sessions cs/.test(text)) return { rows: [{ id: 41 }, { id: 42 }] };
   if (/DELETE FROM apps/.test(text)) calls.push(['delete-app', params[0]]);
   return { rows: [] };
-} };
+},
+// The purge's name lock (#5121): the re-check finds no other app holding it.
+async connect() { return { query: async () => ({ rows: [{ held: false }] }), release() {} }; } };
 
 test('a retirement the machine has not applied, or faulted on, stops the deletion before anything is removed', async () => {
   for (const status of ['pending', 'faulted']) {

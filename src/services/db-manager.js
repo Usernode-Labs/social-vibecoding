@@ -1411,6 +1411,31 @@ async function retireTemplateElsewhere(sourceDb, keepOn) {
   }
 }
 
+// A deleted app's staging templates, on every server that may hold them
+// (#5121). The template is a redacted copy of the app's own database, kept
+// warm for previews, so it outlived the app: the teardown dropped only
+// app_<slug>, and nothing else drops a template whose source is gone. Taken
+// under the source's template lock, so a refresh cannot be mid-build. Drops
+// the template, its `_next` build and the template role. Idempotent (IF
+// EXISTS throughout). Throws on the first failure, for the caller to record.
+async function dropStagingTemplates(sourceDb) {
+  const templateDb = stagingTemplateDbName(sourceDb);
+  const templateRole = ownerRoleName(templateDb);
+  if (!SAFE_IDENT.test(templateDb) || !SAFE_IDENT.test(templateRole)) {
+    throw new Error(`dropStagingTemplates: unusable template name for ${JSON.stringify(sourceDb)}`);
+  }
+  // A name too long for a `_next` build was never made into a template.
+  if (templateDb.length > MAX_TEMPLATE_IDENT) return;
+  await withTemplateLock(sourceDb, async () => {
+    for (const server of previewSideServers()) {
+      await dropTemplateDb(`${templateDb}_next`, { server });
+      await dropTemplateDb(templateDb, { server });
+      await adminExecutor(server)(`DROP ROLE IF EXISTS ${templateRole}`);
+    }
+  });
+  log.info('db-manager', 'Staging templates of a deleted app dropped', { sourceDb, templateDb });
+}
+
 // The template to clone from. Refreshed first (`refreshed: true`) when it
 // is missing or past the hard age; handed over as it is with `stale: true`
 // when it is only past the soft age, so the caller can queue the refresh
@@ -3726,6 +3751,7 @@ module.exports = {
   LABEL_PREVIEW_DB,
   LABEL_PREVIEW_DB_SERVER,
   retireStrayTemplates,
+  dropStagingTemplates,
   // What a preview-side child process is started with (tests run the real
   // psql with it).
   _childEnvForTest: postgresEnv,

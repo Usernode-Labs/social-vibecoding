@@ -347,6 +347,13 @@ export const JOBS: readonly Job[] = Object.freeze([
     },
   },
   {
+    // A deleted app's database, staging template or files its teardown could
+    // not remove, retried from the receipt it left (#5121). Never throws; a
+    // no-op in a preview.
+    name: 'app-data-purges', everyMs: 6 * HOUR, leaseMs: 30 * MIN,
+    run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/app-data-retention').retryPendingPurges(pool, config),
+  },
+  {
     // The shared Postgres (and the preview database server) near its
     // connection limit: one preview given back at a time, none while the
     // last one asked for is still being retired, looked at again a minute
