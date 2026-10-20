@@ -4,10 +4,14 @@
 // One board, two rankings. "The group's" puts every item in the tier its
 // average lands in. "Yours" is the same board with your own tiers on it:
 // drag an item into a tier (press and hold first on a touch screen, so a
-// swipe still scrolls). Dragging it back to "Not ranked yet" takes it off
-// your board. Tapping an item, on either board, opens its sheet: the
-// group's tier, who put it in which tier, taking it off your board, and,
-// for whoever added it, removing it for everyone.
+// swipe still scrolls). Below F, and not a tier, is Want to (go, hike, play:
+// index.html's data-verb): drag one there that you have not got to yet. It
+// counts toward no tier, and the group's board lists there every one
+// somebody wants to, with how many people. Dragging it back to "Not ranked
+// yet" takes it off your board. Tapping an item, on either board, opens its
+// sheet: the group's tier, who put it in which tier and who wants to,
+// taking it off your board, and, for whoever added it, removing it for
+// everyone.
 //
 // Rendering builds elements and sets textContent, never innerHTML with
 // people's words in it, so an item called "<b>hi</b>" shows exactly that.
@@ -28,6 +32,8 @@
     note: document.getElementById('board-note'),
     hint: document.getElementById('hint'),
     board: document.getElementById('board'),
+    want: document.getElementById('want'),
+    wantItems: document.getElementById('want-items'),
     tray: document.getElementById('tray'),
     trayLabel: document.getElementById('tray-label'),
     trayItems: document.getElementById('tray-items'),
@@ -38,6 +44,8 @@
     detailClose: document.getElementById('detail-close'),
     detailGroup: document.getElementById('detail-group'),
     detailRaters: document.getElementById('detail-raters'),
+    detailWants: document.getElementById('detail-wants'),
+    detailWanters: document.getElementById('detail-wanters'),
     detailYours: document.getElementById('detail-yours'),
     detailOff: document.getElementById('detail-off'),
     detailRemove: document.getElementById('detail-remove'),
@@ -49,6 +57,10 @@
   var CHIP = 'inline-flex min-h-9 max-w-full items-center rounded-lg bg-raised px-2.5 py-1.5 text-left text-small font-medium hover:bg-line';
   var CHIP_MOVABLE = 'inline-flex min-h-9 max-w-full cursor-grab touch-manipulation select-none items-center rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-small font-medium shadow-sm';
   var NAME_CHIP = 'inline-flex max-w-full items-center rounded-lg bg-raised px-2.5 py-1.5 text-small font-medium';
+  // Want to (W, a place but not a tier): what to, as this tier list says it.
+  var WANT_VERB = el.want.getAttribute('data-verb') || 'try';
+  var WANT_LABEL = 'Want to ' + WANT_VERB;
+  var SVG = 'http://www.w3.org/2000/svg';
 
   var data = null;
   // Which ranking is on the board; remembered on this device. Yours first,
@@ -258,15 +270,43 @@
 
   // ── The board ───────────────────────────────────────────────────────────
 
-  function chipFor(item) {
+  function wantCount(n) {
+    return n === 1 ? '1 person wants to ' + WANT_VERB : n + ' people want to ' + WANT_VERB;
+  }
+
+  // How many want to, on the group's Want to row: a person and the number.
+  function wantBadge(n) {
+    var badge = h('span', 'ml-1.5 inline-flex shrink-0 items-center gap-0.5 text-muted');
+    badge.setAttribute('aria-hidden', 'true');
+    var svg = document.createElementNS(SVG, 'svg');
+    svg.setAttribute('class', 'h-3.5 w-3.5');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    [['circle', { cx: '12', cy: '8', r: '4' }], ['path', { d: 'M4 21c0-4 3.6-6 8-6s8 2 8 6' }]].forEach(function (part) {
+      var shape = document.createElementNS(SVG, part[0]);
+      Object.keys(part[1]).forEach(function (k) { shape.setAttribute(k, part[1][k]); });
+      svg.appendChild(shape);
+    });
+    badge.appendChild(svg);
+    badge.appendChild(document.createTextNode(String(n)));
+    return badge;
+  }
+
+  function chipFor(item, withWants) {
     var chip;
     if (view === 'group') {
       chip = h('button', CHIP, item.name);
       chip.setAttribute('aria-label', item.name + (item.tier ? ', in the group\'s ' + item.tier + ' tier' : ', not ranked yet')
-        + '. ' + count(item.votes, 'person', 'people') + ' ranked it. Show who ranked it what.');
+        + '. ' + count(item.votes, 'person', 'people') + ' ranked it' + (item.wants ? ', ' + wantCount(item.wants) : '')
+        + '. Show who ranked it what.');
+      if (withWants) chip.appendChild(wantBadge(item.wants));
     } else {
       chip = h('button', CHIP_MOVABLE, item.name);
-      chip.setAttribute('aria-label', item.name + (item.yours ? ', in your ' + item.yours + ' tier' : ', not ranked yet') + '. Show who ranked it what.');
+      chip.setAttribute('aria-label', item.name + (item.yours === 'W' ? ', in your ' + WANT_LABEL
+        : item.yours ? ', in your ' + item.yours + ' tier' : ', not ranked yet') + '. Show who ranked it what.');
       chip.style.webkitTouchCallout = 'none';
       chip.addEventListener('pointerdown', onPointerDown);
       chip.addEventListener('contextmenu', function (e) { e.preventDefault(); });
@@ -311,22 +351,33 @@
         : 'min-h-11 rounded-lg px-4 text-body font-medium text-muted hover:bg-raised';
     });
 
-    var waiting = data.items.filter(function (i) { return !placeOf(i); });
+    // Want to: yours, where you put them; the group's, every one somebody
+    // wants to, most people first.
+    var wanted = view === 'yours'
+      ? data.items.filter(function (i) { return i.yours === 'W'; })
+      : data.items.filter(function (i) { return i.wants; }).sort(function (a, b) { return b.wants - a.wants; });
+    el.wantItems.textContent = '';
+    wanted.forEach(function (item) { el.wantItems.appendChild(chipFor(item, true)); });
+
+    // The group's tray leaves out the ones on its Want to row.
+    var waiting = data.items.filter(function (i) { return !placeOf(i) && (view === 'yours' || !i.wants); });
     el.trayItems.textContent = '';
     waiting.forEach(function (item) { el.trayItems.appendChild(chipFor(item)); });
     if (view === 'yours') {
-      var ranked = data.items.length - waiting.length;
+      var ranked = data.items.filter(function (i) { return i.yours && i.yours !== 'W'; }).length;
       el.note.textContent = ranked === data.items.length ? 'All ranked' : ranked + ' of ' + data.items.length + ' ranked';
       el.trayLabel.textContent = waiting.length ? 'Not ranked yet' : 'Not ranked yet: drag one here to take it off your board';
       el.tray.hidden = false;
       el.tray.setAttribute('data-drop', '');
-      el.hint.textContent = 'Drag each one into a tier. Tap one to see who ranked it what.';
+      el.want.setAttribute('data-drop', 'W');
+      el.hint.textContent = 'Drag each one into a tier, or into ' + WANT_LABEL + ' if you haven\'t yet. Tap one to see who ranked it what.';
     } else {
       el.note.textContent = data.rankers ? 'From ' + count(data.rankers, 'person\'s', 'people\'s') + ' rankings' : 'Nobody has ranked yet';
       el.trayLabel.textContent = 'Nobody has ranked these yet';
       el.tray.hidden = !waiting.length;
       el.tray.removeAttribute('data-drop');
-      el.hint.textContent = 'Tap one to see who ranked it what.';
+      el.want.removeAttribute('data-drop');
+      el.hint.textContent = 'Tap one to see who ranked it what. ' + WANT_LABEL + ' doesn\'t count toward any tier.';
     }
     el.hint.hidden = false;
   }
@@ -429,8 +480,20 @@
     return r.name ? '@' + r.name : 'Someone';
   }
 
+  // Who wants to, below who ranked it, as on the board: you first.
+  function renderWanters() {
+    var wanters = (detail.data && detail.data.wanters) || [];
+    el.detailWanters.textContent = '';
+    el.detailWants.hidden = !wanters.length;
+    if (!wanters.length) return;
+    wanters = wanters.slice().sort(function (a, b) { return (b.you ? 1 : 0) - (a.you ? 1 : 0); });
+    el.detailWanters.setAttribute('aria-label', WANT_LABEL + ': ' + wanters.map(raterName).join(', '));
+    wanters.forEach(function (w) { el.detailWanters.appendChild(h('span', NAME_CHIP, raterName(w))); });
+  }
+
   function renderRaters() {
     el.detailRaters.textContent = '';
+    renderWanters();
     if (detail.failed && !detail.data) {
       var failed = h('div', 'card flex flex-col items-start gap-2');
       failed.appendChild(h('p', 'text-body text-muted', 'Who ranked it did not load. Check your connection and try again.'));
