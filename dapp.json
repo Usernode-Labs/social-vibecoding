@@ -4033,6 +4033,18 @@
       "expectText": "Bread Bot"
     },
     {
+      "name": "Homeroom bot Configurations tab lists each scope's versions, the current one first, with its numbers and its own benchmark runs (once Admin, Bot configurations)",
+      "path": "/#admin/homeroom-bot/configs",
+      "expectSelector": "#admin-homeroom-bot-panel-configs #admin-bot-configs-table [data-bot-config][data-role=\"current\"] [data-bot-config-bench]",
+      "expectText": "Not run"
+    },
+    {
+      "name": "Homeroom bot Calls tab reads the helper calls per helper and the model asked first, from the LLM telemetry",
+      "path": "/#admin/homeroom-bot/calls",
+      "expectSelector": "#admin-homeroom-bot-panel-calls #admin-homeroom-bot-calls-total",
+      "expectText": "in the last 7 days"
+    },
+    {
       "name": "Welcome messages lets an admin choose who greets somebody let in, and what the first message says",
       "path": "/#admin/welcome-dm",
       "expectSelector": "#admin-welcome-dm:has(#admin-welcome-dm-members):has(#admin-welcome-dm-recent) #admin-welcome-dm-intro",

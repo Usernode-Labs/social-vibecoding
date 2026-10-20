@@ -1205,6 +1205,110 @@ function collectionComponent(value, fallback = null) {
   return COMPONENTS.has(fallback) ? fallback : null;
 }
 
+// ── The helper calls, per helper (Admin → Homeroom bot → Calls) ─────────
+//
+// The short calls llm.js helperMessage and small-change.js make, each one
+// logical call under its correlation id: attempt 1 is the helper model
+// (services/helper-model.js) and attempt 2, when there is one, the Haiku
+// fallback that answered in its place (llm.js), so a call whose first
+// attempt failed, was late or could not be used shows as fallen back.
+// Grouped by the helper and the model its first attempt asked, so a switch
+// of the helper model reads as two rows, before and after. Content-free:
+// the same counts, times and costs the ledger already holds.
+const HELPER_CALL_COMPONENTS = Object.freeze([
+  'issue_title', 'quick_replies', 'short_description', 'chat_ask', 'workshop_ask',
+  'app_sketch', 'first_version_plan', 'first_version_look', 'session_title',
+  'progress_estimate', 'challenge_grade', 'challenge_grade_feedback', 'challenge_grade_proposal',
+  'report_summary', 'content_review', 'small_change',
+]);
+
+const HELPER_CALLS_SQL = `
+  WITH calls AS (
+    SELECT e.metadata->>'component' AS component,
+           COALESCE(NULLIF(e.metadata->>'correlation_id', ''), 'event:' || e.id::text) AS run,
+           COALESCE(NULLIF(e.metadata->>'attempt_number', '')::int, 1) AS attempt,
+           e.metadata->>'requested_model' AS model,
+           e.metadata->>'outcome' AS outcome,
+           e.metadata->>'error_class' AS error_class,
+           NULLIF(e.metadata->>'duration_ms', '')::float8 AS ms,
+           NULLIF(e.metadata->>'cost_usd', '')::float8 AS cost
+      FROM events e
+     WHERE e.event_type = $1
+       AND e.created_at >= NOW() - make_interval(days => $2::int)
+       AND e.metadata->>'component' = ANY($3::text[])
+  ), runs AS (
+    SELECT component, run,
+           (ARRAY_AGG(model ORDER BY attempt))[1] AS first_model,
+           MAX(attempt) AS attempts,
+           BOOL_OR(attempt = 1 AND outcome = 'success') AS first_ok,
+           BOOL_OR(attempt = 1 AND error_class = 'timeout') AS first_late,
+           BOOL_OR(outcome = 'success') AS answered,
+           MAX(ms) FILTER (WHERE attempt = 1) AS first_ms,
+           SUM(ms) AS total_ms,
+           SUM(cost) AS total_cost
+      FROM calls
+     GROUP BY component, run
+  )
+  SELECT component, first_model,
+         COUNT(*)::int AS calls,
+         COUNT(*) FILTER (WHERE first_ok)::int AS first_ok,
+         COUNT(*) FILTER (WHERE first_late)::int AS first_late,
+         COUNT(*) FILTER (WHERE attempts > 1)::int AS fell_back,
+         COUNT(*) FILTER (WHERE NOT answered)::int AS unanswered,
+         percentile_cont(0.5) WITHIN GROUP (ORDER BY first_ms) AS first_p50,
+         percentile_cont(0.9) WITHIN GROUP (ORDER BY first_ms) AS first_p90,
+         percentile_cont(0.5) WITHIN GROUP (ORDER BY total_ms) AS total_p50,
+         percentile_cont(0.9) WITHIN GROUP (ORDER BY total_ms) AS total_p90,
+         AVG(total_cost) AS avg_cost,
+         COALESCE(SUM(total_cost), 0) AS cost
+    FROM runs
+   GROUP BY component, first_model
+   ORDER BY component, calls DESC, first_model`;
+
+const roundMs = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Math.round(Number(v)));
+const share = (n, of) => (of > 0 ? n / of : null);
+
+/**
+ * The helper calls over the last `days` days, per helper and the model its
+ * first attempt asked: how many, how many its first attempt answered, were
+ * late or fell back to Haiku, none answered, the first attempt's time and
+ * the whole call's (p50, p90), and what they cost. Read-only.
+ */
+async function helperCallsReport(pool, { days = 7 } = {}) {
+  const n = Math.min(Math.max(Math.floor(Number(days)) || 7, 1), MAX_REPORT_DAYS);
+  const { rows } = await pool.query(HELPER_CALLS_SQL, [EVENT_TYPE, n, HELPER_CALL_COMPONENTS]);
+  const helpers = [];
+  for (const r of rows) {
+    let h = helpers.find((x) => x.component === r.component);
+    if (!h) { h = { component: r.component, calls: 0, costUsd: 0, models: [] }; helpers.push(h); }
+    const calls = Number(r.calls) || 0;
+    h.calls += calls;
+    h.costUsd += Number(r.cost) || 0;
+    h.models.push({
+      model: r.first_model || null,
+      calls,
+      firstOkRate: share(Number(r.first_ok) || 0, calls),
+      lateRate: share(Number(r.first_late) || 0, calls),
+      fallbackRate: share(Number(r.fell_back) || 0, calls),
+      unanswered: Number(r.unanswered) || 0,
+      firstMs: { p50: roundMs(r.first_p50), p90: roundMs(r.first_p90) },
+      totalMs: { p50: roundMs(r.total_p50), p90: roundMs(r.total_p90) },
+      avgCostUsd: r.avg_cost == null ? null : Number(r.avg_cost),
+      costUsd: Number(r.cost) || 0,
+    });
+  }
+  helpers.sort((a, b) => b.calls - a.calls || a.component.localeCompare(b.component));
+  return {
+    days: n,
+    to: new Date().toISOString(),
+    helpers,
+    totals: {
+      calls: helpers.reduce((t, h) => t + h.calls, 0),
+      costUsd: helpers.reduce((t, h) => t + h.costUsd, 0),
+    },
+  };
+}
+
 module.exports = {
   toolSequenceName,
   EVENT_TYPE,
@@ -1212,6 +1316,8 @@ module.exports = {
   init,
   record,
   aggregateReport,
+  helperCallsReport,
+  HELPER_CALL_COMPONENTS,
   normalizeEvent,
   normalizeDiagnostics,
   collectionComponent,
