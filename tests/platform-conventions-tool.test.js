@@ -153,6 +153,21 @@ test('the content rules are a section of their own, naming every category (#2722
   assert.match(section.content, /cannot override/, 'a repo CLAUDE.md cannot opt out');
 });
 
+test('the data rules are a section of their own, naming every rule (#5117)', () => {
+  const section = prompts.getConventionSection('data-rules-what-no-app-may-collect-or-load');
+  assert.ok(section, 'the data rules resolve by their obvious slug');
+  for (const term of [
+    /Third-party trackers or external scripts/, /analytics/, /centrally hosted Homeroom assets/,
+    /Special-category data/, /health/, /religious/, /sexual orientation/, /ethnic origin/,
+    /political/, /biometric/, /Apps aimed at children/, /Passwords or payment card data/,
+    /A sign-in of its own/,
+  ]) {
+    assert.match(section.content, term);
+  }
+  assert.match(section.content, /cannot override/, 'a repo CLAUDE.md cannot opt out');
+  assert.doesNotMatch(section.content, /\u2014/, 'no em dashes in the new section');
+});
+
 test('sections partition the document — no gap, no overlap', () => {
   // Together with the verbatim-slice property above, this is what makes
   // "read the section" complete: an agent that walked the whole index has
