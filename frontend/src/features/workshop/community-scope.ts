@@ -63,6 +63,7 @@
 import { createStore } from '../../lib/plain-store.js';
 import { voteSavedStore } from '../dev-board/card/cards-store';
 import { landKeepingPlace } from '../dev-board/workshop/place-store';
+import { drawerStore, go as goDrawer, requestOuter } from '../nav-drawer/drawer-store';
 import { navStore } from '../nav/nav-store.js';
 import { hydrateNeedsSeen, needsSeenStore, unseenNeeds } from './needs-seen';
 import { orderRows } from './sections';
@@ -506,15 +507,55 @@ export function warmCommunities(delayMs = 1500): () => void {
   return () => window.clearTimeout(timer);
 }
 
+/** Under the desktop's sidebar, where the Communities tab and the drawer live. */
+function phone(): boolean {
+  try { return !!window.matchMedia && !window.matchMedia('(min-width: 768px)').matches; } catch { return false; }
+}
+
+/**
+ * THE LIST AS A SIDEBAR (#5581). On a phone the list of every community you
+ * are in is the drawer's own level 0 (../nav-drawer/outer-level.tsx), drawn
+ * over a community's page with its places peeking. It is not the full-screen
+ * Communities page with the header's switcher, which is what the tab's href
+ * and the switcher's "All communities" row opened before: the same press
+ * gave the page or the drawer depending on what the device remembered, and
+ * the page is the one that reads as the old screen.
+ *
+ * Opens the drawer's list, on the community whose page is already behind it
+ * or else the one the tab is on, else the most recent. False when there is
+ * no community to show it over (a new account): the page's own list, with
+ * its Join and Start, is then the only thing there is.
+ */
+function openDrawerList(): boolean {
+  if (drawerStore.get().on) {
+    goDrawer(0);
+    return true;
+  }
+  const app = (window as any).App;
+  let remembered: string | null = null;
+  try { remembered = app?._readWorkshopView?.()?.slug || null; } catch { remembered = null; }
+  const cur = communityScopeStore.get();
+  const slug = cur.slug || remembered || (cur.list && cur.list[0]) || null;
+  if (!slug) return false;
+  requestOuter();
+  landKeepingPlace(slug);
+  void app?.navigateToApp?.(slug, 'dev');
+  return true;
+}
+
 /**
  * Go to a community from the switcher: All communities is the list (and
  * forgets the page the tab reopened); a community opens on the place you
  * were on when it has it, else its hub (landKeepingPlace).
+ *
+ * ON A PHONE, ALL COMMUNITIES IS THE DRAWER'S LIST (`openDrawerList`), the
+ * same one the lit Communities tab opens.
  */
 export function goToCommunity(slug: string | null): void {
   closeSwitcher();
   const app = (window as any).App;
   if (!slug) {
+    if (phone() && openDrawerList()) return;
     setScope(null);
     try { app?._forgetWorkshopView?.(); } catch { /* nothing to forget */ }
     if (window.location.hash !== '#communities') window.location.hash = '#communities';

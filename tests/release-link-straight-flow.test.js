@@ -372,7 +372,10 @@ test('in Safari\'s visible area Continue is on screen: under 800px a 96px pictur
 test('its frame is the make screen\'s own literals', () => {
   const welcome = loadTsx(WELCOME);
   const make = read(MAKE);
-  for (const name of ['WELCOME_BAR', 'WELCOME_COLUMN', 'WELCOME_EYEBROW', 'WELCOME_TITLE', 'WELCOME_LEAD', 'WELCOME_LABEL', 'WELCOME_CARD']) {
+  // #5617 removed the make screen's eyebrow: its one title carries the
+  // greeting, so WELCOME_EYEBROW is now the Welcome's own line, above a title
+  // it shares with the make screen.
+  for (const name of ['WELCOME_BAR', 'WELCOME_COLUMN', 'WELCOME_TITLE', 'WELCOME_LEAD', 'WELCOME_LABEL', 'WELCOME_CARD']) {
     assert.ok(make.includes(welcome[name]), `${name} is the make screen's: ${welcome[name]}`);
   }
   // The make screen's root, at the landing's own layer.
