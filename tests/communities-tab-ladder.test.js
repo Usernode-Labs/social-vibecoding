@@ -241,110 +241,35 @@ test('the pages say what is below their tabs: All items on the project page, a r
   assert.match(switcher, /t\.closest\('\[data-community-switch\]'\)/, 'a press on the rail row closes the menu like any other');
 });
 
-// ── #5040: the blue number goes to what it counts ────────────────────
+// ── #5708: a press from another tab returns to the view left ─────────
 
-/** The ladder with the place store and the Communities screen's store stood in. */
-function loadVotesLadder({ shown = { slug: null, place: 'status' }, workshopTab = 'status' } = {}) {
-  const calls = [];
-  const mod = loadTsx(LADDER_PATH, {
-    cache: false,
-    stubs: {
-      './community-scope': {
-        goToCommunity: (slug) => calls.push(['goToCommunity', slug]),
-        closeSwitcher: () => calls.push(['closeSwitcher']),
-      },
-      '../dev-board/workshop/place-store': {
-        openPlace: (slug, key, opts) => { calls.push(['openPlace', slug, key, opts]); return false; },
-        placeStore: { get: () => shown },
-      },
-      './workshop-store.js': { workshopStore: { get: () => ({ tab: workshopTab }) } },
-    },
-  });
-  return { mod, calls };
-}
-
-test('#5040: goToVotes opens Needs you, the community\'s or every community\'s', () => {
-  const { mod, calls } = loadVotesLadder();
-  withPage({}, (location) => {
-    mod.goToVotes('flat-4b');
-    assert.deepEqual(calls, [['closeSwitcher'], ['openPlace', 'flat-4b', 'needs', { door: true }]],
-      'the community\'s Needs you place, as a door: its page is not on screen');
-    assert.equal(location.hash, '', 'openPlace is the door; nothing else routes');
-  });
-  calls.length = 0;
-  const tabs = [];
-  withPage({}, (location) => {
-    global.window.UsernodeReact = { workshop: { setTab: (t) => tabs.push(t) } };
-    mod.goToVotes(null);
-    assert.deepEqual(tabs, ['needs'], 'the Communities screen opens on its Needs you feed');
-    assert.equal(location.hash, '#communities');
-  });
-  assert.deepEqual(calls, [['closeSwitcher']], 'never the drawer\'s list or the ladder');
-});
-
-test('#5700: the votes press is a door unless the community\'s page is on screen', () => {
-  // Leaving for Messages (App.currentApp null) or Me leaves the page mounted
-  // behind the hidden #app-view: goToVotes must route rather than move a page
-  // nobody can see, or the tab lights and the other screen stays up.
-  const left = loadVotesLadder();
-  withPage({}, () => {
-    left.mod.goToVotes('flat-4b');
-  });
-  assert.deepEqual(left.calls.at(-1), ['openPlace', 'flat-4b', 'needs', { door: true }],
-    'the page is behind the hidden #app-view: a door');
-  const another = loadVotesLadder();
-  withPage({ app: { currentApp: 'recipes' } }, () => {
-    another.mod.goToVotes('flat-4b');
-  });
-  assert.deepEqual(another.calls.at(-1), ['openPlace', 'flat-4b', 'needs', { door: true }],
-    'another community is the one on the router: a door');
-  // Its page is up, under a revealed #app-view: it moves in place, as before.
-  const onPage = loadVotesLadder();
-  withPage({ app: { currentApp: 'flat-4b' } }, () => {
-    global.document.querySelector = () => ({});
-    onPage.mod.goToVotes('flat-4b');
-  });
-  assert.deepEqual(onPage.calls.at(-1), ['openPlace', 'flat-4b', 'needs', { door: false }],
-    'its page is on screen: in place, one press moves it');
-  // A page without a querySelector answers "not on screen", never throws.
-  const bare = loadVotesLadder();
-  withPage({ app: { currentApp: 'flat-4b' } }, () => {
-    bare.mod.goToVotes('flat-4b');
-  });
-  assert.deepEqual(bare.calls.at(-1), ['openPlace', 'flat-4b', 'needs', { door: true }]);
-});
-
-test('#5040: onVotes is true only where the counted votes are on screen', () => {
-  const app = { currentApp: 'garden' };
-  const onNeeds = loadVotesLadder({ shown: { slug: 'garden', place: 'needs' } }).mod;
-  const onHub = loadVotesLadder({ shown: { slug: 'garden', place: 'status' } }).mod;
-  withPage({ app }, () => {
-    assert.equal(onNeeds.onVotes('app-view', 'garden'), true, 'the community\'s Needs you place');
-    assert.equal(onHub.onVotes('app-view', 'garden'), false, 'the Hub is not the votes');
-    assert.equal(onNeeds.onVotes('app-view', 'recipes'), false, 'another community\'s page');
-    assert.equal(onNeeds.onVotes('workshop-screen', 'garden'), false);
-  });
-  const feed = loadVotesLadder({ workshopTab: 'needs' }).mod;
-  const list = loadVotesLadder({ workshopTab: 'status' }).mod;
-  withPage({}, () => {
-    assert.equal(feed.onVotes('workshop-screen', null), true, 'All communities\' Needs you feed');
-    assert.equal(list.onVotes('workshop-screen', null), false, 'the list of communities');
-    assert.equal(feed.onVotes('app-view', null), false);
-  });
-});
-
-test('#5040: the tab bar sends a press to the votes while the blue number shows, before the ladder', () => {
+test('#5708: the tab bar has no votes detour, and returns through the remembered view', () => {
   const src = read('frontend/src/features/nav/tab-bar.tsx');
-  const votesAt = src.indexOf("if (key === 'workshop' && key !== lit && votes > 0 && !onVotes(screen, scope.slug))");
-  const ladderAt = src.indexOf("if (key === 'workshop' && lit === 'workshop' && tab === 'workshop')");
-  assert.ok(votesAt > 0 && ladderAt > votesAt, 'the votes branch runs before the lit tab\'s ladder');
-  assert.match(src.slice(votesAt, ladderAt), /goToVotes\(slug\)/);
-  // The lit tab keeps its ladder whatever the number says: one level up per
-  // press (#3701), never bounced back to Needs you from the Hub.
+  // The detour this replaces opened Needs you whenever the blue
+  // number showed, and wrote Needs you into the place remembered on the
+  // device, so every later return opened there.
+  assert.doesNotMatch(src, /votes > 0 && !onVotes/);
+  assert.doesNotMatch(src, /goToVotes|onVotes/);
+  const click = src.slice(src.indexOf('const onTabClick = '));
+  assert.doesNotMatch(click, /openPlace/, 'the press does not move a page itself');
+  // The sidebar's row is decided first, and unchanged; the lit tab keeps its
+  // ladder (#3701), one level up per press.
   const sidebarAt = src.indexOf("if (key === 'workshop' && sidebarRows)");
-  assert.ok(sidebarAt > 0 && sidebarAt < votesAt, 'the sidebar row\'s press is decided first, and unchanged');
+  const ladderAt = src.indexOf("if (key === 'workshop' && lit === 'workshop' && tab === 'workshop')");
+  assert.ok(sidebarAt > 0 && sidebarAt < ladderAt, 'the sidebar row\'s press is decided before the lit tab\'s ladder');
   assert.match(src.slice(ladderAt, ladderAt + 200), /pressLitTab\(screen\)/, 'the lit tab is the ladder');
-  assert.doesNotMatch(src.slice(ladderAt, src.indexOf('now?.(event)', ladderAt)), /goToVotes/, 'no votes detour on the lit tab');
+  // Every other press takes the tab's own navigation, which resumes the
+  // remembered project and place before the phone's fallback to the drawer.
+  const goToTab = /function goToTab\(([\s\S]*?)\n\}/.exec(src);
+  assert.ok(goToTab, 'the tab\'s own navigation');
+  const resumeAt = goToTab[1].indexOf('app?.resumeWorkshopView?.()');
+  const fallbackAt = goToTab[1].indexOf('goToCommunity(null)');
+  assert.ok(resumeAt > 0 && fallbackAt > resumeAt, 'resumeWorkshopView runs before goToCommunity(null)');
+  // The blue number stays a count, and its pointed-at label still says so.
   assert.match(src, /title=\{key === 'workshop' && titleVotes > 0 \? t\('core:tabs\.votesWaiting', \{ count: titleVotes \}\) : undefined\}/,
     'pointed at, the tab says what the number counts, and nothing at zero');
+  // The ladder module no longer carries the detour.
+  const ladder = read(LADDER_PATH);
+  assert.doesNotMatch(ladder, /export function goToVotes/);
+  assert.doesNotMatch(ladder, /export function onVotes/);
 });
