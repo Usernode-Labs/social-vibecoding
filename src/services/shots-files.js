@@ -39,6 +39,11 @@ const { SAMPLE_NAMES, MAX_FILES: MAX_SAMPLE_FILES } = require('../../worker/shot
 
 const SHOTS_MODE = 'shots';
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+// A run taken at the screen's own density (services/shots-density.js): a 2x
+// desktop screen of a photo-heavy page passes 6 MB, and the agent cannot
+// choose a smaller scale, so its cap leaves room for one. It stays under the
+// internal route's 21 MB body limit (routes/internal.js).
+const MAX_DENSE_IMAGE_BYTES = 12 * 1024 * 1024;
 const MAX_CLIP_BYTES = 20 * 1024 * 1024;
 const MIN_CLIP_BYTES = 1024;
 const MAX_IMAGE_EDGE = 8192;
@@ -85,13 +90,13 @@ function sha256(buffer) {
 
 // Structural checks only: the platform image ships no codecs, and the header
 // plus terminator is enough to refuse anything that is not one whole PNG.
-function inspectImage(buffer) {
+function inspectImage(buffer, { maxBytes = MAX_IMAGE_BYTES } = {}) {
   if (!Buffer.isBuffer(buffer) || buffer.length < PNG_SIGNATURE.length + 25 + PNG_IEND.length) {
     throw new ShotError('invalid_shot_image', 'A shot must be a complete PNG image.');
   }
-  if (buffer.length > MAX_IMAGE_BYTES) {
+  if (buffer.length > maxBytes) {
     throw new ShotError('shot_too_large',
-      `A shot may be at most ${MAX_IMAGE_BYTES} bytes; save the visible screen or one element, not the full page.`, 413);
+      `A shot may be at most ${maxBytes} bytes; save the visible screen or one element, not the full page.`, 413);
   }
   if (!buffer.subarray(0, 8).equals(PNG_SIGNATURE)
       || buffer.readUInt32BE(8) !== 13
@@ -271,7 +276,11 @@ function cleanConditions(value) {
   }).filter(Boolean);
 }
 
-function stored(target, buffer, info) {
+// `dense`, for a still saved at more than one device pixel per CSS pixel in
+// a run taken at device density (services/shots-density.js): its original,
+// `{ density, data, width, height, bytes, sha256 }`. `buffer` and `info` are
+// then its 1x copy, what everyone outside the experiment is shown.
+function stored(target, buffer, info, dense = null) {
   return {
     ...target,
     contentType: target.media === 'webm' ? 'video/webm' : 'image/png',
@@ -280,36 +289,61 @@ function stored(target, buffer, info) {
     height: info.height,
     bytes: info.bytes,
     sha256: info.sha256,
+    density: dense ? dense.density : 1,
+    dense: dense ? { data: dense.data, width: dense.width, height: dense.height, bytes: dense.bytes, sha256: dense.sha256 } : null,
     focusRect: null,
     stageLabels: null,
   };
+}
+
+// Device pixels per CSS pixel of a screen shot: its width over the declared
+// screen's. A run taken at device density (services/shots-density.js) saves
+// at the browser's (3 on a phone, 2 on a desktop: worker/write-shots-mcp-
+// config.js); every other run saves at 1. Only a whole multiple counts; any other width is a
+// screen shot taken at the wrong size, read as 1, the way it always was.
+const DENSITIES = Object.freeze([1, 2, 3, 4]);
+// The density the browser that shoots a screen saves at: a phone screen's
+// phone browser 3, a desktop browser 2.
+const PHONE_DENSITY = 3;
+const DESKTOP_DENSITY = 2;
+const browserDensity = (viewport) => (planContract.phoneScreen(viewport) ? PHONE_DENSITY : DESKTOP_DENSITY);
+function densityFor(imageWidth, screenWidth) {
+  const ratio = Number(imageWidth) / Number(screenWidth);
+  if (!Number.isFinite(ratio) || ratio <= 0) return 1;
+  return DENSITIES.find((factor) => Math.abs(ratio - factor) < 0.02) || 1;
 }
 
 // An element shot must fit the screen it was taken on. One wider than the
 // screen means the page was laid out at another size (it was loaded before
 // browser_resize, and the app chose its layout once, at load) or the element
 // runs off the screen; one many screens tall is a tiled capture nobody can
-// read. `screenFile` is the same side's screen shot when it is saved: a
-// width of two or three times the screen's says the browser shot at that
-// device scale, so its element shots may be as much larger. Any other width
-// is a screen shot taken at the wrong size and says nothing about scale.
-function checkElementSize(story, target, info, screenFile = null) {
+// read. `screenFile` is the same side's screen shot when it is saved: its
+// density (densityFor) is the element shot's too, so its element shots may
+// be as much larger. Before it is saved (the agent may save the element
+// first), the element may be as dense as the screen's browser saves in a
+// run taken at device density (`deviceDensity`), else 1x.
+// Sizes in the messages are CSS pixels, the screen's own.
+function checkElementSize(story, target, info, screenFile = null, { deviceDensity = false, density = 1 } = {}) {
   if (target.variant !== 'focus' || !info?.width) return;
   const viewport = story.viewports.find((candidate) => candidate.name === target.viewport);
   if (!viewport) return;
-  const ratio = screenFile?.width ? screenFile.width / viewport.width : 1;
-  const scale = [2, 3].find((factor) => Math.abs(ratio - factor) < 0.02) || 1;
+  // `density`: what the worker said this element shot was saved at, in a
+  // run taken at device density. A saved screen shot of such a run holds
+  // its 1x copy, so its width says nothing about the element's.
+  const scale = density > 1 ? density
+    : screenFile?.width ? densityFor(screenFile.width, viewport.width)
+      : deviceDensity ? browserDensity(viewport) : 1;
   const maxWidth = Math.round(viewport.width * scale) + 1;
   const maxHeight = Math.round(viewport.height * scale * MAX_ELEMENT_SCREENS_TALL) + 1;
   if (info.width > maxWidth) {
     throw new ShotError('element_shot_too_wide',
-      `This element shot is ${info.width} px wide, wider than the ${target.viewport} screen (${viewport.width} px). `
+      `This element shot is ${Math.round(info.width / scale)} px wide, wider than the ${target.viewport} screen (${viewport.width} px). `
       + 'The page was probably laid out at another size: open the start path again after browser_resize, '
       + 'retake the screen shot, then shoot a smaller element that fits on the screen.');
   }
   if (info.height > maxHeight) {
     throw new ShotError('element_shot_too_tall',
-      `This element shot is ${info.height} px tall, more than ${MAX_ELEMENT_SCREENS_TALL} ${target.viewport} screens. `
+      `This element shot is ${Math.round(info.height / scale)} px tall, more than ${MAX_ELEMENT_SCREENS_TALL} ${target.viewport} screens. `
       + 'Shoot the smallest element that holds the change (a card or a row, not the whole list).');
   }
 }
@@ -477,6 +511,7 @@ function isShotsVerdict(verdict) {
 module.exports = {
   SHOTS_MODE,
   MAX_IMAGE_BYTES,
+  MAX_DENSE_IMAGE_BYTES,
   MAX_CLIP_BYTES,
   MAX_NOTICE,
   MAX_NOTICES,
@@ -488,6 +523,9 @@ module.exports = {
   inspectClip,
   shotTarget,
   slotKey,
+  PHONE_DENSITY,
+  DESKTOP_DENSITY,
+  densityFor,
   checkElementSize,
   identicalStories,
   markUnchanged,

@@ -29,6 +29,13 @@
       media.addEventListener('change', applyTheme);
     })();
   </script>
+  <!-- What takes the loading shapes' place fades in, briefly, rather than
+       cutting over: an animation replays whenever [hidden] comes off, so
+       nothing has to start it. None under reduced motion. -->
+  <style>
+    @keyframes appear { from { opacity: 0; } to { opacity: 1; } }
+    @media (prefers-reduced-motion: no-preference) { .appear { animation: appear 200ms ease-out; } }
+  </style>
 </head>
 <body class="min-h-screen bg-ground text-fg">
   <main class="mx-auto flex max-w-xl flex-col gap-8 px-4 py-8">
@@ -59,7 +66,7 @@
       <p class="text-body text-muted">Plan one below: pick a day, a time and a place, and everyone can say what they will bring.</p>
     </div>
 
-    <div id="potlucks" class="flex flex-col gap-10" hidden></div>
+    <div id="potlucks" class="flex flex-col gap-10 appear" hidden></div>
 
     <form id="plan-form" class="flex flex-col gap-3" autocomplete="off">
       <h2 class="section-label mb-0">Plan a potluck</h2>
@@ -87,7 +94,7 @@
       <p id="plan-status" class="text-small text-danger" role="alert" hidden></p>
     </form>
 
-    <section id="past-section" class="flex flex-col" hidden>
+    <section id="past-section" class="flex flex-col appear" hidden>
       <h2 class="section-label">Past potlucks</h2>
       <ul id="past" class="list"></ul>
     </section>

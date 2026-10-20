@@ -80,9 +80,9 @@ test('the made screen\'s hand-off: a running app opens full screen with the tip 
   assert.ok(hand.indexOf('if (fromCreate)') < hand.indexOf('oweTip'), 'Create returns before anything is owed');
   // Not live yet: the tip waits for it to be live, the walk runs now on
   // Home, told to the server card by card (moments).
-  assert.match(hand, /if \(firstVersion !== null\) \{\s+if \(uid != null\) oweTip\(uid, \{ slug, name, who: 'maker', live: true \}\);[\s\S]*?enterScreen\('home', slug\);\s+if \(uid != null && !claimWalk\(uid\)\) \{ setMode\(\{ kind: 'none' \}\); return; \}\s+setMode\(\{ kind: 'tour', info: \{ slug, name \}, path: 'walk', moments: true \}\);\s+return;\s+\}/);
+  assert.match(hand, /if \(firstVersion !== null\) \{\s+if \(uid != null\) oweTip\(uid, \{ slug, name, who: 'maker', live: true \}\);[\s\S]*?enterScreen\('home', slug\);\s+if \(uid != null && !claimWalk\(uid\)\) \{ setMode\(\{ kind: 'none' \}\); return; \}\s+legacy\(\)\.App\?\._noteHomeWalk\?\.\('reached'\);\s+setMode\(\{ kind: 'tour', info: \{ slug, name \}, path: 'walk', moments: true \}\);\s+return;\s+\}/);
   // Running: the tip and the walk owed, and the app itself, full screen.
-  assert.match(hand, /if \(uid != null\) \{\s+oweTip\(uid, \{ slug, name, who: 'maker' \}\);\s+oweWalk\(uid, \{ slug, name, maker: true \}\);\s+\}\s+setOwing\(\(n\) => n \+ 1\);\s+setMode\(\{ kind: 'none' \}\);\s+enterScreen\('app', slug\);/);
+  assert.match(hand, /if \(uid != null\) \{\s+oweTip\(uid, \{ slug, name, who: 'maker' \}\);\s+if \(oweWalk\(uid, \{ slug, name, maker: true \}\)\) legacy\(\)\.App\?\._noteHomeWalk\?\.\('owed'\);\s+\}\s+setOwing\(\(n\) => n \+ 1\);\s+setMode\(\{ kind: 'none' \}\);\s+enterScreen\('app', slug\);/);
   assert.doesNotMatch(hand, /path: 'maker'|enterScreen\('home', made\.slug\);\s+setMode\(\{ kind: 'tour'/);
   // Still told to the server, and still marked seen.
   assert.match(hand, /noteMoment\(made\.slug, skipped \? 'invite_later_tapped' : 'continue_tapped'\);\s+markSeen\(made\.slug\);\s+rememberCommunity\(made\.slug\);/);
@@ -209,7 +209,7 @@ test('the island looks at the screen only while something is owed, arms the walk
   // Armed first, so the tip that shows on the same visit cannot keep the
   // walk from its Home.
   assert.ok(watch.indexOf('walkArms(owed.walk, screen)') < watch.indexOf('tipDue(owed.tip, screen)'));
-  assert.match(watch, /else if \(owed\.walk && walkDue\(owed\.walk, screen\)\) \{\s+noteWalkRun\(uid\);\s+startWalk\(owed\.walk\);/);
+  assert.match(watch, /else if \(owed\.walk && walkDue\(owed\.walk, screen\)\) \{\s+noteWalkRun\(uid\);[\s\S]{0,120}?_noteHomeWalk\?\.\('reached'\);\s+startWalk\(owed\.walk\);/);
   assert.match(watch, /if \(owed\.tip && tipDue\(owed\.tip, screen\)\) \{\s+noteTipShown\(uid\);\s+setTip\(owed\.tip\);/);
   // The walk opens over nothing else, numbered, told to the server for a maker.
   assert.match(watch, /prev\.kind === 'none'\s+\? \{ kind: 'tour', info: \{ slug: walk\.slug, name: walk\.name, privateMember \}, path: 'walk', moments: !!walk\.maker \}/);

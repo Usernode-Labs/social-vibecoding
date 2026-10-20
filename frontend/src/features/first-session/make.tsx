@@ -639,7 +639,11 @@ export function MakeScreen({
         name: name.trim(),
         audience: 'invited',
         ...(ready ? { template: ready.template } : { brief: text.trim(), ...(starter ? { template: starter.template } : {}) }),
-        ...(example ? { description: descriptionOf(example, choice) } : {}),
+        // A ready-made app's description is the choice's own line. A game or
+        // Your own words is built from what they typed, so the line is only
+        // the card's fallback: the model writes its tagline from their words
+        // (services/app-sketch.js), and that becomes the description.
+        ...(example ? { [ready ? 'description' : 'taglineFallback']: descriptionOf(example, choice) } : {}),
         ...(rule !== DEFAULT_PRESET ? { governance: { preset: rule } } : {}),
         from: entry,
         // So the sketch's "today" is the maker's (services/app-sketch.js).

@@ -29,6 +29,13 @@
       media.addEventListener('change', applyTheme);
     })();
   </script>
+  <!-- What takes the loading shapes' place fades in, briefly, rather than
+       cutting over: an animation replays whenever [hidden] comes off, so
+       nothing has to start it. None under reduced motion. -->
+  <style>
+    @keyframes appear { from { opacity: 0; } to { opacity: 1; } }
+    @media (prefers-reduced-motion: no-preference) { .appear { animation: appear 200ms ease-out; } }
+  </style>
 </head>
 <body class="min-h-screen bg-ground text-fg">
   <!-- What this challenge counts was filled in when the project was made;
@@ -60,7 +67,7 @@
 
     <!-- A month that is over: last month's, on the first days of a new one,
          or a past month somebody opened. -->
-    <section id="results" class="card flex flex-col gap-4" aria-labelledby="results-title" hidden>
+    <section id="results" class="card flex flex-col gap-4 appear" aria-labelledby="results-title" hidden>
       <div class="flex flex-col items-center gap-1 text-center">
         <h2 id="results-title" class="text-heading"></h2>
         <p class="text-small text-muted">Together we logged</p>
@@ -87,7 +94,7 @@
     </section>
 
     <!-- This month: the group goal, logging, and what is new. -->
-    <div id="this-month" class="flex flex-col gap-7" hidden>
+    <div id="this-month" class="flex flex-col gap-7 appear" hidden>
       <section id="goal" class="card flex flex-col gap-3" aria-labelledby="goal-total">
         <div class="flex items-baseline justify-between gap-2">
           <h2 id="goal-total" class="text-heading"></h2>
@@ -138,7 +145,7 @@
     </div>
 
     <!-- The leaderboard: this month's, or a past month's final standings. -->
-    <section id="board-section" class="flex flex-col" aria-labelledby="board-label" hidden>
+    <section id="board-section" class="flex flex-col appear" aria-labelledby="board-label" hidden>
       <h2 id="board-label" class="section-label">Leaderboard</h2>
       <ol id="leaderboard" class="list"></ol>
       <!-- Empty: only when the load worked and nobody has logged anything this month. -->
@@ -149,12 +156,12 @@
       <p id="not-yet" class="mt-2 px-1 text-small text-muted" hidden></p>
     </section>
 
-    <section id="lately-section" class="flex flex-col" aria-labelledby="lately-label" hidden>
+    <section id="lately-section" class="flex flex-col appear" aria-labelledby="lately-label" hidden>
       <h2 id="lately-label" class="section-label">Lately</h2>
       <ul id="lately" class="list"></ul>
     </section>
 
-    <section id="yours-section" class="flex flex-col" hidden>
+    <section id="yours-section" class="flex flex-col appear" hidden>
       <details id="yours" class="group">
         <summary class="flex min-h-11 cursor-pointer list-none items-center gap-2 px-1 text-small font-medium text-muted [&::-webkit-details-marker]:hidden">
           <svg class="shrink-0 transition-transform group-open:rotate-90" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
@@ -164,7 +171,7 @@
       </details>
     </section>
 
-    <section id="past-section" class="flex flex-col" aria-labelledby="past-label" hidden>
+    <section id="past-section" class="flex flex-col appear" aria-labelledby="past-label" hidden>
       <h2 id="past-label" class="section-label">Past months</h2>
       <ul id="past" class="list"></ul>
     </section>

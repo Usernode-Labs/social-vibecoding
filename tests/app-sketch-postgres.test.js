@@ -109,6 +109,16 @@ test('the sketch against the full PostgreSQL schema', { timeout: 120000 }, async
     assert.deepEqual(await iconOf(app.id), { icon_emoji: '👟', icon_image_id: null });
   });
 
+  // The make screen's own line for a game or Your own choice, kept with what
+  // the card is owed from, is the tagline when the model gives none.
+  await t.test('the make screen\'s line reaches the card the setup makes', async () => {
+    const app = await project();
+    const fixed = 'A dice race: ladders take you up, slides take you back';
+    const deps = { llm: fakeLlm({ text: JSON.stringify({ emoji: '🎲', tagline: '', points: ['Roll the dice', 'Race your friends'] }) }), limits: fakeLimits(), ws: WS };
+    await sketch.startSketch(pool, { app, user, brief: 'A new game we build together. For the first version, a dice race', fallbackTagline: fixed }, deps);
+    assert.equal((await sketch.drawFor(pool, app.id, deps)).design.tagline, fixed);
+  });
+
   await t.test('an icon somebody set is never replaced', async () => {
     const app = await project();
     await pool.query(`UPDATE apps SET icon_emoji = '🎸' WHERE id = $1`, [app.id]);

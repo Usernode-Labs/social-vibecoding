@@ -182,12 +182,18 @@
 
     // The first view comes over a plain request, so the screen fills even
     // before (or without) the live connection; then the connection opens.
-    api('GET', '/api/room').then(function (v) {
+    var first = api('GET', '/api/room').then(function (v) {
       setView(v);
       setStatus('asking');
     }, function (err) {
       if (opts.onFailed) opts.onFailed(err);
-    }).then(function () {
+    });
+    // That first view, drawn (or the error in its place): Homeroom keeps its
+    // opening cover up until then (usernode.ready, the platform bridge), so
+    // the game appears in one step. The cover lifts after a few seconds
+    // regardless.
+    if (window.usernode && window.usernode.ready) window.usernode.ready(first);
+    first.then(function () {
       open();
       schedulePoll();
     });

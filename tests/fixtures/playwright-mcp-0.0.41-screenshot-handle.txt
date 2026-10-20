@@ -1,0 +1,28 @@
+  handle: async (tab, params, response) => {
+    const fileType = params.type || "png";
+    const fileName = await tab.context.outputFile(params.filename ?? (0, import_utils.dateAsFileName)(fileType), { origin: "llm", reason: "Saving screenshot" });
+    const options = {
+      type: fileType,
+      quality: fileType === "png" ? void 0 : 90,
+      scale: "css",
+      path: fileName,
+      ...params.fullPage !== void 0 && { fullPage: params.fullPage }
+    };
+    const isElementScreenshot = params.element && params.ref;
+    const screenshotTarget = isElementScreenshot ? params.element : params.fullPage ? "full page" : "viewport";
+    response.addCode(`// Screenshot ${screenshotTarget} and save it as ${fileName}`);
+    const locator = params.ref ? await tab.refLocator({ element: params.element || "", ref: params.ref }) : null;
+    if (locator)
+      response.addCode(`await page.${await (0, import_utils.generateLocator)(locator)}.screenshot(${javascript.formatObject(options)});`);
+    else
+      response.addCode(`await page.screenshot(${javascript.formatObject(options)});`);
+    const buffer = locator ? await locator.screenshot(options) : await tab.page.screenshot(options);
+    response.addResult(`Took the ${screenshotTarget} screenshot and saved it as ${fileName}`);
+    if (!params.fullPage) {
+      response.addImage({
+        contentType: fileType === "png" ? "image/png" : "image/jpeg",
+        data: buffer
+      });
+    }
+  }
+});

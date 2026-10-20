@@ -106,6 +106,17 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL
 -- tree for that exact reason. Settings -> Developer -> Experimental turns
 -- it on; the deployment gate still applies on top.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS session_bridge_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+-- New Needs you (frontend/src/features/review-flow/), an experiment an
+-- account switches on for itself. Also who is served shots at device
+-- density (services/shots-view.js). The same line as PR #5646's, so either
+-- may merge first.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS review_flow_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- New Needs you, the experimental review flow (Settings -> Experimental).
+-- On the account rather than the device, so it follows the person and the
+-- server knows who is in the experiment: only they are served before/after
+-- stills at the density they were captured at. Default FALSE: an experiment.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS review_flow_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Home sections are permanent (#1801). Remove the obsolete preference from
 -- existing databases; IF EXISTS also makes fresh installs and repeat boots safe.
@@ -10201,6 +10212,44 @@ END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS shot_artifacts_slot_key
   ON shot_artifacts(run_id, story_id, viewport, side, variant, media, theme);
 COMMENT ON TABLE shot_run_files IS 'staging:private';
+-- Shots at the screen's own density (services/shots-density.js), an
+-- experiment. A still saved at more than one device pixel per CSS pixel
+-- keeps its original in dense_*, and `data` holds the same still averaged
+-- down to 1x, so everything that reads `data` (the diff, the invite picture,
+-- the eval, the connectors) sees what it always saw. Only the change page's
+-- artifact route and the shots view hand the dense still, and only to an
+-- account in the New Needs you experiment (users.review_flow_enabled).
+ALTER TABLE shot_run_files ADD COLUMN IF NOT EXISTS density SMALLINT NOT NULL DEFAULT 1;
+ALTER TABLE shot_run_files ADD COLUMN IF NOT EXISTS dense_data BYTEA;
+ALTER TABLE shot_run_files ADD COLUMN IF NOT EXISTS dense_width INTEGER;
+ALTER TABLE shot_run_files ADD COLUMN IF NOT EXISTS dense_height INTEGER;
+ALTER TABLE shot_run_files ADD COLUMN IF NOT EXISTS dense_bytes INTEGER;
+ALTER TABLE shot_run_files ADD COLUMN IF NOT EXISTS dense_sha256 VARCHAR(64);
+ALTER TABLE shot_artifacts ADD COLUMN IF NOT EXISTS density SMALLINT NOT NULL DEFAULT 1;
+ALTER TABLE shot_artifacts ADD COLUMN IF NOT EXISTS dense_data BYTEA;
+ALTER TABLE shot_artifacts ADD COLUMN IF NOT EXISTS dense_width INTEGER;
+ALTER TABLE shot_artifacts ADD COLUMN IF NOT EXISTS dense_height INTEGER;
+ALTER TABLE shot_artifacts ADD COLUMN IF NOT EXISTS dense_bytes INTEGER;
+ALTER TABLE shot_artifacts ADD COLUMN IF NOT EXISTS dense_sha256 VARCHAR(64);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'shot_run_files'::regclass AND conname = 'shot_run_files_density_check'
+  ) THEN
+    ALTER TABLE shot_run_files
+      ADD CONSTRAINT shot_run_files_density_check
+      CHECK (density BETWEEN 1 AND 4 AND ((density = 1) = (dense_data IS NULL)));
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'shot_artifacts'::regclass AND conname = 'shot_artifacts_density_check'
+  ) THEN
+    ALTER TABLE shot_artifacts
+      ADD CONSTRAINT shot_artifacts_density_check
+      CHECK (density BETWEEN 1 AND 4 AND ((density = 1) = (dense_data IS NULL)));
+  END IF;
+END $$;
 
 -- #2377: experimental Global Chat. These records are deliberately separate
 -- from repository-development chat_sessions and user_agent_preferences: the

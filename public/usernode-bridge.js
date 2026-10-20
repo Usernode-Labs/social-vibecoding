@@ -6815,6 +6815,44 @@
   })();
   /* __USERNODE_BACKGROUND_END__ */
 
+  // The app's first screen, drawn. Homeroom opens an app behind a cover that
+  // shows its icon and name, and lifts the cover once the frame's document
+  // has loaded, which is usually before the app's own data has arrived: the
+  // viewer then watches the page assemble itself, a skeleton and then the
+  // real screen. `usernode.ready()` lets an app keep the cover up until its
+  // first real screen is drawn, so it opens in one step:
+  //
+  //   usernode.ready(load());  // a promise that settles after the first render
+  //   usernode.ready();        // or "drawn now", called once after rendering
+  //
+  // With a promise, the cover waits for it to settle, fulfilled or rejected
+  // (an error screen is a first screen too). Homeroom lifts the cover after a
+  // few seconds regardless (AppView.LAUNCH_READY_CAP_MS), so an app whose
+  // promise never settles is never hidden for long. Only the first call
+  // counts, and outside a Homeroom frame it does nothing.
+  /* __USERNODE_READY_BEGIN__ */
+  (function () {
+    var called = false;
+    function post(state) {
+      if (window === window.parent) return;
+      try { window.parent.postMessage({ __usernode_ready: state }, "*"); } catch (_) {}
+    }
+    window.usernode.ready = function (firstRender) {
+      if (called) return;
+      called = true;
+      if (firstRender && typeof firstRender.then === "function") {
+        // Said at once, while the page is still loading, so the shell knows
+        // to wait past the frame's load event for the "drawn" that follows.
+        post("waiting");
+        var drawn = function () { post("drawn"); };
+        firstRender.then(drawn, drawn);
+        return;
+      }
+      post("drawn");
+    };
+  })();
+  /* __USERNODE_READY_END__ */
+
 
   // Engaged-use readiness and input lease.  A parent frame load alone cannot
   // distinguish an app document from a browser/proxy error document, so the

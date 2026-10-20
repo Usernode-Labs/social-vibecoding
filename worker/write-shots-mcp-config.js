@@ -43,6 +43,24 @@ const phoneClipSize = SIZE.test(process.env.SHOTS_PHONE_CLIP_SIZE || '')
 // (`member_phone`): the boundary keeps one closed-session record per
 // directory, so a desktop session can never stand for a phone clip's.
 const PHONE_DEVICE = 'iPhone 15';
+// Experimental, off unless the platform switched it on for this run
+// (services/shots-density.js): shots saved at the screen's own density.
+// The browsers then save at device scale (patch-playwright-mcp-screenshot.js
+// reads SHOTS_SCREENSHOT_SCALE), so the browser's density is the shots'
+// density: the phone's is its device's (3), and a desktop browser draws at
+// 2, a laptop's display, so a card can zoom into a change without drawing
+// it soft. Playwright takes a density only with a fixed viewport, so the
+// desktop browser opens at 1280x720 instead of its window's size; the agent
+// resizes to each declared screen before it shoots, as it always has. Off,
+// every shot is 1x, as it always was.
+const deviceDensity = process.env.SHOTS_DEVICE_DENSITY === '1';
+const DESKTOP_DENSITY = 2;
+const desktopConfig = path.join(path.dirname(path.resolve(output)), 'shots-desktop-browser.json');
+if (deviceDensity) {
+  fs.writeFileSync(desktopConfig, `${JSON.stringify({
+    browser: { contextOptions: { viewport: { width: 1280, height: 720 }, deviceScaleFactor: DESKTOP_DENSITY } },
+  })}\n`, { mode: 0o600 });
+}
 const PERSONAS = ['member', 'read_only_admin', 'full_admin', 'guest', 'invited_member', 'invited_member_listed'];
 // Which desktop browsers this run starts (services/worker.js
 // SHOTS_BROWSER_PERSONAS): the four ordinary ones, plus an invited
@@ -89,7 +107,7 @@ const browserArgs = (persona, { phone = false } = {}) => {
     '/usr/local/bin/shots-browser-observer.js',
     observed,
     '--browser', 'chromium', '--headless', '--isolated', '--no-sandbox', '--caps', 'vision',
-    ...(phone ? ['--device', PHONE_DEVICE] : []),
+    ...(phone ? ['--device', PHONE_DEVICE] : deviceDensity ? ['--config', desktopConfig] : []),
     '--storage-state', path.join(stateDir, `${persona}.json`),
     '--block-service-workers', '--image-responses', 'allow',
     '--proxy-server', proxyFor(persona),
@@ -108,6 +126,7 @@ const browserEnv = {
   SHOTS_ALLOWED_ORIGINS: JSON.stringify([baseOrigin, headOrigin]),
   SHOTS_BROWSER_DIAGNOSTIC_FILE: process.env.SHOTS_BROWSER_DIAGNOSTIC_FILE || '',
   SHOTS_NAVIGATION_HINTS: process.env.SHOTS_NAVIGATION_HINTS || '{}',
+  ...(deviceDensity ? { SHOTS_SCREENSHOT_SCALE: 'device' } : {}),
 };
 const config = {
   mcpServers: {

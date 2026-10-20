@@ -35,7 +35,7 @@ test('N1, now: a first version on its way sends the maker to Home and the walk, 
   for (const key of ['title', 'text', 'drawing', 'alt']) assert.equal(catalog[`firstSession.tour.firstLook.${key}`], undefined, key);
   // The walk runs now, on Home, once: the maker's, told to the server.
   const index = read(`${DIR}/index.tsx`);
-  assert.match(index, /if \(firstVersion !== null\) \{[\s\S]*?enterScreen\('home', slug\);\s+if \(uid != null && !claimWalk\(uid\)\) \{ setMode\(\{ kind: 'none' \}\); return; \}\s+setMode\(\{ kind: 'tour', info: \{ slug, name \}, path: 'walk', moments: true \}\);/);
+  assert.match(index, /if \(firstVersion !== null\) \{[\s\S]*?enterScreen\('home', slug\);\s+if \(uid != null && !claimWalk\(uid\)\) \{ setMode\(\{ kind: 'none' \}\); return; \}\s+legacy\(\)\.App\?\._noteHomeWalk\?\.\('reached'\);\s+setMode\(\{ kind: 'tour', info: \{ slug, name \}, path: 'walk', moments: true \}\);/);
 });
 
 test('the made screen hands on where its first version stands: null opens the app, anything else goes Home', () => {

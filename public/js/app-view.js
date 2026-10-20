@@ -1948,6 +1948,14 @@ const AppView = {
   //            never fire, e.g. a download-disposition response); holding
   //            the cover past two seconds hides an app that is very likely
   //            already painting.
+  //
+  //   An app that calls `usernode.ready(firstRender)` (the bridge) says
+  //   "waiting" while it loads and "drawn" once its first real screen is up.
+  //   For it, `load` and the 2s cap do not reveal: "drawn" does, so the app
+  //   appears in one step rather than as a skeleton that then changes shape.
+  //   5000ms  reveal it anyway (LAUNCH_READY_CAP_MS): a first render that
+  //            never settles is never hidden for long. An app that never
+  //            calls ready() keeps the ladder above exactly as it was.
   //   20000ms  swap the cover note to a "taking longer" line. Only reachable
   //            when the cap was skipped because the mint hadn't settled.
   //   45000ms  fail the launch (#4813): the cover becomes the failed card —
@@ -1956,6 +1964,7 @@ const AppView = {
   //            after the 2s cap means a frame whose src never went out.
   LAUNCH_SPINNER_MS: 500,
   LAUNCH_REVEAL_CAP_MS: 2000,
+  LAUNCH_READY_CAP_MS: 5000,
   LAUNCH_SLOW_MS: 20000,
   LAUNCH_FAIL_MS: 45000,
   // Keep in sync with `.app-launch-cover` / `#app-iframe` transition
@@ -1968,6 +1977,11 @@ const AppView = {
   // that replaced it.
   _launchId: 0,
   _launchTimers: [],
+  // Per launched frame, what its app has said through `usernode.ready()`:
+  // { waiting, drawn, revealed, reveal }. Set fresh each time the ladder is
+  // armed (watchSurfaceLoad), read by handleReadyBridgeMessage. Keyed by the
+  // frame element, so a frame that is replaced takes its record with it.
+  _launchHolds: typeof WeakMap === 'function' ? new WeakMap() : null,
   // Set by beginLaunch to the exact (launchId, slug, src) it mounted, read
   // ONCE by renderAppTab to decide adopt-vs-rebuild.
   _launchAdopt: null,
@@ -2675,7 +2689,21 @@ const AppView = {
   // into the caller's own array so it can cancel them on teardown.
   watchSurfaceLoad(iframe, { iframeId, coverId, isCurrent, timers }) {
     const current = () => !!isCurrent() && iframe.isConnected;
-    const reveal = () => AppView._revealLaunch({ iframeId, coverId, timers });
+    const hold = { waiting: false, drawn: false, revealed: false, reveal: null };
+    const reveal = () => {
+      hold.revealed = true;
+      AppView._revealLaunch({ iframeId, coverId, timers });
+    };
+    // The app's own "my first screen is drawn" (handleReadyBridgeMessage).
+    // Never before the frame has a src: that would show a blank frame.
+    hold.reveal = () => {
+      if (hold.revealed || !current() || !iframe.getAttribute('src')) return;
+      reveal();
+    };
+    // Waiting on the app, per its `usernode.ready(promise)`: load and the 2s
+    // cap leave the cover up, "drawn" or the ready cap lifts it.
+    const held = () => hold.waiting && !hold.drawn;
+    if (AppView._launchHolds) AppView._launchHolds.set(iframe, hold);
 
     iframe.onload = () => {
       // A src-less mount navigates to about:blank, which fires `load`.
@@ -2685,7 +2713,7 @@ const AppView = {
       if (iframeId === 'app-iframe') AppView.iframeFocused = true;
       // #970: the app's document is up — hand it this frame's insets.
       AppView.scheduleSafeAreaBroadcast();
-      reveal();
+      if (!held() && !hold.revealed) reveal();
       // The app is in: the dev caches' warm-up may have the connection now.
       if (iframeId === 'app-iframe' && AppView._afterAppFrameLoad) AppView._afterAppFrameLoad();
     };
@@ -2720,7 +2748,14 @@ const AppView = {
       // mint) — that would reveal a blank white iframe, the exact bug this
       // whole change removes.
       if (!iframe.getAttribute('src')) return;
+      if (held()) return;
       reveal();
+    });
+    at(AppView.LAUNCH_READY_CAP_MS, () => {
+      // An app that asked the cover to wait for its first screen and has not
+      // said it is drawn: reveal it anyway.
+      if (!iframe.getAttribute('src') || hold.revealed) return;
+      if (held()) reveal();
     });
     at(AppView.LAUNCH_SLOW_MS, () => {
       const text = PlatformI18n.t('changes:launch.cover.slow');
@@ -11330,9 +11365,12 @@ const AppView = {
         })).filter((r) => r.b || r.a);
         const changes = (Array.isArray(screen.stories) && screen.stories.length ? screen.stories : [screen.shot])
           .map(numberOf).filter((n) => n > 0);
+        // Image pixels per CSS pixel; shots saved before density was recorded are 1.
+        const density = Number(screen.density) >= 1 ? Number(screen.density) : 1;
         return {
           viewport: screen.viewport,
           width,
+          density,
           before: { url: base.url, height: heightBefore },
           after: { url: head.url, height: heightAfter },
           regions,
@@ -24191,8 +24229,11 @@ const AppView = {
   // pair stays comparable. A shot without recorded dimensions still leads.
   _shotsCropReadable(shot) {
     if (!shot) return true;
-    const width = Number(shot.width);
-    const height = Number(shot.height);
+    // In CSS pixels: a still saved at 3x is three times as many pixels wide
+    // as the element on the screen.
+    const density = Number(shot.density) >= 1 ? Number(shot.density) : 1;
+    const width = Number(shot.width) / density;
+    const height = Number(shot.height) / density;
     if (!(width > 0 && height > 0)) return true;
     return width >= 120 && height >= 40;
   },
@@ -24726,8 +24767,11 @@ const AppView = {
         shown.includes('shots-box-other') ? `<span class="shots-key"><i class="shots-key-box"></i>${PlatformI18n.htmlText('changes:shots.screen.keyOutline')}</span>` : '',
         shown.includes('shots-mark') ? `<span class="shots-key"><i class="shots-key-line"></i>${PlatformI18n.htmlText('changes:shots.screen.keyLine')}</span>` : '',
       ].join('');
-      const width = Number(after && after.width);
-      const height = Number(after && after.height);
+      // The still's own pixels over its density: the screen's size in CSS
+      // pixels, which is what the screen was declared at.
+      const density = Number(after && after.density) >= 1 ? Number(after.density) : 1;
+      const width = Number(after && after.width) / density;
+      const height = Number(after && after.height) / density;
       const meta = width > 0 && height > 0
         ? PlatformI18n.htmlText('changes:facts.pair', { first: PlatformI18n.t('changes:shots.screen.sized', { size: sizeName(screen.viewport), width: Math.round(width), height: Math.round(height) }), second: who })
         : PlatformI18n.htmlText('changes:facts.pair', { first: sizeName(screen.viewport), second: who });
@@ -28960,6 +29004,27 @@ const AppView = {
     else document.getElementById(id).style.backgroundColor = background;
   },
 
+  // `usernode.ready()` (the bridge): "waiting" while the app draws its first
+  // screen, then "drawn". Only a frame this shell owns, and only the launch
+  // currently armed on it (its record in _launchHolds), is believed; a
+  // message after the cover has gone does nothing.
+  handleReadyBridgeMessage(e) {
+    const data = e.data;
+    if (!data) return;
+    const state = data.__usernode_ready;
+    if (state !== 'waiting' && state !== 'drawn') return;
+    const id = AppView.ownedFrameFor(e.source);
+    if (!id || !AppView._launchHolds) return;
+    const hold = AppView._launchHolds.get(document.getElementById(id));
+    if (!hold || hold.revealed) return;
+    if (state === 'waiting') {
+      if (!hold.drawn) hold.waiting = true;
+      return;
+    }
+    hold.drawn = true;
+    hold.reveal();
+  },
+
   // ── App LLM access consent flow (issue #34) ────────────────────────
   //
   // The bridge's usernode.requestLlmAccess()/getLlmAccess()/
@@ -29800,6 +29865,8 @@ if (typeof window !== 'undefined') {
     // #3257: the bridge's startup request for the platform's theme.
     try { AppView.handleThemeBridgeMessage(e); } catch {}
     try { AppView.handleBackgroundBridgeMessage(e); } catch {}
+    // An app's first screen, drawn (`usernode.ready()`): lifts its cover.
+    try { AppView.handleReadyBridgeMessage(e); } catch {}
   });
 
   // #3257: Theme.onChange fires after the new theme is on <html>, for the

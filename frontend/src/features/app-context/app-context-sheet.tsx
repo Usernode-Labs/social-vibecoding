@@ -292,7 +292,7 @@ function MenuRow({
 
 export function AppsSwitcherSheet(): ReactNode {
   const t = useMessages('agent');
-  const { open, adopted, view } = useStoreState(appContextStore);
+  const { open, adopted, view, back } = useStoreState(appContextStore);
   // Everything this sheet says about the app comes from ONE store, published
   // by the classic writers that already owned those facts. #2718 adds the
   // three the rows need — the name to label them with, the terminal's gate,
@@ -388,6 +388,11 @@ export function AppsSwitcherSheet(): ReactNode {
   // is the platform's own self-hosted row and the name may not have landed.
   const appName = name || slug || null;
   const appLabel = appName || t('agent:appContext.thisApp');
+  // The back disc's name says where it goes (AppContext.goBack): About, for
+  // an invite pane opened from there, or the menu.
+  const backLabel = view === 'invite' && back === 'about'
+    ? (appName ? t('agent:appContext.backToAbout', { app: appName }) : t('agent:appContext.backToAboutThisApp'))
+    : (appName ? t('agent:appContext.backToMenu', { app: appName }) : t('agent:appContext.backToThisAppMenu'));
 
   const close = useCallback(() => AppContext.close(), []);
 
@@ -510,21 +515,26 @@ export function AppsSwitcherSheet(): ReactNode {
               THE PLATFORM'S BACK DISC (#4218), not a chevron in the label's
               small caps: the header's own disc, in its brand ink, at the
               size the Workshop's page heads draw it one level down (36px),
-              with the kit's 44pt hit box (`un-touch-target`). The name
-              beside it says where it goes back to.
+              with the kit's 44pt hit box (`un-touch-target`). It goes one
+              step back: to About for an invite pane opened from there, to
+              the menu otherwise (AppContext.goBack).
+
+              NO NAME BESIDE IT. The app's name in small caps sat here, and
+              each second pane opens on the same name as its own title (About's
+              large name, Invite's "Invite people to …"), so it read twice in
+              a row. The disc's accessible name still says where it goes.
           */}
           {view !== 'menu' ? (
-            <div className="flex-1 min-w-0 flex items-center gap-2.5">
+            <div className="flex-1 min-w-0 flex items-center">
               <button
                 id="app-about-back"
                 type="button"
-                aria-label={appName ? t('agent:appContext.backToMenu', { app: appName }) : t('agent:appContext.backToThisAppMenu')}
+                aria-label={backLabel}
                 className={BACK_DISC}
-                onClick={() => AppContext.showMenu()}
+                onClick={() => AppContext.goBack()}
               >
                 <ChevronLeftIcon className="w-[18px] h-[18px]" aria-hidden="true" />
               </button>
-              <span className={'min-w-0 truncate ' + SECTION_TYPE}>{appLabel}</span>
             </div>
           ) : (
             /*

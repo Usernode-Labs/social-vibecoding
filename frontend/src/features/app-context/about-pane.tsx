@@ -8,16 +8,20 @@
  *   1. WHO IT IS. A large tile, the name, the tagline, the builders' avatars
  *      and how many members its community has ("12 members", #4218).
  *   2. WHAT YOU CAN DO WITH IT (an app): Open — Resume for the app you
- *      parked, and nothing at all for the app already running — and Add to
- *      your apps. HOW BIG IT IS (the platform): apps, members, merged.
- *   3. HOW IT IS BUILT. One short line, its community builds it together,
- *      and "How changes work", which opens the Workshop (#4218).
- *   4. WHO BUILDS IT. Contributors, each with what they have merged, each
+ *      parked, and nothing at all for the app already running — Add to
+ *      your apps, and, for a member, Invite. HOW BIG IT IS (the platform):
+ *      apps, members, merged.
+ *   3. WHO BUILDS IT. Contributors, each with what they have merged, each
  *      opening that person's page.
- *   5. MORE. Share, Add to home screen, Code (public on GitHub), Remix
- *      (a fork, to the code; "Remix" to people), and the version as a plain
- *      row, "App version: a1b2c3d" (#4218). A remix also says what it was
+ *   4. MORE. Add to home screen, Remix (a fork, to the code; "Remix" to
+ *      people), Code (public on GitHub), and the version as a plain row,
+ *      "App version: a1b2c3d" (#4218). A remix also says what it was
  *      remixed from, under its description.
+ *
+ * The line that said how it is built ("Notes’s community builds it
+ * together. How changes work") and the Share row are gone from both panes:
+ * the line said the same thing everywhere, and an app's Invite is how
+ * people are brought in now.
  *
  * ── It is still a PANE, not a sheet ────────────────────────────────────
  *
@@ -41,48 +45,47 @@
  *     repository, opening away from the shell. It says public because every
  *     repository is (services/github.js createRepo; an import must be public
  *     already), whoever the project lets open it.
- *   - `#improve-row-share` keeps its id and, for an app, its gate and its
- *     dialog: Share hands somebody the app's live address, so it appears
- *     whenever the app HAS one (`canShare` — running, with a URL), from its
- *     Workshop as much as from its frame. An app still being created,
- *     errored or waiting on secrets has no page to send anyone to, and a row
- *     that opened a dialog with an empty link would be worse than no row.
- *     Homeroom always has an address — this one — so its Share is always
- *     there, and hands over the platform's own link. Either is hidden while
- *     the menu still offers a newcomer "Go to Homeroom" (#4216,
- *     ./about-data.ts offeringGoToHomeroom): Share brings more people into
- *     the group, which a private member who has not gone to Homeroom yet is
- *     not handing out.
+ *   - `#app-about-invite` is the hub's Invite (../dev-board/workshop/
+ *     community-card.tsx openInviteLinks), for a member as there: it turns
+ *     this sheet to its invite pane (AppContext.openInvite, which waits for
+ *     the link so the pane comes in at its own height), and Back there
+ *     returns here. Every member sees it, a newcomer still offered "Go to
+ *     Homeroom" too: #4216 hid Share from them, which handed out the app's
+ *     address, but an invite link is what the hub offers every member and
+ *     what the server lets any member make, so hiding it here alone kept
+ *     nobody from inviting.
  *   - Add to home screen is a ROW now, as the design draws it, but it is the
  *     row the product already had: for an app, the per-app install page its
- *     card menu and its Discover page offer (#1508, #2320) — found in
- *     Home.menuItemsFor by key, not rebuilt; for Homeroom, which IS this
+ *     card menu and its Discover page offer (#1508, #2320) — Home.menuItemsFor's
+ *     `install`, found by key, not rebuilt; for Homeroom, which IS this
  *     page's PWA, the OS's own steps, because iOS exposes no install API and
  *     Android's prompt fires only when Chrome decides it should
- *     (../mobile-install/detect.ts). Wherever there is no home screen — a
- *     laptop, or an app already launched from one — there is no row.
+ *     (../mobile-install/detect.ts). Not the native app's widget pin
+ *     (`add-to-homescreen`), which Discover leaves out too: it shows its
+ *     result in Home's widget strip, which is not on screen from here, so
+ *     the tap looked like nothing. Where there is no home screen (a laptop)
+ *     there is no row, and none for Homeroom once it is launched from one.
  *
  * ── A viewer who is not served the platform's row ──────────────────────
  *
  * About Homeroom still opens for them (./platform-target.js): who it is, the
- * three figures, how it is built, Share and its Code row. The contributor
+ * three figures and its Code row. The contributor
  * list is the platform row's, which the API does not serve them, so it is not
  * drawn rather than drawn as an error.
  */
 
 import { useMemo, useState, type ReactNode } from 'react';
 
+import { Button } from '@/components/ui/button';
 import {
   CheckIcon,
   Glyph,
   GitHubIcon,
-  ShareIcon,
 } from '@/components/ui/icons';
 
-import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { useMessages } from '../../lib/i18n/react';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
-import { navStore } from '../nav/nav-store.js';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { improveStore } from '../improve/improve-store.js';
 import { A2HS_STEPS, detectMobileOs } from '../mobile-install/detect';
@@ -90,11 +93,10 @@ import { isNativeApp, isStandalone } from '../mobile-install/environment';
 import { parkedStore } from '../nav/parked-store.js';
 import { AppContext } from './app-context-controller.js';
 import {
-  appNote,
+  contributorNote,
   contributorView,
   membersPillText,
   openLabel,
-  platformNote,
   shortVersionOf,
   statCards,
   taglineOf,
@@ -103,7 +105,6 @@ import {
 } from './about-model';
 import {
   listRowFor,
-  offeringGoToHomeroom,
   useAboutApp,
   useContributors,
   usePlatformAbout,
@@ -194,32 +195,12 @@ function lineageOf(row: AppRow | null | undefined): { name: string; deleted: boo
 
 /**
  * The menu dismisses before anything that presents a surface of its own —
- * the share dialog, the fork dialog, the install page — because the kit
+ * the fork dialog, the install page — because the kit
  * cannot present one while it is still tearing the other down (the ordering
- * the terminal and Share rows already keep).
+ * the menu's terminal row already keeps).
  */
 function afterDismiss(then: () => void): void {
   void AppContext.dismissForNav().then(then);
-}
-
-/**
- * "How changes work": the project's Workshop tab, where its voting help
- * spells out this app's rules. The sheet's own row pattern
- * (./app-context-sheet.tsx followThenDismiss): pick the tab, write the
- * address, then close the menu, so the menu's Back record is never spent on
- * the new page. A modified click is left to the browser.
- */
-function openWorkshop(e: React.MouseEvent, slug: string): void {
-  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
-    void AppContext.dismissForNav();
-    return;
-  }
-  e.preventDefault();
-  (window as unknown as { AppView?: { _landOnTab?: (s: string, t: string) => void } })
-    .AppView?._landOnTab?.(slug, 'workshop');
-  const href = `#app/${encodeURIComponent(slug)}/workshop`;
-  if (window.location.hash !== href) window.location.hash = href;
-  void AppContext.dismissForNav();
 }
 
 /** A person's initial in the roster's circle — Discover's contributor disc. */
@@ -236,31 +217,6 @@ function Avatar({ who, size }: { who: string; size: 'sm' | 'xs' }): ReactNode {
       {(who[0] || '?').toUpperCase()}
     </span>
   );
-}
-
-/**
- * Homeroom's link, handed over the way the device offers: the OS share sheet
- * where there is one, the clipboard where there is not. Called straight from
- * the tap — both APIs refuse a call that is not inside a user gesture, so
- * this cannot wait for the menu to close first.
- */
-async function sharePlatform(name: string): Promise<'shared' | 'copied' | 'failed'> {
-  const url = `${window.location.origin}/`;
-  const nav = navigator as Navigator & { share?: (data: ShareData) => Promise<void> };
-  if (typeof nav.share === 'function') {
-    try {
-      await nav.share({ title: name, url });
-      return 'shared';
-    } catch (err) {
-      if ((err as { name?: string })?.name === 'AbortError') return 'shared';
-    }
-  }
-  try {
-    await navigator.clipboard.writeText(url);
-    return 'copied';
-  } catch {
-    return 'failed';
-  }
 }
 
 /**
@@ -281,7 +237,7 @@ export function ContributorsFold({ people, total, showAll, onToggle }: {
     <>
       {shown.length ? (
         <div id="app-about-contributors-list">
-          {shown.map((c) => (
+          {shown.map((c) => [c, contributorNote(c)] as const).map(([c, note]) => (
             <a
               key={c.who}
               data-contributor={c.who}
@@ -291,7 +247,8 @@ export function ContributorsFold({ people, total, showAll, onToggle }: {
             >
               <Avatar who={c.who} size="sm" />
               <span className="flex-1 min-w-0 truncate font-medium">{`@${c.who}`}</span>
-              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{t('agent:appContext.about.contributor.live', { count: c.merged })}</span>
+              {/* "Creator", "3 live", both, or nothing: a zero says nothing. */}
+              {note ? <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{note}</span> : null}
             </a>
           ))}
         </div>
@@ -313,16 +270,16 @@ export function ContributorsFold({ people, total, showAll, onToggle }: {
 }
 
 /**
- * `label` is the app's name. With `unnamed`, no name has loaded and `label` is
- * a stand-in: the note uses its unnamed wording, not the stand-in as a name.
+ * `label` is the app's name. `unnamed` (no name has loaded, and `label` is a
+ * stand-in) is the sheet's to pass and nothing here reads it now: the app's
+ * note, which had wording of its own for it, is gone.
  */
-export function AboutPane({ label, unnamed = false }: { label: string; unnamed?: boolean }): ReactNode {
+export function AboutPane({ label }: { label: string; unnamed?: boolean }): ReactNode {
   const t = useMessages('agent');
   const {
     slug, target, restricted, repoUrl, canShare, version, iconUrl, iconEmoji, tab, deploying,
   } = useStoreState(improveStore);
   const { app: parked } = useStoreState(parkedStore);
-  const { privateMember } = useStoreState(navStore);
   const platform = target === 'platform';
   const isApp = target === 'app';
 
@@ -333,7 +290,6 @@ export function AboutPane({ label, unnamed = false }: { label: string; unnamed?:
   const [added, setAdded] = useState<boolean | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [a2hsOpen, setA2hsOpen] = useState(false);
-  const [shareSaid, setShareSaid] = useState<string | null>(null);
 
   // Read once per mount rather than per render: neither the user agent nor
   // the touch-point count changes while a sheet is open, and this pane is
@@ -349,7 +305,7 @@ export function AboutPane({ label, unnamed = false }: { label: string; unnamed?:
     if (!isApp || !row || typeof menuItemsFor !== 'function') return [];
     try { return menuItemsFor(row) || []; } catch { return []; }
   }, [isApp, row]);
-  const homeScreenItem = items.find((i) => i && (i.key === 'add-to-homescreen' || i.key === 'install'));
+  const homeScreenItem = items.find((i) => i && i.key === 'install');
   const forkItem = items.find((i) => i && i.key === 'fork');
 
   // ── Identity ──────────────────────────────────────────────────────
@@ -382,28 +338,17 @@ export function AboutPane({ label, unnamed = false }: { label: string; unnamed?:
     (listRow && home()?.isYours?.(listRow))
     || (!listRow && row && ((row.is_collaborator && !row.your_apps_hidden) || row.is_favorited))
   );
+  // The hub's rule for its Invite: a member's. GET /api/apps's row says so.
+  const canInvite = !!row?.is_member;
 
   // ── More ──────────────────────────────────────────────────────────
   const repo = platform ? (about?.repoUrl || repoUrl) : (repoUrl || row?.repo_url || null);
-  const showShare = platform || canShare;
-  // #4216: not while the menu still offers this newcomer "Go to Homeroom".
-  const shareRow = showShare && !offeringGoToHomeroom(!!privateMember);
   const platformA2hs = platform && !!os
     && typeof window !== 'undefined' && !isStandalone() && !isNativeApp();
   const showHomeScreen = platform ? platformA2hs : !!homeScreenItem;
   const showFork = isApp && !!forkItem;
   const lineage = isApp ? lineageOf(row) : null;
 
-  // The platform's rules are its row's, which a cold tab may still be loading
-  // (./about-data.ts asks Home for the list): no sentence until they are here,
-  // rather than the default rules for a moment and then the platform's own.
-  const note = platform ? platformNote(label, !!restricted)
-    : unnamed ? t('agent:appContext.about.note.unnamedApp') : appNote(label);
-  // The name the note is about, as appNote and platformNote read it.
-  const named = typeof label === 'string' && label.trim() ? label.trim() : '';
-  // Where "How changes work" goes: the app's Workshop, or the platform's for
-  // a viewer it is served to.
-  const workshopSlug = slug && !restricted ? slug : null;
   const people = ready.map(contributorView);
 
   return (
@@ -555,6 +500,37 @@ export function AboutPane({ label, unnamed = false }: { label: string; unnamed?:
               </>
             ) : <span className="truncate">{t('agent:appContext.about.addToMyApps')}</span>}
           </button>
+          {/*
+              INVITE, for a member, as the hub's is (../dev-board/workshop/
+              community-card.tsx openInviteLinks). Beside Open it is Add's
+              pill, sized to its word: Open is the row's one filled button.
+              With Open gone it takes Open's place, the filled pill taking
+              what Add leaves, so the row inside the app is "✓ Added" and
+              the one thing to do there.
+          */}
+          {canInvite && running ? (
+            <Button
+              id="app-about-invite"
+              type="button"
+              variant="pillAccent"
+              size="none"
+              className="inline-flex flex-1 basis-0 min-w-0 items-center justify-center h-10 px-4 text-sm font-semibold whitespace-nowrap"
+              onClick={() => { void AppContext.openInvite({ back: 'about' }); }}
+            >
+              <span className="truncate">{t('agent:appContext.about.invite')}</span>
+            </Button>
+          ) : canInvite ? (
+            <button
+              id="app-about-invite"
+              type="button"
+              className={'inline-flex shrink-0 min-w-0 items-center justify-center h-10 px-4 rounded-full text-sm font-semibold whitespace-nowrap '
+                + 'bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 '
+                + 'hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-900 dark:text-zinc-100 transition-colors'}
+              onClick={() => { void AppContext.openInvite({ back: 'about' }); }}
+            >
+              <span className="truncate">{t('agent:appContext.about.invite')}</span>
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -582,30 +558,6 @@ export function AboutPane({ label, unnamed = false }: { label: string; unnamed?:
         </div>
       ) : null}
 
-      {(isApp || platform) && note ? (
-        <p id="app-about-note" className="px-5 pt-1 pb-1 text-[0.8125rem] leading-relaxed text-zinc-600 dark:text-zinc-300">
-          {/* The space rides inside the note's own string: a bare {' '}
-              child is a hydration hazard (tests/shell-build.test.js). */}
-          {workshopSlug ? (
-            <RichMessage
-              id={platform
-                ? 'agent:appContext.about.noteHow.platform'
-                : unnamed ? 'agent:appContext.about.noteHow.unnamedApp'
-                  : named ? 'agent:appContext.about.noteHow.app' : 'agent:appContext.about.noteHow.thisApp'}
-              values={{ name: named || 'Homeroom', app: named }}
-              components={[
-                <a
-                  id="app-about-how"
-                  href={`#app/${encodeURIComponent(workshopSlug)}/workshop`}
-                  className="font-semibold text-violet-700 dark:text-violet-300 hover:underline underline-offset-2"
-                  onClick={(e) => openWorkshop(e, workshopSlug)}
-                />,
-              ]}
-            />
-          ) : note}
-        </p>
-      ) : null}
-
       {/*
           WHO BUILDS IT — GET /api/apps/:slug/contributors, the list Discover's
           page ranks, in the order it arrives. Each row opens that person's
@@ -627,32 +579,9 @@ export function AboutPane({ label, unnamed = false }: { label: string; unnamed?:
         </section>
       ) : null}
 
-      {shareRow || showHomeScreen || repo || showFork || versionText ? (
+      {showHomeScreen || repo || showFork || versionText ? (
         <section id="app-about-more" aria-label={t('agent:appContext.about.more')}>
           <h4 className={SECTION}>{t('agent:appContext.about.more')}</h4>
-          {shareRow ? (
-            <ActionRow
-              id="improve-row-share"
-              icon={<ShareIcon />}
-              label={shareSaid || t('agent:appContext.row.share')}
-              onClick={() => {
-                if (!platform) {
-                  // The app's live address, in the share dialog the Improve
-                  // panel's footer opened — same method, same gate.
-                  afterDismiss(() => {
-                    (window as unknown as { Improve?: { share?: () => void } }).Improve?.share?.();
-                  });
-                  return;
-                }
-                void sharePlatform(label).then((how) => {
-                  const said = how === 'copied' ? t('agent:appContext.about.share.copied') : (how === 'failed' ? t('agent:appContext.about.share.failed') : null);
-                  if (!said) return;
-                  setShareSaid(said);
-                  window.setTimeout(() => setShareSaid(null), 1800);
-                });
-              }}
-            />
-          ) : null}
           {showHomeScreen ? (
             <ActionRow
               id="app-about-a2hs"
@@ -670,6 +599,16 @@ export function AboutPane({ label, unnamed = false }: { label: string; unnamed?:
           {platform && a2hsOpen && os ? (
             <p id="app-about-a2hs-steps" className={NOTE}>{t(A2HS_STEPS[os])}</p>
           ) : null}
+          {showFork && forkItem ? (
+            <ActionRow
+              id="app-about-fork"
+              icon={<Glyph d={GLYPHS.fork} />}
+              label={t('agent:appContext.about.remix')}
+              sub={t('agent:appContext.about.remixSub')}
+              onClick={() => afterDismiss(() => forkItem.run())}
+            />
+          ) : null}
+          {/* Code is last of the rows: the one that leaves Homeroom. */}
           {repo ? (
             <a
               id="improve-row-github"
@@ -683,15 +622,6 @@ export function AboutPane({ label, unnamed = false }: { label: string; unnamed?:
               <span className="flex-1 min-w-0 truncate font-medium">{t('agent:appContext.about.code')}</span>
               <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{t('agent:appContext.about.codePublic')}</span>
             </a>
-          ) : null}
-          {showFork && forkItem ? (
-            <ActionRow
-              id="app-about-fork"
-              icon={<Glyph d={GLYPHS.fork} />}
-              label={t('agent:appContext.about.remix')}
-              sub={t('agent:appContext.about.remixSub')}
-              onClick={() => afterDismiss(() => forkItem.run())}
-            />
           ) : null}
           {/* THE VERSION, last and plain (#4218): a fact for whoever needs
               it, not an action, so a line with no glyph and no hover. It

@@ -29,6 +29,13 @@
       media.addEventListener('change', applyTheme);
     })();
   </script>
+  <!-- What takes the loading shapes' place fades in, briefly, rather than
+       cutting over: an animation replays whenever [hidden] comes off, so
+       nothing has to start it. None under reduced motion. -->
+  <style>
+    @keyframes appear { from { opacity: 0; } to { opacity: 1; } }
+    @media (prefers-reduced-motion: no-preference) { .appear { animation: appear 200ms ease-out; } }
+  </style>
 </head>
 <body class="min-h-screen bg-ground text-fg">
   <main class="mx-auto flex max-w-xl flex-col gap-8 px-4 py-8">
@@ -54,7 +61,7 @@
       <div id="today-loading" class="flex flex-col gap-2" aria-label="Loading">
         <div class="skeleton h-16 w-full"></div>
       </div>
-      <div id="today-card" class="card" hidden>
+      <div id="today-card" class="card appear" hidden>
         <p id="today-count" class="text-heading"></p>
         <p id="today-minutes" class="text-small text-muted"></p>
       </div>

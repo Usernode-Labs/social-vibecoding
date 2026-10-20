@@ -70,15 +70,18 @@ test('the app chip menu renders no Add to Home Screen row, with or without an ap
 // and the row it now is, is not the one #2320 moved out of this sheet coming
 // back: that was a per-app install built INTO the chip's sheet. About is the
 // app's page as a pop-up, so its row is the item the app's page already has —
-// Home.menuItemsFor's `install` (or the native pin), taken by key and run as
-// is — and never a second copy of the install address. For Homeroom, which
+// Home.menuItemsFor's `install`, taken by key and run as is — and never a
+// second copy of the install address. Not the native pin
+// (`add-to-homescreen`): its result is Home's widget strip, off screen from
+// About, so the tap looked like nothing; Discover's page leaves it out too. For Homeroom, which
 // IS this page's PWA, it is still the OS's own steps in words, because there
 // is no install API to call (iOS Safari has none and Android's
 // `beforeinstallprompt` fires when Chrome decides it should).
 test('About\'s home-screen row is the app page\'s own item, or the OS\'s steps for Homeroom', () => {
   const about = read('frontend/src/features/app-context/about-pane.tsx');
-  assert.match(about, /i\.key === 'add-to-homescreen' \|\| i\.key === 'install'/,
+  assert.match(about, /items\.find\(\(i\) => i && i\.key === 'install'\)/,
     'the app\'s row is the card menu\'s install item, found by key');
+  assert.doesNotMatch(about, /'add-to-homescreen'/, 'not the native widget pin');
   assert.match(about, /menuItemsFor\(row\)/, 'from the list the app\'s page renders');
   assert.match(about, /A2HS_STEPS/,
     'the platform\'s sentence is the one ../mobile-install/detect.ts already wrote');

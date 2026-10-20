@@ -68,7 +68,7 @@ test('the card starts on App whenever there is a picture, and a side somebody pi
   assert.match(MADE_SRC, /const viewSwitch = picture \? <CardViewSwitch value=\{view\} onChange=\{setPickedView\} \/> : null;/);
 });
 
-test('a ready-made app\'s card opens on its example: the phone, "Example", the note, and the switch on App', () => {
+test('a ready-made app\'s card opens on its example: the phone, "Example", no note, and the switch on App', () => {
   const html = draw(READY);
   assert.match(html, /<div data-first-session-card="app" class="relative flex flex-col items-center overflow-hidden rounded-\[20px\]/);
   assert.match(html, /<div role="group" aria-label="Show the invite or the app" data-first-session-card-switch="app" class="flex rounded-full bg-black\/55 p-0\.5 text-\[12px\] font-semibold leading-4">/);
@@ -78,10 +78,11 @@ test('a ready-made app\'s card opens on its example: the phone, "Example", the n
   assert.match(html, /<img src="\/illustrations\/starters\/tier-list-restaurants\.png" alt="An example of Restaurant Tier List&#x27;s main screen, with sample entries" draggable="false"/);
   assert.match(html, /<span data-first-session-example-tag="" class="pointer-events-none absolute left-3 top-3 [^"]*">Example<\/span>/);
   // The picture shows the app, so its name and description are not said
-  // over it; the note under them stays.
+  // over it; and there is no note under it (20 Oct 2026: "It works as it
+  // is..." read as random).
   assert.doesNotMatch(html, />Restaurant Tier List<\/p>|>A restaurant tier list<\/p>/);
   assert.doesNotMatch(html, /app-icon-tile flex h-20/);
-  assert.match(html, /It works as it is\. You and anyone you invite can change it from there\./);
+  assert.doesNotMatch(html, /It works as it is/);
   // Before "Example", the switch, in the card; the invite buttons still under it.
   assert.ok(html.indexOf('data-first-session-example-tag') < html.indexOf('data-first-session-card-switch'));
   assert.match(html, />Share invite<\/button>/);

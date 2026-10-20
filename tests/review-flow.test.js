@@ -64,18 +64,42 @@ function feedItem(over = {}) {
 
 // ── 1. The switch ────────────────────────────────────────────────────────
 
-test('the switch is off by default and kept under its own key on the device', () => {
-  assert.equal(settings.REVIEW_FLOW_STORAGE_KEY, 'usernode:review-flow');
-  const store = memoryStorage(false);
-  assert.equal(settings.reviewFlowEnabled(store), false);
-  settings.setReviewFlowEnabled(true, store);
-  assert.equal(store.map.get('usernode:review-flow'), '1');
-  assert.equal(settings.reviewFlowEnabled(store), true);
-  settings.setReviewFlowEnabled(false, store);
-  assert.equal(store.map.has('usernode:review-flow'), false);
-  assert.equal(settings.reviewFlowEnabled(null), false, 'unreadable storage reads as off');
-  const broken = { getItem() { throw new Error('denied'); } };
-  assert.equal(settings.reviewFlowEnabled(broken), false);
+test('the switch is off by default and kept on the account; a failed save changes nothing', async () => {
+  assert.equal(settings.reviewFlowEnabled({ user: {} }), false);
+  assert.equal(settings.reviewFlowEnabled(null), false, 'signed out reads as off');
+  const app = { user: { reviewFlowEnabled: false } };
+  const sent = [];
+  const ok = (v) => { sent.push(v); return Promise.resolve(true); };
+  assert.equal(await settings.setReviewFlowEnabled(true, app, ok), true);
+  assert.deepEqual(sent, [true]);
+  assert.equal(settings.reviewFlowEnabled(app), true);
+  assert.equal(await settings.setReviewFlowEnabled(false, app, () => Promise.resolve(false)), false);
+  assert.equal(settings.reviewFlowEnabled(app), true, 'the account keeps what the server has');
+});
+
+test('a device that had it on carries it over to the account once, then forgets it', async () => {
+  const app = { user: { reviewFlowEnabled: false } };
+  const store = memoryStorage(true);
+  const sent = [];
+  await settings.carryOverDeviceSwitch(app, store, (v) => { sent.push(v); return Promise.resolve(true); });
+  assert.deepEqual(sent, [true]);
+  assert.equal(app.user.reviewFlowEnabled, true);
+  assert.equal(store.map.has(settings.REVIEW_FLOW_STORAGE_KEY), false);
+  await settings.carryOverDeviceSwitch(app, store, (v) => { sent.push(v); return Promise.resolve(true); });
+  assert.deepEqual(sent, [true], 'nothing left to carry');
+  const failing = memoryStorage(true);
+  await settings.carryOverDeviceSwitch({ user: { reviewFlowEnabled: false } }, failing, () => Promise.resolve(false));
+  assert.equal(failing.map.get(settings.REVIEW_FLOW_STORAGE_KEY), '1', 'kept to try again when the save failed');
+});
+
+test('the server keeps the switch on the account and serves it with the user', () => {
+  assert.match(read('src/db/schema.sql'), /ALTER TABLE users ADD COLUMN IF NOT EXISTS review_flow_enabled BOOLEAN NOT NULL DEFAULT FALSE;/);
+  const routes = read('src/routes/auth.js');
+  assert.match(routes, /router\.post\('\/api\/me\/review-flow'[\s\S]{0,400}UPDATE users SET review_flow_enabled = \$1 WHERE id = \$2/);
+  assert.match(routes, /reviewFlowEnabled: !!req\.user\.reviewFlowEnabled/);
+  const mw = read('src/middleware/auth.js');
+  assert.equal((mw.match(/review_flow_enabled/g) || []).length, 4, 'both reads select it and both shapes carry it');
+  assert.match(read('src/services/global-chat/classic-capabilities.js'), /experimental: \['aiProgressEstimate', 'sessionBridgeEnabled', 'reviewFlowEnabled'\]/);
 });
 
 test('the bridge settings.js reads and saves the switch through', () => {
@@ -90,7 +114,7 @@ test('Settings, Experimental carries the switch, and settings.js paints and save
   assert.match(section, /<SwitchRow id="review-flow-enabled">/);
   assert.match(section, /settings:experimental\.reviewFlow\.label/);
   const js = read('frontend/src/features/settings/settings.js');
-  assert.match(js, /getElementById\('review-flow-enabled'\)[\s\S]{0,400}UsernodeReact\?\.reviewFlow[\s\S]{0,80}setEnabled\(e\.target\.checked\)/);
+  assert.match(js, /getElementById\('review-flow-enabled'\)[\s\S]{0,400}UsernodeReact\?\.reviewFlow[\s\S]{0,80}setEnabled\(e\.target\.checked\)[\s\S]{0,80}if \(!ok\) reviewToggle\.checked = !!pref\?\.enabled\(\)/);
   assert.match(js, /review\.checked = !!reviewPref\?\.enabled\(\)/);
   assert.match(read('frontend/src/main.tsx'), /import '\.\/features\/review-flow\/settings';/);
   assert.equal(message('settings:experimental.reviewFlow.label'), 'New Needs you');
@@ -132,10 +156,11 @@ test('feed items become review items: plain summary, shaped screens, phone first
 
 test('the title shot crops the after side to what changed, at its own proportions', () => {
   const crop = model.titleCrop(SCREEN, { w: 300, h: 200 });
-  // The after box (20,300,240,60) with 20px of room: 280 x 100 at x=0..280? left clamps at 0.
+  // The after box (20,300,240,60) with 24px of room, clamped at the left
+  // edge: 284 x 108.
   assert.ok(crop.w <= 300 && crop.h <= 200);
-  assert.ok(Math.abs(crop.w / crop.h - 280 / 100) < 0.05, 'the plate keeps the crop\'s proportions');
-  assert.ok(crop.place.scale > 1 && crop.place.scale <= 2, 'a small spot is enlarged, at most twice');
+  assert.ok(Math.abs(crop.w / crop.h - 284 / 108) < 0.05, 'the plate keeps the crop\'s proportions');
+  assert.ok(crop.place.scale >= 1 && crop.place.scale <= 2, 'a small spot is shown at least at its size, at most twice');
   assert.ok(crop.place.ty < 0, 'the screen is moved up so the spot shows');
 });
 
@@ -268,4 +293,141 @@ test('a vote taken back leaves the saved-vote store, so no screen keeps it answe
   const before = cards.voteSavedStore.get();
   cards.publishVoteSaved(9002, null, null);
   assert.equal(cards.voteSavedStore.get(), before, 'nothing to forget: the store is untouched');
+});
+
+// ── 5. A picture for every card, a short line, changes first ──────────
+
+test('every item gets a picture: shots, a pair, a drawn benefit or a drawn decision', () => {
+  const shape = (v, shots) => (shots && shots.screens ? { screens: shots.screens } : null);
+  const items = model.toReviewItems([
+    feedItem({ id: 1, shots: { screens: [SCREEN] } }),
+    feedItem({ id: 2, title: 'Fix the invite link that never opened', shots: null }),
+    feedItem({ id: 3, kind: 'governance', shots: null, decision: { kind: 'close_issue', issueNumber: 5 } }),
+    feedItem({ id: 4, kind: 'governance', shots: null, decision: { kind: 'something_new' } }),
+    feedItem({ id: 5, shots: { claims: [], benefit: { kind: 'speed', area: 'messages', before: '85 KB', after: '46 KB' } } }),
+    feedItem({ id: 6, shots: null, benefit: { kind: 'security', area: 'accounts' } }),
+  ], shape);
+  assert.deepEqual(items.pop().picture, { kind: 'benefit', benefit: 'security', area: 'accounts', token: null }, 'the feed row\'s own benefit counts too');
+  assert.deepEqual(items.map((i) => i.picture.kind), ['shots', 'benefit', 'decision', 'decision', 'benefit']);
+  assert.equal(items[1].picture.benefit, 'fixed');
+  assert.equal(items[2].picture.decision, 'close_issue');
+  assert.equal(items[3].picture.decision, 'decision', 'an unknown decision kind is drawn as a group decision');
+  assert.deepEqual(items[4].picture, { kind: 'benefit', benefit: 'speed', area: 'messages', token: { before: '85 KB', after: '46 KB' } }, 'a declared benefit wins over the guess');
+  for (const i of items) assert.match(i.ground, /^#[0-9A-F]{6}$/i);
+});
+
+test('the benefit is read from the title first, the summary only for work nobody sees', () => {
+  const g = model.guessBenefit;
+  assert.equal(g('Make the deferred tap-save tests run on mock timers'), 'behind');
+  assert.equal(g('Add a one-tap light/dark switch to the top bar'), 'effort');
+  assert.equal(g('Usage analytics are off by default, with a Share usage analytics switch'), 'security');
+  assert.equal(g('Add rest timer to Gym Tracker'), 'more', '"Tracker" in a name is not privacy');
+  assert.equal(g('Stop the rest timer when you go back from a workout'), 'fixed');
+  assert.equal(g('Explain retry limit with last deploy error in Build log panel'), 'clarity');
+  assert.equal(g('Polish the home lobby'), 'results');
+  assert.equal(g('Category', 'Nothing in the game changes.'), 'behind');
+  assert.equal(g('Category'), 'more');
+});
+
+test('the area is the project for an app, and named for Homeroom itself', () => {
+  assert.equal(model.guessArea('Add a timer', 'gym-tracker-1'), 'app');
+  assert.equal(model.guessArea('The Mayor answers in threads', model.PLATFORM_SLUG), 'agents');
+  assert.equal(model.guessArea('Votes show at once', model.PLATFORM_SLUG), 'proposals');
+  assert.equal(model.guessArea('Something else', model.PLATFORM_SLUG), 'platform');
+});
+
+test('the change line is the first declared change, else the first sentence, never a wall', () => {
+  assert.equal(model.changeLine('A link nobody used says so.', 'Long summary. More.'), 'A link nobody used says so.');
+  assert.equal(model.changeLine('', 'What changes for people Nothing in the game changes. The tests do.'), 'Nothing in the game changes.');
+  const long = model.changeLine('', 'word '.repeat(80));
+  assert.ok(long.length <= 141 && long.endsWith('…'), long);
+  assert.equal(model.cleanTitle('implement this change in the app: TITLE: Add comments'), 'Add comments');
+});
+
+test('changes come first, group decisions after', () => {
+  const order = model.orderForReview([{ key: 'g1', kind: 'governance' }, { key: 'p1', kind: 'proposal' }, { key: 'g2', kind: 'governance' }, { key: 'p2', kind: 'proposal' }]);
+  assert.deepEqual(order.map((i) => i.key), ['p1', 'p2', 'g1', 'g2']);
+});
+
+test('the title shot zooms in on the biggest change, not every change at once', () => {
+  const busy = { ...SCREEN, regions: [{ n: 1, a: [10, 10, 40, 20], b: null }, { n: 2, a: [20, 600, 300, 120], b: null }] };
+  assert.deepEqual(model.largestRegion(busy), { x: 20, y: 600, w: 300, h: 120 });
+  const crop = model.titleCrop(busy, { w: 300, h: 200 });
+  assert.ok(crop.place.ty < -400, 'it moves to the big change far down the screen');
+});
+
+test('a project\'s Needs you draws the same flow when the switch is on', () => {
+  const src = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.match(src, /const reviewFlow = useReviewFlowEnabled\(\);/);
+  assert.match(src, /tab === 'needs' && reviewFlow && slug \? \([\s\S]*?<ProjectReviewFlow slug=\{slug\}/);
+  const flow = read('frontend/src/features/review-flow/review-flow.tsx');
+  assert.match(flow, /export function ProjectReviewFlow\(/);
+  assert.match(flow, /all\.filter\(\(it\) => it\.app && it\.app\.slug === slug\)/);
+});
+
+
+// ── 6. The title shot's composition (the prototype's rules) ─────────────
+
+const CARD = { w: 358, h: 268 };
+function screenWith(regions, over = {}) {
+  return { viewport: 'phone', width: 390, before: { url: 'b.png', height: 844 }, after: { url: 'a.png', height: 844 }, regions, ...over };
+}
+
+test('one change: 62% of the binding side, or real size when it fits, centred at 48%, never past the captured pixels', () => {
+  // A small control (60x30): real size fits, so it is not blown up past 1x.
+  const small = model.composeTitle(model.piecesOf([screenWith([{ n: 1, a: [100, 200, 60, 30], b: null }])]), CARD, '#ECE6CE');
+  assert.equal(small.rule, 'single');
+  const p = small.plates[0];
+  assert.ok(Math.abs(p.img.width - 390) < 0.5, 'shown at 1x: the still has one pixel per point');
+  assert.ok(Math.abs((p.y + p.h / 2) - CARD.h * 0.48) < 0.5, 'centred 48% down');
+  // A wide section (370x300): framed at 62% of the binding side.
+  const big = model.composeTitle(model.piecesOf([screenWith([{ n: 1, a: [10, 100, 370, 300], b: null }])]), CARD, '#ECE6CE');
+  const q = big.plates[0];
+  assert.ok(q.w <= CARD.w * 0.92 + 0.5 && q.h <= CARD.h * 0.92 + 0.5, 'inside the wide allowance');
+  assert.ok(Math.max(q.w / CARD.w, q.h / CARD.h) >= 0.62 - 0.01, 'binding side at least 62%');
+});
+
+test('a thin strip gets real context, never a sliver', () => {
+  const [piece] = model.piecesOf([screenWith([{ n: 1, a: [0, 400, 390, 20], b: null }])]);
+  assert.ok(piece.box.w / piece.box.h <= 3.3, `strip widened to ${piece.box.w}x${piece.box.h}`);
+});
+
+test('noise is dropped and near areas are one piece', () => {
+  const pieces = model.piecesOf([screenWith([
+    { n: 1, a: [20, 100, 200, 60], b: null },
+    { n: 1, a: [20, 170, 200, 40], b: null },
+    { n: 0, a: [300, 700, 10, 10], b: null },
+  ])]);
+  assert.equal(pieces.length, 1, 'the two named areas 10px apart merge; the unnamed speck goes');
+});
+
+test('two to four changes: a grid at one common scale; too small becomes a deck', () => {
+  const two = model.composeTitle(model.piecesOf([screenWith([{ n: 1, a: [20, 100, 160, 60], b: null }, { n: 2, a: [20, 500, 160, 60], b: null }])]), CARD, '#F7E07A');
+  assert.equal(two.rule, 'grid');
+  assert.equal(two.plates.length, 2);
+  assert.ok(Math.abs(two.plates[0].img.width - two.plates[1].img.width) < 0.01, 'one common scale');
+  const many = model.composeTitle(model.piecesOf([1, 2, 3, 4, 5].map(() => null).map((_, i) => screenWith([{ n: 1, a: [10, 50, 370, 300], b: null }], { after: { url: `s${i}.png`, height: 844 } }))), CARD, '#F2958A');
+  assert.equal(many.rule, 'deck');
+  assert.equal(many.plates.length, 4, 'a lead and three back plates at most');
+  assert.ok(many.plates.slice(1).every((p) => p.img === null && /^#[0-9a-f]{6}$/.test(p.fill)), 'back plates are plain tones');
+  assert.ok(many.plates[1].w < many.plates[0].w && many.plates[2].w < many.plates[1].w, 'each back plate narrower');
+});
+
+test('a still is never shown larger than its saved pixels allow on the display', () => {
+  const at = (density, display) => model.densityOf({ ...SCREEN, density }, display);
+  assert.equal(at(undefined, 3), 1, 'a 1x still keeps today\'s size');
+  assert.equal(at(3, 3), 1);
+  assert.equal(at(3, 2), 1.5);
+  assert.equal(at(8.2, 2), 4.1);
+  const view = read('public/js/app-view.js');
+  assert.match(view, /const density = Number\(screen\.density\) >= 1 \? Number\(screen\.density\) : 1;/);
+});
+
+test('the title flies between its two ends measured at rest, and transitions end on their last frame', () => {
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  const open = src.slice(src.indexOf("open.phase !== 'opening'"), src.indexOf('/* ── Collapse'));
+  assert.ok(open.indexOf('planTitleFlight(') < open.indexOf('page.animate('), 'measured before the page moves');
+  assert.match(src, /whenDone\(moving, done, OPEN_MS\)/);
+  assert.match(src, /whenDone\(moving, finish, OPEN_MS \* 0\.85\)/);
+  assert.match(src, /whenDone\(sliding, settle, PUSH_MS\)/);
 });

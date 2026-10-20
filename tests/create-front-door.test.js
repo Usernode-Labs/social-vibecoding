@@ -309,7 +309,7 @@ test('a ready-made app lands on the made screen like an import: set up, then rea
   assert.equal(made.buildLine(null, 'creating', false, false, true), 'Setting it up…');
   assert.equal(made.buildLine(null, 'running', false, false, true), 'Ready to use.');
   assert.equal(made.buildLine(null, 'error', false, false, true), 'Setting it up didn’t finish.', 'a stopped setup says so first');
-  assert.equal(made.buildNote(false, false, null, false, true), 'It works as it is. You and anyone you invite can change it from there.');
+  assert.equal(made.buildNote(false, false, null, false, true), null, 'a ready-made app has no second line (20 Oct 2026)');
   assert.equal(made.madeLine(null, false), null, 'Homeroom bot builds nothing, so there is no build line');
   const html = renderToHtml(createElement(made.MadeScreen, {
     made: { slug: 'groceries-1', name: 'Grocery List', emoji: '🛒', description: 'A grocery list', example: null, conversationId: null, readyMade: true },
@@ -405,12 +405,15 @@ test('a stopped setup is not "Ready to try", and a Just me sketch is shared with
   assert.deepEqual(sketch.fallbackCard({ name: 'Run Club', brief: '', solo: true }).points, [], 'not padded with it either');
   const route = read('src/routes/apps.js');
   // Owed in the route's transaction; a failure to owe it never fails the create.
-  assert.match(route, /await optional\('sketch', 'Sketch not owed', \(\) => require\('\.\.\/services\/app-sketch'\)\.startSketch\(db, \{[\s\S]{0,300}solo: options\.audience === 'solo',\s+\}\)\);/);
+  assert.match(route, /await optional\('sketch', 'Sketch not owed', \(\) => require\('\.\.\/services\/app-sketch'\)\.startSketch\(db, \{[\s\S]{0,700}solo: options\.audience === 'solo',\s+\}\)\);/);
   assert.match(route, /await db\.query\(`SAVEPOINT \$\{name\}`\);\s+try \{\s+await fn\(\);\s+await db\.query\(`RELEASE SAVEPOINT \$\{name\}`\);\s+\} catch \(err\) \{\s+await db\.query\(`ROLLBACK TO SAVEPOINT \$\{name\}`\);/);
   const service = read('src/services/app-sketch.js');
   assert.match(service, /if \(points\.length < 2 && !solo\) points = distinctPoints\(\[\.\.\.points, SHARED_POINT\], tagline\);/);
-  assert.match(service, /card = parseCardReply\(reply\.text, \{ name, brief, today, solo \}\);/);
-  // What the card is made from, kept for the setup that makes it.
-  assert.match(service, /JSON\.stringify\(\{ brief, audience, solo: !!solo, timeZone, username: user\.username \|\| null \}\)/);
+  assert.match(service, /card = parseCardReply\(reply\.text, \{ name, brief, today, solo, fallbackTagline \}\);/);
+  // What the card is made from, kept for the setup that makes it, the make
+  // screen's own tagline with it.
+  assert.match(service, /JSON\.stringify\(\{ brief, audience, solo: !!solo, timeZone, fallbackTagline: fallbackTagline \|\| null, username: user\.username \|\| null \}\)/);
   assert.match(service, /solo: !!request\.solo,/);
+  assert.match(service, /fallbackTagline: request\.fallbackTagline \?\? null,/);
+  assert.match(route, /fallbackTagline: typeof req\.body\.taglineFallback === 'string' \? req\.body\.taglineFallback\.slice\(0, 200\) : null,/);
 });

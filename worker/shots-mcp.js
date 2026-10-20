@@ -26,6 +26,10 @@ const proxyControlToken = String(process.env.SHOTS_PROXY_CONTROL_TOKEN || '');
 // clips when a browser session closes) into its own directory here, and so
 // does a persona's phone browser, beside it (`member_phone`).
 const shotsDir = String(process.env.SHOTS_DIR || '');
+// A run taken at the screen's own density (write-shots-mcp-config.js): its
+// phone browsers save at 3 device pixels per CSS pixel, its desktop ones at
+// 2, and each saved still says so, so Homeroom can keep a 1x copy of it.
+const deviceDensity = process.env.SHOTS_DEVICE_DENSITY === '1';
 const PERSONA_DIRS = Object.freeze([
   'member', 'admin', 'full_admin', 'guest', 'invited_member', 'invited_member_listed',
 ]);
@@ -109,7 +113,11 @@ function savedScreenshot(file) {
   // The site the browser observer stamped this image with: the page it was
   // taken on (shots-boundary.js).
   const image = fs.readFileSync(found.candidate);
-  return { image, origin: boundary.screenshotOrigin(path.join(shotsDir, found.dir), name, image) };
+  return {
+    image,
+    origin: boundary.screenshotOrigin(path.join(shotsDir, found.dir), name, image),
+    density: deviceDensity ? (found.dir.endsWith('_phone') ? 3 : 2) : 1,
+  };
 }
 
 // The directory of the browser that shoots a change's screen: the persona's
@@ -263,10 +271,12 @@ server.registerTool('save_shot', {
   let pair = null;
   for (const { change, screen, side, kind = 'screen', theme, file } of shots) {
     try {
-      const { image, origin } = savedScreenshot(file);
+      const { image, origin, density } = savedScreenshot(file);
       pair = pair || await pairOrigins();
       requireOnApp(side, [origin], pair);
-      const query = new URLSearchParams({ change, screen, side, kind, ...(theme === 'dark' ? { theme } : {}) });
+      const query = new URLSearchParams({
+        change, screen, side, kind, ...(theme === 'dark' ? { theme } : {}), ...(density > 1 ? { density: String(density) } : {}),
+      });
       const result = (await request(`/shot?${query}`, { method: 'POST', binary: image })).result;
       results.push({ change, screen, side, kind, file, saved: true, result });
     } catch (error) {

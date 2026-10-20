@@ -252,8 +252,6 @@ test('an app or an owner with no name gets an unnamed sentence that reads as the
     ['agent:appContext.invite.shareTitle', 'agent:appContext.invite.shareTitleUnnamed', { project: 'this app' }],
     ['agent:appContext.invite.buildersOnly', 'agent:appContext.invite.buildersOnlyUnnamed', { project: 'this app' }],
     ['agent:appContext.invite.joinFirst', 'agent:appContext.invite.joinFirstUnnamed', { project: 'this app' }],
-    ['agent:appContext.about.note.app', 'agent:appContext.about.note.unnamedApp', { app: 'this app' }],
-    ['agent:appContext.about.noteHow.app', 'agent:appContext.about.noteHow.unnamedApp', { app: 'this app' }],
     ['chat:group.specCard.sharedBy', 'chat:group.specCard.sharedBySomeone', { name: 'Someone' }],
     ['chat:group.specCard.sharedByBuilt', 'chat:group.specCard.sharedBySomeoneBuilt', { name: 'Someone' }],
     ['chat:group.specCard.sharedByPr', 'chat:group.specCard.sharedBySomeonePr', { name: 'Someone' }],

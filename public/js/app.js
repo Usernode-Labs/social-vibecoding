@@ -8688,26 +8688,84 @@ const App = {
     'profile-proposals-screen': ['arrow', '#profile'],
   },
 
-  // ── A private member's way out ───────────────────────────────────────
+  // ── A newcomer's way out ─────────────────────────────────────────────
   //
   // A PRIVATE MEMBER (App.user.privateMember: an invite link let them into
   // its community before they were let in) lands inside that app with no ✕.
-  // The mark menu's "Go to Homeroom" (features/app-context) takes them to
-  // Home and its four-step tour (features/first-session goHome), and from
-  // then on an app has its ✕ like anybody's. Remembered on this device, the
-  // way the tours themselves are.
+  // So does anybody new the first session still owes its walk on Home (a
+  // maker of their first project, somebody new by an invite): their menu
+  // offers the same "Go to Homeroom" (features/app-context), and a ✕ beside
+  // it was a second way out that skipped the walk. "Go to Homeroom" takes
+  // them to Home and its tour (features/first-session goHome), and from
+  // then on an app has its ✕ like anybody's.
+  //
+  // KEPT BY THE ACCOUNT, so every device agrees (Evan, 20 Oct 2026): the
+  // walk owed and Homeroom reached are marks on the account (POST
+  // /api/me/home-walk, read back as App.user.homeWalkOwed and
+  // .homeroomReached). This device's own records stay beside them, read
+  // with an OR: they are the answer at once, before a write lands, and for
+  // an account from before the marks.
   PRIVATE_HOME_PREFIX: 'usernode:private-home:',
   _privateHomeKey() {
     return `${App.PRIVATE_HOME_PREFIX}${App.user?.id ?? 'anon'}`;
   },
+  // Reached Homeroom: on the account, by "Go to Homeroom" on this device, or
+  // by the walk having run here (it runs on Home).
   _privateHomeVisited() {
-    try { return !!localStorage.getItem(App._privateHomeKey()); } catch (_) { return false; }
+    if (App.user?.homeroomReached === true) return true;
+    try {
+      if (localStorage.getItem(App._privateHomeKey())) return true;
+      const uid = App.user?.id;
+      return uid != null && localStorage.getItem(`${App.FIRST_SESSION_WALK_PREFIX}${uid}`) === 'done';
+    } catch (_) { return false; }
   },
   _notePrivateHome() {
     try { localStorage.setItem(App._privateHomeKey(), String(Date.now())); } catch (_) { /* private mode */ }
+    App._noteHomeWalk('reached');
+  },
+  // Tell the account (POST /api/me/home-walk): 'owed' when the first session
+  // owes the walk, 'reached' when they reach Homeroom. This document's user
+  // has it at once, and so does the snapshot the next boot starts from (not
+  // while the shell runs FROM the snapshot, as tour-done.ts keeps it).
+  // Fire-and-forget: a failed write costs the other devices the answer and
+  // nothing here, and never logs a console.error.
+  HOME_WALK_PATH: '/api/me/home-walk',
+  _noteHomeWalk(state) {
+    const user = App.user;
+    if (!user || user.id == null || (state !== 'owed' && state !== 'reached')) return;
+    if (user.homeroomReached === true || (state === 'owed' && user.homeWalkOwed === true)) return;
+    if (state === 'reached') { user.homeroomReached = true; user.homeWalkOwed = false; } else user.homeWalkOwed = true;
+    try { if (App._sessionFromSnapshot !== true) App.saveSessionSnapshot(user); } catch (_) { /* the account has it */ }
+    try {
+      Promise.resolve(fetch(App.HOME_WALK_PATH, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ state }),
+      })).then((res) => {
+        if (res && !res.ok) console.warn('[first-session] walk not kept on the account:', res.status);
+      }, (err) => console.warn('[first-session] walk not kept on the account:', err));
+    } catch (_) { /* no fetch: this device's record is the answer */ }
+  },
+  // The walk the first session owes this person: on the account, or as
+  // features/first-session/first-visit.ts owedWalk reads this device's record
+  // (WALK_PREFIX there; tests/private-member-shell.test.js keeps the two
+  // prefixes equal): a record with a slug, until the walk has run and it
+  // says 'done'.
+  FIRST_SESSION_WALK_PREFIX: 'usernode:first-session:walk:',
+  _homeWalkOwed() {
+    if (App.user?.homeWalkOwed === true) return true;
+    const uid = App.user?.id;
+    if (uid == null) return false;
+    try {
+      const raw = localStorage.getItem(`${App.FIRST_SESSION_WALK_PREFIX}${uid}`);
+      if (!raw || raw === 'done') return false;
+      const record = JSON.parse(raw);
+      return !!(record && typeof record === 'object' && typeof record.slug === 'string' && record.slug);
+    } catch (_) { return false; }
   },
   _privateNoClose() {
-    return !!App.user?.privateMember && !App._privateHomeVisited();
+    return (!!App.user?.privateMember || App._homeWalkOwed()) && !App._privateHomeVisited();
   },
 
   // The slot for a screen, as setBackIcon's own arguments. Anything off the

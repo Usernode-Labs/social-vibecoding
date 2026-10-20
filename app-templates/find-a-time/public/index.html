@@ -29,6 +29,13 @@
       media.addEventListener('change', applyTheme);
     })();
   </script>
+  <!-- What takes the loading shapes' place fades in, briefly, rather than
+       cutting over: an animation replays whenever [hidden] comes off, so
+       nothing has to start it. None under reduced motion. -->
+  <style>
+    @keyframes appear { from { opacity: 0; } to { opacity: 1; } }
+    @media (prefers-reduced-motion: no-preference) { .appear { animation: appear 200ms ease-out; } }
+  </style>
 </head>
 <body class="min-h-screen bg-ground text-fg">
   <!-- What the times are for, and the new plan's example name, were filled
@@ -98,9 +105,9 @@
         <p class="text-body text-muted">Start one: give it a name and suggest a few times, and everyone marks when they're free.</p>
       </div>
 
-      <div id="plans" class="flex flex-col gap-12" hidden></div>
+      <div id="plans" class="flex flex-col gap-12 appear" hidden></div>
 
-      <section id="past-section" class="flex flex-col" hidden>
+      <section id="past-section" class="flex flex-col appear" hidden>
         <h2 class="section-label">Past plans</h2>
         <ul id="past" class="list"></ul>
       </section>

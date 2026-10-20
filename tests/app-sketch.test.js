@@ -106,6 +106,28 @@ test('without the model the description makes the card: deterministic, and never
   assert.equal(card('Meetups', 'Next meetup is Thursday, 31 October at the pub').tagline, 'Next meetup is Saturday, 31 October at the pub');
 });
 
+// A game, or Your own words in a template, starts from the template's own
+// opening words ("A new game we build together. For the first version, …"),
+// so the sentence's first clause is no tagline. The make screen sends the
+// choice's own line, and without the model the card says that, keeping
+// every clause of their words as points. The model's tagline wins over it.
+test('a game or Your own choice: the model\'s tagline from their words, else the make screen\'s own line', () => {
+  const brief = 'A new game we build together. For the first version, a board game where we roll dice and race each other around the board';
+  const fixed = 'A dice race: ladders take you up, slides take you back';
+  const card = sketch.fallbackCard({ name: 'Ladders', brief, today: TODAY, tagline: fixed });
+  assert.equal(card.tagline, fixed);
+  assert.equal(card.points[0], 'A new game we build together', 'their sentence is still on the card, as its points');
+  assert.match(card.points[1], /^For the first version, a board game where we roll dice/);
+  assert.equal(card.source, 'fallback');
+  assert.equal(sketch.fallbackCard({ name: 'Ladders', brief, today: TODAY, tagline: '  ' }).tagline, 'A new game we build together',
+    'an empty line is no line');
+  const opts = { name: 'Ladders', brief, today: TODAY, fallbackTagline: fixed };
+  assert.equal(sketch.parseCardReply(JSON.stringify({ emoji: '🎲', tagline: 'Race your friends around a dice board', points: ['Roll', 'Race'] }), opts).tagline,
+    'Race your friends around a dice board', 'the model\'s line wins');
+  assert.equal(sketch.parseCardReply(JSON.stringify({ emoji: '🎲', tagline: '', points: ['Roll', 'Race'] }), opts).tagline, fixed,
+    'a reply without one takes the make screen\'s');
+});
+
 test('every line of a card is plain: sentence case, no em dash, no emoji, no full stop', () => {
   const clean = (s) => sketch.cleanLine(s, 80);
   assert.equal(clean('  - **hello** world.  '), 'Hello world');
@@ -478,6 +500,8 @@ test('the setup makes the card before its first commit, the route owes it with t
   // A ready-made app (services/app-templates.js) has its own icon and nothing to sketch.
   assert.match(routes, /if \(MAKE_ORIGINS\.has\(req\.body\.from\) && !repoUrlNormalized && !readyMade\s+&& homeroomBotDm\.normalizeBrief\(req\.body\.brief\)\) \{\s+await optional\('sketch', 'Sketch not owed', \(\) => require\('\.\.\/services\/app-sketch'\)\.startSketch\(db, \{/);
   assert.match(routes, /app: appRow, user: req\.user, brief: req\.body\.brief,\s+timeZone: typeof req\.body\.timeZone === 'string' \? req\.body\.timeZone\.slice\(0, 64\) : null,/);
+  // A game's or Your own choice's line, the card's fallback tagline.
+  assert.match(routes, /fallbackTagline: typeof req\.body\.taglineFallback === 'string' \? req\.body\.taglineFallback\.slice\(0, 200\) : null,/);
   assert.doesNotMatch(routes, /sketch\.html/, 'no framed page: the card is drawn by the made screen');
   const make = read('frontend/src/features/first-session/make.tsx');
   assert.match(make, /const timeZone = deviceTimeZone\(\);/);

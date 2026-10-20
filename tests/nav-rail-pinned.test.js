@@ -27,7 +27,7 @@ const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 const appSource = read('public/js/app.js');
 const css = read('public/css/app.css');
 
-function harness({ stored = null, phone = false, throws = false, user = null, appView = null } = {}) {
+function harness({ stored = null, phone = false, throws = false, user = null, appView = null, fetch = undefined } = {}) {
   const store = new Map(stored == null ? [] : [['usernode:rail-pinned', stored]]);
   const classes = new Set();
   const slots = [];
@@ -62,6 +62,7 @@ function harness({ stored = null, phone = false, throws = false, user = null, ap
     matchMedia: () => ({ matches: !phone, addEventListener() {} }),
     localStorage,
     PlatformUI: { transition(fn, opts) { fn(); opts?.after?.(); } },
+    ...(fetch ? { fetch } : {}),
   });
   context.window = context;
   vm.runInContext(appSource, context);
@@ -138,6 +139,87 @@ test('a private member\'s first app keeps the old arrangement: no rail, and no �
   assert.equal(shown(), false, 'the mark menu\'s "Go to Homeroom" is the way on');
   assert.equal(classes.has('rail-pinned'), false);
   assert.equal(corner(), 'none');
+});
+
+// Anybody new the first session still owes its walk on Home (a maker of
+// their first project, somebody new by an invite) is offered the same "Go to
+// Homeroom" in the mark menu, and gets the same arrangement until they use it.
+test('a newcomer owed the walk on Home gets the same: no rail and no ✕, until they go to Homeroom', () => {
+  const walkKey = 'usernode:first-session:walk:7';
+  const owed = harness({ user: { id: 7 } });
+  owed.store.set(walkKey, JSON.stringify({ slug: 'notes-ab12', name: 'Notes' }));
+  owed.App._syncPlatformTabs('app-view');
+  assert.equal(owed.shown(), false);
+  assert.equal(owed.classes.has('rail-pinned'), false);
+  assert.equal(owed.corner(), 'none', '"Go to Homeroom" is the way on');
+
+  // Once they have used it (goHome notes it), the app has its ✕ again.
+  owed.store.set('usernode:private-home:7', String(Date.now()));
+  owed.App._syncPlatformTabs('app-view');
+  assert.equal(owed.corner(), 'none', 'the rail is back beside the app on a desktop');
+  assert.equal(owed.shown(), true);
+
+  // A walk that has run, or a record without a project, owes nothing.
+  for (const value of ['done', '{}', 'not json']) {
+    const after = harness({ user: { id: 7 } });
+    after.store.set(walkKey, value);
+    after.App._syncPlatformTabs('app-view');
+    assert.equal(after.shown(), true, value);
+  }
+  // Somebody else's walk on this device is not theirs.
+  const other = harness({ user: { id: 8 } });
+  other.store.set(walkKey, JSON.stringify({ slug: 'notes-ab12', name: 'Notes' }));
+  other.App._syncPlatformTabs('app-view');
+  assert.equal(other.shown(), true);
+});
+
+// Kept by the account (Evan, 20 Oct 2026: "Shouldn't this be per account?"):
+// /api/auth/me's homeWalkOwed and homeroomReached ride App.user, so a second
+// device, with nothing of its own stored, agrees with the first.
+test('the walk owed and Homeroom reached are the account\'s, so every device agrees', () => {
+  // Owed on the account, nothing on this device: no ✕, no rail.
+  const owed = harness({ user: { id: 7, homeWalkOwed: true } });
+  owed.App._syncPlatformTabs('app-view');
+  assert.equal(owed.shown(), false);
+  assert.equal(owed.corner(), 'none');
+  // Reached on the account (on another device): the app as anybody has it,
+  // a private member's included.
+  for (const user of [{ id: 7, homeroomReached: true }, { id: 7, privateMember: true, homeroomReached: true }]) {
+    const reached = harness({ user });
+    reached.store.set('usernode:first-session:walk:7', JSON.stringify({ slug: 'notes-ab12', name: 'Notes' }));
+    reached.App._syncPlatformTabs('app-view');
+    assert.equal(reached.shown(), true, JSON.stringify(user));
+  }
+  // The walk having run on this device is Homeroom reached too.
+  const ran = harness({ user: { id: 7, privateMember: true } });
+  ran.store.set('usernode:first-session:walk:7', 'done');
+  ran.App._syncPlatformTabs('app-view');
+  assert.equal(ran.shown(), true);
+});
+
+test('"Go to Homeroom" tells the account at once, and this document\'s user has it before the write lands', async () => {
+  const posts = [];
+  const fetch = (url, init) => { posts.push([url, init.method, JSON.parse(init.body)]); return Promise.resolve({ ok: true }); };
+  const { App, store } = harness({ user: { id: 7, homeWalkOwed: true }, fetch });
+  App._noteHomeWalk('owed');
+  assert.deepEqual(posts, [], 'owed already: nothing to say');
+  App._notePrivateHome();
+  assert.ok(store.get('usernode:private-home:7'), 'this device\'s record, as before');
+  assert.equal(App.user.homeroomReached, true);
+  assert.equal(App.user.homeWalkOwed, false);
+  assert.deepEqual(posts, [['/api/me/home-walk', 'POST', { state: 'reached' }]]);
+  App._notePrivateHome();
+  App._noteHomeWalk('owed');
+  assert.equal(posts.length, 1, 'once reached, nothing more is written, and never owed again');
+  assert.equal(App._privateNoClose(), false);
+  // A write that fails costs the other devices the answer and nothing here.
+  const failing = harness({ user: { id: 8 }, fetch: () => Promise.reject(new Error('offline')) });
+  assert.doesNotThrow(() => failing.App._noteHomeWalk('owed'));
+  assert.equal(failing.App.user.homeWalkOwed, true);
+  const none = harness({ user: { id: 9 } });
+  assert.doesNotThrow(() => none.App._noteHomeWalk('reached'), 'no fetch at all');
+  assert.doesNotThrow(() => none.App._noteHomeWalk('bogus'));
+  assert.equal(none.App.user.homeroomReached, true);
 });
 
 test('storage that throws reads as the default', () => {

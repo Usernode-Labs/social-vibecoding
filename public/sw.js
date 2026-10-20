@@ -446,6 +446,10 @@ const NO_FALLBACK_PREFIXES = [
   '/reports/',
 ];
 
+// An app's install page: a server page under /app/<slug>/ that is never the
+// shell (classifyRequest and isShellDocumentUrl below).
+const APP_INSTALL_PAGE = /^\/app\/[a-z0-9][a-z0-9-]{0,254}\/install$/;
+
 // Pure request classifier — the single source of truth for what the fetch
 // handler does with a request. Returns one of:
 //   'bypass'   — don't touch it; the browser talks to the network directly.
@@ -555,6 +559,13 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
     if (/^\/(?:issue-images|visuals|app-icons|avatars|app-files)\/[a-f0-9]{32}$/.test(p)) {
       return 'bypass';
     }
+    // The same again for an app's install page (/app/<slug>/install,
+    // routes/app-install.js), which "Add to home screen" opens from Home's
+    // card menu, Discover and the app menu's About. It is a server page, not
+    // a shell route, so the cached shell answered it, the router read
+    // `install` as the App tab and reopened the app: the tap did nothing a
+    // tester could see.
+    if (APP_INSTALL_PAGE.test(p)) return 'bypass';
     return 'navigate';
   }
 
@@ -625,6 +636,7 @@ function isShellDocumentUrl(url, selfOrigin) {
   try {
     const u = new URL(url, selfOrigin);
     if (u.origin !== selfOrigin) return false;
+    if (APP_INSTALL_PAGE.test(u.pathname)) return false;
     return SHELL_DOCUMENT_PATHS.includes(u.pathname)
       || /^\/app\/[a-z0-9][a-z0-9-]{0,254}(?:\/.*)?$/.test(u.pathname);
   } catch { return false; }

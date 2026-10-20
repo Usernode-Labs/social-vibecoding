@@ -273,6 +273,45 @@ test('the installed worker leaves an issue screenshot to the browser (#3585)', (
   assert.equal(intercepted.length, 0, 'the browser receives the image, not a cached document');
 });
 
+// "Add to home screen" opens an app's install page, /app/<slug>/install
+// (routes/app-install.js). That navigation got the cached shell too, whose
+// router read `install` as the App tab and reopened the app, so on a phone
+// the row looked like it did nothing (About, Home's card menu, Discover).
+test('an app\'s install page is the server\'s, never the shell', () => {
+  const { isShellDocumentUrl } = require('../public/sw.js');
+  for (const slug of ['city-tier-list-1e2a43', 'notes']) {
+    assert.equal(classify('GET', `/app/${slug}/install`, 'text/html', 'navigate'), 'bypass', slug);
+    assert.equal(isShellDocumentUrl(`${ORIGIN}/app/${slug}/install`, ORIGIN), false,
+      'never stored as the shell either');
+  }
+  // The app's own routes are still the shell's.
+  for (const path of ['/app/notes', '/app/notes/dev', '/app/notes/install/more', '/app/notes/installs', '/app/install']) {
+    assert.equal(classify('GET', path, 'text/html', 'navigate'), 'navigate', path);
+  }
+  assert.equal(isShellDocumentUrl(`${ORIGIN}/app/notes/dev`, ORIGIN), true);
+});
+
+test('the installed worker leaves an app\'s install page to the browser', () => {
+  const handlers = {};
+  const intercepted = [];
+  vm.runInNewContext(fs.readFileSync(require.resolve('../public/sw.js'), 'utf8'), {
+    self: { location: { origin: ORIGIN }, addEventListener: (name, fn) => { handlers[name] = fn; } },
+    URL, Headers, Response, Map, Set, Promise,
+    caches: { open: async () => ({ match: async () => new Response('<!DOCTYPE html><title>Homeroom</title>') }) },
+    fetch: () => new Promise(() => {}),
+    setTimeout: () => 1, clearTimeout: () => {},
+  });
+  handlers.fetch({
+    request: {
+      method: 'GET', url: `${ORIGIN}/app/city-tier-list-1e2a43/install`,
+      headers: new Headers({ accept: 'text/html' }), mode: 'navigate',
+    },
+    respondWith: (response) => intercepted.push(response),
+    waitUntil: () => {},
+  });
+  assert.equal(intercepted.length, 0, 'the browser receives the install page, not a cached document');
+});
+
 test('shell assets classify as shell', () => {
   assert.equal(classify('GET', '/js/app.js'), 'shell');
   assert.equal(classify('GET', '/css/app.css'), 'shell');
