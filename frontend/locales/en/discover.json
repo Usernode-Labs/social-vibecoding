@@ -127,6 +127,38 @@
     "text": "Not yet reviewed",
     "description": "Filter chip on Discover shown only to platform admins: shows only the apps no admin has reviewed in their current version yet."
   },
+  "category.groupLabel": {
+    "text": "Filter by type",
+    "description": "Accessible name of Discover's second row of chips, under All \u00b7 Featured \u00b7 Joined \u00b7 New, which narrows the list to one kind of app."
+  },
+  "category.all": {
+    "text": "All types",
+    "description": "First chip of Discover's type row: every kind of app, including apps that have not said what kind they are."
+  },
+  "category.games": {
+    "text": "Games",
+    "description": "Chip in Discover's type row: only apps whose project says they are games."
+  },
+  "category.social": {
+    "text": "Social",
+    "description": "Chip in Discover's type row: only apps whose project says they are for talking, meeting or doing things with other people."
+  },
+  "category.tools": {
+    "text": "Tools",
+    "description": "Chip in Discover's type row: only apps whose project says they are tools, such as lists, trackers and planners."
+  },
+  "category.learning": {
+    "text": "Learning",
+    "description": "Chip in Discover's type row: only apps whose project says they are for learning or studying."
+  },
+  "category.creative": {
+    "text": "Creative",
+    "description": "Chip in Discover's type row: only apps whose project says they are for making things, such as drawing, writing or music."
+  },
+  "category.other": {
+    "text": "Other",
+    "description": "Chip in Discover's type row: only apps whose project says they fit none of the other types."
+  },
   "sort.label": {
     "text": "Sort",
     "description": "Label in front of the sort menu on the Discover screen. A noun: the order of the list."
@@ -206,6 +238,10 @@
   "empty.all": {
     "text": "No apps to show yet.",
     "description": "Shown in place of Discover's list when there are no apps at all (or none are new)."
+  },
+  "empty.category": {
+    "text": "No apps of this type here.",
+    "description": "Shown in place of Discover's list when a type chip is pressed and the filter chip above leaves no app of that type (no search text)."
   },
   "list.heading.recommended": {
     "text": "Recommended for you",
