@@ -59,7 +59,11 @@ const plus = (iso, seconds) => new Date(new Date(iso).getTime() + seconds * 1000
 test('the made screen and the maker\'s tour: people per step, each card, and where the tour was left', { timeout: 120000 }, async (t) => {
   const db = await freshDatabase(t);
   if (!db) return;
-  const { user, app, event } = db;
+  const { app, event } = db;
+  // Accounts made before the fixed `now` journey.person reads at below: it
+  // reads only an account that existed then, and the server's clock passed
+  // 2026-10-20T00:00Z.
+  const user = (username, cols = {}) => db.user(username, { created_at: '2026-10-01T00:00:00Z', ...cols });
   const week = journey.parseWeek('2026-10-12', new Date('2026-10-20T00:00:00Z'));
   const moments = async (userId, appId, start, list) => {
     for (const [i, m] of list.entries()) {

@@ -301,7 +301,7 @@ test('shots brief ranks a relevant check beyond the first 80 manifest entries', 
     const selected = orchestrator.declaredCheckSummary(checkout, intent);
     assert.equal(selected.length, 80);
     assert.equal(selected[0].path, '/workshop');
-    assert.equal(selected[0].testedAs, 'read_only_admin');
+    assert.equal('testedAs' in selected[0], false, 'the system prompt names the checks\' persona once');
     assert.equal(orchestrator.declaredCheckSummary(checkout)[0].path, '/screen-0');
   } finally {
     fs.rmSync(checkout, { recursive: true, force: true });
@@ -359,7 +359,6 @@ test('the brief names the declared changes, both addresses and revisions, and no
     assert.equal(brief.changeContext.testingSteps, 'Open the Workshop and inspect the view strip.');
     assert.equal(brief.changeContext.untrusted, true);
     assert.equal(brief.declaredChecks[0].path, route);
-    assert.equal(brief.declaredChecks[0].testedAs, 'read_only_admin');
     assert.deepEqual(brief.availableFixtures, [{ id: 'member-session', persona: 'member',
       path: '/#messages/agent/9' }]);
     assert.deepEqual(brief.security, {
