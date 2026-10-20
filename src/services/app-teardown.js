@@ -16,7 +16,7 @@
 // failed object-store sweep leaves orphans under app/<id>/ rather than a
 // half-deleted app. What each step left is recorded in deleted_app_purges
 // (#5121, services/app-data-retention.js), which outlives the row, and the
-// reap sweep retries a data step that failed. Two steps throw: the previews' retirement,
+// app-data-purges clock retries a data step that failed. Two steps throw: the previews' retirement,
 // first (the preview machine must have applied it before the rows go, or a
 // preview it adopts from its row is never retired), and the row delete.
 
@@ -79,7 +79,7 @@ async function removeApp(pool, config, app) {
   await pool.query('UPDATE apps SET teardown_started_at = COALESCE(teardown_started_at, NOW()) WHERE id = $1', [app.id]);
   // The receipt of what this app leaves in storage (#5121,
   // services/app-data-retention.js): each step below is stamped on it, and a
-  // data step that fails is retried by the reap sweep after the row is gone.
+  // data step that fails is retried by the app-data-purges clock after the row is gone.
   const retention = require('./app-data-retention');
   const dbManager = require('./db-manager');
   const dbName = dbManager.appDbName(app.slug);
@@ -129,7 +129,7 @@ async function removeApp(pool, config, app) {
   // the files BEFORE the row delete cascades away the app_files metadata.
   // Each is best-effort, as always, so a failure never leaves a
   // half-deleted app; now each failure is kept on the receipt, and the
-  // reap sweep retries it (services/app-data-retention.js).
+  // app-data-purges clock retries it (services/app-data-retention.js).
   await retention.purgeData(pool, config, { appId: app.id, dbName });
 
   // Delete from DB (cascades to chat_messages, sessions, etc.)

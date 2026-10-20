@@ -485,3 +485,15 @@ test('a build turn that pushed after its last save and lost its record is taken 
   assert.match(out.diff, /app\.js/);
   assert.deepEqual(side, []);
 });
+
+test('budgetsFor: a configuration\'s own clocks for the stages it names, the bot\'s for the rest', () => {
+  const app = { repo_url: 'https://github.com/o/app' };
+  const settings = { turnSeconds: 20 * 60 };
+  const plain = runner.budgetsFor(settings, app, {}, 'first_version');
+  assert.deepEqual(runner.budgetsFor(settings, app, {}, 'first_version', null), plain, 'no clocks: as before');
+  const own = runner.budgetsFor(settings, app, {}, 'first_version', { build: 45, triage: 5 });
+  assert.equal(own.firstVersion.buildMs, 45 * 60000, 'a first version\'s build clock is the recipe\'s own');
+  assert.equal(own.firstVersion.turnMs, 5 * 60000);
+  assert.equal(own.firstVersion.specMs, plain.firstVersion.specMs, 'a stage it does not name keeps the bot\'s');
+  assert.equal(runner.budgetsFor(settings, app, {}, 'build', { build: 30 }).turnMs, 30 * 60000);
+});

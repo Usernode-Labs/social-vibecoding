@@ -42,8 +42,8 @@ anything, and stamps each step as it finishes:
 The receipt has no foreign key and outlives the `apps` row. It holds an app
 id, its slug and its storage names, nothing personal.
 
-The reap sweep (server.js, on the orphan staging-database pass's six-hour
-throttle) retries every receipt with a data step undone and its last attempt
+The `app-data-purges` clock (`src/workflow/clock/services.ts`, every six
+hours) retries every receipt with a data step undone and its last attempt
 more than an hour old, up to 10 a pass. A step already done is not repeated.
 After 20 attempts a receipt is left for an operator (`needs_operator` in the
 report).

@@ -580,3 +580,46 @@ test('a pair side\'s diff: from GitHub by commit, else the side build\'s stored 
   assert.equal(await configs.diffSummary({ github: down, repoUrl: APP.repo_url, base: BASE, sha: 'd'.repeat(40) }), null);
   assert.equal(await configs.diffSummary({ github: gh, repoUrl: APP.repo_url, base: null, sha: 'd'.repeat(40) }), null);
 });
+
+// ── 19 Oct 2026: the later recipe decides the triage and the follow-ups ──
+
+test('fillLaterStages: the current later version names what its triage and follow-ups run on today, once, in place', async () => {
+  const configsMod = require('../src/services/bot-configs');
+  const GLM5 = 'z-ai/glm-5.3-flash';
+  const DS = 'deepseek/deepseek-v4.1-flash-1017';
+  const OPUS5 = 'anthropic/claude-opus-5.5';
+  const state = { recipe: { models: { triage: GLM5, spec: OPUS5, build: DS }, reviewer: null, pack: null }, updates: [] };
+  const pool = {
+    async query(sql, params) {
+      const s = String(sql);
+      if (/FROM bot_config_versions WHERE scope = 'later' AND role = 'current'/.test(s)) return { rows: [{ id: 14, recipe: state.recipe }] };
+      if (/FROM platform_settings/.test(s)) {
+        // The per-stage settings: triage on the platform default, follow-ups named.
+        return { rows: [{ key: 'openrouter_default_codex_model', value: DS }, { key: 'homeroom_bot_model_followup', value: DS }] };
+      }
+      if (/UPDATE bot_config_versions SET recipe/.test(s)) {
+        state.updates.push({ id: params[0], recipe: JSON.parse(params[1]) });
+        state.recipe = JSON.parse(params[1]);
+        return { rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  assert.equal(await configsMod.fillLaterStages(pool, { openrouterDefaultCodexModel: GLM5 }), true);
+  assert.deepEqual(state.updates, [{ id: 14, recipe: { models: { triage: DS, spec: OPUS5, build: DS, followup: DS }, reviewer: null, pack: null } }],
+    'the triage the platform default ran on, the follow-ups their own setting; spec and build untouched');
+  assert.equal(await configsMod.fillLaterStages(pool, {}), false, 'a version that names its follow-ups is left alone');
+  assert.equal(state.updates.length, 1);
+  const broken = { async query() { throw new Error('down'); } };
+  assert.equal(await configsMod.fillLaterStages(broken, {}), false, 'never throws');
+});
+
+test('a first-version recipe has no follow-ups to name', async () => {
+  const configsMod = require('../src/services/bot-configs');
+  const out = await configsMod.saveVersion({ async query() { return { rows: [] }; } }, {
+    label: 'X', role: 'side', scope: 'first_version',
+    recipe: { models: { triage: 'a/b', spec: 'a/b', build: 'a/b', followup: 'a/b' }, reviewer: null, pack: null },
+  });
+  assert.equal(out.ok, false);
+  assert.match(out.error, /first-version recipe has no follow-ups/);
+});

@@ -1,11 +1,14 @@
 'use strict';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 
 import { AdminUI } from './admin-console.js';
-import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { requestBenchLaunch } from './admin-homeroom-bench';
+import type { BenchRequest } from './admin-homeroom-bench';
 
-// Bot configurations (#admin/bot-configs).
+// Homeroom bot → Configurations (#admin/homeroom-bot/configs). It was a
+// section of its own, #admin/bot-configs, which still opens this tab.
 //
 // How the Homeroom bot builds, as versioned recipes
 // (src/services/bot-configs.js), in two scopes the switch at the top picks
@@ -19,9 +22,14 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // One row per active version, the current one first, then the side ones;
 // retired versions are folded away. A full admin can promote a version to
 // current, make one a side configuration, or retire it, each after a
-// confirmation, and set the scope's weekly side-build budget. Recipes are
-// written through the connector only (save_bot_config), so a recipe is never
-// typed into a form here.
+// confirmation, and set the scope's weekly side-build budget. A version is
+// copied into a NEW SIDE VERSION here (its models, reasoning effort and
+// clock per stage; its reviewer, pack and tweaks as they are), which only
+// builds beside live builds until somebody makes it current from its row;
+// the connector's save_bot_config writes any recipe. Each row also shows the
+// version's own benchmark runs (a studio arm, `config:<id>`), and "Compare
+// on the benchmark" opens the Benchmark tab's launch for it beside the
+// current version, where nothing launches until a person presses Launch.
 
 type Role = 'current' | 'side' | 'retired';
 export type Scope = 'first_version' | 'later';
@@ -31,12 +39,34 @@ const SCOPES: Array<{ scope: Scope; label: string }> = [
   { scope: 'later', label: 'Later changes' },
 ];
 
-interface Recipe {
-  models: { triage: string; spec: string; build: string };
+// The stages a recipe decides (services/bot-configs.js): triage, plan and
+// build in both scopes, and a later change's follow-ups (replies on its
+// proposal and fixes of its checks).
+export type RecipeStage = 'triage' | 'spec' | 'build' | 'followup';
+export const RECIPE_STAGES: { key: RecipeStage; label: string }[] = [
+  { key: 'triage', label: 'Triage' },
+  { key: 'spec', label: 'Plan' },
+  { key: 'build', label: 'Build' },
+  { key: 'followup', label: 'Follow-ups and check fixes' },
+];
+// bot-configs.js EFFORTS; blank is the deployment's own.
+export const EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export const MAX_CLOCK_MINUTES = 180;
+
+export interface Recipe {
+  models: { triage: string; spec: string; build: string; followup?: string };
   reviewer: { model: string; maxRounds: number; budgetMinutes: number } | null;
   pack: number | null;
   // Build-speed tweaks (services/bot-configs.js TWEAKS); recipeLine names them.
   tweaks?: string[];
+  // Per stage, where it names one: the reasoning effort, and the clock in minutes.
+  effort?: Partial<Record<RecipeStage, string>>;
+  clocks?: Partial<Record<RecipeStage, number>>;
+}
+
+/** The stages a scope's recipe decides. Pure. */
+export function stagesOf(scope: Scope): { key: RecipeStage; label: string }[] {
+  return scope === 'later' ? RECIPE_STAGES : RECIPE_STAGES.filter((st) => st.key !== 'followup');
 }
 
 interface VsCurrent {
@@ -83,7 +113,18 @@ export interface BotConfigVersion {
     bootRate: number | null;
     pairsWaiting: number;
     vsCurrent: VsCurrent | null;
+    // Its own benchmark runs as a studio arm (bot-configs.js benchOfVersions).
+    bench?: BenchOfVersion | null;
   };
+}
+
+export interface BenchOfVersion {
+  runs: number;
+  trials: number;
+  ok: number;
+  avgCostUsd: number | null;
+  medianMs: number | null;
+  lastRunId: number | null;
 }
 
 export interface BotConfigsPayload {
@@ -158,6 +199,174 @@ export function proposalsText(p: BotConfigVersion['stats']['proposals']): string
   return parts.length ? `Proposals: ${parts.join(', ')}` : '';
 }
 
+/** "2 runs: 9 of 10 built, $1.10, 18 min", or '' for none. Pure. */
+export function benchText(b: BenchOfVersion | null | undefined): string {
+  if (!b || !b.trials) return '';
+  const parts = [`${b.ok} of ${b.trials} built`];
+  if (b.avgCostUsd != null) parts.push(usd(b.avgCostUsd));
+  if (b.medianMs != null) parts.push(minutes(b.medianMs));
+  return `${b.runs} run${b.runs === 1 ? '' : 's'}: ${parts.join(', ')}`;
+}
+
+// ── A new side version, from a copy of one ─────────────────────────────────
+
+/** The form's fields: a model per stage, and an effort and clock per stage ('' is the default). */
+export interface Draft {
+  scope: Scope;
+  label: string;
+  models: Record<RecipeStage, string>;
+  effort: Record<RecipeStage, string>;
+  clocks: Record<RecipeStage, string>;
+  // Carried over from the version it was copied from, as they are.
+  base: Pick<Recipe, 'reviewer' | 'pack' | 'tweaks'>;
+  from: string;
+}
+
+/** A draft copied from `v`, with `change` (a stage and its model) applied. Pure. */
+export function draftFrom(v: BotConfigVersion, change: { stage: RecipeStage; model: string } | null = null): Draft {
+  const r = v.recipe;
+  const scope: Scope = v.scope === 'later' ? 'later' : 'first_version';
+  const each = (fn: (st: RecipeStage) => string) => Object.fromEntries(RECIPE_STAGES.map((st) => [st.key, fn(st.key)])) as Record<RecipeStage, string>;
+  const draft: Draft = {
+    scope,
+    label: change ? `${v.label}, ${change.stage} on ${change.model.split('/').pop()}` : `${v.label} (copy)`,
+    models: each((st) => (r.models as Record<string, string | undefined>)[st] || ''),
+    effort: each((st) => r.effort?.[st] || ''),
+    clocks: each((st) => (r.clocks?.[st] ? String(r.clocks[st]) : '')),
+    base: { reviewer: r.reviewer, pack: r.pack, ...(r.tweaks?.length ? { tweaks: r.tweaks } : {}) },
+    from: `${v.label} v${v.version}`,
+  };
+  if (change && (scope === 'later' || change.stage !== 'followup')) draft.models[change.stage] = change.model;
+  return draft;
+}
+
+/** The recipe a draft saves, or the first thing wrong with it. Pure. */
+export function recipeOfDraft(d: Draft): { recipe: Recipe | null; error: string | null } {
+  const stages = stagesOf(d.scope);
+  const models: Recipe['models'] = { triage: '', spec: '', build: '' };
+  const effort: Partial<Record<RecipeStage, string>> = {};
+  const clocks: Partial<Record<RecipeStage, number>> = {};
+  for (const st of stages) {
+    const id = String(d.models[st.key] || '').trim();
+    if (st.key === 'followup') {
+      if (id) models.followup = id;
+    } else if (!id) {
+      return { recipe: null, error: `${st.label}: name a model (vendor/model).` };
+    } else {
+      models[st.key as 'triage' | 'spec' | 'build'] = id;
+    }
+    if (d.effort[st.key]) effort[st.key] = d.effort[st.key];
+    const raw = String(d.clocks[st.key] || '').trim();
+    if (raw) {
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < 1 || n > MAX_CLOCK_MINUTES) {
+        return { recipe: null, error: `${st.label}: a clock is a whole number of minutes from 1 to ${MAX_CLOCK_MINUTES}, or blank for the default.` };
+      }
+      clocks[st.key] = n;
+    }
+  }
+  if (!d.label.trim()) return { recipe: null, error: 'Give the version a name.' };
+  return {
+    recipe: {
+      models, ...d.base,
+      ...(Object.keys(effort).length ? { effort } : {}),
+      ...(Object.keys(clocks).length ? { clocks } : {}),
+    },
+    error: null,
+  };
+}
+
+export function DraftForm({ draft, busy, onChange, onSave, onCancel }: {
+  draft: Draft; busy: boolean; onChange: (d: Draft) => void; onSave: () => void; onCancel: () => void;
+}) {
+  const set = (part: 'models' | 'effort' | 'clocks', st: RecipeStage, value: string) => onChange({ ...draft, [part]: { ...draft[part], [st]: value } });
+  const kept = [
+    draft.base.reviewer ? `review ${draft.base.reviewer.model.split('/').pop()} ×${draft.base.reviewer.maxRounds} in ${draft.base.reviewer.budgetMinutes} min` : 'no review',
+    draft.base.pack ? `pack ${draft.base.pack}` : '',
+    draft.base.tweaks?.length ? `tweaks ${draft.base.tweaks.join(', ')}` : '',
+  ].filter(Boolean).join(' · ');
+  return (
+    <form
+      className={`${AdminUI.card} p-4 mb-3`} id="admin-bot-configs-draft"
+      onSubmit={(e) => { e.preventDefault(); onSave(); }}
+    >
+      <div className={AdminUI.cardHeader}>
+        <h3 className={AdminUI.cardTitle}>New side version</h3>
+        <span className={AdminUI.cardDescription}>{`Copied from ${draft.from}`}</span>
+      </div>
+      <label className={AdminUI.label} htmlFor="admin-bot-configs-draft-label">Name</label>
+      <input id="admin-bot-configs-draft-label" className={`${AdminUI.input} mb-3`} value={draft.label} maxLength={80}
+        onChange={(e) => onChange({ ...draft, label: e.target.value })} />
+      <div className={AdminUI.tableWrap}>
+        <table className={`${AdminUI.table} min-w-[40rem]`}>
+          <thead className={AdminUI.thead}>
+            <tr>
+              <th className={AdminUI.th}>Stage</th>
+              <th className={AdminUI.th}>Model</th>
+              <th className={AdminUI.th}>Effort</th>
+              <th className={AdminUI.th}>Clock (min)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {stagesOf(draft.scope).map((st) => (
+              <tr key={st.key} className={AdminUI.trHover} data-draft-stage={st.key}>
+                <td className={AdminUI.td}>{st.label}</td>
+                <td className={AdminUI.td}>
+                  <input className={`${AdminUI.input} font-mono text-xs`} value={draft.models[st.key]} spellCheck={false}
+                    placeholder={st.key === 'followup' ? 'the per-stage setting' : 'vendor/model'} aria-label={`${st.label} model`}
+                    onChange={(e) => set('models', st.key, e.target.value.trim())} />
+                </td>
+                <td className={AdminUI.td}>
+                  <select className={AdminUI.select} value={draft.effort[st.key]} aria-label={`${st.label} effort`}
+                    onChange={(e) => set('effort', st.key, e.target.value)}>
+                    <option value="">Default</option>
+                    {EFFORTS.map((x) => <option key={x} value={x}>{x}</option>)}
+                  </select>
+                </td>
+                <td className={AdminUI.td}>
+                  <input className={AdminUI.input} type="number" min="1" max={MAX_CLOCK_MINUTES} step="1" value={draft.clocks[st.key]}
+                    placeholder="Default" aria-label={`${st.label} clock in minutes`}
+                    onChange={(e) => set('clocks', st.key, e.target.value)} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className={`${AdminUI.muted} mt-2`} id="admin-bot-configs-draft-kept">
+        {`Kept as they are: ${kept}. Effort max reaches Claude Code turns only; a Codex turn runs it at xhigh. A blank effort is the deployment's (an Anthropic plan at medium), and a blank clock the default. It is built beside every ${draft.scope === 'later' ? 'later change' : 'live first version'} within the side builds' weekly budget, and builds nothing live until it is made current.`}
+      </p>
+      <div className="flex gap-2 mt-3">
+        <button type="submit" className={AdminUI.btn.primarySm} disabled={busy} id="admin-bot-configs-draft-save">Save as a side version</button>
+        <button type="button" className={AdminUI.btn.outlineSm} disabled={busy} onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * What "Compare on the benchmark" asks the Benchmark for: a first version's
+ * studio arms (this version and the current one), or for a later change the
+ * launcher on the stages the two name different models for, with both
+ * models; null when they differ only in effort, clocks or what the bench
+ * does not run (a later change is then compared by its blind pairs). Pure.
+ */
+export function benchRequestFor(v: BotConfigVersion, current: BotConfigVersion | null):
+  | { view: 'studio'; models: string }
+  | { view: 'launch'; preset: { stages: string[]; models: string[] } }
+  | null {
+  if (v.scope !== 'later') return { view: 'studio', models: current && current.id !== v.id ? `config:${v.id}, config:${current.id}` : `config:${v.id}` };
+  if (!current || current.id === v.id) return null;
+  const mine = v.recipe.models as Record<string, string | undefined>;
+  const theirs = current.recipe.models as Record<string, string | undefined>;
+  // The benchmark's own stage for each (a follow-up's fix is its checks fix).
+  const benchStage: Record<RecipeStage, string> = { triage: 'triage', spec: 'spec', build: 'build', followup: 'checks_fix' };
+  const differ = RECIPE_STAGES.map((st) => st.key).filter((st) => mine[st] && theirs[st] && mine[st] !== theirs[st]);
+  if (!differ.length) return null;
+  const models = [...new Set(differ.flatMap((st) => [mine[st] as string, theirs[st] as string]))];
+  return { view: 'launch', preset: { stages: differ.map((st) => benchStage[st]), models } };
+}
+
 /** The actions a row offers a full admin: never one that leaves no current version. */
 export function actionsFor(role: Role): Array<{ role: Role; label: string }> {
   if (role === 'current') return [];
@@ -165,10 +374,12 @@ export function actionsFor(role: Role): Array<{ role: Role; label: string }> {
   return [{ role: 'current', label: 'Make current' }, { role: 'side', label: 'Make side' }];
 }
 
-function Row({ v, canWrite, busy, onRole }: {
+function Row({ v, canWrite, busy, onRole, onCopy, onCompare }: {
   v: BotConfigVersion; canWrite: boolean; busy: boolean; onRole: (v: BotConfigVersion, role: Role) => void;
+  onCopy?: (v: BotConfigVersion) => void; onCompare?: (v: BotConfigVersion) => void;
 }) {
   const s = v.stats;
+  const benched = benchText(s.bench);
   const left = leftOutText(s.vsCurrent);
   const proposals = proposalsText(s.proposals);
   return (
@@ -201,6 +412,10 @@ function Row({ v, canWrite, busy, onRole }: {
         {left ? <div className={`${AdminUI.muted} text-xs`}>{left}</div> : null}
       </td>
       <td className={`${AdminUI.td} whitespace-nowrap`}>{s.pairsWaiting}</td>
+      <td className={`${AdminUI.td} whitespace-nowrap`} data-bot-config-bench={v.id}>
+        {benched || <span className={AdminUI.muted}>Not run</span>}
+        {s.bench?.lastRunId ? <div className={`${AdminUI.muted} text-xs`}>{`Latest: studio run ${s.bench.lastRunId}`}</div> : null}
+      </td>
       <td className={`${AdminUI.td} whitespace-nowrap`}>
         {v.role === 'current'
           ? <span className={`${AdminUI.muted} text-xs`}>{v.scope === 'later' ? 'Builds every later change' : 'Builds every first version'}</span>
@@ -218,6 +433,18 @@ function Row({ v, canWrite, busy, onRole }: {
               ))}
             </div>
           ) : null)}
+        {canWrite && (onCopy || onCompare) ? (
+          <div className="flex gap-2 mt-1">
+            {onCopy ? (
+              <button type="button" className={`${AdminUI.btn.link} text-xs`} disabled={busy} data-bot-config-action="copy"
+                onClick={() => onCopy(v)}>Copy to a side version</button>
+            ) : null}
+            {onCompare && v.role !== 'current' ? (
+              <button type="button" className={`${AdminUI.btn.link} text-xs`} disabled={busy} data-bot-config-action="compare"
+                onClick={() => onCompare(v)}>Compare on the benchmark</button>
+            ) : null}
+          </div>
+        ) : null}
       </td>
     </tr>
   );
@@ -225,7 +452,7 @@ function Row({ v, canWrite, busy, onRole }: {
 
 export function BotConfigsView({
   payload, canWrite, busy = false, showRetired = false, onToggleRetired, onRole, error = null,
-  scope = 'first_version', onScope, onBudget,
+  scope = 'first_version', onScope, onBudget, onCopy, onCompare, draftForm = null,
 }: {
   payload: BotConfigsPayload | null;
   canWrite: boolean;
@@ -237,6 +464,10 @@ export function BotConfigsView({
   scope?: Scope;
   onScope?: (scope: Scope) => void;
   onBudget?: (weeklyUsd: number) => void;
+  onCopy?: (v: BotConfigVersion) => void;
+  onCompare?: (v: BotConfigVersion) => void;
+  // The new side version's form, when one is being made.
+  draftForm?: ReactNode;
 }) {
   const versions = payload?.versions || [];
   const active = versions.filter((v) => v.role !== 'retired');
@@ -246,7 +477,7 @@ export function BotConfigsView({
   return (
     <div className={`${AdminUI.card} p-4`}>
       <div className={AdminUI.cardHeader}>
-        <h2 className={AdminUI.cardTitle}>Bot configurations</h2>
+        <h2 className={AdminUI.cardTitle}>Configurations</h2>
         <span className={AdminUI.cardDescription} id="admin-bot-configs-waiting">
           {payload ? `${payload.pairsWaiting} pair${payload.pairsWaiting === 1 ? '' : 's'} waiting for a pick` : 'Loading…'}
         </span>
@@ -265,19 +496,20 @@ export function BotConfigsView({
       </div>
       {scope === 'later' ? (
         <p className={`${AdminUI.muted} mb-2`} id="admin-bot-configs-about">
-          How the Homeroom bot builds every later change, live or shadow: the current configuration&apos;s plan and
-          build models. The triage and follow-up turns keep their own models. Side configurations are built silently
+          How the Homeroom bot handles every request that is not a first version: the current configuration decides
+          its triage, its plan, its build and its follow-ups (replies on its proposal and fixes of its checks), and
+          each stage&apos;s reasoning effort and clock where it names them. Side configurations are built silently
           beside each later change on the App bench lane, never shown to the person, and pairs compare the two sides&apos;
           plans and diffs. Each version is measured on its own, and its blind win rate is against the current one,
-          where a tie counts half. Recipes are saved and pairs are picked through the connector.
+          where a tie counts half. Pairs are picked through the connector.
         </p>
       ) : (
         <p className={`${AdminUI.muted} mb-2`} id="admin-bot-configs-about">
           How the Homeroom bot builds a project&apos;s first version. The current configuration builds every live first
-          version; side configurations are built silently beside it on the App bench lane, never shown to the person.
+          version (its triage, plan, build and review, and each stage&apos;s reasoning effort and clock where it names
+          them); side configurations are built silently beside it on the App bench lane, never shown to the person.
           Each version is measured on its own: average real cost, median active time (queue left out), boot rate, and
-          its blind win rate against the current one, where a tie counts half. Recipes are saved and pairs are picked
-          through the connector.
+          its blind win rate against the current one, where a tie counts half. Pairs are picked through the connector.
         </p>
       )}
       {payload?.sideBuilds ? (
@@ -310,8 +542,9 @@ export function BotConfigsView({
         </form>
       ) : null}
       {error ? <p className="text-sm text-red-700 dark:text-red-300 mb-2" role="alert">{error}</p> : null}
+      {draftForm}
       <div className={AdminUI.tableWrap}>
-        <table className={`${AdminUI.table} min-w-[64rem]`} id="admin-bot-configs-table">
+        <table className={`${AdminUI.table} min-w-[72rem]`} id="admin-bot-configs-table">
           <thead className={AdminUI.thead}>
             <tr>
               <th className={AdminUI.th}>Configuration</th>
@@ -323,14 +556,15 @@ export function BotConfigsView({
               <th className={AdminUI.th}>Booted</th>
               <th className={AdminUI.th}>Win rate vs current</th>
               <th className={AdminUI.th}>Waiting</th>
+              <th className={AdminUI.th}>Benchmark</th>
               <th className={AdminUI.th}>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((v) => <Row key={v.id} v={v} canWrite={canWrite} busy={busy} onRole={onRole} />)}
+            {rows.map((v) => <Row key={v.id} v={v} canWrite={canWrite} busy={busy} onRole={onRole} onCopy={onCopy} onCompare={onCompare} />)}
             {payload && rows.length === 0 ? (
               <tr>
-                <td className={AdminUI.td} colSpan={10} id="admin-bot-configs-empty">
+                <td className={AdminUI.td} colSpan={11} id="admin-bot-configs-empty">
                   No configurations yet. They are made when the platform starts.
                 </td>
               </tr>
@@ -377,10 +611,20 @@ export function confirmCopy(v: BotConfigVersion, role: Role, current: BotConfigV
   };
 }
 
-function BotConfigsSection() {
+/**
+ * The Configurations tab. `onOpenBenchmark` shows the Benchmark tab (its
+ * launch is handed over through requestBenchLaunch); `asked` is the
+ * Benchmark's "Use for <stage>": a new side version of the later changes'
+ * current one with that stage's model, opened as a draft to save or not.
+ */
+function BotConfigsSection({ onOpenBenchmark, asked = null }: {
+  onOpenBenchmark?: () => void;
+  asked?: { stage: RecipeStage; model: string; nonce: number } | null;
+} = {}) {
   const console_ = () => (window as any).AdminConsole;
   const canWrite = !!console_()?.canWrite();
-  const [scope, setScope] = useState<Scope>('first_version');
+  const [scope, setScope] = useState<Scope>(asked ? 'later' : 'first_version');
+  const [draft, setDraft] = useState<Draft | null>(null);
   const [payload, setPayload] = useState<BotConfigsPayload | null>(null);
   const [showRetired, setShowRetired] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -405,10 +649,66 @@ function BotConfigsSection() {
 
   useEffect(() => { load(); }, [load]);
 
+  // The Benchmark's "Use for <stage>", once the later changes' versions are here.
+  const askedDone = useRef<number | null>(null);
+  useEffect(() => {
+    if (!asked || askedDone.current === asked.nonce) return;
+    if (scope !== 'later') { setPayload(null); setScope('later'); return; }
+    const current = (payload?.versions || []).find((v) => v.role === 'current');
+    if (!current) return;
+    askedDone.current = asked.nonce;
+    setDraft(draftFrom(current, { stage: asked.stage, model: asked.model }));
+  }, [asked, scope, payload]);
+
+  const onCopy = useCallback((v: BotConfigVersion) => setDraft(draftFrom(v)), []);
+
+  const onSaveDraft = useCallback(async () => {
+    if (!draft) return;
+    const { recipe, error: wrong } = recipeOfDraft(draft);
+    if (!recipe) { console_()._alert(wrong); return; }
+    const sure = await console_()._confirm({
+      title: `Save ${draft.label} as a side version?`,
+      message: `${draft.scope === 'later' ? 'It will be built silently beside every later change' : 'It will be built silently beside every live first version'}, within the side builds' weekly budget. Nothing live uses it until it is made current.`,
+      confirmLabel: 'Save',
+    });
+    if (!sure) return;
+    setBusy(true);
+    try {
+      const res = await fetch('/api/admin/homeroom-bot/configs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: draft.label.trim(), scope: draft.scope, recipe, role: 'side' }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        console_()._alert(body?.error || `Could not save it (HTTP ${res.status}).`);
+      } else if (alive.current) {
+        setDraft(null);
+      }
+    } catch {
+      console_()._alert('Could not save it.');
+    } finally {
+      if (alive.current) setBusy(false);
+      await load();
+    }
+  }, [draft, load]);
+
+  const onCompare = useCallback((v: BotConfigVersion) => {
+    const current = (payload?.versions || []).find((x) => x.role === 'current') || null;
+    const request = benchRequestFor(v, current);
+    if (!request) {
+      console_()._alert('These two name the same models wherever the benchmark runs one, so it cannot tell them apart. Their blind pairs on live builds compare them.');
+      return;
+    }
+    requestBenchLaunch(request as BenchRequest);
+    onOpenBenchmark?.();
+  }, [payload, onOpenBenchmark]);
+
   const onScope = useCallback((next: Scope) => {
     if (next === scope) return;
     setPayload(null);
     setShowRetired(false);
+    setDraft(null);
     setScope(next);
   }, [scope]);
 
@@ -467,27 +767,13 @@ function BotConfigsSection() {
       scope={scope}
       onScope={onScope}
       onBudget={onBudget}
+      onCopy={canWrite ? onCopy : undefined}
+      onCompare={canWrite ? onCompare : undefined}
+      draftForm={draft ? (
+        <DraftForm draft={draft} busy={busy} onChange={setDraft} onSave={onSaveDraft} onCancel={() => setDraft(null)} />
+      ) : null}
     />
   );
 }
 
-let host: Element | null = null;
-
-const AdminBotConfigs = {
-  render(el: Element) {
-    host = el;
-    mountLegacyPortal(el, <BotConfigsSection />);
-  },
-
-  destroy() {
-    unmountLegacyPortal(host);
-    host = null;
-  },
-};
-
-// Published on the global because AdminConsole._renderSection dispatches
-// section modules through window[modName]. Guarded: the SSG prerender pass
-// evaluates this module in Node, where there is no window.
-if (typeof window !== 'undefined') (window as any).AdminBotConfigs = AdminBotConfigs;
-
-export { AdminBotConfigs };
+export { BotConfigsSection };

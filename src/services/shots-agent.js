@@ -164,7 +164,9 @@ there for a state the steps need before you decide a change cannot be
 reached, such as an agent run in progress or a proposal with votes. The
 declaredChecks are the app's own checks, run as read_only_admin: their paths
 can show data only that persona has, so another persona may find nothing
-there.
+there. The brief keeps to a size you can read whole, so its
+reference lists hold the best first: declaredChecksLeftOut, a changedFiles
+that is not complete and a truncated diff say some of a list was left out.
 
 Homeroom's home screen is not on these addresses. When the brief has
 homeTile, each address also serves the app's tile on that screen (its icon

@@ -9,9 +9,9 @@
 // it finishes: the runtime, the app's database and owner role, the redacted
 // staging template made from it, and its stored files. The steps were
 // best-effort and silent before: a drop that failed left a database nobody
-// knew about. Now a failed step keeps its message, and the reap sweep
-// (server.js, beside the orphan staging-database pass) retries the data steps
-// until they hold. The receipt outlives the app's row on purpose: it is the
+// knew about. Now a failed step keeps its message, and the app-data-purges
+// clock (src/workflow/clock/services.ts) retries the data steps until they
+// hold. The receipt outlives the app's row on purpose: it is the
 // list an operator replays after restoring a backup taken before the delete.
 //
 // Inactive apps. A read-only report: apps nobody has opened, merged into or

@@ -49,9 +49,11 @@
 // A clean sync is a mechanical merge, so the approval epoch does not move
 // and the votes the proposal has keep counting (services/pr-vote-revision.js).
 //
-// It runs as a leader-only sweep every INTERVAL_MS, rather than from each
-// path a merge can take, so a proposal that was stuck before it existed is
-// found on its first pass.
+// It runs as a clock of the workflow every five minutes (the fixed-check-sync
+// job, src/workflow/clock/services.ts; services/proposal-scans.js), rather
+// than from each path a merge can take, so a proposal that was stuck before
+// it existed is found on its first pass. Each sync it asks for is the
+// proposal machine's to decide (once per head).
 //
 // The Homeroom bot asks for one more, syncBeforeHandOff below: before it
 // hands a red check on one of its proposals to a person, the proposal is
@@ -76,10 +78,6 @@ const appManifest = require('./app-manifest');
 const { isUnitSuiteRow, UNIT_CHECK_NAME, UNIT_CHECK_PATH } = require('./unit-suite-row');
 const log = require('./logger');
 
-const INTERVAL_MS = 5 * 60 * 1000;
-// The first pass waits for the new leader to settle: it dispatches worker
-// turns, and the release that made this process the leader is still rolling.
-const FIRST_PASS_DELAY_MS = 60 * 1000;
 // What main passes is read off the final runs of the last few merged
 // proposals: the newest of them that ran a check decides it.
 const RECENT_MERGES = 5;
@@ -544,12 +542,12 @@ function declinedWords(why) {
   return DECLINED_WORDS[String(why || '')] || `it was not synced (${String(why || 'no reason given').slice(0, 60)})`;
 }
 
-// The last reason each proposal was declined for, so a sweep says so once
-// when it changes rather than on every pass.
-const lastDeclined = new Map();
-
-/** Pure: the sweep's declines that changed since `seen`, which it updates. */
-function freshDeclines(skipped, seen = lastDeclined) {
+/**
+ * Pure: the sweep's declines that changed since `seen` (the last reason each
+ * proposal was declined for, which the clock carries from run to run), which
+ * it updates, so a sweep says so once when it changes.
+ */
+function freshDeclines(skipped, seen) {
   const fresh = {};
   for (const [id, why] of Object.entries(skipped || {})) {
     if (seen.get(id) === why) continue;
@@ -557,41 +555,6 @@ function freshDeclines(skipped, seen = lastDeclined) {
     fresh[id] = why;
   }
   return fresh;
-}
-
-let timer = null;
-let firstPass = null;
-let inFlight = null;
-function start(config, pool) {
-  if (timer || !isEnabled() || !pool) return;
-  const run = () => {
-    if (inFlight) return inFlight;
-    inFlight = sweep({ config, pool, shouldStop: () => timer === null })
-      .then((result) => {
-        if (result.candidates) log.info('fixed-check-sync', 'Fixed-on-main sweep', result);
-        const fresh = freshDeclines(result.skipped);
-        if (Object.keys(fresh).length) {
-          log.info('fixed-check-sync', 'Proposals with failing checks not synced with main', {
-            declined: Object.fromEntries(Object.entries(fresh).map(([id, why]) => [id, { why, words: declinedWords(why) }])),
-          });
-        }
-      })
-      .catch((err) => log.warn('fixed-check-sync', 'Fixed-on-main sweep stopped', { err: err.message }))
-      .finally(() => { inFlight = null; });
-    return inFlight;
-  };
-  timer = setInterval(run, INTERVAL_MS);
-  timer.unref();
-  firstPass = setTimeout(run, FIRST_PASS_DELAY_MS);
-  firstPass.unref();
-}
-
-async function stop() {
-  clearInterval(timer);
-  clearTimeout(firstPass);
-  timer = null;
-  firstPass = null;
-  await inFlight;
 }
 
 module.exports = {
@@ -612,10 +575,7 @@ module.exports = {
   mainWatchVerdict,
   UNIT_KEY,
   unitSyncKey,
-  start,
-  stop,
   isEnabled,
-  INTERVAL_MS,
   RECENT_MERGES,
   MIN_FAILING,
   MAX_SYNCS_PER_PASS,
