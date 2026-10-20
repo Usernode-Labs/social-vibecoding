@@ -3,7 +3,7 @@
 // pipeline does when it applies the result event.
 
 import { steps } from './steps.ts';
-import { assertJson } from './machine.ts';
+import { WorkflowInputError, assertJson, jsonText } from './machine.ts';
 import { append } from './stream.ts';
 import { checkout } from './pipeline.ts';
 import type { Json, Logger, Pool, WorkHandler } from './types.ts';
@@ -59,6 +59,11 @@ export function concurrencyOf(h: WorkHandler): number {
 }
 const RESULT_EVENTS = new Map([['succeeded', 'WorkSucceeded'], ['failed', 'WorkFailed'], ['exhausted', 'WorkExhausted']]);
 const defaultBackoff = (attempt: number) => Math.min(10 * 60000, 5000 * 2 ** (attempt - 1));
+
+// A write the database refused for what it held, not for when it ran: a
+// data exception (SQLSTATE class 22) or a broken constraint (class 23), or
+// a value the kernel itself refuses before writing.
+const refused = (err: unknown) => err instanceof WorkflowInputError || /^2[23]/.test(String((err as { code?: unknown })?.code ?? ''));
 
 function errorJson(err: unknown): { message: string; code: string | null } {
   const e = err as { message?: string; code?: unknown };
@@ -206,19 +211,19 @@ async function finish(opts: ServiceOptions, w: Claimed, report: Report): Promise
       ? await client.query(
         `UPDATE wf_work SET status = 'queued', claim_id = NULL, lease_until = NULL, last_error = $3,
                 due_at = now() + make_interval(secs => $4::float8 / 1000) WHERE ${live}`,
-        [w.id, w.claim_id, JSON.stringify(report.error), report.delayMs])
+        [w.id, w.claim_id, jsonText(report.error), report.delayMs])
       : await client.query(
         `UPDATE wf_work SET status = 'reported', claim_id = NULL, lease_until = NULL,
                 result = $3, last_error = $4 WHERE ${live}`,
-        [w.id, w.claim_id, JSON.stringify({ outcome: report.outcome, ...('result' in report ? { value: report.result } : {}) }),
-          'error' in report ? JSON.stringify(report.error) : null]);
+        [w.id, w.claim_id, jsonText({ outcome: report.outcome, ...('result' in report ? { value: report.result } : {}) }),
+          'error' in report ? jsonText(report.error) : null]);
     if (!rowCount) { await client.query('ROLLBACK'); return false; }
     // The item no longer counts against its kind's limit: every process
     // with room hears it, a draining one's included.
     await client.query(`SELECT pg_notify('wf_work', $1)`, [w.kind]);
     await client.query(
       `UPDATE wf_work_attempts SET outcome = $2, error = $3, finished_at = now() WHERE id = $1`,
-      [w.claim_id, report.outcome, 'error' in report ? JSON.stringify(report.error) : null]);
+      [w.claim_id, report.outcome, 'error' in report ? jsonText(report.error) : null]);
     if (report.outcome !== 'retry') {
       const type = RESULT_EVENTS.get(report.outcome)!;
       await append(client, w.machine, w.key, {
@@ -298,12 +303,18 @@ export async function execute(opts: ServiceOptions, w: Claimed, stopping?: Abort
     if (!leaseLost && Date.now() - renewedAt >= Math.floor((leaseMs * 3) / 4)) lose();
     renew(`UPDATE wf_work SET ${extend} WHERE ${live}`, [w.id, w.claim_id, leaseMs]).catch(() => {});
   }, Math.max(50, Math.floor(leaseMs / 4)));
+  // How an attempt that ended in `err` is reported.
+  const failure = (err: unknown): Report => {
+    if ((err as { permanent?: boolean })?.permanent) return { outcome: 'failed', error: errorJson(err) };
+    if (tries >= maxAttempts) return { outcome: 'exhausted', error: errorJson(err) };
+    return { outcome: 'retry', error: errorJson(err), delayMs: (h.backoffMs || defaultBackoff)(tries) };
+  };
   let report: Report | null;
   try {
     const checkpoint = async (v: Json) => {
       assertJson(v);
       if (leaseLost) throw new LeaseLost();
-      await renew(`UPDATE wf_work SET checkpoint = $4, ${extend} WHERE ${live}`, [w.id, w.claim_id, leaseMs, JSON.stringify(v)]);
+      await renew(`UPDATE wf_work SET checkpoint = $4, ${extend} WHERE ${live}`, [w.id, w.claim_id, leaseMs, jsonText(v)]);
     };
     const value = await h.run({
       workId: w.id, kind: w.kind, key: w.work_key, input: w.input, attempt: w.attempt_count, lostAttempts: lost,
@@ -319,10 +330,7 @@ export async function execute(opts: ServiceOptions, w: Claimed, stopping?: Abort
     assertJson(result);
     report = { outcome: 'succeeded', result };
   } catch (err) {
-    if (abort.signal.aborted) report = null;
-    else if ((err as { permanent?: boolean })?.permanent) report = { outcome: 'failed', error: errorJson(err) };
-    else if (tries >= maxAttempts) report = { outcome: 'exhausted', error: errorJson(err) };
-    else report = { outcome: 'retry', error: errorJson(err), delayMs: (h.backoffMs || defaultBackoff)(tries) };
+    report = abort.signal.aborted ? null : failure(err);
   } finally {
     clearInterval(heartbeat);
     stopping?.removeEventListener('abort', onStop);
@@ -340,7 +348,22 @@ export async function execute(opts: ServiceOptions, w: Claimed, stopping?: Abort
     return;
   }
   if (leaseLost || !report) return;
-  if (!await finish(opts, w, report)) {
+  let written: boolean;
+  try {
+    written = await finish(opts, w, report);
+  } catch (err) {
+    // The report could not be written: the database refused it (a result
+    // event a machine cannot take, say), or could not be reached. The
+    // refusal is the attempt's failure, recorded under the claim like any
+    // other, rather than an attempt left running until its lease lapses and
+    // the work runs again with no word of why. A refused value is refused
+    // every time, so that failure is permanent. When this write fails too,
+    // the database is out of reach and the lease is all that is left.
+    opts.log.error('workflow', 'work report refused; recording it as the attempt\'s failure',
+      { kind: w.kind, workId: w.id, outcome: report.outcome, message: (err as Error)?.message, code: (err as { code?: unknown })?.code });
+    written = await finish(opts, w, failure(refused(err) ? Object.assign(err as Error, { permanent: true }) : err));
+  }
+  if (!written) {
     opts.log.warn('workflow', 'work claim gone before reporting (lease lost or cancelled)', { kind: w.kind, workId: w.id });
   }
 }
