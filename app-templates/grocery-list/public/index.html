@@ -29,6 +29,13 @@
       media.addEventListener('change', applyTheme);
     })();
   </script>
+  <!-- What takes the loading shapes' place fades in, briefly, rather than
+       cutting over: an animation replays whenever [hidden] comes off, so
+       nothing has to start it. None under reduced motion. -->
+  <style>
+    @keyframes appear { from { opacity: 0; } to { opacity: 1; } }
+    @media (prefers-reduced-motion: no-preference) { .appear { animation: appear 200ms ease-out; } }
+  </style>
 </head>
 <body class="min-h-screen bg-ground text-fg">
   <main class="mx-auto flex max-w-xl flex-col gap-4 px-4 py-8">
@@ -91,12 +98,21 @@
       </form>
     </div>
 
-    <!-- Loading: shapes where the list will be. -->
-    <div id="loading" class="flex flex-col gap-2" aria-label="Loading">
-      <div class="skeleton h-12 w-full"></div>
-      <div class="skeleton h-5 w-32"></div>
-      <div class="skeleton h-12 w-full"></div>
-      <div class="skeleton h-12 w-full"></div>
+    <!-- Loading: the list's own shape, the General items and then a
+         category under its heading, so nothing moves when it arrives. -->
+    <div id="loading" class="flex flex-col gap-5" aria-label="Loading">
+      <ul class="list" aria-hidden="true">
+        <li class="list-row gap-1 py-0 pl-1 pr-1"><div class="w-6 shrink-0"></div><div class="flex h-11 w-11 shrink-0 items-center justify-center"><div class="skeleton h-5 w-5"></div></div><div class="flex flex-1 py-2"><div class="skeleton h-4 w-2/5"></div></div></li>
+        <li class="list-row gap-1 py-0 pl-1 pr-1"><div class="w-6 shrink-0"></div><div class="flex h-11 w-11 shrink-0 items-center justify-center"><div class="skeleton h-5 w-5"></div></div><div class="flex flex-1 py-2"><div class="skeleton h-4 w-1/3"></div></div></li>
+      </ul>
+      <div class="flex flex-col gap-1" aria-hidden="true">
+        <div class="skeleton mx-1 my-3 h-5 w-28"></div>
+        <ul class="list">
+          <li class="list-row gap-1 py-0 pl-1 pr-1"><div class="w-6 shrink-0"></div><div class="flex h-11 w-11 shrink-0 items-center justify-center"><div class="skeleton h-5 w-5"></div></div><div class="flex flex-1 py-2"><div class="skeleton h-4 w-1/2"></div></div></li>
+          <li class="list-row gap-1 py-0 pl-1 pr-1"><div class="w-6 shrink-0"></div><div class="flex h-11 w-11 shrink-0 items-center justify-center"><div class="skeleton h-5 w-5"></div></div><div class="flex flex-1 py-2"><div class="skeleton h-4 w-1/4"></div></div></li>
+          <li class="list-row gap-1 py-0 pl-1 pr-1"><div class="w-6 shrink-0"></div><div class="flex h-11 w-11 shrink-0 items-center justify-center"><div class="skeleton h-5 w-5"></div></div><div class="flex flex-1 py-2"><div class="skeleton h-4 w-2/5"></div></div></li>
+        </ul>
+      </div>
     </div>
 
     <!-- Error: only when the load failed. -->
@@ -115,7 +131,7 @@
     <p id="no-results" class="px-1 text-body text-muted" hidden></p>
 
     <!-- The General items first, with no heading, then each category. -->
-    <div id="categories" class="flex flex-col gap-5" hidden></div>
+    <div id="categories" class="flex flex-col gap-5 appear" hidden></div>
 
     <form id="new-category" class="flex gap-2" autocomplete="off" hidden>
       <input name="name" type="text" maxlength="100" class="field min-w-0 flex-1" placeholder="New category…" aria-label="New category">

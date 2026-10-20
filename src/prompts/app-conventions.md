@@ -2688,6 +2688,37 @@ that animate, polling), listen for:
 An app that is not reopened soon is dropped and loads fresh next time, so
 keep durable state server-side (or in `localStorage`) as you already should.
 
+## Opening in one step — `usernode.ready()`
+
+Homeroom opens an app behind a cover showing its icon and name, and lifts
+the cover once the frame's document has loaded. That is usually before the
+app's own data has arrived, so without help the viewer watches the page
+assemble itself: a skeleton, then the real screen in a different shape. Tell
+the shell when your first real screen is drawn and the cover stays up until
+then, so the app appears in one step:
+
+```js
+// app.js, where the first load starts: pass the promise of the first render.
+usernode.ready(load());
+```
+
+- **`usernode.ready(promise)`** says "waiting" at once and "drawn" when the
+  promise settles, fulfilled or rejected: an error screen is a first screen
+  too, so settle after drawing whichever of ready, empty or error you show.
+- **`usernode.ready()`** with no argument says "drawn" now; call it once,
+  right after the first render.
+- Only the first call counts. Outside a Homeroom frame it does nothing, so
+  guard it only against a missing bridge:
+  `if (window.usernode && usernode.ready) usernode.ready(load());`
+- The cover lifts after a few seconds regardless, so a first render that
+  never settles is never hidden for long. An app that never calls it opens
+  as before.
+- Keep the skeleton anyway, shaped like the real first screen: it is what a
+  viewer sees when the data is slower than that cap, and on every refresh
+  after the first.
+
+The ready-made starters all do this.
+
 ## Browser capabilities in the app frame
 
 Apps run in a cross-origin iframe, and the powerful browser capabilities

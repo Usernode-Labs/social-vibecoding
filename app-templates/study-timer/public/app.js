@@ -312,6 +312,11 @@
   // A session that ran out while the page was closed is finished now, and
   // its count goes up with the first load.
   if (session.state === 'running' && session.endsAt - now().getTime() <= 0) finish();
-  loadToday();
+  // The timer is drawn already; the count is the first screen's last part.
+  // Homeroom keeps its opening cover up until it is in (usernode.ready, the
+  // platform bridge), so the app appears in one step. The cover lifts after
+  // a few seconds regardless.
+  var first = loadToday();
+  if (window.usernode && window.usernode.ready) window.usernode.ready(first);
   if (session.state === 'running') dayLoaded = now().toLocaleDateString();
 })();

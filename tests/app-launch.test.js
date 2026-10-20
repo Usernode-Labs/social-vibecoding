@@ -634,6 +634,87 @@ test('reduced motion swaps the cross-fade for an instant swap', () => {
   assert.equal(dom.els.get('app-launch-cover'), undefined, 'cover removed outright, no fade');
 });
 
+// ── 4b. The app's own "first screen drawn" (usernode.ready) ─────────────
+//
+// An app that calls `usernode.ready(firstRender)` says "waiting" while it
+// loads and "drawn" once its first real screen is up. Its cover stays up
+// past load and the 2s cap, lifts on "drawn", and lifts at the ready cap if
+// "drawn" never comes. An app that never calls it keeps the ladder above.
+
+function readyLaunch() {
+  const made = makeAppView({ fetchImpl: okToken() });
+  made.AppView._tokenFresh = { slug: 'notes', token: 'tok-1', at: 0 };
+  made.AppView.beginLaunch('notes');
+  const iframe = made.dom.els.get('app-iframe');
+  iframe.contentWindow = {};
+  const say = (state, source = iframe.contentWindow) => made.AppView.handleReadyBridgeMessage({
+    source, data: { __usernode_ready: state },
+  });
+  return { ...made, iframe, cover: made.dom.els.get('app-launch-cover'), say };
+}
+
+const lifted = (cover) => cover.classList.contains('app-launch-cover--out');
+
+test('an app waiting on its first render keeps the cover past load and the 2s cap, and "drawn" lifts it', () => {
+  const { AppView, iframe, cover, clock, say } = readyLaunch();
+  say('waiting');
+  iframe.onload();
+  assert.equal(lifted(cover), false, 'load alone does not reveal an app that is still drawing');
+  assert.equal(AppView.iframeFocused, true, 'the load bookkeeping still runs');
+  clock.advance(AppView.LAUNCH_REVEAL_CAP_MS + 1);
+  assert.equal(lifted(cover), false, 'nor does the 2s cap');
+  say('drawn');
+  assert.equal(lifted(cover), true, 'its first screen is up: the cover cross-fades out');
+  assert.equal(iframe.style.opacity, '1');
+});
+
+test('an app that never says "drawn" is revealed at the ready cap', () => {
+  const { AppView, iframe, cover, clock, say } = readyLaunch();
+  say('waiting');
+  iframe.onload();
+  clock.advance(AppView.LAUNCH_READY_CAP_MS - 1);
+  assert.equal(lifted(cover), false);
+  clock.advance(2);
+  assert.equal(lifted(cover), true, 'never hidden for long');
+  assert.ok(AppView.LAUNCH_READY_CAP_MS > AppView.LAUNCH_REVEAL_CAP_MS);
+  assert.ok(AppView.LAUNCH_READY_CAP_MS <= 6000, 'a few seconds, not more');
+});
+
+test('"drawn" before the load event reveals at once', () => {
+  const { iframe, cover, say } = readyLaunch();
+  say('waiting');
+  say('drawn');
+  assert.equal(lifted(cover), true);
+  iframe.onload();
+  assert.equal(lifted(cover), true, 'the late load is harmless');
+});
+
+test('an app that never calls ready() reveals on load, as before', () => {
+  const { iframe, cover } = readyLaunch();
+  iframe.onload();
+  assert.equal(lifted(cover), true);
+});
+
+test('only the launched frame, on the launch armed now, is believed', () => {
+  const { AppView, iframe, cover, clock, say } = readyLaunch();
+  say('waiting');
+  iframe.onload();
+  say('drawn', {});
+  assert.equal(lifted(cover), false, 'a message from another window does nothing');
+  AppView._launchId += 1; // a newer navigation took over
+  say('drawn');
+  assert.equal(lifted(cover), false, 'a superseded launch is not revealed by its app');
+  clock.advance(30_000);
+  assert.equal(cover.isConnected, true);
+  for (const data of [null, {}, { __usernode_ready: 'ready' }, { __usernode_ready: 1 }]) {
+    AppView.handleReadyBridgeMessage({ source: iframe.contentWindow, data });
+  }
+});
+
+test('the shell listens for the ready message beside the other bridge relays', () => {
+  assert.match(SRC, /try \{ AppView\.handleReadyBridgeMessage\(e\); \} catch \{\}/);
+});
+
 // ── 5. One-shot adoption in renderAppTab ────────────────────────────────
 
 function launchThenRender(overrides = {}) {
