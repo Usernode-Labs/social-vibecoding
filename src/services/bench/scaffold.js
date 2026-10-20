@@ -50,13 +50,15 @@ function requestCard(sketch) {
  * the pack's files on top. Pure but for the template code's own reads.
  */
 function filesFor({ input, pack = null, sketch = null }) {
-  const { getTemplateFiles } = require('../template');
+  const { getTemplateFiles, fillAppName } = require('../template');
   const { slugOf } = require('./taste');
-  const files = getTemplateFiles(input.appName, slugOf(input.appName), '', null, {
+  // Its name in the page: a trial's preview runs as the studio's host app,
+  // whose name the page would otherwise show (template.js fillAppName).
+  const files = fillAppName(getTemplateFiles(input.appName, slugOf(input.appName), '', null, {
     template: input.template || null,
     description: input.description || null,
     sketch: sketch && sketch.design ? { design: sketch.design, model: sketch.model || null, ready_at: sketch.readyAt || null } : null,
-  });
+  }), input.appName);
   return packs.withPackFiles(files, pack);
 }
 
