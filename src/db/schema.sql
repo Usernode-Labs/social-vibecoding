@@ -14904,10 +14904,12 @@ CREATE TABLE IF NOT EXISTS platform_processes (
 CREATE INDEX IF NOT EXISTS idx_platform_processes_heartbeat ON platform_processes (heartbeat_at);
 COMMENT ON TABLE platform_processes IS 'staging:private';
 
--- One row per thing a process holds: `kind` (a session's turn, a preview
--- build, a shots run, ...; processes.js KINDS) for `ref` (its id). Written
--- on the process's first hold of it and removed on its last release, and the
--- whole set written again with every beat.
+-- What a process of a release from before the turn machine holds: `kind` (a
+-- session's turn, a sync, ...) for `ref` (its id), written as it works. This
+-- release writes none (services/processes.js keeps its holds in memory, for
+-- its own drain); ROLLOUT-ONLY readers (services/turn-leftovers.js) leave
+-- alone what an older release's live process still holds. Drop once no such
+-- release can run.
 CREATE TABLE IF NOT EXISTS process_holds (
   process_id TEXT NOT NULL REFERENCES platform_processes(id) ON DELETE CASCADE,
   kind       TEXT NOT NULL,

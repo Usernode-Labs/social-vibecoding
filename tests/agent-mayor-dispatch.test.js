@@ -619,6 +619,9 @@ function dispatchDeps({
     },
     activeWorkers: {
       isSessionBusy: () => isBusy(),
+      // What works on the change on any process (session-work.ts
+      // workedOnSql), here the same as this process.
+      isSessionBusyAnywhere: async () => isBusy(),
       hasSessionOperation: () => isBusy() && !shotsRun,
       activeWorkers: new Map(),
       beginSessionOperation: (id) => { log.push(['begin', id]); return () => log.push(['release', id]); },

@@ -25,6 +25,7 @@ const topicAttrs = require('../services/topic-attributes');
 // reports as `busy`, so an issue's work-state chip and the session card it
 // points at can never disagree about whether an agent is actually running.
 const { isSessionBusy } = require('../services/active-workers');
+const { workedOnSql } = require('../workflow/session-work.ts');
 const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const challengeScorer = require('../services/topochain/challenge-scorer');
@@ -865,9 +866,9 @@ function composeInProgress(sessions, claims, viewerId) {
       username: s.username || null,
       mine: s.user_id === viewerId,
       status: s.status || null,
-      // In-process only: a multi-process platform would under-report this,
-      // in which case switch to `active_turn IS NOT NULL` on the query.
-      busy: isSessionBusy(s.id),
+      // Worked on by any process (read with the row: session-work.ts
+      // workedOnSql), or by this one.
+      busy: s.worked_on === true || isSessionBusy(s.id),
       lastActivityAt: s.last_activity_at || null,
     }));
   return {
@@ -2102,7 +2103,8 @@ function issueRoutes(config) {
       const { rows: inProgressRows } = await pool.query(
         `SELECT UNNEST(cs.linked_issues) AS n,
                 cs.id, cs.user_id, cs.status, cs.shared_at,
-                cs.last_activity_at, cs.created_at, u.username
+                cs.last_activity_at, cs.created_at, u.username,
+                ${workedOnSql()} AS worked_on
            FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
           WHERE cs.app_id = $1 AND cs.is_headless = FALSE
             AND cardinality(cs.linked_issues) > 0

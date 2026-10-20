@@ -32,7 +32,7 @@
 
 const { normalizeIdempotencyKey } = require('./conversations');
 const sessionBus = require('./session-bus');
-const { isSessionBusy } = require('./active-workers');
+const { isSessionBusyAnywhere } = require('./active-workers');
 
 // Read the optional id from a request body or query string. It has the same
 // shape as a conversation message's idempotency_key (8 to 64 of
@@ -102,7 +102,7 @@ async function lookup(db, { sessionId, clientMessageId, viewer }) {
   const state = deliveryState({
     messageId,
     liveMessageId: live?.message_id ?? null,
-    turnLive: !!live || isSessionBusy(Number(sessionId)),
+    turnLive: !!live || await isSessionBusyAnywhere(Number(sessionId), { pool: db }),
     isLatestUserMessage: !!row.latest_user,
     hasLaterRows: !!row.has_later,
   });

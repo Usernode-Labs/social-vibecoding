@@ -981,7 +981,7 @@ function loadReapForPressure(fx) {
   stub(ids.stagingEnv, { expectedStagingFingerprint: () => 'fp' });
   stub(ids.staging, {});
   stub(ids.pool, { getPool: () => mainPool });
-  stub(ids.activeWorkers, { isSessionBusy: () => false });
+  stub(ids.activeWorkers, { isSessionBusy: () => false, busySessionsAnywhere: async () => new Set() });
   stub(ids.recovery, {
     inspectPreviewRuntime: async (session) => {
       fx.inspected.push(Number(session.id));

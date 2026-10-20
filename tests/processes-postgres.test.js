@@ -1,9 +1,10 @@
 'use strict';
 
-// The platform's processes and what each one holds (services/processes.js,
-// docs/plans/draining-releases.md), against the REAL schema in a throwaway
-// PostgreSQL database. Another process is played by the rows it would write:
-// what this module must see of it, and what it must not.
+// The platform's processes (services/processes.js, docs/plans/
+// draining-releases.md), against the REAL schema in a throwaway PostgreSQL
+// database: the roster, and this process's holds, which stay in its memory
+// for its own drain and are written nowhere. Another process is played by
+// the rows it would write.
 //
 // Skipped when no server is reachable, required when TEST_DATABASE_URL is set.
 // Run with: TEST_DATABASE_URL=postgres://... node --test tests/processes-postgres.test.js
@@ -26,7 +27,7 @@ async function until(check, { timeoutMs = 5000, label = 'condition' } = {}) {
   }
 }
 
-test('processes and their holds, against the full schema', { timeout: 120000 }, async (t) => {
+test('processes and the roster, against the full schema', { timeout: 120000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
@@ -57,96 +58,48 @@ test('processes and their holds, against the full schema', { timeout: 120000 }, 
     }
   }
 
-  await t.test('before it starts, a hold is this process\'s alone, and nothing elsewhere is seen', async () => {
+  await t.test('a hold is this process\'s alone, in memory, counted for its drain', async () => {
     const release = processes.hold('session', 7);
+    const again = processes.hold('session', 7);
     assert.equal(processes.heldHere('session', 7), true);
-    assert.equal(processes.heldElsewhere('session', 7), false);
     assert.equal(processes.localCount(), 1);
-    assert.deepEqual(await processes.holders('session', 7, null), [processes.ID]);
-    release();
+    release(); release();
+    assert.equal(processes.heldHere('session', 7), true, 'a release called twice counts once');
+    again();
     assert.equal(processes.heldHere('session', 7), false);
+    assert.equal(processes.localCount(), 0);
     assert.throws(() => processes.hold('not-a-kind', 1), /unknown hold kind/);
     assert.throws(() => processes.hold('session', null), /needs a ref/);
+    for (const gone of ['heldElsewhere', 'heldAnywhere', 'holders', 'refreshMirror', 'refsElsewhere', 'whenReleasedElsewhere']) {
+      assert.equal(processes[gone], undefined, `no process reads another's holds (${gone})`);
+    }
   });
 
-  await t.test('registered: the row, the holds taken before, and those after, all reach the database', async () => {
+  await t.test('registered: the row, and no hold written anywhere', async () => {
     // In a Kubernetes Pod, this container's dead predecessor (same Pod name)
-    // is removed as it starts, its holds with it.
-    await other('predecessor', { holds: [['session', 99]] });
+    // is removed as it starts.
+    await other('predecessor');
     await pool.query(`UPDATE platform_processes SET host = $1 WHERE id = 'predecessor'`, [require('node:os').hostname()]);
     const kube = process.env.KUBERNETES_SERVICE_HOST;
     process.env.KUBERNETES_SERVICE_HOST = '10.0.0.1';
-    const early = processes.hold('sync', 11);
+    const early = processes.hold('session', 11);
     try {
       await processes.start({ pool, role: 'all' });
     } finally {
       if (kube === undefined) delete process.env.KUBERNETES_SERVICE_HOST; else process.env.KUBERNETES_SERVICE_HOST = kube;
     }
     assert.equal((await pool.query(`SELECT 1 FROM platform_processes WHERE id = 'predecessor'`)).rows.length, 0);
-    assert.equal((await pool.query(`SELECT 1 FROM process_holds WHERE process_id = 'predecessor'`)).rows.length, 0);
     const { rows: [me] } = await pool.query('SELECT * FROM platform_processes WHERE id = $1', [processes.ID]);
     assert.equal(me.state, 'serving');
     const late = processes.hold('session', 12);
-    await processes.flush();
-    const { rows } = await pool.query('SELECT kind, ref FROM process_holds WHERE process_id = $1 ORDER BY kind', [processes.ID]);
-    assert.deepEqual(rows.map((r) => `${r.kind}:${r.ref}`), ['session:12', 'sync:11']);
-    early(); late();
-    await processes.flush();
-    const { rows: none } = await pool.query('SELECT 1 FROM process_holds WHERE process_id = $1', [processes.ID]);
-    assert.equal(none.length, 0, 'the last release removes the row');
-  });
-
-  await t.test('counted: a second hold of the same thing keeps it until both are released', async () => {
-    const a = processes.hold('session', 20);
-    const b = processes.hold('session', 20);
-    a(); a();
-    await processes.flush();
-    assert.equal(processes.heldHere('session', 20), true, 'a release called twice counts once');
-    assert.equal((await pool.query(`SELECT 1 FROM process_holds WHERE process_id = $1 AND ref = '20'`, [processes.ID])).rows.length, 1);
-    b();
-    await processes.flush();
-    assert.equal(processes.heldHere('session', 20), false);
-    assert.equal(processes.localCount(), 0);
-  });
-
-  await t.test('another live process\'s holds are seen; a gone one\'s are not', async () => {
-    await other('pod-old', { state: 'draining', holds: [['session', 30], ['sync', 31]], drainStartedAt: new Date() });
-    await other('pod-dead', { ageSeconds: processes.LIVE_SECONDS + 30, holds: [['session', 32]] });
-    await processes.refreshMirror();
-    assert.equal(processes.heldElsewhere('session', 30), true);
-    assert.equal(processes.heldAnywhere('sync', 31), true);
-    assert.equal(processes.heldElsewhere('session', 32), false, 'a process that stopped beating holds nothing');
-    assert.deepEqual(processes.refsElsewhere('session'), ['30']);
-    assert.deepEqual(await processes.holders('session', 30), ['pod-old']);
-    assert.deepEqual(await processes.holders('session', 32), []);
-    // A copy that could not be refreshed for longer than a process lives
-    // vouches for nobody.
-    const realNow = Date.now;
-    Date.now = () => realNow() + (processes.LIVE_SECONDS + 5) * 1000;
-    try {
-      assert.equal(processes.heldElsewhere('session', 30), false);
-      assert.deepEqual(processes.refsElsewhere('session'), []);
-    } finally { Date.now = realNow; }
-    // Its release reaches this process at the next refresh.
-    await pool.query(`DELETE FROM process_holds WHERE process_id = 'pod-old' AND ref = '30'`);
-    await processes.refreshMirror();
-    assert.equal(processes.heldElsewhere('session', 30), false);
-  });
-
-  await t.test('the beat writes every hold again: a write the database lost comes back', async () => {
-    const release = processes.hold('sync', 40);
-    await processes.flush();
-    await pool.query('DELETE FROM process_holds WHERE process_id = $1', [processes.ID]);
-    await pool.query(`INSERT INTO process_holds (process_id, kind, ref) VALUES ($1, 'session', '41')`, [processes.ID]);
     await processes.beat();
-    const { rows } = await pool.query('SELECT kind, ref FROM process_holds WHERE process_id = $1', [processes.ID]);
-    assert.deepEqual(rows.map((r) => `${r.kind}:${r.ref}`), ['sync:40'], 'what this process holds, and only that');
-    // A row the leader reaped while this process stalled comes back too.
+    assert.equal((await pool.query('SELECT 1 FROM process_holds')).rows.length, 0, 'nothing written');
+    early(); late();
+    // A row the process-reap clock reaped while this process stalled comes
+    // back with the next beat.
     await pool.query('DELETE FROM platform_processes WHERE id = $1', [processes.ID]);
     await processes.beat();
-    assert.equal((await pool.query('SELECT 1 FROM process_holds WHERE process_id = $1', [processes.ID])).rows.length, 1);
-    release();
-    await processes.flush();
+    assert.equal((await pool.query('SELECT 1 FROM platform_processes WHERE id = $1', [processes.ID])).rows.length, 1);
   });
 
   await t.test('draining: the row says so, and newer draining processes of the role are counted', async () => {
@@ -197,22 +150,19 @@ test('processes and their holds, against the full schema', { timeout: 120000 }, 
     assert.equal((await pool.query('SELECT state FROM platform_processes WHERE id = $1', [processes.ID])).rows[0].state, 'draining');
   });
 
-  await t.test('the leader reaps long-gone rows and their holds; live ones are listed', async () => {
-    await other('pod-ancient', { ageSeconds: processes.REAP_AFTER_SECONDS + 60, holds: [['session', 50]] });
+  await t.test('the process-reap clock deletes long-gone rows; live ones are listed', async () => {
+    await other('pod-ancient', { ageSeconds: processes.REAP_AFTER_SECONDS + 60 });
+    await other('pod-dead', { ageSeconds: processes.LIVE_SECONDS + 30 });
     assert.ok(await processes.reap() >= 1);
-    assert.equal((await pool.query(`SELECT 1 FROM process_holds WHERE process_id = 'pod-ancient'`)).rows.length, 0);
+    assert.equal((await pool.query(`SELECT 1 FROM platform_processes WHERE id = 'pod-ancient'`)).rows.length, 0);
     const live = await processes.list();
     assert.ok(live.some((p) => p.id === processes.ID));
     assert.ok(!live.some((p) => p.id === 'pod-dead'));
   });
 
-  await t.test('stopping deletes this process\'s row and holds, so what it leaves is free at once', async () => {
-    processes.hold('session', 60);
-    await processes.flush();
+  await t.test('stopping deletes this process\'s row, so it is not counted as live after it', async () => {
     await processes.stop();
     assert.equal((await pool.query('SELECT 1 FROM platform_processes WHERE id = $1', [processes.ID])).rows.length, 0);
-    assert.equal((await pool.query('SELECT 1 FROM process_holds WHERE process_id = $1', [processes.ID])).rows.length, 0);
-    assert.equal(processes.heldElsewhere('session', 30), false, 'a stopped registry sees nothing elsewhere');
     await until(() => true);
   });
 });

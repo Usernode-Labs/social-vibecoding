@@ -116,7 +116,7 @@ test('a close vote\'s withdrawal is the machine\'s close: its durable work finis
 
 test('a resume reads that the session is the caller\'s and paused before it evicts anybody (bug 23)', () => {
   const sessions = read('src/routes/sessions.js');
-  const fn = sessions.slice(sessions.indexOf('async function resumePausedSession('), sessions.indexOf('// What a stop forwarded from another platform process'));
+  const fn = sessions.slice(sessions.indexOf('async function resumePausedSession('), sessions.indexOf('// A resume Homeroom has not decided yet'));
   const refused = fn.indexOf("if (!own || own.status !== 'paused') return { ok: false, status: 404");
   assert.ok(refused > 0, 'a session that is not the caller\'s, or not paused, is refused first');
   for (const evicts of ['freeGlobalSlot(', 'freeUserSlot(', 'resumeProposal(']) {

@@ -1588,9 +1588,9 @@ async function cleanup() {
     });
   }
 
-  // This process's row goes, and its holds with it: what it leaves is the
-  // next process's at once rather than once its heartbeat lapses
-  // (services/processes.js). Bounded like the marks above.
+  // This process's row goes: it is not counted as live after it, rather than
+  // until its heartbeat lapses (services/processes.js). Bounded like the
+  // marks above.
   await boundedStep(processes.stop(), BUILD_SHUTDOWN_MARK_TIMEOUT_MS)
     .catch((err) => log.warn('server', 'Could not remove this process\'s row', { err: err.message }));
 

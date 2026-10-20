@@ -99,7 +99,7 @@ test('no sweep stops a worker a durable build holds: the eviction clock reads it
   const eviction = fs.readFileSync(path.join(__dirname, '..', 'src/services/worker-eviction.js'), 'utf8');
   assert.match(eviction, /AND NOT \$\{workedOnSql\(\)\}/);
   const work = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/session-work.ts'), 'utf8');
-  assert.match(work.slice(work.indexOf('export function workedOnSql()')), /OR \$\{buildHoldSql\('cs'\)\}/);
+  assert.match(work.slice(work.indexOf('export function workedOnSql(')), /OR \$\{buildHoldSql\('cs'\)\}/);
   // Adoption keeps a durable build's worker as it is
   // (tests/homeroom-bot-restart-recovery.test.js).
   // (Moved out of server.js unchanged: services/turn-recovery.js. A turn's

@@ -179,11 +179,11 @@ async function gatherFull(config) {
       else if (warm.inFlight) workerMode = 'in-flight';
       else workerMode = 'warm-idle';
     } else if (sessionId != null) {
-      // Another live process's worker (a web process's, or the conductor's:
-      // docs/plans/web-and-conductor.md), not an orphan: what it holds says
-      // what it is doing (services/processes.js).
-      const processes = require('./processes');
-      if (processes.heldElsewhere('session', sessionId)) workerMode = 'in-flight';
+      // Another process's worker (a workflow process's, where a person's
+      // turn runs: docs/plans/web-and-conductor.md), not an orphan: its
+      // session's turn record says it is running, session_workers that it
+      // was used.
+      if (sess && sess.has_active_turn) workerMode = 'in-flight';
       else if (usedElsewhere.has(Number(sessionId))) workerMode = 'warm-idle';
     }
     const idleMs = warm && !warm.inFlight ? Date.now() - warm.lastUsedMs : null;

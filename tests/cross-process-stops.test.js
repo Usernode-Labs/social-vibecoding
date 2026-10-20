@@ -2,37 +2,19 @@
 
 // Stops for work another platform process runs (docs/plans/
 // draining-releases.md): a turn, and the BYOK spend a proxy saw for a turn
-// it does not run. (A bench trial's or run's cancel is the bench lane's
-// machine's, which stops a trial through its build wherever it runs: never
-// the bus.) The process that holds
-// the work does what a stop in its own process does; the one asked forwards
-// it over the WebSocket bus and answers as if it had. Here the other process
-// is played by the registry's copy of its holds (a fake database answers the
-// mirror's read) and the bus by a stub of its publish.
+// it does not run. A person's turn is its machine's work item
+// (src/workflow/turn/): a Stop reaches it through its machine, and the
+// durable path (the stamp, the kill inside the worker) reaches the rest from
+// any process. Nothing is forwarded over the WebSocket bus any more, and no
+// process reads another's memory. (A bench trial's or run's cancel is the
+// bench lane's machine's; shots are the shots machine's.)
 //
 // Run with: node --test tests/cross-process-stops.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const processes = require('../src/services/processes');
 const wsBus = require('../src/services/ws-bus');
-
-// The registry, started over a database whose only other process holds `held`.
-async function elsewhere(held) {
-  processes._reset();
-  const pool = {
-    query: async (sql) => {
-      if (/FROM process_holds h\s+JOIN platform_processes p ON p\.id = h\.process_id\s+WHERE h\.process_id <> \$1/.test(sql)) {
-        return { rows: held.map(([kind, ref]) => ({ kind, ref: String(ref), process_id: 'pod-old' })) };
-      }
-      if (/SELECT DISTINCT h\.process_id/.test(sql)) return { rows: held.length ? [{ process_id: 'pod-old' }] : [] };
-      return { rows: [], rowCount: 0 };
-    },
-  };
-  await processes.start({ pool, role: 'all' });
-  return pool;
-}
 
 function capturePublishes() {
   const sent = [];
@@ -41,38 +23,19 @@ function capturePublishes() {
   return { sent, restore: () => { wsBus.publish = real; } };
 }
 
-test('a Stop for a turn another process runs is forwarded to it, and answered as stopping', async (t) => {
-  await elsewhere([['session', 4242]]);
+test('a Stop with no turn here forwards nothing over the bus: its turn\'s machine, or the durable path, reaches it', async (t) => {
   const bus = capturePublishes();
-  t.after(() => { bus.restore(); processes._reset(); });
+  t.after(() => { bus.restore(); });
   const { requestSessionStop } = require('../src/routes/sessions');
-  const queries = [];
-  const pool = { query: async (sql, params) => { queries.push(sql); return { rows: [{ id: 4242, user_id: 7 }] }; } };
-  const result = await requestSessionStop({ pool, sessionId: 4242, user: { id: 7, username: 'alice' } });
-  assert.equal(result.status, 202);
-  assert.equal(result.body.stopping, true);
-  assert.deepEqual(bus.sent, [{
-    kind: 'session_stop', routing: null,
-    data: { sessionId: 4242, user: { id: 7, username: 'alice', canAdminWrite: false }, force: false, immediate: false, expectedTurnId: null },
-  }]);
-  // The stop's user is checked here first: someone else's session is not forwarded.
-  bus.sent.length = 0;
+  const pool = { query: async () => ({ rows: [{ id: 4242, user_id: 7 }] }) };
+  await requestSessionStop({ pool, sessionId: 4242, user: { id: 7, username: 'alice' } });
+  assert.deepEqual(bus.sent.filter((m) => m.kind === 'session_stop'), []);
+  // The stop's user is checked first: someone else's session is refused.
   const denied = await requestSessionStop({
     pool: { query: async () => ({ rows: [] }) }, sessionId: 4242, user: { id: 8, username: 'mallory' },
   });
   assert.equal(denied.status, 404);
-  assert.deepEqual(bus.sent, []);
-});
-
-test('a forwarded stop is run where the turn is, and never forwarded again', async (t) => {
-  await elsewhere([['session', 4242]]);
-  const bus = capturePublishes();
-  t.after(() => { bus.restore(); processes._reset(); });
-  const sessions = require('../src/routes/sessions');
-  // Not held here: nothing to do, nothing published.
-  assert.equal(await sessions.receiveSessionStop({ sessionId: 4242, user: { id: 7, username: 'alice' } }), null);
-  assert.deepEqual(bus.sent, []);
-  assert.equal(await sessions.receiveSessionStop({ sessionId: 'x', user: { id: 7 } }), null, 'a malformed one is ignored');
+  assert.equal(require('../src/routes/sessions').receiveSessionStop, undefined, 'and nothing receives one');
 });
 
 test('a Stop for shots is no bus message: the shots machine cancels the agent\'s step wherever it runs', () => {
@@ -95,27 +58,20 @@ test('a bench cancel is the bench lane\'s machine\'s, never the bus\'s', () => {
   assert.doesNotMatch(ws, /bench_cancel|bench_wake/);
 });
 
-test('the bus delivers each stop to its receiver, and a turn\'s BYOK spend to the process running it', async (t) => {
+test('the bus delivers a turn\'s BYOK spend to the process running it, and an older release\'s stop forward to nobody', async (t) => {
   const ws = require('../src/services/ws');
-  const sessions = require('../src/routes/sessions');
   const worker = require('../src/services/worker');
   const got = [];
-  const saved = { s: sessions.receiveSessionStop, w: worker.receiveTurnByok };
-  sessions.receiveSessionStop = async (p) => { got.push(['session', p.sessionId]); };
+  const saved = worker.receiveTurnByok;
   worker.receiveTurnByok = (p) => { got.push(['byok', p.cents]); };
-  t.after(() => {
-    sessions.receiveSessionStop = saved.s; worker.receiveTurnByok = saved.w;
-  });
+  t.after(() => { worker.receiveTurnByok = saved; });
   ws._onBusMessage({ kind: 'session_stop', data: { sessionId: 1 } });
   ws._onBusMessage({ kind: 'turn_byok', data: { cents: 12 } });
-  ws._onBusMessage({ kind: 'session_stop', data: { sessionId: 2 }, oversize: true });
   await new Promise((r) => setImmediate(r));
-  assert.deepEqual(got, [['session', 1], ['byok', 12]], 'an oversize one carries nothing to act on');
+  assert.deepEqual(got, [['byok', 12]]);
 });
 
-test('BYOK spend the proxy here saw for a turn another process runs is not kept here', async (t) => {
-  await elsewhere([['session', 515]]);
-  t.after(() => processes._reset());
+test('BYOK spend the proxy here saw for a turn this process does not run is not kept here', async () => {
   const worker = require('../src/services/worker');
   worker.noteTurnByokSpend(515, 40);
   assert.equal(worker.getTurnByokCents(515), 0, 'this process runs no turn on the session: no tally of its own');

@@ -538,6 +538,25 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     }
   });
 
+  await t.test('C4 a dev chat turn is work on its change for every process; the turn itself reads past its own instance', async () => {
+    // No process mirrors what it runs (services/processes.js holds are its
+    // own drain's): another process reads the turn's instance
+    // (session-work.ts workedOnSql), and the Mayor turn's own busy gates
+    // read everything but it (exceptTurn), or it would refuse itself.
+    const { isSessionBusyAnywhere, busySessionsAnywhere } = require('../src/services/active-workers');
+    const c = await change();
+    const idle = await change();
+    assert.equal(await isSessionBusyAnywhere(c.id, { pool }), false, 'nothing works on it yet');
+    await send(c, 'Asked', { turnId: 'c4', kind: 'classic', input: {} });
+    await rt.drain();
+    assert.equal((await instance(c)).state, 'running');
+    assert.equal(await isSessionBusyAnywhere(c.id, { pool }), true, 'its running turn is work on it');
+    assert.deepEqual([...await busySessionsAnywhere([c.id, idle.id], { pool })], [c.id], 'read for many at once, only the one worked on');
+    assert.equal(await isSessionBusyAnywhere(c.id, { pool, exceptTurn: true }), false, 'the turn does not count itself');
+    await settle();
+    assert.equal(await isSessionBusyAnywhere(c.id, { pool }), false, 'and once it ended, nothing works on it');
+  });
+
   await t.test('C3 resumed: what it dispatched is carried on; a turn cut before its reply gets the dev chat\'s note, once', async () => {
     reset(); classic.turns.length = 0; classic.stalled.length = 0;
     const c = await change();

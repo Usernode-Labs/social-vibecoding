@@ -25,7 +25,6 @@ const limits = require('./limits');
 const events = require('./events');
 const ws = require('./ws');
 const log = require('./logger');
-const processes = require('./processes');
 
 let config = null;
 function sharedConfig() {
@@ -289,13 +288,17 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     log.info('server', 'A turn on this worker is live in this process; not adopting it', { containerName, sessionId });
     return;
   }
-  // Nor one another live process is following: the Pod a release replaced
-  // finishes its turns while this one leads (docs/plans/draining-releases.md),
-  // holding their sessions until they end (services/processes.js). Read
-  // exactly: a session whose holders cannot be read is retried, not taken.
+  // Nor one an older release's live process is following (ROLLOUT-ONLY: it
+  // finishes its turns while it drains, docs/plans/draining-releases.md,
+  // holding their sessions until they end). This release's turns are their
+  // work items' (workflow_owned, below). Read exactly: a session whose
+  // holders cannot be read is retried, not taken.
   let holders = [];
   try {
-    if (!owned) holders = await processes.holders(['session', 'sync'], sessionId, pool);
+    if (!owned) {
+      const holder = await require('./turn-leftovers').olderProcessHolding(pool, sessionId);
+      if (holder) holders = [holder];
+    }
   } catch (err) {
     throw retryRuntimeRecovery(`could not read who holds the session: ${err.message}`);
   }

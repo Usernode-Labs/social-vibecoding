@@ -224,6 +224,10 @@ limits.settleTurnSpend = async (_pool, userId, cents, opts) => { rec.billing.pus
 // unrelated SQL here depending on CPU load, sometimes in the NEXT scenario.
 // Keep the turn golden deterministic without changing its expected output.
 require('../src/services/session-state').touch = () => {};
+// The busy read names this process's own holder (it skips this process's
+// operations, which its memory answers for); a fixed one keeps the SQL the
+// same from run to run.
+require('../src/services/process-presence').holder = () => 'golden-host:1:boot';
 
 const sessionTitles = require('../src/services/session-title');
 sessionTitles.titleAtTurnEnd = (args) => { rec.calls.push({ fn: 'titleAtTurnEnd', firstTurn: !!args.firstTurn, message: args.message }); };

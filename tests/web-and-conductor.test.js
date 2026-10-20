@@ -17,31 +17,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const processes = require('../src/services/processes');
 const wsBus = require('../src/services/ws-bus');
 
 const serverJs = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-
-// The registry, over a database whose only other live process ('pod-web')
-// holds `held` ([kind, ref] pairs). `holders` is answered exactly too.
-async function elsewhere(held, other = 'pod-web') {
-  processes._reset();
-  const pool = {
-    query: async (sql, params = []) => {
-      if (/FROM process_holds h\s+JOIN platform_processes p ON p\.id = h\.process_id\s+WHERE h\.process_id <> \$1/.test(sql)) {
-        return { rows: held.map(([kind, ref]) => ({ kind, ref: String(ref), process_id: other })) };
-      }
-      if (/SELECT DISTINCT h\.process_id/.test(sql)) {
-        const kinds = [].concat(params[0]);
-        const hit = held.some(([kind, ref]) => kinds.includes(kind) && String(ref) === String(params[1]));
-        return { rows: hit ? [{ process_id: other }] : [] };
-      }
-      return { rows: [], rowCount: 0 };
-    },
-  };
-  await processes.start({ pool, role: 'web' });
-  return pool;
-}
 
 function capturePublishes(t) {
   const sent = [];
@@ -191,18 +169,22 @@ test('no process stands for leader, and only a serving one says its merges are l
   assert.match(startBody, /if \(processRole\.servesRequests\(ownRole\)\) require\('\.\/src\/workflow\/platform\.ts'\)\.releaseServing\(getPool\(config\)\);/);
   // The scans that read busy before acting read it for every process: the
   // imported-PR look, the revision refresh and the measurement, clocks of
-  // the workflow now (services/proposal-scans.js). isSessionBusy is the
-  // turn here (worker.isInFlight) and a hold any other process has.
+  // the workflow now (services/proposal-scans.js). What another process
+  // works on is read from the workflow's own records (session-work.ts
+  // workedOnSql), never from a mirror of its holds.
   const scans = fs.readFileSync(path.join(__dirname, '..', 'src/services/proposal-scans.js'), 'utf8');
-  assert.match(scans, /function busy\(sessionId\) \{\n\s+return require\('\.\/active-workers'\)\.isSessionBusy\(Number\(sessionId\)\);/);
-  for (const fn of ['async function lookImported(', 'async function refreshRevision(', 'async function measurePromoted(']) {
+  assert.match(scans, /function busy\(sessionId, pool\) \{\n\s+return require\('\.\/active-workers'\)\.isSessionBusyAnywhere\(Number\(sessionId\), \{ pool \}\);/);
+  for (const fn of ['async function lookImported(', 'async function refreshRevision(']) {
     const body = scans.slice(scans.indexOf(fn), scans.indexOf('\n}\n', scans.indexOf(fn)));
-    assert.match(body, /busy\(session\.id\)/, `${fn} skips a session busy anywhere`);
+    assert.match(body, /await busy\(session\.id, pool\)/, `${fn} skips a session busy anywhere`);
   }
+  const measure = scans.slice(scans.indexOf('async function measurePromoted('), scans.indexOf('\n}\n', scans.indexOf('async function measurePromoted(')));
+  assert.match(measure, /busySessionsAnywhere\(sessions\.map\(\(s\) => s\.id\), \{ pool \}\)/, 'the measurement skips sessions busy anywhere');
   const busy = fs.readFileSync(path.join(__dirname, '..', 'src/services/active-workers.js'), 'utf8');
-  const isBusy = busy.slice(busy.indexOf('function isSessionBusy('), busy.indexOf('function isSessionBusyElsewhere('));
-  assert.match(isBusy, /worker\.isInFlight\(sessionId\)/);
-  assert.match(isBusy, /return isSessionBusyElsewhere\(sessionId\);/);
+  const anywhere = busy.slice(busy.indexOf('async function isSessionBusyAnywhere('), busy.indexOf('async function busySessionsAnywhere('));
+  assert.match(anywhere, /if \(isSessionBusy\(sessionId\)\) return true;/, 'this process\'s own turn first');
+  assert.match(anywhere, /workedOnSql\(/, 'then the workflow\'s records');
+  assert.doesNotMatch(busy, /isSessionBusyElsewhere|heldElsewhere/, 'no mirror of another process\'s holds');
 });
 
 // ── The chart ─────────────────────────────────────────────────────────

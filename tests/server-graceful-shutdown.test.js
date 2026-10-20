@@ -756,7 +756,7 @@ test('a Pod a release replaced keeps listening while it finishes what it holds, 
 test('a Pod a release replaced hands over what it still holds at its drain deadline', async () => {
   const { server, logs } = loadServer();
   const processes = require('../src/services/processes');
-  const release = processes.hold('sync', 5151);
+  const release = processes.hold('handoff', 5151);
   try {
     const startedAt = Date.now();
     const order = await runCleanup(server, {
@@ -766,7 +766,7 @@ test('a Pod a release replaced hands over what it still holds at its drain deadl
     assert.ok(Date.now() - startedAt < 15000, 'bounded by the deadline, not by the work');
     const handed = logs.find((l) => l.msg === "Drain deadline passed; handing the rest of this process's work over");
     assert.ok(handed, 'it says it is handing the work over');
-    assert.deepEqual(handed.data.holds, [{ kind: 'sync', ref: '5151' }], 'and what it held');
+    assert.deepEqual(handed.data.holds, [{ kind: 'handoff', ref: '5151' }], 'and what it held');
   } finally {
     release();
   }

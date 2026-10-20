@@ -233,14 +233,15 @@ test('a durable build\'s worker is left to its build: kept, never stopped, follo
     const pool = makePool({ session });
     await adopt(pool, session, 'running');
     assert.deepEqual(workerCalls, [['adoptWarmWorker', 6001]], 'kept and registered, nothing else');
-    assert.equal(pool.calls.length, 1, 'nothing but the read of the session: no run, session or turn record is touched');
+    assert.deepEqual(pool.calls.map((c) => (/FROM process_holds/.test(c.sql) ? 'older-holds' : 'read')), ['read', 'older-holds'],
+      'nothing but the reads of the session and of who holds it: no run, session or turn record is touched');
     assert.deepEqual(ledger, []);
 
     workerCalls.length = 0;
     const exited = makePool({ session });
     await adopt(exited, session, 'exited');
     assert.deepEqual(workerCalls, [], 'a worker that did not survive is not removed either: the build reads that for itself');
-    assert.equal(exited.calls.length, 1);
+    assert.equal(exited.calls.filter((c) => !/FROM process_holds/.test(c.sql)).length, 1);
   }
 });
 

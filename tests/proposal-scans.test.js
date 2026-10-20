@@ -18,7 +18,10 @@ function fakeModule(relPath, exports) {
 }
 
 const busy = new Set();
-fakeModule('../src/services/active-workers', { isSessionBusy: (id) => busy.has(Number(id)) });
+fakeModule('../src/services/active-workers', {
+  isSessionBusyAnywhere: async (id) => busy.has(Number(id)),
+  busySessionsAnywhere: async (ids) => new Set(ids.map(Number).filter((id) => busy.has(id))),
+});
 const budget = { allows: true };
 fakeModule('../src/services/github-budget', {
   budgetAllows: () => budget.allows,

@@ -99,9 +99,9 @@ test('the pass fetches once per app, measures each proposal from it, and falls b
   assert.match(fn, /const mirrorDir = await integration\.fetchAppMirror\(ready\)\.catch\(/);
   assert.match(fn, /integration\.measure\(\{ pool, session \}, \{ force: true, \.\.\.\(mirrorDir \? \{ mirrorDir \} : \{\}\) \}\)/,
     'with the app\'s mirror when it was fetched, and a fetch of its own when not');
-  assert.match(fn, /sessions\.filter\(\(session\) => !busy\(session\.id\)\)/, 'never a session mid-turn');
-  assert.match(SCANS, /function busy\(sessionId\) \{\n\s+return require\('\.\/active-workers'\)\.isSessionBusy\(Number\(sessionId\)\);/,
-    'mid-turn on any process (isSessionBusy reads this process\'s worker too)');
+  assert.match(fn, /sessions\.filter\(\(session\) => !working\.has\(Number\(session\.id\)\)\)/, 'never a session mid-turn');
+  assert.match(fn, /require\('\.\/active-workers'\)\.busySessionsAnywhere\(sessions\.map\(\(s\) => s\.id\), \{ pool \}\)/,
+    'mid-turn on any process (busySessionsAnywhere reads this process\'s worker and the workflow\'s records)');
 });
 
 test('the measurement runs on its own clock, not inside another sweep, and a shutdown stops it', () => {

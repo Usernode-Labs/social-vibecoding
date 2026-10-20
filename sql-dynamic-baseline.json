@@ -409,6 +409,13 @@
       "preview": "`SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total, COUNT(*)::int AS all_total, ${allDoneSql} AS all_done, COUNT(*) FILTER ( WHERE ${scopeFilter} AND "
     },
     {
+      "source": "src/routes/issues.js",
+      "kind": "structural-template",
+      "fingerprint": "1ed079d9e52e665be2be",
+      "count": 1,
+      "preview": "`SELECT UNNEST(cs.linked_issues) AS n, cs.id, cs.user_id, cs.status, cs.shared_at, cs.last_activity_at, cs.created_at, u.username, ${workedOnSql()} AS worked_on"
+    },
+    {
       "source": "src/routes/kudos.js",
       "kind": "structural-template",
       "fingerprint": "23e047220a859a119a96",
@@ -474,9 +481,58 @@
     {
       "source": "src/routes/proposal-handoff.js",
       "kind": "structural-template",
+      "fingerprint": "14e100b27085ad0a7fe8",
+      "count": 1,
+      "preview": "`SELECT cs.*, a.slug AS app_slug, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.user_id = $1 AND cs.handoff_request_id "
+    },
+    {
+      "source": "src/routes/proposal-handoff.js",
+      "kind": "structural-template",
+      "fingerprint": "476bc6cbc89e56feb04a",
+      "count": 1,
+      "preview": "`SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.collab_visibility, a.view_visibility, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN app"
+    },
+    {
+      "source": "src/routes/proposal-handoff.js",
+      "kind": "structural-template",
+      "fingerprint": "5e36542ef8458d49531f",
+      "count": 1,
+      "preview": "`SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.collab_visibility, a.view_visibility, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN app"
+    },
+    {
+      "source": "src/routes/proposal-handoff.js",
+      "kind": "structural-template",
+      "fingerprint": "88f4499c338d7f3adb7a",
+      "count": 1,
+      "preview": "`SELECT cs.*, a.slug AS app_slug, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 AND cs.user_id = $2 AND cs.app_"
+    },
+    {
+      "source": "src/routes/proposal-handoff.js",
+      "kind": "structural-template",
+      "fingerprint": "bf63b7bb71ed94aa961b",
+      "count": 1,
+      "preview": "`SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.collab_visibility, a.view_visibility, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN app"
+    },
+    {
+      "source": "src/routes/proposal-handoff.js",
+      "kind": "structural-template",
       "fingerprint": "c9542dc200bfb852bb1e",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5, ${summaryFreshness.INVALIDATE_SQL}, handoff_upload_checked_sha = checks_comm"
+    },
+    {
+      "source": "src/routes/proposal-handoff.js",
+      "kind": "structural-template",
+      "fingerprint": "d230be33a081416081b2",
+      "count": 1,
+      "preview": "`SELECT cs.*, a.slug AS app_slug, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.user_id = $1 AND cs.app_id = $2 AND cs."
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
+      "fingerprint": "0882e61966e68334f071",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.status, cs.linked_issues, cs.shared_at, cs.transcript_shar"
     },
     {
       "source": "src/routes/sessions.js",
@@ -512,6 +568,13 @@
       "fingerprint": "ba8110c429c6037d85c2",
       "count": 1,
       "preview": "`SELECT s.version, s.built_at FROM chat_session_specs s WHERE s.session_id = $1 AND ($2::int = $3::int OR ${specVersionSharedVisibilitySql('s', '$3')}) ORDER BY"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
+      "fingerprint": "d6def8d6230e5b0888e6",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.session_title, cs.pr_title, cs.pr_number, cs.pr_url, cs.branch_name, cs.status, cs.staging_url, -- #2069, as above: a shared draft has neither"
     },
     {
       "source": "src/routes/sessions.js",
@@ -890,6 +953,20 @@
       "fingerprint": "746ec64bf1e3488f9fe5",
       "count": 1,
       "preview": "`DELETE FROM ${table} WHERE user_id = $1 AND message_id IS NULL`"
+    },
+    {
+      "source": "src/services/active-workers.js",
+      "kind": "structural-template",
+      "fingerprint": "9f56324a99752da672e8",
+      "count": 1,
+      "preview": "`SELECT ${require('../workflow/session-work.ts').workedOnSql({ turns: !exceptTurn, exceptHolder: ownHolder() })} AS busy FROM chat_sessions cs WHERE cs.id = $1`"
+    },
+    {
+      "source": "src/services/active-workers.js",
+      "kind": "structural-template",
+      "fingerprint": "b15a92d206772610996c",
+      "count": 1,
+      "preview": "`SELECT cs.id FROM chat_sessions cs WHERE cs.id = ANY($1::int[]) AND ${require('../workflow/session-work.ts').workedOnSql({ exceptHolder: ownHolder() })}`"
     },
     {
       "source": "src/services/admin-approval.js",

@@ -891,7 +891,7 @@ test('postgres: a request folded into a busy session stamps the head pending and
 
   const route = read('src/routes/sessions.js');
   const recheck = route.slice(route.indexOf("router.post('/api/sessions/:id/recheck'"), route.indexOf("router.post('/api/sessions/:id/recheck'") + 9000);
-  assert.match(recheck, /const busyNow = \(\) => isSessionBusy\(sessionId\);\s+if \(busyNow\(\)\) \{\s+await require\('\.\.\/services\/unit-suite-reuse'\)\.owePendingRun\(\{\s+pool, stagingRecovery, config, session, busy: busyNow, head: requestedHead,\s+\}\);\s+return res\.json\(\{ status: 'running' \}\);/);
+  assert.match(recheck, /const busyNow = \(\) => isSessionBusyAnywhere\(sessionId, \{ pool \}\);\s+if \(await busyNow\(\)\) \{\s+await require\('\.\.\/services\/unit-suite-reuse'\)\.owePendingRun\(\{\s+pool, stagingRecovery, config, session, busy: busyNow, head: requestedHead,\s+\}\);\s+return res\.json\(\{ status: 'running' \}\);/);
 });
 
 // The settlement's view of a run with no unit-suite row while a fresh run is

@@ -1382,7 +1382,6 @@
 "tests/private-member-shell.test.js":[0.3,1],
 "tests/private-requests.test.js":[0.4,1.6],
 "tests/process-role.test.js":[0.1,1.1],
-"tests/processes-multi-postgres.test.js":[8.7,0.1],
 "tests/processes-postgres.test.js":[2.7,0.1],
 "tests/prod-debug-access.test.js":[1.9,0.1],
 "tests/prod-debug-routes.test.js":[0.5,1.6],

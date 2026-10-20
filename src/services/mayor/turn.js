@@ -35,7 +35,7 @@ const workerProgress = require('../worker-progress');
 const {
   activeWorkers,
   beginSessionOperation,
-  isSessionBusy,
+  isSessionBusyAnywhere,
 } = require('../active-workers');
 const {
   fallbackKindForTurn,
@@ -439,7 +439,7 @@ async function runMayorTurn(ctx, deps) {
       const directSpec = await loadSessionSpec(pool, session.id);
       turnHasSpec = !!String(directSpec || '').trim();
 
-      if (isSessionBusy(session.id)) {
+      if (await isSessionBusyAnywhere(session.id, { pool, exceptTurn: true })) {
         const live = workerProgress.get(session.id);
         const busyIdentity = live?.backend
           ? {
@@ -733,7 +733,7 @@ async function runMayorTurn(ctx, deps) {
     // alive". Treating warm-idle as busy here would falsely lock
     // the Mayor out of dispatch_scout / dispatch_claude_code for
     // the entire idle-eviction window of a previous turn.
-    const isWorkerBusy = isSessionBusy(session.id);
+    const isWorkerBusy = await isSessionBusyAnywhere(session.id, { pool, exceptTurn: true });
     // Inject the live spec_md into the Mayor's system prompt every
     // turn so revisions anchor against real content instead of
     // regenerating from scratch. Re-read before phase-2 below in
@@ -1396,7 +1396,7 @@ async function runMayorTurn(ctx, deps) {
     // gating on container-status would reject every scout/build
     // for ~10 min after the first dispatch finishes (warm idle is
     // not busy).
-    if (isSessionBusy(session.id)) {
+    if (await isSessionBusyAnywhere(session.id, { pool, exceptTurn: true })) {
       const live = workerProgress.get(session.id);
       const busyAgent = live?.backend
         ? {

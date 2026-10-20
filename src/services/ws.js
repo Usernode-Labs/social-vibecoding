@@ -122,13 +122,10 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       // An older release's wake for the bot's loop, which is the workflow's
       // now (bot-request, bot-lane): nothing to do.
       return;
-    // Stops for work another platform process runs (docs/plans/
-    // draining-releases.md): the process that holds it does what a stop in
-    // its own process does; every other one finds nothing and ignores it.
-    // Never a socket event, and the sender has already checked who may stop.
+    // An older release's stop forward: a turn's stop reaches its machine's
+    // work item now (src/workflow/turn/), and the durable path reaches the
+    // rest. Never a socket event: nothing to do.
     case 'session_stop':
-      if (!oversize) void Promise.resolve(require('../routes/sessions').receiveSessionStop?.(payload))
-        .catch((err) => log.warn('ws', 'A stop for a turn here failed', { err: err.message }));
       return;
     // A turn's stream has a new row (services/session-bus.js): this
     // process's subscribers to it read on. Never a socket event.

@@ -171,15 +171,9 @@ test('only what no live process or work item holds is recovered', { timeout: 120
   // session_workers: tests/worker-eviction-postgres.test.js, a durable
   // build's included.)
 
-  await t.test('nor what this process itself holds', async () => {
-    const another = await session('mine');
-    const release = processes.hold('session', another);
-    try {
-      await new Promise((r) => setTimeout(r, 200));
-      await pass();
-      assert.ok(!(await asked()).includes(another));
-    } finally { release(); }
-  });
+  // (What this release's processes run is their work items': a record its
+  // outstanding item owns is never a leftover, tests/workflow-turn-postgres
+  // L2. Holds are in memory now, for a process's own drain.)
 
   await t.test('no database connection was dropped while the checks ran', () => {
     assert.deepEqual(dropped, [], 'an idle connection was terminated mid-test: ' + dropped.join('; '));

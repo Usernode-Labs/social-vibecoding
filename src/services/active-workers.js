@@ -215,39 +215,73 @@ function getActiveWorkerCount() {
   return new Set([...activeWorkers, ...activeSessionOperations.keys()]).size;
 }
 
-// Shared "any part of a turn is running" predicate — the same one the
-// /api/sessions/:id/status endpoint and the session-list routes use. For
-// every live platform process: this one's memory, then what the others hold
-// (services/processes.js, at most one refresh behind), so a sweeper on the
-// new leader never pauses a session a draining process is still finishing.
+// Shared "any part of a turn is running in this process" predicate.
 // `activeWorkers` covers the chat handler's full window (added before
 // ensureWorker, deleted in run(Scout|ClaudeCode)Tool's finally — i.e.
-// including the post-exec PR/staging tail) plus the restart-recovery
-// flows; `worker.isInFlight` covers the inner docker-exec window. The
-// auto-pause / staging-GC sweepers in server.js MUST use this instead
-// of the bare isInFlight, or they can tear a session down mid-wrap-up
-// (the sessions 2391/2386 incident).
+// including the post-exec PR/staging tail) plus the recovery flows;
+// `worker.isInFlight` covers the inner docker-exec window (the sessions
+// 2391/2386 incident). What another process runs is answered from the
+// database, not from this process's memory: isSessionBusyAnywhere.
 function isSessionBusy(sessionId) {
   if (hasSessionOperation(sessionId)) return true;
   // Lazy require: worker.js is pulled in by the route layer that also
   // requires this module — a top-level require here would be a cycle.
   const worker = require('./worker');
-  if (activeWorkers.has(sessionId) || worker.isInFlight(sessionId)) return true;
-  return isSessionBusyElsewhere(sessionId);
-}
-
-/** Whether another live process holds the session (processes.js mirror). */
-function isSessionBusyElsewhere(sessionId) {
-  if (sessionId === null || sessionId === undefined || sessionId === '') return false;
-  try { return processes().heldElsewhere('session', Number(sessionId)); } catch { return false; }
-}
-
-/** Only this process's part of isSessionBusy: what it runs itself. */
-function isSessionBusyHere(sessionId) {
-  if (hasSessionOperation(sessionId)) return true;
-  const worker = require('./worker');
   return activeWorkers.has(sessionId) || worker.isInFlight(sessionId);
 }
+
+// This process's holder, as its recorded operations name it: what it
+// answers from memory (its operations end here before their OperationEnded
+// reaches the preview machine).
+function ownHolder() {
+  try { return require('./process-presence').holder(); } catch { return null; }
+}
+
+// The same, for the platform's every process: this one's memory, then what
+// the database says works on the session (src/workflow/session-work.ts
+// workedOnSql: a turn's record, a turn its machine runs, a local agent's
+// turn, a shots run, a durable build, a sync, a recorded operation). For a
+// decision about a session another process may be working on. A database
+// that cannot answer leaves this process's own answer, as a reader that
+// cannot see another process never calls it busy. `exceptTurn`: asked by a
+// person's turn about its own change, whose turn machine instance is that
+// turn (session-work.ts workedOnSql turns: false).
+async function isSessionBusyAnywhere(sessionId, { pool = null, exceptTurn = false } = {}) {
+  if (isSessionBusy(sessionId)) return true;
+  const id = Number(sessionId);
+  if (!Number.isSafeInteger(id) || id <= 0) return false;
+  try {
+    const db = pool || require('../db/pool').getPool();
+    const { rows: [r] } = await db.query(
+      `SELECT ${require('../workflow/session-work.ts').workedOnSql({ turns: !exceptTurn, exceptHolder: ownHolder() })} AS busy FROM chat_sessions cs WHERE cs.id = $1`, [id]);
+    return !!(r && r.busy);
+  } catch (err) {
+    require('./logger').warn('active-workers', 'Could not read whether a session is worked on elsewhere', { sessionId: id, err: err.message });
+    return false;
+  }
+}
+
+// Of the sessions `ids`, those worked on by any process: this one's memory,
+// then one read of the database (as isSessionBusyAnywhere). For a pass over
+// many sessions whose pure picker takes a synchronous predicate.
+async function busySessionsAnywhere(ids, { pool = null } = {}) {
+  const wanted = [...new Set((ids || []).map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))];
+  const busy = new Set(wanted.filter((id) => isSessionBusy(id)));
+  if (!wanted.length) return busy;
+  try {
+    const db = pool || require('../db/pool').getPool();
+    const { rows } = await db.query(
+      `SELECT cs.id FROM chat_sessions cs WHERE cs.id = ANY($1::int[]) AND ${require('../workflow/session-work.ts').workedOnSql({ exceptHolder: ownHolder() })}`,
+      [wanted]);
+    for (const r of rows) busy.add(Number(r.id));
+  } catch (err) {
+    require('./logger').warn('active-workers', 'Could not read which sessions are worked on elsewhere', { err: err.message });
+  }
+  return busy;
+}
+
+/** Only this process's part: what it runs itself (isSessionBusy). */
+const isSessionBusyHere = isSessionBusy;
 
 module.exports = {
   activeWorkers,
@@ -256,6 +290,7 @@ module.exports = {
   getActiveWorkerCount,
   isSessionBusy,
   isSessionBusyHere,
-  isSessionBusyElsewhere,
+  isSessionBusyAnywhere,
+  busySessionsAnywhere,
   notifySessionState,
 };

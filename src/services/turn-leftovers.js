@@ -51,6 +51,8 @@ const LIVE_SECONDS = 45;
 // Per pass and per kind.
 const LIMIT = 50;
 
+// ROLLOUT-ONLY: an older release's process records what it runs in
+// process_holds; this release writes none (services/processes.js).
 const heldByLiveProcess = (ref) => `EXISTS (
   SELECT 1 FROM process_holds h JOIN platform_processes p ON p.id = h.process_id
    WHERE h.kind IN ('session', 'sync') AND h.ref = (${ref})::text
@@ -240,4 +242,19 @@ async function sweep(pool, { config, previous = null, deps = {} } = {}) {
   return { claims, records, headless, local, unanswered, backfilled: backfilled ?? null };
 }
 
-module.exports = { sweep, backfillUnanswered, STALE_SECONDS, CLAIMS_SQL, RECORDS_SQL, HEADLESS_SQL, UNANSWERED_SQL };
+/**
+ * ROLLOUT-ONLY: the live process of an older release that holds the session
+ * `sessionId` (it finishes its own turns while it drains), or null. Read by
+ * the adoption before it takes a turn (turn-recovery.js adoptOrphanWorker).
+ * Rejects on a database error: a caller that cannot tell must not act.
+ */
+async function olderProcessHolding(pool, sessionId) {
+  const { rows: [r] } = await pool.query(
+    `SELECT h.process_id FROM process_holds h JOIN platform_processes p ON p.id = h.process_id
+      WHERE h.kind IN ('session', 'sync') AND h.ref = $1::text
+        AND p.heartbeat_at > NOW() - make_interval(secs => ${LIVE_SECONDS})
+      LIMIT 1`, [Number(sessionId)]);
+  return r ? r.process_id : null;
+}
+
+module.exports = { sweep, backfillUnanswered, olderProcessHolding, STALE_SECONDS, CLAIMS_SQL, RECORDS_SQL, HEADLESS_SQL, UNANSWERED_SQL };

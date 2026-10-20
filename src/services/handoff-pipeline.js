@@ -29,8 +29,9 @@ const OWNED_SOURCE_SQL = "source IS DISTINCT FROM 'imported'";
 // still proving ancestry/updating GitHub. Serialize that adoption per session
 // so an older request can never persist its SHA after the newer request and
 // regress the durable reviewed head. This matches staging.js's process model;
-// different sessions still move independently. A pipeline is also this
-// process's hold (services/processes.js), so another platform process sees it.
+// different sessions still move independently. A pipeline is counted for this
+// process's drain (services/processes.js); another process sees its recorded
+// operation (beginHandoffPipeline).
 const handoffSubmissionTails = new Map();
 const handoffPipelines = require('./processes').heldSet('handoff');
 
@@ -46,9 +47,11 @@ function serializeHandoffSubmission(sessionId, fn) {
   return run;
 }
 
+// A hand-off pipeline this process runs on the session. One another process
+// runs is the session's recorded operation (kind 'handoff-pipeline'), read
+// from the database: session-work.ts operationOfKindLiveSql.
 function hasInFlightHandoffPipeline(sessionId) {
-  if (handoffPipelines.has(String(sessionId))) return true;
-  try { return require('./processes').heldElsewhere('handoff', String(sessionId)); } catch { return false; }
+  return handoffPipelines.has(String(sessionId));
 }
 
 function beginHandoffPipeline(sessionId) {

@@ -2736,13 +2736,12 @@ async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
 //   - adoptWarmWorker() → server restart picked up an existing warm
 //                         container; register it so the next exec
 //                         doesn't try to re-bootstrap on top.
-// docs/plans/draining-releases.md: a turn this process is executing holds
-// its session (services/processes.js) for as long as `inFlight` is set,
-// whatever started it (a person's turn, a sync, the shots agent, an eval
-// trial, a bot build): the cross-process twin of isInFlight, so another
-// process's leader never adopts or tears it down, and another process's
-// proxy reads its mode (remoteTurn). Taken on the flag's rise, given back on
-// its fall or when the entry goes.
+// docs/plans/draining-releases.md: a turn this process is executing is
+// counted for its drain (services/processes.js) for as long as `inFlight` is
+// set, whatever started it (a person's turn, a sync, the shots agent, an eval
+// trial, a bot build). Another process reads the turn's durable record, never
+// this count (remoteTurn, session-work.ts workedOnSql). Taken on the flag's
+// rise, given back on its fall or when the entry goes.
 const _inFlightHolds = new Map(); // sessionId -> release
 function _inFlightHold(sessionId, inFlight) {
   if (inFlight && !_inFlightHolds.has(sessionId)) {
@@ -4371,7 +4370,7 @@ function getActiveTurnMode(sessionId) {
 // calls back through whichever process the Service picks. What the proxy
 // must know about it (its mode, its id) comes from its durable record, cached
 // for REMOTE_TURN_TTL_MS: the proxy asks on every model call. Null for a turn
-// this process runs, and for a session no live process holds.
+// this process runs, and for a session with no turn record.
 const REMOTE_TURN_TTL_MS = 5000;
 const _remoteTurns = new Map(); // sessionId -> { at, turn: { mode, turnId } | null }
 
@@ -4379,8 +4378,6 @@ async function remoteTurn(sessionId) {
   const sid = Number(sessionId);
   const meta = _warmRegistry.get(sid);
   if (meta && meta.inFlight) return null;
-  const processes = require('./processes');
-  if (!processes.heldElsewhere('session', sid)) return null;
   const cached = _remoteTurns.get(sid);
   if (cached && Date.now() - cached.at < REMOTE_TURN_TTL_MS) return cached.turn;
   const pool = _getPoolSafe();
@@ -4421,9 +4418,10 @@ function noteTurnByokSpend(sessionId, cents) {
   const sid = Number(sessionId);
   if (!(cents > 0)) return;
   const meta = _warmRegistry.get(sid);
-  // A turn another process runs: the durable mirror here, and that process's
-  // tally for its settlement told over the bus (receiveTurnByok).
-  if (!(meta && meta.inFlight) && require('./processes').heldElsewhere('session', sid)) {
+  // A turn this process does not run (another process's, as its durable
+  // record says): the durable mirror here, and that process's tally for its
+  // settlement told over the bus (receiveTurnByok).
+  if (!(meta && meta.inFlight)) {
     void remoteTurn(sid).then(async (turn) => {
       if (!turn?.turnId) return;
       const pool = _getPoolSafe();
@@ -4461,9 +4459,9 @@ function getTurnByokCents(sessionId) {
 function markTurnByokSwitched(sessionId) {
   const sid = Number(sessionId);
   const meta = _warmRegistry.get(sid);
-  // A turn another process runs: no registry entry is made for it here; once
-  // per session per REMOTE_SWITCH_MS stands in for once per turn.
-  if (!(meta && meta.inFlight) && require('./processes').heldElsewhere('session', sid)) {
+  // A turn this process does not run: no registry entry is made for it here;
+  // once per session per REMOTE_SWITCH_MS stands in for once per turn.
+  if (!(meta && meta.inFlight)) {
     const at = _remoteByokSwitched.get(sid);
     if (at && Date.now() - at < REMOTE_SWITCH_MS) return false;
     if (_remoteByokSwitched.size > 500) _remoteByokSwitched.clear();

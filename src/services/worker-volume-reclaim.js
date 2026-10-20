@@ -80,9 +80,11 @@ async function reclaimWorkerVolumes({
        FROM chat_sessions WHERE id = ANY($1::int[])`,
     [ids]
   );
+  // What works on each session, on any process, read once for the pass.
+  const busy = await d.activeWorkers.busySessionsAnywhere(ids, { pool });
   const picked = pickVolumes(volumes, rows, {
     mode, excludeSessionId: exclude, limit, now: d.now(),
-    isBusy: (id) => d.activeWorkers.isSessionBusy(id),
+    isBusy: (id) => busy.has(Number(id)),
   });
   const freed = [];
   for (const pick of picked) {

@@ -555,7 +555,8 @@ async function reapLeftover(item, config = {}) {
   if (status && !FINISHED_STATUSES.has(status) && namesPreview(fresh, fresh.session)) return { outcome: 'skipped_linked' };
   // An open session somebody works on (a turn about to replace its
   // preview): its leftover waits for the next run.
-  if (status && !FINISHED_STATUSES.has(status) && require('./active-workers').isSessionBusy(Number(fresh.sessionId))) {
+  if (status && !FINISHED_STATUSES.has(status)
+      && await require('./active-workers').isSessionBusyAnywhere(Number(fresh.sessionId), { pool: getPool(config) })) {
     return { outcome: 'skipped_busy' };
   }
   return reapOne(fresh, config);
@@ -764,8 +765,13 @@ async function run(config, job, { isInFlight = null } = {}) {
   const startedMs = Date.now();
 
   const containers = await listPreviews(config);
+  const classified = await classify(pool, containers);
+  // What works on each session, on any process (session-work.ts
+  // workedOnSql), read once for the pass.
+  const busy = await require('./active-workers').busySessionsAnywhere(classified.map((item) => item.sessionId), { pool });
+  const working = (id) => busy.has(Number(id)) || !!(isInFlight && isInFlight(id));
   const { stale, selected: items } = selectReapable(
-    await classify(pool, containers), stagingEnv.expectedStagingFingerprint(config), { isInFlight }
+    classified, stagingEnv.expectedStagingFingerprint(config), { isInFlight: working }
   );
   // The classification says what the session is doing; for a live session's
   // preview the reason it was taken is its env, so the row says that too.
@@ -1247,9 +1253,11 @@ async function sweepConnectionPressure(config, { server = null, asked = [] } = {
       const labelled = dbManager.previewDatabaseServerOf(state.labels) || dbManager.PRIMARY_SERVER;
       return labelled === (onPreviewServer ? dbManager.PREVIEW_SERVER : dbManager.PRIMARY_SERVER);
     };
+    // What works on each session, on any process, read once for the pass.
+    const busy = await activeWorkers.busySessionsAnywhere(rows.map((r) => r.id), { pool });
     const eligible = selectPressureVictims({
       rows,
-      isBusy: activeWorkers.isSessionBusy,
+      isBusy: (id) => busy.has(Number(id)),
     });
     const victims = [];
     for (const row of eligible) {

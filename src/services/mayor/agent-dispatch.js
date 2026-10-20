@@ -121,7 +121,7 @@ async function waitOutShotsRun(d, changeId, sendAgent) {
   });
   const waited = await d.shotsWait(changeId, { timeoutMs: d.shotsWaitMs });
   if (waited === 'timeout') return 'timeout';
-  return d.activeWorkers.isSessionBusy(changeId) ? 'busy' : 'idle';
+  return (await d.activeWorkers.isSessionBusyAnywhere(changeId)) ? 'busy' : 'idle';
 }
 
 // MAYOR_TURN_DEPS lives in routes/sessions.js, which requires the Mayor
@@ -154,7 +154,8 @@ async function canDispatch(change, deps = {}) {
   if (!LIVE_STATUSES.has(change.status) && !RESUMABLE_STATUSES.has(change.status)) return false;
   if (!/github\.com\/[^/]+\/[^/]+/.test(change.repo_url || '')) return false;
   const id = Number(change.id);
-  if (!d.activeWorkers.isSessionBusy(id)) return true;
+  // What works on the change, on any process (a sync, another turn).
+  if (!(await d.activeWorkers.isSessionBusyAnywhere(id))) return true;
   // Held only by a shots run: the dispatch waits it out.
   return !d.activeWorkers.hasSessionOperation(id) && !d.activeWorkers.activeWorkers.has(id)
     && !!(await d.shotsRunning(id));
@@ -270,7 +271,7 @@ async function runDispatch({
       + 'try again in a few minutes.');
   }
   const changeId = Number(change.id);
-  if (d.activeWorkers.isSessionBusy(changeId)) {
+  if (await d.activeWorkers.isSessionBusyAnywhere(changeId)) {
     const waited = await waitOutShotsRun(d, changeId, sendAgent);
     if (waited === 'timeout') return refusal(SHOTS_BUSY_TEXT);
     if (waited !== 'idle') return refusal(BUSY_TEXT);
