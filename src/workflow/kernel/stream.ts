@@ -1,6 +1,6 @@
 // The event stream: producers append; routes may wait for the outcome.
 
-import { WorkflowInputError, assertJson } from './machine.ts';
+import { WorkflowInputError, assertJson, jsonText } from './machine.ts';
 import type { Machine } from './machine.ts';
 import type { EventOutcome, Logger, Pool, PoolClient, Queryable, Source } from './types.ts';
 
@@ -40,7 +40,7 @@ export async function append(
        INSERT INTO wf_events (machine, key, app_id, type, payload, source, actor, request_key, caused_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id)
      SELECT id, pg_notify('wf_events', $1) FROM ins`,
-    [name, key, opts.appId ?? null, event.type, JSON.stringify(payload), JSON.stringify(opts.source),
+    [name, key, opts.appId ?? null, event.type, jsonText(payload), jsonText(opts.source),
       opts.actor ?? null, opts.requestKey, opts.causedBy ?? null],
   );
   return Number(rows[0]!.id);

@@ -7,7 +7,7 @@
 // the machine's own queries run, and one statement records the outcome
 // before COMMIT. Failures take a slower path in a transaction of their own.
 
-import { NONE, WORK_EVENTS, assertJson, canonicalHash, isIgnored, isRejection } from './machine.ts';
+import { NONE, WORK_EVENTS, assertJson, canonicalHash, isIgnored, isRejection, jsonText } from './machine.ts';
 import type { Machine, WorkResultPayload } from './machine.ts';
 import type {
   Event, Json, Logger, MessageRequest, Outcome, Pool, PoolClient, Push, Queryable, State, TransitionContext, Tx,
@@ -365,7 +365,7 @@ const CANCEL_WORK = `
   -- with room hears it (services.ts claim).
   SELECT id, pg_notify('wf_work', kind) FROM cancelled`;
 
-const json = (v: Json | undefined) => (v == null ? null : JSON.stringify(v));
+const json = (v: Json | undefined) => (v == null ? null : jsonText(v));
 
 async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: Picked,
   publish?: PipelineOptions['publish']): Promise<void> {
@@ -500,7 +500,7 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
          ON CONFLICT (machine, key, kind, work_key) DO NOTHING
          RETURNING id)
        SELECT id, pg_notify('wf_work', $3) FROM ins`,
-      [machine.name, row.key, w.kind, w.key, JSON.stringify(w.input), w.notBefore ?? null, eventId, w.continues ?? null]);
+      [machine.name, row.key, w.kind, w.key, jsonText(w.input), w.notBefore ?? null, eventId, w.continues ?? null]);
     work.push({ kind: w.kind, key: w.key, id: created?.id ?? null });
   }
   const messages = [];
@@ -511,18 +511,18 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
          INSERT INTO wf_events (machine, key, app_id, type, payload, source, actor, request_key, caused_by)
          VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8) RETURNING id)
        SELECT id, pg_notify('wf_events', $1) FROM ins`,
-      [m.to.machine, m.to.key, m.appId ?? ctx.appId, m.event.type, JSON.stringify(m.event.payload),
-        JSON.stringify({ kind: 'message', from: { machine: machine.name, key: row.key, eventId } }),
+      [m.to.machine, m.to.key, m.appId ?? ctx.appId, m.event.type, jsonText(m.event.payload),
+        jsonText({ kind: 'message', from: { machine: machine.name, key: row.key, eventId } }),
         `msg:${eventId}:${i}`, eventId]);
     messages.push({ machine: m.to.machine, key: m.to.key, type: m.event.type, eventId: Number(sent.id) });
   }
 
   await client.query(FINISH_ACCEPTED, [
-    machine.name, row.key, ctx.appId, outcome.next.name, JSON.stringify(data), next, machine.version,
-    timer ? timer.at : null, timer ? JSON.stringify({ type: timer.event.type, payload: timer.event.payload ?? {} }) : null,
-    timer !== undefined, row.request_key, hash, JSON.stringify({ state: outcome.next.name, version: next, reply }), eventId,
+    machine.name, row.key, ctx.appId, outcome.next.name, jsonText(data), next, machine.version,
+    timer ? timer.at : null, timer ? jsonText({ type: timer.event.type, payload: timer.event.payload ?? {} }) : null,
+    timer !== undefined, row.request_key, hash, jsonText({ state: outcome.next.name, version: next, reply }), eventId,
     state.name,
-    JSON.stringify({
+    jsonText({
       writes: (outcome.writes || []).map((w) => w.type),
       work, messages,
       ...(cancelled.length ? { cancelled } : {}),
@@ -571,8 +571,8 @@ async function recordFailure(client: PoolClient, opts: PipelineOptions, machine:
       const attempts = Number(row.attempts) + 1;
       const backoffMs = Math.min(30000, 500 * 2 ** (attempts - 1));
       await client.query(RECORD_TIMEOUT, [row.machine, row.key, appId, NONE, machine.version,
-        attempts >= opts.stallAfter, JSON.stringify({ eventId, attempts, code }),
-        attempts, backoffMs, JSON.stringify({ code, message, kind: 'timeout' }), eventId]);
+        attempts >= opts.stallAfter, jsonText({ eventId, attempts, code }),
+        attempts, backoffMs, jsonText({ code, message, kind: 'timeout' }), eventId]);
       await client.query('COMMIT');
       opts.log.warn('workflow', 'event timed out; retrying', { ...where, attempts, code });
       return;
@@ -580,8 +580,8 @@ async function recordFailure(client: PoolClient, opts: PipelineOptions, machine:
     // A transition that throws is a bug or a broken invariant: hold this
     // instance (and only this instance) until an admin releases it.
     await client.query(RECORD_FAULT, [row.machine, row.key, appId, NONE, machine.version,
-      JSON.stringify({ eventId, code, message }),
-      JSON.stringify({ code, message, stack: String((err as Error)?.stack || '').slice(0, 4000) }),
+      jsonText({ eventId, code, message }),
+      jsonText({ code, message, stack: String((err as Error)?.stack || '').slice(0, 4000) }),
       current.state ?? NONE, eventId]);
     await client.query('COMMIT');
     opts.log.error('workflow', 'transition faulted; instance held', { ...where, message });

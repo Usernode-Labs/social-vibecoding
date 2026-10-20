@@ -170,6 +170,32 @@ export function assertJson(value: unknown, path = '$'): asserts value is Json {
   throw new WorkflowInputError('invalid_payload', `${path} is not JSON data`);
 }
 
+// A value as the JSON text the kernel writes to a json or jsonb column.
+// PostgreSQL refuses two strings JavaScript holds: one with a lone UTF-16
+// surrogate ("invalid input syntax for type json", e.g. a check's output cut
+// in the middle of an emoji) and one with \u0000 ("unsupported Unicode
+// escape sequence"). Each such character is stored as U+FFFD, in keys too:
+// a value the kernel accepted (assertJson) is always one it can write.
+// JSON.stringify escapes exactly these characters, so a text with no such
+// escape needs no second pass; the second pass reads the text back, so what
+// it repairs is what JSON.stringify wrote (a Date's toJSON included).
+const UNSTORABLE = /\\u(0000|d[89a-f])/i;
+export function jsonText(value: unknown): string {
+  const text = JSON.stringify(value);
+  return UNSTORABLE.test(text) ? JSON.stringify(storable(JSON.parse(text))) : text;
+}
+// (String.prototype.toWellFormed is ES2024, past this tree's lib.)
+const UNSTORABLE_CHAR = /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+const storableString = (s: string) => s.replace(UNSTORABLE_CHAR, '\uFFFD');
+function storable(value: unknown): unknown {
+  if (typeof value === 'string') return storableString(value);
+  if (Array.isArray(value)) return value.map(storable);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [storableString(k), storable(v)]));
+  }
+  return value;
+}
+
 function canonical(value: Json): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   if (value && typeof value === 'object') {
