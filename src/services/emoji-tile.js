@@ -20,6 +20,10 @@
 //   parseColor(value)     '#rgb' / '#rrggbb' → [r, g, b], else null.
 //   hasGlyph(emoji)       whether there is a picture for it.
 //   tilePng({ emoji, color })  the PNG bytes, or null.
+//   tilePath(emoji, color)     where routes/app-icons.js serves that tile,
+//                         or null when there is no picture: a phone's
+//                         home-screen icon for an app saved from
+//                         /app/<slug>/install (services/app-install-manifest.js).
 const fs = require('fs');
 const path = require('path');
 const { PNG } = require('pngjs');
@@ -116,9 +120,18 @@ function tilePng({ emoji, color = null, dir = GLYPH_DIR } = {}) {
   return bytes;
 }
 
+// Named by what it draws, the code points and the colour's hex, so the
+// address discloses nothing past the picture and never changes once drawn.
+function tilePath(emoji, color = null) {
+  if (!hasGlyph(emoji)) return null;
+  const rgb = parseColor(color);
+  const hex = rgb ? `-${rgb.map((v) => v.toString(16).padStart(2, '0')).join('')}` : '';
+  return `/app-icons/emoji/${codepointsOf(emoji)}${hex}.png`;
+}
+
 function clearCache() {
   tiles.clear();
   glyphs.clear();
 }
 
-module.exports = { codepointsOf, parseColor, hasGlyph, tilePng, clearCache, SIZE, GLYPH, GLYPH_DIR };
+module.exports = { codepointsOf, parseColor, hasGlyph, tilePng, tilePath, clearCache, SIZE, GLYPH, GLYPH_DIR };

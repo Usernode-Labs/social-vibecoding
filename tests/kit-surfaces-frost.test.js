@@ -238,8 +238,13 @@ test('an app\'s own Workshop wears the glass; the running app keeps its clear ba
   assert.match(block, /background-color: var\(--dc-sheet-fill\);/);
   assert.match(block, /backdrop-filter: var\(--dc-frost\);/);
   assert.match(block, /-webkit-backdrop-filter: var\(--dc-frost\);/);
-  assert.ok(!APP_CSS.includes('[data-app-surface="app"]) #platform-header'),
-    'nothing frosts the bar over a running app');
+  // The one rule that does name the running app's bar is the installed
+  // display's flat band through the status-bar strip (landing-status-bar-edge
+  // pins it): a ground colour, never the glass.
+  const overApp = [...APP_CSS.matchAll(/[^{}]*\[data-app-surface="app"\]\) #platform-header[^{}]*\{([^}]*)\}/g)];
+  for (const [, body] of overApp) {
+    assert.doesNotMatch(body, /backdrop-filter|--dc-sheet-fill|--dc-frost/, 'nothing frosts the bar over a running app');
+  }
   // After the clearing rule, which has the same specificity class and would
   // otherwise win.
   assert.ok(APP_CSS.indexOf('background-color: transparent;', APP_CSS.indexOf(':not(.hidden)) #platform-header'))

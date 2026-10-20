@@ -302,3 +302,21 @@ test('an emoji app\'s page offers iOS the platform icon and draws the emoji', as
     server.close();
   }
 });
+
+test('an emoji app with a picture is saved under its tile, on its own colour', async () => {
+  viewGrant = { ...APP, icon_image_id: null, icon_emoji: '📊', icon_color: '#0ea5e9', manifest_snapshot: null };
+  const server = await startServer(USER);
+  try {
+    const { body } = await get(server, '/app/recipe-box/install');
+    assert.ok(body.includes('<link rel="apple-touch-icon" href="/app-icons/emoji/1f4ca-0ea5e9.png">'));
+    assert.ok(body.includes('<img src="/app-icons/emoji/1f4ca-0ea5e9.png"'));
+    const manifest = JSON.parse((await get(server, '/app/recipe-box/manifest.webmanifest')).body);
+    assert.deepEqual(manifest.icons.map((i) => [i.src, i.purpose]), [
+      ['/app-icons/emoji/1f4ca-0ea5e9.png', 'any'],
+      ['/app-icons/emoji/1f4ca-0ea5e9.png', 'maskable'],
+    ]);
+    assert.match(accessCalls[0].columns, /\bicon_color\b/, 'the colour is read with the row');
+  } finally {
+    server.close();
+  }
+});

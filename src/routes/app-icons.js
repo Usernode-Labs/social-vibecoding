@@ -3,6 +3,19 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
+const emojiTile = require('../services/emoji-tile');
+const { emojiTileLimiter } = require('../middleware/rate-limits');
+
+// emoji-tile.tilePath's names: code points joined by '_', then the colour.
+const EMOJI_TILE_RE = /^([0-9a-f]{1,6}(?:_[0-9a-f]{1,6}){0,9})(?:-([0-9a-f]{6}))?\.png$/;
+
+function emojiOf(code) {
+  try {
+    return String.fromCodePoint(...code.split('_').map((hex) => parseInt(hex, 16)));
+  } catch {
+    return '';
+  }
+}
 
 // Homescreen icon image serving — sibling of /visuals/:id (see
 // src/routes/visuals.js for the full rationale).
@@ -41,6 +54,31 @@ function appIconRoutes(config) {
       log.error('app-icons', 'Failed to serve icon', { id, err: err.message });
       res.status(500).end();
     }
+  });
+
+  // An emoji icon as the PNG a phone's home screen needs (iOS's
+  // apple-touch-icon and Chrome's manifest take only a raster), for an app
+  // saved from /app/<slug>/install that has an emoji and no image
+  // (services/app-install-manifest.js). The name is what it draws, so like
+  // the ids above it discloses only itself, and it is immutable. Only the
+  // committed pictures are drawn (services/emoji-tile.js), and only by their
+  // one spelling: anything else 404s.
+  router.get('/app-icons/emoji/:file', emojiTileLimiter, (req, res) => {
+    const m = EMOJI_TILE_RE.exec(String(req.params.file || ''));
+    const emoji = m ? emojiOf(m[1]) : '';
+    if (!emoji || emojiTile.codepointsOf(emoji) !== m[1]) return res.status(404).end();
+    let png = null;
+    try {
+      png = emojiTile.tilePng({ emoji, color: m[2] ? `#${m[2]}` : null });
+    } catch (err) {
+      log.error('app-icons', 'Failed to draw emoji tile', { file: m[0], err: err.message });
+      return res.status(500).end();
+    }
+    if (!png) return res.status(404).end();
+    res.set('Content-Type', 'image/png');
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    return res.send(png);
   });
 
   return router;

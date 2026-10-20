@@ -53,7 +53,7 @@ const NO_STORE = 'private, no-store';
 function appInstallRoutes(config) {
   const router = Router();
   const pool = getPool(config);
-  const columns = `${appAccess.ACCESS_COLUMNS}, name, icon_emoji, icon_image_id, manifest_snapshot`;
+  const columns = `${appAccess.ACCESS_COLUMNS}, name, icon_emoji, icon_image_id, icon_color, manifest_snapshot`;
 
   /** icon id → { type, dims } for the icons this process has already read. */
   const iconFacts = new Map();
@@ -103,6 +103,7 @@ function appInstallRoutes(config) {
       description: snapshot && typeof snapshot.description === 'string' ? snapshot.description : '',
       icon_emoji: app.icon_emoji || null,
       icon_image_id: app.icon_image_id || null,
+      icon_color: app.icon_color || null,
     };
   }
 
@@ -145,9 +146,10 @@ function appInstallRoutes(config) {
 
     // Every stored icon is a raster: app-manifest's reconcile only admits
     // PNG/JPEG/WebP/GIF bytes (SVG is refused because it can script when
-    // navigated to), and iOS wants a raster for the apple-touch-icon.
+    // navigated to), and iOS wants a raster for the apple-touch-icon. An
+    // emoji app's raster is its tile, which the page picks itself.
     const iconUrl = typeof app.icon_image_id === 'string' && ICON_ID_RE.test(app.icon_image_id)
-      ? `/app-icons/${app.icon_image_id}` : '/apple-touch-icon.png';
+      ? `/app-icons/${app.icon_image_id}` : null;
     return res.send(renderInstallPage(manifestFacts(app), { iconUrl }));
   });
 
