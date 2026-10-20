@@ -36,6 +36,11 @@ const MORE_BTN = 'rounded-lg px-3 py-1.5 text-xs font-medium text-violet-700 '
  * expanding the grid — and without adding a tile row (#3047's point). With
  * the tile in the grid, or no more apps to show, the markup is exactly what
  * it always was.
+ *
+ * #5654: on that pair of controls, Show all reads from the LEFT — where the
+ * eye already starts under the app icons — and the New project entry sits on
+ * the right, as a light button. The lone Show all is left aligned too, so the
+ * line reads the same way whether or not the entry is beside it.
  */
 export function AppsMoreBody({ moreCount, create = null }: {
   moreCount: number; create?: CreateTileView | null;
@@ -48,11 +53,11 @@ export function AppsMoreBody({ moreCount, create = null }: {
     <div id="home-apps-more" className={moreCount ? 'px-2 pb-1 sm:px-3' : 'hidden px-2 pb-1 sm:px-3'}>
       {moreCount ? (
         compact ? (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between gap-2">
             <button
               type="button"
               id="home-apps-more-btn"
-              className={`flex-1 ${MORE_BTN}`}
+              className={`shrink-0 text-left ${MORE_BTN}`}
               onClick={() => {
                 const home = controller();
                 if (!home) return;
@@ -68,7 +73,7 @@ export function AppsMoreBody({ moreCount, create = null }: {
           <button
             type="button"
             id="home-apps-more-btn"
-            className={`w-full ${MORE_BTN}`}
+            className={`text-left ${MORE_BTN}`}
             onClick={() => {
               const home = controller();
               if (!home) return;
