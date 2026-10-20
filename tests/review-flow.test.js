@@ -198,6 +198,33 @@ test('the pill names the side most of the window shows, with hysteresis, and col
   assert.equal(compare.saturationFor(0), 0);
 });
 
+// ── 2b. The preview card ────────────────────────────────────────────────
+
+test('the change page sets its picture and thumbnails apart in an inset card', () => {
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  assert.match(src, /const PREVIEW_INSET = 12;/);
+  // The hero is drawn the card's inner width, one inset off each page edge.
+  assert.match(src, /const inner = Math\.max\(0, width - PREVIEW_INSET \* 2\);/);
+  assert.match(src, /width=\{inner\} height=\{height\}/, 'the slider is drawn at the card\'s inner width');
+  assert.match(src, /<div className="rf-preview">\s*\{visual \? \(/, 'the hero is inside the card');
+  assert.match(
+    src,
+    /<div className="rf-thumbs"[\s\S]*?<\/div>\s*\) : null\}\s*<\/div>\s*\{item\.line \? <p className="rf-claim">/,
+    'the thumbnails are inside the card and the claim follows it',
+  );
+  const css = read('public/css/app.css');
+  const rule = css.match(/\n\.rf-preview \{[^}]*\}/)[0];
+  assert.match(rule, /margin: 12px 12px 0;/);
+  assert.match(rule, /border-radius: 16px;/);
+  assert.match(rule, /background: var\(--rf-sheet\);/);
+  assert.match(rule, /box-shadow: 0 0 0 1px var\(--rf-line\);/);
+  assert.match(css, /\.rf-preview \.rf-thumb\[aria-pressed="true"\] \{ box-shadow: 0 0 0 2px var\(--rf-sheet\), 0 0 0 4px var\(--lit-ink\); \}/);
+  assert.match(css, /\.rf-claim \{ margin: 0; padding: 20px 16px 0 20px;/, 'the description starts further below the card');
+  // The opening ghost lands on the inset card, edges rounded like it.
+  assert.match(src, /const k = \(page\.width - PREVIEW_INSET \* 2\) \/ card\.width;/);
+  assert.equal((src.match(/heroTransform\(cr, pr, headH\), borderRadius: '16px'/g) || []).length, 2);
+});
+
 // ── 3. The vote ──────────────────────────────────────────────────────────
 
 test('votes go through castVote with the epoch, a No carries its line, Undo goes through retractVote', () => {

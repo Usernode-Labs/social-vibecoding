@@ -82,6 +82,7 @@ function boot({ firstRead, native = false, signInBegun = false } = {}) {
       _authedBooted: false,
       _signInBegun: ${signInBegun ? 'true' : 'false'},
       _applySafeAreaShot() {},
+      _noteLaunch() {},
       bindEvents() {},
       _anonShot() { return false; },
       _waitingShot() { return false; },

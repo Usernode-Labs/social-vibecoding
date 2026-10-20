@@ -108,8 +108,19 @@ test('a non-PNG raster icon is declared with sizes "any" and its stored type', (
   assert.deepEqual(unknown, [{ src: `/app-icons/${ICON_ID}`, sizes: 'any', purpose: 'any' }]);
 });
 
-test('an emoji app gets an SVG tile first and the platform PNGs after it', () => {
-  const { icons } = m.buildManifest({ slug: 'a', name: 'Arcade', icon_emoji: '🎮', icon_image_id: null });
+test('an emoji app is saved under its own icon: the emoji drawn as a PNG on its colour', () => {
+  const { icons } = m.buildManifest({ slug: 'a', name: 'Arcade', icon_emoji: '🎮', icon_color: '#0EA5E9' });
+  // Alone: beside the platform's PNGs, Chrome would pick the 192px H.
+  assert.deepEqual(icons, [
+    { src: '/app-icons/emoji/1f3ae-0ea5e9.png', sizes: '480x480', type: 'image/png', purpose: 'any' },
+    { src: '/app-icons/emoji/1f3ae-0ea5e9.png', sizes: '480x480', type: 'image/png', purpose: 'maskable' },
+  ]);
+  assert.equal(m.emojiTileUrl({ icon_emoji: '🎮' }), '/app-icons/emoji/1f3ae.png', 'no colour, the cream ground');
+  assert.equal(m.emojiTileUrl({ icon_emoji: '🎮', icon_image_id: 'a'.repeat(32) }), null, 'an image icon wins');
+});
+
+test('an emoji with no picture gets an SVG tile first and the platform PNGs after it', () => {
+  const { icons } = m.buildManifest({ slug: 'a', name: 'Arcade', icon_emoji: '🪁', icon_image_id: null });
   assert.equal(icons.length, 4);
   const [tile, ...rest] = icons;
   assert.equal(tile.type, 'image/svg+xml');
@@ -118,7 +129,7 @@ test('an emoji app gets an SVG tile first and the platform PNGs after it', () =>
   assert.ok(tile.src.startsWith('data:image/svg+xml,'), 'the tile is a data URL');
   const svg = decodeURIComponent(tile.src.slice('data:image/svg+xml,'.length));
   assert.match(svg, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg"/);
-  assert.ok(svg.includes('>🎮</text>'), 'the emoji is the glyph');
+  assert.ok(svg.includes('>🪁</text>'), 'the emoji is the glyph');
   assert.match(svg, /fill="#7c3aed"/, 'on the violet square');
   // The raster fallbacks are exactly the platform's own, so Chrome always
   // sees a PNG with a declared size of at least 144px.
@@ -230,9 +241,15 @@ test('the install page carries its own manifest link, icons and instructions', (
   assert.match(html, /display-mode: standalone/, 'and detects a standalone launch');
 });
 
-test('an app without an image icon draws its emoji and offers iOS the platform icon', () => {
-  const html = m.renderInstallPage({ slug: 'arcade', name: 'Arcade', icon_emoji: '🎮', icon_image_id: null });
-  assert.ok(html.includes('<div class="icon"><span aria-hidden="true">🎮</span></div>'));
+test('an emoji app offers iOS its emoji tile, and the page shows that icon', () => {
+  const html = m.renderInstallPage({ slug: 'arcade', name: 'Arcade', icon_emoji: '🎮', icon_color: '#0ea5e9' });
+  assert.ok(html.includes('<link rel="apple-touch-icon" href="/app-icons/emoji/1f3ae-0ea5e9.png">'));
+  assert.ok(html.includes('<div class="icon"><img src="/app-icons/emoji/1f3ae-0ea5e9.png" alt="" draggable="false"></div>'));
+});
+
+test('an emoji with no picture is drawn as text and offers iOS the platform icon', () => {
+  const html = m.renderInstallPage({ slug: 'arcade', name: 'Arcade', icon_emoji: '🪁', icon_image_id: null });
+  assert.ok(html.includes('<div class="icon"><span aria-hidden="true">🪁</span></div>'));
   assert.ok(html.includes('<link rel="apple-touch-icon" href="/apple-touch-icon.png">'));
   assert.doesNotMatch(html, /app-icons\//);
 });

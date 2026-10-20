@@ -143,7 +143,7 @@ test('the made screen tells each moment where it happens, never changing what it
   assert.match(index, /setMode\(\{ kind: 'tour', info: \{ slug, name \}, path: 'walk', moments: true \}\);/);
   assert.match(index, /if \(oweWalk\(uid, \{ slug, name, maker: true \}\)\) legacy\(\)\.App\?\._noteHomeWalk\?\.\('owed'\);/);
   assert.match(index, /path: 'walk', moments: !!walk\.maker \}/);
-  assert.match(index, /if \(\(privateMember \|\| info\.newAccount\) && oweWalk\(uid, \{ slug, name, privateMember \}\)\) app\?\._noteHomeWalk\?\.\('owed'\);/);
+  assert.match(index, /walkOwed = \(privateMember \|\| !!info\.newAccount\) && oweWalk\(uid, \{ slug, name, privateMember \}\);\s+if \(walkOwed\) app\?\._noteHomeWalk\?\.\('owed'\);/);
   assert.match(index, /<Tour info=\{mode\.info\} steps=\{steps\} onEnd=\{end\} start=\{mode\.start\} moments=\{!!mode\.moments\} numbered=\{mode\.path === 'walk'\} \/>/);
   assert.doesNotMatch(index.slice(index.indexOf('async function openTourShot'), index.indexOf('const MAKE_FLAG')), /moments/);
   assert.match(index, /if \(momentsRef\.current\) noteMoment\(info\.slug, 'tour_started', \{ steps: steps\.length \}\);/);

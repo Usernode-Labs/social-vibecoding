@@ -2636,6 +2636,14 @@
       "reason": "binary asset delivery rather than an interactive control"
     },
     {
+      "source": "src/routes/app-icons.js",
+      "method": "GET",
+      "path": "/app-icons/emoji/:file",
+      "expression": null,
+      "status": "exempt",
+      "reason": "binary asset delivery rather than an interactive control"
+    },
+    {
       "source": "src/routes/app-illustrations.js",
       "method": "GET",
       "path": "/app-illustrations/:id",

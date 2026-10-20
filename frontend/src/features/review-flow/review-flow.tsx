@@ -47,6 +47,9 @@ import {
 import { VoteSheet, sheetOpen, type SheetState, type Vote } from './vote-sheet';
 
 const EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
+// Matches `.rf-preview`'s 12px side margin in app.css: the hero is drawn this
+// much narrower than the page, inside the card.
+const PREVIEW_INSET = 12;
 const OPEN_MS = 380;
 const PUSH_MS = 440;
 const MARKS_AFTER = 160;
@@ -168,48 +171,52 @@ function TitleShot({ item, width }: { item: ReviewItem; width: number }): ReactN
 function PageBody({ item, width, marks, near }: { item: ReviewItem; width: number; marks: boolean; near: boolean }): ReactNode {
   const [shot, setShot] = useState(0);
   useEffect(() => setShot(0), [item.key]);
-  const height = Math.round(width * 0.75);
+  const inner = Math.max(0, width - PREVIEW_INSET * 2);
+  const height = Math.round(inner * 0.75);
   const screen = item.screens[shot] || null;
   const visual = !!screen || !!(item.pair && (item.pair.after || item.pair.before));
   const t = useMessages('communities');
   return (
     <div className="rf-page-body" data-rf-body={item.key}>
-      {visual ? (
-        <CompareSlider screen={screen} pair={screen ? null : item.pair} ground={item.ground} width={width} height={height} marks={marks} near={near} />
-      ) : (
-        <div className="rf-hero-drawn" style={{ width, height, background: item.ground }}>
-          <Drawn item={item} width={width} height={height} play={near} />
-        </div>
-      )}
-      {item.screens.length > 1 ? (
-        <div className="rf-thumbs" role="group" aria-label={t('communities:review.thumbs.label')}>
-          {item.screens.map((s, i) => {
-            const crop = titleCrop(s, { w: 52, h: 52 });
-            return (
-              <button
-                key={`${s.viewport}-${i}`}
-                type="button"
-                className="rf-thumb"
-                aria-pressed={i === shot}
-                aria-label={t('communities:review.thumbs.one', { n: i + 1, total: item.screens.length })}
-                style={{ background: item.ground }}
-                onClick={() => setShot(i)}
-              >
-                <span className="rf-thumb-in" style={{ width: crop.w, height: crop.h }}>
-                  {near ? (
-                    <img
-                      src={s.after.url}
-                      alt=""
-                      draggable={false}
-                      style={{ width: s.width, height: s.after.height, transform: `translate(${crop.place.tx}px, ${crop.place.ty}px) scale(${crop.place.scale})` }}
-                    />
-                  ) : null}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+      {/* The shot and its thumbnails read as one object, set apart from the page. */}
+      <div className="rf-preview">
+        {visual ? (
+          <CompareSlider screen={screen} pair={screen ? null : item.pair} ground={item.ground} width={inner} height={height} marks={marks} near={near} />
+        ) : (
+          <div className="rf-hero-drawn" style={{ width: inner, height, background: item.ground }}>
+            <Drawn item={item} width={inner} height={height} play={near} />
+          </div>
+        )}
+        {item.screens.length > 1 ? (
+          <div className="rf-thumbs" role="group" aria-label={t('communities:review.thumbs.label')}>
+            {item.screens.map((s, i) => {
+              const crop = titleCrop(s, { w: 52, h: 52 });
+              return (
+                <button
+                  key={`${s.viewport}-${i}`}
+                  type="button"
+                  className="rf-thumb"
+                  aria-pressed={i === shot}
+                  aria-label={t('communities:review.thumbs.one', { n: i + 1, total: item.screens.length })}
+                  style={{ background: item.ground }}
+                  onClick={() => setShot(i)}
+                >
+                  <span className="rf-thumb-in" style={{ width: crop.w, height: crop.h }}>
+                    {near ? (
+                      <img
+                        src={s.after.url}
+                        alt=""
+                        draggable={false}
+                        style={{ width: s.width, height: s.after.height, transform: `translate(${crop.place.tx}px, ${crop.place.ty}px) scale(${crop.place.scale})` }}
+                      />
+                    ) : null}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
       {item.line ? <p className="rf-claim">{item.line}</p> : null}
     </div>
   );
@@ -339,7 +346,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
       { transform: 'none', borderRadius: '20px', opacity: 1 },
       { opacity: 1, offset: 0.2 },
       { opacity: 0, offset: 0.6 },
-      { transform: heroTransform(cr, pr, headH), borderRadius: '0px', opacity: 0 },
+      { transform: heroTransform(cr, pr, headH), borderRadius: '16px', opacity: 0 },
     ], { ...opts, fill: 'forwards' }).finished.catch(() => {}).finally(() => pic.remove());
     rootRef.current?.animate(
       [{ transform: 'none', filter: 'none' }, { transform: 'scale(0.96)', filter: 'brightness(0.94)' }],
@@ -397,7 +404,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     // The hero hands over to the card's own picture, which lands exactly on the card.
     const pic = coverGhost(cover, cr);
     pic.animate([
-      { transform: heroTransform(cr, pr, headH), borderRadius: '0px', opacity: 0 },
+      { transform: heroTransform(cr, pr, headH), borderRadius: '16px', opacity: 0 },
       { opacity: 0, offset: 0.2 },
       { opacity: 1, offset: 0.6 },
       { transform: 'none', borderRadius: '20px', opacity: 1 },
@@ -607,10 +614,10 @@ function coverGhost(cover: HTMLElement, at: DOMRect): HTMLElement {
   return g;
 }
 
-/** Where the card's picture lands: the page's full width, under the header. */
+/** Where the card's picture lands: the inset preview card, under the header. */
 function heroTransform(card: DOMRect, page: DOMRect, headH: number): string {
-  const k = page.width / card.width;
-  return `translate(${page.left - card.left}px, ${page.top + headH - card.top}px) scale(${k})`;
+  const k = (page.width - PREVIEW_INSET * 2) / card.width;
+  return `translate(${page.left + PREVIEW_INSET - card.left}px, ${page.top + headH + PREVIEW_INSET - card.top}px) scale(${k})`;
 }
 
 /**
