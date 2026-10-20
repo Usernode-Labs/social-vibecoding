@@ -37,6 +37,13 @@ import { LocalAgentsList } from '../local-agents-list';
  * ../../improve/suggest-shortcut.ts publishes window.UsernodeReact.suggestShortcut,
  * which settings.js paints and saves the switch through.
  *
+ * New Needs you (default OFF) is kept on the DEVICE too, for the same
+ * reason as Comment on the page: there is nothing to save or fail. When on,
+ * the Communities tab's Needs you draws ../../review-flow/review-flow.tsx
+ * (a feed of title shots, a page per change with a before/after slider and
+ * a vote sheet) instead of the reel. ../../review-flow/settings.ts keeps the
+ * switch and publishes window.UsernodeReact.reviewFlow for settings.js.
+ *
  * #907 Local coding agent lives in the same pane (not the CLI section) because
  * it is a preview of the same feature the dev chat's "Run on" selector
  * exposes, and because a lease is NOT a credential: revoking a CLI token is a
@@ -78,6 +85,14 @@ export function ExperimentalSection() {
           </SwitchRow>
           <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
             {t('settings:experimental.suggestShortcut.description')}
+          </p>
+        </div>
+        <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+          <SwitchRow id="review-flow-enabled">
+            {t('settings:experimental.reviewFlow.label')}
+          </SwitchRow>
+          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+            {t('settings:experimental.reviewFlow.description')}
           </p>
         </div>
       </div>

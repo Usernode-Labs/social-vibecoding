@@ -823,6 +823,23 @@ async function createProposalVoteNotification(pool, { userId, appId, sessionId, 
   return rows;
 }
 
+// The voter took their vote back (DELETE /api/sessions/:id/vote): the
+// author's "X voted yes" row no longer says something true, read or unread,
+// so it goes, as a retracted kudos' row does (routes/kudos.js). Resolves the
+// ids of the people whose bell lost a row, for the caller to re-sync. A vote
+// cast again after this notifies afresh: it is a new vote, and the shared
+// vote limiter (rate-limits.js governanceVoteLimiter) bounds how often.
+async function withdrawProposalVoteNotification(pool, { sessionId, voterId }) {
+  if (!sessionId || !voterId) return [];
+  const { rows } = await pool.query(
+    `DELETE FROM notifications
+      WHERE kind = 'proposal_vote' AND session_id = $1 AND source_user_id = $2
+      RETURNING user_id`,
+    [sessionId, voterId]
+  );
+  return [...new Set(rows.map((r) => r.user_id))];
+}
+
 // The app is unwell: a deploy failed, or it stopped running.
 //
 // Addressed to the people who can actually do something about it, which is
@@ -2208,6 +2225,7 @@ module.exports = {
   notifyIssueMentions,
   notifyIssueFiled,
   createProposalVoteNotification,
+  withdrawProposalVoteNotification,
   createRevisionRecheckNotifications,
   createAppHealthNotification,
   createPlatformLimitNotifications,

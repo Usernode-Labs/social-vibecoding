@@ -162,6 +162,8 @@ test('#3270: the feed reads the owed populations for member projects only, newes
   assert.deepEqual(shaped, [{
     kind: 'proposal', id: 8, title: 'Sort', summary: null, author: 'ada', number: 12, epoch: 3,
     at: '2026-09-20T10:00:00.000Z', yes: 2, no: 0,
+    // A proposal row without a live preview says so (feedStagingUrl).
+    staging_url: null,
     app: { slug: 'garden', name: 'Garden', icon_url: '/app-icons/abc', icon_emoji: null },
   }]);
   // ?demo=1 on staging: the real rows first, then the demo cards, never twice.

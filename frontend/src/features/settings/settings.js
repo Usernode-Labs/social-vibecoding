@@ -678,6 +678,16 @@
         });
       }
 
+      // New Needs you (an experiment), kept on this device like the switch
+      // above (features/review-flow/settings.ts): the change is the save.
+      const reviewToggle = document.getElementById('review-flow-enabled');
+      if (reviewToggle) {
+        reviewToggle.addEventListener('change', (e) => {
+          const pref = typeof window !== 'undefined' ? window.UsernodeReact?.reviewFlow : null;
+          pref?.setEnabled(e.target.checked);
+        });
+      }
+
       // Platform-level language preference (issue #757). Server-side
       // per-user BCP-47 tag (default unset = "Auto"); apps read it via
       // the iframe JWT claim and usernode.getUserLocale(). Fires the
@@ -1640,6 +1650,9 @@
       const shortcut = document.getElementById('suggest-shortcut-enabled');
       const shortcutPref = typeof window !== 'undefined' ? window.UsernodeReact?.suggestShortcut : null;
       if (shortcut) shortcut.checked = !!shortcutPref?.enabled();
+      const review = document.getElementById('review-flow-enabled');
+      const reviewPref = typeof window !== 'undefined' ? window.UsernodeReact?.reviewFlow : null;
+      if (review) review.checked = !!reviewPref?.enabled();
       this._renderLocalAgentsSection();
     },
 

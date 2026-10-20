@@ -14212,6 +14212,21 @@
     },
     {
       "source": "src/routes/votes.js",
+      "method": "DELETE",
+      "path": "/api/sessions/:id/vote",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "development.delete.sessions.item.vote.0c5ac3d9",
+      "domain": "development",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "session",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#workshop"
+    },
+    {
+      "source": "src/routes/votes.js",
       "method": "GET",
       "path": "/api/sessions/:id/votes",
       "expression": null,
@@ -14395,6 +14410,14 @@
     {
       "source": "src/routes/workshop-overview.js",
       "method": "POST",
+      "path": "/api/sessions/:id/vote",
+      "expression": null,
+      "status": "exempt",
+      "reason": "staging demo-card middleware represented by the concrete session vote capabilities"
+    },
+    {
+      "source": "src/routes/workshop-overview.js",
+      "method": "DELETE",
       "path": "/api/sessions/:id/vote",
       "expression": null,
       "status": "exempt",

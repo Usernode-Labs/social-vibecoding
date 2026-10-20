@@ -999,6 +999,16 @@ const AppView = {
       Secrets.applyMissingBadge(appData.missingSecrets || null);
     }
 
+    // #5116: `?report=app` is the Report link of the footer the bridge draws
+    // on an app opened at its own address or on a custom domain
+    // (/?report=app#app/<slug>, the __USERNODE_PLATFORM_LINK__ block of
+    // public/usernode-bridge/v1/bridge.js). It opens the same report dialog
+    // the app menu's "Report app" opens, for this app, when the server says
+    // this viewer may report it (`can_report`). The parameter is taken off
+    // the address first, so a reload or Back does not ask again. Deferred
+    // and slug-guarded for the reasons the `?shot=` links below give.
+    AppView._openReportFromLink(slug, appData);
+
     // Screenshot-state deep link (`?shot=secrets`): the secrets panel —
     // "Platform variables" on the platform's own row — is a modal reached
     // from the "+" menu, so plain navigation can't render it and the
@@ -1501,6 +1511,27 @@ const AppView = {
         }, 300);
       }
     } catch { /* malformed query string — nothing to open */ }
+  },
+
+  // #5116: the `?report=app` link (see the call in open()). Returns true when
+  // a report dialog was scheduled. A viewer who may not report this app (not
+  // signed in, its maker, a demo) gets the app and nothing else.
+  _openReportFromLink(slug, appData) {
+    let params;
+    try { params = new URLSearchParams(location.search); } catch { return false; }
+    if (params.get('report') !== 'app') return false;
+    params.delete('report');
+    try {
+      const query = params.toString();
+      history.replaceState(history.state, '', `${location.pathname}${query ? `?${query}` : ''}${location.hash}`);
+    } catch { /* the address keeps it; the dialog still opens once */ }
+    if (!appData || appData.slug !== slug || appData.can_report !== true) return false;
+    const label = appData.name || slug;
+    setTimeout(() => {
+      if (AppView.appData?.slug !== slug) return;
+      window.UsernodeReact?.dialogs?.report?.open({ targetType: 'app', target: slug, label });
+    }, 300);
+    return true;
   },
 
   // #816: paint one staging-preview loader state with no preview behind it.
@@ -3339,9 +3370,12 @@ const AppView = {
   _noteOwnVote(sessionId, vote) {
     const id = Number(sessionId);
     if (!Number.isInteger(id) || id <= 0) return;
+    // A vote taken back (retractVote, null): nothing of theirs fills a row
+    // any more, and the first version's record is as old as after a vote.
+    if (vote == null) AppView._ownVotes.delete(id);
     // The epoch the vote was cast at is stamped in by _publishVoteSaved,
     // which runs beside this call and is the only path that knows it.
-    AppView._ownVotes.set(id, { vote, at: Date.now(), epoch: null });
+    else AppView._ownVotes.set(id, { vote, at: Date.now(), epoch: null });
     const current = AppView.appData;
     const approval = current && current.first_version && current.first_version.approval;
     if (approval && Number(approval.sessionId) === id) AppView._distrustFirstVersion(current);
@@ -26020,17 +26054,20 @@ const AppView = {
   _pendingVotes: new Map(),
   // The optimistic change to one cached row: the viewer's side and the raw
   // counts. `qualified_yes_count` is left to the server — whether this voter
-  // qualifies is the invited-approver roster's call, not the client's.
+  // qualifies is the invited-approver roster's call, not the client's. A
+  // null vote is a vote taken back (retractVote): the side it was on loses
+  // one and nothing gains.
   _applyVoteToRow(row, vote) {
     if (!row || row.my_vote === vote) return;
+    if (vote == null && row.my_vote == null) return;
     const bump = (key, by) => {
       if (row[key] == null) return;
       row[key] = Math.max(0, (parseInt(row[key], 10) || 0) + by);
     };
     if (row.my_vote === 'yes') bump('yes_count', -1);
     if (row.my_vote === 'no') bump('no_count', -1);
-    bump(vote === 'yes' ? 'yes_count' : 'no_count', 1);
-    row.my_vote = vote;
+    if (vote === 'yes' || vote === 'no') bump(vote === 'yes' ? 'yes_count' : 'no_count', 1);
+    row.my_vote = vote == null ? null : vote;
   },
   _overlayPendingVote(row) {
     if (!row || row.status === 'merged') return;
@@ -26291,6 +26328,106 @@ const AppView = {
       return false;
     }
     finally {
+      AppView._voteInFlight.delete(key);
+      AppView._publishVoteSending(`castVote:${sessionId}`, null);
+    }
+  },
+
+  // The review flow's Undo: take the viewer's vote on a change back
+  // (DELETE /api/sessions/:id/vote). castVote's conventions, in reverse:
+  //   - one request per change at a time, shared with castVote (a vote and
+  //     its undo never race), false for a second press while one is out;
+  //   - the cached rows (the board's and the chat's) lose the vote at once
+  //     (my_vote → null, its side's count down one) and get it back if the
+  //     server refuses or the request never arrives, with a toast in the
+  //     server's own words (`vote_locked`: it is being merged or has left
+  //     the vote) or the catalog's;
+  //   - the vote's own memories go with it (_pendingVotes holds the null so
+  //     a read already in flight cannot paint the vote back, _ownVotes and
+  //     the saved-vote publication are cleared), and the screens castVote
+  //     tells are told again.
+  // A 403 join_required is turned into the Join prompt by the fetch wrapper
+  // (frontend/src/lib/join-required.ts), as for castVote. Resolves TRUE only
+  // once the server confirmed the vote is gone, or that there was none to
+  // take back (`unchanged`); false for everything else.
+  async retractVote(sessionId, expectedEpoch = null) {
+    const key = `${sessionId}`;
+    if (AppView._voteInFlight.has(key)) return false;
+    AppView._voteInFlight.add(key);
+    const pr = AppView._findItem('proposal', sessionId);
+    const live = AppView.voteState && AppView.voteState.bySession
+      ? AppView.voteState.bySession[String(sessionId)] : null;
+    const targets = [];
+    if (pr && pr.my_vote) {
+      targets.push({ row: pr, prev: { my_vote: pr.my_vote, yes_count: pr.yes_count, no_count: pr.no_count } });
+    }
+    if (live && live !== pr && live.my_vote) {
+      targets.push({ row: live, prev: { my_vote: live.my_vote, yes_count: live.yes_count, no_count: live.no_count } });
+    }
+    // The side being taken back, for the "Sending…" mark every Vote button
+    // for this change reads (#3984), whichever surface it is on.
+    const side = targets.length ? targets[0].prev.my_vote : null;
+    if (side === 'yes' || side === 'no') AppView._publishVoteSending(`castVote:${sessionId}`, side);
+    const optimistic = targets.length > 0;
+    const token = {};
+    AppView._pendingVotes.set(Number(sessionId), { vote: null, token });
+    if (optimistic) {
+      targets.forEach((t) => AppView._applyVoteToRow(t.row, null));
+      AppView._repaintAfterVote(sessionId);
+    }
+    const settle = () => {
+      const held = AppView._pendingVotes.get(Number(sessionId));
+      if (held && held.token === token) AppView._pendingVotes.delete(Number(sessionId));
+    };
+    const rollback = () => {
+      settle();
+      if (!optimistic) return;
+      let restored = false;
+      targets.forEach((t) => {
+        if (t.row.my_vote == null) {
+          Object.assign(t.row, t.prev);
+          restored = true;
+        }
+      });
+      if (restored) AppView._repaintAfterVote(sessionId);
+    };
+    try {
+      const known = AppView._seenEpoch.get(sessionId);
+      const epoch = known === undefined ? expectedEpoch : known;
+      const res = await fetch(`/api/sessions/${sessionId}/vote`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(epoch == null ? {} : { expectedEpoch: epoch }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        rollback();
+        if (Number.isFinite(parseInt(data.approvalEpoch, 10))) {
+          AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
+        }
+        await AppView.refreshDevData('vote');
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:vote.toast.undoFailedHttp', { status: res.status }));
+        return false;
+      }
+      AppView._seenEpoch.delete(sessionId);
+      AppView._noteOwnVote(sessionId, null);
+      AppView._publishVoteSaved(sessionId, null, epoch);
+      const refresh = typeof App !== 'undefined' && App._liveRefresh
+        ? App._liveRefresh('vote', sessionId, { appSlug: AppView.appData && AppView.appData.slug })
+        : AppView.refreshDevData('vote');
+      const chatRead = typeof App !== 'undefined' && App.currentTab !== 'dev'
+        && typeof GroupChat !== 'undefined' && GroupChat.appSlug
+        ? AppView.loadVoteState(GroupChat.appSlug) : null;
+      Promise.resolve(chatRead ? Promise.all([refresh, chatRead]) : refresh).then(settle, settle);
+      window.Notifications?.refresh?.();
+      window.UsernodeReact?.profileProposals?.voted?.();
+      window.Leaderboard?.invalidateHistory?.();
+      return true;
+    } catch {
+      rollback();
+      window.PlatformUI?.toast?.(PlatformI18n.t('changes:vote.toast.undoNotSent'));
+      return false;
+    } finally {
       AppView._voteInFlight.delete(key);
       AppView._publishVoteSending(`castVote:${sessionId}`, null);
     }

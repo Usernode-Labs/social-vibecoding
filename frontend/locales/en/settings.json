@@ -1447,6 +1447,14 @@
     "text": "Suggest an improvement opens on a screenshot of the page. Tap or click what should change and say what; it's posted as a suggestion with the screenshot and your pin. Add more comments to the same suggestion, or post each on its own. The form is one switch away. On a computer, pressing C opens it too. Saved on this device only.",
     "description": "Explanation under the \"Comment on the page\" switch in Settings > Experimental. \"Suggest an improvement\" is the name of a button elsewhere; translate it as that button is translated. \"The form\" is the other, written way to suggest an improvement. C is a key on the keyboard; keep it."
   },
+  "experimental.reviewFlow.label": {
+    "text": "New Needs you",
+    "description": "Label of a switch in Settings, Experimental. When on, the Needs you list on the Communities tab becomes a calm list of changes, each opening into its own page with a before and after slider and a vote sheet."
+  },
+  "experimental.reviewFlow.description": {
+    "text": "Try a calmer way through what's waiting on you: one change at a time, with its before and after side by side. Kept on this device.",
+    "description": "Explanation under the New Needs you switch in Settings, Experimental."
+  },
   "experimental.localAgents.title": {
     "text": "Local coding agent",
     "description": "Heading of a block in Settings > Experimental that lists the person's own computers attached to run the coding agent."
