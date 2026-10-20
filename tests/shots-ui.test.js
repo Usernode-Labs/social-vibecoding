@@ -884,3 +884,28 @@ test('the crop is CSS: it applies while both sides show, stacked or beside each 
       `${viewport}: the automatic side by side stacks a wide crop`);
   }
 });
+
+test('a sharp still at its own address shows like any other, and nothing else may follow the id', () => {
+  // shots-view.js serves an account in the New Needs you experiment each
+  // dense still at `…/shots/<id>?density=device` (#5651).
+  const dense = (char) => `${url(char)}?density=device`;
+  const value = shots();
+  value.artifacts = value.artifacts.map((a) => (a.url.startsWith('/api/') ? { ...a, url: dense(a.id[0]), density: 2 } : a));
+  const html = AppView.shotsHtml(value, { sessionId: 42 });
+  assert.doesNotMatch(html, /missing their details/);
+  const figure = /<figure class="shots-view"[\s\S]*?<\/figcaption>\s*<\/figure>/.exec(html)[0];
+  assert.deepEqual([...figure.matchAll(/<img src="([^"]+)"/g)].map((match) => match[1].replace(/&amp;/g, '&')), [dense('4'), dense('3')]);
+  for (const bad of [`${url('4')}?density=other`, `${url('4')}?density=device&x=1`, `${url('4')}#x`, `${url('4')}?`]) {
+    const tampered = shots();
+    tampered.artifacts = tampered.artifacts.map((a) => (a.url === url('4') ? { ...a, url: bad } : a));
+    assert.ok(!AppView.shotsHtml(tampered, { sessionId: 42 }).includes(bad), `${bad} is refused`);
+  }
+  // Needs you and New Needs you read the same stills through _workshopVisuals.
+  const pictures = AppView._workshopVisuals(null, {
+    ...value,
+    claims: [{ ...value.claims[0], viewports: ['desktop'] }],
+    screens: [{ viewport: 'desktop', shot: 'dialog', width: 1280, heightBefore: 800, heightAfter: 800, density: 2, regions: [] }],
+  });
+  assert.equal(pictures.screens.length, 1);
+  assert.equal(pictures.screens[0].after.url, dense('4'));
+});

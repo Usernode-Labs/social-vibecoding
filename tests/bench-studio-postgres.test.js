@@ -20,6 +20,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const express = require('express');
 const { Pool } = require('pg');
+const { asTransition } = require('./lib/as-transition');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -151,7 +152,7 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
     const quiet = await studio.watchRun(pool, run.id, { since: first.cursor });
     assert.equal(quiet.trials.length, 0);
     const moving = first.trials[0];
-    await pool.query(
+    await asTransition(pool,
       "UPDATE bench_trials SET status = 'running', started_at = NOW(), progress = $2::jsonb WHERE id = $1",
       [moving.trialId, JSON.stringify({ step: 'build', lines: ['Using skill warm'], skills: { invoked: ['warm'], read: [] }, updatedAt: new Date(Date.now() + 1000).toISOString() })],
     );

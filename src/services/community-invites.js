@@ -516,7 +516,7 @@ async function loadInvite(db, token, { lock = false } = {}) {
   const { rows } = await db.query(
     `SELECT i.id, i.token, i.community_id, i.app_id, i.created_by, i.max_uses, i.uses,
             i.expires_at, i.revoked_at, i.note,
-            a.slug, a.name, a.icon_emoji, a.icon_image_id, a.created_by AS app_created_by,
+            a.slug, a.name, a.icon_emoji, a.icon_image_id, a.icon_color, a.created_by AS app_created_by,
             a.self_hosted, a.collab_visibility, a.view_visibility, a.community_id AS app_community_id,
             a.manifest_snapshot->>'description' AS description,
             u.username AS inviter, u.display_name AS inviter_display_name,
@@ -671,6 +671,7 @@ async function preview(pool, token) {
       name: invite.name || invite.slug,
       iconEmoji: invite.icon_emoji || null,
       iconUrl: invite.icon_image_id ? `/app-icons/${invite.icon_image_id}` : null,
+      iconColor: invite.icon_color || null,
       description: invite.description || null,
       picture: pictureUrls(token, picture),
       // A public community: its Join asks for a username, not a name (a
@@ -687,6 +688,21 @@ async function preview(pool, token) {
     note: invite.note || null,
     memberCount: count,
     expiresAt: invite.expires_at instanceof Date ? invite.expires_at.toISOString() : invite.expires_at,
+  };
+}
+
+/**
+ * A live link's project icon, for the link preview's picture
+ * (GET /api/public/invites/:token/icon.png): its image's id, or its emoji
+ * and colour. Null for a dead or unknown link, which shows no icon.
+ */
+async function previewIcon(pool, token) {
+  const invite = await loadInvite(pool, token);
+  if (deadReason(invite)) return null;
+  return {
+    imageId: invite.icon_image_id || null,
+    emoji: invite.icon_emoji || null,
+    color: invite.icon_color || null,
   };
 }
 
@@ -1108,6 +1124,7 @@ module.exports = {
   cleanNote,
   pictureBytes,
   pictureFor,
+  previewIcon,
   firstVersionPending,
   joiningRule,
   joiningRuleText,

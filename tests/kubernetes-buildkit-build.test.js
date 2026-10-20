@@ -860,6 +860,153 @@ test('createBuild: a namespace or RBAC the cluster does not have yet is the lane
   assert.equal(state.deleted.filter((d) => /-input$/.test(d.name)).length, 1, 'the clone credential does not outlive the attempt');
 });
 
+// The API's refusal when the lane's ResourceQuota is full, as
+// @kubernetes/client-node raises it: a 403 whose Status says so.
+function quotaRefusal(resource = 'count/jobs.batch') {
+  const status = { kind: 'Status', status: 'Failure', reason: 'Forbidden', code: 403,
+    message: `jobs.batch "bk-12" is forbidden: exceeded quota: bk, requested: ${resource}=1, used: ${resource}=1k, limited: ${resource}=1k` };
+  return Object.assign(new Error(`HTTP-Code: 403\nMessage: Unknown API Status Code!\nBody: ${JSON.stringify(JSON.stringify(status))}`), { code: 403, body: JSON.stringify(status) });
+}
+
+// A succeeded build of `appId` as the prune's listing finds it.
+function retainedBuild(name, appId, completionTime) {
+  return {
+    metadata: { name, namespace: 'bk', creationTimestamp: completionTime, labels: { 'social.usernode.io/app-id': String(appId) } },
+    status: { succeeded: 1, conditions: [{ type: 'Complete', status: 'True' }], completionTime },
+  };
+}
+
+// Five of app 12's builds, two of app 13's, one still running and one
+// failed: room is the oldest two of app 12's, beyond its newest three.
+const RETAINED = [
+  ...[1, 2, 3, 4, 5].map((day) => retainedBuild(`bk-12-old-${day}`, 12, `2026-10-0${day}T10:00:00Z`)),
+  retainedBuild('bk-13-a', 13, '2026-09-20T10:00:00Z'), retainedBuild('bk-13-b', 13, '2026-09-21T10:00:00Z'),
+  { metadata: { name: 'bk-14-running', labels: { 'social.usernode.io/app-id': '14' }, creationTimestamp: '2026-09-01T10:00:00Z' }, status: { active: 1 } },
+  { metadata: { name: 'bk-15-failed', labels: { 'social.usernode.io/app-id': '15' }, creationTimestamp: '2026-09-01T10:00:00Z' },
+    status: { failed: 1, conditions: [{ type: 'Failed', status: 'True' }] } },
+];
+const prunedNames = (state) => state.deleted.filter((d) => d.propagationPolicy === 'Background').map((d) => d.name).sort();
+
+// Refuses the first `times` creates through `method` for quota, then lets
+// them through; counts every attempt.
+function refuseFor(api, method, times, attempts) {
+  const real = api[method].bind(api);
+  api[method] = async (request) => {
+    attempts.push(method);
+    if (attempts.filter((m) => m === method).length <= times) throw quotaRefusal();
+    return real(request);
+  };
+}
+
+test('a quota refusal is told apart from the lane missing, in either shape the client raises it', () => {
+  const { isQuotaRefusal } = buildkit._forTest;
+  assert.equal(isQuotaRefusal(quotaRefusal()), true);
+  assert.equal(isQuotaRefusal(Object.assign(new Error('HTTP-Code: 403'), { code: 403, body: { message: 'exceeded quota: bk' } })), true, 'a parsed body');
+  assert.equal(isQuotaRefusal(Object.assign(new Error('jobs.batch is forbidden: cannot create resource "jobs"'), { code: 403 })), false, 'RBAC');
+  assert.equal(isQuotaRefusal(Object.assign(new Error('exceeded quota'), { code: 422 })), false, 'only a 403');
+});
+
+test('createBuild: a full quota is room to make, not the lane missing: older finished Jobs go and the create is tried again', async () => {
+  buildkit._forTest.setRoomTiming(5, 500);
+  const { clients, state } = fakeCluster({ historyJobs: RETAINED });
+  const attempts = [];
+  refuseFor(clients.batch, 'createNamespacedJob', 2, attempts);
+  const result = await buildkit.createBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(clients));
+  assert.equal(result.engine, 'buildkit');
+  assert.equal(result.imageRef, `registry.test/apps/demo@${digest('d')}`);
+  assert.deepEqual(prunedNames(state), ['bk-12-old-1', 'bk-12-old-2'], 'each app keeps its newest three; running and failed Jobs are left');
+  assert.equal(attempts.length, 3, 'tried again while the quota caught up with the deletions');
+  assert.equal(state.jobs.length, 1);
+  assert.equal(state.deleted.filter((d) => /-input$/.test(d.name)).length, 0, 'the clone credential stays for the Job');
+  assert.equal(buildkit.unavailableReason(), null);
+});
+
+test('createBuild: a Secret the quota refuses makes room the same way', async () => {
+  buildkit._forTest.setRoomTiming(5, 500);
+  const { clients, state } = fakeCluster({ historyJobs: RETAINED });
+  const attempts = [];
+  refuseFor(clients.core, 'createNamespacedSecret', 1, attempts);
+  const result = await buildkit.createBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(clients));
+  assert.equal(result.engine, 'buildkit');
+  assert.deepEqual(prunedNames(state), ['bk-12-old-1', 'bk-12-old-2']);
+  assert.equal(state.secrets.length, 1);
+});
+
+test('createBuild: a lane still full after making room, or with none to make, is full for this build, not unavailable', async () => {
+  buildkit._forTest.setRoomTiming(5, 40);
+  const full = fakeCluster({ historyJobs: RETAINED, createJobError: quotaRefusal() });
+  await assert.rejects(buildkit.createBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(full.clients)), (err) => {
+    assert.equal(err.engineUnavailable, true);
+    assert.equal(err.laneFull, true);
+    assert.match(err.message, /^BuildKit lane full: no room in bk's quota for Jobs \(/);
+    assert.equal(err.buildFailed, true, 'still a failed build for a caller that does not fall back');
+    return true;
+  });
+  assert.deepEqual(prunedNames(full.state), ['bk-12-old-1', 'bk-12-old-2']);
+  assert.equal(full.state.deleted.filter((d) => /-input$/.test(d.name)).length, 1, 'the clone credential does not outlive the attempt');
+  // Every app at its newest three: nothing to prune, so no wait either.
+  const kept = fakeCluster({ historyJobs: RETAINED.slice(2) });
+  const attempts = [];
+  refuseFor(kept.clients.batch, 'createNamespacedJob', Infinity, attempts);
+  await assert.rejects(buildkit.createBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(kept.clients)), (err) => err.laneFull === true);
+  assert.equal(attempts.length, 1);
+  assert.deepEqual(prunedNames(kept.state), []);
+});
+
+test('kubernetes.createBuild under auto sends only the build a full lane refuses to kpack', async () => {
+  buildkit._forTest.setRoomTiming(5, 20);
+  const full = fakeCluster({ historyJobs: RETAINED });
+  const attempts = [];
+  refuseFor(full.clients.batch, 'createNamespacedJob', Infinity, attempts);
+  const kpackCreated = [];
+  kubernetes._setClientsForTest({ ...full.clients, custom: {
+    async listNamespacedCustomObject() { return { items: [] }; },
+    async createNamespacedCustomObject(request) { kpackCreated.push(request.body); },
+    async getNamespacedCustomObject() {
+      return { status: { conditions: [{ type: 'Succeeded', status: 'True' }], latestImage: `registry.test/apps/demo@${digest('c')}` } };
+    },
+  } });
+  const params = () => ({ app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']) });
+  const first = await kubernetes.createBuild(config(), params());
+  assert.equal(first.imageRef, `registry.test/apps/demo@${digest('c')}`);
+  assert.equal(kpackCreated.length, 1);
+  assert.equal(buildkit.unavailableReason(), null, 'a full quota is not a verdict to remember');
+  const tried = attempts.length;
+  await kubernetes.createBuild(config(), params());
+  assert.ok(attempts.length > tried, 'the next build tries the lane again');
+  assert.equal(kpackCreated.length, 2);
+});
+
+test('makeRoom: builds refused together share one prune', async () => {
+  let lists = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const deleted = [];
+  const batch = {
+    async listNamespacedJob() { lists += 1; await gate; return { items: RETAINED }; },
+    async deleteNamespacedJob(request) { deleted.push(request.name); },
+  };
+  const runtime = runtimeWith({ batch });
+  const cfg = config().kubernetes;
+  const both = Promise.all([buildkit._forTest.makeRoom(cfg, runtime, { batch }), buildkit._forTest.makeRoom(cfg, runtime, { batch })]);
+  release();
+  const [a, b] = await both;
+  assert.equal(lists, 1);
+  assert.deepEqual(a, { examined: RETAINED.length, deleted: 2 });
+  assert.equal(a, b);
+  assert.deepEqual(deleted.sort(), ['bk-12-old-1', 'bk-12-old-2']);
+  await buildkit._forTest.makeRoom(cfg, runtime, { batch });
+  assert.equal(lists, 2, 'a later refusal makes room again');
+});
+
 test('createBuild: a Job name still held by a terminating Job past the create deadline does not strand the clone credential', async (t) => {
   const conflict = Object.assign(new Error('jobs.batch "bk" already exists'), { code: 409 });
   const { clients, state } = fakeCluster({ createJobError: conflict });

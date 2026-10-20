@@ -749,8 +749,11 @@
 
   var loaded = false;
   var loading = null;
+  var again = false;
   function load() {
-    if (loading) return loading;
+    // A read already on its way may have left before the change just made:
+    // read once more when it is back.
+    if (loading) { again = true; return loading; }
     loading = api('GET', '/api/plans')
       .then(function (data) { loaded = true; showStatus(null); render(data); })
       .catch(function (err) {
@@ -759,23 +762,25 @@
         if (loaded) showStatus(err);
         else show('error');
       })
-      .then(function () { loading = null; });
+      .then(function () {
+        loading = null;
+        if (again) { again = false; return load(); }
+      });
     return loading;
   }
 
   byId('retry').addEventListener('click', function () { show('loading'); load(); });
 
-  // Other people mark their times too: look again every 20 seconds while
-  // the app is on screen, and straight away when it comes back. Skipped
-  // while you are marking, starting a plan or picking a time to set, so a
-  // refresh never undoes what you are in the middle of.
+  // Other people mark their times too: whenever anybody changes something,
+  // the plans are fetched again at once, and looked at every minute
+  // regardless (public/live-updates.js). Not while you are marking,
+  // starting a plan or picking a time to set: what changed then is fetched
+  // the moment you are done, so a refresh never undoes what you are in the
+  // middle of.
   function busy() {
     return !!marking || !el.planForm.hidden || Object.keys(choosing).length > 0;
   }
-  setInterval(function () {
-    if (!document.hidden && !busy()) load();
-  }, 20000);
-  document.addEventListener('visibilitychange', function () { if (!document.hidden && !busy()) load(); });
+  if (window.LiveUpdates) window.LiveUpdates.watch({ refresh: load, quiet: function () { return !busy(); } });
 
   // The first screen, drawn: Homeroom keeps its opening cover up until then
   // (usernode.ready, the platform bridge), so the app appears in one step

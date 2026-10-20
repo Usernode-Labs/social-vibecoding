@@ -8,7 +8,7 @@
 //
 //   1. Send closed the sheet with nothing said. Now the sheet stays up and
 //      says where the invite went, or, in its own words, why it did not.
-//   2. Share invite opened again on "I'm making this for us. Join and tell me what it needs.", not alex's own
+//   2. Share invite opened again on "I'm making this for us. Click the link to join the app.", not alex's own
 //      note. Now the note is kept per project on the device (else read back
 //      from alex's own newest link), and the invite carries it.
 //   4. mo's invite read "invited you to build", with no note and no
@@ -109,14 +109,14 @@ test('2. the sheet opens on the maker\'s last note for that project', () => {
   const { InviteSheet, noteKey, openingNote, linkNote } = loadTsx(MADE);
   assert.equal(noteKey('page-turners'), 'usernode:first-session:note:page-turners');
   withStorage({}, () => {
-    assert.equal(openingNote('page-turners', null), 'I\'m making this for us. Join and tell me what it needs.', 'nothing kept: the default');
+    assert.equal(openingNote('page-turners', null), 'I\'m making this for us. Click the link to join the app.', 'nothing kept: the default');
     assert.equal(openingNote('page-turners', 'Pick our next book!'), 'Pick our next book!', 'an example\'s own note');
     const html = renderToHtml(createElement(InviteSheet, MADE_PROPS));
-    assert.match(html, /<textarea[^>]*>I&#x27;m making this for us\. Join and tell me what it needs\.<\/textarea>/);
+    assert.match(html, /<textarea[^>]*>I&#x27;m making this for us\. Click the link to join the app\.<\/textarea>/);
   });
   withStorage({ 'usernode:first-session:note:page-turners': 'Fridays at mine, bring a book' }, () => {
     assert.equal(openingNote('page-turners', 'Pick our next book!'), 'Fridays at mine, bring a book');
-    assert.equal(openingNote('another-project', null), 'I\'m making this for us. Join and tell me what it needs.', 'per project');
+    assert.equal(openingNote('another-project', null), 'I\'m making this for us. Click the link to join the app.', 'per project');
     const html = renderToHtml(createElement(InviteSheet, MADE_PROPS));
     assert.match(html, /<textarea[^>]*>Fridays at mine, bring a book<\/textarea>/);
   });

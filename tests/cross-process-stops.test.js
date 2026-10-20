@@ -1,8 +1,10 @@
 'use strict';
 
 // Stops for work another platform process runs (docs/plans/
-// draining-releases.md): a turn, a bench trial or run, and the
-// BYOK spend a proxy saw for a turn it does not run. The process that holds
+// draining-releases.md): a turn, and the BYOK spend a proxy saw for a turn
+// it does not run. (A bench trial's or run's cancel is the bench lane's
+// machine's, which stops a trial through its build wherever it runs: never
+// the bus.) The process that holds
 // the work does what a stop in its own process does; the one asked forwards
 // it over the WebSocket bus and answers as if it had. Here the other process
 // is played by the registry's copy of its holds (a fake database answers the
@@ -83,54 +85,32 @@ test('a Stop for shots is no bus message: the shots machine cancels the agent\'s
   assert.doesNotMatch(ws, /shots_stop/);
 });
 
-test('a cancel for a bench trial another process runs is forwarded; one nobody runs is refused as before', async (t) => {
-  await elsewhere([['bench_trial', 77]]);
-  const bus = capturePublishes();
-  t.after(() => { bus.restore(); processes._reset(); });
-  const lane = require('../src/services/bench/lane');
-  const running = { query: async (sql) => (/UPDATE bench_trials/.test(sql) ? { rows: [] } : { rows: [{ status: 'running' }] }) };
-  assert.deepEqual(await lane.cancelTrial(running, 77), { ok: true, status: 'stopping' });
-  assert.deepEqual(bus.sent.map((m) => [m.kind, m.data]), [['bench_cancel', { trialId: 77 }]]);
-  bus.sent.length = 0;
-  const refused = await lane.cancelTrial(running, 78);
-  assert.equal(refused.status ?? refused.statusCode ?? refused.code, 409);
-  assert.deepEqual(bus.sent, []);
-  assert.equal(lane.receiveCancel({ trialId: 77 }), false, 'the holder side: nothing of it runs in this process');
-  // A slot this process only counts (a durable trial another process
-  // executes, as holdDurableTrials takes after a release): marked, and the
-  // cancel still goes to the process running it.
-  lane._resetForTests();
-  bus.sent.length = 0;
-  const slot = { runId: 1, est: 0, sessionId: null, promise: null, durable: true };
-  lane._inFlightForTests().set(77, slot);
-  assert.deepEqual(await lane.cancelTrial(running, 77), { ok: true, status: 'stopping' });
-  assert.equal(slot.cancelled, true);
-  assert.deepEqual(bus.sent.map((m) => [m.kind, m.data]), [['bench_cancel', { trialId: 77 }]]);
-  lane._resetForTests();
+test('a bench cancel is the bench lane\'s machine\'s, never the bus\'s', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const lane = fs.readFileSync(path.join(__dirname, '..', 'src/services/bench/lane.js'), 'utf8');
+  assert.doesNotMatch(lane, /bench_cancel|bench_wake|heldMap\('bench_trial'\)/);
+  assert.match(lane, /benchCancelTrial\(Number\(trialId\)/);
+  const ws = fs.readFileSync(path.join(__dirname, '..', 'src/services/ws.js'), 'utf8');
+  assert.doesNotMatch(ws, /bench_cancel|bench_wake/);
 });
 
 test('the bus delivers each stop to its receiver, and a turn\'s BYOK spend to the process running it', async (t) => {
   const ws = require('../src/services/ws');
   const sessions = require('../src/routes/sessions');
-  const lane = require('../src/services/bench/lane');
   const worker = require('../src/services/worker');
   const got = [];
-  const saved = {
-    s: sessions.receiveSessionStop, l: lane.receiveCancel, w: worker.receiveTurnByok,
-  };
+  const saved = { s: sessions.receiveSessionStop, w: worker.receiveTurnByok };
   sessions.receiveSessionStop = async (p) => { got.push(['session', p.sessionId]); };
-  lane.receiveCancel = (p) => { got.push(['bench', p.trialId]); };
   worker.receiveTurnByok = (p) => { got.push(['byok', p.cents]); };
   t.after(() => {
-    sessions.receiveSessionStop = saved.s;
-    lane.receiveCancel = saved.l; worker.receiveTurnByok = saved.w;
+    sessions.receiveSessionStop = saved.s; worker.receiveTurnByok = saved.w;
   });
   ws._onBusMessage({ kind: 'session_stop', data: { sessionId: 1 } });
-  ws._onBusMessage({ kind: 'bench_cancel', data: { trialId: 3 } });
   ws._onBusMessage({ kind: 'turn_byok', data: { cents: 12 } });
   ws._onBusMessage({ kind: 'session_stop', data: { sessionId: 2 }, oversize: true });
   await new Promise((r) => setImmediate(r));
-  assert.deepEqual(got, [['session', 1], ['bench', 3], ['byok', 12]], 'an oversize one carries nothing to act on');
+  assert.deepEqual(got, [['session', 1], ['byok', 12]], 'an oversize one carries nothing to act on');
 });
 
 test('BYOK spend the proxy here saw for a turn another process runs is not kept here', async (t) => {

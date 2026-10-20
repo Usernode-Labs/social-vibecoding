@@ -169,7 +169,9 @@ test('the taste eval against the full PostgreSQL schema and its routes', { timeo
     const ear = rows.filter((r) => r.ref === 'ear-trainer');
     assert.deepEqual(ear.map((r) => r.status), ['pending', 'pending', 'pending', 'pending']);
     assert.ok(ear.every((r) => r.est > 0));
-    await lane.cancelRun(pool, launched.run.id, { worker: { stopTurn: async () => {} } });
+    // Put away (nothing runs it here).
+    await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [launched.run.id]);
+    await pool.query("UPDATE bench_trials SET status = 'cancelled' WHERE run_id = $1 AND status = 'pending'", [launched.run.id]);
   });
 
   // Two finished trials of one run, one per arm, each with its screenshots.

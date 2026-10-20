@@ -19,7 +19,6 @@ const path = require('node:path');
 
 const processes = require('../src/services/processes');
 const wsBus = require('../src/services/ws-bus');
-const leaderStatus = require('../src/services/leader-status');
 
 const serverJs = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 
@@ -54,58 +53,18 @@ function capturePublishes(t) {
 
 // ── Leader status ─────────────────────────────────────────────────────
 
-test('a status is read from memory where its work runs, and from the leader\'s copy elsewhere', async (t) => {
-  leaderStatus._reset();
-  t.after(() => leaderStatus._reset());
-  const rows = new Map();
-  const pool = {
-    query: async (sql, params) => {
-      if (sql.startsWith('INSERT INTO leader_status')) {
-        rows.set(params[0], { value: JSON.parse(params[1]), at: Date.now() });
-        return { rows: [] };
-      }
-      if (sql.includes('FROM leader_status')) {
-        const row = rows.get(params[0]);
-        const fresh = row && Date.now() - row.at < params[1] * 1000;
-        return { rows: fresh ? [{ value: row.value }] : [] };
-      }
-      return { rows: [] };
-    },
-  };
-  let lastSweepAt = new Date('2026-10-14T12:00:00Z');
-  leaderStatus.provide('app-domains.sweep', () => ({ lastSweepAt, lastError: null, sweepInFlight: false }));
-  await leaderStatus.start({ pool });
-  // Where the work runs: its memory, as it is now.
-  lastSweepAt = new Date('2026-10-14T12:05:00Z');
-  assert.equal((await leaderStatus.read('app-domains.sweep', pool)).lastSweepAt.toISOString(), '2026-10-14T12:05:00.000Z');
-  // Elsewhere (no provider): the copy, as res.json would have sent it.
-  assert.deepEqual(rows.get('app-domains.sweep').value,
-    { lastSweepAt: '2026-10-14T12:00:00.000Z', lastError: null, sweepInFlight: false });
-  leaderStatus.stop();
-  const published = rows.get('app-domains.sweep').value;
-  leaderStatus._reset();
-  rows.set('app-domains.sweep', { value: published, at: Date.now() });
-  assert.deepEqual(await leaderStatus.read('app-domains.sweep', pool), published);
-  // A copy its leader stopped writing is nobody's.
-  rows.set('app-domains.sweep', { value: published, at: Date.now() - leaderStatus.STALE_MS - 1000 });
-  assert.equal(await leaderStatus.read('app-domains.sweep', pool), null);
-  assert.deepEqual(await leaderStatus.readOr('app-domains.sweep', pool, () => ({ own: true })), { own: true });
-  // A database that will not answer is no copy, never a failed route.
-  assert.equal(await leaderStatus.read('app-domains.sweep', { query: async () => { throw new Error('down'); } }), null);
-});
-
-test('the leader publishes the admin statuses it keeps in memory, and stops as it hands over', () => {
+test('no admin status is kept in a leader\'s memory: each is read from Postgres wherever it is served', () => {
   const body = serverJs.slice(serverJs.indexOf('async function becomeLeader()'), serverJs.indexOf('async function start()'));
-  assert.ok(body.includes("leaderStatus.provide('bench-lane'"), 'becomeLeader publishes the bench lane');
-  assert.match(body, /leaderStatus\.start\(\{ pool: getPool\(config\) \}\)/);
+  // The last one the leader published, the bench lane's, is its machine's
+  // instance now (workflow/bench-lane/): leader-status is gone.
+  assert.ok(!serverJs.includes('leader-status') && !serverJs.includes('leaderStatus'));
+  assert.equal(fs.existsSync(path.join(__dirname, '..', 'src/services/leader-status.js')), false);
   // The automatic stale-preview pass is the preview-gc clock now: nothing of
   // it is kept in the leader's memory.
   assert.ok(!body.includes("'staging-reap.automatic'"), 'no leader publishes the automatic reap');
   // The Homeroom bot's loop keeps nothing in memory to publish: its lane is
   // a workflow instance every process reads (homeroom-bot.js loopMemory).
   assert.ok(!body.includes("require('./src/services/homeroom-bot').MEMORY_STATUS_KEY"));
-  const cleanupBody = serverJs.slice(serverJs.indexOf('async function cleanup()'));
-  assert.match(cleanupBody, /require\('\.\/src\/services\/leader-status'\)\.stop\(\)/);
   // And the routes read them wherever they are served.
   const admin = fs.readFileSync(path.join(__dirname, '..', 'src/routes/admin.js'), 'utf8');
   // The custom-domain sweep, the storage cap's and the leftover-preview pass
@@ -117,7 +76,9 @@ test('the leader publishes the admin statuses it keeps in memory, and stops as i
   assert.match(admin, /await clocks\.status\(pool, 'app-storage-cap'\)/);
   assert.ok(!body.includes("'app-domains.sweep'") && !body.includes('LAST_SWEEP_STATUS_KEY'), 'no leader publishes them');
   const bench = fs.readFileSync(path.join(__dirname, '..', 'src/routes/homeroom-bench.js'), 'utf8');
-  assert.equal(bench.match(/lane: await leaderStatus\.readOr\('bench-lane', pool, lane\.laneStatus\)/g).length, 2);
+  assert.equal(bench.match(/lane: await lane\.laneStatus\(\)/g).length, 2);
+  const lane = fs.readFileSync(path.join(__dirname, '..', 'src/services/bench/lane.js'), 'utf8');
+  assert.match(lane, /return \(deps\.platform \|\| platform\(\)\)\.benchLaneStatus\(\);/);
 });
 
 test('the Homeroom bot\'s queue shows why a row waits from its lane, the same in every process', async () => {
@@ -146,21 +107,15 @@ test('the Homeroom bot\'s queue shows why a row waits from its lane, the same in
 
 // ── Wakes over the bus ────────────────────────────────────────────────
 
-test('a launch on a process not running the bench lane or the eval runner wakes the one that does', (t) => {
-  const sent = capturePublishes(t);
+test('neither the bench lane nor the shots evals need a wake: each is a machine a launch tells, in any process', () => {
   const lane = require('../src/services/bench/lane');
-  const runner = require('../src/services/shots-eval-runner');
-  assert.equal(lane.wake(), false, 'the lane does not run here');
-  assert.equal(runner.wake(), false, 'nor the runner');
-  assert.deepEqual(sent.map((m) => m.kind), ['bench_wake', 'shots_eval_wake']);
-  // Where they do not run either, the bus half does nothing and publishes nothing.
-  sent.length = 0;
-  const ws = require('../src/services/ws');
-  ws._onBusMessage({ kind: 'bench_wake', data: {} });
-  ws._onBusMessage({ kind: 'shots_eval_wake', data: {} });
-  assert.deepEqual(sent, [], 'a wake is never passed on again');
-  assert.equal(lane.wakeHere(), false);
-  assert.equal(runner.wakeHere(), false);
+  const evals = require('../src/services/shots-eval');
+  assert.equal(lane.wake, undefined);
+  assert.equal(typeof lane.look, 'function');
+  assert.equal(typeof evals.look, 'function');
+  assert.equal(fs.existsSync(path.join(__dirname, '..', 'src/services/shots-eval-runner.js')), false);
+  const ws = fs.readFileSync(path.join(__dirname, '..', 'src/services/ws.js'), 'utf8');
+  assert.doesNotMatch(ws, /bench_wake|shots_eval_wake/);
 });
 
 // ── The open-issues copy ──────────────────────────────────────────────

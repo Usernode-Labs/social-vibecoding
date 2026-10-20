@@ -351,6 +351,17 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/main-drift-poller').scan(config, pool, { shouldStop: stopped(ctx) }),
   },
 
+  // ── The App bench ──────────────────────────────────────────────────
+  {
+    // What its trials leave behind (services/bench/lane.js sweep): kept
+    // `bench/` branches past their time (within GitHub's background budget),
+    // side builds' results a trial that never ran left waiting, and the
+    // studio's previews past their day. Which trials run is the bench-lane
+    // machine's (src/workflow/bench-lane/).
+    name: 'bench-sweep', everyMs: 10 * MIN,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/bench/lane').sweep(pool),
+  },
+
   // ── The build's own: what only the newest build may do ──────────────
   {
     // Ready-made apps' images, built ahead under this build's keys

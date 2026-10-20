@@ -304,7 +304,7 @@
     "description": "Label of a tile on the screen that asks a member \"What do you want to make?\": picks a tier list as the starting idea for the new project."
   },
   "firstSession.template.tier.note": {
-    "text": "I'm making us a tier list. Join and tell me what it needs.",
+    "text": "I'm making us a tier list. Click the link to join the app.",
     "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the tier list idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
   },
   "firstSession.template.tier.restaurants.label": {
@@ -404,7 +404,7 @@
     "description": "Label of a tile on the screen that asks a member \"What do you want to make?\": picks a game as the starting idea for the new project."
   },
   "firstSession.template.game.note": {
-    "text": "I'm making us a game. Join and tell me what it needs.",
+    "text": "I'm making us a game. Click the link to join the app.",
     "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the game idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
   },
   "firstSession.template.game.board.label": {
@@ -528,7 +528,7 @@
     "description": "Label of a tile on the screen that asks a member \"What do you want to make?\": picks an organizer as the starting idea for the new project."
   },
   "firstSession.template.organizer.note": {
-    "text": "I'm making us an organizer. Join and tell me what it needs.",
+    "text": "I'm making us an organizer. Click the link to join the app.",
     "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the organizer idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
   },
   "firstSession.template.organizer.groceries.label": {
@@ -624,7 +624,7 @@
     "description": "Label of a tile, or of a row in the list of more ideas, on the screen that asks a member \"What do you want to make?\": picks a group poll as the starting idea for the new project."
   },
   "firstSession.template.poll.note": {
-    "text": "I'm making us a poll. Join and help decide.",
+    "text": "I'm making us a poll. Click the link to join the app.",
     "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the a group poll idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
   },
   "firstSession.template.poll.namePlaceholder": {
@@ -704,7 +704,7 @@
     "description": "Label of a tile, or of a row in the list of more ideas, on the screen that asks a member \"What do you want to make?\": picks finding a time as the starting idea for the new project."
   },
   "firstSession.template.findtime.note": {
-    "text": "I'm making us a way to find a time. Join and mark when you're free.",
+    "text": "I'm making us a way to find a time. Click the link to join the app.",
     "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the finding a time idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
   },
   "firstSession.template.findtime.namePlaceholder": {
@@ -788,7 +788,7 @@
     "description": "Label of a tile, or of a row in the list of more ideas, on the screen that asks a member \"What do you want to make?\": picks a sign-up sheet as the starting idea for the new project."
   },
   "firstSession.template.signup.note": {
-    "text": "I'm making us a sign-up sheet. Join and sign up.",
+    "text": "I'm making us a sign-up sheet. Click the link to join the app.",
     "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the a sign-up sheet idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
   },
   "firstSession.template.signup.namePlaceholder": {
@@ -872,7 +872,7 @@
     "description": "Label of a tile, or of a row in the list of more ideas, on the screen that asks a member \"What do you want to make?\": picks a group challenge as the starting idea for the new project."
   },
   "firstSession.template.challenge.note": {
-    "text": "I'm making us a monthly challenge. Join and start logging.",
+    "text": "I'm making us a monthly challenge. Click the link to join the app.",
     "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the a group challenge idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
   },
   "firstSession.template.challenge.namePlaceholder": {
@@ -1536,7 +1536,7 @@
     "description": "The invite as its receiver sees it, when the sender's name is not known: shown in the preview on the sheet for sending an invite link to a community and used as the title of the shared link. {{community}} is the community's name."
   },
   "firstSession.invite.noteDefault": {
-    "text": "I'm making this for us. Join and tell me what it needs.",
+    "text": "I'm making this for us. Click the link to join the app.",
     "description": "Suggested text of the personal note a maker sends with an invite link, already filled in when the sheet opens. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
   },
   "firstSession.invite.noteLabel": {
@@ -1678,14 +1678,6 @@
   "firstSession.walk.goToCommunity": {
     "text": "Go to community",
     "description": "Button on the last card of a new member's walk on Home, which points at the Communities tab: ends the walk and opens their project's hub page under that tab, so they see why the screen changes. \"Go to\" is a verb; \"community\" is the project's community, as the app menu's \"Go to community\" row says it."
-  },
-  "firstSession.walk.waitlist.title": {
-    "text": "Make your own apps",
-    "description": "Fourth card of the walk on Home, only for someone let in by an invite before the waitlist let them in. It points at the waitlist card on Home."
-  },
-  "firstSession.walk.waitlist.text": {
-    "text": "Join the waitlist to get your spot.",
-    "description": "Line on the walk's waitlist card: joining the waitlist is how they get to make apps of their own."
   },
   "firstSession.tour.look.make.title": {
     "text": "Make something any time",

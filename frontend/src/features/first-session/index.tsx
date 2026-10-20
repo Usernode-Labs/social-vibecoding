@@ -104,8 +104,6 @@ export type FirstSessionInfo = {
    * somebody new to Homeroom, whose first Home gets the walk.
    */
   newAccount?: boolean;
-  /** The walk's reader is a private member: its fourth card is the waitlist (./tour-steps.ts homeWalkSteps). */
-  privateMember?: boolean;
   /**
    * The walk's example of a change to ask Homeroom bot for in this project
    * (walkExample: GET /api/apps/:slug `exampleChange`, from its ready-made
@@ -930,10 +928,10 @@ export function Tour({ info, steps, onEnd: endTour, start = 0, moments = false, 
                 ) : (
                   // The walk's last card says where it goes: it ends on the
                   // project's hub under the Communities tab (`end`,
-                  // walkDoneLanding), except a private member's, which ends
-                  // on its waitlist card and stays on Home.
+                  // walkDoneLanding), an invited private member's as well
+                  // as a maker's (Evan, 20 Oct 2026).
                   <Button type="button" onClick={() => go(index + 1)} variant="pillAccent" size="sm" ink="solid" className="text-[15px] font-semibold">
-                    {step.last ? (numbered ? (info.privateMember ? t('core:common.done') : t('onboarding:firstSession.walk.goToCommunity')) : t('onboarding:firstSession.tour.gotIt')) : t('onboarding:firstSession.tour.next')}
+                    {step.last ? (numbered ? t('onboarding:firstSession.walk.goToCommunity') : t('onboarding:firstSession.tour.gotIt')) : t('onboarding:firstSession.tour.next')}
                   </Button>
                 )}
               </div>
@@ -1009,7 +1007,7 @@ const LOOK_AROUND_INFO: FirstSessionInfo = { slug: '', name: '' };
  * first session reaches them, so the before/after shots open one on demand
  * (the owner's ruling for first-run screens, 6 October 2026, as app-view.js
  * draws `?shot=first-version`): `?shot=tour-home` (the walk's three cards),
- * `?shot=tour-home-private` (with the waitlist card), `?shot=tour-look`, and
+ * `?shot=tour-look`, and
  * `&step=N` to open one at its Nth card; `?shot=app-tip` and
  * `?shot=app-tip-invited`, the tip over the app. The walk and the tip are
  * shown over the first project on the viewer's Home, the walk with its name
@@ -1017,13 +1015,12 @@ const LOOK_AROUND_INFO: FirstSessionInfo = { slug: '', name: '' };
  * opens, so a shot from its second card shows it at once). Nothing is
  * written: no answer to the question, no "seen" or "done" mark.
  */
-const TOUR_SHOTS: Readonly<Record<string, { path: TourPath; privateMember?: boolean }>> = Object.freeze({
+const TOUR_SHOTS: Readonly<Record<string, { path: TourPath }>> = Object.freeze({
   'tour-home': { path: 'walk' },
-  'tour-home-private': { path: 'walk', privateMember: true },
   'tour-look': { path: 'look' },
 });
 
-export type TourShot = { path: TourPath; start: number; privateMember?: boolean };
+export type TourShot = { path: TourPath; start: number };
 
 export function tourShot(search: string): TourShot | null {
   let params: URLSearchParams;
@@ -1033,7 +1030,7 @@ export function tourShot(search: string): TourShot | null {
   if (!found) return null;
   const n = Number(params.get('step'));
   const start = Number.isInteger(n) && n > 1 ? n - 1 : 0;
-  return found.privateMember ? { path: found.path, start, privateMember: true } : { path: found.path, start };
+  return { path: found.path, start };
 }
 
 /** The tip's screenshot states: whose tip it draws, or null. */
@@ -1094,7 +1091,7 @@ async function openTourShot(shot: TourShot, setMode: Dispatch<SetStateAction<Mod
   const project = await firstHomeProject();
   if (!project) return;
   const example = await walkExample(project.slug);
-  open({ ...project, example, privateMember: !!shot.privateMember });
+  open({ ...project, example });
 }
 
 /** The tip's screenshot state: the first project on Home, opened, and its tip, written nowhere. */
@@ -1423,11 +1420,8 @@ export function FirstSession() {
   // after it runs the walk, once. Nothing owed on this device (read as the
   // island mounts, and again whenever something is owed): no looking at all.
   const startWalk = useCallback((walk: WalkRecord) => {
-    // The waitlist card only while they are still a private member: one let
-    // in since the invite has no card to point at.
-    const privateMember = !!walk.privateMember && !!legacy().App?.user?.privateMember;
     setMode((prev) => (prev.kind === 'none'
-      ? { kind: 'tour', info: { slug: walk.slug, name: walk.name, privateMember }, path: 'walk', moments: !!walk.maker }
+      ? { kind: 'tour', info: { slug: walk.slug, name: walk.name }, path: 'walk', moments: !!walk.maker }
       : prev));
   }, []);
   useEffect(() => {
@@ -1461,11 +1455,11 @@ export function FirstSession() {
   }, [mode.kind, tip, owing, startWalk]);
   const closeTip = useCallback(() => setTip(null), []);
 
-  // A tour's end. The maker's walk, done (not skipped), goes on to its
-  // project's hub (walkDoneLanding); a private member's walk ends on its
-  // waitlist card, on Home, and stays there, as every other tour does.
+  // A tour's end. The walk, done (not skipped), goes on to its project's
+  // hub (walkDoneLanding), a maker's and an invited person's alike; every
+  // other tour stays where it ended.
   const end = useCallback((how: 'done' | 'skipped') => {
-    const hub = how === 'done' && mode.kind === 'tour' && mode.path === 'walk' && !mode.info.privateMember ? mode.info.slug : null;
+    const hub = how === 'done' && mode.kind === 'tour' && mode.path === 'walk' ? mode.info.slug : null;
     setMode({ kind: 'none' });
     if (hub) walkDoneLanding(hub);
   }, [mode]);
@@ -1528,8 +1522,8 @@ export function FirstSession() {
   const steps = useMemo(() => {
     if (mode.kind !== 'tour') return [];
     if (mode.path === 'look') return lookAroundSteps();
-    const { slug, name, example, privateMember } = mode.info;
-    return homeWalkSteps({ slug, name, example, privateMember: !!privateMember });
+    const { slug, name, example } = mode.info;
+    return homeWalkSteps({ slug, name, example });
   }, [mode, t]);
   // The walk's Homeroom bot card names a change this project could ask for
   // (walkExample), asked once as the walk opens. Its first card needs none,

@@ -18,7 +18,8 @@
 //
 // A build is a target (live, trial) and an id (the run, or the trial). What
 // each target runs is its own module's: homeroom-bot.js for a run,
-// bench/lane.js for a trial. (The shadow target, a staging lane that ran
+// bench/lane.js for a trial. A trial is asked for by the bench lane's
+// machine (src/workflow/bench-lane/), never through start(). (The shadow target, a staging lane that ran
 // nowhere, is gone: an older release's shadow build fails for good.)
 // Without the workflow runtime (it failed to
 // start), a build runs here, in this process, on the inert context, as
@@ -212,7 +213,7 @@ async function lost(ctx, { config, pool }) {
   const key = keyOf(target, id, nonce);
   log.warn('build-runs', 'A build failed for good; recording it as lost', { key, error: error?.message || null });
   try {
-    await t.lost({ pool, config, id: Number(id), error: error || null });
+    await t.lost({ pool, config, id: Number(id), nonce: nonce ?? null, error: error || null });
   } finally {
     announce(key, { state: 'failed' });
   }
@@ -247,17 +248,6 @@ async function holdsSession(pool, sessionId) {
   }
 }
 
-/** The builds under way of `target`, for slots taken again after a restart. */
-async function underWay(target) {
-  try {
-    if (!platform().botBuildsRunning()) return [];
-    return await platform().buildsUnderWay(target);
-  } catch (err) {
-    log.warn('build-runs', 'Could not read the builds under way', { target, err: err.message });
-    return [];
-  }
-}
-
 module.exports = {
-  start, whenEnded, run, lost, underWay, keyOf, notStarted, triesLeftOf, holdsSession, TARGETS, _ended: ended,
+  start, whenEnded, run, lost, keyOf, notStarted, triesLeftOf, holdsSession, TARGETS, _ended: ended,
 };

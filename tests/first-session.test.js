@@ -62,22 +62,19 @@ test('the walk on Home: three cards, each ringing one place, with Next, and Done
   }
 });
 
-test('a private member\'s walk has a fourth card, the waitlist; no card of any tour says group, shouts or dashes', () => {
+// No waitlist card for a private member (Evan, 20 Oct 2026, "they can just
+// discover that"): the invited person's walk is the same three cards, and
+// the Communities card is its last.
+test('a private member\'s walk is the same three cards; no card of any tour says group, shouts or dashes', () => {
   const { homeWalkSteps, lookAroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const three = homeWalkSteps({ slug: 'best-brunch', name: 'Best Brunch' });
-  const four = homeWalkSteps({ slug: 'best-brunch', name: 'Best Brunch', privateMember: true });
-  const withExample = homeWalkSteps({ slug: 'best-brunch', name: 'Best Brunch', example: 'add a price range to each place', privateMember: true });
-  assert.equal(four.length, 4);
-  assert.deepEqual(withExample[3], four[3], 'the waitlist card is the same with an example');
-  assert.deepEqual(four.slice(0, 2), three.slice(0, 2));
-  const { last: lastOfThree, ...third } = three[2];
-  assert.equal(lastOfThree, true);
-  assert.deepEqual(four[2], third, 'the same Communities card, no longer the last');
-  assert.deepEqual(four[3], {
-    screen: 'home', target: '#home-waitlist-card', ringed: true, title: 'Make your own apps', text: 'Join the waitlist to get your spot.', last: true,
-  });
-  assert.match(read('frontend/src/features/home/waitlist-card.tsx'), /<section id="home-waitlist-card"/);
-  const all = JSON.stringify([...three, ...four, ...withExample, ...lookAroundSteps()]);
+  const withExample = homeWalkSteps({ slug: 'best-brunch', name: 'Best Brunch', example: 'add a price range to each place' });
+  assert.equal(three.length, 3);
+  assert.equal(three[2].target, '#platform-tab-workshop');
+  assert.equal(three[2].last, true);
+  const src = read(`${DIR}/tour-steps.ts`);
+  assert.doesNotMatch(src, /home-waitlist-card|walk\.waitlist|privateMember/);
+  const all = JSON.stringify([...three, ...withExample, ...lookAroundSteps()]);
   assert.doesNotMatch(all, /\bgroup\b/i);
   assert.doesNotMatch(all, /!|—/, 'no exclamation marks, no em dashes');
 });
@@ -99,12 +96,12 @@ test('the walk asks for its project\'s example change once as it opens, and a sc
   // never a throw: a read that fails is the card without an example.
   assert.match(src, /const res = await fetch\(madeAppUrl\(slug\), \{ credentials: 'same-origin', cache: 'no-store' \}\);\s+return res\.ok \? walkExampleOf\(await res\.json\(\)\) : null;\s+\} catch \{\s+return null;/);
   // The steps carry the project's name and example.
-  assert.match(src, /const \{ slug, name, example, privateMember \} = mode\.info;\s+return homeWalkSteps\(\{ slug, name, example, privateMember: !!privateMember \}\);/);
+  assert.match(src, /const \{ slug, name, example \} = mode\.info;\s+return homeWalkSteps\(\{ slug, name, example \}\);/);
   // Asked once, for a walk that has not asked yet, and kept only for that walk.
   assert.match(src, /const walkSlug = mode\.kind === 'tour' && mode\.path === 'walk' && mode\.info\.example === undefined \? mode\.info\.slug : null;/);
   assert.match(src, /setMode\(\(prev\) => \(prev\.kind === 'tour' && prev\.path === 'walk' && prev\.info\.slug === walkSlug && prev\.info\.example === undefined\s+\? \{ \.\.\.prev, info: \{ \.\.\.prev\.info, example \} \}\s+: prev\)\);/);
   // `?shot=tour-home`: the first project on Home, its name and its example.
-  assert.match(src, /const project = await firstHomeProject\(\);\s+if \(!project\) return;\s+const example = await walkExample\(project\.slug\);\s+open\(\{ \.\.\.project, example, privateMember: !!shot\.privateMember \}\);/);
+  assert.match(src, /const project = await firstHomeProject\(\);\s+if \(!project\) return;\s+const example = await walkExample\(project\.slug\);\s+open\(\{ \.\.\.project, example \}\);/);
 });
 
 // #4225: both paths show where Suggest an improvement lives, inside the app,
@@ -144,7 +141,6 @@ const idsNamed = (steps) => [...new Set(steps
 test('every id the tour points at is one the shell ships', () => {
   const { homeWalkSteps, lookAroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   assert.deepEqual(idsNamed(homeWalkSteps({ slug: 'x' })), ['app-list', 'platform-tab-messages', 'platform-tab-workshop']);
-  assert.deepEqual(idsNamed(homeWalkSteps({ slug: 'x', privateMember: true })), ['app-list', 'home-waitlist-card', 'platform-tab-messages', 'platform-tab-workshop']);
   assert.deepEqual(idsNamed(lookAroundSteps()), ['home-create-tile', 'platform-tab-discover', 'platform-tab-messages', 'platform-tab-workshop']);
   // Home's New project tile is React's, one element, and dapp.json's checks
   // select it by this id.
@@ -273,21 +269,19 @@ test('the walk\'s cards: numbered circles for the counter, Skip and Next, no Bac
   assert.match(last, /<li aria-current="step" [^>]*>3<\/li>/);
   assert.match(last, />Go to community</);
   assert.doesNotMatch(last, />Done<|>Skip<|>Back<|>Next<|>Got it<|data-first-session-tap/);
-  // A private member's: four circles, the waitlist card last, and Done, as
-  // their walk stays on Home.
-  const four = drawTour({ info: { slug: 'film', privateMember: true }, steps: homeWalkSteps({ slug: 'film', privateMember: true }), numbered: true, start: 3 });
-  assert.equal((four.match(/<li /g) || []).length, 4);
-  assert.match(four, /aria-label="Step 4 of 4"/);
-  assert.match(four, />Make your own apps</);
-  assert.match(four, />Done</);
-  assert.doesNotMatch(four, />Go to community</);
+  // An invited private member's is the same (Evan, 20 Oct 2026): three
+  // circles, and Go to community on the last.
+  const invited = drawTour({ info: { slug: 'film', privateMember: true }, steps: homeWalkSteps({ slug: 'film' }), numbered: true, start: 2 });
+  assert.equal((invited.match(/<li /g) || []).length, 3);
+  assert.match(invited, />Go to community</);
+  assert.doesNotMatch(invited, />Done</);
   // Only the walk is numbered this way; "Look around first" keeps its counter.
   const src = read(`${DIR}/index.tsx`);
   assert.match(src, /numbered=\{mode\.path === 'walk'\}/);
   assert.match(src, /\{index > 0 && !numbered \? \(/);
-  assert.match(src, /\{step\.last \? \(numbered \? \(info\.privateMember \? t\('core:common\.done'\) : t\('onboarding:firstSession\.walk\.goToCommunity'\)\) : t\('onboarding:firstSession\.tour\.gotIt'\)\) : t\('onboarding:firstSession\.tour\.next'\)\}/);
-  // The same condition `end` reads to choose the hub as the walk's landing.
-  assert.match(src, /how === 'done' && mode\.kind === 'tour' && mode\.path === 'walk' && !mode\.info\.privateMember/);
+  assert.match(src, /\{step\.last \? \(numbered \? t\('onboarding:firstSession\.walk\.goToCommunity'\) : t\('onboarding:firstSession\.tour\.gotIt'\)\) : t\('onboarding:firstSession\.tour\.next'\)\}/);
+  // `end` lands every walk done on its hub, a private member's too.
+  assert.match(src, /const hub = how === 'done' && mode\.kind === 'tour' && mode\.path === 'walk' \? mode\.info\.slug : null;/);
 });
 
 /** A document of fixed boxes, by selector, for as long as `fn` runs. */
@@ -976,11 +970,10 @@ test('each tour has a screenshot state, opened at any card, over a real project,
   const { tourShot } = loadTsx(`${DIR}/index.tsx`);
   assert.deepEqual(tourShot('?shot=tour-home'), { path: 'walk', start: 0 });
   assert.deepEqual(tourShot('?shot=tour-home&step=3'), { path: 'walk', start: 2 });
-  assert.deepEqual(tourShot('?shot=tour-home-private&step=4'), { path: 'walk', start: 3, privateMember: true });
   assert.deepEqual(tourShot('?shot=tour-look&step=3'), { path: 'look', start: 2 });
   assert.deepEqual(tourShot('?shot=tour-look&step=x'), { path: 'look', start: 0 });
   // The old tours' states are gone with them.
-  for (const old of ['tour-make', 'tour-join', 'tour-private', 'first-version', 'toString', '']) assert.equal(tourShot(`?shot=${old}`), null, old);
+  for (const old of ['tour-make', 'tour-join', 'tour-private', 'tour-home-private', 'first-version', 'toString', '']) assert.equal(tourShot(`?shot=${old}`), null, old);
   const src = read(`${DIR}/index.tsx`);
   // Over the first project on the viewer's Home.
   assert.match(src, /document\.querySelector\('#app-list \.app-card\[data-slug\]'\)/);
@@ -989,7 +982,7 @@ test('each tour has a screenshot state, opened at any card, over a real project,
   assert.match(src, /prev\.kind === 'none' \? \{ kind: 'tour', info, path: shot\.path, start: shot\.start \} : prev/);
   // With that project's name and, if its starter has one, its example
   // change, asked before it opens (a read: nothing is written).
-  assert.match(src, /const example = await walkExample\(project\.slug\);\s+open\(\{ \.\.\.project, example, privateMember: !!shot\.privateMember \}\);/);
+  assert.match(src, /const example = await walkExample\(project\.slug\);\s+open\(\{ \.\.\.project, example \}\);/);
   // Opened part-way, the tour opens that card's own screen; the count is
   // clamped to the tour.
   assert.match(src, /useState\(\(\) => Math\.max\(0, Math\.min\(start, steps\.length - 1\)\)\)/);
@@ -1082,7 +1075,7 @@ test('each step brings its target into view before ringing it, finding a held-ba
 // card on the App tab, "<project> opens here", is the only one that says it.
 test('no tour card says where the app opens now; the engine still carries the attribute for one that would', () => {
   const { homeWalkSteps, lookAroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
-  for (const steps of [homeWalkSteps({ slug: 'film' }), homeWalkSteps({ slug: 'film', privateMember: true }), lookAroundSteps()]) {
+  for (const steps of [homeWalkSteps({ slug: 'film' }), lookAroundSteps()]) {
     assert.ok(steps.every((s) => !s.saysWhereItOpens));
   }
   const src = read(`${DIR}/index.tsx`);
@@ -1095,7 +1088,7 @@ test('no tour card says where the app opens now; the engine still carries the at
 // "Opening…" cover. The two steps that point at the app wait for it.
 test('#4900: no card of the walk waits for the app: it points at the tile and opens nothing', () => {
   const { homeWalkSteps, lookAroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
-  for (const steps of [homeWalkSteps({ slug: 'film' }), homeWalkSteps({ slug: 'film', privateMember: true }), lookAroundSteps()]) {
+  for (const steps of [homeWalkSteps({ slug: 'film' }), lookAroundSteps()]) {
     assert.ok(steps.every((s) => !s.waitsFor));
   }
   // The engine's waiting card keeps its words, for a step that waits.
@@ -1266,12 +1259,13 @@ test('#4900: the tour waits for the app before the step is painted, with Skip an
 
 // #5528 for the maker's walk (newcomer run, 20 Oct 2026): the Home tour ended
 // on Communities, and the walk ended where it started, on Home. Done on its
-// last card, the Communities tab's, opens that tab on the project's hub.
-test('the maker\'s walk, done, opens the Communities tab on its project\'s hub; skipped, it stays on Home', () => {
+// last card, the Communities tab's, opens that tab on the project's hub; an
+// invited private member's walk as well (Evan, 20 Oct 2026).
+test('the walk, done, opens the Communities tab on its project\'s hub; skipped, it stays on Home', () => {
   const src = read(`${DIR}/index.tsx`);
   // The tour says how it ended; the walk's end reads it.
   assert.match(src, /noteMoment\(info\.slug, 'tour_ended', \{ step: indexRef\.current \+ 1, steps: steps\.length, how \}\);\s+\}\s+endTour\(how\);/);
-  assert.match(src, /const hub = how === 'done' && mode\.kind === 'tour' && mode\.path === 'walk' && !mode\.info\.privateMember \? mode\.info\.slug : null;\s+setMode\(\{ kind: 'none' \}\);\s+if \(hub\) walkDoneLanding\(hub\);/);
+  assert.match(src, /const hub = how === 'done' && mode\.kind === 'tour' && mode\.path === 'walk' \? mode\.info\.slug : null;\s+setMode\(\{ kind: 'none' \}\);\s+if \(hub\) walkDoneLanding\(hub\);/);
 
   const { walkDoneLanding } = loadTsx(`${DIR}/index.tsx`);
   const before = { window: globalThis.window, localStorage: globalThis.localStorage };

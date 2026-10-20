@@ -201,6 +201,22 @@ const PREFLIGHT_EXIT = 75;
 // nodes is picked up without a platform restart.
 const UNAVAILABLE_MEMO_MS = 10 * 60 * 1000;
 
+// How a create the lane's quota refused makes room (quotaRoom). Finished
+// Jobs count against count/jobs.batch, and each owns its input Secret, for
+// as long as their TTL keeps them (BUILDKIT_SUCCESS_RETENTION_HOURS), so
+// the counts are retained history rather than builds in flight. The prune
+// keeps each app's newest ROOM_KEEP_PER_APP succeeded Jobs, which are what
+// the history is read for: reuse of a revision just built (reusableJob)
+// and the layer-cache report (cacheHistory, which needs CACHE_CHANCES
+// recent builds). Older ones go, oldest first, at most ROOM_PRUNE_MAX at a
+// time. The quota's usage is recounted after the deletes, not during them,
+// so the create is tried again every ROOM_RETRY_MS for up to ROOM_WAIT_MS.
+const ROOM_KEEP_PER_APP = CACHE_CHANCES + 1;
+const ROOM_PRUNE_MAX = 100;
+const ROOM_DELETES_AT_ONCE = 10;
+let roomRetryMs = 1000;
+let roomWaitMs = 30 * 1000;
+
 // The lane's last infrastructure verdict, if it is still fresh.
 let _unavailable = null;
 
@@ -214,16 +230,41 @@ function noteUnavailable(err, now = Date.now()) {
   _unavailable = { reason: String(err?.message || err || 'BuildKit unavailable'), until: now + UNAVAILABLE_MEMO_MS };
 }
 
+function statusCode(err) {
+  return err?.code || err?.response?.statusCode || err?.response?.status || err?.statusCode;
+}
+
+// A create the namespace's ResourceQuota refused. That is a 403 as well,
+// but the lane is there and only its retained history is full: on 20 Oct
+// 2026 it held 996 of its 1000 Jobs, and reading the refusal as the lane
+// missing sent every build to kpack for ten minutes at a time. Room is
+// made for it (quotaRoom) instead.
+function isQuotaRefusal(err) {
+  if (statusCode(err) !== 403) return false;
+  const body = typeof err?.body === 'string' ? err.body : JSON.stringify(err?.body ?? '');
+  return /exceeded quota/i.test(`${err?.message || ''} ${body}`);
+}
+
 // A 403 or 404 from the API for the lane's own namespace: RBAC or the
 // namespace itself is not there. That is the lane missing, not the build.
 function isLaneMissing(err) {
-  const code = err?.code || err?.response?.statusCode || err?.response?.status || err?.statusCode;
-  return code === 403 || code === 404;
+  const code = statusCode(err);
+  return (code === 403 || code === 404) && !isQuotaRefusal(err);
 }
 
 function markUnavailable(err, detail) {
   err.engineUnavailable = true;
   err.message = `BuildKit lane unavailable: ${detail}`;
+  return err;
+}
+
+// Still refused once room was made, or with none to make. Under `auto`
+// this build goes to kpack, and only this one (`laneFull`): the TTL keeps
+// freeing the quota, so the next build tries the lane again.
+function markLaneFull(err, detail) {
+  err.engineUnavailable = true;
+  err.laneFull = true;
+  err.message = `BuildKit lane full: ${detail}`;
   return err;
 }
 
@@ -788,6 +829,76 @@ async function reusableJob(cfg, clients, { appId, revision, recipe }) {
   return null;
 }
 
+// The lane's succeeded Jobs beyond each app's newest ROOM_KEEP_PER_APP,
+// oldest first and at most ROOM_PRUNE_MAX of them, deleted; their input
+// Secrets follow through the owner reference. A Job still running is a
+// build someone is waiting on, and a failed one is the failed-build
+// sweep's (a live build may still be reading its Pod), so neither is
+// touched. A Job without an app is kept as its own group of one.
+async function pruneForRoom(cfg, runtime, { batch }) {
+  const namespace = cfg.buildkitNamespace;
+  const list = await batch.listNamespacedJob({
+    namespace,
+    labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY},${ENGINE_LABEL}=${ENGINE}`,
+  });
+  const items = list?.items || [];
+  const finishedAt = (job) => Date.parse(job.status?.completionTime || job.metadata?.creationTimestamp || '') || 0;
+  const byApp = new Map();
+  for (const job of items) {
+    if (!jobSucceeded(job) || job.metadata?.deletionTimestamp) continue;
+    const key = job.metadata?.labels?.['social.usernode.io/app-id'] || job.metadata?.name;
+    if (!byApp.has(key)) byApp.set(key, []);
+    byApp.get(key).push(job);
+  }
+  const older = [];
+  for (const jobs of byApp.values()) {
+    jobs.sort((a, b) => finishedAt(b) - finishedAt(a));
+    older.push(...jobs.slice(ROOM_KEEP_PER_APP));
+  }
+  older.sort((a, b) => finishedAt(a) - finishedAt(b));
+  const doomed = older.slice(0, ROOM_PRUNE_MAX);
+  let deleted = 0;
+  for (let i = 0; i < doomed.length; i += ROOM_DELETES_AT_ONCE) {
+    const results = await Promise.allSettled(doomed.slice(i, i + ROOM_DELETES_AT_ONCE).map((job) => runtime.deleteIfPresent(
+      batch, 'deleteNamespacedJob', job.metadata.name, namespace, { propagationPolicy: 'Background' })));
+    deleted += results.filter((r) => r.status === 'fulfilled').length;
+  }
+  log.info('kubernetes', 'BuildKit lane quota full; pruned its oldest finished Jobs', { namespace, examined: items.length, deleted });
+  return { examined: items.length, deleted };
+}
+
+// One prune at a time for the whole platform: the builds a full quota
+// refuses together share it rather than each deleting a batch of its own.
+let _pruning = null;
+function makeRoom(cfg, runtime, clients) {
+  if (!_pruning) _pruning = pruneForRoom(cfg, runtime, clients).finally(() => { _pruning = null; });
+  return _pruning;
+}
+
+// What one build does with a create the quota refused: resolves true to
+// try it again. Its first refusal makes room; later ones wait for the
+// quota's usage to catch up with the deletions until ROOM_WAIT_MS has
+// passed. False at once for any other error, and when nothing could be
+// pruned.
+function quotaRoom(cfg, runtime, clients) {
+  let deadline = null;
+  return async (err) => {
+    if (!isQuotaRefusal(err)) return false;
+    if (deadline === null) {
+      const { deleted } = await makeRoom(cfg, runtime, clients).catch((pruneErr) => {
+        log.warn('kubernetes', 'BuildKit lane quota prune failed', { namespace: cfg.buildkitNamespace, err: pruneErr.message });
+        return { deleted: 0 };
+      });
+      if (!deleted) return false;
+      deadline = Date.now() + roomWaitMs;
+    } else if (Date.now() >= deadline) {
+      return false;
+    }
+    await new Promise((resolve) => setTimeout(resolve, roomRetryMs));
+    return true;
+  };
+}
+
 // `onProgress(image)` receives `{ phase, index, total, detail }` per step
 // line, exactly what services/docker.js reports for its BuildKit build, so
 // staging's per-step timing works unchanged. The Job's own `[buildkit] ...`
@@ -856,18 +967,28 @@ async function createBuild(config, {
     metadata: { name: inputSecretName, namespace, labels: body.metadata.labels },
     type: 'Opaque', stringData: { REPO_URL: String(cloneUrl) },
   };
-  try {
-    await core.createNamespacedSecret({ namespace, body: secretBody });
-  } catch (err) {
-    if (!isConflict(err)) {
-      if (isLaneMissing(err)) markUnavailable(err, `cannot create Secrets in ${namespace} (${err.message})`);
-      err.buildFailed = true;
-      err.buildLog = runtime.boundedText(err.message);
-      err.message = runtime.boundedText(err.message);
-      throw err;
+  const room = quotaRoom(cfg, runtime, clients);
+  const refused = (err, what) => {
+    if (isQuotaRefusal(err)) markLaneFull(err, `no room in ${namespace}'s quota for ${what} (${err.message})`);
+    else if (isLaneMissing(err)) markUnavailable(err, `cannot create ${what} in ${namespace} (${err.message})`);
+    err.buildFailed = true;
+    err.buildLog = runtime.boundedText(err.message);
+    err.message = runtime.boundedText(err.message);
+    return err;
+  };
+  while (true) {
+    try {
+      await core.createNamespacedSecret({ namespace, body: secretBody });
+      break;
+    } catch (err) {
+      if (isConflict(err)) {
+        // Left by an earlier attempt of this exact name; a fresh token replaces it.
+        await core.replaceNamespacedSecret({ name: inputSecretName, namespace, body: secretBody }).catch(() => {});
+        break;
+      }
+      if (await room(err)) continue;
+      throw refused(err, 'Secrets');
     }
-    // Left by an earlier attempt of this exact name; a fresh token replaces it.
-    await core.replaceNamespacedSecret({ name: inputSecretName, namespace, body: secretBody }).catch(() => {});
   }
   // No Job of ours will own the Secret when the create is refused or never
   // gets a turn, so its clone credential goes before the build fails.
@@ -880,12 +1001,9 @@ async function createBuild(config, {
       break;
     } catch (err) {
       if (!isConflict(err)) {
+        if (await room(err)) continue;
         await deleteInputSecret();
-        if (isLaneMissing(err)) markUnavailable(err, `cannot create Jobs in ${namespace} (${err.message})`);
-        err.buildFailed = true;
-        err.buildLog = runtime.boundedText(err.message);
-        err.message = runtime.boundedText(err.message);
-        throw err;
+        throw refused(err, 'Jobs');
       }
       const existing = await batch.readNamespacedJob({ name, namespace }).catch((readErr) => {
         if (runtime.isNotFound(readErr)) return null;
@@ -1286,12 +1404,13 @@ module.exports = {
   unavailableReason,
   noteUnavailable,
   _forTest: {
-    BUILD_SCRIPT, PREFLIGHT_EXIT, UNAVAILABLE_MEMO_MS, jobManifest, recipeOf, progressFromLine, stepClock, digestFromPod, exitCodeFromPod,
+    BUILD_SCRIPT, PREFLIGHT_EXIT, UNAVAILABLE_MEMO_MS, ROOM_KEEP_PER_APP, ROOM_PRUNE_MAX, isQuotaRefusal, makeRoom, jobManifest, recipeOf, progressFromLine, stepClock, digestFromPod, exitCodeFromPod,
     pushedImage, IMAGE_LINE_RE,
     // Resolves once every Job followed after its image was handed over has
     // been seen to its end (settleAfterHandOver).
     settled: () => Promise.all([...settling]),
     setSettlePollMs(ms) { settlePollMs = ms; },
+    setRoomTiming(retryMs, waitMs) { roomRetryMs = retryMs; roomWaitMs = waitMs; },
     repoOwnerAndName, requireConfig, dockerHubMirror,
     STEPS_AWK, CACHE_STEPS_ANNOTATION, CACHE_CHANCES, CACHE_CHANCE_WINDOW_MS, CACHE_MAX_STEPS,
     cacheReport, cacheReportText, settledCacheSteps, starterCache, starterPackageKey, STARTER_KEY_FILES,

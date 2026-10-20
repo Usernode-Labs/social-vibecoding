@@ -34,7 +34,7 @@ bench. Each restart bug of October 2026 was one of three shapes:
 ## The model
 
 ```
- bot dispatch / bench lane ──append Requested──▶ bot-build/run:<id> | trial:<id>
+ bot dispatch / bench-lane ─append Requested─▶ bot-build/run:<id> | trial:<id>
                                                     │ building
                                                     │ work: build.run (leased, resumable)
                                                     ▼

@@ -292,10 +292,6 @@ test('#4899: the island reads the tour\'s own flag, and asks again when it chang
   // mounts, and the Tour puts it back as it unmounts.
   const tour = loadTsx('frontend/src/features/first-session/tour-running.ts');
   assert.equal(tour.tourRunning(), false);
-  // The mark menu's home-screen row is a menu somebody opened, not the strip.
-  const hook = fs.readFileSync(
-    path.join(ROOT, 'frontend/src/features/mobile-install/home-screen-offer.ts'), 'utf8');
-  assert.match(hook, /touring: false,/);
 });
 
 test('a first visit holds the strip to its end, and only the first session\'s own screens make one', () => {

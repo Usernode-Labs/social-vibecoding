@@ -343,7 +343,7 @@ async function dispatchClaude(config, options, deps) {
   let result;
   try { result = await withDispatchTimeout(deps.workerService.execInWorker(session.id, {
     mode: 'shots',
-    // A shots eval's trial (shots-eval-runner.js) tries other prompts; every
+    // A shots eval's trial (the shots-eval machine) tries other prompts; every
     // proposal's own run takes these.
     prompt: options.taskPrompt || TASK_PROMPT,
     systemPrompt: options.systemPrompt || SYSTEM_PROMPT,

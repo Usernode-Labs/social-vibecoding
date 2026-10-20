@@ -124,7 +124,7 @@ test('the page\'s link preview: a live link names the project and inviter, a dea
     inviter: 'ada',
     memberCount: 3,
   }, 'https://app.example');
-  assert.match(live, /<meta property="og:title" content="Join Tiers &amp; &lt;Lists&gt; on Homeroom">/);
+  assert.match(live, /<meta property="og:title" content="Tiers &amp; &lt;Lists&gt;">/);
   assert.match(live, /<meta property="og:description" content="@ada invited you to Tiers &amp; &lt;Lists&gt;\. 3 people are in it\.">/);
   assert.match(live, /<meta property="og:image" content="https:\/\/app\.example\/app-icons\/abc">/);
   const dead = routes.previewTags({ live: false, reason: 'revoked' }, 'https://app.example');
@@ -360,43 +360,41 @@ test(`a link carries its maker's note: plain text, one paragraph, at most 280 ch
   assert.match(read('src/routes/community-invites.js'), /maxUses: req\.body\?\.maxUses, note: req\.body\?\.note,/);
 });
 
-test(`the preview reads like the page: who made it, their note, the project's picture`, () => {
+// The card is the project (Evan, 20 Oct 2026): its name, its one line, and
+// its icon as the thumbnail. The note is the message the link is sent in,
+// so it is the card's line only when the project has none of its own.
+test(`the preview is the project: its name, its line, its icon`, () => {
   const live = {
     live: true,
-    project: { name: 'Sunday Run Club', iconUrl: '/app-icons/abc', description: 'A run tracker', picture: null },
+    project: { name: 'Sunday Run Club', iconUrl: '/app-icons/abc', iconEmoji: null, description: 'A run tracker', picture: null },
     inviter: 'maya', inviterName: 'Maya', inviterMadeIt: true, note: 'Come help with our run tracker!', memberCount: 4,
+    communityName: 'Sunday Runners',
   };
-  const tags = routes.previewTags(live, 'https://homeroom.example');
-  // The community shares its project's name, so the title names the project.
-  assert.match(tags, /og:title" content="Maya made Sunday Run Club"/);
-  assert.match(tags, /twitter:title" content="Maya made Sunday Run Club"/);
-  assert.doesNotMatch(tags, /made this for/);
-  assert.match(routes.previewTags({ ...live, communityName: 'sunday run club' }, null), /og:title" content="Maya made Sunday Run Club"/);
-  // A community named apart from its project is what it was made for.
-  const forGroup = routes.previewTags({ ...live, project: { ...live.project, name: 'Run Tracker' }, communityName: 'Sunday Run Club' }, null);
-  assert.match(forGroup, /og:title" content="Maya made this for Sunday Run Club"/);
-  assert.match(tags, /og:description" content="Come help with our run tracker!"/);
+  const tags = routes.previewTags(live, 'https://homeroom.example', 'tok');
+  assert.match(tags, /og:title" content="Sunday Run Club"/);
+  assert.match(tags, /twitter:title" content="Sunday Run Club"/);
+  assert.doesNotMatch(tags, /Maya|made|on Homeroom"/, 'no maker and no "Join … on Homeroom" in the title');
+  assert.match(tags, /og:description" content="A run tracker"/);
   assert.match(tags, /og:image" content="https:\/\/homeroom\.example\/app-icons\/abc"/);
   assert.match(tags, /twitter:card" content="summary"/);
-  // No note: the project's own line. Not its maker: the plain invitation.
-  const plain = routes.previewTags({ ...live, note: null, inviterMadeIt: false }, null);
-  assert.match(plain, /og:title" content="Join Sunday Run Club on Homeroom"/);
-  assert.match(plain, /og:description" content="A run tracker"/);
-  assert.doesNotMatch(plain, /og:image/);
-  // A picture is the large card.
-  const shot = routes.previewTags({ ...live, project: { ...live.project, picture: { kind: 'shot', url: '/api/public/invites/t/picture' } } }, 'https://h.example');
-  assert.match(shot, /twitter:card" content="summary_large_image"/);
-  assert.match(shot, /og:image" content="https:\/\/h\.example\/api\/public\/invites\/t\/picture"/);
-  // WP-D: the card of the idea is words, not an image: the preview keeps the icon.
-  const sketched = routes.previewTags({ ...live, project: { ...live.project, picture: { kind: 'sketch', url: null, darkUrl: null, card: { emoji: '🏃', tagline: 'Miles', points: [] } } } }, 'https://h.example');
-  assert.match(sketched, /og:image" content="https:\/\/h\.example\/app-icons\/abc"/);
-  assert.match(sketched, /twitter:card" content="summary"/);
-  // The note is escaped like everything else.
-  assert.match(routes.previewTags({ ...live, note: 'a "quote" <b>' }, null), /content="a &quot;quote&quot; &lt;b&gt;"/);
-  // While its first version is on its way: "is making", as the page says.
-  assert.match(routes.previewTags({ ...live, building: true }, null), /og:title" content="Maya is making Sunday Run Club"/);
-  assert.match(routes.previewTags({ ...live, building: true, project: { ...live.project, name: 'Run Tracker' }, communityName: 'Sunday Run Club' }, null),
-    /og:title" content="Maya is making this for Sunday Run Club"/);
+  // An emoji icon: drawn on the project's colour, through the link.
+  const emoji = routes.previewTags({ ...live, project: { ...live.project, iconUrl: null, iconEmoji: '📊' } }, 'https://h.example', 'Ab_c-1');
+  assert.match(emoji, /og:image" content="https:\/\/h\.example\/api\/public\/invites\/Ab_c-1\/icon\.png"/);
+  // No token (staging's demo link), no origin, or no icon: no picture.
+  assert.doesNotMatch(routes.previewTags({ ...live, project: { ...live.project, iconUrl: null, iconEmoji: '📊' } }, 'https://h.example', null), /og:image/);
+  assert.doesNotMatch(routes.previewTags(live, null, 'tok'), /og:image/);
+  assert.doesNotMatch(routes.previewTags({ ...live, project: { ...live.project, iconUrl: null } }, 'https://h.example', 'tok'), /og:image/);
+  // A picture of the project is the page's, not the card's: the icon stays.
+  const shot = routes.previewTags({ ...live, project: { ...live.project, picture: { kind: 'shot', url: '/api/public/invites/t/picture' } } }, 'https://h.example', 'tok');
+  assert.match(shot, /twitter:card" content="summary"/);
+  assert.match(shot, /og:image" content="https:\/\/h\.example\/app-icons\/abc"/);
+  // No line of its own: the note. Neither: who invited you.
+  assert.match(routes.previewTags({ ...live, project: { ...live.project, description: null } }, null), /og:description" content="Come help with our run tracker!"/);
+  assert.match(routes.previewTags({ ...live, note: null, project: { ...live.project, description: null } }, null), /og:description" content="@maya invited you to Sunday Run Club\. 4 people are in it\."/);
+  // Everything is escaped.
+  assert.match(routes.previewTags({ ...live, project: { ...live.project, description: 'a "quote" <b>' } }, null), /content="a &quot;quote&quot; &lt;b&gt;"/);
+  // The page passes its token, except for staging's demo link.
+  assert.match(read('src/routes/community-invites.js'), /previewTags\(preview, requestOrigin\(req\), demo \? null : token\)/);
   // The signed-in confirm says the same.
   // Each wording is a whole message of its own (shell.json).
   assert.match(read('public/js/app.js'), /\? \(standing\.building\s+\? PlatformI18n\.t\('shell:invite\.from\.isMaking', \{ inviter: standing\.inviterName \}\)\s+: PlatformI18n\.t\('shell:invite\.from\.made', \{ inviter: standing\.inviterName \}\)\)/);

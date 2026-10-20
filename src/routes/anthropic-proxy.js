@@ -436,41 +436,29 @@ function anthropicProxyRoutes(config) {
     try { workerMod = require('../services/worker'); } catch {}
 
     // A before & after shots eval's trial runs the shots agent on somebody
-    // else's merged proposal for an admin's comparison
-    // (services/shots-eval-runner.js). The platform's key pays for it and
+    // else's merged proposal for an admin's comparison (the shots-eval
+    // machine, src/workflow/shots-eval/). The platform's key pays for it and
     // the eval's own cap bounds it: never the proposal author's allowance,
     // never the system bucket the sync turns below live on, and never the
     // change's ledger. Each call is added to the trial, and one that would
-    // take the eval past its cap is refused or cut off.
-    //
-    // The turn may run in another platform process (one finishing its work
-    // after a release), whose memory this one cannot read: its mode then
-    // comes from its durable record, and the trial's bill from its row
-    // (docs/plans/draining-releases.md).
+    // take the eval past its cap is refused or cut off. Which turn is a
+    // trial's is read from the session's turn record (its owner is the
+    // eval machine's work), in any process and whether or not the process
+    // that dispatched it is alive: never from this process's memory, and
+    // never by the session alone (a person's own shots rerun of the same
+    // proposal is theirs).
     let shotsEval = null;
     let turnMode = null;
     try { turnMode = workerMod ? await workerMod.turnModeFor(sessionId) : null; } catch { turnMode = null; }
-    try {
-      if (turnMode === 'shots') {
-        const evalRunner = require('../services/shots-eval-runner');
-        if (evalRunner.billsSession(sessionId)) {
-          shotsEval = {
-            overCap: (extra) => evalRunner.overCap(sessionId, extra),
-            noteSpend: (cents) => evalRunner.noteSpend(sessionId, cents),
-          };
-        } else {
-          const remote = await evalRunner.remoteTrialFor(pool, sessionId);
-          if (remote) {
-            shotsEval = {
-              overCap: (extra) => evalRunner.remoteOverCap(remote, extra),
-              noteSpend: (cents) => evalRunner.noteRemoteSpend(pool, remote.trialId, cents).catch((err) => {
-                log.warn('anthropic-proxy', 'Could not record a shots eval call', { sessionId, err: err.message });
-              }),
-            };
-          }
-        }
+    if (turnMode === 'shots' || turnMode == null) {
+      try { shotsEval = await require('../services/shots-eval').billFor(pool, sessionId); } catch { shotsEval = null; }
+      if (shotsEval) {
+        const note = shotsEval.noteSpend;
+        shotsEval.noteSpend = (cents) => Promise.resolve(note(cents)).catch((err) => {
+          log.warn('anthropic-proxy', 'Could not record a shots eval call', { sessionId, err: err.message });
+        });
       }
-    } catch { shotsEval = null; }
+    }
     if (shotsEval) {
       if (shotsEval.overCap(0)) {
         return res.status(429).json({ ok: false, code: 'budget_exceeded', message: 'This shots eval reached its cap.' });

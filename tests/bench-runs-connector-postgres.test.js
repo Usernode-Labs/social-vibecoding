@@ -48,11 +48,13 @@ test('running the benchmark through the connector routes, against the full Postg
   const poolMod = require('../src/db/pool');
   const realGetPool = poolMod.getPool;
   poolMod.getPool = () => pool;
-  const lane = require('../src/services/bench/lane');
+  // A run's cancel is the bench lane's machine's: the workflow runtime runs
+  // here, its pipeline only (no work: nothing is granted a build).
+  const platform = require('../src/workflow/platform.ts');
   let server;
   t.after(async () => {
     poolMod.getPool = realGetPool;
-    lane._resetForTests();
+    await platform.stopWorkflow();
     if (server) await new Promise((r) => server.close(r));
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
@@ -60,6 +62,7 @@ test('running the benchmark through the connector routes, against the full Postg
   });
   const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
   await pool.query(schema);
+  await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
 
   const suites = require('../src/services/bench/suites');
   const snapshots = require('../src/services/homeroom-bot-snapshots');

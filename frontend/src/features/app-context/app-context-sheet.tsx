@@ -113,7 +113,7 @@
  */
 
 import { OverlayScrim } from '../../lib/overlay-scrim-view';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
@@ -130,10 +130,9 @@ import {
 } from '@/components/ui/icons';
 
 import { AboutPane } from './about-pane';
-import { offeringGoToHomeroom, owedHomeWalk } from './about-data';
+import { offeringGoToHomeroom, owedHomeWalk, useAboutApp } from './about-data';
 import { InvitePane } from './invite-pane';
-import { useHomeScreenOffer } from '../mobile-install/home-screen-offer';
-import { InstallStepsSheet } from '../mobile-install/install-steps-sheet';
+import { isNativeApp } from '../mobile-install/environment';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
@@ -290,6 +289,9 @@ function MenuRow({
  * the section was that, and it is gone whole. Nothing replaces it here.
  */
 
+/** One of Home.menuItemsFor's items for an app (features/home/home.js). */
+type MenuItem = { key: string; run: () => void };
+
 export function AppsSwitcherSheet(): ReactNode {
   const t = useMessages('agent');
   const { open, adopted, view, back } = useStoreState(appContextStore);
@@ -367,10 +369,20 @@ export function AppsSwitcherSheet(): ReactNode {
   const newcomer = mounted && offeringGoToHomeroom(!!privateMember);
   const walkOwed = mounted && owedHomeWalk();
   // #4399: the home-screen offer that rides in the Go to Homeroom card while
-  // it is offered (the banner is held down meanwhile). Asked only while the
-  // menu is open, so a closed menu costs no request.
-  const homeScreenOs = useHomeScreenOffer(open && newcomer);
-  const [homeScreenSteps, setHomeScreenSteps] = useState(false);
+  // it is offered (the banner is held down meanwhile). It puts THIS app on
+  // the home screen (Evan, 20 Oct 2026), not Homeroom: Home.menuItemsFor's
+  // `install` item for the app, taken by key and run as is, as About's row
+  // does (./about-pane.tsx). That item is a phone's only, and never in the
+  // Homeroom app, where it would leave for the system browser. Read only
+  // while the menu is open, so a closed menu costs nothing.
+  const appRow = useAboutApp(slug || null, open && newcomer && !!slug && !restricted);
+  const installItem = useMemo(() => {
+    const menuItemsFor = typeof window === 'undefined' ? undefined
+      : (window as unknown as { Home?: { menuItemsFor?: (row: unknown) => MenuItem[] } }).Home?.menuItemsFor;
+    if (!appRow || typeof menuItemsFor !== 'function') return null;
+    try { return (menuItemsFor(appRow) || []).find((i) => i && i.key === 'install') || null; } catch { return null; }
+  }, [appRow]);
+  const addToHomeScreen = newcomer && !isNativeApp() ? installItem : null;
   const workshopRowRef = useRef<HTMLAnchorElement | null>(null);
   useIsomorphicLayoutEffect(() => {
     const hide = !!restricted || newcomer || walkOwed;
@@ -649,15 +661,19 @@ export function AppsSwitcherSheet(): ReactNode {
               it, and the row type, 15 over 13. It sits INSIDE #switcher-nav
               so `#improve-quick-actions + #switcher-nav` still holds.
 
-              ADD TO HOME SCREEN, IN THE SAME CARD (#4399): while Go to
-              Homeroom is still offered, the install banner stays down over
-              the app they were invited into, and the offer is a second row
-              here under a hairline instead. It opens the banner's How sheet
-              for their OS, and only when the banner itself would offer the
-              home-screen install (../mobile-install/home-screen-offer.ts).
-              Once they have been Home the row goes and the banner is back.
+              ADD THIS APP TO YOUR HOME SCREEN, IN THE SAME CARD (#4399):
+              while Go to Homeroom is still offered, the install banner stays
+              down over the app they were invited into, and the offer is a
+              second row here under a hairline instead. It opens the app's
+              own install page (`addToHomeScreen`, above), so the icon it
+              leaves opens the app they were invited into.
+
+              ONCE THEY HAVE BEEN HOME the card goes, a private member's too
+              (Evan, 20 Oct 2026, "after the first time, Go to Homeroom
+              would change to Go to community"): "Go to community" is back
+              below, and the ✕ is back on the frame (App._privateNoClose).
           */}
-          {mounted && (privateMember || walkOwed) ? (
+          {mounted && (newcomer || walkOwed) ? (
             <div
               id="app-menu-homeroom-card"
               className="mx-4 mt-1 mb-2 w-[calc(100%_-_2rem)] rounded-[20px] bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]"
@@ -689,26 +705,21 @@ export function AppsSwitcherSheet(): ReactNode {
                 </span>
                 <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
               </button>
-              {newcomer && homeScreenOs ? (
+              {addToHomeScreen ? (
                 <>
                   <div aria-hidden="true" className="mx-3.5 h-px bg-[color:var(--app-sheet-line)]" />
                   <button
                     id="app-menu-row-add-home"
                     type="button"
-                    aria-haspopup="dialog"
-                    aria-expanded={homeScreenSteps}
                     className="flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
-                    onClick={() => setHomeScreenSteps(true)}
+                    onClick={() => { void AppContext.dismissForNav().then(() => addToHomeScreen.run()); }}
                   >
                     <span className="shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200" aria-hidden="true">
                       <PhonePlusIcon className="w-5 h-5" aria-hidden="true" />
                     </span>
-                    <span className="flex-1 min-w-0 block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{t('agent:appContext.addHomeroomToHomeScreen')}</span>
+                    <span className="flex-1 min-w-0 block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{t('agent:appContext.addAppToHomeScreen')}</span>
                     <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
                   </button>
-                  {open && homeScreenSteps ? (
-                    <InstallStepsSheet os={homeScreenOs} onClose={() => setHomeScreenSteps(false)} />
-                  ) : null}
                 </>
               ) : null}
             </div>

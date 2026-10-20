@@ -148,8 +148,7 @@ one; without one, as after a rollback to a release from before this, it cuts
 over as it always did). On `SIGTERM` it:
 
 1. refuses anything new and marks its row in `platform_processes` `draining`;
-2. stops its leader work (the bot's loops, the bench lane, the eval runner,
-   every sweeper and timer), quiesces the workflow runtime (no slot, timer or
+2. stops its leader work (every sweeper and timer still on the leader), quiesces the workflow runtime (no slot, timer or
    claim; its running work goes on) and resigns the leader lock, so the new
    Pod is promoted within a poll;
 3. announces the new build to its tabs and closes their sockets;

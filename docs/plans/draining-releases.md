@@ -49,9 +49,9 @@ A stop for something another process runs travels to it over the WebSocket
 bus (`ws-bus.js`), and the holder does exactly what a stop in its own process
 does: a turn (`session_stop`, acted on by the process with the turn's stop
 handle, while the one asked still takes its durable path: the stamp, and the
-kill inside the worker), a bench trial or run
-(`bench_cancel`, from wherever the trial's slot is counted to wherever its
-build executes). A worker turn in flight holds its session whatever started
+kill inside the worker). (A bench trial's or run's cancel, and a shots eval's,
+is its machine's: the trial's work is cancelled and its turn stopped by its
+record, wherever it runs.) A worker turn in flight holds its session whatever started
 it (the warm registry's `inFlight`), so the shots agent and an eval trial are
 seen too. What a worker turn calls back (the Anthropic proxy, its
 BYOK spend, a shots eval's bill, a shots agent's tool calls) reaches whichever Pod the Service picks, so
@@ -75,8 +75,7 @@ always had: a minute's drain, the lock released last.
    the drain guard lets through. On 14 Oct 2026 a first version built to the
    end in a draining Pod was refused its own promote and stopped. A request
    over HTTP never carries the mark.
-2. Stop being leader: the Homeroom bot's loops, the bench lane, the shots
-   eval runner, the sweepers and timers stop starting things; the workflow
+2. Stop being leader: the sweepers and timers stop starting things; the workflow
    runtime stops its loops (`quiesceWorkflow`: no slot, timer or claim) but
    not its running work; the leader timer ticks and merge passes under way
    finish (up to the deadline); then the leader lock is released
