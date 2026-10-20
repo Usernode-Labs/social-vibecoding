@@ -273,7 +273,8 @@ test('the backfill runs once per release, once no older process is live, and a c
   // on the first clock pass after none of its processes is live, as the
   // leader's boot sweep ran once the previous leader exited.
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-leftovers.js'), 'utf8');
-  assert.match(src, /if \(backfilled !== d\.release && !\(await olderReleaseLive\(pool, d\.release\)\)\) \{\s*unanswered = await backfillUnanswered\(pool, d\);\s*backfilled = d\.release;/);
+  assert.match(src, /const other = await otherRelease\(pool, d\.release\);/);
+  assert.match(src, /if \(backfilled !== d\.release && !other\.live\) \{\s*unanswered = await backfillUnanswered\(pool, d\);\s*backfilled = d\.release;/);
   // A classic turn of this release is its item's, which repairs its own
   // change when it resumes (services/turns.js resumeClassic).
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turns.js'), 'utf8'),

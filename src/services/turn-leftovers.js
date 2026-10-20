@@ -9,17 +9,21 @@
 // release from before the turn machine can run, delete the rollout parts:
 // the claims, headless and local passes, the `resume` flag in turns.js,
 // heldByLiveProcess, olderProcessHolding, receiveOlderStop (and ws.js's
-// `session_stop`), the hold writes in processes.js and the claim's renewal
-// in turns.js (renewClaim).
+// `session_stop`), the hold writes in processes.js, the claim's renewal
+// in turns.js (renewClaim), the leader_sweeps table (schema.sql), and the
+// wait for an older release's serving process (otherRelease).
 //
 // Every turn this release starts belongs to the turn machine
 // (src/workflow/turn/): its work item owns its conversation's claim, its
 // coding run's record and its local agent's turn, and carries them on. An
 // older release's turns have none of that: their process renewed a claim,
 // held its sessions (process_holds), and left the rest to its leader's
-// recovery at the next boot. A pass, every minute, leaves alone everything
-// a live process of that release still holds (it finishes its own turns
-// while it drains), and then:
+// recovery at the next boot. While a process of that release still serves,
+// its leader runs its own recovery, which takes the same leftovers: a pass
+// does nothing then, or two adoptions could take one turn. Otherwise a
+// pass, every minute, leaves alone everything a live process of that
+// release still holds (it finishes its own turns while it drains, having
+// given its leadership up first), and then:
 //
 //   claims     a conversation's claim no turn instance knows, stale by the
 //              old rule (not renewed for 90 seconds) and with nothing still
@@ -202,13 +206,16 @@ async function backfillUnanswered(pool, d) {
   return counts;
 }
 
-// Whether a process of a release other than this one is live.
-async function olderReleaseLive(pool, release) {
+// Whether a process of a release other than this one is live, and whether
+// one of them still serves (and so may lead: a process stops leading as its
+// drain begins).
+async function otherRelease(pool, release) {
   const { rows: [r] } = await pool.query(
-    `SELECT EXISTS (SELECT 1 FROM platform_processes
-                     WHERE release IS DISTINCT FROM $1 AND heartbeat_at > NOW() - make_interval(secs => ${LIVE_SECONDS})) AS live`,
+    `SELECT COALESCE(bool_or(TRUE), FALSE) AS live, COALESCE(bool_or(state = 'serving'), FALSE) AS serving
+       FROM platform_processes
+      WHERE release IS DISTINCT FROM $1 AND heartbeat_at > NOW() - make_interval(secs => ${LIVE_SECONDS})`,
     [release]);
-  return !!r.live;
+  return { live: !!r.live, serving: !!r.serving };
 }
 
 /**
@@ -233,13 +240,18 @@ async function sweep(pool, { config, previous = null, deps = {} } = {}) {
       });
     }),
   };
+  let backfilled = previous && previous.backfilled !== undefined ? previous.backfilled : undefined;
+  const other = await otherRelease(pool, d.release);
+  if (other.serving) {
+    // Its leader's, while it may lead.
+    return { claims: 0, records: 0, headless: 0, local: 0, unanswered: null, backfilled: backfilled ?? null, leftToOlderLeader: true };
+  }
   const claims = await endOldClaims(pool, d);
   const records = await askForRecords(pool, d);
   const headless = await askForHeadless(pool, d);
   const { adopted: local } = await d.localPass();
-  let backfilled = previous && previous.backfilled !== undefined ? previous.backfilled : undefined;
   let unanswered = null;
-  if (backfilled !== d.release && !(await olderReleaseLive(pool, d.release))) {
+  if (backfilled !== d.release && !other.live) {
     unanswered = await backfillUnanswered(pool, d);
     backfilled = d.release;
   }

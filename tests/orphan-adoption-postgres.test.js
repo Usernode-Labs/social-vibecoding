@@ -132,7 +132,9 @@ test('only what no live process or work item holds is recovered', { timeout: 120
     await c.query(`INSERT INTO wf_instances (machine, key, state, machine_version) VALUES ('bot-build', 'run:9', 'building', 1)`);
     await c.query('COMMIT');
   } finally { c.release(); }
-  await pool.query(`INSERT INTO platform_processes (id, state, heartbeat_at, drain_started_at) VALUES ('pod-old', 'draining', NOW(), NOW())`);
+  // An older release's Pod finishing its turns (draining: its leadership
+  // given up, so the leftover pass runs beside it).
+  await pool.query(`INSERT INTO platform_processes (id, release, state, heartbeat_at, drain_started_at) VALUES ('pod-old', 'older-release', 'draining', NOW(), NOW())`);
   await pool.query(`INSERT INTO platform_processes (id, heartbeat_at) VALUES ('pod-dead', NOW() - interval '10 minutes')`);
   await pool.query(`INSERT INTO process_holds (process_id, kind, ref) VALUES ('pod-old', 'session', $1), ('pod-dead', 'session', $2)`,
     [String(heldLive), String(heldDead)]);
@@ -150,7 +152,8 @@ test('only what no live process or work item holds is recovered', { timeout: 120
   const asked = async () => (await pool.query(
     `SELECT (payload->'input'->>'sessionId')::int AS id FROM wf_events WHERE machine = 'turn' AND type = 'Asked'
        AND payload->>'kind' = 'recover' ORDER BY id`)).rows.map((r) => r.id);
-  const pass = () => leftovers.sweep(pool, { config: {}, deps: { localPass: async () => ({ adopted: 0 }), release: 'test' } });
+  // This release is this process's own (processes.start above).
+  const pass = () => leftovers.sweep(pool, { config: {}, deps: { localPass: async () => ({ adopted: 0 }), release: process.env.GIT_SHA || null } });
 
   await t.test('a recover turn is asked, once, for what was left: unheld (or held by the dead), quiet', async () => {
     const out = await pass();

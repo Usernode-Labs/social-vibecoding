@@ -353,16 +353,26 @@ async function runHeadless(ctx, { config, pool }, input) {
     ? { apiKey: null }
     : await require('./limits').resolveBillingPath(pool, config.dataEncryptionKey, session.user_id);
   let retained = false;
-  await sessions.runHeadlessSessionInner({
-    pool, config, session,
-    user: { id: Number(session.user_id), username: session.username },
-    selectedModel: input.selectedModel,
-    repoOwner, repoName,
-    userApiKey: billing.error ? null : billing.apiKey,
-    issueNumber, issue, comments, botUsername,
-    owner,
-    onRetained: () => { retained = true; },
-  });
+  // ROLLOUT-ONLY: the session's hold, as the run held it before the turn
+  // machine (routes/sessions.js runHeadlessSession; a resumed run takes it
+  // in resumeOneHeadlessRun). A release from before it resumes a
+  // 'generating' run no process holds (its resumeHeadlessRuns), and reads
+  // this process's holds as processes.js writes them for it.
+  const release = require('./processes').hold('session', sessionId);
+  try {
+    await sessions.runHeadlessSessionInner({
+      pool, config, session,
+      user: { id: Number(session.user_id), username: session.username },
+      selectedModel: input.selectedModel,
+      repoOwner, repoName,
+      userApiKey: billing.error ? null : billing.apiKey,
+      issueNumber, issue, comments, botUsername,
+      owner,
+      onRetained: () => { retained = true; },
+    });
+  } finally {
+    release();
+  }
   if (retained) await carryHeadlessOn(ctx, { config, pool }, sessionId, owner);
   return { ended: 'done' };
 }

@@ -14872,10 +14872,15 @@ CREATE INDEX IF NOT EXISTS idx_private_request_comments_request
   ON private_request_comments (private_request_id, id);
 COMMENT ON TABLE private_request_comments IS 'staging:private';
 
--- The leader's sweep times (services/leader-timers.js), gone with the leader:
--- every scheduled job is a clock of the workflow now
--- (src/workflow/clock/services.ts), whose instance keeps its last run.
-DROP TABLE IF EXISTS leader_sweeps;
+-- The leader's sweep times, gone with the leader: every scheduled job is a
+-- clock of the workflow now (src/workflow/clock/services.ts), whose instance
+-- keeps its last run. ROLLOUT-ONLY: a release from before it still leads
+-- while it runs beside this one, and records its sweeps here; drop the
+-- table with the other rollout-only parts (services/turn-leftovers.js).
+CREATE TABLE IF NOT EXISTS leader_sweeps (
+  name        TEXT PRIMARY KEY,
+  last_run_at TIMESTAMPTZ NOT NULL
+);
 
 -- The platform's processes, and what each one is doing that no other may
 -- adopt, tear down, duplicate or call idle (services/processes.js,
