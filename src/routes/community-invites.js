@@ -37,6 +37,7 @@ const journeyEvents = require('../services/journey-events');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const invites = require('../services/community-invites');
+const emojiTile = require('../services/emoji-tile');
 const stagingDemoInvite = require('../services/staging-demo-invite');
 const phoneAuth = require('../services/firebase-phone-auth');
 const challengeScorer = require('../services/topochain/challenge-scorer');
@@ -59,56 +60,38 @@ function escapeAttr(value) {
 }
 
 /**
- * The community a live link's project was made for, when it is named apart
- * from the project, or null. A community and its one project share a name
- * today, and preview() sends no other. (The page's card had the same rule
- * until #4203, when it began leading with who invited you instead:
- * frontend/src/features/auth/invite-card.tsx, inviteLine.)
+ * The link-preview tags for an invite page: what WhatsApp, iMessage, Slack
+ * and the rest show when the link is pasted. A live link's card is the
+ * project (Evan, 20 Oct 2026): its name as the title, its one line under it
+ * (else the note, else who invited you), and its icon as the thumbnail, the
+ * image it has or its emoji drawn on its colour (GET /api/public/invites/
+ * :token/icon.png). The note is the message the link is sent in, so the
+ * card does not say it again, and the icon is the project's, not
+ * Homeroom's mark. A dead or unknown link says only that it is a Homeroom
+ * invite, so a pasted link discloses no more than preview() does.
  */
-function madeForName(preview, projectName) {
-  const community = String((preview && preview.communityName) || '').trim();
-  const project = String(projectName || '').trim();
-  return community && community.toLowerCase() !== project.toLowerCase() ? community : null;
-}
-
-/**
- * The link-preview tags for an invite page: what iMessage, Slack and the
- * rest show when the link is pasted. A live link's title is the gift:
- * "Maya made Run Tracker" when the person who sent it made the project ("Maya
- * made this for Sunday Run Club" when the community it was made for has a
- * name of its own; "is making" while its first version is on its way,
- * `building`), with their note (else the project's line, else who
- * invited you) and its picture (else its icon). A dead or unknown one says
- * only that it is a Homeroom invite, so a pasted link discloses no more than
- * preview() does.
- */
-function previewTags(preview, origin) {
+function previewTags(preview, origin, token = null) {
   const live = preview && preview.live;
-  const name = live ? preview.project.name : null;
-  const madeBy = live && preview.inviterMadeIt && preview.inviterName ? preview.inviterName : null;
-  const madeFor = madeBy ? madeForName(preview, name) : null;
-  const made = preview && preview.building ? 'is making' : 'made';
-  const title = !live
-    ? 'Homeroom invite'
-    : madeBy ? (madeFor ? `${madeBy} ${made} this for ${madeFor}` : `${madeBy} ${made} ${name}`) : `Join ${name} on Homeroom`;
+  const project = live ? preview.project || {} : {};
+  const name = live ? project.name : null;
+  const title = live ? name : 'Homeroom invite';
   const members = live && preview.memberCount
     ? ` ${preview.memberCount} ${preview.memberCount === 1 ? 'person is' : 'people are'} in it.`
     : '';
   const description = !live
     ? 'This invite link is no longer active.'
-    : preview.note
-      || preview.project.description
+    : project.description
+      || preview.note
       || `${preview.inviter ? `@${preview.inviter} invited you to ${name}.` : `You are invited to ${name}.`}${members}`;
-  // A card is words, not an image: the preview shows the icon instead.
-  const picture = live && preview.project.picture && preview.project.picture.kind !== 'sketch'
-    ? preview.project.picture.url : null;
-  const image = picture || (live ? preview.project.iconUrl : null);
+  const image = !live ? null
+    : project.iconUrl
+      || (project.iconEmoji && token ? `/api/public/invites/${encodeURIComponent(token)}/icon.png` : null);
   const tags = [
     `<meta property="og:type" content="website">`,
     `<meta property="og:site_name" content="Homeroom">`,
     `<meta property="og:title" content="${escapeAttr(title)}">`,
     `<meta property="og:description" content="${escapeAttr(description)}">`,
-    `<meta name="twitter:card" content="${picture && origin ? 'summary_large_image' : 'summary'}">`,
+    `<meta name="twitter:card" content="summary">`,
     `<meta name="twitter:title" content="${escapeAttr(title)}">`,
     `<meta name="twitter:description" content="${escapeAttr(description)}">`,
   ];
@@ -254,6 +237,33 @@ function communityInviteRoutes(config) {
     }
   });
 
+  // The link preview's thumbnail (previewTags): the project's icon as a PNG
+  // a chat app will draw. An image icon is its own file; an emoji is drawn
+  // on the project's colour (services/emoji-tile.js). An emoji whose
+  // picture cannot be had is Homeroom's own icon, as the card showed before.
+  router.get('/api/public/invites/:token/icon.png', invitePreviewLimiter, async (req, res) => {
+    try {
+      const icon = invites.isToken(req.params.token)
+        ? await invites.previewIcon(pool, req.params.token)
+        : null;
+      if (!icon || (!icon.imageId && !icon.emoji)) return res.status(404).json({ error: 'No icon' });
+      if (icon.imageId) return res.redirect(302, `/app-icons/${encodeURIComponent(icon.imageId)}`);
+      const png = await emojiTile.tilePng({ emoji: icon.emoji, color: icon.color });
+      if (!png) return res.redirect(302, '/apple-touch-icon.png');
+      res.set({
+        'Content-Type': 'image/png',
+        'Content-Length': String(png.length),
+        'Cache-Control': 'private, max-age=3600',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Disposition': 'inline',
+      });
+      return res.end(png);
+    } catch (err) {
+      log.error('invites', 'Invite icon failed', { err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.get('/api/invite-links/queued', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     try {
@@ -365,7 +375,7 @@ function communityInviteRoutes(config) {
       const html = await fs.promises.readFile(INDEX_PATH, 'utf8');
       res.setHeader('Cache-Control', 'no-store');
       applyShellDocumentHeaders(res, INDEX_PATH);
-      res.type('html').send(withPreviewTags(html, previewTags(preview, requestOrigin(req))));
+      res.type('html').send(withPreviewTags(html, previewTags(preview, requestOrigin(req), demo ? null : token)));
     } catch (err) {
       log.error('invites', 'Serving an invite page failed', { err: err.message });
       if (!res.headersSent) {
