@@ -154,14 +154,17 @@ export function CreateTile({ view, style }: { view: CreateTileView; style?: stri
 // drag-time `#app-list > .home-create-tile` rules in app.css are about the
 // grid's canvas, which this does not live in. `.home-create-btn:focus-visible`
 // still applies.
-const COMPACT = 'home-create-btn group inline-flex shrink-0 items-center gap-1.5 rounded-lg '
-  + 'px-3 py-1.5 text-xs font-medium transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800';
-const COMPACT_INK_ON = 'text-zinc-600 group-hover:text-violet-700 dark:text-zinc-400 '
-  + 'dark:group-hover:text-violet-400';
-const COMPACT_INK_OFF = 'text-zinc-400 dark:text-zinc-500';
-// The tile's dashed face, shrunk to the line: same ring colours (FACE_ON /
-// FACE_OFF), same plus, one size down.
-const COMPACT_FACE = 'flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-dashed';
+//
+// #5654: it is the line's one button — the app's white surface (dark grey in
+// dark mode) inside the hairline border, fully rounded, with the plus in
+// front — while Show all stays a text link. No new colour: zinc at rest, the
+// blue accent on hover. The dashed box around the plus is the grid tile's,
+// and is not repeated here.
+const COMPACT = 'home-create-btn group inline-flex shrink-0 items-center gap-1 rounded-full border '
+  + 'bg-white px-3 py-1.5 text-xs font-semibold transition-colors dark:bg-zinc-900';
+const COMPACT_INK_ON = 'border-zinc-200 text-zinc-800 hover:border-violet-500 hover:text-violet-700 '
+  + 'dark:border-zinc-700 dark:text-zinc-100 dark:hover:border-violet-400 dark:hover:text-violet-400';
+const COMPACT_INK_OFF = 'border-zinc-200 text-zinc-400 dark:border-zinc-700 dark:text-zinc-500';
 
 export function CreateCompact({ view }: { view: CreateTileView }) {
   const t = useMessages('home');
@@ -183,9 +186,7 @@ export function CreateCompact({ view }: { view: CreateTileView }) {
         win().App?.showCreateModal?.();
       }}
     >
-      <span className={`${COMPACT_FACE} ${on ? FACE_ON : FACE_OFF}`} aria-hidden="true">
-        <PlusWideIcon className="h-3 w-3" strokeWidth="2" />
-      </span>
+      <PlusWideIcon className="h-3 w-3" strokeWidth="2" aria-hidden="true" />
       {t(CREATE_TILE_LABEL)}
     </button>
   );
