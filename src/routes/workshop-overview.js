@@ -657,13 +657,13 @@ function pictureFields(row) {
  * uses) and start "What it touches" for a head not yet read. Resolves the
  * rows. Best-effort: a failed read leaves the row without a picture.
  */
-async function withPictures(pool, rows, { shotsPresent = false } = {}) {
+async function withPictures(pool, rows, { shotsPresent = false, viewer = null } = {}) {
   const proposals = rows.filter((r) => r.kind === 'proposal');
   if (!proposals.length) return rows;
   if (shotsPresent) {
     try {
       for (const r of proposals) r.app_slug = r.slug;
-      const bySession = await shotsView.getForSessions(pool, proposals, null);
+      const bySession = await shotsView.getForSessions(pool, proposals, null, { viewer });
       for (const r of proposals) r.shots = bySession.get(Number(r.id)) || null;
     } catch (err) {
       log.warn('workshop-overview', 'Could not read the feed\'s shots', { message: err.message });
@@ -966,7 +966,7 @@ function workshopOverviewRoutes(config) {
       const { rows } = await pool.query(NEEDS_FEED_SQL, [
         req.user.id, showSelfHosted, !!req.user.isAdmin, NEEDS_FEED_MAX,
       ]);
-      await withPictures(pool, rows, { shotsPresent: !!config.shots?.present });
+      await withPictures(pool, rows, { shotsPresent: !!config.shots?.present, viewer: req.user });
       await withViewerDecides(pool, rows, req.user.id);
       const items = decidingFirst(shapeNeedsFeed(await withVotesRequired(pool, rows)));
       if (IS_STAGING && req.query.demo === '1') {

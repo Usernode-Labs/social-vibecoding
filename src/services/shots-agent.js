@@ -369,6 +369,8 @@ async function dispatchClaude(config, options, deps) {
     ...(Array.isArray(options.browserPersonas) && options.browserPersonas.length
       ? { shotsBrowserPersonas: JSON.stringify(options.browserPersonas) } : {}),
     shotsPlatformAssets: options.platformAssets === true,
+    // Stills at the screen's own density, only while the experiment is on.
+    shotsDeviceDensity: options.deviceDensity === true,
     telemetryComponent: 'shots_agent',
     telemetryCorrelationId: runId,
     telemetryAttemptNumber: 1,

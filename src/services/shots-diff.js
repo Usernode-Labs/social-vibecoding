@@ -11,10 +11,16 @@
 // inside it; anything else that differs is kept as an undeclared area.
 //
 // Pure apart from PNG decoding. Everything it returns is integers and story
-// ids from the run's own declaration.
+// ids from the run's own declaration, in the screen's CSS pixels: a still
+// saved at its device's density (3 on a phone, 2 on a desktop) is averaged
+// down to one pixel per CSS pixel first, so the areas, widths and heights
+// mean the same whatever the density, and each screen says its `density`
+// for the cards that zoom into it.
 
 const { PNG } = require('pngjs');
+const { densityFor } = require('./shots-files');
 
+// Compared pixels, after averaging down to CSS pixels.
 const MAX_PIXELS = 1920 * 1440;
 const MAX_REGIONS = 12;
 // Two channels closer than this are the same colour: antialiasing and image
@@ -28,10 +34,52 @@ const JOIN_ROWS = 6;
 // sheet, and taking it in would outline the panel instead of the change.
 const FOCUS_MAX_SHARE = 0.5;
 
-function decode(buffer) {
+// Width and height off the PNG's header, read before anything is inflated
+// (shots-files.inspectImage checked the header when the shot was saved).
+function pngSize(buffer) {
+  return { w: buffer.readUInt32BE(16), h: buffer.readUInt32BE(20) };
+}
+
+// One pixel per `density` x `density` block: their average.
+function averageDown(png, density) {
+  const w = Math.floor(png.width / density);
+  const h = Math.floor(png.height / density);
+  const d = Buffer.alloc(w * h * 4);
+  const n = density * density;
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      let r = 0; let g = 0; let b = 0; let a = 0;
+      for (let dy = 0; dy < density; dy += 1) {
+        let i = ((y * density + dy) * png.width + x * density) * 4;
+        for (let dx = 0; dx < density; dx += 1, i += 4) {
+          r += png.data[i]; g += png.data[i + 1]; b += png.data[i + 2]; a += png.data[i + 3];
+        }
+      }
+      const o = (y * w + x) * 4;
+      d[o] = Math.round(r / n); d[o + 1] = Math.round(g / n); d[o + 2] = Math.round(b / n); d[o + 3] = Math.round(a / n);
+    }
+  }
+  return { w, h, d };
+}
+
+// A still's pixels at one per CSS pixel. `density` is how many device
+// pixels it holds per CSS pixel (shots-files.densityFor).
+function decode(buffer, density = 1) {
+  const k = Number.isInteger(density) && density > 1 ? density : 1;
+  const size = pngSize(buffer);
+  if (Math.floor(size.w / k) * Math.floor(size.h / k) > MAX_PIXELS) throw new Error('screen too large to compare');
   const png = PNG.sync.read(buffer);
-  if (png.width * png.height > MAX_PIXELS) throw new Error('screen too large to compare');
-  return { w: png.width, h: png.height, d: png.data };
+  return k === 1 ? { w: png.width, h: png.height, d: png.data } : averageDown(png, k);
+}
+
+// A still saved at `density` device pixels per CSS pixel, as the 1x PNG
+// everyone outside the density experiment is shown (services/shots-density.js):
+// each block averaged, as `decode` does, then written back as a PNG.
+function flatten(buffer, density) {
+  const px = decode(buffer, density);
+  const png = new PNG({ width: px.w, height: px.h });
+  png.data = Buffer.from(px.d.buffer, px.d.byteOffset, px.d.length);
+  return PNG.sync.write(png);
 }
 
 // One hash per row, with the low bits of each channel dropped so that noise
@@ -304,10 +352,17 @@ async function screensFor(stories, files) {
   const find = (storyId, viewport, side, variant) => files.find((file) => file.storyId === storyId
     && file.viewport === viewport && file.side === side && file.variant === variant && file.media === 'png');
   const cache = new Map();
-  const pixelsOf = (file) => {
+  // An element shot is averaged down by its screen shot's density: its own
+  // width says nothing about the screen's.
+  const pixelsOf = (file, density) => {
     if (!file) return null;
-    if (!cache.has(file.sha256)) cache.set(file.sha256, decode(file.data));
-    return cache.get(file.sha256);
+    const key = `${file.sha256}\u0000${density}`;
+    if (!cache.has(key)) cache.set(key, decode(file.data, density));
+    return cache.get(key);
+  };
+  const densityOf = (file, story, viewport) => {
+    const declared = (story.viewports || []).find((candidate) => candidate.name === viewport);
+    return file && declared ? densityFor(pngSize(file.data).w, declared.width) : 1;
   };
   const viewports = [];
   for (const story of stories) {
@@ -328,8 +383,9 @@ async function screensFor(stories, files) {
     }
     for (const group of groups) {
       await new Promise((resolve) => setImmediate(resolve));
-      const before = pixelsOf(group.base);
-      const after = pixelsOf(group.head);
+      const density = densityOf(group.base, group.stories[0], viewport);
+      const before = pixelsOf(group.base, density);
+      const after = pixelsOf(group.head, densityOf(group.head, group.stories[0], viewport));
       const found = regions(before, after).map((region) => ({ ...region, story: null }));
       for (const story of group.stories) {
         // Each element shot is found in its change's own screen shot, which
@@ -339,7 +395,9 @@ async function screensFor(stories, files) {
           const crop = find(story.id, viewport, side, 'focus');
           const own = find(story.id, viewport, side, 'context');
           if (crop && own) await new Promise((resolve) => setImmediate(resolve));
-          const places = crop && own ? locateAll(pixelsOf(own), pixelsOf(crop)) : [];
+          const ownDensity = densityOf(own, story, viewport);
+          const places = crop && own
+            ? locateAll(pixelsOf(own, ownDensity), pixelsOf(crop, ownDensity)) : [];
           const boxOf = (region) => (side === 'head' ? region.a : region.b);
           rects[side] = places.find((place) => found.some((region) => overlaps(boxOf(region), place)))
             || places[0] || null;
@@ -381,6 +439,9 @@ async function screensFor(stories, files) {
         width: before.w,
         heightBefore: before.h,
         heightAfter: after.h,
+        // Device pixels per CSS pixel in the stills shown: how far a card
+        // may zoom before it draws them soft.
+        density,
         regions: kept,
       });
     }
@@ -410,6 +471,8 @@ function unchangedStories(screens) {
 module.exports = {
   MAX_REGIONS,
   decode,
+  averageDown,
+  flatten,
   rowHashes,
   align,
   regions,

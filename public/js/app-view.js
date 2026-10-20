@@ -24194,8 +24194,11 @@ const AppView = {
   // pair stays comparable. A shot without recorded dimensions still leads.
   _shotsCropReadable(shot) {
     if (!shot) return true;
-    const width = Number(shot.width);
-    const height = Number(shot.height);
+    // In CSS pixels: a still saved at 3x is three times as many pixels wide
+    // as the element on the screen.
+    const density = Number(shot.density) >= 1 ? Number(shot.density) : 1;
+    const width = Number(shot.width) / density;
+    const height = Number(shot.height) / density;
     if (!(width > 0 && height > 0)) return true;
     return width >= 120 && height >= 40;
   },
@@ -24729,8 +24732,11 @@ const AppView = {
         shown.includes('shots-box-other') ? `<span class="shots-key"><i class="shots-key-box"></i>${PlatformI18n.htmlText('changes:shots.screen.keyOutline')}</span>` : '',
         shown.includes('shots-mark') ? `<span class="shots-key"><i class="shots-key-line"></i>${PlatformI18n.htmlText('changes:shots.screen.keyLine')}</span>` : '',
       ].join('');
-      const width = Number(after && after.width);
-      const height = Number(after && after.height);
+      // The still's own pixels over its density: the screen's size in CSS
+      // pixels, which is what the screen was declared at.
+      const density = Number(after && after.density) >= 1 ? Number(after.density) : 1;
+      const width = Number(after && after.width) / density;
+      const height = Number(after && after.height) / density;
       const meta = width > 0 && height > 0
         ? PlatformI18n.htmlText('changes:facts.pair', { first: PlatformI18n.t('changes:shots.screen.sized', { size: sizeName(screen.viewport), width: Math.round(width), height: Math.round(height) }), second: who })
         : PlatformI18n.htmlText('changes:facts.pair', { first: sizeName(screen.viewport), second: who });

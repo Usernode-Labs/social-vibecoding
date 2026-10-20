@@ -9,6 +9,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const controlPlane = require('../src/services/shots-control');
 const fixtures = require('./fixtures/shots');
+const shotsFiles = require('../src/services/shots-files');
 
 const { RunControl } = controlPlane;
 
@@ -545,4 +546,49 @@ test('a dark shot that matches its light copy answers sameAsLight and stores not
   const beforeDark = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before', theme: 'dark' },
     fixtures.png());
   assert.equal(beforeDark.saved, true);
+});
+
+test('only a run taken at device density saves stills over 6 MB, and its element shots may be that dense', () => {
+  const over = Buffer.alloc(6 * 1024 * 1024 + 1);
+  const element = { change: 'invite-suggestions', screen: 'desktop', side: 'before', kind: 'element' };
+  // Off (every run unless the experiment is on): today's caps.
+  const plain = control();
+  assert.throws(() => plain.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, over),
+    { code: 'shot_too_large', status: 413 });
+  assert.throws(() => plain.saveShot(element, fixtures.png({ width: 2400, height: 40 })), { code: 'element_shot_too_wide' });
+  // On: the size passes (this buffer then fails as no PNG), and a 2x desktop
+  // element saved before its screen shot is kept.
+  const dense = control();
+  dense.agent = { deviceDensity: true };
+  assert.throws(() => dense.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, over),
+    { code: 'invalid_shot_image' });
+  assert.doesNotThrow(() => dense.saveShot(element, fixtures.png({ width: 2400, height: 40 })));
+});
+
+test('a dense run keeps each still the worker says is dense twice: as its 1x copy, and its original', () => {
+  const dense = control();
+  dense.agent = { deviceDensity: true };
+  const before = { change: 'invite-suggestions', screen: 'desktop', side: 'before' };
+  const after = { change: 'invite-suggestions', screen: 'desktop', side: 'after' };
+  const original = fixtures.png({ width: 2560, height: 1600, shade: 10 });
+  const saved = dense.saveShot({ ...before, density: '2' }, original);
+  assert.equal(saved.saved, true);
+  const file = dense.saved.get(shotsFiles.slotKey(shotsFiles.shotTarget(dense.intent, before)));
+  assert.deepEqual([file.width, file.height, file.density], [1280, 800, 2], 'data is the 1x copy');
+  assert.deepEqual([file.dense.width, file.dense.height, file.dense.data === original], [2560, 1600, true]);
+  // The same original on the other side is still the same image.
+  assert.equal(dense.saveShot({ ...after, density: '2' }, original).sameAsOtherSide, true);
+  // A width that does not match what the worker said, a density the run did
+  // not ask for, or a worker that says nothing: stored as it came, 1x.
+  for (const [run, raw, image] of [
+    [dense, { ...after, density: '3' }, original],
+    [dense, after, original],
+    [control(), { ...after, density: '2' }, original],
+  ]) {
+    run.saveShot(raw, image);
+    const kept = run.saved.get(shotsFiles.slotKey(shotsFiles.shotTarget(run.intent, after)));
+    assert.deepEqual([kept.width, kept.density, kept.dense], [2560, 1, null], JSON.stringify(raw));
+  }
+  // An element the worker says is 2x is judged at 2x, whatever its screen shot's 1x copy says.
+  assert.doesNotThrow(() => dense.saveShot({ ...before, kind: 'element', density: '2' }, fixtures.png({ width: 2400, height: 60 })));
 });

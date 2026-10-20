@@ -80,6 +80,10 @@ test('anything but one whole PNG within bounds is refused with a code', () => {
   assert.throws(() => shots.inspectImage(Buffer.alloc(shots.MAX_IMAGE_BYTES + 1)),
     refusal('shot_too_large', 413));
   assert.equal(shots.MAX_IMAGE_BYTES, 6 * 1024 * 1024);
+  // A run taken at device density has room for a 2x desktop screen of a busy page.
+  assert.equal(shots.MAX_DENSE_IMAGE_BYTES, 12 * 1024 * 1024);
+  assert.throws(() => shots.inspectImage(Buffer.alloc(shots.MAX_DENSE_IMAGE_BYTES + 1), { maxBytes: shots.MAX_DENSE_IMAGE_BYTES }),
+    refusal('shot_too_large', 413));
 });
 
 test('a clip must be a browser WebM between 1 KB and 20 MB', () => {
@@ -239,8 +243,17 @@ test('a stored file carries its slot, type, bytes and digest', () => {
     storyId: 'invite-suggestions', viewport: 'desktop', side: 'head', variant: 'context', media: 'png',
     theme: 'light',
     contentType: 'image/png', data: true, width: 5, height: 2, bytes: image.length, sha256: sha256(image),
+    density: 1, dense: null,
     focusRect: null, stageLabels: null,
   });
+  // A still of a run taken at device density keeps its original beside the
+  // 1x copy it is stored as.
+  const original = fixtures.png({ width: 15, height: 6 });
+  const dense = shots.stored(
+    shots.shotTarget(intent, { change: 'invite-suggestions', screen: 'desktop', side: 'after' }),
+    image, shots.inspectImage(image), { density: 3, data: original, ...shots.inspectImage(original) });
+  assert.deepEqual([dense.width, dense.density, dense.dense.width, dense.dense.height, dense.dense.data === original],
+    [5, 3, 15, 6, true]);
   const clip = fixtures.webm();
   const recording = shots.stored(
     shots.shotTarget(intent, { change: 'saved-toast', screen: 'desktop', side: 'before', kind: 'clip' }),
@@ -616,4 +629,27 @@ test('an element shot must fit the screen it was taken on', () => {
     refusal('element_shot_too_wide'));
   // Screen shots and clips are not element shots.
   assert.doesNotThrow(() => shots.checkElementSize(story, target('mobile', 'screen'), size(390, 5000)));
+  // Saved before its screen shot in a run taken at device density, an
+  // element may be as dense as the screen's browser saves: 3x on a phone
+  // screen, 2x on a desktop one. Any other run's browsers save at 1x.
+  const dense = { deviceDensity: true };
+  assert.doesNotThrow(() => shots.checkElementSize(story, target('mobile'), size(1100, 300), null, dense));
+  assert.doesNotThrow(() => shots.checkElementSize(story, target('desktop'), size(2400, 300), null, dense));
+  assert.throws(() => shots.checkElementSize(story, target('desktop'), size(2600, 300), null, dense),
+    refusal('element_shot_too_wide'));
+  assert.throws(() => shots.checkElementSize(story, target('mobile'), size(1100, 300)), refusal('element_shot_too_wide'));
+  // A 3x screen shot, and the message speaks in the screen's CSS pixels.
+  assert.throws(() => shots.checkElementSize(story, target('mobile'), size(1206, 300), { width: 1170, height: 2532 }),
+    (error) => error.code === 'element_shot_too_wide' && /is 402 px wide, wider than the mobile screen \(390 px\)/.test(error.message));
+});
+
+test('a still\'s density is a whole multiple of its screen\'s width, else 1', () => {
+  assert.equal(shots.densityFor(390, 390), 1);
+  assert.equal(shots.densityFor(1170, 390), 3);
+  assert.equal(shots.densityFor(2560, 1280), 2);
+  assert.equal(shots.densityFor(1179, 393), 3);
+  for (const [image, screen] of [[1280, 390], [600, 390], [390, 0], [390, undefined], [null, 390], [390 * 5, 390]]) {
+    assert.equal(shots.densityFor(image, screen), 1, `${image}/${screen}`);
+  }
+  assert.deepEqual([shots.PHONE_DENSITY, shots.DESKTOP_DENSITY], [3, 2]);
 });

@@ -155,6 +155,13 @@ RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
   && npx playwright install --with-deps chromium \
   && command -v mcp-server-playwright \
   && mcp-server-playwright --version
+# Shots are saved at the browser's device density (3 on a phone, 2 on a
+# desktop), but this MCP version hard-codes browser_take_screenshot's scale to
+# CSS pixels. The patch edits that one tool, and refuses a version whose code
+# no longer matches; verify-shots-browser-mcp.js below proves the saved
+# density in a real browser. See the script's header for why not a pin bump.
+COPY patch-playwright-mcp-screenshot.js /usr/local/bin/patch-playwright-mcp-screenshot.js
+RUN node /usr/local/bin/patch-playwright-mcp-screenshot.js
 
 COPY worker-run.sh   /usr/local/bin/worker-run.sh
 COPY run-cc.sh       /usr/local/bin/run-cc.sh

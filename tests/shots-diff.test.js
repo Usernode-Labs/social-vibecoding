@@ -183,3 +183,54 @@ test('unchangedStories names the changes whose every screen shows no difference'
   assert.deepEqual([...diff.unchangedStories([])], []);
   assert.deepEqual([...diff.unchangedStories(undefined)], []);
 });
+
+// A screen as a browser at `k` device pixels per CSS pixel saves it: each
+// CSS pixel drawn as a k×k block.
+const atDensity = (px, k) => {
+  const w = px.w * k;
+  const d = new Uint8Array(w * px.h * k * 4);
+  for (let y = 0; y < px.h * k; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      d.set(px.d.subarray((Math.floor(y / k) * px.w + Math.floor(x / k)) * 4, (Math.floor(y / k) * px.w + Math.floor(x / k)) * 4 + 4), (y * w + x) * 4);
+    }
+  }
+  return { w, h: px.h * k, d };
+};
+
+test('stills saved at device scale are compared in CSS pixels, and the screen says its density', async () => {
+  const before = screen(240, 200, [...glyphs(10, 10, 20), [20, 40, 80, 20, [37, 99, 235]], ...glyphs(20, 120, 10)]);
+  const after = screen(240, 200, [...glyphs(10, 10, 20), [20, 40, 180, 20, [37, 99, 235]], ...glyphs(20, 120, 10)]);
+  const shown = async (k) => {
+    const stories = [{ id: 'well', viewports: [{ name: 'phone', width: 240, height: 200 }] }];
+    const files = [
+      file('well', 'phone', 'base', 'context', atDensity(before, k)),
+      file('well', 'phone', 'head', 'context', atDensity(after, k)),
+      file('well', 'phone', 'head', 'focus', atDensity(crop(after, 18, 38, 184, 24), k)),
+    ];
+    return (await diff.screensFor(stories, files))[0];
+  };
+  const flat = await shown(1);
+  for (const k of [2, 3]) {
+    const dense = await shown(k);
+    assert.deepEqual([dense.width, dense.heightBefore, dense.heightAfter], [240, 200, 200], `${k}x geometry stays in CSS pixels`);
+    assert.equal(dense.density, k);
+    assert.deepEqual(dense.regions, flat.regions, `${k}x outlines the same areas as 1x`);
+  }
+  assert.equal(flat.density, 1);
+});
+
+test('a 3x phone screen is within what the diff compares; the size is read before anything is inflated', () => {
+  const phone = png(screen(1170, 2532));
+  assert.deepEqual([diff.decode(phone, 3).w, diff.decode(phone, 3).h], [390, 844]);
+  assert.throws(() => diff.decode(phone, 1), /too large/, 'at 1x the same image is too many pixels');
+  // A header claiming a huge image is refused without decoding its body.
+  const claim = Buffer.from(phone);
+  claim.writeUInt32BE(8000, 16);
+  claim.writeUInt32BE(8000, 20);
+  assert.throws(() => diff.decode(claim, 2), /too large/);
+});
+
+test('averaging down keeps a block\'s mean colour', () => {
+  const two = { width: 2, height: 2, data: Buffer.from([0, 0, 0, 255, 255, 255, 255, 255, 0, 0, 0, 255, 255, 255, 255, 255]) };
+  assert.deepEqual([...diff.averageDown(two, 2).d], [128, 128, 128, 255]);
+});

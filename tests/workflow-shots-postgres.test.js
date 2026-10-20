@@ -245,6 +245,45 @@ test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, as
     assert.deepEqual(summary.map((a) => [a.side, a.theme]), [['base', 'light'], ['head', 'dark'], ['head', 'light']]);
   });
 
+  // A run taken at device density (services/shots-density.js) keeps each
+  // dense still twice: `data` its 1x copy, dense_* the original. Publication
+  // copies both, and the database holds the pair together.
+  await t.test('S9b a dense still publishes with its 1x copy and its original', async () => {
+    defaults();
+    const DENSE = Buffer.from('fake-png-dense');
+    work.answer.set(WORK.agent, async (input) => {
+      await saved(input.runId, 'base');
+      await pool.query(
+        `INSERT INTO shot_run_files (run_id, slot, story_id, viewport, side, variant, media, content_type, data, width, height, bytes, sha256,
+                                     density, dense_data, dense_width, dense_height, dense_bytes, dense_sha256)
+         VALUES ($1, 'c1/desktop/head/context', 'c1', 'desktop', 'head', 'context', 'png', 'image/png', $2, 1280, 800, $3, $4,
+                 2, $5, 2560, 1600, $6, $7)`,
+        [input.runId, Buffer.from('fake-png'), 8, crypto.createHash('sha256').update('flat').digest('hex'),
+          DENSE, DENSE.length, crypto.createHash('sha256').update('dense').digest('hex')]);
+      return passed(input);
+    });
+    const s = await proposal();
+    await declare(s);
+    await rt.drain();
+    await send(s, 'HeadReady', { head: SHA('a') }, fromPreview);
+    await settle();
+    const [run] = await runs(s);
+    assert.equal(run.state, 'verified');
+    const { rows: [head] } = await pool.query(
+      `SELECT data, width, density, dense_data, dense_width, dense_height FROM shot_artifacts WHERE run_id = $1 AND side = 'head'`, [run.id]);
+    assert.deepEqual([head.data.toString(), head.width, head.density, head.dense_data.toString(), head.dense_width, head.dense_height],
+      ['fake-png', 1280, 2, 'fake-png-dense', 2560, 1600]);
+    const { rows: [base] } = await pool.query(
+      `SELECT density, dense_data FROM shot_artifacts WHERE run_id = $1 AND side = 'base'`, [run.id]);
+    assert.deepEqual([base.density, base.dense_data], [1, null], 'a 1x still is one copy');
+    // A density without its original, or an original at 1x, is refused.
+    for (const [density, dense] of [[2, null], [1, DENSE]]) {
+      await assert.rejects(pool.query(
+        `UPDATE shot_artifacts SET density = $2, dense_data = $3 WHERE run_id = $1 AND side = 'base'`, [run.id, density, dense]),
+      /shot_artifacts_density_check/);
+    }
+  });
+
   await t.test('S2 a declaration on a head already ready starts at once; the same one again changes nothing', async () => {
     defaults();
     const s = await proposal({ ready: true });
