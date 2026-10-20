@@ -24,8 +24,9 @@
  * people, and what the rule means once others join. It is a tip, not a side
  * panel (the navigation review of 16 Oct: keep the idea tiles large, keep
  * the explanation out of the way), and it covers nothing until asked for:
- * it opens on hover where there is a mouse, and on a tap or click anywhere,
- * and closes on Escape, a press elsewhere, or Change. It is absolutely
+ * it opens on hovering the ⓘ itself where there is a mouse, and on a tap or
+ * click anywhere, and closes on Escape, a press elsewhere, or Change. It is
+ * absolutely
  * positioned inside the line's own wrapper, so the form's transform does not
  * trap it and it needs no portal.
  */
@@ -150,6 +151,10 @@ export function MakeRuleLine({ preset, onPick, who }: { preset: PresetKey; onPic
   // The ⓘ's tip (#5266): closed on the first render, so hydration matches.
   const [tipOpen, setTipOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  // Whether the mouse is what opened it (#5266 review, 20 Oct 2026): only a
+  // hover-opened tip closes when the pointer leaves the ⓘ, so one opened by a
+  // click stays until Escape, a press elsewhere, or Change.
+  const hoverOpened = useRef(false);
   useEffect(() => {
     if (!tipOpen) return undefined;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setTipOpen(false); };
@@ -171,8 +176,6 @@ export function MakeRuleLine({ preset, onPick, who }: { preset: PresetKey; onPic
       <div
         ref={wrapperRef}
         className="relative"
-        onMouseEnter={() => { if (hasHover()) setTipOpen(true); }}
-        onMouseLeave={() => { if (hasHover()) setTipOpen(false); }}
       >
         <p data-make-rule={preset} className="mt-3 flex items-center gap-2 px-1 text-[13px] leading-[1.4] text-zinc-600 dark:text-zinc-300">
           <ShieldCheckIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
@@ -184,19 +187,26 @@ export function MakeRuleLine({ preset, onPick, who }: { preset: PresetKey; onPic
             />
           </span>
           {/* 44px of tap target, pulled back to the line's own height by its
-              margins, so nothing under the line moves. */}
-          <button
-            type="button"
-            data-make-rule-info=""
-            aria-expanded={tipOpen}
-            aria-controls="make-rule-tip"
-            aria-label={t('onboarding:firstSession.make.next.open')}
-            onClick={() => setTipOpen((was) => !was)}
-            className="-mx-2.5 -my-3.5 flex h-11 w-11 shrink-0 items-center justify-center text-zinc-500 dark:text-zinc-400"
+              margins, so nothing under the line moves. The hover is the ⓘ's
+              own, not the whole line's: the words alone are not a question. */}
+          <span
+            className="inline-flex shrink-0"
+            onMouseEnter={() => { if (hasHover()) { hoverOpened.current = true; setTipOpen(true); } }}
+            onMouseLeave={() => { if (hasHover() && hoverOpened.current) { hoverOpened.current = false; setTipOpen(false); } }}
           >
-            <InfoCircleIcon className="h-4 w-4" aria-hidden="true" />
-          </button>
-          <button type="button" onClick={() => { setTipOpen(false); setOpen(true); }} data-make-rule-change=""
+            <button
+              type="button"
+              data-make-rule-info=""
+              aria-expanded={tipOpen}
+              aria-controls="make-rule-tip"
+              aria-label={t('onboarding:firstSession.make.next.open')}
+              onClick={() => { hoverOpened.current = false; setTipOpen((was) => !was); }}
+              className="-mx-2.5 -my-3.5 flex h-11 w-11 shrink-0 items-center justify-center text-zinc-500 dark:text-zinc-400"
+            >
+              <InfoCircleIcon className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </span>
+          <button type="button" onClick={() => { hoverOpened.current = false; setTipOpen(false); setOpen(true); }} data-make-rule-change=""
             className="ml-auto shrink-0 font-semibold text-violet-700 dark:text-violet-400">
             {t('onboarding:firstSession.make.rule.change')}
           </button>

@@ -236,7 +236,13 @@ test('Make it says who can change the project, once, under the two answers', () 
   const rule = read('frontend/src/features/who-decides/make-rule.tsx');
   // Hover only where there is a mouse; a tap or click opens it anywhere.
   assert.match(rule, /function hasHover\(\): boolean \{\s+try \{ return !!window\.matchMedia\?\.\('\(hover: hover\) and \(pointer: fine\)'\)\.matches; \} catch \{ return false; \}/);
-  assert.match(rule, /onClick=\{\(\) => setTipOpen\(\(was\) => !was\)\}/);
+  // #5266 review (20 Oct 2026): the ⓘ's own hover opens it, not the whole
+  // rule line's — the words are not a question, and the tip covers nothing
+  // until someone asks for it. A click-opened tip survives the pointer leaving.
+  assert.match(rule, /<span\s+className="inline-flex shrink-0"\s+onMouseEnter=\{\(\) => \{ if \(hasHover\(\)\) \{ hoverOpened\.current = true; setTipOpen\(true\); \}/);
+  assert.doesNotMatch(rule, /ref=\{wrapperRef\}[\s\S]{0,60}onMouseEnter/, 'the line itself does not open the tip');
+  assert.match(rule, /onMouseLeave=\{\(\) => \{ if \(hasHover\(\) && hoverOpened\.current\)/);
+  assert.match(rule, /onClick=\{\(\) => \{ hoverOpened\.current = false; setTipOpen\(\(was\) => !was\); \}\}/);
   assert.match(rule, /if \(e\.key === 'Escape'\) setTipOpen\(false\);/);
   assert.match(rule, /document\.addEventListener\('pointerdown', onDown\);/);
   // Opening the presets sheet closes it, as a press elsewhere does.
