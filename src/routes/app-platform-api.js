@@ -226,7 +226,7 @@ function appPlatformApiRoutes(config) {
       const { appId } = req.appPlatform;
       try {
         const { users, hasMore } = await userDirectory.searchPrefix(
-          pool, req.query.q, req.query.limit
+          pool, req.query.q, req.query.limit, { viewerId: req.appPlatform.userId ?? null }
         );
         res.json({ users, has_more: hasMore });
       } catch (err) {
