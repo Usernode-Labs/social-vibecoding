@@ -179,8 +179,6 @@ COPY agent-api-failure.js /usr/local/bin/agent-api-failure.js
 # a turn that has changed nothing.
 COPY build-stop-hook.js /usr/local/bin/build-stop-hook.js
 COPY shots-mcp.js /usr/local/bin/shots-mcp.js
-# The brief in answers the shots agent can read whole (get_brief's parts).
-COPY shots-brief.js /usr/local/bin/shots-brief.js
 COPY visible-changes-mcp.js /usr/local/bin/visible-changes-mcp.js
 COPY shots-origin-proxy.js /usr/local/bin/shots-origin-proxy.js
 COPY shots-hosted-origins.js /usr/local/bin/shots-hosted-origins.js

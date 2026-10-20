@@ -162,9 +162,7 @@ function localBridge(runtimeDir) {
     .replace("require('./shots-boundary')",
       `require(${JSON.stringify(path.join(ROOT, 'worker', 'shots-boundary.js'))})`)
     .replace("require('./shots-samples')",
-      `require(${JSON.stringify(path.join(ROOT, 'worker', 'shots-samples.js'))})`)
-    .replace("require('./shots-brief')",
-      `require(${JSON.stringify(path.join(ROOT, 'worker', 'shots-brief.js'))})`);
+      `require(${JSON.stringify(path.join(ROOT, 'worker', 'shots-samples.js'))})`);
   const file = path.join(runtimeDir, 'shots-mcp.js');
   fs.writeFileSync(file, source, { mode: 0o600 });
   return file;

@@ -1159,38 +1159,3 @@ test('a shots turn samples the worker\'s memory through the proxy, which the ima
   assert.ok(asked > 0, 'the runner sets the interval');
   assert.ok(asked < runner.indexOf('node /usr/local/bin/shots-origin-proxy.js &'), 'before the proxy starts');
 });
-
-test('get_brief answers with the core and serves each part the core names (worker/shots-brief.js)', async (t) => {
-  const bridge = bridgeFixture(t);
-  const context = (await bridge.call('get_brief')).value;
-  // A brief with long reference lists, as a large proposal's is.
-  context.declaredChecks = Array.from({ length: 80 }, (_, index) => ({
-    name: `Check ${index} ${'x'.repeat(100)}`, path: `/screen-${index}/${'y'.repeat(300)}`, testedAs: 'read_only_admin',
-  }));
-  const { tools } = loadBridge(bridge.env, async (url, init) => (new URL(url).pathname.endsWith('/context')
-    ? new Response(JSON.stringify({ ok: true, context }), { status: 200 })
-    : bridge.platformFetch(url, init)));
-  const call = async (args) => {
-    const result = await tools.get('get_brief')(args);
-    return { isError: result.isError === true, text: result.content[0].text, value: JSON.parse(result.content[0].text) };
-  };
-  const core = await call({});
-  assert.equal(core.isError, false);
-  assert.deepEqual(Object.keys(core.value)[0], 'declaredChanges');
-  assert.equal(core.value.declaredChanges.length, 4);
-  assert.equal('declaredChecks' in core.value, false);
-  assert.deepEqual(core.value.eligibleHostedAppSlugs, ['hosted-app']);
-  const listed = core.value.moreParts.find((entry) => entry.part === 'declaredChecks');
-  assert.ok(listed.pages >= 2, 'the long list comes in pages');
-  let items = [];
-  for (let page = 1; page <= listed.pages; page += 1) {
-    const answer = await call({ part: 'declaredChecks', page });
-    assert.equal(answer.isError, false);
-    assert.ok(answer.text.length <= 24_000);
-    items = items.concat(answer.value.items);
-  }
-  assert.deepEqual(items, context.declaredChecks);
-  const beyond = await call({ part: 'declaredChecks', page: listed.pages + 1 });
-  assert.equal(beyond.isError, true);
-  assert.equal(beyond.value.code, 'unknown_page');
-});
