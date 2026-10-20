@@ -246,6 +246,18 @@
     "bench-lane": {
       "services | uses src/services/bench/lane.js:allowanceGate": "the bench user's allowance (bench.gate): the user made with its included key if missing, then limits.checkBudget read; keeps nothing, and the lane holds the answer a minute in its own data",
       "services | uses src/services/bench/lane.js:settleSideResults": "a run's side builds' results a cap or a cancel left waiting, finished skipped (bench.sides): an upsert per result that is done once, reading the trials' rows; keeps nothing"
+    },
+    "shots-eval": {
+      "services | uses src/services/shots-agent.js (whole module)": "the shots agent an eval trial runs (eval.agent), its dispatch wrapped with the arm's system and task prompts; keeps nothing",
+      "services | uses src/services/shots-agent.js:dispatch": "the shots agent's dispatch, with the arm's prompts, its reported cost handed back in the work's result for the machine to keep; keeps nothing",
+      "services | uses src/services/shots-eval.js:settlePairs": "an eval's blind pairs from its finished trials (eval.pairs): inserts ON CONFLICT DO NOTHING; keeps nothing",
+      "services | uses src/services/shots-eval.js:storeTrialFiles": "a trial's light files kept on it (eval.compare), in one transaction fenced by its attempt; keeps nothing",
+      "services | uses src/services/shots-orchestrator.js:buildCopies": "eval.copies: a trial's two copies and its agent's workspace, as shots.copies makes a run's, named by the trial's attempt id, its images in the item's checkpoint, stopped between phases once its row says the trial ended",
+      "services | uses src/services/shots-orchestrator.js:cleanupRun": "eval.cleanup: everything a trial left (its turn by its record, copies, workspace, the proposal's temporary worker unless another run of it uses it), by its attempt's names; tried until it is gone",
+      "services | uses src/services/shots-orchestrator.js:compareScreens": "eval.compare: where a trial's ready changes' screens differ, from its workspace's files",
+      "services | uses src/services/shots-orchestrator.js:dispatchAgent": "eval.agent: the shots agent's turn on a trial's copies, a durable step over the item's checkpoint, owned by the item (the proxy bills a turn so owned to its trial)",
+      "services | uses src/services/shots-orchestrator.js:visibleError": "a step's failure in the words the trial shows (pure)",
+      "services | uses src/services/shots-eval.js:trialRecipe": "the arm a trial runs (eval.agent): its configuration's recipe resolved against the deployment's own, its summary kept on the trial's attempt; keeps nothing"
     }
   }
 }

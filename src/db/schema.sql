@@ -14939,8 +14939,8 @@ COMMENT ON TABLE platform_db_roles IS 'staging:private';
 -- An older build's writes and reads of it, during a rollout, log and carry on.
 DROP TABLE IF EXISTS leader_status;
 
--- Before & after shots EVALS (services/shots-eval.js, its runner in
--- services/shots-eval-runner.js): an admin trying the shots agent with
+-- Before & after shots EVALS (services/shots-eval.js, its trials run by the
+-- shots-eval machine, src/workflow/shots-eval/): an admin trying the shots agent with
 -- another model, prompt or time budget on proposals that have already
 -- merged, through the connector, and comparing what it saves with what the
 -- live shots agent saves on the same proposals in the same batch. Nothing
@@ -15033,11 +15033,34 @@ CREATE TABLE IF NOT EXISTS shots_eval_trials (
     CHECK (state IN ('planned', 'provisioning', 'exploring', 'reviewing', 'verified', 'failed', 'cancelled')),
   CONSTRAINT shots_eval_trials_repetition_check CHECK (repetition BETWEEN 1 AND 3)
 );
--- What the Anthropic proxy billed for the trial on a process other than the
--- one running it (services/shots-eval-runner.js noteRemoteSpend): during a
--- release the runner may finish a trial on a Pod the Service no longer sends
--- its shots agent's calls to. Settled into cost_cents with the rest.
+-- What the Anthropic proxy billed for the trial's turns, on whichever
+-- process each call reached (services/shots-eval.js billFor): settled into
+-- cost_cents when the trial ends, and emptied in the same write.
 ALTER TABLE shots_eval_trials ADD COLUMN IF NOT EXISTS proxy_cents NUMERIC(12,4) NOT NULL DEFAULT 0;
+-- What Claude Code itself reported a trial's turns cost (the shots-eval
+-- machine's agent work hands it back): the trial is charged the larger of
+-- this and proxy_cents, both emptied in the write that charges it.
+ALTER TABLE shots_eval_trials ADD COLUMN IF NOT EXISTS reported_cents NUMERIC(12,4) NOT NULL DEFAULT 0;
+-- A trial is claimed (planned to provisioning) and put back (to planned)
+-- by the shots-eval machine only (src/workflow/shots-eval/). An older
+-- build's runner, still running during a rollout, counts only its own
+-- process's trials: its claims and its recovery are refused, and the
+-- trials it already runs finish there.
+CREATE OR REPLACE FUNCTION wf_guard_eval_claim() RETURNS TRIGGER AS $$
+BEGIN
+  IF current_setting('app.wf_writer', true) IS DISTINCT FROM 'transition' THEN
+    RAISE EXCEPTION 'WF_OWNERSHIP_VIOLATION: a shots eval trial is claimed only by the shots-eval machine';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS shots_eval_trials_wf_claim ON shots_eval_trials;
+CREATE TRIGGER shots_eval_trials_wf_claim
+  BEFORE UPDATE OF state ON shots_eval_trials
+  FOR EACH ROW
+  WHEN ((OLD.state = 'planned' AND NEW.state = 'provisioning')
+        OR (OLD.state IN ('provisioning', 'exploring', 'reviewing') AND NEW.state = 'planned'))
+  EXECUTE FUNCTION wf_guard_eval_claim();
 CREATE UNIQUE INDEX IF NOT EXISTS idx_shots_eval_trials_arm
   ON shots_eval_trials (eval_run_id, session_id, COALESCE(config_id, 0), repetition);
 CREATE INDEX IF NOT EXISTS idx_shots_eval_trials_planned

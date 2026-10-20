@@ -1,23 +1,27 @@
 'use strict';
 
 // Before & after shots evals against the REAL schema in a throwaway
-// PostgreSQL database (services/shots-eval.js, services/shots-eval-runner.js).
-// Pinned here, end to end:
+// PostgreSQL database (services/shots-eval.js, the shots-eval machine in
+// src/workflow/shots-eval/). Pinned here, end to end:
 //   - configurations are immutable versions of a recipe;
 //   - an eval shoots merged proposals only, frozen from their own published
 //     run, the live agent as the control and each configuration beside it;
-//   - a trial runs the real shots pipeline (shots-orchestrator.executeRun)
-//     with the arm's model, prompts and budget, keeps its state and files on
-//     its own rows and never touches the proposal's own shots, and its cost
-//     counts against its eval's cap;
+//   - a trial runs the shots pipeline's own steps as the machine's work
+//     (buildCopies, dispatchAgent, compareScreens, cleanupRun) with the
+//     arm's model, prompts and budget, keeps its state and files on its own
+//     rows and never touches the proposal's own shots, and its cost counts
+//     against its eval's cap, charged once when its cleanup is done;
 //   - two finished arms of one proposal make a blind pair, whose pick and
 //     marks feed each arm's numbers;
-//   - a trial a restart interrupted is queued again under a fresh attempt
-//     id, once; the cap stops an eval; a cancel cancels; the GC knows trials.
-// The builds, copies and the shots agent itself are fakes: everything
-// between them and the database is the production code. Skipped when no
-// server is reachable, and required when TEST_DATABASE_URL is set, the same
-// contract as the other *-postgres suites.
+//   - a trial an older build's runner left is cleaned up and queued again
+//     under a fresh attempt id, once; the cap stops an eval; a cancel stops
+//     a trial that runs and cleans it up; the GC knows trials; an eval's
+//     model calls are billed by the turn's owner.
+// The builds, copies and the shots agent itself are fakes on the modules the
+// pipeline reads: everything between them and the database is the
+// production code. Skipped when no server is reachable, and required when
+// TEST_DATABASE_URL is set, the same contract as the other *-postgres
+// suites.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -32,7 +36,10 @@ const controlPlane = require('../src/services/shots-control');
 const shotsAgent = require('../src/services/shots-agent');
 const shotsGc = require('../src/services/shots-gc');
 const evals = require('../src/services/shots-eval');
-const runner = require('../src/services/shots-eval-runner');
+const orchestrator = require('../src/services/shots-orchestrator');
+const { createRuntime } = require('../src/workflow/kernel/index.ts');
+const evalMachine = require('../src/workflow/shots-eval/machine.ts');
+const { shotsEvalServices } = require('../src/workflow/shots-eval/services.ts');
 const fixtures = require('./fixtures/shots');
 
 const DSN = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -129,24 +136,25 @@ async function seed(pool) {
   return admin.id;
 }
 
-// The pipeline's outside world, faked: two builds that are temp dirs, their
-// copies, signed-in personas, and a shots agent that saves a before and an
-// after of every declared change through the real control plane.
-function pipelineDeps({ dispatched, costUsd = 0.5 } = {}) {
+// The pipeline's outside world, faked on the modules it reads: two builds
+// that are temp dirs, their copies, signed-in personas, and a shots agent
+// that saves a before and an after of every declared change through the real
+// control plane. Resolves how to put them back.
+function fakeOutsideWorld({ dispatched, costUsd = 0.5, hold = null }) {
   const checkouts = { base: fs.mkdtempSync(path.join(os.tmpdir(), 'eval-base-')), head: fs.mkdtempSync(path.join(os.tmpdir(), 'eval-head-')) };
   const provenance = { fixtureFingerprint: 'fixture-1', baseImageDigest: 'sha256:base', headImageDigest: 'sha256:head' };
-  return {
-    github: {
+  const patches = [
+    [require('../src/services/github'), {
       compareRefs: async () => ({ files: ['frontend/src/board.tsx'], filesComplete: true }),
       getProposalDiff: async () => ({ diff: 'diff --git', fileCount: 1, truncated: false }),
-    },
-    shotsAgent: {
-      ...shotsAgent,
+    }],
+    [shotsAgent, {
       dispatch: async (cfg, options) => {
         dispatched.push({
           model: shotsAgent.agentModel(cfg), budgetMs: cfg.shots.maxAgentMs, timeoutMs: options.timeoutMs,
-          systemPrompt: options.systemPrompt, taskPrompt: options.taskPrompt, runId: options.runId,
+          systemPrompt: options.systemPrompt, taskPrompt: options.taskPrompt, runId: options.runId, owner: options.owner || null,
         });
+        if (hold) await hold(options);
         // The agent's calls, through the trial's workspace in Postgres.
         const intent = (await controlPlane.read(options.pool, options.runId)).intent;
         for (const story of intent.stories) {
@@ -159,43 +167,63 @@ function pipelineDeps({ dispatched, costUsd = 0.5 } = {}) {
         }
         return { backend: 'claude_code', model: shotsAgent.agentModel(cfg), result: { costUsd } };
       },
-    },
-    injected: {
-      environment: {
-        preparePair: async (_config, { run }) => ({
-          runId: run.id, fixtureFingerprint: provenance.fixtureFingerprint,
-          sides: { base: { imageDigest: provenance.baseImageDigest, checkout: checkouts.base },
-            head: { imageDigest: provenance.headImageDigest, checkout: checkouts.head } },
-        }),
-        resetPair: async () => ({ origins: { base: 'http://base.internal:3000', head: 'http://head.internal:3000' }, baseSha: BASE, headSha: HEAD, ...provenance }),
-      },
-      // The copies are fakes: nothing to remove.
-      removeCopies: async () => [],
-      identities: {
-        mintShotsAuthTokens: async () => ({ member: 'm', read_only_admin: 'a', full_admin: 'f' }),
-        shotsGuestIdentity: async () => ({ kind: 'private', token: null }),
-      },
-      shotsStarter: { beforeIsStarter: async () => false },
-      worker: {
-        isInFlight: () => false, getActiveTurnMode: () => null, stopTurn: async () => {},
-        clearPendingStop: () => {}, destroyCcVolume: async () => {},
-      },
-      waitForSessionIdle: async () => ({ outcome: 'idle' }),
-      shotsDiff: { screensFor: async () => [], unchangedStories: () => [] },
-    },
-  };
-}
-
-async function settleInFlight() {
-  for (const entry of [...runner._inFlight.values()]) await entry.promise;
+    }],
+    [require('../src/services/shots-environment'), {
+      preparePair: async (_config, { run }) => ({
+        runId: run.id, fixtureFingerprint: provenance.fixtureFingerprint,
+        sides: { base: { imageDigest: provenance.baseImageDigest, checkout: checkouts.base },
+          head: { imageDigest: provenance.headImageDigest, checkout: checkouts.head } },
+      }),
+      resetPair: async () => ({ origins: { base: 'http://base.internal:3000', head: 'http://head.internal:3000' }, baseSha: BASE, headSha: HEAD, ...provenance }),
+    }],
+    // The copies are fakes: nothing to remove.
+    [require('../src/services/shots-gc'), { cleanupRunResources: async (_c, run) => { removed.push(run.id); return []; } }],
+    [require('../src/services/shots-identities'), {
+      mintShotsAuthTokens: async () => ({ member: 'm', read_only_admin: 'a', full_admin: 'f' }),
+      shotsGuestIdentity: async () => ({ kind: 'private', token: null }),
+    }],
+    [require('../src/services/shots-starter'), { beforeIsStarter: async () => false }],
+    [require('../src/services/worker'), {
+      isInFlight: () => false, getActiveTurnMode: () => null, stopTurn: async () => {}, stopTurnByJournal: async () => { stoppedTurns.push(1); },
+      clearPendingStop: () => {}, destroyCcVolume: async (id) => { destroyed.push(id); }, finishTurn: async () => true,
+    }],
+    [require('../src/services/shots-diff'), { screensFor: async () => [], unchangedStories: () => new Set() }],
+  ];
+  const removed = [];
+  const destroyed = [];
+  const stoppedTurns = [];
+  const saved = patches.map(([mod, fakes]) => [mod, Object.fromEntries(Object.keys(fakes).map((k) => [k, mod[k]]))]);
+  for (const [mod, fakes] of patches) Object.assign(mod, fakes);
+  return { removed, destroyed, stoppedTurns, restore: () => { for (const [mod, real] of saved) Object.assign(mod, real); } };
 }
 
 test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => {
   const pool = await freshDb(t);
   if (!pool) return;
-  runner._resetForTests();
-  t.after(() => runner._resetForTests());
   const adminId = await seed(pool);
+  // The eval machine, run here: its trials' phases are its own work.
+  const rt = createRuntime({
+    pool, pollMs: 50, machines: [evalMachine.shotsEval({ concurrency: 2, defaultAgentMs: CONFIG.shots.maxAgentMs })],
+    services: shotsEvalServices({ config: CONFIG, pool }),
+  });
+  t.after(() => rt.stop());
+  let rk = 0;
+  const settle = async () => { for (let i = 0; i < 60; i += 1) { await rt.drain(); if (!(await rt.runServices())) { await rt.drain(); return; } } };
+  const lookNow = async () => {
+    await rt.append(evalMachine.MACHINE, evalMachine.KEY, { type: 'Look', payload: {} }, { requestKey: `look-${++rk}`, source: { kind: 'system', name: 'test' } });
+  };
+  // An admin's cancel, as appendAndWait answers it (stepped by hand here).
+  const platformHere = {
+    evalCancel: async (evalId) => {
+      const id = await rt.append(evalMachine.MACHINE, evalMachine.KEY, { type: 'EvalCancelled', payload: { evalId } },
+        { requestKey: `cancel-${++rk}`, source: { kind: 'admin', name: 'test' } });
+      await rt.drain();
+      const { rows: [e] } = await pool.query('SELECT result, reason FROM wf_events WHERE id = $1', [id]);
+      return { status: e.result, reason: e.reason };
+    },
+  };
+  // An older build's runner's write (a rollout): only the machine may claim.
+  const asTransition = require('./lib/as-transition').asTransition;
   let configId;
   let evalId;
 
@@ -241,15 +269,16 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
   });
 
   const dispatched = [];
-  const deps = pipelineDeps({ dispatched });
+  let world = fakeOutsideWorld({ dispatched });
+  t.after(() => world.restore());
 
   await t.test('a trial runs the real pipeline with its arm, on its own rows, and is billed to its eval', async () => {
     const { rows: [sessionBefore] } = await pool.query('SELECT shots_run_id, shots_state, shots_detail FROM chat_sessions WHERE id = $1', [MERGED]);
-    const out = await runner.tick(pool, CONFIG, deps);
-    assert.equal(out.started, 1, 'one trial at a time on one proposal');
-    await settleInFlight();
-    assert.equal((await runner.tick(pool, CONFIG, deps)).started, 1);
-    await settleInFlight();
+    await lookNow();
+    await rt.drain();
+    const { rows: claimed } = await pool.query("SELECT id FROM shots_eval_trials WHERE eval_run_id = $1 AND state <> 'planned'", [evalId]);
+    assert.equal(claimed.length, 1, 'one trial at a time on one proposal');
+    await settle();
 
     assert.equal(dispatched.length, 2);
     const [control, tried] = dispatched;
@@ -258,6 +287,8 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
     assert.equal(tried.model, 'claude-opus-5-5', 'the arm\'s model');
     assert.equal(tried.systemPrompt, `${shotsAgent.SYSTEM_PROMPT}\n\nClose any toast, then wait a second.`);
     assert.equal(tried.budgetMs, CONFIG.shots.maxAgentMs, 'a version names its whole recipe: v1\'s agentMinutes is not inherited');
+    assert.equal(tried.owner.machine, 'shots-eval', 'its turn the eval machine\'s work: the proxy bills it to the trial');
+    assert.equal(world.removed.length, 2, 'each trial\'s copies removed');
 
     const { rows } = await pool.query(
       `SELECT t.id, t.state, t.config_id, t.recipe, t.hard_verdict, t.cost_cents::float8 AS cost, t.attempts,
@@ -280,7 +311,6 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
     const { rows: [{ n: runs }] } = await pool.query('SELECT COUNT(*)::int AS n FROM shot_runs WHERE session_id = $1', [MERGED]);
     assert.equal(runs, 1, 'no shots run was made for the proposal');
 
-    await runner.tick(pool, CONFIG, deps);
     const { rows: [done] } = await pool.query('SELECT status FROM shots_eval_runs WHERE id = $1', [evalId]);
     assert.equal(done.status, 'done', 'an eval with nothing left is done');
   });
@@ -353,42 +383,204 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
     assert.equal(again.ok, true);
     assert.deepEqual(again.eval.proposals, [MERGED]);
     assert.equal(again.eval.trials, 2, 'the control only, twice');
-    await evals.cancelRun(pool, again.eval.id);
-    assert.equal((await evals.cancelRun(pool, again.eval.id)).status, 409);
+    await evals.cancelRun(pool, again.eval.id, { platform: platformHere });
+    assert.equal((await evals.cancelRun(pool, again.eval.id, { platform: platformHere })).status, 409);
     const { rows } = await pool.query('SELECT DISTINCT state FROM shots_eval_trials WHERE eval_run_id = $1', [again.eval.id]);
     assert.deepEqual(rows.map((r) => r.state), ['cancelled']);
   });
 
-  await t.test('a trial a restart interrupted is queued again under a fresh attempt id, once', async () => {
+  await t.test('a trial an older build\'s runner left is cleaned up and queued again under a fresh attempt id, once', async () => {
     const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
     const { rows: [trial] } = await pool.query('SELECT id, attempt_id FROM shots_eval_trials WHERE eval_run_id = $1', [launched.eval.id]);
-    await pool.query(`UPDATE shots_eval_trials SET state = 'exploring', attempts = 1, updated_at = NOW() - interval '10 minutes' WHERE id = $1`, [trial.id]);
-    const cleaned = [];
-    const cleanupRunResources = async (_config, run) => { cleaned.push(run); return []; };
-    assert.deepEqual(await runner.recoverStale(pool, CONFIG, { cleanupRunResources }), { requeued: 1, failed: 0 });
-    assert.deepEqual(cleaned, [{ id: trial.attempt_id, app_slug: 'eval-demo' }], 'its copies are removed by its old names');
+    // Its runner claimed it and went quiet with its process.
+    await asTransition(pool, `UPDATE shots_eval_trials SET state = 'exploring', attempts = 1, updated_at = NOW() - interval '10 minutes' WHERE id = $1`, [trial.id]);
+    world.removed.length = 0;
+    const held = rt; void held;
+    // Its copies removed by its old names, and then it runs again.
+    world.restore();
+    const blocked = [];
+    world = fakeOutsideWorld({ dispatched, hold: async () => { blocked.push(1); throw new Error('stop here'); } });
+    await lookNow();
+    await rt.drain();
+    await rt.runServices(); // its cleanup
+    await rt.drain();
+    assert.ok(world.removed.includes(trial.attempt_id), 'its copies removed by its old names');
     const { rows: [requeued] } = await pool.query('SELECT state, attempt_id FROM shots_eval_trials WHERE id = $1', [trial.id]);
-    assert.equal(requeued.state, 'planned');
+    assert.ok(['planned', 'provisioning'].includes(requeued.state), requeued.state);
     assert.notEqual(requeued.attempt_id, trial.attempt_id);
 
-    await pool.query(`UPDATE shots_eval_trials SET state = 'provisioning', attempts = 2, updated_at = NOW() - interval '10 minutes' WHERE id = $1`, [trial.id]);
-    assert.deepEqual(await runner.recoverStale(pool, CONFIG, { cleanupRunResources }), { requeued: 0, failed: 1 });
-    const { rows: [failed] } = await pool.query('SELECT state, failure_code FROM shots_eval_trials WHERE id = $1', [trial.id]);
+    // Left again on its second attempt: failed.
+    await pool.query(`UPDATE shots_eval_runs SET status = 'cancelled' WHERE id = $1`, [launched.eval.id]);
+    await settle();
+    const launched2 = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
+    const { rows: [t2] } = await pool.query('SELECT id FROM shots_eval_trials WHERE eval_run_id = $1', [launched2.eval.id]);
+    await asTransition(pool, `UPDATE shots_eval_trials SET state = 'provisioning', attempts = 2, updated_at = NOW() - interval '10 minutes' WHERE id = $1`, [t2.id]);
+    await lookNow();
+    await rt.drain();
+    await rt.runServices();
+    await rt.drain();
+    const { rows: [failed] } = await pool.query('SELECT state, failure_code FROM shots_eval_trials WHERE id = $1', [t2.id]);
     assert.deepEqual(failed, { state: 'failed', failure_code: 'shots_eval_interrupted' });
-    await pool.query(`UPDATE shots_eval_runs SET status = 'done' WHERE id = $1`, [launched.eval.id]);
+    await pool.query(`UPDATE shots_eval_runs SET status = 'done' WHERE id = $1`, [launched2.eval.id]);
+    world.restore();
+    world = fakeOutsideWorld({ dispatched });
   });
 
   await t.test('the cap stops an eval before a trial it cannot pay for', async () => {
     const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], configIds: [configId], capUsd: 5 });
     await pool.query('UPDATE shots_eval_runs SET spent_cents = 300 WHERE id = $1', [launched.eval.id]);
-    let started = 0;
-    const out = await runner.tick(pool, CONFIG, { executeTrial: async () => { started += 1; } });
-    assert.equal(started, 0);
-    assert.equal(out.capped, 1);
+    const before = dispatched.length;
+    await lookNow();
+    await settle();
+    assert.equal(dispatched.length, before);
     const { rows: [run] } = await pool.query('SELECT status FROM shots_eval_runs WHERE id = $1', [launched.eval.id]);
     assert.equal(run.status, 'capped');
     const { rows } = await pool.query('SELECT DISTINCT state FROM shots_eval_trials WHERE eval_run_id = $1', [launched.eval.id]);
     assert.deepEqual(rows.map((r) => r.state), ['cancelled']);
+  });
+
+  await t.test('a cancel stops a trial its agent is running: its turn stopped, everything removed, its cost charged once', async () => {
+    const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
+    world.restore();
+    world = fakeOutsideWorld({ dispatched, hold: () => new Promise(() => {}) });
+    await lookNow();
+    await rt.drain();
+    await rt.runServices(); // the copies
+    await rt.drain();
+    const { rows: [trial] } = await pool.query('SELECT id, attempt_id, state FROM shots_eval_trials WHERE eval_run_id = $1', [launched.eval.id]);
+    assert.equal(trial.state, 'exploring');
+    // Its agent's turn runs (never returns here); a call the proxy billed it.
+    void rt.runServices();
+    await new Promise((r) => setTimeout(r, 100));
+    await pool.query('UPDATE shots_eval_trials SET proxy_cents = 12 WHERE id = $1', [trial.id]);
+    const out = await evals.cancelRun(pool, launched.eval.id, { platform: platformHere });
+    assert.equal(out.ok, true);
+    const { rows: [w] } = await pool.query(
+      `SELECT status FROM wf_work WHERE machine = 'shots-eval' AND kind = 'eval.agent' AND work_key LIKE $1`, [`agent:${trial.id}:%`]);
+    assert.equal(w.status, 'settled', 'its agent\'s work cancelled');
+    const { rows: [cleanup] } = await pool.query(
+      `SELECT input FROM wf_work WHERE machine = 'shots-eval' AND kind = 'eval.cleanup' AND work_key LIKE $1`, [`cleanup:${trial.id}:%`]);
+    assert.equal(cleanup.input.stopTurn, true, 'its turn stopped by its record');
+    await settle();
+    const { rows: [ended] } = await pool.query('SELECT state, cost_cents::float8 AS cost, proxy_cents::float8 AS proxy FROM shots_eval_trials WHERE id = $1', [trial.id]);
+    assert.deepEqual(ended, { state: 'cancelled', cost: 12, proxy: 0 }, 'charged once, its bill emptied');
+    const { rows: [ev] } = await pool.query('SELECT status, spent_cents::float8 AS spent FROM shots_eval_runs WHERE id = $1', [launched.eval.id]);
+    assert.deepEqual(ev, { status: 'cancelled', spent: 12 });
+    assert.ok(world.removed.includes(trial.attempt_id));
+    world.restore();
+    world = fakeOutsideWorld({ dispatched });
+  });
+
+  await t.test('a phase past its time ends the trial: its work cancelled, cleaned up, failed with why', async () => {
+    const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
+    await lookNow();
+    await rt.drain();
+    const { rows: [trial] } = await pool.query('SELECT id FROM shots_eval_trials WHERE eval_run_id = $1', [launched.eval.id]);
+    // Its copies never answer: their time runs out.
+    const c = await pool.connect();
+    try {
+      await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+      await c.query(`UPDATE wf_instances SET deadline_at = now(),
+                       data = jsonb_set(data, ARRAY['trials', $1::text, 'due'], to_jsonb(now()::text))
+                      WHERE machine = 'shots-eval'`, [String(trial.id)]);
+      await c.query('COMMIT');
+    } finally { c.release(); }
+    await rt.fireTimers();
+    await rt.drain();
+    const { rows: [copies] } = await pool.query(
+      `SELECT status FROM wf_work WHERE machine = 'shots-eval' AND kind = 'eval.copies' AND work_key LIKE $1`, [`copies:${trial.id}:%`]);
+    assert.equal(copies.status, 'settled', 'cancelled: it never runs');
+    await settle();
+    const { rows: [ended] } = await pool.query('SELECT state, failure_code FROM shots_eval_trials WHERE id = $1', [trial.id]);
+    assert.deepEqual(ended, { state: 'failed', failure_code: 'shots_eval_timeout' });
+  });
+
+  await t.test('a trial cancelled while its copies are built stops at their next phase', async () => {
+    const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
+    await lookNow();
+    await rt.drain();
+    const { rows: [trial] } = await pool.query('SELECT id, attempt_id FROM shots_eval_trials WHERE eval_run_id = $1', [launched.eval.id]);
+    // Cancelled between its claim and its copies' second phase: what was
+    // built is not reset, and the agent never runs.
+    const env = require('../src/services/shots-environment');
+    const real = env.preparePair;
+    const before = dispatched.length;
+    let reset = 0;
+    const realReset = env.resetPair;
+    env.preparePair = async (...args) => {
+      await evals.cancelRun(pool, launched.eval.id, { platform: { evalCancel: async () => ({ status: 'accepted' }) } }).catch(() => null);
+      await pool.query(`UPDATE shots_eval_trials SET state = 'cancelled' WHERE id = $1`, [trial.id]);
+      return real(...args);
+    };
+    env.resetPair = async (...args) => { reset += 1; return realReset(...args); };
+    try {
+      await settle();
+    } finally { env.preparePair = real; env.resetPair = realReset; }
+    assert.equal(reset, 0, 'its copies stopped at the next phase');
+    assert.equal(dispatched.length, before, 'its agent never ran');
+    const { rows: [ended] } = await pool.query('SELECT state FROM shots_eval_trials WHERE id = $1', [trial.id]);
+    assert.equal(ended.state, 'cancelled');
+    assert.ok(world.removed.includes(trial.attempt_id), 'what it built removed');
+    await pool.query(`UPDATE shots_eval_runs SET status = 'done' WHERE id = $1 AND status = 'running'`, [launched.eval.id]);
+  });
+
+  await t.test('an eval\'s model calls are its trial\'s by the turn\'s owner, not by the session', async () => {
+    const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 1 + 3 });
+    const { rows: [trial] } = await pool.query('SELECT id, attempt_id FROM shots_eval_trials WHERE eval_run_id = $1', [launched.eval.id]);
+    await asTransition(pool, `UPDATE shots_eval_trials SET state = 'exploring' WHERE id = $1`, [trial.id]);
+    const turn = (owner) => pool.query('UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1',
+      [MERGED_TWO, JSON.stringify({ turnId: 't1', mode: 'shots', owner })]);
+    // The eval machine's agent work owns it: billed to the trial.
+    await turn({ machine: 'shots-eval', key: 'evals', kind: 'eval.agent', workKey: `agent:${trial.id}:${trial.attempt_id}:1`, workId: 'w' });
+    const bill = await evals.billFor(pool, MERGED_TWO);
+    assert.equal(bill.trialId, trial.id);
+    assert.equal(bill.overCap(0), false);
+    await bill.noteSpend(350);
+    assert.equal(bill.overCap(100), true, 'past the eval\'s $4 cap');
+    const { rows: [t1] } = await pool.query('SELECT proxy_cents::float8 AS p FROM shots_eval_trials WHERE id = $1', [trial.id]);
+    assert.equal(t1.p, 350);
+    // The proposal's own shots turn on the same session: never the eval's.
+    await turn({ machine: 'shots', key: `session:${MERGED_TWO}`, kind: 'shots.agent', workKey: 'agent:1', workId: 'w' });
+    assert.equal(await evals.billFor(pool, MERGED_TWO), null);
+    await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [MERGED_TWO]);
+    await pool.query(`UPDATE shots_eval_runs SET status = 'done' WHERE id = $1`, [launched.eval.id]);
+    await asTransition(pool, `UPDATE shots_eval_trials SET state = 'failed' WHERE id = $1`, [trial.id]);
+  });
+
+  await t.test('a trial\'s cleanup leaves the proposal\'s worker to its own shots run, and theirs to a trial', async () => {
+    const live = await pool.query(`SELECT 1`);
+    void live;
+    // The proposal's own shots under way: the worker stays.
+    const c = await pool.connect();
+    try {
+      await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+      await c.query(`INSERT INTO wf_instances (machine, key, state, data, machine_version) VALUES ('shots', $1, 'taking_shots', '{"run": {"id": "x"}}'::jsonb, 1)`, [`session:${MERGED_TWO}`]);
+      await c.query('COMMIT');
+    } finally { c.release(); }
+    world.destroyed.length = 0;
+    await orchestrator.cleanupRun(CONFIG, pool, { runId: 'f'.repeat(32), sessionId: MERGED_TWO, appSlug: 'eval-demo', worker: true });
+    assert.deepEqual(world.destroyed, [], 'kept for the proposal\'s own run');
+    await pool.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'; DELETE FROM wf_instances WHERE machine = 'shots' AND key = 'session:${MERGED_TWO}'; COMMIT`);
+    // A trial of it under way: the proposal's own cleanup keeps it too.
+    const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
+    const { rows: [trial] } = await pool.query('SELECT id FROM shots_eval_trials WHERE eval_run_id = $1', [launched.eval.id]);
+    await asTransition(pool, `UPDATE shots_eval_trials SET state = 'exploring' WHERE id = $1`, [trial.id]);
+    await orchestrator.cleanupRun(CONFIG, pool, { runId: '1'.repeat(32), sessionId: MERGED_TWO, appSlug: 'eval-demo', worker: true });
+    assert.deepEqual(world.destroyed, [], 'kept for the trial');
+    await asTransition(pool, `UPDATE shots_eval_trials SET state = 'failed' WHERE id = $1`, [trial.id]);
+    await pool.query(`UPDATE shots_eval_runs SET status = 'done' WHERE id = $1`, [launched.eval.id]);
+    await orchestrator.cleanupRun(CONFIG, pool, { runId: '1'.repeat(32), sessionId: MERGED_TWO, appSlug: 'eval-demo', worker: true });
+    assert.deepEqual(world.destroyed, [MERGED_TWO], 'nothing else on it: removed');
+  });
+
+  await t.test('only the eval machine claims a trial or puts one back: an older build\'s runner is refused', async () => {
+    const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
+    const { rows: [trial] } = await pool.query('SELECT id FROM shots_eval_trials WHERE eval_run_id = $1', [launched.eval.id]);
+    await assert.rejects(pool.query("UPDATE shots_eval_trials SET state = 'provisioning' WHERE id = $1 AND state = 'planned'", [trial.id]), /WF_OWNERSHIP_VIOLATION/);
+    await asTransition(pool, "UPDATE shots_eval_trials SET state = 'exploring' WHERE id = $1", [trial.id]);
+    await assert.rejects(pool.query("UPDATE shots_eval_trials SET state = 'planned' WHERE id = $1", [trial.id]), /WF_OWNERSHIP_VIOLATION/);
+    await asTransition(pool, "UPDATE shots_eval_trials SET state = 'failed' WHERE id = $1", [trial.id]);
+    await pool.query(`UPDATE shots_eval_runs SET status = 'done' WHERE id = $1`, [launched.eval.id]);
   });
 
   await t.test('the GC keeps a running trial\'s checkout and prunes old trial images', async () => {

@@ -1192,11 +1192,8 @@ async function becomeLeader() {
   // (The Homeroom bot's loop is no leader work: it is the bot-request and
   // bot-lane machines, src/workflow/, whose work runs wherever workflow work
   // runs.)
-  // (Nor is the App bench's lane: the bench-lane machine, src/workflow/.)
-  // Before & after shots evals' runner (services/shots-eval-runner.js).
-  // Leader-only for the same reason: a trial builds two copies and runs the
-  // shots agent, which costs money. Inert until an admin launches an eval.
-  require('./src/services/shots-eval-runner').startRunner(config);
+  // (Nor are the App bench's lane and the shots evals' trials: the
+  // bench-lane and shots-eval machines, src/workflow/.)
   // Adopt any worker containers left over from a previous server run —
   // either still executing or already exited but un-finalized. These
   // orphans are a feature, not a bug: workers are intentionally detached
@@ -4549,9 +4546,6 @@ async function cleanup() {
   // The leader's loops: nothing new is claimed or dispatched on a process
   // whose pool is about to close. Their turns already running are restart
   // recovery's to finish.
-  try { require('./src/services/shots-eval-runner').stopRunner(); } catch (err) {
-    log.warn('server', 'Stopping the shots eval runner failed', { err: err.message });
-  }
   // The bot's builds and the bench's trials under way here are durable
   // builds (services/build-runs.js). A process finishing its work only
   // quiesces the workflow runtime below, so each goes on here to its end,

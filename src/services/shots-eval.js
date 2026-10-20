@@ -20,9 +20,10 @@
 //       reusing the published shots: the copies are made from today's data,
 //       so only a control run beside the others compares like with like.
 //   TRIALS          shots_eval_trials: one proposal, one arm, one repetition.
-//       services/shots-eval-runner.js runs them on the leader through the
-//       real shots pipeline (shots-orchestrator.executeRun), with their own
-//       state and storage, billed to the platform.
+//       The shots-eval machine (src/workflow/shots-eval/) grants and runs
+//       them through the shots pipeline's own steps (shots-orchestrator.js
+//       buildCopies, dispatchAgent, compareScreens, cleanupRun), with their
+//       own state and storage, billed to the platform (billFor).
 //   PAIRS           shots_eval_pairs: a configuration's trial beside the
 //       control's, blind and in a random order, for an admin's pick and for
 //       marks on each ready change (does it show its claim; is it
@@ -424,22 +425,126 @@ async function launch(pool, config, {
   };
 }
 
-// Cancel what has not finished. The runner stops a trial already running
-// at its next pass.
-async function cancelRun(pool, runId) {
+function platform() {
+  return require('../workflow/platform.ts');
+}
+
+/** The eval machine looks again (an eval launched). Never throws: its clock looks anyway. */
+async function look(deps = {}) {
+  try {
+    await (deps.platform || platform()).evalLook();
+  } catch (err) {
+    require('./logger').warn('shots-eval', 'Could not ask the eval machine to look', { err: err.message });
+  }
+}
+
+// Cancel what has not finished: the eval machine's decision. A trial
+// already running is stopped (its work cancelled, its turn stopped by its
+// record) and cleaned up; its cost lands when its cleanup is done.
+async function cancelRun(pool, runId, deps = {}) {
   const id = Number(runId);
-  const { rows } = await pool.query(
-    `UPDATE shots_eval_runs SET status = 'cancelled', finished_at = NOW()
-      WHERE id = $1 AND status = 'running' RETURNING id`,
-    [id]
-  );
-  if (!rows.length) return httpError(409, 'That eval is not running');
-  const { rowCount } = await pool.query(
-    `UPDATE shots_eval_trials SET state = 'cancelled', completed_at = NOW(), updated_at = NOW()
-      WHERE eval_run_id = $1 AND state IN ('planned', 'provisioning', 'exploring', 'reviewing')`,
-    [id]
-  );
-  return { ok: true, cancelled: rowCount || 0 };
+  const out = await (deps.platform || platform()).evalCancel(id);
+  if (out.status === 'rejected') return httpError(out.reason === 'no_eval' ? 404 : 409, 'That eval is not running');
+  if (out.status === 'faulted') return httpError(503, 'The eval could not be cancelled just now. Try again.');
+  const { rows: [n] } = await pool.query(
+    "SELECT COUNT(*)::int AS n FROM shots_eval_trials WHERE eval_run_id = $1 AND state = 'cancelled'", [id]);
+  return { ok: true, cancelled: Number(n?.n) || 0 };
+}
+
+/**
+ * The arm a trial runs, resolved against the deployment's own (its
+ * configuration's recipe, or the live agent for the control), and its
+ * summary kept on the trial's attempt. Resolves what resolveRecipe does.
+ */
+async function trialRecipe(pool, config, trialId, attemptId) {
+  const { rows: [trial] } = await pool.query(
+    'SELECT c.recipe FROM shots_eval_trials t LEFT JOIN shots_eval_configs c ON c.id = t.config_id WHERE t.id = $1',
+    [Number(trialId)]);
+  const resolved = resolveRecipe(config, trial?.recipe || null);
+  await pool.query('UPDATE shots_eval_trials SET recipe = $2::jsonb WHERE id = $1 AND attempt_id = $3',
+    [Number(trialId), JSON.stringify(resolved.summary), String(attemptId)]);
+  return resolved;
+}
+
+/**
+ * A trial's files, kept (the eval machine's compare step): its attempt's
+ * shots, light only (#4459: its dark shots are skipped, so the table's
+ * six-column unique needs no theme), on the trial, replacing what an
+ * earlier attempt kept. Only while that attempt is the trial's and its
+ * shots under way. Resolves how many.
+ */
+async function storeTrialFiles(pool, trialId, attemptId, slots) {
+  const files = await require('./shots-control').filesFor(pool, attemptId, slots);
+  const newId = require('./shots-state').newId;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [row] } = await client.query(
+      `SELECT id FROM shots_eval_trials WHERE id = $1 AND attempt_id = $2 AND state IN ('exploring', 'reviewing') FOR UPDATE`,
+      [Number(trialId), String(attemptId)]);
+    if (!row) throw Object.assign(new Error('This trial no longer owns its shots; they were discarded.'), { code: 'stale_shots_operation' });
+    await client.query('DELETE FROM shots_eval_artifacts WHERE trial_id = $1', [Number(trialId)]);
+    const kept = files.filter((a) => a?.theme !== 'dark');
+    for (const a of kept) {
+      // eslint-disable-next-line no-await-in-loop
+      await client.query(
+        `INSERT INTO shots_eval_artifacts
+           (id, trial_id, story_id, viewport, side, variant, media, content_type,
+            data, width, height, bytes, sha256, focus_rect)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)`,
+        [newId(), Number(trialId), a.storyId, a.viewport, a.side, a.variant, a.media, a.contentType,
+          a.data, a.width, a.height, a.bytes, a.sha256, a.focusRect ? JSON.stringify(a.focusRect) : null]);
+    }
+    await client.query('COMMIT');
+    return kept.length;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Whether a model call on `sessionId` is a shots eval trial's, and so the
+ * platform's to pay, bounded by the eval's cap (routes/anthropic-proxy.js).
+ * Read from the session's turn record: a shots turn the eval machine's work
+ * owns is its trial's, whichever process the call reaches and whether or
+ * not the process that dispatched it is still alive; any other turn on the
+ * session (the proposal's own shots, a person's) is not. Resolves null, or
+ * `{ trialId, overCap(extraCents), noteSpend(cents) }`: the cap read from
+ * the eval's spend and every trial of it running, the spend kept on the
+ * trial's row.
+ */
+async function billFor(pool, sessionId) {
+  const { rows: [s] } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [Number(sessionId)]);
+  let turn = s?.active_turn || null;
+  if (typeof turn === 'string') { try { turn = JSON.parse(turn); } catch { turn = null; } }
+  const owner = turn?.mode === 'shots' ? turn.owner : null;
+  if (!owner || owner.machine !== 'shots-eval') return null;
+  const m = /^agent:(\d+):([0-9a-f]{32}):/.exec(String(owner.workKey || ''));
+  if (!m) return null;
+  const { rows: [t] } = await pool.query(
+    `SELECT t.id, r.cap_cents::float8 AS cap,
+            r.spent_cents::float8 + COALESCE((SELECT SUM(GREATEST(o.proxy_cents, o.reported_cents)) FROM shots_eval_trials o
+                                               WHERE o.eval_run_id = r.id AND o.state IN ('provisioning', 'exploring', 'reviewing', 'cancelled')
+                                                 AND (o.proxy_cents > 0 OR o.reported_cents > 0)), 0)::float8 AS spent
+       FROM shots_eval_trials t JOIN shots_eval_runs r ON r.id = t.eval_run_id
+      WHERE t.id = $1 AND t.attempt_id = $2`, [Number(m[1]), m[2]]);
+  if (!t) return null;
+  const capCents = num(t.cap);
+  let spentCents = num(t.spent);
+  return {
+    trialId: Number(t.id),
+    overCap: (extraCents = 0) => capCents > 0 && spentCents + (Number(extraCents) || 0) > capCents,
+    async noteSpend(costCents) {
+      const cents = Number(costCents);
+      if (!(Number.isFinite(cents) && cents > 0)) return;
+      spentCents += cents;
+      await pool.query('UPDATE shots_eval_trials SET proxy_cents = proxy_cents + $2::numeric WHERE id = $1 AND attempt_id = $3',
+        [Number(t.id), cents, m[2]]);
+    },
+  };
 }
 
 // ── Reading results ─────────────────────────────────────────────────────
@@ -969,6 +1074,10 @@ module.exports = {
   proposalInputs,
   launch,
   cancelRun,
+  look,
+  trialRecipe,
+  storeTrialFiles,
+  billFor,
   changeResults,
   exclusionOf,
   armStats,

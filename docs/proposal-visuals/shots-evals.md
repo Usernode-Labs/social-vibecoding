@@ -9,8 +9,8 @@ it never spends a proposal author's allowance.
 
 - Service: `src/services/shots-eval.js` (configurations, launch, results,
   blind pairs).
-- Runner: `src/services/shots-eval-runner.js` (runs the trials on the
-  leader).
+- Trials: the `shots-eval` machine (`src/workflow/shots-eval/`), which
+  grants them and runs each one's phases as workflow work, in any process.
 - Routes: `src/routes/shots-evals.js` (`/api/shots-evals`, the connector's
   doors).
 - Tables: `shots_eval_configs`, `shots_eval_runs`, `shots_eval_trials`,
@@ -48,44 +48,51 @@ it never spends a proposal author's allowance.
 
 ## How a trial runs
 
-The runner is leader-only and inert until an eval is launched. It starts at
-most `SHOTS_EVAL_CONCURRENCY` trials at once (default 2, at most 4). It never
-runs two trials on one proposal at the same time, and never runs one beside
-the proposal's own shots run.
+The machine starts at most `SHOTS_EVAL_CONCURRENCY` trials at once (default
+2, at most 4), whichever processes run the workflow. It never runs two trials
+on one proposal at the same time, and never runs one beside the proposal's own
+shots run.
 
-A trial is `shots-orchestrator.executeRun`, the real pipeline: the two exact
-revisions are built, the data is copied, the personas are signed in, and the
-shots agent runs in the proposal's temporary worker. Three things are
+A trial runs the steps of the real pipeline, each a work item of the machine:
+the two exact revisions are built and the data copied (`eval.copies`), the
+shots agent runs in the proposal's temporary worker (`eval.agent`), where the
+screens differ is worked out and the files kept (`eval.compare`), and,
+however it ends, everything it made is removed (`eval.cleanup`, tried again
+until it is all gone). Each step has its own time limit. Three things are
 swapped:
 
-- **State.** It lives on the trial's row, through
-  `shots-eval-runner.trialState`. The proposal's shots slot is never read or
-  written, and nobody watching the proposal is told anything.
+- **State.** It lives on the trial's row, written by the machine. The
+  proposal's shots slot is never read or written, and nobody watching the
+  proposal is told anything.
 - **Files.** Its files go to `shots_eval_artifacts`. They are pruned
   `shots-gc.EVAL_ARTIFACT_DAYS` (30) days after the trial ends; the trial
   keeps its results.
 - **Agent.** The agent runs with the arm's model, prompts and time budget.
-- **Bill.** While a trial's shots turn runs, the Anthropic proxy sends its
-  calls on the platform's key (`billsSession`). They are gated only by the
-  eval's cap (`overCap`): never by the author's allowance, and never by the
-  system budget that sync turns draw on. Each call is added to the trial
-  (`noteSpend`). A call that would take the eval past its cap is refused, or
-  cut off mid-stream.
+- **Bill.** A trial's shots turn is owned by the machine's agent work, and
+  that is how the Anthropic proxy knows it (`shots-eval.billFor`, reading the
+  session's turn record, in any process): it sends the calls on the
+  platform's key, gated only by the eval's cap, never by the author's
+  allowance and never by the system budget that sync turns draw on. Each call
+  is added to the trial. A call that would take the eval past its cap is
+  refused, or cut off mid-stream. A person's own shots rerun of the same
+  proposal is never billed to an eval.
 
 What a trial costs is the larger of two figures: the proxy's count, and what
 Claude Code itself reported. That cost goes on the trial and on its eval's
-spend, which is the eval's own ledger. It is not written to the author's
+spend, once, when the trial's cleanup is done. It is not written to the author's
 usage, the change's agent-cost ledger or the system budget.
 
-The cap is checked before each trial starts, against what is spent plus an
-estimate for each trial still running: the 90th percentile of recent trials,
+The cap is checked before each trial starts, against what is spent plus, for
+each trial still running, what it has spent so far or an estimate, whichever
+is more: the 90th percentile of recent trials,
 or $3 before there are enough of them. Trials already running when the cap
 is reached are allowed to finish. Builds and database copies are the
 platform's own and are not counted.
 
-A trial whose heartbeat goes quiet for five minutes (the leader restarted)
-has its copies removed. It is queued once more under a fresh attempt id;
-after that it fails with `shots_eval_interrupted`. The GC's orphan sweeps
+A cancel stops what runs (its work cancelled, its agent's turn stopped) and
+cleans the trial up. A trial an older build's runner left during a release
+(its heartbeat quiet for five minutes) is cleaned up and queued once more
+under a fresh attempt id; after that it fails with `shots_eval_interrupted`. The GC's orphan sweeps
 (checkouts and runtimes) and the preview database server's drain count a
 running trial the way they count a running shots run.
 

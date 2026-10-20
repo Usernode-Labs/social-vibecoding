@@ -2,7 +2,7 @@
 
 // What a failed psql run says (services/db-manager.js psqlFailure), as the
 // before & after shots failure people read it (shots-orchestrator.js
-// failCurrentRun). On 2026-10-09 two shots runs failed with a reason that
+// visibleError, which the shots machine's steps record a failure with). On 2026-10-09 two shots runs failed with a reason that
 // ended at the psql command: a CREATE DATABASE … TEMPLATE and a DROP
 // DATABASE … WITH (FORCE) had run past their time limits, and nothing said
 // so. Pinned here, with the errors Node really raises: a run cut off at its
@@ -37,15 +37,10 @@ async function nodeFailure(script, args = [], options = {}) {
   throw new Error('the child was expected to fail');
 }
 
-// The reason and code a shots run records for `error`.
+// The reason and code a shots step records for `error` (the shots
+// machine's failureOf: src/workflow/shots/services.ts).
 async function recorded(error) {
-  const patches = [];
-  const stateService = {
-    async getRun() { return { id: 1, current_run_id: 1, state: 'provisioning' }; },
-    async transitionRun(_pool, _runId, _state, patch) { patches.push(patch); },
-  };
-  assert.equal(await orchestrator.failCurrentRun({}, 1, error, stateService), true);
-  return { reason: patches[0].failureReason, code: patches[0].failureCode };
+  return { reason: orchestrator.visibleError(error), code: String(error?.code || 'shots_failed').slice(0, 48) };
 }
 
 test('a run cut off at its time limit says so, and that the statement may still be running', async () => {

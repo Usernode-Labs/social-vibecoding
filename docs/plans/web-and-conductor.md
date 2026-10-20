@@ -3,7 +3,7 @@
 Every platform Pod used to do everything: serve people's requests and
 WebSockets, and stand for the leader lock, whose holder runs the platform's
 own work (the workflow loops, the timers and sweeps, the merge queue, the
-Homeroom bot, the bench lane, recovery). A release replaced the Pod, and with
+Homeroom bot, recovery). A release replaced the Pod, and with
 it the leader: the replaced Pod resigned and the new one took over
 (docs/plans/draining-releases.md).
 
@@ -41,19 +41,15 @@ is one for its whole life, so what a follower could not do had to move:
   reads it on first use and again when Postgres refuses it (the next release
   rotated it). The SQL console's role has no password: a process takes the
   record's word that it was set up.
-- **What the leader keeps in memory and an admin screen reads** is published
-  for the others (`services/leader-status.js`, table `leader_status`): the
-  leader rewrites each status every 10 seconds, a route reads it from memory
-  where the work runs and from the table elsewhere, and a copy nobody rewrote
-  for two minutes is none. The Homeroom bot's loop (its last pass, refusals,
-  what runs, backoffs, the platform fault, the budget pause, the build lane),
-  the bench lane and the preview reaper's automatic pass. (The custom-domain
-  sweep and the storage cap's are scheduled jobs of the workflow, read from
-  their clock's instance wherever they ran: docs/workflows.md, "clock".)
-- **The leader's loops are woken over the bus** from wherever a request
-  landed: the bench lane (`bench_wake`) and the shots eval runner
-  (`shots_eval_wake`), as the bot's wakes already were. A process not running
-  one asks; the one running it passes; nobody passes a wake on.
+- **Nothing an admin screen reads is kept in a leader's memory**: what the
+  leader published for the others (`services/leader-status.js`, table
+  `leader_status`) is gone with its last status, the bench lane's. The bot's
+  loop, the bench lane, the shots evals, the custom-domain sweep and the
+  storage cap are workflow instances, read from Postgres wherever they run
+  (docs/workflows.md).
+- **No loop needs a wake over the bus**: a launch appends its machine's event
+  in whatever process it lands (the bench lane's `Look`, the shots evals'
+  `Look`).
 - **What one process learns about a repo's issues, the others hear**
   (`issues_cache`): a close, a reopen or an invalidation leaves every
   process's open-issues copy, so a list a web process serves is as fresh as

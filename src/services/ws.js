@@ -133,11 +133,6 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
     case 'turn_byok':
       if (!oversize) require('./worker').receiveTurnByok(payload);
       return;
-    // Wakes for the leader's loops, asked by a process that does not run
-    // them (docs/plans/web-and-conductor.md): the one running each passes.
-    case 'shots_eval_wake':
-      require('./shots-eval-runner').wakeHere();
-      return;
     default:
       log.warn('ws', 'unknown bus kind', { kind });
   }

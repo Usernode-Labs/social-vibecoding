@@ -107,20 +107,15 @@ test('the Homeroom bot\'s queue shows why a row waits from its lane, the same in
 
 // ── Wakes over the bus ────────────────────────────────────────────────
 
-test('a launch on a process not running the eval runner wakes the one that does; the bench lane needs no wake', (t) => {
-  const sent = capturePublishes(t);
+test('neither the bench lane nor the shots evals need a wake: each is a machine a launch tells, in any process', () => {
   const lane = require('../src/services/bench/lane');
-  const runner = require('../src/services/shots-eval-runner');
-  // The bench lane is a machine: a launch appends its Look, in any process.
+  const evals = require('../src/services/shots-eval');
   assert.equal(lane.wake, undefined);
-  assert.equal(runner.wake(), false, 'the runner does not run here');
-  assert.deepEqual(sent.map((m) => m.kind), ['shots_eval_wake']);
-  // Where it does not run either, the bus half does nothing and publishes nothing.
-  sent.length = 0;
-  const ws = require('../src/services/ws');
-  ws._onBusMessage({ kind: 'shots_eval_wake', data: {} });
-  assert.deepEqual(sent, [], 'a wake is never passed on again');
-  assert.equal(runner.wakeHere(), false);
+  assert.equal(typeof lane.look, 'function');
+  assert.equal(typeof evals.look, 'function');
+  assert.equal(fs.existsSync(path.join(__dirname, '..', 'src/services/shots-eval-runner.js')), false);
+  const ws = fs.readFileSync(path.join(__dirname, '..', 'src/services/ws.js'), 'utf8');
+  assert.doesNotMatch(ws, /bench_wake|shots_eval_wake/);
 });
 
 // ── The open-issues copy ──────────────────────────────────────────────

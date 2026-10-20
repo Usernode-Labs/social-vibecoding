@@ -38,94 +38,6 @@ const provenance = {
   headImageDigest: 'sha256:head',
 };
 
-function virtualWaitClock() {
-  let timeMs = 0;
-  return {
-    now: () => timeMs,
-    wait: async (delayMs) => { timeMs += delayMs; },
-  };
-}
-
-test('an ordinary coding turn keeps the normal shots start deadline', async () => {
-  const clock = virtualWaitClock();
-  const pool = { query: async () => ({ rows: [{ active_turn: {
-    mode: 'build', phase: 'executing',
-  } }] }) };
-  await assert.rejects(orchestrator.waitForSessionIdle(pool, 42, {
-    timeoutMs: 20,
-    recoveryTimeoutMs: 50,
-    intervalMs: 10,
-    now: clock.now,
-    wait: clock.wait,
-    workerService: { isInFlight: () => true, getActiveTurnMode: () => 'build' },
-  }), (error) => {
-    assert.equal(error.code, 'shots_agent_busy');
-    assert.deepEqual(error.detail.idleWait, {
-      version: 1, outcome: 'timeout', waitClass: 'session_busy', recoveryReason: null,
-      normalLimitMs: 20, recoveryLimitMs: 50, waitedMs: 20, polls: 3,
-      activeTurnPresent: true, activeTurnMode: 'build', activeTurnPhase: 'executing',
-      workerInFlight: true, workerMode: 'build',
-    });
-    return true;
-  });
-});
-
-test('an interrupted shots turn may finish cleanup after the normal deadline', async () => {
-  const clock = virtualWaitClock();
-  const pool = { query: async () => ({ rows: [{
-    active_turn: clock.now() < 30
-      ? { mode: 'shots', phase: 'cleanup_pending' }
-      : null,
-  }] }) };
-  const result = await orchestrator.waitForSessionIdle(pool, 42, {
-    timeoutMs: 20,
-    recoveryTimeoutMs: 50,
-    intervalMs: 10,
-    now: clock.now,
-    wait: clock.wait,
-    workerService: { isInFlight: () => false, getActiveTurnMode: () => null },
-  });
-  assert.deepEqual(result, {
-    version: 1, outcome: 'idle', waitClass: 'shots_recovery',
-    recoveryReason: 'shots_turn', normalLimitMs: 20, recoveryLimitMs: 50,
-    waitedMs: 30, polls: 4, activeTurnPresent: false,
-    activeTurnMode: null, activeTurnPhase: null, workerInFlight: false, workerMode: null,
-  });
-});
-
-test('a stuck shots cleanup fails at the extended deadline with diagnostics', async () => {
-  const clock = virtualWaitClock();
-  const observations = [];
-  const pool = { query: async () => ({ rows: [{ active_turn: {
-    mode: 'shots', phase: 'cleanup_pending',
-  } }] }) };
-  await assert.rejects(orchestrator.waitForSessionIdle(pool, 42, {
-    timeoutMs: 20,
-    recoveryTimeoutMs: 40,
-    intervalMs: 10,
-    now: clock.now,
-    wait: clock.wait,
-    onObservation: (observation) => observations.push(observation),
-    workerService: { isInFlight: () => false, getActiveTurnMode: () => null },
-  }), (error) => {
-    assert.equal(error.code, 'shots_agent_busy');
-    assert.equal(error.detail.idleWait.waitClass, 'shots_recovery');
-    assert.equal(error.detail.idleWait.waitedMs, 40);
-    assert.equal(error.detail.idleWait.polls, 5);
-    assert.equal(error.detail.idleWait.outcome, 'timeout');
-    return true;
-  });
-  assert.equal(observations.at(-1).outcome, 'timeout');
-});
-
-// ── One run, end to end: the shots agent saves through RunControl ─────
-
-// ── Provisioning, provenance and fixture sign-in ─────────────────────────
-
-// An app built on Homeroom is told who is signed in, never their role in
-// it, so no browser is its creator or one of its admins. Three runs on one
-// app's Creator Studio tried every browser before giving up (QuestVerse's PRs 7 to 9):
-// the brief says so up front, in fixed words, so the agent skips at once.
 test('a child app\'s brief says no browser holds a role in the app, and to skip an owner-only screen at once', () => {
   const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-app-roles-'));
   try {
@@ -425,19 +337,11 @@ test('a declared preview moment reaches the brief in a fixed shape, so both copi
 
 // ── Heartbeat, terminal metadata and storage fencing ────────────────────
 
-test('terminal failure metadata fits the database and redacts credentials before persistence', async () => {
-  let persisted;
+test('a step\'s failure is said without the credentials its error carried', () => {
   const error = Object.assign(new Error('Request failed: token=secret.jwt api_key=topsecret'), {
     code: 'bad-code-with-punctuation',
   });
-  const updated = await orchestrator.failCurrentRun({}, RUN_ID, error, {
-    getRun: async () => ({ id: RUN_ID, current_run_id: RUN_ID, state: 'exploring' }),
-    transitionRun: async (_pool, _runId, next, patch) => { persisted = { next, patch }; },
-  });
-  assert.equal(updated, true);
-  assert.equal(persisted.next, 'failed');
-  assert.equal(persisted.patch.failureCode, 'shots_failed');
-  assert.doesNotMatch(persisted.patch.failureReason, /secret\.jwt|topsecret/);
+  assert.doesNotMatch(orchestrator.visibleError(error), /secret\.jwt|topsecret/);
 });
 
 // ── Scheduling and claiming ──────────────────────────────────────────────

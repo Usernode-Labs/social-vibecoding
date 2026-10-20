@@ -48,6 +48,8 @@ import { MACHINE as BOT_LANE, KEY as LANE_KEY, botLane } from './bot-lane/machin
 import { botLaneServices } from './bot-lane/services.ts';
 import { MACHINE as BENCH_LANE, KEY as BENCH_LANE_KEY, benchLane } from './bench-lane/machine.ts';
 import { benchLaneServices } from './bench-lane/services.ts';
+import { DEFAULT_CONCURRENCY as EVAL_DEFAULT_CONCURRENCY, KEY as EVAL_KEY, MACHINE as SHOTS_EVAL, MAX_CONCURRENCY as EVAL_MAX_CONCURRENCY, shotsEval } from './shots-eval/machine.ts';
+import { shotsEvalServices } from './shots-eval/services.ts';
 import { MACHINE as RELEASE, releaseKey, releaseMachine } from './release/machine.ts';
 import { releaseServices } from './release/services.ts';
 import type { Adoption } from './release/services.ts';
@@ -214,12 +216,16 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const clocks = clock();
   // The App bench's lane: which trials run, and when (bench-lane/).
   const bench = benchLane();
-  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, releases, clocks];
+  // The shots evals' trials (shots-eval/), as many at once as the
+  // deployment says (SHOTS_EVAL_CONCURRENCY).
+  const trials = shotsEval(evalDeps(config));
+  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, trials, releases, clocks];
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
     ...appDeliveryServices(deps), ...appCreationServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
     ...campaignServices(deps), ...botChangeServices(deps), ...botVoiceServices(deps), ...botDmServices(deps),
     ...mainCheckServices(deps), ...botRequestServices(deps), ...botLaneServices(deps), ...benchLaneServices({ config, pool: appPool }),
+    ...shotsEvalServices({ config, pool: appPool }),
     ...releaseServices({ adoptions: ADOPTIONS }),
     ...clockServices(CLOCK_JOBS, { config, pool: appPool }),
   };
@@ -291,6 +297,9 @@ const ADOPTIONS: readonly Adoption[] = Object.freeze([
   // The App bench's lane looks at what is waiting (and holds the slots of
   // trials an older build's lane claimed: they are running rows).
   ['benchLane', (release: string) => startBenchLane(release)],
+  // The shots evals' trials: what is waiting, and what an older build's
+  // runner left (cleaned up once its heartbeat is quiet).
+  ['shotsEvals', (release: string) => startEvals(release)],
   // The platform's scheduled jobs: each armed with this build's interval,
   // and the ones it no longer defines retired.
   ['clocks', (release: string) => armClocks(release)],
@@ -393,6 +402,36 @@ async function adoptFirstRequests(): Promise<number> {
   }
   if (rows.length) log!.info('workflow', 'Adopted first requests left open', { count: rows.length });
   return rows.length;
+}
+
+// ── The shots evals (shots-eval) ────────────────────────────────────────
+
+function evalDeps(config: any) {
+  const n = Number.parseInt(process.env.SHOTS_EVAL_CONCURRENCY || '', 10);
+  return {
+    concurrency: Number.isInteger(n) && n >= 1 ? Math.min(n, EVAL_MAX_CONCURRENCY) : EVAL_DEFAULT_CONCURRENCY,
+    defaultAgentMs: Number(config?.shots?.maxAgentMs) || 480_000,
+  };
+}
+
+async function startEvals(release: string): Promise<void> {
+  if (!runtime) return;
+  await runtime.append(SHOTS_EVAL, EVAL_KEY, { type: 'Tick', payload: {} },
+    { requestKey: `boot:${release}`, source: { kind: 'system', name: 'boot' } });
+}
+
+// Look again (services/shots-eval.js look): an eval launched.
+export async function evalLook(): Promise<void> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  await runtime.append(SHOTS_EVAL, EVAL_KEY, { type: 'Look', payload: {} },
+    { requestKey: `look:${randomUUID()}`, source: { kind: 'system', name: 'shots-eval' } });
+}
+
+// An admin's cancel of an eval: what the machine decided.
+export async function evalCancel(evalId: number): Promise<EventOutcome> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  return runtime.appendAndWait(SHOTS_EVAL, EVAL_KEY, { type: 'EvalCancelled', payload: { evalId } as any },
+    { requestKey: `cancel-eval:${evalId}:${randomUUID()}`, source: { kind: 'admin', name: 'shots-eval' } });
 }
 
 // ── The App bench's lane (bench-lane) ──────────────────────────────────
