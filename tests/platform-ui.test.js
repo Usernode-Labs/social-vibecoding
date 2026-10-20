@@ -814,19 +814,13 @@ test('the menu\'s action leads it, shaped like the pill that used to open it', (
   // Share moved to the footer beside the repository link (#1443), and both
   // moved on to the menu's About pane (#2718) — which is the same argument
   // one level further: they are the app as something you POINT OTHER PEOPLE
-  // AT, and About is the surface named for facts about it. Same ids, same
-  // canShare gate, same dialog.
+  // AT, and About is the surface named for facts about it. Share has since
+  // left About too: an app's About offers Invite beside Add, a link that
+  // lets somebody in, and Homeroom's About lost its Share with it.
   const aboutPane = read('frontend/src/features/app-context/about-pane.tsx');
-  assert.match(aboutPane, /id="improve-row-share"/, 'Share survives');
-  assert.match(aboutPane, /Improve\?\.share\?\.\(\)/, 'with the same handler');
-  // THE DESIGN'S ORDER NOW (nav-prototype.html, About's MORE): Share leads,
-  // and View on GitHub — the design's "Source code" — follows it.
-  assert.ok(aboutPane.indexOf('id="improve-row-share"') < aboutPane.indexOf('id="improve-row-github"'),
-    'Share leads, View on GitHub follows, in the design\'s order');
-  // An app's Share is still gated on canShare — a live address to hand over;
-  // Homeroom always has one, so its Share always shows (./about-pane.tsx).
-  assert.match(aboutPane, /const showShare = platform \|\| canShare;/, 'still gated on canShare for an app');
-  assert.doesNotMatch(panel, /id="improve-row-share"/, 'and not in two places');
+  assert.doesNotMatch(aboutPane, /id="improve-row-share"/, 'Share is retired from About');
+  assert.match(aboutPane, /id="app-about-invite"/, 'Invite is how an app\'s About brings people in');
+  assert.doesNotMatch(panel, /id="improve-row-share"/, 'and it did not come back here');
 
   // Everything else left: the view toggle is the view STRIP now.
   assert.ok(!/id="improve-row-kanban"/.test(panel), 'the Kanban ROW is retired');
@@ -986,7 +980,6 @@ test('the menu is actions, navigation and the app\'s options — one scroller', 
     'the outward-facing facts are About\'s');
   const about = read('frontend/src/features/app-context/about-pane.tsx');
   assert.match(about, /id="improve-row-github"/, 'and About is where they went');
-  assert.match(about, /id="improve-row-share"/);
   // The revisions went back to Settings' About pane, which is the screen you
   // consult rather than act from (tests/header-status-pane.test.js pins
   // where they landed). The question people were reading them for was never
