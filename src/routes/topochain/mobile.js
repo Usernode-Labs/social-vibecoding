@@ -70,6 +70,7 @@ const { nativeEpochDelegationRoutes } = require('./epoch-delegation');
 const { mobileIdentityHash } = require('../../services/mobile-identity-hash');
 const { mobilePushRegistrationRoutes } = require('./mobile-push-registration');
 const { verifyCompletion, ZkBridgeError } = require('../../services/topochain/zk-bridge');
+const { requireAdultAttestation } = require('../../services/adult-attestation');
 
 // ─── Small shared formatters (duplicated in miniature from public.js — ──
 // that file doesn't export its identifier/display-name helpers, and these
@@ -1587,7 +1588,10 @@ function topochainMobileRoutes(config) {
   // shows "Ask to produce blocks" and its pending/released state with
   // the platform session.
   router.get('/challenges-api/bp/state', webSessionAuth, requireSessionUser, bpStateHandler);
-  router.post('/challenges-api/bp/request', webSessionAuth, requireSessionUser, sameOriginBrowserOnly, bpRequestHandler);
+  // Running a node is for adults (#5095): the request waits for the 18+
+  // answer. The state read above stays open.
+  router.post('/challenges-api/bp/request', webSessionAuth, requireSessionUser, sameOriginBrowserOnly,
+    requireAdultAttestation(pool, { shape: 'topochain' }), bpRequestHandler);
   // Everything else under /challenges-api keeps the old proxy allowlist's
   // "off-list -> 404" contract instead of falling through to the SPA
   // catch-all (which would 200 with index.html) or authMiddleware's 401.
@@ -1782,7 +1786,10 @@ function topochainMobileRoutes(config) {
   //      state; this mirrors the §4.10 "challenge_progress placeholder"
   //      precedent of reporting the honest absence of a mechanism rather
   //      than a fabricated success.
-  router.post('/api/v4/mobile/zkpassport/complete', mobileTokenAuth(config), async (req, res) => {
+  // A passport proof is for adults (#5095), refused until the account said
+  // it is 18 or older.
+  router.post('/api/v4/mobile/zkpassport/complete', mobileTokenAuth(config),
+    requireAdultAttestation(pool, { shape: 'topochain' }), async (req, res) => {
     try {
       const body = req.body || {};
       const details = {};
@@ -2038,6 +2045,8 @@ function topochainMobileRoutes(config) {
     // populated before its key is computed.
     optionalSessionAuth(config),
     mobileWalletClaimLimiter,
+    // Claiming a wallet is for adults (#5095).
+    requireAdultAttestation(pool, { shape: 'topochain' }),
     async (req, res) => {
       const sessionToken = req.cookies?.session;
       if (!req.user || !sessionToken) return fail(res, 401, 'Unauthenticated.');

@@ -1433,7 +1433,7 @@
       "name": "Discover is one flat lane: curated cards then popular, with no sub-group label",
       "path": "/?demo=1",
       "expectSelector": "[data-panel-slot=\"discover\"]:not([data-featured=\"0\"]):not([data-popular=\"0\"]) .home-panel:not(:has(.home-discover-divider)):not(:has(.home-discover-lane ~ .home-discover-lane)) .home-discover-rail .app-card.home-discover-card:not(:has(.users-badge))",
-      "expectText": "Browse all apps"
+      "expectText": "See all"
     },
     {
       "name": "Directory leads with Recommended for you and keeps demos under Show more (#1523, #5267)",
@@ -1456,7 +1456,7 @@
       "name": "With nothing to discover, the block shows its compact note (?shot=discover-empty)",
       "path": "/?demo=1&shot=discover-empty",
       "expectSelector": "#home-body [data-panel-slot=\"discover\"][data-featured=\"0\"][data-popular=\"0\"]:has(.home-panel-browse) .home-panel:not(:has(.home-discover-rail)) .home-discover-empty",
-      "expectText": "Nothing to discover right now"
+      "expectText": "No communities to suggest right now"
     },
     {
       "name": "Adding from Discover lands in My apps with no reload, and removing takes it out again (#1567)",
@@ -1784,27 +1784,28 @@
       "expectSelector": "#dev-plus-menu:not(.hidden) button[data-plus=\"rename\"]"
     },
     {
-      "name": "Waitlist survey lives on its own #waitlist screen",
+      "name": "An old #waitlist link opens Continue on the landing, the one way to join (#5261)",
       "path": "/?shot=anon#waitlist",
-      "expectSelector": "#auth-waitlist-screen #waitlist-form #waitlist-email",
+      "expectSelector": "#auth-landing-screen [data-sign-in-sheet] #sign-in-sheet-title",
+      "expectText": "Continue to Homeroom",
       "allowConsoleErrors": true
     },
     {
-      "name": "Waitlist country picker carries the whole ISO list (#1527)",
-      "path": "/?shot=anon#waitlist",
-      "expectSelector": "#waitlist-country option[value=\"UY\"]",
+      "name": "The waiting room asks the country the retired join form asked, from the whole ISO list (#1527, #5261)",
+      "path": "/?shot=waiting",
+      "expectSelector": "#waiting-about-country option[value=\"UY\"]",
       "allowConsoleErrors": true
     },
     {
-      "name": "Waitlist countries are one flat list, so Switzerland is a top-level option (#1527)",
-      "path": "/?shot=anon#waitlist",
-      "expectSelector": "#waitlist-country > option[value=\"CH\"]",
+      "name": "Waiting-room countries are one flat list, so Switzerland is a top-level option (#1527, #5261)",
+      "path": "/?shot=waiting",
+      "expectSelector": "#waiting-about-country > option[value=\"CH\"]",
       "allowConsoleErrors": true
     },
     {
-      "name": "Waitlist countries start at A, with Aland Islands sorted as an A (#1527)",
-      "path": "/?shot=anon#waitlist",
-      "expectSelector": "#waitlist-country > option:nth-child(3)[value=\"AX\"]",
+      "name": "Waiting-room countries start at A, with Aland Islands sorted as an A (#1527, #5261)",
+      "path": "/?shot=waiting",
+      "expectSelector": "#waiting-about-country > option:nth-child(3)[value=\"AX\"]",
       "allowConsoleErrors": true
     },
     {
@@ -1815,54 +1816,57 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Waitlist joined state renders the stage-2 offer",
-      "path": "/?shot=waitlist-confirmed",
-      "expectText": "Want in sooner?",
+      "name": "The waiting room asks how you found us, after the account is made (#5261)",
+      "path": "/?shot=waiting",
+      "expectSelector": "[data-waiting-about=\"ask\"] #waiting-about-discovery button",
+      "expectText": "How did you find us?",
       "allowConsoleErrors": true
     },
     {
-      "name": "Waitlist confirm step drops the join pitch",
-      "path": "/?shot=waitlist-joined",
-      "expectSelector": "#auth-waitlist-screen h1.hidden",
+      "name": "The waiting room questions can be skipped (#5261)",
+      "path": "/?shot=waiting",
+      "expectSelector": "[data-waiting-about=\"ask\"] #waiting-about-skip",
+      "expectText": "Skip",
       "allowConsoleErrors": true
     },
     {
-      "name": "Waitlist acknowledges the saved signup before confirmation (#1528)",
-      "path": "/?shot=waitlist-joined",
-      "expectSelector": "#waitlist-joined h2:not(.hidden)",
-      "expectText": "You're on the waitlist!",
+      "name": "The waiting room questions say they are optional, and Save waits for an answer (#5261)",
+      "path": "/?shot=waiting",
+      "expectSelector": "[data-waiting-about=\"ask\"] #waiting-about-save[disabled]",
+      "expectText": "Both optional",
       "allowConsoleErrors": true
     },
     {
-      "name": "Waitlist email confirmation is explicitly step 2 (#1528)",
-      "path": "/?shot=waitlist-joined",
+      "name": "Check your status labels its code field on step 2 (#1876)",
+      "path": "/?shot=waitlist-code-step",
       "expectSelector": "#waitlist-confirm:not(.hidden) label[for=\"waitlist-code\"]",
-      "expectText": "Step 2 of 2 · Confirm your email",
+      "expectText": "Your six-digit code",
       "allowConsoleErrors": true
     },
     {
-      "name": "Waitlist joined state shows the confirm-your-email step",
-      "path": "/?shot=waitlist-joined",
-      "expectSelector": "#waitlist-confirm:not(.hidden) #waitlist-code",
+      "name": "A status read-back is never asked for a code (#2201)",
+      "path": "/?shot=waitlist-status",
+      "expectSelector": "#waitlist-confirm.hidden",
       "allowConsoleErrors": true
     },
     {
-      "name": "Waitlist offers a fresh code on the confirm step",
-      "path": "/?shot=waitlist-joined",
-      "expectSelector": "#waitlist-confirm:not(.hidden) #waitlist-resend",
+      "name": "Check your status keeps a way in for a code already in hand (#1876)",
+      "path": "/?shot=waitlist-code-entry",
+      "expectSelector": "#waitlist-confirm-address:not(.hidden) #waitlist-have-code",
+      "expectText": "I already have a code",
       "allowConsoleErrors": true
     },
     {
-      "name": "Waitlist does not ask for the address again after a join",
-      "path": "/?shot=waitlist-joined",
-      "expectSelector": "#waitlist-confirm-email.hidden",
+      "name": "Check-your-status links keep working with the join form gone (#5261)",
+      "path": "/?shot=anon#waitlist?confirm=1",
+      "expectSelector": "#auth-waitlist-screen #waitlist-confirm-address:not(.hidden) #waitlist-confirm-email",
       "allowConsoleErrors": true
     },
     {
-      "name": "Waitlist step 1 offers a way back to the code entry",
-      "path": "/?shot=waitlist-step1",
-      "expectSelector": "#waitlist-enter-code",
-      "expectText": "Check your status",
+      "name": "An old #waitlist?ref= invite link opens Continue too (#5261)",
+      "path": "/?shot=anon#waitlist?ref=abcdefghij",
+      "expectSelector": "#auth-landing-screen [data-sign-in-sheet]",
+      "expectText": "Continue to Homeroom",
       "allowConsoleErrors": true
     },
     {
@@ -1945,19 +1949,19 @@
     },
     {
       "name": "Waitlist withholds the stage-2 offer until the email is confirmed",
-      "path": "/?shot=waitlist-joined",
+      "path": "/?shot=waitlist-code-step",
       "expectSelector": "#waitlist-more-offer.hidden",
       "allowConsoleErrors": true
     },
     {
-      "name": "Waitlist confirmed state gives the list place",
-      "path": "/?shot=waitlist-confirmed",
+      "name": "Waitlist status panel gives the list place",
+      "path": "/?shot=waitlist-status",
       "expectSelector": "#waitlist-confirmed:not(.hidden)",
       "allowConsoleErrors": true
     },
     {
-      "name": "Waitlist confirmed state names the registered address",
-      "path": "/?shot=waitlist-confirmed",
+      "name": "Waitlist status panel names the registered address",
+      "path": "/?shot=waitlist-status",
       "expectSelector": "#waitlist-confirmed:not(.hidden) #waitlist-confirmed-email:not(.hidden)",
       "expectText": "Registered with",
       "allowConsoleErrors": true
@@ -1977,16 +1981,16 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "A fresh confirmation still celebrates (#1538)",
-      "path": "/?shot=waitlist-confirmed",
-      "expectSelector": "#waitlist-confirmed:not(.hidden) #waitlist-confirmed-headline:not(.hidden)",
-      "expectText": "on the list",
+      "name": "A waiting signup reading its status sees the day it joined (#1538)",
+      "path": "/?shot=waitlist-status",
+      "expectSelector": "#waitlist-confirmed:not(.hidden) #waitlist-status-since:not(.hidden)",
+      "expectText": "On the list since",
       "allowConsoleErrors": true
     },
     {
-      "name": "A status read-back states it once, without the congratulations (#1538)",
+      "name": "A waiting signup is offered no account button yet (#1538)",
       "path": "/?shot=waitlist-status",
-      "expectSelector": "#waitlist-confirmed:not(.hidden) #waitlist-confirmed-headline.hidden",
+      "expectSelector": "#waitlist-confirmed:not(.hidden) #waitlist-status-action.hidden",
       "allowConsoleErrors": true
     },
     {
@@ -2024,22 +2028,21 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "A confirmed address re-joining lands on the settled panel (#2201)",
-      "path": "/?shot=waitlist-rejoined",
-      "expectSelector": "#waitlist-confirmed:not(.hidden) #waitlist-status-pill:not(.hidden)",
-      "expectText": "On the waitlist",
+      "name": "Check your status offers Continue only once the address is not found (#2201, #5261)",
+      "path": "/?shot=waitlist-code-entry",
+      "expectSelector": "#waitlist-confirm-address:not(.hidden) #waitlist-join-instead.hidden",
       "allowConsoleErrors": true
     },
     {
-      "name": "A confirmed re-join reads back instead of congratulating (#2201)",
-      "path": "/?shot=waitlist-rejoined",
-      "expectSelector": "#waitlist-confirmed:not(.hidden) #waitlist-confirmed-headline.hidden",
-      "allowConsoleErrors": true
-    },
-    {
-      "name": "A confirmed re-join is never asked for a code (#2201)",
-      "path": "/?shot=waitlist-rejoined",
+      "name": "Admitted status asks for no code (#1538)",
+      "path": "/?shot=waitlist-admitted",
       "expectSelector": "#waitlist-confirm.hidden",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "An address not on the list is sent nothing, so there is no code step (#2201)",
+      "path": "/?shot=waitlist-not-found",
+      "expectSelector": "#waitlist-confirm-code.hidden",
       "allowConsoleErrors": true
     },
     {
@@ -3008,13 +3011,13 @@
       "expectSelector": "#platform-tabs:has(> .platform-tabs-marker[data-marker-at][aria-hidden=\"true\"] + #platform-tab-home) #platform-tab-home[aria-current=\"page\"]"
     },
     {
-      "name": "#2760: the fifth tab is named after the signed-in user instead of \"Me\", on the phone bar and the desktop rail alike",
+      "name": "#2760, N7: the fifth tab says You, and its accessible name says whose account it is, on the phone bar and the desktop rail alike",
       "path": "/?demo=1",
-      "expectSelector": "#platform-tabs a#platform-tab-me[href=\"#profile\"][aria-label$=\", your profile\"]"
+      "expectSelector": "#platform-tabs a#platform-tab-me[href=\"#profile\"][aria-label^=\"You, \"]:has(> .platform-tab-label)"
     },
     {
-      "name": "A message notification is listed in the notifications sheet",
-      "path": "/?shot=notifications&demo=1",
+      "name": "A message notification is listed in the notifications sheet, on its Messages tab (#18: the bell's Unread leaves plain messages to Messages)",
+      "path": "/?shot=notifications-messages&demo=1",
       "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990207\"]",
       "expectText": "[Mock] Did the notifications change land yet?"
     },
@@ -4028,6 +4031,18 @@
       "path": "/#admin/homeroom-bot/benchmark/studio",
       "expectSelector": "#admin-homeroom-bench[data-bench-view=\"studio\"]:has(#admin-homeroom-bench-tab-studio[aria-current=\"page\"]) #admin-bench-studio-gallery [data-studio-brief=\"bread\"] h4",
       "expectText": "Bread Bot"
+    },
+    {
+      "name": "Homeroom bot Configurations tab lists each scope's versions, the current one first, with its numbers and its own benchmark runs (once Admin, Bot configurations)",
+      "path": "/#admin/homeroom-bot/configs",
+      "expectSelector": "#admin-homeroom-bot-panel-configs #admin-bot-configs-table [data-bot-config][data-role=\"current\"] [data-bot-config-bench]",
+      "expectText": "Not run"
+    },
+    {
+      "name": "Homeroom bot Calls tab reads the helper calls per helper and the model asked first, from the LLM telemetry",
+      "path": "/#admin/homeroom-bot/calls",
+      "expectSelector": "#admin-homeroom-bot-panel-calls #admin-homeroom-bot-calls-total",
+      "expectText": "in the last 7 days"
     },
     {
       "name": "Welcome messages lets an admin choose who greets somebody let in, and what the first message says",

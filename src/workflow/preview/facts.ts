@@ -37,6 +37,9 @@ export interface Session {
   turnRunning: boolean;         // active_turn: a coding turn's journal
   localTurnRunning: boolean;    // local_agent_turns: a turn on the author's machine
   shotsRunning: boolean;        // the shots machine has a run under way
+  // When somebody last used the session (a tab's heartbeat writes it every
+  // minute): the idle rule reads it when its deadline comes.
+  lastActivityAt: string | null;
 }
 
 export interface App { id: number; slug: string; selfHosted: boolean; repoUrl: string | null }
@@ -63,7 +66,7 @@ export function pinOf(r: any): string | null {
   return null;
 }
 
-// staging-recovery.findStuckCheckSessions' scope: a promoted proposal, an
+// The error lane's scope (staging-recovery.isStuckCheckRecoveryScope): a promoted proposal, an
 // active CLI hand-off with a head, or an active or paused proposal owed a
 // fresh unit suite on its current head (a person's "Run checks again",
 // which the route takes for both), and a branch to build.
@@ -72,7 +75,12 @@ function retryScope(r: any): boolean {
   if (r.status === 'promoted') return true;
   if ((r.status === 'active' || r.status === 'paused') && sha(r.unit_suite_fresh_sha)
       && sha(r.unit_suite_fresh_sha) === sha(r.checks_commit_sha)) return true;
-  return r.status === 'active' && r.source === 'cli_handoff' && !!(r.checks_commit_sha || r.handoff_head_sha);
+  if (r.status !== 'active' || r.source !== 'cli_handoff' || !(r.checks_commit_sha || r.handoff_head_sha)) return false;
+  // An upload not submitted yet: its checks wait for the submit
+  // (staging-recovery.isStuckCheckRecoveryScope's rule).
+  const unsubmitted = !!r.handoff_uploaded_sha && r.handoff_uploaded_sha !== r.handoff_head_sha
+    && (r.checks_commit_sha || null) === (r.handoff_upload_checked_sha || null);
+  return !unsubmitted;
 }
 
 // `lock`: a decision about the preview or the checks (every event but an
@@ -83,9 +91,10 @@ export async function readFacts(tx: Tx, sessionId: number,
   const { rows: [r] } = await tx.query(
     `SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.shared_at, cs.branch_name,
             cs.pr_number, cs.imported_pr_head_sha, cs.reviewed_head_sha, cs.handoff_head_sha,
+            cs.handoff_uploaded_sha, cs.handoff_upload_checked_sha,
             cs.checks_commit_sha, cs.check_state, cs.unit_suite_fresh_sha, cs.testing_md, cs.testing_path,
             cs.staging_url, cs.staging_container_id, cs.staging_image_ref, cs.staging_build_ref,
-            cs.staging_runtime_kind, cs.staging_runtime_name, cs.staging_commit_sha,
+            cs.staging_runtime_kind, cs.staging_runtime_name, cs.staging_commit_sha, cs.last_activity_at,
             cs.active_turn IS NOT NULL AS turn_running,
             EXISTS (SELECT 1 FROM local_agent_turns t
                      WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running')) AS local_turn_running,
@@ -116,6 +125,7 @@ export async function readFacts(tx: Tx, sessionId: number,
       unitFreshSha: sha(r.unit_suite_fresh_sha),
       testing: { md: r.testing_md ?? null, path: r.testing_path ?? null },
       turnRunning: !!r.turn_running, localTurnRunning: !!r.local_turn_running, shotsRunning: !!r.shots_running,
+      lastActivityAt: r.last_activity_at ? new Date(r.last_activity_at).toISOString() : null,
     },
     app: { id: r.app_id, slug: r.app_slug, selfHosted: !!r.self_hosted, repoUrl: r.repo_url ?? null },
     alive,

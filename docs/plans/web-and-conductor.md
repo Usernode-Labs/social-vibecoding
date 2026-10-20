@@ -33,21 +33,23 @@ is one for its whole life, so what a follower could not do had to move:
   the idle eviction of its own warm workers, which only the leader ran. A
   worker whose session is busy on another process is left alone: a session's
   turns land wherever the Service sends them.
-- **The read-only database roles** the leader sets up at its election are
-  recorded for the others (`platform_db_roles`). The prod-debug role's
-  password, which only the leader's memory held, is stored encrypted with the
-  data key, as app secrets are, and denied to both roles; a web process reads
-  it on first use and again when Postgres refuses it (a newer leader rotated
-  it). The SQL console's role has no password: a web process takes the
-  leader's word that it was set up.
+- **The read-only database roles** are set up once per release with the
+  schema, by the migration Job (in compose, by boot's own migration under its
+  lock: `services/db-roles.js`), and recorded for every process
+  (`platform_db_roles`). The prod-debug role's password is stored encrypted
+  with the data key, as app secrets are, and denied to both roles; a process
+  reads it on first use and again when Postgres refuses it (the next release
+  rotated it). The SQL console's role has no password: a process takes the
+  record's word that it was set up.
 - **What the leader keeps in memory and an admin screen reads** is published
   for the others (`services/leader-status.js`, table `leader_status`): the
   leader rewrites each status every 10 seconds, a route reads it from memory
   where the work runs and from the table elsewhere, and a copy nobody rewrote
   for two minutes is none. The Homeroom bot's loop (its last pass, refusals,
   what runs, backoffs, the platform fault, the budget pause, the build lane),
-  the bench lane, the preview reaper's automatic pass, the custom-domain
-  sweep and the storage cap's last sweep.
+  the bench lane and the preview reaper's automatic pass. (The custom-domain
+  sweep and the storage cap's are scheduled jobs of the workflow, read from
+  their clock's instance wherever they ran: docs/workflows.md, "clock".)
 - **The leader's loops are woken over the bus** from wherever a request
   landed: the bench lane (`bench_wake`) and the shots eval runner
   (`shots_eval_wake`), as the bot's wakes already were. A process not running

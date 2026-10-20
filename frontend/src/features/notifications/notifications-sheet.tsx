@@ -146,6 +146,8 @@ type ScreenRowView = NotificationRowView & {
   by?: string | null;
   /** Set on a conversation row — what the Messages tab filters on. */
   conversation?: boolean;
+  /** A plain message (#18): on the Messages tab, never on Unread, as the bell leaves it out. */
+  plainMessage?: boolean;
   /** Set on a row from the Homeroom bot: it wears the bot's own face. */
   bot?: boolean;
   /** Set on an agent-status row (#2815) — the Messages tab lists these too. */
@@ -930,8 +932,10 @@ export function NotificationsSheetView() {
   // Unread LISTS what was unread while the sheet has been open (polish #7,
   // useHeldUnread); its count and Mark all read follow what still is.
   const held = useHeldUnread(open, all);
-  const unread = all.filter(held.listed);
-  const unreadNow = all.filter((view) => view.unread);
+  // #18 (19 Oct 2026 polish board): plain messages are the Messages tab's,
+  // as the bell's count leaves them out, so Unread says what the badge says.
+  const unread = all.filter((view) => held.listed(view) && !view.plainMessage);
+  const unreadNow = all.filter((view) => view.unread && !view.plainMessage);
   const messages = all.filter((view) => view.conversation || view.agent);
   // WHAT YOU ARE WORKING ON, from the store that already answers it (#2718
   // review). The Improve panel splits the same list in two — this app's and

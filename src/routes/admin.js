@@ -17,9 +17,23 @@ const events = require('../services/events');
 const llmTelemetry = require('../services/llm-telemetry');
 const appRollover = require('../services/app-rollover');
 const stagingReap = require('../services/staging-reap');
-// What the leader keeps in memory, for a process that does not lead
-// (services/leader-status.js, docs/plans/web-and-conductor.md).
-const leaderStatus = require('../services/leader-status');
+// A scheduled job's last run (src/workflow/clock/), wherever it ran.
+const clocks = require('../services/clocks');
+
+// The automatic leftover-preview pass, as the Stale previews section shows
+// it: the preview-gc clock's last run (src/workflow/clock/services.ts),
+// read from any process. `tornDown` is how many it handed on to be taken
+// (the clock keeps a run's targets as their count).
+async function automaticReap(pool) {
+  const intervalMs = stagingReap.staleSweepIntervalMs();
+  const s = await clocks.status(pool, 'preview-gc').catch(() => null);
+  const items = Number.isInteger(s?.result?.items) ? s.result.items : null;
+  return {
+    lastRunAt: s?.lastSweepAt || null, intervalMs,
+    examined: s?.result?.examined ?? null, abandoned: s?.result?.abandoned ?? null,
+    tornDown: items, failed: s?.lastError ? 1 : 0,
+  };
+}
 const { isSessionBusy } = require('../services/active-workers');
 const stagingEnv = require('../services/staging-env');
 const mail = require('../services/mail');
@@ -96,6 +110,31 @@ function adminRoutes(config) {
         code: err && err.code ? String(err.code).slice(0, 64) : 'query_failed',
       });
       return res.status(500).json({ error: 'Could not load LLM telemetry' });
+    }
+  });
+
+  // The helper calls per helper and first model (Admin → Homeroom bot →
+  // Calls): how fast, how often Haiku answered instead, what they cost.
+  // Read-only and aggregate-only, like the report above.
+  router.get('/api/admin/homeroom-bot/calls', async (req, res) => {
+    const days = Number(req.query.days == null ? 7 : req.query.days);
+    if (!Number.isInteger(days) || days < 1 || days > llmTelemetry.MAX_REPORT_DAYS) {
+      return res.status(400).json({ error: `days must be an integer between 1 and ${llmTelemetry.MAX_REPORT_DAYS}` });
+    }
+    try {
+      const report = await llmTelemetry.helperCallsReport(pool, { days });
+      // Beside each helper its time limit, and the model the helpers ask now.
+      const limits = require('../services/llm').HELPER_TIME_LIMIT_MS || {};
+      return res.json({
+        ...report,
+        helperModel: await require('../services/helper-model').current(config, { pool }),
+        helpers: report.helpers.map((h) => ({ ...h, limitMs: limits[h.component] || null })),
+      });
+    } catch (err) {
+      log.warn('admin', 'Helper calls report failed', {
+        code: err && err.code ? String(err.code).slice(0, 64) : 'query_failed',
+      });
+      return res.status(500).json({ error: 'Could not load the helper calls' });
     }
   });
 
@@ -318,7 +357,7 @@ function adminRoutes(config) {
         stale: counts.stale,
         abandoned: counts.abandoned,
         expectedFingerprint: stagingEnv.expectedStagingFingerprint(config),
-        automatic: await leaderStatus.readOr('staging-reap.automatic', pool, stagingReap.readAutomatic),
+        automatic: await automaticReap(pool),
         staging,
         runtimeKind,
         available: !staging,
@@ -1695,7 +1734,8 @@ function adminRoutes(config) {
       return res.json(appStorageCap.demoAdminPayload());
     }
     try {
-      res.json(await appStorageCap.adminPayload(pool));
+      const sweep = await clocks.status(pool, 'app-storage-cap');
+      res.json(await appStorageCap.adminPayload(pool, { lastSweep: sweep.result }));
     } catch (err) {
       log.error('admin', 'Read app storage failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -1744,15 +1784,31 @@ function adminRoutes(config) {
     }
   });
 
+  // The storage clock's run, now (src/workflow/clock/): one sweep at a time
+  // wherever the workflow runs, and its result is the page's last sweep.
   router.post('/api/admin/storage/sweep', requireAdminWrite, async (req, res) => {
     try {
-      const sweep = await appStorageCap.sweep(pool);
+      let sweep;
+      try {
+        const ran = await clocks.runNow('app-storage-cap', req.user);
+        if (ran && ran.lastError) return res.status(500).json({ error: ran.lastError });
+        sweep = ran && ran.result;
+      } catch (err) {
+        // No clock runs it here (a staging preview arms none): measured on
+        // the spot, which on a preview records figures and freezes nothing.
+        if (err && err.code !== 'not_armed') throw err;
+        sweep = await appStorageCap.sweep(pool);
+      }
+      if (!sweep) {
+        return res.status(503).json({ error: 'Still measuring: the figures will show here when it ends.' });
+      }
       log.info('admin', 'App storage sweep run from the console', {
         by: req.user.username, measured: sweep.measured, frozen: sweep.frozen,
-        unfrozen: sweep.unfrozen, warned: sweep.warned, errors: sweep.errors.length,
+        unfrozen: sweep.unfrozen, warned: sweep.warned, errors: (sweep.errors || []).length,
       });
       res.json({ sweep });
     } catch (err) {
+      if (err && err.status) return res.status(err.status).json({ error: err.message });
       log.error('admin', 'App storage sweep failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
@@ -1783,7 +1839,7 @@ function adminRoutes(config) {
   router.get('/api/admin/domains', async (req, res) => {
     try {
       const rows = await appDomains.adminList(pool);
-      res.json({ domains: rows.map(adminDomainRow), sweep: await leaderStatus.readOr('app-domains.sweep', pool, appDomains.getStatus) });
+      res.json({ domains: rows.map(adminDomainRow), sweep: await clocks.status(pool, 'app-domains') });
     } catch (err) {
       log.error('admin', 'Read custom domains failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

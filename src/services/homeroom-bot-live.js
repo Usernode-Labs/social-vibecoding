@@ -3200,10 +3200,10 @@ function recipeHarness(model, config = null) {
 }
 
 // The reasoning effort a configuration's spec turn runs at when its model
-// is an Anthropic one (Opus 5.5 writes the first version's spec): above the
-// session's own (`low`, config.openrouterDefaultCodexReasoning), since the
-// spec is the one turn of a first version that is all thinking. Any other
-// spec model keeps the session's.
+// is an Anthropic one (Opus 5.5 writes the spec) and its recipe names none
+// (recipe.effort.spec): 'medium', not the session's own
+// (config.openrouterDefaultCodexReasoning, 'xhigh' unless the deployment
+// says otherwise). Any other spec model keeps the session's.
 const RECIPE_SPEC_EFFORT = 'medium';
 
 /** The effort a configuration's spec turn on `model` runs at, or null for the session's own. Pure. */
@@ -3769,6 +3769,9 @@ async function waitOutShotsRun(sessionId, deps = {}) {
 function buildTurnRunner({
   pool, config, bot, session, model, branchName, containerName, deps,
   harness = 'auto', telemetry = null, onProgress = null,
+  // A configuration's effort for the build's turns (and a review's fixes),
+  // or null for the session's own.
+  reasoningEffort = null,
   // L2: hold each turn to the app's own declared checks before it ends
   // (appChecksLines; worker.js writeAppCheck and build-stop-hook.js's checks
   // gate). Not for the platform's own repository, which the check script
@@ -3874,6 +3877,7 @@ function buildTurnRunner({
           // OpenRouter build needs no handbook as system context in either
           // (run-cc.sh).
           harness,
+          ...(reasoningEffort ? { reasoningEffort } : {}),
         }),
         dispatchOnce: (ctx) => worker.execInWorker(session.id, {
           mode: 'build',
@@ -4078,6 +4082,10 @@ async function buildAndPropose({
   // model runs in (recipeHarness), and the REVIEW of a first version
   // (services/bot-review.js): { reviewer, owner: { botRunId } | { trialId },
   // onState, budgetCheck }. Neither for any other build.
+  // The reasoning effort a configuration gives its spec and its build
+  // (bot-configs.js recipe.effort), each null for the session's own: the
+  // spec keeps recipeSpecEffort's rule then.
+  efforts = null,
   harnessOf = null,
   review = null,
   // #4387: a first version's first look, handed the spec's HTML and the
@@ -4401,7 +4409,7 @@ async function buildAndPropose({
       ...(telemetry ? { telemetryComponent: telemetry } : {}),
       ...(harnessOf ? {
         harness: harnessOf(specModel || model, config),
-        reasoningEffort: recipeSpecEffort(specModel || model),
+        reasoningEffort: (efforts && efforts.spec) || recipeSpecEffort(specModel || model),
       } : {}),
     })));
   // The build turn runs the build's model again.
@@ -4517,7 +4525,7 @@ async function buildAndPropose({
   const runBuildTurn = buildTurnRunner({
     pool, config, bot, session, model, branchName, containerName, deps,
     harness: buildHarness, telemetry, onProgress, checksGate: appChecksOn(platformRepo),
-    firstVersion, tweaks: buildTweaks,
+    firstVersion, tweaks: buildTweaks, reasoningEffort: (efforts && efforts.build) || null,
   });
   await step('build_turn', { budgetMs: turnBudgetMs });
   // The build's clock, from about when its turn starts (runBuildTurn's

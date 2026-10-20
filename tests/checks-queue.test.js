@@ -12,7 +12,7 @@
 // runs went at once.
 //
 // This file holds the rules that need no database: the order and the slot
-// rule (planAdmission), the stale sweeps' reading of a waiting run, where the
+// rule (planAdmission), how a waiting run is read (never overdue), where the
 // gate sits in captureForSession, and what people and agents are told while a
 // run waits. tests/checks-queue-postgres.test.js runs the queue on a real
 // Postgres: two processes, a freed slot, a superseded run, a restart.
@@ -178,14 +178,16 @@ test('checkRunOverdue never reads a run waiting for a slot as overdue, however l
   }, { now, staleMs: 600000 }), true, 'a head nothing ever recorded is still judged by clock');
 });
 
-test('the stale sweep skips a queued session while it has a row in line, and only then', async () => {
-  const queries = [];
-  const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [] }; } };
-  await stagingRecovery.findStuckCheckSessions({ pool, staleMs: 600000, maxAutoRetries: 6 });
-  const sql = queries[0].sql;
-  assert.match(sql, /cs\.check_phase IS DISTINCT FROM 'queued'\s+OR NOT EXISTS \(SELECT 1 FROM check_runs cr\s+WHERE cr\.session_id = cs\.id AND cr\.admitted_at IS NULL\)/,
-    'a queued session with no row left in line is overdue by the usual clock: the backstop');
-  assert.deepEqual(queries[0].params, [600000, 6, 50, stagingRecovery.PLATFORM_FAULT_RETRY_MS]);
+test('a queued run whose process died is carried on by its checks run\'s retry, from its place in line', () => {
+  // No sweep re-drives a queued session (the leader's stuck-checks sweep is
+  // gone): the wait is inside the preview machine's checks run, a work item
+  // with a lease, and the claim after a lost one asks for its slot as of the
+  // place the earlier claim had. tests/checks-queue-postgres.test.js runs it.
+  const services = stripComments(read('src/workflow/preview/services.ts'));
+  const run = services.slice(services.indexOf('[WORK.run]: {'));
+  assert.match(run, /if \(attempt > 1\) \{[\s\S]*?SELECT min\(queued_at\) AS at FROM check_runs WHERE session_id = \$1 AND manifest->>'runKey' = \$2/);
+  assert.match(run, /queuedSince, report,/);
+  assert.equal(stagingRecovery.findStuckCheckSessions, undefined);
 });
 
 test('the merge gate kicks no recheck for a queued run, and says it is waiting', () => {

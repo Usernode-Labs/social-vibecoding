@@ -65,6 +65,21 @@ test('the launcher at rest reads as unscrolled: rest is the parked search bar', 
   assert.equal(doc.props['--home-star-y'], '0px');
 });
 
+test('from 768px the launcher rests at the top: its search bar is not parked there (#17)', () => {
+  const had = 'window' in globalThis;
+  const saved = globalThis.window;
+  globalThis.window = { PlatformUI: { isPhoneLayout: () => false } };
+  try {
+    const { doc } = boot({
+      'home-search-bar': { offsetHeight: 58 },
+      'home-screen': { scrollTop: 0 },
+    });
+    assert.equal(doc.props['--home-star-y'], '0px');
+  } finally {
+    if (had) globalThis.window = saved; else delete globalThis.window;
+  }
+});
+
 test('the wallpaper follows document scrolling on mobile web', () => {
   const { doc, apply } = boot({
     'home-search-bar': { offsetHeight: 52 },

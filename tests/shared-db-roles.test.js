@@ -151,7 +151,7 @@ test('the SQL console\'s role is available on a web process once the leader set 
   const web = processWith(db, '../src/services/topochain/db-console-role');
   await web.loadShared(db.pool);
   assert.equal(web.isAvailable(), false);
-  assert.match(web.unavailableReason(), /not set up by the leader yet/);
+  assert.match(web.unavailableReason(), /not set up yet/);
 
   const leader = processWith(db, '../src/services/topochain/db-console-role');
   await leader.ensureConsoleRole(config);

@@ -103,6 +103,11 @@ export interface Data {
   pending: { head: string; trigger: string | null } | null;  // a revision that arrived during an idle retirement
   closedAt: string | null;
   operations: Operation[];
+  // The deadline the last outcome set ({ type, at, v: the version that set
+  // it }), as the instance's own record of it: a housekeeping event older
+  // than it (fired, or sent by a release, before a newer deadline was set)
+  // changes nothing (withRest).
+  due?: { type: string; at: string; v: number } | null;
   previewOnly?: boolean;         // a session previewed with no checks (the App bench): every attempt is
 }
 
@@ -195,6 +200,17 @@ const EVENTS = {
   // that is never released): read as a failure, its late result stale.
   AdminEnd: () => ({}),
   RetryDue: () => ({}),
+  // Its own housekeeping deadlines (restTimer): a preview nobody has used
+  // for a while is given back, and checks the row still owes are run.
+  IdleDue: () => ({}),
+  ChecksDue: () => ({}),
+  // The release found the serving attempt built with another build's
+  // environment (the preview-env clock, staging-reap tellStaleEnv): built again if
+  // it backs a vote, else given back.
+  EnvStale: (p: any) => {
+    if (!Number.isInteger(p?.attempt) || p.attempt < 0) throw new Error('attempt must be an attempt number');
+    return { attempt: p.attempt as number };
+  },
 };
 
 // ── Names ───────────────────────────────────────────────────────────────
@@ -238,7 +254,17 @@ const recheckTrigger = (reason: string, trigger: string | null) =>
 export interface Deps {
   maxRetries: number;        // staging-recovery.checkMaxAutoRetries(), read at boot
   retireAfterMs: number;     // a cancelled prepare has stopped by then (its lease)
+  // A preview nobody has used for this long is given back (config
+  // stagingIdleTeardownMs; 0 or absent: never).
+  idleMs?: number;
 }
+
+// How long checks the row owes wait before the machine runs them itself
+// (what the leader's stuck-checks sweep waited), how soon a deadline that
+// found someone working comes again, and the soonest an idle one comes.
+const CHECKS_DUE_MS = 10 * 60 * 1000;
+const WORKED_RECHECK_MS = 60 * 1000;
+const IDLE_FLOOR_MS = 30 * 1000;
 
 interface Step {
   name: Name;
@@ -415,6 +441,107 @@ function errorTimer(d: Data, f: Facts, deps: Deps, ctx: TransitionContext, strea
   return { at: new Date(ctx.now.getTime() + retryDelayMs(streakBefore)), event: { type: 'RetryDue' } };
 }
 
+// ── Housekeeping ────────────────────────────────────────────────────────
+
+// The machine's own deadline whenever an outcome leaves none (withRest).
+// The error lane's retry is set by the outcome itself and kept; otherwise
+// the earliest of
+//   - ChecksDue: checks the row owes and nothing runs (a person's request
+//     for a fresh unit suite, a verdict left pending or missing in the
+//     error lane's scope), run once nobody works on the session. This
+//     replaced the leader's three stuck-checks sweeps;
+//   - IdleDue: a preview that serves is given back once nobody has used the
+//     session for `idleMs`; a vote-backed one is looked at again after that
+//     long. This replaced the leader's idle staging GC.
+const SERVES: ReadonlySet<string> = new Set(['settled', 'deferred', 'failed']);
+const underReview = (f: Facts) => !!f.session && (f.session.status === 'promoted' || f.session.status === 'merging');
+
+// The head the row's checks are owed for, when they are: one a person asked
+// to have checked fresh, or, in the error lane's scope, one whose stored
+// verdict is pending or missing while nothing builds or runs it.
+function owedChecks(s: Live, f: Facts): { head: string; fresh: boolean } | null {
+  const x = f.session;
+  if (!x || !OPEN.has(x.status) || s.data.previewOnly) return null;
+  if (s.name !== 'settled' && s.name !== 'idle') return null;
+  const head = x.pin ?? s.data.head;
+  if (!head) return null;
+  const holds = s.name === 'settled' && s.data.head === head ? s.data.verdict : null;
+  // An error it holds for the head is the error lane's, within its cap: a
+  // run that errors before the unit suite starts leaves the request owed,
+  // and running it again here would never stop.
+  if (holds === 'error') return null;
+  if (x.unitFreshSha && x.unitFreshSha === head) return { head, fresh: true };
+  if (!x.retryScope) return null;
+  // A verdict this machine holds for the head stands.
+  if (holds !== null) return null;
+  const st = x.checks.commitSha === head ? x.checks.state : null;
+  return st === 'pending' || st == null ? { head, fresh: false } : null;
+}
+
+function restTimer(next: PState, f: Facts, ctx: TransitionContext, deps: Deps): TimerRequest | null {
+  if (next.name === NONE || next.name === 'retired') return null;
+  const s = next as Live;
+  const now = ctx.now.getTime();
+  const due: TimerRequest[] = [];
+  if (owedChecks(s, f)) due.push({ at: new Date(now + CHECKS_DUE_MS), event: { type: 'ChecksDue' } });
+  const idleMs = deps.idleMs ?? 0;
+  if (idleMs > 0 && s.data.serving && SERVES.has(s.name) && f.session) {
+    const last = f.session.lastActivityAt ? Date.parse(f.session.lastActivityAt) : now;
+    const at = underReview(f) ? now + idleMs : Math.max(last + idleMs, now + IDLE_FLOOR_MS);
+    due.push({ at: new Date(at), event: { type: 'IdleDue' } });
+  }
+  return due.length ? due.reduce((a, b) => (b.at < a.at ? b : a)) : null;
+}
+
+// The deadlines that are this machine's own: a fired one the state cannot
+// use (a retry that is no longer due, an idle look at a preview being
+// built) is still taken, as a step that sets the deadline due now, because
+// a refused deadline would leave the instance with none. The release's own
+// IdleDue (platform.ts, restPreviews: an instance an older build left with
+// no deadline) is taken the same way.
+const HOUSE: ReadonlySet<string> = new Set(['IdleDue', 'ChecksDue', 'RetryDue']);
+const HOUSE_REST: ReadonlySet<string> = new Set(['IdleDue', 'ChecksDue']);
+const ownDeadline = (e: Event<any>) => e.source.kind === 'timer' || (e.type !== 'RetryDue' && e.source.kind === 'system');
+
+// Every transition, with the housekeeping deadline where its outcome
+// leaves none (`timer: null`).
+function withRest(entry: Entry, type: string, deps: Deps): Entry {
+  // The outcome, its rest deadline where it left none, and that deadline
+  // recorded as the instance's own (`due`).
+  const rested = (o: Outcome<PState>, f: Facts, ctx: TransitionContext): Outcome<PState> => {
+    const out = o.timer === null ? { ...o, timer: restTimer(o.next, f, ctx, deps) } : o;
+    if (out.timer === undefined || out.next.name === NONE) return out;
+    const due = out.timer ? { type: out.timer.event.type, at: out.timer.at.toISOString(), v: ctx.version + 1 } : null;
+    return { ...out, next: { name: out.next.name, data: { ...(out.next as Live).data, due } } as PState };
+  };
+  const idle = (s: any, f: Facts, ctx: TransitionContext) => rested(step({ name: s.name, data: s.data, timer: null }), f, ctx);
+  if (!HOUSE.has(type)) return 'ignore' in entry ? entry : { ...entry, to: (s, e, f, ctx) => rested(entry.to(s, e, f, ctx), f, ctx) };
+  // A housekeeping event a newer deadline overtook: it keeps that one. A
+  // fired deadline names the version that set it (the kernel's
+  // `setAtVersion`), so one a later outcome replaced is told apart exactly;
+  // a release's, sent to an instance it read with no deadline, is overtaken
+  // by a deadline set since that is still to come and is not a rest one
+  // (a rest deadline it recomputes the same way).
+  const overtaken = (s: any, e: Event<any>, ctx: TransitionContext) => {
+    const due = s.data?.due;
+    if (!ownDeadline(e) || !due) return false;
+    if (e.source.kind === 'timer') return Number.isInteger(e.source.setAtVersion) && e.source.setAtVersion !== due.v;
+    return !HOUSE_REST.has(due.type) && Date.parse(due.at) > ctx.now.getTime();
+  };
+  return {
+    guard: (s, e, f, ctx) => {
+      if (ownDeadline(e)) return ok();
+      if ('ignore' in entry) return reject(entry.ignore);
+      return entry.guard ? entry.guard(s, e, f, ctx) : ok();
+    },
+    to: (s, e, f, ctx) => {
+      if (overtaken(s, e, ctx)) return step({ name: s.name, data: s.data });
+      if ('ignore' in entry || (entry.guard && entry.guard(s, e, f, ctx) !== true)) return idle(s, f, ctx);
+      return rested(entry.to(s, e, f, ctx), f, ctx);
+    },
+  };
+}
+
 // A verdict a change of the Homeroom bot's is told: ready to try, or its
 // failing checks are the bot's to fix (its change machine decides, from
 // the row this transition writes: src/workflow/bot-change/).
@@ -533,13 +660,27 @@ type Entry = { guard?: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext)
   to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => Outcome<PState> } | { ignore: string };
 
 function transitions(deps: Deps): Record<string, Record<string, Entry>> {
+  const table = rawTransitions(deps);
+  return Object.fromEntries(Object.entries(table).map(([state, row]) =>
+    [state, Object.fromEntries(Object.entries(row).map(([type, entry]) => [type, withRest(entry, type, deps)]))]));
+}
+
+function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
+  // A proposal going up for a vote (`promote-kick`) whose head errored out
+  // of the error lane's scope (an ordinary session's error has no retry):
+  // in scope now, its retry is armed. Nothing else would.
+  const rearms = (s: any, e: Event<any>) => e.payload.trigger === 'promote-kick'
+    && (s.name === 'failed' || (s.name === 'settled' && s.data.verdict === 'error'));
   const revision: Entry = {
     guard: (s, e, f, ctx) => {
       const c = admissible(f, e.payload.head, ctx, e.payload.sessionId);
       if (c !== true) return c;
-      return !restarts(s) && sameHead(s, e.payload.head) ? reject('same_head') : ok();
+      return !restarts(s) && sameHead(s, e.payload.head) && !rearms(s, e) ? reject('same_head') : ok();
     },
     to: (s, e, f, ctx) => {
+      if (!restarts(s) && sameHead(s, e.payload.head)) {
+        return step({ name: s.name, data: s.data, timer: errorTimer(s.data, f, deps, ctx, Math.max(0, s.data.streak - 1)) });
+      }
       const live: Live = restarts(s) ? { name: 'idle', data: adopt(e, f, priorOf(s)) } : s;
       // A green verdict is not carried from, or to, a head a person asked to
       // have checked again (services/unit-suite-reuse.js): the merged head
@@ -698,10 +839,14 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
   const folded: Entry = {
     guard: (s, e, f) => (f.session && f.session.checks.commitSha === e.payload.head && f.session.checks.state !== 'pending'
       ? ok() : reject('nothing_to_stamp')),
+    // The request it owes is run once nobody works there: resting, by its
+    // ChecksDue; a deadline it waits on otherwise (a failed build's retry)
+    // stays.
     to: (s, e, f, ctx) => step({
       name: s.name, data: s.data,
       writes: [{ type: 'pending', sessionId: s.data.sessionId, head: e.payload.head, phase: null, trigger: 'manual-recheck' }],
       push: [checksPending(s.data, ctx, e.payload.head, '', 'manual-recheck')],
+      ...(s.name === 'settled' || s.name === 'idle' ? { timer: null } : {}),
     }),
   };
 
@@ -819,6 +964,52 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
   };
   const ops = { OperationStarted: opStarted, OperationEnded: opEnded };
 
+  // Given back once nobody has used the session for `idleMs`, never while
+  // it is under review or worked on (the leader's idle GC's rules, decided
+  // under the row's lock); used since, the deadline comes again later.
+  const idleDue: Entry = {
+    to: (s, e, f, ctx) => {
+      const x = f.session;
+      const idleMs = deps.idleMs ?? 0;
+      const last = x?.lastActivityAt ? Date.parse(x.lastActivityAt) : ctx.now.getTime();
+      if (!x || idleMs <= 0 || underReview(f) || ctx.now.getTime() - last < idleMs) {
+        return step({ name: s.name, data: s.data, timer: null });
+      }
+      if (worked(s, f)) return step({ name: s.name, data: s.data, timer: { at: new Date(ctx.now.getTime() + WORKED_RECHECK_MS), event: { type: 'IdleDue' } } });
+      return toRetiring(s, 'idle', false, ctx, deps);
+    },
+  };
+  // The row's owed checks, run: a person's fresh run as theirs, any other as
+  // the run the leader's sweep used to start.
+  const checksDue: Entry = {
+    to: (s, e, f, ctx) => {
+      const owed = owedChecks(s, f);
+      if (!owed) return step({ name: s.name, data: s.data, timer: null });
+      if (worked(s, f)) return step({ name: s.name, data: s.data, timer: { at: new Date(ctx.now.getTime() + WORKED_RECHECK_MS), event: { type: 'ChecksDue' } } });
+      const trigger = owed.fresh ? 'manual-recheck' : 'stuck-sweep';
+      return owed.head !== s.data.head || !s.data.serving || s.data.serving.head !== owed.head
+        ? begin(s, owed.head, trigger, ctx, deps)
+        : startRun(s, trigger, ctx);
+    },
+  };
+  // Built with another build's environment: a vote-backed preview is built
+  // again (as a lost one is); any other is given back unless someone works
+  // on it (then the idle rule takes it later).
+  const envStale: Entry = {
+    guard: (s, e, f) => {
+      if (s.data.serving?.n !== e.payload.attempt) return reject('not_serving');
+      return !underReview(f) && worked(s, f) ? reject('worked_on') : ok();
+    },
+    to: (s, e, f, ctx) => (underReview(f)
+      ? begin(s, s.data.head || s.data.serving.head, 'stuck-sweep', ctx, deps)
+      : toRetiring(s, 'stale-env', false, ctx, deps)),
+  };
+  const house = (name: Name): Record<string, Entry> => ({
+    IdleDue: SERVES.has(name) ? idleDue : notHere('not_serving'),
+    ChecksDue: name === 'settled' || name === 'idle' ? checksDue : notHere('not_owed_here'),
+    EnvStale: SERVES.has(name) ? envStale : notHere(name === 'preparing' || name === 'checking' ? 'busy' : 'not_serving'),
+  });
+
   const works = (name: Name): Record<string, Entry> => ({
     WorkSucceeded: workResult(name, 'succeeded', deps),
     WorkFailed: workResult(name, 'failed', deps),
@@ -849,6 +1040,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       RetireRequested: { guard: (s, e) => (e.payload.terminal ? ok() : reject('already_idle')), to: retire.to },
       AdminRetry: adminRetry, AdminRetire: adminRetire, AdminEnd: notHere('nothing_running'),
       RetryDue: notHere('not_waiting'),
+      ...house('idle'),
       ...works('idle'),
     },
     preparing: {
@@ -862,6 +1054,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       RetireRequested: retire,
       AdminRetry: notHere('in_progress'), AdminRetire: adminRetire, AdminEnd: adminEnd,
       RetryDue: notHere('not_waiting'),
+      ...house('preparing'),
       ...works('preparing'),
     },
     checking: {
@@ -875,6 +1068,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       RetireRequested: retire,
       AdminRetry: notHere('in_progress'), AdminRetire: adminRetire, AdminEnd: adminEnd,
       RetryDue: notHere('not_waiting'),
+      ...house('checking'),
       ...works('checking'),
     },
     deferred: {
@@ -891,6 +1085,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       RetireRequested: retire,
       AdminRetry: adminRetry, AdminRetire: adminRetire, AdminEnd: notHere('nothing_running'),
       RetryDue: notHere('not_waiting'),
+      ...house('deferred'),
       ...works('deferred'),
     },
     settled: {
@@ -904,6 +1099,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       RetireRequested: retire,
       AdminRetry: adminRetry, AdminRetire: adminRetire, AdminEnd: notHere('nothing_running'),
       RetryDue: { guard: (s, e, f) => (s.data.verdict !== 'error' ? reject('not_error') : (retryDue.guard as any)(s, e, f)), to: retryDue.to },
+      ...house('settled'),
       ...works('settled'),
     },
     failed: {
@@ -917,6 +1113,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       RetireRequested: retire,
       AdminRetry: adminRetry, AdminRetire: adminRetire, AdminEnd: notHere('nothing_running'),
       RetryDue: retryDue,
+      ...house('failed'),
       ...works('failed'),
     },
     retiring: {
@@ -946,6 +1143,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       AdminRetire: notHere('already_retiring'),
       AdminEnd: notHere('retiring'),
       RetryDue: notHere('not_waiting'),
+      ...house('retiring'),
       ...works('retiring'),
     },
     retired: {
@@ -954,6 +1152,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ...created, ...ops,
       ChecksSkipped: skipped,
       ChecksCleared: clearAdopting,
+      ...house('retired'),
       ...works('retired'),
     },
     // Handed back before the old paths were deleted (no Detach any more): an
@@ -966,6 +1165,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       OperationStarted: opStarted,
       RetireRequested: retireAdopting,
       ChecksCleared: clearAdopting,
+      ...house('detached'),
       ...works('detached'),
     },
   };
@@ -1297,8 +1497,11 @@ export function preview(deps: Deps): Machine<PState, Facts> {
     // 5: a passing verdict asks the merge queue, and a boot failure main
     // caused asks the proposal for a sync, by message. 6: a person's recheck
     // folded into a busy session stamps the stored verdict pending
-    // (RecheckFolded).
-    version: 6,
+    // (RecheckFolded). 7: its own housekeeping deadlines (IdleDue,
+    // ChecksDue), EnvStale from the release, and a promote that re-arms the
+    // error lane: the leader's idle GC, heal and stuck-checks sweeps are
+    // gone, so an older Pod must not decide an instance relying on them.
+    version: 7,
     events: EVENTS,
     create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped', 'OperationStarted', 'RetireRequested', 'ChecksCleared', 'RecheckFolded'],
     terminal: ['retired'],
@@ -1327,6 +1530,9 @@ export function preview(deps: Deps): Machine<PState, Facts> {
       AdminRetire: admin,
       AdminEnd: admin,
       RetryDue: retry,
+      IdleDue: retry,
+      ChecksDue: retry,
+      EnvStale: system,
     },
     transitions: transitions(deps) as any,
     writes: WRITES,

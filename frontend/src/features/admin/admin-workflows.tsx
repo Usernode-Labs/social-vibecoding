@@ -338,6 +338,13 @@ function InstanceView({ at, actions, onOpen, onBack }: {
                 Retire preview
               </button>
             ) : null}
+            {actions.includes('RunNow') && ['waiting', 'running'].includes(inst.state) ? (
+              <button type="button" disabled={busy} className={AdminUI.btn.outlineSm}
+                onClick={() => act('Run now', ...event('RunNow'),
+                  'Runs the scheduled job now (once more right after the run under way, if there is one); its next run is due an interval after.')}>
+                Run now
+              </button>
+            ) : null}
             {actions.includes('AdminApply') && inst.state === 'open' ? (
               <button type="button" disabled={busy} className={AdminUI.btn.destructiveSm}
                 onClick={() => act('Apply now', ...event('AdminApply'),

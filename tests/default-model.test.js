@@ -243,8 +243,9 @@ test('the Models card has a platform default picker, and Save sends it', () => {
   assert.match(tsx, /onChange=\{\(id\) => setField\('defaultModel', id\)\}/);
   assert.match(tsx, /else if \(key === 'defaultModel'\) \{/);
   assert.match(tsx, /patch\.defaultModel = id;/);
-  // The stage pickers name the default the form now holds, saved or not.
-  assert.match(tsx, /defaultModel=\{form\.defaultModel \|\| payload\?\.deploymentDefaultModel/);
+  // A stage of a scope with no configuration current falls back to its
+  // per-stage setting, else the platform default (Settings' read of the stages).
+  assert.match(tsx, /fallback=\{\(stage\) => saved\.models\[stage\] \|\| payload\?\.defaultModel \|\| null\}/);
 });
 
 // ── What a current configuration runs ───────────────────────────────────
@@ -258,13 +259,25 @@ test('the admin payload names the current configurations\' models, which builds 
   });
   configs.laterVersion = async () => ({
     id: 5, key: 'later', label: 'Later', version: 1,
-    recipe: { models: { triage: 'z-ai/glm-5.3-flash', spec: 'anthropic/claude-opus-5.5', build: 'z-ai/glm-5.3-flash' } },
+    recipe: {
+      models: { triage: 'deepseek/deepseek-v4.1-flash-1017', spec: 'anthropic/claude-opus-5.5', build: 'z-ai/glm-5.3-flash', followup: 'deepseek/deepseek-v4.1-flash-1017' },
+      reviewer: null, pack: null, effort: { build: 'max' }, clocks: { build: 30 },
+    },
   });
+  const none = { triage: null, spec: null, build: null };
   try {
     assert.deepEqual(await bot.currentConfigurations({}), {
-      firstVersion: { id: 15, key: 'fv', label: 'FV', version: 1, models: { triage: 'z-ai/glm-5.3-flash', spec: 'anthropic/claude-opus-5.5', build: 'deepseek/deepseek-v4.1-flash-1017' } },
-      // A later change's triage keeps the stage setting, so it is not named.
-      later: { id: 5, key: 'later', label: 'Later', version: 1, models: { spec: 'anthropic/claude-opus-5.5', build: 'z-ai/glm-5.3-flash' } },
+      firstVersion: {
+        id: 15, key: 'fv', label: 'FV', version: 1,
+        models: { triage: 'z-ai/glm-5.3-flash', spec: 'anthropic/claude-opus-5.5', build: 'deepseek/deepseek-v4.1-flash-1017' },
+        effort: none, clocks: none,
+      },
+      // A later change's triage and follow-ups are its configuration's too.
+      later: {
+        id: 5, key: 'later', label: 'Later', version: 1,
+        models: { triage: 'deepseek/deepseek-v4.1-flash-1017', spec: 'anthropic/claude-opus-5.5', build: 'z-ai/glm-5.3-flash', followup: 'deepseek/deepseek-v4.1-flash-1017' },
+        effort: { ...none, build: 'max', followup: null }, clocks: { ...none, build: 30, followup: null },
+      },
     });
     configs.currentVersion = async () => null;
     configs.laterVersion = async () => { throw new Error('boom'); };

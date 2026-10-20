@@ -32,12 +32,12 @@
     "description": "Tab in the main navigation: opens the communities the person belongs to. A community is a group that owns projects."
   },
   "tabs.me": {
-    "text": "Me",
-    "description": "Tab in the main navigation, shown only while nobody is signed in: opens the person's own profile. Once signed in the tab shows their username instead."
+    "text": "You",
+    "description": "Last tab in the main navigation: opens the person's own profile, their account and settings. A short word for the person themselves, like \"Me\"; it must fit under an icon in a fifth of a phone's width."
   },
   "tabs.meNamed": {
-    "text": "{{username}}, your profile",
-    "description": "Accessible name of the profile tab when signed in. The tab shows only {{username}}; this adds what the tab is. Keep {{username}} first."
+    "text": "You, {{username}}",
+    "description": "Accessible name of the profile tab when signed in. The tab shows only the word for You; this adds whose account it is. {{username}} is the person's username. Keep the word for You first."
   },
   "tabs.communitiesOn": {
     "text": "Communities, on {{community}}",
@@ -169,7 +169,7 @@
   },
   "header.back": {
     "text": "Back",
-    "description": "Accessible name of the header's back button when it returns to the previous screen."
+    "description": "Accessible name of the header's back button when it returns to the previous screen, including on a phone the Communities list's arrow back to the community page you came from."
   },
   "header.closeApp": {
     "text": "Close app",

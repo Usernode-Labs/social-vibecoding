@@ -2,11 +2,11 @@
 // grid. THE UI OVERHAUL fixed their order and their hosts:
 //
 //   discover   — the admin-curated featured tiles, the Popular lane, and
-//                "Browse all apps". The shell's ONLY door to the app
+//                "See all". The shell's ONLY door to the app
 //                directory, which is why it cannot be hidden.
 //   challenges — what the viewer can do next: their First challenges while
-//                any is unfinished, then up to three open ones, furthest
-//                along first, or one line when nothing is open. "See all"
+//                any is unfinished, then up to three open ones, in the
+//                Challenges tab's order, or one line when nothing is open. "See all"
 //                in its heading goes to the Challenges tab.
 //
 // CREATE APP WAS THE THIRD. It is the launcher grid's trailing tile now
@@ -192,33 +192,22 @@ const HomePanels = {
       .map((x) => x.c);
   },
 
-  // How far along an unfinished challenge is, for "Next challenges":
-  // `fraction` is the counted share (current over a target above one; 0 for
-  // a yes-or-no challenge, which has no share to show), and `started` is
-  // whether the viewer has anything on it at all (a count, or points). The
-  // same facts challengeRowView turns into the rail.
-  progressOf(c) {
-    const target = HomePanels.hasMeter(c) ? Number(c.progress.target) : 0;
-    const current = target > 0 ? Math.max(0, Number(c.progress.current) || 0) : 0;
-    const fraction = target > 1 ? Math.min(current, target) / target : 0;
-    return { fraction, started: fraction > 0 || Number(c.earned_points) > 0 };
-  },
-
-  // "Next challenges": the open challenges the viewer has not finished,
-  // furthest along first (the counted share, then Started before Not
-  // started), ties in orderRows' sequence, cut to NEXT_SLOTS. A challenge
-  // carried while not open (organiser-closed, or outside its window) is not
-  // something to do next. Stable, and the input is not mutated.
+  // "Next challenges": the open challenges the viewer has not finished, in
+  // the Challenges tab's own order (orderRows), cut to NEXT_SLOTS. A
+  // challenge carried while not open (organiser-closed, or outside its
+  // window) is not something to do next. Stable, and the input is not
+  // mutated.
+  //
+  // NOT BY PROGRESS (polish N11). It was furthest along first, and progress
+  // is what moves: the boot copy and the fresh read a moment later
+  // disagreed, and every visit after a step, so the three cards swapped
+  // places, and which three they were, while you looked at them. The tab's
+  // order changes only when a challenge is finished, opens or closes.
   nextRows(rows, onboarding) {
     return HomePanels.orderRows(rows, onboarding)
       .filter((c) => c && HomePanels.groupOf(c).key !== 'setup'
         && !HomePanels.orderDone(c) && c.open !== false)
-      .map((c, i) => ({ c, i, p: HomePanels.progressOf(c) }))
-      .sort((a, b) => (b.p.fraction - a.p.fraction)
-        || ((b.p.started ? 1 : 0) - (a.p.started ? 1 : 0))
-        || (a.i - b.i))
-      .slice(0, HomePanels.NEXT_SLOTS)
-      .map((x) => x.c);
+      .slice(0, HomePanels.NEXT_SLOTS);
   },
 
   // ── Data ───────────────────────────────────────────────────────────
@@ -521,8 +510,8 @@ const HomePanels = {
   //           unfinished: every one of them, in the admin's order, the done
   //           ones in place with their Done rail (inAdminOrder).
   //   next  — "Next challenges" once they are all done: up to NEXT_SLOTS open
-  //           challenges the viewer has not finished, furthest along first
-  //           (nextRows).
+  //           challenges the viewer has not finished, in the Challenges
+  //           tab's order (nextRows).
   //   done  — "Challenges" over one line, when nothing is open and every
   //           This week challenge is done: "All done for this week", and how
   //           many start again on Monday (the week the scorer counts by).

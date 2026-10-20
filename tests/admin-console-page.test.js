@@ -131,8 +131,8 @@ test('the console island imports every admin module, console first', () => {
     'admin-analytics',
     // Apps & usage: every app's members, contributors and activity.
     'admin-apps-usage',
-    // How the Homeroom bot builds first versions, and how each configuration measures up.
-    'admin-bot-configs',
+    // Bot configurations is the Homeroom bot's Configurations tab now,
+    // imported by admin-homeroom-bot.tsx rather than by the island.
     'admin-campaigns', 'admin-codes', 'admin-db-export',
     // #4405: every custom domain a project has claimed.
     'admin-domains',

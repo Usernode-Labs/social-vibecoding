@@ -108,7 +108,8 @@ test('a row read while the sheet is open stays listed; one the viewer clears lea
 
 test('the sheet lists the held rows, counts the unread ones, and dims what was read', () => {
   const body = SHEET_SRC.slice(SHEET_SRC.indexOf('export function NotificationsSheetView('));
-  assert.match(body, /const held = useHeldUnread\(open, all\);\s*const unread = all\.filter\(held\.listed\);\s*const unreadNow = all\.filter\(\(view\) => view\.unread\);/);
+  // #18: plain messages are the Messages tab's, as the bell leaves them out.
+  assert.match(body, /const held = useHeldUnread\(open, all\);[\s\S]{0,300}const unread = all\.filter\(\(view\) => held\.listed\(view\) && !view\.plainMessage\);\s*const unreadNow = all\.filter\(\(view\) => view\.unread && !view\.plainMessage\);/);
   assert.match(body, /const unreadCount = unreadNow\.reduce\(/, 'the tab says what is still unread');
   assert.match(body, /disabled=\{!unreadNow\.length\}/, 'Mark all read has nothing to do once all of it is read');
   assert.match(body, /held=\{tab === 'unread' && !entry\.view\.unread && !olderShown\}/,

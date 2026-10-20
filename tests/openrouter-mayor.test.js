@@ -212,7 +212,9 @@ test('the client sends one atomic request on the bound model and key', async () 
 // order and preferences here (worker/claude-openrouter-request.js), and the
 // same one resend to every host when that shortlist refuses it.
 
-const LISTENER_PREFERENCES = { preferred_max_latency: { p90: 15 }, preferred_min_throughput: { p50: 30 } };
+// #5123: every request also denies data collection, routed or not.
+const DENY = { data_collection: 'deny' };
+const LISTENER_PREFERENCES = { preferred_max_latency: { p90: 15 }, preferred_min_throughput: { p50: 30 }, ...DENY };
 
 async function providerSent(model, options = {}) {
   const { fetchImpl, calls } = fakeFetch(completion({ content: 'ok', model }));
@@ -232,8 +234,8 @@ test('a chat on a shortlisted model goes to the coding turns\' hosts, any other 
     sort: 'throughput',
     allow_fallbacks: true,
   });
-  assert.deepEqual(await providerSent('anthropic/claude-opus-5.5'), { allow_fallbacks: true });
-  assert.deepEqual(await providerSent('m/x'), { allow_fallbacks: true });
+  assert.deepEqual(await providerSent('anthropic/claude-opus-5.5'), { allow_fallbacks: true, ...DENY });
+  assert.deepEqual(await providerSent('m/x'), { allow_fallbacks: true, ...DENY });
 
   // The platform's override (OPENROUTER_PROVIDER_SHORTLISTS) wins, for any model.
   assert.deepEqual(await providerSent('deepseek/deepseek-v4.1-flash-1017', { providerShortlist: 'parasail' }), {
@@ -247,7 +249,7 @@ test('a chat on a shortlisted model goes to the coding turns\' hosts, any other 
     { ...LISTENER_PREFERENCES, allow_fallbacks: true },
     '`none` drops the shortlist and keeps the preferences',
   );
-  assert.deepEqual(await providerSent('m/x', { providerShortlist: 'none' }), { allow_fallbacks: true });
+  assert.deepEqual(await providerSent('m/x', { providerShortlist: 'none' }), { allow_fallbacks: true, ...DENY });
 });
 
 test('a request its shortlist refuses is sent once more to every host; other refusals are final', async () => {
@@ -443,7 +445,7 @@ test('a session\'s Mayor takes the platform\'s host shortlist for its own model'
   };
   assert.deepEqual((await sent('openrouter/deepseek/deepseek-v4.1-flash-1017')).only, ['parasail']);
   assert.deepEqual(await sent(null), { ...LISTENER_PREFERENCES, allow_fallbacks: true }, 'the default model, unlisted by `none`');
-  assert.deepEqual(await sent('m/x'), { allow_fallbacks: true });
+  assert.deepEqual(await sent('m/x'), { allow_fallbacks: true, ...DENY });
 });
 
 test('#3557: a PDF goes to OpenRouter as a file part only for a model listed as taking files', async () => {

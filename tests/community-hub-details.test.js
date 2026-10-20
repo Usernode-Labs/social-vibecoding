@@ -384,8 +384,13 @@ test('#4457, After-Workshop-B: the approval rule is one line: its checks pass, a
   // The names' faces lead them, then the names in bold, in both wordings.
   const words = renderToHtml(createElement(RuleWords, { line: ruleSentence({ policy: 'invited', approvals_required: null, electorate: 2, required: 1 }, member, ['evan', 'snait']) }));
   assert.match(words, /^<span class="dev-ws-ov-wide">A change goes live when its checks pass and <span class="dev-ws-ov-faces" aria-hidden="true"><span class="dev-ws-ov-face" style="background:[^"]+">E<\/span><span class="dev-ws-ov-face" style="background:[^"]+">S<\/span><\/span><b class="dev-ws-ov-names">evan or snait<\/b> says yes\.<\/span><span class="dev-ws-ov-narrow">Goes live when its checks pass and <span class="dev-ws-ov-faces"/);
-  assert.match(CARD_SRC, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/approvers`\)/, 'the approvers come from their own route');
-  assert.match(CARD_SRC.slice(CARD_SRC.indexOf('export function ApprovalLine(')), /const approvers = useApprovers\(slug, invited\);/);
+  // Polish board #13: the names come with the community record, so the line
+  // is drawn once; only an older server's record, without them, asks their
+  // own route.
+  assert.match(CARD_SRC, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/approvers`\)/, 'the approvers\' own route, for an older server');
+  const line = CARD_SRC.slice(CARD_SRC.indexOf('export function ApprovalLine('));
+  assert.match(line, /const given = data && data\.approval \? data\.approval\.approvers : undefined;/);
+  assert.match(line, /const approvers = given !== undefined \? given : asked;/);
   assert.equal(typeof ApprovalLine, 'function');
   // The three steps went: no step tiles, no joins, no faces' step.
   assert.doesNotMatch(CARD_SRC, /dev-ws-rule-step|dev-ws-rule-join|data-ws-rule-people|export function ApprovalRules/);

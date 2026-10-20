@@ -1586,7 +1586,12 @@ export function ApprovalLine({ slug }: { slug: string }) {
   const t = useMessages('project');
   const data = useCommunity(slug);
   const invited = !!(data && data.approval && data.approval.policy === 'invited');
-  const approvers = useApprovers(slug, invited);
+  // The record carries the names (polish board #13), so the line is drawn
+  // once, as it stays: a reader the roster is closed to gets null there and
+  // the count. Only an older server's record, without the field, asks.
+  const given = data && data.approval ? data.approval.approvers : undefined;
+  const asked = useApprovers(slug, invited && given === undefined);
+  const approvers = given !== undefined ? given : asked;
   if (!data || !data.approval) return null;
   const { wait } = ruleHasWait(data.approval) ? approvalStep(data.approval, data, approvers) : { wait: '' };
   return (

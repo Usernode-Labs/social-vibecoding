@@ -1659,9 +1659,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // and high contrast controls (?demo=1#settings/accessibility), a route no
   // other check reaches. 735 leaves 145 slots.
   //
+  // 735 → 737: +2: the Homeroom bot's Configurations tab (once its own
+  // section, #admin/bot-configs) and its Calls tab, two routes no other
+  // check reaches. 737 leaves 143 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 735);
+  checkCap.assertPinned(DAPP.tests.length, 737);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
