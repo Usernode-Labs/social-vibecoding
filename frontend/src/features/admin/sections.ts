@@ -40,6 +40,7 @@ import './admin-reports.tsx';
 import './admin-rollover.tsx';
 import './admin-staging-reap.tsx';
 import './admin-workflows.tsx';
+import './admin-compliance.tsx';
 import './admin-status.tsx';
 import './admin-incidents.tsx';
 import './admin-node.tsx';

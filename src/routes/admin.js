@@ -12,6 +12,7 @@ const limits = require('../services/limits');
 const anthropicCredits = require('../services/anthropic-credits');
 const dbExport = require('../services/db-export');
 const adminAccessReview = require('../services/admin-access-review');
+const compliance = require('../services/compliance');
 const adminAppsUsage = require('../services/admin-apps-usage');
 const appDataRetention = require('../services/app-data-retention');
 const events = require('../services/events');
@@ -2598,6 +2599,84 @@ function adminRoutes(config) {
       res.json(await adminAccessReview.report(pool));
     } catch (err) {
       log.error('admin', 'Access review record failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Compliance report (#5634) ─────────────────────────────────────────
+  //
+  // The compliance plan's items with their status and what the scan found
+  // (services/compliance.js). Every admin reads it; saving a status and
+  // Scan now are full admins only.
+  async function complianceReport() {
+    const [report, scan] = await Promise.all([
+      compliance.report(pool),
+      clocks.status(pool, 'compliance-scan').catch(() => null),
+    ]);
+    return {
+      ...report,
+      scanClock: scan ? { nextDueAt: scan.nextDueAt, inFlight: scan.sweepInFlight, lastError: scan.lastError } : null,
+    };
+  }
+
+  router.get('/api/admin/compliance', async (_req, res) => {
+    try {
+      res.set('Cache-Control', 'no-store');
+      res.json(await complianceReport());
+    } catch (err) {
+      log.error('admin', 'Compliance report read failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.get('/api/admin/compliance/items/:code', async (req, res) => {
+    try {
+      const history = await compliance.itemHistory(pool, String(req.params.code || ''));
+      if (!history) return res.status(404).json({ error: 'No such item in the compliance plan.' });
+      res.set('Cache-Control', 'no-store');
+      res.json(history);
+    } catch (err) {
+      log.error('admin', 'Compliance item history read failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/admin/compliance/items/:code/status', requireAdminWrite, drainGuard, async (req, res) => {
+    const code = String(req.params.code || '');
+    const input = compliance.normaliseStatus(code, req.body);
+    if (!input.ok) return res.status(input.status).json({ error: input.error });
+    try {
+      const row = await compliance.recordStatus(pool, { code, ...input.value, changedBy: req.user.id });
+      log.info('admin', 'Compliance status set', { code, status: row.status, by: req.user.username });
+      res.set('Cache-Control', 'no-store');
+      res.json(await complianceReport());
+    } catch (err) {
+      log.error('admin', 'Compliance status save failed', { code, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Scan now: the compliance-scan clock's run, waited for, so it is one
+  // scan at a time wherever the workflow runs. A staging preview arms no
+  // clock, so there it scans on the spot.
+  router.post('/api/admin/compliance/scan', requireAdminWrite, drainGuard, async (req, res) => {
+    try {
+      let error = null;
+      let pending = false;
+      try {
+        const ran = await clocks.runNow('compliance-scan', req.user, { timeoutMs: 90000 });
+        if (!ran) pending = true;
+        else if (ran.lastError) error = ran.lastError;
+      } catch (err) {
+        if (err && err.code !== 'not_armed') throw err;
+        await compliance.runScan(pool).catch((e) => { error = e.message; });
+      }
+      log.info('admin', 'Compliance scan run from the console', { by: req.user.username, pending, error });
+      res.set('Cache-Control', 'no-store');
+      res.status(pending ? 202 : 200).json({ ...await complianceReport(), pending, scanError: error });
+    } catch (err) {
+      if (err && err.status) return res.status(err.status).json({ error: err.message });
+      log.error('admin', 'Compliance scan failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
