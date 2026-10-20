@@ -492,22 +492,18 @@ test('the platform\'s own deploy still reconciles the shared backend', async (t)
   );
 });
 
-test('the boot path reconciles the backend, on Kubernetes only', () => {
+test('each release reconciles the backend in its own build, on Kubernetes only', () => {
   // Otherwise a fix to how the backend is BUILT does not reach one that
-  // already exists until some child app happens to deploy.
+  // already exists until some child app happens to deploy. The release's
+  // work (src/workflow/platform.ts ADOPTIONS), never an older build's.
+  const platform = fs.readFileSync(path.join(__dirname, '..', 'src', 'workflow', 'platform.ts'), 'utf-8');
+  assert.match(platform, /\['assetBackend', \(\) => reconcileAssetBackend\(\)\]/);
+  const fn = platform.slice(platform.indexOf('async function reconcileAssetBackend()'));
+  assert.match(fn.slice(0, 300), /if \(!clusterRelease\(\)\) return null;/, 'never on a staging preview, never on Docker');
+  assert.match(platform, /const clusterRelease = \(\) => legacy\('config'\)\.runsClusterMaintenance\(\)\s+&& legacy\('services\/application-runtime'\)\.mode\(appConfig\) === 'kubernetes';/);
+  assert.match(fn.slice(0, 400), /ensurePlatformAssetBackend\(appConfig\)/);
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf-8');
-  const leader = server.slice(server.indexOf('async function becomeLeader()'));
-  const call = leader.indexOf('ensurePlatformAssetBackend');
-  assert.ok(call > 0, 'the leader reconciles the hosted-asset backend');
-
-  const block = leader.slice(0, call);
-  assert.match(block.slice(-400), /mode\(config\) === 'kubernetes'/,
-    'gated on the runtime — the docker runtime has no cluster to reconcile against');
-  // Fire-and-forget: a platform that cannot reach its cluster must still boot.
-  assert.match(leader.slice(call, call + 400), /\.catch\(/,
-    'failure is logged, never fatal');
-  assert.doesNotMatch(leader.slice(Math.max(0, call - 200), call), /await\s+require/,
-    'and never awaited, so boot is not blocked on it');
+  assert.ok(!server.includes('ensurePlatformAssetBackend'), 'no leader runs it at its election any more');
 });
 
 // ── A deploy and the backend's reconcile (sharedBackendForDeploy) ─────────

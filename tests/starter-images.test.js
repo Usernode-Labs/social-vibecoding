@@ -153,8 +153,9 @@ test('every container env carries the slug and name, reserved and value-exempt',
   const preview = stagingEnv.envFingerprint(stagingEnv.platformStagingEnv({ id: 42, slug: 'some-app-123abc', name: 'Some App' }));
   assert.equal(preview, stagingEnv.expectedStagingFingerprint(), 'a preview of any app matches the expected digest');
   stagingEnv._resetExpected();
-  // A new project's env names it; the boot respawn reads its name.
-  assert.match(read('src/services/app-creator.js'), /\.\.\.appIdentityEnv\(\{ id: appId, slug, name \}, config\),/);
+  // A new project's env names it (its first deploy is every deploy's,
+  // staging.deployProduction); the boot respawn reads its name.
+  assert.match(read('src/services/staging.js'), /\.\.\.appIdentityEnv\(app, config\),/);
   assert.match(read('src/db/migrate.js'), /`SELECT id, slug, name, container_id, manifest_snapshot, db_password, status, self_hosted/);
 });
 
@@ -192,7 +193,8 @@ test('it waits for an image being built, and builds its own when none comes or n
       looks += 1;
       return { rows: looks >= 3 ? [{ template: 't', image_ref: 'img@sha256:1', build_ref: null, engine: 'buildkit' }] : [] };
     }
-    if (/status = 'building'/.test(sql)) { clock += 1000; return { rows: [{}] }; }
+    // A build of it under way: the clock's target, queued or running.
+    if (/FROM wf_work/.test(sql)) { clock += 1000; return { rows: [{ key: 'a'.repeat(64) }] }; }
     return { rows: [] };
   });
   const got = await starterImages.imageFor(K8S, pool, { key: 'a'.repeat(64), slug: 's' }, { pollMs: 1, now });
@@ -201,7 +203,7 @@ test('it waits for an image being built, and builds its own when none comes or n
   // Never longer than waitMs.
   clock = 0;
   const forever = fakePool((sql) => {
-    if (/status = 'building'/.test(sql)) { clock += 30000; return { rows: [{}] }; }
+    if (/FROM wf_work/.test(sql)) { clock += 30000; return { rows: [{ key: 'a'.repeat(64) }] }; }
     return { rows: [] };
   });
   assert.equal(await starterImages.imageFor(K8S, forever, { key: 'a'.repeat(64), slug: 's' }, { pollMs: 1, now, waitMs: 60000 }), null);
@@ -215,13 +217,15 @@ test('it waits for an image being built, and builds its own when none comes or n
   assert.equal(await starterImages.imageFor(K8S, idle, { key: null, slug: 's' }), null);
 });
 
-test('createApp looks for an image only for a ready-made app it has just committed', () => {
-  const src = read('src/services/app-creator.js');
-  assert.match(src, /seeded = \{ sha: commit\.sha\.toLowerCase\(\), files \};\s+if \(appTemplates\.isReadyMade\(templateOf\(appRow\)\)\) \{\s+prebuiltKey = starterImages\.contextKey\(files, starterImages\.buildRecipe\(config\)\);/);
-  assert.match(src, /const prebuilt = prebuiltKey \? await starterImages\.imageFor\(config, pool, \{ key: prebuiltKey, slug \}\) : null;\s+const build = prebuilt \|\| await applicationRuntime\.build\(config, \{/);
-  assert.match(src, /engine: prebuilt \? 'prebuilt' :/);
-  // The deploy is labelled with the project's own commit either way.
-  assert.match(src, /labels: \/\^\[a-f0-9\]\{40\}\$\/i\.test\(mainSha \|\| ''\)/);
+test('a ready-made app\'s first deploy looks for an image only for the starter commit its setup just made', () => {
+  const creator = read('src/services/app-creator.js');
+  assert.match(creator, /const key = appTemplates\.isReadyMade\(template\) \? starterImages\.contextKey\(files, starterImages\.buildRecipe\(config\)\) : null;/);
+  assert.match(creator, /offer: sha \? \{ starter: \{ sha, template, \.\.\.\(key \? \{ key \} : \{\}\) \} \} : null/);
+  const deploy = read('src/services/staging.js');
+  // Only the exact commit (tests/first-deploy.test.js runs it).
+  assert.match(deploy, /const starter = options\.starter && mainSha && String\(options\.starter\.sha \|\| ''\)\.toLowerCase\(\) === String\(mainSha\)\.toLowerCase\(\)/);
+  assert.match(deploy, /if \(!build && starter\?\.key\) \{\s+build = await require\('\.\/starter-images'\)\.imageFor\(config, prodPool, \{ key: starter\.key, slug: app\.slug \}\);/);
+  assert.match(deploy, /engine: build\.prebuilt \? 'prebuilt' :/);
   const timing = require('../src/services/app-creation-timing');
   const note = timing.buildNote({ engine: 'prebuilt', result: { reused: true, prebuilt: { template: 'tier-list-cities', key: 'abcdefabcdef', waitedMs: 1200.4 } } });
   assert.deepEqual(note, { engine: 'prebuilt', reused: true, prebuilt: { template: 'tier-list-cities', key: 'abcdefabcdef', waitedMs: 1200 } });
@@ -229,20 +233,21 @@ test('createApp looks for an image only for a ready-made app it has just committ
 
 // ── 4. Built ahead ───────────────────────────────────────────────────────
 
-test('the leader builds them ahead, and not in a staging preview', () => {
-  const server = read('server.js');
-  assert.match(server, /require\('\.\/src\/services\/starter-images'\)\.start\(config, getPool\(config\)\);/);
-  assert.match(server, /\['starter image', \(\) => require\('\.\/src\/services\/starter-images'\)\.stop\(\)\],/);
+test('a clock only the newest build runs builds them ahead, each key a target, and not in a staging preview', () => {
+  const clocks = read('src/workflow/clock/services.ts');
+  assert.match(clocks, /name: 'starter-images', everyMs: MIN, newestOnly: true,/);
+  assert.match(clocks, /legacy\('services\/starter-images'\)\.targets\(config, pool\)/);
+  assert.match(clocks, /legacy\('services\/starter-images'\)\.buildTarget\(config, pool, ctx\.input\.input\)/);
+  assert.ok(!read('server.js').includes("require('./src/services/starter-images').start"), 'no leader builds them');
   assert.equal(starterImages.prebuildsOn({}), true);
   assert.equal(starterImages.prebuildsOn({ USERNODE_ENV: 'staging' }), false);
   assert.equal(starterImages.prebuildsOn({ STARTER_PREBUILDS: 'off' }), false);
-  // A build takes its row by compare-and-set: queued, a builder gone quiet,
-  // or a failure whose wait is over, a few times at most.
+  // Owed a build: queued, a failure whose wait is over (a few times at
+  // most), or one marked building whose build stopped with its process (the
+  // clock gives one still running no second item).
   const src = read('src/services/starter-images.js');
-  assert.match(src, /AND \(status = 'queued'\s+OR \(status = 'building' AND \(heartbeat_at IS NULL OR heartbeat_at < NOW\(\) - make_interval\(secs => \$4\)\)\)\s+OR \(status = 'failed' AND attempts < \$5/);
-  // Taken only as its build starts: a row waiting its turn is never marked
-  // building, so it never looks abandoned to another process.
-  assert.match(src, /if \(building\.has\(t\.key\) \|\| !\(await take\(pool, t, owner\)\)\) continue;\s+building\.add\(t\.key\);/);
+  assert.match(src, /AND \(status IN \('queued', 'building'\)\s+OR \(status = 'failed' AND attempts < \$3/);
+  assert.doesNotMatch(src, /heartbeat_at = NOW\(\)|owner = \$3/, 'no lease of its own: the workflow\'s');
   // The build is the starter as generated: it writes the shared layer cache.
   assert.match(src, /starterTree: true,/);
   // Its source is a commit with no parent, on the template's own branch.

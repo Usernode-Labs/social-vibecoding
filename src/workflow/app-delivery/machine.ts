@@ -263,8 +263,16 @@ function moved(s: DeliveryState, e: Event<any>, f: Facts, ctx: TransitionContext
   const reason = byHand ? 'check_updates' : 'drift';
   const next = record(d, e, ctx, { reason, sha });
   if (s.name === 'deploying' || s.name === 'healing') return { next: { name: s.name, data: next } };
-  // A retry owed for a drift that just came in again starts now (its
-  // deadline goes): a new commit is a new chance.
+  // This commit's deploy failed a moment ago (a merge's, or one that failed
+  // before it knew its commit, a clone): the drift waits as a retry would,
+  // rather than deploy the same failure again at once. By hand, it goes now.
+  const failedAt = f.lastFailure?.at ? Date.parse(f.lastFailure.at) : NaN;
+  if (!byHand && f.lastFailure && (f.lastFailure.sha == null || f.lastFailure.sha === sha)
+      && Number.isFinite(failedAt) && ctx.now.getTime() - failedAt < DRIFT_RETRY_MS) {
+    const held = [...(d.retry?.held ?? []), next.nextId - 1];
+    const retry: Retry = { failures: d.retry?.failures ?? 1, held, at: new Date(failedAt + DRIFT_RETRY_MS).toISOString() };
+    return rest({ ...next, retry });
+  }
   return start(next, f, ctx);
 }
 const movedGuard = (s: DeliveryState, e: Event<any>, f: Facts): Check => {

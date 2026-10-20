@@ -5,8 +5,8 @@ import type { Tx } from '../kernel/index.ts';
 export interface Facts {
   app: { slug: string; selfHosted: boolean; repoUrl: string | null; mainSha: string | null; status: string } | null;
   // The last deploy failure the row records (staging.deployProduction):
-  // its kind (root_image, …) and the commit it was of.
-  lastFailure: { kind: string | null; sha: string | null } | null;
+  // its kind (root_image, …), the commit it was of, and when.
+  lastFailure: { kind: string | null; sha: string | null; at: string | null } | null;
   // Where the app runs (its row's runtime, else the platform's).
   runtimeKind: string | null;
   // Whether GitHub is configured: without it an app has no repository, and
@@ -33,7 +33,7 @@ export async function readFacts(tx: Tx, appId: number, platform: Platform, { wai
     status: String(a.status) } : null;
   const failure = asRecord(a?.last_failure);
   const lastFailure = failure ? { kind: failure.kind ? String(failure.kind) : null,
-    sha: failure.sha ? String(failure.sha).toLowerCase() : null } : null;
+    sha: failure.sha ? String(failure.sha).toLowerCase() : null, at: failure.at ? String(failure.at) : null } : null;
   const base = { app, lastFailure, runtimeKind: a?.runtime_kind || platform.runtimeMode, githubOn: platform.githubOn };
   if (!waitingMerges) return { ...base, waitingMerges: [] };
   const { rows } = await tx.query(

@@ -130,8 +130,6 @@ test('singleton background work lives in becomeLeader(), not start()', () => {
     'recoverActiveWorkers(config)',
     'resumeHeadlessRuns',
     'startTurnWatchdog(config)',
-    "require('./src/services/main-drift-poller').start(config)",
-    "require('./src/services/app-heal').start(config)",
   ]) {
     assert.ok(becomeLeaderBody.includes(singleton), `becomeLeader() must own: ${singleton}`);
     assert.ok(!startBody.includes(singleton), `start() must NOT run singleton work: ${singleton}`);
@@ -145,7 +143,14 @@ test('singleton background work lives in becomeLeader(), not start()', () => {
   for (const gone of ['mobilePush.start()', 'check-retention', 'startTitleHealSweeper', 'auditExistingRepoPrivacy',
     'vote-digest', 'welcome-dm', 'challenge-scorer',
     'observeMergedOnGithub(', 'reconcileStuckChecks(', 'recoverSessions(', 'startSessionAutoPauseSweeper(',
-    'startStalePrSweeper(', 'startStuckChecksSweeper(', "require('./src/services/fixed-check-sync').start"]) {
+    'startStalePrSweeper(', 'startStuckChecksSweeper(', "require('./src/services/fixed-check-sync').start",
+    // Production apps' health and drift are clocks that tell app delivery; a
+    // project's making is the app-creation machine's; the build's own work
+    // is the release's or a clock only the newest build runs.
+    "require('./src/services/main-drift-poller').start", "require('./src/services/app-heal').start",
+    'app-creation-owner', 'startCommitSweep', 'first-request-sweep', "require('./src/services/starter-images').start",
+    "require('./src/services/language-sync-runner').start", 'startOnBoot', 'ensurePlatformAssetBackend',
+    'reconcileAppGateIngresses']) {
     assert.ok(!serverJs.includes(gone), `no leader runs ${gone}`);
   }
 

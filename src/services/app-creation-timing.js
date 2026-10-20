@@ -5,25 +5,27 @@
 // A newcomer's first project took about 45 seconds to be ready (onboarding
 // run, 12 Oct 2026), and nothing said which part of creation spent them: the
 // admin Journey's creation path has the total (app_running's
-// secondsFromCreation) and nothing under it. This keeps one stopwatch per
-// creation attempt (services/app-creator.js createApp) and, once the attempt
-// ends, whatever its outcome, writes what it measured twice:
+// secondsFromCreation) and nothing under it. An attempt's two halves each
+// keep a stopwatch, in the processes that run them: its setup
+// (services/app-creator.js setUp) and its first deploy (services/staging.js
+// deployProduction). Once the attempt ends, whatever its outcome, the
+// app-creation machine (src/workflow/app-creation/) writes what they
+// measured as one record (src/workflow/app-creation/timing.ts combine):
 //
-//   * an `app_creation_timed` event (services/events.js), which the
-//     Journey's creation path reads (services/journey.js creationPath);
+//   * an `app_creation_timed` event, which the Journey's creation path
+//     reads (services/journey.js creationPath);
 //   * a `Creation timed` log line, so a failed attempt is there to read too.
 //
 // The stages, in the order creation reaches them. Each is its own wall
-// clock: the database and the repository are made side by side, and the
-// card wait sits inside the repository, so the stages do not add up to
-// `totalMs`.
+// clock: the database and the card then the repository are made side by
+// side, so the stages do not add up to `totalMs`.
 //
 //   database    the project's Postgres database and its role
+//   card        making the first session's card, before the repository
 //   repository  its GitHub repository made and the starter committed (an
 //               import: the scaffold and the create answers committed)
-//   card        waiting for the first session's card, inside repository
-//   checkout    the tree the build reads: the committed starter written
-//               out, or a clone
+//   checkout    the tree the build reads: a clone of the repository (or,
+//               without GitHub, the starter's files written out)
 //   lock        waiting to share the build-retention lock (Kubernetes)
 //   manifest    dapp.json read and reconciled, required secrets checked
 //   build       the image build; `build` beside it says which engine and
@@ -41,7 +43,6 @@
 // Never a reason creation fails or waits: nothing here throws, and the
 // event is written fire-and-forget.
 
-const events = require('./events');
 const log = require('./logger');
 
 const STAGES = Object.freeze([
@@ -167,53 +168,4 @@ function buildNote({ engine, result, solveStartMs = null } = {}) {
   return note;
 }
 
-/**
- * Write the attempt's record: the event and the log line. Resolves, never
- * rejects, and never throws.
- */
-function record(pool, { appId, userId = null, slug = null, watch } = {}) {
-  try {
-    const metadata = watch && watch.snapshot();
-    if (!metadata) return Promise.resolve();
-    log.info('app-creator', 'Creation timed', { appId, slug, ...metadata });
-    return events.record(pool, {
-      type: events.EVENT_TYPES.APP_CREATION_TIMED, userId, appId, metadata,
-    });
-  } catch (err) {
-    log.warn('app-creator', 'Creation timing not recorded', { appId, err: err && err.message });
-    return Promise.resolve();
-  }
-}
-
-/**
- * One attempt's record from its two halves (src/workflow/app-creation/):
- * the setup's stopwatch snapshot (database, card, repository) and the first
- * deploy's (checkout, lock, manifest, build, deploy, rollout), measured in
- * the processes that ran them, with the outcome and the whole time the
- * machine saw. Pure; null when there is nothing to record.
- */
-const RECORD_KEYS = new Set(['outcome', 'totalMs', 'stages', 'failedIn']);
-function combine({ setup = null, deploy = null, outcome = 'error', totalMs = 0 } = {}) {
-  if (!setup && !deploy) return null;
-  const parts = [setup, deploy].filter((p) => p && typeof p === 'object');
-  const stages = {};
-  const notes = {};
-  let failedIn = null;
-  for (const p of parts) {
-    for (const [k, v] of Object.entries(p.stages || {})) if (STAGES.includes(k)) stages[k] = (stages[k] || 0) + ms(Number(v) || 0);
-    for (const [k, v] of Object.entries(p)) if (!RECORD_KEYS.has(k)) notes[k] = v;
-    if (Array.isArray(p.failedIn) && p.failedIn.length) failedIn = p.failedIn;
-  }
-  const result = OUTCOMES.includes(outcome) ? outcome : 'error';
-  const metadata = {
-    outcome: result,
-    totalMs: ms(Number(totalMs) || 0),
-    stages: Object.fromEntries(STAGES.filter((s) => s in stages).map((s) => [s, stages[s]])),
-    ...(result === 'error' && failedIn ? { failedIn } : {}),
-    ...notes,
-  };
-  log.info('app-creator', 'Creation timed', metadata);
-  return metadata;
-}
-
-module.exports = { STAGES, OUTCOMES, stopwatch, IDLE, buildNote, record, combine, KEPT_BUILD_STEPS };
+module.exports = { STAGES, OUTCOMES, stopwatch, IDLE, buildNote, KEPT_BUILD_STEPS };

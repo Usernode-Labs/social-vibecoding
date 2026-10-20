@@ -24,8 +24,8 @@ import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type { Check, Event, Json, Machine, MessageRequest, Outcome, Push, TransitionContext, WorkRequest, WorkResultPayload } from '../kernel/index.ts';
 import { MACHINE as DELIVERY, appKey as deliveryKey } from '../app-delivery/machine.ts';
 import { appStatus, creationPhase } from '../pushes.ts';
-import { legacy } from '../legacy.ts';
 import { readFacts } from './facts.ts';
+import { combine } from './timing.ts';
 import type { Facts } from './facts.ts';
 
 export const MACHINE = 'app-creation';
@@ -156,7 +156,8 @@ function delivered(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Ou
   const p = e.payload as { sha: string | null; url: string | null; timing: Json };
   return {
     next: { name: 'running', data: { ...d, timedOut: false } },
-    writes: [{ type: 'running', appId: d.appId, timing: timingOf(d, p.timing, 'running', ctx) }],
+    // Its timing was recorded when it failed, if it ran late.
+    writes: [{ type: 'running', appId: d.appId, timing: s.name === 'failed' ? null : timingOf(d, p.timing, 'running', ctx) }],
     push: [appStatus({ appId: d.appId, appSlug: d.appSlug, status: 'running', url: p.url })],
     timer: null,
   };
@@ -308,13 +309,14 @@ export function appCreation(): Machine<CState, Facts> {
                   retry_count = retry_count + CASE WHEN $2::boolean THEN 1 ELSE 0 END
             WHERE id = $1 AND status = 'error'`, [w.appId, w.counted]);
       },
-      // What failed is the setup's record, or one made here (services/
-      // deploy-failure.js syntheticRecord: interrupted, timed out), or the
-      // first deploy's, which it wrote already.
-      failed: async (tx, w) => {
+      // What failed is the setup's record, or one made here (interrupted,
+      // timed out: services/deploy-failure.js syntheticRecord's shape), or
+      // the first deploy's, which it wrote already.
+      failed: async (tx, w, ctx) => {
         const f = w.failure as any;
         const record = f?.synthetic
-          ? { ...legacy('services/deploy-failure').syntheticRecord(f.synthetic, f.reason), ...(f.interrupted ? { interrupted: true } : {}) }
+          ? { stage: f.synthetic, reason: String(f.reason).slice(0, 280), log: '', at: ctx.now.toISOString(), sha: null,
+            ...(f.interrupted ? { interrupted: true } : {}) }
           : f;
         await tx.query(
           `UPDATE apps SET status = 'error', last_failure = COALESCE($2::jsonb, last_failure)
@@ -359,7 +361,7 @@ const FIRST_RUNNING_SQL = `WITH marked AS (
 // the setup and the first deploy measured.
 async function timed(tx: any, w: any) {
   if (!w.timing) return;
-  const metadata = legacy('services/app-creation-timing').combine(w.timing);
+  const metadata = combine(w.timing);
   if (!metadata) return;
   await tx.query(
     `INSERT INTO events (user_id, app_id, event_type, metadata)

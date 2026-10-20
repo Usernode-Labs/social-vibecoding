@@ -485,10 +485,10 @@ test('a down app is kept once per app per minute; only a heal that brought it ba
   assert.deepEqual(calls.map((c) => c[1][2]), ['started', 'restarted', 'deploy_requested', 'respawned']);
   await outages.recordHealed(pool, { ...app, self_hosted: true }, { status: 'restarted' }, 'sweep', minute);
   assert.equal(calls.length, 4, 'Homeroom itself is never recorded');
-  // The watchdog records both of its paths; the page records a document load.
+  // The heal records what it did, from the clock's report or a visit (its
+  // `via`), a deploy as a deploy asked for; the page records a document load.
   const heal = read('src/services/app-heal.js');
-  assert.match(heal, /checkAndHealOne\(config, pool, app, \{ background: true \}\);\n\s*appOutages\.recordHealed\(pool, app, result, 'sweep'\);/);
-  assert.match(heal, /checkAndHealOne\(config, pool, rows\[0\], \{ probeRunning: true \}\);\n\s*appOutages\.recordHealed\(pool, rows\[0\], result, 'visit'\);/);
+  assert.match(heal, /appOutages\.recordHealed\(pool, app, \{ status: result\.status === 'needs_deploy' \? 'deploy_requested' : result\.status \}, via\);/);
   const page = read('src/routes/app-error.js');
   assert.ok(page.indexOf('if (!isDocument)') < page.indexOf('appOutages.recordUnavailable(pool, productionSlug)'), 'a fetch from a half-loaded app is not an open');
 });

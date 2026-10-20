@@ -71,7 +71,7 @@ stub(ids.github, {
 // The deploys asked of app delivery.
 const requested = [];
 stub(ids.platform, {
-  requestDeploy: async (appId, reason) => { requested.push([appId, reason]); return 1; },
+  reportMainMoved: async (appId, sha, o) => { requested.push([appId, o?.byHand ? 'check_updates' : 'drift']); return { status: 'accepted' }; },
   wantMerge: async () => {},
   // main's unit suite on a new main (the main-check machine) is its own concern.
   requestMainCheck: async () => {},
@@ -108,12 +108,12 @@ test.beforeEach(() => {
 });
 
 test('the second read is conditional, and a 304 answers unchanged with no deploy and no extra call', async () => {
-  const first = await poller.checkAndRedeployOne({}, pool, { ...APP });
+  const first = await poller.checkOne({}, pool, { ...APP });
   assert.equal(first.status, 'no_drift');
   assert.equal(branchCalls.length, 1);
   assert.equal(branchCalls[0].headers, undefined, 'nothing to be conditional on yet');
 
-  const second = await poller.checkAndRedeployOne({}, pool, { ...APP });
+  const second = await poller.checkOne({}, pool, { ...APP });
   assert.equal(second.status, 'no_drift');
   assert.equal(branchCalls.length, 2, 'one call per check, the 304 included');
   assert.deepEqual(branchCalls[1].headers, { 'if-none-match': `W/"${SHA}"` });
@@ -122,8 +122,8 @@ test('the second read is conditional, and a 304 answers unchanged with no deploy
 
 test('the self-hosted row hands release-watch the cached head on a 304, in the same shape', async () => {
   const self = { ...APP, id: 1, slug: 'homeroom', repo_url: 'https://github.com/Usernode-Labs/social-vibecoding', main_sha: 'c'.repeat(40), self_hosted: true };
-  await poller.checkAndRedeployOne({}, pool, self);
-  await poller.checkAndRedeployOne({}, pool, self);
+  await poller.checkOne({}, pool, self);
+  await poller.checkOne({}, pool, self);
   assert.equal(observed.length, 2);
   assert.equal(observed[0].notModified, undefined);
   assert.equal(observed[1].notModified, true);
@@ -134,13 +134,13 @@ test('the self-hosted row hands release-watch the cached head on a 304, in the s
 });
 
 test('a moved main is a 200 with the new tip, and a deploy is asked for', async () => {
-  await poller.checkAndRedeployOne({}, pool, { ...APP });
+  await poller.checkOne({}, pool, { ...APP });
   tip = NEWER;
-  const out = await poller.checkAndRedeployOne({}, pool, { ...APP });
+  const out = await poller.checkOne({}, pool, { ...APP });
   assert.equal(out.status, 'deploy_requested');
   assert.equal(out.to, NEWER);
   assert.deepEqual(requested, [[5, 'drift']]);
-  const third = await poller.checkAndRedeployOne({}, pool, { ...APP, main_sha: NEWER });
+  const third = await poller.checkOne({}, pool, { ...APP, main_sha: NEWER });
   assert.equal(third.status, 'no_drift');
   assert.deepEqual(branchCalls[2].headers, { 'if-none-match': `W/"${NEWER}"` },
     'and the new ETag is the one sent next');
@@ -154,7 +154,7 @@ test('a 304 for a repo with nothing cached is still an error, never a guess', as
   const prior = github.getReadOctokit;
   github.getReadOctokit = async () => bare;
   try {
-    const out = await poller.checkAndRedeployOne({}, pool,
+    const out = await poller.checkOne({}, pool,
       { ...APP, slug: 'never-read', repo_url: 'https://github.com/usernode-bot/never-read' });
     assert.equal(out.status, 'fetch_failed');
     assert.deepEqual(requested, []);
@@ -176,15 +176,15 @@ test('a pass is held while the budget is under the reserve, and the admin check 
     'x-ratelimit-remaining': '400',
     'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 1800),
   });
-  const held = await poller.poll({});
-  assert.deepEqual(held, { apps: 2, checked: 0, held: true });
+  const held = await poller.scan({}, pool);
+  assert.deepEqual(held, { apps: 2, checked: 0, reported: [], held: true });
   assert.equal(branchCalls.length, 0, 'not one read while held');
 
-  const manual = await poller.checkAndRedeployOne({}, pool, { ...APP }, { manual: true });
+  const manual = await poller.checkByHand({}, pool, { ...APP });
   assert.equal(manual.status, 'no_drift', '"Check for updates" is a person asking');
   assert.equal(branchCalls.length, 1);
 
   budget._resetForTests();
-  const free = await poller.poll({});
-  assert.deepEqual(free, { apps: 2, checked: 2, held: false });
+  const free = await poller.scan({}, pool);
+  assert.deepEqual(free, { apps: 2, checked: 2, reported: [] });
 });

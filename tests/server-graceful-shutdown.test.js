@@ -366,7 +366,7 @@ test('the workflow runtime stops its loops as shutdown begins, its work only aft
     'chosen with the bot\'s loops, before the short drain\'s listener closes');
   assert.ok(drained > shortClose && longClose > drained && stoppedAfter > drained,
     'a process finishing its work closes its listener and stops its workflow work after the drain');
-  assert.match(body, /await Promise\.race\(\[\n\s+Promise\.all\(\[[^\]]*\bworkflowStop\b[^\]]*\]\)\.then\(\(\) => shutdownPool\.end\(\)\),/,
+  assert.match(body, /await Promise\.race\(\[\n\s+workflowStop\.then\(\(\) => shutdownPool\.end\(\)\),/,
     'its stop (each build\'s lease given up) is awaited before the pool ends, inside the pool close\'s bound');
   assert.doesNotMatch(body, /homeroom-bot-drain|waitForSafePoint|botDeadlineMs/, 'and nothing waits for the bot\'s builds');
 });

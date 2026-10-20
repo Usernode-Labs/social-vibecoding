@@ -677,7 +677,9 @@ async function startSketch(db, { app, user, brief, audience = null, solo = false
      VALUES ($1, $2, 'pending', $3::jsonb)
      ON CONFLICT (app_id) DO NOTHING
      RETURNING app_id`,
-    [app.id, user.id, JSON.stringify({ brief, audience, solo: !!solo, timeZone })]
+    // The maker's username too: the card names them by it when their row
+    // cannot be read (makerOf).
+    [app.id, user.id, JSON.stringify({ brief, audience, solo: !!solo, timeZone, username: user.username || null })]
   );
   return rows.length > 0;
 }
@@ -696,7 +698,7 @@ async function drawFor(pool, appId, deps = {}) {
     `SELECT s.user_id, s.request, a.id, a.name FROM app_sketches s JOIN apps a ON a.id = s.app_id WHERE s.app_id = $1`, [appId]);
   const request = owed?.request || {};
   const app = { id: owed.id, name: owed.name };
-  const user = owed.user_id ? { id: owed.user_id } : null;
+  const user = owed.user_id ? { id: owed.user_id, username: request.username || null } : null;
   try {
     const maker = user ? await makerOf(pool, user).catch(() => null) : null;
     const { card, model, error } = await makeCard(pool, {

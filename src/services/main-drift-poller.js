@@ -243,6 +243,7 @@ module.exports = {
   enabled,
   intervalMs: () => POLL_INTERVAL_MS,
   scan,
+  checkOne,
   // The admin "Check for updates" button: one app, now, by hand.
   checkByHand: (config, pool, app) => checkOne(config, pool, app, { byHand: true }),
   _forTest: {

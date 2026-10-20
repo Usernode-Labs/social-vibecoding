@@ -230,13 +230,10 @@ test('the idle sweep leaves a worker another process keeps warm, and adoption le
   assert.match(adopt, /processes\.holders\('warm', sessionId, pool\)/);
 });
 
-test('a heal under way elsewhere is not started twice', async (t) => {
-  await elsewhere([['app_heal', 'ear-trainer']]);
-  t.after(() => processes._reset());
-  const heal = require('../src/services/app-heal');
-  const out = await heal.checkAndHealOne({}, null, { slug: 'ear-trainer', runtime_kind: 'docker' });
-  assert.deepEqual(out, { status: 'in_flight', slug: 'ear-trainer' });
-});
+// A heal is app delivery's work (src/workflow/app-delivery/): one at a time
+// per app, never beside its deploy, under the workflow's lease rather than a
+// hold another process reads through a mirror (tests/workflow-app-delivery-
+// postgres.test.js H1-H3).
 
 // ── Roles at boot ─────────────────────────────────────────────────────
 

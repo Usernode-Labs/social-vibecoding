@@ -1,8 +1,7 @@
-// Regression coverage for issue #1549. Fork setup used to swallow its real
-// error, leaving last_failure null and a bare "Error" tile. Retrying then ran
-// the ordinary create path and could seed the starter template. These tests
-// pin the worker half: useful failures are persisted/broadcast, and a fork
-// whose repository was already copied resumes from that repository.
+// Regression coverage for issue #1549: a remix's source is found by the id
+// its lineage records, and its lineage keeps what git did not give as null.
+// A remix's setup (its failures, its resume from a copied repository, its
+// empty database) is app-creator.js setUp's: tests/app-creator-failure.test.js.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -121,77 +120,6 @@ const SOURCE = {
   self_hosted: false,
 };
 
-function recordedFailure(queries) {
-  const write = queries.find((q) => /last_failure = \$2/.test(q.sql));
-  assert.ok(write, 'fork failure should persist status and last_failure together');
-  assert.equal(write.params[0], 'error');
-  assert.equal(write.params[2], FORK.id);
-  return JSON.parse(write.params[1]);
-}
-
-test('database-setup failure is persisted and broadcast with its real reason', async () => {
-  const fx = loadForker({
-    createDatabase: async () => { throw new Error('could not create the database'); },
-  });
-
-  await fx.subject.forkApp({}, { ...FORK }, SOURCE);
-
-  const failure = recordedFailure(fx.queries);
-  assert.equal(failure.stage, 'database');
-  assert.match(failure.reason, /could not create the database/);
-  assert.deepEqual(fx.phases.map((p) => p[2]), ['database']);
-  assert.deepEqual(fx.cleared, [FORK.slug]);
-  assert.deepEqual(fx.statusPushes, [{
-    id: FORK.id,
-    slug: FORK.slug,
-    status: 'error',
-    errorReason: failure.reason,
-  }]);
-});
-
-test('source-repository clone failure is classified instead of becoming a generic error', async () => {
-  const previousToken = process.env.GITHUB_BOT_TOKEN;
-  process.env.GITHUB_BOT_TOKEN = 'test-only-token';
-  const fx = loadForker({
-    execFileAsync: async (command) => {
-      if (command === 'git') {
-        const err = new Error("fatal: repository 'source-app' not found");
-        err.stderr = "fatal: repository 'source-app' not found";
-        throw err;
-      }
-      return { stdout: '', stderr: '' };
-    },
-  });
-  try {
-    await fx.subject.forkApp({}, { ...FORK }, SOURCE);
-
-    const failure = recordedFailure(fx.queries);
-    assert.equal(failure.stage, 'clone');
-    assert.match(failure.reason, /not found/);
-    assert.deepEqual(fx.phases.map((p) => p[2]), ['database', 'repository']);
-    assert.equal(fx.finalizeCalls.length, 0);
-    assert.equal(fx.statusPushes[0].errorReason, failure.reason);
-  } finally {
-    if (previousToken === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = previousToken;
-  }
-});
-
-test('retry resumes a copied fork repository and never enters the fresh-template branch', async () => {
-  const fx = loadForker();
-  const copiedFork = {
-    ...FORK,
-    status: 'error',
-    repo_url: 'https://github.com/usernode-bot/forked-app',
-  };
-
-  await fx.subject.forkApp({}, copiedFork, null);
-
-  assert.equal(fx.createCalls.length, 1, 'the existing fork repo is treated as an import');
-  assert.equal(fx.createCalls[0][1], copiedFork);
-  assert.equal(fx.cloneCalls(), 0, 'the source DB snapshot is not repeated after the repo copy');
-  assert.equal(fx.finalizeCalls.length, 0, 'createApp owns the resumed deploy');
-});
 
 test('source lookup treats a recorded app id as authoritative', async () => {
   const fx = loadForker();
@@ -227,116 +155,6 @@ test('source lookup supports legacy slug-only lineage', async () => {
   const result = await fx.subject.findForkSource(lookupPool, legacyFork);
 
   assert.equal(result, SOURCE);
-});
-
-test('a successful fork deploys the cloned source tree, not starter-template files', async () => {
-  const previousToken = process.env.GITHUB_BOT_TOKEN;
-  process.env.GITHUB_BOT_TOKEN = 'test-only-token';
-  const tempDir = `/tmp/usernode-fork-${FORK.slug}`;
-  const fx = loadForker({
-    execFileAsync: async (command, args, options = {}) => {
-      if (command === 'rm') {
-        fs.rmSync(args[1], { recursive: true, force: true });
-      } else if (command === 'git' && args[0] === 'clone') {
-        const destination = args[args.length - 1];
-        fs.mkdirSync(`${destination}/public`, { recursive: true });
-        fs.writeFileSync(`${destination}/dapp.json`, JSON.stringify({ name: 'Source App' }));
-        fs.writeFileSync(`${destination}/public/index.html`, '<main>SOURCE APP CONTENT</main>');
-      } else if (command === 'git' && args[0] === 'rev-parse') {
-        // The squashed commit's sha, read back after the push: its own git
-        // step now, not the last line of a bash script's stdout.
-        return { stdout: 'source-copy-sha\n', stderr: '' };
-      }
-      return { stdout: '', stderr: '' };
-    },
-  });
-
-  try {
-    await fx.subject.forkApp({}, { ...FORK }, SOURCE);
-
-    assert.equal(fx.finalizeCalls.length, 1);
-    const deploy = fx.finalizeCalls[0][1];
-    assert.equal(deploy.repoUrl, 'https://github.com/usernode-bot/forked-app');
-    assert.equal(deploy.mainSha, 'source-copy-sha');
-    const html = fs.readFileSync(`${deploy.tempDir}/public/index.html`, 'utf8');
-    assert.match(html, /SOURCE APP CONTENT/);
-    assert.doesNotMatch(html, /Starter template/);
-    const manifest = JSON.parse(fs.readFileSync(`${deploy.tempDir}/dapp.json`, 'utf8'));
-    assert.equal(manifest.name, FORK.name, 'only the copied manifest name is rewritten');
-  } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
-    if (previousToken === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = previousToken;
-  }
-});
-
-// A remix (what people call a fork) is the original's code and look, and
-// nothing of its people: an empty database of its own, none of the
-// original's keys, and dapp.json without the original's audience, approval
-// rule or admins. It also records the two commits it was cut from, written
-// with the repository in one statement, so a later diff of the copy can be
-// told apart from what it copied.
-test('a remix gets an empty database, no keys, and records the commits it was cut from', async () => {
-  const previousToken = process.env.GITHUB_BOT_TOKEN;
-  process.env.GITHUB_BOT_TOKEN = 'test-only-token';
-  const tempDir = `/tmp/usernode-fork-${FORK.slug}`;
-  let revParses = 0;
-  const fx = loadForker({
-    execFileAsync: async (command, args) => {
-      if (command === 'rm') {
-        fs.rmSync(args[1], { recursive: true, force: true });
-      } else if (command === 'git' && args[0] === 'clone') {
-        const destination = args[args.length - 1];
-        fs.mkdirSync(destination, { recursive: true });
-        fs.writeFileSync(`${destination}/dapp.json`, JSON.stringify({
-          name: 'Source App',
-          visibility: { build: 'public', view: 'public' },
-          governance: { approvers: 'invited' },
-          admins: ['source-admin'],
-          secrets: [{ key: 'PUBLIC_KEY', private: false }],
-        }));
-      } else if (command === 'git' && args[0] === 'rev-parse') {
-        revParses += 1;
-        // First the clone's HEAD (before the flatten), then the copy's own
-        // first commit (after the push).
-        return { stdout: revParses === 1 ? `${'a'.repeat(40)}\n` : `${'b'.repeat(40)}\n`, stderr: '' };
-      }
-      return { stdout: '', stderr: '' };
-    },
-  });
-
-  try {
-    await fx.subject.forkApp({}, { ...FORK }, SOURCE);
-
-    assert.equal(fx.cloneCalls(), 0, 'the original\'s database is never copied');
-    assert.deepEqual(fx.createDbCalls, [['app_forked_app']], 'a new, empty database of its own');
-    assert.equal(fx.secretReads.length, 0, 'the original\'s stored keys are never read');
-    assert.equal(fx.secretWrites.length, 0, 'and none are written into the copy');
-
-    const lineage = fx.queries.find((q) => /forked_from/.test(q.sql));
-    assert.ok(lineage, 'the lineage shas are written');
-    assert.match(lineage.sql, /SET repo_url = \$1,/, 'in the same write as the repository');
-    assert.match(lineage.sql, /jsonb_typeof\(forked_from\) = 'object'/, 'merged into the stored reference');
-    assert.equal(lineage.params[0], 'https://github.com/usernode-bot/forked-app');
-    assert.deepEqual(JSON.parse(lineage.params[1]), {
-      sourceSha: 'a'.repeat(40),
-      forkBaseSha: 'b'.repeat(40),
-    });
-    assert.equal(lineage.params[2], FORK.id);
-
-    assert.equal(fx.finalizeCalls.length, 1, 'the shared deploy tail runs (its secrets gate decides awaiting_secrets)');
-    const manifest = JSON.parse(fs.readFileSync(`${fx.finalizeCalls[0][1].tempDir}/dapp.json`, 'utf8'));
-    assert.equal(manifest.name, FORK.name);
-    assert.equal(manifest.visibility, undefined, 'the copy starts as Just you, not the original\'s audience');
-    assert.equal(manifest.governance, undefined, 'the original\'s approval rule stays with it');
-    assert.equal(manifest.admins, undefined, 'and so do its admins');
-    assert.deepEqual(manifest.secrets, [{ key: 'PUBLIC_KEY', private: false }],
-      'the keys the code needs are still declared, for the owner to fill');
-  } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
-    if (previousToken === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = previousToken;
-  }
 });
 
 test('forkLineageShas stores what git did not give as null, never leaves it out', () => {

@@ -108,19 +108,28 @@ async function setUp(config, pool, appId, ctx) {
   timing.note('starter', templateOf(row));
   try {
     reportPhase(appId, row.slug, 'database');
-    // The database and the card do not need each other: side by side.
-    const [, sketch] = await Promise.all([
-      steps.once('database', () => timing.time('database', () => part('database', async () => {
-        const dbName = dbManager.appDbName(row.slug);
-        const { password } = await dbManager.createDatabase(dbName);
-        await pool.query('UPDATE apps SET db_password = $1 WHERE id = $2', [password, appId]);
-        return true;
-      }))),
-      fork || row.repo_url ? null : steps.once('card', () => timing.time('card', () => appSketch.drawFor(pool, appId))),
-    ]);
-    reportPhase(appId, row.slug, 'repository');
-    const repo = await steps.once('repository', () => timing.time('repository', () => part('repo',
-      () => (fork ? copyFork(config, pool, row) : row.repo_url ? scaffoldImport(row) : seedStarter(config, pool, row, sketch, ctx)))));
+    // The database, and the card then the repository, do not need each
+    // other (#4895: the starter writes no database URL into the
+    // repository): side by side. The made screen's 'repository' step is
+    // reported once the database is done, so it never ticks off a database
+    // still being made.
+    const database = steps.once('database', () => timing.time('database', () => part('database', async () => {
+      const dbName = dbManager.appDbName(row.slug);
+      const { password } = await dbManager.createDatabase(dbName);
+      await pool.query('UPDATE apps SET db_password = $1 WHERE id = $2', [password, appId]);
+      return true;
+    }))).then((done) => { reportPhase(appId, row.slug, 'repository'); return done; });
+    const repository = (async () => {
+      const sketch = fork || row.repo_url ? null : await steps.once('card', () => timing.time('card', () => appSketch.drawFor(pool, appId)));
+      return steps.once('repository', () => timing.time('repository', () => part('repo',
+        () => (fork ? copyFork(config, pool, row) : row.repo_url ? scaffoldImport(row) : seedStarter(config, pool, row, sketch, ctx)))));
+    })();
+    // Both settle before a failure is reported, so nothing of this attempt
+    // runs on after it; a database that failed is reported first.
+    const [db, repoDone] = await Promise.allSettled([database, repository]);
+    if (db.status === 'rejected') throw db.reason;
+    if (repoDone.status === 'rejected') throw repoDone.reason;
+    const repo = repoDone.value;
     return { sha: repo.sha ?? null, repoUrl: repo.repoUrl ?? null, offer: repo.offer ?? null, timing: timing.snapshot() };
   } catch (err) {
     if (ctx.signal?.aborted) throw err;
