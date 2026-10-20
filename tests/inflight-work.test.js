@@ -97,7 +97,11 @@ test('waitIdle also waits for `also`, polling it', async () => {
   setTimeout(() => { open = false; }, 60);
   const startedAt = Date.now();
   assert.equal(await inflight.waitIdle({ timeoutMs: 2000, pollMs: 10, also: () => !open }), true);
-  assert.ok(Date.now() - startedAt >= 55);
+  // It resolved only once also() said idle. Not a wall-clock bound: a busy
+  // runner fires the 60 ms timer early by Date.now() (libuv counts from its
+  // cached loop time), which failed the unit suite with nothing wrong.
+  assert.equal(open, false, 'waited for also()');
+  assert.ok(Date.now() - startedAt < 2000, 'well before the deadline');
   assert.equal(await inflight.waitIdle({ timeoutMs: 0, also: () => true }), true, 'idle now: no wait');
 });
 

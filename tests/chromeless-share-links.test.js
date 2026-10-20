@@ -45,10 +45,15 @@ test('scaffold server.js redirects unauthenticated document navigations to the c
   // Via PLATFORM_ORIGIN rather than an inlined literal: the origin is read
   // from the injected USERNODE_PLATFORM_ORIGIN at runtime (no hostname is
   // baked in at scaffold time), so the link follows the platform when its
-  // domain moves instead of pointing at where it used to be.
+  // domain moves instead of pointing at where it used to be. The slug is
+  // read at runtime too (USERNODE_APP_SLUG), so no app's slug is written in
+  // and every project made from one starter is the same code
+  // (services/starter-images.js).
+  assert.match(server, /const APP_SLUG = process\.env\.USERNODE_APP_SLUG \|\| '';/);
+  assert.doesNotMatch(server, /demo-app-abc123/, 'no slug is written in');
   assert.match(
     server,
-    /res\.redirect\(302, PLATFORM_ORIGIN \+ '\/app\/demo-app-abc123\/full' \+ deepPath\)/,
+    /const appPath = APP_SLUG \? '\/app\/' \+ encodeURIComponent\(APP_SLUG\) \+ '\/full' \+ deepPath : '';\s+if \(PLATFORM_ORIGIN && req\.get\('sec-fetch-dest'\) === 'document'\) \{\s+return res\.redirect\(302, PLATFORM_ORIGIN \+ appPath\);/,
     'redirects to the platform chromeless deep link for this slug, carrying the inner path'
   );
   // The redirect must live INSIDE the unauthenticated branch, before the
@@ -84,7 +89,7 @@ test('scaffold server.js encodes ?path= from req.originalUrl behind the characte
 test('scaffold landing page deep-links to the app, not the bare platform origin', () => {
   const files = getTemplateFiles('Demo App', 'demo-app-abc123', 'postgres://x', 's');
   const server = files.find((f) => f.path === 'server.js').content;
-  assert.match(server, /href="\$\{PLATFORM_ORIGIN\}\/app\/demo-app-abc123\/full\$\{deepPath\}"/,
+  assert.match(server, /href="\$\{PLATFORM_ORIGIN\}\$\{appPath\}"/,
     'landing anchor carries the gated deep path too, on the runtime origin');
 });
 
