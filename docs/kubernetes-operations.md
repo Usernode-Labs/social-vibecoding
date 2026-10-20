@@ -856,6 +856,48 @@ interfaces accept managed runtime names such as `sv-worker-s42` and
 `sv-preview-7-s42`. Their inventory includes readiness but leaves CPU/memory
 usage null when measured usage is unavailable.
 
+## IP address retention
+
+The platform keeps a person's IP address for `IP_RETENTION_DAYS` (default
+180, six months; whole days from 1 to 3650; any other value keeps 180). The
+privacy notice states the same period, so change the two together. The leader clears older addresses
+once a day (`ip-retention` in `leader_sweeps`; `src/services/ip-retention.js`
+lists each column) and keeps the rows. A pass that cleared anything logs
+`Cleared expired IP addresses` with a count per table.
+
+The database is only one copy. The platform also writes a client address into a
+few stdout lines (rate-limit refusals, internal-route refusals, patch-upload
+refusals, database-export audit lines), and those live wherever container
+output is kept. Nothing in this repository ships logs anywhere, so these steps
+are the cluster's:
+
+1. **Kubelet container logs.** Kubelet rotates by size only, so bound the
+   size. On Talos, add to the machine config of every node and apply it:
+
+   ```yaml
+   machine:
+     kubelet:
+       extraConfig:
+         containerLogMaxSize: 10Mi
+         containerLogMaxFiles: 3
+   ```
+
+   (`talosctl -n NODE patch machineconfig --patch @kubelet-logs.yaml`). On
+   the platform 30Mi is days of output, not months, and a container's logs
+   also go when its Pod is deleted, which every release does. Check with
+   `kubectl get --raw /api/v1/nodes/NODE/proxy/configz` that the two values
+   took.
+2. **Any log collector** (Loki, Vector, Fluent Bit, a hosted service) set up
+   outside this repository must keep platform logs no longer than
+   `IP_RETENTION_DAYS`. For Loki: `limits_config.retention_period: 4320h`
+   with `compactor.retention_enabled: true`.
+3. **Database backups** hold the addresses that were in the database on the
+   day of the backup. Keep backups no longer than the period plus the backup
+   rotation, or say so in the notice.
+
+The in-memory log ring behind `/api/status` holds the last 200 lines and is
+gone when the process restarts.
+
 ## Build and startup failures
 
 Find the kpack lifecycle Pod through the Build's `status.podName`, then inspect

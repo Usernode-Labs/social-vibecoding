@@ -15,6 +15,7 @@ const log = require('./logger');
 const appAccess = require('./app-access');
 const notifications = require('./notifications');
 const events = require('./events');
+const contactPrivacy = require('./contact-privacy');
 
 // Validation failures the caller can surface verbatim: `status` is the
 // HTTP status the standalone route responds with; the governance-pr
@@ -53,6 +54,13 @@ async function inviteApprover(pool, app, username, inviter) {
       throw new ApproverInviteError(400,
         `@${target.username} must be a collaborator first. Invite them as a collaborator, then as an approver`);
     }
+  }
+
+  // #5104: an approver invite is an invitation like any other, so it waits
+  // on the invitee's contact_policy. On an invite-only-build app the rule
+  // above already made them a collaborator, and so connected.
+  if (!(await contactPrivacy.mayContact(pool, inviter.id, target.id))) {
+    throw new ApproverInviteError(403, contactPrivacy.CONTACT_RESTRICTED_MESSAGE);
   }
 
   const { rows: inserted } = await pool.query(

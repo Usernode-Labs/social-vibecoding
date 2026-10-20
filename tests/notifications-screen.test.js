@@ -106,7 +106,8 @@ test('the screen renders from the store: all rows, tabs, sections, pager', () =>
   // rowView carries the screen's extra data; the drawer's renderer ignores it.
   assert.match(controllerSrc, /createdAtMs: Date\.parse\(n\.createdAt\) \|\| 0/);
   // The screen partitions client-side and acts through the controller.
-  assert.match(screen, /tab === 'unread' \? unread\s*\n\s*: tab === 'messages' \? messages : all/);
+  // #5289: two tabs, Unread and All; the Messages filter is gone.
+  assert.match(screen, /const rows = tab === 'unread' \? unread : all;/);
   assert.match(screen, /at: view\.createdAtMs \|\| 0/);
   assert.match(screen, /entry\.at >= boundary/);
   assert.match(screen, /_onItemClick\(view\.id\)/);

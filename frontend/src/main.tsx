@@ -166,6 +166,9 @@ import './lib/file-drop-guard';
 // (the shell's own keys and pointer, and the bridge's message from inside an
 // app); the comment itself (features/comment-pin/) loads on the first C.
 import './features/improve/suggest-shortcut';
+// New Needs you (an experiment, Settings, Experimental): the switch's bridge
+// for settings.js, window.UsernodeReact.reviewFlow.
+import './features/review-flow/settings';
 // #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
 // verbatim. Imported HERE rather than from a Shell island for the same reason
 // as the dev board above — #dc-view is written into an empty #app-content at

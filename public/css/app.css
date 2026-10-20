@@ -3274,23 +3274,28 @@ html.dark[data-contrast="more"] .dark\:border-zinc-800 { border-color: #48484a; 
   visibility: visible !important;
 }
 
-/* THE BELL IS A FIXED TWO THIRDS, and that is the whole point of it.
+/* THE BELL IS A FIXED HEIGHT, and that is the whole point of it.
    Every other surface here is `height:auto` under a cap, so it is as tall as
    whatever it happens to contain. On the notifications sheet that content
-   changes under the viewer's feet: Unread, All and Messages are three filters
-   over one list, so switching tabs re-sized the sheet — a two-row Unread tab
+   changes under the viewer's feet: Unread and All are two filters over one
+   list, so switching tabs re-sized the sheet: a two-row Unread tab
    was a short sheet and All was a tall one, and the kit seeds its slide-up
    spring from a single measurement at present time (lib/sheet-controller.js),
    so the panel jumped rather than resized. A definite height takes the
-   content out of the decision entirely: the sheet is the same object on all
-   three tabs and only the rows inside it change. The inner scroller
+   content out of the decision entirely: the sheet is the same object on both
+   tabs and only the rows inside it change. The inner scroller
    (`flex-1 min-h-0` on the row list) already handles the overflow this
    creates on a full All tab.
+   #5289: the WHOLE screen, less the status bar and a sliver above the kit's
+   grabber (21px) that keeps it reading as a sheet you can pull down. It was
+   two thirds, which on a phone fit five rows: the bell is a list you read
+   down, and a third of the screen spent on the page behind it bought
+   nothing. The bottom safe inset is the kit's own padding under the sheet.
    `height` has to beat `height: auto !important` above, hence the
-   !important, and the min() keeps the safe-area ceiling for a short viewport
-   where two thirds would still reach the status bar. */
+   !important. */
 .platform-sheet-adopted#notifications-sheet {
-  height: min(66dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 3rem)) !important;
+  height: calc(100dvh - env(safe-area-inset-top, 0px)
+    - var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)) - 2.25rem) !important;
   max-height: none !important;
 }
 
@@ -13280,13 +13285,12 @@ a.drawer-ver--fork:hover {
     max-width: none;
     /* `dvh`, not `vh`: a mobile browser's collapsing toolbar must not push
        the foot of the sheet under itself.
-       Two thirds, matching the kit-adopted rule near the top of this file —
-       see the note there for why the bell in particular gets a DEFINITE
-       height rather than a cap. This was very nearly full-screen (3rem of
-       ground), which made the sheet a de-facto screen; the same number on
-       both paths is what keeps the surface one object at every width. The
-       min() preserves the old safe-area ceiling on a short viewport. */
-    height: min(66dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 3rem));
+       Full height less the status bar and a sliver, matching the kit-adopted
+       rule near the top of this file. See the note there for why the bell
+       in particular gets a DEFINITE height rather than a cap, and why it
+       stopped being two thirds (#5289). The same height on both paths is
+       what keeps the surface one object at every width. */
+    height: calc(100dvh - env(safe-area-inset-top, 0px) - 0.75rem);
     border-left-width: 0;
     border-top-width: 1px;
     border-top-left-radius: 1.75rem;
@@ -18435,7 +18439,17 @@ button.dev-ws-recent-card {
    kicker, the card's sentence-case title and line in Share it's own type,
    and its one button. The picture's box is fixed, so nothing moves as it
    loads. */
-.dev-ws-strip.dev-ws-first-look { flex-direction: row; align-items: flex-start; gap: 14px; }
+.dev-ws-strip.dev-ws-first-look { position: relative; flex-direction: row; align-items: flex-start; gap: 14px; }
+/* #5618: the picture and the words open the maker's chat with Homeroom
+   bot. The door is an empty button over the card, under its Watch button,
+   so the card keeps its look: only a hover tint and the focus ring show it. */
+.dev-ws-first-look-open {
+  position: absolute; inset: 0; z-index: 1; border: 0; padding: 0;
+  background: transparent; border-radius: inherit; cursor: pointer;
+}
+.dev-ws-first-look-open:hover { background: rgba(10, 10, 10, 0.03); }
+.dark .dev-ws-first-look-open:hover { background: rgba(255, 255, 255, 0.04); }
+.dev-ws-first-look-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dev-ws-first-look-shot {
   flex: none; width: 64px; height: 138px; border-radius: 12px;
   object-fit: cover; object-position: top;
@@ -18452,7 +18466,8 @@ button.dev-ws-recent-card {
 }
 .dev-ws-first-look-body .dev-ws-head-title { margin: 0; }
 .dev-ws-first-look-body .dev-ws-strip-text { color: var(--text-muted); }
-.dev-ws-first-look-body > button { margin-top: 8px; }
+/* Watch keeps its own tap, over the door (#5618). */
+.dev-ws-first-look-body > button { position: relative; z-index: 2; margin-top: 8px; }
 
 /* ── Approval rules (community-card.tsx ApprovalRules) ─────────────── */
 .dev-ws-rules-line { margin: 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
@@ -24732,4 +24747,164 @@ html.in-side-panel body {
 @media (max-width: 640px) {
   .dev-ws-wrow { gap: 10px; }
   .dev-ws-wrow-tile { width: 30px; height: 30px; border-radius: 9px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   EXPERIMENTAL: the new Needs you review flow (.rf-*)
+   ═══════════════════════════════════════════════════════════════════
+
+   frontend/src/features/review-flow/, behind Settings › Experimental
+   ("New Needs you", kept on the device). The feed of title shots, the
+   change page that expands out of a card, its before/after slider and its
+   vote sheet. Drawn for the phone first; a wide window shows the same
+   column centred. Colours are the shell's own tokens, light and dark. */
+.rf-feed, .rf-page-wrap {
+  --rf-page: var(--bg-primary);
+  --rf-sheet: var(--bg-secondary);
+  --rf-fill: var(--bg-tertiary);
+  --rf-ink: var(--text-primary);
+  --rf-muted: var(--text-muted);
+  --rf-line: var(--app-sheet-line);
+  --rf-black: #1b1b1d;
+  --rf-cream: #fffeea;
+}
+.dark .rf-feed, .dark .rf-page-wrap { --rf-page: #0b0d1b; --rf-sheet: #1c1c1e; --rf-fill: #2c2c2e; }
+
+/* The feed: a title shot and a title, nothing else. */
+.rf-feed { display: flex; flex-direction: column; gap: 28px; padding: 4px 16px 32px; transform-origin: 50% 30%; }
+.rf-loading { min-height: 50vh; }
+.rf-card { display: flex; flex-direction: column; gap: 12px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.rf-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 20px; }
+.rf-cover { position: relative; display: grid; place-items: center; overflow: hidden; border-radius: 20px; isolation: isolate; }
+.rf-plate { position: relative; overflow: hidden; border-radius: 12px; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 8px 24px rgba(0,0,0,.10); }
+.rf-plate img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; }
+.rf-plate-whole img { position: static; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.rf-quiet-card, .rf-hero-quiet { display: flex; flex-direction: column; justify-content: center; gap: 10px; box-sizing: border-box; padding: 24px 28px; color: #1b1b1d; text-align: left; }
+.rf-quiet-card { width: 100%; height: 100%; }
+.rf-quiet-over { font: 600 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; color: rgba(27,27,29,.62); }
+.rf-quiet-text { font-size: 17px; font-weight: 600; line-height: 23px; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.rf-card-title { padding: 0 4px; font-size: 17px; font-weight: 600; line-height: 22px; color: var(--rf-ink); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.rf-end { display: flex; flex-direction: column; align-items: center; padding: 28px 8px 8px; text-align: center; }
+.rf-end-mark { width: 48px; height: 48px; border-radius: 999px; background: var(--lit-tint); color: var(--lit-ink); display: grid; place-items: center; }
+.rf-end-line { margin: 14px 0 20px; font-size: 15px; line-height: 21px; color: var(--rf-muted); }
+.rf-end-btn { align-self: stretch; height: 48px; border: 0; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
+.rf-capped { margin: -12px 0 0; font-size: 12px; color: var(--rf-muted); text-align: center; }
+
+/* The change page: fixed above the tab bar, which stays. */
+.rf-page-wrap { position: fixed; left: 0; right: 0; top: 0; bottom: var(--platform-tabs-h, 0px); z-index: 35; pointer-events: none; }
+.rf-page { position: absolute; top: 0; bottom: 0; left: max(0px, calc(50% - 260px)); width: min(100%, 520px); display: flex; flex-direction: column; overflow: hidden; background: var(--rf-page); color: var(--rf-ink); pointer-events: auto; -webkit-font-smoothing: antialiased; }
+.rf-band { position: absolute; left: 0; right: 0; top: 0; height: 0; z-index: 3; pointer-events: none; }
+.rf-head { position: relative; z-index: 4; flex: none; display: flex; align-items: center; gap: 4px; padding: env(safe-area-inset-top, 0px) 4px 4px; min-height: 52px; background: var(--rf-page); }
+.rf-head-btn { width: 44px; height: 44px; flex: none; display: grid; place-items: center; border: 0; background: none; color: inherit; cursor: pointer; }
+.rf-head-title { flex: 1; min-width: 0; margin: 0; text-align: center; font-size: 16px; font-weight: 600; line-height: 22px; }
+.rf-head-title span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rf-fly { position: fixed; z-index: 36; margin: 0; white-space: nowrap; transform-origin: 0 0; pointer-events: none; }
+.rf-stage { position: relative; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+.rf-stage-layer { background: var(--rf-page); }
+.rf-stage-leaving { position: absolute; left: 0; right: 0; top: 0; z-index: 0; }
+.rf-stage-arriving { position: relative; z-index: 1; }
+.rf-page-body { padding-bottom: 16px; }
+.rf-claim { margin: 0; padding: 14px 16px 0 20px; font-size: 17px; font-weight: 600; line-height: 23px; text-wrap: pretty; }
+.rf-thumbs { display: flex; gap: 8px; padding: 10px 14px 4px; overflow-x: auto; scrollbar-width: none; }
+.rf-thumbs::-webkit-scrollbar { display: none; }
+.rf-thumb { position: relative; flex: none; width: 52px; height: 52px; margin: 4px; padding: 0; border: 0; border-radius: 12px; overflow: hidden; display: grid; place-items: center; box-shadow: inset 0 0 0 1px var(--rf-line); cursor: pointer; }
+.rf-thumb[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--rf-page), 0 0 0 4px var(--lit-ink); }
+.rf-thumb-in { position: relative; overflow: hidden; border-radius: 4px; background: #fff; }
+.rf-thumb-in img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; }
+.rf-hero-quiet { width: 100%; }
+.rf-scrim { position: absolute; inset: 0; z-index: 5; background: rgba(0,0,0,.62); opacity: 0; pointer-events: none; transition: opacity .22s cubic-bezier(0.22,1,0.36,1); }
+.rf-scrim-on { opacity: 1; pointer-events: auto; }
+
+/* The slider. */
+.rf-compare { position: relative; overflow: hidden; touch-action: pan-y; user-select: none; -webkit-user-select: none; outline: none; }
+.rf-compare:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.rf-layer, .rf-layer-clip { position: absolute; left: 0; top: 0; }
+.rf-layer-clip { inset: 0; }
+.rf-shot-img { display: block; max-width: none; }
+.rf-shot-whole { width: 100%; height: auto; }
+.rf-seam { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; background: var(--rf-black); z-index: 3; pointer-events: none; transition: opacity .18s cubic-bezier(0.22,1,0.36,1), width .15s ease-out; }
+.rf-dragging .rf-seam { width: 1px; opacity: .5 !important; }
+.rf-tab { position: absolute; left: 0; top: 0; width: 30px; height: 60px; z-index: 4; display: grid; place-items: center; border-radius: 0 14px 14px 0; background: var(--rf-black); color: var(--rf-cream); pointer-events: none; transition: opacity .18s cubic-bezier(0.22,1,0.36,1); }
+.rf-tab-right { border-radius: 14px 0 0 14px; }
+.rf-tab-mid { border-radius: 14px; }
+.rf-dragging .rf-tab { opacity: 0 !important; transition: opacity .12s cubic-bezier(0.22,1,0.36,1); }
+.rf-pill { position: absolute; left: 50%; top: 12px; z-index: 5; width: 104px; height: 36px; margin-left: -52px; padding: 0; border: 0; border-radius: 999px; overflow: hidden; background: var(--rf-cream); color: var(--rf-black); box-shadow: inset 0 0 0 1px var(--rf-black); font: 560 14px/36px var(--font-sans, ui-sans-serif, system-ui, sans-serif); cursor: pointer; touch-action: manipulation; -webkit-touch-callout: none; transition: opacity .3s cubic-bezier(0.22,1,0.36,1), scale .12s; }
+.rf-pill::before { content: ''; position: absolute; left: 50%; top: 50%; width: 120px; height: 44px; transform: translate(-50%, -50%); }
+.rf-pill:active { scale: .96; }
+.rf-pill-word { position: relative; display: block; text-align: center; }
+.rf-pill-dark { position: absolute; inset: 0; background: var(--rf-black); color: var(--rf-cream); clip-path: inset(0 calc(100% - var(--rf-g, 0%)) 0 0); }
+.rf-pill[data-view="before"] { background: var(--rf-black); color: var(--rf-cream); }
+
+/* The vote sheet, pinned at the page's foot. */
+.rf-sheet { position: relative; z-index: 6; flex: none; overflow: hidden; border-radius: 20px 20px 0 0; background: var(--rf-sheet); box-shadow: 0 -8px 32px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.06); transition: height .26s cubic-bezier(0.22,1,0.36,1); }
+.rf-sheet-inner { display: flex; flex-direction: column; max-height: inherit; padding: 0 16px 10px; }
+.rf-sheet button, .rf-sheet input, .rf-sheet textarea { font-family: inherit; }
+.rf-grab { flex: none; display: block; width: 100%; height: 27px; margin: 0; padding: 0; border: 0; background: none; cursor: pointer; }
+.rf-grab span { display: block; width: 36px; height: 5px; margin: 8px auto 14px; border-radius: 999px; background: var(--rf-line); }
+.rf-yn { flex: none; display: flex; gap: 10px; }
+.rf-pill-btn { flex: 1; height: 52px; border: 0; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 17px; font-weight: 600; cursor: pointer; }
+.rf-pill-btn:active { scale: .98; }
+.rf-pill-btn:disabled { opacity: .6; }
+.rf-pill-no { background: rgba(239,68,68,.16); color: #dc2626; }
+.dark .rf-pill-no { background: rgba(239,68,68,.18); color: #f87171; }
+.rf-pill-primary { background: var(--accent); color: #fff; }
+.dark .rf-pill-primary { background: #0a6ee0; }
+.rf-quiet { flex: none; width: 100%; min-height: 44px; margin-top: 4px; border: 0; background: none; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--rf-muted); font-size: 15px; font-weight: 500; cursor: pointer; }
+.rf-line { margin: 12px 4px 6px; font-size: 13px; line-height: 18px; color: var(--rf-muted); }
+.rf-line-tight { margin: 6px 4px 0; }
+.rf-row { position: relative; width: 100%; display: flex; align-items: center; gap: 14px; min-height: 64px; padding: 10px 0; border: 0; background: none; color: var(--rf-ink); text-align: left; text-decoration: none; cursor: pointer; }
+.rf-row::after { content: ''; position: absolute; left: 50px; right: 0; bottom: 0; height: 1px; background: var(--rf-line); }
+.rf-row:last-child::after { display: none; }
+.rf-row > svg:last-child { flex: none; color: var(--rf-muted); }
+.rf-row-icon { width: 36px; height: 36px; flex: none; border-radius: 12px; background: var(--rf-fill); display: grid; place-items: center; }
+.rf-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rf-row-text b { font-size: 15px; font-weight: 650; line-height: 20px; }
+.rf-row-text i { font-style: normal; font-size: 13px; line-height: 18px; color: var(--rf-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rf-menu .rf-menu-row { min-height: 52px; padding: 0 4px; font-size: 17px; font-weight: 500; }
+.rf-menu .rf-menu-row::after { left: 4px; }
+.rf-menu-cancel { color: var(--rf-muted); }
+.rf-sub { flex: none; display: flex; align-items: center; gap: 2px; margin: 10px 0 2px -12px; }
+.rf-sub button { width: 44px; height: 44px; flex: none; display: grid; place-items: center; border: 0; background: none; color: var(--rf-ink); cursor: pointer; }
+.rf-sub h2 { margin: 0; font-size: 17px; font-weight: 600; line-height: 22px; }
+.rf-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 2px 0 12px; }
+.rf-note { margin: 0; font-size: 13px; line-height: 18px; color: var(--rf-muted); }
+.rf-para { margin: 0; font-size: 15px; line-height: 21px; }
+.rf-sect { margin: 6px 0 -4px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--rf-muted); }
+.rf-facts { border-radius: 16px; background: var(--rf-fill); padding: 4px 14px; }
+.rf-facts > div { display: flex; flex-direction: column; justify-content: center; min-height: 52px; border-bottom: 1px solid var(--rf-line); }
+.rf-facts > div:last-child { border-bottom: 0; }
+.rf-facts b { font-size: 15px; font-weight: 600; line-height: 20px; }
+.rf-facts small { font-size: 13px; color: var(--rf-muted); }
+.rf-link { align-self: flex-start; min-height: 44px; display: inline-flex; align-items: center; color: var(--accent); font-size: 15px; font-weight: 500; text-decoration: none; }
+.rf-me { align-self: flex-end; max-width: 80%; padding: 10px 14px; border-radius: 18px 18px 4px 18px; background: #0a6ee0; color: #fff; font-size: 15px; line-height: 20px; white-space: pre-wrap; }
+.rf-ai { align-self: flex-start; max-width: 88%; display: flex; flex-direction: column; gap: 6px; }
+.rf-ai small { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; color: var(--rf-muted); }
+.rf-ai small svg { width: 14px; height: 14px; }
+.rf-ai p { margin: 0; padding: 10px 14px; border-radius: 18px 18px 18px 4px; background: var(--rf-fill); font-size: 15px; line-height: 20px; white-space: pre-wrap; }
+.rf-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.rf-chip { height: 44px; padding: 0 13px; border: 0; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); font-size: 15px; font-weight: 500; white-space: nowrap; cursor: pointer; }
+.rf-ask-form { flex: none; display: flex; align-items: center; gap: 8px; margin: 0; padding: 4px 0 8px; }
+.rf-ask-form input, .rf-textarea { flex: 1; min-width: 0; box-sizing: border-box; border: 0; background: var(--rf-fill); box-shadow: inset 0 0 0 1px var(--rf-line); color: var(--rf-ink); font-size: 16px; line-height: 22px; outline: 0; }
+.rf-ask-form input { height: 44px; padding: 0 16px; border-radius: 999px; }
+.rf-textarea { display: block; width: 100%; height: 76px; padding: 10px 12px; border-radius: 12px; resize: none; }
+.rf-ask-label { display: block; margin: 18px 4px 8px; font-size: 15px; font-weight: 600; line-height: 20px; }
+.rf-ends { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding-top: 12px; }
+.rf-cancel { height: 44px; padding: 0 16px; border: 0; background: none; color: var(--rf-muted); font-size: 15px; font-weight: 600; cursor: pointer; }
+.rf-go { flex: none; height: 44px; padding: 0 20px; border: 0; border-radius: 999px; background: #0a6ee0; color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
+.rf-go:disabled { opacity: .5; cursor: default; }
+.rf-go-wide { align-self: stretch; height: 48px; }
+.rf-thread { min-height: 200px; }
+.rf-said { display: flex; flex-direction: column; align-items: center; padding: 14px 0 24px; }
+.rf-said-mark { width: 72px; height: 72px; border-radius: 999px; background: var(--lit-tint); color: var(--lit-ink); display: grid; place-items: center; }
+.rf-said h2 { margin: 14px 0 0; font-size: 20px; font-weight: 700; line-height: 26px; letter-spacing: -.01em; }
+.rf-said + .rf-yn { margin-bottom: 6px; }
+@keyframes rf-mark-in { 0% { transform: scale(.6); opacity: 0; } 60% { transform: scale(1.06); opacity: 1; } 100% { transform: none; } }
+@keyframes rf-draw { from { stroke-dashoffset: 40; } }
+@keyframes rf-rise { from { opacity: 0; transform: translateY(4px); } }
+.rf-fresh .rf-said-mark { animation: rf-mark-in .42s cubic-bezier(0.22,1,0.36,1); }
+.rf-fresh .rf-said-mark path { stroke-dasharray: 40; animation: rf-draw .36s .12s cubic-bezier(0.22,1,0.36,1) both; }
+.rf-fresh h2 { animation: rf-rise .3s .08s cubic-bezier(0.22,1,0.36,1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .rf-sheet, .rf-scrim, .rf-seam, .rf-tab, .rf-pill { transition: none; }
+  .rf-fresh .rf-said-mark, .rf-fresh .rf-said-mark path, .rf-fresh h2 { animation: none; }
 }

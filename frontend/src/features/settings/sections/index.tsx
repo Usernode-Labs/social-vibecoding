@@ -17,10 +17,11 @@
  *    controls inside it silently stop firing. React re-rendering one of these
  *    subtrees would be the same failure, so every component here is STATIC:
  *    no state, no props, no effects. They render once, at hydration, and are
- *    never reconciled again. ThemeSection, AccessibilitySection and
- *    ProfileSection are the exceptions, and they earn it the same way:
- *    settings.js binds nothing inside them, so React is the only writer
- *    there. See ./theme.tsx, ./accessibility.tsx and ./profile.tsx.
+ *    never reconciled again. ThemeSection, AccessibilitySection,
+ *    ProfileSection and PrivacySection are the exceptions, and they earn it
+ *    the same way: settings.js binds nothing inside them, so React is the
+ *    only writer there. See ./theme.tsx, ./accessibility.tsx, ./profile.tsx
+ *    and ./privacy.tsx.
  *    The one thing every pane does subscribe to is the language
  *    (`useMessages`): a new language re-renders the pane, and React then
  *    patches only the text nodes whose words changed. The elements, their
@@ -87,6 +88,10 @@ export function SettingsSections() {
       <PasswordSection />
       <DeleteAccountSection />
       <LinkedAccountsSection />
+      {/* ── #5104: who can message or invite you, and who can find you; and
+          #5097's Share usage analytics under them. A stateful pane; see
+          ./privacy.tsx. */}
+      <PrivacySection />
       <WalletSection />
       {/* ── AI & building ── */}
       <UsageSection />
@@ -108,9 +113,6 @@ export function SettingsSections() {
       <AccessibilitySection />
       <LanguageSection />
       <AlertsSection />
-      {/* ── #5097: Share usage analytics, off until switched on. Stateful
-          like Accessibility; see ./privacy.tsx. */}
-      <PrivacySection />
       <AppPermissionsSection />
       <AppAiSection />
       <BlockedAppsSection />

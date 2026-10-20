@@ -232,6 +232,13 @@ async function deleteAccount(pool, { userId, actorId, mode, confirmation, passwo
     }
     const sessions = await db.query('SELECT id FROM chat_sessions WHERE user_id = $1 FOR UPDATE', [userId]);
     for (const session of sessions.rows) await queueTask(db, deletionId, 'worker', session.id);
+    // #5118: every app the person touched is asked to erase their rows in
+    // its own database (services/app-user-data.js). Read before the private
+    // files and the memberships below are removed.
+    const { touchedAppIds, encodeTarget } = require('./app-user-data');
+    for (const appId of await touchedAppIds(db, userId)) {
+      await queueTask(db, deletionId, 'app_data', encodeTarget(appId, user.usernode_pubkey));
+    }
     const files = await db.query(`DELETE FROM app_files WHERE user_id = $1 AND visibility = 'private' RETURNING id, app_id`, [userId]);
     for (const file of files.rows) await queueTask(db, deletionId, 'object', `${file.app_id}/${file.id}`);
 

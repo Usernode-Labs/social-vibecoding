@@ -1447,6 +1447,14 @@
     "text": "Suggest an improvement opens on a screenshot of the page. Tap or click what should change and say what; it's posted as a suggestion with the screenshot and your pin. Add more comments to the same suggestion, or post each on its own. The form is one switch away. On a computer, pressing C opens it too. Saved on this device only.",
     "description": "Explanation under the \"Comment on the page\" switch in Settings > Experimental. \"Suggest an improvement\" is the name of a button elsewhere; translate it as that button is translated. \"The form\" is the other, written way to suggest an improvement. C is a key on the keyboard; keep it."
   },
+  "experimental.reviewFlow.label": {
+    "text": "New Needs you",
+    "description": "Label of a switch in Settings, Experimental. When on, the Needs you list on the Communities tab becomes a calm list of changes, each opening into its own page with a before and after slider and a vote sheet."
+  },
+  "experimental.reviewFlow.description": {
+    "text": "Try a calmer way through what's waiting on you: one change at a time, with its before and after side by side. Kept on this device.",
+    "description": "Explanation under the New Needs you switch in Settings, Experimental."
+  },
   "experimental.localAgents.title": {
     "text": "Local coding agent",
     "description": "Heading of a block in Settings > Experimental that lists the person's own computers attached to run the coding agent."
@@ -1519,11 +1527,51 @@
     "text": "Darker text and clearer lines, in light and dark.",
     "description": "Explanation under the High contrast switch in Settings > Accessibility."
   },
-  "privacy.title": {
-    "text": "Usage analytics",
-    "description": "Heading of the Privacy page in Settings, above the Share usage analytics switch."
+  "privacy.whoCanMessage.title": {
+    "text": "Who can message or invite me",
+    "description": "Heading of the first setting on the Settings > Privacy page, and the accessible name of its two choices. It decides who may start a direct message with you or invite you to a group chat or a project."
   },
-  "privacy.intro": {
+  "privacy.whoCanMessage.intro": {
+    "text": "Who can start a new conversation with you, invite you to a group chat or a project, or send you a friend request. Conversations you already have keep working.",
+    "description": "Explanation under the \"Who can message or invite me\" heading in Settings > Privacy."
+  },
+  "privacy.whoCanMessage.shared": {
+    "text": "People in projects I'm in",
+    "description": "First choice under \"Who can message or invite me\" in Settings > Privacy, and the default: only people who are in one of your projects with you, or your friends, can start a conversation or invite you."
+  },
+  "privacy.whoCanMessage.sharedDescription": {
+    "text": "Your friends, and people who made or were invited into a project you're in. Joining a public community doesn't count. Anyone else can still send you an invite link.",
+    "description": "Small explanation under the \"People in projects I'm in\" choice in Settings > Privacy."
+  },
+  "privacy.whoCanMessage.anyone": {
+    "text": "Anyone",
+    "description": "Second choice under \"Who can message or invite me\" in Settings > Privacy: anybody on Homeroom can start a conversation with you or invite you."
+  },
+  "privacy.whoCanMessage.anyoneDescription": {
+    "text": "Anybody on Homeroom can message you, invite you or send you a friend request.",
+    "description": "Small explanation under the \"Anyone\" choice in Settings > Privacy."
+  },
+  "privacy.discoverable.label": {
+    "text": "Let people find my profile",
+    "description": "Label of a switch in Settings > Privacy, off by default. When on, people who are not in a project with you can find your username when they search for people."
+  },
+  "privacy.discoverable.description": {
+    "text": "When this is off, only your friends and people who made or were invited into a project you're in find your username when they search for someone to message, mention or invite. A link to your profile still works.",
+    "description": "Explanation under the \"Let people find my profile\" switch in Settings > Privacy."
+  },
+  "privacy.loadFailed": {
+    "text": "Couldn't load your privacy settings. Try again in a moment.",
+    "description": "Error on the Settings > Privacy page when reading the current settings from the server failed."
+  },
+  "privacy.saveFailed": {
+    "text": "Couldn't save that change. Try again in a moment.",
+    "description": "Error on the Settings > Privacy page when saving a change failed; the control goes back to what it was."
+  },
+  "privacy.usageAnalytics.title": {
+    "text": "Usage analytics",
+    "description": "Heading of the last block of Settings > Privacy, above the Share usage analytics switch."
+  },
+  "privacy.usageAnalytics.intro": {
     "text": "Whether Homeroom may record how you use it.",
     "description": "One line under the Usage analytics heading in Settings > Privacy."
   },
@@ -2051,6 +2099,10 @@
     "text": "Linked accounts",
     "description": "Name of a part of Settings: the Linked accounts page (connecting GitHub and X). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
   },
+  "nav.part.contactPrivacy": {
+    "text": "Privacy",
+    "description": "Name of a part of Settings: the Privacy page (who can message or invite you, and whether people can find your profile). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
+  },
   "nav.part.wallet": {
     "text": "Homeroom Wallet",
     "description": "Name of a part of Settings: the Homeroom Wallet page (linking a crypto wallet). Homeroom is the product name. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
@@ -2110,10 +2162,6 @@
   "nav.part.alerts": {
     "text": "Notifications",
     "description": "Name of a part of Settings: the Notifications page (sound, alerts and phone push). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
-  },
-  "nav.part.privacy": {
-    "text": "Privacy",
-    "description": "Name of a part of Settings: the Privacy page (the Share usage analytics switch). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
   },
   "nav.part.appPermissions": {
     "text": "App device permissions",
@@ -2207,6 +2255,10 @@
     "text": "github x twitter social verified weekly credits connect",
     "description": "Not shown on screen. Extra search words for \"Linked accounts\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
+  "nav.keywords.contactPrivacy": {
+    "text": "privacy messages message dm invite invitations contact strangers safety find search discoverable profile friend requests analytics usage tracking telemetry",
+    "description": "Not shown on screen. Extra search words for \"Privacy\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
+  },
   "nav.keywords.wallet": {
     "text": "crypto link qr",
     "description": "Not shown on screen. Extra search words for \"Homeroom Wallet\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
@@ -2262,10 +2314,6 @@
   "nav.keywords.alerts": {
     "text": "notifications sound push phone mute bell chime",
     "description": "Not shown on screen. Extra search words for \"Notifications\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
-  },
-  "nav.keywords.privacy": {
-    "text": "privacy analytics usage data tracking telemetry statistics",
-    "description": "Not shown on screen. Extra search words for \"Privacy\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.appPermissions": {
     "text": "camera microphone location screen device",

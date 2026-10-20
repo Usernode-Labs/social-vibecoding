@@ -437,7 +437,11 @@ test('declared Improve checks expect real session rows on the full change route'
   const check = manifest.tests.find((item) =>
     String(item.name || '').includes('Real sessions still render beside it'));
   assert.ok(check, 'the mixed work-order/session fixture remains covered');
-  assert.match(check.expectSelector, /\/dev\/proposals\//);
+  // #5289: checked on the Messages screen's agents list now, where a
+  // session row opens its conversation (#2813, `#messages/session/…`), the
+  // inbox's own address; still never the workspace link.
+  assert.match(check.path, /#messages$/);
+  assert.match(check.expectSelector, /\[href\^="#messages\/session\/"\]/);
   assert.doesNotMatch(check.expectSelector, /\/dev\/sessions\//);
 });
 

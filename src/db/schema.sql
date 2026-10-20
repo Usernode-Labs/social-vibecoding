@@ -4376,6 +4376,49 @@ CREATE INDEX IF NOT EXISTS idx_db_exports_user ON db_exports (user_id, requested
 -- able to read the export log; that's an audit trail, not a secret.
 COMMENT ON TABLE db_exports IS 'staging:private';
 
+-- ── Admin access review (#5133) ────────────────────────────────────────
+--
+-- Two append-only records behind the console's Access review section
+-- (services/admin-access-review.js, #admin/access-review).
+--
+-- admin_role_changes: one row per role set through
+-- POST /api/admin/users/:id/is-admin, so the review can say when an
+-- account got the role it holds now and who gave it. Roles set before this
+-- table existed (or straight in SQL) have no row, and the review says
+-- "not recorded" for them rather than guessing a date.
+--
+-- admin_access_reviews: one row each time a full admin presses Reviewed.
+-- `admins` is the list they looked at, as [{ "id": n, "role": "admin" }],
+-- ids and roles only, so the record says what was reviewed without
+-- copying anyone's name. The next review is due 90 days after the latest.
+--
+-- Both point at users(id): a deleted reviewer leaves the review with a
+-- NULL reviewer (ON DELETE SET NULL), and a deleted account takes its role
+-- history with it. user-merge.js re-points both, like every FK to users.
+CREATE TABLE IF NOT EXISTS admin_role_changes (
+  id          BIGSERIAL PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role        VARCHAR(16) NOT NULL CHECK (role IN ('user', 'view_admin', 'admin')),
+  changed_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  changed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_admin_role_changes_user
+  ON admin_role_changes (user_id, changed_at DESC);
+COMMENT ON TABLE admin_role_changes IS 'staging:private';
+
+CREATE TABLE IF NOT EXISTS admin_access_reviews (
+  id                BIGSERIAL PRIMARY KEY,
+  reviewed_by       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  reviewed_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  full_admins       INTEGER NOT NULL DEFAULT 0 CHECK (full_admins >= 0),
+  view_only_admins  INTEGER NOT NULL DEFAULT 0 CHECK (view_only_admins >= 0),
+  admins            JSONB NOT NULL DEFAULT '[]'::jsonb,
+  note              TEXT CHECK (note IS NULL OR char_length(note) <= 500)
+);
+CREATE INDEX IF NOT EXISTS idx_admin_access_reviews_at
+  ON admin_access_reviews (reviewed_at DESC);
+COMMENT ON TABLE admin_access_reviews IS 'staging:private';
+
 -- ── Platform environment variables ───────────────────────────────────
 --
 -- In-platform management of the *platform's own* env vars — the ones
@@ -11717,6 +11760,24 @@ CREATE INDEX IF NOT EXISTS account_deletion_tasks_worker
   ON account_deletion_tasks (target) WHERE kind = 'worker';
 COMMENT ON TABLE account_deletions IS 'staging:private';
 COMMENT ON TABLE account_deletion_tasks IS 'staging:private';
+-- #5118: an `app_data` task asks one app to erase the person's rows in its
+-- own database (services/app-user-data.js). The inline CHECK above was
+-- auto-named; widen it once, only while it still lacks the new kind, so a
+-- boot that finds it current takes no lock.
+DO $$
+DECLARE
+  constraint_def TEXT;
+BEGIN
+  SELECT pg_get_constraintdef(oid) INTO constraint_def
+    FROM pg_constraint
+   WHERE conrelid = 'account_deletion_tasks'::regclass
+     AND conname = 'account_deletion_tasks_kind_check';
+  IF constraint_def IS NULL OR position('app_data' IN constraint_def) = 0 THEN
+    ALTER TABLE account_deletion_tasks DROP CONSTRAINT IF EXISTS account_deletion_tasks_kind_check;
+    ALTER TABLE account_deletion_tasks ADD CONSTRAINT account_deletion_tasks_kind_check
+      CHECK (kind IN ('openrouter_key', 'worker', 'object', 'key_reconciliation', 'app_data'));
+  END IF;
+END $$;
 
 -- Preserve necessary historical totals and published attachments. The service
 -- withdraws votes on open decisions BEFORE deleting the identity; completed
@@ -12836,10 +12897,11 @@ BEGIN
   -- Building by invitation: the link is the maker's collaborator invite,
   -- accepted. The collaborator trigger joins the community from this row.
   IF r.collab_visibility = 'private' AND NOT r.self_hosted THEN
-    INSERT INTO app_collaborators (app_id, user_id, status, invited_by, accepted_at)
-    VALUES (r.app_id, r.user_id, 'member', r.created_by, NOW())
+    INSERT INTO app_collaborators (app_id, user_id, status, invited_by, accepted_at, accepted_via)
+    VALUES (r.app_id, r.user_id, 'member', r.created_by, NOW(), 'link')
     ON CONFLICT (app_id, user_id) DO UPDATE
-      SET status = 'member', accepted_at = COALESCE(app_collaborators.accepted_at, NOW())
+      SET status = 'member', accepted_at = COALESCE(app_collaborators.accepted_at, NOW()),
+          accepted_via = 'link'
       WHERE app_collaborators.status <> 'member';
   END IF;
   INSERT INTO community_members (community_id, user_id, source)
@@ -13282,6 +13344,34 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS included_in_session_id INTEGE
 -- through community-invites.js cleanNote. Kept once the invite is accepted,
 -- like invited_by.
 ALTER TABLE app_collaborators ADD COLUMN IF NOT EXISTS invite_note TEXT;
+-- #5104: HOW a member row was accepted, for users_connected's consent rule.
+-- 'invite' is an invitation the person accepted (collab-invites.js
+-- acceptAndPin), 'link' an invite link they redeemed (apply_community_invite).
+-- NULL is everything nobody accepted: the creator's own row (the creator is
+-- read off apps.created_by instead), dapp.json's declared admins
+-- (app-manifest.js applyAdminsChange) and fixtures. The backfill runs once,
+-- when the column is added: an existing member with an inviter and an
+-- acceptance is taken to have accepted an invitation.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = current_schema() AND table_name = 'app_collaborators'
+       AND column_name = 'accepted_via'
+  ) THEN
+    ALTER TABLE app_collaborators ADD COLUMN accepted_via VARCHAR(16);
+    UPDATE app_collaborators SET accepted_via = 'invite'
+     WHERE status = 'member' AND accepted_at IS NOT NULL
+       AND invited_by IS NOT NULL AND invited_by <> user_id;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'app_collaborators_accepted_via_check' AND conrelid = 'app_collaborators'::regclass
+  ) THEN
+    ALTER TABLE app_collaborators ADD CONSTRAINT app_collaborators_accepted_via_check
+      CHECK (accepted_via IS NULL OR accepted_via IN ('invite', 'link'));
+  END IF;
+END $$;
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -15045,3 +15135,113 @@ CREATE TABLE IF NOT EXISTS server_error_minutes (
 );
 CREATE INDEX IF NOT EXISTS idx_server_error_minutes_minute ON server_error_minutes (minute DESC);
 COMMENT ON COLUMN server_error_minutes.sample IS 'staging:private';
+
+-- ── Who can reach you, and who can find you (#5104) ───────────────────
+--
+-- Teen-safe defaults for everyone, existing accounts included (ADD COLUMN
+-- with a DEFAULT fills every row that is already there). A person loosens
+-- either in Settings › Privacy (sections/privacy.tsx, POST
+-- /api/me/contact-privacy); nothing else writes them.
+--
+--   contact_policy  who may START something with you: a new direct message,
+--                   an invitation to a group chat, a project or its
+--                   approvers, and a friend request. 'shared' (the default)
+--                   is people you are connected to (users_connected below);
+--                   'anyone' is what everybody had before. A conversation
+--                   that already exists keeps working either way: the rule
+--                   is read only when something new is started.
+--   profile_discoverable  whether people you are not connected to find your
+--                   username in a search: the people pickers, the invite
+--                   typeahead, an app's searchUsers, and the @ list of a
+--                   channel everyone reads (#general). Off by default. Your
+--                   profile page is a separate, older opt-in
+--                   (profile_published) and is not changed by this.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS contact_policy VARCHAR(16) NOT NULL DEFAULT 'shared';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_discoverable BOOLEAN NOT NULL DEFAULT FALSE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'users_contact_policy_check' AND conrelid = 'users'::regclass
+  ) THEN
+    ALTER TABLE users ADD CONSTRAINT users_contact_policy_check
+      CHECK (contact_policy IN ('shared', 'anyone'));
+  END IF;
+END $$;
+
+-- The projects `u` is in BY CONSENT on both sides, the ties users_connected
+-- below counts:
+--
+--   - a project they created (apps.created_by);
+--   - a project they joined by accepting an invitation or redeeming an
+--     invite link (app_collaborators.accepted_via, set only by those two
+--     paths), from somebody who is in it by consent themselves: its creator,
+--     or a member whose own row has accepted_via. That check is one level
+--     deep, not recursive.
+--
+-- Nothing else counts. A member row nobody accepted (dapp.json's declared
+-- admins, which applyAdminsChange seeds without asking, even over a pending
+-- invite) has no accepted_via. app_admins alone never counts. Community
+-- membership never counts on its own: Join, a Home pin, a vote or activity
+-- is self-service, and an invite link into a community that is not public
+-- always writes a collaborator row (apps_visibility_combo_check: a project
+-- only its people can see is one only its people build), which the second
+-- rule reads with its maker. Homeroom's own project is never one.
+CREATE OR REPLACE FUNCTION user_consented_projects(u INTEGER)
+RETURNS SETOF INTEGER
+LANGUAGE sql STABLE AS $$
+  SELECT pa.id FROM apps pa
+   WHERE pa.created_by = u AND NOT pa.self_hosted
+  UNION
+  SELECT c.app_id FROM app_collaborators c
+    JOIN apps pa ON pa.id = c.app_id
+   WHERE c.user_id = u AND c.status = 'member'
+     AND c.accepted_via IS NOT NULL
+     AND c.invited_by IS NOT NULL AND c.invited_by <> u
+     AND NOT pa.self_hosted
+     AND (pa.created_by = c.invited_by
+          OR EXISTS (SELECT 1 FROM app_collaborators mk
+                      WHERE mk.app_id = c.app_id AND mk.user_id = c.invited_by
+                        AND mk.status = 'member' AND mk.accepted_via IS NOT NULL))
+$$;
+
+-- Two people are CONNECTED only by a tie neither of them can make alone: an
+-- accepted friendship, or a project both are in by consent
+-- (user_consented_projects above). Sharing a public community, or being
+-- named somewhere without being asked, connects nobody.
+CREATE OR REPLACE FUNCTION users_connected(a INTEGER, b INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT EXISTS (
+           SELECT 1 FROM friendships f
+            WHERE f.status = 'accepted'
+              AND f.user_low_id = LEAST(a, b) AND f.user_high_id = GREATEST(a, b))
+      OR EXISTS (
+           SELECT 1
+             FROM user_consented_projects(a) pa(app_id)
+             JOIN user_consented_projects(b) pb(app_id) ON pb.app_id = pa.app_id)
+$$;
+
+-- Whether `sender_id` may start something new with `target_id` (see
+-- contact_policy above). A platform account (the Homeroom bot) on either
+-- side is never held to it: it cannot be a stranger, and a person can always
+-- write to it.
+CREATE OR REPLACE FUNCTION user_contactable_by(target_id INTEGER, sender_id INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT target_id = sender_id
+      OR EXISTS (SELECT 1 FROM users t WHERE t.id = target_id
+                    AND (t.contact_policy = 'anyone' OR t.is_synthetic))
+      OR EXISTS (SELECT 1 FROM users s WHERE s.id = sender_id AND s.is_synthetic)
+      OR users_connected(target_id, sender_id)
+$$;
+
+-- Whether `viewer_id` may find `target_id` in a search (profile_discoverable
+-- above). Yourself, and people you are connected to, always.
+CREATE OR REPLACE FUNCTION user_discoverable_by(target_id INTEGER, viewer_id INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT target_id = viewer_id
+      OR EXISTS (SELECT 1 FROM users t WHERE t.id = target_id AND t.profile_discoverable)
+      OR (viewer_id IS NOT NULL AND users_connected(target_id, viewer_id))
+$$;

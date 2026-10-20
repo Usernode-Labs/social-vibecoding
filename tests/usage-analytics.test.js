@@ -152,20 +152,25 @@ test('GET and PUT /api/me/usage-analytics: off by default, and the choice persis
 });
 
 test('Settings > Privacy carries the switch, off until the saved choice is read', () => {
+  // #5097 + #5104: one Privacy page. The switch is its last block, under who
+  // can reach you and who can find you.
   const html = renderComponent('frontend/src/features/settings/sections/privacy.tsx', 'PrivacySection', {});
-  assert.match(html, /data-settings-section="privacy"/);
+  assert.match(html, /data-settings-section="contact-privacy"/);
+  assert.match(html, /id="settings-contact-privacy-section"[\s\S]*id="settings-usage-analytics-section"/,
+    'after the contact settings');
   assert.match(html, /<input[^>]*id="settings-usage-analytics"/);
-  assert.doesNotMatch(html, /checked=""/, 'the first render is off');
-  assert.match(html, /disabled=""/, 'and waits for the server');
+  assert.doesNotMatch(html, /<input[^>]*id="settings-usage-analytics"[^>]*checked=""/, 'the first render is off');
+  assert.match(html, /<input[^>]*id="settings-usage-analytics"[^>]*disabled=""|<input[^>]*disabled=""[^>]*id="settings-usage-analytics"/,
+    'and waits for the server');
   assert.ok(html.includes(message('settings:privacy.usageAnalytics.label')));
   assert.ok(html.includes(message('settings:privacy.usageAnalytics.description').replace(/'/g, '&#x27;')),
     'with a line saying what is collected');
 
+  const pane = read('frontend/src/features/settings/sections/usage-analytics.tsx');
+  assert.match(pane, /detail\?\.section === 'contact-privacy'\) void load\(\);/, 'read again when the page opens');
   const settings = read('frontend/src/features/settings/settings.js');
-  assert.match(settings,
-    /\{ key: 'privacy', label: 'settings:nav\.part\.privacy', group: 'settings:nav\.group\.preferences' \}/);
-  const sections = read('frontend/src/features/settings/sections/index.tsx');
-  assert.match(sections, /<PrivacySection \/>/);
+  assert.doesNotMatch(settings, /key: 'privacy'/, 'no second Privacy row');
+  assert.match(settings, /\{ key: 'contact-privacy', label: 'settings:nav\.part\.contactPrivacy'/);
 });
 
 test('the client sends usage analytics only on the server\'s explicit yes', () => {

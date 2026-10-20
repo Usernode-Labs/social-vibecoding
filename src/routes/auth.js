@@ -34,6 +34,7 @@ const challengeScorer = require('../services/topochain/challenge-scorer');
 const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
 const usernames = require('../services/usernames');
+const contactPrivacy = require('../services/contact-privacy');
 const uiTelemetry = require('../services/ui-telemetry');
 const usageAnalytics = require('../services/usage-analytics');
 const { verificationKeyFor } = require('../services/wallet-signing-key');
@@ -1362,6 +1363,39 @@ function authRoutes(config) {
       res.json({ ok: true, enabled });
     } catch (err) {
       log.error('settings', 'Failed to toggle session bridge', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #5104: Settings › Privacy. Who can start a conversation or send an
+  // invitation (`whoCanContact`: 'shared', the default, or 'anyone') and
+  // whether people outside your projects find you in a search
+  // (`discoverable`, default false). services/contact-privacy.js has the
+  // rules; both are the owner's to loosen and nobody else's.
+  router.get('/api/me/contact-privacy', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      const settings = await contactPrivacy.readSettings(pool, req.user.id);
+      if (!settings) return res.status(404).json({ error: 'Not found' });
+      res.json(settings);
+    } catch (err) {
+      log.error('settings', 'Failed to read contact privacy', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/me/contact-privacy', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const parsed = contactPrivacy.parseUpdate(req.body);
+    if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+    try {
+      const settings = await contactPrivacy.saveSettings(pool, req.user.id, parsed.value);
+      if (!settings) return res.status(404).json({ error: 'Not found' });
+      log.info('settings', 'Contact privacy changed', { userId: req.user.id, ...settings });
+      res.json(settings);
+    } catch (err) {
+      log.error('settings', 'Failed to save contact privacy', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

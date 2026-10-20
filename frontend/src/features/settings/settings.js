@@ -320,6 +320,10 @@
       // public page. They shared a pane with the chat connectors, which have
       // nothing to do with identity.
       { key: 'linked-accounts', label: 'settings:nav.part.linkedAccounts', group: 'settings:nav.group.account' },
+      // #5104: who can message or invite you, and who can find you. Both are
+      // about other people reaching your account, so they sit with it. A
+      // stateful pane; settings.js binds nothing inside it.
+      { key: 'contact-privacy', label: 'settings:nav.part.contactPrivacy', group: 'settings:nav.group.account' },
       { key: 'wallet', label: 'settings:nav.part.wallet', group: 'settings:nav.group.account', gate: 'wallet-section' },
 
       // ── AI & building ───────────────────────────────────────────────────
@@ -362,9 +366,6 @@
       // locale while the row could not say what it did.
       { key: 'language', label: 'settings:nav.part.language', group: 'settings:nav.group.preferences' },
       { key: 'alerts', label: 'settings:nav.part.alerts', group: 'settings:nav.group.preferences' },
-      // #5097: whether Homeroom may record how you use it. Off until you
-      // switch it on; a stateful pane (sections/privacy.tsx).
-      { key: 'privacy', label: 'settings:nav.part.privacy', group: 'settings:nav.group.preferences' },
       // What each app may do: the device access and AI spending you granted,
       // and the apps you blocked. They were split between Preferences and the
       // collapsed Advanced group, which hid two privacy controls from the
@@ -414,6 +415,7 @@
       password: 'settings:nav.keywords.password',
       'delete-account': 'settings:nav.keywords.deleteAccount',
       'linked-accounts': 'settings:nav.keywords.linkedAccounts',
+      'contact-privacy': 'settings:nav.keywords.contactPrivacy',
       wallet: 'settings:nav.keywords.wallet',
       usage: 'settings:nav.keywords.usage',
       'api-key': 'settings:nav.keywords.apiKey',
@@ -428,7 +430,6 @@
       accessibility: 'settings:nav.keywords.accessibility',
       language: 'settings:nav.keywords.language',
       alerts: 'settings:nav.keywords.alerts',
-      privacy: 'settings:nav.keywords.privacy',
       'app-permissions': 'settings:nav.keywords.appPermissions',
       'app-ai': 'settings:nav.keywords.appAi',
       'blocked-apps': 'settings:nav.keywords.blockedApps',
@@ -678,6 +679,16 @@
       if (shortcutToggle) {
         shortcutToggle.addEventListener('change', (e) => {
           const pref = typeof window !== 'undefined' ? window.UsernodeReact?.suggestShortcut : null;
+          pref?.setEnabled(e.target.checked);
+        });
+      }
+
+      // New Needs you (an experiment), kept on this device like the switch
+      // above (features/review-flow/settings.ts): the change is the save.
+      const reviewToggle = document.getElementById('review-flow-enabled');
+      if (reviewToggle) {
+        reviewToggle.addEventListener('change', (e) => {
+          const pref = typeof window !== 'undefined' ? window.UsernodeReact?.reviewFlow : null;
           pref?.setEnabled(e.target.checked);
         });
       }
@@ -1644,6 +1655,9 @@
       const shortcut = document.getElementById('suggest-shortcut-enabled');
       const shortcutPref = typeof window !== 'undefined' ? window.UsernodeReact?.suggestShortcut : null;
       if (shortcut) shortcut.checked = !!shortcutPref?.enabled();
+      const review = document.getElementById('review-flow-enabled');
+      const reviewPref = typeof window !== 'undefined' ? window.UsernodeReact?.reviewFlow : null;
+      if (review) review.checked = !!reviewPref?.enabled();
       this._renderLocalAgentsSection();
     },
 

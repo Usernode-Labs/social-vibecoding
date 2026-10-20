@@ -120,6 +120,15 @@
       "mobileSupported": true
     },
     {
+      "key": "contact-privacy",
+      "label": "Privacy",
+      "group": "Account",
+      "gate": null,
+      "capabilityId": "settings.open.contact_privacy",
+      "classicPath": "#settings/contact-privacy",
+      "mobileSupported": true
+    },
+    {
       "key": "wallet",
       "label": "Homeroom Wallet",
       "group": "Account",
@@ -234,15 +243,6 @@
       "gate": null,
       "capabilityId": "settings.open.alerts",
       "classicPath": "#settings/alerts",
-      "mobileSupported": true
-    },
-    {
-      "key": "privacy",
-      "label": "Privacy",
-      "group": "Preferences",
-      "gate": null,
-      "capabilityId": "settings.open.privacy",
-      "classicPath": "#settings/privacy",
       "mobileSupported": true
     },
     {
@@ -1949,6 +1949,36 @@
       "domain": "admin",
       "risk": "read",
       "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
+      "source": "src/routes/admin.js",
+      "method": "GET",
+      "path": "/api/admin/access-review",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.access.review.8056ca48",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
+      "source": "src/routes/admin.js",
+      "method": "POST",
+      "path": "/api/admin/access-review/reviews",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.access.review.reviews.749dc479",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
       "renderer": "admin_record",
       "transport": "server_loopback",
       "mobileSupported": true,
@@ -3896,6 +3926,36 @@
       "expression": null,
       "status": "mapped",
       "capabilityId": "apps.post.me.session.bridge.33ae9515",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/auth.js",
+      "method": "GET",
+      "path": "/api/me/contact-privacy",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.me.contact.privacy.64241ea7",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/auth.js",
+      "method": "POST",
+      "path": "/api/me/contact-privacy",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.me.contact.privacy.6d2b3e6d",
       "domain": "apps",
       "risk": "external_write",
       "confirmation": "required",
@@ -14251,6 +14311,21 @@
     },
     {
       "source": "src/routes/votes.js",
+      "method": "DELETE",
+      "path": "/api/sessions/:id/vote",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "development.delete.sessions.item.vote.0c5ac3d9",
+      "domain": "development",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "session",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#workshop"
+    },
+    {
+      "source": "src/routes/votes.js",
       "method": "GET",
       "path": "/api/sessions/:id/votes",
       "expression": null,
@@ -14434,6 +14509,14 @@
     {
       "source": "src/routes/workshop-overview.js",
       "method": "POST",
+      "path": "/api/sessions/:id/vote",
+      "expression": null,
+      "status": "exempt",
+      "reason": "staging demo-card middleware represented by the concrete session vote capabilities"
+    },
+    {
+      "source": "src/routes/workshop-overview.js",
+      "method": "DELETE",
       "path": "/api/sessions/:id/vote",
       "expression": null,
       "status": "exempt",

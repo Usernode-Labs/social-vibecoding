@@ -2544,7 +2544,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           title: '[Mock] Work handed to a coding agent',
           branch_name: 'usernode/mock-issue-900002',
           agent: 'claude-code',
-          created_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
+          // #5289: six minutes, between the mock sessions at five and eight,
+          // so the row is inside the five Messages' agents list shows before
+          // "N older chats" (at twelve it tied the fifth session for the
+          // last slot) — the declared checks read it there.
+          created_at: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
           app_slug: config.selfAppSlug,
           app_name: 'Homeroom',
           // The demo row carries an icon too, or the ONE work-order row a
