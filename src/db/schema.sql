@@ -11760,6 +11760,24 @@ CREATE INDEX IF NOT EXISTS account_deletion_tasks_worker
   ON account_deletion_tasks (target) WHERE kind = 'worker';
 COMMENT ON TABLE account_deletions IS 'staging:private';
 COMMENT ON TABLE account_deletion_tasks IS 'staging:private';
+-- #5118: an `app_data` task asks one app to erase the person's rows in its
+-- own database (services/app-user-data.js). The inline CHECK above was
+-- auto-named; widen it once, only while it still lacks the new kind, so a
+-- boot that finds it current takes no lock.
+DO $$
+DECLARE
+  constraint_def TEXT;
+BEGIN
+  SELECT pg_get_constraintdef(oid) INTO constraint_def
+    FROM pg_constraint
+   WHERE conrelid = 'account_deletion_tasks'::regclass
+     AND conname = 'account_deletion_tasks_kind_check';
+  IF constraint_def IS NULL OR position('app_data' IN constraint_def) = 0 THEN
+    ALTER TABLE account_deletion_tasks DROP CONSTRAINT IF EXISTS account_deletion_tasks_kind_check;
+    ALTER TABLE account_deletion_tasks ADD CONSTRAINT account_deletion_tasks_kind_check
+      CHECK (kind IN ('openrouter_key', 'worker', 'object', 'key_reconciliation', 'app_data'));
+  END IF;
+END $$;
 
 -- Preserve necessary historical totals and published attachments. The service
 -- withdraws votes on open decisions BEFORE deleting the identity; completed

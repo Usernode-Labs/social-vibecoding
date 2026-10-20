@@ -329,6 +329,18 @@ const FRESHNESS_HOOK_SCRIPT = fs.readFileSync(
   'utf8'
 );
 
+// #5118: the handler Homeroom calls when a person deletes their account or
+// asks for their data (POST /usernode/user-deletion, GET
+// /usernode/user-export; "Your people's data" in the conventions). A real
+// file outside src/ so it can be required and tested as itself, and so
+// check-sql.js leaves its queries (an app database's, not the platform's)
+// alone.
+const USER_DATA_PATH = 'usernode-user-data.js';
+const USER_DATA_SCRIPT = fs.readFileSync(
+  path.join(__dirname, '..', '..', 'app-templates', '_scaffold', USER_DATA_PATH),
+  'utf8'
+);
+
 // The one-line file naming the app's canonical repository, which the hook
 // above compares HEAD against. Platform-written rather than part of the
 // shared scaffold: a create and an import write the app's own URL, and a fork
@@ -732,6 +744,15 @@ tables you've marked private), etc.
 ${about ? `${about}\n\n_(add a sentence or two more of product context here so Claude Code has a\nshared understanding of what this app is for)_` : `_(add a sentence or two of product context here so Claude Code has a
 shared understanding of what this app is for)_`}
 
+## Your people's data
+
+\`usernode-user-data.js\` erases a person's rows when they delete their
+Homeroom account, and exports them when they ask for a copy. By default it
+covers every table with a \`user_id\` (or \`usernode_pubkey\`) column. When
+you add a table that keys a person's rows another way (\`author_id\`), add it
+to \`OWNED_BY\`; when a table's \`user_id\` is not the person the row is
+about, add it to \`SKIP\`. Keep the file and its mount in \`server.js\`.
+
 ${DESIGN_CLAUDE_SECTION}
 
 ## App-specific conventions
@@ -1047,6 +1068,7 @@ value = "build"
     // an import's or a fork's (getConnectorScaffoldFiles): those bring their
     // own look.
     ...require('./design-skill').skillFiles(),
+    { path: USER_DATA_PATH, content: USER_DATA_SCRIPT },
     {
       path: 'server.js',
       content: `const express = require('express');
@@ -1130,6 +1152,13 @@ app.get(/^\\/usernode-(?:bridge|native|tailwind)\\//, async (req, res) => {
     return res.sendStatus(502);
   }
 });
+
+// Homeroom's requests about one person's data: erase it when they delete
+// their account, export it when they ask for a copy. Mounted BEFORE the
+// sign-in check because they carry a platform token of their own, which
+// usernode-user-data.js verifies. When you add a table, check that file's
+// OWNED_BY and SKIP lists ("Your people's data" in the platform conventions).
+require('./usernode-user-data').mount(app, pool);
 
 // "Now" for this request, as a Date: \`req.now\`, set for every request by
 // the middleware below. Read the day and the time through it (and
