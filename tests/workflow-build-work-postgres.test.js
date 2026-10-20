@@ -50,7 +50,7 @@ test('the build\'s own work against the full PostgreSQL schema', { timeout: 1200
 
   const { createRuntime } = require('../src/workflow/kernel/index.ts');
   const clockMod = require('../src/workflow/clock/machine.ts');
-  const { clockServices } = require('../src/workflow/clock/services.ts');
+  const { clockServices, JOBS } = require('../src/workflow/clock/services.ts');
   const release = require('../src/workflow/release/machine.ts');
   const NEW = 'a'.repeat(40);
   const OLD = 'b'.repeat(40);
@@ -162,6 +162,159 @@ test('the build\'s own work against the full PostgreSQL schema', { timeout: 1200
     await pool.query(`DELETE FROM platform_processes WHERE id LIKE 'b1-%'`);
   });
 
+  // The clock's runs by hand, one step at a time: Arm (or Run now), the run,
+  // its targets.
+  const step = async (rt, job, n, { arm = false, everyMs = 60000 } = {}) => {
+    if (arm) {
+      await rt.append(clockMod.MACHINE, clockMod.clockKey(job), { type: 'Arm', payload: { job, everyMs, firstDueAt: null } },
+        { requestKey: `arm:${job}:${n}`, source: { kind: 'system', name: 'release' } });
+      await rt.drain();
+      await rt.fireTimers();
+    } else {
+      await rt.append(clockMod.MACHINE, clockMod.clockKey(job), { type: 'RunNow', payload: {} },
+        { requestKey: `run-now:${job}:${n}`, source: { kind: 'admin' } });
+    }
+    await rt.drain();
+    await rt.runServices();   // the run (its items too, when due)
+    await rt.drain();
+  };
+  const itemsOfJob = async (job) => (await pool.query(
+    `SELECT id, work_key, status, input->>'release' AS release, result, checkpoint FROM wf_work
+      WHERE machine = 'clock' AND kind = $1 ORDER BY created_at`, [`clock.${job}.item`])).rows;
+
+  await t.test('B6: a target\'s item that did not finish is carried on by its next one; one that succeeded is not', async () => {
+    const seen = [];
+    let fail = true;
+    const job = {
+      name: 'carry', everyMs: 60000,
+      run: async () => ({ items: [{ target: 'paid-thing', input: {} }] }),
+      item: {
+        maxAttempts: 1,
+        run: async (ctx) => {
+          const steps = ctx.steps();
+          seen.push(steps.get('paid') ?? null);
+          await steps.once('paid', async () => `paid-${seen.length}`);
+          if (fail) throw new Error('its record could not be written');
+          return { ok: true };
+        },
+      },
+    };
+    const rt = createRuntime({ pool, machines: [clockMod.clock()], services: clockServices([job], { config: {}, pool }), pollMs: 50 });
+    runtimes.push(rt);
+    await step(rt, 'carry', 1, { arm: true });
+    await rt.runServices();   // the item: pays, then fails, out of tries
+    await rt.drain();
+    assert.deepEqual(seen, [null]);
+    fail = false;
+    await step(rt, 'carry', 2);
+    await rt.runServices();
+    await rt.drain();
+    assert.deepEqual(seen, [null, 'paid-1'], 'the next item carries on from what the last one paid for');
+    await step(rt, 'carry', 3);
+    await rt.runServices();
+    await rt.drain();
+    assert.deepEqual(seen, [null, 'paid-1', null], 'after a success the target starts afresh');
+  });
+
+  await t.test('B7: an item an older build\'s process is claiming while the newest hands it on stays that process\'s', async () => {
+    await serving(OLD, NEW);
+    process.env.GIT_SHA = NEW;
+    const job = {
+      name: 'race', everyMs: 60000, newestOnly: true,
+      run: async () => ({ items: [{ target: 'race-1', input: {} }] }),
+      item: { run: async () => ({ ok: true }) },
+    };
+    const services = clockServices([job], { config: {}, pool });
+    const rt = createRuntime({ pool, machines: [clockMod.clock()], services, pollMs: 50, release: NEW });
+    runtimes.push(rt);
+    await step(rt, 'race', 1, { arm: true });
+    // Its item, as an older build's run handed it out: queued.
+    await pool.query(`UPDATE wf_work SET input = input || jsonb_build_object('release', $1::text) WHERE kind = 'clock.race.item'`, [OLD]);
+    const [older] = await itemsOfJob('race');
+    assert.equal(older.status, 'queued');
+    // The older build's process claims it: its claim's transaction holds the
+    // row while the newest build's run hands its target out.
+    const claim = await pool.connect();
+    try {
+      await claim.query('BEGIN');
+      await claim.query('SELECT id FROM wf_work WHERE id = $1 FOR UPDATE', [older.id]);
+      await rt.append(clockMod.MACHINE, clockMod.clockKey('race'), { type: 'RunNow', payload: {} },
+        { requestKey: 'run-now:race:2', source: { kind: 'admin' } });
+      await rt.drain();
+      await rt.runServices();   // the run; its result's transition waits on the row
+      const handing = rt.drain();
+      await new Promise((r) => setTimeout(r, 150));
+      await claim.query(`WITH a AS (INSERT INTO wf_work_attempts (id, work_id, service_id, number) VALUES (gen_random_uuid(), $1, 'older-pod', 1) RETURNING id)
+                         UPDATE wf_work SET status = 'running', claim_id = (SELECT id FROM a), lease_until = now() + interval '1 minute', attempt_count = 1
+                          WHERE id = $1`, [older.id]);
+      await claim.query('COMMIT');
+      await handing;
+    } finally { claim.release(); }
+    const items = await itemsOfJob('race');
+    assert.equal(items.find((i) => i.id === older.id).status, 'running', 'not cancelled under the process that claimed it');
+    assert.equal(items.length, 1, 'and its target not handed out a second time');
+    await pool.query(`DELETE FROM platform_processes WHERE id LIKE 'b1-%'`);
+  });
+
+  await t.test('B8: translations: a batch paid for, unrecorded, is recorded by the newest build after the English changed, never paid for again', async (st) => {
+    const runner = require('../src/services/language-sync-runner');
+    const llm = require('../src/services/llm');
+    const cache = require('../src/services/language-cache');
+    const real = { isEnabled: llm.isEnabled, submit: llm.submitCatalogBatch, status: llm.catalogBatchStatus, readSource: cache.readSource };
+    st.after(() => {
+      Object.assign(llm, { isEnabled: real.isEnabled, submitCatalogBatch: real.submit, catalogBatchStatus: real.status });
+      cache.readSource = real.readSource;
+    });
+    const submitted = [];
+    llm.isEnabled = () => true;
+    llm.submitCatalogBatch = async () => { submitted.push(1); return { id: `msgbatch_${submitted.length}` }; };
+    llm.catalogBatchStatus = async () => ({ status: 'in_progress' });
+    const english = real.readSource();
+    assert.ok(english, 'the build\'s catalogs');
+    let source = english;
+    cache.readSource = () => source;
+    // The state write fails while the flag is up.
+    await pool.query(`CREATE TABLE b8_fail (up BOOLEAN NOT NULL);
+      INSERT INTO b8_fail VALUES (false);
+      CREATE FUNCTION b8_fail_state() RETURNS trigger AS $$
+      BEGIN IF NEW.key = '${runner.STATE_KEY}' AND (SELECT up FROM b8_fail) THEN RAISE EXCEPTION 'the state write failed'; END IF; RETURN NEW; END $$ LANGUAGE plpgsql;
+      CREATE TRIGGER b8_fail_state BEFORE INSERT OR UPDATE ON platform_settings FOR EACH ROW EXECUTE FUNCTION b8_fail_state();`);
+    st.after(() => pool.query(`DROP TRIGGER IF EXISTS b8_fail_state ON platform_settings; DROP FUNCTION IF EXISTS b8_fail_state(); DROP TABLE IF EXISTS b8_fail;
+                               DELETE FROM platform_settings WHERE key = '${runner.STATE_KEY}'`));
+    const job = JOBS.find((j) => j.name === 'language-sync');
+    const services = clockServices([job], { config: {}, pool });
+    const older = createRuntime({ pool, machines: [clockMod.clock()], services, pollMs: 50, release: OLD });
+    const newer = createRuntime({ pool, machines: [clockMod.clock()], services, pollMs: 50, release: NEW });
+    runtimes.push(older, newer);
+    // The older build: its pass submits a batch, and the write that records
+    // it fails. Its item waits out its retry, with the batch in its steps.
+    await serving(OLD);
+    process.env.GIT_SHA = OLD;
+    await pool.query('UPDATE b8_fail SET up = true');
+    await step(older, 'language-sync', 1, { arm: true, everyMs: job.everyMs });
+    await older.runServices();
+    await older.drain();
+    assert.equal(submitted.length, 1);
+    const [paid] = await itemsOfJob('language-sync');
+    assert.equal(paid.status, 'queued', 'waiting out its retry');
+    assert.equal(paid.checkpoint.batch.id, 'msgbatch_1');
+    await pool.query('UPDATE b8_fail SET up = false');
+    // A new build, whose English changed: its run hands the catalog on.
+    source = JSON.parse(JSON.stringify(english));
+    const en = Object.keys(source.files).find((f) => f.startsWith('en/'));
+    const id = Object.keys(source.files[en])[0];
+    source.files[en][id] = { ...source.files[en][id], text: `${source.files[en][id].text} (changed)` };
+    await serving(OLD, NEW);
+    process.env.GIT_SHA = NEW;
+    await step(newer, 'language-sync', 2);
+    await newer.runServices();
+    await newer.drain();
+    assert.equal(submitted.length, 1, 'never paid for twice');
+    const { rows: [state] } = await pool.query('SELECT value FROM platform_settings WHERE key = $1', [runner.STATE_KEY]);
+    assert.equal(JSON.parse(state.value).batch.id, 'msgbatch_1', 'recorded, to be collected');
+    await pool.query(`DELETE FROM platform_processes WHERE id LIKE 'b1-%'`);
+  });
+
   await t.test('B2: ready-made images: each key owed a build is a target; its row building, then ready or failed', async () => {
     const starter = require('../src/services/starter-images');
     const runtime = require('../src/services/application-runtime');
@@ -220,12 +373,26 @@ test('the build\'s own work against the full PostgreSQL schema', { timeout: 1200
     const source = { files: { 'en/a.json': { x: { text: 'Hello' } } } };
     const llm = { isEnabled: () => true };
     const digest = runner.sourceDigest(source);
-    assert.deepEqual(await runner.look({ pool, deps: { llm, source } }), { items: [{ target: `catalog:${digest}`, input: {} }] });
+    assert.deepEqual(await runner.look({ pool, deps: { llm, source } }), { items: [{ target: 'catalog', input: {} }] });
     await runner.writeState(pool, { checkedDigest: digest });
     assert.deepEqual(await runner.look({ pool, deps: { llm, source } }), { skipped: 'unchanged' });
     await runner.writeState(pool, { checkedDigest: digest, batch: { id: 'msgbatch_01abc', sourceDigest: digest } });
     assert.deepEqual(await runner.look({ pool, deps: { llm, source } }), { items: [{ target: 'batch:msgbatch_01abc', input: {} }] });
     assert.deepEqual(await runner.look({ pool, deps: { llm: { isEnabled: () => false }, source } }), { skipped: 'no_key' });
+    // A pass carried on from one that paid for a batch it never recorded:
+    // recorded, whatever the English is now (here a few messages, which a
+    // pass would translate directly, paying again).
+    await runner.writeState(pool, {});
+    const { steps: makeSteps } = require('../src/workflow/kernel/steps.ts');
+    const kept = { id: 'msgbatch_9', sourceDigest: 'older', english: {}, submittedAt: '2026-10-20T10:00:00Z', messages: 900 };
+    const direct = [];
+    const paying = { isEnabled: () => true, translateCatalogDirect: async (r) => { direct.push(r); return []; },
+      submitCatalogBatch: async () => assert.fail('submitted again') };
+    const steps = makeSteps({ resumeFrom: { batch: kept }, checkpoint: async () => {} });
+    assert.deepEqual(await runner.runOnce({ pool, deps: { llm: paying, source, steps } }), { recorded: 'msgbatch_9' });
+    assert.deepEqual(direct, []);
+    assert.deepEqual((await runner.readState(pool)).batch, kept);
+    await pool.query('DELETE FROM platform_settings WHERE key = $1', [runner.STATE_KEY]);
   });
 
   await t.test('B4: a release whose work waits out a retry is kept while its processes live, abandoned once they are gone', async () => {

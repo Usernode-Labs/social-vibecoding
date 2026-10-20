@@ -1602,9 +1602,13 @@ intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
   started serving last (`platform_processes`), so a rollback, or a rollout of the same build
   with another configuration, is the newest once it serves. An item an older build's run
   handed out, once nobody works it (queued, or its lease lapsed), is given up by the next run
-  and its target asked for again, carrying on from its checkpoint (`continues`), so a paid
-  step it finished (a translation batch submitted) is not done twice. One a live process of
-  that build is working stays its own.
+  and its target asked for again; the run reads those items locked, so none is claimed in
+  between. One a live process of that build is working stays its own.
+- **A target's progress is the target's.** A new item for a target carries on from the
+  checkpoint of the target's last item when that one did not finish (given up, failed, out of
+  tries), so an effect it made is not made again: a translation batch it paid for is
+  recorded, not submitted a second time. The translation target is `catalog` whatever the
+  English, so a deploy that changes a string carries the batch on too.
 - **Production apps.** `app-health` (each running app's runtime, every minute) and
   `main-drift` (each running app's main on GitHub, every 5 minutes) report to app-delivery
   (`Unhealthy`, `MainMoved`), which decides.

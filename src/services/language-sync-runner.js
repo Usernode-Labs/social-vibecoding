@@ -184,7 +184,10 @@ async function finishPass(pool, { summary, spent, checkedDigest, deps, extra = {
 /**
  * The clock's look: nothing, or the one pass owed, as a target (a batch to
  * collect, keyed by the batch; the build's catalogs not yet translated,
- * keyed by their digest). Reads, never spends.
+ * `catalog`). The catalog is one target whatever its English, so a pass
+ * that submitted a batch and stopped before recording it is carried on by
+ * the next, even after a deploy changed the English (the clock carries a
+ * target's checkpoint on). Reads, never spends.
  */
 async function look({ pool, deps = {} }) {
   if (!isEnabled()) return { off: true };
@@ -197,7 +200,7 @@ async function look({ pool, deps = {} }) {
   if (state.batch) return { items: [{ target: `batch:${state.batch.id}`, input: {} }] };
   const digest = sourceDigest(source);
   if (digest === state.checkedDigest) return { skipped: 'unchanged' };
-  return { items: [{ target: `catalog:${digest}`, input: {} }] };
+  return { items: [{ target: 'catalog', input: {} }] };
 }
 
 /**
@@ -216,6 +219,17 @@ async function runOnce({ config, pool, deps = {} }) {
   if (!source) return { skipped: 'no_source' };
   const digest = sourceDigest(source);
   const state = await readState(pool);
+
+  // A batch an earlier try of this pass submitted (its step kept) but never
+  // recorded, its state write having failed or its work been handed on:
+  // recorded now, and collected by the next pass, rather than paid for
+  // again. Whatever English it was asked from (sourceDigest).
+  const kept = deps.steps && !state.batch && deps.steps.has('batch') ? deps.steps.get('batch') : null;
+  if (kept && kept.id) {
+    await writeState(pool, { lastPass: state.lastPass, batch: kept });
+    log.info('language-sync', 'Translation batch recorded', { batchId: kept.id, sourceDigest: kept.sourceDigest });
+    return { recorded: kept.id };
+  }
 
   if (state.batch) {
     let status;
@@ -268,14 +282,15 @@ async function runOnce({ config, pool, deps = {} }) {
     if (budget.error) return { skipped: 'budget' };
 
     if (messages > DIRECT_LIMIT) {
-      const submit = () => model.submitCatalogBatch(prepared.requests).then((b) => ({ id: b.id }));
-      const batch = deps.steps ? await deps.steps.once(`batch:${digest}`, submit) : await submit();
       const english = {};
       for (const items of prepared.plans.values()) for (const item of items) english[item.id] = englishOf(item);
-      await writeState(pool, {
-        lastPass: state.lastPass,
-        batch: { id: batch.id, sourceDigest: digest, english, submittedAt: new Date().toISOString(), messages },
-      });
+      // The step keeps all the state needs to collect it, so a try that
+      // stops before the write below records it from the step (above).
+      const submit = () => model.submitCatalogBatch(prepared.requests).then((b) => ({
+        id: b.id, sourceDigest: digest, english, submittedAt: new Date().toISOString(), messages,
+      }));
+      const batch = deps.steps ? await deps.steps.once('batch', submit) : await submit();
+      await writeState(pool, { lastPass: state.lastPass, batch });
       log.info('language-sync', 'Translation batch submitted', { batchId: batch.id, messages, requests: prepared.requests.length });
       return { submitted: batch.id, messages };
     }
