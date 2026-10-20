@@ -1554,9 +1554,13 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
   // untouched. read_at IS NULL is a cheap filter on the rows
   // idx_notifications_user_recent already produces, the same reasoning as
   // the kind filter above.
+  // #18 (19 Oct 2026 polish board): and not a plain message, which the bell
+  // leaves to the Messages tab (countUnreadSplit): what the bell counts is
+  // `unread - messageUnread`, so that is what this pages.
   let unreadClause = '';
   if (unreadOnly) {
-    unreadClause = `AND n.read_at IS NULL AND NOT ${DECIDED_ASK_SETTLED_SQL}`;
+    unreadClause = `AND n.read_at IS NULL AND NOT ${DECIDED_ASK_SETTLED_SQL}
+      AND n.kind NOT IN ('conversation_message', 'channel_message')`;
   }
   // #4795: a merged change is decided, so the rows that asked you to vote on
   // it or try it leave the list instead of staying as read entries somebody
@@ -1731,6 +1735,39 @@ async function countUnread(pool, userId) {
     [userId, MERGED_HIDDEN_KINDS]
   );
   return rows[0]?.c || 0;
+}
+
+// THE BELL LEAVES PLAIN MESSAGES TO THE MESSAGES TAB (#18 of the 19 Oct 2026
+// polish board). One unread direct message showed as the bell's red 1, the
+// Messages tab's grey 1 and a count on its row: one event, three numbers.
+// #2912 kept messages in the bell on purpose, when the tab's count was new;
+// with one meaning per badge now (red is the bell, grey is new to read, the
+// accent is waiting on you) a message is the Messages tab's to count, and
+// the bell counts what happened TO you: a mention, a reply to you, a
+// thread you are in, news of your request. These two kinds are a plain
+// message in a conversation or a channel and nothing more.
+//
+// The rows are still written (they push to a phone, and they still list in
+// the bell's sheet), and `unread` still counts them: it is the home-screen
+// icon's number too, which a push stamps from countUnread above. So the
+// bell's figure is `unread - messageUnread`, both read in one query.
+// listForUser's `unreadOnly` clause spells the same two kinds as literals.
+const MESSAGE_KINDS = ['conversation_message', 'channel_message'];
+
+async function countUnreadSplit(pool, userId) {
+  const { rows } = await pool.query(
+    `SELECT (COUNT(*) FILTER (WHERE n.kind = ANY($3::text[])))::int AS m,
+            COUNT(*)::int AS c FROM notifications AS n
+      WHERE n.user_id = $1 AND n.read_at IS NULL
+        AND NOT ${DECIDED_ASK_SETTLED_SQL}
+        AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+        AND ${PARKED_KINDS_SQL}
+        AND NOT (n.kind = ANY($2::text[]) AND EXISTS (
+              SELECT 1 FROM chat_sessions s
+               WHERE s.id = n.session_id AND s.status = 'merged'))`,
+    [userId, MERGED_HIDDEN_KINDS, MESSAGE_KINDS]
+  );
+  return { unread: rows[0]?.c || 0, messageUnread: rows[0]?.m || 0 };
 }
 
 // "Action-completed" registry — the reusable auto-dismiss mechanism.
@@ -2203,6 +2240,8 @@ module.exports = {
   listSavedForUserSafe,
   getForUser,
   countUnread,
+  countUnreadSplit,
+  MESSAGE_KINDS,
   PARKED_KINDS_SQL,
   markRead,
   markReadForSession,

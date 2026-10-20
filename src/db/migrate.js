@@ -82,12 +82,16 @@ async function migrate(config) {
   // minutes, where the first deploy seeded three in 25).
   await require('../services/bot-configs').seedConfigs(pool);
   await require('../services/bot-configs').upgradeSeedConfigs(pool);
+  // Once: the later changes' current version names its triage and
+  // follow-ups, which its recipe decides from now on (what they ran on).
+  await require('../services/bot-configs').fillLaterStages(pool, config);
   finishPhase('coreSeedMs');
   await seedStagingNotifications(pool, config);
   // #1130: must run AFTER seedStagingNotifications — its delivery rows hang
   // off a notification id that seeder owns.
   await seedStagingPushDeliveries(pool, config);
   await seedStagingAdminConsoleData(pool);
+  await seedStagingHelperCalls(pool);
   await seedStagingEnvProposal(pool, config);
   await seedStagingMergedPrs(pool, config);
   // Must run AFTER seedStagingMergedPrs — its snapshot dates are chosen
@@ -2172,6 +2176,55 @@ async function seedSelfApp(pool, config) {
 // rows (same "first users" convention as seedStagingNotifications).
 // Idempotent: codes key on the UNIQUE code value, usage rows on
 // UNIQUE(user_id, date). Strictly a no-op outside staging.
+// Staging only: a few made-up helper calls (Homeroom bot → Calls,
+// llm-telemetry.js helperCallsReport), so a fresh preview's Calls tab has
+// rows to show: quick replies on GLM then on DeepSeek V4.1 Flash 1017, one
+// late and answered by Haiku, and a plan at Make it. Content-free, like the
+// ledger itself; nothing reads these to decide anything. Idempotent: each
+// row's invocation key is unique (idx_events_llm_invocation_key).
+async function seedStagingHelperCalls(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const GLM = 'z-ai/glm-5.3-flash';
+  const DS = 'deepseek/deepseek-v4.1-flash-1017';
+  const HAIKU = 'claude-haiku-5-5';
+  const calls = [
+    ['quick_replies', 1, GLM, 'success', 820, 0.00009, null, 2],
+    ['quick_replies', 1, GLM, 'error', 2500, null, 'timeout', 2],
+    ['quick_replies', 2, HAIKU, 'success', 900, 0.0004, null, 2],
+    ['quick_replies', 1, DS, 'success', 560, 0.00008, null, 1],
+    ['quick_replies', 1, DS, 'success', 610, 0.00009, null, 1],
+    ['quick_replies', 1, DS, 'success', 700, 0.0001, null, 1],
+    ['first_version_plan', 1, DS, 'success', 1700, 0.0003, null, 1],
+    ['first_version_plan', 1, DS, 'success', 2300, 0.0003, null, 1],
+    ['content_review', 1, DS, 'success', 640, 0.0001, null, 1],
+  ];
+  try {
+    let run = 0;
+    for (let i = 0; i < calls.length; i += 1) {
+      const [component, attempt, model, outcome, ms, cost, errorClass, daysAgo] = calls[i];
+      if (attempt === 1) run += 1;
+      const metadata = {
+        invocation_key: `staging-demo-helper-${i + 1}`,
+        provider: model === HAIKU ? 'anthropic' : 'openrouter',
+        backend: 'helper', component, requested_model: model, served_model: outcome === 'success' ? model : null,
+        billing_path: 'platform', outcome, duration_ms: ms,
+        cost_usd: cost, cost_source: cost == null ? 'unavailable' : 'provider_reported',
+        attempt_number: attempt, correlation_id: `staging-demo-call-${run}`,
+        ...(errorClass ? { error_class: errorClass } : {}),
+      };
+      // eslint-disable-next-line no-await-in-loop
+      await pool.query(
+        `INSERT INTO events (event_type, metadata, created_at)
+         VALUES ('llm_invocation', $1::jsonb, NOW() - make_interval(days => $2::int))
+         ON CONFLICT DO NOTHING`,
+        [JSON.stringify(metadata), daysAgo],
+      );
+    }
+  } catch (err) {
+    log.warn('db', 'Staging helper calls not seeded', { err: err.message });
+  }
+}
+
 async function seedStagingAdminConsoleData(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
@@ -2253,6 +2306,33 @@ async function seedStagingModerationCase(pool) {
                 NULL
            FROM moderation_cases c
           WHERE c.target_type = 'user' AND c.target_id = 900320`
+      );
+    }
+    // #5102: a second fake case, reported for child safety, so the queue
+    // shows a case sorted to the top with its marks. Inserted after the first
+    // so the first keeps case id 1 (the deep-link check opens it).
+    await pool.query(
+      `INSERT INTO users (id, username, password, profile_published)
+       VALUES (900322, 'staging-demo-flagged', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO moderation_cases (target_type, target_id, target_label, target_user_id, status, preserve_evidence)
+       VALUES ('user', 900322, '@staging-demo-flagged', 900322, 'new', TRUE)
+       ON CONFLICT (target_type, target_id) DO NOTHING`
+    );
+    const hasChildSafety = await pool.query(
+      `SELECT 1 FROM moderation_reports r JOIN moderation_cases c ON c.id = r.case_id
+        WHERE c.target_type = 'user' AND c.target_id = 900322 LIMIT 1`
+    );
+    if (!hasChildSafety.rowCount) {
+      await pool.query(
+        `INSERT INTO moderation_reports (case_id, cycle, reporter_user_id, reason, detail, evidence)
+         SELECT c.id, c.cycle, 900321, 'child_safety',
+                'Staging fixture: a fake child-safety report so the Moderation queue shows a priority case.',
+                NULL
+           FROM moderation_cases c
+          WHERE c.target_type = 'user' AND c.target_id = 900322`
       );
     }
     log.info('db', 'Staging moderation case seeded');
@@ -15247,6 +15327,7 @@ module.exports = {
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
   followPlatformDefaultModel,
+  seedStagingHelperCalls,
   clearAutomatedChannelLines,
   backfillPlanRows,
   backfillProposalIssuerAssignments, backfillVotesRequired,

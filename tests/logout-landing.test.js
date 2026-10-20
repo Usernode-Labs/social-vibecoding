@@ -64,8 +64,8 @@ test('an anonymous deep link answers with sign-in, only a bare / lands', () => {
 
   assert.match(anon, /if \(!hash \|\| authRoute === 'waiting'\) \{\s*\n\s*AuthScreens\.show\('landing'\);/,
     'no fragment and no app path is the ONLY thing that reaches landing');
-  assert.match(anon, /AuthScreens\.rememberDeepLink\(App\._deepLinkTarget\(\)\);\s*\n\s*AuthScreens\.show\('login'\);/,
-    'every other address is remembered and answered with the sign-in form');
+  assert.match(anon, /AuthScreens\.showSignInFor\(App\._deepLinkTarget\(\)\);\s*\n\s*return;/,
+    'every other address is remembered and answered with the sign-in sheet (#5264)');
   // `hash` falls back to the clean app pathname above this branch, so a
   // sign-out from inside `/app/<slug>` is the same case.
   assert.match(APP, /let hash = rawHash\s*\n\s*\? \(qIdx === -1 \? rawHash : rawHash\.slice\(0, qIdx\)\)\s*\n\s*: pathRoute;/);

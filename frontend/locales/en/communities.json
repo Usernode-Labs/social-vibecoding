@@ -47,6 +47,22 @@
     "text": "{{count}} in Just you",
     "description": "Accessible name of the number beside the Just you section heading. {{count}} is how many of the person's projects have no other member. \"Just you\" is the section's name."
   },
+  "sections.shownOf_one": {
+    "text": "{{shown}} of {{count}}",
+    "description": "Number beside a section heading in the list of the person's communities, while the section is folded: how many of its communities are listed out of how many it has, as in \"3 of 27\". {{shown}} is how many rows show, {{count}} the section's total."
+  },
+  "sections.shownOf_other": {
+    "text": "{{shown}} of {{count}}",
+    "description": "Number beside a section heading in the list of the person's communities, while the section is folded: how many of its communities are listed out of how many it has, as in \"3 of 27\". {{shown}} is how many rows show, {{count}} the section's total."
+  },
+  "sections.shownOfLabel_one": {
+    "text": "Showing {{shown}} of {{count}}",
+    "description": "Accessible name of the \"3 of 27\" number beside a folded section heading in the list of the person's communities. The heading's own name says which section. {{shown}} is how many rows show, {{count}} the section's total."
+  },
+  "sections.shownOfLabel_other": {
+    "text": "Showing {{shown}} of {{count}}",
+    "description": "Accessible name of the \"3 of 27\" number beside a folded section heading in the list of the person's communities. The heading's own name says which section. {{shown}} is how many rows show, {{count}} the section's total."
+  },
   "sections.showFewer": {
     "text": "Show fewer",
     "description": "Last row of a section in the list of the person's communities, once every community in it is showing: folds the section back to its first few rows."
@@ -88,7 +104,7 @@
     "description": "Accessible name of the All filter chip above the list of the person's communities, with how many communities they are in. {{count}} is that number."
   },
   "list.loading": {
-    "text": "Loading your apps",
+    "text": "Loading your communities",
     "description": "Accessible name of the placeholder rows on the Communities screen while the person's list of communities is loading."
   },
   "list.loadError": {
@@ -175,13 +191,13 @@
     "text": "{{count}} to vote",
     "description": "Status on a community's row on the Communities screen: how many proposals and group decisions in it are waiting for this person's vote. \"To vote\" means still to be voted on by you."
   },
-  "row.unread_one": {
-    "text": "{{count}} unread in the channel",
-    "description": "Accessible name of the number badge on a community's row on the Communities screen: how many unread messages its chat channel has."
+  "row.newMessages_one": {
+    "text": "{{count}} new message",
+    "description": "Status on a community's row on the Communities screen, after how many proposals wait for the person's vote (\"1 to vote · 1 new message\"): how many messages in its chat channel the person has not read yet."
   },
-  "row.unread_other": {
-    "text": "{{count}} unread in the channel",
-    "description": "Accessible name of the number badge on a community's row on the Communities screen: how many unread messages its chat channel has."
+  "row.newMessages_other": {
+    "text": "{{count}} new messages",
+    "description": "Status on a community's row on the Communities screen, after how many proposals wait for the person's vote (\"1 to vote · 5 new messages\"): how many messages in its chat channel the person has not read yet."
   },
   "needsYou.heading": {
     "text": "Needs you",

@@ -43,10 +43,11 @@ test('a patch is validated before anything is read or written', async () => {
     { ok: true, updates: [['welcome_dm_title', 'Hi {username}']] });
 });
 
-test('the sweep runs on the leader, and the write is for full admins only', () => {
-  const server = read('server.js');
-  const leader = server.slice(server.indexOf('async function becomeLeader()'));
-  assert.match(leader, /require\('\.\/src\/services\/welcome-dm'\)\.start\(config\);/);
+test('the sweep is a scheduled job of the workflow, and the write is for full admins only', () => {
+  // A clock (src/workflow/clock/services.ts): every half minute wherever the
+  // workflow runs, one run at a time.
+  assert.match(read('src/workflow/clock/services.ts'), /name: 'welcome-dm', everyMs: 30 \* 1000,/);
+  assert.ok(!read('server.js').includes('welcome-dm'));
   const admin = read('src/routes/admin.js');
   assert.match(admin, /router\.get\('\/api\/admin\/welcome-dm', async/);
   assert.match(admin, /router\.put\('\/api\/admin\/welcome-dm', requireAdminWrite,/);

@@ -43,6 +43,9 @@ const GroupChat = {
   // The open thread's own: whether its reader is at the newest line, from
   // where they last scrolled it (`_attachThreadFollow`).
   _threadPinned: false,
+  // Whether the open topic page has been put at its top (renderThread), which
+  // it is once per mount (mountThread).
+  _threadPlaced: false,
   _savedScrollTop: null,
   _didInitialScroll: false,
 
@@ -1483,7 +1486,9 @@ const GroupChat = {
         { navBar: false },
       );
     }
-    // #4513: a new thread starts unpinned; `renderThread` says where it opens.
+    // #4513: a new thread starts unpinned; `renderThread` says where it opens,
+    // once (`_threadPlaced`, polish board #12).
+    GroupChat._threadPlaced = false;
     GroupChat._threadPinned = false;
     GroupChat._attachThreadFollow(GroupChat._threadScrollEl());
 
@@ -2174,10 +2179,18 @@ const GroupChat = {
     // A short thread fits with room to spare, so nobody scrolled it and the
     // flag never came on; when the composer then takes height from it, its
     // newest line is what must stay in view.
+    //
+    // Not while a topic page that opens at its top is still loading (polish
+    // board #12): before its card and replies are in, every page "fits", and
+    // pinning it then sent the reader to the bottom as the card painted and
+    // again as its pictures arrived.
     let last = { client: scroll.clientHeight, content: scroll.scrollHeight };
     const ro = new ResizeObserver(() => {
       if (GroupChat._threadScrollEl() !== scroll) return;
-      if (scroll.clientHeight < last.client && last.content - last.client <= 1) {
+      const host = scroll.id === 'gc-thread-scroll' && typeof scroll.querySelector === 'function'
+        ? scroll.querySelector('#gc-thread-messages') : null;
+      const loading = !!host && !!host.dataset && host.dataset.loaded !== '1';
+      if (!loading && scroll.clientHeight < last.client && last.content - last.client <= 1) {
         GroupChat._threadPinned = true;
       }
       follow();
@@ -2276,6 +2289,11 @@ const GroupChat = {
     } else if (unified) {
       // #363: open a topic at the TOP so its card/body reads first; the user
       // scrolls down into the discussion (general chat lands at the bottom).
+      // Once, as it mounts (polish board #12): the replies' first page lands
+      // later, and sending the reader back to the top then was the page's
+      // second jump.
+      if (GroupChat._threadPlaced) return;
+      GroupChat._threadPlaced = true;
       scroll.scrollTop = 0;
       GroupChat._threadPinned = false;
     } else {
@@ -3333,9 +3351,10 @@ const GroupChat = {
     const d = new Date(ts == null ? NaN : ts);
     if (isNaN(d.getTime())) return { text: '', title: '' };
     const today = now || new Date();
-    const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    // No zero-padded hour (polish N5): "4:14 AM", as lib/timestamp.ts.
+    const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     const title = d.toLocaleString([], {
-      year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+      year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
     });
     const sameDay = d.getFullYear() === today.getFullYear()
       && d.getMonth() === today.getMonth()

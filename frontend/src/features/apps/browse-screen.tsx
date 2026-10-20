@@ -276,12 +276,18 @@ export function BrowseScreen() {
             the field can never disagree with the rows below it. `w-auto`
             overrides the cva's `w-full` through cn's twMerge (the control
             should be as wide as its longest label, not as wide as the bar).
+
+            DRAWN AS THE CHIPS ARE (polish N12): the `plain` field's white,
+            in the chips' own box (a full radius, no border, 36px, their
+            15px medium type), so it reads as one more control of the row
+            above rather than a grey form field beside it.
         */}
         <div id="browse-sort-bar" className="mt-2 flex items-center gap-2 max-w-xl">
           <Label htmlFor="browse-sort-select" className="shrink-0">{t('discover:sort.label')}</Label>
           <Select
             id="browse-sort-select"
-            className="w-auto py-1.5"
+            variant="plain"
+            className="w-auto h-9 rounded-full border-0 bg-white dark:bg-zinc-900 px-4 py-0 text-[0.9375rem] font-medium text-zinc-900 dark:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
             aria-label={t('discover:sort.selectLabel')}
             value={state.sort}
             onChange={(e) => browse()?.setSort(e.currentTarget.value)}

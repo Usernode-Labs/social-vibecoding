@@ -6,8 +6,9 @@
 // there; two pieces of work that are not leader timers did not, and ran on
 // after the pool closed ("Cannot use a pool after calling end on the pool"):
 // a Workshop board-change reconcile and the session sweeper's proposal
-// measurement. And app-heal held the drain 40 s waiting on a rollout that
-// could never finish (its own test is in tests/app-heal.test.js).
+// measurement (a clock of the workflow now, services/proposal-scans.js).
+// And app-heal held the drain 40 s waiting on a rollout that could never
+// finish (its own test is in tests/app-heal.test.js).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -49,15 +50,31 @@ test('a board-change reconcile under way is held for the drain; none starts once
 
 // 14 Oct 2026, 16:39: holding the whole sweeper tick held the drain to its
 // 60s deadline while one pass was minutes into a staging rebuild, which a
-// shutdown leaves to be re-driven anyway. Only the measurement is held.
-test('the session sweeper holds the drain only for a measurement, and its long loops stop at their next row on shutdown', () => {
-  assert.match(SERVER, /sessionSweeperHandle = setInterval\(singleFlight\('session-sweeper', async \(\) => \{\s+if \(lifecycle\.isShuttingDown\(\)\) return;/);
-  assert.doesNotMatch(SERVER, /inflightWork\.track\('timer:session-sweeper'/, 'a staging rebuild in a pass is not waited for');
-  assert.match(SERVER, /await inflightWork\.track\('proposal-measure', async \(\) => \{\s+for \(const sessions of byApp\.values\(\)\) \{\s+if \(lifecycle\.isShuttingDown\(\)\) break;/,
-    'the proposal measurement is held, and stops before its next app');
-  assert.match(SERVER, /for \(const session of ready\) \{\s+if \(lifecycle\.isShuttingDown\(\)\) break;/,
+// shutdown leaves to be re-driven anyway. The session sweeper is gone: what
+// is left of it is the turn watchdog, a leader timer (held for the drain
+// while a tick runs, none started once shutdown has begun), and the
+// measurement is a clock of the workflow, whose run stops at its next row
+// when the workflow runtime is stopped.
+test('the turn watchdog starts nothing on shutdown, and the measurement stops at its next row', () => {
+  assert.doesNotMatch(SERVER, /sessionSweeperHandle|singleFlight\('session-sweeper'/, 'the session sweeper is gone');
+  assert.match(SERVER, /leaderTimers\.every\('turn-watchdog', singleFlight\('turn-watchdog', async \(\) => \{\s+if \(lifecycle\.isShuttingDown\(\)\) return;/);
+  assert.doesNotMatch(SERVER, /inflightWork\.track\('proposal-measure'/, 'the measurement is not the drain\'s to wait for');
+
+  const scans = fs.readFileSync(path.join(__dirname, '..', 'src/services/proposal-scans.js'), 'utf8');
+  const measure = scans.slice(scans.indexOf('async function measurePromoted('), scans.indexOf('// ── A check main has fixed'));
+  assert.match(measure, /for \(const sessions of byApp\.values\(\)\) \{\s+if \(shouldStop\(\)\) break;/,
+    'the proposal measurement stops before its next app');
+  assert.match(measure, /for \(const session of ready\) \{\s+if \(shouldStop\(\)\) break;/,
     'and before its next write');
-  assert.match(SERVER, /if \(healed >= MAX_HEALS_PER_SWEEP \|\| lifecycle\.isShuttingDown\(\)\) break;/, 'the staging heal starts no rebuild during shutdown');
+  const clocks = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/clock/services.ts'), 'utf8');
+  assert.match(clocks, /measurePromoted\(pool, \{ shouldStop: stopped\(ctx\) \}\)/, 'its stop is the run\'s signal');
+  // Which stopping the runtime aborts (cleanup() stops it at once without a
+  // drain, or at the drain's deadline).
+  const kernel = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/kernel/index.ts'), 'utf8');
+  assert.match(kernel, /execute\(service, w, stopping\.signal\)/);
+  assert.match(kernel, /async stop\(\) \{\n\s+stopping\.abort\(\);/);
+  const work = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/kernel/services.ts'), 'utf8');
+  assert.match(work, /stopping\?\.addEventListener\('abort', onStop, \{ once: true \}\);/);
 });
 
 // Last: shutting down cannot be undone in this process.

@@ -153,9 +153,22 @@ test('a move its caller waits on carries a deadline, and a resume not applied in
 });
 
 test('sessions are adopted on a host with the idle pause off (review 8); caps lock the owner without blocking its rows\' inserts (review 9)', () => {
-  const server = read('server.js');
-  const fn = server.slice(server.indexOf('function startSessionAutoPauseSweeper('), server.indexOf('sessionSweeperHandle = setInterval(singleFlight(\'session-sweeper\''));
-  assert.match(fn, /singleFlight\('proposal-adopt'[\s\S]*adoptProposals\(\)/);
+  // Whatever the host's idle pause: a session's INSERT enrols it in the
+  // proposal machine in the same statement (no leader pass, which a host
+  // with the pause off once skipped), with the request key and payload
+  // platform.proposalAdopted uses, so an adoption asked again replays; the
+  // release adopts what an older build inserted without it.
+  const schema = read('src/db/schema.sql');
+  const enrol = schema.slice(schema.indexOf('CREATE OR REPLACE FUNCTION wf_enrol_proposal()'), schema.indexOf('EXECUTE FUNCTION wf_enrol_proposal();'));
+  assert.match(enrol, /VALUES \('proposal', 'session:' \|\| NEW\.id, NEW\.app_id, 'Adopted',\n\s+jsonb_build_object\('sessionId', NEW\.id\), '\{"kind": "system", "name": "adopt"\}'::jsonb,\n\s+'adopt:' \|\| NEW\.id\);/);
+  assert.match(enrol, /AFTER INSERT ON chat_sessions\n {2}FOR EACH ROW\n {2}WHEN \(NEW\.status IN \('active', 'promoted', 'merging'\)\)\n {2}$/);
+  const platform = read('src/workflow/platform.ts');
+  assert.match(platform, /runtime!\.append\(proposalMachine\(\), proposalKey\(o\.sessionId\), \{ type: 'Adopted', payload: \{ sessionId: o\.sessionId \} \},\n\s+\{ requestKey: `adopt:\$\{o\.sessionId\}`, source: sys\('adopt'\)/);
+  assert.match(platform, /\['proposals', \(\) => adoptProposals\(\)\],/);
+  assert.doesNotMatch(read('server.js'), /proposal-adopt|adoptProposals/);
+  for (const rel of ['src/routes/votes.js', 'src/services/rename-pr.js']) {
+    assert.doesNotMatch(read(rel), /proposalAdopted\(/, `${rel}: its insert enrols itself`);
+  }
   assert.match(read('src/workflow/proposal/facts.ts'), /FROM users WHERE id = \$1 FOR NO KEY UPDATE/);
 });
 

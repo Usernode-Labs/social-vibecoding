@@ -1504,16 +1504,20 @@
     "description": "The one button at the top of the Homeroom menu (the sheet opened from the Homeroom mark): opens the dialog for sending a suggestion or bug report about the app on screen."
   },
   "menu.update.platformReady": {
-    "text": "Homeroom has an update. Reload to get it.",
-    "description": "Row in the Homeroom menu (the sheet opened from the Homeroom mark) when a new version of Homeroom itself, not of the app on screen, is ready; pressing the row reloads the page. It is a button on phones and computers alike, so it says Reload rather than Tap or Click."
+    "text": "Homeroom has an update",
+    "description": "Row in the Homeroom menu (the sheet opened from the Homeroom mark) when a new version of Homeroom itself, not of the app on screen, is ready. A \"Reload\" button ends the row; pressing the row reloads the page."
   },
   "menu.update.appReady": {
-    "text": "{{app}} has an update. Reload to see it.",
-    "description": "Row in the Homeroom menu (the sheet opened from the Homeroom mark) when the app on screen has a new released version; pressing the row reloads the app. {{app}} is the app's name."
+    "text": "{{app}} has an update",
+    "description": "Row in the Homeroom menu (the sheet opened from the Homeroom mark) when the app on screen has a new released version. A \"Reload\" button ends the row; pressing the row reloads the app. {{app}} is the app's name."
   },
   "menu.update.appReadyUnnamed": {
-    "text": "This app has an update. Reload to see it.",
-    "description": "The same row as menu.update.appReady, when the app's name is not known yet: the app on screen has a new released version, and pressing the row reloads the app."
+    "text": "This app has an update",
+    "description": "The same row as menu.update.appReady, when the app's name is not known yet: the app on screen has a new released version. A \"Reload\" button ends the row; pressing the row reloads the app."
+  },
+  "menu.update.action": {
+    "text": "Reload",
+    "description": "Button at the end of the Homeroom menu's update-ready rows (\"Homeroom has an update\", \"<app> has an update\"): reloads onto the new version. A verb. It is a button on phones and computers alike, so it says Reload rather than Tap or Click."
   },
   "menu.update.platformDownloading": {
     "text": "Homeroom is downloading an update. You can reload once it’s ready.",

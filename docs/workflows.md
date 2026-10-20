@@ -326,6 +326,9 @@ All of it is in `src/db/schema.sql`. The tables are `staging:private`.
 - settled work after 90 days;
 - receipts 30 days after their instance ends.
 
+A machine whose history is mostly a clock's ticks keeps less (its definition's `retainDays`):
+the `clock` machine keeps a week.
+
 Instances keep their latest state indefinitely.
 
 **Projections.** Existing readers (API, frontend, `dapp.json` checks) keep reading the
@@ -500,7 +503,13 @@ does both.
   each adoption a step. Booting waits for none of it. A release none of whose processes
   took it within 10 minutes (it was replaced first) is `abandoned`, and the next release
   adopts what is left. A route that meets an open row the machine does not hold enrolls it itself,
-  and the conductor's leader still adopts sessions created since, every minute.
+  and a session's insert enrols it in the proposal machine (`wf_enrol_proposal`, a trigger on
+  `chat_sessions` that appends `Adopted` in the insert's own statement).
+- **The platform's scheduled jobs** (retention, probes, digests, the push sender, title heal,
+  Workshop themes, the challenge scorer, and what is read about previews and proposals from
+  outside: runtimes, GitHub, the mirrors) are the `clock` machine's: one instance per job,
+  each run a work item at most one at a time across every process, armed by the release's
+  work and on no staging preview (below).
 - **A Pod a release replaced** quiesces its runtime as it starts draining
   (`quiesceWorkflow`: no slot, timer or claim) and keeps running the work it had
   claimed, its leases renewed, until it ends or the drain does
@@ -703,6 +712,7 @@ A new machine brings the same two layers:
 | `bot-request` | `request:<appId>:<issue>`, for each request the Homeroom bot is owed a look at | `idle` → `queued` → `reading` / `following_up` → `idle`; `building`; `older_turn` | On everywhere; its old paths are deleted |
 | `bot-lane` | `bot`, one for the Homeroom bot | `open` | On everywhere; its old paths are deleted |
 | `release` | `release:<GIT_SHA>`, one per release of the platform | `adopting` → `done`, `failed` or `abandoned` | Runs the boot adoptions once per release (`release.adopt`), in that release's own processes |
+| `clock` | `clock:<job>`, one per scheduled platform job | `waiting` ⇄ `running`; `retired` | Runs each job on its schedule (`clock.<job>`), wherever the workflow runs; its old leader timers are deleted |
 
 ### Turns workflow work runs
 
@@ -857,8 +867,10 @@ What a merged pull request still has to do once GitHub has merged it
 
 - **Created by `Merged`.** The proposal machine sends it by message in the transition
   that records GitHub's merge (its `merge.attempt`, or its `merge.observe` once GitHub
-  answers a merge nobody heard), and the leader's six-hourly `observeMergedOnGithub`
-  appends it for a promoted row GitHub has merged (`platform.mergeObserved`). Either way
+  answers a merge nobody heard), and the `merged-by-hand` clock (every six hours) and the
+  `imported-prs` clock (each imported pull request every three minutes, and the webhook)
+  append it for a promoted row GitHub has merged (`platform.mergeObserved`,
+  `services/proposal-scans.js`). Either way
   the merge gets every follow-up, and the app's merge queue is told to go on
   (`MergeWanted`).
 - **One transaction with the merge:**
@@ -1013,16 +1025,33 @@ release built is known, and retired by identity once a newer attempt serves).
 - **Liveness is the work lease;** nothing is judged stuck by clock. An `error` runs again
   on the instance's timer (2 minutes doubling to 30, at most `CHECK_MAX_AUTO_RETRIES`, or
   for a day for the platform's own fault; a release re-arms those platform faults at
-  boot). An admin can retry, retire, or end a build or run that never answers
-  (`AdminEnd`).
+  boot). A proposal going up for a vote whose head errored before it was in that scope
+  (an ordinary session's error has no retry) arms the retry then. An admin can retry,
+  retire, or end a build or run that never answers (`AdminEnd`).
+- **Its own housekeeping deadline** (`restTimer`), whenever an outcome leaves none: the
+  earliest of `ChecksDue`, ten minutes after it rests with checks the row owes and nothing
+  runs (a person's "Run checks again" a restart lost, a verdict left pending or missing in
+  the error lane's scope), which runs them once nobody works on the session; and
+  `IdleDue`, when a preview that serves has gone unused for `STAGING_IDLE_TEARDOWN_MS`
+  (read from `last_activity_at` when it comes, so a heartbeat costs no event), which gives
+  it back unless it is under review or worked on (then it comes again). A fired deadline
+  the state cannot use is still taken and sets the next one, so an instance is never left
+  without one; the release gives one to each instance an older build left without
+  (`restPreviews`). These replaced the leader's idle staging GC and its three stuck-checks
+  sweeps.
+- **A stale environment** is the `preview-env` clock's to find (every 15 minutes, acting
+  only in the newest build): each preview built with another platform environment is told
+  (`EnvStale`, once per attempt and environment), and is built again if it backs a vote,
+  else given back. An older Pod during a rollout never judges the new build's previews by
+  its own fingerprint.
 - **What people read.** The transitions write the lines: the dev chat's "Staging
   deployed!" when a new attempt serves, and "Staging build failed" when a build fails
   while a turn's "Building staging preview..." card is still open; an imported pull
   request's thread hears when its preview is being built and when it is ready; the first
   failure of a streak tells the author once.
 - **Retirement:** archive, merge, included changes and app deletion retire the preview
-  for good; idle and connection pressure only when nobody is working on the session (a
-  refusal reads as busy to the sweep that asked). The runtime and its Secrets are deleted
+  for good; idle, a stale environment and connection pressure only when nobody is working
+  on the session (a refusal reads as busy to whoever asked). The runtime and its Secrets are deleted
   by the identities read first, every attempt's database by name.
 - **Who is working on a session.** The instance is also its durable record: its own build
   or run while it is `preparing` or `checking`, and the operations old flows keep no
@@ -1033,12 +1062,14 @@ release built is known, and retired by identity once a newer attempt serves).
   (`services/process-presence.js`, `rules/presence.ts`): a crash or a release ends it at
   once, without a heartbeat. `session-work.ts` is what other machines read.
 - **Observers.** What asks whether a build or run is under way reads the row
-  (`check_phase = 'building'`, the preview display state) or the instance. The boot heal
-  and the sweeper's heal (a runtime gone or stale reports `PreviewLost`; a row it never
-  held is handed over as a revision) and the stuck-checks sweep (a row with no verdict, or
-  'pending' or 'error' from before the machine held it) only hand work to it, and leave a
-  session it is building, checking or retrying alone. The reapers' teardown asks it to
-  retire, which it refuses while it works.
+  (`check_phase = 'building'`, the preview display state) or the instance. The clocks only
+  hand work to it: `preview-runtimes` reports a vote-backed preview whose runtime or
+  database is gone (`PreviewLost`); `preview-gc` retires previews whose session finished
+  or that no row names (or removes one no instance holds by name); `preview-pressure`
+  asks it to give back one preview at a time while the database server is saturated,
+  none while the last one asked for is still retiring; `preview-orphan-dbs` drops
+  databases nothing reaches. A vote-backed row it never held is handed over by the
+  release as a revision of its reviewed head. It refuses to retire while it works.
 
 ### shots
 
@@ -1106,9 +1137,10 @@ copies go) and taken again once while the proposal is open.
 
 A proposal's lifecycle (`src/workflow/proposal/`), from the moment somebody starts it until
 it is merged or closed. One instance per session, every one included (the Homeroom bot's
-triage and build sessions, the App bench's), adopted from its row by its first event: the
-leader's boot adopts every row in review, being merged or holding a slot, and its minute
-sweep the ones created since. `chat_sessions.status` is its projection with the values it
+triage and build sessions, the App bench's), adopted from its row by its first event: a
+session's insert appends `Adopted` (`wf_enrol_proposal`, a trigger), and each release adopts
+every row in review, being merged or holding a slot from before that, and every closed row
+whose CC volume is still there. `chat_sessions.status` is its projection with the values it
 always had (the move into `merged` stays merge-followups', which tells this machine with a
 `Merged` message), and it owns the columns that move with it: `promoted_at`, `archived_at`,
 `stale_notified_at`, `merge_attempt_at`, `active_users_at_promote`, what the group votes
@@ -1154,6 +1186,16 @@ on, `reviewed_head_sha` and `approval_epoch`, and what makes each platform sync 
   asks the least recently active session nobody works on to pause, and asks once more. A
   closed proposal is never resumed. An instance timer gives back a slot nobody has used for
   `SESSION_AUTOPAUSE_IDLE_MS` (the session sweeper's old first pass).
+- **Retention.** A close queues the CC volume's purge (`cc.purge`) for when
+  `ARCHIVED_RETENTION_MS` has passed since it closed; it waits doomed, so a Reopen cancels
+  it (the leader's hourly GC purged unfenced and could race a Reopen).
+- **What is read from outside** is a clock's (`services/proposal-scans.js`), and each
+  consequence the machine's: `imported-prs` (each imported pull request's head and
+  description, and GitHub merging or closing it: a merge of one up for a vote is
+  merge-followups', any other closes the proposal), `merged-by-hand`, `proposal-revisions`
+  (a native head pushed outside Homeroom, the explicit-approval flag), `proposal-measure`
+  (against main, every minute; it never rewrites the merge gate's reasons) and
+  `fixed-check-sync`.
 - **The review check** is the instance's hourly timer: the vote gate read under the lock
   (`rules/pr-gate.ts`), so a Yes since counts; voted down closes it; quiet for
   `PR_STALE_NOTIFY_MS` warns its author once; still quiet `PR_STALE_GRACE_MS` after the
@@ -1424,3 +1466,51 @@ board's banner read them.
   `enabled:main-check` row of `wf_settings` after such a rollback (the same holds for every
   machine's guard).
 
+### clock
+
+The platform's scheduled jobs (`src/workflow/clock/`): what the leader's timers ran, now on
+whichever process runs the workflow. One instance per job (`clock:<job>`); the jobs, their
+intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
+
+- **Due.** The instance's deadline is when the job is next due. When it passes, the job runs
+  as one work item (`clock.<job>`, key `run:<n>`) with a limit of 1 across every process, so
+  no two runs of a job overlap and no job needs a leader. The next run is due one interval
+  after this one ends; after a failure, sooner (30 s doubling, never later than the interval),
+  and the failure is recorded as one. A job with no interval (the push sender's drain) runs
+  again as soon as a run ends.
+- **What a run found** is the instance's last run: when, ok or its error, how long, its
+  result. That is the status an admin page reads (`platform.clockStatus`: the custom-domain
+  sweep, the storage cap), and the last good result is handed to the next run as
+  `input.previous`, so what a job carries from run to run (the build it last ran under, when
+  it last looked at the challenge standings) lives here and not in a process.
+- **Targets.** An effect a sweep finds owed once per target (a title's model call, an app's
+  Workshop re-draft) is never made by the sweep: its result lists `items`
+  (`{ target, gen, input }`), and each becomes a work item of its own
+  (`clock.<job>.item`, key `item:<target>@<gen>`), at most 200 a run (the Workshop's whole list). The generation is the run
+  unless the job names one, so each run asks again for what is still owed; a target with an
+  item still outstanding gets no second one, and a named generation only one.
+- **Safe to run twice.** A lease is weaker than a lock: a run whose process stalls stops
+  itself only at three quarters of its lease. So every run is an age DELETE, a delete
+  preconditioned on what it read, or a state change written as a compare-and-set with the
+  notice it causes (custom domains, the storage cap, connector waits, the vote digest), and
+  the push sender claims each row with its run's work item and attempt: a row left sending
+  is sent again only when that attempt is no longer live.
+- **Armed by the release** (`release.adopt`'s `clocks` step): every job the build defines
+  gets `Arm` with its interval, a new one first due when the leader timer it replaces would
+  have run (`leader_sweeps`), or at once; a job the build no longer defines is `Retire`d (no
+  deadline, its run cancelled). On a staging preview nothing is armed
+  (`config.runsClusterMaintenance`), as no leader duty ran there.
+- **A continuous job** (no interval) runs again as soon as a run ends, unless its result asks
+  to rest (`restMs`, at most 5 minutes: the push sender in a process that sends none).
+- **Run now.** Admin → Workflows' "Run now" (`RunNow`), and the storage page's "Measure now",
+  which waits for the run it asked for (`platform.runClockNow`; on a staging preview, where
+  nothing is armed, it measures on the spot). During a run it runs once more after it.
+- **First runs** are due when the leader timer a job replaces would have run, else spread over
+  the next two minutes.
+- **Previews and proposals.** `preview-runtimes`, `preview-gc`, `preview-env` (acting only in the
+  newest build), `preview-orphan-dbs`, `preview-pressure` and `worker-volumes` read the runtimes
+  and the database servers;
+  `imported-prs`, `merged-by-hand`, `proposal-revisions`, `proposal-measure` and
+  `fixed-check-sync` read GitHub and the mirrors. Each hands what it found to the preview or
+  proposal machine as an event, or retires through it, so none decides anything about an
+  instance; a per-target effect (a GitHub read, a removal by name) is a target.

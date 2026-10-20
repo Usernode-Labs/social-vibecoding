@@ -1122,7 +1122,7 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_checked_at T
 -- PR 'pending'/NULL and permanently merge-blocked. A 'pending' row whose
 -- checks_checked_at is older than CHECKS_STALE_MS (default 10m) is now treated
 -- as STUCK and
--- re-run: by server.js reconcileStuckChecks (boot + session-sweeper Pass 4),
+-- re-run: by the preview machine's own ChecksDue deadline (preview/machine.ts),
 -- by a vote that reaches threshold (the merge gate's stale-pending kick), by any
 -- staging rebuild (staging-recovery.rebuildSessionStaging now re-runs checks),
 -- and by the manual POST /api/sessions/:id/recheck ("Re-run checks" button).
@@ -5902,6 +5902,13 @@ BEGIN
 END $$;
 ALTER TABLE mobile_push_deliveries
   VALIDATE CONSTRAINT mobile_push_deliveries_platform_check;
+-- The sender's claim: the work item and attempt of the push-drain clock's run
+-- that is sending the row (src/workflow/clock/services.ts). A row left 'sending'
+-- by an attempt that is no longer live is sent again; one a live attempt
+-- holds is not, so a run beside another (a release's overlap, a process
+-- that stalled past its lease) never sends a push twice.
+ALTER TABLE mobile_push_deliveries ADD COLUMN IF NOT EXISTS claimed_work UUID;
+ALTER TABLE mobile_push_deliveries ADD COLUMN IF NOT EXISTS claimed_attempt INTEGER;
 CREATE INDEX IF NOT EXISTS idx_mobile_push_deliveries_claim
   ON mobile_push_deliveries (environment, available_at, id) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_mobile_push_deliveries_registration
@@ -11664,6 +11671,11 @@ COMMENT ON TABLE moderation_actions IS 'staging:private';
 COMMENT ON TABLE moderation_message_originals IS 'staging:private';
 
 CREATE UNIQUE INDEX IF NOT EXISTS moderation_reports_unique_open ON moderation_reports(case_id,cycle,reporter_user_id) WHERE legacy_type IS NULL;
+-- #5102: a child-safety report sets this on its case, and the retention
+-- purge (services/moderation.js purgeExpired) skips a preserved case: its
+-- reports, evidence, files and audit outlive the 180-day clock. Only a full
+-- administrator's audited release_evidence action clears it.
+ALTER TABLE moderation_cases ADD COLUMN IF NOT EXISTS preserve_evidence BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Retired: cross-Pod ownership of a preview build under the old preview
 -- lifecycle (the preview machine owns every build since #5212).
@@ -12933,6 +12945,10 @@ CREATE TABLE IF NOT EXISTS platform_limit_alerts (
   measured_at TIMESTAMPTZ,
   notified_at TIMESTAMPTZ
 );
+-- GitHub's caps: the quota window (its reset) the level is about. Each
+-- process knows GitHub's figures from its own last answer; a level holds
+-- within its window and decides afresh in the next (platform-limit-alerts.js).
+ALTER TABLE platform_limit_alerts ADD COLUMN IF NOT EXISTS window_reset_at TIMESTAMPTZ;
 
 -- ── Test accounts ──────────────────────────────────────────────────────
 --
@@ -12982,6 +12998,14 @@ COMMENT ON TABLE test_phone_sign_ins IS 'staging:private';
 -- retired the step: verification is asked only at a public step now). Kept
 -- so existing databases need nothing; nothing reads it.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_ask_answered_at TIMESTAMPTZ;
+
+-- "Are you 18 or older?" (#5095, compliance A-02): when the account said
+-- yes, asked the first time it opens a wallet, staking, node or passport
+-- feature. NULL until then, including "I'm under 18", which records
+-- nothing so the question comes back. No birthdate is kept. The wallet,
+-- staking, node and passport writes refuse a NULL here with 403
+-- adult_attestation_required (src/services/adult-attestation.js).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS adult_attested_at TIMESTAMPTZ;
 
 -- VERIFIED IDENTITY (sybil protection for public decisions and the full AI
 -- budget). An account is verified by any of: a verified phone
@@ -13763,6 +13787,9 @@ ALTER TABLE wf_work ADD COLUMN IF NOT EXISTS lost_attempts INTEGER NOT NULL DEFA
 CREATE INDEX IF NOT EXISTS wf_work_due_idx
   ON wf_work (kind, due_at) WHERE status IN ('queued', 'running');
 CREATE INDEX IF NOT EXISTS wf_work_instance_idx ON wf_work (machine, key, created_at);
+-- An instance's outstanding items of one kind (a clock's targets still owed
+-- an item: src/workflow/clock/machine.ts facts).
+CREATE INDEX IF NOT EXISTS wf_work_outstanding_idx ON wf_work (machine, key, kind) WHERE status <> 'settled';
 CREATE INDEX IF NOT EXISTS wf_work_settled_idx
   ON wf_work (settled_at) WHERE status = 'settled';
 COMMENT ON TABLE wf_work IS 'staging:private';
@@ -14128,6 +14155,31 @@ CREATE TRIGGER chat_sessions_wf_proposal_owned
     'active_users_at_promote', 'approval_epoch', 'reviewed_head_sha',
     'boot_failure_sync_head', 'fixed_check_sync_head', 'fixed_check_sync_keys', 'integration_resolved_epoch');
 
+-- Every session that holds or wants a slot is the proposal machine's from
+-- the moment it exists: its INSERT appends `Adopted` in the same statement,
+-- whoever inserts it (a route, a hand-off, the bot, an import, an older
+-- release during a rollout). The request key and payload are the ones
+-- platform.proposalAdopted uses, so an adoption appended again replays. A
+-- paused row needs no idle check and is adopted by its first event (Resume,
+-- Close, ...). Before this, a new session waited for the leader's per-minute
+-- adoption pass, and without a leader it was never adopted.
+CREATE OR REPLACE FUNCTION wf_enrol_proposal() RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO wf_events (machine, key, app_id, type, payload, source, request_key)
+  VALUES ('proposal', 'session:' || NEW.id, NEW.app_id, 'Adopted',
+          jsonb_build_object('sessionId', NEW.id), '{"kind": "system", "name": "adopt"}'::jsonb,
+          'adopt:' || NEW.id);
+  PERFORM pg_notify('wf_events', 'proposal');
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS chat_sessions_wf_enrol_proposal ON chat_sessions;
+CREATE TRIGGER chat_sessions_wf_enrol_proposal
+  AFTER INSERT ON chat_sessions
+  FOR EACH ROW
+  WHEN (NEW.status IN ('active', 'promoted', 'merging'))
+  EXECUTE FUNCTION wf_enrol_proposal();
+
 -- campaign (src/workflow/campaign/) owns a fleet maintenance campaign once it
 -- holds it: the campaign's status, when it ended, and each app's record (its
 -- state and error), projected from the instance; and the lease columns an
@@ -14171,7 +14223,7 @@ CREATE TRIGGER shot_runs_wf_shots_owned
 -- bot-request (src/workflow/bot-request/): the Homeroom bot's queue is its
 -- projection. A row of a request it holds is written only by its
 -- transitions; a row no instance holds yet (an older release's insert during
--- a rollout) is written as before and adopted (platform.adoptBotQueue). A
+-- a rollout, before #5424) was written as before and adopted. A
 -- row going with its project (the cascade) or a deleted account's id
 -- emptied (ON DELETE SET NULL) is not the queue moving.
 CREATE OR REPLACE FUNCTION wf_guard_bot_queue() RETURNS TRIGGER AS $$

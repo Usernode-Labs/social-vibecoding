@@ -42,10 +42,9 @@ const DSN = process.env.TEST_DATABASE_URL
 const SCHEMA = `checks_queue_pg_${process.pid}`;
 const SCOPED = `${DSN}${DSN.includes('?') ? '&' : '?'}options=${encodeURIComponent(`-c search_path=${SCHEMA}`)}`;
 
-// The tables the queue and the stale sweep read besides its own, with the
-// columns these paths touch; check_runs exactly as schema.sql declares it, the
-// checks queue's columns included. The preview machine's two tables are here
-// for the stale sweep, which leaves the sessions it works on alone.
+// The tables the queue reads besides its own, with the columns these paths
+// touch; check_runs exactly as schema.sql declares it, the checks queue's
+// columns included.
 const CHECK_RUNS_DDL = (() => {
   const schema = fs.readFileSync(path.join(ROOT, 'src/db/schema.sql'), 'utf8');
   const start = schema.indexOf('CREATE TABLE IF NOT EXISTS check_runs');
@@ -73,8 +72,6 @@ const DDL = `
     imported_pr_head_sha TEXT, active_turn JSONB, staging_url TEXT,
     promoted_at TIMESTAMPTZ, last_activity_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW()
   );
-  CREATE TABLE wf_instances (machine TEXT, key TEXT, state TEXT, data JSONB, deadline_at TIMESTAMPTZ, PRIMARY KEY (machine, key));
-  CREATE TABLE wf_work (machine TEXT, key TEXT, kind TEXT, status TEXT);
   ${CHECK_RUNS_DDL}
 `;
 
@@ -412,18 +409,12 @@ test('a capture waits after its preview, says so, is not stale, and leaves the l
   assert.equal(row.kind, 'proposal');
   assert.equal(row.manifest.launched, false, 'the queue row is the provisional manifest');
 
-  // Not stale, however long it has waited.
+  // Not stale, however long it has waited: nothing re-drives it by clock.
+  // (The wait is inside the machine's checks run, whose work item a dead
+  // process's retry carries on: the restart test below.)
   await pool.query("UPDATE chat_sessions SET checks_checked_at = NOW() - INTERVAL '2 hours' WHERE id = $1", [s.id]);
-  const stuck = await stagingRecovery.findStuckCheckSessions({ pool, staleMs: 600000, maxAutoRetries: 6 });
-  assert.ok(!stuck.rows.some((r) => r.id === s.id), 'the stale sweep leaves a run that is in line');
   const fresh2 = (await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [s.id])).rows[0];
   assert.equal(stagingRecovery.checkRunOverdue(fresh2), false);
-  // A session whose row has gone is overdue as before: the backstop.
-  const lost = await session(pool, appId, { check_phase: 'queued' });
-  await pool.query("UPDATE chat_sessions SET checks_checked_at = NOW() - INTERVAL '2 hours' WHERE id = $1", [lost.id]);
-  assert.ok((await stagingRecovery.findStuckCheckSessions({ pool, staleMs: 600000, maxAutoRetries: 6 }))
-    .rows.some((r) => r.id === lost.id));
-  await pool.query('DELETE FROM chat_sessions WHERE id = $1', [lost.id]);
 
   // A newer head: the machine cancels the waiting run, which leaves the line
   // at once with no verdict; its row is the machine's cancel to clear.
@@ -464,8 +455,9 @@ test('a run waiting when its process died keeps its place: the retry of its work
   let plan = await checksQueue.admit(pool);
   assert.equal(plan.byRun.get(later).ahead, 0, 'a dead run does not hold up the line');
   assert.equal(plan.byRun.get(dying).ahead, null);
-  assert.ok(!(await stagingRecovery.findStuckCheckSessions({ pool, staleMs: 0, maxAutoRetries: 6 }))
-    .rows.some((r) => r.id === s.id), 'nor is it the stale sweep\'s: the machine\'s retry has it');
+  const { rows: [orphaned] } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [s.id]);
+  assert.equal(stagingRecovery.checkRunOverdue(orphaned, { staleMs: 0 }), false,
+    'nor is it overdue by clock: the machine\'s retry of its work item has it');
 
   // The work item's retry (preview services checks.run) reads the earlier
   // claim's place, clears its row, and asks for its slot as of then.

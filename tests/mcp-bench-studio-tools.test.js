@@ -25,6 +25,7 @@ const READS = [
 const WRITES = [
   'launch_bench_studio', 'submit_bench_reference', 'rerun_bench_trial', 'cancel_bench_trial', 'keep_bench_trial',
   'deploy_bench_preview', 'create_bench_context_pack', 'add_bench_task', 'edit_bench_task', 'rate_homeroom_bot_run',
+  'set_homeroom_bot_settings',
 ];
 const ADMIN = { id: 1, username: 'evan', isAdmin: true, canAdminWrite: true };
 // A 1x1 PNG.
@@ -373,4 +374,38 @@ test('the bot and the screenshots: filters reach the route, text is untrusted, s
   assert.deepEqual(week.structuredContent.person, { username: 'evan', found: true, capCents: 10000, spentCents: 10240, usedUp: true });
   assert.match(specs.get('get_homeroom_bot').description, /whose weekly building time it counted toward \(billing: charged, payer, paidAs/);
   assert.match(specs.get('get_homeroom_bot').description, /Pass username for that person's week of building time since Monday 00:00 UTC/);
+});
+
+test('set_homeroom_bot_settings: only the fields passed, mode in the console\'s words, refusals with their reason', async (t) => {
+  const calls = stubFetch(t, (url, init) => {
+    const body = JSON.parse(init.body);
+    if (body.helperModel === 'vendor/not-listed') {
+      return { status: 400, body: { error: 'Not in the OpenRouter catalog: vendor/not-listed. The helper model must be a model OpenRouter lists.' } };
+    }
+    return { body: { ok: true, changed: Object.keys(body), settings: { mode: 'shadow', modeLabel: 'on', helperModel: body.helperModel || null }, weeklyLimitCents: 20000 } };
+  });
+  const { handlers, specs } = register({ user: { ...ADMIN } });
+  const spec = specs.get('set_homeroom_bot_settings');
+  assert.match(spec.description, /ask the person, and say each change back with its old and new value/);
+  assert.equal(spec.inputSchema.mode.safeParse('shadow').success, false, 'on or off, as the console says it');
+  assert.equal(spec.inputSchema.turnSeconds.safeParse(1.5).success, false);
+
+  const out = await handlers.get('set_homeroom_bot_settings')({ helperModel: 'deepseek/deepseek-v4.1-flash-1017', mode: 'on', extra: 'dropped' });
+  assert.equal(calls[0].url, 'http://platform.internal/api/bot-studio/bot/settings');
+  assert.equal(calls[0].method, 'POST');
+  assert.deepEqual(calls[0].body, { mode: 'shadow', helperModel: 'deepseek/deepseek-v4.1-flash-1017' }, 'only the settings it names, nothing else');
+  assert.deepEqual(out.structuredContent.changed, ['mode', 'helperModel']);
+  assert.equal(out.structuredContent.settings.helperModel, 'deepseek/deepseek-v4.1-flash-1017');
+  assert.equal(out.structuredContent.weeklyLimitCents, 20000);
+
+  await handlers.get('set_homeroom_bot_settings')({ mode: 'off', helperModel: null, models: { build: '' } });
+  assert.deepEqual(calls[1].body, { mode: 'off', models: { build: '' }, helperModel: null }, 'null and blank go back to the default');
+
+  const refused = await handlers.get('set_homeroom_bot_settings')({ helperModel: 'vendor/not-listed' });
+  assert.equal(refused.structuredContent.code, 'invalid_request');
+  assert.match(text(refused), /Not in the OpenRouter catalog: vendor\/not-listed/);
+
+  const none = await handlers.get('set_homeroom_bot_settings')({});
+  assert.equal(none.structuredContent.code, 'invalid_request');
+  assert.equal(calls.length, 3, 'nothing to change reaches nothing');
 });

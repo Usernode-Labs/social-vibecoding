@@ -92,8 +92,17 @@ fakeModule('../src/services/integration', {
 // machine's guard and statement would, against the pool the test is using
 // (recordingPool below), and records each ask on it.
 let movePool = null;
+// GitHub's word on the pull request itself: a merge of one up for a vote is
+// merge-followups' (platform.mergeObserved); any other merge or close closes
+// the proposal (session-lifecycle.archiveSession). Both recorded.
+const observedMerges = [];
+const closes = [];
 fakeModule('../src/workflow/platform.ts', {
   moveReviewHead: async (p) => movePool.move(p),
+  mergeObserved: async (m) => { observedMerges.push(m); return 1; },
+});
+fakeModule('../src/services/session-lifecycle', {
+  archiveSession: async (args) => { closes.push({ sessionId: args.sessionId, reason: args.reason, from: args.from }); return { archived: true }; },
 });
 
 const prImportSync = require('../src/services/pr-import-sync');
@@ -944,4 +953,56 @@ test('applyHeadChange: a late sweep keeps an author summary recorded for the hea
       'the exception is scoped to the head this statement installs');
     assert.equal(session.pr_summary_stale, false, 'the in-memory row follows what the machine kept');
   });
+});
+
+// ── A pull request merged or closed on GitHub settles the proposal ─────
+
+test('syncImportedProposal: merged on GitHub while up for a vote is recorded as a merge; nothing else moves', async () => {
+  observedMerges.length = 0; closes.length = 0;
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ merged: true, state: 'closed', merge_commit_sha: 'c'.repeat(40), merged_at: '2026-10-19T10:00:00Z',
+      head: { sha: 'b'.repeat(40) } })],
+  ], async () => {
+    const pool = recordingPool();
+    const res = await prImportSync.syncImportedProposal({ config: {}, pool, session: { ...SESSION } });
+    assert.equal(res, 'merged');
+    assert.deepEqual(observedMerges, [{ sessionId: 321, appId: 9, mergeSha: 'c'.repeat(40), mergedAt: '2026-10-19T10:00:00Z' }]);
+    assert.deepEqual(closes, []);
+    assert.equal(pool.moves.length, 0, 'a merged head is not installed for a vote');
+  });
+});
+
+test('syncImportedProposal: closed on GitHub, or merged before it went up, closes the proposal', async () => {
+  observedMerges.length = 0; closes.length = 0;
+  // Closed a minute ago (an author re-running CI closes and reopens): not
+  // settled yet; closed for longer, it is.
+  await withStubs([[fakeGithub, 'getPR', async () => ({ merged: false, state: 'closed', closed_at: new Date(Date.now() - 60000).toISOString(),
+    head: { sha: 'a'.repeat(40) }, mergeable: true })]], async () => {
+    const res = await prImportSync.syncImportedProposal({ config: {}, pool: recordingPool(), session: { ...SESSION } });
+    assert.equal(res, 'unchanged');
+  });
+  assert.deepEqual(closes, []);
+  await withStubs([[fakeGithub, 'getPR', async () => ({ merged: false, state: 'closed', closed_at: new Date(Date.now() - 600000).toISOString(),
+    head: { sha: 'b'.repeat(40) } })]], async () => {
+    const res = await prImportSync.syncImportedProposal({ config: {}, pool: recordingPool(), session: { ...SESSION } });
+    assert.equal(res, 'closed');
+  });
+  await withStubs([[fakeGithub, 'getPR', async () => ({ merged: true, state: 'closed', head: { sha: 'b'.repeat(40) } })]], async () => {
+    const res = await prImportSync.syncImportedProposal({ config: {}, pool: recordingPool(), session: { ...SESSION, status: 'active' } });
+    assert.equal(res, 'merged');
+  });
+  assert.deepEqual(closes, [
+    { sessionId: 321, reason: 'pr-closed', from: 'promoted' },
+    { sessionId: 321, reason: 'pr-merged', from: 'active' },
+  ], 'the proposal machine decides each close, from the status read');
+  assert.deepEqual(observedMerges, []);
+});
+
+test('syncImportedProposal: a proposal being merged is left to its merge attempt', async () => {
+  observedMerges.length = 0; closes.length = 0;
+  await withStubs([[fakeGithub, 'getPR', async () => ({ merged: true, state: 'closed', head: { sha: 'b'.repeat(40) } })]], async () => {
+    const res = await prImportSync.syncImportedProposal({ config: {}, pool: recordingPool(), session: { ...SESSION, status: 'merging' } });
+    assert.equal(res, 'skipped');
+  });
+  assert.deepEqual([observedMerges, closes], [[], []]);
 });

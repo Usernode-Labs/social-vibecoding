@@ -2,7 +2,7 @@
  * One rule for "when was this said" (#1808).
  *
  * Every transcript in the product stamped a bare time of day. A row read
- * "02:41 PM" whether it was posted ten minutes ago or in March, so a
+ * "2:41 PM" whether it was posted ten minutes ago or in March, so a
  * discussion scrolled back through carried no answer to the question people
  * actually ask of it: when. The reporter hit it on the app discussions and
  * guessed, correctly, that it was not only there.
@@ -13,9 +13,13 @@
  * read at all. So the extra words are spent only where they carry
  * information:
  *
- *   today            02:41 PM
- *   earlier this year Jun 16, 02:41 PM
- *   an earlier year   Jun 16, 2025, 02:41 PM
+ *   today            2:41 PM
+ *   earlier this year Jun 16, 2:41 PM
+ *   an earlier year   Jun 16, 2025, 2:41 PM
+ *
+ * The hour is never zero-padded (polish N5): the app chat and a request's
+ * post read "04:14 AM" while the DM rows beside them read "1:28 AM". One
+ * spelling, `hour: 'numeric'`, in this module and in both copies below.
  *
  * and `title` always carries the unambiguous form, so a row whose date is
  * elided is still one hover from certain.
@@ -29,7 +33,7 @@
  * `agoStamp` is the same guarantee at a different density. Cards, lists,
  * feeds and notification rows spend one segment of a crowded line on the
  * stamp, and there recency is the thing being said — "3d ago" beats
- * "Jun 13, 02:41 PM" when the reader is scanning for what just happened.
+ * "Jun 13, 2:41 PM" when the reader is scanning for what just happened.
  * But a relative age that never stops being relative says nothing at all:
  * the notification rows read "412d ago", which is a duration and not
  * information. So the relative form has a floor:
@@ -75,7 +79,7 @@ export interface Stamp {
 
 /** The full form, matching GroupChat._stamp's title exactly. */
 const FULL: Intl.DateTimeFormatOptions = {
-  year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
 };
 
 /**
@@ -145,7 +149,7 @@ export function messageStamp(
   if (!date) return { text: '', title: '' };
 
   const now = opts.now ?? new Date(Date.now());
-  const hour = opts.hour ?? '2-digit';
+  const hour = opts.hour ?? 'numeric';
   const time = formatDate(date, `time-${hour}`, { hour, minute: '2-digit' });
   const title = formatDate(date, 'full', FULL);
   if (sameDay(date, now)) return { text: time, title };

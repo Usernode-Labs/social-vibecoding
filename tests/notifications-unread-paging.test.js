@@ -411,9 +411,13 @@ test('both _renderList branches publish the Unread tab\'s pager state', () => {
   }
 });
 
-test('the badge code is untouched', () => {
-  assert.match(FE_SRC, /_badgeTotal\(\) \{\s*\n\s*return Notifications\.unread \+ Notifications\.invites\.length;\s*\n\s*\},/,
-    'the badge keeps counting unread + invites, exactly as before');
+test('the badge counts what the Unread tab pages: unread less plain messages, plus invites', () => {
+  // #18 (19 Oct 2026 polish board): the bell leaves plain messages to the
+  // Messages tab, so `?unread=1` leaves them out and _unreadShort compares
+  // against the same figure.
+  assert.match(FE_SRC, /_badgeTotal\(\) \{\s*\n\s*return Math\.max\(0, Notifications\.unread - \(Notifications\.messageUnread \|\| 0\)\) \+ Notifications\.invites\.length;\s*\n\s*\},/);
+  assert.match(FE_SRC, /return loaded < Notifications\.unread - \(Notifications\.messageUnread \|\| 0\);/);
+  assert.match(read('src/services/notifications.js'), /AND n\.kind NOT IN \('conversation_message', 'channel_message'\)`;/);
 });
 
 // ── the sheet ───────────────────────────────────────────────────────────

@@ -69,24 +69,30 @@ test('the header at a depth: colour, arrow, and the titles moving the drawer\'s 
   const slot = 44;
   const at0 = math.headerFrame(0, slot);
   assert.equal(at0.tint, 0, 'untinted on your communities');
-  assert.equal(at0.back.opacity, 0, 'no arrow on the outermost level');
-  assert.equal(at0.back.live, false);
-  assert.equal(at0.back.x, 8, 'it waits 8px to the right');
-  assert.deepEqual(at0.outer, { opacity: 1, x: -slot, y: 7 }, '"Communities" where the arrow is not');
+  assert.equal(at0.back.opacity, 1, 'the arrow is there on the outermost level too');
+  assert.equal(at0.back.live, true);
+  assert.equal(at0.back.x, 0);
+  assert.deepEqual(at0.outer, { opacity: 1, x: 0, y: 7 }, '"Communities" sits beside the arrow, never past the left edge');
+  assert.equal(at0.outer.x, 0, 'wherever the bar measured its slot');
+  assert.equal(math.headerFrame(0, 0).outer.x, 0);
+  assert.equal(math.headerFrame(0, 140).outer.x, 0);
   assert.equal(at0.inner.opacity, 0);
   assert.equal(at0.inner.x, 24, 'the name waits 24px to the right');
 
   const half = math.headerFrame(0.5, slot);
   assert.equal(half.tint, 0.5);
   assert.equal(half.outer.opacity, 0.5);
-  assert.equal(half.outer.x, -slot - 6, 'going in, "Communities" drifts left');
+  assert.equal(half.outer.x, -6, 'going in, "Communities" drifts left');
   assert.equal(half.inner.x, 12, 'and the name arrives from the right');
-  assert.equal(half.back.x, 4);
+  assert.equal(half.back.opacity, 1, 'the arrow stays');
+  assert.equal(half.back.x, 0);
 
   const at1 = math.headerFrame(1, slot);
   assert.equal(at1.tint, 1);
   assert.equal(at1.back.opacity, 1);
   assert.equal(at1.back.live, true);
+  assert.equal(at1.back.x, 0);
+  assert.equal(at1.outer.x, -12, '"Communities" has faded out 12px to the left');
   assert.equal(at1.outer.opacity, 0);
   assert.deepEqual(at1.inner, { opacity: 1, x: 0, y: 7, subOpacity: 0, subX: 24, subY: -7 }, 'the name alone, centred');
 
@@ -100,9 +106,10 @@ test('the header at a depth: colour, arrow, and the titles moving the drawer\'s 
   assert.deepEqual(at2.inner, { opacity: 1, x: 0, y: 0, subOpacity: math.SUB_OPACITY, subX: 0, subY: 0 });
 
   const calm = math.headerFrame(0.5, slot, true);
-  assert.equal(calm.outer.x, -slot, 'Reduce Motion: crossfades in place');
+  assert.equal(calm.outer.x, 0, 'Reduce Motion: crossfades in place');
   assert.equal(calm.inner.x, 0);
   assert.equal(calm.back.x, 0);
+  assert.equal(calm.back.opacity, 1, 'the arrow never fades, and has no movement to drop');
   assert.equal(calm.outer.opacity, 0.5, 'the fades stay');
 });
 
@@ -134,11 +141,21 @@ test('the store: one level at a time, the search first, nothing while it does no
   store.back();
   assert.equal(store.drawerStore.get().level, 0, 'the arrow: up one level');
   store.setSearching(true);
+  store.back();
+  assert.equal(store.drawerStore.get().searching, false, 'a widened search narrows first');
+  assert.equal(store.drawerStore.get().level, 0, 'and the strip has not moved');
+  store.setSearching(true);
   assert.equal(store.drawerStore.get().searching, true);
   assert.equal(store.pressTab(), 'up', 'the lit tab narrows a widened search first');
   assert.equal(store.drawerStore.get().searching, false);
   assert.equal(store.drawerStore.get().level, 0);
   assert.equal(store.pressTab(), 'none', 'the outermost level has nowhere up to go');
+  store.back();
+  assert.equal(store.drawerStore.get().level, 2, 'the arrow on level 0 returns to the page, as the device\'s Back does');
+  store.setDepth(0);
+  store.setMoving(true);
+  store.setMoving(false);
+  assert.equal(store.liveDepth(), 2, 'settling puts the header on the frame it rests at, whatever the slide did');
   store.go(2, { cut: true });
   assert.equal(store.pressTab(), 'up');
   assert.equal(store.drawerStore.get().level, 1, 'the page to its places');
@@ -240,6 +257,16 @@ test('the header takes the drawer\'s arrow and titles only while it applies', ()
   assert.equal(ui.pageLabel('discussion'), '#general');
   assert.equal(ui.pageLabel('workshop'), 'Workshop');
   assert.equal(ui.pageLabel('status'), 'Hub');
+});
+
+test('the arrow on your communities is labelled back, and stays live there', () => {
+  const drawer = read(`${DIR}/header-drawer.tsx`);
+  assert.match(drawer, /level === 2 \? t\('core:header\.drawer\.toPlaces'/, 'the page: to the places');
+  assert.match(drawer, /level === 1 \? t\('core:header\.drawer\.toCommunities'\)\s*:\s*t\('core:header\.back'\)/,
+    'the places: to your communities; your communities: the header\'s own back label');
+  const island = read(`${DIR}/nav-drawer.tsx`);
+  assert.doesNotMatch(island, /data-nav-drawer-back/,
+    'the level-0 focus move is gone: the arrow is live there now');
 });
 
 test('the lit tab and the left edge are the drawer\'s on a phone; the tray keeps the wide window', () => {

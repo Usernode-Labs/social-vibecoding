@@ -119,11 +119,11 @@ function makeStore(initialRow, extra) {
       return { rows: [] };
     }
     if (/FROM app_workshop_themes WHERE app_id/.test(sql)) return { rows: st.row ? [st.row] : [] };
-    if (/SET reconcile_started_at = NOW\(\)/.test(sql)) {
+    if (/SET reconcile_started_at = clock_timestamp\(\)/.test(sql)) {
       st.log.push('lease');
       if (st.denyLease || !st.row) return { rows: [] };
       st.row.reconcile_started_at = now();
-      return { rows: [{ app_id: st.row.app_id }] };
+      return { rows: [{ stamp: 'lease-1' }] };
     }
     if (/SET reconcile_started_at = NULL WHERE/.test(sql)) {
       st.log.push('release');
@@ -893,7 +893,7 @@ test('a board change is debounced per app, then reconciled for the app the broad
   } finally { llm._setClientForTests(prev); resetBoard(); }
 });
 
-test('the sweep re-checks the apps opened in the last week, in turn', async () => {
+test('the sweep finds the apps opened in the last week, and each is reconciled as a target of its own', async () => {
   boardOf(1);
   const apps = [{ id: 7, slug: 'demo', name: 'Demo', repo_url: 'https://github.com/acme/demo' }, { id: 8, slug: 'two', name: 'Two', repo_url: null }];
   const rows = new Map();
@@ -906,20 +906,23 @@ test('the sweep re-checks the apps opened in the last week, in turn', async () =
     const id = params && params[0];
     if (/INSERT INTO app_workshop_themes/.test(sql)) { if (!rows.has(id)) rows.set(id, freshRow({ app_id: id })); return { rows: [] }; }
     if (/FROM app_workshop_themes WHERE app_id/.test(sql)) return { rows: rows.has(id) ? [rows.get(id)] : [] };
-    if (/SET reconcile_started_at = NOW\(\)/.test(sql)) return { rows: [{ app_id: id }] };
+    if (/SET reconcile_started_at = clock_timestamp\(\)/.test(sql)) return { rows: [{ stamp: `lease-${id}` }] };
+    if (/FROM apps WHERE id = \$1/.test(sql)) return { rows: apps.filter((a) => a.id === id) };
     if (/SET input_hash/.test(sql)) { const r = rows.get(id); r.themes_json = JSON.parse(params[2]); r.discovered_at = now(); return { rows: [r] }; }
     return { rows: [] };
   };
   const m = makeModel({ themes: [{ name: 'A', anchors: [] }], place: placeAllInto('a') });
   const prev = llm._setClientForTests(m.client);
   try {
-    const out = await svc.sweep({ pool });
+    const out = await svc.sweepTargets({ pool });
     assert.equal(out.apps, 2);
-    assert.equal(out.discovered, 1, 'the app with a board drafted; the one without cards was skipped');
+    // Each app is a target of the clock's own (src/workflow/clock/): one
+    // reconcile, and its model calls, however many passes find it.
+    assert.deepEqual(out.items, [{ target: 'app:7', input: { appId: 7 } }, { target: 'app:8', input: { appId: 8 } }]);
+    let discovered = 0;
+    for (const it of out.items) if ((await svc.sweepApp({ pool, appId: it.input.appId })).discovered) discovered += 1;
+    assert.equal(discovered, 1, 'the app with a board drafted; the one without cards was skipped');
     assert.equal(m.calls.filter((c) => c.kind === 'discovery').length, 1);
-    let stops = 0;
-    const halted = await svc.sweep({ pool, isShuttingDown: () => (stops++ > 0) });
-    assert.equal(halted.apps, 1, 'a shutdown stops the sweep between apps');
   } finally { llm._setClientForTests(prev); resetBoard(); }
 });
 

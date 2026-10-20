@@ -55,8 +55,11 @@ test('a pass that throws frees the next tick', async () => {
   assert.equal(calls, 2);
 });
 
-test('the session sweeper runs one pass at a time', () => {
+test('the turn watchdog runs one pass at a time', () => {
+  // What is left of the session sweeper: a leader timer whose tick is
+  // single-flight, so a slow pass is never overlapped by the next.
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  assert.match(server, /sessionSweeperHandle = setInterval\(singleFlight\('session-sweeper', async \(\) => \{/);
-  assert.match(server, /\}\), config\.sessionSweepIntervalMs\)\.unref\(\);/);
+  assert.match(server, /leaderTimers\.every\('turn-watchdog', singleFlight\('turn-watchdog', async \(\) => \{/);
+  const body = server.slice(server.indexOf("leaderTimers.every('turn-watchdog'"));
+  assert.match(body, /\n {2}\}\), config\.sessionSweepIntervalMs\);\n\}/);
 });

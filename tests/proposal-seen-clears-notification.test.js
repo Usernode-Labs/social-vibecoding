@@ -63,7 +63,7 @@ function makePool({ cleared }) {
     async query(sql, params) {
       calls.push({ sql: String(sql), params });
       if (/^\s*UPDATE notifications/.test(sql)) return { rowCount: cleared, rows: [] };
-      if (/COUNT\(\*\)/.test(sql)) return { rows: [{ c: 3 }] };
+      if (/COUNT\(\*\)/.test(sql)) return { rows: [{ c: 3, m: 1 }] };
       throw new Error(`Unexpected SQL: ${sql}`);
     },
   };
@@ -100,7 +100,7 @@ test('POST /api/notifications/read { session_id } clears the proposal nudge and 
   await withServer(pool, async (post, pushes) => {
     const res = await post({ session_id: 55 });
     assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { unread: 3, cleared: 1 });
+    assert.deepEqual(await res.json(), { unread: 3, messageUnread: 1, cleared: 1 });
     const update = pool.calls.find((c) => /UPDATE notifications/.test(c.sql));
     assert.deepEqual(update.params, [7, 55, ['pr_proposed']]);
     assert.deepEqual(pushes, [{ userId: 7, msg: { type: 'notifications_changed' } }]);
@@ -111,7 +111,7 @@ test('POST /api/notifications/read { session_id } with nothing to clear does not
   const pool = makePool({ cleared: 0 });
   await withServer(pool, async (post, pushes) => {
     const res = await post({ session_id: '55' });
-    assert.deepEqual(await res.json(), { unread: 3, cleared: 0 });
+    assert.deepEqual(await res.json(), { unread: 3, messageUnread: 1, cleared: 0 });
     assert.equal(pushes.length, 0);
   });
 });

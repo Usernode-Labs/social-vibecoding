@@ -55,26 +55,8 @@ const MORE = 'frontend/src/features/auth/more.tsx';
  * real form. A `name` appearing on one of them is a change, not a fix.
  */
 const FIELDS = [
-  // ── #waitlist, the stage-1 join and the confirm-by-code panel ────────
-  {
-    screen: 'auth-waitlist-screen',
-    src: WAITLIST,
-    id: 'waitlist-email',
-    tag: 'input',
-    component: 'Input',
-    attrs: {
-      type: 'email', required: '', maxlength: '255',
-      placeholder: 'you@example.com', autocomplete: 'email',
-    },
-  },
-  {
-    screen: 'auth-waitlist-screen',
-    src: WAITLIST,
-    id: 'waitlist-country',
-    tag: 'select',
-    component: 'Select',
-    attrs: {},
-  },
+  // ── #waitlist, check your status (the join form's address and country
+  // went with it, #5261) ──────────────────────────────────────────────
   {
     screen: 'auth-waitlist-screen',
     src: WAITLIST,
@@ -85,9 +67,8 @@ const FIELDS = [
       type: 'email', maxlength: '255',
       placeholder: 'you@example.com', autocomplete: 'email',
     },
-    // It ships hidden and the declared checks read that class off the field
-    // itself (`#waitlist-confirm-email.hidden` / `:not(.hidden)`).
-    alsoClasses: ['hidden', 'mb-2'],
+    // Always up on its step since #5261: the screen is only this errand.
+    alsoClasses: ['mb-2'],
   },
   {
     screen: 'auth-waitlist-screen',

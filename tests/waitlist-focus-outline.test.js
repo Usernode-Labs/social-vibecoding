@@ -83,15 +83,21 @@ test('every focus ring is paired with a focused border colour', () => {
       );
     }
   }
-  assert.ok(checked >= 17, `expected the whole waitlist form, saw ${checked} fields`);
+  // 15 since #5261 took the join form's address and country off #waitlist;
+  // the country is asked in the waiting room now (the test below).
+  assert.ok(checked >= 15, `expected the whole waitlist form, saw ${checked} fields`);
 });
 
 test('the country select — the control the report named — is covered', () => {
-  const select = fieldsOf('auth-waitlist-screen').find((f) => f.id === 'waitlist-country');
-  assert.ok(select, '#waitlist-country is rendered');
-  assert.equal(select.tag, 'select', 'and it is still a real <select>');
-  assert.match(select.classes, /border border-zinc-300/, 'still bordered at rest');
-  assert.match(select.classes, /focus:border-violet-500/, 'and bordered when focused');
+  // It is the waiting room's now (#5261, features/auth/waiting-about.tsx),
+  // which draws it only once the account's answers are read, so the rule is
+  // read off the source: it spreads the surveys' one select box.
+  const about = fs.readFileSync(path.join(ROOT, 'frontend/src/features/auth/waiting-about.tsx'), 'utf8');
+  const select = about.match(/<Select\s+id="waiting-about-country"[\s\S]*?<\/Select>/);
+  assert.ok(select, '#waiting-about-country is a real <select>');
+  assert.match(select[0], /\{\.\.\.SURVEY_SELECT\}/, 'drawn with the surveys\' bordered select');
+  const shared = fs.readFileSync(path.join(ROOT, 'frontend/src/features/auth/waitlist-shared.tsx'), 'utf8');
+  assert.match(shared, /export const SURVEY_SELECT = \{ variant: 'authWhite' \} as const;/);
 });
 
 test('the pair is spelled ONCE, in the primitives the screens now use', () => {

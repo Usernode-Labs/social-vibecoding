@@ -1,19 +1,22 @@
 'use strict';
 
-// #2760 — the fifth tab carries the signed-in user's USERNAME instead of "Me",
-// on the phone's bar and the desktop rail alike (the owner asked for both).
+// #2760 — the fifth tab carried the signed-in user's USERNAME instead of "Me",
+// on the phone's bar and the desktop rail alike. N7 of the 19 Oct 2026 polish
+// board turned that round (the owner agreed): a long username was cut to
+// "newbie_t1…", the one label on the bar that did not fit, so the tab says
+// "You" and its accessible name says whose account it is.
 //
 // Four things are pinned, and each is a way the tab can be wrong while the bar
 // still renders and every structural test still passes:
 //
-//   1. THE PRERENDER STILL SAYS "Me". The document is built in Node with no
-//      session. A first client render that named anybody would disagree with
-//      it, which is React #418 — a console error on every route, and a console
-//      error on any route fails every declared check.
-//   2. ONCE KNOWN, THE NAME IS THE LABEL, and the accessible name still says
-//      what the tab is, not only whose it is.
+//   1. THE PRERENDER SAYS "You". The document is built in Node with no
+//      session. A first client render that said anything else would disagree
+//      with it, which is React #418 — a console error on every route, and a
+//      console error on any route fails every declared check.
+//   2. ONCE KNOWN, THE NAME IS IN THE ACCESSIBLE NAME, after the word on
+//      screen, and the words on screen do not change.
 //   3. THE BRIDGE CLEANS WHAT IT IS GIVEN. A user object with no username yet
-//      leaves the tab saying "Me" rather than saying nothing.
+//      leaves the tab with no name of its own rather than an empty one.
 //   4. APP.JS PUBLISHES IT WHEREVER `App.user` CHANGES — every boot and login,
 //      the verified session replacing the snapshot, sign-out, and a rename.
 
@@ -48,10 +51,10 @@ const meTab = (html) => {
 
 // ── 1. The prerender ──────────────────────────────────────────────────
 
-test('the shipped document says "Me", with no name and no label of its own', () => {
+test('the shipped document says "You", with no name and no label of its own', () => {
   assert.equal(ui.navStore.get().viewer, null, 'nobody is known before the router runs');
   const shipped = meTab(HTML);
-  assert.match(shipped, /class="platform-tab-label">Me</, 'the prerender can only say Me');
+  assert.match(shipped, /class="platform-tab-label">You</, 'the prerender says You');
   assert.doesNotMatch(shipped, /aria-label=/,
     'an accessible name that differs from the text would be a second thing to keep in step');
   // …and the first client render is the same markup, or hydration fails.
@@ -61,12 +64,12 @@ test('the shipped document says "Me", with no name and no label of its own', () 
 
 // ── 2. The name ───────────────────────────────────────────────────────
 
-test('once somebody is signed in, the tab is their username', () => {
+test('once somebody is signed in, the tab still says You, and its name says whose', () => {
   const tab = meTab(render('evan'));
-  assert.match(tab, /class="platform-tab-label">evan</, 'the username is the visible label');
-  assert.doesNotMatch(tab, />Me</, 'and "Me" is gone');
-  assert.match(tab, /aria-label="evan, your profile"/,
-    'the accessible name starts with what is on screen and says what the tab is');
+  assert.match(tab, /class="platform-tab-label">You</, 'the words on screen do not change');
+  assert.doesNotMatch(tab, />evan</, 'the username is not the label (N7: a long one was cut)');
+  assert.match(tab, /aria-label="You, evan"/,
+    'the accessible name starts with what is on screen and says whose account it is');
   assert.match(tab, /href="#profile"/, 'the destination is unchanged');
   assert.match(tab, /data-tab="me"/, 'and so is the key every selector uses');
 });
@@ -84,13 +87,13 @@ test('only the fifth tab changes', () => {
       `${key} keeps its text as its name`);
   }
   assert.deepEqual(ui.tabLabel('home', 'Home', 'evan'), { text: 'Home', ariaLabel: undefined });
-  assert.deepEqual(ui.tabLabel('me', 'Me', null), { text: 'Me', ariaLabel: undefined });
-  assert.deepEqual(ui.tabLabel('me', 'Me', 'evan'), { text: 'evan', ariaLabel: 'evan, your profile' });
+  assert.deepEqual(ui.tabLabel('me', 'You', null), { text: 'You', ariaLabel: undefined });
+  assert.deepEqual(ui.tabLabel('me', 'You', 'evan'), { text: 'You', ariaLabel: 'You, evan' });
 });
 
-test('a long username is cut with an ellipsis inside the tab, at both sizes', () => {
-  // Usernames are up to 32 characters with no spaces (src/services/usernames.js),
-  // so the label has to clip rather than push the bar or the rail row wider.
+test('a long label is cut with an ellipsis inside the tab, at both sizes', () => {
+  // The tab said a username once (up to 32 characters, src/services/usernames.js),
+  // and any label still has to clip rather than push the bar or the rail row wider.
   assert.match(CSS, /\.platform-tab-label \{\s*max-width: 100%;\s*overflow: hidden;\s*text-overflow: ellipsis;/,
     'the phone caption clips at its column');
   // The sidebar's row: the label takes the row's room and clips there (a

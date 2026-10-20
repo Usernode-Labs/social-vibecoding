@@ -154,6 +154,10 @@ export interface MachineDefinition<S extends State = State, F = unknown> {
   // platform can hurry, each with the words Admin → Workflows shows beside
   // it under "Needs a person" (a merge GitHub has not answered).
   attention?: Record<string, string>;
+  // Days its processed events, settled work and receipts are kept, when fewer
+  // than the runtime's (a machine whose history is mostly a clock's ticks; its
+  // request keys must not come back after that long).
+  retainDays?: number;
 }
 
 export interface WorkContext {

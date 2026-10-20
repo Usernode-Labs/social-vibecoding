@@ -774,14 +774,16 @@ const Browse = {
   //   new                   12 users · Created 5d ago
   //
   // A zero-merge app omits the merge segment rather than printing "0 merged",
-  // which reads as a defect rather than as an absence.
+  // which reads as a defect rather than as an absence. So does a zero user
+  // count (polish N12): "0 users" beside the row's "Joined" read as a
+  // contradiction, and a zero says nothing in this shell.
   // Pure — unit-tested.
   metaLine(app, key) {
     if (!app) return '';
     const sort = Browse.resolveSort(key == null ? Browse._sort : key);
     const bits = [];
     const users = parseInt(app.active_users || 0, 10) || 0;
-    bits.push(PlatformI18n.t('discover:row.meta.users', { count: users }));
+    if (users > 0) bits.push(PlatformI18n.t('discover:row.meta.users', { count: users }));
     if (sort === 'active') {
       const recent = parseInt(app.merged_prs_recent || 0, 10) || 0;
       if (recent > 0) bits.push(PlatformI18n.t('discover:row.meta.liveRecently', { count: recent }));
@@ -802,7 +804,7 @@ const Browse = {
       : app.status === 'error' ? PlatformI18n.t('discover:row.status.error')
       : app.status || '';
     if (status) bits.push(status);
-    return joinFacts(bits);
+    return bits.length ? joinFacts(bits) : '';
   },
 
   // One app-store row, as DATA: icon · name + meta + status pills · Add

@@ -11,8 +11,10 @@ export function openReport(target: ReportTarget) {
   (window as any).UsernodeReact?.dialogs?.report?.open(target);
 }
 // The second item is a message id (frontend/locales/en/dialogs.json), read
-// when the list renders.
+// when the list renders. Child safety is first (#5102): it is the report that
+// must not wait, and its case keeps its evidence past the retention period.
 export const REPORT_REASONS = [
+  ['child_safety', 'dialogs:report.reason.childSafety'],
   ['spam', 'dialogs:report.reason.spam'], ['scam', 'dialogs:report.reason.scam'], ['harassment', 'dialogs:report.reason.harassment'],
   ['hate', 'dialogs:report.reason.hate'], ['threats', 'dialogs:report.reason.threats'], ['sexual_content', 'dialogs:report.reason.sexualContent'],
   ['impersonation', 'dialogs:report.reason.impersonation'], ['other', 'dialogs:report.reason.other'],

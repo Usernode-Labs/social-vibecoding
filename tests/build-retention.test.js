@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { sweep, stop } = require('../src/services/build-retention');
+const { sweep } = require('../src/services/build-retention');
 const { createGuard } = require('../src/services/build-retention-guard');
 const { BUILD_RETENTION_LOCK } = require('../src/services/advisory-locks');
 const kubernetes = require('../src/services/kubernetes');
@@ -322,61 +322,27 @@ test('loss of a held session lock invokes fail-closed handling once', async () =
   finish.resolve(); await deploy;
 });
 
-test('leader scheduler previews then cleans at startup, repeats hourly, and stops cleanly', async (t) => {
-  await stop();
-  t.mock.timers.enable({ apis: ['setInterval'] });
-  const h = harness([build('old', 1000)]);
-  const list = t.mock.method(kubernetes, 'listManagedBuilds', async () =>
-    (await h.runtime.listManagedBuilds()).filter(b => !h.state.deleted.includes(b.metadata.name)));
-  // An empty inventory still requires a readable reference inventory.
-  // Patch the shared pool module before loading an isolated scheduler module.
-  const poolModule = require('../src/db/pool');
-  t.mock.method(poolModule, 'getPool', () => h.pool);
-  const moduleId = require.resolve('../src/services/build-retention');
-  const cached = require.cache[moduleId];
-  delete require.cache[moduleId];
-  const scheduler = require(moduleId);
-  t.after(async () => { await scheduler.stop(); require.cache[moduleId] = cached; });
+test('the build-retention clock cleans failed Builds, then sweeps for real, and a stopped run deletes nothing more', async (t) => {
+  // The hourly schedule is the clock's (src/workflow/clock/services.ts): one
+  // run at a time wherever the workflow runs, its stop the run's signal.
+  const { JOBS } = require('../src/workflow/clock/services.ts');
+  const job = JOBS.find((j) => j.name === 'build-retention');
+  assert.equal(job.everyMs, hour);
+  const h = harness([build('old', 1000), build('older', 500)]);
+  t.mock.method(kubernetes, 'listManagedBuilds', h.runtime.listManagedBuilds);
   t.mock.method(kubernetes, 'readBuild', h.runtime.readBuild);
   t.mock.method(kubernetes, 'deleteBuildSnapshot', h.runtime.deleteBuildSnapshot);
-  scheduler.start(config);
-  scheduler.start(config);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(h.state.deleted, ['old']);
-  assert.equal(list.mock.callCount(), 2);
-  t.mock.timers.tick(hour - 1);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(h.state.deleted, ['old']);
-  t.mock.timers.tick(1);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(h.state.deleted, ['old']);
-  assert.equal(list.mock.callCount(), 3);
-  await scheduler.stop();
-  t.mock.timers.tick(hour);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(list.mock.callCount(), 3);
-});
+  const failed = t.mock.method(require('../src/services/application-runtime'), 'cleanupFailedBuilds', async () => ({ examined: 1, deleted: 1 }));
+  const live = new AbortController();
+  const out = await job.run({ input: {}, signal: live.signal }, { pool: h.pool, config });
+  assert.equal(failed.mock.callCount(), 1);
+  assert.equal(out.failedDeleted, 1);
+  assert.deepEqual(h.state.deleted.sort(), ['old', 'older']);
 
-
-test('stopping during the startup preview prevents the cleanup pass', async (t) => {
-  t.mock.timers.enable({ apis: ['setInterval'] });
-  const h = harness([build('old', 1000)]);
-  const pending = deferred();
-  const poolModule = require('../src/db/pool');
-  t.mock.method(poolModule, 'getPool', () => h.pool);
-  const list = t.mock.method(kubernetes, 'listManagedBuilds', () => pending.promise);
-  t.mock.method(kubernetes, 'deleteBuildSnapshot', async () => assert.fail('must not delete after stop'));
-  const moduleId = require.resolve('../src/services/build-retention');
-  const cached = require.cache[moduleId];
-  delete require.cache[moduleId];
-  const scheduler = require(moduleId);
-  t.after(async () => { await scheduler.stop(); require.cache[moduleId] = cached; });
-  scheduler.start(config);
-  const stopping = scheduler.stop();
-  pending.resolve([build('old', 1000)]);
-  await stopping;
-  await new Promise(resolve => setImmediate(resolve));
-  t.mock.timers.tick(hour);
-  assert.equal(list.mock.callCount(), 1);
-  assert.deepEqual(h.state.deleted, []);
+  const again = harness([build('old', 1000)]);
+  t.mock.method(kubernetes, 'listManagedBuilds', again.runtime.listManagedBuilds);
+  t.mock.method(kubernetes, 'deleteBuildSnapshot', async () => assert.fail('a stopped run deletes nothing'));
+  const stopped = new AbortController();
+  stopped.abort();
+  await job.run({ input: {}, signal: stopped.signal }, { pool: again.pool, config });
 });
