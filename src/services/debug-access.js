@@ -11,12 +11,11 @@
 // and the platform executes the reads on its side:
 //
 //   - SQL runs through a dedicated `usernode_debug_ro` Postgres role
-//     whose password the leader regenerates at every election, and whose
-//     grants exclude every credential-bearing table/column (deny lists
-//     below). The leader keeps it in memory; the other processes (a web
-//     process never leads, docs/plans/web-and-conductor.md) read it from
-//     platform_db_roles, encrypted with the data key as app secrets are,
-//     a table this role itself cannot read.
+//     whose password each release's migration step regenerates
+//     (services/db-roles.js), and whose grants exclude every
+//     credential-bearing table/column (deny lists below). Every process
+//     reads it from platform_db_roles, encrypted with the data key as app
+//     secrets are, a table this role itself cannot read.
 //   - docker reads (`docker logs`, `docker ps`) run via the platform's
 //     existing docker.js helpers against an allowlist of container
 //     names.
@@ -251,7 +250,7 @@ let _roPassword = null;
 let _roPool = null;
 let _available = false;
 let _unavailableReason = 'prod-debug role not initialized';
-// When this process last read the leader's record (loadShared).
+// When this process last read the role's record (loadShared).
 let _sharedReadAt = 0;
 const SHARED_TTL_MS = 30 * 1000;
 
@@ -346,11 +345,10 @@ async function ensureRole(config) {
   }
 }
 
-// What the leader made, for the other processes (loadShared): whether the
+// What the migration step made, for every process (loadShared): whether the
 // setup succeeded and the password, encrypted with the data key. Retried: a
-// record left at the previous password refuses every other process's queries
-// until the next election. Never throws: the leader's own capability does
-// not depend on it.
+// record left at the previous password refuses every process's queries until
+// the next release. Never throws.
 const RECORD_RETRY_MS = [500, 2000, 5000];
 async function recordBootstrap(config, { ok, password = null, reason = null }) {
   let secretEnc;
@@ -379,9 +377,9 @@ async function recordBootstrap(config, { ok, password = null, reason = null }) {
   }
 }
 
-// A process that did not set the role up (a web process, a follower, or a
-// leader since replaced, whose password the new one rotated) uses the
-// leader's record. Read at most every SHARED_TTL_MS unless `force`d (a
+// A process that did not set the role up (every process: the migration
+// step does, services/db-roles.js; or one whose password the next release
+// rotated) uses the record. Read at most every SHARED_TTL_MS unless `force`d (a
 // password Postgres refused). Never throws: a record it cannot read leaves
 // the capability as it was.
 async function loadShared(config, { force = false } = {}) {
@@ -392,16 +390,16 @@ async function loadShared(config, { force = false } = {}) {
     ({ rows: [row] } = await getPool(config).query(
       'SELECT ok, reason, secret_enc FROM platform_db_roles WHERE role = $1', [ROLE]));
   } catch (err) {
-    log.warn('prod-debug', 'Could not read the leader\'s record of the role', { err: err.message });
+    log.warn('prod-debug', 'Could not read the record of the role', { err: err.message });
     return;
   }
   if (!row) {
-    _unavailableReason = 'prod-debug role not set up by the leader yet';
+    _unavailableReason = 'prod-debug role not set up yet (the release\'s migration step does it)';
     return;
   }
   if (!row.ok) {
     _available = false;
-    _unavailableReason = row.reason || 'prod-debug role bootstrap failed on the leader';
+    _unavailableReason = row.reason || 'prod-debug role bootstrap failed in the migration step';
     return;
   }
   const password = secrets.decrypt(row.secret_enc, config && config.dataEncryptionKey);
@@ -549,7 +547,7 @@ async function runQuery(sql, { config = null } = {}) {
       res = await _getRoPool(config).query(sql);
       break;
     } catch (err) {
-      // 28P01: the password was rotated by a newer leader's setup. Its
+      // 28P01: the password was rotated by a newer release's setup. Its
       // record has the new one; ask once more with it.
       if (err.code !== '28P01' || attempt > 1) throw err;
       const before = _roPassword;

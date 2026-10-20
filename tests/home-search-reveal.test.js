@@ -122,6 +122,28 @@ test('sync tucks the bar away by exactly its measured height', () => {
   assert.equal(bar.dataset.revealed, 'false');
 });
 
+// #17 of the 19 Oct polish board: from 768px the bar stays in view. Parked,
+// the desktop showed no search at all, and an empty blur glided the page
+// back up on its own.
+test('from 768px the bar is never tucked: not at first, and not on an empty blur', () => {
+  const { Home, screen, bar, sandbox } = makeHome({ barHeight: 58, scrollTop: 0 });
+  sandbox.PlatformUI = { isPhoneLayout: () => false };
+  const glides = [];
+  screen.scrollTo = (opts) => glides.push(opts);
+  Home._searchReveal.sync();
+  assert.equal(screen.scrollTop, 0, 'Home opens at the top, the search in sight');
+  assert.equal(bar.dataset.revealed, 'true');
+  Home._searchReveal.pin();
+  Home._searchReveal.unpin();
+  assert.deepEqual(glides, [], 'leaving the empty box scrolls nothing');
+  assert.equal(screen.scrollTop, 0);
+  // The phone keeps the tuck.
+  const phone = makeHome({ barHeight: 58, scrollTop: 0 });
+  phone.sandbox.PlatformUI = { isPhoneLayout: () => true };
+  phone.Home._searchReveal.sync();
+  assert.equal(phone.screen.scrollTop, 58);
+});
+
 test('sync never yanks a user who has scrolled further down', () => {
   const { Home, screen } = makeHome({ barHeight: 52, scrollTop: 800 });
   Home._searchReveal.sync();

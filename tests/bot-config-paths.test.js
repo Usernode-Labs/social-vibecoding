@@ -152,12 +152,54 @@ test('every other build keeps the per-stage settings it was handed', async (t) =
   assert.equal(args.review, undefined);
 });
 
-test('a first version\'s triage reads the current configuration\'s model and pack', () => {
+test('a first version\'s triage reads the current configuration\'s model and pack; every other request the later one\'s', () => {
   const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot'), 'utf8');
   const triage = src.slice(src.indexOf('async function runTriage('), src.indexOf('async function actOnVerdict('));
   assert.match(triage, /if \(liveMode && requester\?\.firstVersion\) \{\n\s+const version = await botConfigs\(\)\.currentVersion\(pool\);/);
-  assert.match(triage, /model = version\.recipe\.models\.triage;\n\s+triageHarness = live\.recipeHarness\(model, config\);/);
-  assert.match(triage, /harness: triageHarness,/);
+  assert.match(triage, /const t = recipeStage\(version\.recipe, 'triage', \{ fallback: model, fallbackMs: turnBudgetMs \}\);\n\s+model = t\.model;/);
+  assert.match(triage, /\} else \{\n\s+const recipe = await laterRecipe\(pool\);/);
+  assert.match(triage, /triageHarness = live\.recipeHarness\(model, config\);/);
+  assert.match(triage, /harness: triageHarness,\n[^\n]*\n\s+\.\.\.\(triageEffort \? \{ reasoningEffort: triageEffort \} : \{\}\),/);
+  assert.match(triage, /budgetMs: triageBudgetMs, owner: look\.owner/);
+});
+
+test('recipeStage: a stage\'s model, effort and clock from a recipe, else the fallbacks', () => {
+  const recipe = {
+    models: { triage: 'a/t', spec: 'a/s', build: 'a/b', followup: 'a/f' }, reviewer: null, pack: null,
+    effort: { build: 'max', followup: 'low' }, clocks: { triage: 5, build: 45 },
+  };
+  assert.deepEqual(bot.recipeStage(recipe, 'followup', { fallback: 'x/y', fallbackMs: 1200000 }), { model: 'a/f', effort: 'low', clockMs: 1200000 });
+  assert.deepEqual(bot.recipeStage(recipe, 'triage', { fallback: 'x/y', fallbackMs: 1200000 }), { model: 'a/t', effort: null, clockMs: 300000 });
+  const noFollowup = { ...recipe, models: { triage: 'a/t', spec: 'a/s', build: 'a/b' } };
+  assert.deepEqual(bot.recipeStage(noFollowup, 'followup', { fallback: 'x/y', fallbackMs: 9 }), { model: 'x/y', effort: 'low', clockMs: 9 },
+    'a recipe that names no follow-up model leaves it to the per-stage setting');
+  assert.deepEqual(bot.recipeStage(null, 'build', { fallback: 'x/y', fallbackMs: 9 }), { model: 'x/y', effort: null, clockMs: 9 });
+});
+
+test('recipeBudgets: a configuration\'s own clocks, the platform\'s repository three times them; none named is buildBudgets', () => {
+  const app = { repo_url: 'https://github.com/o/app' };
+  const recipe = { models: { triage: 'a/t', spec: 'a/s', build: 'a/b' }, reviewer: null, pack: null, clocks: { build: 45, spec: 15 } };
+  assert.deepEqual(bot.recipeBudgets(app, {}, 1200000, { firstVersion: true, recipe }), { turnBudgetMs: 45 * 60000, specBudgetMs: 15 * 60000 },
+    'a first version\'s clocks are its own, with no factor on top');
+  assert.deepEqual(bot.recipeBudgets(app, {}, 1200000, { firstVersion: true, recipe: { ...recipe, clocks: undefined } }),
+    bot.buildBudgets(app, {}, 1200000, { firstVersion: true }));
+  assert.deepEqual(bot.recipeBudgets(app, {}, 1200000, { recipe: { ...recipe, clocks: { build: 30 } } }),
+    { turnBudgetMs: 30 * 60000, specBudgetMs: bot.buildBudgets(app, {}, 1200000).specBudgetMs }, 'a stage it does not name keeps its default');
+  const platform = { repo_url: 'https://github.com/Usernode-Labs/social-vibecoding', self_hosted: true, slug: 'usernode-2d5619' };
+  const factor = bot.isPlatformRepo(platform, {}) ? bot.PLATFORM_BUILD_TIME_FACTOR : 1;
+  assert.equal(bot.recipeBudgets(platform, {}, 1200000, { recipe }).turnBudgetMs, 45 * 60000 * factor);
+});
+
+test('a configuration\'s effort reaches the spec, the build and the follow-ups; none named, the session\'s own', () => {
+  const fs = require('node:fs');
+  const live = fs.readFileSync(require.resolve('../src/services/homeroom-bot-live'), 'utf8');
+  assert.match(live, /reasoningEffort: \(efforts && efforts\.spec\) \|\| recipeSpecEffort\(specModel \|\| model\),/);
+  assert.match(live, /firstVersion, tweaks: buildTweaks, reasoningEffort: \(efforts && efforts\.build\) \|\| null,/);
+  const botSrc = fs.readFileSync(require.resolve('../src/services/homeroom-bot'), 'utf8');
+  assert.match(botSrc, /efforts: \{ spec: botConfigs\(\)\.stageEffort\(recipe, 'spec'\), build: botConfigs\(\)\.stageEffort\(recipe, 'build'\) \},/);
+  assert.match(botSrc, /const f = recipeStage\(await laterRecipe\(pool\), 'followup', \{/);
+  const followup = fs.readFileSync(require.resolve('../src/services/homeroom-bot-followup'), 'utf8');
+  assert.match(followup, /harness: 'auto',\n\s+\.\.\.\(reasoningEffort \? \{ reasoningEffort \} : \{\}\),/);
 });
 
 // ── A side build on the App bench lane ───────────────────────────────────
@@ -495,4 +537,10 @@ test('a bench trial may move only its own branch back, for a review\'s rollback'
   assert.throws(() => g.resetBenchBranch('o', 'r', 'main', BASE), /may not touch the branch main/);
   assert.throws(() => g.resetBenchBranch('o', 'r', 'dev/homeroom_bot-1', BASE), /may not touch/);
   assert.throws(() => g.forceBranchToSha('o', 'r', 'bench/r3-t44', BASE), /benchmark trials may not call github\.forceBranchToSha/, 'never the raw call');
+});
+
+test('a max effort reaches a Claude Code turn, and runs at xhigh in Codex, whose scale stops there', () => {
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/agent-turn'), 'utf8');
+  assert.match(src, /const requestedReasoningEffort = asked === 'max' && agentHarness !== 'claude' \? 'xhigh' : asked;/);
+  assert.ok(require('../src/services/bot-configs').EFFORTS.includes('max'));
 });

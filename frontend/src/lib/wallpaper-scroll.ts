@@ -70,9 +70,16 @@ type DocLike = EventTarget & Pick<Document, 'getElementById'> & {
 };
 type WinLike = Pick<Window, 'addEventListener' | 'requestAnimationFrame'>;
 
-/** The scroll position a root reads as "not scrolled". */
+/**
+ * The scroll position a root reads as "not scrolled": Home's parks its
+ * search bar, on a phone only (#17; features/home/home.js
+ * `_searchReveal.tucks`, the same question asked the same way).
+ */
 export function restTop(doc: DocLike, rootId: string): number {
   if (rootId !== 'home-screen') return 0;
+  const ui = typeof window === 'undefined' ? undefined
+    : (window as unknown as { PlatformUI?: { isPhoneLayout?: () => boolean } }).PlatformUI;
+  if (ui?.isPhoneLayout?.() === false) return 0;
   const bar = doc.getElementById('home-search-bar');
   return (bar && (bar as HTMLElement).offsetHeight) || 0;
 }

@@ -13,9 +13,9 @@
 // It is a SWEEP, not a write-path check. The platform does not sit
 // between an app and its database (the app holds its own connection
 // string), so the only place a limit can bite is Postgres itself, and the
-// only way to learn how big a database is is to ask. The leader measures
-// every `app_*` database every APP_DB_STORAGE_SWEEP_INTERVAL_MS
-// (server.js, becomeLeader), records the figure on the app row, and moves
+// only way to learn how big a database is is to ask. The app-storage-cap
+// clock (src/workflow/clock/services.ts) measures every `app_*` database
+// every APP_DB_STORAGE_SWEEP_INTERVAL_MS, records the figure on the app row, and moves
 // each app through a small state machine:
 //
 //   ok --(>= warn%)--> warned --(>= cap)--> frozen --(< 95% of cap)--> ok
@@ -232,14 +232,10 @@ async function listApps(pool, { now } = {}) {
 
 // ── The sweep ─────────────────────────────────────────────────────────
 
+// Only which log line a staging preview has already written.
 const state = {
-  lastSweep: null,
   stagingMeasureWarned: false,
 };
-
-function lastSweep() {
-  return state.lastSweep;
-}
 
 // The notification creator, resolved at call time so a test can swap the
 // module's export (the same seam staging.js's deploy-failure path uses).
@@ -247,23 +243,51 @@ function defaultNotify(pool, args) {
   return require('./notifications').createAppHealthNotification(pool, args);
 }
 
+// The app's row, locked for the length of `fn` (which may change its
+// database role): the sweep's freeze, thaw and hold, and an admin's grace,
+// each run whole under it, so a role is never changed against a row another
+// of them has just changed. Resolves what `fn` does.
+function underRowLock(pool, appId, fn) {
+  const { withTransaction } = require('./cli-auth');
+  return withTransaction(pool, async (db) => {
+    const { rows } = await db.query(
+      `SELECT db_storage_frozen_at, db_storage_grace_until, db_storage_cap_bytes
+         FROM apps WHERE id = $1 FOR UPDATE`, [appId]);
+    return fn(db, rows[0] || null);
+  });
+}
+
+const sameTime = (a, b) => (toMs(a) ?? null) === (toMs(b) ?? null);
+
 async function applyTransition(pool, app, dbName, decision, ctx) {
   const { now, staging, execute, notify, bytes, capBytes, summary } = ctx;
   const meta = { slug: app.slug, dbName, bytes, capBytes, staging };
   switch (decision.transition) {
     case 'freeze': {
-      // Role first, then the row, then the people: if the role change
-      // fails nothing is recorded and the next sweep tries again; if the
-      // notification fails the freeze still stands, which is the part
-      // that protects the volume.
-      if (!staging) await dbManager.setAppDatabaseWritable(dbName, false, { execute });
-      await pool.query(
-        `UPDATE apps
-            SET db_storage_frozen_at = $1,
-                db_storage_warned_at = COALESCE(db_storage_warned_at, $1)
-          WHERE id = $2`,
-        [now, app.id]
-      );
+      // Under the app row's lock, held across the role change: an admin's
+      // grace (grantGrace) and another sweep take the same lock, so none of
+      // them interleaves with this. Read again under it, the app must still
+      // be as this sweep measured it (not frozen, the same grace and cap);
+      // then the role, then the row, so a role that cannot be changed
+      // records nothing and the next sweep tries again. A process that dies
+      // after the role leaves the row unfrozen and over its cap: the next
+      // sweep freezes it. Then the people: if the notification fails the
+      // freeze still stands, which is the part that protects the volume.
+      const frozen = await underRowLock(pool, app.id, async (db, cur) => {
+        if (!cur || cur.db_storage_frozen_at
+          || !sameTime(cur.db_storage_grace_until, app.db_storage_grace_until)
+          || (cur.db_storage_cap_bytes ?? null) !== (app.db_storage_cap_bytes ?? null)) return false;
+        if (!staging) await dbManager.setAppDatabaseWritable(dbName, false, { execute });
+        await db.query(
+          `UPDATE apps
+              SET db_storage_frozen_at = $1,
+                  db_storage_warned_at = COALESCE(db_storage_warned_at, $1)
+            WHERE id = $2`,
+          [now, app.id]
+        );
+        return true;
+      });
+      if (!frozen) return;
       summary.frozen += 1;
       log.warn('app-storage-cap', 'App database frozen read-only: over its storage cap', meta);
       if (!staging) {
@@ -277,14 +301,22 @@ async function applyTransition(pool, app, dbName, decision, ctx) {
       return;
     }
     case 'unfreeze': {
-      if (!staging) await dbManager.setAppDatabaseWritable(dbName, true, { execute });
-      await pool.query('UPDATE apps SET db_storage_frozen_at = NULL WHERE id = $1', [app.id]);
+      const thawed = await underRowLock(pool, app.id, async (db, cur) => {
+        if (!cur || !cur.db_storage_frozen_at) return false;
+        if (!staging) await dbManager.setAppDatabaseWritable(dbName, true, { execute });
+        await db.query('UPDATE apps SET db_storage_frozen_at = NULL WHERE id = $1', [app.id]);
+        return true;
+      });
+      if (!thawed) return;
       summary.unfrozen += 1;
       log.info('app-storage-cap', 'App database writable again', { ...meta, grace: decision.graceOpen });
       return;
     }
     case 'warn': {
-      await pool.query('UPDATE apps SET db_storage_warned_at = $1 WHERE id = $2', [now, app.id]);
+      // Told once: a sweep beside this one finds it already warned.
+      const { rowCount } = await pool.query(
+        'UPDATE apps SET db_storage_warned_at = $1 WHERE id = $2 AND db_storage_warned_at IS NULL', [now, app.id]);
+      if (!rowCount) return;
       summary.warned += 1;
       log.info('app-storage-cap', 'App database past its storage warning line', meta);
       if (!staging) {
@@ -298,8 +330,29 @@ async function applyTransition(pool, app, dbName, decision, ctx) {
       return;
     }
     case 'clear_warning': {
-      await pool.query('UPDATE apps SET db_storage_warned_at = NULL WHERE id = $1', [app.id]);
+      const { rowCount } = await pool.query(
+        'UPDATE apps SET db_storage_warned_at = NULL WHERE id = $1 AND db_storage_warned_at IS NOT NULL', [app.id]);
+      if (!rowCount) return;
       summary.cleared += 1;
+      return;
+    }
+    case 'none': {
+      // Frozen and staying so: a role that is not read-only (a freeze whose
+      // process died between its row and its role) is made so again, under
+      // the row's lock and only if the row still says frozen with no grace
+      // open (an admin's grace granted since this sweep read the app wins).
+      // A role already read-only is left alone: setting it again would end
+      // every connection the app has open, at every sweep.
+      if (decision.frozen && !staging) {
+        const enforced = await underRowLock(pool, app.id, async (_db, cur) => {
+          if (!cur || !cur.db_storage_frozen_at) return false;
+          if (toMs(cur.db_storage_grace_until) > toMs(now)) return false;
+          if (await dbManager.isAppDatabaseReadOnly(dbName, { execute })) return false;
+          await dbManager.setAppDatabaseWritable(dbName, false, { execute });
+          return true;
+        });
+        if (enforced) summary.enforced += 1;
+      }
       return;
     }
     default:
@@ -307,9 +360,12 @@ async function applyTransition(pool, app, dbName, decision, ctx) {
 }
 
 /**
- * Measure every app database and apply the transitions. Never throws: a
- * failed measurement or a failed app is recorded in the summary (and in
- * `lastSweep()`, which the admin API reads) and the rest carries on.
+ * Measure every app database and apply the transitions: a pass of the
+ * `app-storage-cap` clock (src/workflow/clock/services.ts), whose last run is
+ * what the admin API shows. Never throws: a failed measurement or a failed
+ * app is recorded in the summary and the rest carries on. Every transition
+ * is checked again against the row under its lock, so two sweeps at once
+ * notify once and undo nothing an admin changed meanwhile.
  *
  * deps.execute  the psql runner db-manager uses (tests inject a fake)
  * deps.now      the sweep's clock (tests pin it)
@@ -336,12 +392,12 @@ async function sweep(pool, deps = {}) {
     unfrozen: 0,
     warned: 0,
     cleared: 0,
+    enforced: 0,
     errors: [],
   };
   const finish = () => {
     summary.finishedAt = new Date().toISOString();
     summary.durationMs = Date.now() - startedMs;
-    state.lastSweep = summary;
     return summary;
   };
 
@@ -434,23 +490,31 @@ async function grantGrace(pool, slug, minutes, deps = {}) {
   const now = deps.now != null ? new Date(toMs(deps.now)) : new Date();
   const staging = deps.staging != null ? !!deps.staging : isStaging();
   const until = new Date(now.getTime() + mins * 60 * 1000);
-  const { rows } = await pool.query(
-    `UPDATE apps
-        SET db_storage_grace_until = $1
-      WHERE slug = $2 AND NOT self_hosted
-  RETURNING id, slug, db_storage_frozen_at`,
-    [until, slug]
-  );
-  const app = rows[0];
-  if (!app) return null;
-  if (app.db_storage_frozen_at) {
+  // Under the row's lock across the role change, as the sweep's freeze and
+  // hold are: neither can make the role read-only again in between. (A role
+  // change also ends the app's open connections, so a grace on an app that is
+  // not frozen leaves the role alone.)
+  const app = await require('./cli-auth').withTransaction(pool, async (db) => {
+    const { rows } = await db.query(
+      `UPDATE apps
+          SET db_storage_grace_until = $1
+        WHERE slug = $2 AND NOT self_hosted
+    RETURNING id, slug, db_storage_frozen_at`,
+      [until, slug]
+    );
+    const row = rows[0];
+    if (!row) return null;
     // Same split as the sweep: the row is the preview's own to write, the
     // role is production's and is left alone from a staging copy.
-    if (!staging) {
-      await dbManager.setAppDatabaseWritable(dbManager.appDbName(slug), true, { execute: deps.execute });
+    if (row.db_storage_frozen_at) {
+      if (!staging) {
+        await dbManager.setAppDatabaseWritable(dbManager.appDbName(slug), true, { execute: deps.execute });
+      }
+      await db.query('UPDATE apps SET db_storage_frozen_at = NULL WHERE id = $1', [row.id]);
     }
-    await pool.query('UPDATE apps SET db_storage_frozen_at = NULL WHERE id = $1', [app.id]);
-  }
+    return row;
+  });
+  if (!app) return null;
   log.info('app-storage-cap', 'Grace window granted', {
     slug, minutes: mins, until: until.toISOString(), wasFrozen: !!app.db_storage_frozen_at, staging,
   });
@@ -484,22 +548,12 @@ async function setCapOverride(pool, slug, capBytesOrNull, deps = {}) {
 
 // ── Admin API payloads ────────────────────────────────────────────────
 
-// The leader's sweep runs on its timer; an admin's sweep runs where the
-// request landed. The newer of this process's and the leader's published
-// one (services/leader-status.js, docs/plans/web-and-conductor.md).
-async function newestSweep(pool) {
-  const published = await require('./leader-status').read(LAST_SWEEP_STATUS_KEY, pool);
-  const finished = (s) => String((s && s.finishedAt) || '');
-  return [state.lastSweep, published].filter(Boolean)
-    .sort((a, b) => finished(b).localeCompare(finished(a)))[0] || null;
-}
-const LAST_SWEEP_STATUS_KEY = 'app-storage-cap.sweep';
-
-async function adminPayload(pool, { now } = {}) {
+// `lastSweep`: the clock's last run (routes/admin.js reads it).
+async function adminPayload(pool, { now, lastSweep = null } = {}) {
   return {
     apps: await listApps(pool, { now }),
     defaults: config(),
-    lastSweep: await newestSweep(pool),
+    lastSweep,
   };
 }
 
@@ -553,7 +607,6 @@ function demoAdminPayload({ now } = {}) {
 }
 
 function _resetForTest() {
-  state.lastSweep = null;
   state.stagingMeasureWarned = false;
 }
 
@@ -568,8 +621,6 @@ module.exports = {
   readApp,
   adminPayload,
   demoAdminPayload,
-  lastSweep,
-  LAST_SWEEP_STATUS_KEY,
   isStaging,
   DEFAULT_CAP_BYTES,
   DEFAULT_WARN_PERCENT,

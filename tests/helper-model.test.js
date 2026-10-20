@@ -6,7 +6,10 @@
 // Pins the request GLM is sent, the fallback, the cases that never reach GLM
 // (a BYOK key, HELPER_MODEL=haiku, no bot key, a picked model), a caller's
 // cancel, the cost the answer is billed at, the telemetry pair, and that
-// every helper the switch names goes through the path.
+// every helper the switch names goes through the path. And the model it is
+// as an admin setting (services/helper-model.js): read through a short
+// cache, blank or unreadable for GLM, thinking off on any other model,
+// checked against the catalog when saved, and followed by small-change.js.
 //
 // Run with: node --test tests/helper-model.test.js
 
@@ -52,11 +55,11 @@ function stubClient(text = '{"title":"From Haiku"}') {
   };
 }
 
-async function withHelpers({ reply, key = 'sk-or-bot', haikuText } = {}, fn) {
+async function withHelpers({ reply, key = 'sk-or-bot', haikuText, model } = {}, fn) {
   const openrouter = fakeOpenRouter(reply);
   const client = stubClient(haikuText);
   const events = [];
-  const prevDeps = llm._setHelperDepsForTests({ openrouter, key, config: { openrouterApiBase: 'https://or.test/api/v1' } });
+  const prevDeps = llm._setHelperDepsForTests({ openrouter, key, model, config: { openrouterApiBase: 'https://or.test/api/v1' } });
   const prevClient = llm._setClientForTests(client);
   const prevEnabled = llmTelemetry._setEnabledForTests(true);
   const prevSink = llmTelemetry._setSinkForTests((e) => { events.push(e); });
@@ -523,4 +526,138 @@ test('every helper the switch names goes through the path, and telemetry knows e
   assert.equal(require('../src/services/topochain/challenge-grader').GRADE_MODEL, llm.HELPER_MODEL);
   assert.match(read('src/services/mayor/pills.js'), /qrWithTimeout\(\(signal\) => llm\.generateQuickReplies\(\{[\s\S]*?signal,/,
     'the pills budget cancels the GLM attempt too');
+});
+
+// ── The helper model as an admin setting ────────────────────────────────
+
+const helperModel = require('../src/services/helper-model');
+const DS = 'deepseek/deepseek-v4.1-flash-1017';
+
+function settingsPool({ value = null, fail = false, catalog = null } = {}) {
+  const calls = [];
+  const state = { value };
+  return {
+    calls,
+    state,
+    async query(sql, params) {
+      const s = String(sql);
+      calls.push({ s, params });
+      if (fail) throw new Error('relation "platform_settings" does not exist');
+      if (/FROM openrouter_model_catalog/.test(s)) return { rows: catalog ? [{ models: catalog }] : [] };
+      if (/INSERT INTO platform_settings/.test(s)) {
+        if (params[0] === helperModel.KEY) state.value = params[1];
+        return { rows: [], rowCount: 1 };
+      }
+      if (/FROM platform_settings/.test(s)) return { rows: state.value == null ? [] : [{ value: state.value }] };
+      return { rows: [], rowCount: 0 };
+    },
+  };
+}
+
+test('the helper model: the admin\'s when stored, else GLM; read once per cache window', async () => {
+  const fresh = async (pool) => { helperModel.invalidate(); return helperModel.current(null, { pool }); };
+  assert.equal(helperModel.BUILT_IN, llm.HELPER_MODEL, 'blank keeps the model the helpers always asked');
+  assert.equal(await fresh(settingsPool({ value: DS })), DS);
+  assert.equal(await fresh(settingsPool()), llm.HELPER_MODEL);
+  assert.equal(await fresh(settingsPool({ value: '' })), llm.HELPER_MODEL);
+  assert.equal(await fresh(settingsPool({ value: 'not a model' })), llm.HELPER_MODEL);
+  assert.equal(await fresh(settingsPool({ fail: true })), llm.HELPER_MODEL, 'a read that fails keeps the helpers answering');
+  helperModel.invalidate();
+  assert.equal(await helperModel.current({}), llm.HELPER_MODEL, 'no database: the built-in model');
+
+  const pool = settingsPool({ value: DS });
+  helperModel.invalidate();
+  await helperModel.current(null, { pool });
+  pool.state.value = 'vendor/other';
+  assert.equal(await helperModel.current(null, { pool }), DS, 'cached for CACHE_TTL_MS');
+  assert.equal(pool.calls.length, 1);
+  helperModel.invalidate();
+  assert.equal(await helperModel.current(null, { pool }), 'vendor/other');
+  helperModel.invalidate();
+});
+
+test('thinkingFor: GLM at low as before; any other model with its thinking off', () => {
+  assert.equal(helperModel.thinkingFor('z-ai/glm-5.3-flash'), 'low');
+  assert.equal(helperModel.thinkingFor('~z-ai/glm-5.3-flash'), 'low');
+  assert.equal(helperModel.thinkingFor(DS), 'none');
+  assert.equal(helperModel.thinkingFor('anthropic/claude-haiku-5.5'), 'none');
+  const { buildRequest } = require('../src/services/global-chat/openrouter');
+  const base = { model: DS, messages: [{ role: 'user', content: 'hi' }], tools: [] };
+  assert.deepEqual(buildRequest({ ...base, reasoning: 'none' }).reasoning, { enabled: false }, 'OpenRouter\'s switch for thinking off');
+  assert.deepEqual(buildRequest({ ...base, reasoning: 'low' }).reasoning, { effort: 'low' });
+  assert.throws(() => require('../src/services/global-chat/profile').reasoningEffort('none'), /Invalid reasoning effort/,
+    'a Global Chat profile still cannot choose it');
+});
+
+test('a helper model other than GLM is asked by name, with its thinking off, and recorded as asked', async () => {
+  const reply = (input) => ({
+    servedModel: input.model,
+    finishReason: 'tool_calls',
+    toolCalls: [{ type: 'function', function: { name: 'answer', arguments: JSON.stringify({ title: 'Plant watering reminders' }) } }],
+    usage: { inputTokens: 400, outputTokens: 40, reasoningTokens: 0, costUsd: 0.00006 },
+  });
+  await withHelpers({ reply, model: DS }, async ({ openrouter, client, events }) => {
+    const out = await llm.generateSessionTitle({ requests: ['Remind us to water the plants'] });
+    assert.equal(out.title, 'Plant watering reminders');
+    assert.equal(out.model, DS);
+    assert.equal(client.calls.length, 0);
+    const sent = openrouter.calls[0];
+    assert.equal(sent.model, DS);
+    assert.equal(sent.reasoning, 'none');
+    assert.equal(sent.maxOutputTokens, 64 + 1500, 'the same ceiling as GLM\'s');
+    assert.equal(sent.timeoutMs, llm.HELPER_TIME_LIMIT_MS.session_title, 'and the same time limit');
+    assert.equal(events[0].requested_model, DS);
+    assert.equal(events[0].reasoning_effort, 'none');
+  });
+  // The plan at Make it keeps its tighter ceiling on any helper model.
+  await withHelpers({ reply: null, model: DS }, async ({ openrouter }) => {
+    await llm.generateFirstVersionPlan({ system: 's', user: 'u', schema: { type: 'object' }, validate: () => false }).catch(() => {});
+    assert.equal(openrouter.calls[0].maxOutputTokens, llm.HELPER_OUTPUT_LIMIT.first_version_plan);
+    assert.equal(openrouter.calls[0].reasoning, 'none');
+  });
+});
+
+test('a caller that names another model, or HELPER_MODEL=haiku, still never reaches the helper model', async () => {
+  await withHelpers({ reply: { title: 'x' }, model: DS }, async ({ openrouter, client }) => {
+    await llm.generateFirstVersionPlan({ system: 's', user: 'u', schema: { type: 'object' }, model: 'claude-sonnet-5-5' }).catch(() => {});
+    assert.equal(client.calls[0].model, 'claude-sonnet-5-5');
+    const prev = process.env.HELPER_MODEL;
+    process.env.HELPER_MODEL = 'haiku';
+    try {
+      await llm.generateSessionTitle({ requests: ['a'] });
+    } finally {
+      if (prev === undefined) delete process.env.HELPER_MODEL; else process.env.HELPER_MODEL = prev;
+    }
+    assert.equal(openrouter.calls.length, 0);
+    assert.ok(client.calls.length >= 1);
+  });
+});
+
+test('the bot settings carry it: patched, checked against the catalog, and followed at once', async () => {
+  const bot = require('../src/services/homeroom-bot');
+  assert.equal(bot.parseSettings([{ key: bot.KEY_HELPER_MODEL, value: DS }]).helperModel, DS);
+  assert.equal(bot.parseSettings([{ key: bot.KEY_HELPER_MODEL, value: 'oops' }]).helperModel, '');
+  assert.equal(bot.parseSettings([]).helperModel, '', 'blank is the built-in model');
+  assert.deepEqual(bot.validateSettingsPatch({ helperModel: DS }).updates, [[bot.KEY_HELPER_MODEL, DS]]);
+  assert.deepEqual(bot.validateSettingsPatch({ helperModel: null }).updates, [[bot.KEY_HELPER_MODEL, '']]);
+  assert.match(bot.validateSettingsPatch({ helperModel: 'gpt; rm -rf' }).error, /^helperModel must be an OpenRouter model id/);
+
+  const catalog = [
+    { id: DS, supported_parameters: ['tools', 'reasoning'] },
+    { id: 'vendor/no-tools', supported_parameters: ['temperature'] },
+  ];
+  const pool = settingsPool({ catalog });
+  helperModel.invalidate();
+  assert.equal(await helperModel.current(null, { pool }), llm.HELPER_MODEL);
+  const missing = await bot.writeSettings(pool, { helperModel: 'vendor/not-listed' }, 1, {});
+  assert.match(missing.error, /^Not in the OpenRouter catalog: vendor\/not-listed\. The helper model must/);
+  assert.match((await bot.writeSettings(pool, { helperModel: 'vendor/no-tools' }, 1, {})).error, /every helper call answers through one/);
+  assert.match((await bot.writeSettings(settingsPool(), { helperModel: DS }, 1, {})).error, /check the helper model against/);
+  assert.equal(pool.calls.filter((c) => /INSERT INTO platform_settings/.test(c.s)).length, 0, 'a refused save writes nothing');
+
+  assert.deepEqual(await bot.writeSettings(pool, { helperModel: DS }, 1, {}), { ok: true });
+  assert.equal(await helperModel.current(null, { pool }), DS, 'this server follows the save at once');
+  assert.deepEqual(await bot.writeSettings(pool, { helperModel: '' }, 1, {}), { ok: true }, 'blank needs no catalog');
+  assert.equal(await helperModel.current(null, { pool }), llm.HELPER_MODEL);
+  helperModel.invalidate();
 });

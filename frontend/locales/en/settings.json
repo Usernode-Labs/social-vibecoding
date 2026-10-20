@@ -1,7 +1,7 @@
 {
   "language.title": {
     "text": "Language",
-    "description": "Heading of the Language section in Settings."
+    "description": "Heading of the Language section in Settings, where the person picks the language Homeroom is shown in. \"Language\" is a noun."
   },
   "language.intro": {
     "text": "Homeroom's own screens are in English for now. Apps on Homeroom use this as their default language, and may offer their own override.",

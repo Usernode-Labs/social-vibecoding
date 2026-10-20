@@ -68,6 +68,21 @@ export function sectionFold(total: number, limit: number): { shown: number; labe
 }
 
 /**
+ * The number beside a section's heading: how many of its rows the card
+ * lists. Folded it reads "3 of 27", so it says what is under it rather than
+ * sitting over three rows and a "Show 5 more" (polish N2); with every row
+ * out it is the total alone. `count` is the section's own message id for
+ * the total's accessible name (SECTIONS).
+ */
+export function sectionCount(total: number, shown: number, count: string): { text: string; label: string } {
+  if (shown >= total) return { text: String(total), label: t(count, { count: total }) };
+  return {
+    text: t('communities:sections.shownOf', { shown, count: total }),
+    label: t('communities:sections.shownOfLabel', { shown, count: total }),
+  };
+}
+
+/**
  * The fewest rows a section of "Your communities" ever shows (#3519): three,
  * or as many as it takes to reach the community you are on, so no press of
  * "Show fewer" folds away the row with the tick. It was #3363's pickerFloor,

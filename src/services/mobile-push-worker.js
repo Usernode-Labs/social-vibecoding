@@ -29,7 +29,6 @@ const DEFAULTS = Object.freeze({
   retryMaxMs: 60 * 60 * 1000,
   retentionDays: 30,
   retentionBatchSize: 500,
-  retentionIntervalMs: 6 * 60 * 60 * 1000,
 });
 
 function deadline(promise, timeoutMs) {
@@ -65,47 +64,58 @@ class MobilePushWorker {
     this.options = { ...DEFAULTS, ...options };
     // mobile-push-badge.js's sync, for the badge rows (drainBadges).
     this.badges = badges;
-    this.timer = null;
-    this.running = null;
-    this.stopping = true;
-    this.lastRetentionAt = 0;
-  }
-
-  start() {
-    if (!this.config.mobilePushEnabled || !this.provider || !this.stopping) return;
     this.stopping = false;
-    this._schedule(0);
+    this.running = null;
   }
 
-  _schedule(ms) {
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      this.running = this.runOnce()
-        .catch((err) => {
-          log.error('mobile-push', 'delivery pass failed', {
-            code: typeof err?.code === 'string' ? err.code : 'unknown',
-          });
-          return 0;
-        })
-        .then((count) => {
-          this.running = null;
-          if (!this.stopping) {
-            this._schedule(count > 0 ? this.options.busyPollMs : this.options.pollMs);
-          }
+  // One run of the push-drain clock (src/workflow/clock/services.ts): passes
+  // back to back for up to `forMs` (100 ms apart while there is work, 5 s
+  // when idle), until `signal` aborts (the run's lease is lost, or its
+  // process stops). `token` is the run's work item and attempt, which every
+  // row it claims carries. Resolves the deliveries it handled.
+  async drain({ token, forMs = 5 * 60 * 1000, signal = null } = {}) {
+    if (!this.config.mobilePushEnabled || !this.provider) return { handled: 0, off: true };
+    const until = Date.now() + forMs;
+    let handled = 0;
+    let passes = 0;
+    const aborted = () => !!(signal && signal.aborted) || this.stopping;
+    while (!aborted() && Date.now() < until) {
+      let count = 0;
+      try {
+        this.running = this.runOnce(token);
+        count = await this.running;
+      } catch (err) {
+        log.error('mobile-push', 'delivery pass failed', {
+          code: typeof err?.code === 'string' ? err.code : 'unknown',
         });
-    }, ms);
-    this.timer.unref?.();
+      }
+      this.running = null;
+      handled += count;
+      passes += 1;
+      await this._sleep(count > 0 ? this.options.busyPollMs : this.options.pollMs, signal);
+    }
+    return { handled, passes };
   }
 
+  _sleep(ms, signal) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(done, ms);
+      timer.unref?.();
+      function done() { clearTimeout(timer); signal?.removeEventListener?.('abort', done); resolve(); }
+      signal?.addEventListener?.('abort', done, { once: true });
+    });
+  }
+
+  // A process shutting down stops its drain at the next pass, and waits up
+  // to `timeoutMs` for the sends of the pass under way. Resolves whether
+  // they ended.
   async stop({ timeoutMs = 5000 } = {}) {
     this.stopping = true;
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
     if (!this.running) return true;
     let timeout;
     try {
       return await Promise.race([
-        this.running.then(() => true),
+        this.running.then(() => true, () => true),
         new Promise((resolve) => { timeout = setTimeout(() => resolve(false), timeoutMs); }),
       ]);
     } finally {
@@ -113,96 +123,109 @@ class MobilePushWorker {
     }
   }
 
-  async maintain() {
-    // Passes do not overlap. Any `sending` row seen here was left behind by a
-    // failed prior pass and can be retried without distributed lease state.
+  // A row left 'sending' by a claim that is no longer live (its run's
+  // attempt ended, or its lease lapsed), or by an earlier pass of this same
+  // run (a pass awaits every send it started, so none of those is in
+  // flight), is pending again; one a live run elsewhere holds is left to it.
+  // Expired rows are cancelled.
+  async resetInterrupted(token = null) {
     await this.pool.query(
-      `UPDATE mobile_push_deliveries
+      `UPDATE mobile_push_deliveries d
           SET status = CASE
-                WHEN expires_at <= NOW() THEN 'cancelled'
+                WHEN d.expires_at <= NOW() THEN 'cancelled'
                 ELSE 'pending'
               END,
               available_at = NOW(),
               last_error_code = CASE
-                WHEN expires_at <= NOW() THEN 'expired'
+                WHEN d.expires_at <= NOW() THEN 'expired'
                 ELSE 'sender_interrupted'
               END,
+              claimed_work = NULL, claimed_attempt = NULL,
               updated_at = NOW()
-        WHERE status = 'sending'
-           OR (status = 'pending' AND expires_at <= NOW())`
+        WHERE (d.status = 'sending'
+               AND ((d.claimed_work = $1::uuid AND d.claimed_attempt = $2::integer)
+                    OR NOT EXISTS (
+                      SELECT 1 FROM wf_work w
+                       WHERE w.id = d.claimed_work AND w.attempt_count = d.claimed_attempt
+                         AND w.status = 'running' AND w.lease_until > NOW())))
+           OR (d.status = 'pending' AND d.expires_at <= NOW())`,
+      [token?.workId ?? null, token?.attempt ?? null]
     );
-    const now = Date.now();
-    if (now - this.lastRetentionAt >= this.options.retentionIntervalMs) {
-      await this.pool.query(
-        `WITH doomed AS (
-           SELECT r.id
-             FROM mobile_push_registrations r
-            WHERE r.session_expires_at <= NOW()
-            ORDER BY r.id LIMIT $1
-         ), removed AS (
-           DELETE FROM mobile_push_registrations r USING doomed
-            WHERE r.id = doomed.id
-              AND r.session_expires_at <= NOW()
-          RETURNING r.id, r.user_id, r.environment, r.installation_id,
-                    r.platform, r.permission_status
-         )
-         INSERT INTO mobile_push_registration_events (
-           user_id, registration_id, environment, installation_id, platform,
-           permission_status, event_kind, reason_code
-         )
-         SELECT user_id, id, environment, installation_id, platform,
-                permission_status, 'session_expired', 'mobile_session_expired'
-           FROM removed`,
-        [this.options.retentionBatchSize]
-      );
-      await this.pool.query(
-        `WITH doomed AS (
-           SELECT id FROM mobile_push_deliveries
-            WHERE status IN ('sent', 'dead', 'cancelled')
-              AND updated_at < NOW() - make_interval(days => $1::integer)
-            ORDER BY id LIMIT $2
-         )
-         DELETE FROM mobile_push_deliveries d USING doomed
-          WHERE d.id = doomed.id`,
-        [this.options.retentionDays, this.options.retentionBatchSize]
-      );
-      await this.pool.query(
-        `WITH doomed AS (
-           SELECT m.environment, m.installation_id, m.latest_mutation_revision
-             FROM mobile_push_installation_mutations m
-            WHERE m.updated_at < NOW() - make_interval(days => $1::integer)
-              AND NOT EXISTS (
-                SELECT 1
-                  FROM mobile_push_registrations r
-                 WHERE r.environment = m.environment
-                   AND r.installation_id = m.installation_id
-              )
-            ORDER BY m.updated_at, m.environment, m.installation_id
-            LIMIT $2
-         )
-         DELETE FROM mobile_push_installation_mutations m USING doomed
-          WHERE m.environment = doomed.environment
-            AND m.installation_id = doomed.installation_id
-            AND m.latest_mutation_revision = doomed.latest_mutation_revision`,
-        [this.options.retentionDays, this.options.retentionBatchSize]
-      );
-      await this.pool.query(
-        `WITH doomed AS (
-           SELECT id
-             FROM mobile_push_registration_events
-            WHERE created_at < NOW() - make_interval(days => $1::integer)
-            ORDER BY created_at, id
-            LIMIT $2
-         )
-         DELETE FROM mobile_push_registration_events event USING doomed
-          WHERE event.id = doomed.id`,
-        [this.options.retentionDays, this.options.retentionBatchSize]
-      );
-      this.lastRetentionAt = now;
-    }
   }
 
-  async claimBatch() {
+  // Sent, dead and cancelled rows past their window, expired registrations
+  // (with their event), and the bookkeeping nothing needs any more: the
+  // push-retention clock, every six hours. Bounded deletes; two at once
+  // delete nothing twice.
+  async retention() {
+    await this.pool.query(
+      `WITH doomed AS (
+         SELECT r.id
+           FROM mobile_push_registrations r
+          WHERE r.session_expires_at <= NOW()
+          ORDER BY r.id LIMIT $1
+       ), removed AS (
+         DELETE FROM mobile_push_registrations r USING doomed
+          WHERE r.id = doomed.id
+            AND r.session_expires_at <= NOW()
+        RETURNING r.id, r.user_id, r.environment, r.installation_id,
+                  r.platform, r.permission_status
+       )
+       INSERT INTO mobile_push_registration_events (
+         user_id, registration_id, environment, installation_id, platform,
+         permission_status, event_kind, reason_code
+       )
+       SELECT user_id, id, environment, installation_id, platform,
+              permission_status, 'session_expired', 'mobile_session_expired'
+         FROM removed`,
+      [this.options.retentionBatchSize]
+    );
+    await this.pool.query(
+      `WITH doomed AS (
+         SELECT id FROM mobile_push_deliveries
+          WHERE status IN ('sent', 'dead', 'cancelled')
+            AND updated_at < NOW() - make_interval(days => $1::integer)
+          ORDER BY id LIMIT $2
+       )
+       DELETE FROM mobile_push_deliveries d USING doomed
+        WHERE d.id = doomed.id`,
+      [this.options.retentionDays, this.options.retentionBatchSize]
+    );
+    await this.pool.query(
+      `WITH doomed AS (
+         SELECT m.environment, m.installation_id, m.latest_mutation_revision
+           FROM mobile_push_installation_mutations m
+          WHERE m.updated_at < NOW() - make_interval(days => $1::integer)
+            AND NOT EXISTS (
+              SELECT 1
+                FROM mobile_push_registrations r
+               WHERE r.environment = m.environment
+                 AND r.installation_id = m.installation_id
+            )
+          ORDER BY m.updated_at, m.environment, m.installation_id
+          LIMIT $2
+       )
+       DELETE FROM mobile_push_installation_mutations m USING doomed
+        WHERE m.environment = doomed.environment
+          AND m.installation_id = doomed.installation_id
+          AND m.latest_mutation_revision = doomed.latest_mutation_revision`,
+      [this.options.retentionDays, this.options.retentionBatchSize]
+    );
+    await this.pool.query(
+      `WITH doomed AS (
+         SELECT id
+           FROM mobile_push_registration_events
+          WHERE created_at < NOW() - make_interval(days => $1::integer)
+          ORDER BY created_at, id
+          LIMIT $2
+       )
+       DELETE FROM mobile_push_registration_events event USING doomed
+        WHERE event.id = doomed.id`,
+      [this.options.retentionDays, this.options.retentionBatchSize]
+    );
+  }
+
+  async claimBatch(token = null) {
     const { rows } = await this.pool.query(
       `WITH picked AS (
          SELECT d.id
@@ -220,6 +243,7 @@ class MobilePushWorker {
        UPDATE mobile_push_deliveries d
           SET status = 'sending',
               attempts = d.attempts + 1,
+              claimed_work = $4::uuid, claimed_attempt = $5::integer,
               updated_at = NOW()
          FROM picked
        WHERE d.id = picked.id AND d.status = 'pending'
@@ -228,17 +252,22 @@ class MobilePushWorker {
         this.options.batchSize,
         this.config.mobilePushEnvironment,
         this.config.firebaseProjectId,
+        token?.workId ?? null,
+        token?.attempt ?? null,
       ]
     );
     return rows;
   }
 
-  async runOnce() {
+  async runOnce(token = null) {
     if (!this.config.mobilePushEnabled || !this.provider || this.stopping) return 0;
-    await this.maintain();
-    const jobs = await this.claimBatch();
+    await this.resetInterrupted(token);
+    const jobs = await this.claimBatch(token);
+    // Each row is read and settled only while it is still this run's claim:
+    // a run that outlived its lease sends and settles nothing the next run
+    // took over.
     const results = await Promise.allSettled(
-      jobs.map((job) => this.processDelivery(job))
+      jobs.map((job) => this.processDelivery({ ...job, token }))
     );
     const failed = results.find((result) => result.status === 'rejected');
     if (failed) throw failed.reason;
@@ -345,8 +374,9 @@ class MobilePushWorker {
           AND preference.category = policy.category
          LEFT JOIN mobile_push_deployment_state state ON state.environment = d.environment
          LEFT JOIN mobile_push_registrations r ON r.id = d.registration_id
-        WHERE d.id = $1 AND d.status = 'sending'`,
-      [job.id]
+        WHERE d.id = $1 AND d.status = 'sending'
+          AND d.claimed_work IS NOT DISTINCT FROM $2::uuid AND d.claimed_attempt IS NOT DISTINCT FROM $3::integer`,
+      [job.id, job.token?.workId ?? null, job.token?.attempt ?? null]
     );
     return rows[0] || null;
   }
@@ -416,8 +446,9 @@ class MobilePushWorker {
               sent_at = CASE WHEN $4 THEN NOW() ELSE sent_at END,
               last_error_code = $5,
               updated_at = NOW()
-        WHERE id = $1 AND status = 'sending'`,
-      [job.id, status, availableAt, sent, code]
+        WHERE id = $1 AND status = 'sending'
+          AND claimed_work IS NOT DISTINCT FROM $6::uuid AND claimed_attempt IS NOT DISTINCT FROM $7::integer`,
+      [job.id, status, availableAt, sent, code, job.token?.workId ?? null, job.token?.attempt ?? null]
     );
   }
 

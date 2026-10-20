@@ -183,6 +183,12 @@ test('staging + ?demo=1: twelve mock rows prepend, and only the unread ones bump
     // and leaving "Mark all read" enabled with nothing left to mark.
     assert.ok(body.notifications.some((n) => n.id === 1), 'real rows still present');
     assert.equal(body.unread, 2 + 11);
+    // #18: the unread mock messages are counted apart too, for the bell to
+    // leave out (the real row is a mention, which the bell keeps).
+    const mockMessages = body.notifications.filter((n) => n.id !== 1 && !n.readAt
+      && ['conversation_message', 'channel_message'].includes(n.kind)).length;
+    assert.ok(mockMessages > 0, 'the demo shows message rows');
+    assert.equal(body.messageUnread, mockMessages);
   } finally {
     server.close();
   }

@@ -120,7 +120,11 @@ const SESSION = {
   checks_commit_sha: 'cafe1234',
 };
 
-test('stuck-check recovery includes submitted active CLI handoffs without widening to drafts or ordinary sessions', async () => {
+test('the error lane\'s scope includes submitted active CLI handoffs without widening to drafts or ordinary sessions', async () => {
+  // The scope the preview machine's error lane and its ChecksDue deadline
+  // read (preview/facts.ts retryScope), and the connector's "a re-run is
+  // coming" (mcp-tools.erroredRunWillRetry). The leader's stuck-checks sweep
+  // that selected it in SQL is gone: the machine runs what a row owes.
   const { subject, restore } = loadRecovery();
   const submitted = {
     id: 2,
@@ -132,11 +136,11 @@ test('stuck-check recovery includes submitted active CLI handoffs without wideni
     handoff_upload_checked_sha: null,
   };
   const candidates = [
-    { id: 1, status: 'promoted', source: 'native' },
-    submitted,
-    { id: 3, status: 'active', source: 'native', checks_commit_sha: 'head-3' },
-    { id: 4, status: 'active', source: 'cli_handoff', checks_commit_sha: null },
-    {
+    [{ id: 1, status: 'promoted', source: 'native' }, true],
+    [submitted, true],
+    [{ id: 3, status: 'active', source: 'native', checks_commit_sha: 'head-3' }, false],
+    [{ id: 4, status: 'active', source: 'cli_handoff', checks_commit_sha: null }, false],
+    [{
       id: 5,
       status: 'active',
       source: 'cli_handoff',
@@ -144,41 +148,16 @@ test('stuck-check recovery includes submitted active CLI handoffs without wideni
       handoff_head_sha: 'old-head',
       handoff_uploaded_sha: 'new-upload',
       handoff_upload_checked_sha: 'old-head',
-    },
-    { id: 6, status: 'promoted', source: 'native' },
+    }, false],
+    // A person's "Run checks again" on the current head, native or paused.
+    [{ id: 6, status: 'paused', source: 'native', checks_commit_sha: 'HEAD-6', unit_suite_fresh_sha: 'head-6' }, true],
+    [{ id: 7, status: 'active', source: 'native', checks_commit_sha: 'head-7', unit_suite_fresh_sha: 'head-old' }, false],
   ];
-  const queries = [];
-  const pool = {
-    async query(sql, params) {
-      queries.push({ sql: String(sql), params });
-      // The second read: which of them the preview machine is building or
-      // checking right now (its work is alive while its lease is).
-      if (/FROM wf_work/.test(String(sql))) return { rows: [{ key: 'session:6' }] };
-      return { rows: candidates };
-    },
-  };
   try {
-    assert.equal(subject.isStuckCheckRecoveryScope(submitted), true);
-    const { rows } = await subject.findStuckCheckSessions({
-      pool, staleMs: 600000, maxAutoRetries: 6,
-    });
-    assert.deepEqual(rows.map((row) => row.id), [1, 2], 'a session the machine is working on is left to it');
-    assert.equal(queries.length, 2);
-    assert.match(queries[0].sql,
-      /cs\.status = 'active'[\s\S]*cs\.source = 'cli_handoff'/,
-      'submitted pre-vote handoffs are selected alongside promoted proposals');
-    assert.match(queries[0].sql, /COALESCE\(cs\.checks_commit_sha, cs\.handoff_head_sha\) IS NOT NULL/,
-      'a fresh proposal draft is not mistaken for a lost check run');
-    assert.match(queries[0].sql, /handoff_upload_checked_sha/,
-      'an upload awaiting proposal_submit_build stays out of recovery');
-    assert.match(queries[0].sql,
-      /cs\.check_state = 'pending'[\s\S]*cs\.checks_checked_at IS NULL/,
-      'legacy pending rows with no timestamp are recoverable');
-    // The fourth is how long a platform fault is retried past the cap
-    // (tests/platform-fault-retry.test.js).
-    assert.deepEqual(queries[0].params, [600000, 6, 50, subject.PLATFORM_FAULT_RETRY_MS]);
-    assert.match(queries[1].sql, /kind IN \('preview\.prepare', 'checks\.run'\)/);
-    assert.deepEqual(queries[1].params, [['session:1', 'session:2', 'session:6']], 'only the rows in scope are looked up');
+    for (const [session, inScope] of candidates) {
+      assert.equal(subject.isStuckCheckRecoveryScope(session), inScope, `session ${session.id}`);
+    }
+    assert.equal(subject.findStuckCheckSessions, undefined, 'no sweep selects them any more');
   } finally { restore(); }
 });
 
@@ -213,19 +192,19 @@ test("a 'pending' run is the preview machine's, alive while its lease is: never 
   } finally { restore(); }
 });
 
-test('a deferred verdict is waiting on a conflict, not on a runner: never swept', async () => {
+test('a deferred verdict is waiting on a conflict, not on a runner: never overdue', () => {
   const { subject, restore } = loadRecovery();
   try {
     // Phase 'deferred' says no run was ever started for it
-    // (services/check-admission.js). Re-driving one would only defer again.
-    const queries = [];
-    const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [] }; } };
-    await subject.findStuckCheckSessions({ pool, staleMs: 600000, maxAutoRetries: 6 });
-    assert.match(queries[0].sql, /cs\.check_phase IS DISTINCT FROM 'deferred'/,
-      'the pending branch of the sweep leaves deferred rows alone');
-    // An 'error' on a session the machine holds is the machine's own timer's.
-    assert.match(queries[0].sql,
-      /cs\.check_state = 'error'\s+AND NOT EXISTS \(SELECT 1 FROM wf_instances w[\s\S]*?w\.deadline_at IS NOT NULL\)/);
+    // (services/check-admission.js). Re-driving one would only defer again;
+    // the conflict's resolution resumes it (conflict-resolved).
+    const now = Date.now();
+    for (const state of ['pending', null, 'error']) {
+      assert.equal(subject.checkRunOverdue({
+        check_state: state, check_phase: 'deferred', checks_commit_sha: 'head',
+        checks_checked_at: new Date(now - 6 * 3600 * 1000),
+      }, { now, staleMs: 600000 }), false, `check_state ${state}`);
+    }
   } finally { restore(); }
 });
 
@@ -307,8 +286,8 @@ function withToken(fn) {
 
 const NATIVE = { ...SESSION, repo_url: 'https://github.com/acme/whiteboard', pr_number: 7 };
 
-test('a heal or a boot leaves a preview the machine is preparing, retiring or failing to it; a Preview click still asks', withToken(async () => {
-  for (const reason of ['heal', 'startup']) {
+test('a turn\'s recovery leaves a preview the machine is preparing, retiring or failing to it; a Preview click still asks', withToken(async () => {
+  for (const reason of ['tail_worker_gone', 'dangling_tail']) {
     const { subject, handoffs, compares, restore } = loadRecovery({ held: true, lost: false, working: true, compare: AHEAD });
     try {
       assert.equal(await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session: NATIVE, reason }),
@@ -326,10 +305,10 @@ test('a heal or a boot leaves a preview the machine is preparing, retiring or fa
   } finally { restore(); }
 }));
 
-test('a preview the machine is retrying is not reported lost by a heal or a boot, though its runtime is gone', withToken(async () => {
+test('a preview the machine is retrying is not rebuilt by a turn\'s recovery, though its runtime is gone', withToken(async () => {
   // A failed rebuild keeps the older attempt's receipt: reporting that
   // runtime lost would start another build inside the backoff, past the cap.
-  for (const reason of ['heal', 'startup']) {
+  for (const reason of ['tail_worker_gone', 'dangling_tail']) {
     const { subject, handed, handoffs, restore } = loadRecovery({ held: true, lost: true, working: true, compare: AHEAD });
     try {
       assert.equal(await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session: NATIVE, reason }),
@@ -341,24 +320,26 @@ test('a preview the machine is retrying is not reported lost by a heal or a boot
 }));
 
 test('a runtime observed gone, on a session the machine serves, is reported lost and nothing else', withToken(async () => {
-  for (const reason of ['heal', 'startup', 'preview-click']) {
-    const { subject, handed, handoffs, compares, restore } = loadRecovery({ held: true, lost: true, compare: AHEAD });
-    try {
-      assert.equal(await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session: NATIVE, reason }),
-        'handed_off');
-      const lost = handed.find(([name]) => name === 'lost');
-      assert.deepEqual(lost[1], { session: NATIVE, detail: reason });
-      assert.deepEqual(handoffs(), []);
-      assert.equal(compares.length, 0);
-    } finally { restore(); }
-  }
-  // Any other reason is not an observation: it goes the ordinary way.
-  const { subject, handed, handoffs, restore } = loadRecovery({ held: true, lost: true, compare: AHEAD });
+  // A Preview click is the one observation left here; the preview-runtimes
+  // clock reports the others itself (lookForLostPreviews).
+  const { subject, handed, handoffs, compares, restore } = loadRecovery({ held: true, lost: true, compare: AHEAD });
   try {
-    await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session: NATIVE, reason: 'stuck-checks-sweep' });
-    assert.ok(!handed.some(([name]) => name === 'lost'));
-    assert.deepEqual(handoffs().map(([name]) => name), ['revision']);
+    assert.equal(await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session: NATIVE, reason: 'preview-click' }),
+      'handed_off');
+    const lost = handed.find(([name]) => name === 'lost');
+    assert.deepEqual(lost[1], { session: NATIVE, detail: 'preview-click' });
+    assert.deepEqual(handoffs(), []);
+    assert.equal(compares.length, 0);
   } finally { restore(); }
+  // Any other reason is not an observation: it goes the ordinary way.
+  for (const reason of ['tail_worker_gone', 'dangling_tail']) {
+    const other = loadRecovery({ held: true, lost: true, compare: AHEAD });
+    try {
+      await other.subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session: NATIVE, reason });
+      assert.ok(!other.handed.some(([name]) => name === 'lost'), reason);
+      assert.deepEqual(other.handoffs().map(([name]) => name), ['revision'], reason);
+    } finally { other.restore(); }
+  }
 }));
 
 test('a branch ahead of main is handed over as a revision of its tip, with the trigger its reason maps to', withToken(async () => {
@@ -380,8 +361,8 @@ test('a proposal up for approval is rebuilt at its reviewed head, not a tip past
   const { subject, handoffs, restore } = loadRecovery({ compare: AHEAD });
   try {
     const session = { ...NATIVE, status: 'promoted', reviewed_head_sha: 'reviewed' };
-    await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session, reason: 'startup' });
-    await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session, reason: 'startup', headSha: 'asked' });
+    await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session, reason: 'tail_worker_gone' });
+    await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session, reason: 'tail_worker_gone', headSha: 'asked' });
     assert.deepEqual(handoffs().map(([, arg]) => [arg.head, arg.trigger]), [['reviewed', 'boot-reconcile'], ['asked', 'boot-reconcile']]);
   } finally { restore(); }
 }));
@@ -410,15 +391,16 @@ test('a compare that fails hands over the head the row knows; the machine\'s bui
 test('recheckSessionChecks hands the recheck to the machine, as a person\'s or the system\'s', async () => {
   const { subject, handoffs, restore } = loadRecovery();
   try {
-    for (const reason of ['manual-recheck', 'testing-update', 'preview-click', 'stuck-checks-sweep', 'startup']) {
+    for (const reason of ['manual-recheck', 'testing-update', 'preview-click', 'stale-pending-vote-kick', 'shots-update']) {
       assert.equal(await subject.recheckSessionChecks({ pool: makeRecordingPool(), session: SESSION, reason }), 'handed_off');
     }
     assert.deepEqual(handoffs().map(([name, arg]) => [name, arg.reason, arg.trigger, arg.system]), [
       ['recheck', 'manual-recheck', 'manual-recheck', false],
       ['recheck', 'testing-update', 'manual-recheck', false],
       ['recheck', 'preview-click', 'manual-recheck', false],
-      ['recheck', 'stuck-checks-sweep', 'stuck-sweep', true],
-      ['recheck', 'startup', 'boot-reconcile', true],
+      // The system's own: the machine's map names their trigger.
+      ['recheck', 'stale-pending-vote-kick', null, true],
+      ['recheck', 'shots-update', null, true],
     ]);
   } finally { restore(); }
 });

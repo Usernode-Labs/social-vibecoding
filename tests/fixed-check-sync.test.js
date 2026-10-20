@@ -553,14 +553,48 @@ test('a sweep syncs at most MAX_SYNCS_PER_PASS and never throws', async () => {
 
 // ── wiring ───────────────────────────────────────────────────────────────
 
-test('the leader starts the sweep and shutdown stops it', () => {
+test('a clock of the workflow runs the sweep, stops it, and says a decline once', async (t) => {
+  // Every five minutes, one run at a time wherever the workflow runs
+  // (src/workflow/clock/services.ts); its stop is the run's signal, and what
+  // it remembers between runs is its previous run's result, not the process.
+  const clocks = fs.readFileSync(path.join(ROOT, 'src/workflow/clock/services.ts'), 'utf8');
+  assert.match(clocks, /name: 'fixed-check-sync', everyMs: 5 \* MIN, leaseMs: 10 \* MIN,\n\s+run: \(ctx: WorkContext, \{ pool, config \}: JobDeps\) => legacy\('services\/proposal-scans'\)\.fixedCheckSync\(config, pool, \{\n\s+previous: ctx\.input\.previous \?\? null, shouldStop: stopped\(ctx\),/);
   const server = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
-  const leader = server.slice(server.indexOf('async function becomeLeader('));
-  assert.match(leader.slice(0, leader.indexOf('\n}\n')),
-    /require\('\.\/src\/services\/fixed-check-sync'\)\.start\(config, getPool\(config\)\)/,
-    'leader-only, beside the other sweeps');
-  assert.match(server, /const fixedCheckSyncStop = require\('\.\/src\/services\/fixed-check-sync'\)\.stop\(\);/);
-  assert.match(server, /Promise\.all\(\[[^\]]*fixedCheckSyncStop[^\]]*\]\)/, 'and the pool waits for its pass');
+  assert.doesNotMatch(server, /fixed-check-sync|fixedCheckSync/, 'no leader starts or stops it');
+  assert.equal(subject.start, undefined);
+  assert.equal(subject.stop, undefined);
+
+  const scans = require('../src/services/proposal-scans');
+  let skipped = { 7: 'level', 8: 'conflict' };
+  const stop = () => false;
+  const sweep = t.mock.method(subject, 'sweep', async () => ({ apps: 1, candidates: 2, synced: [], skipped }));
+  const said = () => logs.filter((l) => l.msg === 'Proposals with failing checks not synced with main').map((l) => Object.keys(l.meta.declined));
+  logs.length = 0;
+  const first = await scans.fixedCheckSync({}, {}, { previous: null, shouldStop: stop });
+  assert.equal(sweep.mock.calls[0].arguments[0].shouldStop, stop, 'the run\'s stop reaches the sweep');
+  assert.deepEqual(first, { apps: 1, candidates: 2, synced: [], declined: { 7: 'level', 8: 'conflict' } });
+  assert.deepEqual(said(), [['7', '8']]);
+  assert.deepEqual(logs.find((l) => l.msg === 'Proposals with failing checks not synced with main').meta.declined['8'],
+    { why: 'conflict', words: subject.declinedWords('conflict') });
+
+  // The next run, handed the last one's result, says nothing new; a reason
+  // that changed is said again; a proposal no longer declined is forgotten.
+  const second = await scans.fixedCheckSync({}, {}, { previous: JSON.parse(JSON.stringify(first)) });
+  assert.deepEqual(said(), [['7', '8']], 'said once');
+  skipped = { 7: 'main_fails' };
+  const third = await scans.fixedCheckSync({}, {}, { previous: second });
+  assert.deepEqual(said(), [['7', '8'], ['7']], 'again when it changes');
+  assert.deepEqual(third.declined, { 7: 'main_fails' }, 'and 8, synced or gone, is not remembered');
+
+  const before = process.env.FIXED_CHECK_SYNC_ENABLED;
+  try {
+    process.env.FIXED_CHECK_SYNC_ENABLED = '0';
+    assert.deepEqual(await scans.fixedCheckSync({}, {}, {}), { off: true });
+    assert.equal(sweep.mock.callCount(), 3, 'off, it does not sweep');
+  } finally {
+    if (before === undefined) delete process.env.FIXED_CHECK_SYNC_ENABLED;
+    else process.env.FIXED_CHECK_SYNC_ENABLED = before;
+  }
 });
 
 test('the schema carries the claim columns', () => {

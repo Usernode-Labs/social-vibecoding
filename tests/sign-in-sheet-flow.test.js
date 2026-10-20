@@ -155,7 +155,11 @@ test('the landing takes the link on show: Sign in opens at once, a new account\'
   // once while it is checked (tests/release-link-straight-flow.test.js); no
   // sheet opens for it. An existing account's opens Sign in.
   assert.match(onShow, /const link = takeReleaseLink\(\);\s+if \(link\) \{\s+noteSignInBegun\(\);\s+flushSync\(\(\) => \{\s+setRelease\(link\);\s+setResume\(null\);\s+setHolding\(straightLink\(link\)\);\s+if \(link\.route !== 'signup'\) setSheet\('signin'\);/);
-  assert.doesNotMatch(onShow, /setSheet\('start'\)|spendReleaseLink/);
+  assert.doesNotMatch(onShow, /spendReleaseLink/);
+  // The one Continue it opens is an old #waitlist link's (#5261), and never
+  // over a release link.
+  assert.equal((onShow.match(/setSheet\('start'\)/g) || []).length, 1);
+  assert.match(onShow, /if \(takeStartSheet\(\) && !link\) \{\s+flushSync\(\(\) => \{ setResume\(null\); setSheet\('start'\); \}\);/);
   assert.match(src, /onStart=\{\(\) => setSheet\('start'\)\}/);
   // Get started's sheet carries the token; Sign in's never does. The
   // one-time sign-in too, unless the landing already found it used.

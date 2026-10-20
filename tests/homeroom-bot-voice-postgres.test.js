@@ -69,6 +69,21 @@ async function openDatabase(t) {
   return pool;
 }
 
+// A status written as the proposal machine writes it: a session is the
+// machine's from its insert (schema.sql wf_enrol_proposal), so its owned
+// columns are written under the transition's writer.
+async function asMachine(pool, sql, params) {
+  const c = await pool.connect();
+  try {
+    await c.query("BEGIN; SET LOCAL app.wf_writer = 'transition'");
+    await c.query(sql, params);
+    await c.query('COMMIT');
+  } catch (err) {
+    await c.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally { c.release(); }
+}
+
 /** A model that answers each request of a turn with the next step of `script`. */
 function scripted(script) {
   const seen = [];
@@ -239,7 +254,7 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     sent.length = 0;
     broadcasts.length = 0;
     // No change of its own is up here for this test.
-    await pool.query(`UPDATE chat_sessions SET status = 'archived' WHERE id = $1`, [change.id]);
+    await asMachine(pool, `UPDATE chat_sessions SET status = 'archived' WHERE id = $1`, [change.id]);
     const model = scripted([
       { tool: 'offer_request', args: { title: 'Sort the list by due date', details: 'Could the list sort by due date?' } },
       { tool: 'reply', args: { text: 'That sounds like a good request. I drafted it: tap File it under this to send it to the group.' } },
@@ -456,7 +471,7 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
 
   await t.test('when the update ends, the people who asked are owed what came of it, said once where they asked', async () => {
     sent.length = 0;
-    await pool.query(`UPDATE chat_sessions SET status = 'promoted' WHERE id = $1`, [change.id]);
+    await asMachine(pool, `UPDATE chat_sessions SET status = 'promoted' WHERE id = $1`, [change.id]);
     const runTag = 'fu-test-1';
     const asks = await voice.takeAsks(pool, { sessionId: change.id, runTag });
     assert.equal(asks.length, 2, 'both asks waiting on it, oldest first');

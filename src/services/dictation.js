@@ -1,5 +1,8 @@
 'use strict';
 
+// #5123: every OpenRouter request denies data collection.
+const { withNoTraining } = require('../../worker/openrouter-privacy');
+
 // Short, mono PCM recordings only. Reading the WAV's frame count gives us
 // an actual duration bound without trusting a browser-supplied duration.
 const SAMPLE_RATE = 16000;
@@ -37,7 +40,8 @@ async function transcribe({ data, apiKey, config, signal, fetchImpl = fetch }) {
     method: 'POST', signal,
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json',
       'HTTP-Referer': config.openrouterOrigin || 'https://app.onhomeroom.com', 'X-OpenRouter-Title': 'Homeroom dictation' },
-    body: JSON.stringify({ model, input_audio: { data: data.toString('base64'), format: 'wav' } }),
+    // #5123: the recording reaches only a host that neither trains on it nor keeps it.
+    body: JSON.stringify(withNoTraining({ model, input_audio: { data: data.toString('base64'), format: 'wav' } })),
   });
   if (!response.ok) {
     await response.body?.cancel();

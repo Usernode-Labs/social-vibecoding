@@ -517,7 +517,13 @@ test('a finished request is ONE line: the project\'s small tile, how it ended, i
   const html = renderToHtml(createElement('div', null, createElement(SettledLine, {
     name: 'Plant Pal', slug: 'plant-pal', iconUrl: null, emoji: null, number: 4, title: 'Dark mode', outcome: 'live', fallback: 'Live',
   })));
-  assert.match(html, /^<div><span class="flex w-9 shrink-0 justify-end"><span class="[^"]*h-\[22px\] w-\[22px\][^"]*"[^>]*data-bot-tile="">P<\/span><\/span><span class="flex min-w-0 flex-1 items-center gap-1\.5"><span class="contents" data-bot-final="live">[\s\S]*data-request-tag="4">#4<\/span><span class="truncate text-\[14px\] font-medium leading-5 text-zinc-700 dark:text-zinc-300">Dark mode<\/span><\/span><\/div>$/, 'the small tile at the end of the big tile\'s column, beside its badge');
+  assert.match(html, /^<div><span class="flex w-9 shrink-0 justify-end"><span class="[^"]*h-\[22px\] w-\[22px\][^"]*"[^>]*data-bot-tile="">P<\/span><\/span><span class="flex min-w-0 flex-1 items-center gap-1\.5"><span class="contents" data-bot-final="live">[\s\S]*data-request-tag="4">#4<\/span><span class="min-w-0 flex-1 truncate text-\[14px\] font-medium leading-5 text-zinc-700 dark:text-zinc-300">Dark mode<\/span><\/span><\/div>$/, 'the small tile at the end of the big tile\'s column, beside its badge');
+  // Polish N15: the title grows and the status gives way, capped at 40%
+  // and right-aligned whatever the title's length.
+  const worded = renderToHtml(createElement('div', null, createElement(SettledLine, {
+    name: 'Plant Pal', slug: 'plant-pal', iconUrl: null, emoji: null, number: 4, title: 'Fix scrolling', outcome: 'taken', fallback: 'Taken', words: 'Somebody else took it on',
+  })));
+  assert.match(worded, /<span class="min-w-0 flex-1 truncate[^"]*">Fix scrolling<\/span><span class="min-w-0 max-w-\[40%\] truncate text-right [^"]*" data-bot-settled-words="">Somebody else took it on<\/span>/);
   const nested = renderToHtml(createElement('div', null, createElement(SettledLine, {
     name: 'Plant Pal', slug: 'plant-pal', iconUrl: null, emoji: null, number: 4, title: 'Dark mode', outcome: 'live', fallback: 'Live', nested: true,
   })));

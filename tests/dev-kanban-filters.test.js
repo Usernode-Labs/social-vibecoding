@@ -927,11 +927,13 @@ test('the second column reads "Underway" but keeps its inprogress key and id', (
   assert.ok(tab && /Underway/.test(tab[0]), 'the mobile tab is retitled too');
   // One-line hover explanation on the column's step (#4486: the steps are
   // the column heads) — the name alone still cannot say what the five
-  // underway states have in common.
+  // underway states have in common: a person or an agent is on each (#5210
+  // shortened it; the card's chip names the state).
   const head = html.match(/id="dev-kanban-tab-inprogress"[^>]*class="dev-kanban-step" title="([^"]+)"/);
   assert.ok(head, 'the column head carries a title attribute');
-  assert.match(head[1], /auto-solving/i);
-  assert.match(head[1], /paused/i);
+  assert.equal(head[1], message('changes:board.column.underwayHint'));
+  assert.match(head[1], /person/i);
+  assert.match(head[1], /agent/i);
   // …and only that column has one, so the other three heads are unchanged.
   assert.equal((html.match(/class="dev-kanban-step" title="/g) || []).length, 1);
 });

@@ -147,10 +147,10 @@ function automaticLine(automatic: Automatic | null, loaded: boolean): string {
   if (!automatic || !automatic.intervalMs) return 'The automatic background sweep is switched off.';
   if (!automatic.lastRunAt) {
     const every = Math.round(automatic.intervalMs / 60000);
-    return `Automatic sweep runs every ${every} minutes. It hasn't run yet since this platform process started.`;
+    return `Automatic sweep runs every ${every} minutes. It hasn't run yet.`;
   }
   const bits = [`Automatic sweep last ran ${ago(automatic.lastRunAt) || 'recently'}`];
-  bits.push(`${automatic.tornDown || 0} shut down`);
+  bits.push(`${automatic.tornDown || 0} to shut down`);
   if (automatic.failed) bits.push(`${automatic.failed} failed`);
   return `${bits.join(' · ')}.`;
 }

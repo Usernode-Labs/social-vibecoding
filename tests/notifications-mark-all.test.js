@@ -121,7 +121,7 @@ test('route fall-through branch pushes notifications_changed when rows cleared',
   // Isolate the code between the markRead call and the response — the
   // single-id / mark-all fall-through branch of POST /api/notifications/read.
   const m = ROUTE_SRC.match(
-    /const cleared = await notifications\.markRead\([\s\S]*?res\.json\(\{ unread, cleared \}\)/
+    /const cleared = await notifications\.markRead\([\s\S]*?res\.json\(\{ unread, messageUnread, cleared \}\)/
   );
   assert.ok(m, 'fall-through branch captures cleared and returns it');
   assert.match(m[0], /if \(cleared > 0\)/, 'fan-out is gated on rows actually clearing');

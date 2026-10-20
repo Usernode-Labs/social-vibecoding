@@ -128,11 +128,11 @@ test('run four: a promote kick on a session the machine does not hold yet enroll
 
 test('a rebuild of a proposal builds its reviewed head, not a tip past it; an underway change builds its tip', async (t) => {
   const { rec, pool, copy, calls } = harness(t, { tip: TIP });
-  assert.equal(await rec.rebuildSessionStaging({ config: null, pool, session: { ...copy, status: 'promoted' }, reason: 'stuck-checks-sweep' }), 'handed_off');
-  assert.deepEqual(calls.find((c) => c[0] === 'revision'), ['revision', NEW, 'stuck-checks-sweep']);
+  assert.equal(await rec.rebuildSessionStaging({ config: null, pool, session: { ...copy, status: 'promoted' }, reason: 'tail_worker_gone' }), 'handed_off');
+  assert.deepEqual(calls.find((c) => c[0] === 'revision'), ['revision', NEW, 'tail_worker_gone']);
   calls.length = 0;
-  assert.equal(await rec.rebuildSessionStaging({ config: null, pool, session: { ...copy, status: 'paused' }, reason: 'stuck-checks-sweep' }), 'handed_off');
-  assert.deepEqual(calls.find((c) => c[0] === 'revision'), ['revision', TIP, 'stuck-checks-sweep'],
+  assert.equal(await rec.rebuildSessionStaging({ config: null, pool, session: { ...copy, status: 'paused' }, reason: 'tail_worker_gone' }), 'handed_off');
+  assert.deepEqual(calls.find((c) => c[0] === 'revision'), ['revision', TIP, 'tail_worker_gone'],
     'recovery still claims the newest tip of a change underway');
 });
 
@@ -180,7 +180,7 @@ test('a person\'s "Run checks again" marks the head owed a fresh unit suite befo
 
   // An automatic re-drive marks nothing.
   marked.length = 0;
-  await rec.recheckSessionChecks({ pool, session: copy, reason: 'stuck-checks-sweep' });
+  await rec.recheckSessionChecks({ pool, session: copy, reason: 'stale-pending-vote-kick' });
   await rec.recheckSessionChecks({ pool, session: copy, reason: 'promote-kick' });
   assert.equal(marked.length, 0);
 });

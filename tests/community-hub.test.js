@@ -125,7 +125,7 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   assert.match(read(HUB), /const claims = Math\.max\(0, Number\(unclaimed\) \|\| 0\);/, 'the requests are the view model\'s unclaimed count, not queue rows');
   // Each row is a door to its place.
   assert.match(hub, /onNeeds=\{\(\) => openTab\('needs'\)\}\s+onWork=\{\(\) => openTab\('workshop'\)\}\s+onDiscussion=\{\(\) => openTab\('discussion'\)\}/);
-  assert.match(hub, /<RecentlyLive slug=\{slug\} rows=\{v\.recentLive\} onAll=\{\(\) => openTab\('workshop'\)\} own=\{ownLive\} \/>/, 'All in Workshop is the Workshop place');
+  assert.match(hub, /<RecentlyLive slug=\{slug\} rows=\{v\.recentLive\} onAll=\{\(\) => openTab\('workshop'\)\} own=\{ownLive\} ident=\{recentIdent\} \/>/, 'All in Workshop is the Workshop place');
   const { ForYouCard } = loadTsx(HUB);
   const quiet = renderToHtml(createElement(ForYouCard, {
     slug: 'garden', queue: [], mine: null, alone: true,

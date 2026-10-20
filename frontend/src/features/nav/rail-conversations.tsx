@@ -9,9 +9,10 @@
  * All messages, which is the whole list as the page, with its search and its
  * previews. Which five, and why, is ../messages/rail-inbox.ts; the list's own
  * module works them out and publishes them, so this draws plain rows. The
- * one you have open is lit, a sixth row while it is not among the five; with
- * nothing open, All messages is. The Messages row keeps `aria-current` and
- * gives its fill to the row lit under it (app.css).
+ * one you have open is lit when it is among the five, and adds no row when
+ * it is not (#21: Messages stays lit then); with nothing open, All messages
+ * is. The Messages row keeps `aria-current` and gives its fill to the row
+ * lit under it (app.css).
  *
  * It is the column the conversations had beside the strip, moved into the
  * sidebar: on a desktop the inbox draws one pane at a time
