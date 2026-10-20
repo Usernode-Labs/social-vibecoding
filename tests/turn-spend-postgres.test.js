@@ -98,6 +98,76 @@ test('a turn\'s spend as it happens, against the full PostgreSQL schema', { time
     assert.equal(await open(), 1, 'the live turn\'s call waits for its end');
   });
 
+  await t.test('a call whose write lands after its turn settled is reconciled with that settlement: never counted or billed twice', async () => {
+    const { rows: [u] } = await pool.query("INSERT INTO users (username, password) VALUES ('late-spender', 'x') RETURNING id");
+    const mine = async () => (await pool.query(
+      `SELECT COALESCE(SUM(total_cost_cents), 0)::float8 AS platform FROM llm_usage WHERE user_id = $1`, [u.id])).rows[0].platform;
+    const today = async () => Number((await pool.query(`SELECT ${limits.TODAY_USER_SPEND_SQL} AS n`, [u.id])).rows[0].n);
+    const sessionOf = async (turnId) => (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, active_turn) VALUES ($1, $2, 'b', 'active', $3::jsonb) RETURNING id`,
+      [app.id, u.id, JSON.stringify({ turnId, phase: 'executing', spendKept: true })])).rows[0].id;
+
+    // Claude Code reported 10 cents, which holds every call; one call's write
+    // lands after the settlement, its turn read as the call started.
+    const R = crypto.randomUUID();
+    const s = await sessionOf(R);
+    const turn = await limits.turnSpendTarget(pool, s);
+    assert.deepEqual(turn, { turnId: R, keep: true });
+    await limits.settleTurnSpend(pool, u.id, 10, { turnId: R });
+    // The next turn has its record by now: the late call is still its own turn's.
+    await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`, [s, JSON.stringify({ turnId: crypto.randomUUID(), spendKept: true })]);
+    await limits.noteTurnSpend(pool, { sessionId: s, userId: u.id, cents: 10, turn });
+    assert.equal(await mine(), 10, 'in the reported total already');
+    assert.equal(await today(), 10, 'not counted again by the caps');
+    await pool.query("UPDATE turn_spend SET created_at = NOW() - interval '3 hours' WHERE user_id = $1", [u.id]);
+    await limits.settleOpenTurnSpend(pool);
+    assert.equal(await mine(), 10, 'nor billed again by the clock');
+    await limits.settleTurnSpend(pool, u.id, 10, { turnId: R });
+    assert.equal(await mine(), 10, 'and a replayed settlement adds nothing');
+
+    // A turn that reported nothing was charged its kept calls: a late one is
+    // charged as it lands, once.
+    const K = crypto.randomUUID();
+    const k = await sessionOf(K);
+    const kTurn = await limits.turnSpendTarget(pool, k);
+    await limits.noteTurnSpend(pool, { sessionId: k, userId: u.id, cents: 4, turn: kTurn });
+    await limits.settleTurnSpend(pool, u.id, 0, { turnId: K });
+    assert.equal(await mine(), 14);
+    await limits.noteTurnSpend(pool, { sessionId: k, userId: u.id, cents: 3, turn: kTurn });
+    assert.equal(await mine(), 17, 'charged now');
+    assert.equal(await today(), 17);
+    await pool.query("UPDATE turn_spend SET created_at = NOW() - interval '3 hours' WHERE user_id = $1", [u.id]);
+    await limits.settleOpenTurnSpend(pool);
+    assert.equal(await mine(), 17, 'once');
+
+    // A Mayor's spend settled under the same turn id is its own figure: the
+    // coding agent's kept calls wait for the coding agent's settlement.
+    const M = crypto.randomUUID();
+    const m = await sessionOf(M);
+    await limits.noteTurnSpend(pool, { sessionId: m, userId: u.id, cents: 6, turn: await limits.turnSpendTarget(pool, m) });
+    await limits.settleTurnSpend(pool, u.id, 2, { turnId: M, effectKey: 'turn_wrapup_spend' });
+    assert.equal(await mine(), 19, 'the Mayor\'s 2 cents');
+    await limits.settleTurnSpend(pool, u.id, 0, { turnId: M });
+    assert.equal(await mine(), 25, 'then the coding agent\'s kept 6');
+
+    // A late write racing its turn's settlement waits for it, and then sees
+    // that it closed the turn.
+    const L = crypto.randomUUID();
+    const l = await sessionOf(L);
+    const lTurn = await limits.turnSpendTarget(pool, l);
+    const settling = await pool.connect();
+    try {
+      await settling.query('BEGIN');
+      await settling.query(`SELECT pg_advisory_xact_lock(hashtextextended('turn_spend:' || $1::text, 0))`, [L]);
+      const late = limits.noteTurnSpend(pool, { sessionId: l, userId: u.id, cents: 9, turn: lTurn });
+      await new Promise((r) => setTimeout(r, 200));
+      await settling.query('INSERT INTO turn_spend_closed (turn_id, reported) VALUES ($1, TRUE)', [L]);
+      await settling.query('COMMIT');
+      await late;
+    } finally { settling.release(); }
+    assert.equal(await today(), 25, 'the reported total held it: kept as settled');
+  });
+
   await t.test('ROLLOUT-ONLY: an older release\'s turn keeps none of its calls: it settles its spend from Claude Code\'s report alone', async () => {
     const before = await open();
     const older = await session(crypto.randomUUID(), { older: true });

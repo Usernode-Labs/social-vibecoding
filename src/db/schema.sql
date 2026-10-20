@@ -15648,6 +15648,21 @@ CREATE INDEX IF NOT EXISTS idx_turn_spend_open_day ON turn_spend (created_at) WH
 CREATE INDEX IF NOT EXISTS idx_turn_spend_turn ON turn_spend (turn_id) WHERE turn_id IS NOT NULL;
 COMMENT ON TABLE turn_spend IS 'staging:private';
 
+-- A coding turn whose kept calls its settlement closed (limits.js
+-- settleTurnSpend), and on what it billed: Claude Code's reported total
+-- (`reported`, which already holds every call of the turn) or the kept calls.
+-- A call of that turn whose write lands after it (proxy writes are not
+-- awaited) is reconciled with it under the same lock (noteTurnSpend): kept as
+-- settled, and charged then only when the settlement charged the kept calls,
+-- never counted again by the caps or billed again by the clock. Kept two
+-- days (the turn-spend-settle clock).
+CREATE TABLE IF NOT EXISTS turn_spend_closed (
+  turn_id    TEXT PRIMARY KEY,
+  reported   BOOLEAN NOT NULL,
+  closed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE turn_spend_closed IS 'staging:private';
+
 -- A change's worker (services/worker.js: a container, or a Kubernetes
 -- Deployment, named by the session), and when anything last used it: written
 -- by every process that ensures it or runs something in it, and read by the

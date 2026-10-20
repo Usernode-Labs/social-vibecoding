@@ -471,6 +471,10 @@ function anthropicProxyRoutes(config) {
     }
 
     const isSyncTurn = turnMode === 'sync';
+    // The turn this call belongs to, read as it starts: its cost is kept
+    // against that turn however late its write lands (limits.js
+    // noteTurnSpend reconciles one that lands after the turn settled).
+    const spendTurn = !isSyncTurn && turnMode !== 'shots' ? await limits.turnSpendTarget(pool, sessionId) : null;
 
     // Resolve effective cap + current spend snapshot. Both come from
     // small caches (limits.js's own 10s cache for the cap, our
@@ -601,7 +605,7 @@ function anthropicProxyRoutes(config) {
             workerMod.noteTurnByokSpend(sessionId, result.costCents);
           }
           if (turnMode !== 'shots') {
-            void limits.noteTurnSpend(pool, { sessionId, userId, cents: result.costCents, byok: true });
+            void limits.noteTurnSpend(pool, { sessionId, userId, cents: result.costCents, byok: true, turn: spendTurn });
           }
           // #800: BYOK-paid work still costs the change the same at list
           // price, so it lands on the ledger identically.
@@ -748,7 +752,7 @@ function anthropicProxyRoutes(config) {
     // turn's (the system bucket), nor a person's shots run's (gated by the
     // owner's caps, never settled into their allowance).
     if (!isSyncTurn && turnMode !== 'shots') {
-      void limits.noteTurnSpend(pool, { sessionId, userId, cents: result.costCents, byok: false });
+      void limits.noteTurnSpend(pool, { sessionId, userId, cents: result.costCents, byok: false, turn: spendTurn });
     }
     // #800: same cost, recorded durably against the change rather than
     // only in the in-memory trackers above. Counted on kills too, for the

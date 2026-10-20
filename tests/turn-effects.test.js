@@ -40,6 +40,12 @@ function makePool() {
         row.result = JSON.parse(params[2]);
         return { rows: [{ result: row.result }], rowCount: 1 };
       }
+      // The coding agent's settlement closes its turn's kept calls under the
+      // turn's lock, and says on what it billed (limits.js settleTurnSpend).
+      if (/pg_advisory_xact_lock\(hashtextextended\('turn_spend:'/.test(text)
+          || /INSERT INTO turn_spend_closed/.test(text)) {
+        return { rows: [], rowCount: 1 };
+      }
       // A turn's kept calls (turn_spend), settled with its receipt: none here.
       if (/UPDATE turn_spend SET settled_at/.test(text)) {
         return { rows: [{ platform: 0, byok: 0 }], rowCount: 0 };
