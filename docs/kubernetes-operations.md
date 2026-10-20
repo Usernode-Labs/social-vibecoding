@@ -858,9 +858,9 @@ usage null when measured usage is unavailable.
 
 ## IP address retention
 
-The platform keeps a person's IP address for `IP_RETENTION_DAYS` (default 90,
-whole days from 1 to 3650; any other value keeps 90). The privacy notice states
-the same period, so change the two together. The leader clears older addresses
+The platform keeps a person's IP address for `IP_RETENTION_DAYS` (default
+180, six months; whole days from 1 to 3650; any other value keeps 180). The
+privacy notice states the same period, so change the two together. The leader clears older addresses
 once a day (`ip-retention` in `leader_sweeps`; `src/services/ip-retention.js`
 lists each column) and keeps the rows. A pass that cleared anything logs
 `Cleared expired IP addresses` with a count per table.
@@ -889,7 +889,7 @@ are the cluster's:
    took.
 2. **Any log collector** (Loki, Vector, Fluent Bit, a hosted service) set up
    outside this repository must keep platform logs no longer than
-   `IP_RETENTION_DAYS`. For Loki: `limits_config.retention_period: 2160h`
+   `IP_RETENTION_DAYS`. For Loki: `limits_config.retention_period: 4320h`
    with `compactor.retention_enabled: true`.
 3. **Database backups** hold the addresses that were in the database on the
    day of the backup. Keep backups no longer than the period plus the backup

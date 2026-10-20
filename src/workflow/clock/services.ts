@@ -101,8 +101,9 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/cli-auth').cleanupCliAuth(pool),
   },
   {
-    // #5132: a person's IP address is kept IP_RETENTION_DAYS (90 by default),
-    // then cleared from the rows that recorded it; the rows stay.
+    // #5132: a person's IP address is kept IP_RETENTION_DAYS (180 days, six
+    // months, by default), then cleared from the rows that recorded it; the
+    // rows stay.
     name: 'ip-retention', everyMs: 24 * HOUR,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/ip-retention').purgeExpiredIps(pool),
   },

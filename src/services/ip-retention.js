@@ -2,9 +2,9 @@
 
 // How long the platform keeps a person's IP address (#5132).
 //
-// One period for every IP the database holds: IP_RETENTION_DAYS, 90 days
+// One period for every IP the database holds: IP_RETENTION_DAYS, 180 days
 // unless the deployment sets otherwise (whole days, 1 to 3650; anything else
-// keeps 90). The privacy notice states this period, so change the two
+// keeps 180). The privacy notice states this period, so change the two
 // together. After it, the address is cleared and the row itself stays: a
 // waitlist signup, a terms consent and a database-export audit row are still
 // records the platform needs, only no longer with the address they came from.
@@ -33,7 +33,7 @@
 // The server runs `purgeExpiredIps` daily on the leader's durable clock
 // (server.js, `ip-retention`).
 
-const DEFAULT_DAYS = 90;
+const DEFAULT_DAYS = 180; // six months
 const MIN_DAYS = 1;
 const MAX_DAYS = 3650;
 

@@ -1,6 +1,6 @@
 'use strict';
 
-// #5132: IP addresses are cleared after IP_RETENTION_DAYS (90 by default),
+// #5132: IP addresses are cleared after IP_RETENTION_DAYS (180 by default),
 // row by row, and the rows themselves are kept.
 
 const test = require('node:test');
@@ -12,17 +12,17 @@ const ipRetention = require('../src/services/ip-retention');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
-test('IP_RETENTION_DAYS is 90 unless set to a whole number of days in range', () => {
+test('IP_RETENTION_DAYS is 180 unless set to a whole number of days in range', () => {
   const days = ipRetention.retentionDays;
-  assert.equal(ipRetention.DEFAULT_DAYS, 90);
-  assert.equal(days({}), 90);
-  assert.equal(days({ IP_RETENTION_DAYS: '' }), 90);
+  assert.equal(ipRetention.DEFAULT_DAYS, 180);
+  assert.equal(days({}), 180);
+  assert.equal(days({ IP_RETENTION_DAYS: '' }), 180);
   assert.equal(days({ IP_RETENTION_DAYS: '30' }), 30);
   assert.equal(days({ IP_RETENTION_DAYS: ' 60 ' }), 60);
   assert.equal(days({ IP_RETENTION_DAYS: '1' }), 1);
   assert.equal(days({ IP_RETENTION_DAYS: '3650' }), 3650);
   for (const bad of ['0', '-5', '3651', '30.5', '1e3', 'ninety', 'Infinity']) {
-    assert.equal(days({ IP_RETENTION_DAYS: bad }), 90, bad);
+    assert.equal(days({ IP_RETENTION_DAYS: bad }), 180, bad);
   }
 });
 
@@ -85,8 +85,8 @@ test('the purge against the full PostgreSQL schema', { timeout: 120000 }, async 
   const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
   await pool.query(schema);
 
-  const OLD = "NOW() - INTERVAL '91 days'";
-  const NEW = "NOW() - INTERVAL '89 days'";
+  const OLD = "NOW() - INTERVAL '181 days'";
+  const NEW = "NOW() - INTERVAL '179 days'";
   let seq = 0;
   async function user(waitlistIp, submittedAt, createdAt = 'NOW()') {
     seq += 1;
@@ -124,7 +124,7 @@ test('the purge against the full PostgreSQL schema', { timeout: 120000 }, async 
        ('new-admin', 'app_x', 'done', '2001:db8::2', ${NEW})`
   );
 
-  const counts = await ipRetention.purgeExpiredIps(pool, { days: 90 });
+  const counts = await ipRetention.purgeExpiredIps(pool, { days: 180 });
   assert.deepEqual(counts, { waitlistSignups: 1, userWaitlistIps: 2, termsConsents: 1, dbExports: 1 });
 
   const ips = async (sql) => (await pool.query(sql)).rows.map((r) => [r.k, r.ip]);
@@ -147,7 +147,7 @@ test('the purge against the full PostgreSQL schema', { timeout: 120000 }, async 
 
   // A second pass has nothing left to clear, and a shorter period reaches
   // the newer rows too.
-  assert.deepEqual(await ipRetention.purgeExpiredIps(pool, { days: 90 }),
+  assert.deepEqual(await ipRetention.purgeExpiredIps(pool, { days: 180 }),
     { waitlistSignups: 0, userWaitlistIps: 0, termsConsents: 0, dbExports: 0 });
   assert.deepEqual(await ipRetention.purgeExpiredIps(pool, { days: 30 }),
     { waitlistSignups: 1, userWaitlistIps: 2, termsConsents: 1, dbExports: 1 });
