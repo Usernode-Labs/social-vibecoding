@@ -4258,8 +4258,8 @@ const App = {
       // A running app's ✕: back to the page it was opened from (closeApp).
       if (App.currentApp && App.currentTab === 'app' && App.closeApp()) return;
       // A dev SESSION claims it as "back to the Board" (Streamlined
-      // Concept); declines when no session is open.
-      if (App.currentApp && window.DevChat?.handleBack?.()) return;
+      // Concept); not on a topic (#5301: a request page's own arrow).
+      if (App.currentApp && App.currentSubTab !== 'topic' && window.DevChat?.handleBack?.()) return;
       // FOLLOW THE ARROW'S OWN HREF. Every screen that shows the arrow tells
       // setBackIcon where it points, and until now that href was decorative
       // on a plain click: the chain preventDefault()s and then always went

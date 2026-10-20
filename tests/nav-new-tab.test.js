@@ -234,6 +234,11 @@ test('the header click handler guards before it preventDefaults', () => {
   assert.ok(body.indexOf('Browse?.handleBack') < body.indexOf('TopochainChallenges?.handleBack'));
   assert.ok(body.indexOf('TopochainChallenges?.handleBack') < body.indexOf('DevChat?.handleBack'));
   assert.ok(body.indexOf('DevChat?.handleBack') < body.indexOf('App.navigateHome()'));
+  // #5301: on a topic page (a request's page draws this arrow) the session
+  // never claims it, even with a session still open from before the hop;
+  // the arrow's own href is followed instead.
+  assert.match(body, /if \(App\.currentApp && App\.currentSubTab !== 'topic' && window\.DevChat\?\.handleBack\?\.\(\)\) return;/,
+    'a session left open does not claim the arrow on a topic page');
 });
 
 test('setBackIcon owns the anchor href, defaulting to home', () => {
