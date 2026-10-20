@@ -23,7 +23,10 @@
 //   - a 409 "already imported" reloads the stale list in place;
 //   - a network error surfaces without navigating;
 //   - a throwing navigation still closes the dialog and toasts;
-//   - no selection submits nothing.
+//   - no selection submits nothing;
+//   - #5717: the candidates read asks for a fresh answer, and the open dialog
+//     is registered with live-reads so a correction, a reconnect or the tab
+//     coming back re-reads the list in place without losing the pick.
 //
 // Run with: node --test tests/dialog-import-pr.test.js
 
@@ -134,6 +137,67 @@ test('the list only fetches once the dialog is open', () => {
   const shipped = HTML.slice(HTML.indexOf('id="import-pr-list"'));
   assert.match(shipped.slice(0, 400), /id="import-pr-list"[^>]*>\s*<\/div>/,
     'the shipped list host is empty, exactly as the hand-written shell had it');
+});
+
+// ── #5717: the list is fresh on open, and stays current while open ───
+
+test('the candidates read asks for a fresh answer', () => {
+  // The route asks GitHub on every request, so it is often slower than the
+  // service worker's 1s deadline; without `cache: 'no-cache'` the worker
+  // answers from a saved copy and posts an `api-updated` correction later.
+  assert.match(SRC, /import \{ FRESH, watch \} from '\.\.\/\.\.\/lib\/live-reads';/,
+    'the same seam topic-head and my-proposals use');
+  const load = fnBody('loadCandidates');
+  assert.match(load, /await fetch\(candidatesPath\(slug\), FRESH\)/,
+    'the read waits for the network instead of a saved copy');
+  // One spelling of the read: the fetch and the watcher both go through
+  // candidatesPath, so the URL the worker corrects is the URL this dialog
+  // actually read.
+  assert.equal((SRC.match(/`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/pr-import\/candidates`/g) || []).length, 1,
+    'the path literal lives in candidatesPath alone');
+  assert.match(SRC, /function candidatesPath\(slug: string\): string \{/);
+  assert.doesNotMatch(BODY, /fetch\([^)]*pr-import\/candidates/,
+    'no init-less fetch of the candidates read is left');
+});
+
+test('the open dialog is watched and re-read in place', () => {
+  const watchAt = SRC.indexOf('return watch(');
+  assert.ok(watchAt > 0, 'the dialog registers a live re-read');
+  const effectStart = SRC.lastIndexOf('useEffect(', watchAt);
+  const effect = SRC.slice(effectStart, SRC.indexOf('}, [dialog.isOpen]);', watchAt));
+  assert.ok(effectStart > 0 && effect.includes('return watch('), 'the effect is the registration');
+  assert.match(effect, /^useEffect\(\(\) => \{/, 'a hook, not a module-level registration');
+  assert.match(effect, /if \(!dialog\.isOpen\) return;/, 'only while the dialog is open');
+  assert.match(effect, /if \(!slug\) return;/, 'and only for an app');
+  assert.match(effect, /reads: \(url: URL\) => url\.pathname === candidatesPath\(slug\)/,
+    'it owns this slug’s candidates read, and nothing else');
+  assert.match(effect, /if \(busyRef\.current\) return;/, 'nothing re-reads under the progress line');
+  assert.match(effect, /void loadCandidates\(\{ inPlace: true \}\);/, 'the re-read leaves the list where it is');
+  // Returning watch(...) is what unregisters the dialog on close or unmount.
+  assert.ok(effect.indexOf('return watch(') > effect.indexOf('if (!slug) return;'),
+    'the unwatch is the effect’s cleanup');
+  assert.match(SRC, /\}, \[dialog\.isOpen\]\);/, 're-registered whenever the dialog opens');
+});
+
+test('an in-place re-read keeps the list and the pick', () => {
+  const load = fnBody('loadCandidates');
+  assert.match(load, /options: \{ inPlace\?: boolean \} = \{\}/, 'the open path is still the default');
+  assert.match(load, /if \(!inPlace\) setSelected\(null\);/, 'opening still starts from no pick');
+  assert.doesNotMatch(load, /kind: 'loading'/,
+    'a re-read never goes back to the loading line — opening sets that');
+  // Both a thrown and a non-OK answer keep rows that are already on screen.
+  const keepRows = load.match(/inPlace && prev\.kind === 'rows'\s*\?\s*prev\s*:/g) || [];
+  assert.equal(keepRows.length, 2, 'rows stay on screen when a re-read fails');
+  // …and only the newest read publishes.
+  assert.match(load, /const seq = \+\+readSeq\.current;/, 'every read takes a sequence number');
+  assert.equal((load.match(/seq !== readSeq\.current/g) || []).length, 2,
+    'an older answer is dropped, both after the fetch and in the catch');
+  const afterSuccess = load.slice(load.indexOf("setList({ kind: 'rows', rows });"));
+  assert.match(afterSuccess,
+    /if \(inPlace\) \{[\s\S]*setSelected\(\(prev\) =>[\s\S]*rows\.some\(\(c\) => Number\(c\.number\) === prev\) \? prev : null,/,
+    'a pick survives only while its pull request is still listed');
+  assert.equal((load.match(/if \(inPlace\) setSelected\(null\);/g) || []).length, 2,
+    'a list that now lists nothing clears the pick too');
 });
 
 // ── #846: the import is awaited in place ─────────────────────────────
