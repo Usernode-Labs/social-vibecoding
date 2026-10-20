@@ -72,8 +72,8 @@ function demoQS(): string {
  * as their way on: they came in by an invite link before they were let in,
  * and have not used it yet on this device (App._privateNoClose,
  * public/js/app.js). While it is, the menu hides "Go to community" and
- * About hides Share (#4216): one way onward, and no handing out the app's
- * address before they have gone to Homeroom. Both come back once they have
+ * About hides Invite (#4216, which hid its Share): one way onward, and no
+ * handing out a way into the app before they have gone to Homeroom. Both come back once they have
  * used it, or are let in (`privateMember` goes false).
  *
  * Read during a render that runs after mount only: the visit is remembered

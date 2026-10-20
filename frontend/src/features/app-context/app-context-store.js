@@ -32,6 +32,13 @@ export const appContextStore = createStore({
    */
   view: 'menu',
   /**
+   * Where the header's back disc goes from a second pane: `'menu'`, or
+   * `'about'` for an invite pane opened from About's Invite, so Back retraces
+   * the step taken rather than skipping the page it was taken from. Reset
+   * with `view`.
+   */
+  back: 'menu',
+  /**
    * Whether the presentation is a KIT sheet (touch) rather than the CSS
    * slide-over. The kit brings its own backdrop, so the web overlay only
    * raises when this is false — see lib/sheet-controller.js.
