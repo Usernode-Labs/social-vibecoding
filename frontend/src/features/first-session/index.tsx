@@ -1277,6 +1277,11 @@ export function FirstSession() {
       try { sessionStorage.removeItem(MAKE_FLAG); } catch { /* shown once anyway */ }
       openMake(setMode, now);
     };
+    // A `?shot=` address opens on its own, before the session read lands and
+    // even if it never does: it is the before/after capture's own link and it
+    // writes nothing, so it must not fall back to the signed-out landing
+    // (#5266 review, 20 Oct 2026).
+    if (makeShot(window.location.search)) check(false);
     if (legacy().App?.user) check(false);
     const onAuthed = () => check(true);
     document.addEventListener('sv:authed', onAuthed);
