@@ -5,16 +5,16 @@
     {
       "source": "server.js",
       "kind": "structural-template",
-      "fingerprint": "856f867d06e5b2aabdcc",
+      "fingerprint": "1439fe9c893bb33f9501",
       "count": 1,
-      "preview": "`SELECT cs.id FROM chat_sessions cs WHERE cs.active_turn IS NOT NULL AND cs.active_turn->>'phase' = ANY($1::text[]) AND COALESCE(cs.active_turn->>'lifecycleUpda"
+      "preview": "`SELECT cs.id, cs.user_id, cs.app_id, cs.status, cs.pr_number, cs.active_turn, cs.workflow_owner, u.username, u.is_synthetic AS user_is_synthetic FROM chat_sess"
     },
     {
       "source": "server.js",
       "kind": "structural-template",
-      "fingerprint": "a93a5c8f9dbfecec396a",
+      "fingerprint": "856f867d06e5b2aabdcc",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.user_id, cs.app_id, cs.status, cs.pr_number, cs.active_turn, cs.workflow_owner, u.username, u.is_synthetic AS user_is_synthetic FROM chat_sess"
+      "preview": "`SELECT cs.id FROM chat_sessions cs WHERE cs.active_turn IS NOT NULL AND cs.active_turn->>'phase' = ANY($1::text[]) AND COALESCE(cs.active_turn->>'lifecycleUpda"
     },
     {
       "source": "server.js",
@@ -474,6 +474,13 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
+      "fingerprint": "42c89c7dc3cd0cb79eb0",
+      "count": 1,
+      "preview": "`SELECT DISTINCT ON (s.session_id) s.session_id, s.version, s.built_at FROM chat_session_specs s JOIN chat_sessions owner_session ON owner_session.id = s.sessio"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
       "fingerprint": "974dbc333f746ae0a00c",
       "count": 1,
       "preview": "`SELECT s.version, s.content, s.content_html, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at FROM chat_session_specs s JOIN chat_sessions cs ON cs."
@@ -894,9 +901,9 @@
     {
       "source": "src/services/app-domains.js",
       "kind": "structural-template",
-      "fingerprint": "4d8364d2457874f40f71",
+      "fingerprint": "28c15da6ec75bb1c98cc",
       "count": 1,
-      "preview": "`UPDATE app_domains SET ${sets.join(', ')} WHERE id = $1 RETURNING ${ROW_COLUMNS}`"
+      "preview": "`UPDATE app_domains SET ${sets.join(', ')} WHERE ${where} RETURNING ${ROW_COLUMNS}`"
     },
     {
       "source": "src/services/check-history.js",
@@ -1300,6 +1307,13 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
+      "fingerprint": "c7f6a44be60767ec3f89",
+      "count": 1,
+      "preview": "`SELECT (COUNT(*) FILTER (WHERE n.kind = ANY($3::text[])))::int AS m, COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND "
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
       "fingerprint": "cf837b937e37a4415dce",
       "count": 1,
       "preview": "`INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind) SELECT v.user_id, v.app_id, v.chat_message_id, v.source_user_id, v.kind FROM"
@@ -1627,6 +1641,13 @@
       "preview": "`WITH coded AS ( SELECT e.id, e.user_id, e.metadata, e.created_at, CASE WHEN e.metadata->>'kind' IN ('action_outcome','server_failure') AND e.metadata ? 'attemp"
     },
     {
+      "source": "src/services/upload-retention.js",
+      "kind": "structural-template",
+      "fingerprint": "340ad7979fcdfa1d7a05",
+      "count": 1,
+      "preview": "`DELETE FROM ${table} WHERE ${owner} IS NULL AND created_at < NOW() - INTERVAL '24 hours'`"
+    },
+    {
       "source": "src/services/user-merge.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "00773acfc50e0d336f0f",
@@ -1811,7 +1832,7 @@
     {
       "source": "src/workflow/preview/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "3fdb0ac002f0301bdf3e",
+      "fingerprint": "9080cc5d6581aec071a8",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.shared_at, cs.branch_name, cs.pr_number, cs.imported_pr_head_sha, cs.reviewed_hea"
     },
@@ -1825,7 +1846,7 @@
     {
       "source": "src/workflow/proposal/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "b149a8372cf1247d2020",
+      "fingerprint": "902268e325a637542f37",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.pr_number, cs.pr_title, cs.branch_name, cs.reviewed_head_sha, cs.imported_pr_head"
     },

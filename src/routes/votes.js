@@ -2304,6 +2304,68 @@ async function recordVote({
   );
 }
 
+// Take a vote back (DELETE /api/sessions/:id/vote, the review flow's Undo).
+//
+// In one transaction, under the same row lock recordVote takes and the
+// proposal machine reads its facts under (workflow/proposal/facts.ts
+// readRow), so a retraction is ordered against a vote and against a merge
+// claim: a claim that lands first leaves the proposal 'merging' here and the
+// vote stays; one that lands after counts the votes without this one. The
+// DELETE is its own statement after the lock so it reads the votes as they
+// are once the lock is held (a vote committed while this waited is seen).
+//
+// Only while the proposal is still up for a vote ('promoted'); only the vote
+// that counts now (the current epoch's: a vote on an earlier version is
+// already not counted, and its row is what names the voter as asked back,
+// #1688); and, when the client says which epoch it was shown, only at that
+// epoch. Resolves { found, status, epoch, vote, reason }: `vote` is the side
+// taken back, null when nothing was removed.
+async function retractVote({ pool, sessionId, userId, expectedEpoch = null }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [locked] = [] } = await client.query(
+      'SELECT status, approval_epoch FROM chat_sessions WHERE id = $1 FOR UPDATE',
+      [sessionId]
+    );
+    if (!locked) {
+      await client.query('ROLLBACK');
+      return { found: false };
+    }
+    const epoch = locked.approval_epoch == null ? null : parseInt(locked.approval_epoch, 10);
+    const out = { found: true, status: locked.status, epoch, vote: null, reason: null };
+    const expected = parseExpectedEpoch(expectedEpoch);
+    if (locked.status !== 'promoted' || (expected != null && expected !== epoch)) {
+      await client.query('ROLLBACK');
+      return out;
+    }
+    const { rows: [removed] = [] } = await client.query(
+      `DELETE FROM pr_votes pv
+        USING chat_sessions cs
+        WHERE pv.session_id = $1 AND pv.user_id = $2
+          AND cs.id = pv.session_id
+          AND pv.approval_epoch = cs.approval_epoch
+        RETURNING pv.vote, pv.reason`,
+      [sessionId, userId]
+    );
+    await client.query('COMMIT');
+    if (removed) {
+      out.vote = removed.vote;
+      out.reason = removed.reason || null;
+    }
+    return out;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// What a retraction is answered when the vote can no longer move: the
+// proposal is being merged, has merged, or left review.
+const VOTE_LOCKED_MESSAGE = 'This change is no longer open for voting, so your vote stays as it is.';
+
 // After a vote has been answered (#2782): the fresh GitHub read the route used
 // to await, then the app's merge queue is asked to look at the proposal. The
 // order matters — the merge gate's own reconcile is a non-fresh one that
@@ -3448,6 +3510,115 @@ function voteRoutes(config) {
     }
   });
 
+  // Take your vote back (the review flow's Undo). The same gates as casting
+  // one: the shared vote limiter (a vote and its undo are one act, and a
+  // scripted vote/undo loop is the flip loop the limiter exists for), the
+  // membership gate, and the router's collab guard.
+  //
+  //   body (optional): { expectedEpoch } — the epoch the voter's screen was
+  //   drawn at, as on a cast; also read from ?expectedEpoch=.
+  //
+  //   200 { ok, retracted: true, merged: false, vote, readyReopened? }
+  //   200 { ok, unchanged: true }  — no vote of theirs counts now
+  //   404 — no such change
+  //   409 { code: 'vote_locked' } — no longer up for a vote (being merged,
+  //       merged, closed, archived, or not proposed)
+  //   409 { headChanged, approvalEpoch } — the change moved on since it was
+  //       shown (revisionChangedVoteResponse)
+  //
+  // Not refused for identity or for a private member on a public project
+  // (the cast route's identity/privacy refusals): those decide whose vote
+  // may COUNT, and taking a vote back only ever removes one. Never asks for
+  // a merge: whatever a retraction unblocks (a No taken back), the merge
+  // queue's own sweep finds.
+  router.delete('/api/sessions/:id/vote', governanceVoteLimiter, requireMembership, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+    const sessionId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(sessionId) || sessionId <= 0) {
+      return res.status(400).json({ error: 'Invalid session id' });
+    }
+    const expectedEpoch = req.body?.expectedEpoch ?? req.query?.expectedEpoch ?? null;
+    try {
+      const { rows: sessionRows } = await pool.query(
+        `SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.pr_number, cs.pr_title, cs.branch_name,
+                cs.source, cs.reviewed_head_sha, cs.imported_pr_head_sha, a.slug AS app_slug
+           FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+          WHERE cs.id = $1`,
+        [sessionId]
+      );
+      if (!sessionRows.length) return res.status(404).json({ error: 'Session not found' });
+      const session = sessionRows[0];
+      // The cast route's rule, kept: the CLI does not act on a proposal that
+      // declares a secret, in either direction.
+      if (isCliCredentialManagementSession(req, session)) {
+        return res.status(403).json({ error: CLI_CREDENTIAL_MANAGEMENT_ERROR });
+      }
+
+      const result = await retractVote({ pool, sessionId, userId: req.user.id, expectedEpoch });
+      if (!result.found) return res.status(404).json({ error: 'Session not found' });
+      if (result.status !== 'promoted') {
+        return res.status(409).json({ error: VOTE_LOCKED_MESSAGE, code: 'vote_locked' });
+      }
+      const expected = parseExpectedEpoch(expectedEpoch);
+      if (expected != null && expected !== result.epoch) {
+        return revisionChangedVoteResponse(res, reviewedHeadForSession(session), null, result.epoch);
+      }
+      if (!result.vote) {
+        log.debug('votes', 'Nothing to retract', { sessionId, userId: req.user.id });
+        return res.json({ ok: true, unchanged: true });
+      }
+
+      // The author's "voted yes" no longer says something true.
+      try {
+        const cleared = await notifications.withdrawProposalVoteNotification?.(pool, {
+          sessionId, voterId: req.user.id,
+        });
+        for (const userId of cleared || []) pushNotificationToUser(userId, { type: 'notifications_changed' });
+      } catch (err) {
+        log.warn('votes', 'Withdrawing the vote notification failed', { sessionId, err: err.message });
+      }
+
+      // B7 in reverse: a Yes taken back reopens the "ready to try" cards it
+      // settled, so they offer Approve again. Never throws.
+      const botDm = require('../services/homeroom-bot-dm');
+      const reopened = result.vote === 'yes'
+        ? await botDm.noteApprovalWithdrawn(pool, sessionId, req.user.id)
+        : 0;
+      const readyCard = reopened ? { readyReopened: true } : {};
+      // Whoever asked the bot for this change reads their card again, so it
+      // names who it waits on now. No vote, so no "approved it" line.
+      void botDm.noteVoted(pool, sessionId, {});
+
+      // The vote's own line stays in the proposal's thread, as a flip's
+      // earlier line does; this line says it no longer stands.
+      const voteLabel = session.pr_title
+        ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
+        : `PR #${session.pr_number || session.id}`;
+      await sendSystemMessage(pool, session.app_id,
+        `${req.user.username} took back their vote on ${voteLabel}`,
+        'system',
+        { voteRetracted: { sessionId, prNumber: session.pr_number || null, vote: result.vote } },
+        { type: 'session', ref: sessionId }
+      );
+
+      const { pushVoteUpdate } = require('../services/ws');
+      pushVoteUpdate({ sessionId, appSlug: session.app_slug, merged: false });
+
+      events.record(pool, {
+        type: events.EVENT_TYPES.PR_VOTE_RETRACTED,
+        userId: req.user.id,
+        appId: session.app_id,
+        sessionId,
+        metadata: { vote: result.vote },
+      });
+      log.info('votes', 'Vote retracted', { sessionId, vote: result.vote, userId: req.user.id });
+      return res.json({ ok: true, retracted: true, merged: false, vote: result.vote, ...readyCard });
+    } catch (err) {
+      log.error('votes', 'Vote retraction failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Get vote tally for a session. #646: when the app restricts
   // approvals to invited approvers, `approvers` lists the usernames
   // whose votes QUALIFY (the roster, incl. the full-admin fallback) so
@@ -4185,6 +4356,9 @@ function voteRoutes(config) {
         }
       }
 
+      // #4479 / polish board #14: the plan each change was built from, so its
+      // page draws the plan card with everything else (sessions.js).
+      await require('./sessions').attachChangePlans(pool, rows, userId);
       res.json({
         // `?results=failing`: the shell's list form (services/list-test-results.js).
         promoted: listTestResults.forListing(req, rows),
@@ -4585,6 +4759,8 @@ function voteRoutes(config) {
         };
       }
 
+      // The plan each change was built from (see /promoted above).
+      await require('./sessions').attachChangePlans(pool, rows, userId);
       res.json({
         // `?results=failing`: the shell's list form (services/list-test-results.js).
         merged: listTestResults.forListing(req, rows),
@@ -6287,10 +6463,8 @@ async function checkAndOpenRevert(config, pool, session, decider) {
     ]
   );
   const revertSessionId = revertRows[0].id;
-  // Born in review: the proposal machine adopts it now (its review check
-  // armed). The leader's sweep adopts any row this missed.
-  await require('../workflow/platform.ts').proposalAdopted({ sessionId: revertSessionId, appId: session.app_id })
-    .catch((err) => log.warn('votes', 'Could not hand a proposal born in review to the proposal machine', { sessionId: revertSessionId, err: err.message }));
+  // (Born in review: its insert enrolled it in the proposal machine,
+  // schema.sql wf_enrol_proposal.)
   await topicAttrs.selfAssignProposal(
     pool, session.app_id, revertSessionId, decider
   );

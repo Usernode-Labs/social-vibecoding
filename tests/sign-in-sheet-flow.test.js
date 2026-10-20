@@ -155,7 +155,11 @@ test('the landing takes the link on show: Sign in opens at once, a new account\'
   // once while it is checked (tests/release-link-straight-flow.test.js); no
   // sheet opens for it. An existing account's opens Sign in.
   assert.match(onShow, /const link = takeReleaseLink\(\);\s+if \(link\) \{\s+noteSignInBegun\(\);\s+flushSync\(\(\) => \{\s+setRelease\(link\);\s+setResume\(null\);\s+setHolding\(straightLink\(link\)\);\s+if \(link\.route !== 'signup'\) setSheet\('signin'\);/);
-  assert.doesNotMatch(onShow, /setSheet\('start'\)|spendReleaseLink/);
+  assert.doesNotMatch(onShow, /spendReleaseLink/);
+  // The one Continue it opens is an old #waitlist link's (#5261), and never
+  // over a release link.
+  assert.equal((onShow.match(/setSheet\('start'\)/g) || []).length, 1);
+  assert.match(onShow, /if \(takeStartSheet\(\) && !link\) \{\s+flushSync\(\(\) => \{ setResume\(null\); setSheet\('start'\); \}\);/);
   assert.match(src, /onStart=\{\(\) => setSheet\('start'\)\}/);
   // Get started's sheet carries the token; Sign in's never does. The
   // one-time sign-in too, unless the landing already found it used.
@@ -227,8 +231,8 @@ test('the code is six boxes over one real field, and the sixth digit sends it (#
   assert.equal(message('auth:signInSheet.code.title'), 'Enter the code we emailed');
 });
 
-test('the code step opens the address\'s own mail, and counts Get started\'s steps (#5253)', () => {
-  const { mailAppFor, storyStep } = loadTsx(SHEET);
+test('the code step opens the address\'s own mail (#5253)', () => {
+  const { mailAppFor } = loadTsx(SHEET);
   const gmail = mailAppFor('Ada@Gmail.com');
   assert.equal(gmail.name, 'Gmail');
   assert.equal(gmail.url, 'https://mail.google.com/mail/?authuser=Ada%40Gmail.com#search/in%3Aanywhere+newer_than%3A1h');
@@ -241,18 +245,8 @@ test('the code step opens the address\'s own mail, and counts Get started\'s ste
   assert.equal(mailAppFor('ada@usernodelabs.org'), null);
   assert.equal(mailAppFor('not an address'), null);
   assert.equal(message('auth:signInSheet.code.openMail', { app: 'Gmail' }), 'Open Gmail');
-  // Only the story's Get started counts its steps: email, code, username.
-  assert.equal(storyStep('code', 'story'), 2);
-  assert.equal(storyStep('code', 'signin'), null);
-  assert.equal(storyStep('code', 'invite'), null);
-  assert.equal(storyStep('account', 'story'), 3);
-  // From the first step (#5252): the email, or Apple and Google above it.
-  assert.equal(storyStep('email', 'story'), 1);
-  assert.equal(storyStep('choose', 'story'), 1);
-  assert.equal(storyStep('email', 'signin'), null);
-  assert.equal(storyStep('password', 'story'), null);
-  assert.equal(storyStep('phone', 'invite'), null);
-  assert.equal(message('auth:signInSheet.progress', { step: 2, total: 3 }), 'Step 2 of 3');
+  // No counted steps over the title: no bar, and no "Step X of 3" (#5615).
+  assert.doesNotMatch(read(SHEET), /data-sign-in-sheet-progress/);
 });
 
 test('the sheet spends the one-time sign-in with a POST, and anything but a spend falls back (#4594)', async () => {
@@ -465,6 +459,16 @@ test('the password step is the sheet\'s: the link opens it, and Forgot password 
   assert.match(src, /data-sign-in-sheet-forgot="" className=\{QUIET\} onClick=\{\(\) => \{ typedIdentifier\.current = \(identifierField\.current\?\.value \|\| ''\)\.trim\(\); toStep\('forgot'\); \}\}>/);
   assert.doesNotMatch(src, /href="#login\/forgot"/);
   assert.equal(message('auth:signInSheet.password.forgot'), 'Forgot password?');
+  // #5616: picking Password is choosing how to sign in, so the step has no
+  // "Other ways to continue" back to Apple and Google; closing the sheet does
+  // that. Without the Email code | Password switch, the email code is the one
+  // other way, and the link goes straight to that step.
+  assert.doesNotMatch(src, /signInSheet\.password\.otherWays/);
+  const passwordAt = src.indexOf("{step === 'password' ? (");
+  const passwordForm = src.slice(passwordAt, src.indexOf("{step === 'forgot' ? (", passwordAt));
+  assert.doesNotMatch(passwordForm, /otherWays/);
+  assert.match(passwordForm, /\{!methodSwitch \? \(\s+<button type="button" className=\{QUIET\} onClick=\{\(\) => toStep\('email'\)\}>\s+\{t\('auth:signInSheet\.password\.useEmailCode'\)\}/);
+  assert.match(passwordForm, /data-sign-in-sheet-forgot=""/);
   // Join pressed on an invite, then a password: the shell follows the link
   // without asking a second time, as it did from the sign-in screen.
   assert.match(src, /if \(followInvite\) rememberInviteJoin\(\);\s+await finish\('existing'\);/);

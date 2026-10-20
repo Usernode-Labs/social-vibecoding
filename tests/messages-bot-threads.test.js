@@ -123,9 +123,10 @@ test('a request\'s thread is named by the request, and a moment\'s label says wh
 });
 
 test('the composer inside a request\'s thread says what a reply is about', () => {
-  assert.equal(catalog('messages:composer.placeholderBotThread', { request: 'Dark mode' }), 'Reply about Dark mode…');
-  assert.equal(catalog('messages:composer.placeholderBotThreadFirstVersion', { project: 'Plant Pal' }), 'Reply about Plant Pal’s first version…');
-  assert.equal(catalog('messages:composer.placeholderBotThreadNumbered', { number: '9' }), 'Reply about request #9…');
+  // Polish N16: one line on a phone. The thread's header names the
+  // request, so the box does not repeat its title.
+  assert.equal(catalog('messages:composer.placeholderBotThread'), 'Reply about this request…');
+  assert.equal(catalog('messages:composer.placeholderBotThreadFirstVersion'), 'Reply about this first version…');
   const composer = read('frontend/src/features/messages/composer.tsx');
   assert.match(composer, /placeholder=\{inThread \? threadPlaceholder : \(prompt \|\| t\('messages:composer\.placeholder'\)\)\}/);
   assert.match(composer, /botRequest\.firstVersion \? t\('messages:composer\.placeholderBotThreadFirstVersion'/);

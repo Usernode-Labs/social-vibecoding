@@ -5,7 +5,6 @@ const kubernetes = require('./kubernetes');
 const { BUILD_RETENTION_LOCK } = require('./advisory-locks');
 const log = require('./logger');
 
-const INTERVAL_MS = 60 * 60 * 1000;
 const MAX_DELETIONS = 20;
 // Migrated apps can have an image_ref without a build_ref. Their current
 // successful Build is still live history and must survive the retention sweep.
@@ -111,34 +110,8 @@ async function sweep(config, { dryRun = true, now = Date.now(), pool = null, run
   }
 }
 
-let timer = null;
-let inFlight = null;
-function start(config) {
-  if (timer || (config?.appRuntime || process.env.APP_RUNTIME || 'docker') !== 'kubernetes') return;
-  try { retentionHours(config); } catch (err) {
-    log.warn('build-retention', 'kpack retention disabled: invalid configuration', { err: err.message });
-    return;
-  }
-  const run = (dryRun) => {
-    if (inFlight) return inFlight;
-    inFlight = sweep(config, { dryRun, shouldStop: () => timer === null })
-      .then((result) => log.info('build-retention', dryRun ? 'kpack retention preview' : 'kpack retention sweep', result))
-      .catch((err) => log.warn('build-retention', 'kpack retention sweep stopped', { err: err.message }))
-      .finally(() => { inFlight = null; });
-    return inFlight;
-  };
-  timer = setInterval(() => run(false), INTERVAL_MS);
-  timer.unref();
-  // Releases frequently replace the leader before its first hourly tick.
-  // Preview first, then perform the same bounded, lock-protected sweep so
-  // restarts cannot indefinitely postpone deletion of eligible records.
-  run(true).then(() => { if (timer) run(false); });
-}
-
-async function stop() {
-  clearInterval(timer);
-  timer = null;
-  await inFlight;
-}
-
-module.exports = { sweep, start, stop };
+// The `build-retention` clock (src/workflow/clock/services.ts) runs it hourly on
+// any process that runs the workflow: one pass at a time across them, and the
+// advisory lock above keeps a pass from racing a build that still uses an
+// image. Failed Builds a restart left behind go in the same pass.
+module.exports = { sweep, retentionHours };

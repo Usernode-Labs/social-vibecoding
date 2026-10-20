@@ -579,6 +579,10 @@ const MembersDialog = {
         body: JSON.stringify({ username }),
       });
       const data = await res.json().catch(() => ({}));
+      // #5104: they take invitations only from people in projects with them.
+      if (!res.ok && data.code === 'contact_restricted') {
+        throw new Error(PlatformI18n.t('dialogs:members.invite.contactRestricted'));
+      }
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       if (status) {
         status.textContent = PlatformI18n.t('dialogs:members.invite.sent', { username: data.username || username });

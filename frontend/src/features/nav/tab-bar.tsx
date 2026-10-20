@@ -89,8 +89,7 @@ import {
 import { CommunitySwitcher } from '../workshop/community-switcher';
 import { pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
-import { pinnedAppsStore } from './pinned-apps-store.js';
-import { RailCommunities, useRailCommunities, votesElsewhere } from './rail-communities';
+import { RailCommunities, useRailCommunities } from './rail-communities';
 import { RailConversations } from './rail-conversations';
 import { RailPinned } from './rail-pinned';
 import { useSidebarRows } from './sidebar-rows';
@@ -140,8 +139,8 @@ const TABS = [
   { key: 'discover' as const, label: 'core:tabs.discover', href: '#apps', Icon: CompassIcon },
   { key: 'messages' as const, label: 'core:tabs.messages', href: '#messages', Icon: ChatIcon },
   { key: 'workshop' as const, label: 'core:tabs.communities', href: '#communities', Icon: UserGroupIcon },
-  // "Me" is the label only until somebody is signed in: from then on this tab
-  // is named after them (#2760) — see tabLabel below.
+  // "You", signed in or not (N7 of the 19 Oct polish board); the accessible
+  // name adds whose account it is — see tabLabel below.
   { key: 'me' as const, label: 'core:tabs.me', href: '#profile', Icon: UserIcon },
 ];
 
@@ -163,16 +162,21 @@ const TABS = [
  * THE ACCESSIBLE NAME KEEPS SAYING WHAT THE TAB IS. A bare username among
  * Home, Discover, Communities and Messages would be read out as a person rather
  * than a place, so the label names both, and it starts with the visible text
- * so a voice command that says what is on screen still finds it. Long names
- * are cut by app.css with an ellipsis; usernames are at most 32 characters
- * and never contain a space, so a clipped one is still recognisably yours.
+ * so a voice command that says what is on screen still finds it.
+ *
+ * …AND THE TAB SAYS "You" NOW (N7 of the 19 Oct 2026 polish board; the owner
+ * agreed). A username is up to 32 characters, and in a fifth of a phone's
+ * width a long one was cut to "newbie_t1…", the only label on the bar that
+ * did not fit. "You" is the account's place, as Home and Messages are
+ * places; it is the prerender too, so the name arriving changes no text on
+ * screen, and the accessible name still says whose it is.
  */
 export function tabLabel(
   key: string,
   label: string,
   viewer: string | null,
 ): { text: string; ariaLabel: string | undefined } {
-  if (key === 'me' && viewer) return { text: viewer, ariaLabel: translate('core:tabs.meNamed', { username: viewer }) };
+  if (key === 'me' && viewer) return { text: label, ariaLabel: translate('core:tabs.meNamed', { username: viewer }) };
   return { text: label, ariaLabel: undefined };
 }
 
@@ -223,12 +227,29 @@ function onHomeClick(event: React.MouseEvent<HTMLAnchorElement>): void {
  * where the tab pops to the selector as it always did — it answers false and
  * the href does exactly what it did before. A modified click is left alone,
  * as Home's is.
+ *
+ * ON A PHONE THE HREF IS NOT WHAT IT DID BEFORE (#5581). `#communities` is
+ * the full-screen Communities page, with the header's "Communities ⌄" and
+ * the list drawn as a page; the list on a phone is the drawer's own level 0
+ * (../nav-drawer/), as the lit tab already opens it from a community's page.
+ * So the tab takes the switcher's "All communities" door instead
+ * (../workshop/community-scope.ts `goToCommunity`), which opens the drawer's
+ * list over a community. A new account with no community to show it over
+ * still lands on the page, which is where Join and Start are.
  */
 function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
   const nav = (window as unknown as { NavLink?: { isNativeClick?: (e: unknown) => boolean } }).NavLink;
   if (nav?.isNativeClick?.(event)) return;
   const app = (window as unknown as { App?: { resumeWorkshopView?: () => boolean } }).App;
-  if (app?.resumeWorkshopView?.()) event.preventDefault();
+  if (app?.resumeWorkshopView?.()) { event.preventDefault(); return; }
+  if (wideWindow()) return;
+  event.preventDefault();
+  goToCommunity(null);
+}
+
+/** The desktop's sidebar, where the tab's href (the full-screen list) is right. */
+function wideWindow(): boolean {
+  try { return !window.matchMedia || window.matchMedia('(min-width: 768px)').matches; } catch { return true; }
 }
 
 /**
@@ -751,6 +772,11 @@ function goToTab(key: string, href: string): void {
     return;
   }
   if (key === 'workshop' && app?.resumeWorkshopView?.()) return;
+  // #5581: on a phone the list is the drawer's, not the page the href names.
+  if (key === 'workshop' && !wideWindow()) {
+    goToCommunity(null);
+    return;
+  }
   window.location.assign(href);
 }
 
@@ -780,12 +806,13 @@ export function PlatformTabs() {
   // until you have taken part there (tabVotes says why).
   const votes = tabVotes(scope);
   // THE SIDEBAR OF ROWS (./sidebar-rows.ts, from 768px): the five
-  // communities it lists (./rail-communities.tsx), and on its All row the
-  // votes in the ones it does not, so no vote is counted twice.
-  // The pinned ones have their own rows above them, with their own counts.
+  // communities it lists (./rail-communities.tsx), and on its All row every
+  // vote waiting on you, the tab's own figure (#18 of the 19 Oct polish
+  // board). It was the votes in the communities the rows above did not
+  // list, which read as a total and was not one: 67 there while Needs you
+  // said 93.
   const railShown = useRailCommunities();
-  const { apps: pins } = useStoreState(pinnedAppsStore);
-  const elsewhere = votesElsewhere([...pins.map((app: { slug: string }) => app.slug), ...railShown], scope.list, scope.info);
+  const allVotes = Number(scope.badgeNeeds) || 0;
   const allCount = scope.list ? scope.list.length : 0;
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
@@ -996,10 +1023,12 @@ export function PlatformTabs() {
                 Rendered only above zero, so the prerender (INITIAL is 0)
                 and the first client render agree with no badge at all.
 
-                AND IT IS THE QUIET ONE (#2912). Unread messages are counted
-                in the bell too, so this one is grey rather than the bell's
-                red: on the phone's bar a grey disc on the glyph's corner, on
-                the desktop rail a grey pill at the row's far end. It stays
+                AND IT IS THE QUIET ONE (#2912). Grey is "new to read"
+                everywhere (#18, 19 Oct 2026): the bell's red counts what
+                happened to you and leaves plain messages to this count, so
+                one message lights one number. On the phone's bar a grey disc
+                on the glyph's corner, on the desktop rail a grey pill at the
+                row's far end. It stays
                 HERE in the markup for both; app.css moves it on the rail by
                 dissolving this wrapper, so the phone keeps its anchor and a
                 declared check keeps finding it inside the Messages tab.
@@ -1021,7 +1050,9 @@ export function PlatformTabs() {
           {/*
               THE ALL ROW'S WORDS AND COUNT, in the sidebar of rows (D): how
               many communities you are in, so the row says there are more than
-              the five above it, and the votes in the ones it does not list.
+              the five above it, and every vote waiting on you (#18). Blue
+              wins its seat: the grey count of unread channels gives way
+              while a vote is owed (app.css), one number per row.
               app.css shows these instead of the label and the tab's own
               badge there; a hidden element is not in the accessible name, so
               each width's name is what it shows.
@@ -1031,9 +1062,9 @@ export function PlatformTabs() {
               {allCount > 0 ? t('core:rail.all', { count: allCount }) : t('core:rail.allPlain')}
             </span>
           ) : null}
-          {key === 'workshop' && elsewhere > 0 ? (
-            <span className="platform-tab-all-votes" aria-label={t('core:tabs.votesWaiting', { count: elsewhere })}>
-              {elsewhere > 99 ? '99+' : String(elsewhere)}
+          {key === 'workshop' && allVotes > 0 ? (
+            <span className="platform-tab-all-votes" aria-label={t('core:tabs.votesWaiting', { count: allVotes })}>
+              {allVotes > 99 ? '99+' : String(allVotes)}
             </span>
           ) : null}
         </a>,

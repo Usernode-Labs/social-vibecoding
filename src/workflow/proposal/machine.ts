@@ -212,6 +212,9 @@ export interface Deps {
   staleGraceMs: number;
   // config.shots.enforce: a declared shots run must have verified the head.
   shotsEnforced?: boolean;
+  // A closed proposal's CC volume is purged this long after it closed
+  // (config.archivedRetentionMs; 0 or absent: kept).
+  retentionMs?: number;
 }
 
 // A held session somebody works on is looked at again this soon.
@@ -515,11 +518,16 @@ function closedLine(r: Row, reason: string, byOwner: boolean): string {
     case 'red-checks': return `${l} was withdrawn: its checks failed and nobody changed it for a few days.`;
     case 'stale-pr': return `${l} went quiet and was set aside. It can always come back as a new change.`;
     case 'campaign-refused': return `${l} could not be put up for a vote and was closed. The maintenance campaign can make it again.`;
+    case 'pr-closed': return `${l} was closed on GitHub, so it is closed here too.`;
+    case 'pr-merged': return `${l} was merged on GitHub before it went up for a vote, so it is closed here.`;
     case 'manual':
       return byOwner && r.ownerName ? `${r.ownerName} withdrew ${r.prTitle ? l : 'this change'}.` : `${l} was withdrawn.`;
     default: return `${l} was withdrawn.`;
   }
 }
+
+// The closes that follow GitHub's own (services/pr-import-sync.js).
+const GITHUB_SETTLED: ReadonlySet<string> = new Set(['pr-closed', 'pr-merged']);
 
 // How a conversation that started the change words its close
 // (rules/agent-notes.ts closedSentence).
@@ -651,7 +659,10 @@ function close(s: Live, e: Event<any>, f: Facts, reason: string, more: { byOwner
   const work: WorkRequest[] = [...stops, destroy];
   // Its pull request is closed; one GitHub is still opening for it (a
   // promote under way) is closed once it has, by the number it then has.
-  const pr = repoInput(f) || (s.name === 'proposing' && row.repo ? { owner: row.repo.owner, repo: row.repo.repo, number: null } : null);
+  // One GitHub closed or merged itself is left as it is: closing it again
+  // would close an author's reopen.
+  const pr = GITHUB_SETTLED.has(reason) ? null
+    : repoInput(f) || (s.name === 'proposing' && row.repo ? { owner: row.repo.owner, repo: row.repo.repo, number: null } : null);
   if (pr) {
     const moved = prMove(d, { kind: WORK.close, key: `close:${n}`, input: { sessionId: d.sessionId, ...pr } });
     d = moved.data;
@@ -1339,6 +1350,29 @@ const expired = (e: Event<any>, ctx: TransitionContext) =>
 const mergedAway = (s: Live, e: Event<any>, f: Facts) =>
   f.row?.status === 'merged' && s.name !== 'merged' && e.type !== 'Merged';
 
+// A closed proposal's CC volume, purged once the retention window since it
+// closed has passed: the purge is queued with the close (or with the
+// adoption of a row closed before this rule), not before then, and doomed,
+// so a Reopen cancels it while it waits (spare). The leader's hourly GC
+// purged with no lock and could race a Reopen. A purge's own report queues
+// none (one that gave up waits for the next release's adoption).
+// A row that was closed with no time recorded (the leader's GC skipped
+// those too) keeps its volume.
+function retained(o: Outcome<PState>, e: Event<any>, f: Facts, ctx: TransitionContext, deps: Deps, before: string): Outcome<PState> {
+  const next = o.next as Live;
+  const ms = deps.retentionMs ?? 0;
+  if (ms <= 0 || next.name !== 'closed' || !f.row || f.row.ccPurged) return o;
+  if (e.type.startsWith('Work') && (e.payload as WorkResultPayload)?.kind === WORK.purge) return o;
+  if ((next.data.doomed || []).some((x) => x.kind === WORK.purge)) return o;
+  if ((o.work || []).some((w) => w.kind === WORK.purge)) return o;
+  // Closed by this move: its time is the move's (the projection writes it).
+  const since = before !== 'closed' ? ctx.now.getTime() : f.row.archivedAt ? Date.parse(f.row.archivedAt) : null;
+  if (since == null) return o;
+  const purge: WorkRequest = { kind: WORK.purge, key: `retain:${next.data.n}:v${ctx.version}`, input: { sessionId: next.data.sessionId },
+    notBefore: new Date(Math.max(since + ms, ctx.now.getTime())) };
+  return { ...o, next: { name: 'closed', data: doom(next.data, purge) }, work: [...(o.work || []), purge] };
+}
+
 function transitions(deps: Deps) {
   // A campaign's proposal adopted before the flag existed learns it from its
   // row on its next event (it holds no worker slot either).
@@ -1353,7 +1387,8 @@ function transitions(deps: Deps) {
       const g = GUARDS.get(type);
       return g ? g(s, e, f, ctx) : ok();
     },
-    to: (s: Live, e: Event<any>, f: Facts, ctx: TransitionContext) => HANDLERS.get(type)!(platformOf(s, f), e, f, ctx, deps),
+    to: (s: Live, e: Event<any>, f: Facts, ctx: TransitionContext) =>
+      retained(HANDLERS.get(type)!(platformOf(s, f), e, f, ctx, deps), e, f, ctx, deps, s.name),
   });
   const row = Object.fromEntries([...HANDLERS.keys()].map((t) => [t, entry(t)]));
   const table: Record<string, Record<string, any>> = {};
@@ -1379,9 +1414,9 @@ function transitions(deps: Deps) {
     },
     to: (_s: any, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<PState> => {
       const a = adopt(e.payload.sessionId, f.row!);
-      if (type === 'Adopted' || (type === 'Merged' && a.name === 'merged')) return step(a, { timer: timerFor(a, f, ctx, deps) });
+      if (type === 'Adopted' || (type === 'Merged' && a.name === 'merged')) return retained(step(a, { timer: timerFor(a, f, ctx, deps) }), e, f, ctx, deps, a.name);
       const out = HANDLERS.get(type)!(a, e, f, ctx, deps);
-      return out.timer === undefined ? { ...out, timer: timerFor(out.next as Live, f, ctx, deps) } : out;
+      return retained(out.timer === undefined ? { ...out, timer: timerFor(out.next as Live, f, ctx, deps) } : out, e, f, ctx, deps, a.name);
     },
   });
   table[NONE] = Object.fromEntries(CREATE.map((t) => [t, adopting(t)]));
@@ -1415,8 +1450,10 @@ export function proposal(deps: Deps): Machine<PState, Facts> {
     name: MACHINE,
     // 2: the merge (step 6): attempts, unconfirmed, syncs, forces. 3: a
     // maintenance campaign's promote (the campaign hears its outcome) and its
-    // proposals, which hold no worker slot (`platform`).
-    version: 3,
+    // proposals, which hold no worker slot (`platform`). 4: a closed
+    // proposal's CC volume purged once its retention window passes (the
+    // leader's archived GC is gone, so an older Pod must not decide one).
+    version: 4,
     events: EVENTS,
     create: CREATE,
     terminal: ['merged'],

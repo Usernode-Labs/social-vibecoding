@@ -91,16 +91,26 @@ function moderationRoutes(config, { pool = getPool(config) } = {}) {
     const since = req.query.since || null;
     if (since && !/^\d{4}-\d{2}-\d{2}$/.test(since)) throw new svc.ModerationError(400, 'Invalid date');
     if (since && (Number.isNaN(Date.parse(since)) || new Date(since).toISOString().slice(0,10) !== since)) throw new svc.ModerationError(400, 'Invalid date');
-    const before = svc.id(req.query.before);
+    // #5102: cases with a child-safety report come first, newest first within
+    // each group. The cursor names its group: "c<id>" inside the child-safety
+    // group, "<id>" after it.
+    const cursor = String(req.query.before || '');
+    const priorityCursor = cursor.startsWith('c');
+    const before = svc.id(priorityCursor ? cursor.slice(1) : cursor);
     const { rows } = await pool.query(
-      `SELECT c.*, COUNT(r.id)::int AS report_count, ARRAY_AGG(DISTINCT r.reason) AS reasons
-       FROM moderation_cases c LEFT JOIN moderation_reports r ON r.case_id = c.id
-       WHERE ($1 = 'all' OR c.status = $1) AND ($2::text IS NULL OR c.target_type = $2)
-         AND ($3::text IS NULL OR EXISTS (SELECT 1 FROM moderation_reports mr WHERE mr.case_id = c.id AND mr.reason = $3))
-         AND ($4::date IS NULL OR c.created_at >= $4::date)
-         AND ($5::bigint IS NULL OR c.id < $5)
-       GROUP BY c.id ORDER BY c.id DESC LIMIT 51`, [status, type, reason, since, before]);
-    res.json({ cases: rows.slice(0,50), next: rows.length > 50 ? rows[49].id : null, canWrite: !!req.user.canAdminWrite });
+      `SELECT * FROM (
+         SELECT c.*, COUNT(r.id)::int AS report_count, ARRAY_AGG(DISTINCT r.reason) AS reasons,
+                COALESCE(BOOL_OR(r.reason = 'child_safety'), FALSE) AS child_safety
+         FROM moderation_cases c LEFT JOIN moderation_reports r ON r.case_id = c.id
+         WHERE ($1 = 'all' OR c.status = $1) AND ($2::text IS NULL OR c.target_type = $2)
+           AND ($3::text IS NULL OR EXISTS (SELECT 1 FROM moderation_reports mr WHERE mr.case_id = c.id AND mr.reason = $3))
+           AND ($4::date IS NULL OR c.created_at >= $4::date)
+         GROUP BY c.id
+       ) q
+       WHERE $5::bigint IS NULL OR (q.child_safety = $6 AND q.id < $5) OR ($6 AND NOT q.child_safety)
+       ORDER BY q.child_safety DESC, q.id DESC LIMIT 51`, [status, type, reason, since, before, priorityCursor]);
+    const last = rows[49];
+    res.json({ cases: rows.slice(0,50), next: rows.length > 50 ? `${last.child_safety ? 'c' : ''}${last.id}` : null, canWrite: !!req.user.canAdminWrite });
   }));
   router.get('/api/admin/moderation/:id', run(async (req, res) => {
     const caseId = svc.id(req.params.id);

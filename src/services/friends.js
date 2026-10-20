@@ -48,6 +48,7 @@
 // between the two (acceptPendingDirect).
 
 const conversations = require('./conversations');
+const contactPrivacy = require('./contact-privacy');
 
 const MAX_PENDING_OUTGOING = 20;
 const MAX_REQUESTS_PER_DAY = 50;
@@ -330,6 +331,12 @@ async function sendRequest(pool, user, targetId) {
     // person who declined can reverse a decline this way; the one who was
     // declined keeps seeing "outgoing" above.
     if (row) return becomeFriends(db, user.id, targetId);
+    // #5104: a new request is something new started with them, so it waits
+    // on their contact_policy like a direct message does. Answering their
+    // own request (above) never does.
+    if (!(await contactPrivacy.mayContact(db, user.id, targetId))) {
+      throw new FriendsError(403, contactPrivacy.CONTACT_RESTRICTED_CODE, contactPrivacy.CONTACT_RESTRICTED_MESSAGE);
+    }
 
     await db.query(
       `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,

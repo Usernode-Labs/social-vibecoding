@@ -144,8 +144,11 @@ test('the fake and the wallpaper paint the same washes', () => {
   // and cannot drift when the wallpaper changes: every wallpaper variant
   // (light, dark, phone, wide) draws its star and grain over --home-washes.
   const wallpapers = [...css.matchAll(/--home-wallpaper:\s*([\s\S]*?);/g)].map((m) => m[1]);
-  assert.equal(wallpapers.length, 4, 'four wallpaper variants');
+  // Four variants, and the star-less one a running app and New project draw
+  // so their header area stays clear of the star (polish N20).
+  assert.equal(wallpapers.length, 5, 'four wallpaper variants and the one without the star');
   for (const w of wallpapers) assert.match(w, /var\(--home-grain\)[^,]*,\s*var\(--home-washes\)$/);
+  assert.equal(wallpapers.filter((w) => !/home-star/.test(w)).length, 1, 'one leaves the star out');
   const washes = [...css.matchAll(/--home-washes:\s*([\s\S]*?);/g)].map((m) => m[1]);
   assert.equal(washes.length, 4, 'each variant defines its washes');
   for (const w of washes) {
@@ -174,10 +177,12 @@ test('Workshop and Profile draw their cards in the plane colour', () => {
   assert.match(primitive, /defaultVariants: \{ tone: 'card' \}/, 'every other list keeps the white card');
   const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
   const workshop = read('frontend/src/features/workshop/index.tsx');
-  // #workshop-list holds one card per audience section (Communities, Groups,
-  // Just you), so the plane tone is on each section's card, not the wrapper.
+  // #workshop-list holds ONE card of every community, under the audience
+  // chips (#5296; #5581 took the per-audience sections out of the phone
+  // drawer too, so nothing draws them any more), so the plane tone is on
+  // that card, not the wrapper.
   assert.match(workshop, /<div id="workshop-list">/);
-  assert.match(workshop, /<section data-workshop-section=\{audience\}[\s\S]*?<GroupedList tone="plane">/);
+  assert.match(workshop, /<GroupedList tone="plane" data-workshop-rows=\{pressed\}>/);
   assert.doesNotMatch(workshop, /<GroupedList(?![^>]*tone="plane")[^>]*>/,
     'every list on the Workshop screen (the app list, the per-app item groups, their skeleton) is a plane list');
   assert.match(read('frontend/src/features/profile/account-panel.tsx'), /<GroupedList className="mx-0" tone="plane">/);
@@ -191,4 +196,11 @@ test('Workshop and Profile draw their cards in the plane colour', () => {
   assert.doesNotMatch(read('frontend/src/features/profile/public-profile-card.tsx'), /bg-white dark:bg-zinc-900 p-5/);
   assert.doesNotMatch(read('frontend/src/features/friends/friend-search.tsx'), /bg-white/,
     'the friend search results under Friends are the plane colour too');
+});
+
+test('polish N20: a running app and the make screen draw the wallpaper without its star', () => {
+  const rule = css.match(/html:root body:has\(#app-view:not\(\.hidden\):not\(\[data-app-surface="platform"\]\)\),\s*\[data-first-session-make\] \{([^}]*)\}/);
+  assert.ok(rule, 'one rule for both');
+  assert.doesNotMatch(rule[1], /home-star/);
+  assert.match(rule[1], /--home-wallpaper:\s*var\(--home-grain\) 0 0 \/ 240px 240px repeat,\s*var\(--home-washes\);/);
 });

@@ -144,7 +144,8 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
   assert.match(landing, /const storyOn = waitlistPayload\?\.story_landing !== false && !onInvitePath && !session;/);
   assert.match(landing, /useState\(\s+\(\) => typeof location !== 'undefined' && onInviteLink\(location\.pathname\),\s+\);/);
   assert.match(landing, /const pitchHidden = madeForYou \|\| deadInvite \|\| storyOn \|\| invitePending;/);
-  assert.match(landing, /<Story primaryClass=\{PRIMARY_PILL\} welcomeEmail=\{releaseEmail\} onStart=\{\(\) => setSheet\('start'\)\} \/>/);
+  // Polish N10: the email line's "Sign in" opens the same sheet titled Sign in.
+  assert.match(landing, /<Story primaryClass=\{PRIMARY_PILL\} welcomeEmail=\{releaseEmail\} onStart=\{\(\) => setSheet\('start'\)\} onSignIn=\{\(\) => setSheet\('signin'\)\} \/>/);
   // A new account from its sheet is asked what to make, not which communities to join.
   assert.match(landing, /sessionStorage\.setItem\('usernode:first-session:make', '1'\)/);
   assert.match(landing, /fetch\('\/api\/me\/first-session\/started', \{ method: 'POST', credentials: 'same-origin' \}\)/);
@@ -171,13 +172,18 @@ test('the story: label, headline, "For example" and the three examples, then one
     'For example',
     ...TEMPLATE_ROWS,
     message('auth:story.continue'),
-    message('auth:story.email'),
+    'Sign in',
+    'or join with your email.',
   ]);
   assert.match(html, /<a href="#signup" data-landing-story-start="" class="pill">Continue<\/a>/);
-  assert.match(html, /<p data-landing-story-how=""[^>]*>Sign in or join with your email\.<\/p><\/div>/);
-  assert.doesNotMatch(html, /data-landing-story-signin|Already have an account|Get started|data-landing-story-waves|in waves/);
+  // Polish N10: the line is still one sentence, and its "Sign in" is a link.
+  assert.match(html, /<p data-landing-story-how=""[^>]*><a href="#login" data-landing-story-signin="" class="[^"]*">Sign in<\/a> or join with your email\.<\/p><\/div>/);
+  assert.doesNotMatch(html, /Already have an account|Get started|data-landing-story-waves|in waves/);
   // In a phone browser too, the story fills the screen and its foot is at the foot.
   const css = read('public/css/app.css');
+  // Polish N10: one level-1 heading. The covered platform header leaves the
+  // accessibility tree while the landing shows (its own bar is not an h1).
+  assert.match(css, /body:has\(#auth-landing-screen:not\(\.hidden\)\) #platform-header \{\s*visibility: hidden;\s*\}/);
   assert.match(css, /html\[data-browser-scroller="auth-landing-scroll"\] #auth-landing-scroll:has\(> \* > \[data-landing-story\]\) \{\s+flex: 1 0 auto;\s+display: flex;\s+flex-direction: column;\s+\}/);
   assert.match(css, /html\[data-browser-scroller="auth-landing-scroll"\] #auth-landing-scroll > :has\(> \[data-landing-story\]\) \{\s+flex: 1 0 auto;\s+width: 100%;\s+\}/);
   for (const gone of [/Make an account/, /spot on the waitlist/, /Anyone using an app/, /What groups make/, /What communities make/]) {
@@ -275,6 +281,7 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   assert.equal(require('../src/services/homeroom-bot-dm').MIN_BRIEF_CHARS, 10, 'the server\'s floor');
   for (const [id, words] of [
     ['onboarding:firstSession.make.title', 'What do you want to make?'],
+    ['onboarding:firstSession.make.titleHello', 'Hi {{name}}, what do you want to make?'],
     ['onboarding:firstSession.make.briefLabel', 'What should it do?'],
     ['onboarding:firstSession.make.nameLabel', 'What should we call it?'],
     ['onboarding:firstSession.make.lookAround', 'Not sure yet? <0>Look around first</0>'],

@@ -23,6 +23,7 @@ const { userDirectoryLimiter } = require('../middleware/rate-limits');
 // (services/collab-invites.js).
 const { acceptInvite, sendInvite, welcomeFor } = require('../services/collab-invites');
 const communities = require('../services/communities');
+const contactPrivacy = require('../services/contact-privacy');
 const { cleanNote } = require('../services/community-invites');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
@@ -77,7 +78,7 @@ function collaboratorRoutes(config) {
         excludeAppId = app?.id || null;
       }
       if (!messageScope) {
-        const { users } = await userDirectory.searchPrefix(pool, q, 10, { excludeAppId });
+        const { users } = await userDirectory.searchPrefix(pool, q, 10, { excludeAppId, viewerId: req.user.id });
         return res.json({ users });
       }
 
@@ -89,6 +90,13 @@ function collaboratorRoutes(config) {
       // #2386: the viewer's friends lead, and say so with `friend: true` —
       // the one key added to the projection, and only ever for the viewer's
       // own relationship.
+      //
+      // #5104: and only people the viewer may find (searchPrefix's
+      // `viewerId` note in services/user-directory.js), or the one person
+      // whose whole handle was typed: knowing it is what a profile link
+      // gives you, and a profile's Message button resolves it this way
+      // (features/profile/message-person.ts). Whether they can then be
+      // messaged is their contact_policy's answer, not this search's.
       const escaped = userDirectory.escapeLike(q);
       const { rows } = await pool.query(
         `SELECT id, username,
@@ -107,9 +115,10 @@ function collaboratorRoutes(config) {
                WHERE (b.blocker_id = $4 AND b.blocked_user_id = users.id)
                   OR (b.blocker_id = users.id AND b.blocked_user_id = $4)
             ))
+            AND (LOWER(username) = LOWER($5) OR user_discoverable_by(users.id, $4))
           ORDER BY friend DESC, LOWER(username), id
           LIMIT 10`,
-        [escaped, excludeAppId, messageScope, req.user.id]
+        [escaped, excludeAppId, messageScope, req.user.id, q]
       );
       res.json({
         users: rows.map((row) => (row.friend
@@ -169,6 +178,8 @@ function collaboratorRoutes(config) {
   //   self             the inviter named themself
   //   already_member   they are in it already
   //   already_invited  they have an invite waiting
+  //   contact_restricted  they take invitations only from people in
+  //                    projects with them (403, #5104)
   router.post('/api/apps/:slug/invites', drainGuard, async (req, res) => {
     const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
     if (!username) return res.status(400).json({ error: 'username is required' });
@@ -197,6 +208,10 @@ function collaboratorRoutes(config) {
       }
 
       const sent = await sendInvite(pool, { app, target, inviterId: req.user.id, note: cleaned.note });
+      // #5104: they take invitations only from people in projects with them.
+      if (!sent.ok && sent.status === contactPrivacy.CONTACT_RESTRICTED_CODE) {
+        return res.status(403).json(contactPrivacy.CONTACT_RESTRICTED);
+      }
       if (!sent.ok) {
         return res.status(409).json({
           error: sent.status === 'member'

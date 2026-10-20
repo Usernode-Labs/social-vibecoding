@@ -48,7 +48,8 @@
  * the order: an ordering by urgency is how a quiet project you care about
  * falls off the bottom and is lost, and each row's vote pill already says
  * which ones are asking for you. The drawer (../nav-drawer/outer-level.tsx)
- * still draws the sections (`Section` below).
+ * draws the same chips and the same one list, through `AudienceChips` and
+ * `AppRow` below.
  *
  * ── Where the numbers come from ────────────────────────────────────────
  *
@@ -99,7 +100,7 @@ import { IconTile } from '@/components/ui/icon-tile';
 import { Chip, ChipRail } from '@/components/ui/chip';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
-  BallotIcon, ChevronLeftIcon, HandRaisedIcon, LockIcon, PlusIcon, SearchIcon, SpeechCheckIcon, UserGroupIcon, UserIcon,
+  BallotIcon, ChevronLeftIcon, HandRaisedIcon, PlusIcon, SearchIcon, SpeechCheckIcon,
 } from '@/components/ui/icons';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { AppsLoadError } from '../apps/load-error';
@@ -118,11 +119,14 @@ import { openPinMenu } from '../nav/pin-actions';
 import { useSidebarRows } from '../nav/sidebar-rows';
 import { communitiesSearchStore } from './communities-search';
 import { takeCounts, votesWaiting } from './community-scope';
+// What the last read of your communities knew, for the list's skeleton
+// (expectNeedsDoor): its own line, beside the tab's one definition above.
+import { communityScopeStore } from './community-scope';
 import { NeedsReel, type NeedsFeedItem } from './needs-reel';
+import { ReviewFlow } from '../review-flow/review-flow';
+import { useReviewFlowEnabled } from '../review-flow/settings';
 import { unseenNeeds, useNeedsSeen } from './needs-seen';
-import {
-  matchRows, orderRows, SECTION_LIMIT, SECTIONS, sectionFold, type Audience,
-} from './sections';
+import { matchRows, orderRows, SECTIONS, type Audience } from './sections';
 import { workshopStore } from './workshop-store.js';
 
 // The legacy router reads the DOM on the line after it routes — the ?shot=
@@ -135,7 +139,7 @@ workshopStore.setFlush(flushSync);
 // the "Which project?" panel (#3363); exported from here too, where the
 // screen's tests have always found them.
 export {
-  groupRows, orderRows, SECTION_LIMIT, SECTION_STEP, SECTIONS, sectionFold,
+  groupRows, orderRows, SECTION_LIMIT, SECTION_STEP, SECTIONS, sectionCount, sectionFold,
 } from './sections';
 
 export type WorkshopRow = {
@@ -164,13 +168,6 @@ export type WorkshopRow = {
   unchosen?: boolean;
 };
 
-function SectionGlyph({ audience }: { audience: Audience }) {
-  const cls = 'w-4 h-4 shrink-0';
-  if (audience === 'solo') return <UserIcon className={cls} aria-hidden="true" />;
-  if (audience === 'invited') return <LockIcon className={cls} aria-hidden="true" />;
-  return <UserGroupIcon className={cls} aria-hidden="true" />;
-}
-
 type Counts = Record<string, { working?: number; needs?: number; owed?: unknown; unchosen?: boolean } | undefined>;
 
 /** Which chip is pressed above the list: every community, or one audience. */
@@ -198,6 +195,58 @@ const CHIP_LABELS: Record<AudienceFilter, string> = {
   invited: 'communities:filter.invited',
   solo: 'communities:filter.solo',
 };
+
+/**
+ * THE AUDIENCE CHIPS (#5296): All, Public, Private and Just you, in the
+ * order the sections were, above the one list. A filter, so `aria-pressed`
+ * (the Chip primitive), selection the solid inversion and not the accent.
+ * Each carries its count, and a chip with nothing in it is hidden but kept,
+ * so the order check finds all four.
+ *
+ * Drawn by the screen and by the phone drawer's level 0
+ * (../nav-drawer/outer-level.tsx), which takes the page's list wholesale;
+ * `scope` names the surface in its data attributes (`data-workshop-chip`
+ * there, `data-nav-drawer-chip` in the drawer), so each place's selectors
+ * keep pointing only at it.
+ */
+export function AudienceChips({ tallies, pressed, onPress, scope }: {
+  tallies: Record<AudienceFilter, number>;
+  pressed: AudienceFilter;
+  onPress: (key: AudienceFilter) => void;
+  /** The surface drawing it: the data attribute prefix. */
+  scope: string;
+}) {
+  const t = useMessages('communities');
+  return (
+    <ChipRail
+      className="gap-2 pt-0 pb-3"
+      role="group"
+      aria-label={t('communities:filter.label')}
+      {...{ [`data-${scope}-chips`]: '' }}
+    >
+      {(['all', ...SECTIONS.map((section) => section.key)] as AudienceFilter[]).map((key) => {
+        const count = tallies[key];
+        const label = key === 'all'
+          ? t('communities:filter.allCount', { count })
+          : t(SECTIONS.find((section) => section.key === key)!.count, { count });
+        return (
+          <Chip
+            key={key}
+            size="bar"
+            className={key !== 'all' && !count ? 'hidden' : 'gap-1.5 px-4'}
+            selected={pressed === key}
+            aria-label={label}
+            onClick={() => onPress(key)}
+            {...{ [`data-${scope}-chip`]: key }}
+          >
+            <span>{t(CHIP_LABELS[key])}</span>
+            <span className="tabular-nums opacity-60" aria-hidden="true">{count}</span>
+          </Chip>
+        );
+      })}
+    </ChipRail>
+  );
+}
 
 /** How many communities each chip would show. */
 export function audienceTallies(rows: readonly WorkshopRow[]): Record<AudienceFilter, number> {
@@ -463,13 +512,11 @@ export function AppRow({ row, onOpen, current = false }: {
         </AppIconLink>
       )}
       title={row.name || row.slug}
-      // ONE PILL A ROW (#5296): the votes when any wait on you, else the
-      // channel's unread count.
-      trailing={row.needs > 0 ? <VotePill count={row.needs} /> : unread > 0 ? (
-        <span className="messages-unread" data-workshop-unread={String(unread)} aria-label={t('communities:row.unread', { count: unread })}>
-          {unread > 99 ? '99+' : unread}
-        </span>
-      ) : null}
+      // ONE PILL A ROW (#5296): the votes, when any wait on you. The
+      // channel's unread is not a second number at the row's end: it is
+      // said on the second line, in grey (#18 of the 19 Oct polish board:
+      // the accent is waiting on you, grey is new to read).
+      trailing={row.needs > 0 ? <VotePill count={row.needs} /> : null}
       // THE STATUS LEADS THE SECOND LINE, then the quiet fact after it, so a
       // narrow screen truncates the fact and never the part that changes.
       // The status spans are always here (see StatusLine) so the checks'
@@ -477,8 +524,13 @@ export function AppRow({ row, onOpen, current = false }: {
       subtitle={(
         <>
           <StatusLine working={row.working} needs={row.needs} needsInPill />
+          {unread > 0 ? (
+            <span data-workshop-unread={String(unread)} className="text-zinc-500 dark:text-zinc-400">
+              {busy ? <span aria-hidden="true"> · </span> : null}{t('communities:row.newMessages', { count: unread })}
+            </span>
+          ) : null}
           {fact ? (
-            <span>{busy ? <span aria-hidden="true"> · </span> : null}{fact}</span>
+            <span>{busy || unread > 0 ? <span aria-hidden="true"> · </span> : null}{fact}</span>
           ) : null}
         </>
       )}
@@ -494,6 +546,35 @@ export function AppRow({ row, onOpen, current = false }: {
  * changes. `chevron={false}` because a disclosure arrow on a row that
  * discloses nothing yet is the one part of the shape worth NOT reproducing.
  */
+/**
+ * Whether the Needs you door is to be expected over the list while it loads:
+ * yes unless the last read of your communities (./community-scope.ts) found
+ * no vote owed in any of them. The door stands where the list's first rows
+ * would, so a skeleton without it put the list 120px too high (polish board
+ * #19).
+ */
+export function expectNeedsDoor(scope: { list: string[] | null; info: Record<string, { owedCount?: number }> }): boolean {
+  if (!scope.list) return true;
+  return scope.list.some((slug) => (Number(scope.info[slug]?.owedCount) || 0) > 0);
+}
+
+/** The Needs you door's place while the list loads: its label's line and one row. */
+function NeedsDoorSkeleton(): ReactNode {
+  return (
+    <section aria-hidden="true">
+      <SectionHeader>{'\u00a0'}</SectionHeader>
+      <GroupedList tone="plane">
+        <ListRow
+          chevron={false}
+          leading={<Skeleton shape="block" className="w-11 h-11 rounded-xl" />}
+          title={<Skeleton className="max-w-[40%]" />}
+          subtitle={<Skeleton className="max-w-[30%]" />}
+        />
+      </GroupedList>
+    </section>
+  );
+}
+
 export function RowSkeletons(): ReactNode {
   const t = useMessages('communities');
   return (
@@ -511,72 +592,6 @@ export function RowSkeletons(): ReactNode {
   );
 }
 
-/**
- * One audience: its label, its count, a card of its three most recent rows,
- * and the rest behind "Show N more".
- *
- * `SectionHeader` over `GroupedList` — the language's label-over-card shape,
- * the same pair Discover's tiers use. The header carries the count of the
- * whole section, not of the rows showing, so "Private communities 5" over
- * three rows is what tells you there are two more before you find the
- * button.
- *
- * THE FOLD IS A ROW OF THE CARD, not a link under it: the language's "Show
- * more" (Messages' channels, Discover's tiers) is the last row of the group it
- * extends, full-width with no tile, so it reads as more of the same list. It
- * reveals SECTION_STEP rows a press and says how many ("Show 5 more"), and
- * becomes "Show fewer" once the section is all out (#3269). A
- * `button`, not an anchor, because it navigates nowhere — which also keeps it
- * out of `a[data-workshop-app]:first-of-type` for good.
- */
-export function Section({ audience, label, count, rows, idPrefix = 'workshop-section', onOpen, current }: {
-  audience: Audience;
-  /** The section's heading and its count's accessible name, as message ids. */
-  label: string;
-  count: string;
-  rows: WorkshopRow[];
-  /** The heading's id is `<idPrefix>-<audience>`: the drawer draws its own copy. */
-  idPrefix?: string;
-  /** AppRow's: a press that is not a door to the hub. */
-  onOpen?: (row: WorkshopRow) => void;
-  /** The community the drawer is on. */
-  current?: string | null;
-}) {
-  // Subscribed: the heading and the fold row (sectionFold) follow the language.
-  const t = useMessages('communities');
-  // How many rows are out. Each press of "Show N more" adds SECTION_STEP;
-  // once every row is out the same row folds the section back to three.
-  const [limit, setLimit] = useState(SECTION_LIMIT);
-  const fold = sectionFold(rows.length, limit);
-  const shown = rows.slice(0, fold.shown);
-  const expanded = fold.shown === rows.length;
-  const headingId = `${idPrefix}-${audience}`;
-  return (
-    <section data-workshop-section={audience} aria-labelledby={headingId}>
-      <SectionHeader id={headingId} className="flex items-center gap-1.5">
-        <SectionGlyph audience={audience} />
-        <span>{t(label)}</span>
-        <span className="ml-auto tabular-nums" aria-label={t(count, { count: rows.length })}>{rows.length}</span>
-      </SectionHeader>
-      <GroupedList tone="plane">
-        {shown.map((row) => <AppRow key={row.slug} row={row} onOpen={onOpen} current={!!current && current === row.slug} />)}
-        {rows.length > SECTION_LIMIT ? (
-          <ListRow
-            as="button"
-            inset="none"
-            chevron={false}
-            data-workshop-more={audience}
-            aria-expanded={expanded}
-            onClick={() => setLimit(fold.next)}
-            title={fold.label || ''}
-            titleClassName="text-center font-semibold text-violet-700 dark:text-violet-300"
-          />
-        ) : null}
-      </GroupedList>
-    </section>
-  );
-}
-
 export function WorkshopScreen() {
   const t = useMessages('communities');
   const screenRef = useRef<HTMLElement | null>(null);
@@ -585,6 +600,8 @@ export function WorkshopScreen() {
     tab: TabKey;
     feed: NeedsFeedItem[] | null; feedError: boolean; feedCapped: boolean;
   };
+  // The new Needs you, when this device has it switched on (an experiment).
+  const reviewFlow = useReviewFlowEnabled();
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
   useNeedsSeen();
   // THE LIST HAS A SEARCH at its head, at every width (#5296; D put it there
@@ -637,6 +654,8 @@ export function WorkshopScreen() {
   // that opens the feed of votes owed across all of them (`tab: 'needs'`,
   // also reached by `?ws=needs`), and a way back. See the markup below.
   const rows = state.rows ? orderRows(state.rows.map(unseenRow)) : null;
+  // What the last read of your communities knew, for the list's skeleton.
+  const scope = useStoreState(communityScopeStore) as { list: string[] | null; info: Record<string, { owedCount?: number }> };
   // #5296: ONE LIST, every row out, narrowed by the chip and the search. A
   // chip whose audience has nothing left in it falls back to All rather than
   // showing an empty list under a chip that is no longer drawn.
@@ -719,6 +738,7 @@ export function WorkshopScreen() {
               the page, above the search, and stays while one is up: the
               search narrows the list under it, and a row that went away on
               the first letter would move the box being typed in. */}
+          {rows === null && !state.error && !q && expectNeedsDoor(scope) ? <NeedsDoorSkeleton /> : null}
           {totals && totals.owed > 0 ? (
             <section data-workshop-needs-door="" aria-labelledby="workshop-needs-heading">
               <SectionHeader id="workshop-needs-heading">{t('communities:needsYou.heading')}</SectionHeader>
@@ -765,35 +785,11 @@ export function WorkshopScreen() {
               />
             </div>
           </div>
-          {/* #5296: THE AUDIENCE CHIPS, All, Public, Private and Just you,
-              in the order the sections were: a filter, so `aria-pressed`
-              (the Chip primitive), selection the solid inversion and not the
-              accent. Each carries its count, and a chip with nothing in it
-              is hidden but kept, so the order check finds all four. Drawn
-              once the list has loaded, so never in the prerender. */}
+          {/* #5296: THE AUDIENCE CHIPS, All, Public, Private and Just you —
+              the one rail the drawer draws too (AudienceChips). Drawn once
+              the list has loaded, so never in the prerender. */}
           {tallies && tallies.all > 0 && !state.error ? (
-            <ChipRail className="gap-2 pt-0 pb-3" role="group" aria-label={t('communities:filter.label')} data-workshop-chips="">
-              {(['all', ...SECTIONS.map((section) => section.key)] as AudienceFilter[]).map((key) => {
-                const count = tallies[key];
-                const label = key === 'all'
-                  ? t('communities:filter.allCount', { count })
-                  : t(SECTIONS.find((section) => section.key === key)!.count, { count });
-                return (
-                  <Chip
-                    key={key}
-                    size="bar"
-                    className={key !== 'all' && !count ? 'hidden' : 'gap-1.5 px-4'}
-                    data-workshop-chip={key}
-                    selected={pressed === key}
-                    aria-label={label}
-                    onClick={() => setAudience(key)}
-                  >
-                    <span>{t(CHIP_LABELS[key])}</span>
-                    <span className="tabular-nums opacity-60" aria-hidden="true">{count}</span>
-                  </Chip>
-                );
-              })}
-            </ChipRail>
+            <AudienceChips scope="workshop" tallies={tallies} pressed={pressed} onPress={setAudience} />
           ) : null}
           {/* `#workshop-list` IS A PLAIN WRAPPER, not the card. It holds the
               empty card and then the ONE card of rows (#5296; it held one
@@ -846,7 +842,7 @@ export function WorkshopScreen() {
                 </GroupedList>
               )
               : rows === null
-                ? <GroupedList tone="plane"><RowSkeletons /></GroupedList>
+                ? <><SectionHeader aria-hidden="true">{'\u00a0'}</SectionHeader><GroupedList tone="plane"><RowSkeletons /></GroupedList></>
                 : shown && shown.length ? (
                   <GroupedList tone="plane" data-workshop-rows={pressed}>
                     {shown.map((row) => <AppRow key={row.slug} row={row} />)}
@@ -908,7 +904,20 @@ export function WorkshopScreen() {
             {/* ONE FEED, EVERYTHING MIXED (#3270): every decision owed by you
                 across your projects, one per screen, newest first, drawn by
                 a project's own Needs you feed (#3488). See ./needs-reel.tsx. */}
-            {state.error ? null : (
+            {state.error ? null : reviewFlow ? (
+              // EXPERIMENTAL (Settings, Experimental, "New Needs you"; off by
+              // default, kept on the device): the same feed as a list of
+              // title shots, each opening into its own page with a
+              // before/after slider and a vote sheet. ../review-flow/.
+              <ReviewFlow
+                items={state.feed}
+                error={state.feedError}
+                capped={state.feedCapped}
+                onDone={() => workshopController.setTab('status')}
+                onAnswered={(id, epoch) => workshopController.answered(id, epoch)}
+                onRetracted={(id) => workshopController.retracted(id)}
+              />
+            ) : (
               <NeedsReel
                 items={state.feed}
                 error={state.feedError}
@@ -1084,6 +1093,17 @@ export const workshopController = {
    * the key and `needs` drops one, so the "1 to vote" line goes with the card
    * instead of waiting for the next read to correct it.
    */
+  /**
+   * A vote taken back (the new Needs you's Undo, DELETE /api/sessions/:id/vote):
+   * the change is owed again, so it may come back into every read, and the
+   * counts and the feed are read again quietly.
+   */
+  retracted(id: number) {
+    for (const key of [...answeredVotes]) {
+      if (Number(key.slice('proposal:'.length, key.indexOf('@'))) === id) answeredVotes.delete(key);
+    }
+    void this.refreshNeeds();
+  },
   answered(id: number, epoch: number | null) {
     answeredVotes.add(answeredVoteKey(id, epoch));
     const state = workshopStore.get();
@@ -1168,14 +1188,21 @@ export const workshopController = {
     const state = workshopStore.get();
     const fresh = state.rows != null || state.feed != null;
     const freshOpts = fresh ? { cache: 'no-cache' as const } : undefined;
+    // POLISH BOARD #19: THE LIST DOES NOT WAIT FOR THE FEED. Only the Needs
+    // you tab reads the feed, and it took three times as long as your
+    // communities did (694 ms against 187), all of it with the list held
+    // back. The three reads still leave together; the list draws when its
+    // communities and their counts are in, and the feed follows on its own.
+    let feedRead: Promise<Response | null> = Promise.resolve(null);
     try {
-      const [appsRes, countsRes, feedRes] = await Promise.all([
+      const listReads = Promise.all([
         // Only the communities you are in (#5023): the list below keeps
         // nothing else, so the rest of the catalog was payload for nothing.
         fetch(`/api/apps?scope=joined${demo.replace('?', '&')}`),
         fetch(`/api/workshop/counts${demo}`, freshOpts).catch(() => null),
-        fetch(`/api/workshop/needs-feed${demo}`, freshOpts).catch(() => null),
       ]);
+      feedRead = fetch(`/api/workshop/needs-feed${demo}`, freshOpts).catch(() => null);
+      const [appsRes, countsRes] = await listReads;
       if (appsRes.ok) {
         const data = await appsRes.json();
         const home = (window as any).Home;
@@ -1193,17 +1220,6 @@ export const workshopController = {
           counts = data.counts;
           // #5296: the tab counts from this same answer.
           takeCounts(counts);
-        }
-      }
-      // The Needs you feed is optional like the counts: losing it costs the
-      // feed its cards (it says so), never the screen. A read issued before a
-      // vote in the feed and landing after it runs through the answered set
-      // with refreshNeeds()'s, so it cannot bring the card back.
-      if (feedRes && feedRes.ok) {
-        const data = await feedRes.json().catch(() => null);
-        if (data && Array.isArray(data.items)) {
-          feed = stripAnswered(data.items as NeedsFeedItem[]);
-          feedCapped = Number(data.max) > 0 && feed.length >= Number(data.max);
         }
       }
     } catch {
@@ -1224,10 +1240,25 @@ export const workshopController = {
       // rows too, the way the feed's own read is stripped below.
       rows: stripAnsweredCounts(joinCounts(apps, counts)),
       error: false,
-      feed: feed || [],
-      feedError: !feed,
-      feedCapped,
     });
+    // The Needs you feed is optional like the counts: losing it costs the
+    // feed its cards (it says so), never the screen. A read issued before a
+    // vote in the feed and landing after it runs through the answered set
+    // with refreshNeeds()'s, so it cannot bring the card back.
+    try {
+      const feedRes = await feedRead;
+      if (feedRes && feedRes.ok) {
+        const data = await feedRes.json().catch(() => null);
+        if (data && Array.isArray(data.items)) {
+          feed = stripAnswered(data.items as NeedsFeedItem[]);
+          feedCapped = Number(data.max) > 0 && feed.length >= Number(data.max);
+        }
+      }
+    } catch {
+      // The feed says it could not load; the list is drawn.
+    }
+    if (!workshopStore.get().open) return;
+    workshopStore.set({ feed: feed || [], feedError: !feed, feedCapped });
   },
 };
 

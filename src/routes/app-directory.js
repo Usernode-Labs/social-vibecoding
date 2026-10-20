@@ -66,7 +66,7 @@ function appDirectoryRoutes(config) {
     res.set('Cache-Control', NO_STORE);
     try {
       const { users, hasMore } = await userDirectory.searchPrefix(
-        pool, req.query.q, req.query.limit
+        pool, req.query.q, req.query.limit, { viewerId: req.user?.id ?? null }
       );
       res.json({ users, has_more: hasMore });
     } catch (err) {

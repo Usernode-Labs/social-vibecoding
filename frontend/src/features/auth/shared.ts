@@ -132,6 +132,8 @@ interface LegacyWindow {
     // stale-session recovery in fetchSessionMint.
     _dropCachedSession?(): void;
     restoreFromHash?(): void;
+    // The address for a fragment, keeping the page's query (a demo link's ?demo=1).
+    _rootUrl?(hash: string): string;
     // A sign-in has begun here, so a stale build is no longer swapped in
     // under the signed-out screens (see noteSignInBegun below).
     noteSignInBegun?(): void;
@@ -613,6 +615,18 @@ export function takeReleaseLink(): ReleaseLink | null {
 export function keepReleaseLink(link: ReleaseLink): void {
   const host = legacy().AuthScreens;
   if (host) host._releaseLink = link;
+}
+
+/**
+ * Did an old `#waitlist` link bring this visitor (#5261)? Its join form is
+ * retired, and AuthScreens.retireWaitlistLink sends it to the landing with
+ * Continue asked for. Read once, like the release link above.
+ */
+export function takeStartSheet(): boolean {
+  const host = legacy().AuthScreens;
+  if (!host || host._startSheet !== true) return false;
+  host._startSheet = false;
+  return true;
 }
 
 /**

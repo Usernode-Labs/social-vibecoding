@@ -959,7 +959,7 @@ function loadReapForPressure(fx) {
     pool: require.resolve('../src/db/pool'),
     census: require.resolve('../src/db/connection-census'),
     activeWorkers: require.resolve('../src/services/active-workers'),
-    sessionLifecycle: require.resolve('../src/services/session-lifecycle'),
+    previewWorkflow: require.resolve('../src/services/preview-workflow'),
     recovery: require.resolve('../src/services/staging-recovery'),
     reap: require.resolve('../src/services/staging-reap'),
   };
@@ -967,7 +967,11 @@ function loadReapForPressure(fx) {
   for (const [key, id] of Object.entries(ids)) { orig[key] = require.cache[id]; delete require.cache[id]; }
   const mainPool = {
     name: 'main',
-    query: async (sql, params) => ({ rows: /WHERE id = \$1/.test(sql) ? [{ id: params[0], staging_container_id: `c${params[0]}` }] : fx.rows }),
+    query: async (sql, params) => {
+      if (/WHERE id = \$1/.test(sql)) return { rows: [{ id: params[0], staging_container_id: `c${params[0]}` }] };
+      fx.listed += 1;
+      return { rows: fx.rows };
+    },
   };
   const previewReader = { name: 'preview' };
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
@@ -994,15 +998,19 @@ function loadReapForPressure(fx) {
       return { max: 100, used: saturated ? 95 : 10, free: saturated ? 5 : 90, saturated, topDatabases: [] };
     },
   });
-  stub(ids.sessionLifecycle, {
-    teardownStagingForSession: async ({ sessionId, reason }) => {
-      assert.equal(reason, 'connection-pressure');
-      fx.tornDown.push(sessionId);
-      for (const name of Object.keys(fx.holds)) {
-        if (fx.holds[name].has(sessionId)) fx.saturated[name] -= 1;
-      }
-      return { torn: true };
+  // The preview machine: a give-back it accepts is retired later (its
+  // runtime and database are still there until then), one it refuses (under
+  // review, worked on, building, checking) is not taken.
+  stub(ids.previewWorkflow, {
+    retire: async ({ session, reason, terminal }) => {
+      assert.equal(reason, 'pressure');
+      assert.equal(terminal, false, 'a reclaim, not the end of the proposal');
+      fx.asked.push(session.id);
+      if (fx.refused?.has(session.id)) return { taken: false, retired: false, status: 'rejected', reason: 'busy' };
+      fx.retiring.add(session.id);
+      return { taken: true, retired: true, status: 'accepted', reason: null };
     },
+    retiring: async (id) => fx.retiring.has(id),
   });
   stub(ids.dbManager, fx.twoServers ? {
     PRIMARY_SERVER: 'primary',
@@ -1026,11 +1034,15 @@ const pressureFixture = (overrides = {}) => ({
     { id: 2, status: 'active', last_activity_at: '2026-09-02T00:00:00Z' },
     { id: 3, status: 'active', last_activity_at: '2026-09-03T00:00:00Z' },
   ],
-  // How many teardowns of a preview held there it takes to clear each server.
+  // Whether each server is near its limit (> 0).
   saturated: { main: 0, preview: 0 },
   holds: { main: new Set([1]), preview: new Set([2, 3]) },
   read: [],
-  tornDown: [],
+  // The sessions the machine was asked to give back, and those it is retiring.
+  asked: [],
+  retiring: new Set(),
+  // How many times the reclaimable previews were listed.
+  listed: 0,
   inspected: [],
   ...overrides,
 });
@@ -1044,8 +1056,12 @@ test('connection pressure on the preview server reclaims only previews whose dat
     const preview = await reap.sweepConnectionPressure({}, { server: 'preview' });
     assert.equal(preview.saturated, true);
     assert.equal(preview.candidates, 2);
-    assert.deepEqual(fx.tornDown, [2], 'idle longest of the previews on that server, and it stops when the pressure is off');
-    assert.deepEqual(fx.read, ['main', 'preview', 'preview']);
+    assert.deepEqual(fx.asked, [2], 'idle longest of the previews on that server, and one at a time');
+    assert.deepEqual(preview.asked, [2], 'what it asked for, for its next pass to wait on');
+    assert.equal(preview.waiting, 0);
+    // A retirement is asynchronous: a census right after the ask sees
+    // nothing freed yet, so none is taken.
+    assert.deepEqual(fx.read, ['main', 'preview']);
   } finally { restore(); }
 });
 
@@ -1060,12 +1076,16 @@ test('connection pressure on the main server leaves previews on the preview serv
     holds: { main: new Set([1, 4]), preview: new Set([2, 3]) },
     unlabelled: new Set([4]),
     unreadable: new Set([5]),
+    // The machine refuses the idle-longest (someone works on it): the next is asked.
+    refused: new Set([1]),
   });
   const { reap, restore } = loadReapForPressure(fx);
   try {
     const main = await reap.sweepConnectionPressure({});
     assert.equal(main.candidates, 2);
-    assert.deepEqual(fx.tornDown, [1, 4], 'tearing down a preview on the other server would free nothing here');
+    assert.deepEqual(fx.asked, [1, 4], 'asking for a preview on the other server would free nothing here');
+    assert.deepEqual(main.asked, [4], 'only the one the machine took');
+    assert.equal(main.failed, 0, 'a refusal is the machine\'s answer, not a failure');
   } finally { restore(); }
 });
 
@@ -1074,12 +1094,72 @@ test('with one server the pressure pass is what it was, and the preview pass doe
   const { reap, restore } = loadReapForPressure(fx);
   try {
     const preview = await reap.sweepConnectionPressure({}, { server: 'preview' });
-    assert.deepEqual(preview, { saturated: false, candidates: 0, tornDown: 0, failed: 0, freed: 0 });
+    assert.deepEqual(preview, { saturated: false, candidates: 0, asked: [], waiting: 0, failed: 0 });
     assert.deepEqual(fx.read, []);
     const main = await reap.sweepConnectionPressure({});
     assert.equal(main.candidates, 3);
-    assert.deepEqual(fx.tornDown, [1]);
+    assert.deepEqual(fx.asked, [1]);
     assert.deepEqual(fx.inspected, [], 'with one server no runtime is inspected: the pass is what it was');
+  } finally { restore(); }
+});
+
+// Asking again on a census taken while the last give-back is still being
+// retired took the whole cap every saturated pass: the pass waits for it.
+test('connection pressure asks for no other preview while the one it asked for is still retiring', async () => {
+  const fx = pressureFixture({ twoServers: false, saturated: { main: 1, preview: 0 }, holds: { main: new Set([1, 2, 3]), preview: new Set() } });
+  const { reap, restore } = loadReapForPressure(fx);
+  try {
+    const first = await reap.sweepConnectionPressure({});
+    assert.deepEqual(first.asked, [1]);
+    const listed = fx.listed;
+
+    const waiting = await reap.sweepConnectionPressure({}, { asked: first.asked });
+    assert.deepEqual(waiting, { saturated: true, candidates: 0, asked: [1], waiting: 1, failed: 0 });
+    assert.deepEqual(fx.asked, [1], 'nothing more is asked for');
+    assert.equal(fx.listed, listed, 'and no victim is looked for');
+
+    // Retired, and the server still saturated: the next one.
+    fx.retiring.delete(1);
+    fx.rows = fx.rows.filter((r) => r.id !== 1);
+    const next = await reap.sweepConnectionPressure({}, { asked: waiting.asked });
+    assert.deepEqual(next.asked, [2]);
+    assert.equal(next.waiting, 0);
+
+    // Not saturated any more: nothing asked, nothing waited on.
+    fx.saturated.main = 0;
+    const calm = await reap.sweepConnectionPressure({}, { asked: next.asked });
+    assert.deepEqual(calm, { saturated: false, candidates: 0, asked: [], waiting: 0, failed: 0 });
+    assert.deepEqual(fx.asked, [1, 2]);
+  } finally { restore(); }
+});
+
+// The preview-pressure clock (src/workflow/clock/services.ts) carries what
+// each server's pass asked for from one run to the next, and looks again a
+// minute later while the pressure lasts.
+test('the preview-pressure clock carries its asks from run to run, and rests when calm', async () => {
+  const fx = pressureFixture({ saturated: { main: 0, preview: 1 } });
+  const { reap, restore } = loadReapForPressure(fx);
+  try {
+    const { JOBS } = require('../src/workflow/clock/services.ts');
+    const job = JOBS.find((j) => j.name === 'preview-pressure');
+    assert.ok(job, 'the preview-pressure clock exists');
+    assert.equal(job.everyMs, 0, 'continuous: each run says how long to rest');
+    const MIN = 60 * 1000;
+
+    const first = await job.run({ input: { previous: null } }, { config: {}, pool: null });
+    assert.deepEqual(first.preview.asked, [2]);
+    assert.equal(first.restMs, MIN, 'saturated: looked at again a minute later');
+
+    const second = await job.run({ input: { previous: first } }, { config: {}, pool: null });
+    assert.equal(second.preview.waiting, 1, 'the last run\'s ask is still retiring');
+    assert.deepEqual(fx.asked, [2]);
+    assert.equal(second.restMs, MIN);
+
+    fx.retiring.clear();
+    fx.saturated.preview = 0;
+    const calm = await job.run({ input: { previous: second } }, { config: {}, pool: null });
+    assert.equal(calm.restMs, reap.pressureSweepIntervalMs(), 'calm: every five minutes');
+    assert.equal(calm.drainAt, 0, 'no drain to report');
   } finally { restore(); }
 });
 
@@ -1131,9 +1211,10 @@ test('drain status counts what depends on the preview server, in every state and
   const named = { staging_url: 'https://x', staging_container_id: 'c' };
   try {
     const reap = require(ids.reap);
+    const now = Date.parse('2026-10-19T12:00:00Z');
     const one = async (sessions, extra = {}) => {
       Object.assign(fx, { sessions, shots: [], shotsRuns: 0 }, extra);
-      return reap.previewServerDrainStatus({}, { force: true });
+      return reap.previewServerDrainStatus({}, { force: true, now });
     };
     // A dependent runtime counts in EVERY state it can exist in: one that is
     // restarting or stopped today serves again tomorrow.
@@ -1149,19 +1230,24 @@ test('drain status counts what depends on the preview server, in every state and
     assert.equal(logs.at(-1).message, 'Preview database server drain: no dependent preview, build or shots run found');
     // A runtime that could not be read is not "none".
     assert.deepEqual(await one({ 1: { row: named, state: null } }),
-      { previews: [], unread: 1, buildsInFlight: 0, shotsRuns: 0, shotsDatabases: 0, clear: false });
+      { previews: [], unread: 1, buildsInFlight: 0, shotsRuns: 0, shotsDatabases: 0, clear: false, at: now });
     // A first build has no runtime and no staging_url yet. It is counted
     // from its row (the phase the preview machine writes), so a build any
     // platform replica is running counts.
     const firstBuild = await one({ 9: { row: { staging_url: null, building: true }, state: null } });
-    assert.deepEqual(firstBuild, { previews: [], unread: 0, buildsInFlight: 1, shotsRuns: 0, shotsDatabases: 0, clear: false });
+    assert.deepEqual(firstBuild, { previews: [], unread: 0, buildsInFlight: 1, shotsRuns: 0, shotsDatabases: 0, clear: false, at: now });
     assert.match(sqls.find((sql) => /FROM chat_sessions/.test(sql)), /check_state = 'pending' AND check_phase = 'building'/);
     // Shots runs anywhere, shots databases there.
     assert.equal((await one({}, { shotsRuns: 1 })).clear, false);
     assert.equal((await one({}, { shots: ['app_demo_evsrc_0123456789ab'] })).clear, false);
     assert.equal(logs.at(-1).message, 'Preview database server drain: still in use');
 
-    assert.equal(await reap.previewServerDrainStatus({}), null, 'at most once every ten minutes');
+    // At most once every ten minutes: `lastAt` is when it was last said (the
+    // preview-pressure clock carries the result's `at` to its next run).
+    const minute = 60 * 1000;
+    assert.equal(await reap.previewServerDrainStatus({}, { now, lastAt: now - 9 * minute }), null, 'at most once every ten minutes');
+    assert.equal((await reap.previewServerDrainStatus({}, { now, lastAt: now - 10 * minute })).at, now);
+    assert.equal((await reap.previewServerDrainStatus({}, { now })).at, now, 'never said before: said now');
     fx.draining = false;
     assert.equal(await reap.previewServerDrainStatus({}, { force: true }), null, 'only while draining');
   } finally {

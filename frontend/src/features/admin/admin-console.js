@@ -40,9 +40,10 @@
 // kanban-tabs pattern, #814) made sixteen ungrouped sections a thumb-swipe
 // scavenger hunt. Phones now get a real two-level nav instead:
 //
-//   level 1 (#admin)        the grouped section menu, one tappable row per
-//                           section under the same Operations / People /
-//                           Insights / Platform headings as the sidebar;
+//   level 1 (#admin)        Overview's numbers, then the grouped section
+//                           menu (#5286), one tappable row per section
+//                           under the same Operations / People / Insights /
+//                           Platform headings as the sidebar;
 //   level 2 (#admin/<key>)  that one section, full width, with the platform
 //                           header's back button flipped to an arrow and
 //                           its title set to the section label.
@@ -245,6 +246,15 @@ const AdminConsole = {
   // View Transition has captured the page the viewer is leaving.
   _chromeSuspended: false,
 
+  // Where the console's Exit goes (#5286). _lastOutside is the newest
+  // address this tab showed that was not the console, kept current by the
+  // listener at the foot of this file; open() copies it into _returnTo, so a
+  // move inside the console never changes where Exit leads. Null means the
+  // console was the first thing this tab showed, and Exit falls back to the
+  // Me tab, the console's way in.
+  _lastOutside: null,
+  _returnTo: null,
+
   // The single source of truth in JS for where the sidebar layout starts.
   // Must stay in step with the `md:` classes in _renderShell (Tailwind's
   // md breakpoint IS 768px) — same discipline as AppView's
@@ -307,6 +317,10 @@ const AdminConsole = {
     // the connector's *_test_account tools wrap). Full admins only, the list
     // included. See features/admin/admin-test-accounts.tsx.
     { key: 'test-accounts', label: 'Test accounts', group: 'People' },
+    // Access review (#5133): every account with admin rights, what each can
+    // do (exports, SQL console), and the quarterly review that confirms the
+    // list. Full admins only. See features/admin/admin-access-review.tsx.
+    { key: 'access-review', label: 'Access review', group: 'People' },
     { key: 'reports', label: 'Moderation', group: 'People' },
     { key: 'codes', label: 'Activation codes', group: 'People' },
     { key: 'limits', label: 'Limits', group: 'People' },
@@ -359,10 +373,6 @@ const AdminConsole = {
     // #2684: the Homeroom bot's shadow-mode verdicts — what it would have
     // asked or built on each open request — and the ratings that calibrate it.
     { key: 'homeroom-bot', label: 'Homeroom bot', group: 'Platform' },
-    // How the bot builds a project's first version: versioned recipes, the
-    // current one and the side ones built beside it, and how each measures
-    // up (features/admin/admin-bot-configs.tsx, services/bot-configs.js).
-    { key: 'bot-configs', label: 'Bot configurations', group: 'Platform' },
     // The watch-only small-change tag: which proposal versions read as small
     // and undoable, and what ruled the rest out (features/admin/admin-small-changes.tsx).
     { key: 'small-changes', label: 'Small changes', group: 'Platform' },
@@ -395,6 +405,9 @@ const AdminConsole = {
   // the address bar itself so the bookmark self-heals.
   LEGACY_SECTION_KEYS: {
     topochain: 'seasons',
+    // Bot configurations became the Homeroom bot's Configurations tab
+    // (#admin/homeroom-bot/configs); app.js rewrites the address to it.
+    'bot-configs': 'homeroom-bot',
   },
 
   // Heroicons v2 outline, one per section — same icon treatment as
@@ -414,6 +427,8 @@ const AdminConsole = {
     'workflows': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z"/></svg>',
     // Support: lifebuoy.
     'support': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.75"/><path stroke-linecap="round" stroke-linejoin="round" d="M5.64 5.64l3.7 3.7m5.32 5.32l3.7 3.7m0-12.72l-3.7 3.7m-5.32 5.32l-3.7 3.7"/></svg>',
+    // Access review (#5133): shield-check, the admin list confirmed.
+    'access-review': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/></svg>',
     'users': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"/></svg>',
     // Test accounts: user-plus, a new account made by hand.
     'test-accounts': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zM4 19.235v-.11a6.375 6.375 0 0112.75 0v.109A12.318 12.318 0 0110.374 21c-2.331 0-4.512-.645-6.374-1.766z"/></svg>',
@@ -438,8 +453,6 @@ const AdminConsole = {
     // change on each model costs.
     'model-costs': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
     'homeroom-bot': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z"/></svg>',
-    // Bot configurations: adjustments-horizontal, a recipe's dials.
-    'bot-configs': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75"/></svg>',
     'small-changes': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z"/><path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6z"/></svg>',
     // Sign-in providers: arrow-right-end-on-rectangle, the way in.
     'sign-in': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 9V5.25A2.25 2.25 0 0110.5 3h6a2.25 2.25 0 012.25 2.25v13.5A2.25 2.25 0 0116.5 21h-6a2.25 2.25 0 01-2.25-2.25V15M12 9l3 3m0 0l-3 3m3-3H2.25"/></svg>',
@@ -537,6 +550,7 @@ const AdminConsole = {
     AdminConsole._pushedFromMenu = false;
     AdminConsole._chromeSuspended = !!(opts && opts.chrome === false);
     AdminConsole._menuScrollTop = 0;
+    AdminConsole._returnTo = AdminConsole._lastOutside;
     AdminConsole._ensureMediaListener();
     section = AdminConsole._canonicalSection(section);
     const visible = AdminConsole._visibleSections();
@@ -569,6 +583,12 @@ const AdminConsole = {
     // Runs after app.js's own setHeaderTitle, so on a mobile deep link the
     // header ends up showing the section's name rather than the console's.
     AdminConsole._syncChrome();
+  },
+
+  // The address the band's Exit leads to: where the console was entered
+  // from, else the Me tab. Read by features/admin/index.tsx on the press.
+  exitTarget() {
+    return AdminConsole._returnTo || '#profile';
   },
 
   close() {
@@ -1073,6 +1093,11 @@ const AdminConsole = {
     // and its class attribute must be written once at hydration and then
     // only ever toggled from here (the useHiddenClass contract).
     if (banner) banner.classList.toggle('hidden', !viewOnly);
+    // The console's own band (#5286), same classList contract as the banner.
+    // A non-admin on a public section is not in the admin console, so it
+    // stays hidden for them.
+    const bar = document.getElementById('admin-console-bar');
+    if (bar) bar.classList.toggle('hidden', AdminConsole._publicMode());
   },
 
   // Every [data-admin-section] control routes through here. On mobile a
@@ -1181,12 +1206,12 @@ const AdminConsole = {
     'model-costs': 'AdminModelCosts',
     'welcome-dm': 'AdminWelcomeDm',
     'homeroom-bot': 'AdminHomeroomBot',
-    'bot-configs': 'AdminBotConfigs',
     'small-changes': 'AdminSmallChanges',
     features: 'AdminFeatures',
     limits: 'AdminLimits',
     support: 'AdminSupport',
     users: 'AdminUsers',
+    'access-review': 'AdminAccessReview',
     'test-accounts': 'AdminTestAccounts',
     reports: 'AdminReports',
     rollover: 'AdminRollover',
@@ -1258,10 +1283,27 @@ const AdminConsole = {
     AdminConsole._markRouted();
   },
 
+  // Level 1 on a phone opens on the numbers (#5286): the Overview section,
+  // then every section under an "All sections" heading. It used to be the
+  // section list alone, forty rows with no summary before them. Overview
+  // renders into a sub-host of its own through the same _renderModule
+  // seam (so _teardownActiveSection still stops it), and the menu follows
+  // it in the same innerHTML write. Public mode has no Overview to show,
+  // so a non-admin keeps the bare list. #admin/overview is still Overview
+  // alone, as a level-2 section.
   _renderMobileMenu(host) {
-    host.innerHTML = AdminConsole._mobileMenuHtml();
+    host.innerHTML = AdminConsole._levelOneHtml();
     AdminConsole._wireSectionButtons(host);
     AdminConsole._wireGroupToggles(host);
+    const sub = document.getElementById('admin-mobile-overview');
+    if (sub) AdminConsole._renderModule(sub, 'AdminOverview', 'overview');
+  },
+
+  _levelOneHtml() {
+    if (AdminConsole._publicMode()) return AdminConsole._mobileMenuHtml();
+    return `<div id="admin-mobile-overview" class="mb-6"></div>
+      <h2 class="${AdminUI.sectionTitle} mb-3">All sections</h2>
+      ${AdminConsole._mobileMenuHtml()}`;
   },
 
   _renderSection() {
@@ -1359,9 +1401,12 @@ const AdminConsole = {
       const pending = AdminConsole._ensureSections();
       if (pending) {
         host.innerHTML = `<p class="${AdminUI.loading} p-4">Loading…</p>`;
+        // Through _renderContent rather than _renderSection: on a phone's
+        // level 1 the host passed here is the Overview sub-host under the
+        // menu (#5286), and a bare section render would wipe the menu.
         pending.then(() => {
           const live = document.getElementById('admin-section-content');
-          if (live && AdminConsole._open) AdminConsole._renderSection();
+          if (live && AdminConsole._open) AdminConsole._renderContent();
         });
         return;
       }
@@ -1460,3 +1505,21 @@ const AdminConsole = {
 // section modules through window[modName], so the global publication stays.
 // Guarded: the prerender pass evaluates this module in Node.
 if (typeof window !== 'undefined') window.AdminConsole = AdminConsole;
+
+// Remember the newest address that was not the console (#5286), for Exit.
+// popstate and hashchange both, because a history traversal can route on
+// popstate before hashchange fires; replaceState fires neither, so a screen
+// that rewrites its own tail leaves the address it was entered at, which is
+// still that screen. Registered when the module evaluates, before app.js's
+// router, so the address is recorded before the console can open on it.
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  const remember = () => {
+    try {
+      const h = location.hash || '#';
+      if (!/^#admin(\/|$)/.test(h)) AdminConsole._lastOutside = h;
+    } catch { /* no location: nothing to remember */ }
+  };
+  remember();
+  window.addEventListener('hashchange', remember);
+  window.addEventListener('popstate', remember);
+}

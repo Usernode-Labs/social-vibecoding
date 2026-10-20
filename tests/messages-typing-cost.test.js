@@ -84,12 +84,12 @@ test('timestamps reuse one Intl.DateTimeFormat per format, and print what toLoca
 
     for (const at of instants) {
       const sameDay = at.toDateString() === now.toDateString();
-      const time = at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      const time = at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
       const day = at.toLocaleDateString(undefined, at.getFullYear() === now.getFullYear()
         ? { month: 'short', day: 'numeric' }
         : { year: 'numeric', month: 'short', day: 'numeric' });
       const full = at.toLocaleString(undefined, {
-        year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+        year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
       });
       assert.deepEqual(messageStamp(at, { now }), { text: sameDay ? time : `${day}, ${time}`, title: full });
       assert.equal(timeOfDay(at), at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }));

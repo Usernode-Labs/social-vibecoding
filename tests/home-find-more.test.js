@@ -158,9 +158,13 @@ const discoveryCandidates = () => [
   })),
 ];
 
-test('popular requires a current review and a real icon, not just popularity', () => {
+// Polish N3: a review ranks a community first but is not required. It
+// expires on every merge, and with none current the lane was always empty
+// while Discover listed dozens to join. Demo and broken reviews still keep
+// an app out, as no icon and not running do.
+test('popular puts reviewed communities first, offers unreviewed ones, and never a demo or broken one', () => {
   const Home = makeHome();
-  assert.deepEqual(Home.popularApps(discoveryCandidates()).map((a) => a.slug), ['ready']);
+  assert.deepEqual(Home.popularApps(discoveryCandidates()).map((a) => a.slug), ['ready', 'unreviewed', 'outdated']);
   assert.equal(Home.isDiscoveryReady(app({ demo: true })), true, 'staging inertness is not an editorial demo classification');
   assert.equal(Home.isDiscoveryReady(app({ directory: { state: 'outdated', tier: 'unreviewed' } })), false,
     'an expired review is not a current one');
@@ -262,10 +266,10 @@ test('discoverMetaLine composes the facts line from the words the Discover rows 
     Home.discoverMetaLine({ active_users: 1, created_at: threeDaysAgo }),
     '1 user · Updated 3d ago',
   );
-  // The count is printed even at zero, exactly as the directory's own rows
-  // print it (browse.js metaLine pushes the users bit unconditionally); with
-  // no date to add the line is the count alone. No app at all: null.
-  assert.equal(Home.discoverMetaLine({}), '0 users');
+  // A zero count says nothing, exactly as the directory's own rows (polish
+  // N12: "0 users · Joined"); with no date either there is no line at all.
+  assert.equal(Home.discoverMetaLine({ active_users: 0, last_deploy_at: threeDaysAgo }), 'Updated 3d ago');
+  assert.equal(Home.discoverMetaLine({}), null);
   assert.equal(Home.discoverMetaLine(null), null);
 });
 
@@ -501,13 +505,13 @@ test('the Discover widget swaps its tile row for a note, never an empty box', ()
   assert.match(src, /tiles\.length \?/);
   assert.doesNotMatch(src, /view\.featured\.length \?/);
   assert.match(src, /\{t\('home:discover\.empty\.title'\)\}/);
-  assert.equal(message('home:discover.empty.title'), 'Nothing to discover right now');
+  assert.equal(message('home:discover.empty.title'), 'No communities to suggest right now');
   // The browse control always renders: it is THE discovery path, so it must
   // not depend on curation existing. It lives in the SECTION HEADING now, not
   // in the card at all — see the block test below — so it does not even
   // depend on the block having rendered.
   assert.match(PANEL_SRC.ui, /home-browse-btn/);
-  assert.match(PANEL_SRC.ui, /Browse all apps/);
+  assert.match(PANEL_SRC.ui, /t\('home:discover\.browseAll\.text'\)/);
   assert.match(PANEL_SRC.sections, /<BrowseLink \/>/);
   // ...and the widget derives its tiles from the SAME per-viewer flags the
   // old row did, rather than issuing a second query.

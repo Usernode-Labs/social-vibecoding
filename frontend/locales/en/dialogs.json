@@ -67,6 +67,10 @@
     "text": "Threats",
     "description": "Reason for a report, a row in the report dialog's list of reasons: threats of violence or harm."
   },
+  "report.reason.childSafety": {
+    "text": "Child safety: a minor at risk, or sexual content involving a minor",
+    "description": "First reason for a report, a row at the top of the report dialog's list of reasons: a child or teenager is in danger, or the content sexualises a minor. These reports are reviewed first and their evidence is kept."
+  },
   "report.reason.sexualContent": {
     "text": "Sexual or unsafe content",
     "description": "Reason for a report, a row in the report dialog's list of reasons: sexual material or content that is dangerous to people."
@@ -1747,6 +1751,10 @@
     "text": "✓ Invited @{{username}}",
     "description": "Shown under the invite field of the \"Members & approvals\" dialog of an app after the invitation was sent. {{username}} is the invited person's username; keep the check mark and the @."
   },
+  "members.invite.contactRestricted": {
+    "text": "This person only takes invitations from people in projects with them. Send them an invite link instead.",
+    "description": "Error under the invite field of the \"Members & approvals\" dialog when the person's Privacy setting allows invitations only from people who share a project with them."
+  },
   "members.collaborators.heading": {
     "text": "Collaborators",
     "description": "Label above the list of people who may build changes for the app, in the \"Members & approvals\" dialog of an app."
@@ -2817,7 +2825,7 @@
   },
   "whoDecides.see.privateSub": {
     "text": "Only members can open it.",
-    "description": "Line under the Private community choice."
+    "description": "Line under the Private community choice on the Who can see & change it sheet, where a project's visibility and approval rule are set: only the project's members can open it. \"Open\" is a verb."
   },
   "whoDecides.see.public": {
     "text": "Public community",
@@ -2825,11 +2833,11 @@
   },
   "whoDecides.see.publicSub": {
     "text": "Anyone can open it and join.",
-    "description": "Line under the Public community choice."
+    "description": "Line under the Public community choice on the Who can see & change it sheet, where a project's visibility and approval rule are set: anyone can open the project and become a member. \"Open\" and \"join\" are verbs."
   },
   "whoDecides.see.note": {
     "text": "Everyone who can see it can suggest changes. The rule below decides what goes live.",
-    "description": "Note under the two visibility choices."
+    "description": "Note under the two visibility choices on the Who can see & change it sheet, where a project's visibility and approval rule are set. \"Suggest changes\" means propose them; \"the rule below\" is the approval rule picked next, which decides which changes go live."
   },
   "whoDecides.see.limitedName": {
     "text": "Public, invite-only building",
@@ -2841,7 +2849,7 @@
   },
   "whoDecides.rule.title": {
     "text": "How changes are approved",
-    "description": "Section label over the approval presets."
+    "description": "Small section label on the Who can see & change it sheet, where a project's visibility and approval rule are set, over the four presets for how a project's changes get approved by vote. Keep it short."
   },
   "whoDecides.publicWarning": {
     "text": "Anyone can join a public community, so under this rule anyone who joins can approve changes.",
@@ -2877,7 +2885,7 @@
   },
   "whoDecides.preset.two_yeses.line": {
     "text": "Whoever makes it, plus one more. While it’s just you, yours is enough.",
-    "description": "Line under the Two yeses preset."
+    "description": "Line under the Two yeses preset on the Who can see & change it sheet, where a project's visibility and approval rule are set: a change goes live with a yes from whoever made it plus one other person; a project of one needs only that person's yes."
   },
   "whoDecides.preset.open_floor.name": {
     "text": "Open floor",
@@ -2885,7 +2893,7 @@
   },
   "whoDecides.preset.open_floor.line": {
     "text": "Any member’s yes ships a change, even their own.",
-    "description": "Line under the Open floor preset."
+    "description": "Line under the Open floor preset on the Who can see & change it sheet, where a project's visibility and approval rule are set: one yes from any member puts a change live, even a yes on a change that member made. \"Ships\" means goes live."
   },
   "whoDecides.preset.group_vote.name": {
     "text": "Group vote",
@@ -2893,7 +2901,7 @@
   },
   "whoDecides.preset.group_vote.line": {
     "text": "Most active members say yes, or it goes live after a wait if nobody objects.",
-    "description": "Line under the Group vote preset."
+    "description": "Line under the Group vote preset on the Who can see & change it sheet, where a project's visibility and approval rule are set: the usual vote, where most recently active members say yes, or a change goes live after a waiting period when nobody votes no."
   },
   "whoDecides.plays.title": {
     "text": "How it plays out",
@@ -2957,7 +2965,7 @@
   },
   "whoDecides.own.sub": {
     "text": "Groups and rules, starting from the one picked above.",
-    "description": "Line under the Make your own option."
+    "description": "Line under the Make your own option on the Who can see & change it sheet, where a project's visibility and approval rule are set: opens a screen to build custom groups and approval rules, prefilled from the preset picked above."
   },
   "whoDecides.own.picked_one": {
     "text": "Your own rule. Tap to change it.",
@@ -2977,7 +2985,7 @@
   },
   "whoDecides.own.rules": {
     "text": "Rules · any one passing is enough",
-    "description": "Section label over the list of rules."
+    "description": "Small section label on the Make your own screen of the Who can see & change it sheet, where a project builds its own approval rules, over the list of approval rules: a change goes live when any one of them passes. \"Rules\" is a plural noun."
   },
   "whoDecides.own.or": {
     "text": "or",
@@ -2985,7 +2993,7 @@
   },
   "whoDecides.own.addRule": {
     "text": "Add a rule",
-    "description": "Row that opens a new rule."
+    "description": "Tappable row at the end of the rule list on the Make your own screen of the Who can see & change it sheet, where a project builds its own approval rules: opens a screen to create a new approval rule. \"Add\" is a verb; \"rule\" is a noun."
   },
   "whoDecides.own.ruleCount_one": {
     "text": "{{count}} of {{max}} rules",
@@ -3001,7 +3009,7 @@
   },
   "whoDecides.own.addGroup": {
     "text": "Add a group",
-    "description": "Row that opens a new named group of members."
+    "description": "Tappable row at the end of the group list on the Make your own screen of the Who can see & change it sheet, where a project builds its own approval rules: opens a screen to create a new named group of members. \"Add\" is a verb."
   },
   "whoDecides.own.alwaysOn": {
     "text": "Always on",
@@ -3009,7 +3017,7 @@
   },
   "whoDecides.own.alwaysTitle": {
     "text": "Changes to who decides",
-    "description": "Title of the fixed rule's row."
+    "description": "Title of the fixed row under Always on, on the Make your own screen of the Who can see & change it sheet, where a project builds its own approval rules: the rule for changes to who can decide (visibility, admins, groups and rules). Noun phrase, not an instruction."
   },
   "whoDecides.own.alwaysSub": {
     "text": "Who can see it, its admins, its groups and these rules: {{creator}} says yes, or the group does with real yes votes.",
@@ -3025,15 +3033,15 @@
   },
   "whoDecides.own.useNote": {
     "text": "Nothing changes until you propose it. It follows the Always on rule.",
-    "description": "Note under Use these rules."
+    "description": "Note under the Use these rules button on the Make your own screen of the Who can see & change it sheet, where a project builds its own approval rules: the rules take effect only once proposed and voted in, and that vote follows the fixed Always on rule."
   },
   "whoDecides.own.problem.noRules": {
     "text": "Add at least one rule.",
-    "description": "Error: the rule list is empty."
+    "description": "Error on the Make your own screen of the Who can see & change it sheet, where a project builds its own approval rules when the person tries to use an empty list of rules. \"Add\" is a verb."
   },
   "whoDecides.own.problem.tooManyRules": {
     "text": "A project has at most {{max}} rules.",
-    "description": "Error: too many rules. {{max}} is the limit."
+    "description": "Error on the Make your own screen of the Who can see & change it sheet, where a project builds its own approval rules when the list has more approval rules than allowed. {{max}} is the limit, a number."
   },
   "whoDecides.own.problem.tooManyGroups": {
     "text": "A project has at most {{max}} groups of its own.",
@@ -3045,7 +3053,7 @@
   },
   "whoDecides.own.problem.duplicate": {
     "text": "That rule is already on the list.",
-    "description": "Error: the same rule twice."
+    "description": "Error on the Make your own screen of the Who can see & change it sheet, where a project builds its own approval rules when the same approval rule was added twice."
   },
   "whoDecides.group.creator": {
     "text": "Creator",
@@ -3061,7 +3069,7 @@
   },
   "whoDecides.group.membersSub_one": {
     "text": "{{count}} person, updates as people join and leave",
-    "description": "Line under All members, with one person."
+    "description": "Line under the built-in All members group on the Who can see & change it sheet, when the project has one member: the group follows people joining and leaving the project. {{count}} is that number."
   },
   "whoDecides.group.membersSub_other": {
     "text": "{{count}} people, updates as people join and leave",
@@ -3073,11 +3081,11 @@
   },
   "whoDecides.group.builtIn": {
     "text": "Built in",
-    "description": "Label beside a group the platform defines."
+    "description": "Small badge beside a group Homeroom defines itself (Creator, All members, App admins) on the Who can see & change it sheet: it cannot be renamed or deleted. Adjective, keep it short."
   },
   "whoDecides.group.nobody": {
     "text": "Nobody yet",
-    "description": "Line for a group with nobody in it."
+    "description": "Line under a group that has no people in it yet, on the Make your own screen of the Who can see & change it sheet."
   },
   "whoDecides.group.title": {
     "text": "Group",
@@ -3093,7 +3101,7 @@
   },
   "whoDecides.group.name": {
     "text": "Name",
-    "description": "Label of the group's name field."
+    "description": "Label of the text field for the group's name on the group screen of the Who can see & change it sheet, where a named group of members is edited. \"Name\" is a noun."
   },
   "whoDecides.group.people_one": {
     "text": "People in this group · {{count}}",
@@ -3125,15 +3133,15 @@
   },
   "whoDecides.group.whoDecides": {
     "text": "Changing who’s in a group changes who decides, so it follows the Always on rule when you propose it.",
-    "description": "Note on the group screen."
+    "description": "Note on the group screen of the Who can see & change it sheet, where a named group of members is edited: changing a group's people changes who approves changes, so saving it is proposed under the fixed Always on rule."
   },
   "whoDecides.group.save": {
     "text": "Save group",
-    "description": "Button: keep the group's name and people."
+    "description": "Button on the group screen of the Who can see & change it sheet, where a named group of members is edited: keeps the group's name and people. \"Save\" is a verb; keep it short."
   },
   "whoDecides.group.delete": {
     "text": "Delete group",
-    "description": "Button: remove the group."
+    "description": "Button on the group screen of the Who can see & change it sheet, where a named group of members is edited: removes the group. \"Delete\" is a verb; keep it short."
   },
   "whoDecides.group.cannotDelete": {
     "text": "A rule uses this group. Remove the rule first to delete it.",
@@ -3141,7 +3149,7 @@
   },
   "whoDecides.group.problem.blank": {
     "text": "Give the group a name.",
-    "description": "Error: the group's name is empty."
+    "description": "Error on the group screen of the Who can see & change it sheet, where a named group of members is edited when the group's name field is empty."
   },
   "whoDecides.group.problem.long": {
     "text": "A group’s name is at most {{max}} characters.",
@@ -3153,15 +3161,15 @@
   },
   "whoDecides.group.problem.taken": {
     "text": "Another group already has that name.",
-    "description": "Error: two groups cannot share a name."
+    "description": "Error on the group screen of the Who can see & change it sheet, where a named group of members is edited when another group of the project already has the typed name."
   },
   "whoDecides.rule.newTitle": {
     "text": "New rule",
-    "description": "Title of the screen that makes a rule."
+    "description": "Title of the rule screen of the Who can see & change it sheet, where one approval rule is edited, when creating a new rule. \"Rule\" is a noun: one approval rule, not the verb \"to rule\"."
   },
   "whoDecides.rule.editTitle": {
     "text": "Rule",
-    "description": "Title of the screen that edits a rule."
+    "description": "Title of the rule screen of the Who can see & change it sheet, where one approval rule is edited, when editing an existing rule. \"Rule\" is a noun: one approval rule, not the verb \"to rule\". One word, keep it short."
   },
   "whoDecides.rule.sentence": {
     "text": "A change goes live when: {{rule}}.",
@@ -3181,7 +3189,7 @@
   },
   "whoDecides.rule.kind.atLeastSub": {
     "text": "Never more than the group has, so it keeps working if someone leaves.",
-    "description": "Line under A number of people."
+    "description": "Line under the A number of people option on the rule screen of the Who can see & change it sheet, where one approval rule is edited: the required number is capped at the group's size, so the rule still works when someone leaves."
   },
   "whoDecides.rule.kind.percentOfActive": {
     "text": "% of the active people",
@@ -3189,7 +3197,7 @@
   },
   "whoDecides.rule.kind.percentOfActiveSub": {
     "text": "Only people active lately count, the way Group vote does.",
-    "description": "Line under % of the active people."
+    "description": "Line under the % of the active people option on the rule screen of the Who can see & change it sheet, where one approval rule is edited: only people who used the project recently are counted, as the Group vote preset does."
   },
   "whoDecides.rule.kind.percentOfEveryone": {
     "text": "% of everyone in the group",
@@ -3197,7 +3205,7 @@
   },
   "whoDecides.rule.kind.percentOfEveryoneSub": {
     "text": "Active or not.",
-    "description": "Line under % of everyone in the group."
+    "description": "Line under the % of everyone in the group option on the rule screen of the Who can see & change it sheet, where one approval rule is edited: everyone in the group is counted, whether recently active or not. A short fragment."
   },
   "whoDecides.rule.kind.majority": {
     "text": "Majority over time",
@@ -3205,7 +3213,7 @@
   },
   "whoDecides.rule.kind.majoritySub": {
     "text": "Group vote’s math: the bar eases as more people are active, and one yes with no objections goes live after a wait.",
-    "description": "Line under Majority over time."
+    "description": "Line under the Majority over time option on the rule screen of the Who can see & change it sheet, where one approval rule is edited: it uses the Group vote preset's counting, where fewer yeses are needed as more people are active and a single unopposed yes goes live after a wait. \"Math\" means calculation."
   },
   "whoDecides.rule.people": {
     "text": "People",
@@ -3233,11 +3241,11 @@
   },
   "whoDecides.rule.yesesOnly": {
     "text": "Only yeses count toward a rule. No votes don’t stop it, though enough of them can still close a change nobody wants.",
-    "description": "Note under Today on the rule screen."
+    "description": "Note under Today on the rule screen of the Who can see & change it sheet, where one approval rule is edited: only yes votes count toward a rule passing; no votes do not block it, but enough no votes can still close a change. \"Close\" means reject and set aside."
   },
   "whoDecides.rule.save": {
     "text": "Save rule",
-    "description": "Button: keep the rule."
+    "description": "Button on the rule screen of the Who can see & change it sheet, where one approval rule is edited: keeps the rule and returns to the list. \"Save\" is a verb; keep it short."
   },
   "whoDecides.rule.remove": {
     "text": "Remove rule",
@@ -3281,7 +3289,7 @@
   },
   "whoDecides.rule.today.atLeast_one": {
     "text": "Needs {{count}} yes today. Never more than the group has.",
-    "description": "What a count rule asks for today, one yes."
+    "description": "Line under Today on the rule screen of the Who can see & change it sheet, where one approval rule is edited, for a rule needing a number of people, when it needs one yes: {{count}} is 1; the number never exceeds the group's size."
   },
   "whoDecides.rule.today.atLeast_other": {
     "text": "Needs {{count}} yeses today. Never more than the group has.",
@@ -3293,11 +3301,11 @@
   },
   "whoDecides.rule.today.percentOfActive": {
     "text": "Counts only people who have been active lately.",
-    "description": "What a share-of-active rule asks for."
+    "description": "Line under Today on the rule screen of the Who can see & change it sheet, where one approval rule is edited, for a rule counting a share of the active people: says only recently active people are counted."
   },
   "whoDecides.rule.today.majority": {
     "text": "Group vote’s math, or a quiet wait if nobody objects.",
-    "description": "What a majority rule asks for."
+    "description": "Line under Today on the rule screen of the Who can see & change it sheet, where one approval rule is edited, for a Majority over time rule: it counts like the Group vote preset, or a change goes live after a quiet wait when nobody votes no."
   },
   "whoDecides.rule.today.unknown": {
     "text": "Depends on how many people the group has.",
@@ -3313,7 +3321,7 @@
   },
   "whoDecides.people.membersSub_one": {
     "text": "{{count}} person in it. Invite and manage people.",
-    "description": "Line under the Members row, with one person."
+    "description": "Line under the Members row in the People section of the Who can see & change it sheet, when the project has one member: tapping the row opens Members to invite and manage people. {{count}} is 1."
   },
   "whoDecides.people.membersSub_other": {
     "text": "{{count}} people in it. Invite and manage people.",
@@ -3325,7 +3333,7 @@
   },
   "whoDecides.people.adminsNone": {
     "text": "None yet. They manage settings and can force-merge.",
-    "description": "Line under App admins when there are none."
+    "description": "Line under the App admins row of the Who can see & change it sheet when the project has no admins: says what admins do. \"Force-merge\" means put a change live without waiting for the vote."
   },
   "whoDecides.change.see": {
     "text": "Who can see it",
@@ -3369,19 +3377,19 @@
   },
   "whoDecides.nothing": {
     "text": "Nothing changed yet",
-    "description": "Summary heading before anything was changed."
+    "description": "Summary heading at the bottom of the Who can see & change it sheet, where a project's visibility and approval rule are set, before any setting was changed."
   },
   "whoDecides.nothingSub": {
     "text": "Pick something different above, and it becomes one proposal for the group.",
-    "description": "Line under Nothing changed yet."
+    "description": "Line under Nothing changed yet at the bottom of the Who can see & change it sheet, where a project's visibility and approval rule are set: any setting changed above is bundled into one proposal the group votes on."
   },
   "whoDecides.opened": {
     "text": "Proposed",
-    "description": "Summary heading once the proposal is open."
+    "description": "Summary heading at the bottom of the Who can see & change it sheet, where a project's visibility and approval rule are set once the change was sent as a proposal for a vote. Past participle: \"has been proposed\"."
   },
   "whoDecides.openedSub": {
     "text": "It’s up for a vote now, and goes live once it passes.",
-    "description": "Line under Proposed."
+    "description": "Line under Proposed at the bottom of the Who can see & change it sheet, where a project's visibility and approval rule are set: the change is being voted on now and takes effect once the vote passes."
   },
   "whoDecides.notVerified": {
     "text": "Nothing changed. Making it public needs a verified phone first.",
@@ -3389,7 +3397,7 @@
   },
   "whoDecides.error": {
     "text": "Could not propose the change. Try again.",
-    "description": "Error when the proposal could not be opened."
+    "description": "Error at the bottom of the Who can see & change it sheet, where a project's visibility and approval rule are set when sending the change as a proposal failed. \"Propose\" is a verb."
   },
   "members.whoDecides.title": {
     "text": "Who can see & change it",
@@ -3397,7 +3405,7 @@
   },
   "members.whoDecides.sub": {
     "text": "Private or public, and how changes are approved",
-    "description": "Second line of that row."
+    "description": "Second line of the Who can see & change it row in the Members dialog: says the row sets whether the project is private or public and how its changes are approved. \"Approved\" means accepted by a vote."
   },
   "appSettings.access.now": {
     "text": "Now: {{access}}. Who can see it and how its changes are approved are set together, in one proposal.",

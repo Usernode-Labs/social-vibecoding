@@ -285,33 +285,29 @@ test('a waiting-room session gets one pill back to the room, and no other', () =
   assert.doesNotMatch(interior, /id="landing-header-ctas"/);
 });
 
-test('the stage-1 survey lives on its own #waitlist screen', () => {
+test('#waitlist is check your status, with no join form (#5261)', () => {
   const html = shellMarkup();
-  // Not anchored on indentation: public/index.html is generated from
-  // frontend/src/Shell.tsx now and ships without the hand-written line
-  // breaks. <main> cannot nest, so the first close tag is this screen's.
-  // The screen's interior mounts on first reveal, so the document carries
-  // only its root; the interior is what a reveal puts inside it.
+  // <main> cannot nest, so the first close tag is this screen's. The
+  // screen's interior mounts on first reveal, so the document carries only
+  // its root; the interior is what a reveal puts inside it.
   const interior = interiorHtmlFor('auth-waitlist-screen');
   const classes = html.match(/id="auth-waitlist-screen"[^>]*class="([^"]*)"/);
   // Same overlay shape as the other anonymous screens (#more, #login).
   for (const cls of ['hidden', 'fixed', 'inset-0', 'z-40', 'overflow-y-auto']) {
     assert.match(classes[1], new RegExp(cls.replace('-', '\\-')), `screen is ${cls}`);
   }
-  // The whole survey moved here, ids intact so the wiring is a pure move.
-  //
-  // #waitlist-made-url is deliberately NOT in this list any more. It was a
-  // REQUIRED stage-1 field, which contradicted the email-only join the
-  // onboarding doc settled on, so the question moved to the stage-2
-  // "Want in sooner?" form as #more-made-url (recorded in RETIRED_IDS /
-  // ADDED_IDS in tests/shell-id-inventory.test.js). Joining asks for an
-  // address and nothing else; everything below is still on this screen.
-  for (const id of ['waitlist-form', 'waitlist-email',
-    'waitlist-country', 'waitlist-discovery-chips', 'waitlist-submit',
+  for (const id of ['waitlist-confirm-email', 'waitlist-request-code', 'waitlist-code',
     'waitlist-msg', 'waitlist-joined', 'waitlist-more-offer',
-    'waitlist-more-link', 'waitlist-queued', 'waitlist-confirmed-email']) {
+    'waitlist-more-link', 'waitlist-confirmed-email']) {
     assert.match(interior, new RegExp(`id="${id}"`), `${id} is on the screen`);
   }
+  // The join form went (#5261): Continue makes the account and puts it in
+  // line, and the waiting room asks the two optional questions.
+  for (const id of ['waitlist-form', 'waitlist-email', 'waitlist-country',
+    'waitlist-discovery-chips', 'waitlist-submit', 'waitlist-queued', 'waitlist-enter-code']) {
+    assert.doesNotMatch(interior, new RegExp(`id="${id}"`), `${id} is retired`);
+  }
+  assert.doesNotMatch(interior, /<form/);
   // Back goes to the landing page via the shared delegated handler.
   assert.match(interior, /data-auth-back/);
   // NOT a <header>: the header-layout code used to measure document.querySelector
@@ -333,32 +329,25 @@ test('#waitlist is a registered route ordered under landing, above #more', () =>
   assert.match(js, /if \(id === 'auth-waitlist-screen'\) AuthScreens\._wireWaitlist\(\);/);
 });
 
-test('the waitlist screen swaps the form for the queued note on a session', () => {
-  // Stage 1 is React since #1080 chunk C, so both branches are derived from
-  // one piece of state rather than toggled onto two elements.
-  const tsx0 = read(WAITLIST_TSX);
-  const fn = tsx0.match(/const waitlistOnShow = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[/);
-  assert.ok(fn, 'waitlistOnShow exists');
-  // Same predicate the landing header uses — shared.ts's hasSession.
-  assert.match(fn[0], /sessionExists\(\)/);
-  assert.match(read('frontend/src/features/auth/shared.ts'),
-    /export function hasSession\(\)[\s\S]*?legacy\(\)\.App\?\.user/);
-  assert.match(tsx0, /id="waitlist-form"[\s\S]{0,200}hiddenLast\(hasSession \|\| joined/);
-  assert.match(tsx0, /id="waitlist-queued"[\s\S]{0,200}hiddenFirst\(!hasSession/);
-  // AppBar mirroring for the Flutter WebView, same as the landing header.
-  assert.match(fn[0], /document\.title/);
-  // The landing CTA block toggles its LINK now, not a form.
-  const tsx = read(LANDING_TSX);
-  assert.match(tsx, /id="landing-waitlist-link"/);
-  assert.doesNotMatch(tsx, /waitlist-form/);
-});
-
-test('a gated (waiting-room) session can still reach #waitlist', () => {
+test('a bare #waitlist opens Continue, keeping an old link\'s ref (#5261)', () => {
   const js = read('public/js/app.js');
+  // Signed out: the landing with its Continue sheet up.
+  assert.match(js, /if \(authRoute === 'waitlist' && !\/\(\?:\^\|&\)confirm=1\(\?:&\|\$\)\/\.test\(fragQuery\)\) \{\s+AuthScreens\.retireWaitlistLink\(fragQuery\);\s+return;\s+\}/);
+  // A waiting account goes to its room, which sends the ref on.
   const gated = js.match(/if \(App\.user\.hasPlatformAccess === false\) \{[\s\S]*?showWaiting\(\);/);
   assert.ok(gated, 'gated-session branch exists');
-  assert.match(gated[0], /authRoute === 'waitlist'/);
-  assert.match(gated[0], /AuthScreens\.show\('waitlist'\)/);
+  assert.match(gated[0], /if \(authRoute === 'waitlist'\) AuthScreens\.keepWaitlistRef\(fragQuery\);/);
+  assert.doesNotMatch(gated[0], /AuthScreens\.show\('waitlist'\)/);
+  const screens = read('public/js/auth-screens.js');
+  assert.match(screens, /retireWaitlistLink\(query\) \{\s+AuthScreens\.keepWaitlistRef\(query\);\s+AuthScreens\._startSheet = true;/);
+  assert.match(screens, /if \(ref && \/\^\[a-z0-9\]\{10\}\$\/\.test\(ref\)\) sessionStorage\.setItem\('usernode:waitlist-ref', ref\);/);
+  // The landing takes the flag on show and opens the story's sheet.
+  const tsx = read(LANDING_TSX);
+  assert.match(tsx, /if \(takeStartSheet\(\) && !link\) \{\s+flushSync\(\(\) => \{ setResume\(null\); setSheet\('start'\); \}\);/);
+  // AppBar mirroring for the Flutter WebView, same as the landing header.
+  assert.match(read(WAITLIST_TSX), /document\.title = translate\('auth:waitlist\.documentTitle'\)/);
+  assert.match(tsx, /id="landing-waitlist-link"/);
+  assert.doesNotMatch(tsx, /waitlist-form/);
 });
 
 test('the anonymous screens are reachable to shots via ?shot=anon', () => {
@@ -379,25 +368,23 @@ test('the anonymous screens are reachable to shots via ?shot=anon', () => {
   const fn = js.match(/_anonShot\(\) \{[\s\S]*?\n  \},/);
   assert.ok(fn, '_anonShot exists');
   assert.match(fn[0], /'anon'/);
-  assert.match(fn[0], /'waitlist-joined'/);
-  // The confirmed state needs the same anonymous boot: it is the one that
-  // now carries the list place and the stage-2 offer.
-  assert.match(fn[0], /'waitlist-confirmed'/);
+  // The status read-back needs the same anonymous boot: it carries the
+  // list place and the stage-2 offer. The join form's shots went with it
+  // (#5261).
+  assert.match(fn[0], /'waitlist-status'/);
+  assert.doesNotMatch(fn[0], /'waitlist-joined'|'waitlist-confirmed'|'waitlist-rejoined'|'waitlist-step1'/);
   // Pure UI state: no env gate, and no request of its own.
   assert.doesNotMatch(fn[0], /USERNODE_ENV|fetch\(/);
-  // Both shots paint their state client-side — neither POSTs.
+  // The shots paint their state client-side: none POSTs.
   const tsx1 = read(WAITLIST_TSX);
-  const shot = tsx1.match(/const shotJoined = shot === 'waitlist-joined';[\s\S]*?\n    \}\n\n/);
+  const shot = tsx1.match(/if \(shot === 'waitlist-code-entry'\) \{[\s\S]*?\n    if \(!shot\)/);
   assert.ok(shot, 'the waitlist shot branch exists');
   assert.doesNotMatch(shot[0], /fetch\(/);
-  // The offer rides on `waitlist-confirmed`, with no token, so the link
-  // keeps the inert prerendered href. `waitlist-joined` must NOT raise it:
-  // nothing is offered until the address is confirmed.
-  assert.match(shot[0], /shotConfirmed\)\s*\{[\s\S]*?setOffer\(true\)/);
+  // The offer rides on `waitlist-status`, with no token, so the link keeps
+  // the inert href.
+  assert.match(shot[0], /'waitlist-status'\) \{[\s\S]*?setOffer\(true\)/);
   assert.doesNotMatch(shot[0], /setMoreToken/);
-  // #1537: both settled states name the address the signup was made with, so
-  // the shot has to carry one — a stand-in literal, since a shot has no join
-  // behind it to read a real address from. Still no request of any kind.
+  // #1537: the settled states name the address, a stand-in literal.
   assert.match(shot[0], /setSentTo\('you@example\.com'\)/);
   assert.match(tsx1, /id="waitlist-more-offer"[\s\S]{0,200}hiddenFirst\(\s*!offer/);
 });
@@ -445,24 +432,6 @@ test('both "you\'re on the list" surfaces name the registered address (#1537)', 
   const pillAt = block[0].indexOf('<StatusPill');
   const emailAt = block[0].indexOf('<SignupEmail');
   assert.ok(pillAt > -1 && emailAt > pillAt, 'the address sits under the pill');
-});
-
-test('the stage-1 submit handler cannot be later than the first render', () => {
-  // The imperative version wired the submit listener BEFORE awaiting the
-  // options fetch on purpose: the email field is focused on arrival, so a
-  // submit inside the fetch window would otherwise fall through to a native
-  // GET navigation off the SPA. React removes the window rather than ordering
-  // it — onSubmit is part of the element, and the options arrive in an effect
-  // that cannot run before the render that attached it.
-  const tsx = read(WAITLIST_TSX);
-  assert.match(tsx, /id="waitlist-form"[\s\S]{0,200}onSubmit=\{onSubmit\}/);
-  const submit = tsx.match(/const onSubmit = useCallback\([\s\S]*?\n    \[discovery, startCooldown\],\s*\n  \);/);
-  assert.ok(submit, 'onSubmit exists');
-  assert.match(submit[0], /e\.preventDefault\(\)/);
-  assert.match(submit[0], /'\/api\/public\/waitlist'/);
-  // The options really are effect-scoped, not fetched during render.
-  const shared = read('frontend/src/features/auth/waitlist-shared.tsx');
-  assert.match(shared, /export function useWaitlistOptions\(\)[\s\S]*?useEffect\(/);
 });
 
 // ─── index.html + landing.tsx: in-flow app viewer ─────────────────
@@ -718,8 +687,11 @@ test('landing tiles mirror home cards and gate on requires_login', () => {
 
 // ─── probe wiring ─────────────────────────────────────────────────
 
-test('shell probe starts at boot and its columns are in schema', () => {
-  assert.match(read('server.js'), /shell-probe'\)\.start\(config\)/);
+test('the shell probe is a scheduled job of the workflow, and its columns are in schema', () => {
+  // A clock (src/workflow/clock/services.ts): every five minutes wherever the
+  // workflow runs, and the first run of a new build re-probes every app that
+  // read public.
+  assert.match(read('src/workflow/clock/services.ts'), /name: 'shell-probe', everyMs: 5 \* MIN,/);
   const schema = read('src/db/schema.sql');
   assert.match(schema, /ADD COLUMN IF NOT EXISTS anon_shell VARCHAR\(10\) NOT NULL DEFAULT 'unknown'/);
   assert.match(schema, /ADD COLUMN IF NOT EXISTS anon_shell_checked_at TIMESTAMPTZ/);

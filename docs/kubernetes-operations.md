@@ -284,16 +284,20 @@ rollback past the preview machine's deletion recreates it empty).
 
 ## Preview cleanup
 
-Merge, archive and the idle reclaim (`STAGING_IDLE_TEARDOWN_MS`) tear a preview
-down through its session row. Anything those paths leave behind is found by the
-stale-preview sweep (`services/staging-reap.js`), which lists the
+Merge, archive and the preview machine's idle give-back
+(`STAGING_IDLE_TEARDOWN_MS`) retire a preview through the preview machine.
+Anything those paths leave behind is found by the `preview-gc` clock
+(`services/staging-reap.js` `leftovers`), which lists the
 `sv-preview-<appId>-s<sessionId>` Deployments in the app namespace and joins
 them back to `chat_sessions`. Every `STAGING_STALE_SWEEP_INTERVAL_MS` (15 min)
-it tears down at most `STAGING_STALE_SWEEP_LIMIT` (10) previews whose session
-merged, was archived or no longer exists, or whose `usernode.env.fp` label is
-out of date. It never takes a preview backing a live vote (`promoted` or
-`merging`); the heal pass rebuilds those in place when they go out of date.
-Admin → Stale previews takes the same selection without the per-pass limit. A
+it takes each preview whose session merged, was archived or no longer exists,
+and each one its row no longer names that the machine does not hold, one
+target at a time. A preview whose `usernode.env.fp` label is out of date is
+the release's to find: the new build's release work tells the preview
+machine, which rebuilds one backing a live vote (`promoted` or `merging`) and
+gives the rest back. The `preview-runtimes` clock reports a vote-backed
+preview whose runtime or database is gone, and the machine builds it again.
+Admin → Stale previews takes the out-of-date and finished ones at once. A
 preview whose row no longer names it keeps its staging database until the
 orphan database pass (`STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS`, 6 h) finds nothing
 connected to it.
@@ -851,6 +855,48 @@ The authorized `usernode-debug containers` and `usernode-debug logs <name>`
 interfaces accept managed runtime names such as `sv-worker-s42` and
 `sv-preview-7-s42`. Their inventory includes readiness but leaves CPU/memory
 usage null when measured usage is unavailable.
+
+## IP address retention
+
+The platform keeps a person's IP address for `IP_RETENTION_DAYS` (default
+180, six months; whole days from 1 to 3650; any other value keeps 180). The
+privacy notice states the same period, so change the two together. The leader clears older addresses
+once a day (`ip-retention` in `leader_sweeps`; `src/services/ip-retention.js`
+lists each column) and keeps the rows. A pass that cleared anything logs
+`Cleared expired IP addresses` with a count per table.
+
+The database is only one copy. The platform also writes a client address into a
+few stdout lines (rate-limit refusals, internal-route refusals, patch-upload
+refusals, database-export audit lines), and those live wherever container
+output is kept. Nothing in this repository ships logs anywhere, so these steps
+are the cluster's:
+
+1. **Kubelet container logs.** Kubelet rotates by size only, so bound the
+   size. On Talos, add to the machine config of every node and apply it:
+
+   ```yaml
+   machine:
+     kubelet:
+       extraConfig:
+         containerLogMaxSize: 10Mi
+         containerLogMaxFiles: 3
+   ```
+
+   (`talosctl -n NODE patch machineconfig --patch @kubelet-logs.yaml`). On
+   the platform 30Mi is days of output, not months, and a container's logs
+   also go when its Pod is deleted, which every release does. Check with
+   `kubectl get --raw /api/v1/nodes/NODE/proxy/configz` that the two values
+   took.
+2. **Any log collector** (Loki, Vector, Fluent Bit, a hosted service) set up
+   outside this repository must keep platform logs no longer than
+   `IP_RETENTION_DAYS`. For Loki: `limits_config.retention_period: 4320h`
+   with `compactor.retention_enabled: true`.
+3. **Database backups** hold the addresses that were in the database on the
+   day of the backup. Keep backups no longer than the period plus the backup
+   rotation, or say so in the notice.
+
+The in-memory log ring behind `/api/status` holds the last 200 lines and is
+gone when the process restarts.
 
 ## Build and startup failures
 

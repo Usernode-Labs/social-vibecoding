@@ -288,15 +288,31 @@ test('sweep is a no-op inside a staging preview', async () => {
   }
 });
 
-test('orphanDbSweepDue: due once per interval, 0 disables', async () => {
+// The pass is the preview-orphan-dbs clock's run (src/workflow/clock/
+// services.ts): one at a time across every process, on the orphan-DB
+// interval. 0 is a kill switch, not a zero-delay.
+test('the preview-orphan-dbs clock runs the sweep on its interval, and 0 switches it off', async () => {
   const reap = loadReap();
-  assert.equal(reap.orphanDbSweepDue(), true);
-  await reap.sweepOrphanDbs({});           // arms the throttle
-  assert.equal(reap.orphanDbSweepDue(), false);
+  fx.dbRows = [{ datname: 'app_a_staging_s1_aaaaaa' }];
+  const { JOBS } = require('../src/workflow/clock/services.ts');
+  const job = JOBS.find((j) => j.name === 'preview-orphan-dbs');
+  assert.ok(job, 'the preview-orphan-dbs clock exists');
+  assert.equal(reap.orphanDbSweepIntervalMs(), 6 * 60 * 60 * 1000, 'every six hours by default');
+  assert.equal(job.everyMs, reap.orphanDbSweepIntervalMs());
+  assert.equal(job.item, undefined, 'a drop is preconditioned on what it read: safe to run twice, no targets');
+
+  const summary = await job.run({ input: {} }, { config: {}, pool: null });
+  assert.equal(summary.dropped, 1);
+  assert.deepEqual(fx.dropped, ['app_a_staging_s1_aaaaaa']);
 
   process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS = '0';
   try {
-    assert.equal(reap.orphanDbSweepDue(), false);
+    assert.equal(reap.orphanDbSweepIntervalMs(), 0);
+    fx.dropped = [];
+    assert.deepEqual(await job.run({ input: {} }, { config: {}, pool: null }), { off: true });
+    assert.deepEqual(fx.dropped, [], 'switched off, it drops nothing');
+    process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS = 'banana';
+    assert.equal(reap.orphanDbSweepIntervalMs(), 6 * 60 * 60 * 1000, 'junk falls back to the default');
   } finally {
     delete process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS;
   }

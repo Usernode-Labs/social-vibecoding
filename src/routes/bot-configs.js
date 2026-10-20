@@ -10,8 +10,8 @@
 //   /api/admin/homeroom-bot/configs…   the console's "Bot configurations"
 //       section (frontend/src/features/admin/admin-bot-configs.tsx), one
 //       scope at a time (?scope=). Any admin reads; a role change and a
-//       side-build budget are requireAdminWrite. Recipes are written only
-//       through the connector.
+//       side-build budget are requireAdminWrite, and so is a SIDE version
+//       saved from the console's form; making one current is a role change.
 //
 //   /api/bot-configs…   the admin connector's (services/mcp-tools.js), on
 //       its allowlist (services/cli-api-policy.js CONNECTOR_ALLOWED_ROUTES).
@@ -87,6 +87,20 @@ function botConfigRoutes(config) {
   )));
   router.post('/api/admin/homeroom-bot/configs/budget', requireAdminWrite, handler('Bot configuration side budget', setBudget('console')));
   router.post('/api/admin/homeroom-bot/configs/:id/role', requireAdminWrite, handler('Bot configuration role', setRole('console')));
+  // A side version saved from the console (Homeroom bot → Configurations →
+  // New side version): never current from here, so a recipe typed into a
+  // form builds nothing live until a person makes it current from its row,
+  // which checks its models against the catalog then.
+  router.post('/api/admin/homeroom-bot/configs', requireAdminWrite, handler('Bot configuration save', async (req) => {
+    const b = req.body || {};
+    if (b.role != null && b.role !== 'side') return bad('A version saved here is a side version. Make it current from its row once it has numbers.');
+    const out = await configs.saveVersion(pool, {
+      key: b.key || null, label: b.label || null, recipe: b.recipe, role: 'side', notes: b.notes || null, actorId: req.user.id,
+      scope: b.scope || null,
+    });
+    if (out.ok) log.info('bot-configs', 'Configuration saved', { by: req.user.username, via: 'console', id: out.version.id, key: out.version.key, scope: out.version.scope });
+    return out;
+  }));
 
   // ── The admin connector's doors ─────────────────────────────────────
 

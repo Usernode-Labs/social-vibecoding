@@ -185,7 +185,9 @@ test('each ready-made app is a directory of its own files; the four tier lists s
   const games = new Set(GAMES.map((id) => appTemplates.dirOf(id)));
   const shared = new Set(GAMES.map((id) => appTemplates.get(id).shared));
   assert.deepEqual([...shared], ['_game-room'], 'every game starter shares one game room');
-  assert.deepEqual(fs.readdirSync(appTemplates.STARTERS_DIR).sort(), [...dirs, ...games, ...shared].sort(), 'no directory that no entry uses');
+  // `_scaffold` holds files every new app gets, starter or not
+  // (usernode-user-data.js, #5118; services/template.js reads it).
+  assert.deepEqual(fs.readdirSync(appTemplates.STARTERS_DIR).sort(), [...dirs, ...games, ...shared, '_scaffold'].sort(), 'no directory that no entry uses');
   for (const dir of dirs) {
     for (const rel of appTemplates.REQUIRED_FILES) {
       assert.ok(fs.existsSync(path.join(appTemplates.STARTERS_DIR, dir, rel)), `${dir}/${rel}`);

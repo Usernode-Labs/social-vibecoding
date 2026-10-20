@@ -688,7 +688,11 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
-.messages-row-time-unread { color: var(--accent); font-weight: 600; }
+/* #18 of the 19 Oct polish board, ONE MEANING PER BADGE: the accent is
+   "waiting on you" (a vote, an answer), and an unread message is new to
+   read, which is grey everywhere. So an unread row's time is the ink, and
+   its count is said, "2 new", in grey (.messages-unread below). */
+.messages-row-time-unread { color: var(--text-primary); font-weight: 600; }
 .messages-group-tag {
   display: inline-flex;
   align-items: center;
@@ -703,20 +707,18 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   font-weight: 600;
   vertical-align: 2px;
 }
+/* NEW TO READ, SAID ON THE ROW (#18): "2 new" in grey at the preview's
+   end, where a blue bubble with a bare number was. A full row says its count
+   in words (the shell's rule); bare numbers are for tabs and the sidebar's
+   compact rows, and grey there too. */
 .messages-unread {
   flex: 0 0 auto;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 7px;
-  border-radius: 9999px;
-  background: var(--accent);
-  /* --accent-ink, not `white`: the dark accent is a lighter blue and white
-     on it is 2.5:1. Same pair the send disc and the empty-state button use. */
-  color: var(--accent-ink);
+  margin-left: 8px;
+  color: var(--text-muted);
   font-size: 13px;
-  font-weight: 700;
-  line-height: 22px;
-  text-align: center;
+  font-weight: 650;
+  line-height: 18px;
+  white-space: nowrap;
 }
 
 .messages-network-banner {
@@ -2058,6 +2060,10 @@ form.agent-session-composer:focus-within {
 @media (max-width: 767px) {
   .messages-layout.messages-has-reply-thread > .messages-thread-pane { display: none; }
   .messages-reply-pane { flex: 1 1 auto; width: 100%; margin-top: 12px; }
+  /* One way back (polish N16): the header bar's arrow. The thread's own ✕
+     beside it said the same thing a second time. A community page's copy
+     (`.messages-layout-embedded`) keeps its ✕. */
+  .messages-layout:not(.messages-layout-embedded) > .messages-reply-pane [data-reply-close] { display: none; }
 }
 @media (min-width: 768px) {
   .messages-reply-pane { flex: 0 0 min(420px, 42%); margin: 14px 12px 0 0; }
@@ -2228,6 +2234,17 @@ form.agent-session-composer:focus-within {
   .messages-markdown.gc-msg-content { font-size: 15px; line-height: 1.4; }
   .messages-composer-input { font-size: 15px; }
   .messages-edit textarea { font-size: 15px; }
+}
+
+/* A READABLE MEASURE (N14 of the 19 Oct polish board). A message's text ran
+   the pane's whole width on a desktop: about 1,100px beside the sidebar and
+   1,380px without it, a hundred and fifty characters a line. From 768px its
+   lines stop at 72 characters; the face, the name line and the cards keep
+   their own widths. A phone is narrower than this already. */
+@media (min-width: 768px) {
+  .messages-markdown.gc-msg-content {
+    max-width: 72ch;
+  }
 }
 
 /* ── An app's discussion, as a thread of this inbox (#2718 review) ──────
@@ -3861,6 +3878,13 @@ html[data-browser-scroller^="auth-"] :is(
 ) {
   display: none;
 }
+/* UNDER THE SIGNED-OUT LANDING the platform header is covered (the landing
+   is a fixed overlay with its own bar) but was still read out: an empty
+   level-1 heading beside the page's own on a desktop (polish N10). In a
+   phone browser the rule above already takes it out of the layout. */
+body:has(#auth-landing-screen:not(.hidden)) #platform-header {
+  visibility: hidden;
+}
 /* IN BROWSER-SCROLLER MODE the document is the scroller and this bar is
    sticky over it, so it has to hide the content sliding under it rather than
    letting it read through — which is why it takes a near-opaque wash of the
@@ -4292,6 +4316,21 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
       var(--home-grain) 0 0 / 240px 240px repeat,
       var(--home-washes);
   }
+}
+/* THE HEADER STAYS CLEAR OF THE STAR in a running app and on New project
+   (polish N20). On Home the star sits behind the bell by design, but over
+   somebody's app the bar is the app's header, and on the make screen the
+   bar holds only the ✕ and the mark: there it read as a stray shape showing
+   through. Both draw the same wallpaper with its first layer, the star,
+   left out. `html:root` lifts this past the dark and wide rules above,
+   which define the full shorthand at the same route test. The make screen
+   paints `var(--home-wallpaper)` on its own root (make.tsx), so the
+   variable is redefined there too; it reads the body's grain and washes. */
+html:root body:has(#app-view:not(.hidden):not([data-app-surface="platform"])),
+[data-first-session-make] {
+  --home-wallpaper:
+    var(--home-grain) 0 0 / 240px 240px repeat,
+    var(--home-washes);
 }
 /* THE BAR OVER THE WALLPAPER. On every wallpaper route the header's
    zinc-200 surface goes, so the wallpaper (and the star) run up behind the
@@ -4816,6 +4855,18 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    step to the same faint token. */
 .app-icon-tile[data-icon="letter"] {
   color: var(--text-faint);
+}
+/* An image tile's initial while its picture loads (AppIconContent's
+   IconImage, polish board #11): the letter tile's own quiet placeholder,
+   laid under the image, and gone once the image has drawn. The tile is its
+   box at zero specificity, so a tile that already positions itself keeps
+   doing so. */
+:where(:has(> .app-icon-wait)) { position: relative; }
+.app-icon-wait {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  color: var(--text-faint); font-weight: 700; line-height: 1;
+  pointer-events: none;
 }
 .dark .app-icon-tile {
   /* --bg-primary is near-black in dark mode; one step up so the tile
@@ -6182,10 +6233,13 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   background: var(--bg-primary);
 }
 
-/* THE GREEN "STILL OPEN" DOT (#2902), on an app kept loaded — its tile on
-   Home, its row in the rail's Recents (features/app-frame/live-apps.tsx).
-   Green because it says the app is RUNNING, the one colour every status
-   surface here already reads that way; ringed in the page ground so it
+/* THE "STILL OPEN" DOT (#2902), on an app kept loaded — its tile on Home,
+   its App row in the sidebar (features/app-frame/live-apps.tsx). QUIET
+   GREY since the 19 Oct polish board (N17): it was green, and the shell
+   shows a coloured status dot only when something is wrong (AGENTS.md,
+   "let zero say nothing"), never a green one on every running app. An app
+   kept open is a convenience, not news; the dot stays because the sidebar's
+   close control (#5525) sits where it is. Ringed in the page ground so it
    stays a dot on any icon behind it. */
 .app-live-dot {
   display: block;
@@ -6193,7 +6247,7 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   height: 10px;
   flex: none;
   border-radius: 999px;
-  background: #22c55e;
+  background: var(--text-muted);
   box-shadow: 0 0 0 2px var(--bg-primary);
 }
 /* On a launcher tile: the icon's top-right corner, where the fork tag's
@@ -8081,6 +8135,10 @@ a.dc-flow-action {
   border: 1px solid var(--border);
   background: rgba(0, 0, 0, 0.25);
 }
+/* Until the picture has drawn, its box is the size pictures are drawn at,
+   so a late, lazy picture fills the room it already has rather than growing
+   its row (transcript.tsx AttachmentImage, polish board #19). */
+.dc-msg-att-img[data-pending] { width: 160px; height: 120px; }
 
 .dc-msg-att-chip {
   display: inline-flex;
@@ -12585,6 +12643,46 @@ html.web-browser-chrome {
   }
 }
 
+/* ONE ROW, CENTRED, ON EVERY DESKTOP SCREEN (#20 of the 19 Oct polish
+   board). A community's pages already split the bar's 52px 12 and 12
+   (#4237, near `.dev-ws-tabs`), and every other screen kept pt-2/pb-4, so
+   the toggle, the bell, the H and the title sat 4px above the middle there
+   and jumped 4px each time you went into a project or came out. From 768px
+   every bar is 12 and 12, signed out as signed in, so parity holds and
+   nothing moves.
+
+   EXCEPT OVER A RUNNING APP: its sheet comes 8px up under the bar (-mb-2),
+   and 12 under the controls is what leaves them 8px clear of its lip (the
+   invariant above). A phone is untouched.
+
+   THE TITLE IS THE ROW'S 28px, ITS WORDS CENTRED IN IT. They sit in an
+   inline-flex box on `vertical-align: middle`: the wordmark's 20px box
+   fitted the 24px line, a 24px line of words grew it to 25.7px, and the
+   title moved 1px between Home and Messages. A taller line does not help
+   (measured: 29.7px in a 28px line), so the title centres its one child,
+   as the row centres the buttons; the child's own max-width still ends a
+   long name in "…". */
+@media (min-width: 768px) {
+  body:not(:has(#app-view:not(.hidden)[data-app-surface="app"])) :is(#platform-header, #landing-header) {
+    padding-bottom: 0.75rem;
+  }
+  #header-title {
+    display: flex;
+    align-items: center;
+    height: 1.75rem;
+  }
+}
+@media (min-width: 768px) {
+  @supports (padding: env(safe-area-inset-top)) {
+    body:not(:has(#app-view:not(.hidden)[data-app-surface="app"])) :is(#platform-header, #landing-header).un-safe-top-extend {
+      padding-top: calc(0.75rem + var(--un-safe-inset-top, env(safe-area-inset-top, 0px))) !important;
+    }
+    html.web-browser-chrome body:not(:has(#app-view:not(.hidden)[data-app-surface="app"])) :is(#platform-header, #landing-header).un-safe-top-extend {
+      padding-top: 0.75rem !important;
+    }
+  }
+}
+
 /* A FLAT TOP EDGE FOR THE INSTALLED LANDING. From iOS 26 an installed web app
    whose status bar is black-translucent (frontend/src/head.html, #1929) gets
    a Liquid Glass blur over the strip, and it runs about 38pt below the clock
@@ -16643,6 +16741,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   .pin-shot-layer { transition: none; }
 }
 
+/* A request's track card drawn from the board's older row keeps its place
+   unseen until the fresh row says where the work is (request-head.tsx
+   `trackPending`, polish board #12). */
+.dev-request-track[data-request-track="pending"] { visibility: hidden; }
 /* Where it stands: a card on the sheet, the stepper, a sentence, the next step. */
 .dev-request-status {
   margin-top: 10px;
@@ -18168,6 +18270,12 @@ button.dev-ws-recent-card {
   object-fit: cover; object-position: top center;
 }
 .dev-ws-recent-glyph { width: 26px; height: 26px; color: var(--text-muted); opacity: .6; }
+/* A change with no picture, and the app's own card: the project's tile on its
+   community's colour, the band's own `--community-tint` (polish board N13),
+   where a grey box with a check was. */
+.dev-ws-recent-pic:is([data-ws-recent-pic="plain"], [data-ws-recent-pic="app"]) {
+  background: var(--community-tint, var(--bg-tertiary));
+}
 .dev-ws-recent-title {
   font-size: 14px; font-weight: 650; line-height: 1.3; color: var(--text-primary);
   display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
@@ -18327,7 +18435,17 @@ button.dev-ws-recent-card {
    kicker, the card's sentence-case title and line in Share it's own type,
    and its one button. The picture's box is fixed, so nothing moves as it
    loads. */
-.dev-ws-strip.dev-ws-first-look { flex-direction: row; align-items: flex-start; gap: 14px; }
+.dev-ws-strip.dev-ws-first-look { position: relative; flex-direction: row; align-items: flex-start; gap: 14px; }
+/* #5618: the picture and the words open the maker's chat with Homeroom
+   bot. The door is an empty button over the card, under its Watch button,
+   so the card keeps its look: only a hover tint and the focus ring show it. */
+.dev-ws-first-look-open {
+  position: absolute; inset: 0; z-index: 1; border: 0; padding: 0;
+  background: transparent; border-radius: inherit; cursor: pointer;
+}
+.dev-ws-first-look-open:hover { background: rgba(10, 10, 10, 0.03); }
+.dark .dev-ws-first-look-open:hover { background: rgba(255, 255, 255, 0.04); }
+.dev-ws-first-look-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dev-ws-first-look-shot {
   flex: none; width: 64px; height: 138px; border-radius: 12px;
   object-fit: cover; object-position: top;
@@ -18344,7 +18462,8 @@ button.dev-ws-recent-card {
 }
 .dev-ws-first-look-body .dev-ws-head-title { margin: 0; }
 .dev-ws-first-look-body .dev-ws-strip-text { color: var(--text-muted); }
-.dev-ws-first-look-body > button { margin-top: 8px; }
+/* Watch keeps its own tap, over the door (#5618). */
+.dev-ws-first-look-body > button { position: relative; z-index: 2; margin-top: 8px; }
 
 /* ── Approval rules (community-card.tsx ApprovalRules) ─────────────── */
 .dev-ws-rules-line { margin: 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
@@ -19220,6 +19339,11 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   border-radius: 999px; background: var(--accent); color: #fff;
   font-size: 12px; font-weight: 700; line-height: 20px; text-align: center;
 }
+/* A channel's count is new to read, not waiting on you (#18): the grey the
+   tab bar's unread count wears. Needs you keeps the accent. */
+.dev-ws-place:is([data-place="discussion"], [data-place^="c:"]) .dev-ws-place-count {
+  background: var(--text-faint, #8e8e93);
+}
 .dev-ws-place .dev-ws-filter-dot { position: static; flex-shrink: 0; background: var(--accent); }
 .dev-ws-places-line { height: 1px; margin: 8px 10px; background: var(--app-sheet-line); }
 .dev-ws-places-group { display: flex; flex-direction: column; gap: 2px; }
@@ -19245,9 +19369,12 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
 }
 .dev-ws-places-btn:focus-visible { outline: 2px solid #fff; outline-offset: -4px; }
 .dev-ws-places-btn-glyph { width: 22px; height: 22px; }
+/* Something waits in the places (votes, unread talk). WHITE on the
+   community's colour, not red (#18 of the 19 Oct polish board): red is the
+   bell's alone, and the places' own counts say which it is when opened. */
 .dev-ws-places-dot {
   position: absolute; top: 9px; right: 8px; width: 9px; height: 9px; border-radius: 999px;
-  background: #ff5a4f; box-shadow: 0 0 0 2px var(--community-tint, #2a2e34);
+  background: #fff; box-shadow: 0 0 0 2px var(--community-tint, #2a2e34);
 }
 .dev-ws-place-title {
   min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -19259,7 +19386,7 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   .dev-ws-places-btn { color: var(--text-muted); margin-left: -10px; }
   .dev-ws-places-btn:focus-visible { outline-color: var(--accent); }
   @media (hover: hover) { .dev-ws-places-btn:hover { background: var(--bg-secondary); color: var(--text-primary); } }
-  .dev-ws-places-dot { box-shadow: 0 0 0 2px var(--bg-primary); }
+  .dev-ws-places-dot { background: var(--text-muted); box-shadow: 0 0 0 2px var(--bg-primary); }
   .dev-ws-place-title { font-size: 20px; font-weight: 700; color: var(--text-primary); }
 }
 
@@ -19560,14 +19687,24 @@ html[data-nav-drawer] #app-view { touch-action: pan-y; }
   .messages-thread-peek { overflow: hidden; }
   .messages-thread-peek > .messages-peek-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
   .messages-thread-peek .messages-thread-scroll { overflow: hidden; }
+  .messages-thread-peek .messages-peek-head { flex: none; display: flex; padding: 14px 16px 8px; }
+  .messages-thread-peek .messages-message > :first-child { visibility: hidden; }
   .messages-peek-open {
     position: absolute; inset: 0; margin: 0; padding: 0; border: 0;
     background: rgba(0, 0, 0, 0.05); cursor: pointer; -webkit-tap-highlight-color: transparent;
   }
   :is(.dark) .messages-peek-open { background: rgba(0, 0, 0, 0.22); }
   .messages-peek-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; }
-  /* In a conversation the header names it, so its sheet keeps only its discs. */
-  .messages-layout.messages-drawer .messages-thread-header { padding-top: 8px; padding-bottom: 0; }
+  /* In a conversation the header names it, so its sheet keeps only its discs,
+     and they take no row of their own (polish N15: a 48px row held the ⋯
+     alone). They float at the conversation's top-right corner, over the
+     Homeroom bot's Activity strip, which leaves them its right end. */
+  .messages-layout.messages-drawer > .messages-thread-pane > .messages-thread-header {
+    position: absolute; top: 4px; right: 12px; z-index: 25; padding: 0; gap: 8px;
+  }
+  .messages-layout.messages-drawer > .messages-thread-pane > .messages-thread-header .messages-thread-action { width: 32px; height: 32px; }
+  .messages-layout.messages-drawer > .messages-thread-pane > .messages-thread-header .messages-thread-action svg { width: 18px; height: 18px; }
+  .messages-layout.messages-drawer > .messages-thread-pane [data-bot-strip-toggle] { padding-right: 56px; }
 }
 
 /* ── The hero's rows (community-card.tsx) ──
@@ -19575,9 +19712,12 @@ html[data-nav-drawer] #app-view { touch-action: pan-y; }
    phrase, the audience's glyph leading it. Then one row of what you can do:
    Open app in the community's colour, Invite, the ⋯, and Join at the far
    end. Leave is a row of the ⋯ (#4045). */
-.dev-ws-hero-audience { display: inline-flex; align-items: center; gap: 4px; vertical-align: -3px; }
+/* The words sit on the line's own baseline, so "Public community" and
+   " · 23 members" read as one line; only the glyph is centred. A
+   `vertical-align` nudge here dropped the audience 3px below the count. */
+.dev-ws-hero-audience { display: inline-flex; align-items: baseline; gap: 4px; }
 .dev-ws-hero-audience b { font-weight: 650; }
-.dev-ws-hero-audience svg { width: 16px; height: 16px; flex: none; color: var(--text-muted); }
+.dev-ws-hero-audience svg { width: 16px; height: 16px; flex: none; align-self: center; color: var(--text-muted); }
 .dev-ws-hero-row { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 32px; }
 .dev-ws-hero-row > .dev-ws-hero-actions { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; }
 .dev-ws-hero-member { margin-left: auto; flex: none; display: flex; }
@@ -20789,7 +20929,11 @@ button.dev-ws-dash-cell {
   font-weight: inherit;
   text-align: left;
   cursor: pointer;
-  border-radius: 10px;
+  /* Square, as the spans beside it are (polish board #24): a radius bent
+     this cell's hairline into a faint rounded outline where the other
+     figures have straight dividers. */
+  border-radius: 0;
+  box-shadow: none;
 }
 button.dev-ws-dash-cell:hover .dev-ws-dash-label { color: var(--accent); }
 button.dev-ws-dash-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -21800,6 +21944,40 @@ html[data-browser-scroller] #landing-header::before {
     linear-gradient(var(--fake-glass-tint, var(--dc-sheet-fill)), var(--fake-glass-tint, var(--dc-sheet-fill))),
     var(--home-washes, var(--dc-sheet-solid));
 }
+/* DISCOVER'S SEARCH BAND FROM 768px (polish N12), the same faked layer.
+   It pinned on a flat `--home-ground` fill: the washes behind the page do
+   not reach it, so it read as a band of a different colour across them, and
+   with no edge the cards slid under it into nothing. Now it paints the
+   wallpaper's own grain and washes, fixed so they line up with the body's
+   pixel for pixel: the band is the page, opaque, and only its hairline
+   says where the cards pass under. The phone's head is not sticky
+   (`browse-pane-head` above) and keeps its transparent fill. */
+@media (min-width: 768px) {
+  #browse-search-bar {
+    background: transparent;
+    clip-path: inset(0);
+  }
+  #browse-search-bar::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      var(--home-grain, none) 0 0 / 240px 240px repeat,
+      var(--home-washes, var(--dc-sheet-solid));
+  }
+  #browse-search-bar::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 1px;
+    background: var(--app-sheet-line);
+    pointer-events: none;
+  }
+}
 /* THE HAIRLINE GOES BACK ON TOP. The layer paints over its surface's own
    border (a stacking context's negative layer comes after its background and
    border), so a bar whose edge is a border redraws it above the layer. */
@@ -22039,10 +22217,15 @@ html.un-ios {
 
 /* A QUIET GREY DISC, NOT THE BELL'S RED (#2912). This used to be the same
    red disc as #notifications-badge, on the argument that two counts on one
-   screen should look alike. But an unread message is ALSO counted in the
+   screen should look alike. But an unread message was ALSO counted in the
    bell, so the same news arrived twice in the loudest colour on the screen,
    and the second red drew the eye away from the one that is the alarm. The
    bell keeps the red; this only says "there is something here".
+
+   ONE MEANING PER BADGE since the 19 Oct 2026 polish board (#18): grey is
+   NEW TO READ wherever it is (this, the channels' count beside it, a chat's
+   row), the accent is WAITING ON YOU (votes), and red is the bell alone,
+   which no longer counts plain messages at all: this count is theirs.
 
    Same size and place on the phone's bar, on the glyph's corner, with white
    ink. The fill is `--text-faint`, the neutral ramp's lightest step, which
@@ -22696,10 +22879,16 @@ html.un-kb #platform-parked {
     order: 3;
   }
   /* The cog: the ink, radius, lit fill and hover are a tab's, so it reads as
-     one more place in the rail rather than a toolbar button. */
+     one more place in the rail rather than a toolbar button.
+     ONE STEP ABOVE THE TABS (#4 of the 19 Oct polish board). A flex item
+     paints in `order`, not in markup order, so Me (`order: 3`) painted over
+     the cog (`order: 2`) at the same z-index 1. In the sidebar of rows Me's
+     row runs under the cog, and its padding left room to see the cog but
+     not to press it: every click on the cog opened Profile, and Me's lit
+     fill covered it on Profile, Settings and the leaderboard. */
   .platform-rail-settings {
     position: relative;
-    z-index: 1;
+    z-index: 2;
     align-self: center;
     display: inline-flex;
     align-items: center;
@@ -22874,10 +23063,12 @@ html.un-kb #platform-parked {
   }
 
   /* THE COMMUNITIES TAB IS THE SECTION'S ALL ROW: the grid and "All 13
-     communities" in place of the ring and the word, and on it only the
-     votes in the communities the section does not list
-     (`.platform-tab-all-votes`), so no vote is counted twice. The grey count
-     of unread channels stays until a vote takes its seat, as on the strip. */
+     communities" in place of the ring and the word, and on it every vote
+     waiting on you (`.platform-tab-all-votes`, the tab's own figure: #18 of
+     the 19 Oct polish board; it used to be only the votes in the rows not
+     listed, which read as a total and was not one). The grey count of
+     unread channels stays until a vote takes its seat, as on the strip:
+     one number per row. */
   #platform-tab-workshop .platform-tab-ring,
   #platform-tab-workshop .platform-tab-label,
   #platform-tab-workshop .platform-tab-votes {
@@ -22908,7 +23099,9 @@ html.un-kb #platform-parked {
   #platform-tab-workshop .platform-tab-mark:has(.platform-tab-votes) > #platform-tabs-badge-communities:not(.hidden) {
     display: inline-flex;
   }
-  #platform-tab-workshop:has(.platform-tab-all-votes) #platform-tabs-badge-communities {
+  /* As heavy as the rule above, and after it, so it wins (#18): it was
+     (2,1,0) against (2,3,0), and the All row drew a grey 1 beside a blue 28. */
+  #platform-tab-workshop:has(.platform-tab-all-votes) .platform-tab-mark > #platform-tabs-badge-communities:not(.hidden) {
     display: none;
   }
   /* ON A COMMUNITY'S PAGE ITS OWN ROW IS LIT, NOT ALL. The tab keeps
@@ -23196,10 +23389,15 @@ html.un-kb #platform-parked {
   }
   /* The part's one grid row is what features/nav/rail-nest.tsx animates
      (`0fr` to `1fr`, which is the rows' own height on every frame). */
+  /* ITS ONE COLUMN IS THE RAIL'S WIDTH (N19). With no column size the
+     implicit track grew to the widest row, which never wraps (350px inside
+     199px), so a long name ran past the edge and was clipped by the
+     overflow with no ellipsis. Sized to the rail, each label ends in "…". */
   .platform-rail-nest {
     flex: none;
     display: grid;
     grid-template-rows: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     overflow: hidden;
   }
   .platform-rail-nest[data-nest="closing"] {
@@ -23327,6 +23525,11 @@ html.un-kb #platform-parked {
     font-weight: 700;
     line-height: 1;
   }
+  /* A conversation's and a channel's count is new to read (#18): grey, as
+     the Messages tab's is. Needs you's votes keep the accent. */
+  .platform-rail-nest :is(.platform-rail-sub-count, :is([data-place="discussion"], [data-place^="c:"]) > .dev-ws-place-count) {
+    background: var(--text-faint, #8e8e93);
+  }
   .platform-rail-nest .dev-ws-places-more {
     padding-left: 30px;
     color: var(--text-muted);
@@ -23411,14 +23614,16 @@ html.un-kb #platform-parked {
   .platform-rail-nest .platform-rail-places > .platform-rail-nest-in::before {
     display: none;
   }
-  /* The parent: lit by its page, filled by none, its count said under it. */
+  /* The parent: lit by its page, filled by none, its count said under it.
+     Messages only while a row under it is lit (#21): a conversation that is
+     not among the five adds no row now, and Messages keeps its fill. */
   .platform-rail-community[data-rail-open][aria-current="page"],
-  .platform-tabs:has(#platform-rail-conversations > [data-nest="open"]) #platform-tab-messages[aria-current="page"] {
+  .platform-tabs:has(#platform-rail-conversations > [data-nest="open"] [aria-current="page"]) #platform-tab-messages[aria-current="page"] {
     background: transparent;
     color: var(--text-primary);
     font-weight: 650;
   }
-  .platform-tabs:has(#platform-rail-conversations > [data-nest="open"]) #platform-tab-messages[aria-current="page"] .platform-tab-glyph {
+  .platform-tabs:has(#platform-rail-conversations > [data-nest="open"] [aria-current="page"]) #platform-tab-messages[aria-current="page"] .platform-tab-glyph {
     color: var(--text-primary);
   }
   /* The places are in the sidebar, so the place bar's button to the tray has
@@ -23771,8 +23976,10 @@ html.dark .messages-inbox-change-tile {
      the ROUTER's answer about whether this route has a rail, and the two have
      to stay tellable apart (frontend/src/features/nav/tab-bar.tsx). A peeking
      bar keeps both classes and this rule stands aside for it, which is what
-     makes the hot zone at the window's edge the way back. */
-  .platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) {
+     makes the hot zone at the window's edge the way back. It stands aside
+     too while the rail slides away (`platform-tabs-leaving`, N21:
+     frontend/src/features/nav/rail-slide.ts). */
+  .platform-tabs.platform-tabs-folded:not(.platform-tabs-peek):not(.platform-tabs-leaving) {
     display: none;
   }
   /* …AND ITS FOOTER GOES WITH IT (#2762). The parked strip is fixed to the
@@ -24241,6 +24448,15 @@ html.in-side-panel body {
 .dev-ws-hrow-meta {
   flex: none; display: inline-flex; align-items: center; gap: 8px;
   font-size: 13px; color: var(--text-muted); white-space: nowrap;
+  /* Never wider than the row (polish board #24): a long step, "Waiting for
+     a slot, 1 request ahead of it", ran past the card's edge and was cut
+     with no ellipsis. The words tags give way with an ellipsis instead; the
+     pill, the glyph tags and the time keep their size. */
+  max-width: 100%; min-width: 0;
+}
+.dev-ws-hrow-meta > * { flex: none; }
+.dev-ws-hrow-meta > .dev-ws-hrow-tag:not(:has(> svg)) {
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
 }
 .dev-ws-hrow-you {
   display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 999px;
@@ -24527,4 +24743,164 @@ html.in-side-panel body {
 @media (max-width: 640px) {
   .dev-ws-wrow { gap: 10px; }
   .dev-ws-wrow-tile { width: 30px; height: 30px; border-radius: 9px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   EXPERIMENTAL: the new Needs you review flow (.rf-*)
+   ═══════════════════════════════════════════════════════════════════
+
+   frontend/src/features/review-flow/, behind Settings › Experimental
+   ("New Needs you", kept on the device). The feed of title shots, the
+   change page that expands out of a card, its before/after slider and its
+   vote sheet. Drawn for the phone first; a wide window shows the same
+   column centred. Colours are the shell's own tokens, light and dark. */
+.rf-feed, .rf-page-wrap {
+  --rf-page: var(--bg-primary);
+  --rf-sheet: var(--bg-secondary);
+  --rf-fill: var(--bg-tertiary);
+  --rf-ink: var(--text-primary);
+  --rf-muted: var(--text-muted);
+  --rf-line: var(--app-sheet-line);
+  --rf-black: #1b1b1d;
+  --rf-cream: #fffeea;
+}
+.dark .rf-feed, .dark .rf-page-wrap { --rf-page: #0b0d1b; --rf-sheet: #1c1c1e; --rf-fill: #2c2c2e; }
+
+/* The feed: a title shot and a title, nothing else. */
+.rf-feed { display: flex; flex-direction: column; gap: 28px; padding: 4px 16px 32px; transform-origin: 50% 30%; }
+.rf-loading { min-height: 50vh; }
+.rf-card { display: flex; flex-direction: column; gap: 12px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.rf-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 20px; }
+.rf-cover { position: relative; display: grid; place-items: center; overflow: hidden; border-radius: 20px; isolation: isolate; }
+.rf-plate { position: relative; overflow: hidden; border-radius: 12px; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 8px 24px rgba(0,0,0,.10); }
+.rf-plate img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; }
+.rf-plate-whole img { position: static; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.rf-quiet-card, .rf-hero-quiet { display: flex; flex-direction: column; justify-content: center; gap: 10px; box-sizing: border-box; padding: 24px 28px; color: #1b1b1d; text-align: left; }
+.rf-quiet-card { width: 100%; height: 100%; }
+.rf-quiet-over { font: 600 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; color: rgba(27,27,29,.62); }
+.rf-quiet-text { font-size: 17px; font-weight: 600; line-height: 23px; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.rf-card-title { padding: 0 4px; font-size: 17px; font-weight: 600; line-height: 22px; color: var(--rf-ink); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.rf-end { display: flex; flex-direction: column; align-items: center; padding: 28px 8px 8px; text-align: center; }
+.rf-end-mark { width: 48px; height: 48px; border-radius: 999px; background: var(--lit-tint); color: var(--lit-ink); display: grid; place-items: center; }
+.rf-end-line { margin: 14px 0 20px; font-size: 15px; line-height: 21px; color: var(--rf-muted); }
+.rf-end-btn { align-self: stretch; height: 48px; border: 0; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
+.rf-capped { margin: -12px 0 0; font-size: 12px; color: var(--rf-muted); text-align: center; }
+
+/* The change page: fixed above the tab bar, which stays. */
+.rf-page-wrap { position: fixed; left: 0; right: 0; top: 0; bottom: var(--platform-tabs-h, 0px); z-index: 35; pointer-events: none; }
+.rf-page { position: absolute; top: 0; bottom: 0; left: max(0px, calc(50% - 260px)); width: min(100%, 520px); display: flex; flex-direction: column; overflow: hidden; background: var(--rf-page); color: var(--rf-ink); pointer-events: auto; -webkit-font-smoothing: antialiased; }
+.rf-band { position: absolute; left: 0; right: 0; top: 0; height: 0; z-index: 3; pointer-events: none; }
+.rf-head { position: relative; z-index: 4; flex: none; display: flex; align-items: center; gap: 4px; padding: env(safe-area-inset-top, 0px) 4px 4px; min-height: 52px; background: var(--rf-page); }
+.rf-head-btn { width: 44px; height: 44px; flex: none; display: grid; place-items: center; border: 0; background: none; color: inherit; cursor: pointer; }
+.rf-head-title { flex: 1; min-width: 0; margin: 0; text-align: center; font-size: 16px; font-weight: 600; line-height: 22px; }
+.rf-head-title span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rf-fly { position: fixed; z-index: 36; margin: 0; white-space: nowrap; transform-origin: 0 0; pointer-events: none; }
+.rf-stage { position: relative; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+.rf-stage-layer { background: var(--rf-page); }
+.rf-stage-leaving { position: absolute; left: 0; right: 0; top: 0; z-index: 0; }
+.rf-stage-arriving { position: relative; z-index: 1; }
+.rf-page-body { padding-bottom: 16px; }
+.rf-claim { margin: 0; padding: 14px 16px 0 20px; font-size: 17px; font-weight: 600; line-height: 23px; text-wrap: pretty; }
+.rf-thumbs { display: flex; gap: 8px; padding: 10px 14px 4px; overflow-x: auto; scrollbar-width: none; }
+.rf-thumbs::-webkit-scrollbar { display: none; }
+.rf-thumb { position: relative; flex: none; width: 52px; height: 52px; margin: 4px; padding: 0; border: 0; border-radius: 12px; overflow: hidden; display: grid; place-items: center; box-shadow: inset 0 0 0 1px var(--rf-line); cursor: pointer; }
+.rf-thumb[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--rf-page), 0 0 0 4px var(--lit-ink); }
+.rf-thumb-in { position: relative; overflow: hidden; border-radius: 4px; background: #fff; }
+.rf-thumb-in img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; }
+.rf-hero-quiet { width: 100%; }
+.rf-scrim { position: absolute; inset: 0; z-index: 5; background: rgba(0,0,0,.62); opacity: 0; pointer-events: none; transition: opacity .22s cubic-bezier(0.22,1,0.36,1); }
+.rf-scrim-on { opacity: 1; pointer-events: auto; }
+
+/* The slider. */
+.rf-compare { position: relative; overflow: hidden; touch-action: pan-y; user-select: none; -webkit-user-select: none; outline: none; }
+.rf-compare:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.rf-layer, .rf-layer-clip { position: absolute; left: 0; top: 0; }
+.rf-layer-clip { inset: 0; }
+.rf-shot-img { display: block; max-width: none; }
+.rf-shot-whole { width: 100%; height: auto; }
+.rf-seam { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; background: var(--rf-black); z-index: 3; pointer-events: none; transition: opacity .18s cubic-bezier(0.22,1,0.36,1), width .15s ease-out; }
+.rf-dragging .rf-seam { width: 1px; opacity: .5 !important; }
+.rf-tab { position: absolute; left: 0; top: 0; width: 30px; height: 60px; z-index: 4; display: grid; place-items: center; border-radius: 0 14px 14px 0; background: var(--rf-black); color: var(--rf-cream); pointer-events: none; transition: opacity .18s cubic-bezier(0.22,1,0.36,1); }
+.rf-tab-right { border-radius: 14px 0 0 14px; }
+.rf-tab-mid { border-radius: 14px; }
+.rf-dragging .rf-tab { opacity: 0 !important; transition: opacity .12s cubic-bezier(0.22,1,0.36,1); }
+.rf-pill { position: absolute; left: 50%; top: 12px; z-index: 5; width: 104px; height: 36px; margin-left: -52px; padding: 0; border: 0; border-radius: 999px; overflow: hidden; background: var(--rf-cream); color: var(--rf-black); box-shadow: inset 0 0 0 1px var(--rf-black); font: 560 14px/36px var(--font-sans, ui-sans-serif, system-ui, sans-serif); cursor: pointer; touch-action: manipulation; -webkit-touch-callout: none; transition: opacity .3s cubic-bezier(0.22,1,0.36,1), scale .12s; }
+.rf-pill::before { content: ''; position: absolute; left: 50%; top: 50%; width: 120px; height: 44px; transform: translate(-50%, -50%); }
+.rf-pill:active { scale: .96; }
+.rf-pill-word { position: relative; display: block; text-align: center; }
+.rf-pill-dark { position: absolute; inset: 0; background: var(--rf-black); color: var(--rf-cream); clip-path: inset(0 calc(100% - var(--rf-g, 0%)) 0 0); }
+.rf-pill[data-view="before"] { background: var(--rf-black); color: var(--rf-cream); }
+
+/* The vote sheet, pinned at the page's foot. */
+.rf-sheet { position: relative; z-index: 6; flex: none; overflow: hidden; border-radius: 20px 20px 0 0; background: var(--rf-sheet); box-shadow: 0 -8px 32px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.06); transition: height .26s cubic-bezier(0.22,1,0.36,1); }
+.rf-sheet-inner { display: flex; flex-direction: column; max-height: inherit; padding: 0 16px 10px; }
+.rf-sheet button, .rf-sheet input, .rf-sheet textarea { font-family: inherit; }
+.rf-grab { flex: none; display: block; width: 100%; height: 27px; margin: 0; padding: 0; border: 0; background: none; cursor: pointer; }
+.rf-grab span { display: block; width: 36px; height: 5px; margin: 8px auto 14px; border-radius: 999px; background: var(--rf-line); }
+.rf-yn { flex: none; display: flex; gap: 10px; }
+.rf-pill-btn { flex: 1; height: 52px; border: 0; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 17px; font-weight: 600; cursor: pointer; }
+.rf-pill-btn:active { scale: .98; }
+.rf-pill-btn:disabled { opacity: .6; }
+.rf-pill-no { background: rgba(239,68,68,.16); color: #dc2626; }
+.dark .rf-pill-no { background: rgba(239,68,68,.18); color: #f87171; }
+.rf-pill-primary { background: var(--accent); color: #fff; }
+.dark .rf-pill-primary { background: #0a6ee0; }
+.rf-quiet { flex: none; width: 100%; min-height: 44px; margin-top: 4px; border: 0; background: none; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--rf-muted); font-size: 15px; font-weight: 500; cursor: pointer; }
+.rf-line { margin: 12px 4px 6px; font-size: 13px; line-height: 18px; color: var(--rf-muted); }
+.rf-line-tight { margin: 6px 4px 0; }
+.rf-row { position: relative; width: 100%; display: flex; align-items: center; gap: 14px; min-height: 64px; padding: 10px 0; border: 0; background: none; color: var(--rf-ink); text-align: left; text-decoration: none; cursor: pointer; }
+.rf-row::after { content: ''; position: absolute; left: 50px; right: 0; bottom: 0; height: 1px; background: var(--rf-line); }
+.rf-row:last-child::after { display: none; }
+.rf-row > svg:last-child { flex: none; color: var(--rf-muted); }
+.rf-row-icon { width: 36px; height: 36px; flex: none; border-radius: 12px; background: var(--rf-fill); display: grid; place-items: center; }
+.rf-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rf-row-text b { font-size: 15px; font-weight: 650; line-height: 20px; }
+.rf-row-text i { font-style: normal; font-size: 13px; line-height: 18px; color: var(--rf-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rf-menu .rf-menu-row { min-height: 52px; padding: 0 4px; font-size: 17px; font-weight: 500; }
+.rf-menu .rf-menu-row::after { left: 4px; }
+.rf-menu-cancel { color: var(--rf-muted); }
+.rf-sub { flex: none; display: flex; align-items: center; gap: 2px; margin: 10px 0 2px -12px; }
+.rf-sub button { width: 44px; height: 44px; flex: none; display: grid; place-items: center; border: 0; background: none; color: var(--rf-ink); cursor: pointer; }
+.rf-sub h2 { margin: 0; font-size: 17px; font-weight: 600; line-height: 22px; }
+.rf-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 2px 0 12px; }
+.rf-note { margin: 0; font-size: 13px; line-height: 18px; color: var(--rf-muted); }
+.rf-para { margin: 0; font-size: 15px; line-height: 21px; }
+.rf-sect { margin: 6px 0 -4px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--rf-muted); }
+.rf-facts { border-radius: 16px; background: var(--rf-fill); padding: 4px 14px; }
+.rf-facts > div { display: flex; flex-direction: column; justify-content: center; min-height: 52px; border-bottom: 1px solid var(--rf-line); }
+.rf-facts > div:last-child { border-bottom: 0; }
+.rf-facts b { font-size: 15px; font-weight: 600; line-height: 20px; }
+.rf-facts small { font-size: 13px; color: var(--rf-muted); }
+.rf-link { align-self: flex-start; min-height: 44px; display: inline-flex; align-items: center; color: var(--accent); font-size: 15px; font-weight: 500; text-decoration: none; }
+.rf-me { align-self: flex-end; max-width: 80%; padding: 10px 14px; border-radius: 18px 18px 4px 18px; background: #0a6ee0; color: #fff; font-size: 15px; line-height: 20px; white-space: pre-wrap; }
+.rf-ai { align-self: flex-start; max-width: 88%; display: flex; flex-direction: column; gap: 6px; }
+.rf-ai small { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; color: var(--rf-muted); }
+.rf-ai small svg { width: 14px; height: 14px; }
+.rf-ai p { margin: 0; padding: 10px 14px; border-radius: 18px 18px 18px 4px; background: var(--rf-fill); font-size: 15px; line-height: 20px; white-space: pre-wrap; }
+.rf-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.rf-chip { height: 44px; padding: 0 13px; border: 0; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); font-size: 15px; font-weight: 500; white-space: nowrap; cursor: pointer; }
+.rf-ask-form { flex: none; display: flex; align-items: center; gap: 8px; margin: 0; padding: 4px 0 8px; }
+.rf-ask-form input, .rf-textarea { flex: 1; min-width: 0; box-sizing: border-box; border: 0; background: var(--rf-fill); box-shadow: inset 0 0 0 1px var(--rf-line); color: var(--rf-ink); font-size: 16px; line-height: 22px; outline: 0; }
+.rf-ask-form input { height: 44px; padding: 0 16px; border-radius: 999px; }
+.rf-textarea { display: block; width: 100%; height: 76px; padding: 10px 12px; border-radius: 12px; resize: none; }
+.rf-ask-label { display: block; margin: 18px 4px 8px; font-size: 15px; font-weight: 600; line-height: 20px; }
+.rf-ends { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding-top: 12px; }
+.rf-cancel { height: 44px; padding: 0 16px; border: 0; background: none; color: var(--rf-muted); font-size: 15px; font-weight: 600; cursor: pointer; }
+.rf-go { flex: none; height: 44px; padding: 0 20px; border: 0; border-radius: 999px; background: #0a6ee0; color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
+.rf-go:disabled { opacity: .5; cursor: default; }
+.rf-go-wide { align-self: stretch; height: 48px; }
+.rf-thread { min-height: 200px; }
+.rf-said { display: flex; flex-direction: column; align-items: center; padding: 14px 0 24px; }
+.rf-said-mark { width: 72px; height: 72px; border-radius: 999px; background: var(--lit-tint); color: var(--lit-ink); display: grid; place-items: center; }
+.rf-said h2 { margin: 14px 0 0; font-size: 20px; font-weight: 700; line-height: 26px; letter-spacing: -.01em; }
+.rf-said + .rf-yn { margin-bottom: 6px; }
+@keyframes rf-mark-in { 0% { transform: scale(.6); opacity: 0; } 60% { transform: scale(1.06); opacity: 1; } 100% { transform: none; } }
+@keyframes rf-draw { from { stroke-dashoffset: 40; } }
+@keyframes rf-rise { from { opacity: 0; transform: translateY(4px); } }
+.rf-fresh .rf-said-mark { animation: rf-mark-in .42s cubic-bezier(0.22,1,0.36,1); }
+.rf-fresh .rf-said-mark path { stroke-dasharray: 40; animation: rf-draw .36s .12s cubic-bezier(0.22,1,0.36,1) both; }
+.rf-fresh h2 { animation: rf-rise .3s .08s cubic-bezier(0.22,1,0.36,1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .rf-sheet, .rf-scrim, .rf-seam, .rf-tab, .rf-pill { transition: none; }
+  .rf-fresh .rf-said-mark, .rf-fresh .rf-said-mark path, .rf-fresh h2 { animation: none; }
 }

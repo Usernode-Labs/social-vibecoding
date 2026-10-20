@@ -174,7 +174,7 @@ test('no run writes the rollout reason, and nothing stamps or reads a boot windo
   assert.equal(stagingRecovery.errorVerdictWillRetry, undefined, 'its only reader went with it');
 });
 
-test('the auto-retry cap is still read in one place, and the reconcile reads it', (t) => {
+test('the auto-retry cap is read the same way by the connector and by the preview machine', (t) => {
   const saved = process.env.CHECK_MAX_AUTO_RETRIES;
   t.after(() => {
     if (saved === undefined) delete process.env.CHECK_MAX_AUTO_RETRIES;
@@ -186,9 +186,13 @@ test('the auto-retry cap is still read in one place, and the reconcile reads it'
   assert.equal(stagingRecovery.checkMaxAutoRetries(), 3);
   process.env.CHECK_MAX_AUTO_RETRIES = 'not a number';
   assert.equal(stagingRecovery.checkMaxAutoRetries(), 6);
-  const server = stripComments(read('server.js'));
-  assert.match(server, /const CHECK_MAX_AUTO_RETRIES = stagingRecovery\.checkMaxAutoRetries\(\);/);
-  assert.match(server, /maxAutoRetries: CHECK_MAX_AUTO_RETRIES/);
+  // The machine's error lane takes it from the config, read once at boot
+  // with the same default; the leader's stuck-checks reconcile that read it
+  // in server.js is gone.
+  const config = stripComments(read('src/config.js'));
+  assert.match(config, /checkMaxAutoRetries: \(\(\) => \{\s+const n = Number\.parseInt\(process\.env\.CHECK_MAX_AUTO_RETRIES \|\| '6', 10\);\s+return Number\.isFinite\(n\) \? n : 6;/);
+  assert.match(stripComments(read('src/workflow/platform.ts')), /maxRetries: config\.checkMaxAutoRetries \?\? 6,/);
+  assert.doesNotMatch(stripComments(read('server.js')), /CHECK_MAX_AUTO_RETRIES/);
 });
 
 // ── A live run ──────────────────────────────────────────────────────────

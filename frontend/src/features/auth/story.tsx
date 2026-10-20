@@ -35,7 +35,7 @@
 // tier list drawn as one.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import { Message } from '../../lib/i18n/react';
+import { Message, RichMessage } from '../../lib/i18n/react';
 import { FRONT } from '../first-session/examples';
 import { useMessages } from '../../lib/i18n/react';
 import { TierChart } from '../first-session/tier-chart';
@@ -99,11 +99,13 @@ export function nextStep(fit: number, footBottom: number, screenBottom: number):
   return fit + 1;
 }
 
-export function Story({ primaryClass, welcomeEmail = null, onStart }: {
+export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn }: {
   primaryClass: string;
   /** The address a "You're in" mail's link names, greeted under the welcome. */
   welcomeEmail?: string | null;
   onStart: () => void;
+  /** The foot line's "Sign in": the sheet in its Sign in mode. Continue's when absent. */
+  onSignIn?: () => void;
 }) {
   const t = useMessages('auth');
   const storyRef = useRef<HTMLDivElement>(null);
@@ -207,8 +209,21 @@ export function Story({ primaryClass, welcomeEmail = null, onStart }: {
         <a href="#signup" data-landing-story-start="" className={primaryClass} onClick={(e) => { e.preventDefault(); onStart(); }}>
           {t('auth:story.continue')}
         </a>
+        {/* Polish N10: the line read like a second way in but was plain
+            text. Its "Sign in" is one now, the same sheet titled Sign in
+            (landing.tsx's 'signin'), for somebody who has an account. */}
         <p data-landing-story-how="" className="mt-1 text-[15px] leading-5 text-zinc-500 dark:text-zinc-400 text-balance">
-          {t('auth:story.email')}
+          <RichMessage
+            id="auth:story.email"
+            components={[
+              <a
+                href="#login"
+                data-landing-story-signin=""
+                className="font-semibold text-violet-700 dark:text-violet-400 hover:underline un-touch-target"
+                onClick={(e) => { e.preventDefault(); (onSignIn || onStart)(); }}
+              />,
+            ]}
+          />
         </p>
       </div>
     </div>

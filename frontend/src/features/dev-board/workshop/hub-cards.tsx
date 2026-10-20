@@ -300,6 +300,9 @@ const FIRST_LOOK_ONLY: readonly string[] = ['first_look'];
  * 15 Oct 2026 (newcomer run nine): until the picture is saved, its drawn
  * screen (../../first-session/drawn-look.tsx), asked again until the
  * picture is there and swapped for it once it is in.
+ *
+ * #5618: its picture and words open the maker's chat with Homeroom bot,
+ * where the build is reported; Watch keeps its own job (FirstLookView).
  */
 export function FirstLookCard({ slug, data }: { slug: string; data: CommunityPayload | null }): ReactNode {
   const touring = useTourRunning();
@@ -325,7 +328,22 @@ export function FirstLookCard({ slug, data }: { slug: string; data: CommunityPay
   }, [wanted, slug, src, broken]);
   const shown = useLookSwap(src && src !== broken ? src : null, ownSrc);
   if (!wanted || touring || !shown) return null;
-  return <FirstLookView slug={slug} name={data?.name || slug} src={shown} onBroken={() => setBroken(shown)} />;
+  return (
+    <FirstLookView
+      slug={slug}
+      name={data?.name || slug}
+      src={shown}
+      onBroken={() => setBroken(shown)}
+      // #5618: the picture and the words open the maker's chat with Homeroom
+      // bot, as the First version card's Review the plan does; the Watch
+      // button keeps its own job.
+      onOpen={() => {
+        const id = data?.first_version?.conversation_id;
+        if (id) openConversation(id);
+        else void openBot();
+      }}
+    />
+  );
 }
 
 /**
@@ -337,19 +355,37 @@ export function watchBuild(slug: string): void {
   (window as any).App?.openAppTab?.(slug, 'app');
 }
 
-/** The first look card once its picture is there (FirstLookCard). */
-export function FirstLookView({ slug, name, src, onBroken }: {
+/**
+ * The first look card once its picture is there (FirstLookCard).
+ *
+ * TAPPING IT (#5618): with `onOpen`, the picture and the words open the
+ * maker's chat with Homeroom bot. An empty button over them (under the
+ * Watch button) is the door, so the card keeps its look and only a hover
+ * tint and the focus ring say it can be tapped.
+ */
+export function FirstLookView({ slug, name, src, onBroken, onOpen }: {
   slug: string;
   name: string;
   /** The first look's own URL (../../first-session/first-look.tsx firstLookSrc), or its drawn screen's. */
   src: string;
   /** The picture would not load: the card asks for it again. */
   onBroken?: () => void;
+  /** Opens the maker's chat with Homeroom bot: the picture and words become its door. */
+  onOpen?: () => void;
 }): ReactNode {
   const t = useMessages('project');
   const alt = t('project:hub.firstLook.alt', { app: name });
   return (
     <section className="dev-ws-strip dev-ws-first-look" data-ws-first-look="">
+      {onOpen ? (
+        <button
+          type="button"
+          className="dev-ws-first-look-open"
+          data-ws-first-look-open=""
+          aria-label={t('project:hub.firstLook.open')}
+          onClick={onOpen}
+        />
+      ) : null}
       {isDrawnLook(src) ? (
         // Its drawn screen, at the picture's size, until the picture is saved.
         <div className="dev-ws-first-look-shot relative overflow-hidden">
@@ -657,6 +693,92 @@ export function ForYouCard({
   );
 }
 
+/* ── The hub while it loads ──────────────────────────────────────────── */
+
+/** A text line's own box, filled: the bar is exactly as tall as the words it stands for. */
+const BAR = 'inline-block max-w-full rounded bg-zinc-200 align-top dark:bg-zinc-800';
+const BAR_SOFT = 'inline-block max-w-full rounded bg-zinc-200/70 align-top dark:bg-zinc-800/70';
+
+function SkeletonRow({ wide }: { wide: string }): ReactNode {
+  return (
+    <div className="dev-ws-foryou-row flex items-center">
+      <span className="h-8 w-8 shrink-0 rounded-lg bg-zinc-200 dark:bg-zinc-800" />
+      <span className="min-w-0 flex-1">
+        <span className="block text-[0.9375rem] leading-5"><span className={`${BAR} ${wide}`}>{'\u00a0'}</span></span>
+        <span className="mt-0.5 block text-[0.8125rem] leading-[1.125rem]"><span className={`${BAR_SOFT} w-2/3`}>{'\u00a0'}</span></span>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * THE HUB'S OWN SHAPE WHILE IT LOADS (polish board #3): its hero (the tile
+ * and the name over who it is for, the description, who is around, the
+ * actions), For you's three doors and Recently live's three pictures, drawn
+ * in the hub's own boxes, so what arrives lands on its own outline. It was
+ * the Dev board's card list (CardSkeleton), which is no part of the hub.
+ * Who is around is drawn when the last read of the communities says other
+ * people are in it (`others`), as the hero only draws it then.
+ */
+export function HubSkeleton({ others }: { others: boolean }): ReactNode {
+  const t = useMessages('project');
+  return (
+    <>
+      <div className="sr-only" role="status">{t('project:page.loading')}</div>
+      <section className="dev-ws-hero dev-ws-hero-summary animate-pulse" aria-hidden="true" data-ws-hub-skeleton="">
+        <div className="dev-ws-hero-id">
+          <span className="dev-ws-hero-tile bg-zinc-200 dark:bg-zinc-800" />
+          <span className="dev-ws-hero-id-text">
+            <span className="dev-ws-hero-name"><span className={`${BAR} w-44`}>{'\u00a0'}</span></span>
+            <span className="dev-ws-hero-id-sub"><span className={`${BAR_SOFT} w-36`}>{'\u00a0'}</span></span>
+          </span>
+        </div>
+        <span className="dev-ws-hero-desc block"><span className={`${BAR_SOFT} w-full`}>{'\u00a0'}</span><br /><span className={`${BAR_SOFT} w-2/3`}>{'\u00a0'}</span></span>
+        {others ? (
+          <div className="dev-ws-hero-active">
+            <span className="h-8 w-28 shrink-0 rounded-full bg-zinc-200 dark:bg-zinc-800" />
+            <span className="dev-ws-hero-active-words">
+              <span className="dev-ws-hero-active-n"><span className={`${BAR} w-32`}>{'\u00a0'}</span></span>
+              <span className="dev-ws-hero-active-names"><span className={`${BAR_SOFT} w-48`}>{'\u00a0'}</span></span>
+            </span>
+          </div>
+        ) : null}
+        <div className="dev-ws-hero-row">
+          <div className="dev-ws-hero-actions">
+            <span className="h-8 w-24 rounded-full bg-zinc-200 dark:bg-zinc-800" />
+            <span className="h-8 w-20 rounded-full bg-zinc-200 dark:bg-zinc-800" />
+            <span className="h-8 w-8 rounded-full bg-zinc-200 dark:bg-zinc-800" />
+          </div>
+        </div>
+      </section>
+      <section className="dev-ws-hub-section animate-pulse" aria-hidden="true">
+        <div className={`${HUB_HEAD} text-xs font-bold uppercase leading-4`}><span className={`${BAR_SOFT} w-16`}>{'\u00a0'}</span></div>
+        <div className="dev-ws-strip dev-ws-foryou">
+          <SkeletonRow wide="w-24" />
+          <SkeletonRow wide="w-28" />
+          <SkeletonRow wide="w-20" />
+        </div>
+      </section>
+      <section className="dev-ws-hub-section animate-pulse" aria-hidden="true">
+        <div className={`${HUB_HEAD} text-xs font-bold uppercase leading-4`}><span className={`${BAR_SOFT} w-24`}>{'\u00a0'}</span></div>
+        <div className="dev-ws-strip dev-ws-recent">
+          <ul className="dev-ws-recent-list">
+            {[0, 1, 2].map((i) => (
+              <li key={i} className="dev-ws-recent-item">
+                <span className="dev-ws-recent-card">
+                  <span className="dev-ws-recent-pic" />
+                  <span className="dev-ws-recent-title"><span className={`${BAR} w-5/6`}>{'\u00a0'}</span></span>
+                  <span className="dev-ws-recent-meta"><span className={`${BAR_SOFT} w-1/2`}>{'\u00a0'}</span></span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </section>
+    </>
+  );
+}
+
 /* ── Recently live ───────────────────────────────────────────────────── */
 
 /** How many of the newest changes Recently live draws. */
@@ -724,12 +846,17 @@ function openApp(slug: string): void {
  * version Homeroom bot is still building (the page leaves `own` out), is
  * not live yet.
  */
-export function RecentlyLive({ slug, rows, onAll, own = null }: {
+export function RecentlyLive({ slug, rows, onAll, own = null, ident = null }: {
   slug: string;
   rows: DevWorkshopView['recentLive'];
   onAll: () => void;
   /** The app itself, drawn while `rows` is empty. */
   own?: RecentOwn | null;
+  /**
+   * The project's tile, for a change with no picture (polish board N13): its
+   * icon on the community's colour, where a grey box with a check was.
+   */
+  ident?: Omit<RecentOwn, 'since'> | null;
 }): ReactNode {
   const t = useMessages('project');
   const headId = useId();
@@ -737,6 +864,7 @@ export function RecentlyLive({ slug, rows, onAll, own = null }: {
   const self = !list.length && own && own.since ? liveSinceLine(own.since) : '';
   if (!slug || (!list.length && !self)) return null;
   const app = own ? { slug, name: own.name, icon_url: own.iconUrl || null, icon_emoji: own.iconEmoji || null } : null;
+  const tile = ident ? { slug, name: ident.name, icon_url: ident.iconUrl || null, icon_emoji: ident.iconEmoji || null } : null;
   return (
     <section className="dev-ws-hub-section" data-ws-hub-recent="" aria-labelledby={headId}>
       <div className="dev-ws-hub-sechead">
@@ -781,6 +909,10 @@ export function RecentlyLive({ slug, rows, onAll, own = null }: {
                   <span className="dev-ws-recent-pic" data-ws-recent-pic={r.picture ? 'shot' : 'plain'} aria-hidden="true">
                     {r.picture ? (
                       <img src={r.picture} alt="" loading="lazy" draggable={false} />
+                    ) : tile ? (
+                      <span className="app-icon-tile dev-ws-recent-app" data-icon={appIconKind(tile)}>
+                        <AppIconContent app={tile} />
+                      </span>
                     ) : r.going ? (
                       <ClockIcon className="dev-ws-recent-glyph" aria-hidden="true" />
                     ) : (

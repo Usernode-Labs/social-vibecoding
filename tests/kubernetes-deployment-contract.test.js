@@ -148,7 +148,14 @@ test('Kubernetes platform image keeps the npm download cache out of both depende
 test('Docker keeps boot migrations while Kubernetes can delegate them to a Job', () => {
   const source = read('server.js');
   assert.match(source, /RUN_MIGRATIONS_ON_STARTUP !== 'false'/);
-  assert.match(source, /migration = await withMigrationLock\(getPool\(config\), \(\) => migrate\(config\)\)/);
+  assert.match(source, /migration = await withMigrationLock\(getPool\(config\), async \(\) => \{\n\s*const result = await migrate\(config\);/);
+  // The read-only database roles go with the schema, by the new build,
+  // before any Pod of the release: the Job does both (services/db-roles.js).
+  const job = read('scripts/migrate-kubernetes.js');
+  assert.ok(job.indexOf('await migrate(config)') < job.indexOf("require('../src/services/db-roles').ensureRoles(config)"),
+    'the migration Job sets the roles up after the schema');
+  assert.ok(!/ensureRole\(|ensureConsoleRole\(/.test(source.slice(source.indexOf('async function becomeLeader()'), source.indexOf('async function start()'))),
+    'and no leader does at its election');
 });
 
 test('startup diagnostics expose coarse public-safe phases through health', () => {

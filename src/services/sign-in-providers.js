@@ -105,8 +105,15 @@ const PRIVATE_KEY_MAX = 4000;
 
 // Where the sheet was opened from, carried across the trip.
 const STARTED_FROM = Object.freeze(['invite', 'story', 'signin']);
-// Where the person comes back to: Home, or the invite link they were on.
+// Where the person comes back to: Home, the invite link they were on, or the
+// page a shared link opened while they were signed out (#5264): a fragment on
+// Home (`/#apps`, `/#app/<slug>/board`) or an app's own path
+// (`/app/<slug>/board`). Every accepted value is a path on this origin: it
+// starts with one `/` followed by nothing, `invite/`, `app/` or `#`, so it
+// can never be read as `//host` or a scheme, and a fragment, whatever it
+// says, cannot change where the browser goes.
 const INVITE_PATH_RE = /^\/invite\/[A-Za-z0-9_-]{22}$/;
+const DEEP_LINK_RE = /^\/(?:app\/[a-z0-9][a-z0-9-]{0,254}(?:\/[A-Za-z0-9_-]{1,64}){0,6})?(?:#[A-Za-z0-9_\-/.~%=&?]{1,300})?$/;
 
 class SignInProviderError extends Error {
   constructor(code, message, status = 422) {
@@ -135,7 +142,8 @@ function sameHash(a, b) {
 }
 
 function safeReturnTo(value) {
-  return typeof value === 'string' && INVITE_PATH_RE.test(value) ? value : '/';
+  if (typeof value !== 'string') return '/';
+  return INVITE_PATH_RE.test(value) || DEEP_LINK_RE.test(value) ? value : '/';
 }
 
 function callbackPath(provider) {

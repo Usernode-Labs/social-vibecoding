@@ -908,6 +908,9 @@ async function sessionTakenElsewhere(pool, sessionId, owner = null) {
 async function runFollowUpTurn({
   pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps,
   commitMsg = null, onStart = null, steps = null, owner = null, key = 'followup',
+  // The effort the later changes' configuration gives follow-ups, or null
+  // for the session's own (bot-configs.js recipe.effort.followup).
+  reasoningEffort = null,
 }) {
   const { worker, sessions, agentTurn } = deps;
   const durableTurn = deps.durableTurn || require('./durable-turn');
@@ -982,6 +985,7 @@ async function runFollowUpTurn({
           // it (#3296). The saved thread is cleared above, so a proposal built
           // in the other CLI is never resumed across the switch.
           harness: 'auto',
+          ...(reasoningEffort ? { reasoningEffort } : {}),
         }),
         dispatchOnce: async (ctx) => {
           pricing = ctx?.pricingSnapshot || pricing;

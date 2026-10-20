@@ -470,6 +470,11 @@ export const PlayIcon = stroked(
   'M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z',
 );
 export const ChevronUpIcon = stroked('ChevronUpIcon', 'M5 15l7-7 7 7');
+// The before/after slider's handle (features/review-flow/compare.tsx): ››
+// at the left edge, ‹‹ at the right, two bars while it rides the seam.
+export const ChevronDoubleRightIcon = stroked('ChevronDoubleRightIcon', 'M5.25 4.5l7.5 7.5-7.5 7.5m6-15l7.5 7.5-7.5 7.5');
+export const ChevronDoubleLeftIcon = stroked('ChevronDoubleLeftIcon', 'M18.75 19.5l-7.5-7.5 7.5-7.5m-6 15L5.25 12l7.5-7.5');
+export const GripBarsIcon = stroked('GripBarsIcon', 'M9.75 5.25v13.5m4.5-13.5v13.5');
 
 export const ThumbsUpIcon = stroked(
   'ThumbsUpIcon',
