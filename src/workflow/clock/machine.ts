@@ -116,6 +116,9 @@ function itemsOf(jobName: string, run: number, result: Json, busy: ReadonlySet<s
     return { items: [], status: result ?? null };
   }
   const { items, ...status } = result as { items: Json[] } & Record<string, Json>;
+  // A job only the newest build runs names its build: its targets are
+  // claimed only by a process of it (clock/services.ts newestOnly).
+  const release = typeof status.release === 'string' ? status.release : null;
   const out: WorkRequest[] = [];
   const seen = new Set<string>();
   for (const it of items) {
@@ -125,7 +128,8 @@ function itemsOf(jobName: string, run: number, result: Json, busy: ReadonlySet<s
     const gen = o?.gen == null ? `run${run}` : String(o.gen);
     if (!TARGET.test(target) || !TARGET.test(gen) || busy.has(target) || seen.has(target)) continue;
     seen.add(target);
-    out.push({ kind: itemKind(jobName), key: itemKey(target, gen), input: { job: jobName, target, input: (o!.input ?? null) as Json } });
+    out.push({ kind: itemKind(jobName), key: itemKey(target, gen),
+      input: { job: jobName, target, input: (o!.input ?? null) as Json, ...(release ? { release } : {}) } });
   }
   return { items: out, status: { ...status, items: out.length } };
 }
@@ -187,7 +191,9 @@ export function clock() {
   const results = { WorkSucceeded: { to: workResult }, WorkFailed: { to: workResult }, WorkExhausted: { to: workResult } };
   return defineMachine<CState, Facts>({
     name: MACHINE,
-    version: 1,
+    // 2: a newest-build job's targets carry its release (an older build's
+    // transition would hand them out without it, unclaimable).
+    version: 2,
     // A job that runs every minute writes two events a run: a week of them is
     // history enough.
     retainDays: 7,

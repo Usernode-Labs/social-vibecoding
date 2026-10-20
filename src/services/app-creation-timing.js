@@ -185,4 +185,35 @@ function record(pool, { appId, userId = null, slug = null, watch } = {}) {
   }
 }
 
-module.exports = { STAGES, OUTCOMES, stopwatch, IDLE, buildNote, record, KEPT_BUILD_STEPS };
+/**
+ * One attempt's record from its two halves (src/workflow/app-creation/):
+ * the setup's stopwatch snapshot (database, card, repository) and the first
+ * deploy's (checkout, lock, manifest, build, deploy, rollout), measured in
+ * the processes that ran them, with the outcome and the whole time the
+ * machine saw. Pure; null when there is nothing to record.
+ */
+const RECORD_KEYS = new Set(['outcome', 'totalMs', 'stages', 'failedIn']);
+function combine({ setup = null, deploy = null, outcome = 'error', totalMs = 0 } = {}) {
+  if (!setup && !deploy) return null;
+  const parts = [setup, deploy].filter((p) => p && typeof p === 'object');
+  const stages = {};
+  const notes = {};
+  let failedIn = null;
+  for (const p of parts) {
+    for (const [k, v] of Object.entries(p.stages || {})) if (STAGES.includes(k)) stages[k] = (stages[k] || 0) + ms(Number(v) || 0);
+    for (const [k, v] of Object.entries(p)) if (!RECORD_KEYS.has(k)) notes[k] = v;
+    if (Array.isArray(p.failedIn) && p.failedIn.length) failedIn = p.failedIn;
+  }
+  const result = OUTCOMES.includes(outcome) ? outcome : 'error';
+  const metadata = {
+    outcome: result,
+    totalMs: ms(Number(totalMs) || 0),
+    stages: Object.fromEntries(STAGES.filter((s) => s in stages).map((s) => [s, stages[s]])),
+    ...(result === 'error' && failedIn ? { failedIn } : {}),
+    ...notes,
+  };
+  log.info('app-creator', 'Creation timed', metadata);
+  return metadata;
+}
+
+module.exports = { STAGES, OUTCOMES, stopwatch, IDLE, buildNote, record, combine, KEPT_BUILD_STEPS };

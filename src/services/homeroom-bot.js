@@ -1510,8 +1510,8 @@ function parseRepo(url) {
 
 // The projects the refresh reads: every one that runs on a repository, and
 // (newcomer run nine, 15 Oct 2026) one still being set up whose first
-// version the bot builds is filed (homeroom-bot-dm.js FILEABLE_SQL files it
-// once its repository holds the starter), so its request is read while the
+// version the bot builds is filed (its making files it once its repository
+// holds the starter: src/workflow/app-creation/), so its request is read while the
 // starter is built and deployed, not once it runs.
 async function listApps(pool) {
   const { rows } = await pool.query(
@@ -7811,7 +7811,7 @@ function heldForFirstVersion(holds, { appId, issueNumber, firstVersion = false, 
 // ── A first version filed while its project is set up ───────────────────
 //
 // Newcomer run nine (15 Oct 2026): a first version is filed once its
-// repository holds the starter (homeroom-bot-dm.js FILEABLE_SQL), while the
+// repository holds the starter (src/workflow/app-creation/), while the
 // starter is still built and deployed, so its plan, spec and build start
 // without waiting for the project to run. They need only the repository and
 // the build's own worker (its review's captures run the app in that worker
@@ -7832,8 +7832,8 @@ const SETUP_FAILED_DURING = 'its project could not be set up, so the build was s
 const SETUP_NOT_PROPOSED = 'the change was built but could not be proposed: its project was still being set up';
 // How long a built first version waits for its project to run before it is
 // proposed, and how often it looks. A project is 'creating' for a minute or
-// so, and the creation watchdog fails one that takes ten
-// (app-creation-owner.js), long before a build ends.
+// so, and its making fails one that takes fifteen
+// (src/workflow/app-creation/), long before a build ends.
 const SETUP_WAIT_MS = 15 * 60 * 1000;
 const SETUP_POLL_MS = 5 * 1000;
 
@@ -9530,16 +9530,6 @@ async function refresh(config, pool, { n = 0, apps = null, deps = {} } = {}) {
   if (held) return { github: held };
   const bot = await ensureBotUser(pool, config);
   const refreshDeps = { ...deps, bot, refreshN: n };
-  // A project waiting for its first version whose creation hook missed it
-  // is filed first, on the full refresh, before the refresh that queues it.
-  if (!apps) {
-    try {
-      const filed = await (deps.dm || require('./homeroom-bot-dm')).sweepFirstVersions(pool, config, deps);
-      if (filed) log.info('homeroom-bot', 'First versions filed', { filed });
-    } catch (err) {
-      log.warn('homeroom-bot', 'First-version sweep failed', { err: err.message });
-    }
-  }
   const summary = apps ? await refreshApps(pool, settings, apps, refreshDeps) : await refreshQueue(pool, settings, refreshDeps);
   if (summary.queued || summary.removed) log.info('homeroom-bot', apps ? 'Queue refreshed on activity' : 'Queue refreshed', summary);
   return summary;

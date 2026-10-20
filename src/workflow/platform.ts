@@ -22,6 +22,9 @@ import type { Target as BuildTarget } from './bot-build/machine.ts';
 import { botBuildServices } from './bot-build/services.ts';
 import { MACHINE as DELIVERY, appDelivery, appKey } from './app-delivery/machine.ts';
 import { appDeliveryServices } from './app-delivery/services.ts';
+import { MACHINE as CREATION, appCreation, creationKey } from './app-creation/machine.ts';
+import { appCreationServices } from './app-creation/services.ts';
+import { bootRelease } from './release/boot.ts';
 import { MACHINE as PREVIEW, preview, sessionKey as previewKey } from './preview/machine.ts';
 import { PREPARE_LEASE_MS, previewServices } from './preview/services.ts';
 import { LIVE as SHOTS_LIVE, MACHINE as SHOTS, sessionKey as shotsKey, shots } from './shots/machine.ts';
@@ -167,7 +170,13 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const deps = { config, pool: appPool, requestDeploy };
   const machine = governanceProposal({ dataKey: config.dataEncryptionKey });
   const merges = mergeFollowups({ dataKey: config.dataEncryptionKey });
-  const deliveries = appDelivery();
+  // One thing at a time on an app's runtime: deploys, and heals with the
+  // backoff APP_HEAL_COOLDOWN_MS starts.
+  const deliveries = appDelivery({
+    healCooldownMs: Number(config.appHealCooldownMs) > 0 ? Number(config.appHealCooldownMs) : 10 * 60 * 1000,
+    githubOn: () => legacy('services/github').isEnabled(),
+    runtimeMode: legacy('services/application-runtime').mode(config),
+  });
   // A cancelled prepare learns it at its next checkpoint or lease renewal;
   // its attempt is retired, and a retirement runs, a lease and more later
   // (and never while it serves: services.ts). A preview nobody has used for
@@ -195,14 +204,16 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const staging = process.env.USERNODE_ENV === 'staging';
   const requests = botRequest({ staging });
   const lane = botLane({ staging });
+  // A new project's making (app-creation/), its first deploy app delivery's.
+  const creations = appCreation();
   // What a release runs once, whichever process claims it (release/).
   const releases = releaseMachine();
   // The platform's scheduled jobs (clock/), armed by the release's work.
   const clocks = clock();
-  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, releases, clocks];
+  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, releases, clocks];
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
-    ...appDeliveryServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
+    ...appDeliveryServices(deps), ...appCreationServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
     ...campaignServices(deps), ...botChangeServices(deps), ...botVoiceServices(deps), ...botDmServices(deps),
     ...mainCheckServices(deps), ...botRequestServices(deps), ...botLaneServices(deps),
     ...releaseServices({ adoptions: ADOPTIONS }),
@@ -241,14 +252,9 @@ export async function releaseServing(pool: Pool): Promise<void> {
   if (runtime) await releaseBooted(pool).catch(warn('Could not report the running release'));
 }
 
-// The build this process runs, as the release machine names it: GIT_SHA, or,
-// on a build without one (local work, tests), this boot, so each such boot
-// still runs the adoptions once.
-const BOOT = randomUUID();
-function bootRelease(): string {
-  const sha = String(process.env.GIT_SHA || '').trim().slice(0, 40);
-  return sha && sha !== 'dev' ? sha : `dev:${BOOT}`;
-}
+// The build this process runs (release/boot.ts): GIT_SHA, or, on a build
+// without one (local work, tests), this boot, so each such boot still runs
+// the adoptions once.
 
 // The loops: pipeline slots (already running), the timer loop and the
 // services, in a process that runs the workflow (a conductor, or 'all':
@@ -289,9 +295,93 @@ const ADOPTIONS: readonly Adoption[] = Object.freeze([
   ['mainChecks', () => adoptMainChecks()],
   ['previews', (release: string) => restPreviews(release)],
   ['platformFaults', () => retryPlatformFaults()],
-  // Last: up to a few thousand appends on the first release.
+  // Projects an older build was making: made here once its owner lets go.
+  ['appCreations', () => adoptAppCreations()],
+  // Up to a few thousand appends on the first release.
   ['closedProposals', (release: string) => retainClosedProposals(release)],
+  // What the cluster runs for every app, as this build says: the shared
+  // hosted-asset backend and the app-host gate's routing (APP_GATE).
+  ['assetBackend', () => reconcileAssetBackend()],
+  ['appGate', () => reconcileAppGate()],
+  // Last, and long the first time: the bench suites from this build's
+  // checked-in definitions.
+  ['benchSuites', () => materializeBenchSuites()],
 ] as Adoption[]);
+
+// Cluster work a release owes: only where the platform runs its cluster
+// maintenance (never on a staging preview, whose release work also runs),
+// and only on Kubernetes.
+const clusterRelease = () => legacy('config').runsClusterMaintenance()
+  && legacy('services/application-runtime').mode(appConfig) === 'kubernetes';
+
+// #2045: the shared hosted-asset backend, reconciled once per release.
+// Otherwise only an app's deploy reconciles it, so a fix to how it is built
+// would not reach a backend that exists until some app deployed: an app
+// whose Ingress carries the asset paths then answered 503 on every one of
+// them (#2042). The same call every deploy makes (it converges on what the
+// cluster's platform Deployment runs).
+async function reconcileAssetBackend(): Promise<Json> {
+  if (!clusterRelease()) return null;
+  return { backend: await legacy('services/kubernetes').ensurePlatformAssetBackend(appConfig) };
+}
+
+// The app-host gate follows this build's APP_GATE, in both directions: on
+// brings it up and routes every app through it, off routes them all
+// straight back (services/kubernetes.js reconcileAppGateIngresses). An
+// older build never runs it (the release's work is its own build's), so it
+// never routes the fleet back by its own setting during a rollout.
+async function reconcileAppGate(): Promise<Json> {
+  if (!clusterRelease()) return null;
+  return legacy('services/kubernetes').reconcileAppGateIngresses(appConfig);
+}
+
+// #3654, #3737: the benchmark's Core suite (reads GitHub; a no-op once
+// this definition is made) and the taste eval's (rows only), made from this
+// build's checked-in definitions. BENCH_CORE_MATERIALIZE=off switches both
+// off.
+async function materializeBenchSuites(): Promise<Json> {
+  if (!legacy('config').runsClusterMaintenance()) return null;
+  const core = legacy('services/bench/core');
+  if (!core.bootEnabled()) return { off: true };
+  const pool = legacy('db/pool').getPool(appConfig);
+  const out: Record<string, Json> = {};
+  if (legacy('services/github').isEnabled()) {
+    const started = core.materializeInBackground(pool, appConfig);
+    out.core = started.promise ? await started.promise : started;
+  } else {
+    out.core = { skipped: 'no_github' };
+  }
+  out.taste = await legacy('services/bench/taste').materialize(pool, appConfig);
+  return out as Json;
+}
+
+// Every project still being made that no app-creation instance holds: an
+// older build made it (with the owner lease that came before the machine),
+// and its process may still be at it. Its instance waits until that owner's
+// heartbeat lapses, then makes it from where the row is. Keyed per row, so
+// an older release's adoption appends nothing twice.
+async function adoptAppCreations(): Promise<number> {
+  if (!runtime) return 0;
+  const { rows } = await kernelPool!.query(
+    `SELECT a.id FROM apps a
+      WHERE a.status = 'creating' AND a.self_hosted IS NOT TRUE
+        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'app:' || a.id)
+      ORDER BY a.id LIMIT 500`, [CREATION]);
+  for (const r of rows) {
+    await runtime.append(CREATION, creationKey(r.id), { type: 'Adopted', payload: { appId: r.id } },
+      { requestKey: `adopt:${r.id}`, source: { kind: 'system', name: 'release' }, appId: r.id });
+  }
+  if (rows.length) log!.info('workflow', 'Adopted projects being made', { count: rows.length });
+  return rows.length;
+}
+
+// A person asks again for a project whose making failed (POST
+// /api/apps/:slug/retry): what its making decided.
+export async function retryCreation(appId: number, o: { counted: boolean; actor?: string | null }): Promise<EventOutcome> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  return runtime.appendAndWait(CREATION, creationKey(appId), { type: 'Retry', payload: { appId, counted: o.counted } },
+    { requestKey: `retry:${appId}:${randomUUID()}`, source: { kind: 'system', name: 'retry' }, appId });
+}
 
 // Every open governance row the machine does not hold yet is filed with it.
 async function enrollGovernance(): Promise<number> {
@@ -1189,6 +1279,31 @@ export async function buildsUnderWay(target?: BuildTarget): Promise<{ key: strin
 // recorded at once, deployed by the machine one at a time. Resolves the
 // event's id; the "deploying" state and its end reach browsers from the
 // machine. A request key makes asking again a replay.
+// An app whose runtime the app-health clock found not running (keyed by the
+// clock's run), and one a person could not reach (keyed by the minute):
+// app delivery decides whether to heal it.
+export async function reportUnhealthy(appId: number, state: string, requestKey: string): Promise<void> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  await runtime.append(DELIVERY, appKey(appId), { type: 'Unhealthy', payload: { appId, state } },
+    { requestKey, source: { kind: 'system', name: 'app-health' }, appId });
+}
+export async function reportUnreachable(appId: number, requestKey: string): Promise<void> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  await runtime.append(DELIVERY, appKey(appId), { type: 'Unreachable', payload: { appId } },
+    { requestKey, source: { kind: 'system', name: 'visit' }, appId });
+}
+
+// main at a commit production does not run (the main-drift clock, keyed by
+// the commit; an admin's Check for updates, by hand): what app delivery
+// decided.
+export async function reportMainMoved(appId: number, sha: string, { byHand = false } = {}): Promise<EventOutcome> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  const s = String(sha).toLowerCase();
+  return runtime.appendAndWait(DELIVERY, appKey(appId), { type: 'MainMoved', payload: { appId, sha: s, byHand } },
+    { requestKey: byHand ? `check:${appId}:${s}:${randomUUID()}` : `drift:${appId}:${s}`,
+      source: { kind: 'system', name: byHand ? 'check_updates' : 'drift' }, appId });
+}
+
 export async function requestDeploy(appId: number, reason: string, o: {
   prNumber?: number | null; revision?: string | null; reuse?: unknown; requestKey?: string;
 } = {}): Promise<number> {
@@ -1416,11 +1531,11 @@ export function campaignDeps(config: any, env: Record<string, string | undefined
 // Something may make an app's proposals mergeable (a vote, main green, main
 // moved, an admin resuming merges): the app's merge queue looks. In a
 // caller's transaction (`db`) it is appended there.
-export async function wantMerge(p: { appId: number; sessionId?: number | null; reason: string; db?: Queryable }): Promise<void> {
+export async function wantMerge(p: { appId: number; sessionId?: number | null; reason: string; db?: Queryable; requestKey?: string }): Promise<void> {
   if (!Number.isInteger(Number(p.appId)) || Number(p.appId) <= 0) return;
   const appId = Number(p.appId);
   const event = { type: 'MergeWanted', payload: { appId, sessionId: p.sessionId ?? null, reason: p.reason } };
-  const opts = { requestKey: `want:${appId}:${randomUUID()}`, source: { kind: 'system' as const, name: p.reason }, appId };
+  const opts = { requestKey: p.requestKey ?? `want:${appId}:${randomUUID()}`, source: { kind: 'system' as const, name: p.reason }, appId };
   if (p.db && !runtime) {
     await appendEvent(p.db, mergeQueue(), queueKey(appId), event, opts);
     return;

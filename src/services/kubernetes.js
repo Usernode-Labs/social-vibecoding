@@ -1204,13 +1204,36 @@ async function reconcileAppGateIngresses(config, { force = null } = {}) {
     namespace,
     labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY}`,
   });
+  // Each Ingress on its own: one that changed since the list (a deploy
+  // replaced it) is read again and routed, and one that still fails does
+  // not leave the rest of the fleet unrouted. Any failure is thrown at the
+  // end, so the release's work tries the whole reconcile again.
   let updated = 0;
-  for (const ingress of listed.items || []) {
-    if (ingress?.metadata?.labels?.['app.kubernetes.io/managed-by'] !== MANAGED_BY) continue;
-    const body = ingressWithGateRoute(ingress, mode);
-    if (!body) continue;
-    await networking.replaceNamespacedIngress({ name: ingress.metadata.name, namespace, body });
-    updated += 1;
+  const failed = [];
+  for (const listedIngress of listed.items || []) {
+    if (listedIngress?.metadata?.labels?.['app.kubernetes.io/managed-by'] !== MANAGED_BY) continue;
+    const name = listedIngress.metadata.name;
+    let ingress = listedIngress;
+    for (let attempt = 1; ; attempt += 1) {
+      const body = ingressWithGateRoute(ingress, mode);
+      if (!body) break;
+      try {
+        await networking.replaceNamespacedIngress({ name, namespace, body });
+        updated += 1;
+        break;
+      } catch (err) {
+        if (isConflict(err) && attempt < UPSERT_CONFLICT_ATTEMPTS && networking.readNamespacedIngress) {
+          ingress = await networking.readNamespacedIngress({ name, namespace }).catch(() => null);
+          if (ingress) continue;
+        }
+        if (isNotFound(err)) break;
+        failed.push({ name, message: err.message });
+        break;
+      }
+    }
+  }
+  if (failed.length) {
+    throw Object.assign(new Error(`${failed.length} Ingress(es) not routed: ${failed.slice(0, 3).map((f) => `${f.name} (${f.message})`).join(', ')}`), { updated });
   }
   return { mode, updated };
 }
@@ -1843,14 +1866,25 @@ async function deleteCustomDomain(config, { domain }) {
   await deleteIfPresent(core, 'deleteNamespacedSecret', withSuffix(name, 'tls'), namespace);
 }
 
+// A replace that lost to another write's resourceVersion (the Deployment's
+// own controller updating it) is read again and replaced, as the upserts
+// are, rather than read as a failed restart.
 async function restartApplication(config, runtimeName) {
   const namespace = config.kubernetes.appNamespace;
-  const deployment = await getClients().apps.readNamespacedDeployment({ name: runtimeName, namespace });
-  deployment.spec.template.metadata ||= {};
-  deployment.spec.template.metadata.annotations ||= {};
-  deployment.spec.template.metadata.annotations['social.usernode.io/restarted-at'] = new Date().toISOString();
-  const restarted = await getClients().apps.replaceNamespacedDeployment({ name: runtimeName, namespace, body: deployment });
-  return waitForDeployment(namespace, runtimeName, { generation: restarted?.metadata?.generation, uid: restarted?.metadata?.uid });
+  for (let attempt = 1; ; attempt += 1) {
+    const deployment = await getClients().apps.readNamespacedDeployment({ name: runtimeName, namespace });
+    deployment.spec.template.metadata ||= {};
+    deployment.spec.template.metadata.annotations ||= {};
+    deployment.spec.template.metadata.annotations['social.usernode.io/restarted-at'] = new Date().toISOString();
+    let restarted;
+    try {
+      restarted = await getClients().apps.replaceNamespacedDeployment({ name: runtimeName, namespace, body: deployment });
+    } catch (err) {
+      if (!isConflict(err) || attempt >= UPSERT_CONFLICT_ATTEMPTS) throw err;
+      continue;
+    }
+    return waitForDeployment(namespace, runtimeName, { generation: restarted?.metadata?.generation, uid: restarted?.metadata?.uid });
+  }
 }
 
 // The Deployment is deleted only if it is still the one read first (its UID,

@@ -3,7 +3,8 @@
 // The translation step, run by Homeroom on its own catalogs
 // (frontend/locales/README.md, "Translations").
 //
-// A leader-only sweep. Each pass reads what the RUNNING build says (its
+// The language-sync clock's (src/workflow/clock/), which only the newest
+// build runs. Each pass reads what the RUNNING build says (its
 // English and committed translations, public/locales/.source.json) with the
 // translation cache laid over it (services/language-cache.js). When a
 // configured language lacks messages (English that is new or reworded, or a
@@ -21,8 +22,10 @@
 //
 // A few messages go one request at a time, the same pass. More go as one
 // Message Batch, half the price: the pass that submits it records it in
-// platform_settings, and a later pass, on this leader or the next, keeps its
-// answers once it has ended. A deploy in between can move the English, so a
+// platform_settings, and a later pass, on any process, keeps its answers
+// once it has ended. The clock looks every ten minutes (look): a catalog it
+// has not translated, or a batch to collect, is a target of its own, one
+// pass at a time, so a batch is never submitted twice for one catalog. A deploy in between can move the English, so a
 // batch's answers are matched to messages by id, and only to a message whose
 // English is the one it was asked about (`batch.english`).
 //
@@ -42,9 +45,9 @@ const sync = require('./language-sync');
 const packs = require('../../scripts/language-packs');
 const languageCache = require('./language-cache');
 
-const INTERVAL_MS = 3 * 60 * 60 * 1000;
-// The first pass waits for the new leader to settle.
-const FIRST_PASS_DELAY_MS = 10 * 60 * 1000;
+// How often the clock looks: a batch's answers are kept at most this long
+// after it ends, and a new build's English this long after it runs.
+const LOOK_MS = 10 * 60 * 1000;
 // Up to this many messages are translated directly, in the pass that finds
 // them; more go as a Message Batch.
 const DIRECT_LIMIT = 400;
@@ -179,9 +182,30 @@ async function finishPass(pool, { summary, spent, checkedDigest, deps, extra = {
 }
 
 /**
+ * The clock's look: nothing, or the one pass owed, as a target (a batch to
+ * collect, keyed by the batch; the build's catalogs not yet translated,
+ * keyed by their digest). Reads, never spends.
+ */
+async function look({ pool, deps = {} }) {
+  if (!isEnabled()) return { off: true };
+  const model = deps.llm || llm;
+  const cache = deps.cache || languageCache;
+  if (!model.isEnabled()) return { skipped: 'no_key' };
+  const source = deps.source !== undefined ? deps.source : cache.readSource();
+  if (!source) return { skipped: 'no_source' };
+  const state = await readState(pool);
+  if (state.batch) return { items: [{ target: `batch:${state.batch.id}`, input: {} }] };
+  const digest = sourceDigest(source);
+  if (digest === state.checkedDigest) return { skipped: 'unchanged' };
+  return { items: [{ target: `catalog:${digest}`, input: {} }] };
+}
+
+/**
  * Translates what the running build's English is missing, beyond what the
  * cache already has, and keeps it in the cache; or submits a batch, or keeps
  * the answers of a batch that has ended. Returns what it did, for the log.
+ * `deps.steps` (the clock's target, its work's steps): the batch is
+ * submitted once, however often the pass is run again.
  */
 async function runOnce({ config, pool, deps = {} }) {
   void config;
@@ -244,7 +268,8 @@ async function runOnce({ config, pool, deps = {} }) {
     if (budget.error) return { skipped: 'budget' };
 
     if (messages > DIRECT_LIMIT) {
-      const batch = await model.submitCatalogBatch(prepared.requests);
+      const submit = () => model.submitCatalogBatch(prepared.requests).then((b) => ({ id: b.id }));
+      const batch = deps.steps ? await deps.steps.once(`batch:${digest}`, submit) : await submit();
       const english = {};
       for (const items of prepared.plans.values()) for (const item of items) english[item.id] = englishOf(item);
       await writeState(pool, {
@@ -292,45 +317,18 @@ async function status(pool, { deps = {} } = {}) {
   };
 }
 
-let timer = null;
-let firstPass = null;
-let inFlight = null;
-function start(config, pool) {
-  if (timer || !isEnabled() || !pool) return;
-  const run = () => {
-    if (inFlight) return inFlight;
-    inFlight = runOnce({ config, pool })
-      .then((result) => { if (!result.skipped) log.info('language-sync', 'Translation pass', result); })
-      .catch((err) => log.warn('language-sync', 'Translation pass stopped', { err: err.message }))
-      .finally(() => { inFlight = null; });
-    return inFlight;
-  };
-  timer = setInterval(run, INTERVAL_MS);
-  timer.unref();
-  firstPass = setTimeout(run, FIRST_PASS_DELAY_MS);
-  firstPass.unref();
-}
-
-async function stop() {
-  clearInterval(timer);
-  clearTimeout(firstPass);
-  timer = null;
-  firstPass = null;
-  await inFlight;
-}
-
 module.exports = {
   DIRECT_LIMIT,
   STATE_KEY,
   batchAnswersFor,
   englishOf,
+  LOOK_MS,
   isEnabled,
+  look,
   passOutcome,
   readState,
   runOnce,
   sourceDigest,
-  start,
   status,
-  stop,
   writeState,
 };

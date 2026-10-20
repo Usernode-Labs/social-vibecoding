@@ -6,11 +6,6 @@ const path = require('path');
 const log = require('./logger');
 const github = require('./github');
 const docker = require('./docker');
-const dbManager = require('./db-manager');
-const deployFailure = require('./deploy-failure');
-const { getPool } = require('../db/pool');
-const { pushAppStatusUpdate } = require('./ws');
-const { createApp, finalizeDeploy, reportPhase, endPhases } = require('./app-creator');
 const { getConnectorScaffoldFiles, getCanonicalRepoFile } = require('./template');
 
 // Rewrite (or create) the top-level `name` in the forked working tree's
@@ -111,8 +106,7 @@ async function findForkSource(pool, forkApp) {
 // (icon images, etc.) that github.pushFiles would corrupt. NOT a
 // GitHub fork: both repos are bot-owned (GitHub disallows self-forks)
 // and we want an independent app with its own issues/PRs. Leaves the
-// fork's working tree on disk at `tempDir` for finalizeDeploy to build
-// from, and returns { repoUrl, mainSha, sourceSha }: the copy's own first
+// fork's working tree on disk at `tempDir` (the caller removes it), and returns { repoUrl, mainSha, sourceSha }: the copy's own first
 // commit, and the source commit that was actually cloned. That is read
 // from the clone itself rather than from the source's `main_sha`, which
 // lags the repository while a deploy of a newer merge is still running.
@@ -263,9 +257,9 @@ function forkLineageShas(copied) {
   };
 }
 
-// Async worker mirroring app-creator.createApp, but instead of a fresh
-// template it copies the SOURCE app's code. The copy gets the code, the
-// look and the icon, and nothing that belongs to the original's people:
+// A copy gets the code, the look and the icon, and nothing that belongs to
+// the original's people (app-creator.js copyFork, the setup's repository
+// step, then its first deploy through app delivery):
 //   - a NEW, EMPTY database (dbManager.createDatabase, as create does). The
 //     app's own migrations are idempotent and build its tables on first
 //     boot, so no row from the original comes over: not its posts, not its
@@ -275,114 +269,9 @@ function forkLineageShas(copied) {
 //     original's keys. A copy that needs a required key lands in the
 //     ordinary `awaiting_secrets` state and its owner adds their own.
 //     Platform-provided keys (DATABASE_URL, JWT_SECRET, the LLM proxy pair,
-//     …) are never in app_secrets, so the shared deploy tail mints them.
-// Everything after (build → run → health → reconcile → finalize) runs
-// through the exact same finalizeDeploy() the create path uses, so the two
-// can't drift.
-async function forkApp(config, appRow, sourceApp) {
-  const pool = getPool(config);
-  const { id: appId, name, slug } = appRow;
-
-  // Once repo_url is present, copyRepoTree completed and the fork's own
-  // immutable source snapshot is already in its independent repository.
-  // Resume from that repository instead of re-copying a source app that may
-  // since have changed or been deleted. createApp's import branch never
-  // writes template files, and its template-boundary guard below protects
-  // this contract if repo_url is ever absent.
-  if (appRow.repo_url) {
-    log.info('app-forker', 'Resuming fork from copied repository', { appId, slug });
-    return createApp(config, appRow);
-  }
-
-  const tempDir = `/tmp/usernode-fork-${slug}`;
-  let failureStage = 'other';
-  let mainSha = null;
-
-  try {
-    // These are also route guards, but the worker is callable from Retry and
-    // background repair. Keep the invariant at the operation boundary too.
-    if (appRow.self_hosted || (sourceApp && sourceApp.self_hosted)) {
-      throw new Error('Homeroom itself cannot be remixed.');
-    }
-    if (!sourceApp) {
-      throw new Error('The app this copy came from no longer exists.');
-    }
-    if (!sourceApp.repo_url) {
-      const err = new Error('The original app is not ready to copy yet.');
-      err.cloneFailed = true;
-      throw err;
-    }
-    if (!github.isEnabled()) {
-      const err = new Error('Remixing is unavailable because GitHub integration is not configured.');
-      err.repoFailed = true;
-      throw err;
-    }
-
-    log.info('app-forker', 'Starting fork', { appId, slug, sourceSlug: sourceApp.slug });
-    await pool.query('UPDATE apps SET status = $1 WHERE id = $2', ['creating', appId]);
-
-    // 1. A new, EMPTY database for the copy, with its own role: the same
-    // call createApp makes. Nothing is read from the source's database, so
-    // nobody's data comes with a copy (see the comment above). Persist the
-    // role's password, as create does, so later deploys can rebuild the URL.
-    failureStage = 'database';
-    reportPhase(appId, slug, 'database');
-    const forkDbName = dbManager.appDbName(slug);
-    const { password: dbPassword } = await dbManager.createDatabase(forkDbName);
-    await pool.query('UPDATE apps SET db_password = $1 WHERE id = $2', [dbPassword, appId]);
-    const dbUrl = dbManager.connectionUrl(forkDbName, dbPassword);
-
-    // 2. Copy the source repo's current main tree into a fresh bot-owned
-    // repo (history-free, binary-safe), rewriting dapp.json's name.
-    failureStage = 'repo';
-    reportPhase(appId, slug, 'repository');
-    const botUsername = await github.getBotUsername();
-    const copied = await copyRepoTree({
-      sourceApp, botUsername, forkSlug: slug, forkName: name, tempDir,
-    });
-    const { repoUrl } = copied;
-    mainSha = copied.mainSha;
-    // The repository and the lineage it was cut from land in ONE write:
-    // `sourceSha` is the source commit actually cloned, `forkBaseSha` the
-    // copy's own first commit. The diff between the copy's main and
-    // forkBaseSha is exactly what its owner changed, and it applies onto
-    // sourceSha in the original. A retry that resumes from repo_url never
-    // re-copies, so these are written once.
-    await pool.query(
-      `UPDATE apps
-          SET repo_url = $1,
-              forked_from = CASE WHEN jsonb_typeof(forked_from) = 'object'
-                                 THEN forked_from || $2::jsonb
-                                 ELSE forked_from END
-        WHERE id = $3`,
-      [repoUrl, JSON.stringify(forkLineageShas(copied)), appId]
-    );
-
-    // 3. Shared deploy tail (identical to createApp): manifest reconcile,
-    // secrets gate, build, run, health, finalize. No secrets were copied,
-    // so a required key the copy needs sends it to `awaiting_secrets`.
-    await finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoUrl, mainSha });
-  } catch (err) {
-    log.error('app-forker', 'Fork failed', { appId, slug, err: err.message });
-    const failure = deployFailure.record(err, {
-      ...(failureStage === 'database' && !err.cloneFailed && !err.repoFailed
-        ? { stage: 'database' } : {}),
-      ...(failureStage === 'repo' && !err.cloneFailed && !err.repoFailed
-        ? { stage: 'repo' } : {}),
-      sha: mainSha || null,
-    });
-    await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
-    await pool.query(
-      'UPDATE apps SET status = $1, last_failure = $2 WHERE id = $3',
-      ['error', JSON.stringify(failure), appId]
-    ).catch(() => {});
-    endPhases(slug);
-    pushAppStatusUpdate({ id: appId, slug, status: 'error', errorReason: failure.reason });
-  }
-}
+//     …) are never in app_secrets, so the deploy mints them.
 
 module.exports = {
-  forkApp,
   copyRepoTree,
   findForkSource,
   flattenTree,

@@ -781,9 +781,35 @@ function serializeRebuild(slug, fn) {
 // whoever asked. The machine runs one deploy of an app at a time; the chain
 // still orders it against rollover's respawn in this process, which is all
 // that orders anything on Docker, where the lock is not taken.
+//
+// A project's FIRST deploy (its row still `creating`: the app-creation
+// machine asked for it, src/workflow/app-creation/) is the same deploy,
+// with what creation needs: the steps the made screen follows (build,
+// deploy), where its time went (services/app-creation-timing.js, returned
+// as `timing`), and no app-health notification (the made screen shows a
+// failure). `options.starter` — { sha, template, key } — is the starter
+// commit its setup made: a clone of exactly that commit may write the
+// starter's shared layer cache, and a ready-made app's image built ahead
+// under `key` (services/starter-images.js) is deployed instead of a build.
 function deployProduction(config, app, options = {}) {
-  return serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug,
-    () => rebuildProductionInner(config, app, options)));
+  const watch = app.status === 'creating' ? require('./app-creation-timing').stopwatch() : null;
+  watch?.start('lock');
+  return serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug, () => {
+    watch?.end('lock');
+    return rebuildProductionInner(config, app, { ...options, watch });
+  }));
+}
+
+// A project's starter files as the working tree, for an install without
+// GitHub (no repository to clone).
+function writeStarter(dir, files) {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(path.join(dir, 'public'), { recursive: true });
+  for (const f of files) {
+    const filePath = path.join(dir, f.path);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, f.content);
+  }
 }
 
 // Whether an offered image is of the tree that was just cloned, and so the
@@ -845,41 +871,59 @@ async function rebuildProductionInner(config, app, options = {}) {
   // onto the apps.last_failure record (#416).
   let mainSha = null;
 
+  const watch = options.watch || null;
+  const first = app.status === 'creating';
+  const phase = (name) => {
+    if (!first) return;
+    try { require('./ws').pushAppCreationPhase({ id: app.id, slug: app.slug, phase: name }); } catch {}
+  };
   try {
-    const [, owner, repo] = app.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-    if (!owner || !repo) throw new Error('Could not parse repo URL');
-
-    const cloneUrl = await github.getCloneUrl(owner, repo);
     const cloneDir = `/tmp/usernode-rebuild-${app.slug}`;
-
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
-    // --recurse-submodules + --shallow-submodules so dapps that vendor
-    // upstream sources via submodules (e.g. falling-sands → sandspiel)
-    // get a complete tree at build time. No-op for dapps without
-    // submodules. Timeout bumped to absorb worst-case submodule fetch.
-    try {
-      await docker.execFileAsync('git', [
-        'clone', '--depth', '1',
-        '--recurse-submodules', '--shallow-submodules',
-        cloneUrl, cloneDir,
-      ], { timeout: 120000 });
-    } catch (err) {
-      // Stage marker for the last_failure classifier (#416).
-      err.cloneFailed = true;
-      throw err;
-    }
+    watch?.start('checkout');
+    if (!app.repo_url) {
+      // No repository: GitHub is off on this install (app delivery serves
+      // such an app only then), and the project is its starter's files.
+      writeStarter(cloneDir, require('./app-creator').starterFiles(app, {
+        sketch: await require('./app-sketch').readSketch(getPool(config), app.id)
+          .then((r) => (r && r.status === 'ready' ? r : null), () => null),
+      }));
+    } else {
+      const [, owner, repo] = app.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      if (!owner || !repo) throw new Error('Could not parse repo URL');
 
-    // Capture the exact SHA this build is pinned to so the UI can show
-    // what commit is running in production (#21). The shallow clone's
-    // HEAD is the tip of the default branch at clone time.
-    try {
-      const { stdout } = await docker.execFileAsync('git', [
-        '-C', cloneDir, 'rev-parse', 'HEAD',
-      ], { timeout: 5000 });
-      mainSha = (stdout || '').trim() || null;
-    } catch (err) {
-      log.warn('staging', 'Failed to capture main SHA', { app: app.slug, err: err.message });
+      const cloneUrl = await github.getCloneUrl(owner, repo);
+
+      // --recurse-submodules + --shallow-submodules so dapps that vendor
+      // upstream sources via submodules (e.g. falling-sands → sandspiel)
+      // get a complete tree at build time. No-op for dapps without
+      // submodules. Timeout bumped to absorb worst-case submodule fetch.
+      try {
+        await docker.execFileAsync('git', [
+          'clone', '--depth', '1',
+          '--recurse-submodules', '--shallow-submodules',
+          cloneUrl, cloneDir,
+        ], { timeout: 120000 });
+      } catch (err) {
+        // Stage marker for the last_failure classifier (#416).
+        err.cloneFailed = true;
+        throw err;
+      }
+
+      // Capture the exact SHA this build is pinned to so the UI can show
+      // what commit is running in production (#21). The shallow clone's
+      // HEAD is the tip of the default branch at clone time.
+      try {
+        const { stdout } = await docker.execFileAsync('git', [
+          '-C', cloneDir, 'rev-parse', 'HEAD',
+        ], { timeout: 5000 });
+        mainSha = (stdout || '').trim() || null;
+      } catch (err) {
+        log.warn('staging', 'Failed to capture main SHA', { app: app.slug, err: err.message });
+      }
     }
+    watch?.end('checkout');
+    watch?.start('manifest');
 
     if (!options.retrySameCommit && mainSha) {
       const { rows: [current] } = await getPool(config).query('SELECT last_failure FROM apps WHERE id = $1', [app.id]);
@@ -953,6 +997,7 @@ async function rebuildProductionInner(config, app, options = {}) {
     const merge = appSecrets.mergeForDeploy(
       manifest, stored, appSecrets.platformDefaultsFromEnv()
     );
+    watch?.end('manifest');
     if (merge.missingRequired.length) {
       await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
       throw new MissingSecretsError(merge.missingRequired);
@@ -973,6 +1018,18 @@ async function rebuildProductionInner(config, app, options = {}) {
         fromSha: offered.fromSha || null, imageRef: offered.imageRef || null,
       });
     }
+    // The starter commit a project's setup just made, cloned back exactly:
+    // its build may write the starter's shared layer cache, and a ready-made
+    // app's image is built already (the same key).
+    const starter = options.starter && mainSha && String(options.starter.sha || '').toLowerCase() === String(mainSha).toLowerCase()
+      ? options.starter : null;
+    phase('build');
+    watch?.start('build');
+    const buildStartedAt = Date.now();
+    let solveStartMs = null;
+    if (!build && starter?.key) {
+      build = await require('./starter-images').imageFor(config, prodPool, { key: starter.key, slug: app.slug });
+    }
     if (!build) {
       build = await applicationRuntime.build(config, {
         app,
@@ -980,8 +1037,19 @@ async function rebuildProductionInner(config, app, options = {}) {
         environment: 'production',
         sourceDir: cloneDir,
         dockerImage: imageName,
+        ...(starter ? { starterTree: true } : {}),
+        ...(watch ? { onProgress: (image) => {
+          if (solveStartMs == null && image?.phase === 'source' && /^building /.test(image.detail || '')) {
+            solveStartMs = Date.now() - buildStartedAt;
+          }
+        } } : {}),
       });
     }
+    watch?.end('build');
+    watch?.note('build', require('./app-creation-timing').buildNote({
+      engine: build.prebuilt ? 'prebuilt' : applicationRuntime.mode(config) === 'docker' ? 'docker' : (build.engine || 'kpack'),
+      result: build, solveStartMs,
+    }));
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
 
     // Reload the app row to pick up apps.db_password — the per-role
@@ -1006,6 +1074,8 @@ async function rebuildProductionInner(config, app, options = {}) {
     // Likewise the app-storage env pair (#752) — production only; the
     // staging path above deliberately injects neither storage var.
     const storageEnv = await appStorageEnv.productionStorageEnv(prodPool, app.id);
+    phase('deploy');
+    watch?.start('deploy');
     const deployed = await applicationRuntime.deploy(config, {
       app,
       environment: 'production',
@@ -1022,7 +1092,13 @@ async function rebuildProductionInner(config, app, options = {}) {
         ...storageEnv,
         ...merge.env,
       },
+      // Applied: from here it is the container starting and answering
+      // /health (the 'rollout' stage).
+      ...(watch ? { onRollout: () => { watch.end('deploy'); watch.start('rollout'); } } : {}),
     });
+    watch?.end('deploy');
+    watch?.end('rollout');
+    if (deployed.podTimeline) watch?.note('pod', deployed.podTimeline);
 
     // No Caddy route to register. The wildcard site in the Caddyfile
     // maps `<slug>.<domain>` straight to this container
@@ -1051,6 +1127,8 @@ async function rebuildProductionInner(config, app, options = {}) {
       buildRef: build.buildRef,
       imageReused: !!build.reused,
       sha: mainSha,
+      url: deployed.url || null,
+      ...(watch ? { timing: watch.snapshot() } : {}),
     };
   } catch (err) {
     if (err instanceof WaitsForNewCommitError) {
@@ -1115,7 +1193,10 @@ async function rebuildProductionInner(config, app, options = {}) {
       //
       // Best-effort, and deliberately after the row is persisted: the
       // failure record is the durable part and must not depend on this.
-      if (deployFailure.sameIncident(previousFailure, failureRecord)) {
+      if (first) {
+        // A project's first deploy: its made screen shows the failure, with
+        // Retry (the app-creation machine writes it to the row).
+      } else if (deployFailure.sameIncident(previousFailure, failureRecord)) {
         log.info('staging', 'Production rebuild failed again for the same commit; already notified', {
           app: app.slug, sha: failureRecord.sha, stage: failureRecord.stage,
         });
