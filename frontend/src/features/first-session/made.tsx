@@ -1276,8 +1276,14 @@ function FirstLookStatus({ progress }: { progress: FirstLookProgress }) {
  * the same first look as its App side (INVITE | APP, below), this card
  * leaves its phone out (`phone` false) and keeps its words and its progress
  * at the same height; flipped back to Invite, the phone is here again.
+ *
+ * TAPPING IT (#5618): with `onOpen`, the whole card is one more way into
+ * the maker's chat with Homeroom bot, where the build is reported. An empty
+ * button covers the card (above the phone and its iframe), so tapping the
+ * picture, the words or the progress opens it; the card keeps its look, and
+ * only a hover tint and the focus ring say it can be tapped.
  */
-export function FirstLookCard({ src, name, progress, onBroken = () => {}, phone = true }: {
+export function FirstLookCard({ src, name, progress, onBroken = () => {}, phone = true, onOpen }: {
   /** The first look's URL (./first-look.tsx firstLookSrc), or null while there is none. */
   src: string | null;
   name: string;
@@ -1285,10 +1291,12 @@ export function FirstLookCard({ src, name, progress, onBroken = () => {}, phone 
   onBroken?: (src: string) => void;
   /** Whether the card draws the first look itself: not while the project's card above shows it. */
   phone?: boolean;
+  /** Opens the maker's chat with Homeroom bot: the whole card becomes its door. */
+  onOpen?: () => void;
 }) {
   const t = useMessages('onboarding');
   return (
-    <section data-made-first-look={src ? 'ready' : 'drawing'} data-made-first-look-above={phone ? undefined : ''} aria-labelledby="made-first-look-title">
+    <section data-made-first-look={src ? 'ready' : 'drawing'} data-made-first-look-above={phone ? undefined : ''} aria-labelledby="made-first-look-title" className="relative">
       <div className={FIRST_LOOK_ROW}>
         {phone ? <FirstLookPhone src={src} name={name} onBroken={onBroken} /> : null}
         <div className="flex min-w-0 flex-1 flex-col">
@@ -1297,6 +1305,15 @@ export function FirstLookCard({ src, name, progress, onBroken = () => {}, phone 
           <FirstLookStatus progress={progress} />
         </div>
       </div>
+      {onOpen ? (
+        <button
+          type="button"
+          data-made-first-look-open=""
+          aria-label={t('onboarding:firstSession.made.firstLook.open')}
+          onClick={onOpen}
+          className="absolute inset-0 z-[1] rounded-[20px] hover:bg-black/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:hover:bg-white/[0.04]"
+        />
+      ) : null}
     </section>
   );
 }
@@ -1913,7 +1930,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
           {/* Under the project, never above it: the thumbnail stays where it is. */}
           {settingUp && setupCard ? <SetupProgress step={setupStep} slow={slow} waitedOut={waitedOut} /> : null}
           {ranInPlace && setupCard ? <SetupProgress step={setupStep} slow={slow} waitedOut={waitedOut} done={{ line: card ? t(SETUP_SET_UP) : plainLine, busy }} /> : null}
-          {firstLook ? <FirstLookCard src={lookShown} name={made.name} progress={lookProgress} onBroken={setBrokenLook} phone={!lookInCard} /> : null}
+          {firstLook ? <FirstLookCard src={lookShown} name={made.name} progress={lookProgress} onBroken={setBrokenLook} phone={!lookInCard} onOpen={() => onOpenChat(made.conversationId)} /> : null}
           {stalled ? (
             <SetupStoppedCard stalled={stalled} busy={retrying} onRetry={() => { void retry(); }} onSetSecrets={() => onSetSecrets?.()} />
           ) : null}
