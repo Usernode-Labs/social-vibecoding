@@ -14,10 +14,9 @@
  *          shows after that, three cards about their own project: its
  *          tile, Homeroom bot in Messages (with a change they could ask for
  *          in it, when its starter has one), and Communities, where its hub
- *          is. A private member (let in by an
- *          invite link before the waitlist let them in) gets a fourth, the
- *          waitlist card that is how they make apps of their own
- *          (homeWalkSteps).
+ *          is (homeWalkSteps). An invited private member gets the same
+ *          three: no waitlist card, which they find on Home for themselves
+ *          (Evan, 20 Oct 2026).
  *   look   "Look around first" (decision E, #4072): four cards on Home,
  *          where to start a project later and what the tab bar's places are
  *          (lookAroundSteps).
@@ -182,17 +181,16 @@ export type HomeWalkProject = {
    * known: the card then says where Homeroom bot is instead.
    */
   example?: string | null;
-  privateMember?: boolean;
 };
 
 /**
- * The walk on Home (see the header): three cards, or four for a private
- * member, each ringing its place, with Next and Done on the last. Nothing is
+ * The walk on Home (see the header): three cards, each ringing its place,
+ * with Next, and Go to community on the last. Nothing is
  * pressed: the tile is pointed at, not opened. Each card is about the
  * reader's own project (Evan, 15 Oct 2026, "a more contextual tour"): where
  * it lives, a change they could ask Homeroom bot for in it, and its hub.
  */
-export function homeWalkSteps({ slug, name, example = null, privateMember = false }: HomeWalkProject): TourStep[] {
+export function homeWalkSteps({ slug, name, example = null }: HomeWalkProject): TourStep[] {
   const app = name || slug;
   const steps: TourStep[] = [
     {
@@ -224,17 +222,6 @@ export function homeWalkSteps({ slug, name, example = null, privateMember = fals
       text: translate('onboarding:firstSession.walk.communities.text', { app }),
     },
   ];
-  if (privateMember) {
-    // The card's own heading says what it is for; this card says what to
-    // do with it (../home/waitlist-card.tsx).
-    steps.push({
-      screen: 'home',
-      target: '#home-waitlist-card',
-      ringed: true,
-      title: translate('onboarding:firstSession.walk.waitlist.title'),
-      text: translate('onboarding:firstSession.walk.waitlist.text'),
-    });
-  }
   steps[steps.length - 1] = { ...steps[steps.length - 1], last: true };
   return steps;
 }

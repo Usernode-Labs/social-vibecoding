@@ -212,9 +212,7 @@ test('the island looks at the screen only while something is owed, arms the walk
   assert.match(watch, /else if \(owed\.walk && walkDue\(owed\.walk, screen\)\) \{\s+noteWalkRun\(uid\);[\s\S]{0,120}?_noteHomeWalk\?\.\('reached'\);\s+startWalk\(owed\.walk\);/);
   assert.match(watch, /if \(owed\.tip && tipDue\(owed\.tip, screen\)\) \{\s+noteTipShown\(uid\);\s+setTip\(owed\.tip\);/);
   // The walk opens over nothing else, numbered, told to the server for a maker.
-  assert.match(watch, /prev\.kind === 'none'\s+\? \{ kind: 'tour', info: \{ slug: walk\.slug, name: walk\.name, privateMember \}, path: 'walk', moments: !!walk\.maker \}/);
-  // The waitlist card only while they are still a private member.
-  assert.match(watch, /const privateMember = !!walk\.privateMember && !!legacy\(\)\.App\?\.user\?\.privateMember;/);
+  assert.match(watch, /prev\.kind === 'none'\s+\? \{ kind: 'tour', info: \{ slug: walk\.slug, name: walk\.name \}, path: 'walk', moments: !!walk\.maker \}/);
   assert.match(src, /if \(tip\) return <AppTip tip=\{tip\} onClose=\{closeTip\} \/>;/);
   assert.equal(visit.FIRST_VISIT_CHECK_MS, 250);
   // A private member's "Go to Homeroom": their first visit was the app.
