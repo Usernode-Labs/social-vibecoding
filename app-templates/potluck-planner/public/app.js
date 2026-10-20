@@ -419,8 +419,11 @@
 
   var loaded = false;
   var loading = null;
+  var again = false;
   function load() {
-    if (loading) return loading;
+    // A read already on its way may have left before the change just made:
+    // read once more when it is back.
+    if (loading) { again = true; return loading; }
     loading = api('GET', '/api/potlucks')
       .then(function (data) { loaded = true; render(data); })
       .catch(function (err) {
@@ -429,7 +432,10 @@
         if (loaded) showStatus(err);
         else show('error');
       })
-      .then(function () { loading = null; });
+      .then(function () {
+        loading = null;
+        if (again) { again = false; return load(); }
+      });
     return loading;
   }
 
@@ -445,16 +451,17 @@
   });
   document.getElementById('retry').addEventListener('click', function () { show('loading'); load(); });
 
-  // Other people sign up, react and chat too: look again every 10 seconds
-  // while the app is on screen, and straight away when it comes back.
-  // Skipped while someone is typing or choosing a reaction, so a refresh
-  // never eats a half-written dish or message.
-  setInterval(function () {
+  // Other people sign up, react and chat too: whenever anybody changes
+  // something, the potlucks are fetched again at once, and looked at every
+  // minute regardless (public/live-updates.js). Not while someone is typing
+  // or choosing a reaction: what changed then is fetched the moment they are
+  // done, so a refresh never eats a half-written dish or message.
+  function quiet() {
     var active = document.activeElement;
     var typing = active && (active.tagName === 'INPUT' || active.tagName === 'SELECT') && (active.value || active.tagName === 'SELECT');
-    if (!document.hidden && !typing && picking === null) load();
-  }, 10000);
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
+    return !typing && picking === null;
+  }
+  if (window.LiveUpdates) window.LiveUpdates.watch({ refresh: load, quiet: quiet });
 
   // The first screen, drawn: Homeroom keeps its opening cover up until then
   // (usernode.ready, the platform bridge), so the app appears in one step

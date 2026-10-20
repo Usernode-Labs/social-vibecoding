@@ -23,7 +23,8 @@
 //     its items.
 //   - Markdown export and import, in Todo List's format.
 // Changes show at once and go to the server in order behind the scenes.
-// Other people's changes arrive by asking again every few seconds.
+// Other people's changes arrive the moment they are made (live updates,
+// public/live-updates.js).
 //
 // Rendering builds elements and sets textContent, never innerHTML with
 // people's words in it, so an item called "<b>hi</b>" shows exactly that.
@@ -35,7 +36,6 @@
   // leaving an add field with something typed in it adds it.
   var TOUCH = window.matchMedia('(hover: none)').matches;
   var HISTORY_MAX = 50;
-  var POLL_MS = 5000;
   var KEY_COLLAPSED = 'grocery-list:collapsed';
   var KEY_SHOW_COMPLETED = 'grocery-list:showCompleted';
 
@@ -1400,12 +1400,15 @@
   // force: also when something is open or being sent (after an import, or a
   // change the server refused).
   function refresh(force) {
-    if (loading) return loading;
+    // A read already on its way may have left before the latest change:
+    // read again once things are quiet (public/live-updates.js).
+    if (loading) { if (live) live.changed(); return loading; }
     var asked = generation;
     loading = api('GET', '/api/list')
       .then(function (d) {
-        // A change made while this was on its way would be undone by it.
-        if (loaded && !force && (asked !== generation || queue.length)) return;
+        // A change made while this was on its way would be undone by it:
+        // read again once it has gone out.
+        if (loaded && !force && (asked !== generation || queue.length)) { if (live) live.changed(); return; }
         loaded = true;
         data = d;
         render();
@@ -1514,13 +1517,13 @@
     refresh();
   });
 
-  // Other people shop too: look again every few seconds while the app is on
-  // screen, and straight away when it comes back. Not mid-drag, mid-edit or
-  // while changes are still going out.
-  setInterval(function () {
-    if (!document.hidden && !busy()) refresh();
-  }, POLL_MS);
-  document.addEventListener('visibilitychange', function () { if (!document.hidden && !busy()) refresh(); });
+  // Other people shop too: whenever anybody changes something, the list is
+  // fetched again at once, and looked at every minute regardless
+  // (public/live-updates.js). Not mid-drag, mid-edit or while changes are
+  // still going out: what changed then is fetched the moment that is over.
+  var live = window.LiveUpdates
+    ? window.LiveUpdates.watch({ refresh: function () { return refresh(); }, quiet: function () { return !busy(); } })
+    : null;
 
   // The first screen, drawn: Homeroom keeps its opening cover up until then
   // (usernode.ready, the platform bridge), so the app appears in one step

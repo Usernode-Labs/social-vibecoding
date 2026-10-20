@@ -187,8 +187,9 @@ test('each ready-made app is a directory of its own files; the four tier lists s
   const games = new Set(GAMES.map((id) => appTemplates.dirOf(id)));
   const shared = new Set(GAMES.map((id) => appTemplates.get(id).shared));
   assert.deepEqual([...shared], ['_game-room'], 'every game starter shares one game room');
-  // `_scaffold` holds files every new app gets, starter or not
-  // (usernode-user-data.js, #5118; services/template.js reads it).
+  // `_scaffold` holds files services/template.js writes itself: what every
+  // new app gets, starter or not (usernode-user-data.js, #5118), and what
+  // every ready-made app gets (live-updates.js and its page's half).
   assert.deepEqual(fs.readdirSync(appTemplates.STARTERS_DIR).sort(), [...dirs, ...games, ...shared, '_scaffold'].sort(), 'no directory that no entry uses');
   for (const dir of dirs) {
     for (const rel of appTemplates.REQUIRED_FILES) {
@@ -250,6 +251,83 @@ test('a tier list ranks what its entry says, escaped where it lands, and its scr
   assert.doesNotMatch(script, /if \(!data\.items\.length\) return show\('empty'\)/);
   const board = appTemplates.get('tier-list-hikes').tests.find((c) => c.id === 'tiers.board');
   assert.match(board.expectSelector, /#board\[data-view="yours"\]/, 'the visual check reads the board it opens on');
+});
+
+// "For tier list, make it so if you tap a place, it shows information about
+// who rated it what. You can drop the tap-a-tier thing, it can just be drag
+// based for that." (Evan, 20 Oct 2026.) Ranking is dragging; a tap, on
+// either board, opens the item's sheet, which is also where removing it
+// went. tests/app-templates-postgres.test.js runs GET /api/items/:id.
+test('a tier list ranks by dragging, and tapping one shows who ranked it what', () => {
+  const html = file(generate('tier-list-restaurants'), 'public/index.html');
+  const script = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'tier-list/public/app.js'), 'utf8');
+  // No tap-a-chip-then-tap-a-tier: no picked item, no tier to tap.
+  assert.doesNotMatch(script, /\bpicked\b|function pick\(|tap a tier/);
+  assert.doesNotMatch(html, /picked-actions/);
+  assert.match(script, /var label = h\('div', 'flex w-14 shrink-0 items-center justify-center text-heading ' \+ TIER_CLASS\[tier\], tier\);/,
+    'a tier\'s label is not a button any more');
+  // A tap (a press that was not a drag) opens the item's sheet, on either board.
+  assert.match(script, /chip\.addEventListener\('click', function \(\) \{\s*if \(!justDragged\) openDetail\(item\.id, chip\);/);
+  assert.match(script, /chip = h\('button', CHIP, item\.name\);/, 'the group\'s board too');
+  // The sheet: the name, the group's tier, who ranked it what.
+  for (const id of ['detail', 'detail-scrim', 'detail-name', 'detail-by', 'detail-group', 'detail-raters', 'detail-close', 'detail-off', 'detail-remove']) {
+    assert.match(html, new RegExp(`id="${id}"`), id);
+  }
+  assert.match(html, /<section id="detail-sheet" role="dialog" aria-modal="true" aria-labelledby="detail-name"/);
+  assert.match(script, /api\('GET', '\/api\/items\/' \+ asked\)/);
+  assert.match(script, /el\.main\.inert = true;/, 'the board behind it cannot be reached');
+  assert.match(script, /if \(e\.key === 'Escape' && detail\) closeDetail\(\);/);
+  // Removing it went into the sheet: two taps, for whoever added it.
+  assert.match(script, /tapTwice\(el\.detailRemove, 'Tap again to remove'/);
+  assert.match(script, /el\.detailRemove\.hidden = !item\.mine;/);
+  assert.match(script, /el\.detailOff\.hidden = !signedIn \|\| !item\.yours;/);
+  // A keyboard or a screen reader cannot drag: the sheet's own tiers, shown once focus reaches them.
+  assert.match(html, /id="detail-yours"[^>]*class="sr-only [^"]*focus-within:not-sr-only/);
+  for (const tier of ['S', 'A', 'B', 'C', 'D', 'F', '']) assert.match(html, new RegExp(`data-set-tier="${tier}"`));
+  // What the README and the made screen say.
+  for (const id of READY.slice(0, 4)) {
+    const t = appTemplates.get(id);
+    assert.ok(t.features.some((f) => f.startsWith(`**Who ranked it what**: tap any of the ${t.fill.ITEM_PLURAL}`)), id);
+    assert.doesNotMatch(JSON.stringify(t.features), /tap a tier|tap it and then/, id);
+  }
+});
+
+// "Add SSE to all of the templated apps. Tier list for example, changes are
+// only showing up with a long delay." (Evan, 20 Oct 2026.) Every ready-made
+// app's server tells the open screens when a write succeeds (GET
+// /api/changes, app-templates/_scaffold/live-updates.js), and every screen
+// that shows what other people do listens and fetches again
+// (public/live-updates.js), which also looks every minute. The study timer
+// keeps only each person's own count, so its screen has nothing to hear.
+// A game keeps its own live connection. The helper itself is
+// tests/scaffold-live-updates.test.js.
+test('every ready-made app hears its own writes, and every screen that shares anything listens', () => {
+  const scaffold = (rel) => fs.readFileSync(path.join(appTemplates.STARTERS_DIR, '_scaffold', rel), 'utf8');
+  for (const id of READY) {
+    const files = generate(id);
+    assert.equal(file(files, 'live-updates.js'), scaffold('live-updates.js'), id);
+    assert.equal(file(files, 'public/live-updates.js'), scaffold('public/live-updates.js'), id);
+    const server = file(files, 'server.js');
+    const mount = server.indexOf("const changes = require('./live-updates').mount(app);");
+    assert.ok(mount > server.indexOf('app.use((req, res, next) => {\n  req.now'), `${id}: behind the sign-in check`);
+    assert.ok(mount < server.indexOf("const api = require('./api');"), `${id}: before api.js, so every write it answers is heard`);
+    assert.match(server, /    changes\.close\(\);\n    server\.close\(\(\) => \{\}\);/, `${id}: its streams end on SIGTERM`);
+    assert.match(file(files, 'CLAUDE.md'), /`live-updates\.js` and `public\/live-updates\.js`: live updates\./, id);
+    const script = file(files, 'public/app.js');
+    const html = file(files, 'public/index.html');
+    if (id === 'study-timer') {
+      assert.doesNotMatch(script + html, /LiveUpdates|live-updates/, 'nothing shared to hear');
+      continue;
+    }
+    assert.match(html, /<script src="\/live-updates\.js"><\/script>\s*<script src="\/app\.js"><\/script>/, `${id}: the page's half first`);
+    assert.match(script, /window\.LiveUpdates\.watch\(\{ refresh: [^,]+, quiet: /, `${id}: listens, and holds a change while it would interrupt`);
+    assert.doesNotMatch(script, /setInterval\(|visibilitychange/, `${id}: the page's half is its one clock, and knows when nobody is looking`);
+  }
+  for (const id of ['empty', ...GAMES]) {
+    const files = generate(id);
+    assert.ok(!files.some((f) => /live-updates\.js$/.test(f.path)), id);
+    assert.doesNotMatch(file(files, 'server.js'), /live-updates|changes\.close/, id);
+  }
 });
 
 for (const id of READY) {

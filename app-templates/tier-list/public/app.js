@@ -4,8 +4,10 @@
 // One board, two rankings. "The group's" puts every item in the tier its
 // average lands in. "Yours" is the same board with your own tiers on it:
 // drag an item into a tier (press and hold first on a touch screen, so a
-// swipe still scrolls), or tap it and then tap a tier. Dragging it back to
-// "Not ranked yet" takes it off your board.
+// swipe still scrolls). Dragging it back to "Not ranked yet" takes it off
+// your board. Tapping an item, on either board, opens its sheet: the
+// group's tier, who put it in which tier, taking it off your board, and,
+// for whoever added it, removing it for everyone.
 //
 // Rendering builds elements and sets textContent, never innerHTML with
 // people's words in it, so an item called "<b>hi</b>" shows exactly that.
@@ -15,6 +17,7 @@
   var token = new URLSearchParams(window.location.search).get('token') || '';
 
   var el = {
+    main: document.querySelector('main'),
     form: document.getElementById('add-form'),
     status: document.getElementById('status'),
     loading: document.getElementById('loading'),
@@ -28,26 +31,39 @@
     tray: document.getElementById('tray'),
     trayLabel: document.getElementById('tray-label'),
     trayItems: document.getElementById('tray-items'),
-    picked: document.getElementById('picked-actions'),
+    detail: document.getElementById('detail'),
+    detailScrim: document.getElementById('detail-scrim'),
+    detailName: document.getElementById('detail-name'),
+    detailBy: document.getElementById('detail-by'),
+    detailClose: document.getElementById('detail-close'),
+    detailGroup: document.getElementById('detail-group'),
+    detailRaters: document.getElementById('detail-raters'),
+    detailYours: document.getElementById('detail-yours'),
+    detailOff: document.getElementById('detail-off'),
+    detailRemove: document.getElementById('detail-remove'),
   };
 
   // Whole class names per tier, so the build and the <style> block see them.
   var TIER_CLASS = { S: 'tier-s', A: 'tier-a', B: 'tier-b', C: 'tier-c', D: 'tier-d', F: 'tier-f' };
   var TIERS = ['S', 'A', 'B', 'C', 'D', 'F'];
-  var CHIP = 'inline-flex max-w-full items-center rounded-lg bg-raised px-2.5 py-1.5 text-small font-medium';
-  var CHIP_MOVABLE = 'inline-flex min-h-9 max-w-full cursor-grab touch-manipulation select-none items-center rounded-lg border border-line bg-surface px-2.5 py-1.5 text-small font-medium shadow-sm';
-  var CHIP_PICKED = 'inline-flex min-h-9 max-w-full cursor-grab touch-manipulation select-none items-center rounded-lg border border-accent bg-surface px-2.5 py-1.5 text-small font-medium ring-2 ring-accent';
+  var CHIP = 'inline-flex min-h-9 max-w-full items-center rounded-lg bg-raised px-2.5 py-1.5 text-left text-small font-medium hover:bg-line';
+  var CHIP_MOVABLE = 'inline-flex min-h-9 max-w-full cursor-grab touch-manipulation select-none items-center rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-small font-medium shadow-sm';
+  var NAME_CHIP = 'inline-flex max-w-full items-center rounded-lg bg-raised px-2.5 py-1.5 text-small font-medium';
 
   var data = null;
   // Which ranking is on the board; remembered on this device. Yours first,
   // so somebody new can drag straight away; once they switch, that sticks.
   var view = 'yours';
   try { if (localStorage.getItem('tier-list:view') === 'group') view = 'group'; } catch (e) { /* yours */ }
-  // The item tapped and waiting for a tier, if any.
-  var picked = null;
   // A drag under way: { id, chip, ghost, x, y, pointerId, touch, active, timer }.
   var drag = null;
   var justDragged = false;
+  // The sheet that is open, if any: { id, opener, data, failed }.
+  var detail = null;
+  // Removals waiting for their second tap: a refresh would put the button back.
+  var armed = 0;
+  // Live updates (public/live-updates.js), wired up at the bottom.
+  var live = null;
 
   function api(method, url, body) {
     var headers = { 'x-usernode-token': token };
@@ -59,9 +75,11 @@
       .then(function (res) {
         return res.json().catch(function () { return {}; }).then(function (d) {
           if (!res.ok) {
-            throw new Error(d.error === 'account_required'
+            var err = new Error(d.error === 'account_required'
               ? 'Make an account to join in.'
               : d.error || 'Something went wrong (' + res.status + ').');
+            err.status = res.status;
+            throw err;
           }
           return d;
         });
@@ -89,9 +107,11 @@
     var className = null;
     function rest() {
       timer = null;
+      armed -= 1;
       button.textContent = '';
       resting.forEach(function (n) { button.appendChild(n); });
       if (label) button.setAttribute('aria-label', label);
+      else button.removeAttribute('aria-label');
       button.className = className;
     }
     button.addEventListener('click', function () {
@@ -101,6 +121,7 @@
         action();
         return;
       }
+      armed += 1;
       resting = Array.prototype.slice.call(button.childNodes);
       label = button.getAttribute('aria-label');
       className = button.className;
@@ -109,6 +130,7 @@
       button.className = 'btn-secondary shrink-0 whitespace-nowrap border-0 bg-transparent px-2 text-small text-danger';
       timer = setTimeout(rest, 4000);
     });
+    return { disarm: function () { if (timer) { clearTimeout(timer); rest(); } } };
   }
 
   function showStatus(err) {
@@ -116,8 +138,13 @@
     el.status.hidden = !err;
   }
 
+  // The board, and the open sheet if there is one, fetched again.
+  function refresh() {
+    return Promise.all([load(), detail ? loadDetail() : null]);
+  }
+
   function act(promise) {
-    return promise.then(function () { showStatus(null); return load(); }).catch(function (err) { showStatus(err); return load(); });
+    return promise.then(function () { showStatus(null); return refresh(); }).catch(function (err) { showStatus(err); return refresh(); });
   }
 
   function count(n, one, many) {
@@ -137,16 +164,10 @@
 
   function place(id, tier) {
     var item = itemById(id);
-    picked = null;
-    if (!item || item.yours === tier) { render(); return; }
+    if (!item || item.yours === tier) return;
     item.yours = tier; // on the board straight away; the server agrees or the reload puts it back
     render();
     act(api('PUT', '/api/items/' + id + '/tier', { tier: tier }));
-  }
-
-  function pick(id) {
-    picked = picked === id ? null : id;
-    render();
   }
 
   // ── Dragging ────────────────────────────────────────────────────────────
@@ -208,7 +229,7 @@
     var id = drag.id;
     var target = wasActive ? dropTargetAt(e.clientX, e.clientY) : null;
     endDrag();
-    if (!wasActive) return; // a tap: the click handler picks it
+    if (!wasActive) return; // a tap: the click handler opens its sheet
     justDragged = true;
     setTimeout(function () { justDragged = false; }, 0);
     if (target) place(id, target.getAttribute('data-drop') || null);
@@ -232,24 +253,23 @@
   // ── The board ───────────────────────────────────────────────────────────
 
   function chipFor(item) {
+    var chip;
     if (view === 'group') {
-      var still = h('span', CHIP, item.name);
-      still.setAttribute('data-item', String(item.id));
-      still.title = item.name + ': ' + count(item.votes, 'person', 'people') + ' ranked it';
-      return still;
+      chip = h('button', CHIP, item.name);
+      chip.setAttribute('aria-label', item.name + (item.tier ? ', in the group\'s ' + item.tier + ' tier' : ', not ranked yet')
+        + '. ' + count(item.votes, 'person', 'people') + ' ranked it. Show who ranked it what.');
+    } else {
+      chip = h('button', CHIP_MOVABLE, item.name);
+      chip.setAttribute('aria-label', item.name + (item.yours ? ', in your ' + item.yours + ' tier' : ', not ranked yet') + '. Show who ranked it what.');
+      chip.style.webkitTouchCallout = 'none';
+      chip.addEventListener('pointerdown', onPointerDown);
+      chip.addEventListener('contextmenu', function (e) { e.preventDefault(); });
     }
-    var chip = h('button', picked === item.id ? CHIP_PICKED : CHIP_MOVABLE, item.name);
     chip.type = 'button';
     chip.setAttribute('data-item', String(item.id));
-    chip.setAttribute('aria-pressed', picked === item.id ? 'true' : 'false');
-    chip.setAttribute('aria-label', item.name + (item.yours ? ', in your ' + item.yours + ' tier' : ', not ranked yet') + '. Tap, then tap a tier to move it.');
-    chip.style.webkitTouchCallout = 'none';
-    chip.addEventListener('pointerdown', onPointerDown);
-    chip.addEventListener('click', function (e) {
-      e.stopPropagation();
-      if (!justDragged) pick(item.id);
+    chip.addEventListener('click', function () {
+      if (!justDragged) openDetail(item.id, chip);
     });
-    chip.addEventListener('contextmenu', function (e) { e.preventDefault(); });
     return chip;
   }
 
@@ -262,46 +282,14 @@
     var items = sorted(data.items.filter(function (i) { return placeOf(i) === tier; }));
     var r = h('div', 'flex min-h-14 items-stretch');
     r.setAttribute('data-tier', tier);
-    var label;
-    if (view === 'yours') {
-      r.setAttribute('data-drop', tier);
-      label = h('button', 'flex w-14 shrink-0 items-center justify-center text-heading ' + TIER_CLASS[tier], tier);
-      label.type = 'button';
-      label.setAttribute('aria-label', picked ? 'Put ' + itemById(picked).name + ' in ' + tier : 'Tier ' + tier);
-      r.addEventListener('click', function () { if (picked) place(picked, tier); });
-    } else {
-      label = h('div', 'flex w-14 shrink-0 items-center justify-center text-heading ' + TIER_CLASS[tier], tier);
-      label.setAttribute('aria-label', 'Tier ' + tier);
-    }
+    if (view === 'yours') r.setAttribute('data-drop', tier);
+    var label = h('div', 'flex w-14 shrink-0 items-center justify-center text-heading ' + TIER_CLASS[tier], tier);
+    label.setAttribute('aria-label', 'Tier ' + tier);
     r.appendChild(label);
-    var chips = h('div', picked ? 'flex min-w-0 flex-1 cursor-pointer flex-wrap items-center gap-1.5 px-3 py-2' : 'flex min-w-0 flex-1 flex-wrap items-center gap-1.5 px-3 py-2');
+    var chips = h('div', 'flex min-w-0 flex-1 flex-wrap items-center gap-1.5 px-3 py-2');
     items.forEach(function (item) { chips.appendChild(chipFor(item)); });
     r.appendChild(chips);
     return r;
-  }
-
-  function renderPicked() {
-    el.picked.textContent = '';
-    var item = picked && itemById(picked);
-    el.picked.hidden = !item;
-    if (!item) return;
-    if (item.yours) {
-      var out = h('button', 'btn-secondary', 'Take it off my board');
-      out.type = 'button';
-      out.addEventListener('click', function () { place(item.id, null); });
-      el.picked.appendChild(out);
-    }
-    if (item.mine) {
-      var remove = h('button', 'btn-secondary border-0 bg-transparent px-2 text-small text-muted', 'Remove it for everyone');
-      remove.type = 'button';
-      // Everyone's tiers for it go with it.
-      tapTwice(remove, 'Tap again to remove', function () { picked = null; act(api('DELETE', '/api/items/' + item.id)); });
-      el.picked.appendChild(remove);
-    }
-    var cancel = h('button', 'btn-secondary border-0 bg-transparent px-2 text-small text-muted', 'Cancel');
-    cancel.type = 'button';
-    cancel.addEventListener('click', function () { picked = null; render(); });
-    el.picked.appendChild(cancel);
   }
 
   function renderBoard() {
@@ -326,21 +314,194 @@
       el.trayLabel.textContent = waiting.length ? 'Not ranked yet' : 'Not ranked yet: drag one here to take it off your board';
       el.tray.hidden = false;
       el.tray.setAttribute('data-drop', '');
-      el.tray.onclick = function () { if (picked && itemById(picked).yours) place(picked, null); };
-      el.hint.textContent = picked
-        ? 'Now tap a tier for ' + itemById(picked).name + '.'
-        : 'Drag each one into a tier, or tap it and then tap a tier.';
-      el.hint.hidden = false;
+      el.hint.textContent = 'Drag each one into a tier. Tap one to see who ranked it what.';
     } else {
       el.note.textContent = data.rankers ? 'From ' + count(data.rankers, 'person\'s', 'people\'s') + ' rankings' : 'Nobody has ranked yet';
       el.trayLabel.textContent = 'Nobody has ranked these yet';
       el.tray.hidden = !waiting.length;
       el.tray.removeAttribute('data-drop');
-      el.tray.onclick = null;
-      el.hint.hidden = true;
+      el.hint.textContent = 'Tap one to see who ranked it what.';
     }
-    renderPicked();
+    el.hint.hidden = false;
   }
+
+  // ── One item's sheet: who ranked it what ───────────────────────────────
+
+  function openDetail(id, opener) {
+    detail = { id: id, opener: opener, data: null, failed: false };
+    renderDetail();
+    el.detail.hidden = false;
+    // The board behind it can be neither reached nor scrolled.
+    el.main.inert = true;
+    document.body.classList.add('overflow-hidden');
+    el.detailClose.focus();
+    loadDetail();
+  }
+
+  function closeDetail() {
+    if (!detail) return;
+    var id = detail.id;
+    var opener = detail.opener;
+    detail = null;
+    removing.disarm();
+    el.detail.hidden = true;
+    el.main.inert = false;
+    document.body.classList.remove('overflow-hidden');
+    // Back to the item it opened from, or the same item redrawn since.
+    var back = opener && opener.isConnected ? opener : el.ranking.querySelector('[data-item="' + id + '"]');
+    if (back) back.focus();
+  }
+
+  var detailLoading = null;
+  var detailAgain = false;
+  function loadDetail() {
+    // A read already on its way may have left before the change just made:
+    // read once more when it is back.
+    if (detailLoading) { detailAgain = true; return detailLoading; }
+    var asked = detail && detail.id;
+    if (!asked) return Promise.resolve();
+    detailLoading = api('GET', '/api/items/' + asked)
+      .then(function (d) {
+        if (!detail || detail.id !== asked) return;
+        detail.data = d;
+        detail.failed = false;
+        renderDetail();
+      }, function (err) {
+        if (!detail || detail.id !== asked) return;
+        // Removed meanwhile: there is nothing left to show.
+        if (err.status === 404) { closeDetail(); showStatus(err); return; }
+        detail.failed = true;
+        renderDetail();
+      })
+      .then(function () {
+        detailLoading = null;
+        if (detailAgain) { detailAgain = false; return loadDetail(); }
+      });
+    return detailLoading;
+  }
+
+  function tierBadge(tier, size) {
+    var badge = h('span', (size === 'big'
+      ? 'flex h-14 w-14 shrink-0 items-center justify-center rounded-xl text-title '
+      : 'flex w-12 shrink-0 items-center justify-center text-heading ') + TIER_CLASS[tier], tier);
+    badge.setAttribute('aria-hidden', 'true');
+    return badge;
+  }
+
+  function raterName(r) {
+    if (r.you) return 'You';
+    return r.name ? '@' + r.name : 'Someone';
+  }
+
+  function renderRaters() {
+    el.detailRaters.textContent = '';
+    if (detail.failed && !detail.data) {
+      var failed = h('div', 'card flex flex-col items-start gap-2');
+      failed.appendChild(h('p', 'text-body text-muted', 'Who ranked it did not load. Check your connection and try again.'));
+      var retry = h('button', 'btn-secondary', 'Retry');
+      retry.type = 'button';
+      retry.addEventListener('click', function () { detail.failed = false; renderDetail(); loadDetail(); });
+      failed.appendChild(retry);
+      el.detailRaters.appendChild(failed);
+      return;
+    }
+    if (!detail.data) {
+      // Loading: two rows of the list below, with bars for the names.
+      var shapes = h('div', 'list');
+      shapes.setAttribute('aria-label', 'Loading');
+      for (var i = 0; i < 2; i += 1) {
+        var r = h('div', 'flex min-h-12 items-stretch');
+        r.appendChild(h('div', 'skeleton w-12 shrink-0 rounded-none'));
+        var bars = h('div', 'flex min-w-0 flex-1 flex-wrap items-center gap-1.5 px-3 py-2');
+        bars.appendChild(h('div', 'skeleton h-8 w-20'));
+        bars.appendChild(h('div', 'skeleton h-8 w-16'));
+        r.appendChild(bars);
+        shapes.appendChild(r);
+      }
+      el.detailRaters.appendChild(shapes);
+      return;
+    }
+    var raters = detail.data.raters;
+    if (!raters.length) {
+      el.detailRaters.appendChild(h('p', 'px-1 text-body text-muted', view === 'yours'
+        ? 'Nobody has ranked it yet. Drag it into a tier to be the first.'
+        : 'Nobody has ranked it yet.'));
+      return;
+    }
+    // The board's own shape: a row for each tier somebody chose, you first in yours.
+    var list = h('div', 'list');
+    list.setAttribute('aria-label', 'Who ranked it what');
+    TIERS.forEach(function (tier) {
+      var here = raters.filter(function (r) { return r.tier === tier; });
+      if (!here.length) return;
+      here.sort(function (a, b) { return (b.you ? 1 : 0) - (a.you ? 1 : 0); });
+      var r = h('div', 'flex min-h-12 items-stretch');
+      r.setAttribute('data-rated', tier);
+      r.appendChild(tierBadge(tier));
+      var names = h('div', 'flex min-w-0 flex-1 flex-wrap items-center gap-1.5 px-3 py-2');
+      names.setAttribute('aria-label', tier + ': ' + here.map(raterName).join(', '));
+      here.forEach(function (rater) { names.appendChild(h('span', NAME_CHIP, raterName(rater))); });
+      r.appendChild(names);
+      list.appendChild(r);
+    });
+    el.detailRaters.appendChild(list);
+  }
+
+  function renderDetail() {
+    if (!detail) return;
+    // The board's copy first: it has your tier the moment you choose one.
+    var item = itemById(detail.id) || (detail.data && detail.data.item);
+    if (!item) { closeDetail(); return; }
+    el.detailName.textContent = item.name;
+    el.detailBy.textContent = item.mine ? 'Added by you' : 'Added by @' + item.by;
+
+    el.detailGroup.textContent = '';
+    if (item.tier) {
+      el.detailGroup.appendChild(tierBadge(item.tier, 'big'));
+      var words = h('div', 'flex min-w-0 flex-col');
+      words.appendChild(h('p', 'text-body font-medium', 'In the group\'s ' + item.tier + ' tier'));
+      words.appendChild(h('p', 'text-small text-muted', count(item.votes, 'person', 'people') + ' ranked it · average ' + item.average.toFixed(1) + ' of 5'));
+      el.detailGroup.appendChild(words);
+    } else {
+      el.detailGroup.appendChild(h('p', 'text-body text-muted', 'Not on the group\'s board yet: nobody has ranked it.'));
+    }
+
+    renderRaters();
+
+    // Signed in: your own tier, for a keyboard or a screen reader, and taking it off your board.
+    var signedIn = !!(data && data.me);
+    el.detailYours.hidden = !signedIn;
+    Array.prototype.forEach.call(el.detailYours.querySelectorAll('[data-set-tier]'), function (b) {
+      var tier = b.getAttribute('data-set-tier') || null;
+      b.setAttribute('aria-pressed', item.yours === tier ? 'true' : 'false');
+      b.className = item.yours === tier ? 'btn-primary' : 'btn-secondary';
+    });
+    el.detailOff.hidden = !signedIn || !item.yours;
+    el.detailRemove.hidden = !item.mine;
+  }
+
+  el.detailClose.addEventListener('click', closeDetail);
+  el.detailScrim.addEventListener('click', closeDetail);
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && detail) closeDetail();
+  });
+  el.detailYours.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-set-tier]');
+    if (b && detail) place(detail.id, b.getAttribute('data-set-tier') || null);
+  });
+  el.detailOff.addEventListener('click', function () {
+    if (!detail) return;
+    var id = detail.id;
+    closeDetail();
+    place(id, null);
+  });
+  // Everyone's tiers for it go with it.
+  var removing = tapTwice(el.detailRemove, 'Tap again to remove', function () {
+    if (!detail) return;
+    var id = detail.id;
+    closeDetail();
+    act(api('DELETE', '/api/items/' + id));
+  });
 
   // ── Loading, empty, error ──────────────────────────────────────────────
 
@@ -354,24 +515,28 @@
   }
 
   function render() {
-    if (picked && !itemById(picked)) picked = null;
     renderBoard();
     var none = !data.items.length;
     // Nothing to switch between, drag or tray yet: just the tiers.
     el.toggle.parentNode.hidden = none;
     if (none) { el.hint.hidden = true; el.tray.hidden = true; }
     show(none ? 'empty' : 'ready');
+    renderDetail();
   }
 
   var loaded = false;
   var loading = null;
+  var again = false;
   function load() {
-    if (loading) return loading;
+    // A read already on its way may have left before the change just made:
+    // read once more when it is back.
+    if (loading) { again = true; return loading; }
     loading = api('GET', '/api/items')
       .then(function (d) {
         loaded = true;
         // Not while somebody is mid-drag: the board would move under them.
-        if (drag) return;
+        // It is fetched again the moment the drag is over.
+        if (drag) { if (live) live.changed(); return; }
         data = d;
         render();
       })
@@ -381,7 +546,10 @@
         if (loaded) showStatus(err);
         else show('error');
       })
-      .then(function () { loading = null; });
+      .then(function () {
+        loading = null;
+        if (again) { again = false; return load(); }
+      });
     return loading;
   }
 
@@ -389,7 +557,6 @@
     var b = e.target.closest('[data-view]');
     if (!b) return;
     view = b.getAttribute('data-view');
-    picked = null;
     try { localStorage.setItem('tier-list:view', view); } catch (err) { /* not kept */ }
     render();
   });
@@ -401,14 +568,16 @@
   });
   document.getElementById('retry').addEventListener('click', function () { show('loading'); load(); });
 
-  // Other people rank too: look again every 15 seconds while the app is on
-  // screen, and straight away when it comes back. Skipped while someone is
-  // typing, dragging or has picked an item, so a refresh never interrupts them.
-  setInterval(function () {
+  // Other people rank too: whenever anybody changes something, the board
+  // (and the sheet, if one is open) is fetched again at once, and looked at
+  // every minute regardless (public/live-updates.js). Not while someone is
+  // dragging, typing a name or about to remove one: what changed then is
+  // fetched the moment they are done, so a refresh never interrupts them.
+  function quiet() {
     var typing = document.activeElement && document.activeElement.tagName === 'INPUT' && document.activeElement.value;
-    if (!document.hidden && !typing && !drag && !picked) load();
-  }, 15000);
-  document.addEventListener('visibilitychange', function () { if (!document.hidden && !drag) load(); });
+    return !drag && !typing && !armed;
+  }
+  if (window.LiveUpdates) live = window.LiveUpdates.watch({ refresh: refresh, quiet: quiet });
 
   // The first screen, drawn: Homeroom keeps its opening cover up until then
   // (usernode.ready, the platform bridge), so the app appears in one step

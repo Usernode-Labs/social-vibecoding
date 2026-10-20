@@ -112,8 +112,9 @@ function tierList(id, { plural, one, example, title, change }) {
     fill: Object.freeze({ ITEM_PLURAL: plural, ITEM_ONE: one, ITEM_EXAMPLE: example }),
     features: Object.freeze([
       `**Add ${plural}**: anyone in the project adds one; a name already on the list is not added twice.`,
-      '**Your ranking**: drag each one into S, A, B, C, D or F, or tap it and then tap a tier. Change your mind any time.',
+      '**Your ranking**: drag each one into S, A, B, C, D or F. Change your mind any time.',
       '**The group\'s ranking**: the same board, with every item in the tier its average lands in (a tie goes up). One tap switches between the two.',
+      `**Who ranked it what**: tap any of the ${plural}, on either board, to see the group's tier and the tier each person gave it, live as people rank.`,
     ]),
     tables: '`tier_items` and `tier_votes`',
     tests: Object.freeze([
