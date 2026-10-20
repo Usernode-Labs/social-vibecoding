@@ -388,3 +388,22 @@ test('two to four changes: a grid at one common scale; too small becomes a deck'
   assert.ok(many.plates.slice(1).every((p) => p.img === null && /^#[0-9a-f]{6}$/.test(p.fill)), 'back plates are plain tones');
   assert.ok(many.plates[1].w < many.plates[0].w && many.plates[2].w < many.plates[1].w, 'each back plate narrower');
 });
+
+test('a still is never shown larger than its saved pixels allow on the display', () => {
+  const at = (density, display) => model.densityOf({ ...SCREEN, density }, display);
+  assert.equal(at(undefined, 3), 1, 'a 1x still keeps today\'s size');
+  assert.equal(at(3, 3), 1);
+  assert.equal(at(3, 2), 1.5);
+  assert.equal(at(8.2, 2), 4.1);
+  const view = read('public/js/app-view.js');
+  assert.match(view, /const density = Number\(screen\.density\) >= 1 \? Number\(screen\.density\) : 1;/);
+});
+
+test('the title flies between its two ends measured at rest, and transitions end on their last frame', () => {
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  const open = src.slice(src.indexOf("open.phase !== 'opening'"), src.indexOf('/* ── Collapse'));
+  assert.ok(open.indexOf('planTitleFlight(') < open.indexOf('page.animate('), 'measured before the page moves');
+  assert.match(src, /whenDone\(moving, done, OPEN_MS\)/);
+  assert.match(src, /whenDone\(moving, finish, OPEN_MS \* 0\.85\)/);
+  assert.match(src, /whenDone\(sliding, settle, PUSH_MS\)/);
+});

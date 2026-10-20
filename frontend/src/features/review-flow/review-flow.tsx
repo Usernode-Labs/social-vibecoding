@@ -249,7 +249,17 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const [sheet, setSheet] = useState<SheetState>('ask');
   const busy = useRef(false);
   const timers = useRef<number[]>([]);
+  const ghosts = useRef<HTMLElement[]>([]);
+  useEffect(() => () => { ghosts.current.forEach((g) => g.remove()); }, []);
   const later = (fn: () => void, ms: number) => { timers.current.push(window.setTimeout(fn, ms)); };
+  // A transition ends on its animation's last frame, not on a timer that a
+  // busy phone can fire a frame early; the timer only rescues a stalled one.
+  const whenDone = (anim: Animation | undefined, fn: () => void, ms: number) => {
+    let ran = false;
+    const once = () => { if (!ran) { ran = true; fn(); } };
+    anim?.finished.then(once, once);
+    later(once, ms + 1500);
+  };
   useEffect(() => () => { timers.current.forEach(clearTimeout); }, []);
 
   const shaped = useMemo(() => (items ? orderForReview(toReviewItems(items, shape)) : null), [items]);
@@ -305,11 +315,14 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     if (!cover || reducedMotion()) { done(); return; }
     const cr = cover.getBoundingClientRect();
     const headH = headRef.current ? headRef.current.getBoundingClientRect().height : 56;
+    // Both ends of the title's flight are measured at rest, before anything moves.
+    const titleFrom = card?.querySelector<HTMLElement>('[data-rf-title]');
+    const flight = titleFrom && titleRef.current ? planTitleFlight(titleFrom, titleRef.current) : null;
     const dx = cr.left - pr.left;
     const dy = cr.top - pr.top;
     const clipFrom = `inset(0px ${Math.max(0, pr.width - cr.width)}px ${Math.max(0, pr.height - cr.height)}px 0px round 20px)`;
     const opts = { duration: OPEN_MS, easing: EASE };
-    page.animate(
+    const moving = page.animate(
       [{ transform: `translate(${dx}px, ${dy}px)`, clipPath: clipFrom }, { transform: 'none', clipPath: 'inset(0px 0px 0px 0px round 0px)' }],
       opts,
     );
@@ -319,16 +332,22 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
       { ...opts, fill: 'none' },
     );
     headRef.current?.animate([{ opacity: 0 }, { opacity: 0, offset: 0.6 }, { opacity: 1 }], opts);
-    stageRef.current?.animate([{ opacity: 0 }, { opacity: 0, offset: 0.35 }, { opacity: 1 }], opts);
+    stageRef.current?.animate([{ opacity: 0 }, { opacity: 0, offset: 0.15 }, { opacity: 1, offset: 0.55 }, { opacity: 1 }], opts);
+    // The card's picture grows into the hero's place as the hero shows through it.
+    const pic = coverGhost(cover, cr);
+    pic.animate([
+      { transform: 'none', borderRadius: '20px', opacity: 1 },
+      { opacity: 1, offset: 0.2 },
+      { opacity: 0, offset: 0.6 },
+      { transform: heroTransform(cr, pr, headH), borderRadius: '0px', opacity: 0 },
+    ], { ...opts, fill: 'forwards' }).finished.catch(() => {}).finally(() => pic.remove());
     rootRef.current?.animate(
       [{ transform: 'none', filter: 'none' }, { transform: 'scale(0.96)', filter: 'brightness(0.94)' }],
       { ...opts, fill: 'forwards' },
     );
     // The card's title travels into the header.
-    const from = card?.querySelector<HTMLElement>('[data-rf-title]');
-    const to = titleRef.current;
-    if (from && to) flyTitle(from, to, OPEN_MS);
-    later(done, OPEN_MS);
+    flight?.(OPEN_MS);
+    whenDone(moving, done, OPEN_MS);
   }, [open && open.index, open && open.phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Collapse: page → card ── */
@@ -341,6 +360,9 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     const cover = card?.querySelector<HTMLElement>('[data-rf-cover]');
     const finish = () => {
       rootRef.current?.getAnimations().forEach((a) => a.cancel());
+      // Gone once the card under them is drawn again, not a frame before.
+      const left = ghosts.current.splice(0);
+      requestAnimationFrame(() => requestAnimationFrame(() => left.forEach((g) => g.remove())));
       setOpen(null);
       setSheet('ask');
       busy.current = false;
@@ -350,6 +372,8 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     // Measure against the feed at rest, not as it is drawn receded.
     rootRef.current?.getAnimations().forEach((a) => a.cancel());
     const cr = cover.getBoundingClientRect();
+    const titleTo = card?.querySelector<HTMLElement>('[data-rf-title]');
+    const flight = titleRef.current && titleTo ? planTitleFlight(titleRef.current, titleTo) : null;
     rootRef.current?.animate(
       [{ transform: 'scale(0.96)', filter: 'brightness(0.94)' }, { transform: 'none', filter: 'none' }],
       { duration: OPEN_MS * 0.85, easing: EASE },
@@ -357,7 +381,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     const pr = page.getBoundingClientRect();
     const headH = headRef.current ? headRef.current.getBoundingClientRect().height : 56;
     const opts = { duration: OPEN_MS * 0.85, easing: EASE, fill: 'forwards' as FillMode };
-    page.animate(
+    const moving = page.animate(
       [{ transform: 'none', clipPath: 'inset(0px 0px 0px 0px round 0px)' }, {
         transform: `translate(${cr.left - pr.left}px, ${cr.top - pr.top}px)`,
         clipPath: `inset(0px ${Math.max(0, pr.width - cr.width)}px ${Math.max(0, pr.height - cr.height)}px 0px round 20px)`,
@@ -370,10 +394,17 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     );
     headRef.current?.animate([{ opacity: 1 }, { opacity: 0, offset: 0.3 }, { opacity: 0 }], opts);
     stageRef.current?.animate([{ opacity: 1 }, { opacity: 0, offset: 0.5 }, { opacity: 0 }], opts);
-    const from = titleRef.current;
-    const to = card?.querySelector<HTMLElement>('[data-rf-title]');
-    if (from && to) flyTitle(from, to, OPEN_MS * 0.85);
-    later(finish, OPEN_MS * 0.85);
+    // The hero hands over to the card's own picture, which lands exactly on the card.
+    const pic = coverGhost(cover, cr);
+    pic.animate([
+      { transform: heroTransform(cr, pr, headH), borderRadius: '0px', opacity: 0 },
+      { opacity: 0, offset: 0.2 },
+      { opacity: 1, offset: 0.6 },
+      { transform: 'none', borderRadius: '20px', opacity: 1 },
+    ], opts);
+    ghosts.current.push(pic);
+    flight?.(OPEN_MS * 0.85);
+    whenDone(moving, finish, OPEN_MS * 0.85);
   }, [open, list]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Push: this change → the next ── */
@@ -403,10 +434,10 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     const arriving = stage.querySelector<HTMLElement>('[data-rf-arriving]');
     const gone = stage.querySelector<HTMLElement>('[data-rf-leaving]');
     const opts = { duration: PUSH_MS, easing: EASE };
-    arriving?.animate([{ transform: `translateX(${w}px)`, boxShadow: '-12px 0 32px rgba(0,0,0,.4)' }, { transform: 'none', boxShadow: '-12px 0 32px rgba(0,0,0,0)' }], opts);
+    const sliding = arriving?.animate([{ transform: `translateX(${w}px)`, boxShadow: '-12px 0 32px rgba(0,0,0,.4)' }, { transform: 'none', boxShadow: '-12px 0 32px rgba(0,0,0,0)' }], opts);
     gone?.animate([{ transform: 'none', filter: 'none' }, { transform: `translateX(${-0.3 * w}px)`, filter: 'brightness(0.55)' }], { ...opts, fill: 'forwards' });
     titleRef.current?.animate([{ opacity: 0, transform: 'translateX(32px)' }, { opacity: 1, transform: 'none' }], { duration: PUSH_MS * 0.8, easing: EASE });
-    later(settle, PUSH_MS);
+    whenDone(sliding, settle, PUSH_MS);
   }, [open && open.index, open && open.phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Votes ── */
@@ -564,35 +595,97 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   );
 }
 
+/** A fixed copy of a card's picture, laid exactly over the card. */
+function coverGhost(cover: HTMLElement, at: DOMRect): HTMLElement {
+  const g = cover.cloneNode(true) as HTMLElement;
+  g.removeAttribute('data-rf-cover');
+  g.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+  g.classList.add('rf-ghost-cover');
+  g.setAttribute('aria-hidden', 'true');
+  Object.assign(g.style, { left: `${at.left}px`, top: `${at.top}px`, width: `${at.width}px`, height: `${at.height}px` });
+  document.body.appendChild(g);
+  return g;
+}
+
+/** Where the card's picture lands: the page's full width, under the header. */
+function heroTransform(card: DOMRect, page: DOMRect, headH: number): string {
+  const k = page.width / card.width;
+  return `translate(${page.left - card.left}px, ${page.top + headH - card.top}px) scale(${k})`;
+}
+
 /**
- * The card's title travelling to the header (and back): a copy flies from
- * one to the other while both originals hide, so the words never jump.
+ * Where an element's title text actually sits: its first line's box, as
+ * wrapped (the card's two lines) or as centred and cut short (the header).
  */
-function flyTitle(from: HTMLElement, to: HTMLElement, ms: number): void {
-  const a = from.getBoundingClientRect();
-  const b = to.getBoundingClientRect();
-  if (!a.width || !b.width) return;
-  const cs = getComputedStyle(to);
-  const k = parseFloat(getComputedStyle(from).fontSize) / parseFloat(cs.fontSize || '16');
-  const fly = document.createElement('span');
-  fly.className = 'rf-fly';
-  fly.textContent = to.textContent || from.textContent || '';
-  Object.assign(fly.style, {
-    left: `${b.left}px`, top: `${b.top}px`,
-    font: cs.font, color: getComputedStyle(from).color,
+function textBox(el: HTMLElement): { left: number; top: number; width: number; height: number } {
+  const box = el.getBoundingClientRect();
+  const cs = getComputedStyle(el);
+  const padL = parseFloat(cs.paddingLeft) || 0;
+  const padR = parseFloat(cs.paddingRight) || 0;
+  const inner = box.width - padL - padR;
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const first = range.getClientRects()[0];
+  const width = Math.min(inner, range.getBoundingClientRect().width || inner);
+  const centred = cs.textAlign === 'center' || getComputedStyle(el.parentElement || el).textAlign === 'center';
+  const left = centred ? box.left + padL + (inner - width) / 2 : box.left + padL;
+  return { left, top: first ? first.top : box.top, width: cs.whiteSpace === 'nowrap' ? width : inner, height: box.height };
+}
+
+/** A fixed copy of an element's title, drawn in its own type and wrapping. */
+function titleGhost(el: HTMLElement, at: { left: number; top: number; width: number }): HTMLElement {
+  const cs = getComputedStyle(el);
+  const g = document.createElement('span');
+  g.className = 'rf-fly';
+  g.textContent = el.textContent || '';
+  Object.assign(g.style, {
+    left: `${at.left}px`, top: `${at.top}px`, width: `${Math.ceil(at.width) + 1}px`,
+    font: cs.font, letterSpacing: cs.letterSpacing, color: cs.color,
+    whiteSpace: cs.whiteSpace === 'nowrap' ? 'nowrap' : 'normal',
+    textOverflow: cs.whiteSpace === 'nowrap' ? 'ellipsis' : 'clip',
+    WebkitLineClamp: cs.webkitLineClamp || 'none',
+    display: cs.whiteSpace === 'nowrap' ? 'block' : '-webkit-box',
   });
-  document.body.appendChild(fly);
-  from.style.visibility = 'hidden';
-  to.style.visibility = 'hidden';
-  const pad = parseFloat(getComputedStyle(from).paddingLeft) || 0;
-  fly.animate(
-    [{ transform: `translate(${a.left + pad - b.left}px, ${a.top - b.top}px) scale(${k})` }, { transform: 'none' }],
-    { duration: ms, easing: EASE, fill: 'forwards' },
-  ).finished.catch(() => {}).finally(() => {
-    fly.remove();
-    from.style.visibility = '';
-    to.style.visibility = '';
-  });
+  return g;
+}
+
+/**
+ * The title travelling from the card to the header (and back). Both ends are
+ * measured before anything moves; the returned function flies it. Two copies
+ * take one path: the departing one in its own wrapping fades out as the
+ * arriving one fades in, so the words never reflow or jump at either end.
+ */
+function planTitleFlight(from: HTMLElement, to: HTMLElement): ((ms: number) => void) | null {
+  const a = textBox(from);
+  const b = textBox(to);
+  if (!a.width || !b.width) return null;
+  const k = parseFloat(getComputedStyle(to).fontSize) / parseFloat(getComputedStyle(from).fontSize || '16');
+  return (ms) => {
+    const leaving = titleGhost(from, a);
+    const arriving = titleGhost(to, b);
+    document.body.append(leaving, arriving);
+    from.style.visibility = 'hidden';
+    to.style.visibility = 'hidden';
+    const dx = b.left - a.left;
+    const dy = b.top - a.top;
+    const opts = { duration: ms, easing: EASE, fill: 'forwards' as FillMode };
+    leaving.animate([
+      { transform: 'none', opacity: 1 },
+      { opacity: 0, offset: 0.3 },
+      { transform: `translate(${dx}px, ${dy}px) scale(${k})`, opacity: 0 },
+    ], opts);
+    arriving.animate([
+      { transform: `translate(${-dx}px, ${-dy}px) scale(${1 / k})`, opacity: 0 },
+      { opacity: 0, offset: 0.12 },
+      { opacity: 1, offset: 0.4 },
+      { transform: 'none', opacity: 1 },
+    ], opts).finished.catch(() => {}).finally(() => {
+      leaving.remove();
+      arriving.remove();
+      from.style.visibility = '';
+      to.style.visibility = '';
+    });
+  };
 }
 
 /**

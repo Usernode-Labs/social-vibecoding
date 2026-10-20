@@ -39,6 +39,8 @@ export type Region = {
 export type ReviewScreen = {
   viewport: string;
   width: number;
+  /** Image pixels per CSS pixel the stills were saved at (1 before density was recorded). */
+  density?: number;
   before: { url: string; height: number };
   after: { url: string; height: number };
   regions: Region[];
@@ -512,9 +514,14 @@ export function piecesOf(screens: ReviewScreen[], max = 6): TitlePiece[] {
   return out;
 }
 
-/** A piece's still's pixels per point: the cap on how large it may be shown. */
-export function densityOf(_screen: ReviewScreen): number {
-  return 1;
+/**
+ * How large a piece's still may be shown, in points per point: its saved
+ * pixels per point over the display's, so a zoom never stretches pixels the
+ * capture does not have. Never below 1: today's 1x stills keep their size.
+ */
+export function densityOf(screen: ReviewScreen, display = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1): number {
+  const saved = Number(screen.density) >= 1 ? Number(screen.density) : 1;
+  return Math.max(1, saved / display);
 }
 
 function padded(p: TitlePiece): Box {

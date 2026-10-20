@@ -11330,9 +11330,12 @@ const AppView = {
         })).filter((r) => r.b || r.a);
         const changes = (Array.isArray(screen.stories) && screen.stories.length ? screen.stories : [screen.shot])
           .map(numberOf).filter((n) => n > 0);
+        // Image pixels per CSS pixel; shots saved before density was recorded are 1.
+        const density = Number(screen.density) >= 1 ? Number(screen.density) : 1;
         return {
           viewport: screen.viewport,
           width,
+          density,
           before: { url: base.url, height: heightBefore },
           after: { url: head.url, height: heightAfter },
           regions,
