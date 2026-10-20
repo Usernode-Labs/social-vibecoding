@@ -10,6 +10,11 @@
 //
 // `lastFailure` shape: { stage, reason, log, at, sha } — see
 // src/services/deploy-failure.js.
+//
+// #4092: once an app's retries are used up (retry_count against the
+// payload's retryLimit), the panel still leads with the last error, says
+// whose problem it looks like when the record can tell, and says the limit
+// in a small line under it, rather than a Retry that only answers 429.
 const BuildLog = {
   _el: null,
   _keyHandler: null,
@@ -24,6 +29,34 @@ const BuildLog = {
       case 'timeout': return PlatformI18n.t('session:buildLog.stage.timeout');
       default: return PlatformI18n.t('session:buildLog.stage.other');
     }
+  },
+
+  // Whose problem the failure looks like: 'platform' for the steps the
+  // platform runs before the app is built (its repository, the clone, its
+  // database) and for a start the shared database refused (its reason is
+  // connection-census.js's "Infrastructure problem, not this change: …";
+  // the record keeps no flag for it); 'app' for its own build, start or
+  // health check, and an image that runs as root. Null when the record
+  // cannot tell (a timeout, an unknown step).
+  originOf(failure) {
+    if (!failure || typeof failure !== 'object') return null;
+    if (/^(\[[^\]]*\] )?Infrastructure problem\b/.test(String(failure.reason || ''))) return 'platform';
+    if (failure.kind === 'root_image') return 'app';
+    switch (failure.stage) {
+      case 'repo': case 'clone': case 'database': return 'platform';
+      case 'build': case 'start': case 'healthcheck': return 'app';
+      default: return null;
+    }
+  },
+
+  // Whether Retry is used up for this app, as POST /retry decides it: a
+  // failure the platform's restarts caused (`interrupted`) is never capped.
+  atRetryLimit(app) {
+    if (!app || app.status !== 'error') return false;
+    const limit = Number(app.retryLimit);
+    if (!Number.isFinite(limit) || limit <= 0) return false;
+    if (app.lastFailure && app.lastFailure.interrupted === true) return false;
+    return Number(app.retry_count) >= limit;
   },
 
   async open(slug) {
@@ -41,15 +74,23 @@ const BuildLog = {
   _render(slug, app) {
     const failure = app && app.lastFailure && typeof app.lastFailure === 'object'
       ? app.lastFailure : null;
+    const isAdmin = !!window.App?.user?.canAdminWrite;
+    const atLimit = BuildLog.atRetryLimit(app);
+    // At the limit only an admin's Retry goes through (POST /retry).
     const canRetry = !!(app && app.status === 'error'
-      && (window.App?.user?.canAdminWrite || window.App?.user?.id === app.created_by));
+      && (isAdmin || (window.App?.user?.id === app.created_by && !atLimit)));
+    const origin = BuildLog.originOf(failure);
+    const limitHtml = atLimit
+      ? `<p id="build-log-limit" class="mt-3 text-xs text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText(
+        isAdmin ? 'session:buildLog.limitAdmin' : 'session:buildLog.limit', { count: Number(app.retryLimit) })}</p>`
+      : '';
 
     let bodyHtml;
     if (!failure) {
       bodyHtml = `
         <p class="text-sm text-zinc-500 dark:text-zinc-400">
-          ${PlatformI18n.htmlText('session:buildLog.empty')}
-        </p>`;
+          ${PlatformI18n.htmlText(atLimit ? 'session:buildLog.emptyAtLimit' : 'session:buildLog.empty')}
+        </p>${limitHtml}`;
     } else {
       const when = failure.at ? new Date(failure.at) : null;
       const whenAbs = when && !Number.isNaN(when.getTime()) ? when.toLocaleString() : null;
@@ -75,9 +116,15 @@ const BuildLog = {
           ${metaBits.map((m) => `<div>${m}</div>`).join('')}
         </div>
         <p class="mt-2 text-sm font-mono text-red-700 break-words dark:text-red-400">${blEscape(String(failure.reason || '').slice(0, 280))}</p>
+        ${origin
+          ? `<p id="build-log-origin" data-origin="${origin}" class="mt-2 text-sm text-zinc-700 dark:text-zinc-200">${PlatformI18n.htmlText(
+            origin === 'platform' ? 'session:buildLog.origin.platform' : 'session:buildLog.origin.app')}</p>`
+          : ''}
         ${logText
           ? `<pre id="build-log-pre" class="mt-3 max-h-72 overflow-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 p-3 text-[0.7rem] leading-relaxed font-mono whitespace-pre-wrap break-words select-text text-zinc-700 dark:text-zinc-300">${blEscape(logText)}</pre>`
-          : `<p class="mt-3 text-xs text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('session:buildLog.noLog')}</p>`}
+          : `<p class="mt-3 text-xs text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText(
+            origin === 'platform' ? 'session:buildLog.noLogPipeline' : 'session:buildLog.noLog')}</p>`}
+        ${limitHtml}
       `;
     }
 
@@ -169,6 +216,18 @@ const BuildLog = {
           const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/retry`, { method: 'POST' });
           if (!res.ok) {
             const data = await res.json().catch(() => ({}));
+            // #4092: the limit is answered in the panel, which keeps the
+            // last error in front and says the limit under it.
+            if (res.status === 429 && data.code === 'retry_limit') {
+              BuildLog.close();
+              BuildLog._render(slug, {
+                ...app,
+                retry_count: data.retryCount,
+                retryLimit: data.retryLimit,
+                lastFailure: data.lastFailure || failure,
+              });
+              return;
+            }
             PlatformUI.toast(data.error || PlatformI18n.t('session:buildLog.retryFailed', { status: res.status }));
             retryBtn.disabled = false;
             retryBtn.textContent = PlatformI18n.t('session:buildLog.retry');

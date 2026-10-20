@@ -1902,6 +1902,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         icon_url: appRow.icon_image_id ? `/app-icons/${appRow.icon_image_id}` : null,
         directory: discoveryCuration.describe(appRow),
         last_failure: undefined,
+        // #4092: the Build log panel compares retry_count with it, to say
+        // the retries are used up rather than leave Retry to answer 429.
+        retryLimit: MAX_RETRY_COUNT,
         lastFailure: (canSeeFailure && appRow.last_failure && typeof appRow.last_failure === 'object')
           ? appRow.last_failure : null,
         url,
@@ -3971,8 +3974,17 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
 
       const interrupted = appCreationOwner.isInterrupted(appRow.last_failure);
       if (appRow.retry_count >= MAX_RETRY_COUNT && !req.user.canAdminWrite && !interrupted) {
+        // #4092: with the counts and the last recorded failure (redacted
+        // when it was stored, services/deploy-failure.js), so the Build log
+        // panel can lead with the error rather than a bare count. The caller
+        // passed canManageApp: the app's creator or one of its admins.
         return res.status(429).json({
           error: `Retry limit reached (${MAX_RETRY_COUNT}). Ask an admin to investigate.`,
+          code: 'retry_limit',
+          retryCount: appRow.retry_count,
+          retryLimit: MAX_RETRY_COUNT,
+          lastFailure: (appRow.last_failure && typeof appRow.last_failure === 'object')
+            ? appRow.last_failure : null,
         });
       }
 

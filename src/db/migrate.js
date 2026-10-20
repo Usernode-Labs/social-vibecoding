@@ -6521,10 +6521,12 @@ async function seedStagingFailedApp(pool, config) {
       at: new Date().toISOString(),
       sha: null,
     };
+    // #4092: retry_count 3 is the retry limit (MAX_RETRY_COUNT in
+    // routes/apps.js), so the Build log panel shows how the limit reads.
     await pool.query(
       `INSERT INTO apps (name, slug, status, view_visibility, created_by, retry_count, last_failure)
        SELECT 'Staging demo failed app', 'staging-demo-failed-app', 'error', 'public',
-              id, 0, $1::jsonb
+              id, 3, $1::jsonb
          FROM users WHERE username = 'staging-demo-user'
        ON CONFLICT (slug) DO UPDATE
          SET name = EXCLUDED.name,

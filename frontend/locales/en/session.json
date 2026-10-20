@@ -1047,6 +1047,38 @@
     "text": "No log output was captured for this failure.",
     "description": "Shown in the \"Build log\" panel of a failed deploy when the failure has a reason but no log text was saved."
   },
+  "buildLog.noLogPipeline": {
+    "text": "No build log was captured: the deploy stopped before the app was built.",
+    "description": "Shown in the \"Build log\" panel of a failed deploy, instead of the log, when no log text was saved and the deploy failed in a step Homeroom runs before building the app (its code repository, copying the code, its database)."
+  },
+  "buildLog.origin.platform": {
+    "text": "This looks like a problem on Homeroom’s side, not in the app.",
+    "description": "Line under the error in the \"Build log\" panel, which shows why an app's last deploy failed, when the failure was in a step Homeroom itself runs (its code repository, copying the code, its database, or its shared database refusing the app)."
+  },
+  "buildLog.origin.app": {
+    "text": "This looks like a problem in the app itself: its build or its start-up.",
+    "description": "Line under the error in the \"Build log\" panel, which shows why an app's last deploy failed, when the failure was in the app's own build, start or health check."
+  },
+  "buildLog.emptyAtLimit": {
+    "text": "No detail of the last failure was recorded, so Homeroom can’t tell whether the app or the platform is at fault.",
+    "description": "Shown in the \"Build log\" panel of an app whose deploy failed, when Homeroom kept no detail of the failure and the app has used up its retries."
+  },
+  "buildLog.limit_one": {
+    "text": "Its {{count}} retry is used up, so only a Homeroom admin can retry it now.",
+    "description": "Small line at the end of the \"Build log\" panel, under the last error, when the app's deploy has been retried as many times as allowed and the viewer is not a Homeroom admin. {{count}} is how many retries are allowed."
+  },
+  "buildLog.limit_other": {
+    "text": "Its {{count}} retries are used up, so only a Homeroom admin can retry it now.",
+    "description": "Small line at the end of the \"Build log\" panel, under the last error, when the app's deploy has been retried as many times as allowed and the viewer is not a Homeroom admin. {{count}} is how many retries are allowed."
+  },
+  "buildLog.limitAdmin_one": {
+    "text": "Its {{count}} retry is used up. As an admin you can still retry it.",
+    "description": "Small line at the end of the \"Build log\" panel, under the last error, when the app's deploy has been retried as many times as allowed and the viewer is a Homeroom admin, who may retry anyway. {{count}} is how many retries are allowed."
+  },
+  "buildLog.limitAdmin_other": {
+    "text": "Its {{count}} retries are used up. As an admin you can still retry it.",
+    "description": "Small line at the end of the \"Build log\" panel, under the last error, when the app's deploy has been retried as many times as allowed and the viewer is a Homeroom admin, who may retry anyway. {{count}} is how many retries are allowed."
+  },
   "buildLog.title": {
     "text": "Build log",
     "description": "Title of the panel that shows why an app's last deploy failed. \"Build\" is a noun: the log of the build."

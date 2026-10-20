@@ -1578,8 +1578,23 @@ const Home = {
   // can carry its own handler as a prop.
   async _onRetry(slug, btn) {
     if (btn) btn.textContent = '...';
-    await fetch(`/api/apps/${slug}/retry`, { method: 'POST' });
+    await Home._retryOrExplain(slug);
     Home.load();
+  },
+
+  // #4092: a Retry refused at the retry limit used to vanish without a word.
+  // The Build log panel answers it instead: the last error first, the limit
+  // under it.
+  async _retryOrExplain(slug) {
+    try {
+      const res = await fetch(`/api/apps/${slug}/retry`, { method: 'POST' });
+      if (res.status === 429 && typeof window !== 'undefined' && window.BuildLog) {
+        const data = await res.json().catch(() => ({}));
+        if (data.code === 'retry_limit') window.BuildLog.open(slug);
+      }
+    } catch {
+      // Home.load() below shows the card as it is.
+    }
   },
 
   // ── The home screen's Improve button (#1367) ───────────────────────
@@ -4759,7 +4774,7 @@ const Home = {
   },
 
   async _menuRetry(app) {
-    await fetch(`/api/apps/${app.slug}/retry`, { method: 'POST' });
+    await Home._retryOrExplain(app.slug);
     Home.load();
   },
 
