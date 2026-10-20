@@ -461,7 +461,9 @@ test('feedback: the island owns the lifecycle, the controller keeps its logic', 
   const ctl = dialog('feedback-controller.js');
   // #4803: corrections use the same lifecycle without preparing a new comment.
   assert.match(src, /onOpen: \(opts\) => \{\s*if \(opts\?\.edit\) setOffersComment\(false\);\s*else setOffersComment\(formOffersComment\(\)\);\s*Feedback\._open\(opts \|\| \{\}\);\s*(?:\/\/[^\n]*\n\s*)*if \(!opts\?\.edit\) prepareComment\(\);\s*\}/);
-  assert.match(src, /onClose: \(\) => Feedback\._reset\(\)/);
+  // #5687: closing also drops any full-size preview of an attachment, whose
+  // object URL `_reset` revokes.
+  assert.match(src, /onClose: \(\) => \{\s*setPreview\(null\);\s*Feedback\._reset\(\);\s*\}/);
   assert.match(src, /initFeedback\(\)/);
   // The pieces with issue numbers on them, still present after the move.
   assert.match(ctl, /App\.openFeedbackModal = /, 'the legacy entry point is re-published from the controller');

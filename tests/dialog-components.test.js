@@ -102,7 +102,11 @@ const DIALOG_IDS = [
  */
 // controller-text.tsx is the first words of a node a controller module then
 // owns (feedback, members, app secrets); it renders text, never a root.
-const SUPPORT_FILES = ['create-progress.tsx', 'app-allowance.tsx', 'controller-text.tsx'];
+// #5687: feedback-preview.tsx is the "Suggest an improvement" form's
+// full-size picture or clip, opened from a thumbnail. It is not a dialog root
+// — it has no id, no `useDialog` and no chassis; it portals its own layer
+// beside the feedback dialog, the way the chat's image viewer does.
+const SUPPORT_FILES = ['create-progress.tsx', 'app-allowance.tsx', 'controller-text.tsx', 'feedback-preview.tsx'];
 
 const allFiles = fs.readdirSync(DIALOGS)
   .filter((f) => f.endsWith('.tsx') && f !== 'index.tsx');
