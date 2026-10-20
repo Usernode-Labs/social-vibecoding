@@ -10490,14 +10490,14 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_prev_approvals INTEGER;
 
 -- #1688: warmer voting.
 --
--- pr_votes.reason — the sentence behind a vote. routes/votes.js requires one
--- on a No and accepts one on a Yes; a row written before this column, or a
--- Yes cast without a line, is NULL and reads exactly as it did. The upsert
+-- pr_votes.reason — the sentence behind a vote. routes/votes.js accepts one
+-- on a No or a Yes; a row written before this column, or a vote cast without
+-- a line, is NULL and reads exactly as it did. The upsert
 -- keeps an earlier line when the same person re-casts the same side without
 -- a new one, which is what carries a Yes onto a proposal's next version.
 ALTER TABLE pr_votes ADD COLUMN IF NOT EXISTS reason TEXT;
--- #2603: the same line, on a governance vote. The governance machine requires one on
--- a No (`down`) and accepts one on a Yes (`up`), with the identical 280-char
+-- #2603: the same line, on a governance vote. The governance machine accepts one
+-- on a No (`down`) or a Yes (`up`), with the identical 280-char
 -- cap; a row written before this column is NULL and reads exactly as it did.
 -- An issue vote toggles OFF when it is re-cast on the same side, so there is
 -- no same-side upsert to carry a line across: a flip simply replaces it, the

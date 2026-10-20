@@ -149,12 +149,13 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     assert.deepEqual([again.status, again.body.error], [409, 'Issue is not open']);
   });
 
-  await t.test('a No without a line is refused; a retraction toggles', async () => {
+  await t.test('a No without a line is accepted; a retraction toggles', async () => {
     const i = await issue('close_issue', { issueNumber: 3, issueTitle: 'x' });
     await pool.query('UPDATE apps SET approvals_required = 5 WHERE id = $1', [app.id]);
     const voter = await user();
     const noLine = await call(vote, { params: { id: String(i.id) }, body: { vote: 'down' }, user: voter });
-    assert.deepEqual([noLine.status, noLine.body.error], [400, 'reason_required']);
+    assert.equal(noLine.status, 200, JSON.stringify(noLine.body));
+    assert.equal(noLine.body.issueClosed.applied, false);
     const up = await call(vote, { params: { id: String(i.id) }, body: { vote: 'up' }, user: voter });
     assert.equal(up.body.issueClosed.applied, false);
     const toggle = await call(vote, { params: { id: String(i.id) }, body: { vote: 'up' }, user: voter });

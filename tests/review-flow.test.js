@@ -260,11 +260,12 @@ test('after a vote: a large mark, what you said, Undo beside Next change', () =>
   assert.ok(last.includes(message('communities:review.said.done')));
 });
 
-test('a No asks for its line, held to the server\'s limit', () => {
+test('a No offers its line, held to the server\'s limit; Send never waits for it', () => {
   const html = sheetHtml({ state: 'no' });
   assert.ok(html.includes(message('communities:review.no.ask')));
   assert.match(html, /maxLength="280"/);
   assert.match(html, /aria-pressed="true"/);
+  assert.doesNotMatch(html, /class="rf-go"[^>]*disabled/, 'an empty line does not stop the No');
 });
 
 // ── 4. The copy ──────────────────────────────────────────────────────────

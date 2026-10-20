@@ -3360,8 +3360,8 @@
     "description": "Label over the optional text box in the vote picker when Yes is chosen: one line of comment that the community's other members will see with the vote."
   },
   "card.vote.picker.noLabel": {
-    "text": "What’s not working for you? One line is plenty.",
-    "description": "Label over the text box in the vote picker when No (or Don't approve) is chosen. A reason is required for a No; one short line is enough."
+    "text": "What’s not working for you? Add a line, if you like.",
+    "description": "Label over the text box in the vote picker when No (or Don't approve) is chosen. The line is optional; one short line is enough if the person writes one."
   },
   "card.vote.picker.yesPlaceholder": {
     "text": "What do you like about it?",

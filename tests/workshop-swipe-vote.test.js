@@ -132,7 +132,7 @@ test('the swipe votes through answer(), so a No asks for its reason and a dismis
   assert.match(cast, /if \(reason === false\) \{\s*AppView\._voteInFlight\.delete\(key\);\s*return false;/);
   const ask = body(view, '  async _askVoteReason(vote)', '\n  },\n');
   assert.match(ask, /if \(answer === null\) return no \? false : null;/, 'a dismissed No prompt is `false`: no vote');
-  assert.match(ask, /if \(no && !line\) \{[\s\S]*?return false;/, 'and so is an empty line');
+  assert.doesNotMatch(ask, /no && !line/, 'an empty line is sent as no line, never refused');
 });
 
 test('only a card the viewer can vote on, on a phone, takes the gesture', () => {

@@ -727,8 +727,8 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     if (sheet) { sheetRef.current = null; sheet.dismiss(); }
   }, []);
   // The box takes focus when the popover opens, and in either home the
-  // moment the switch lands on No — the side that needs a line. A layout
-  // effect, so on touch the focus still counts as part of that tap and
+  // moment the switch lands on No — the side that usually carries a line. A
+  // layout effect, so on touch the focus still counts as part of that tap and
   // raises the keyboard. Not on a sheet opening on Yes: a keyboard rising
   // over a one-tap "Vote yes" would be in the way.
   useIsoLayoutEffect(() => {
@@ -789,10 +789,8 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   const popMaxH = clampPopoverHeight({ height: h }, viewport);
   const spec = side === 'yes' ? yes : no;
   const trimmed = line.replace(/\s+/g, ' ').trim();
-  // A No needs its line; a Yes may go without one.
-  const canSend = !isVote || side === 'yes' || !!trimmed;
+  // A line is optional on either side; Send carries what is written.
   const submit = () => {
-    if (!canSend) return;
     send(spec, isVote ? (trimmed || null) : null);
   };
   const onBoxKey = (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => {
@@ -929,7 +927,6 @@ export function VotePicker({
 }): ReactNode {
   const t = useMessages('project');
   const tc = useMessages('core');
-  const trimmed = line.replace(/\s+/g, ' ').trim();
   const yesOn = side === 'yes';
   // The header over the switch is also the switch's accessible name.
   const headId = `${reasonId}-head`;
@@ -1003,7 +1000,6 @@ export function VotePicker({
         <button
           type="button"
           className={`dev-vote-reason-send dev-vote-reason-send-${side}`}
-          disabled={withLine && !yesOn && !trimmed}
           // The line keeps focus through the press, so the sheet does not
           // move under the tap as the keyboard goes (lib/keyboard-open.ts).
           onMouseDown={(event) => event.preventDefault()}

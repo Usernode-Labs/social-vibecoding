@@ -5900,6 +5900,7 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   assert.match(WORKSHOP, /data-ws-vote-form=""[\s\S]{0,120}?<VotePicker[\s\S]{0,900}?withLine/, 'which is the card\'s picker, with its line box');
   assert.ok(!/data-ws-answer-btn="(yes|no)"/.test(WORKSHOP), 'the bare Yes/No pair is gone');
   assert.match(WORKSHOP, /answer\(voteSide, undefined, voteTrimmed \|\| null\)/, 'the sheet sends its line, so castVote does not ask again');
+  assert.doesNotMatch(WORKSHOP, /voteSide === 'no' && !voteTrimmed/, 'a No without a line is sent, not refused');
   assert.match(WORKSHOP, /const opts = reason === undefined \? \{ onSend \} : \{ onSend, reason \};/, 'only the swipe leaves the line to castVote');
   // NOTHING ADVANCES ON ITS OWN. The deck used to jump half a second after a
   // vote, which in a feed reads as the card vanishing under the press: the

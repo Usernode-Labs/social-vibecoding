@@ -59,10 +59,10 @@ test('the form is the card\'s vote picker: the switch, the line for the group, C
   assert.ok(!/role="dialog"/.test(html), 'nothing in the form is a dialog of its own');
 });
 
-test('on No the box asks what is not working, and the send waits for a line', () => {
+test('on No the box asks what is not working, and the send never waits for a line', () => {
   const empty = form({ side: 'no' });
-  assert.match(empty, /What’s not working for you\? One line is plenty\./);
-  assert.match(empty, /class="dev-vote-reason-send dev-vote-reason-send-no" disabled="">Vote no</, 'a No needs its line');
+  assert.match(empty, /What’s not working for you\? Add a line, if you like\./);
+  assert.match(empty, /class="dev-vote-reason-send dev-vote-reason-send-no">Vote no</, 'an empty line does not stop the No');
   const filled = form({ side: 'no', line: 'Too dark' });
   assert.match(filled, /class="dev-vote-reason-send dev-vote-reason-send-no">Vote no</);
 });
@@ -120,7 +120,7 @@ test('an approval row\'s Yes line is a note before any community read; a group r
   const yes = form({ row: approval });
   assert.match(yes, /<label class="dev-vote-reason-label" for="dev-ws-vote-reason-needs-proposal-42">Add a note, if you like\.<\/label>/);
   assert.doesNotMatch(yes, /for the group/);
-  assert.match(form({ row: approval, side: 'no' }), /What’s not working for you\? One line is plenty\./, 'No is unchanged');
+  assert.match(form({ row: approval, side: 'no' }), /What’s not working for you\? Add a line, if you like\./, 'No offers the same optional line');
   assert.match(form(), /Add a line for the group, if you like\./, 'a group row keeps its wording');
 });
 
@@ -153,8 +153,8 @@ test('#22: on a solo project the Yes line is a note, asked of the row\'s own pro
   assert.deepEqual(asked.slice(-1), ['demo-app'], 'the row\'s project, not the page\'s');
 
   const no = draw({ side: 'no' });
-  assert.match(no, /What’s not working for you\? One line is plenty\./);
-  assert.match(no, /class="dev-vote-reason-send dev-vote-reason-send-no" disabled="">Vote no</, 'No still needs its line');
+  assert.match(no, /What’s not working for you\? Add a line, if you like\./);
+  assert.match(no, /class="dev-vote-reason-send dev-vote-reason-send-no">Vote no</, 'No never waits for its line');
 
   audience = 'invited';
   assert.match(draw(), /Add a line for the group, if you like\./, 'a group keeps its wording');

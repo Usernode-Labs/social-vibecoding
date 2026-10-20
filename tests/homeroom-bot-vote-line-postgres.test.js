@@ -2,7 +2,7 @@
 
 // #3977: a No vote's line on a change Homeroom bot built reaches the bot.
 //
-// A No comes with a line (#1688). On one of the bot's own changes, while it
+// A No may come with a line (#1688). On one of the bot's own changes, while it
 // is up for a vote, that line is what the bot should fix, and it used to
 // stop at the vote row: a system row the bot neither wakes on nor reads.
 // The vote route (routes/votes.js) now hands it over through

@@ -140,12 +140,15 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     const i = await issue(a, author, 'close_issue', { issueNumber: 7, issueTitle: 'x' });
     await file(i);
     const noReason = await vote(i, v1, 'down');
-    assert.deepEqual([noReason.result, noReason.reason], ['rejected', 'reason_required']);
-    assert.equal((await vote(i, v1, 'down', 'not yet')).result, 'accepted');
+    assert.equal(noReason.result, 'accepted', 'a No without a line is accepted');
     // The same side again retracts, and needs no line.
     assert.equal((await vote(i, v1, 'down')).result, 'accepted');
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM issue_votes WHERE issue_id = $1', [i.id])).rows[0].n, 0);
-    assert.deepEqual(await lines(i), [`${v1.username} voted down on close proposal for issue #7: “not yet”`]);
+    assert.equal((await vote(i, v1, 'down', 'not yet')).result, 'accepted');
+    assert.deepEqual(await lines(i), [
+      `${v1.username} voted down on close proposal for issue #7`,
+      `${v1.username} voted down on close proposal for issue #7: “not yet”`,
+    ]);
     assert.ok(pushed.some((p) => p.kind === 'room' && p.routing.appId === a.id && p.data.type === 'chat'
       && p.data.content === `${v1.username} voted down on close proposal for issue #7: “not yet”` && p.data.thread.type === 'governance'),
     'the vote line, to the app\'s room');
@@ -157,7 +160,8 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     await rt.drain();
     const late = await vote(i, v2, 'up');
     assert.deepEqual([late.result, late.reason], ['rejected', 'not_open']);
-    assert.equal((await pool.query('SELECT count(*)::int AS n FROM issue_votes WHERE issue_id = $1', [i.id])).rows[0].n, 0);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM issue_votes WHERE issue_id = $1', [i.id])).rows[0].n, 1,
+      'the refused vote wrote nothing: the earlier line is still the only row');
     const wrongActor = await send(i, 'VoteCast', { userId: v2.id, username: v2.username, vote: 'up' }, { actor: `user:${v1.id}` });
     await rt.drain();
     assert.equal((await event(wrongActor)).reason, 'not_the_voter');
