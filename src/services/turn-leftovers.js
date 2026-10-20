@@ -1,10 +1,14 @@
 'use strict';
 
-// ROLLOUT-ONLY. What a release from before the turn machine leaves behind,
-// taken to an end now that no leader recovers it. Delete this module, its
-// clock (`turn-leftovers`, src/workflow/clock/services.ts), the `recover`
-// turn kind (services/turns.js) and the process_holds reads below once no
-// such release can run (one release after this one serves everywhere).
+// Turns nothing carries any more, taken to an end now that no leader
+// recovers them: what a release from before the turn machine leaves behind
+// (ROLLOUT-ONLY: the claims, headless runs and local turns below, and the
+// process_holds reads), and a coding record whose work item settled without
+// releasing it (its release failed: services/turns.js releaseLeftRecord),
+// which is the leader's orphan sweep and watchdog's case and stays. Once no
+// release from before the turn machine can run, delete the rollout parts:
+// the claims, headless and local passes, the `resume` flag in turns.js and
+// heldByLiveProcess.
 //
 // Every turn this release starts belongs to the turn machine
 // (src/workflow/turn/): its work item owns its conversation's claim, its
@@ -21,17 +25,24 @@
 //              conversation was answered after the turn started (its reply,
 //              or its build's recovered wrap-up), else ended as interrupted,
 //              with Retry;
-//   records    a coding run's record with no owner: a `recover` turn asked
-//              on its change, which runs the adoption the leader ran
+//   records    a coding run's record no work item holds (none owns it, or
+//              its owner settled), quiet for two minutes: a `recover` turn
+//              asked on its change, which runs the adoption the leader ran
 //              (turn-recovery.js adoptOrphanWorker), once;
 //   headless   a run still 'generating' that no turn carries: a `headless`
 //              turn asked to resume it, once;
 //   local      a local agent's turn whose waiter went quiet and that no item
 //              dispatched: finished by the local recovery pass, as the
 //              leader's timer did (its waiter's heartbeat makes it
-//              restartable: services/local-agent-recovery.js).
+//              restartable: services/local-agent-recovery.js);
+//   unanswered once per release, on the first pass after no process of an
+//              older release is live (when the leader's boot ran it): a dev
+//              chat turn of that release cut before its reply, or before its
+//              reply's pills, repaired as its item would repair one of this
+//              release's (#786: turn-recovery.js repairUnansweredTurn).
 
 const log = require('./logger');
+const { workflowTurnHeldSql, buildHoldSql } = require('../workflow/session-work.ts');
 
 // The old claim's stale window (agent-sessions.js before the turn machine).
 const STALE_SECONDS = 90;
@@ -70,12 +81,23 @@ const CLAIMS_SQL = `
    LIMIT ${LIMIT}`;
 
 const IDENTITY = `COALESCE(cs.active_turn->>'turnId', cs.active_turn->>'logicalTurnId', cs.active_turn->>'turnUuid', 'record')`;
+// A record that has not moved for this long (a dispatch just made by an
+// older release has its hold written long before then).
+const QUIET_SECONDS = 120;
 const RECORDS_SQL = `
   SELECT cs.id, cs.app_id, ${IDENTITY} AS identity
     FROM chat_sessions cs
    WHERE cs.active_turn IS NOT NULL
-     AND cs.active_turn->'owner' IS NULL
-     AND cs.workflow_owner IS NULL
+     -- No work item holds it: none owns it, or the one that did has settled.
+     AND NOT ${workflowTurnHeldSql('cs.active_turn')}
+     -- What other work carries: a headless run (below), a durable build, a
+     -- shots agent's turn.
+     AND cs.is_headless IS NOT TRUE
+     AND NOT ${buildHoldSql('cs')}
+     AND NOT EXISTS (SELECT 1 FROM wf_instances w
+                      WHERE w.machine = 'shots' AND w.key = 'session:' || cs.id AND w.state = 'taking_shots')
+     AND COALESCE(cs.active_turn->>'lifecycleUpdatedAt', cs.active_turn->>'startedAt')::timestamptz
+           < NOW() - make_interval(secs => ${QUIET_SECONDS})
      AND NOT ${heldByLiveProcess('cs.id')}
      AND NOT EXISTS (SELECT 1 FROM wf_instances t
                       WHERE t.machine = 'turn' AND t.key = 'session:' || cs.id AND t.state = 'running')
@@ -90,7 +112,9 @@ const HEADLESS_SQL = `
   SELECT cs.id, cs.app_id, cs.user_id
     FROM chat_sessions cs
    WHERE cs.is_headless = TRUE AND cs.headless_status = 'generating'
-     AND cs.active_turn IS NULL
+     -- A run with no person behind it (a staging fixture's) is never resumed.
+     AND cs.user_id IS NOT NULL
+     AND (cs.active_turn IS NULL OR NOT ${workflowTurnHeldSql('cs.active_turn')})
      AND NOT ${heldByLiveProcess('cs.id')}
      AND NOT EXISTS (SELECT 1 FROM wf_instances t WHERE t.machine = 'turn' AND t.key = 'session:' || cs.id)
      AND NOT EXISTS (SELECT 1 FROM wf_events e WHERE e.machine = 'turn' AND e.key = 'session:' || cs.id)
@@ -140,8 +164,53 @@ async function askForHeadless(pool, d) {
   return rows.length;
 }
 
-/** One pass of the `turn-leftovers` clock. */
-async function sweep(pool, { config, deps = {} } = {}) {
+// The changes the boot backfill looked at (#786): a dev chat of the last
+// week, nothing on it now.
+const UNANSWERED_LIMIT = 200;
+const UNANSWERED_WINDOW_DAYS = 7;
+const UNANSWERED_SQL = `
+  SELECT cs.id, cs.pr_number, cs.spec_md FROM chat_sessions cs
+   WHERE cs.status IN ('active', 'promoted')
+     AND cs.source IS DISTINCT FROM 'imported'
+     AND cs.is_headless = FALSE
+     AND cs.agent_session_id IS NULL
+     AND cs.active_turn IS NULL
+     AND NOT EXISTS (SELECT 1 FROM wf_instances t
+                      WHERE t.machine = 'turn' AND t.key = 'session:' || cs.id AND t.state = 'running')
+     AND cs.last_activity_at > NOW() - make_interval(days => ${UNANSWERED_WINDOW_DAYS})
+   ORDER BY cs.last_activity_at DESC
+   LIMIT ${UNANSWERED_LIMIT}`;
+
+async function backfillUnanswered(pool, d) {
+  const { rows } = await pool.query(UNANSWERED_SQL);
+  const counts = { attached: 0, breadcrumb: 0, skipped: 0 };
+  for (const session of rows) {
+    try {
+      counts[await d.repairUnansweredTurn(pool, session)] += 1;
+    } catch (err) {
+      counts.skipped += 1;
+      log.warn('turn-leftovers', 'An unanswered dev chat turn could not be repaired', { sessionId: session.id, err: err.message });
+    }
+  }
+  log.info('turn-leftovers', 'Dev chat turns an older release cut were repaired', { scanned: rows.length, ...counts });
+  return counts;
+}
+
+// Whether a process of a release other than this one is live.
+async function olderReleaseLive(pool, release) {
+  const { rows: [r] } = await pool.query(
+    `SELECT EXISTS (SELECT 1 FROM platform_processes
+                     WHERE release IS DISTINCT FROM $1 AND heartbeat_at > NOW() - make_interval(secs => ${LIVE_SECONDS})) AS live`,
+    [release]);
+  return !!r.live;
+}
+
+/**
+ * One pass of the `turn-leftovers` clock. `previous` is the last pass's
+ * result (the clock's), whose `backfilled` names the release the unanswered
+ * backfill last ran for.
+ */
+async function sweep(pool, { config, previous = null, deps = {} } = {}) {
   const d = {
     agentSessions: deps.agentSessions || require('./agent-sessions'),
     platform: deps.platform || require('../workflow/platform.ts'),
@@ -149,6 +218,8 @@ async function sweep(pool, { config, deps = {} } = {}) {
     publishDone: deps.publishDone || ((agentSessionId, turnId) => require('./session-bus').publish(
       require('./mayor/agent-turn').busKey(agentSessionId),
       { type: 'done', _seq: `${String(turnId).slice(0, 8)}-z`, agentSessionId })),
+    release: deps.release !== undefined ? deps.release : (String(process.env.GIT_SHA || '').trim().slice(0, 40) || null),
+    repairUnansweredTurn: deps.repairUnansweredTurn || ((...a) => require('./turn-recovery').repairUnansweredTurn(...a)),
     localPass: deps.localPass || (() => {
       const recovery = require('./turn-recovery');
       return require('./local-agent-recovery').recoverOrphanedLocalTurns({
@@ -160,7 +231,13 @@ async function sweep(pool, { config, deps = {} } = {}) {
   const records = await askForRecords(pool, d);
   const headless = await askForHeadless(pool, d);
   const { adopted: local } = await d.localPass();
-  return { claims, records, headless, local };
+  let backfilled = previous && previous.backfilled !== undefined ? previous.backfilled : undefined;
+  let unanswered = null;
+  if (backfilled !== d.release && !(await olderReleaseLive(pool, d.release))) {
+    unanswered = await backfillUnanswered(pool, d);
+    backfilled = d.release;
+  }
+  return { claims, records, headless, local, unanswered, backfilled: backfilled ?? null };
 }
 
-module.exports = { sweep, STALE_SECONDS, CLAIMS_SQL, RECORDS_SQL, HEADLESS_SQL };
+module.exports = { sweep, backfillUnanswered, STALE_SECONDS, CLAIMS_SQL, RECORDS_SQL, HEADLESS_SQL, UNANSWERED_SQL };

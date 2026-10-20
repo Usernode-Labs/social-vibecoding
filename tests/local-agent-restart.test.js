@@ -112,26 +112,16 @@ test('the lease sweeper is what reaps a turn whose waiter died with the process'
   assert.equal(localAgent.TERMINAL_TURN_STATUSES.includes('abandoned'), true);
 });
 
-test('the sweeper is armed at boot, on an interval shorter than the lease TTL', () => {
-  assert.match(serverSource, /startLocalAgentLeaseSweeper\(config\)/);
-  const declared = serverSource.match(/LOCAL_AGENT_SWEEP_MS\s*=\s*([^;]+);/);
-  assert.ok(declared, 'the sweep interval is a named constant');
-  // eslint-disable-next-line no-eval
-  const sweepMs = eval(declared[1]);
-  assert.ok(sweepMs <= localAgent.LEASE_TTL_MS,
-    'a lease must not outlive its reaper by more than one sweep');
-  assert.match(serverSource, /sweepExpiredLeases/);
-});
-
-test('the sweeper never takes the process down with it', () => {
-  const block = serverSource.slice(
-    serverSource.indexOf('function startLocalAgentLeaseSweeper'),
-    serverSource.indexOf('function startLocalAgentLeaseSweeper') + 900
-  );
-  assert.ok(/catch/.test(block), 'a failed sweep is logged, not thrown into the event loop');
-  // A leader timer (services/leader-timers.js): unref'd, skipped once
-  // shutdown begins and stopped by cleanup().
-  assert.match(block, /leaderTimers\.every\('local-agent-lease-sweep', tick, LOCAL_AGENT_SWEEP_MS\)/);
+test('the sweep is a clock of the workflow, on an interval shorter than the lease TTL, that never throws into a loop', () => {
+  // One run at a time wherever the workflow runs (src/workflow/clock/): a
+  // failed run is the clock's to record and run again, never an uncaught
+  // throw in some process.
+  const clock = fs.readFileSync(path.join(__dirname, '..', 'src', 'workflow', 'clock', 'services.ts'), 'utf8');
+  const job = clock.slice(clock.indexOf("name: 'local-agent-leases'"), clock.indexOf('},', clock.indexOf("name: 'local-agent-leases'")));
+  assert.match(job, /everyMs: MIN,/);
+  assert.match(job, /legacy\('services\/local-agent'\)\.sweepExpiredLeases\(pool\)/);
+  assert.ok(60 * 1000 <= localAgent.LEASE_TTL_MS, 'a lease must not outlive its reaper by more than one sweep');
+  assert.doesNotMatch(serverSource, /startLocalAgentLeaseSweeper|sweepExpiredLeases/, 'no process sweeps on its own');
 });
 
 // ── The client rides out the outage ────────────────────────────────────────

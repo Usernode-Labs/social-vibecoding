@@ -1,14 +1,13 @@
 'use strict';
 
-// The new leader while the Pod a release replaced still finishes its turns
-// (docs/plans/draining-releases.md), against the REAL schema in a throwaway
-// PostgreSQL database:
+// A turn a process left behind while the Pod a release replaced still
+// finishes its own (docs/plans/draining-releases.md), against the REAL schema
+// in a throwaway PostgreSQL database:
 //
 //   - adoptOrphanWorker leaves a turn another live process holds alone;
-//   - the leader's periodic sweep (server.js sweepOrphanTurns) adopts what a
-//     process left behind: a turn in a recoverable phase that no live process
-//     holds, whose record has not moved for ORPHAN_MIN_AGE_MS, whose worker
-//     is still there; and nothing else.
+//   - the turn-leftovers clock (services/turn-leftovers.js) asks a recover
+//     turn, once, for what was left: a record no work item and no live
+//     process holds, quiet for two minutes; and nothing else.
 //
 // The worker module is stubbed; the other processes are the rows they write.
 // Skipped when no server is reachable, required when TEST_DATABASE_URL is set.
@@ -50,7 +49,7 @@ const onPoolError = (err) => {
   dropped.push(`${err.code || ''} ${err.message}`);
 };
 
-test('the leader adopts only what no live process holds', { timeout: 120000 }, async (t) => {
+test('only what no live process or work item holds is recovered', { timeout: 120000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   admin.on('error', onPoolError);
   try { await admin.query('SELECT 1'); } catch (err) {
@@ -147,17 +146,25 @@ test('the leader adopts only what no live process holds', { timeout: 120000 }, a
     assert.equal(row.active_turn.phase, 'executing', 'its turn record is untouched');
   });
 
-  await t.test('the sweep adopts what was left: unheld (or held by the dead), old enough, recoverable', async () => {
-    const adopted = [];
-    const out = await server.sweepOrphanTurns({}, { adopt: async (orphan) => { adopted.push(orphan.sessionId); } });
-    await new Promise((r) => setImmediate(r));
-    assert.deepEqual(adopted.sort((a, b) => a - b), [heldDead, left].sort((a, b) => a - b));
-    assert.equal(out.adopted, 2);
+  const leftovers = require('../src/services/turn-leftovers');
+  const asked = async () => (await pool.query(
+    `SELECT (payload->'input'->>'sessionId')::int AS id FROM wf_events WHERE machine = 'turn' AND type = 'Asked'
+       AND payload->>'kind' = 'recover' ORDER BY id`)).rows.map((r) => r.id);
+  const pass = () => leftovers.sweep(pool, { config: {}, deps: { localPass: async () => ({ adopted: 0 }), release: 'test' } });
+
+  await t.test('a recover turn is asked, once, for what was left: unheld (or held by the dead), quiet', async () => {
+    const out = await pass();
+    assert.equal(out.records, 3);
+    const adopted = await asked();
+    // A quarantined record is asked too: the adoption stops its worker and
+    // keeps the record for an operator (turn-recovery.js adoptOrphanWorker).
+    assert.deepEqual(adopted.sort((a, b) => a - b), [heldDead, left, quarantined].sort((a, b) => a - b));
     assert.ok(!adopted.includes(fresh), 'a turn whose record just moved may be one being dispatched');
-    assert.ok(!adopted.includes(quarantined), 'a quarantined turn is not recoverable');
     assert.ok(!adopted.includes(headless) && !adopted.includes(building),
-      'nor what adoption leaves as it is: a headless run, a durable build\'s session');
+      'nor what other work carries: a headless run, a durable build\'s session');
     assert.ok(!adopted.includes(heldLive));
+    await pass();
+    assert.equal((await asked()).length, 3, 'once');
   });
 
   // (A worker a process left behind is the worker-eviction clock's, from
@@ -165,12 +172,12 @@ test('the leader adopts only what no live process holds', { timeout: 120000 }, a
   // build's included.)
 
   await t.test('nor what this process itself holds', async () => {
-    const release = processes.hold('session', left);
+    const another = await session('mine');
+    const release = processes.hold('session', another);
     try {
-      const adopted = [];
-      await server.sweepOrphanTurns({}, { adopt: async (orphan) => { adopted.push(orphan.sessionId); } });
-      await new Promise((r) => setImmediate(r));
-      assert.ok(!adopted.includes(left));
+      await new Promise((r) => setTimeout(r, 200));
+      await pass();
+      assert.ok(!(await asked()).includes(another));
     } finally { release(); }
   });
 

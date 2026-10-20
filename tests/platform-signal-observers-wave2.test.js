@@ -288,72 +288,53 @@ test('the platform\'s service account may get pods in its own namespace, and not
 
 // ── turn_recovery_gave_up ───────────────────────────────────────────────
 
-function fakeTimers() {
-  const queued = [];
-  return {
-    queued,
-    setTimer(fn, delay) { const timer = { fn, delay, unref() {} }; queued.push(timer); return timer; },
-    clearTimer(timer) { const i = queued.indexOf(timer); if (i >= 0) queued.splice(i, 1); },
-    async runNext() { const timer = queued.shift(); assert.ok(timer, 'a queued retry'); await timer.fn(); },
-  };
+// A coding run's recovery is tried again by its turn's work item
+// (services/turns.js RECOVERY_RETRY); running out of tries records the
+// give-up the platform signal files a request for.
+async function recoverTurn({ pool, recover, tries = 2 }) {
+  const turns = require('../src/services/turns');
+  const recovery = require('../src/services/turn-recovery');
+  const saved = { recoverOwnedTurn: recovery.recoverOwnedTurn, releaseLeftRecord: recovery.releaseLeftRecord, retry: { ...turns.RECOVERY_RETRY } };
+  recovery.recoverOwnedTurn = recover;
+  recovery.releaseLeftRecord = async () => null;
+  Object.assign(turns.RECOVERY_RETRY, { ms: 1, tries });
+  try {
+    return await turns.run({
+      workId: 'w', kind: 'turn.run', key: 'run:t', resumeFrom: null, lostAttempts: 0, signal: new AbortController().signal,
+      input: { kind: 'recover', sessionId: 5030, turnId: 't', instanceKey: 'session:5030' },
+    }, { config: {}, pool });
+  } finally {
+    Object.assign(recovery, { recoverOwnedTurn: saved.recoverOwnedTurn, releaseLeftRecord: saved.releaseLeftRecord });
+    Object.assign(turns.RECOVERY_RETRY, saved.retry);
+  }
 }
 
-test('a retained recovery that runs out of attempts records that it gave up, with its session and code', async () => {
-  const timers = fakeTimers();
+test('a recovery that runs out of tries records that it gave up, with its session and code', async () => {
   const calls = [];
   const pool = { query: (sql, params) => { calls.push({ sql, params }); return Promise.resolve({ rows: [] }); } };
-  const order = [];
-  recoveryRetry.scheduleRetainedRecovery({
-    key: 'interactive:5030',
-    run: async () => { throw Object.assign(new Error('No commits between main and dev/x'), { code: 'no_commits' }); },
-    onExhausted: async () => { order.push(`exhausted after ${calls.length} record`); },
-    release: () => order.push('released'),
-    maxFailures: 2,
-    setTimer: timers.setTimer,
-    clearTimer: timers.clearTimer,
+  let tried = 0;
+  await assert.rejects(recoverTurn({
     pool,
-  });
-  await timers.runNext();
-  assert.equal(calls.length, 0, 'a failure with attempts left records nothing');
-  await timers.runNext();
-  assert.equal(calls.length, 1);
-  assert.match(calls[0].sql, /INSERT INTO events/);
-  assert.deepEqual(calls[0].params.slice(0, 4), [null, null, 5030, 'turn_recovery_gave_up']);
-  assert.deepEqual(JSON.parse(calls[0].params[4]), { sessionId: 5030, recovery: 'interactive', code: 'no_commits', failures: 2 });
-  assert.deepEqual(order, ['exhausted after 1 record', 'released']);
-  assert.equal(recoveryRetry.isScheduled('interactive:5030'), false);
+    recover: async () => {
+      tried += 1;
+      throw Object.assign(new Error('No commits between main and dev/x'), { code: 'no_commits', retryWorkerRecovery: true });
+    },
+  }), /No commits/);
+  assert.equal(tried, 2);
+  const records = calls.filter((c) => /INSERT INTO events/.test(c.sql));
+  assert.equal(records.length, 1, 'once, as it gives up');
+  assert.deepEqual(records[0].params.slice(0, 4), [null, null, 5030, 'turn_recovery_gave_up']);
+  assert.deepEqual(JSON.parse(records[0].params[4]), { sessionId: 5030, recovery: 'interactive', code: 'no_commits', failures: 2 });
 });
 
-test('a recovery that succeeds, or stops on a permanent error, records no give-up; a record that fails costs nothing', async () => {
+test('a recovery that succeeds, or stops on an error trying again cannot help, records no give-up; a record that fails costs nothing', async () => {
   const calls = [];
-  const pool = { query: (sql, params) => { calls.push(params); return Promise.resolve({ rows: [] }); } };
-  const timers = fakeTimers();
-  recoveryRetry.scheduleRetainedRecovery({
-    key: 'headless:1', run: async () => {}, maxFailures: 1, pool, setTimer: timers.setTimer, clearTimer: timers.clearTimer,
-  });
-  await timers.runNext();
-  recoveryRetry.scheduleRetainedRecovery({
-    key: 'headless:2',
-    run: async () => { throw Object.assign(new Error('bad state'), { code: 'recovery_retry_state_invalid' }); },
-    maxFailures: 1, pool, setTimer: timers.setTimer, clearTimer: timers.clearTimer,
-  });
-  await timers.runNext();
-  assert.equal(calls.length, 0);
-
+  const pool = { query: (sql, params) => { calls.push({ sql, params }); return Promise.resolve({ rows: [] }); } };
+  await recoverTurn({ pool, recover: async () => {} });
+  await assert.rejects(recoverTurn({ pool, recover: async () => { throw Object.assign(new Error('bad state'), { code: 'recovery_retry_state_invalid' }); } }));
+  assert.equal(calls.filter((c) => /INSERT INTO events/.test(c.sql)).length, 0);
   // The database throwing as it is asked, and a key with no session id.
-  let exhausted = 0;
-  let released = 0;
-  const broken = { query: () => { throw new Error('db down'); } };
-  recoveryRetry.scheduleRetainedRecovery({
-    key: 'test:no-session',
-    run: async () => { throw new Error('still failing'); },
-    onExhausted: async () => { exhausted += 1; },
-    release: () => { released += 1; },
-    maxFailures: 1, pool: broken, setTimer: timers.setTimer, clearTimer: timers.clearTimer,
-  });
-  await timers.runNext();
-  assert.equal(exhausted, 1);
-  assert.equal(released, 1);
+  assert.doesNotThrow(() => recoveryRetry.recordGaveUp({ pool: { query: () => { throw new Error('db down'); } }, key: 'test:no-session', err: new Error('x'), failures: 1 }));
   assert.doesNotThrow(() => recoveryRetry.recordGaveUp({ pool: null, key: undefined, err: null, failures: 'x' }));
 });
 

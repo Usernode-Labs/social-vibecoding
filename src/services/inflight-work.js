@@ -22,8 +22,8 @@
 // worker (restart recovery adopts those), and not anything open-ended — a
 // stream, a poll loop, a wait for a person — which would only hold every
 // shutdown to its deadline. Nothing here refuses new work: whoever starts
-// work checks lifecycle.isShuttingDown() (services/leader-timers.js does it
-// for every timer tick), and the drain is bounded by its own deadline.
+// work checks lifecycle.isShuttingDown(), and the drain is bounded by its own
+// deadline.
 
 const entries = new Map(); // id → { name, startedAt }
 let nextId = 1;

@@ -10,9 +10,10 @@
 // the recovery paths deliberately don't resume.
 //
 // server.js only boots under the require.main guard, so requiring it here
-// exposes adoptOrphanWorker + restoreMissingQuickReplies without starting
-// servers. worker and ws are stubbed via require.cache BEFORE the require so
-// server.js binds the stubs.
+// exposes adoptOrphanWorker without starting servers. The backfill is the
+// turn-leftovers clock's, once per release (services/turn-leftovers.js),
+// driven here against a scripted pool. worker and ws are stubbed via
+// require.cache BEFORE the require so server.js binds the stubs.
 //
 // Run with: node --test tests/restart-recovery-pills-server.test.js
 
@@ -70,15 +71,19 @@ const origSetTimeout = global.setTimeout;
 global.setInterval = (...a) => { const t = origSetInterval(...a); if (t && t.unref) t.unref(); return t; };
 global.setTimeout = (...a) => { const t = origSetTimeout(...a); if (t && t.unref) t.unref(); return t; };
 let adoptOrphanWorker;
-let restoreMissingQuickReplies;
 try {
-  ({ adoptOrphanWorker, restoreMissingQuickReplies } = require('../server'));
+  ({ adoptOrphanWorker } = require('../server'));
 } finally {
   global.setInterval = origSetInterval;
   global.setTimeout = origSetTimeout;
 }
 
-const activeWorkersSvc = require('../src/services/active-workers');
+// The backfill one pass of the turn-leftovers clock runs, against the pool
+// this test scripted.
+const leftovers = require('../src/services/turn-leftovers');
+const restoreMissingQuickReplies = () => leftovers.backfillUnanswered(backfillPool, {
+  repairUnansweredTurn: require('../src/services/turn-recovery').repairUnansweredTurn,
+});
 
 const SERVER_SRC = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8')
   // With what a turn's recovery runs, moved out of server.js unchanged
@@ -256,40 +261,26 @@ test('the recovered scout tails carry spec_done / unrecoverable pills', () => {
     'the no-spec outcome is persisted, not emit-only (it used to vanish on reload)');
 });
 
-test('the failed-resume and watchdog-reap breadcrumbs carry retry pills', () => {
+test('the failed-resume breadcrumbs carry retry pills', () => {
   assert.match(SERVER_SRC, /const failedPills = recoveryPills\.buildRecoveryQuickReplies\('unrecoverable'\)/);
-  // The reap picks its set from whether the turn's code landed: a reaped
-  // TAIL offers Propose/tweak, a reaped exec offers "try that again".
-  assert.match(SERVER_SRC,
-    /const reapPills = recoveryPills\.buildRecoveryQuickReplies\(\s*reapCodeLanded \? 'code_done' : 'unrecoverable'\s*\)/);
   assert.match(SERVER_SRC, /const goneP = recoveryPills\.buildRecoveryQuickReplies\('unrecoverable'\)/);
   assert.match(SERVER_SRC, /const landedPills = recoveryPills\.buildRecoveryQuickReplies\('code_done'\)/,
     'a dead-worker tail whose commit landed gets code_done pills, not retry pills');
 });
 
-test('the backfill sweep is chained post-listen onto the recovery block', () => {
-  // Hard constraint: it must never run before the listener is up. It hangs
-  // off the same fire-and-forget chain as the other boot recovery steps.
-  assert.match(SERVER_SRC,
-    /resumeHeadlessRuns\(config\)[\s\S]{0,600}\.then\(\(\) => restoreMissingQuickReplies\(config\)\)/,
-    'restoreMissingQuickReplies is chained after resumeHeadlessRuns');
-  // Since blue-green, the recovery block lives in becomeLeader(), which is
-  // only ever invoked via leadership.start(becomeLeader) — and that call
-  // sits after app.listen() inside start(). Pin both halves: the chain is
-  // inside becomeLeader, and becomeLeader is started post-listen.
-  const leaderIdx = SERVER_SRC.indexOf('async function becomeLeader(');
-  const chainIdx = SERVER_SRC.indexOf('.then(() => restoreMissingQuickReplies(config))');
-  const startIdx = SERVER_SRC.indexOf('async function start(');
-  assert.ok(leaderIdx >= 0 && chainIdx > leaderIdx && chainIdx < startIdx,
-    'the backfill chain must live inside becomeLeader()');
-  const startBody = SERVER_SRC.slice(startIdx);
-  const listenIdx = startBody.indexOf('const server = app.listen(');
-  const electIdx = startBody.indexOf('leadership.start(becomeLeader)');
-  assert.ok(listenIdx >= 0 && electIdx > listenIdx,
-    'leadership.start(becomeLeader) must come after app.listen() in start()');
+test('the backfill runs once per release, once no older process is live, and a cut turn of this release repairs itself', () => {
+  // Never before an older release's turns could still answer: its pass runs
+  // on the first clock pass after none of its processes is live, as the
+  // leader's boot sweep ran once the previous leader exited.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-leftovers.js'), 'utf8');
+  assert.match(src, /if \(backfilled !== d\.release && !\(await olderReleaseLive\(pool, d\.release\)\)\) \{\s*unanswered = await backfillUnanswered\(pool, d\);\s*backfilled = d\.release;/);
+  // A classic turn of this release is its item's, which repairs its own
+  // change when it resumes (services/turns.js resumeClassic).
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turns.js'), 'utf8'),
+    /await require\('\.\/turn-recovery'\)\.repairUnansweredTurn\(pool, sessionId\);/);
 });
 
-// ── 3. restoreMissingQuickReplies — the boot backfill sweep ────────────
+// ── 3. The unanswered-turn backfill (turn-leftovers.js backfillUnanswered) ──
 
 // Fake pool driven by a per-test script: the candidate sessions, the newest
 // user/assistant row per session, and the newest system row per session.
@@ -329,7 +320,7 @@ test('backfill: a row that already has pills is left alone', async () => {
     sessions: [{ id: 1, pr_number: 5, spec_md: 'x' }],
     lastRows: { 1: { id: 10, role: 'assistant', content: 'done', metadata: { quickReplies: ['Make a tweak'] } } },
   });
-  await restoreMissingQuickReplies({});
+  await restoreMissingQuickReplies();
   assert.deepEqual(writes(backfillPool), [], 'no writes for an already-healthy session');
   assert.deepEqual(broadcasts, []);
 });
@@ -339,7 +330,7 @@ test('backfill: a bare assistant row with a PR gets the code_done pills', async 
     sessions: [{ id: 2, pr_number: 41, spec_md: null }],
     lastRows: { 2: { id: 20, role: 'assistant', content: "I'll have the agent do that.", metadata: {} } },
   });
-  await restoreMissingQuickReplies({});
+  await restoreMissingQuickReplies();
   const w = writes(backfillPool);
   assert.equal(w.length, 1);
   assert.match(w[0].sql, /UPDATE chat_session_messages/);
@@ -354,7 +345,7 @@ test('backfill: a spec but no PR gets the spec_done pills', async () => {
     sessions: [{ id: 3, pr_number: null, spec_md: '## User-facing changes\n\nx' }],
     lastRows: { 3: { id: 30, role: 'assistant', content: 'Scouting.', metadata: {} } },
   });
-  await restoreMissingQuickReplies({});
+  await restoreMissingQuickReplies();
   assert.deepEqual(JSON.parse(writes(backfillPool)[0].params[0]),
     recoveryPills.buildRecoveryQuickReplies('spec_done'));
 });
@@ -364,7 +355,7 @@ test('backfill: neither PR nor spec falls back to unknown_state', async () => {
     sessions: [{ id: 4, pr_number: null, spec_md: '   ' }],
     lastRows: { 4: { id: 40, role: 'assistant', content: 'Hello.', metadata: {} } },
   });
-  await restoreMissingQuickReplies({});
+  await restoreMissingQuickReplies();
   assert.deepEqual(JSON.parse(writes(backfillPool)[0].params[0]),
     recoveryPills.buildRecoveryQuickReplies('unknown_state'));
 });
@@ -375,7 +366,7 @@ test('backfill: a trailing user row gets the missed-reply breadcrumb + resend pi
     lastRows: { 5: { id: 50, role: 'user', content: 'Make the leaderboard sort by score', metadata: {} } },
     newestSystem: { 5: { content: 'Thinking about your request...' } },
   });
-  await restoreMissingQuickReplies({});
+  await restoreMissingQuickReplies();
   const w = writes(backfillPool).filter((c) => /chat_session_messages/.test(c.sql));
   assert.equal(w.length, 1);
   assert.match(w[0].sql, /INSERT INTO chat_session_messages/);
@@ -401,7 +392,7 @@ test('backfill: the missed-reply breadcrumb is not posted twice across boots', a
     lastRows: { 6: { id: 60, role: 'user', content: 'Make it blue', metadata: {} } },
     newestSystem: { 6: { content: recoveryPills.UNANSWERED_BREADCRUMB } },
   });
-  await restoreMissingQuickReplies({});
+  await restoreMissingQuickReplies();
   assert.deepEqual(writes(backfillPool), [], 'a second boot must not duplicate the breadcrumb');
 });
 
@@ -415,39 +406,22 @@ test('backfill: a question turn is skipped (answer chips take precedence)', asyn
       },
     },
   });
-  await restoreMissingQuickReplies({});
+  await restoreMissingQuickReplies();
   assert.deepEqual(writes(backfillPool), []);
 });
 
-test('backfill: a busy session is skipped before any read of its messages', async () => {
-  backfillPool = makeBackfillPool({
-    sessions: [{ id: 8, pr_number: 9, spec_md: null }],
-    lastRows: { 8: { id: 80, role: 'assistant', content: 'x', metadata: {} } },
-  });
-  activeWorkersSvc.activeWorkers.add(8);
-  try {
-    await restoreMissingQuickReplies({});
-  } finally {
-    activeWorkersSvc.activeWorkers.delete(8);
-  }
-  assert.deepEqual(writes(backfillPool), [], 'a live consumer will post its own breadcrumb');
-  assert.equal(
-    backfillPool.calls.filter((c) => /role IN \('user', 'assistant'\)/.test(c.sql)).length,
-    0,
-    'the busy guard short-circuits before the per-session reads'
-  );
-});
-
-test('backfill: the candidate query is bounded and excludes in-flight/headless rows', async () => {
+test('backfill: the candidate query is bounded and leaves out a change something works on, a headless run and a conversation\'s change', async () => {
   backfillPool = makeBackfillPool({ sessions: [] });
-  await restoreMissingQuickReplies({});
+  await restoreMissingQuickReplies();
   const q = backfillPool.calls[0];
   assert.match(q.sql, /status IN \('active', 'promoted'\)/);
   assert.match(q.sql, /is_headless = FALSE/);
+  assert.match(q.sql, /agent_session_id IS NULL/, 'a conversation\'s change has no dev chat of its own');
   assert.match(q.sql, /active_turn IS NULL/);
-  assert.match(q.sql, /last_activity_at > NOW\(\) - make_interval/);
-  assert.match(q.sql, /LIMIT \$2/);
-  assert.deepEqual(q.params, [7, 200]);
+  assert.match(q.sql, /NOT EXISTS \(SELECT 1 FROM wf_instances t\s+WHERE t\.machine = 'turn' AND t\.key = 'session:' \|\| cs\.id AND t\.state = 'running'\)/,
+    'a dev chat turn running in any process is its own to answer');
+  assert.match(q.sql, /last_activity_at > NOW\(\) - make_interval\(days => 7\)/);
+  assert.match(q.sql, /LIMIT 200/);
 });
 
 test('backfill: one failing session does not abort the sweep', async () => {
@@ -467,67 +441,10 @@ test('backfill: one failing session does not abort the sweep', async () => {
     return realQuery(sql, params);
   };
   backfillPool = pool;
-  await restoreMissingQuickReplies({});
+  await restoreMissingQuickReplies();
   const patched = pool.calls.filter((c) => /UPDATE chat_session_messages/i.test(c.sql));
   assert.equal(patched.length, 2, 'both sessions were attempted');
   assert.equal(patched[0].threw, true, 'the first session threw mid-write');
   assert.equal(patched[1].params[1], 100, 'the second session was still repaired');
 });
 
-// ── 4. A Mayor turn still answering is not "unanswered" ────────────────
-//
-// A promoting pod runs this sweep while Mayor turns may still be live, here
-// or on another pod, and a Mayor's first phase sets no busy flag on the
-// change. A change an agent session started has no dev chat at all: its
-// rows are the conversation's, whose own lease and sweeper end its dead
-// turns (mayor/agent-turn.js). Neither may get the classic breadcrumb, the
-// "stopped before finishing" bell, or dev-chat pills.
-
-test('backfill: a conversation\'s change gets no breadcrumb, bell or pills, live lease or not', async () => {
-  backfillPool = makeBackfillPool({
-    sessions: [
-      // The conversation's Mayor is mid-answer: its user message is the
-      // change's newest row and nothing marks the change busy.
-      { id: 11, pr_number: null, spec_md: null, agent_session_id: 501 },
-      // A Mayor reply on a conversation's change, without pills.
-      { id: 12, pr_number: 4, spec_md: null, agent_session_id: 502 },
-    ],
-    lastRows: {
-      11: { id: 110, role: 'user', content: 'Make the header blue', metadata: { agentTurnId: 't-1' } },
-      12: { id: 120, role: 'assistant', content: 'Done: the header is blue.', metadata: { agentTurnId: 't-2' } },
-    },
-  });
-  await restoreMissingQuickReplies({});
-  assert.deepEqual(writes(backfillPool), [], 'nothing is written on a conversation\'s change');
-  assert.equal(
-    backfillPool.calls.filter((c) => /INSERT INTO notifications/.test(c.sql)).length, 0,
-    'no session_stalled bell',
-  );
-  assert.deepEqual(broadcasts, []);
-  assert.match(backfillPool.calls[0].sql, /agent_session_id/, 'the sweep reads which rows are a conversation\'s');
-});
-
-test('backfill: a dev-chat Mayor turn this process is still answering is left to finish', async () => {
-  const stopRegistry = require('../src/services/stop-registry');
-  backfillPool = makeBackfillPool({
-    sessions: [{ id: 13, pr_number: null, spec_md: null, agent_session_id: null }],
-    lastRows: { 13: { id: 130, role: 'user', content: 'Add a footer', metadata: {} } },
-  });
-  const handle = stopRegistry.createHandle({ sessionId: 13, phase: 'mayor1' });
-  stopRegistry.set(13, handle);
-  try {
-    await restoreMissingQuickReplies({});
-  } finally {
-    stopRegistry.deleteIf(13, handle);
-  }
-  assert.deepEqual(writes(backfillPool), [], 'its own reply supplies the pills');
-  assert.equal(backfillPool.calls.filter((c) => /INSERT INTO notifications/.test(c.sql)).length, 0);
-
-  // The same session once that turn is gone: the breadcrumb, as before.
-  backfillPool = makeBackfillPool({
-    sessions: [{ id: 13, pr_number: null, spec_md: null, agent_session_id: null }],
-    lastRows: { 13: { id: 130, role: 'user', content: 'Add a footer', metadata: {} } },
-  });
-  await restoreMissingQuickReplies({});
-  assert.equal(writes(backfillPool).filter((c) => /INSERT INTO chat_session_messages/.test(c.sql)).length, 1);
-});

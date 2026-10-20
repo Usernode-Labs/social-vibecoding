@@ -248,17 +248,14 @@ test('a pass takes over each quiet turn and finishes it in the background', asyn
 
 // ── Wiring ─────────────────────────────────────────────────────────────
 
-test('the leader runs the pass at boot, on its own tick, and after every lease sweep', () => {
-  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  const block = server.slice(server.indexOf('function startLocalAgentLeaseSweeper'),
-    server.indexOf('async function recoverLocalAgentTurns'));
-  assert.match(block, /localAgent\.sweepExpiredLeases\(getPool\(config\)\)[\s\S]{0,400}\.then\(\(\) => recoverLocalAgentTurns\(config\)\)/);
-  assert.match(block, /\n  recoverLocalAgentTurns\(config\);\n/);
-  // A leader timer (services/leader-timers.js): it stops when leadership goes.
-  assert.match(block, /leaderTimers\.every\('local-agent-recovery', \(\) => recoverLocalAgentTurns\(config\), LOCAL_AGENT_RECOVERY_MS\)/);
-  const tick = Number((server.match(/const LOCAL_AGENT_RECOVERY_MS = (\d+) \* 1000;/) || [])[1]) * 1000;
-  assert.ok(tick > 0 && tick < localAgent.WAITER_STALE_SECONDS * 1000,
-    'a quiet waiter is taken over within its stale window plus one tick');
+test('the pass runs on the turn-leftovers clock, for turns no work item dispatched, well inside the waiter\'s stale window', () => {
+  const leftovers = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-leftovers.js'), 'utf8');
+  assert.match(leftovers, /require\('\.\/local-agent-recovery'\)\.recoverOrphanedLocalTurns\(\{/);
+  const clock = fs.readFileSync(path.join(__dirname, '..', 'src', 'workflow', 'clock', 'services.ts'), 'utf8');
+  assert.match(clock, /name: 'turn-leftovers', everyMs: MIN,/);
+  assert.ok(localAgent.WAITER_STALE_SECONDS * 1000 + 60 * 1000 <= 2 * 60 * 1000,
+    'a quiet waiter is taken over within its stale window plus one pass: two minutes');
   assert.ok(localAgent.WAITER_RENEW_MS * 3 < localAgent.WAITER_STALE_SECONDS * 1000,
     'a live waiter can miss renewals before it is taken for dead');
+  assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8'), /recoverLocalAgentTurns|recoverOrphanedLocalTurns/);
 });

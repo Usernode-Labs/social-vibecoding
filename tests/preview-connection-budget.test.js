@@ -86,52 +86,32 @@ test('#1771: runsClusterMaintenance is false in a preview and true everywhere el
   }
 });
 
-test('#1771: the guard sits at the election, not at each of the fifteen duties', () => {
+test('#1771: a preview runs no fleet duty: there is no leader, and the clocks and process duties are gated where they start', () => {
   const src = read('server.js');
-  // One decision, at the one seam every duty is already behind. Guarding
-  // each starter instead would leave the next one added unguarded.
-  assert.match(src, /if \(!runsClusterMaintenance\(\)\) \{/,
-    'the election is gated on whether this process runs cluster maintenance');
-  assert.match(src, /\} else \{\n\s*leadership = createLeadership\(/,
-    'and the coordinator is created only in the other arm');
-  assert.equal((src.match(/leadership = createLeadership\(/g) || []).length, 1,
-    'exactly one place elects a leader, so exactly one guard covers it');
+  // No election: a preview cannot win a lock it would hold on a copy of
+  // production's rows, because there is none to stand for.
+  assert.ok(!/becomeLeader|createLeadership|leaderTimers/.test(src), 'no leader, no leader timers');
   assert.match(src, /const \{ load: loadConfig, runsClusterMaintenance \} = require\('\.\/src\/config'\);/);
-  // Shutdown already tolerates a null coordinator; a preview now relies on
-  // that, so it must not regress into an unguarded call.
-  assert.match(src, /if \(leadership\) \{\s*\n\s*await leadership\.stop\(\)/,
-    'stop() stays guarded — a preview never assigns `leadership`');
-});
-
-test('#1771: becomeLeader is still where the fleet duties live', () => {
-  // If a sweeper ever starts outside becomeLeader, the one guard above stops
-  // covering it. This is the tripwire for that.
-  const src = read('server.js');
-  const body = src.slice(src.indexOf('async function becomeLeader()'), src.indexOf('async function start()'));
-  assert.ok(body.length > 1000, 'becomeLeader must still exist');
-  for (const starter of ['startTurnWatchdog', 'startLocalAgentLeaseSweeper']) {
-    assert.ok(body.includes(`${starter}(`), `${starter} is started under the leader gate`);
-  }
-  // The session sweeper's passes, the stale-PR and stuck-checks sweepers are
-  // gone: what they did is the preview and proposal machines' own deadlines,
-  // or a clock (below).
-  for (const retired of ['startSessionAutoPauseSweeper', 'startStalePrSweeper', 'startStuckChecksSweeper']) {
+  // The session sweeper's passes, the stale-PR and stuck-checks sweepers, the
+  // orphan sweeps and the watchdog are gone: what they did is the machines'
+  // own deadlines, a turn's work item, or a clock (below).
+  for (const retired of ['startSessionAutoPauseSweeper', 'startStalePrSweeper', 'startStuckChecksSweeper',
+    'startTurnWatchdog', 'startLocalAgentLeaseSweeper', 'sweepOrphanTurns']) {
     assert.ok(!src.includes(`function ${retired}(`), `${retired} no longer exists`);
   }
   // The platform's scheduled jobs are clocks of the workflow, which a
-  // preview runs: the release's work arms none of them there, by the same
-  // rule (src/workflow/platform.ts armClocks).
+  // preview runs: the release's work arms none of them there
+  // (src/workflow/platform.ts armClocks).
   const platform = read('src/workflow/platform.ts');
   const arm = platform.slice(platform.indexOf('async function armClocks('));
   const armed = arm.slice(0, arm.indexOf('\n}\n'));
   assert.match(armed, /const runs = legacy\('config'\)\.runsClusterMaintenance\(\);/);
   assert.match(armed, /if \(runs && CLOCK_JOB_NAMES\.has\(job\)\) continue;/, 'one armed there before is retired');
   assert.match(armed, /if \(!runs\) return 0;/, 'no clock is armed on a staging preview');
-  // What each process sweeps of its own runs whether or not it leads, and
-  // still never on a preview. Idle workers are a clock's, not a process's
-  // (services/worker-eviction.js), so a preview arms no eviction either.
+  // What each process sweeps of its own never runs on a preview either. Idle
+  // workers are a clock's, not a process's (services/worker-eviction.js).
   assert.match(src, /if \(runsClusterMaintenance\(\)\) startProcessDuties\(\);/);
-  const duties = src.slice(src.indexOf('function startProcessDuties()'), src.indexOf('async function becomeLeader()'));
+  const duties = src.slice(src.indexOf('function startProcessDuties()'), src.indexOf('async function start()'));
   assert.ok(!/startIdleEvictionSweeper\(/.test(stripComments(duties)), 'no process evicts idle workers of its own');
   assert.match(read('src/workflow/clock/services.ts'), /name: 'worker-eviction', everyMs: 2 \* MIN/, 'the eviction clock does');
 });

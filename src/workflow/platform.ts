@@ -143,13 +143,13 @@ export async function publishPushes(q: Queryable, pushes: Push[], { badges = fal
 // sessions, with the row locks a slot holds and a claim's advisory lock,
 // would live on until the server's OS keepalive gave up on them: two hours
 // and more, while every other process's slots time out on that instance. So
-// the runtime's sessions reap a dead peer as the leader lock's session does
-// (services/leadership.js): the server probes a silent client and drops it
+// the runtime's sessions reap a dead peer (services/db-locks.js): the server
+// probes a silent client and drops it
 // within about 40 s, and a transaction left open by a client that stopped
 // talking ends after 30 s (a transition never waits outside the database
 // inside one: docs/workflows.md).
 export function deadPeerOptions() {
-  const { KEEPALIVE_INITIAL_DELAY_MS, SERVER_KEEPALIVE } = legacy('services/leadership');
+  const { KEEPALIVE_INITIAL_DELAY_MS, SERVER_KEEPALIVE } = legacy('services/db-locks');
   const settings = { ...SERVER_KEEPALIVE, idle_in_transaction_session_timeout: 30000 };
   return {
     keepAlive: true,
@@ -515,17 +515,11 @@ async function armClocks(release: string): Promise<number> {
       { requestKey: `retire:${release}`, source: { kind: 'system', name: 'release' } });
   }
   if (!runs) return 0;
-  const { rows: swept } = await kernelPool!.query(
-    `SELECT name, last_run_at FROM leader_sweeps WHERE name = ANY($1::text[])`,
-    [CLOCK_JOBS.map((j) => j.leaderSweep).filter(Boolean)]).catch(() => ({ rows: [] as any[] }));
-  const lastRun = new Map<string, Date>(swept.map((r: any) => [r.name, new Date(r.last_run_at)]));
   for (const job of CLOCK_JOBS) {
-    // A job first armed is due when the leader timer it replaces would have
-    // run, or within the next two minutes (spread, so they do not all start
-    // in the same second). Only the first Arm reads it.
-    const ran = job.leaderSweep ? lastRun.get(job.leaderSweep) : undefined;
+    // A job first armed is due within the next two minutes (spread, so they
+    // do not all start in the same second). Only the first Arm reads it.
     const spread = Math.floor(Math.random() * Math.min(job.everyMs, 2 * 60 * 1000));
-    const firstDueAt = new Date(ran ? ran.getTime() + job.everyMs : Date.now() + spread).toISOString();
+    const firstDueAt = new Date(Date.now() + spread).toISOString();
     await runtime.append(CLOCK, clockKey(job.name), { type: 'Arm', payload: { job: job.name, everyMs: job.everyMs, firstDueAt } },
       { requestKey: `arm:${release}`, source: { kind: 'system', name: 'release' } });
   }

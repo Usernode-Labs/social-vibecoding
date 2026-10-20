@@ -334,41 +334,6 @@ test('a bot turn whose worker did not survive has its record cleared and its wor
   }
 });
 
-// ── A turn the stale-turn watchdog reaped (#1006) ───────────────────────
-
-test('a reaped bot turn no build owns is a read the queue takes again: its session rests, and nothing is said to a person', async () => {
-  const session = botSession();
-  const pool = makePool({ session });
-  assert.equal(await bot.settleReapedTurn({ pool, config: {}, session }), 'released');
-  assertRested(pool, 6001);
-  assert.deepEqual(runUpdates(pool), []);
-  assert.deepEqual(devChatRows(pool), []);
-});
-
-test('a reaped turn of a durable build is its build\'s: nothing is touched', async () => {
-  const session = botSession({ workflow_owner: 'bot-build/run:900' });
-  const pool = makePool({ session });
-  assert.equal(await bot.settleReapedTurn({ pool, config: {}, session }), 'durable');
-  assert.deepEqual(pool.calls, [], 'the step following the turn reads its end');
-});
-
-test('the stale-turn watchdog leaves a durable build\'s turn alone, and hands a bot or bench turn to its owner before a person\'s breadcrumb', () => {
-  const src = require('node:fs').readFileSync(require.resolve('../server'), 'utf8');
-  const start = src.indexOf('Stale active_turn watchdog');
-  const body = src.slice(start, src.indexOf('Stale active_turn watchdog sweep failed', start));
-  assert.match(body, /u\.username, u\.is_synthetic AS user_is_synthetic/, 'the sweep reads who owns the session');
-  assert.match(body, /WHERE cs\.active_turn IS NOT NULL\s+AND NOT \(cs\.workflow_owner IS NOT NULL AND EXISTS \(\s*SELECT 1 FROM wf_instances w[\s\S]{0,300}?AND w\.state = 'building'\)\)/,
-    'a turn whose build is under way is never read for reaping');
-  const reaped = body.indexOf('worker.clearActiveTurn(row.id');
-  const bench = body.indexOf('isBenchSession(row)');
-  const botAt = body.indexOf('settleReapedTurn({ pool, config, session: row })');
-  const breadcrumb = body.indexOf('TURN_UNFINISHED_BREADCRUMB');
-  assert.ok(reaped > 0 && bench > reaped && botAt > bench && breadcrumb > botAt,
-    'cleared first (a CAS miss hands nothing back), then the owner, then the person path');
-  assert.match(body.slice(bench, botAt), /log\.warn\('server', 'Watchdog reaped a benchmark turn no trial owns', \{ sessionId: row\.id \}\);\n\s+continue;/,
-    'a trial\'s turn no durable trial owns: nothing waits on it');
-});
-
 // ── The bot's clock across a restart ─────────────────────────────────────
 
 test('each restart that reaches a turn gives its clock back two minutes, up to ten restarts', async () => {

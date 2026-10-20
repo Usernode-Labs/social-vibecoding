@@ -213,10 +213,7 @@ test('every "didn\'t finish" breadcrumb after a lost worker notifies the owner',
     'a dangling tail whose code landed is not a stall');
 });
 
-test('the watchdog and the recovered tail pick the kind from how the turn ended', () => {
-  assert.match(SERVER_SRC,
-    /const create = reapCodeLanded\s*\n\s*\? notifications\.createSessionDoneNotification\s*\n\s*: notifications\.createSessionStalledNotification;/,
-    'a reaped exec never finished; a reaped tail whose commit landed did');
+test('the recovered tail picks the kind from how the turn ended', () => {
   assert.match(SERVER_SRC,
     /const create = recoveredStalled\s*\n\s*\? notifications\.createSessionStalledNotification\s*\n\s*: notifications\.createSessionDoneNotification;/);
   assert.match(SERVER_SRC, /recoveredStalled = finalizeOutcome === 'push_failed';/);

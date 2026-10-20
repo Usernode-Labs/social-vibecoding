@@ -721,28 +721,40 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     await rt.drain();
   });
 
-  await t.test('L2 a coding record with no owner: a recover turn asked once, never while a live process holds its change', async () => {
+  await t.test('L2 a coding record no work item holds: a recover turn asked once, never while a live process or its item holds it', async () => {
+    const quiet = (turnId, extra = {}) => JSON.stringify({ turnId, mode: 'build', startedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(), ...extra });
     const c = await change();
-    await pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"old-job","mode":"build"}'::jsonb WHERE id = $1`, [c.id]);
+    await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`, [c.id, quiet('old-job')]);
     const held = await change();
-    await pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"held-job","mode":"build"}'::jsonb WHERE id = $1`, [held.id]);
+    await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`, [held.id, quiet('held-job')]);
+    const fresh = await change();
+    await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`, [fresh.id,
+      JSON.stringify({ turnId: 'fresh-job', mode: 'build', startedAt: new Date().toISOString() })]);
+    // An item that settled without releasing its record (its release failed).
+    const { rows: [doneItem] } = await pool.query(`SELECT id FROM wf_work WHERE kind = $1 AND status = 'settled' LIMIT 1`, [WORK.run]);
+    const settledOwner = await change();
+    await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`, [settledOwner.id,
+      quiet('settled-job', { owner: { machine: MACHINE, key: settledOwner.key, kind: WORK.run, workKey: 'run:s', workId: doneItem.id } })]);
     await pool.query(`INSERT INTO platform_processes (id, release) VALUES ('old-pod', 'old')`);
     await pool.query(`INSERT INTO process_holds (process_id, kind, ref) VALUES ('old-pod', 'session', $1::text)`, [held.id]);
+    const { rows: [liveItem] } = await pool.query(`SELECT id FROM wf_work WHERE kind = $1 AND status IN ('queued', 'running') LIMIT 1`, [WORK.run]);
     const owned = await change();
-    await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`, [owned.id, JSON.stringify({
-      turnId: 'owned-job', mode: 'build', owner: { machine: MACHINE, key: owned.key, kind: WORK.run, workKey: 'run:o', workId: 'item' } })]);
+    await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`, [owned.id,
+      quiet('owned-job', { owner: { machine: MACHINE, key: owned.key, kind: WORK.run, workKey: 'run:o', workId: liveItem.id } })]);
     const before = (await leftoverPass()).records;
     assert.ok(before >= 1);
     assert.deepEqual((await askedOn(c.key)).map((p) => [p.kind, p.turnId, p.input.sessionId]), [['recover', 'leftover-old-job', c.id]]);
     assert.deepEqual(await askedOn(held.key), [], 'its process finishes it');
-    assert.deepEqual(await askedOn(owned.key), [], 'an owned record is its item\'s');
+    assert.deepEqual(await askedOn(owned.key), [], 'a record its outstanding item owns is that item\'s');
+    assert.deepEqual(await askedOn(fresh.key), [], 'one that just moved may still be its process\'s');
+    assert.deepEqual((await askedOn(settledOwner.key)).map((p) => p.kind), ['recover'], 'one its settled item left is nobody\'s');
     await leftoverPass();
     assert.equal((await askedOn(c.key)).length, 1, 'asked once');
     await pool.query(`UPDATE platform_processes SET heartbeat_at = NOW() - interval '5 minutes' WHERE id = 'old-pod'`);
     await leftoverPass();
     assert.deepEqual((await askedOn(held.key)).map((p) => p.kind), ['recover'], 'once its process is gone');
     await pool.query(`DELETE FROM platform_processes WHERE id = 'old-pod'`);
-    for (const x of [c, held, owned]) await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [x.id]);
+    for (const x of [c, held, owned, fresh, settledOwner]) await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [x.id]);
     // A recover turn runs the leader's adoption, as an unowned one.
     reset();
     const was = recovery.recoverOwnedTurn;
@@ -761,15 +773,42 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     const carried = await autoRun();
     await send(carried, 'Asked', { turnId: 'mine', kind: 'headless', input: {} });
     await rt.drain();
+    // A staging fixture's run: nobody behind it, never resumed (migrate.js).
+    const fixture = await autoRun();
+    await pool.query('UPDATE chat_sessions SET user_id = NULL WHERE id = $1', [fixture.id]);
     await leftoverPass();
     await leftoverPass();
     assert.deepEqual((await askedOn(old.key)).map((p) => [p.kind, p.input.resume]), [['headless', true]]);
     assert.equal((await askedOn(carried.key)).length, 1, 'only its own');
+    assert.deepEqual(await askedOn(fixture.key), [], 'a run with no person behind it is left as it is');
     // Asked to resume, it resumes rather than starting the run again.
     const ctx = { ...headlessCtx(old, 'leftover-headless'), input: { ...headlessCtx(old, 'x').input, resume: true } };
     assert.deepEqual(await turns.run(ctx, { config: {}, pool }), { ended: 'recovered' });
     assert.deepEqual([headless.runs.length, headless.resumes.length], [0, 1]);
-    for (const x of [old, carried]) await pool.query(`UPDATE chat_sessions SET headless_status = 'failed' WHERE id = $1`, [x.id]);
+    for (const x of [old, carried, fixture]) await pool.query(`UPDATE chat_sessions SET headless_status = 'failed' WHERE id = $1`, [x.id]);
+  });
+
+  await t.test('L4 dev chat turns an older release cut are repaired once per release, once no process of it is live', async () => {
+    classic.stalled.length = 0;
+    const d = await change();
+    await pool.query(`INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'user', 'Add a toggle', '{}')`, [d.id]);
+    await pool.query(`INSERT INTO platform_processes (id, release) VALUES ('old-pod-2', 'old-release')`);
+    const pass = (previous) => leftovers.sweep(pool, { config: {}, previous, deps: { release: 'new-release', localPass: async () => ({ adopted: 0 }) } });
+    const crumbs = async () => (await pool.query(
+      `SELECT metadata FROM chat_session_messages WHERE session_id = $1 AND role = 'system'`, [d.id])).rows;
+    let out = await pass(null);
+    assert.equal(out.unanswered, null, 'an older release still runs: its turns may still answer');
+    assert.equal(out.backfilled, null);
+    assert.deepEqual(await crumbs(), []);
+    await pool.query(`DELETE FROM platform_processes WHERE id = 'old-pod-2'`);
+    out = await pass(out);
+    assert.equal(out.backfilled, 'new-release');
+    assert.ok(out.unanswered.breadcrumb >= 1);
+    assert.deepEqual((await crumbs()).map((c) => c.metadata.recoveredReason), ['unanswered']);
+    await pool.query(`INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'user', 'Still there?', '{}')`, [d.id]);
+    out = await pass(out);
+    assert.equal(out.unanswered, null, 'once per release');
+    assert.equal((await crumbs()).length, 1);
   });
 
   // ── 6. Global Chat: request-scoped, its Stop from any process ───────

@@ -404,21 +404,18 @@ test('the timer-driven GitHub callers ask before they spend', () => {
 // election read every app's repository (~150) and every proposal up for a
 // vote from GitHub again: an audit whose result is only logged, while every
 // worker start checks privacy itself, and a look for merges made by hand.
-// Neither runs at an election now. Both are clocks of the workflow
-// (src/workflow/clock/services.ts), first due when their leader timers would
-// have run.
-test('an election does not re-run the privacy audit or the merged-by-hand lookup', () => {
+// Neither runs at a release now: there is no election, and both are clocks
+// of the workflow (src/workflow/clock/services.ts), whose due times outlive
+// every release.
+test('a release does not re-run the privacy audit or the merged-by-hand lookup', () => {
   const server = read('server.js');
-  const becomeLeader = server.slice(server.indexOf('async function becomeLeader()'), server.indexOf('async function start()'));
-  assert.ok(becomeLeader.length > 0, 'becomeLeader() exists');
+  assert.ok(!/becomeLeader|createLeadership/.test(server), 'no process is elected');
 
   const clocks = read('src/workflow/clock/services.ts');
-  assert.match(clocks, /name: 'repo-privacy-audit', everyMs: 24 \* HOUR, leaderSweep: 'repo-privacy-audit'/,
-    'the privacy audit: a daily clock, first due when its leader timer would have run');
-  assert.ok(!/auditExistingRepoPrivacy|repo-privacy/.test(server), 'and no leader runs it');
-  assert.match(clocks, /name: 'merged-by-hand', everyMs: 6 \* HOUR, leaderSweep: 'merged-by-hand-lookup',/,
-    'the merged-by-hand lookup: every six hours, first due when its leader timer would have run');
-  assert.ok(!/observeMergedOnGithub|merged-by-hand/.test(server), 'and no leader runs it');
+  assert.match(clocks, /name: 'repo-privacy-audit', everyMs: 24 \* HOUR,/, 'the privacy audit: a daily clock');
+  assert.ok(!/auditExistingRepoPrivacy|repo-privacy/.test(server), 'and no process runs it on its own');
+  assert.match(clocks, /name: 'merged-by-hand', everyMs: 6 \* HOUR,/, 'the merged-by-hand lookup: every six hours');
+  assert.ok(!/observeMergedOnGithub|merged-by-hand/.test(server), 'and no process runs it on its own');
   // Each proposal is a target of its own: a run stopped part way leaves the
   // rest to be looked at, rather than the whole lookup to run again.
   const job = clocks.slice(clocks.indexOf("name: 'merged-by-hand'"), clocks.indexOf("name: 'proposal-revisions'"));

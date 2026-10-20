@@ -180,13 +180,11 @@ test('a worker used here is noted for every process, never held by this one', ()
 
 // ── Roles at boot ─────────────────────────────────────────────────────
 
-test('a web process never stands for leader, and only a serving one says its merges are live', () => {
+test('no process stands for leader, and only a serving one says its merges are live', () => {
   const startBody = serverJs.slice(serverJs.indexOf('async function start()'), serverJs.indexOf('// Boot only when run as the entry point'));
   assert.match(startBody, /const ownRole = processRole\.processRole\(\);/);
   assert.match(startBody, /await processes\.start\(\{ pool: getPool\(config\), role: ownRole \}\);/);
-  const web = startBody.indexOf('} else if (!processRole.standsForLeader(ownRole)) {');
-  const elect = startBody.indexOf('leadership.start(becomeLeader)');
-  assert.ok(web !== -1 && elect > web, 'the election is the last branch, after the web one');
+  assert.ok(!/standsForLeader|becomeLeader|createLeadership/.test(serverJs), 'there is no election');
   assert.match(startBody, /if \(processRole\.servesRequests\(ownRole\)\) platformRelease\.recordRunning\(getPool\(config\)\);/);
   // The merge-followups machine hears it from the same place, never from a
   // conductor's boot (src/workflow/platform.ts releaseServing).

@@ -25,8 +25,9 @@
 //   headless  an auto session on a request (routes/sessions.js
 //             runHeadlessSessionInner). Resumed: carried on from the
 //             change's row (resumeOneHeadlessRun).
-//   recover   ROLLOUT-ONLY: an older release's coding record with no owner,
-//             taken through the leader's adoption (turn-leftovers.js).
+//   recover   a coding record no work item holds (an older release's, with
+//             no owner, or one its settled item left), taken through the
+//             leader's adoption (turn-leftovers.js).
 //
 // What the turn shows goes to its stream (services/session-bus.js), which
 // the request that asked for it follows from any process. A coding record
@@ -65,6 +66,9 @@ async function recoverChange(ctx, { config, pool }, sessionId, { owned = true } 
     try {
       return await require('./turn-recovery').recoverOwnedTurn({ config, pool, sessionId, owned });
     } catch (err) {
+      if (err && err.retryWorkerRecovery && tried >= RECOVERY_RETRY.tries) {
+        require('./recovery-retry').recordGaveUp({ pool, key: `interactive:${Number(sessionId)}`, err, failures: tried });
+      }
       if (!err || !err.retryWorkerRecovery || tried >= RECOVERY_RETRY.tries || ctx.signal?.aborted) throw err;
       log.warn('turns', 'A coding run\'s recovery will be tried again', { sessionId, tried, err: err.message });
       await pause(RECOVERY_RETRY.ms, ctx.signal);
@@ -309,6 +313,7 @@ async function carryHeadlessOn(ctx, { config, pool }, sessionId, owner) {
       if (!again || tried >= RECOVERY_RETRY.tries || ctx.signal?.aborted) {
         if (ctx.signal?.aborted) throw err;
         log.error('turns', 'A headless run could not be carried on; failing it', { sessionId, err: err.message });
+        if (again) recoveryRetry.recordGaveUp({ pool, key: `headless:${Number(sessionId)}`, err, failures: tried });
         if (latest) {
           await sessions.failHeadlessRun(pool, latest,
             `Auto session could not be completed: ${String(err.message || err).substring(0, 200)}`);
@@ -367,12 +372,12 @@ async function resumeHeadless(ctx, { config, pool }, input) {
   return { ended: 'recovered' };
 }
 
-// ── ROLLOUT-ONLY: a turn an older release left (services/turn-leftovers.js)
+// ── A coding record nothing carries (services/turn-leftovers.js) ──────
 
-// A coding run's record with no owner, left by a release from before the
-// turn machine: the adoption its leader ran, as that leader ran it (a turn a
-// live process still runs is left alone there too), tried again as an owned
-// one is. Delete with turn-leftovers.js.
+// A coding run's record no work item holds (an older release's, with no
+// owner, or one whose item settled without releasing it): the adoption the
+// leader ran, as it ran it (a turn a live process still runs is left alone
+// there too), tried again as an owned one is.
 async function runRecover(ctx, { config, pool }, input) {
   await recoverChange(ctx, { config, pool }, Number(input.sessionId), { owned: false });
   return { ended: 'recovered' };

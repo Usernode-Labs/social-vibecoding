@@ -321,7 +321,7 @@ test('orphan conversation attachment GC is independent of session auto-pause', (
   // The upload-gc clock (src/workflow/clock/services.ts), hourly wherever the
   // workflow runs, whatever SESSION_AUTOPAUSE_IDLE_MS says.
   const clocks = fs.readFileSync(path.join(ROOT, 'src/workflow/clock/services.ts'), 'utf8');
-  assert.match(clocks, /name: 'upload-gc', everyMs: HOUR, leaderSweep: 'conversation-attachment-gc',/);
+  assert.match(clocks, /name: 'upload-gc', everyMs: HOUR,/);
   const { ORPHANS } = require('../src/services/upload-retention');
   assert.ok(ORPHANS.some(([, table, owner]) => table === 'conversation_message_attachments' && owner === 'message_id'));
   assert.ok(!serverSource.includes('startConversationAttachmentSweeper'));

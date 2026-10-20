@@ -51,127 +51,6 @@ function turnCleanupArgs(activeTurn) {
   return turnLifecycle.cleanupArgs(activeTurn);
 }
 
-async function reconcilePendingTurnCleanup(config) {
-  const pool = getPool(config);
-  const { rows } = await pool.query(
-    `SELECT id, active_turn
-       FROM chat_sessions
-      WHERE active_turn->>'phase' = $1`,
-    [turnLifecycle.PHASE_CLEANUP_PENDING],
-  );
-  for (const row of rows) {
-    // A live process still finishing the turn cleans it up itself
-    // (docs/plans/draining-releases.md); one whose holders cannot be read is
-    // left for a later sweep.
-    let held = true;
-    try { held = (await processes.holders('session', row.id, pool)).length > 0; } catch { held = true; }
-    if (held) continue;
-    const args = turnCleanupArgs(row.active_turn);
-    const cleared = await worker.finishTurn(row.id, args);
-    if (!cleared) {
-      log.warn('server', 'Pending turn cleanup remains durable for a later sweep', {
-        sessionId: row.id,
-      });
-    }
-  }
-}
-
-function scheduleRetainedOrphanRecovery(orphan, deps) {
-  const sessionId = Number(orphan.sessionId);
-  let releaseReservation = null;
-  return recoveryRetry.scheduleRetainedRecovery({
-    key: `interactive:${sessionId}`,
-    hold: () => {
-      if (!releaseReservation) {
-        releaseReservation = activeWorkersSvc.beginSessionOperation(sessionId);
-      }
-    },
-    release: () => {
-      releaseReservation?.();
-      releaseReservation = null;
-    },
-    // Every retry re-reads the durable phase. The timer is only scheduling;
-    // it never remembers semantic recovery state in a closure.
-    run: async () => {
-      const activeTurn = await turnLifecycle.loadActiveTurn(deps.pool, sessionId);
-      const action = turnLifecycle.recoveryAction(activeTurn);
-      if (action === 'none' && !orphan.retryWorkerRecovery) return;
-      if (action === 'cleanup') {
-        const args = turnCleanupArgs(activeTurn);
-        recoveryRetry.requireDurableTurnCleanup(
-          await worker.finishTurn(sessionId, args),
-          args,
-        );
-        return;
-      }
-      if (action === 'quarantine') return;
-      await adoptOrphanWorker(orphan, deps);
-    },
-    onError: async (err, { failures }) => {
-      if (!recoveryRetry.shouldRetryRecoveryError(err)) {
-        log.error('server', 'Orphan recovery has invalid durable state; leaving it quarantined', {
-          name: orphan.name, sessionId, err: err.message,
-        });
-        return false;
-      }
-      const retained = err?.retainActiveTurn
-        ? true
-        : await persistedActiveTurnExists(deps.pool, sessionId);
-      if (retained !== false) {
-        log.warn('server', 'Retrying retained orphan recovery', {
-          name: orphan.name, sessionId, failures, err: err.message,
-          activeTurnObservable: retained !== null,
-        });
-        return true;
-      }
-      log.warn('server', 'Retried orphan adoption failed after durable turn cleared', {
-        name: orphan.name, sessionId, err: err.message,
-      });
-      return false;
-    },
-    // Out of attempts (recovery-retry DEFAULT_MAX_FAILURES). The reservation
-    // is released and the durable turn left in place, so the stale-turn
-    // watchdog ends it like any unowned turn and tells the user.
-    onExhausted: async (err, { failures }) => {
-      log.error('server', 'Retained orphan recovery gave up; leaving the turn to the stale-turn watchdog', {
-        name: orphan.name, sessionId, failures, err: err.message, code: err.code || null,
-      });
-    },
-    onComplete: () => log.info('server', 'Retained orphan recovery completed', {
-      name: orphan.name, sessionId,
-    }),
-    onHookError: (err) => log.warn('server', 'Orphan recovery retry hook failed', {
-      name: orphan.name, sessionId, err: err.message,
-    }),
-  });
-}
-
-// Live handlers use the exact orphan-adoption state machine after retaining
-// an active_turn. Supplying it at route construction avoids a circular
-// sessions.js -> server.js import while keeping one semantic recovery path
-// for live failures and process restarts.
-function scheduleInteractiveTurnRecovery(sessionId) {
-  const id = Number(sessionId);
-  if (!Number.isSafeInteger(id) || id <= 0) return false;
-  const key = `interactive:${id}`;
-  const scheduled = scheduleRetainedOrphanRecovery({
-    name: worker.workerContainerName(id),
-    sessionId: id,
-    // Warm workers remain running after their detached turn exits; cleanup
-    // phases bypass this value before adoption is attempted.
-    state: 'running',
-  }, {
-    config: sharedConfig(),
-    pool: getPool(sharedConfig()),
-    staging: stagingSvc,
-    ghub: github,
-    broadcastGlobal: ws.broadcastGlobal,
-  });
-  // A duplicate request means the retained owner is already scheduled, not
-  // that recovery is absent.
-  return scheduled || recoveryRetry.isScheduled(key);
-}
-
 function recoveredAgentIdentity(session, activeTurn = null) {
   const backend = activeTurn?.backend || session?.agent_backend || 'claude_code';
   const isOpenRouter = backend === 'codex_openrouter';
@@ -2345,9 +2224,6 @@ module.exports = {
   releaseLeftRecord,
   persistedActiveTurnExists,
   turnCleanupArgs,
-  reconcilePendingTurnCleanup,
-  scheduleRetainedOrphanRecovery,
-  scheduleInteractiveTurnRecovery,
   recoveredAgentIdentity,
   abandonCodexAttempt,
   abandonOrphanShotsTurn,

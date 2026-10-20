@@ -446,11 +446,12 @@ const {
 const stopPolicy = require('../services/stop-policy');
 const { stopPendingFor } = stopPolicy;
 
-// A live request can lose its database connection after the detached worker
-// has already produced a result. In that case the durable active_turn is the
-// authority: keep the session reserved and hand it to the same recovery path
-// boot adoption uses. The scheduler itself is injected by server.js to avoid
-// a routes -> server require cycle.
+// A turn can lose its database connection after the detached worker has
+// already produced a result. In that case the durable active_turn is the
+// authority: keep the session reserved and leave the record to whoever
+// carries it on: the turn's work item as it ends (services/turns.js, which
+// passes its own scheduler), else the turn-leftovers clock once no item
+// holds the record (services/turn-leftovers.js). True when it is retained.
 async function scheduleRetainedInteractiveTurn({
   pool,
   sessionId,
@@ -471,12 +472,8 @@ async function scheduleRetainedInteractiveTurn({
     }
   }
   if (!retained) return false;
-  if (typeof scheduleInteractiveRecovery !== 'function') {
-    log.error('sessions', 'Interactive durable turn retained without a recovery scheduler', {
-      sessionId,
-    });
-    return false;
-  }
+  // Nobody to schedule it with: carried on by the turn-leftovers clock.
+  if (typeof scheduleInteractiveRecovery !== 'function') return true;
   try {
     return (await scheduleInteractiveRecovery(sessionId)) !== false;
   } catch (err) {
@@ -6732,8 +6729,8 @@ function buildHeadlessFollowUpQuickReplies(src) {
 }
 
 // The unattended-mode addendum appended to the Mayor system prompt for
-// both headless phases. Factored out so the boot-time resume path
-// (resumeHeadlessRuns) can rebuild the exact same prompt.
+// both headless phases. Factored out so a resumed run
+// (resumeOneHeadlessRun) can rebuild the exact same prompt.
 function buildHeadlessAddendum(issueNumber) {
   return `
 
@@ -7029,7 +7026,7 @@ async function checkpointHeadlessWrapUp(pool, sessionId, outcome) {
 // tool-less phase-3 wrap-up. Every other path keeps the original tool-less
 // phase-2 wrap-up.
 //
-// `resume` is set by resumeHeadlessRuns when re-driving a 'planning'-step
+// `resume` is set by resumeOneHeadlessRun when re-driving a 'planning'-step
 // run after a restart: the seed user message already exists in
 // chat_session_messages, so it isn't inserted again.
 
@@ -7143,10 +7140,9 @@ async function settleHeadlessMayorUsage({
   return costCents;
 }
 
-// The whole run holds its session (services/processes.js), planning and
-// wrap-up included, not only its coding turn: a process that replaced this
-// one at a release must not resume a run this one is still carrying
-// (resumeHeadlessRuns), and a draining process finishes it before it exits.
+// A resumed planning step's run (resumeOneHeadlessRun). The run is its
+// turn's work item's wherever it runs (services/turns.js); the hold is
+// what a release from before the turn machine reads (turn-leftovers.js).
 function runHeadlessSession(args) {
   const release = require('../services/processes').hold('session', Number(args.session.id));
   return runHeadlessSessionInner(args).finally(release);
@@ -7521,7 +7517,7 @@ async function runHeadlessSessionInner({
         },
       };
       // Checkpoint BEFORE the dispatch: if the platform restarts while
-      // the (detached) CC turn runs, resumeHeadlessRuns finds
+      // the (detached) CC turn runs, the resumed run (resumeOneHeadlessRun) finds
       // headless_step='cc_running' + active_turn and picks the turn back
       // up from its journal instead of failing the run.
       await setHeadlessStep(pool, session.id, 'cc_running');
@@ -7961,8 +7957,9 @@ async function runHeadlessSessionInner({
         headlessTurnId,
         err: err.message,
       });
+      // Carried on by the run's own work item (services/turns.js), else, once
+      // no item holds the run, by the turn-leftovers clock.
       if (onRetained) onRetained(err);
-      else scheduleRetainedHeadlessRecovery({ pool, config, session });
       return;
     }
     log.error('sessions', 'Headless session failed', { sessionId: session.id, err: err.message, stack: err.stack });
@@ -8427,11 +8424,9 @@ async function runRecoveredWrapUp({
   }
 }
 
-// Boot hook: resume headless auto sessions that were 'generating' when
-// the platform went down, instead of blanket-failing them (the old
-// failOrphanedHeadlessRuns behavior — now narrowed in migrate.js to
-// only rows that predate the step machine). Driven by the persisted
-// headless_step checkpoint:
+// The change's row of a headless run that is still to be carried on: still
+// generating, or its record still awaiting its cleanup. A resumed run picks
+// it up from its persisted headless_step (resumeOneHeadlessRun):
 //   planning   → re-issue the whole Mayor turn from the persisted seed
 //                message (cheap, retry-safe — nothing was dispatched yet).
 //   cc_running → pick the detached CC turn back up from its journal
@@ -8440,77 +8435,8 @@ async function runRecoveredWrapUp({
 //   wrapping   → the dispatch finished and its outcome was checkpointed;
 //                re-issue just the phase-2 Mayor call from the persisted
 //                transcript.
-// Anything that can't be carried forward is marked 'failed' — same
-// terminal state as before, just no longer the only possibility.
-//
-// `minIdleMs` (the leader's periodic pass, server.js orphan-headless-sweep):
-// only runs that have not moved for that long, so a run starting in some
-// process is never taken before its hold is seen.
-async function resumeHeadlessRuns(config, { minIdleMs = 0 } = {}) {
-  const pool = getPool(config);
-  let rows;
-  try {
-    ({ rows } = await pool.query(
-      `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
-              a.self_hosted AS app_self_hosted, u.username
-       FROM chat_sessions cs
-       JOIN apps a ON cs.app_id = a.id
-       JOIN users u ON cs.user_id = u.id
-       WHERE cs.is_headless = TRUE
-         AND (cs.headless_status = 'generating'
-              OR cs.active_turn->>'phase' = 'cleanup_pending')
-         -- A run its turn machine carries (services/turns.js): its own item
-         -- resumes it, in whichever process claims it.
-         AND NOT EXISTS (SELECT 1 FROM wf_instances t
-                          WHERE t.machine = 'turn' AND t.key = 'session:' || cs.id AND t.state = 'running')
-         AND ($1::double precision = 0
-              OR cs.last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0))`,
-      [Number(minIdleMs) || 0]
-    ));
-  } catch (err) {
-    log.error('sessions', 'resumeHeadlessRuns query failed', { err: err.message });
-    return;
-  }
-  if (!rows.length) return;
-  // A run a live process still carries (the Pod a release replaced, finishing
-  // its work) is that process's, not a restart's to resume. Read exactly; a
-  // run whose holders cannot be read waits for the next pass.
-  const processes = require('../services/processes');
-  const free = [];
-  for (const row of rows) {
-    try {
-      if (!(await processes.holders('session', row.id, pool)).length) free.push(row);
-    } catch (err) {
-      log.warn('sessions', 'Could not read who holds a headless run; leaving it for the next pass', { sessionId: row.id, err: err.message });
-    }
-  }
-  if (free.length < rows.length && !minIdleMs) {
-    log.info('sessions', 'Leaving headless runs live processes still carry', {
-      sessionIds: rows.filter((r) => !free.includes(r)).map((r) => r.id),
-    });
-  }
-  rows = free;
-  if (!rows.length) return;
-  log.info('sessions', 'Resuming headless runs after restart', {
-    count: rows.length, sessionIds: rows.map((r) => r.id),
-  });
-  for (const session of rows) {
-    resumeOneHeadlessRun({ pool, config, session }).catch(async (err) => {
-      if (err?.retainActiveTurn && recoveryRetry.shouldRetryRecoveryError(err)) {
-        log.warn('sessions', 'Headless resume paused with durable turn state retained', {
-          sessionId: session.id, err: err.message,
-        });
-        scheduleRetainedHeadlessRecovery({ pool, config, session });
-        return;
-      }
-      log.error('sessions', 'Headless resume failed — marking run failed', {
-        sessionId: session.id, err: err.message, stack: err.stack,
-      });
-      await failHeadlessRun(pool, session, `Auto session could not be completed: ${String(err.message || err).substring(0, 200)}`);
-    });
-  }
-}
-
+// Anything that can't be carried forward is marked 'failed'. Its turn's
+// work item resumes it (services/turns.js).
 async function reloadRecoverableHeadlessSession(pool, sessionId) {
   try {
     const { rows } = await pool.query(
@@ -8532,89 +8458,6 @@ async function reloadRecoverableHeadlessSession(pool, sessionId) {
     err.retainActiveTurn = true;
     throw err;
   }
-}
-
-function scheduleRetainedHeadlessRecovery({
-  pool,
-  config,
-  session,
-}) {
-  const sessionId = Number(session.id);
-  let releaseReservation = null;
-  let latestSession = session;
-  return recoveryRetry.scheduleRetainedRecovery({
-    key: `headless:${sessionId}`,
-    hold: () => {
-      if (!releaseReservation) releaseReservation = beginSessionOperation(sessionId);
-    },
-    release: () => {
-      releaseReservation?.();
-      releaseReservation = null;
-    },
-    run: async () => {
-      const fresh = await reloadRecoverableHeadlessSession(pool, sessionId);
-      if (!fresh) return;
-      latestSession = fresh;
-      const action = turnLifecycle.recoveryAction(fresh.active_turn);
-      if (action === 'cleanup') {
-        const cleanupArgs = turnLifecycle.cleanupArgs(fresh.active_turn);
-        recoveryRetry.requireDurableTurnCleanup(
-          await worker.finishTurn(sessionId, cleanupArgs),
-          cleanupArgs,
-        );
-        // cleanup_pending can be the last coding-turn state while the
-        // independently identified headless Mayor wrap-up is still pending.
-        // Clearing that obsolete coding owner must hand back to wrapping,
-        // not strand a generating row forever.
-        fresh.active_turn = null;
-        if (fresh.headless_status !== 'generating') return;
-      }
-      if (action === 'quarantine') {
-        await failHeadlessRun(
-          pool,
-          fresh,
-          'Auto session could not be completed because its durable coding-turn state is inconsistent.',
-        );
-        return;
-      }
-      if (fresh.headless_status !== 'generating') return;
-      await resumeOneHeadlessRun({ pool, config, session: fresh });
-    },
-    onError: async (err, { failures }) => {
-      if (err?.retainActiveTurn && recoveryRetry.shouldRetryRecoveryError(err)) {
-        log.warn('sessions', 'Retrying retained headless recovery', {
-          sessionId, failures, err: err.message,
-        });
-        return true;
-      }
-      log.error('sessions', 'Retried headless resume failed — marking run failed', {
-        sessionId, err: err.message, stack: err.stack,
-      });
-      await failHeadlessRun(
-        pool,
-        latestSession,
-        `Auto session could not be completed: ${String(err.message || err).substring(0, 200)}`
-      );
-      return false;
-    },
-    // Out of attempts (recovery-retry DEFAULT_MAX_FAILURES): the same terminal
-    // outcome as a failure that cannot be retried.
-    onExhausted: async (err, { failures }) => {
-      log.error('sessions', 'Retained headless recovery gave up; marking run failed', {
-        sessionId, failures, err: err.message,
-      });
-      await failHeadlessRun(
-        pool,
-        latestSession,
-        `Auto session could not be completed after ${failures} recovery attempts: `
-          + `${String(err.message || err).substring(0, 200)}`,
-      );
-    },
-    onComplete: () => log.info('sessions', 'Retained headless recovery completed', { sessionId }),
-    onHookError: (err) => log.warn('sessions', 'Headless recovery retry hook failed', {
-      sessionId, err: err.message,
-    }),
-  });
 }
 
 // A missing Codex provider thread can be retried once while the original
@@ -13549,7 +13392,7 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { requestSessionStop, receiveSessionStop, resolveClassicPayer, runHeadlessSessionInner, resumeOneHeadlessRun, reloadRecoverableHeadlessSession, failHeadlessRun, changePlanFor, attachChangePlans, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, receiveSessionStop, resolveClassicPayer, runHeadlessSessionInner, resumeOneHeadlessRun, reloadRecoverableHeadlessSession, failHeadlessRun, changePlanFor, attachChangePlans, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
 // #4524: the topic page's fast open asks GET /api/apps/:slug/proposals/:id
 // for its item beside the board load, and production serves an active or
 // paused session there when it is the viewer's own or shared. The demo rows

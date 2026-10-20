@@ -1791,7 +1791,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS chat_session_messages_client_message_idx
 --   headless_step = where the headless auto-session loop last checkpointed:
 --                   'planning' (Mayor phase-1) | 'cc_running' (CC turn
 --                   dispatched) | 'wrapping' (Mayor phase-2). Lets
---                   resumeHeadlessRuns continue a 'generating' row after a
+--                   a resumed run continue a 'generating' row after a
 --                   restart instead of blanket-failing it. NULL on ordinary
 --                   sessions and on headless rows finished before this column
 --                   existed.
@@ -14872,19 +14872,10 @@ CREATE INDEX IF NOT EXISTS idx_private_request_comments_request
   ON private_request_comments (private_request_id, id);
 COMMENT ON TABLE private_request_comments IS 'staging:private';
 
--- When each of the leader's long-interval sweeps last completed
--- (services/leader-timers.js, a `durable` timer). The leader changes with
--- every release, about every twenty minutes on a busy day, and an hourly
--- setInterval restarts its clock at each election, so the stale-proposal
--- sweep, the Workshop theme sweep and the grant prune went days without
--- running. On election each one now runs when this says it is due. One row
--- per sweep, written by the leader after each completed run; a sweep with
--- no row has never run and is due at once. Nothing private: names and
--- times.
-CREATE TABLE IF NOT EXISTS leader_sweeps (
-  name        TEXT PRIMARY KEY,
-  last_run_at TIMESTAMPTZ NOT NULL
-);
+-- The leader's sweep times (services/leader-timers.js), gone with the leader:
+-- every scheduled job is a clock of the workflow now
+-- (src/workflow/clock/services.ts), whose instance keeps its last run.
+DROP TABLE IF EXISTS leader_sweeps;
 
 -- The platform's processes, and what each one is doing that no other may
 -- adopt, tear down, duplicate or call idle (services/processes.js,
