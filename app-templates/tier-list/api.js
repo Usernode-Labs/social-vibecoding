@@ -1,8 +1,10 @@
 // This app's API: a shared tier list. Anyone in the project adds things to
-// rank, each person puts each one in a tier, and the group's tier list is
-// where the average lands. server.js mounts it after the sign-in check: a
-// write always has req.user ({ id, username }); a read may come from a guest
-// with no account (req.guest, no req.user).
+// rank, each person puts each one in a tier, the group's tier list is where
+// the average lands, and anyone can see who put each one where. server.js
+// mounts it after the sign-in check: a write always has req.user ({ id,
+// username }); a read may come from a guest with no account (req.guest, no
+// req.user). Live updates (live-updates.js) are mounted before it, so every
+// write here that succeeds tells the screens that are open.
 //
 // It came from Homeroom's ready-made tier list. Change it freely.
 
@@ -15,6 +17,8 @@ const ITEMS_SHOWN = 300;
 // query below), and an item's place on the group's list is the tier its
 // average score is nearest, a tie going up: 4.5 is S, 4.4 is A.
 const TIERS = ['S', 'A', 'B', 'C', 'D', 'F'];
+
+const GONE = 'That one is not on the list any more.';
 
 function tierOf(average) {
   return TIERS[Math.min(TIERS.length - 1, Math.max(0, Math.ceil(4.5 - average)))];
@@ -57,6 +61,15 @@ async function migrate(pool) {
       PRIMARY KEY (item_id, user_id)
     )
   `);
+  // Who put it there, by name, for "who ranked it what" (GET
+  // /api/items/:id). Tiers set before the name was kept have none: they
+  // get it from the items that person added, and from their next tier.
+  await pool.query('ALTER TABLE tier_votes ADD COLUMN IF NOT EXISTS username VARCHAR(255)');
+  await pool.query(`
+    UPDATE tier_votes v SET username = i.created_by_name
+      FROM tier_items i
+     WHERE v.username IS NULL AND v.user_id = i.created_by
+  `);
 
   // A staging preview starts with no rows, so seed a few obviously fake
   // ones for the checks in dapp.json to find: items, and tiers from three
@@ -74,15 +87,39 @@ async function migrate(pool) {
       ON CONFLICT DO NOTHING
     `);
     await pool.query(`
-      INSERT INTO tier_votes (item_id, user_id, tier)
+      INSERT INTO tier_votes (item_id, user_id, username, tier)
       VALUES
-        (900001, -1, 'S'), (900001, -2, 'S'), (900001, -3, 'A'),
-        (900002, -1, 'A'), (900002, -2, 'B'),
-        (900003, -1, 'B'), (900003, -2, 'C'), (900003, -3, 'B'),
-        (900004, -1, 'F'), (900004, -3, 'D')
+        (900001, -1, 'staging-demo-ana', 'S'), (900001, -2, 'staging-demo-ben', 'S'), (900001, -3, 'staging-demo-cy', 'A'),
+        (900002, -1, 'staging-demo-ana', 'A'), (900002, -2, 'staging-demo-ben', 'B'),
+        (900003, -1, 'staging-demo-ana', 'B'), (900003, -2, 'staging-demo-ben', 'C'), (900003, -3, 'staging-demo-cy', 'B'),
+        (900004, -1, 'staging-demo-ana', 'F'), (900004, -3, 'staging-demo-cy', 'D')
       ON CONFLICT DO NOTHING
     `);
   }
+}
+
+// Items with the group's tier, how many people ranked each, and the
+// viewer's own tier ($1); the caller adds its WHERE, GROUP BY and ORDER.
+const SUMMARY = `
+  SELECT i.id, i.name, i.created_by, i.created_by_name,
+         COUNT(v.user_id)::int AS votes,
+         AVG(CASE v.tier WHEN 'S' THEN 5 WHEN 'A' THEN 4 WHEN 'B' THEN 3
+                         WHEN 'C' THEN 2 WHEN 'D' THEN 1 WHEN 'F' THEN 0 END)::float AS average,
+         MAX(CASE WHEN v.user_id = $1 THEN v.tier END) AS yours
+    FROM tier_items i
+    LEFT JOIN tier_votes v ON v.item_id = i.id`;
+
+function shape(r, me) {
+  return {
+    id: r.id,
+    name: r.name,
+    by: r.created_by_name,
+    mine: r.created_by === me,
+    votes: r.votes,
+    average: r.votes ? Math.round(r.average * 100) / 100 : null,
+    tier: r.votes ? tierOf(r.average) : null,
+    yours: r.yours || null,
+  };
 }
 
 function routes(app, pool) {
@@ -93,13 +130,7 @@ function routes(app, pool) {
     try {
       const me = req.user ? req.user.id : null;
       const { rows } = await pool.query(
-        `SELECT i.id, i.name, i.created_by, i.created_by_name,
-                COUNT(v.user_id)::int AS votes,
-                AVG(CASE v.tier WHEN 'S' THEN 5 WHEN 'A' THEN 4 WHEN 'B' THEN 3
-                                WHEN 'C' THEN 2 WHEN 'D' THEN 1 WHEN 'F' THEN 0 END)::float AS average,
-                MAX(CASE WHEN v.user_id = $1 THEN v.tier END) AS yours
-           FROM tier_items i
-           LEFT JOIN tier_votes v ON v.item_id = i.id
+        `${SUMMARY}
           GROUP BY i.id
           ORDER BY i.created_at, i.id
           LIMIT $2`,
@@ -110,16 +141,31 @@ function routes(app, pool) {
         me: req.user ? { id: me, username: req.user.username } : null,
         tiers: TIERS,
         rankers: people[0].n,
-        items: rows.map((r) => ({
-          id: r.id,
-          name: r.name,
-          by: r.created_by_name,
-          mine: r.created_by === me,
-          votes: r.votes,
-          average: r.votes ? Math.round(r.average * 100) / 100 : null,
-          tier: r.votes ? tierOf(r.average) : null,
-          yours: r.yours || null,
-        })),
+        items: rows.map((r) => shape(r, me)),
+      });
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  // One item, and who put it in which tier: what tapping it shows. Best
+  // tier first, then by name. A tier from before names were kept, whose
+  // person has not ranked anything since, has no name (null).
+  app.get('/api/items/:id', async (req, res) => {
+    const id = idParam(req);
+    if (!id) return res.status(404).json({ error: GONE });
+    try {
+      const me = req.user ? req.user.id : null;
+      const { rows } = await pool.query(`${SUMMARY} WHERE i.id = $2 GROUP BY i.id`, [me, id]);
+      if (!rows.length) return res.status(404).json({ error: GONE });
+      const { rows: votes } = await pool.query(
+        `SELECT user_id, username, tier FROM tier_votes WHERE item_id = $1
+          ORDER BY POSITION(tier IN 'SABCDF'), LOWER(username) NULLS LAST, user_id`,
+        [id]
+      );
+      res.json({
+        item: shape(rows[0], me),
+        raters: votes.map((v) => ({ name: v.username || null, you: v.user_id === me, tier: v.tier })),
       });
     } catch (err) {
       fail(res, err);
@@ -145,7 +191,7 @@ function routes(app, pool) {
   // Put an item in one of your tiers, or take it out again with tier null.
   app.put('/api/items/:id/tier', async (req, res) => {
     const id = idParam(req);
-    if (!id) return res.status(404).json({ error: 'That one is not on the list any more.' });
+    if (!id) return res.status(404).json({ error: GONE });
     const tier = req.body ? req.body.tier : undefined;
     if (tier !== null && !TIERS.includes(tier)) return res.status(400).json({ error: 'Pick S, A, B, C, D or F.' });
     try {
@@ -154,13 +200,19 @@ function routes(app, pool) {
         return res.json({ tier: null });
       }
       const { rows } = await pool.query(
-        `INSERT INTO tier_votes (item_id, user_id, tier)
-         SELECT id, $2, $3 FROM tier_items WHERE id = $1
-         ON CONFLICT (item_id, user_id) DO UPDATE SET tier = EXCLUDED.tier, updated_at = NOW()
+        `INSERT INTO tier_votes (item_id, user_id, username, tier)
+         SELECT id, $2, $4, $3 FROM tier_items WHERE id = $1
+         ON CONFLICT (item_id, user_id) DO UPDATE SET tier = EXCLUDED.tier, username = EXCLUDED.username, updated_at = NOW()
          RETURNING tier`,
-        [id, req.user.id, tier]
+        [id, req.user.id, tier, req.user.username]
       );
-      if (!rows.length) return res.status(404).json({ error: 'That one is not on the list any more.' });
+      if (!rows.length) return res.status(404).json({ error: GONE });
+      // Their name on every tier they set, so one set before names were
+      // kept, or before they were renamed, says who they are now.
+      await pool.query(
+        'UPDATE tier_votes SET username = $2 WHERE user_id = $1 AND username IS DISTINCT FROM $2',
+        [req.user.id, req.user.username]
+      );
       res.json({ tier: rows[0].tier });
     } catch (err) {
       fail(res, err);
@@ -170,7 +222,7 @@ function routes(app, pool) {
   // Whoever added an item can take it off the list, tiers and all.
   app.delete('/api/items/:id', async (req, res) => {
     const id = idParam(req);
-    if (!id) return res.status(404).json({ error: 'That one is not on the list any more.' });
+    if (!id) return res.status(404).json({ error: GONE });
     try {
       const { rowCount } = await pool.query(
         'DELETE FROM tier_items WHERE id = $1 AND created_by = $2', [id, req.user.id]);

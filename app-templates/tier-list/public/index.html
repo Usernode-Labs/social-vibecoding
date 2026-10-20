@@ -41,6 +41,7 @@
       --tier-d: 168 222 140;
       --tier-f: 160 196 255;
       --on-tier: 28 25 23;
+      --scrim: 28 25 23;
     }
     .dark {
       --tier-s: 230 110 110;
@@ -50,6 +51,7 @@
       --tier-d: 140 196 116;
       --tier-f: 132 170 232;
       --on-tier: 12 10 9;
+      --scrim: 0 0 0;
     }
     .tier-s { background-color: rgb(var(--tier-s)); color: rgb(var(--on-tier)); }
     .tier-a { background-color: rgb(var(--tier-a)); color: rgb(var(--on-tier)); }
@@ -57,13 +59,18 @@
     .tier-c { background-color: rgb(var(--tier-c)); color: rgb(var(--on-tier)); }
     .tier-d { background-color: rgb(var(--tier-d)); color: rgb(var(--on-tier)); }
     .tier-f { background-color: rgb(var(--tier-f)); color: rgb(var(--on-tier)); }
+    /* What dims the board behind a place's sheet, dark in both looks. */
+    .scrim { background-color: rgb(var(--scrim) / 0.45); }
   </style>
   <!-- What takes the loading shapes' place fades in, briefly, rather than
-       cutting over: an animation replays whenever [hidden] comes off, so
-       nothing has to start it. None under reduced motion. -->
+       cutting over, and a place's sheet rises into view: an animation
+       replays whenever [hidden] comes off, so nothing has to start it. None
+       under reduced motion. -->
   <style>
     @keyframes appear { from { opacity: 0; } to { opacity: 1; } }
     @media (prefers-reduced-motion: no-preference) { .appear { animation: appear 200ms ease-out; } }
+    @keyframes rise { from { opacity: 0; transform: translateY(1.5rem); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: no-preference) { .rise { animation: rise 200ms ease-out; } }
   </style>
 </head>
 <body class="min-h-screen bg-ground text-fg">
@@ -115,9 +122,9 @@
       <p class="text-body text-muted">Add the first one above. Everyone here can add more and rank them.</p>
     </div>
 
-    <!-- One board, two rankings: yours, first (drag each into a tier, or tap
-         it and then tap a tier) and the group's (every item in the tier its
-         average lands in). -->
+    <!-- One board, two rankings: yours, first (drag each into a tier) and
+         the group's (every item in the tier its average lands in). Tapping
+         one, on either, opens its sheet below. -->
     <section id="ranking" class="flex flex-col gap-3 appear" hidden>
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div id="view-toggle" role="radiogroup" aria-label="Whose ranking" class="inline-flex rounded-xl border border-line bg-surface p-1">
@@ -132,10 +139,51 @@
         <p id="tray-label" class="text-small text-muted"></p>
         <div id="tray-items" class="flex min-h-11 flex-wrap items-center gap-1.5"></div>
       </div>
-      <div id="picked-actions" class="flex flex-wrap items-center gap-2" hidden></div>
     </section>
   </main>
 
+  <!-- One {{ITEM_ONE}}, tapped on either board: the group's tier, who put
+       it in which tier, and what you can do with it. A sheet over the board,
+       which is inert behind it; Close, Escape or a tap on the dimmed board
+       puts it away. "Your tier" is for a keyboard or a screen reader, where
+       there is no dragging: it shows once focus reaches it. -->
+  <div id="detail" class="fixed inset-0 z-40 flex flex-col justify-end" hidden>
+    <div id="detail-scrim" class="scrim appear absolute inset-0"></div>
+    <section id="detail-sheet" role="dialog" aria-modal="true" aria-labelledby="detail-name"
+      class="rise relative mx-auto flex max-h-[85vh] w-full max-w-xl flex-col gap-5 overflow-y-auto rounded-t-2xl border border-b-0 border-line bg-surface px-4 pb-8 pt-3 shadow-lg">
+      <div class="mx-auto h-1 w-10 shrink-0 rounded-full bg-line" aria-hidden="true"></div>
+      <header class="flex items-start gap-3">
+        <div class="flex min-w-0 flex-1 flex-col gap-1">
+          <h2 id="detail-name" class="break-words text-heading"></h2>
+          <p id="detail-by" class="text-small text-muted"></p>
+        </div>
+        <button id="detail-close" type="button" class="btn-secondary shrink-0">Close</button>
+      </header>
+      <div id="detail-group" class="flex items-center gap-3"></div>
+      <div class="flex flex-col">
+        <p class="section-label">Who ranked it</p>
+        <div id="detail-raters"></div>
+      </div>
+      <div id="detail-yours" role="group" aria-labelledby="detail-yours-label" class="sr-only flex-col gap-2 focus-within:not-sr-only focus-within:flex">
+        <p id="detail-yours-label" class="section-label mb-0">Your tier</p>
+        <div class="flex flex-wrap gap-2">
+          <button type="button" data-set-tier="S" class="btn-secondary">S</button>
+          <button type="button" data-set-tier="A" class="btn-secondary">A</button>
+          <button type="button" data-set-tier="B" class="btn-secondary">B</button>
+          <button type="button" data-set-tier="C" class="btn-secondary">C</button>
+          <button type="button" data-set-tier="D" class="btn-secondary">D</button>
+          <button type="button" data-set-tier="F" class="btn-secondary">F</button>
+          <button type="button" data-set-tier="" class="btn-secondary">Not ranked</button>
+        </div>
+      </div>
+      <div id="detail-actions" class="flex flex-wrap items-center gap-2">
+        <button id="detail-off" type="button" class="btn-secondary" hidden>Take it off my board</button>
+        <button id="detail-remove" type="button" class="btn-secondary border-0 bg-transparent px-2 text-small text-muted" hidden>Remove it for everyone</button>
+      </div>
+    </section>
+  </div>
+
+  <script src="/live-updates.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

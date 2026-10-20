@@ -107,6 +107,47 @@ function liveOf(app, tok) {
 }
 const isView = (test = () => true) => (m) => m.t === 'view' && test(m.view);
 
+/**
+ * A ready-made app's live updates, as its page listens (GET /api/changes,
+ * live-updates.js): the stream's status and type, how many `change` events
+ * it has had, `until(check)` to wait for more, and `close()`. A stream the
+ * server ends, or a server that goes away, just ends it.
+ */
+async function listen(app, tok) {
+  const controller = new AbortController();
+  const res = await fetch(`${app.base}/api/changes${tok ? `?token=${encodeURIComponent(tok)}` : ''}`, { signal: controller.signal });
+  let text = '';
+  let ended = false;
+  const reading = (async () => {
+    try {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+      }
+    } catch { /* closed here, or the server went away */ }
+    ended = true;
+  })();
+  const s = {
+    status: res.status,
+    type: res.headers.get('content-type'),
+    text: () => text,
+    ended: () => ended,
+    events: () => (text.match(/^event: change$/gm) || []).length,
+    async until(check, ms = 5000) {
+      const end = Date.now() + ms;
+      while (!check(s)) {
+        if (Date.now() > end) throw new Error(`not in time; the stream had: ${JSON.stringify(text)}`);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    },
+    close: () => { controller.abort(); return reading; },
+  };
+  return s;
+}
+
 function freePort() {
   return new Promise((resolve, reject) => {
     const srv = net.createServer();
@@ -219,7 +260,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
 
   // What every app shares: the screen for a signed-in visitor, nothing for
   // anyone else, and a clean exit on SIGTERM.
-  async function common(app, apiPath) {
+  async function common(app, apiPath, ready) {
     const page = await app.call('GET', `/?token=${encodeURIComponent(ada)}`, { raw: true });
     assert.equal(page.status, 200);
     assert.match(page.headers.get('content-type'), /text\/html/);
@@ -230,6 +271,18 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     assert.equal((await app.call('GET', apiPath, { as: token(101, 'ada', 'usernode:app:999') })).status, 401,
       'a token minted for another app is refused');
     assert.equal((await app.call('GET', '/health')).status, 200);
+    // A ready-made app's live updates (a game has its own live connection):
+    // the page's half is served, and the stream is behind the sign-in check.
+    if (!ready) return;
+    assert.equal((await app.call('GET', '/live-updates.js', { raw: true })).status, 200);
+    const stranger = await listen(app, null);
+    assert.equal(stranger.status, 401, 'no token, no stream');
+    await stranger.close();
+    const stream = await listen(app, ada);
+    assert.equal(stream.status, 200);
+    assert.equal(stream.type, 'text/event-stream');
+    await stream.until((x) => x.text().includes(':ok'));
+    await stream.close();
   }
 
   async function run(template, apiPath, seeded, flows) {
@@ -250,7 +303,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     assert.equal(await app.stop(), 0);
     app = await boot(dir, stagingDb, 'staging', env);
     assert.equal(seeded((await app.call('GET', apiPath, { as: ada })).data), first, 'a second boot does not seed again');
-    await common(app, apiPath);
+    await common(app, apiPath, require('../src/services/app-templates').isReadyMade(template));
     await flows(app);
     assert.equal(await app.stop(), 0, app.output());
   }
@@ -266,6 +319,21 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       // nothing, so every item waits in the tray as a chip to drag.
       assert.ok(seeded.items.length > 0 && seeded.items.every((i) => i.yours === null), 'the check\'s tray has items');
 
+      // Who ranked a seeded item what: best tier first, then by name.
+      const demoItem = (await app.call('GET', '/api/items/900001', { as: ada })).data;
+      assert.deepEqual([demoItem.item.name, demoItem.item.tier, demoItem.item.votes], ['Staging demo one', 'S', 3]);
+      assert.deepEqual(demoItem.raters, [
+        { name: 'staging-demo-ana', you: false, tier: 'S' },
+        { name: 'staging-demo-ben', you: false, tier: 'S' },
+        { name: 'staging-demo-cy', you: false, tier: 'A' },
+      ]);
+      assert.equal((await app.call('GET', '/api/items/999999', { as: ada })).status, 404);
+      assert.equal((await app.call('GET', '/api/items/900001')).status, 401, 'no token, no names');
+
+      // Grace's screen is open while Ada adds and ranks: each change reaches it.
+      const graces = await listen(app, grace);
+      await graces.until((x) => x.text().includes(':ok'));
+
       assert.equal((await app.call('POST', '/api/items', { as: ada, body: { name: '   ' } })).status, 400);
       const added = await app.call('POST', '/api/items', { as: ada, body: { name: '  Noodle   Bar ' } });
       assert.equal(added.status, 201);
@@ -276,11 +344,19 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
 
       assert.equal((await app.call('PUT', `/api/items/${id}/tier`, { as: ada, body: { tier: 'Z' } })).status, 400);
       assert.equal((await app.call('PUT', '/api/items/999999/tier', { as: ada, body: { tier: 'S' } })).status, 404);
+      await graces.until((x) => x.events() >= 1);
+      const heard = graces.events();
       await app.call('PUT', `/api/items/${id}/tier`, { as: ada, body: { tier: 'S' } });
+      await graces.until((x) => x.events() > heard);
+      assert.doesNotMatch(graces.text(), /Noodle|ada/, 'the stream says only that something changed');
       await app.call('PUT', `/api/items/${id}/tier`, { as: grace, body: { tier: 'B' } });
       let item = (await app.call('GET', '/api/items', { as: grace })).data.items.find((i) => i.id === id);
       assert.deepEqual([item.name, item.by, item.mine, item.votes, item.average, item.tier, item.yours],
         ['Noodle Bar', 'ada', false, 2, 4, 'A', 'B']);
+      // Tapping it: who ranked it what, by name, with the viewer marked.
+      const sheet = (await app.call('GET', `/api/items/${id}`, { as: grace })).data;
+      assert.deepEqual(sheet.item, item, 'the same item as on the board');
+      assert.deepEqual(sheet.raters, [{ name: 'ada', you: false, tier: 'S' }, { name: 'grace', you: true, tier: 'B' }]);
       // A tie goes up: 4.5 is S.
       await app.call('PUT', `/api/items/${id}/tier`, { as: grace, body: { tier: 'A' } });
       item = (await app.call('GET', '/api/items', { as: ada })).data.items.find((i) => i.id === id);
@@ -291,8 +367,12 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       assert.deepEqual([item.votes, item.tier, item.yours], [1, 'A', null]);
 
       assert.equal((await app.call('DELETE', `/api/items/${id}`, { as: grace })).status, 403, 'only whoever added it removes it');
+      const before = graces.events();
       assert.equal((await app.call('DELETE', `/api/items/${id}`, { as: ada })).status, 200);
       assert.ok(!(await app.call('GET', '/api/items', { as: ada })).data.items.some((i) => i.id === id));
+      await graces.until((x) => x.events() > before);
+      assert.equal((await app.call('GET', `/api/items/${id}`, { as: grace })).status, 404, 'its sheet is gone with it');
+      // Grace's stream stays open: SIGTERM still drains and exits (run() checks).
     });
   });
 
@@ -621,7 +701,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     // Staging: no seed, and the app still works for whoever opens it.
     const stagingDb = await database();
     app = await boot(dir, stagingDb, 'staging', env);
-    await common(app, '/api/today');
+    await common(app, '/api/today', true);
     assert.equal((await app.call('GET', '/api/today', { as: ada })).data.count, 0, 'a preview starts empty');
 
     // A session that runs out is counted once, however many times the same

@@ -341,6 +341,18 @@ const USER_DATA_SCRIPT = fs.readFileSync(
   'utf8'
 );
 
+// A ready-made app's live updates: GET /api/changes, an event stream that
+// tells every open screen when a write succeeds (live-updates.js, mounted by
+// server.js), and the page's half that listens and fetches again
+// (public/live-updates.js). Real files for the same reasons as the one
+// above. Only a ready-made app gets them: a game starter has its own live
+// connection (game/live.js), and Empty has no screen that shares anything.
+const LIVE_PATHS = ['live-updates.js', 'public/live-updates.js'];
+const LIVE_FILES = LIVE_PATHS.map((rel) => ({
+  path: rel,
+  content: fs.readFileSync(path.join(__dirname, '..', '..', 'app-templates', '_scaffold', rel), 'utf8'),
+}));
+
 // The one-line file naming the app's canonical repository, which the hook
 // above compares HEAD against. Platform-written rather than part of the
 // shared scaffold: a create and an import write the app's own URL, and a fork
@@ -529,9 +541,10 @@ connector registered under some other name.
 // the same for every new app. EMPTY_SERVER carries no routes and no tables:
 // the starter screen is static (#4047 removed the Press! demo it served),
 // so there is nothing for the scaffold to mount until the app's first real
-// feature adds its own. STARTER_SERVER mounts a starter's api.js
-// (services/app-templates.js) and adds the graceful shutdown the platform
-// conventions ask for.
+// feature adds its own. starterServer mounts a starter's api.js
+// (services/app-templates.js), a ready-made app's live updates before it
+// (LIVE_FILES), and adds the graceful shutdown the platform conventions ask
+// for.
 const EMPTY_SERVER = {
   health: `app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 `,
@@ -576,22 +589,35 @@ app.get(['/', '/index.html'], (_req, res) => res.type('html').send(page()));
 `;
 }
 
-const STARTER_SERVER = {
-  staticOptions: ', { index: false }',
-  sendPage: `res.type('html').send(page());`,
-  health: `// 503 once a shutdown has begun, so anything polling readiness sees the
+// A ready-made app's live updates (LIVE_FILES), mounted before api.js so
+// the write hook hears every write api.js answers.
+const LIVE_ROUTES = `// Live updates (live-updates.js): GET /api/changes tells every screen
+// that is open when a write to /api/* succeeds, so each one fetches what it
+// shows again at once.
+const changes = require('./live-updates').mount(app);
+
+`;
+
+function starterServer(starter) {
+  // A game starter keeps its own live connection (game/live.js) instead.
+  const withLive = !!starter.ready;
+  return {
+    page: starterPage(starter.title),
+    staticOptions: ', { index: false }',
+    sendPage: `res.type('html').send(page());`,
+    health: `// 503 once a shutdown has begun, so anything polling readiness sees the
 // container leaving rotation rather than a connection reset.
 let shuttingDown = false;
 app.get('/health', (_req, res) => res.status(shuttingDown ? 503 : 200).json({ status: shuttingDown ? 'stopping' : 'ok' }));
 `,
-  routes: `// This app's own routes and tables live in api.js, which came from a
+    routes: `${withLive ? LIVE_ROUTES : ''}// This app's own routes and tables live in api.js, which came from a
 // Homeroom starter template. Everything it mounts is behind the sign-in
 // check above, so req.user is always set there.
 const api = require('./api');
 api.routes(app, pool);
 
 `,
-  start: `async function start() {
+    start: `async function start() {
   // Tables are created idempotently on every boot; a staging preview also
   // gets a few obviously fake rows (see migrate() in api.js).
   await api.migrate(pool);
@@ -612,7 +638,7 @@ api.routes(app, pool);
     shuttingDown = true;
     console.log(\`[shutdown] \${signal} received, draining\`);
     if (live && typeof live.close === 'function') live.close();
-    server.close(() => {});
+${withLive ? '    changes.close();\n' : ''}    server.close(() => {});
     server.closeIdleConnections?.();
     const timer = setTimeout(() => server.closeAllConnections?.(), DRAIN_MS);
     timer.unref?.();
@@ -628,7 +654,8 @@ api.routes(app, pool);
 }
 
 `,
-};
+  };
+}
 
 // repoUrl is the app's canonical GitHub repository; with it the scaffold
 // includes the pointer file the freshness check reads. A local build with no
@@ -653,7 +680,7 @@ function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = n
   // starter swaps in its own screen, api.js, README and checks.
   const starter = template == null || template === appTemplates.DEFAULT_TEMPLATE ? null : appTemplates.get(template);
   if (template != null && !appTemplates.isTemplate(template)) throw new Error(`Unknown app template: ${template}`);
-  const server = starter ? { ...STARTER_SERVER, page: starterPage(starter.title) } : EMPTY_SERVER;
+  const server = starter ? starterServer(starter) : EMPTY_SERVER;
   // A starter's own packages (a game's `ws`), added to package.json and its
   // lockfile so the image's `npm ci` installs them.
   const extraDeps = starter && starter.dependencies ? extraDependencies(starter) : null;
@@ -1118,6 +1145,7 @@ value = "build"
     // own look.
     ...require('./design-skill').skillFiles(),
     { path: USER_DATA_PATH, content: USER_DATA_SCRIPT },
+    ...(starter && starter.ready ? LIVE_FILES : []),
     {
       path: 'server.js',
       content: `const express = require('express');
@@ -1467,6 +1495,13 @@ Where things are:
   \`server.js\` mounts it after the sign-in check and runs \`migrate()\`
   on boot, which also seeds a few obviously fake rows in a staging preview.
 - \`public/index.html\` and \`public/app.js\`: the screen.
+- \`live-updates.js\` and \`public/live-updates.js\`: live updates. Every
+  write to \`/api/*\` that succeeds tells each open screen over
+  \`GET /api/changes\` (an event stream saying only that something
+  changed), and a screen that shows what other people do fetches again
+  (\`LiveUpdates.watch\` in \`public/app.js\`). A route added to \`api.js\` is
+  covered by itself; a change made any other way (a timer, a job) calls
+  \`require('./live-updates').notify()\`.
 - \`dapp.json\` \`tests\`: the checks every proposal runs. Keep them passing,
   and change them when you change what they look for.
 

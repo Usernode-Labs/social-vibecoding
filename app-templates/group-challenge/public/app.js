@@ -640,8 +640,11 @@
 
   var loaded = false;
   var loading = null;
+  var again = false;
   function load() {
-    if (loading) return loading;
+    // A read already on its way may have left before the change just made:
+    // read once more when it is back.
+    if (loading) { again = true; return loading; }
     loading = api('GET', '/api/challenge' + (viewing ? '?month=' + encodeURIComponent(viewing) : ''))
       .then(function (data) { loaded = true; render(data); })
       .catch(function (err) {
@@ -650,23 +653,27 @@
         if (loaded && current && el.loading.hidden && !el.thisMonth.hidden) say(el.logStatus, err);
         else show('error');
       })
-      .then(function () { loading = null; });
+      .then(function () {
+        loading = null;
+        if (again) { again = false; return load(); }
+      });
     return loading;
   }
 
   document.getElementById('retry').addEventListener('click', function () { show('loading'); load(); });
 
-  // Everybody else logs too: look again every 30 seconds while the app is
-  // on screen, and straight away when it comes back. Skipped while someone
-  // is typing or changing the goal, so a refresh never interrupts them, and
-  // while a past month is open, since a past month does not change.
+  // Everybody else logs too: whenever anybody changes something, the month
+  // is fetched again at once, and looked at every minute regardless
+  // (public/live-updates.js). Not while someone is typing or changing the
+  // goal, so a refresh never interrupts them, and not while a past month is
+  // open, since a past month does not change: what changed then is fetched
+  // the moment they are done.
   function quiet() {
     var active = document.activeElement;
     var typing = active && (active.tagName === 'INPUT' || active.tagName === 'SELECT') && active.value;
-    return !document.hidden && !typing && !editingGoal && viewing === null;
+    return !typing && !editingGoal && viewing === null;
   }
-  setInterval(function () { if (quiet()) load(); }, 30000);
-  document.addEventListener('visibilitychange', function () { if (quiet()) load(); });
+  if (window.LiveUpdates) window.LiveUpdates.watch({ refresh: load, quiet: quiet });
 
   // The first screen, drawn: Homeroom keeps its opening cover up until then
   // (usernode.ready, the platform bridge), so the app appears in one step
