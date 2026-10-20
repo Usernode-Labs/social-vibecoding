@@ -24,6 +24,25 @@
 //
 // It is not in @/components/ui: it is a domain card, not a primitive.
 //
+// ── Open cards ask, finished cards step back (#4563) ───────────────────
+//
+// Every card used to have one shape and one weight, so the challenge still
+// worth points looked exactly like the one already done. The card now has
+// two shapes, decided by the viewer's own state and nothing else (no colour
+// per card, nothing read from fields an admin may have left empty):
+//
+//   * UNFINISHED (`new`, `progress`): the full card, and beside its rail a
+//     filled accent pill, "Start" before the viewer has begun and "Continue"
+//     once they have. The accent marks an action (AGENTS.md, "Type and
+//     colour"): it opens the challenge's page, as tapping anywhere on the
+//     card does. It is a span, not a <button>: the card root is already the
+//     button, and a control inside a control is invalid and a second tab
+//     stop.
+//   * DONE: one short line, the ringed green check, the title and what the
+//     viewer earned in emerald, on a 20px card with no tile and no rail. A
+//     settled thing gets no fill; it gives its height to what is still open.
+//     The line still opens the challenge's page.
+//
 // ── Title with its points, then the rail ───────────────────────────────
 //
 // The Semi design (2026-10-16): the card says what to do, what it pays and how
@@ -116,6 +135,13 @@ const TILE_ART = 'bg-[var(--tint-art)] dark:bg-[var(--tint-art)]';
 // Passed through `className` on both faces, where tailwind-merge displaces the
 // xl size's own `rounded-2xl` rather than layering a second radius on it.
 const TILE_RADIUS = 'rounded-[0.6875rem]';
+// The open card's action pill: the rail's own 36px height and 11px corners
+// (RAIL_SIZE.md), so the two sit flush on one row, in the accent the detail
+// page's action button uses. It never shrinks; the rail's label truncates
+// first on a narrow phone.
+const CARD_ACTION = 'relative flex h-9 shrink-0 items-center rounded-[0.6875rem] bg-violet-600 px-3.5 '
+  + 'text-[0.8125rem] font-semibold text-white dark:bg-violet-500';
+const RAIL_ROW = 'flex min-w-0 items-center gap-2';
 
 
 // The three state marks. The board draws an empty ring, a dashed ring and a
@@ -288,9 +314,19 @@ export const CHALLENGE_CARD_FACE = 'flex items-center gap-3 bg-white dark:bg-zin
   + 'border border-zinc-200 dark:border-zinc-800 p-3';
 const CARD = CHALLENGE_CARD_FACE
   + ' cursor-pointer hover:border-violet-400 dark:hover:border-violet-600 transition-colors';
+// The finished card: one line on the same white face and hairline, at the
+// 20px corners of a card this short (Home's one-line note uses them too).
+// `h-fit` keeps it one line tall when the Challenges tab's grid would stretch
+// it to a full card beside it; in Home's column it changes nothing.
+const CARD_DONE = 'flex h-fit min-w-0 items-center gap-2.5 bg-white dark:bg-zinc-900 rounded-[1.25rem] '
+  + 'border border-zinc-200 dark:border-zinc-800 px-3.5 py-3 '
+  + 'cursor-pointer hover:border-violet-400 dark:hover:border-violet-600 transition-colors';
+const DONE_MARK = 'shrink-0 text-emerald-700 dark:text-emerald-400';
+const DONE_POINTS = 'max-w-[55%] shrink-0 truncate text-[0.8125rem] font-medium leading-5 text-emerald-700 dark:text-emerald-400';
 
-// The card: tile, then the title with its points at the right of the same
-// line, and the rail — nothing else. The task is not on the card (the tab's
+// The open card: tile, then the title with its points at the right of the
+// same line, and the rail with its Start or Continue pill — nothing else.
+// A finished challenge is the one-line card instead (see the file header). The task is not on the card (the tab's
 // detail page carries it in full).
 //
 // TITLE AND RAIL ARE ONE GROUP. The title line sits 8px above the rail and
@@ -310,6 +346,7 @@ export function ChallengeCard({ view, className, onClick, onKeyDown, ...rest }: 
   view: ChallengeCardView;
   className?: string;
 } & Omit<HTMLAttributes<HTMLDivElement>, 'className'>): ReactNode {
+  const t = useMessages('leaderboard');
   const reward = view.earned || view.reward;
   const pressable = onClick
     ? {
@@ -326,21 +363,45 @@ export function ChallengeCard({ view, className, onClick, onKeyDown, ...rest }: 
       },
     }
     : { onKeyDown };
+  if (view.state === 'done') {
+    return (
+      <div
+        className={className ? `${className} ${CARD_DONE}` : CARD_DONE}
+        data-challenge-state="done"
+        {...pressable}
+        {...rest}
+      >
+        <span className={DONE_MARK}><StateMark state="done" /></span>
+        <div className={TITLE}>{view.goal}</div>
+        {view.earned ? (
+          <>
+            <span className="sr-only">{view.stateLabel}</span>
+            <span className={DONE_POINTS}>{view.earned}</span>
+          </>
+        ) : <span className={DONE_POINTS}>{view.stateLabel}</span>}
+      </div>
+    );
+  }
   return (
-    <div className={className ? `${className} ${CARD}` : CARD} {...pressable} {...rest}>
+    <div className={className ? `${className} ${CARD}` : CARD} data-challenge-state={view.state} {...pressable} {...rest}>
       <ChallengeTile icon={view.icon} illustration={view.illustration} illustrationTone={view.illustrationTone} />
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div className={TITLE_LINE}>
           <div className={TITLE}>{view.goal}</div>
           {reward ? <span className={view.earned ? POINTS_EARNED : POINTS}>{reward}</span> : null}
         </div>
-        <ProgressRail
-          state={view.state}
-          label={view.stateLabel}
-          fill={view.fill}
-          name={view.goal}
-          counted={!!view.counted}
-        />
+        <div className={RAIL_ROW}>
+          <ProgressRail
+            state={view.state}
+            label={view.stateLabel}
+            fill={view.fill}
+            name={view.goal}
+            counted={!!view.counted}
+          />
+          <span className={CARD_ACTION}>
+            {view.state === 'progress' ? t('leaderboard:challenges.card.continue') : t('leaderboard:challenges.card.start')}
+          </span>
+        </div>
       </div>
     </div>
   );

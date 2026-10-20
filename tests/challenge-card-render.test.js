@@ -231,14 +231,74 @@ test('the points: amber to earn, emerald once earned, and nothing when there are
   assert.doesNotMatch(neither, /text-amber-800|text-emerald-700/);
 
   const done = card({ ...base, state: 'done', stateLabel: 'Done', fill: 1, counted: true, reward: '900 pts', earned: '900 pts' });
-  assert.ok(done.includes(`${TITLE('Try Three Apps')}${POINTS_EARNED('900 pts')}</div>`),
+  assert.ok(done.includes(`${TITLE('Try Three Apps')}<span class="sr-only">Done</span>${POINTS_EARNED('900 pts')}</div>`),
     'a finished challenge says what was earned, in emerald, without the word "Earned"');
   assert.doesNotMatch(done, /text-amber-800|Earned/, 'not the reward on offer');
-  assert.doesNotMatch(done, /style="width/, 'and its rail draws no bar');
+  assert.doesNotMatch(done, /style="width/, 'and draws no bar');
 
   const zero = card({ ...base, stateLabel: '0/3 Apps tried', counted: true, reward: '500 pts' });
   assert.match(zero, /style="width:0\.375rem"/, 'the stub at 0 of 3');
   assert.match(zero, />0\/3 Apps tried</);
+});
+
+// ── Two shapes (#4563) ────────────────────────────────────────────────
+//
+// Every card had one shape and one weight, so nothing stood out. An open
+// challenge carries a filled Start or Continue beside its rail; a finished
+// one is a single short line with no tile and no rail.
+const ACTION = (t) => `<span class="relative flex h-9 shrink-0 items-center rounded-[0.6875rem] bg-violet-600 px-3.5 text-[0.8125rem] font-semibold text-white dark:bg-violet-500">${t}</span>`;
+
+test('an open card asks: Start before it is begun, Continue once it is, beside the rail', () => {
+  const base = { goal: 'Suggest an improvement', reward: '1,000 pts', icon: '💡', fill: 0, earned: null };
+  const fresh = card({ ...base, state: 'new', stateLabel: 'Not started' });
+  assert.match(fresh, /^<div class="flex items-center gap-3 [^"]*rounded-3xl[^"]*" data-challenge-state="new"/);
+  assert.ok(fresh.includes('<div class="flex min-w-0 items-center gap-2"><div role="progressbar"'),
+    'the rail and the pill share one row, the rail first');
+  assert.ok(fresh.includes(`<span class="relative min-w-0 truncate">Not started</span></div>${ACTION('Start')}</div>`),
+    'Start sits right after the rail');
+  assert.match(fresh, />1,000 pts</, 'the reward on offer stays');
+  assert.match(fresh, /h-20 w-20/, 'and the tile');
+  assert.doesNotMatch(fresh, /<button/, 'the pill is not a control inside the card’s own button');
+
+  const going = card({ ...base, state: 'progress', stateLabel: '1/3 Apps tried', fill: 1 / 3, counted: true });
+  assert.ok(going.includes(ACTION('Continue')), 'a begun challenge says Continue');
+  assert.doesNotMatch(going, />Start</);
+
+  const tappable = renderToHtml(createElement(Card.ChallengeCard, {
+    view: { ...base, state: 'new', stateLabel: 'Not started' }, onClick: () => {},
+  }));
+  assert.equal((tappable.match(/role="button"|tabindex/g) || []).length, 2, 'still one button and one tab stop');
+});
+
+test('a finished card is one short line: check, title, what was earned', () => {
+  const view = {
+    goal: 'Vote on five proposals', reward: '900 pts', icon: '🗳️', illustration: 'try-three-apps',
+    state: 'done', stateLabel: 'Done', fill: 1, counted: true, earned: '900 pts',
+  };
+  const html = renderToHtml(createElement(Card.ChallengeCard, {
+    view, className: 'home-challenge-card', 'data-challenge-id': '9', onClick: () => {},
+  }));
+  const root = html.match(/^<div class="([^"]*)"/)[1].split(' ');
+  assert.equal(root[0], 'home-challenge-card', 'the surface class still leads');
+  for (const c of ['h-fit', 'rounded-[1.25rem]', 'bg-white', 'dark:bg-zinc-900', 'border', 'border-zinc-200', 'items-center']) {
+    assert.ok(root.includes(c), `the line has ${c}`);
+  }
+  assert.ok(!root.includes('rounded-3xl') && !root.includes('p-3'), 'not the full card’s geometry');
+  assert.match(html, /data-challenge-state="done"/);
+  assert.match(html, /data-challenge-id="9"/);
+  assert.match(html, /role="button"/, 'it still opens the challenge');
+  assert.match(html, /tabindex="0"/);
+  assert.doesNotMatch(html, /role="progressbar"|h-20|<img|🗳️/, 'no rail, no tile, no artwork');
+  assert.doesNotMatch(html, /bg-violet-600|>Start<|>Continue</, 'and nothing to start');
+  assert.match(html, /<span class="shrink-0 text-emerald-700 dark:text-emerald-400"><span aria-hidden="true" class="[^"]*rounded-full border-2 border-current"><svg/,
+    'the ringed check in emerald');
+  assert.ok(html.includes(`${TITLE('Vote on five proposals')}<span class="sr-only">Done</span>${POINTS_EARNED('900 pts')}`),
+    'the title, then the points earned in emerald, and "Done" for a screen reader');
+
+  const nothingEarned = card({ ...view, earned: null });
+  assert.ok(nothingEarned.includes(`${TITLE('Vote on five proposals')}${POINTS_EARNED('Done')}</div>`),
+    'nothing earned: the line says Done');
+  assert.doesNotMatch(nothingEarned, /sr-only|900 pts/, 'not the reward that was on offer');
 });
 
 test('the title gives way on a narrow line, never the points', () => {
