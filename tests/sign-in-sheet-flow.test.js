@@ -231,8 +231,8 @@ test('the code is six boxes over one real field, and the sixth digit sends it (#
   assert.equal(message('auth:signInSheet.code.title'), 'Enter the code we emailed');
 });
 
-test('the code step opens the address\'s own mail, and counts Get started\'s steps (#5253)', () => {
-  const { mailAppFor, storyStep } = loadTsx(SHEET);
+test('the code step opens the address\'s own mail (#5253)', () => {
+  const { mailAppFor } = loadTsx(SHEET);
   const gmail = mailAppFor('Ada@Gmail.com');
   assert.equal(gmail.name, 'Gmail');
   assert.equal(gmail.url, 'https://mail.google.com/mail/?authuser=Ada%40Gmail.com#search/in%3Aanywhere+newer_than%3A1h');
@@ -245,18 +245,10 @@ test('the code step opens the address\'s own mail, and counts Get started\'s ste
   assert.equal(mailAppFor('ada@usernodelabs.org'), null);
   assert.equal(mailAppFor('not an address'), null);
   assert.equal(message('auth:signInSheet.code.openMail', { app: 'Gmail' }), 'Open Gmail');
-  // Only the story's Get started counts its steps: email, code, username.
-  assert.equal(storyStep('code', 'story'), 2);
-  assert.equal(storyStep('code', 'signin'), null);
-  assert.equal(storyStep('code', 'invite'), null);
-  assert.equal(storyStep('account', 'story'), 3);
-  // From the first step (#5252): the email, or Apple and Google above it.
-  assert.equal(storyStep('email', 'story'), 1);
-  assert.equal(storyStep('choose', 'story'), 1);
-  assert.equal(storyStep('email', 'signin'), null);
-  assert.equal(storyStep('password', 'story'), null);
-  assert.equal(storyStep('phone', 'invite'), null);
-  assert.equal(message('auth:signInSheet.progress', { step: 2, total: 3 }), 'Step 2 of 3');
+  // The story's step bar is gone: no progress markup anywhere in the sheet.
+  const src = read(SHEET);
+  assert.doesNotMatch(src, /data-sign-in-sheet-progress/);
+  assert.doesNotMatch(src, /storyStep/);
 });
 
 test('the sheet spends the one-time sign-in with a POST, and anything but a spend falls back (#4594)', async () => {
