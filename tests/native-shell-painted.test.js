@@ -72,6 +72,10 @@ function boot(opts = {}) {
     dclAt: opts.dclAt ?? 1,
   };
   const t0 = Date.now();
+  // A test that measures the cap can own the clock instead of racing real
+  // time: `setClock(ms)` moves it, and nothing else in the sandbox changes
+  // (setTimeout stays real, so the poll still runs).
+  let clock = 0;
   const listeners = {};
   const htmlChildren = [];
   const html = {
@@ -123,7 +127,7 @@ function boot(opts = {}) {
     localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
     getComputedStyle: () => ({ paddingTop: `${page.inset}px`, backgroundColor: 'rgb(244, 242, 228)' }),
     performance: {
-      now: () => Date.now() - t0,
+      now: opts.manualClock ? () => clock : () => Date.now() - t0,
       getEntriesByType: () => [{ domContentLoadedEventStart: page.dclAt }],
     },
     requestAnimationFrame: opts.noFrames ? () => 0 : (fn) => setTimeout(fn, 1),
@@ -153,6 +157,7 @@ function boot(opts = {}) {
       page.readyState = 'interactive';
       for (const fn of listeners.DOMContentLoaded || []) fn();
     },
+    setClock(ms) { clock = ms; },
   };
 }
 
@@ -223,14 +228,22 @@ test('drawn before the inset is known: it waits for the inset', async () => {
 });
 
 test('still skeletons at the cap: sent anyway, and only counted from DOMContentLoaded', async () => {
-  const h = boot({ drawn: false, readyState: 'loading', dclAt: 0, capMs: 60 });
-  await wait(120);
+  // The clock is moved by hand, never by real time, so a slow machine
+  // cannot push the cap over an assertion.
+  const DCL = 10000;
+  const CAP = 1500;
+  const h = boot({ drawn: false, readyState: 'loading', dclAt: 0, manualClock: true, capMs: CAP });
+  h.setClock(DCL);
+  await wait(40);
   assert.equal(h.calls.painted, 0, 'not parsed yet: no cap is running');
-  h.page.dclAt = h.sandbox.performance.now();
+  h.page.dclAt = DCL;
   h.fireDomContentLoaded();
-  await wait(30);
+  h.setClock(DCL + CAP - 1);
+  await wait(40);
   assert.equal(h.calls.painted, 0, 'inside the cap');
-  await wait(80);
+  h.setClock(DCL + CAP);
+  const sentBy = Date.now() + 2000;
+  while (h.calls.painted === 0 && Date.now() < sentBy) await wait(5);
   assert.equal(h.calls.painted, 1, 'the cap sent it');
   assert.equal(h.NativeChrome._shellPaintedReason, 'cap');
 });
