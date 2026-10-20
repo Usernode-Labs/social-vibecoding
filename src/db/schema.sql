@@ -15038,9 +15038,15 @@ CREATE TABLE IF NOT EXISTS shots_eval_trials (
 -- cost_cents when the trial ends, and emptied in the same write.
 ALTER TABLE shots_eval_trials ADD COLUMN IF NOT EXISTS proxy_cents NUMERIC(12,4) NOT NULL DEFAULT 0;
 -- What Claude Code itself reported a trial's turns cost (the shots-eval
--- machine's agent work hands it back): the trial is charged the larger of
--- this and proxy_cents, both emptied in the write that charges it.
+-- machine's agent work adds each dispatch's as it returns): the trial is
+-- charged the larger of this and proxy_cents, both emptied in the write
+-- that charges it.
 ALTER TABLE shots_eval_trials ADD COLUMN IF NOT EXISTS reported_cents NUMERIC(12,4) NOT NULL DEFAULT 0;
+-- When the shots-eval machine decided a running trial ends (a cancel, a
+-- phase past its time, its row ended elsewhere): its work stops at its next
+-- step from then, though the row reads active until its cleanup is done
+-- and its end written. Emptied when the trial is put back.
+ALTER TABLE shots_eval_trials ADD COLUMN IF NOT EXISTS stopping_at TIMESTAMPTZ;
 -- A trial is claimed (planned to provisioning) and put back (to planned)
 -- by the shots-eval machine only (src/workflow/shots-eval/). An older
 -- build's runner, still running during a rollout, counts only its own

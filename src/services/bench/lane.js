@@ -628,8 +628,33 @@ async function runTrial({ pool, config, id, input = {}, steps, deps = {} }) {
   const key = buildKeyOf(id, input?.nonce);
   const { rows: [trialRow] } = await pool.query('SELECT id, run_id, status, build_key FROM bench_trials WHERE id = $1', [Number(id)]);
   if (!trialRow) return { status: 'gone' };
+  // Recorded by this build already: a restart came between the record and
+  // its step being saved. What follows the record is done again.
+  if (trialRow.status !== 'running' && trialRow.build_key === key) {
+    await afterRecorded(pool, config, Number(id), deps);
+    return { status: trialRow.status };
+  }
   if (!claimedBy(trialRow, key)) return { status: trialRow.status === 'running' ? 'not_this_claim' : trialRow.status };
   return { status: await executeTrial(pool, config, trialRow, { ...deps, durable: steps, buildKey: key }) };
+}
+
+// What recordTrial does after its record that is safe to do twice: the
+// trial's sessions put away, its grade, a side build's result. (The
+// allowance's debit is not: a restart in that gap loses it, as it did.)
+async function afterRecorded(pool, config, id, deps = {}) {
+  const row = await loadTrialContext(pool, id);
+  if (!row) return;
+  const d = liveDeps(deps);
+  const sessionIds = [...new Set([row.session_id, ...(row.session_ids || [])].filter(Boolean).map(Number))];
+  const lifecycle = d.sessionLifecycle || require('../session-lifecycle');
+  for (const sid of sessionIds) {
+    await lifecycle.closeOwnSession({ pool, sessionId: sid, reason: 'bench' }).catch(() => {});
+  }
+  const grade = d.afterTrial || ((p, tid) => require('./graders').gradeTrial(p, tid, { github: d.github }));
+  await Promise.resolve(grade(pool, id)).catch((err) => {
+    log.warn('bench', 'After-trial grading failed', { trialId: id, err: err.message });
+  });
+  if (row.bot_config_version_id) await require('../bot-configs').finishSideTrial(pool, id);
 }
 
 function buildKeyOf(id, nonce) {
@@ -645,14 +670,16 @@ function claimedBy(row, key) {
 /**
  * A durable trial whose build failed for good (its handler threw twice,
  * restarts caught it more often than the kernel carries a build on, or an
- * admin stopped it), recorded through the finisher every trial ends by
- * (recordTrial): what its sessions spent charged to its run, its sessions
- * put away. Then the lane looks again: its slot is free. Never throws.
+ * admin stopped it), or whose build ended without recording it (the lane
+ * finds those: `bench.lost`), recorded through the finisher every trial
+ * ends by (recordTrial): what its sessions spent charged to its run, its
+ * sessions put away. Then the lane looks again: its slot is free. Throws
+ * when it could not record it, so its work tries again.
  */
-async function recordLostTrial({ pool, config, id, nonce = null, error = null }) {
+async function recordLostTrial({ pool, config, id, nonce = null, key: named = null, error = null }) {
   try {
     const row = await loadTrialContext(pool, id);
-    const key = buildKeyOf(id, nonce);
+    const key = named || buildKeyOf(id, nonce);
     if (!row || !claimedBy(row, key)) return;
     const user = await runner.ensureBenchUser(pool, config);
     // Stopped (an admin's cancel): recorded as the cancel it was.
@@ -665,6 +692,7 @@ async function recordLostTrial({ pool, config, id, nonce = null, error = null })
     });
   } catch (err) {
     log.warn('bench', 'Could not record a lost trial', { trialId: id, err: err.message });
+    throw err;
   } finally {
     await look();
   }

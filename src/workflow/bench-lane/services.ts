@@ -1,6 +1,7 @@
 // bench-lane's I/O: the bench user's allowance, looked at for the lane's
-// grants, and a run's side builds' results finished when a cap or a cancel
-// leaves their trials unrun (services/bench/lane.js).
+// grants, a trial its build left unrecorded, recorded lost, and a run's side
+// builds' results finished when a cap or a cancel leaves their trials unrun
+// (services/bench/lane.js).
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
@@ -18,6 +19,19 @@ export function benchLaneServices({ config, pool }: Deps): Record<string, WorkHa
       concurrency: 1,
       async run(): Promise<Json> {
         return lane().allowanceGate(pool, config);
+      },
+    },
+    // A trial whose build ended without recording it, recorded lost (fenced
+    // by its claim: a build that did record it first wins).
+    [WORK.lost]: {
+      maxAttempts: 5,
+      backoffMs: (attempt) => Math.min(30000 * 2 ** (attempt - 1), 600000),
+      async run({ input }): Promise<Json> {
+        await lane().recordLostTrial({
+          pool, config, id: Number(input.trialId), key: (input.buildKey as string | null) ?? null,
+          error: { message: 'its build ended without recording it' },
+        });
+        return { recorded: true };
       },
     },
     [WORK.sides]: {

@@ -32,7 +32,7 @@ import type { Facts, Trial } from './facts.ts';
 
 export const MACHINE = 'bench-lane';
 export const KEY = 'lane';
-export const WORK = Object.freeze({ gate: 'bench.gate', sides: 'bench.sides' });
+export const WORK = Object.freeze({ gate: 'bench.gate', sides: 'bench.sides', lost: 'bench.lost' });
 
 // One run's trials at once (a studio run's own limit, 9, fits under it),
 // heavy ones of one run at once, and every trial in flight across runs.
@@ -47,6 +47,10 @@ export const WAIT_MS = 60 * 1000;
 // While trials run, a look this often anyway: a lost build's record asks
 // for one, and this is what catches that ask being lost.
 export const RUNNING_LOOK_MS = 5 * 60 * 1000;
+// And with nothing running, a look this often all the same: an ask to look
+// that was lost (a launch whose Look failed, an older release's wake during
+// a rollout) waits no longer than this.
+export const IDLE_LOOK_MS = 10 * 60 * 1000;
 
 type Name = 'open';
 export interface Data {
@@ -100,6 +104,11 @@ function decide(d0: Data, f: Facts, ctx: TransitionContext, extra: Extra = {}): 
     work.push({ kind: WORK.sides, key: `sides:${d.sides}`, input: { runId } });
   };
   for (const runId of extra.sides || []) sides(runId);
+  // Trials whose build ended without recording them: recorded lost (once
+  // per build; the record is fenced by the trial's claim).
+  for (const u of f.unrecorded) {
+    work.push({ kind: WORK.lost, key: `lost:${u.buildKey || `trial:${u.id}`}`, input: { trialId: u.id, buildKey: u.buildKey } as Json });
+  }
   for (const run of f.runs) {
     const mine = running.filter((t) => t.runId === run.id);
     const pending = f.pendingCount.get(run.id) || 0;
@@ -157,6 +166,7 @@ function decide(d0: Data, f: Facts, ctx: TransitionContext, extra: Extra = {}): 
   if (blocked === 'live' || (blocked === 'gate' && d.gate.running == null)) times.push(at(ctx, WAIT_MS).getTime());
   if (running.length) times.push(at(ctx, RUNNING_LOOK_MS).getTime());
   const due = times.filter((t) => Number.isFinite(t) && t > ctx.now.getTime());
+  if (!due.length) due.push(at(ctx, IDLE_LOOK_MS).getTime());
   const timer = due.length ? { at: new Date(Math.min(...due)), event: { type: 'Tick' } } : null;
   return { next: { name: 'open', data: d }, writes, messages, work, timer };
 }
@@ -253,11 +263,16 @@ export function benchLane() {
     writes: {
       // The claim, and the run under way: its build's Requested is this
       // transition's message, so the two commit together.
+      // A trial no longer pending here was changed outside this lock (an
+      // older release's process, during a rollout): the transition is tried
+      // again on what the rows say now, so no build goes for a claim that
+      // did not happen.
       claim: async (tx, w) => {
-        await tx.query(
+        const { rowCount } = await tx.query(
           `UPDATE bench_trials SET status = 'running', claims = claims + 1, started_at = NOW(),
                   first_started_at = COALESCE(first_started_at, NOW()), checkpoint = NULL, build_key = $2
             WHERE id = $1 AND status = 'pending'`, [w.trialId, w.buildKey]);
+        if (!rowCount) throw Object.assign(new Error(`trial ${w.trialId} changed while it was granted`), { code: '40001' });
         await tx.query(
           `UPDATE bench_runs SET status = 'running', started_at = COALESCE(started_at, NOW()) WHERE id = $1 AND status = 'queued'`, [w.runId]);
       },

@@ -17,15 +17,22 @@
 // which goes on its eval in the same write.
 //
 // A cancel stops what runs (its work cancelled, its turn stopped by its
-// record), and the trial is cleaned up as any other. A phase past its time
-// ends the trial the same way. A trial an older build's runner left (its
-// heartbeat quiet: its process is gone) is cleaned up and queued again, once.
+// record, its row marked stopping so its work stops at its next step), and
+// the trial is cleaned up as any other; copies still being built are left
+// to stop there, and their cleanup waits for them. A phase past its time
+// ends the trial the same way, and so does its row ended elsewhere (an
+// older release's process during a rollout). A trial an older build's
+// runner left (its heartbeat quiet: its process is gone) is cleaned up and
+// queued again, once. The rows of the trials it runs are kept beating as
+// that runner's were, so an older release's runner, during a rollout, never
+// takes one for its own lost one. While two releases serve, nothing new is
+// granted: an older one's proxy would bill a trial's calls to the author.
 //
 // workflow-foundation's design-step4-lanes.md is the design.
 
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type { Event, Json, Outcome, TransitionContext, WorkRequest, WorkRef, WorkResultPayload } from '../kernel/index.ts';
-import { readFacts } from './facts.ts';
+import { ACTIVE_STATES, readFacts } from './facts.ts';
 import type { Facts } from './facts.ts';
 
 export const MACHINE = 'shots-eval';
@@ -46,6 +53,14 @@ export const COMPARE_MS = 10 * 60 * 1000;
 // The shots agent busy or gone at its dispatch: tried again this soon, at
 // most this often, while a minute of its budget is left.
 export const AGENT_RETRY_MS = 20 * 1000;
+// How long a trial's cleanup waits for copies it stopped to say so.
+export const AWAIT_COPIES_MS = 10 * 60 * 1000;
+// The rows of running trials beat this often (an older release's runner
+// takes one quiet for STALE_SECONDS, five minutes, for its own lost one).
+export const BEAT_MS = 2 * 60 * 1000;
+// With nothing due, a look this often all the same: an ask to look that was
+// lost (a launch whose Look failed, an older release's wake) waits no longer.
+export const IDLE_LOOK_MS = 10 * 60 * 1000;
 const MAX_BUSY_RETRIES = 2;
 const MIN_RETRY_LEFT_MS = 60 * 1000;
 
@@ -58,7 +73,8 @@ export interface Trial {
   agentMs: number; agentStarted: string | null; dispatches: number; busy: number; died: boolean; retryAt: string | null;
   // The agent may still run: its cleanup stops its turn.
   stopTurn: boolean;
-  reportedCents: number;
+  // Its copies, stopped, still to say so: its cleanup waits for them.
+  awaitCopies?: boolean;
   end: End | null;
   // What the agent saved, kept for the files: its slots and its plan's hash.
   slots?: string[]; planHash?: string | null; trace?: Json;
@@ -93,27 +109,61 @@ function outstanding(t: Trial): WorkRef[] {
   return [];
 }
 
-function cleanup(t: Trial, end: End, ctx: TransitionContext): { trial: Trial; work: WorkRequest; cancel: WorkRef[] } {
-  const cancel = outstanding(t);
+const cleanupWork = (t: Trial): WorkRequest =>
+  work(WORK.cleanup, t, { attemptId: t.attempt, sessionId: t.sessionId, appSlug: t.appSlug, stopTurn: t.stopTurn } as Json);
+
+// The trial ends: what runs of it cancelled, its row marked stopping (its
+// work stops at its next step), and its cleanup. Copies still being built
+// are left to stop there and say so (they would build on after a cleanup
+// that ran beside them), and the cleanup waits for them, as the shots
+// machine's does.
+interface Ending { trial: Trial; work: WorkRequest | null; cancel: WorkRef[]; writes: any[] }
+function cleanup(t: Trial, end: End, ctx: TransitionContext, { copiesSettled = false } = {}): Ending {
+  const awaitCopies = t.phase === 'copies' && !copiesSettled;
   const stopTurn = t.stopTurn || t.phase === 'agent';
-  const trial: Trial = { ...t, phase: 'cleanup', due: null, retryAt: null, stopTurn, end: t.end && t.end.state !== 'verified' ? t.end : end };
+  const trial: Trial = {
+    ...t, phase: 'cleanup', due: awaitCopies ? iso(ctx.now.getTime() + AWAIT_COPIES_MS) : null, retryAt: null, stopTurn,
+    end: t.end && t.end.state !== 'verified' ? t.end : end, ...(awaitCopies ? { awaitCopies: true } : {}),
+  };
   return {
-    trial, cancel,
-    work: work(WORK.cleanup, trial, { attemptId: t.attempt, sessionId: t.sessionId, appSlug: t.appSlug, stopTurn } as Json),
+    trial,
+    cancel: outstanding(t).filter((w) => !(awaitCopies && w.kind === WORK.copies)),
+    work: awaitCopies ? null : cleanupWork(trial),
+    writes: end.state === 'verified' ? [] : [{ type: 'stopping', trialId: t.id, attemptId: t.attempt }],
   };
 }
 
 // `ended`: trials this transition ended (its write lands after the facts
-// were read: their rows still read active there).
-interface Step { data: Data; writes: any[]; work: WorkRequest[]; cancel: WorkRef[]; ended: Set<number> }
+// were read: their rows still read active there), and `charged`, what their
+// ends put on each eval's spend, which the facts do not hold yet either.
+interface Step { data: Data; writes: any[]; work: WorkRequest[]; cancel: WorkRef[]; ended: Set<number>; charged: Map<number, number> }
+
+function apply(st: Step, c: Ending) {
+  st.data = { trials: { ...st.data.trials, [c.trial.id]: c.trial } };
+  if (c.work) st.work.push(c.work);
+  st.cancel.push(...c.cancel);
+  st.writes.push(...c.writes);
+}
 
 // Grant what may start now, and set the clock: every trial's next due
 // time, and a minute while trials wait on a proposal busy with its own.
 function decide(s0: Step, f: Facts, ctx: TransitionContext, deps: Deps): Outcome<EState> {
-  let d = s0.data;
-  const writes = s0.writes.slice();
-  const workOut = s0.work.slice();
-  const cancel = s0.cancel.slice();
+  // A trial of this machine's whose row no longer reads it running (ended
+  // or put back elsewhere: an older release's process during a rollout, an
+  // older release's cancel): stopped and cleaned up here.
+  const st: Step = { ...s0, writes: s0.writes.slice(), work: s0.work.slice(), cancel: s0.cancel.slice() };
+  for (const t of Object.values(s0.data.trials)) {
+    if (t.phase === 'cleanup') continue;
+    const row = f.mine.get(t.id);
+    if (row && row.attemptId === t.attempt && ACTIVE_STATES.includes(row.state)) continue;
+    apply(st, cleanup(t, row?.state === 'cancelled'
+      ? { state: 'cancelled' }
+      : { state: 'failed', code: 'shots_eval_ended', reason: 'The trial was ended elsewhere while it ran.' }, ctx));
+  }
+  let d = st.data;
+  const writes = st.writes;
+  const workOut = st.work;
+  const cancel = st.cancel;
   const now = ctx.now.getTime();
   // An older build's runner's trial whose process is gone: cleaned up here,
   // then queued again (or failed).
@@ -123,12 +173,13 @@ function decide(s0: Step, f: Facts, ctx: TransitionContext, deps: Deps): Outcome
     const t: Trial = {
       id: a.id, evalId: a.evalId, sessionId: a.sessionId, attempt: a.attemptId, appSlug: a.appSlug, phase: 'cleanup', due: null,
       agentMs: deps.defaultAgentMs, agentStarted: null, dispatches: 0, busy: 0, died: false, retryAt: null, stopTurn: true,
-      reportedCents: 0, end: null, attempts: a.attempts,
+      end: null, attempts: a.attempts,
     };
     const again = a.attempts < MAX_ATTEMPTS && a.evalStatus === 'running';
     const c = cleanup(t, again ? { state: 'requeue' } : { state: 'failed', code: 'shots_eval_interrupted', reason: INTERRUPTED_REASON }, ctx);
     d = { trials: { ...d.trials, [a.id]: c.trial } };
-    workOut.push(c.work);
+    if (c.work) workOut.push(c.work);
+    writes.push(...c.writes);
   }
   const mine = Object.values(d.trials);
   const sessionsBusy = new Set<number>([...active.map((a) => a.sessionId), ...mine.map((t) => t.sessionId)]);
@@ -143,13 +194,15 @@ function decide(s0: Step, f: Facts, ctx: TransitionContext, deps: Deps): Outcome
     .reduce((sum, id) => sum + Math.max(proxyOf.get(id) || 0, f.estimateCents), 0);
   const skip = new Set<number>();
   let waiting = false;
-  for (const p of f.planned) {
+  // Two releases serving: nothing new until the rollout is over.
+  if (f.rollout && f.planned.length) waiting = true;
+  for (const p of f.rollout ? [] : f.planned) {
     if (running >= deps.concurrency) break;
     if (skip.has(p.evalId) || sessionsBusy.has(p.sessionId)) continue;
     if (f.liveShots.has(p.sessionId)) { waiting = true; continue; }
     const ev = f.evals.find((e) => e.id === p.evalId);
     if (!ev) continue;
-    if (ev.spent + committed(p.evalId) + f.estimateCents > ev.cap) {
+    if (ev.spent + (st.charged.get(p.evalId) || 0) + committed(p.evalId) + f.estimateCents > ev.cap) {
       // Wait for what is under way, then stop the eval there.
       if (!committed(p.evalId)) writes.push({ type: 'capped', evalId: p.evalId });
       skip.add(p.evalId);
@@ -158,7 +211,7 @@ function decide(s0: Step, f: Facts, ctx: TransitionContext, deps: Deps): Outcome
     const t: Trial = {
       id: p.id, evalId: p.evalId, sessionId: p.sessionId, attempt: p.attemptId, appSlug: p.appSlug,
       phase: 'copies', due: iso(now + COPIES_MS), agentMs: p.agentMs || deps.defaultAgentMs, agentStarted: null,
-      dispatches: 0, busy: 0, died: false, retryAt: null, stopTurn: false, reportedCents: 0, end: null, attempts: p.attempts + 1,
+      dispatches: 0, busy: 0, died: false, retryAt: null, stopTurn: false, end: null, attempts: p.attempts + 1,
     };
     writes.push({ type: 'claim', trialId: p.id, attemptId: p.attemptId });
     workOut.push(work(WORK.copies, t, {
@@ -176,26 +229,41 @@ function decide(s0: Step, f: Facts, ctx: TransitionContext, deps: Deps): Outcome
     const left = f.planned.some((p) => p.evalId === ev.id) || [...activeIds].some((id) => evalOf(id) === ev.id);
     if (!left) writes.push({ type: 'done', evalId: ev.id });
   }
+  // The rows of the trials it holds beat.
+  const held = Object.values(d.trials).map((t) => t.id);
+  if (held.length) writes.push({ type: 'beat', trialIds: held });
   const times: number[] = [];
   for (const t of Object.values(d.trials)) {
     if (t.due) times.push(Date.parse(t.due));
     if (t.retryAt) times.push(Date.parse(t.retryAt));
   }
+  if (held.length) times.push(now + BEAT_MS);
   if (waiting) times.push(now + 60 * 1000);
   // An older build's runner's trials: looked at again once they could be stale.
   if (active.some((a) => !d.trials[a.id])) times.push(now + 60 * 1000);
   const due = times.filter((x) => Number.isFinite(x) && x > now);
+  if (!due.length) due.push(now + IDLE_LOOK_MS);
   const timer = due.length ? { at: new Date(Math.min(...due)), event: { type: 'Tick' } } : null;
   return { next: { name: 'open', data: d }, writes, work: workOut, cancel, timer };
 }
 
-const start = (s: EState): Step => ({ data: s.name === NONE ? { trials: {} } : (s as Live).data, writes: [], work: [], cancel: [], ended: new Set() });
+const start = (s: EState): Step => ({
+  data: s.name === NONE ? { trials: {} } : (s as Live).data, writes: [], work: [], cancel: [], ended: new Set(), charged: new Map(),
+});
 
 // The clock: phases past their time end their trial; a re-dispatch due runs.
 function tick(s: EState, e: Event<any>, f: Facts, ctx: TransitionContext, deps: Deps): Outcome<EState> {
   const st = start(s);
   const now = ctx.now.getTime();
   for (const t of Object.values(st.data.trials)) {
+    // Copies that never said they stopped: cancelled, and cleaned up anyway.
+    if (t.awaitCopies && t.due && Date.parse(t.due) <= now) {
+      const next: Trial = { ...t, awaitCopies: false, due: null };
+      st.data = { trials: { ...st.data.trials, [t.id]: next } };
+      st.cancel.push({ kind: WORK.copies, key: keyOf('copies', t) });
+      st.work.push(cleanupWork(next));
+      continue;
+    }
     if (t.retryAt && Date.parse(t.retryAt) <= now) {
       const left = Date.parse(t.agentStarted!) + t.agentMs - now;
       const next: Trial = { ...t, retryAt: null, dispatches: t.dispatches + 1 };
@@ -204,10 +272,7 @@ function tick(s: EState, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
       continue;
     }
     if (t.due && Date.parse(t.due) <= now && t.phase !== 'cleanup') {
-      const c = cleanup(t, { state: 'failed', code: 'shots_eval_timeout', reason: `The trial ran out of time while ${t.phase === 'copies' ? 'its copies were built' : t.phase === 'agent' ? 'the shots agent worked' : 'its shots were kept'}.` }, ctx);
-      st.data = { trials: { ...st.data.trials, [t.id]: c.trial } };
-      st.work.push(c.work);
-      st.cancel.push(...c.cancel);
+      apply(st, cleanup(t, { state: 'failed', code: 'shots_eval_timeout', reason: `The trial ran out of time while ${t.phase === 'copies' ? 'its copies were built' : t.phase === 'agent' ? 'the shots agent worked' : 'its shots were kept'}.` }, ctx));
     }
   }
   return decide(st, f, ctx, deps);
@@ -219,10 +284,15 @@ function cancelled(s: EState, e: Event<any>, f: Facts, ctx: TransitionContext, d
   st.writes.push({ type: 'evalCancelled', evalId });
   for (const t of Object.values(st.data.trials)) {
     if (t.evalId !== evalId || t.phase === 'cleanup') continue;
-    const c = cleanup(t, { state: 'cancelled' }, ctx);
-    st.data = { trials: { ...st.data.trials, [t.id]: c.trial } };
-    st.work.push(c.work);
-    st.cancel.push(...c.cancel);
+    apply(st, cleanup(t, { state: 'cancelled' }, ctx));
+  }
+  // An older release's runner's trials of it (a rollout): their turns
+  // stopped and their copies removed here; that runner, if it is still at
+  // one, finds its row cancelled at its next step.
+  for (const a of f.active) {
+    if (a.evalId !== evalId || st.data.trials[a.id]) continue;
+    st.work.push({ kind: WORK.cleanup, key: `cleanup:${a.id}:${a.attemptId}:other`,
+      input: { attemptId: a.attemptId, sessionId: a.sessionId, appSlug: a.appSlug, stopTurn: true } as Json });
   }
   // As the write leaves it: no longer running, nothing of it waiting.
   const after: Facts = { ...f, evals: f.evals.filter((ev) => ev.id !== evalId), planned: f.planned.filter((p) => p.evalId !== evalId) };
@@ -247,16 +317,22 @@ function result(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
     if (x) trials[id] = x; else delete trials[id];
     st.data = { trials };
   };
-  const failWith = (x: Trial, code: string, reason: string, extra: Partial<End> = {}) => {
-    const c = cleanup(x, { state: 'failed', code, reason, ...extra }, ctx);
-    put(c.trial, x.id);
-    st.work.push(c.work);
+  // `copiesSettled`: the copies' own result ends it.
+  const failWith = (x: Trial, code: string, reason: string, extra: Partial<End> = {}, copiesSettled = false) => {
+    apply(st, cleanup(x, { state: 'failed', code, reason, ...extra }, ctx, { copiesSettled }));
   };
   if (!t) return decide(st, f, ctx, deps);
+  // Copies a cleanup waited for, stopped: now the cleanup.
+  if (p.kind === WORK.copies && t.phase === 'cleanup' && t.awaitCopies && p.workKey === keyOf('copies', t)) {
+    const next: Trial = { ...t, awaitCopies: false, due: null };
+    put(next, t.id);
+    st.work.push(cleanupWork(next));
+    return decide(st, f, ctx, deps);
+  }
   const failure = (fallback: string) => ({ code: String(r?.failed?.code || p.error?.code || 'shots_eval_failed').slice(0, 64), reason: String(r?.failed?.message || p.error?.message || fallback).slice(0, 2000) });
   if (p.kind === WORK.copies && t.phase === 'copies' && p.workKey === keyOf('copies', t)) {
-    if (!ok || r?.failed) { const fl = failure('Its copies could not be built.'); failWith(t, fl.code, fl.reason); }
-    else if (r?.stale) failWith(t, 'shots_eval_ended', 'The trial ended while its copies were built.');
+    if (!ok || r?.failed) { const fl = failure('Its copies could not be built.'); failWith(t, fl.code, fl.reason, {}, true); }
+    else if (r?.stale) failWith(t, 'shots_eval_ended', 'The trial ended while its copies were built.', {}, true);
     else {
       const next: Trial = { ...t, phase: 'agent', agentStarted: ctx.now.toISOString(), dispatches: 1,
         due: iso(ctx.now.getTime() + t.agentMs + AGENT_SLACK_MS), stopTurn: true };
@@ -265,8 +341,7 @@ function result(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
       st.work.push(work(WORK.agent, next, { attemptId: t.attempt, sessionId: t.sessionId, trialId: t.id, budgetMs: t.agentMs } as Json, agentKey(next)));
     }
   } else if (p.kind === WORK.agent && t.phase === 'agent' && p.workKey === keyOf('agent', t, agentKey(t))) {
-    const reported = t.reportedCents + (Number(r?.reportedCents) || 0);
-    const x: Trial = { ...t, reportedCents: reported };
+    const x: Trial = t;
     const outcome = String(r?.agent?.outcome || (ok ? 'completed' : 'failed'));
     const left = Date.parse(t.agentStarted!) + t.agentMs - ctx.now.getTime();
     if (ok && !r?.passed && left >= MIN_RETRY_LEFT_MS && ((outcome === 'busy' && t.busy < MAX_BUSY_RETRIES) || (outcome === 'died' && !t.died))) {
@@ -289,18 +364,19 @@ function result(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
   } else if (p.kind === WORK.compare && t.phase === 'compare' && p.workKey === keyOf('compare', t)) {
     if (!ok || r?.failed) { const fl = failure('Its shots could not be kept.'); failWith(t, fl.code, fl.reason); }
     else {
-      const c = cleanup(t, { state: 'verified', verdict: r?.verdict ?? null, planHash: t.planHash ?? null, trace: t.trace ?? null }, ctx);
-      put(c.trial, t.id);
       st.writes.push({ type: 'moved', trialId: t.id, attemptId: t.attempt, state: 'reviewing', verdict: r?.verdict ?? null, planHash: t.planHash ?? null });
-      st.work.push(c.work);
+      apply(st, cleanup(t, { state: 'verified', verdict: r?.verdict ?? null, planHash: t.planHash ?? null, trace: t.trace ?? null }, ctx));
     }
   } else if (p.kind === WORK.cleanup && t.phase === 'cleanup' && p.workKey === keyOf('cleanup', t)) {
     // Done, or given up after its tries (an admin sees it in Admin →
     // Workflows): the trial's end is written either way, with its cost.
-    st.writes.push({ type: 'ended', trialId: t.id, attemptId: t.attempt, evalId: t.evalId, end: t.end, reportedCents: t.reportedCents,
-      cleaned: ok, attempts: t.attempts });
+    st.writes.push({ type: 'ended', trialId: t.id, attemptId: t.attempt, evalId: t.evalId, end: t.end, cleaned: ok, attempts: t.attempts });
     put(null, t.id);
     st.ended.add(t.id);
+    // What the write charges its eval, for this transition's own cap check.
+    const row = f.active.find((a) => a.id === t.id && a.attemptId === t.attempt);
+    const cents = Math.max(row?.proxyCents || 0, row?.reportedCents || 0);
+    st.charged.set(t.evalId, (st.charged.get(t.evalId) || 0) + cents);
     st.work.push({ kind: WORK.pairs, key: `pairs:${t.evalId}:${t.id}:${t.attempt}`, input: { evalId: t.evalId } });
   }
   return decide(st, f, ctx, deps);
@@ -321,7 +397,9 @@ export function shotsEval(deps: Deps) {
     events: EVENTS,
     create: ['Look', 'Tick', 'EvalCancelled'],
     decode: (r) => ({ name: r.state as 'open', data: r.data as Data }),
-    facts: (tx, _s, e) => readFacts(tx, { evalId: e.payload?.evalId ?? null }),
+    facts: (tx, s, e) => readFacts(tx, {
+      evalId: e.payload?.evalId ?? null, mine: s.name === NONE ? [] : Object.keys((s as Live).data.trials).map(Number),
+    }),
     authorize: {
       Look: system, EvalCancelled: system,
       Tick: (e) => (e.source.kind === 'timer' || e.source.kind === 'system' ? ok() : reject('not_the_clock')),
@@ -332,11 +410,24 @@ export function shotsEval(deps: Deps) {
       open: { Look: look, Tick: clock, EvalCancelled: cancel, WorkSucceeded: results, WorkFailed: results, WorkExhausted: results },
     } as any,
     writes: {
+      // A trial no longer planned here was changed outside this lock (an
+      // older release's process): the transition is tried again on what
+      // the rows say now, so no work goes for a claim that did not happen.
       claim: async (tx, w) => {
-        await tx.query(
+        const { rowCount } = await tx.query(
           `UPDATE shots_eval_trials
-              SET state = 'provisioning', attempts = attempts + 1, started_at = NOW(), updated_at = NOW()
+              SET state = 'provisioning', attempts = attempts + 1, started_at = NOW(), updated_at = NOW(), stopping_at = NULL
             WHERE id = $1 AND attempt_id = $2 AND state = 'planned'`, [w.trialId, w.attemptId]);
+        if (!rowCount) throw Object.assign(new Error(`trial ${w.trialId} changed while it was granted`), { code: '40001' });
+      },
+      stopping: async (tx, w) => {
+        await tx.query('UPDATE shots_eval_trials SET stopping_at = COALESCE(stopping_at, NOW()) WHERE id = $1 AND attempt_id = $2',
+          [w.trialId, w.attemptId]);
+      },
+      beat: async (tx, w) => {
+        await tx.query(
+          `UPDATE shots_eval_trials SET updated_at = NOW()
+            WHERE id = ANY($1::int[]) AND state IN ('provisioning', 'exploring', 'reviewing')`, [w.trialIds]);
       },
       moved: async (tx, w) => {
         await tx.query(
@@ -346,27 +437,27 @@ export function shotsEval(deps: Deps) {
           [w.trialId, w.attemptId, w.state, w.verdict == null ? null : JSON.stringify(w.verdict), w.planHash ?? null]);
       },
       // The trial's end, with its cost on it and on its eval, once: what
-      // the proxy billed and what Claude Code reported, the larger, both
-      // emptied in the same write. Put back (a restart cut it): a fresh
+      // the proxy billed and what Claude Code reported (each on its row),
+      // the larger, both emptied in the same write. Put back (a restart cut it): a fresh
       // attempt, its earlier files gone.
       ended: async (tx, w) => {
         const e = (w.end || { state: 'failed', code: 'shots_eval_failed', reason: 'The trial ended without shots.' }) as End;
         const { rows: [cost] } = await tx.query(
           `WITH t AS (
-             SELECT id, eval_run_id, GREATEST(proxy_cents, reported_cents + $3::numeric) AS cents
+             SELECT id, eval_run_id, GREATEST(proxy_cents, reported_cents) AS cents
                FROM shots_eval_trials WHERE id = $1 AND attempt_id = $2 FOR UPDATE),
            trial AS (
              UPDATE shots_eval_trials s SET cost_cents = s.cost_cents + t.cents, proxy_cents = 0, reported_cents = 0
                FROM t WHERE s.id = t.id RETURNING t.eval_run_id, t.cents)
            UPDATE shots_eval_runs r SET spent_cents = r.spent_cents + trial.cents FROM trial WHERE r.id = trial.eval_run_id
-           RETURNING trial.cents`, [w.trialId, w.attemptId, Number(w.reportedCents) || 0]);
+           RETURNING trial.cents`, [w.trialId, w.attemptId]);
         void cost;
         const trace = { ...((e.trace as object) || {}), ...(w.cleaned ? {} : { cleanupFailed: true }) };
         if (e.state === 'requeue') {
           await tx.query('DELETE FROM shots_eval_artifacts WHERE trial_id = $1', [w.trialId]);
           await tx.query(
             `UPDATE shots_eval_trials
-                SET state = 'planned', attempt_id = md5(random()::text || clock_timestamp()::text), started_at = NULL, updated_at = NOW(),
+                SET state = 'planned', attempt_id = md5(random()::text || clock_timestamp()::text), started_at = NULL, updated_at = NOW(), stopping_at = NULL,
                     recipe = NULL, hard_verdict = NULL, plan_hash = NULL, trace_summary = NULL, failure_code = NULL, failure_reason = NULL
               WHERE id = $1 AND attempt_id = $2 AND state IN ('provisioning', 'exploring', 'reviewing')`, [w.trialId, w.attemptId]);
           return;

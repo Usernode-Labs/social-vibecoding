@@ -839,21 +839,31 @@ estimate, plus the next one's).
   that sends its build's `Requested` to `bot-build/trial:<id>@<nonce>`, with `replyTo` the
   lane: a granted trial is counted at once, from its row, whether or not its build has
   started. Its build hears `BuildEnded`; a lost build's record (`build.lost`) asks for a
-  `Look`; a running lane looks again every five minutes anyway.
+  `Look`; a running lane looks again every five minutes anyway, and an idle one every ten,
+  so an ask to look that was lost (a launch's, an older release's wake) waits no longer. A
+  claim whose trial changed outside the lock (an older release's write) is retried, so no
+  build goes for a claim that did not happen.
 - **Recording** is the trial's own build's (`recordTrial`): the trial's result and its
   run's charge in one statement, by the build its claim named (`build_key`), the branch it
   cut kept for the sweep, and every session it opened (`session_ids`) charged when it is
-  lost. A build sent for a claim that did not happen runs nothing.
+  lost. A build sent for a claim that did not happen runs nothing. A trial whose build
+  ended without recording it (ten minutes on), or an older release's claim that never got a
+  build (an hour on), is recorded lost by the lane (`bench.lost`); a build a restart caught
+  between its record and saving it redoes what follows the record (sessions put away, the
+  grade, a side build's result).
 - **Cancels** (a run, a trial; a side build given up) are its events: written in the
   transition, a trial running stopped by `StopRequested` to its build, which always comes
-  after that build's `Requested` from this instance. A run marked done or capped is
+  after that build's `Requested` from this instance. A trial an older release's lane
+  claimed names no build on its row: its build is found by the trial it runs, as that lane
+  stopped it. A run marked done or capped is
   decided here, its write checking again that nothing of it waits; a trial added to an
   ended run reopens it (`Look` with `runId`).
 - **The allowance** (the bench user's week) is legacy code: looked at by `bench.gate`, kept a
   minute in the instance, nothing granted while it is unknown or spent. A provider refusing
   the bench key for its limit pauses grants half an hour (read from the trials).
 - **Only it claims**: a trigger refuses `pending → running` outside a transition, so an older
-  build's lane, during a rollout, starts nothing. Its sweeps (kept branches, side results a
+  build's lane, during a rollout, starts nothing. A run's queue is read heavy and light
+  trials apart, so one holding its heavy trials still finds its light ones. Its sweeps (kept branches, side results a
   trial never filled, the studio's previews) are the `bench-sweep` clock.
 
 ### shots-eval
@@ -865,21 +875,31 @@ never beside the proposal's own shots run, and each eval's cap (what it spent, p
 trial running at what it has spent or its estimate, the larger, plus the next one's).
 - **A trial's phases are this instance's work**, the shots machine's steps on the trial's
   attempt id: `eval.copies` (`buildCopies`, stopped between phases once the trial's row
-  says it ended), `eval.agent` (`dispatchAgent` with the arm's model, prompts and time, the
+  says it ended or is stopping; its recipe kept on the trial from here), `eval.agent` (`dispatchAgent` with the arm's model, prompts and time, the
   turn owned by the item; busy or gone, tried again 20 seconds later while a minute is
   left), `eval.compare` (`compareScreens`, its light files kept), and, however it ends,
   `eval.cleanup` (`cleanupRun`: its turn by its record, copies, workspace, and the
   proposal's temporary worker unless another run of the proposal uses it), tried until
-  done. Each phase has its own deadline; past it the trial fails and is cleaned up.
+  done. Each phase has its own deadline; past it the trial fails and is cleaned up. A
+  trial that ends while its copies are built waits for them to stop (its row's
+  `stopping_at` stops them at their next step) before its cleanup, as the shots machine
+  does. No trial starts on a proposal with a turn under way, nor while two releases serve
+  (an older one's proxy would bill its calls to the author). The rows of the trials it
+  runs beat every two minutes, so an older release's runner never takes one for its own
+  lost one; a row ended elsewhere (an older release's write) ends its trial here too.
 - **Its end** is written once its cleanup is done, with its cost: the larger of what the
-  proxy billed and what Claude Code reported, charged to it and its eval in one write that
-  empties both.
+  proxy billed and what Claude Code reported (each kept on the row as it comes), charged to
+  it and its eval in one write that empties both, and counted in that transition's own cap
+  check.
 - **Billing**: the proxy reads the session's turn record; a shots turn the eval machine's
-  work owns is that trial's (`shots-eval.billFor`): the platform key, the eval's cap from
-  rows, each call added to the trial. Never this process's memory, and never the session
-  alone (the proposal's own shots rerun is its author's).
+  work owns is that trial's (`shots-eval.billFor`), on whatever attempt; one nothing owns
+  (an older release's runner) is the trial its correlation names on that session. The
+  platform key, the eval's cap from rows, each call added to the trial, or, after its
+  attempt ended, to its cost and its eval's spend at once. Never this process's memory, and
+  never the session alone (the proposal's own shots rerun is its author's).
 - **Cancel** (`EvalCancelled`): the eval and its trials not ended read cancelled at once;
-  what runs is stopped (its work cancelled, its turn stopped) and cleaned up. A trial an
+  what runs is stopped (its work cancelled, its turn stopped) and cleaned up, an older
+  release's runner's trials of it included. A trial an
   older build's runner left (its heartbeat quiet five minutes) is cleaned up and queued
   again once, then failed. A trigger refuses a claim or a re-queue outside a transition.
 

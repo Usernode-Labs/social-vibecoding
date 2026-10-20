@@ -688,4 +688,166 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     const [one] = await trials(run.id);
     await assert.rejects(pool.query("UPDATE bench_trials SET status = 'running' WHERE id = $1 AND status = 'pending'", [one.id]), /WF_OWNERSHIP_VIOLATION/);
   });
+  // ── What a rollout or a lost record leaves (the step 4 review) ─────────
+
+  const asTx = (sql, params = []) => require('./lib/as-transition').asTransition(pool, sql, params);
+  // A bot-build an older release's lane started: its key names no claim's
+  // nonce the trial knows (build_key stays empty on the trial's row).
+  const oldBuild = async (trialId, state = 'building') => {
+    const key = `trial:${trialId}@old`;
+    await asTx(`INSERT INTO wf_instances (machine, key, state, data, machine_version) VALUES ('bot-build', $1, $2, $3::jsonb, 1)`,
+      [key, state, JSON.stringify({ target: 'trial', id: trialId })]);
+    return key;
+  };
+  const dropBuild = async (key) => {
+    await asTx("DELETE FROM wf_events WHERE machine = 'bot-build' AND key = $1", [key]);
+    await asTx("DELETE FROM wf_instances WHERE machine = 'bot-build' AND key = $1", [key]);
+  };
+  const stopsTo = async (key) => (await pool.query(
+    "SELECT COUNT(*)::int AS n FROM wf_events WHERE machine = 'bot-build' AND key = $1 AND type = 'StopRequested'", [key])).rows[0].n;
+
+  await t.test('O1: a trial an older release\'s lane claimed (no build named on it) is stopped by its build on a cancel', async () => {
+    await closeAll();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1, concurrency: 1 });
+    const [a, b] = await trials(run.id);
+    await claimAs(a.id, null, { ago: '1 minute' });
+    await claimAs(b.id, null, { ago: '1 minute' });
+    const ka = await oldBuild(a.id);
+    const kb = await oldBuild(b.id);
+    try {
+      const out = await lane.cancelTrial(pool, a.id, { platform: { benchCancelTrial: (id, o) => cancel(laneOnly, 'TrialCancelled', { trialId: id, by: o.by }) } });
+      assert.deepEqual(out, { ok: true, status: 'stopping' });
+      assert.equal(await stopsTo(ka), 1, 'its build told to stop');
+      assert.notEqual((await cancel(laneOnly, 'RunCancelled', { runId: run.id })).status, 'rejected');
+      assert.equal(await stopsTo(kb), 1, 'the run\'s other running trial\'s build too');
+    } finally { await dropBuild(ka); await dropBuild(kb); }
+  });
+
+  await t.test('O2: a run holding its heavy trials finds its light ones behind more heavy ones than a queue read holds', async () => {
+    await closeAll();
+    const { run } = await lane.launchRun(pool, {
+      suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage', 'build'], repeats: 1, concurrency: 8, capUsd: 500,
+    });
+    // Seventy more builds, all taken before every triage trial.
+    await pool.query(
+      `INSERT INTO bench_trials (run_id, task_id, model, attempt, status, item_token, est_cost_usd)
+       SELECT tr.run_id, tr.task_id, tr.model, g, 'pending', md5(random()::text), tr.est_cost_usd
+         FROM bench_trials tr JOIN bench_tasks t ON t.id = tr.task_id, generate_series(2, 25) g
+        WHERE tr.run_id = $1 AND t.stage = 'build'`, [run.id]);
+    await pool.query(
+      `UPDATE bench_trials tr SET attempt = tr.attempt + 100 FROM bench_tasks t
+        WHERE t.id = tr.task_id AND tr.run_id = $1 AND t.stage = 'triage'`, [run.id]);
+    await staleGate();
+    await grantOnly();
+    const flying = await runningOf(run.id);
+    assert.equal(flying.filter((f) => f.stage === 'build').length, 3);
+    assert.equal(flying.filter((f) => f.stage === 'triage').length, 3, 'the triage trials, behind 72 builds');
+  });
+
+  await t.test('O3: a trial its build ended without recording, or never built, is recorded lost by the lane', async () => {
+    await closeAll();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1, concurrency: 1 });
+    const [a, b, c] = await trials(run.id);
+    // a: its build ended (its record failed for good) a while ago.
+    const ka = `trial:${a.id}@c1.g1`;
+    await claimAs(a.id, null, { buildKey: ka, ago: '30 minutes' });
+    await asTx(`INSERT INTO wf_instances (machine, key, state, data, machine_version, updated_at)
+                VALUES ('bot-build', $1, 'failed', $2::jsonb, 1, NOW() - interval '20 minutes')`, [ka, JSON.stringify({ target: 'trial', id: a.id })]);
+    // b: an older release's claim whose build was never asked for.
+    await claimAs(b.id, null, { ago: '2 hours' });
+    // c: claimed just now, its build not yet started: left alone.
+    await claimAs(c.id, null, { buildKey: `trial:${c.id}@c1.g2`, ago: '1 minute' });
+    try {
+      await lookNow();
+      await settle();
+      assert.equal((await trialRow(a.id)).status, 'infra_fail');
+      assert.match((await trialRow(a.id)).error, /ended without recording it/);
+      assert.equal((await trialRow(b.id)).status, 'infra_fail');
+      assert.equal((await trialRow(c.id)).status, 'running');
+    } finally { await dropBuild(ka); }
+  });
+
+  await t.test('O4: a lane with nothing open still looks again, so a lost ask to look waits only so long', async () => {
+    await closeAll();
+    await lookNow(laneOnly);
+    await laneOnly.drain();
+    const d = await laneData();
+    assert.ok(d.deadline_at, 'a look is due');
+    const inMs = Date.parse(d.deadline_at) - Date.now();
+    assert.ok(inMs > 5 * 60 * 1000 && inMs <= benchLaneMod.IDLE_LOOK_MS, String(inMs));
+  });
+
+  await t.test('O5: a claim another process changed meanwhile sends no build; the grant is decided again', async () => {
+    await closeAll();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1, concurrency: 1 });
+    const [a] = await trials(run.id);
+    // The claim finds the trial no longer pending once (an older release
+    // cancelled it at that moment): its UPDATE takes no row.
+    await pool.query(`CREATE SEQUENCE o5_miss;
+      CREATE FUNCTION o5_miss() RETURNS trigger AS $$
+      BEGIN IF OLD.status = 'pending' AND NEW.status = 'running' AND nextval('o5_miss') = 1 THEN RETURN NULL; END IF; RETURN NEW; END $$ LANGUAGE plpgsql;
+      CREATE TRIGGER o5_miss BEFORE UPDATE ON bench_trials FOR EACH ROW EXECUTE FUNCTION o5_miss();`);
+    try {
+      await staleGate();
+      await lookNow(laneOnly);
+      await laneOnly.drain();
+      await laneOnly.runServices();
+      await laneOnly.drain();
+      const requested = async () => (await pool.query(
+        "SELECT COUNT(*)::int AS n FROM wf_events WHERE machine = 'bot-build' AND type = 'Requested' AND key LIKE $1", [`trial:${a.id}@%`])).rows[0].n;
+      const row = await trialRow(a.id);
+      assert.ok(row.status === 'pending' ? (await requested()) === 0 : (await requested()) === 1,
+        'a build goes only with a claim that happened');
+      // Tried again: granted.
+      for (let i = 0; i < 20 && (await trialRow(a.id)).status === 'pending'; i += 1) {
+        await new Promise((r) => setTimeout(r, 200));
+        await laneOnly.drain();
+        await laneOnly.runServices();
+      }
+      assert.equal((await trialRow(a.id)).status, 'running');
+      assert.equal(await requested(), 1, 'one build, for the claim that happened');
+    } finally {
+      await pool.query('DROP TRIGGER o5_miss ON bench_trials; DROP FUNCTION o5_miss(); DROP SEQUENCE o5_miss');
+    }
+  });
+
+  await t.test('O6: a build a restart caught after it recorded its trial, before that was saved, puts its sessions away and grades it', async () => {
+    await closeAll();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1 });
+    const [a] = await trials(run.id);
+    const key = `trial:${a.id}@c1.g1`;
+    await claimAs(a.id, null, { buildKey: key });
+    await pool.query("UPDATE bench_trials SET status = 'ok', session_ids = ARRAY[901, 902], finished_at = NOW() WHERE id = $1", [a.id]);
+    const closed = [];
+    const graded = [];
+    const lifecycle = require('../src/services/session-lifecycle');
+    const graders = require('../src/services/bench/graders');
+    const was = [lifecycle.closeOwnSession, graders.gradeTrial];
+    lifecycle.closeOwnSession = async ({ sessionId }) => { closed.push(sessionId); };
+    graders.gradeTrial = async (_p, id) => { graded.push(id); };
+    try {
+      const out = await lane.runTrial({ pool, config: {}, id: a.id, input: { nonce: 'c1.g1' }, steps: durableSteps.durable({ checkpoint: async () => {} }) });
+      assert.deepEqual(out, { status: 'ok' });
+      assert.deepEqual(closed.sort(), [901, 902]);
+      assert.deepEqual(graded, [a.id]);
+      // Another build's run of it does nothing.
+      closed.length = 0;
+      await lane.runTrial({ pool, config: {}, id: a.id, input: { nonce: 'c9.g9' }, steps: durableSteps.durable({ checkpoint: async () => {} }) });
+      assert.deepEqual(closed, []);
+    } finally { [lifecycle.closeOwnSession, graders.gradeTrial] = was; }
+  });
+
+  await t.test('O7: a lost trial whose record fails throws, so its work tries again', async () => {
+    await closeAll();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1 });
+    const [a] = await trials(run.id);
+    await claimAs(a.id, null, { buildKey: `trial:${a.id}@c1.g1` });
+    const was = runner.ensureBenchUser;
+    runner.ensureBenchUser = async () => { throw new Error('the database blinked'); };
+    try {
+      await assert.rejects(lane.recordLostTrial({ pool, config: {}, id: a.id, nonce: 'c1.g1' }), /blinked/);
+    } finally { runner.ensureBenchUser = was; }
+    await lane.recordLostTrial({ pool, config: {}, id: a.id, nonce: 'c1.g1' });
+    assert.equal((await trialRow(a.id)).status, 'infra_fail');
+  });
 });

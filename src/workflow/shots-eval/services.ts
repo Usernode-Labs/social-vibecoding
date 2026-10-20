@@ -1,9 +1,10 @@
 // shots-eval's I/O: a trial's phases, each the step the shots machine runs
 // for a proposal (services/shots-orchestrator.js), on the trial's attempt
-// id, with what a trial has instead of a proposal's run: its row (a cancel
-// or a new attempt stops it between phases), its arm's model, prompts and
-// time, and its files kept in shots_eval_artifacts. Each is safe to run
-// again: everything is named by the attempt.
+// id, with what a trial has instead of a proposal's run: its row (a cancel,
+// the machine marking it stopping, or a new attempt stops it at its next
+// step), its arm's model, prompts and time, and its files kept in
+// shots_eval_artifacts. Each is safe to run again: everything is named by
+// the attempt.
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
@@ -21,10 +22,11 @@ function failureOf(error: any): Json {
 }
 
 export function shotsEvalServices({ config, pool }: Deps): Record<string, WorkHandler> {
-  // Whether the trial's attempt is still in `states` (a cancel, a new
-  // attempt or a timeout ended it otherwise).
+  // Whether the trial's attempt is still in `states` and not stopping (a
+  // cancel, a new attempt, a timeout ended it otherwise).
   const current = (trialId: number, attemptId: string, states: string[]) => async () =>
-    (await pool.query('SELECT 1 FROM shots_eval_trials WHERE id = $1 AND attempt_id = $2 AND state = ANY($3::text[])',
+    (await pool.query(
+      'SELECT 1 FROM shots_eval_trials WHERE id = $1 AND attempt_id = $2 AND state = ANY($3::text[]) AND stopping_at IS NULL',
       [trialId, attemptId, states])).rows.length > 0;
   return {
     [WORK.copies]: {
@@ -40,6 +42,8 @@ export function shotsEvalServices({ config, pool }: Deps): Record<string, WorkHa
         const kept = (ctx.resumeFrom as any) || {};
         const fresh = ctx.attempt === 1 && !(ctx.lostAttempts || 0) && !ctx.resumeFrom;
         try {
+          // What it runs with, on the trial from its start.
+          await evals().trialRecipe(pool, config, Number(input.trialId), String(input.attemptId));
           return await orchestrator().buildCopies(config, pool, {
             runId: input.attemptId, sessionId: input.sessionId, kind: 'trial', intent: input.intent,
             baseSha: input.baseSha, headSha: input.headSha, budgetMs: input.budgetMs,
@@ -56,8 +60,8 @@ export function shotsEvalServices({ config, pool }: Deps): Record<string, WorkHa
 
     // The shots agent with the arm's model, prompts and time, its turn this
     // work's own (the proxy bills a turn so owned to its trial). What Claude
-    // Code reports a dispatch cost is handed back, for when the proxy did
-    // not see the calls.
+    // Code reports a dispatch cost is kept on the trial's row as it returns,
+    // for when the proxy did not see the calls.
     [WORK.agent]: {
       resumable: true,
       maxAttempts: 1,
@@ -69,14 +73,13 @@ export function shotsEvalServices({ config, pool }: Deps): Record<string, WorkHa
         const steps = ctx.steps({ owner: `shots-eval/${input.attemptId}` });
         const resolved = await evals().trialRecipe(pool, config, Number(input.trialId), String(input.attemptId));
         const trialConfig = { ...config, shots: { ...(config?.shots || {}), agentModel: resolved.model, maxAgentMs: resolved.budgetMs } };
-        let reportedCents = 0;
         const agent = legacy('services/shots-agent');
         const prompted = {
           ...agent,
           async dispatch(cfg: any, options: any, agentDeps: any) {
             const out = await agent.dispatch(cfg, { ...options, systemPrompt: resolved.systemPrompt, taskPrompt: resolved.taskPrompt }, agentDeps);
             const usd = Number(out?.result?.costUsd);
-            if (Number.isFinite(usd) && usd > 0) reportedCents += usd * 100;
+            if (Number.isFinite(usd) && usd > 0) await evals().noteReported(pool, Number(input.trialId), String(input.attemptId), usd * 100);
             return out;
           },
         };
@@ -88,10 +91,10 @@ export function shotsEvalServices({ config, pool }: Deps): Record<string, WorkHa
           }, { shotsAgent: prompted });
           await steps.flush();
           steps.fence();
-          return JSON.parse(JSON.stringify({ ...out, reportedCents })) as Json;
+          return JSON.parse(JSON.stringify(out)) as Json;
         } catch (error: any) {
           if (signal.aborted || error?.stopped === true || error?.code === 'steps_stopped') throw error;
-          return { agent: { outcome: 'failed', ...(failureOf(error) as object) }, passed: false, skippedAny: false, reportedCents } as Json;
+          return { agent: { outcome: 'failed', ...(failureOf(error) as object) }, passed: false, skippedAny: false } as Json;
         }
       },
     },
@@ -126,10 +129,11 @@ export function shotsEvalServices({ config, pool }: Deps): Record<string, WorkHa
       },
     },
 
-    // The blind pairs an eval's finished trials make.
+    // The blind pairs an eval's finished trials make (its last trial's are
+    // made by nothing else: tried for a good while).
     [WORK.pairs]: {
-      maxAttempts: 3,
-      backoffMs: (attempt) => 30000 * attempt,
+      maxAttempts: 8,
+      backoffMs: (attempt) => Math.min(30000 * 2 ** (attempt - 1), 600000),
       async run({ input }): Promise<Json> {
         await evals().settlePairs(pool, Number(input.evalId));
         return { settled: true };

@@ -138,10 +138,11 @@ test('the proxy sends an eval trial\'s calls on the platform key, gated by the e
   assert.doesNotMatch(branch, /noteAgentSpend|userBudgetCache|systemBudgetCache|loadUserApiKey/,
     'never the author\'s allowance or key, the system bucket, or the change\'s ledger');
   assert.ok(src.indexOf('let shotsEval = null;') < src.indexOf('limits.resolveCaps('), 'it is decided before any allowance is read');
-  // The trial is the turn's owner's: the eval machine's agent work.
+  // The trial is the turn's owner's (the eval machine's agent work), or,
+  // for a turn nothing owns (an older release's runner), its correlation.
   const evalSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'shots-eval.js'), 'utf8');
   const bill = evalSrc.slice(evalSrc.indexOf('async function billFor('));
-  assert.match(bill, /if \(!owner \|\| owner\.machine !== 'shots-eval'\) return null;/);
+  assert.match(bill, /if \(turn\.owner\) \{\s*if \(turn\.owner\.machine !== 'shots-eval'\) return null;/);
 });
 
 test('the shots agent takes an eval\'s prompts and every proposal\'s own run takes the live ones', async () => {
