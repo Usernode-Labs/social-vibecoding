@@ -971,6 +971,10 @@
     "text": "Hi {{name}}, what do you want to make?",
     "description": "Heading of the screen where a member starts a new project by describing what the app should be, the first time a new member signs in. {{name}} is the member's display name or username."
   },
+  "firstSession.make.welcome": {
+    "text": "Welcome to Homeroom. Pick an idea below or describe your own.",
+    "description": "Quiet line under the question on the \"What do you want to make?\" screen, on a new member's first run only: what this screen is for. Not shown when the screen is opened later from the Create button."
+  },
   "firstSession.make.startFromIdea": {
     "text": "Start from an idea",
     "description": "Label above the grid of ready ideas (Tier list, A game, Organizer, Your own idea) on the \"What do you want to make?\" screen, where a member describes a new project."
@@ -1102,6 +1106,30 @@
   "firstSession.make.rule.use": {
     "text": "Use {{preset}}",
     "description": "Button: make the new project with the picked preset instead. {{preset}} is its name. Nothing is proposed: the project does not exist yet."
+  },
+  "firstSession.make.next.open": {
+    "text": "What happens next",
+    "description": "Accessible name of the small info mark (an ⓘ circle with an i) after \"Who can change it\" on the \"What do you want to make?\" screen: opens the tip described below. Same words as the tip's title."
+  },
+  "firstSession.make.next.title": {
+    "text": "What happens next",
+    "description": "Title of the small tip opened by the info mark after \"Who can change it\" on the \"What do you want to make?\" screen: what happens after Make it is pressed."
+  },
+  "firstSession.make.next.readyMade": {
+    "text": "<0>A ready-made idea</0> is ready to use in about a minute.",
+    "description": "First line of the \"What happens next\" tip on the \"What do you want to make?\" screen: one of the starting ideas whose choice needs no typing is an app of Homeroom's own, already built. <0>…</0> is bold."
+  },
+  "firstSession.make.next.custom": {
+    "text": "<0>Anything else:</0> Homeroom bot writes a plan in about a minute, and asks you first if it needs you to choose something. Then it builds it in 20 to 30 min.",
+    "description": "Second line of the \"What happens next\" tip on the \"What do you want to make?\" screen: what Homeroom bot (the platform's AI helper, keep its name) does with a description of the member's own. Nothing is built before the member agrees, unless the plan needs no choice from them. \"min\" is short for minutes. <0>…</0> is bold."
+  },
+  "firstSession.make.next.invite": {
+    "text": "<0>Then invite people</0> to use it and help improve it together.",
+    "description": "Third line of the \"What happens next\" tip on the \"What do you want to make?\" screen: after the project exists, its maker invites their group to it. <0>…</0> is bold."
+  },
+  "firstSession.make.next.rule": {
+    "text": "<0>Who can change it</0> says how changes go live once others join. You can change it later on the project’s page.",
+    "description": "Fourth line of the \"What happens next\" tip on the \"What do you want to make?\" screen: what the approval rule named in the line the tip was opened from means. <0>…</0> is bold."
   },
   "firstSession.make.lookAround": {
     "text": "Not sure yet? <0>Look around first</0>",

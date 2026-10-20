@@ -227,6 +227,17 @@ test('Make it says who can change the project, once, under the two answers', () 
   assert.match(html, /data-make-rule-change=""[^>]*>Change<\/button>/);
   assert.match(draw('two_yeses'), /Who can change it: <b[^>]*>Two yeses<\/b>/);
 
+  // #5266: a small ⓘ after the rule's words, before Change, opening the
+  // "What happens next" tip. Closed until asked for, so the first render
+  // has the mark and no tip.
+  const info = html.indexOf('data-make-rule-info=""');
+  const words = html.indexOf('Who can change it');
+  const change = html.indexOf('data-make-rule-change=""');
+  assert.ok(words > 0 && words < info && info < change, 'the ⓘ sits after the words, before Change');
+  assert.match(html, /data-make-rule-info=""[^>]*aria-expanded="false"/);
+  assert.match(html, /data-make-rule-info=""[^>]*aria-label="What happens next"/);
+  assert.doesNotMatch(html, /data-make-rule-tip/, 'the tip is drawn only once it is opened');
+
   const make = read('frontend/src/features/first-session/make.tsx');
   const name = make.indexOf("{missing === 'name' ? <p id=\"first-session-name-hint\"");
   const line = make.indexOf('<MakeRuleLine preset={rule} onPick={setRule} who={who} />');

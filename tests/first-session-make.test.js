@@ -477,7 +477,28 @@ test('with the keyboard up nothing scrolls under the status bar: the bar stays, 
   // The scroller's class string is constant.
   assert.match(src, /<div ref=\{scrollerRef\} data-first-session-make-scroll="" className="flex min-h-0 grow flex-col overflow-y-auto">/);
   // #3894's arrival is untouched: the bar and the form still rise in.
-  assert.match(src, /className=\{`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-\[max\(34px,env\(safe-area-inset-bottom\)\)\] \$\{motion\}`\}/);
+  assert.match(src, /className=\{`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-\[max\(34px,env\(safe-area-inset-bottom\)\)\] md:max-w-xl \$\{motion\}`\}/);
+});
+
+// #5266, 20 Oct 2026: a Welcome line on the first run only, a wider form on
+// a computer, and Make it right under the fields instead of at the foot of
+// the window.
+test('the first run opens with a welcome under the one title; Create does not', () => {
+  const first = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
+  assert.match(first, /<p data-make-welcome="" class="[^"]*">Welcome to Homeroom\. Pick an idea below or describe your own\.<\/p>/);
+  const create = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', entry: 'create', onMade() {}, onClose() {} });
+  assert.doesNotMatch(create, /data-make-welcome/);
+});
+
+test('Make it sits right under the fields: the grow spacer is gone, the hold is not', () => {
+  const src = read(`${DIR}/make.tsx`);
+  const rule = src.indexOf('<MakeRuleLine preset={rule} onPick={setRule} who={who} />');
+  const submit = src.indexOf('type="submit"');
+  const between = src.slice(rule, submit);
+  assert.doesNotMatch(between, /<div className="grow" \/>/, 'no spacer pushing Make it to the foot of the window');
+  // The keyboard surface and the busy hold spacer keep their room.
+  assert.match(src, /useKeyboardSurface\(scrollerRef\);/);
+  assert.match(src, /data-make-hold=""/);
 });
 
 // Evan, 5 Oct 2026: a chosen example stayed chosen after he started writing

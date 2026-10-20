@@ -121,6 +121,19 @@ import { SpeakButton } from '../dictation/speak-button';
  * about a minute; anything Homeroom bot builds (their own words, Write it
  * yourself, a game, Your own…) is Custom, 20 to 30 minutes. Before anything
  * is picked or typed there is no line: Make it would only ask for the answer.
+ *
+ * WELCOME, AND WHAT COMES NEXT (#5266, 20 Oct 2026): on the first run the
+ * question is followed by one quiet line, "Welcome to Homeroom. Pick an idea
+ * below or describe your own.", drawn as the import form's line is. From
+ * Create there is nothing to welcome, so the line is not drawn there. What
+ * follows Make it is said by the "What happens next" tip behind the rule
+ * line's ⓘ (../who-decides/make-rule.tsx). On a computer the form is wider
+ * (`md:max-w-xl`, 576px, the import form widening with it, so the two do not
+ * change width when you switch between them) and Make it sits right under
+ * the rule line: the grow spacer that pushed it to the foot of the window
+ * is gone, and the space a short form leaves sits below "Look around
+ * first", where the keyboard-surface reveal and the busy hold spacer keep
+ * their room.
  */
 
 import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
@@ -694,7 +707,7 @@ export function MakeScreen({
     });
     return null;
   }, [entry, onMade]);
-  const formClass = `mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))] ${motion}`;
+  const formClass = `mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))] md:max-w-xl ${motion}`;
   // From Create, the allowance when it bears on Make it (the New project
   // dialog's quiet row, #23): a returning maker can be at their limit, a new
   // account never is. The wrapper goes with it when there is nothing to say.
@@ -749,11 +762,16 @@ export function MakeScreen({
           />
         ) : (
         <form
-          className={`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))] ${motion}`}
+          className={`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))] md:max-w-xl ${motion}`}
           onSubmit={(e) => { e.preventDefault(); void make(); }}
         >
           <div className="text-center">
             <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">{makeTitle(entry, who)}</h1>
+            {/* #5266: the first run's welcome, under the one title (#5617
+                keeps the question the only heading). From Create there is
+                nothing to welcome. Drawn from the first render: props only,
+                so the prerender and the hydration match. */}
+            {entry === 'create' ? null : <p data-make-welcome="" className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.make.welcome')}</p>}
           </div>
           <p className="mt-6 pb-2 text-[13px] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.make.startFromIdea')}</p>
           <div className="grid grid-cols-2 gap-2" role="group" aria-label={t('onboarding:firstSession.make.ideasLabel')}>
@@ -958,7 +976,6 @@ export function MakeScreen({
           <MakeRuleLine preset={rule} onPick={setRule} who={who} />
           {allowance}
           {error ? <p role="alert" className="mt-3 text-[14px] text-red-700 dark:text-red-400">{error}</p> : null}
-          <div className="grow" />
           <Button
             type="submit"
             data-make-submit=""

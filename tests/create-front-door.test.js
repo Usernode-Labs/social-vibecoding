@@ -219,8 +219,13 @@ test('the make screen from Create: New project, a close, a small "Import from a 
   assert.equal(make.makeLine, undefined);
   for (const html of [create, first]) {
     assert.doesNotMatch(html, /Describe it for your group/);
-    assert.match(html, /[Ww]hat do you want to make\?<\/h1><\/div><p[^>]*>Start from an idea<\/p>/);
+    // #5266: the first run carries a Welcome line under the title, so the
+    // ideas' label may follow it or the title itself.
+    assert.match(html, /[Ww]hat do you want to make\?<\/h1>(?:<p[^>]*data-make-welcome[^>]*>[^<]*<\/p>)?<\/div><p[^>]*>Start from an idea<\/p>/);
   }
+  // #5266: the Welcome line is the first run's only; Create does not show it.
+  assert.match(first, /data-make-welcome=""/);
+  assert.doesNotMatch(create, /data-make-welcome/);
 
   const src = read(`${DIR}/make.tsx`);
   assert.match(src, /onClick=\{\(\) => setMode\('import'\)\}/);
