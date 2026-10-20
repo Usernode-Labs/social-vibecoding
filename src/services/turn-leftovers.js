@@ -190,7 +190,11 @@ async function askForHeadless(pool, d) {
 }
 
 // The changes the boot backfill looked at (#786): a dev chat of the last
-// week, nothing on it now.
+// week, nothing on it now. Not one a synthetic user owns (users.is_synthetic:
+// Homeroom bot's builds, the bench's runs): its opening request is stored as a
+// 'user' row and what follows as system rows, never an 'assistant' one, so it
+// would read as a person nobody answered. Its run is its own machine's (the
+// bot-change machine), which says itself how it ended.
 const UNANSWERED_LIMIT = 200;
 const UNANSWERED_WINDOW_DAYS = 7;
 const UNANSWERED_SQL = `
@@ -200,6 +204,7 @@ const UNANSWERED_SQL = `
      AND cs.is_headless = FALSE
      AND cs.agent_session_id IS NULL
      AND cs.active_turn IS NULL
+     AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = cs.user_id AND u.is_synthetic)
      AND NOT EXISTS (SELECT 1 FROM wf_instances t
                       WHERE t.machine = 'turn' AND t.key = 'session:' || cs.id AND t.state = 'running')
      AND cs.last_activity_at > NOW() - make_interval(days => ${UNANSWERED_WINDOW_DAYS})

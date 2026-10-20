@@ -1095,6 +1095,26 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     assert.equal((await crumbs()).length, 1);
   });
 
+  await t.test('L4b a synthetic user\'s change (a Homeroom bot build) is not taken for a person nobody answered', async () => {
+    classic.stalled.length = 0;
+    const person = await change();
+    await pool.query(`INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'user', 'Add a toggle', '{}')`, [person.id]);
+    // What a bot build leaves (homeroom-bot-live.js): its request as a
+    // 'user' row, then system rows, never an 'assistant' one.
+    const bot = await change();
+    await pool.query('UPDATE users SET is_synthetic = TRUE WHERE id = $1', [bot.user.id]);
+    await pool.query(`INSERT INTO chat_session_messages (session_id, role, content, metadata)
+      VALUES ($1, 'user', 'Build issue #12: Fix the header', '{}'), ($1, 'system', 'Opened a proposal', '{}')`, [bot.id]);
+    const crumbs = async (id) => (await pool.query(
+      `SELECT metadata FROM chat_session_messages WHERE session_id = $1 AND metadata->>'recoveredReason' = 'unanswered'`, [id])).rows;
+    const out = await leftovers.sweep(pool, { config: {}, deps: { release: 'bot-release', localPass: async () => ({ adopted: 0 }) } });
+    assert.equal(out.backfilled, 'bot-release');
+    assert.equal((await crumbs(person.id)).length, 1, 'a person\'s cut turn still gets its note');
+    assert.deepEqual(await crumbs(bot.id), [], 'the bot build\'s own machine says how it ended');
+    assert.ok(classic.stalled.includes(person.id));
+    assert.ok(!classic.stalled.includes(bot.id), 'and no bell for the bot');
+  });
+
   await t.test('L5 while an older release still serves, its leader recovers what it left: nothing is taken here until it drains', async () => {
     const stale = await conversation();
     await oldClaim(stale, { turnId: 'old-5', renewedSecondsAgo: 200 });
