@@ -27,8 +27,17 @@ const BASE = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
 const REQUIRED = !!process.env.TEST_DATABASE_URL;
 const at = (dsn, db) => { const u = new URL(dsn); u.pathname = `/${db}`; return String(u); };
 
-async function connect(dsn) {
-  const client = new Client({ connectionString: dsn, connectionTimeoutMillis: 3000 });
+async function connect(dsn, { user, password, options } = {}) {
+  // user and password go into the DSN, not into the Client config: the pg
+  // release this suite runs with lets a connectionString's own credentials
+  // override the separate `user`/`password` fields, so a config-only role
+  // would silently connect as the DSN's user instead.
+  const u = new URL(dsn);
+  if (user !== undefined) u.username = user;
+  if (password !== undefined) u.password = password;
+  const overrides = {};
+  if (options !== undefined) overrides.options = options;
+  const client = new Client({ connectionString: String(u), connectionTimeoutMillis: 3000, ...overrides });
   client.on('error', () => {});
   await client.connect();
   return client;
@@ -38,6 +47,16 @@ async function reachable(t) {
   try { const c = await connect(BASE); await c.end(); return true; }
   catch (err) { if (REQUIRED) throw err; t.skip('a PostgreSQL server is needed; set TEST_DATABASE_URL to require this check'); return false; }
 }
+
+// An executor shaped like the one db-manager's psql paths give the redaction
+// passes: `tuplesOnly` joins each row's cells with `|` and the rows with
+// newlines, booleans as t/f and null as empty. Built over a live client, so
+// a test can run the exported passes against a database it owns itself.
+const rowsAsPsql = (client) => async (dbName, sql, options = {}) => {
+  const result = await client.query({ text: sql, rowMode: 'array' });
+  if (!options.tuplesOnly) return '';
+  return result.rows.map((row) => row.map((v) => v === true ? 't' : v === false ? 'f' : v == null ? '' : String(v)).join('|')).join('\n');
+};
 
 // Source schema: one table with a private column (acct.secret) wearing every
 // kind of app-defined code, a users/audit_log pair for the refill case, and a
@@ -293,11 +312,7 @@ test('the after-the-column-pass re-check fails a copy whose private table was re
     CREATE TABLE public.secrets (id int PRIMARY KEY, body text);
     COMMENT ON TABLE public.secrets IS 'staging:private';
     INSERT INTO public.secrets VALUES (1, 'leaked');`);
-  const execute = async (dbName, sql, options = {}) => {
-    const result = await c.query({ text: sql, rowMode: 'array' });
-    if (!options.tuplesOnly) return '';
-    return result.rows.map((row) => row.map((v) => v === true ? 't' : v === false ? 'f' : v == null ? '' : String(v)).join('|')).join('\n');
-  };
+  const execute = rowsAsPsql(c);
   // A private table that still holds a row (as a refill after the column pass
   // would leave it) is caught by the re-check, which fails closed.
   await assert.rejects(dbManager.verifyPrivateTablesEmpty(db, execute).then((r) => {
@@ -312,40 +327,55 @@ test('FORCE row-level security on a private column fails the copy closed when re
   if (!(await reachable(t))) return;
   const dbManager = harness(t);
   const tok = crypto.randomBytes(4).toString('hex');
-  const source = `app_rls${tok}`;
-  const target = `${source}_staging_s1_abcdef`;
-  const { admin, created } = await adminControl();
-  const wipe = async () => {
-    for (const { datname } of (await admin.query("SELECT datname FROM pg_database WHERE datname LIKE $1", [`%${tok}%`])).rows) {
-      await admin.query(`DROP DATABASE IF EXISTS ${datname} WITH (FORCE)`).catch(() => {});
-    }
-    for (const { rolname } of (await admin.query("SELECT rolname FROM pg_roles WHERE rolname LIKE $1", [`%${tok}%`])).rows) {
-      await admin.query(`DROP ROLE IF EXISTS ${rolname}`).catch(() => {});
-    }
-  };
+  // A database and owner role this test makes and drops itself. Neither name
+  // carries `_staging_`, `_stgtmpl`, `_shots_`, `_evidence_` or `_evsrc_`, so
+  // no sweep, reap or disposable-drop path matches it: the server's cleanup
+  // of old previews cannot drop the database or terminate the owner session
+  // (57P01) while the test runs, which is what flaked this test before.
+  const db = `app_rlsd${tok}`;
+  const role = `${db}_owner`;
+  const pw = crypto.randomBytes(12).toString('hex');
+  const admin = await connect(BASE);
+  let owner = null;
   t.after(async () => {
-    await wipe();
-    if (created) await admin.query('DROP DATABASE IF EXISTS usernode WITH (FORCE)').catch(() => {});
+    await owner?.end().catch(() => {});
+    await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`).catch(() => {});
+    await admin.query(`DROP ROLE IF EXISTS ${role}`).catch(() => {});
     await admin.end();
   });
-  await admin.query(`CREATE DATABASE ${source}`);
-  const src = await connect(at(BASE, source));
+  // The same owner attributes the clone paths give a copy's role: LOGIN and a
+  // password, no SUPERUSER, CREATEDB, CREATEROLE or BYPASSRLS.
+  await admin.query(`CREATE ROLE ${role} LOGIN PASSWORD '${pw}'`);
+  await admin.query(`CREATE DATABASE ${db} OWNER ${role}`);
+  // The owner's session, pinned to the catalog search_path execInTarget gives
+  // the platform's own sessions, so the redaction's SQL resolves as it does
+  // in production. The seed qualifies every name it creates with `public.`,
+  // so the pin changes no answer here either.
+  owner = await connect(at(BASE, db), { user: role, password: pw, options: '-c search_path=pg_catalog' });
   // A private column on a table whose row-level security is FORCEd (so it
   // applies even to the table owner), with a policy that hides every row.
-  await src.query(`
+  await owner.query(`
     CREATE TABLE public.people (id int PRIMARY KEY, email text);
     INSERT INTO public.people VALUES (1, 'ann@prod.example');
     COMMENT ON COLUMN public.people.email IS 'staging:private';
     ALTER TABLE public.people ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.people FORCE ROW LEVEL SECURITY;
     CREATE POLICY hide_all ON public.people USING (false);`);
-  await src.end();
+  const execute = rowsAsPsql(owner);
   // As the owner, RLS applies: the scrub cannot prove the column cleared, so
   // the copy is refused rather than handed out with a value that a policy
-  // might have hidden from the scrub. (As a BYPASSRLS superuser the scrub
-  // would have run blind.)
-  await assert.rejects(dbManager.cloneDatabase(source, target),
+  // might have hidden from the scrub. redactPrivateData is the exact function
+  // every clone path calls over its owner session.
+  await assert.rejects(dbManager.redactPrivateData(db, execute),
     /row-level security|Failed to scrub/i);
+  // Nothing went out through a blind scrub: as a BYPASSRLS superuser the
+  // scrub would have run blind under the policy and emptied the column; the
+  // refusal left the value as it was.
+  const adminOnDb = await connect(at(BASE, db));
+  const left = (await adminOnDb.query('SELECT email FROM public.people')).rows.map((r) => r.email);
+  await adminOnDb.end();
+  assert.deepEqual(left, ['ann@prod.example'],
+    'the private value was not touched by a scrub that could not see every row');
 });
 
 // The app controls what a session inside its own database resolves an
