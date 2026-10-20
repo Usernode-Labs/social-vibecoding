@@ -2225,12 +2225,6 @@ function registerTools(server, ctx) {
     required: z.boolean(),
     impact: z.enum(['ui', 'motion', 'none']).nullable(),
     rationale: z.string().nullable(),
-    benefit: z.object({
-      kind: z.enum(['fixed', 'stability', 'clarity', 'more', 'results', 'speed', 'effort', 'security', 'behind']),
-      area: z.enum(['agents', 'proposals', 'platform', 'projects', 'accounts', 'admin', 'messages', 'challenges', 'app']).nullable(),
-      before: z.string().optional(),
-      after: z.string().optional(),
-    }).optional().describe('What people gain, as declared; present only when the declaration names one.'),
     claims: z.array(z.object({
       id: z.string(),
       claim: z.string(),
@@ -5334,7 +5328,7 @@ function registerTools(server, ctx) {
       testingSteps: z.string().optional()
         .describe('A few short numbered lines telling a person what to click to see the change, shown beside the staging preview. Markdown.'),
       visibleChanges: z.unknown().optional()
-        .describe('The changes a person will see, for before/after shots. Pass the version-1 object returned by declare_visible_changes, or build that shape directly: impact "ui" or "motion" with 1-3 declared changes (changes that show on the same screen are one; each: id, claim as one plain sentence of at most 90 characters on what changes for people (the first is the line under the picture; no file names or PR numbers), persona, viewports, and intent {startPath, steps, checkpoint, focus, baseState, animation, optional hints {setup, expectText, focusTarget}}), or impact "none" with a short rationale when nothing visible changes. With impact "none" also declare benefit {kind, area, before?, after?}, which people see instead of shots: kind is what people feel (fixed, stability, clarity, more, results, speed, effort, security, or behind for nothing a member would notice), area where (agents, proposals, platform, projects, accounts, admin, messages, challenges, or app for the project’s own app), and before/after (each at most 16 characters, both or neither) only for a figure you measured, e.g. "259 s" and "200 s". Homeroom’s shots agent follows each change on the exact before and after builds and saves a before and after shot, plus a short clip for animation "motion". On an app built on Homeroom no persona is the app’s creator or one of its admins (an app is told who is signed in, never their role), so a screen it keeps for particular accounts cannot be shot. Do not add screenshot-only routes or secrets.'),
+        .describe('The changes a person will see, for before/after shots. Pass the version-1 object returned by declare_visible_changes, or build that shape directly: impact "ui" or "motion" with 1-3 declared changes (changes that show on the same screen are one; each: id, claim in plain words, persona, viewports, and intent {startPath, steps, checkpoint, focus, baseState, animation, optional hints {setup, expectText, focusTarget}}), or impact "none" with a short rationale when nothing visible changes. Homeroom’s shots agent follows each change on the exact before and after builds and saves a before and after shot, plus a short clip for animation "motion". On an app built on Homeroom no persona is the app’s creator or one of its admins (an app is told who is signed in, never their role), so a screen it keeps for particular accounts cannot be shot. Do not add screenshot-only routes or secrets.'),
       visualEvidence: z.unknown().optional()
         .describe('Older name for visibleChanges, still accepted. Send visibleChanges.'),
       diagram: z.unknown().optional()

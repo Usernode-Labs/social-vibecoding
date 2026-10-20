@@ -494,31 +494,3 @@ test('a note or reason the agent wrote with escaped quotation marks reads with p
   assert.equal(results[0].note, 'The old "Continue" heading could not be shown.');
   assert.equal(results[1].reason, 'No "Invite" button for a member.');
 });
-
-// What people gain (visible-changes.js benefit) reaches the change page and
-// the Needs-you feed from the declaration the slot keeps, before a run
-// (pendingDetail) and after one (showRun), and only when it was declared.
-test('a declared benefit is served beside impact and rationale, cleaned, and absent when not declared', () => {
-  const declared = { kind: 'speed', area: 'platform', before: '259 s', after: '200 s' };
-  const pending = view.fromSnapshot(session({
-    shots_state: 'not_required',
-    shots_detail: { required: false, impact: 'none', rationale: 'Builds are faster.', claims: [],
-      intent: { version: 1, impact: 'none', rationale: 'Builds are faster.', stories: [], benefit: declared } },
-  }), HEAD);
-  assert.deepEqual(pending.benefit, declared);
-  assert.equal(pending.impact, 'none');
-
-  const withRun = view.serialize(run(), session({
-    shots_detail: { impact: 'ui', rationale: 'The dialog changed.', headSha: HEAD,
-      intent: { version: 1, impact: 'ui', stories: [], benefit: { kind: 'clarity' } } },
-  }), 'demo-app', HEAD);
-  assert.deepEqual(withRun.benefit, { kind: 'clarity', area: null });
-
-  assert.equal(Object.hasOwn(view.serialize(run(), session(), 'demo-app', HEAD), 'benefit'), false);
-  assert.equal(Object.hasOwn(view.fromSnapshot(session(), HEAD), 'benefit'), false);
-
-  assert.equal(view.cleanBenefit({ kind: 'faster' }), null);
-  assert.equal(view.cleanBenefit(null), null);
-  assert.deepEqual(view.cleanBenefit({ kind: 'fixed', area: 'nowhere', before: '1 s', extra: '<b>' }),
-    { kind: 'fixed', area: null }, 'half a figure, an unknown area and any other field are dropped');
-});

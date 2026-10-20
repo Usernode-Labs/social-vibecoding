@@ -154,11 +154,6 @@ test('the Communities feed carries the same pictures, shots included', () => {
   assert.equal(fields.touches.files, 1);
   assert.deepEqual(fields.shots, { state: 'verified' });
   assert.equal(fields.nothing_visible, true);
-  assert.equal(Object.hasOwn(fields, 'benefit'), false, 'no benefit declared, none served');
-  assert.deepEqual(route.pictureFields({
-    kind: 'proposal', source: 'native', reviewed_head_sha: head,
-    shots_detail: { intent: { impact: 'none', benefit: { kind: 'speed', area: 'platform', before: '259 s', after: '200 s' } } },
-  }).benefit, { kind: 'speed', area: 'platform', before: '259 s', after: '200 s' }, 'a declared benefit rides the feed row');
   assert.equal(route.pictureFields({ kind: 'proposal', reviewed_head_sha: head, pr_touches: touches, pr_touches_sha: 'd'.repeat(40) }).touches,
     undefined, '"What it touches" only for the head it was read at');
   assert.deepEqual(route.pictureFields({ kind: 'governance', name: 'Old', decision_kind: 'rename', decision_payload: { newName: 'New' } }),

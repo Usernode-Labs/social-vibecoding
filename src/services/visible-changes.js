@@ -29,30 +29,6 @@ const ANIMATIONS = Object.freeze(['none', 'steps', 'motion']);
 const CONTROLLED_FAILURE_LABEL = 'Controlled test: deliberately block the declared API GET on both revisions.';
 const LOCATOR_KINDS = Object.freeze(['testId', 'role', 'label', 'placeholder', 'text', 'css']);
 
-// A change's claim is the line people read under its picture, and the first
-// one is the change's short description in the review flow. The contract
-// keeps accepting the longer claims stored before this guidance (MAX_TEXT);
-// every surface that asks for a claim asks for one plain sentence of at most
-// this many characters, and the declare answer says so when one is longer.
-const CLAIM_ADVISED_MAX = 90;
-
-// What people gain from a change, said by what they feel rather than how it
-// was built (the kinds come from reading 2,822 merged proposals). Optional on
-// every declaration, so an agent that does not know it yet is never refused;
-// every surface asks for it when impact is "none", because a change nobody
-// can see has no picture and the review flow draws its benefit instead. It
-// may ride a visible change too. `before`/`after` are the rare measured
-// figure ("259 s" → "200 s"), both or neither.
-const BENEFIT_KINDS = Object.freeze([
-  'fixed', 'stability', 'clarity', 'more', 'results', 'speed', 'effort', 'security', 'behind',
-]);
-// Where it is felt; `app` is a project's own app, for a change to an app
-// built on Homeroom.
-const BENEFIT_AREAS = Object.freeze([
-  'agents', 'proposals', 'platform', 'projects', 'accounts', 'admin', 'messages', 'challenges', 'app',
-]);
-const MAX_BENEFIT_FIGURE = 16;
-
 const ID_RE = /^[a-z0-9](?:[a-z0-9_-]{0,94}[a-z0-9])?$/;
 const VIEWPORT_RE = /^[a-z0-9](?:[a-z0-9_-]{0,30}[a-z0-9])?$/;
 const CONTROL_RE = /[\u0000-\u001f\u007f]/;
@@ -201,26 +177,11 @@ const storyIntentSchema = storyIntentObject.superRefine((story, ctx) => {
   });
 });
 
-const benefitSchema = z.object({
-  kind: z.enum(BENEFIT_KINDS),
-  area: z.enum(BENEFIT_AREAS).optional(),
-  before: textField(MAX_BENEFIT_FIGURE).optional(),
-  after: textField(MAX_BENEFIT_FIGURE).optional(),
-}).strict().superRefine((benefit, ctx) => {
-  if ((benefit.before === undefined) !== (benefit.after === undefined)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [benefit.before === undefined ? 'before' : 'after'],
-      message: 'A measured benefit needs both before and after' });
-  }
-});
-
-// `benefit` has no default: a declaration without one parses (and so hashes,
-// shots-files.js manifestHash) exactly as it did before the field existed.
 const semanticIntentSchema = z.object({
   version: z.literal(PLAN_VERSION),
   impact: z.enum(IMPACTS),
   rationale: textField(MAX_TEXT),
   stories: z.array(storyIntentSchema).max(MAX_STORIES).default([]),
-  benefit: benefitSchema.optional(),
 }).strict().superRefine((intent, ctx) => {
   if (intent.impact === 'none' && intent.stories.length) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['stories'], message: 'No stories are allowed when impact is "none"' });
@@ -278,28 +239,6 @@ function safeParseIntent(value) {
     if (!(err instanceof VisibleChangesValidationError)) throw err;
     return { ok: false, value: null, errors: err.issues };
   }
-}
-
-// Advice the declare answer adds, never a refusal: a claim longer than the
-// line under a picture holds, and a change nobody can see that says nothing
-// about what people gain. Pure; takes a parsed intent.
-function declarationNotes(intent) {
-  const notes = [];
-  for (const story of Array.isArray(intent?.stories) ? intent.stories : []) {
-    const length = typeof story?.claim === 'string' ? story.claim.length : 0;
-    if (length > CLAIM_ADVISED_MAX) {
-      notes.push(`${story.id}'s claim is ${length} characters. Say it as one plain sentence of at most `
-        + `${CLAIM_ADVISED_MAX}: what changes for people, with no file names or PR numbers. The first claim is the `
-        + 'line people read under the picture.');
-    }
-  }
-  if (intent?.impact === 'none' && !intent.benefit) {
-    notes.push('Nothing on screen changes, so declare what people gain: benefit {kind, area}, kind one of '
-      + `${BENEFIT_KINDS.join(', ')}; area one of ${BENEFIT_AREAS.join(', ')}; and before and after `
-      + `(each at most ${MAX_BENEFIT_FIGURE} characters, e.g. "259 s" and "200 s") only when you measured one. `
-      + 'People see it in place of before & after shots.');
-  }
-  return notes;
 }
 
 function canonicalize(value) {
@@ -368,10 +307,6 @@ module.exports = {
   ANIMATIONS,
   CONTROLLED_FAILURE_LABEL,
   LOCATOR_KINDS,
-  CLAIM_ADVISED_MAX,
-  BENEFIT_KINDS,
-  BENEFIT_AREAS,
-  MAX_BENEFIT_FIGURE,
   VisibleChangesValidationError,
   validRelativePath,
   validControlledFailurePath,
@@ -379,7 +314,6 @@ module.exports = {
   parseIntent,
   declaredChanges,
   safeParseIntent,
-  declarationNotes,
   canonicalJson,
   needsClip,
   PHONE_WIDTH_BELOW,

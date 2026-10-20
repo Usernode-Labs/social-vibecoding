@@ -127,13 +127,7 @@ test('a recorded declaration says what data the copies hold, and warns when a ch
 
   // Nothing to shoot, nothing to say about data.
   stub(t, shotsIdentities, 'personaWarnings', async () => []);
-  // ... but a change nobody can see is asked what people gain, until it says.
   const none = (await declare(url, { version: 1, impact: 'none', rationale: 'Server only.', stories: [] })).body;
   assert.equal(Object.hasOwn(none, 'availableStates'), false);
-  assert.equal(none.warnings.length, 1);
-  assert.match(none.warnings[0], /^Nothing on screen changes, so declare what people gain: benefit \{kind, area\}/);
-  const said = (await declare(url, {
-    version: 1, impact: 'none', rationale: 'Server only.', stories: [], benefit: { kind: 'behind' },
-  })).body;
-  assert.equal(Object.hasOwn(said, 'warnings'), false);
+  assert.equal(Object.hasOwn(none, 'warnings'), false);
 });

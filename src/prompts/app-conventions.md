@@ -93,10 +93,8 @@ Ordered by how badly an agent working offline gets each one wrong.
    screenshot-only query parameter. After a visible change, call
    `declare_visible_changes` with the change, real steps, focus,
    persona, viewports, and animation (`motion` gets clips). Homeroom takes
-   before/after shots of it on the exact builds. Each claim: one plain
-   sentence, at most 90 characters. For a non-visual change, record
-   `impact: "none"`, a specific rationale and a `benefit` (`kind`, `area`,
-   `before`/`after` only if measured).
+   before/after shots of it on the exact builds. For a non-visual change,
+   record `impact: "none"` with a specific rationale.
 6. **Auth is iframe token injection — do not roll your own login.** The
    shell mints an RS256 JWT per user per app and injects it as
    `?token=`; the app verifies it with `USERNODE_JWT_PUBLIC_KEY`,
