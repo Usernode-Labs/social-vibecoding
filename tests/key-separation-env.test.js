@@ -113,10 +113,10 @@ function poisonedConfig() {
   };
 }
 
-test('appIdentityEnv emits only the public key (twice), the shim and the app id', () => {
+test('appIdentityEnv emits only the public key (twice), the shim, the app id and its slug and name', () => {
   const env = appIdentityEnv({ id: 7 }, poisonedConfig());
   assert.deepEqual(Object.keys(env).sort(),
-    ['IFRAME_JWT_PUBLIC_KEY', 'JWT_SECRET', 'USERNODE_APP_ID', 'USERNODE_JWT_PUBLIC_KEY']);
+    ['IFRAME_JWT_PUBLIC_KEY', 'JWT_SECRET', 'USERNODE_APP_ID', 'USERNODE_APP_NAME', 'USERNODE_APP_SLUG', 'USERNODE_JWT_PUBLIC_KEY']);
   assertNoLeak('appIdentityEnv', env);
 });
 

@@ -15390,3 +15390,47 @@ LANGUAGE sql STABLE AS $$
       OR EXISTS (SELECT 1 FROM users t WHERE t.id = target_id AND t.profile_discoverable)
       OR (viewer_id IS NOT NULL AND users_connected(target_id, viewer_id))
 $$;
+
+-- ── Ready-made apps' prebuilt images (services/starter-images.js) ───────
+--
+-- Every project made from one ready-made app (services/app-templates.js) is
+-- the same code: services/template.js writes nothing of one project's into
+-- what its image is built from. So each ready-made app's image is built
+-- once, on the platform, whenever its code changes (a release that changes a
+-- starter or the generator), and a new project made from it deploys that
+-- image instead of building its own. One row per ready-made app and version
+-- of its code: `context_key`, a SHA-256 over what goes into the image and how
+-- it is built (starter-images.js contextKey). A new project uses the row
+-- whose key is its own.
+--
+--   status     queued    to build: a new key, or Rebuild in Admin
+--              building  `owner` is building it, alive while its
+--                        heartbeat_at is fresh
+--              ready     image_ref is the image
+--              failed    the last attempt failed (`error`); retried a few
+--                        times on its own (attempts), then left for Rebuild
+--   image_ref  the image a project deploys, kept through a Rebuild that is
+--              under way or failed: a ready image stays usable until a newer
+--              one replaces it
+CREATE TABLE IF NOT EXISTS starter_images (
+  template      VARCHAR(64) NOT NULL,
+  context_key   VARCHAR(64) NOT NULL,
+  status        VARCHAR(12) NOT NULL DEFAULT 'queued'
+                  CHECK (status IN ('queued', 'building', 'ready', 'failed')),
+  image_ref     TEXT,
+  build_ref     TEXT,
+  engine        VARCHAR(16),
+  source_sha    VARCHAR(40),
+  build_ms      INTEGER,
+  error         TEXT,
+  attempts      INTEGER NOT NULL DEFAULT 0,
+  owner         TEXT,
+  heartbeat_at  TIMESTAMPTZ,
+  started_at    TIMESTAMPTZ,
+  built_at      TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (template, context_key)
+);
+CREATE INDEX IF NOT EXISTS idx_starter_images_key
+  ON starter_images (context_key) WHERE image_ref IS NOT NULL;

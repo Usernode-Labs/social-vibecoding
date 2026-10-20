@@ -41,7 +41,7 @@ const { spawn, execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const appTemplates = require('../src/services/app-templates');
-const { getTemplateFiles } = require('../src/services/template');
+const { getTemplateFiles, fillAppName } = require('../src/services/template');
 
 const PHONE = { width: 390, height: 844, scale: 2 };
 // A Saturday morning, so the week's chores, a potluck that evening and
@@ -592,7 +592,9 @@ function chromePath() {
 
 /** A starter's files, as a new project made from it gets them, written under `dir`, with its stylesheet compiled. */
 function buildStarter(id, name, dir) {
-  const files = getTemplateFiles(name, 'example', 'postgres://unused', null, { template: id });
+  // This serves public/ as it is, so the name its server.js would fill in
+  // at runtime is written into the page (template.js fillAppName).
+  const files = fillAppName(getTemplateFiles(name, 'example', 'postgres://unused', null, { template: id }), name);
   for (const f of files) {
     const to = path.join(dir, f.path);
     fs.mkdirSync(path.dirname(to), { recursive: true });
