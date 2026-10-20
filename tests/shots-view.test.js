@@ -486,6 +486,44 @@ test('a verified run\'s screens reach the card as integers and its own story ids
   assert.deepEqual(view.fromSnapshot(session(), HEAD).screens, []);
 });
 
+test('a screen says how many device pixels its stills hold per CSS pixel; an older run\'s are 1x', () => {
+  const at = (density) => view.serialize(run({ screens: [{
+    viewport: 'phone', shot: 'dialog', stories: ['dialog'], width: 390, heightBefore: 844, heightAfter: 844,
+    ...(density === undefined ? {} : { density }), regions: [],
+  }] }), session(), 'demo', HEAD).screens[0];
+  assert.equal(at(3).density, 3);
+  assert.equal(at(2).density, 2);
+  assert.deepEqual([at(3).width, at(3).heightAfter], [390, 844], 'the geometry stays in CSS pixels');
+  for (const odd of [undefined, 0, 2.5, '3', 9]) assert.equal(at(odd).density, 1, String(odd));
+});
+
+test('every still says its density: a screen\'s from its declared width, an element\'s from its screen', () => {
+  const id = (n) => String(n).repeat(32).slice(0, 32);
+  const still = (n, viewport, side, variant, width, extra = {}) => ({
+    id: id(n), storyId: 'dialog', viewport, side, variant, media: 'png', contentType: 'image/png',
+    width, height: 100, bytes: 120, ...extra,
+  });
+  const shown = view.serialize(run({
+    screenWidths: { 'dialog:desktop': 1280, 'dialog:phone': 390 },
+    artifactSummary: [
+      still(1, 'desktop', 'head', 'context', 2560),
+      still(2, 'desktop', 'head', 'focus', 900),
+      still(3, 'phone', 'head', 'context', 1170),
+      still(4, 'phone', 'head', 'context', 1170, { theme: 'dark' }),
+      still(5, 'phone', 'head', 'focus', 600),
+      // A run from before device-scale stills, and a phone element whose
+      // screen shot is missing.
+      still(6, 'desktop', 'base', 'context', 1280),
+      still(7, 'phone', 'base', 'focus', 600),
+      { ...still(8, 'phone', 'head', 'animation', null), media: 'webm', contentType: 'video/webm' },
+    ],
+  }), session(), 'demo', HEAD).artifacts;
+  assert.deepEqual(shown.map((artifact) => artifact.density), [2, 2, 3, 3, 3, 1, 1, 1]);
+  assert.equal(shown[0].width, 2560, 'width stays the file\'s own pixels');
+  // A run summary with no widths (an older row) reads every still as 1x.
+  assert.ok(view.serialize(run(), session(), 'demo', HEAD).artifacts.every((artifact) => artifact.density === 1));
+});
+
 test('a note or reason the agent wrote with escaped quotation marks reads with plain ones', () => {
   const results = view.cleanShotResults([
     { id: 'dialog', status: 'ready', note: 'The old \\"Continue\\" heading could not be shown.' },

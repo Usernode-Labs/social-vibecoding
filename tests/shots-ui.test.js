@@ -175,6 +175,14 @@ test('every screen sits in the same fixed stage, fitted at its own shape', () =>
   assert.match(css, /\.shots-stage \{[^}]*container-type: size;[^}]*aspect-ratio: 16 \/ 10;/);
   assert.match(css, /\.shots-stage > \.shots-flip-side \{[^}]*width: min\(100cqw, calc\(100cqh \* \(var\(--shots-shape, 16 \/ 10\)\)\)\); aspect-ratio: var\(--shots-shape, 16 \/ 10\);/);
   assert.match(css, /\.shots-view \{ grid-area: 1 \/ 1;[^}]*visibility: hidden; \}/, 'the screens share one cell, so the tallest sets the height');
+  // Stills saved at device scale say the screen's own size, not their pixels.
+  const dense = AppView.shotsHtml({ ...value, artifacts: value.artifacts.map((artifact) => (artifact.variant === 'context'
+    ? { ...artifact, width: artifact.width * (artifact.viewport === 'phone' ? 3 : 2), height: artifact.height * (artifact.viewport === 'phone' ? 3 : 2),
+      density: artifact.viewport === 'phone' ? 3 : 2 }
+    : artifact)) }, { sessionId: 42 });
+  assert.match(dense, /Desktop, 1280 × 800 · seen as a member/);
+  assert.match(dense, /Phone, 390 × 844 · seen as a member/);
+  assert.match(dense, /--shots-shape:1170 \/ 2532/, 'the shape is only a ratio');
   // Without recorded sizes a phone screen still reads as a phone.
   const unsized = AppView.shotsHtml({ ...value, artifacts: value.artifacts.map(({ width, height, ...rest }) => rest) }, { sessionId: 42 });
   assert.match(unsized, /data-shots-viewport="phone"[\s\S]*?--shots-shape:390 \/ 844/);
@@ -308,6 +316,10 @@ test('the Workshop picture\'s element shot must be readable on both sides', () =
   assert.deepEqual(AppView._workshopVisuals(null, sized(() => ({ width: 46, height: 28 }))),
     { ...AppView._workshopVisuals(null, sized(() => ({ width: 352, height: 61 }))), before: url('3'), after: url('4') });
   assert.equal(AppView._workshopVisuals(null, sized(() => ({ width: 352, height: 61 }))).after, url('2'));
+  // Readable in CSS pixels: the same badge saved at 3x is still a badge.
+  assert.deepEqual(AppView._workshopVisuals(null, sized(() => ({ width: 138, height: 84, density: 3 }))),
+    AppView._workshopVisuals(null, sized(() => ({ width: 46, height: 28 }))));
+  assert.equal(AppView._workshopVisuals(null, sized(() => ({ width: 1056, height: 183, density: 3 }))).after, url('2'));
 });
 
 test('a privileged declared change is explicitly labelled as full admin', () => {

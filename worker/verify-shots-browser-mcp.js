@@ -4,7 +4,9 @@
 // Image-build smoke test for the exact browser MCP command and flags used by
 // before/after turns. Listing tools catches a missing MCP binary; calling a
 // browser tool also catches Chromium startup failures in the worker image,
-// and a named screenshot proves shots land where the shots bridge reads them.
+// and a named screenshot proves shots land where the shots bridge reads them,
+// saved at the browser's device density (patch-playwright-mcp-screenshot.js):
+// the file is the image the tool answered with, times that density, wide.
 
 const { spawn, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -20,7 +22,12 @@ const REQUIRED_TOOLS = [
   'browser_close',
 ];
 
-function verifyBrowser(server, navigationChecks = []) {
+// A PNG's width, off its header.
+function pngWidth(buffer) {
+  return buffer.length > 24 && buffer.toString('latin1', 12, 16) === 'IHDR' ? buffer.readUInt32BE(16) : 0;
+}
+
+function verifyBrowser(server, navigationChecks = [], { density = null } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(server.command, server.args, {
       env: { ...process.env, ...server.env }, stdio: ['pipe', 'pipe', 'pipe'],
@@ -87,6 +94,15 @@ function verifyBrowser(server, navigationChecks = []) {
           if (message.error || message.result?.isError || !server.args.includes('--output-dir')
               || !fs.existsSync(path.join(outputDir, 'image-smoke.png'))) {
             return finish(new Error(`Browser MCP did not save a named screenshot in its shots directory: ${JSON.stringify(message.error || message.result).slice(0, 600)}`));
+          }
+          if (density) {
+            const saved = pngWidth(fs.readFileSync(path.join(outputDir, 'image-smoke.png')));
+            const image = (message.result?.content || []).find((item) => item.type === 'image');
+            const answered = image ? pngWidth(Buffer.from(String(image.data || ''), 'base64')) : 0;
+            if (!answered || saved !== answered * density) {
+              return finish(new Error(`Browser MCP saved a ${saved} px screenshot for a ${answered} px screen; `
+                + `shots must be saved at ${density}x (patch-playwright-mcp-screenshot.js, write-shots-mcp-config.js).`));
+            }
           }
           if (navigationChecks.length) {
             phase = 'browser_navigate';
@@ -164,8 +180,9 @@ async function main() {
     for (const persona of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest',
       'browser_member_phone']) {
       fs.writeFileSync(diagnosticFile, '');
-      const tools = await verifyBrowser(config.mcpServers[persona]);
       const phone = persona.endsWith('_phone');
+      // The iPhone 15 device's density, and the desktop browsers' own.
+      const tools = await verifyBrowser(config.mcpServers[persona], [], { density: phone ? 3 : 2 });
       const records = fs.readFileSync(diagnosticFile, 'utf8').trim().split('\n')
         .filter((line) => line.startsWith('__USERNODE_SHOTS_BROWSER__ '))
         .flatMap((line) => {
@@ -179,7 +196,7 @@ async function main() {
           || !records.some((event) => event.kind === 'browser_call_end')) {
         throw new Error(`Browser observer did not record ${persona} tool timing`);
       }
-      process.stdout.write(`${persona}: ${tools.length} MCP tools available; Chromium opened a tab\n`);
+      process.stdout.write(`${persona}: ${tools.length} MCP tools available; Chromium opened a tab; shots at ${phone ? 3 : 2}x\n`);
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -193,4 +210,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { verifyBrowser };
+module.exports = { verifyBrowser, pngWidth };

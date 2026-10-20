@@ -79,7 +79,7 @@ test('anything but one whole PNG within bounds is refused with a code', () => {
   // agent knows to shoot the visible screen rather than the full page.
   assert.throws(() => shots.inspectImage(Buffer.alloc(shots.MAX_IMAGE_BYTES + 1)),
     refusal('shot_too_large', 413));
-  assert.equal(shots.MAX_IMAGE_BYTES, 6 * 1024 * 1024);
+  assert.equal(shots.MAX_IMAGE_BYTES, 12 * 1024 * 1024, 'room for a 2x desktop screen of a busy page');
 });
 
 test('a clip must be a browser WebM between 1 KB and 20 MB', () => {
@@ -616,4 +616,24 @@ test('an element shot must fit the screen it was taken on', () => {
     refusal('element_shot_too_wide'));
   // Screen shots and clips are not element shots.
   assert.doesNotThrow(() => shots.checkElementSize(story, target('mobile', 'screen'), size(390, 5000)));
+  // Saved before its screen shot, an element may be as dense as the screen's
+  // browser saves: 3x on a phone screen, 2x on a desktop one.
+  assert.doesNotThrow(() => shots.checkElementSize(story, target('mobile'), size(1100, 300)));
+  assert.doesNotThrow(() => shots.checkElementSize(story, target('desktop'), size(2400, 300)));
+  assert.throws(() => shots.checkElementSize(story, target('desktop'), size(2600, 300)),
+    refusal('element_shot_too_wide'));
+  // A 3x screen shot, and the message speaks in the screen's CSS pixels.
+  assert.throws(() => shots.checkElementSize(story, target('mobile'), size(1206, 300), { width: 1170, height: 2532 }),
+    (error) => error.code === 'element_shot_too_wide' && /is 402 px wide, wider than the mobile screen \(390 px\)/.test(error.message));
+});
+
+test('a still\'s density is a whole multiple of its screen\'s width, else 1', () => {
+  assert.equal(shots.densityFor(390, 390), 1);
+  assert.equal(shots.densityFor(1170, 390), 3);
+  assert.equal(shots.densityFor(2560, 1280), 2);
+  assert.equal(shots.densityFor(1179, 393), 3);
+  for (const [image, screen] of [[1280, 390], [600, 390], [390, 0], [390, undefined], [null, 390], [390 * 5, 390]]) {
+    assert.equal(shots.densityFor(image, screen), 1, `${image}/${screen}`);
+  }
+  assert.deepEqual([shots.PHONE_DENSITY, shots.DESKTOP_DENSITY], [3, 2]);
 });

@@ -267,3 +267,14 @@ test('a run the proposal\'s busy agent stopped reads in plain words, not the wor
   assert.equal(state.runSummary({ ...row, failure_code: 'shots_capture_incomplete', failure_reason: 'No shot saved.' })
     .failureReason, 'No shot saved.');
 });
+
+test('a run summary carries each declared screen\'s CSS width, so a still\'s density can be read off its width', () => {
+  const intent = { version: 1, impact: 'ui', stories: [
+    { id: 'invite', claim: 'c', persona: 'member', intent: { steps: ['s'] },
+      viewports: [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone', width: 390, height: 844 }] },
+    { id: 'odd', claim: 'c', persona: 'member', intent: { steps: ['s'] }, viewports: [{ name: 'tablet', width: '768' }] },
+  ] };
+  assert.deepEqual(state.runSummary({ state: 'verified', intent }).screenWidths,
+    { 'invite:desktop': 1280, 'invite:phone': 390 });
+  assert.deepEqual(state.runSummary({ state: 'verified', intent: null }).screenWidths, {});
+});

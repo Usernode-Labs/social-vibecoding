@@ -101,6 +101,10 @@ function cleanScreens(screens, claims) {
       width: int(screen.width) ? screen.width : null,
       heightBefore: int(screen.heightBefore) ? screen.heightBefore : null,
       heightAfter: int(screen.heightAfter) ? screen.heightAfter : null,
+      // The geometry above is the screen's CSS pixels; its stills hold this
+      // many device pixels per CSS pixel. A run compared before the
+      // browsers saved at device scale stored none: its stills are 1x.
+      density: [1, 2, 3, 4].includes(screen.density) ? screen.density : 1,
       regions: (Array.isArray(screen.regions) ? screen.regions : []).slice(0, 12)
         .map((region) => ({
           story: region && ids.has(region.story) ? region.story : null,
@@ -118,8 +122,28 @@ function artifactUrl(slug, sessionId, artifactId) {
   return `/api/apps/${encodeURIComponent(slug)}/proposals/${Number(sessionId)}/shots/${artifactId}`;
 }
 
-function cleanArtifacts(items, { slug, sessionId, verified }) {
+// Device pixels per CSS pixel in each still: a whole screen's is its width
+// over its declared screen's, and an element shot's is its screen shot's
+// (the same browser took both). A clip is drawn at its screen's own size.
+function artifactDensities(items, screenWidths) {
+  const widths = screenWidths && typeof screenWidths === 'object' ? screenWidths : {};
+  const key = (a) => `${a.storyId}\u0000${a.viewport}\u0000${a.side}`;
+  const screens = new Map();
+  for (const a of items) {
+    if (a.variant === 'context' && a.theme !== 'dark' && Number.isInteger(a.width)) {
+      screens.set(key(a), shotsFiles.densityFor(a.width, widths[`${a.storyId}:${a.viewport}`]));
+    }
+  }
+  return (a) => {
+    if (a.media !== 'png') return 1;
+    if (a.variant === 'context') return shotsFiles.densityFor(a.width, widths[`${a.storyId}:${a.viewport}`]);
+    return screens.get(key(a)) || 1;
+  };
+}
+
+function cleanArtifacts(items, { slug, sessionId, verified, screenWidths = null }) {
   if (!verified || !Array.isArray(items)) return [];
+  const densityOf = artifactDensities(items, screenWidths);
   // Up to 48: three changes more than the old 36, the room a run's dark
   // shots (#4459) take beside their light ones.
   return items.slice(0, 48).filter((artifact) => {
@@ -148,8 +172,10 @@ function cleanArtifacts(items, { slug, sessionId, verified }) {
     theme: artifact.theme === 'dark' && artifact.variant === 'context' && artifact.media === 'png'
       ? 'dark' : 'light',
     contentType: String(artifact.contentType || '').slice(0, 32),
+    // The file's own pixels; divided by `density` they are CSS pixels.
     width: Number.isInteger(artifact.width) ? artifact.width : null,
     height: Number.isInteger(artifact.height) ? artifact.height : null,
+    density: densityOf(artifact),
     bytes: Number.isInteger(artifact.bytes) ? artifact.bytes : null,
     focusRect: artifact.focusRect && typeof artifact.focusRect === 'object' ? artifact.focusRect : null,
     stageLabels: Array.isArray(artifact.stageLabels)
@@ -256,6 +282,7 @@ function serialize(run, session, slug, currentHead) {
     overrideReason: run.overrideReason || null,
     artifacts: cleanArtifacts(run.artifactSummary, {
       slug, sessionId: session.id, verified: matchesCurrent && run.state === 'verified',
+      screenWidths: run.screenWidths,
     }),
     updatedAt: run.updatedAt || session.shots_updated_at || null,
   };

@@ -495,10 +495,11 @@ The platform checks:
 - every file came from this run's short-lived, run-scoped token;
 - it is addressed to a declared change, one of that change's screens, and a
   side;
-- a shot is one complete PNG under 6 MB and at most 8192 px on each edge;
+- a shot is one complete PNG under 12 MB and at most 8192 px on each edge
+  (a 2x desktop screen of a photo-heavy page passes 6 MB);
 - an element shot fits its screen: no wider than the screen (scaled by the
-  same side's screen shot when the browser shot at 2x) and at most two
-  screens tall. A wider one means the page was laid out at another size; a
+  same side's screen shot's density, or, before that is saved, by the
+  density the screen's browser saves at) and at most two screens tall. A wider one means the page was laid out at another size; a
   taller one is a tiled capture nobody can read (`element_shot_too_wide`,
   `element_shot_too_tall`);
 - a clip is a WebM between 1 KB and 20 MB, only for a `motion` change;
@@ -793,8 +794,43 @@ agent.
 - The brief names it: `browsers.<persona>.phoneTool`, and `screenBrowsers`
   gives the browser for every change and screen. The agent resizes it to the
   declared size like any other, and is told never to shoot a phone screen in
-  a desktop browser. Screenshots stay at CSS scale, so a 390 px phone screen
-  is a 390 px image whatever the density.
+  a desktop browser.
+
+### Density
+
+Shots are saved at the screen's own density, so a card can zoom into a change
+without drawing it soft: a phone browser's is its device's (3, so a 390 x 844
+screen is a 1170 x 2532 PNG), and every desktop browser draws at 2 from a
+private Playwright config `write-shots-mcp-config.js` writes beside the MCP
+config (`deviceScaleFactor: 2`; Playwright takes it only with a fixed
+viewport, 1280x720, and the agent resizes to each declared screen as before).
+
+- **The screenshot tool.** The pinned Playwright MCP hard-codes
+  `browser_take_screenshot` to CSS scale. The worker image patches that one
+  tool (`worker/patch-playwright-mcp-screenshot.js`): the file it saves is
+  captured at `scale: "device"`, and the image it answers the agent with is
+  a second capture at CSS scale, the size it always was, so a 3x screen never
+  reaches the model as a multi-megabyte image. Each edit must match exactly
+  once, so a pin bump that moves the code fails the image build, and
+  `verify-shots-browser-mcp.js` proves the saved width is the answered width
+  times the browser's density (3 phone, 2 desktop). A newer Playwright takes
+  a `scale` argument, but it also renames the element target and stops
+  answering with the image of a named screenshot; moving to it is its own
+  change.
+- **Geometry stays in CSS pixels.** A still's density is its width over its
+  declared screen's, a whole multiple only (`shots-files.densityFor`); any
+  other width is a screen shot at the wrong size, read as 1. The diff
+  averages each still down to CSS pixels before comparing, so a screen's
+  `width`, `heightBefore`, `heightAfter` and `regions` are CSS pixels and
+  mean the same at any density; each screen says its `density`. Every
+  artifact also says its `density`; its `width` and `height` stay the file's
+  own pixels. Runs from before are density 1.
+- **Clients** read sizes in CSS pixels: the change page's "Phone, 390 x 844"
+  line and the Workshop feed's readable element shot divide by the density.
+  A card that zooms into a change caps the zoom at the still's density over
+  the display's (`window.devicePixelRatio`), so it never draws past the
+  pixels it has.
+- **Clips** are recorded at the screen's CSS size, as before.
 - The init script (`worker/shots-page-init.js`) still records the install
   strip's dismissal on every page (#4087), the phone browsers' included, so a
   phone shot shows the screen rather than the strip over it. A top-level page
@@ -919,7 +955,7 @@ for how wide the change is. Each area is tied to the declared change whose
 element shot sits inside it, and widened to that element. A run from before
 this has no `screens`: its card flips a screen per change and size, with
 nothing outlined. The Workshop feed's picture still leads with the element
-shot when it is big enough to read (at least 120×40 px on both sides).
+shot when it is big enough to read (at least 120×40 CSS px on both sides).
 
 The whole screens are also taken in dark mode (#4459): a run opens each page
 again with the mode parameter (`un-theme=dark` for an app built on Homeroom,
