@@ -477,6 +477,14 @@ test('the password step is the sheet\'s: the link opens it, and Forgot password 
   // A session the shell cannot confirm says so in the sheet, as on the screen.
   assert.match(src, /<SessionConfirmationNotice completion=\{completion\} \/>/);
   assert.match(src, /<NativeLoginDetailsLink details=\{details\} \/>/);
+  // #5616: the password step offers no way back to Apple or Google; closing
+  // the sheet does that. Where the Email code | Password switch is not shown,
+  // the email step is still one link away.
+  const pwStep = src.slice(src.indexOf("{step === 'password' ? ("), src.indexOf("{step === 'account' ? ("));
+  assert.doesNotMatch(pwStep, /toStep\(otherWays\)|signInSheet\.password\.otherWays/);
+  assert.match(pwStep, /\{!methodSwitch \? \(\s+<button type="button" className=\{QUIET\} onClick=\{\(\) => toStep\('email'\)\}>\s+\{t\('auth:signInSheet\.password\.useEmailCode'\)\}/);
+  const english = JSON.parse(read('frontend/locales/en/auth.json'));
+  assert.ok(!('signInSheet.password.otherWays' in english), 'the password step\'s other-ways text is gone from the catalog');
 });
 
 test('each way into the sheet says only what is true for it', () => {
