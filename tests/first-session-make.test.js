@@ -477,7 +477,7 @@ test('with the keyboard up nothing scrolls under the status bar: the bar stays, 
   // The scroller's class string is constant.
   assert.match(src, /<div ref=\{scrollerRef\} data-first-session-make-scroll="" className="flex min-h-0 grow flex-col overflow-y-auto">/);
   // #3894's arrival is untouched: the bar and the form still rise in.
-  assert.match(src, /className=\{`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-\[max\(34px,env\(safe-area-inset-bottom\)\)\] \$\{motion\}`\}/);
+  assert.match(src, /className=\{`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-\[max\(34px,env\(safe-area-inset-bottom\)\)\] md:max-w-xl \$\{motion\}`\}/);
 });
 
 // Evan, 5 Oct 2026: a chosen example stayed chosen after he started writing
@@ -725,6 +725,36 @@ test('Make it stays reachable: a pick brings it into view, and pressing it holds
   // Room after the form only while it makes, so the keys going down leave
   // the scroller where it was.
   assert.doesNotMatch(html, /data-make-hold/);
+  assert.match(src, /\{busy \? <div aria-hidden="true" data-make-hold="" className="h-\[60vh\] shrink-0" \/> : null\}/);
+});
+
+// #5266 (navigation review, 20 Oct 2026): someone who has just been let in
+// gets a Welcome line under the question, the column is wider from a tablet
+// up, and the spacer that pushed Make it to the foot of the window is gone.
+test('the first session says Welcome, and Make it follows the rule line (#5266)', () => {
+  const src = read(`${DIR}/make.tsx`);
+  const first = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
+  const create = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', entry: 'create', onMade() {}, onClose() {} });
+  // The line is a sentence under the one title, in the import form's own style.
+  const welcome = `<p data-make-welcome="" class="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">${message('onboarding:firstSession.make.welcome')}</p>`;
+  assert.ok(first.includes(`</h1>${welcome}</div>`), 'under the question, before Start from an idea');
+  assert.ok(first.indexOf('data-make-welcome') < first.indexOf('Start from an idea'));
+  // Not from Create: New project is a returning maker's, not a first arrival.
+  assert.doesNotMatch(create, /data-make-welcome|Welcome to Homeroom/);
+
+  // Wider on a computer, and only there: phones keep the 384px column, and
+  // the import form shares the frame so the two do not change width.
+  assert.match(src, /const formClass = `mx-auto flex w-full max-w-sm grow flex-col px-4 pb-\[max\(34px,env\(safe-area-inset-bottom\)\)\] md:max-w-xl \$\{motion\}`;/);
+  assert.match(src, /className=\{`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-\[max\(34px,env\(safe-area-inset-bottom\)\)\] md:max-w-xl \$\{motion\}`\}/);
+  assert.match(src, /<div className="grid grid-cols-2 gap-2"/, 'the four ideas stay two by two');
+
+  // Make it follows the rule line: no spacer grows between them.
+  const ruleAt = src.indexOf('<MakeRuleLine preset={rule} onPick={setRule} who={who} />');
+  const submitAt = src.indexOf('type="submit"');
+  assert.ok(ruleAt > 0 && ruleAt < submitAt);
+  assert.doesNotMatch(src.slice(ruleAt, submitAt), /className="grow"/);
+  assert.doesNotMatch(src, /<div className="grow" \/>/);
+  // Room after the form is still held while it makes.
   assert.match(src, /\{busy \? <div aria-hidden="true" data-make-hold="" className="h-\[60vh\] shrink-0" \/> : null\}/);
 });
 

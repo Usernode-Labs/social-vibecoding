@@ -217,10 +217,14 @@ test('the make screen from Create: New project, a close, a small "Import from a 
   // Evan, 8 Oct 2026: no line under the question. The starting points come
   // straight after it, from either door.
   assert.equal(make.makeLine, undefined);
-  for (const html of [create, first]) {
-    assert.doesNotMatch(html, /Describe it for your group/);
-    assert.match(html, /[Ww]hat do you want to make\?<\/h1><\/div><p[^>]*>Start from an idea<\/p>/);
-  }
+  assert.doesNotMatch(create, /Describe it for your group/);
+  assert.match(create, /[Ww]hat do you want to make\?<\/h1><\/div><p[^>]*>Start from an idea<\/p>/);
+  // #5266: the first session's Welcome line sits between the question and
+  // "Start from an idea"; New project from Create is a returning maker's,
+  // so it does not show it.
+  assert.doesNotMatch(create, /data-make-welcome/);
+  assert.doesNotMatch(first, /Describe it for your group/);
+  assert.match(first, /[Ww]hat do you want to make\?<\/h1><p data-make-welcome=""[^>]*>[^<]*<\/p><\/div><p[^>]*>Start from an idea<\/p>/);
 
   const src = read(`${DIR}/make.tsx`);
   assert.match(src, /onClick=\{\(\) => setMode\('import'\)\}/);
