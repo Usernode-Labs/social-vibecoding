@@ -264,8 +264,10 @@ test('after boot, a script error is queued as a client_error with only its four 
     assert.equal(body.includes(raw), false, `${raw} never leaves the page`);
   }
 
-  // The collector takes the client's batch as it is.
-  const parsed = telemetry.parseBatch(h.sent[0]);
+  // The collector takes the client's batch as it is, when it arrives: at the
+  // harness's own time, not the wall clock's, or the fixed date above falls
+  // out of the collector's 24-hour window a day after it was written.
+  const parsed = telemetry.parseBatch(h.sent[0], { nowMs: h.env.now() });
   const stored = parsed.events.find((e) => e.kind === 'client_error');
   assert.deepEqual([stored.errorName, stored.template, stored.frame, stored.errorCode],
     [event.errorName, event.template, event.frame, event.errorCode]);
