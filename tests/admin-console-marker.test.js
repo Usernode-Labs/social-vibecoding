@@ -36,6 +36,10 @@ test('the chassis renders the console band, hidden, with an Exit link', () => {
   assert.match(islandTsx, />Admin console</, 'it names the place');
   assert.match(islandTsx, /id="admin-exit"\s+href="#profile"\s+onClick=\{onExit\}/,
     'Exit is a real anchor to the Me tab, refined on press');
+  assert.match(islandTsx, /border-amber-200 bg-amber-50 px-4 py-3 text-amber-900/,
+    'the band is the console\'s amber warning colour, not the inverted one');
+  assert.match(islandTsx, /Be careful before changing anything\./,
+    'it says these are the platform\'s settings, not the viewer\'s');
   assert.doesNotMatch(islandTsx, /@\/components\/ui/,
     'the console does not draw with the shell primitives');
 });

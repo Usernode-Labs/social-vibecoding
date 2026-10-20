@@ -169,9 +169,10 @@ export function AdminScreen() {
         {/*
             The console's own marker (#5286). It used to open in the same
             chrome as a person's own Settings, so nothing said you had stepped
-            into a place whose levers act on everyone. An inverted band is
-            this screen's colour and nobody else's, and its Exit goes back to
-            where you came from (AdminConsole.exitTarget), not up a level.
+            into a place whose levers act on everyone. The band is amber, the
+            console's own warning colour (as its View-only strip), and its
+            Exit goes back to where you came from (AdminConsole.exitTarget),
+            not up a level.
             Ships hidden, and AdminConsole._renderShell() reveals it through
             classList for an admin; public mode (a non-admin on Health &
             status) keeps it hidden, because that viewer is not in the
@@ -179,17 +180,17 @@ export function AdminScreen() {
             node holds no display utility of its own.
         */}
         <div id="admin-console-bar" className="hidden mb-4">
-          <div className="flex items-center gap-3 rounded-2xl bg-zinc-900 px-4 py-3 text-white dark:bg-zinc-100 dark:text-zinc-900">
-            <span className="h-8 w-1.5 shrink-0 rounded-full bg-amber-400 dark:bg-amber-600" aria-hidden="true"></span>
+          <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-100">
+            <span className="h-8 w-1.5 shrink-0 rounded-full bg-amber-500 dark:bg-amber-400" aria-hidden="true"></span>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold">Admin console</p>
-              <p className="text-xs text-zinc-300 dark:text-zinc-600">Platform-wide tools, apart from your own settings.</p>
+              <p className="text-xs text-amber-800 dark:text-amber-200">{"Platform-wide tools. These are not your settings but the settings of the platform. Be careful before changing anything."}</p>
             </div>
             <a
               id="admin-exit"
               href="#profile"
               onClick={onExit}
-              className="inline-flex items-center min-h-[36px] shrink-0 rounded-lg bg-white/15 px-3 text-sm font-medium text-white transition-colors hover:bg-white/25 dark:bg-zinc-900/10 dark:text-zinc-900 dark:hover:bg-zinc-900/20"
+              className="inline-flex items-center min-h-[36px] shrink-0 rounded-lg bg-amber-900/10 px-3 text-sm font-medium text-amber-900 transition-colors hover:bg-amber-900/20 dark:bg-amber-100/10 dark:text-amber-100 dark:hover:bg-amber-100/20"
             >
               Exit
             </a>
