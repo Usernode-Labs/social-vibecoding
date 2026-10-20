@@ -123,6 +123,8 @@ import { takeCounts, votesWaiting } from './community-scope';
 // (expectNeedsDoor): its own line, beside the tab's one definition above.
 import { communityScopeStore } from './community-scope';
 import { NeedsReel, type NeedsFeedItem } from './needs-reel';
+import { ReviewFlow } from '../review-flow/review-flow';
+import { useReviewFlowEnabled } from '../review-flow/settings';
 import { unseenNeeds, useNeedsSeen } from './needs-seen';
 import { matchRows, orderRows, SECTIONS, type Audience } from './sections';
 import { workshopStore } from './workshop-store.js';
@@ -598,6 +600,8 @@ export function WorkshopScreen() {
     tab: TabKey;
     feed: NeedsFeedItem[] | null; feedError: boolean; feedCapped: boolean;
   };
+  // The new Needs you, when this device has it switched on (an experiment).
+  const reviewFlow = useReviewFlowEnabled();
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
   useNeedsSeen();
   // THE LIST HAS A SEARCH at its head, at every width (#5296; D put it there
@@ -900,7 +904,20 @@ export function WorkshopScreen() {
             {/* ONE FEED, EVERYTHING MIXED (#3270): every decision owed by you
                 across your projects, one per screen, newest first, drawn by
                 a project's own Needs you feed (#3488). See ./needs-reel.tsx. */}
-            {state.error ? null : (
+            {state.error ? null : reviewFlow ? (
+              // EXPERIMENTAL (Settings, Experimental, "New Needs you"; off by
+              // default, kept on the device): the same feed as a list of
+              // title shots, each opening into its own page with a
+              // before/after slider and a vote sheet. ../review-flow/.
+              <ReviewFlow
+                items={state.feed}
+                error={state.feedError}
+                capped={state.feedCapped}
+                onDone={() => workshopController.setTab('status')}
+                onAnswered={(id, epoch) => workshopController.answered(id, epoch)}
+                onRetracted={(id) => workshopController.retracted(id)}
+              />
+            ) : (
               <NeedsReel
                 items={state.feed}
                 error={state.feedError}
@@ -1076,6 +1093,17 @@ export const workshopController = {
    * the key and `needs` drops one, so the "1 to vote" line goes with the card
    * instead of waiting for the next read to correct it.
    */
+  /**
+   * A vote taken back (the new Needs you's Undo, DELETE /api/sessions/:id/vote):
+   * the change is owed again, so it may come back into every read, and the
+   * counts and the feed are read again quietly.
+   */
+  retracted(id: number) {
+    for (const key of [...answeredVotes]) {
+      if (Number(key.slice('proposal:'.length, key.indexOf('@'))) === id) answeredVotes.delete(key);
+    }
+    void this.refreshNeeds();
+  },
   answered(id: number, epoch: number | null) {
     answeredVotes.add(answeredVoteKey(id, epoch));
     const state = workshopStore.get();

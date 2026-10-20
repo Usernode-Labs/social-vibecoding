@@ -314,6 +314,7 @@ const ITEMS_SQL = `
 //      → { items: FeedItem[] }
 //   FeedItem = { kind: 'proposal'|'governance', id, title, summary, author,
 //                number, epoch, at, yes, no, approve?, advisory?, uncounted?,
+//                staging_url (a proposal's live preview or null; feedStagingUrl),
 //                app: { slug, name, icon_url, icon_emoji } }
 //
 // The Communities screen's Needs you tab as ONE FEED: every decision owed by
@@ -388,7 +389,10 @@ const NEEDS_FEED_SQL = `
            -- #5365: whether the change waits on an explicit approval (who
            -- decides), which withViewerDecides reads through viewerDecides
            -- exactly as /promoted marks its rows.
-           cs.requires_explicit_approval, cs.explicit_approval_reason::text
+           cs.requires_explicit_approval, cs.explicit_approval_reason::text,
+           -- The change's live preview, for "Try it" across projects: the
+           -- column /promoted hands a project's own card.
+           cs.staging_url::text AS staging_url
       FROM chat_sessions cs
       LEFT JOIN users u ON u.id = cs.user_id
      WHERE ${OWED_PROPOSALS_WHERE}
@@ -400,7 +404,8 @@ const NEEDS_FEED_SQL = `
            NULL::text, NULL::jsonb, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
            NULL::jsonb, NULL::text, NULL::jsonb, NULL::text, NULL::jsonb,
            i.kind::text, i.payload,
-           NULL::boolean AS requires_explicit_approval, NULL::text AS explicit_approval_reason
+           NULL::boolean AS requires_explicit_approval, NULL::text AS explicit_approval_reason,
+           NULL::text AS staging_url
       FROM issues i
       LEFT JOIN users u ON u.id = i.created_by
      WHERE ${OWED_GOVERNANCE_WHERE}
@@ -412,7 +417,7 @@ const NEEDS_FEED_SQL = `
          o.reviewed_head_sha, o.checks_commit_sha, o.handoff_head_sha,
          o.pr_diagram, o.pr_diagram_source, o.pr_touches, o.pr_touches_sha, o.visuals_agg,
          o.decision_kind, o.decision_payload,
-         o.requires_explicit_approval, o.explicit_approval_reason,
+         o.requires_explicit_approval, o.explicit_approval_reason, o.staging_url,
          -- #5365: whether this viewer's vote is counted at all (a test
          -- account's is not) — the identity/app-access half of the question;
          -- viewerDecides below covers the approver-and-rules half.
@@ -670,6 +675,24 @@ async function withPictures(pool, rows, { shotsPresent = false } = {}) {
   return rows;
 }
 
+/**
+ * A feed row's live preview URL, or null: exactly when the change's own card
+ * on its project offers "Try it" as a live preview. /promoted hands that card
+ * `staging_url` and services/staging.js previewDisplayState calls a row with
+ * one 'ready' (building and failed are both states of a row without one), and
+ * the card's preview (AppView._cardPreviewSpec) is live on a URL. The feed is
+ * proposals up for a vote ('promoted'), the one state a card is drawn from
+ * here. The URL is the column as stored: a local one names `localhost`,
+ * which the client rewrites (public/js/dev-host.js), as it does on the card.
+ * Opening it goes through AppView.swapToStagingForSession, which rebuilds a
+ * preview the idle collector took down since.
+ */
+function feedStagingUrl(row) {
+  if (row.kind === 'governance' || (row.status && row.status !== 'promoted')) return null;
+  const url = typeof row.staging_url === 'string' ? row.staging_url.trim() : '';
+  return url || null;
+}
+
 /** Shape NEEDS_FEED_SQL's rows for the client. Exported for tests. */
 function shapeNeedsFeed(rows) {
   return rows.map((row) => ({
@@ -688,6 +711,9 @@ function shapeNeedsFeed(rows) {
     // card keeps its usual place and wording.
     ...(row.uncounted ? { uncounted: true } : {}),
     ...(row.advisory ? { advisory: true } : {}),
+    // "Try it" from the feed: a change's live preview, as its project's own
+    // card has it (feedStagingUrl). Proposals only.
+    ...(row.kind === 'governance' ? {} : { staging_url: feedStagingUrl(row) }),
     // #4490: the card's picture, the same as a project's Needs you draws.
     ...pictureFields(row),
     app: {
@@ -742,6 +768,9 @@ const DEMO_NEEDS_FEED = [
     kind: 'proposal', id: -103, title: 'Sort recipes by rating',
     summary: 'Adds a Rating option to the sort menu, highest first, and remembers the choice per person.',
     author: 'staging-demo-partner', number: null, epoch: 0, at: '2026-09-24T12:00:00Z', yes: 2, no: 0,
+    // No preview: the demo project has no container (stagingMockProposals
+    // gives its cards none either), so "Try it" is not offered.
+    staging_url: null,
     // #4490: its author's diagram, so the feed's picture can be seen on ?demo=1.
     diagram: {
       version: 1, kind: 'changes',
@@ -757,6 +786,7 @@ const DEMO_NEEDS_FEED = [
     kind: 'proposal', id: -104, title: 'Let members share a shopping list',
     summary: 'A shared list on the app\'s home screen that any member can add to and tick off.',
     author: 'staging-demo-partner', number: null, epoch: 0, at: '2026-09-22T10:00:00Z', yes: 1, no: 1,
+    staging_url: null,
     // #5365: the demo card for an advisory vote, so the feed's label and the
     // deciding-first order can be seen on ?demo=1 without a governed project.
     advisory: true,
@@ -790,6 +820,7 @@ const DEMO_NEEDS_FEED = [
     kind: 'proposal', id: -106, title: '[Demo] Show a word count under each note',
     summary: 'A demo change on a project that is just yours: each note shows how many words it has.',
     author: null, number: null, epoch: 0, at: '2026-09-20T09:00:00Z', yes: 0, no: 0, approve: true,
+    staging_url: null,
     app: { slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_url: null, icon_emoji: '🎮' },
   },
 ];
@@ -857,6 +888,12 @@ function demoNeedsVoteRoutes() {
     const vote = req.body?.vote;
     if (!['yes', 'no'].includes(vote)) return res.status(400).json({ error: 'Vote must be "yes" or "no"' });
     return res.json({ ok: true, demo: true, vote });
+  });
+  // Its Undo, answered the same way: nothing was cast, so nothing is taken back.
+  router.delete('/api/sessions/:id/vote', (req, res, next) => {
+    if (!isDemoNeedsProposal(req.params.id)) return next();
+    if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+    return res.json({ ok: true, demo: true, retracted: true });
   });
   return router;
 }

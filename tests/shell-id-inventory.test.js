@@ -372,6 +372,8 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── New Needs you (an experiment) ──────────────────────────────────
+  'review-flow-enabled': 'New Needs you: the switch in Settings, Experimental (off by default, kept on the device by features/review-flow/settings.ts) that draws the Communities tab\'s Needs you as the new review flow. settings.js paints and saves it through window.UsernodeReact.reviewFlow.',
   // ── #5286: the admin console marks itself ─────────────────────────
   'admin-console-bar': '#5286: the admin console\'s own band at the top of #admin-root, ships hidden and is revealed through classList by AdminConsole._renderShell for an admin (never in public mode).',
   'admin-exit': '#5286: the band\'s Exit link, href #profile, which goes back to the address the console was entered from when one is known.',
