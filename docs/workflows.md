@@ -715,6 +715,8 @@ A new machine brings the same two layers:
 | `main-check` | `app:<id>`, for each app whose main was checked after a merge or a new commit | `idle` → `running` (→ `confirming`) → `idle`; `idle` ⇄ `rechecking` while paused | On everywhere; its old paths are deleted |
 | `bot-request` | `request:<appId>:<issue>`, for each request the Homeroom bot is owed a look at | `idle` → `queued` → `reading` / `following_up` → `idle`; `building`; `older_turn` | On everywhere; its old paths are deleted |
 | `bot-lane` | `bot`, one for the Homeroom bot | `open` | On everywhere; its old paths are deleted |
+| `bench-lane` | `lane`, one for the App bench | `open` | Grants benchmark trials (each a `bot-build`); the leader's lane loop is deleted |
+| `shots-eval` | `evals`, one for the shots evals | `open` | Grants eval trials and runs each one's phases; the leader's eval runner is deleted |
 | `release` | `release:<GIT_SHA>`, one per release of the platform | `adopting` → `done`, `failed` or `abandoned` | Runs the boot adoptions once per release (`release.adopt`), in that release's own processes |
 | `clock` | `clock:<job>`, one per scheduled platform job | `waiting` ⇄ `running`; `retired` | Runs each job on its schedule (`clock.<job>`), wherever the workflow runs; its old leader timers are deleted |
 
@@ -822,6 +824,87 @@ project's triage session, three builds per project.
   for (a person wrote on an idle request, a merge, a settings change), at once for a first
   version just filed, with the five-minute sweeps beside each full one (`bot.sweep`). Its one deadline is the earliest of those, a
   pause's end and the next waiting request becoming eligible.
+
+### bench-lane
+
+Which of the App bench's trials run, and when (`src/workflow/bench-lane/`,
+`services/bench/lane.js`). One instance (`lane`), so its limits hold however many processes
+run the workflow: a run's `concurrency` (at most 9), at most three heavy trials of a run (a
+build, a checks fix, a spec, a first version, a capture; a studio run, its concurrency),
+eleven in flight across every run, none while the live bot's work fills `liveAtOnce` (its
+slots read as bot-lane reads them), a later change's side builds only in the slots live work
+leaves free, and each run's dollar cap (what it spent, plus every trial of it running at its
+estimate, plus the next one's).
+- **A grant** is the trial's claim (`running`, its `build_key`) written in the transition
+  that sends its build's `Requested` to `bot-build/trial:<id>@<nonce>`, with `replyTo` the
+  lane: a granted trial is counted at once, from its row, whether or not its build has
+  started. Its build hears `BuildEnded`; a lost build's record (`build.lost`) asks for a
+  `Look`; a running lane looks again every five minutes anyway, and an idle one every ten,
+  so an ask to look that was lost (a launch's, an older release's wake) waits no longer. A
+  claim whose trial changed outside the lock (an older release's write) is retried, so no
+  build goes for a claim that did not happen.
+- **Recording** is the trial's own build's (`recordTrial`): the trial's result and its
+  run's charge in one statement, by the build its claim named (`build_key`), the branch it
+  cut kept for the sweep, and every session it opened (`session_ids`) charged when it is
+  lost. A build sent for a claim that did not happen runs nothing. A trial whose build
+  ended without recording it (ten minutes on), or an older release's claim that never got a
+  build (an hour on), is recorded lost by the lane (`bench.lost`); a build a restart caught
+  between its record and saving it redoes what follows the record (sessions put away, the
+  grade, a side build's result).
+- **Cancels** (a run, a trial; a side build given up) are its events: written in the
+  transition, a trial running stopped by `StopRequested` to its build, which always comes
+  after that build's `Requested` from this instance. A trial an older release's lane
+  claimed names no build on its row: its build is found by the trial it runs, as that lane
+  stopped it. A run marked done or capped is
+  decided here, its write checking again that nothing of it waits; a trial added to an
+  ended run reopens it (`Look` with `runId`).
+- **The allowance** (the bench user's week) is legacy code: looked at by `bench.gate`, kept a
+  minute in the instance, nothing granted while it is unknown or spent. A provider refusing
+  the bench key for its limit pauses grants half an hour (read from the trials).
+- **Only it claims**: a trigger refuses `pending → running` outside a transition, so an older
+  build's lane, during a rollout, starts nothing. A run's queue is read heavy and light
+  trials apart, so one holding its heavy trials still finds its light ones. Its sweeps (kept branches, side results a
+  trial never filled, the studio's previews) are the `bench-sweep` clock.
+
+### shots-eval
+
+Before & after shots evals' trials (`src/workflow/shots-eval/`, `services/shots-eval.js`):
+an admin's comparison of shots agent recipes on merged proposals. One instance (`evals`):
+at most `SHOTS_EVAL_CONCURRENCY` trials at once (2, at most 4), never two on one proposal,
+never beside the proposal's own shots run, and each eval's cap (what it spent, plus each
+trial running at what it has spent or its estimate, the larger, plus the next one's).
+- **A trial's phases are this instance's work**, the shots machine's steps on the trial's
+  attempt id: `eval.copies` (`buildCopies`, stopped between phases once the trial's row
+  says it ended or is stopping; its recipe kept on the trial from here), `eval.agent` (`dispatchAgent` with the arm's model, prompts and time, the
+  turn owned by the item; busy or gone, tried again 20 seconds later while a minute is
+  left), `eval.compare` (`compareScreens`, its light files kept), and, however it ends,
+  `eval.cleanup` (`cleanupRun`: its turn by its record, copies, workspace, and the
+  proposal's temporary worker unless another run of the proposal uses it), tried until
+  done. Each phase has its own deadline; past it the trial fails and is cleaned up. A
+  trial that ends while its copies are built waits for them to stop (its row's
+  `stopping_at` stops them at their next step) before its cleanup, as the shots machine
+  does. No trial starts on a proposal with a turn under way, nor while two releases serve
+  (an older one's proxy would bill its calls to the author). The rows of the trials it
+  runs beat every two minutes, so an older release's runner never takes one for its own
+  lost one; a row ended elsewhere (an older release's write) ends its trial here too.
+- **Its end** is written once its cleanup is done, and settles its attempt's cost
+  (`shots_eval_attempt_costs`, `workflow/shots-eval/costs.ts`): what the proxy billed and
+  what Claude Code reported, each a running total for the attempt, and the larger charged to
+  the trial and its eval, counted in that transition's own cap check. A call or a report
+  that comes after (a straggler, a dispatch that returns after a cancel) charges only what it
+  adds to the larger total.
+- **Billing**: the proxy reads the session's turn record; a shots turn the eval machine's
+  work owns is that trial's (`shots-eval.billFor`), on whatever attempt; one nothing owns
+  (an older release's runner) is the trial its correlation names on that session. The
+  platform key, the eval's cap from rows, each call added to its attempt's costs (an older
+  runner's on the trial's row, which that runner settles, or this machine when it adopts
+  the trial). Never this process's memory, and
+  never the session alone (the proposal's own shots rerun is its author's).
+- **Cancel** (`EvalCancelled`): the eval and its trials not ended read cancelled at once;
+  what runs is stopped (its work cancelled, its turn stopped) and cleaned up, an older
+  release's runner's trials of it included. A trial an
+  older build's runner left (its heartbeat quiet five minutes) is cleaned up and queued
+  again once, then failed. A trigger refuses a claim or a re-queue outside a transition.
 
 ### governance-proposal
 
@@ -1214,8 +1297,8 @@ copies go) and taken again once while the proposal is open.
   run under way
   holds the proposal's worker: `session-work.ts` `shotsRunningSql` is what the preview
   machine and merge-followups (its `worker.retire`) read.
-- **Shots evals** (an admin's comparison of the agent's prompts) run the same steps one
-  after another in their own runner (`shots-eval-runner.js`), on their own tables.
+- **Shots evals** (an admin's comparison of the agent's prompts) run the same steps as the
+  `shots-eval` machine's work, on their own tables (below).
 
 ### proposal
 
@@ -1609,6 +1692,9 @@ intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
   tries), so an effect it made is not made again: a translation batch it paid for is
   recorded, not submitted a second time. The translation target is `catalog` whatever the
   English, so a deploy that changes a string carries the batch on too.
+- **The App bench.** `bench-sweep` (every 10 minutes): kept `bench/` branches past their
+  time, side builds' results a trial never filled, and the studio's previews past their
+  day. Which trials run is the `bench-lane` machine's.
 - **Production apps.** `app-health` (each running app's runtime, every minute) and
   `main-drift` (each running app's main on GitHub, every 5 minutes) report to app-delivery
   (`Unhealthy`, `MainMoved`), which decides.

@@ -320,13 +320,6 @@ test('the catalog: a model entered for some stages only, a prompt too big for a 
   assert.equal(catalog.estimateTrialCost({}, 'build', []), catalog.FALLBACK_USD.build);
 });
 
-test('the cap holds the next trial when what is spent, under way and next would cross it', () => {
-  assert.equal(lane.fitsCap({ spentUsd: 49, capUsd: 50, inFlightEst: 0, nextEst: 0.5 }), true);
-  assert.equal(lane.fitsCap({ spentUsd: 49, capUsd: 50, inFlightEst: 0.6, nextEst: 0.5 }), false);
-  assert.equal(lane.fitsCap({ spentUsd: 50, capUsd: 50, inFlightEst: 0, nextEst: 0 }), true);
-  assert.equal(lane.fitsCap({ spentUsd: 50.01, capUsd: 50 }), false);
-});
-
 // Run 196's last ten trials, failed on their first request by the bench
 // key's weekly limit at OpenRouter: the platform's fault, not the model's.
 test('a provider refusing the key for its spending limit fails the trial as the platform, never as the model', () => {

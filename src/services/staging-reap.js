@@ -1095,7 +1095,7 @@ async function previewServerDrainStatus(config, { now = Date.now(), force = fals
       if (state.status === 'not_found') continue;
       if (dbManager.previewDatabaseServerOf(state.labels) === dbManager.PREVIEW_SERVER) status.previews.push(Number(session.id));
     }
-    // A shots eval's trial (services/shots-eval-runner.js) uses the same
+    // A shots eval's trial (the shots-eval machine) uses the same
     // kind of copies on the same server.
     const runs = await pool.query(
       `SELECT ((SELECT count(*) FROM shot_runs

@@ -67,7 +67,6 @@ const MIN_CAP_USD = 0.5;
 const MAX_CAP_USD = 1000;
 const MAX_LIVE_PREVIEWS = 4;
 const PREVIEW_HOURS = 24;
-const PREVIEW_SWEEP_MS = 10 * 60 * 1000;
 const HOST_WAIT_MS = 90 * 1000;
 const LABEL_RE = /^[a-z0-9][a-z0-9._-]{0,39}$/;
 const SHA_RE = /^[0-9a-f]{40}$/i;
@@ -79,8 +78,6 @@ const GALLERY_TRIALS_PER_BRIEF = 30;
 // version's can draw two full screens (~30-60K characters in all); it was
 // clipped at 12,000, which cut off everything after the opening section.
 const TRIAL_SPEC_CHARS = 120000;
-
-let lastPreviewSweepAt = 0;
 
 function httpError(status, error, extra = {}) {
   return { ok: false, status, error, ...extra };
@@ -468,7 +465,7 @@ async function launch(pool, config, body = {}, { actorId = null, deps = {} } = {
     client.release();
   }
   await packs.markUsed(pool, v.packIds);
-  require('./lane').wake();
+  await require('./lane').look();
   log.info('bench', 'Studio run launched', { runId: run.id, briefs: tasks.length, models: v.models, packs: v.packIds, trials: plan.task.length });
   return {
     ok: true,
@@ -1343,15 +1340,13 @@ async function deployPreview(pool, config, { trialId, user, deps = {} } = {}) {
 }
 
 /**
- * Previews over time (on the leader, from the lane's pass): a building one
- * takes the preview machine's outcome (live once it serves the build, failed
- * once its build failed); a live one is kept from the platform's idle
+ * Previews over time (the bench-sweep clock, every ten minutes): a building
+ * one takes the preview machine's outcome (live once it serves the build,
+ * failed once its build failed); a live one is kept from the platform's idle
  * collection until it is a day old, then taken down and its session
- * archived. Throttled; never throws.
+ * archived. Never throws.
  */
-async function sweepPreviews(pool, deps = {}, now = Date.now()) {
-  if (now - lastPreviewSweepAt < PREVIEW_SWEEP_MS && !deps.force) return 0;
-  lastPreviewSweepAt = now;
+async function sweepPreviews(pool, deps = {}) {
   let ended = 0;
   try {
     await pool.query(
@@ -1505,5 +1500,4 @@ module.exports = {
   sweepPreviews,
   gallery,
   listStudioRuns,
-  _resetForTests() { lastPreviewSweepAt = 0; },
 };

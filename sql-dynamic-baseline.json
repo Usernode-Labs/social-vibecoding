@@ -1753,6 +1753,13 @@
       "preview": "`SELECT s.user_id, s.expires_at, u.username, u.is_admin FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = $1 AND ${nativeWebSessionIsLive('s')}`"
     },
     {
+      "source": "src/workflow/bench-lane/facts.ts",
+      "kind": "structural-template",
+      "fingerprint": "8354c903d956bc204084",
+      "count": 1,
+      "preview": "`SELECT COUNT(*)::int AS n FROM (${SLOTS_IN_USE_SQL}) s`"
+    },
+    {
       "source": "src/workflow/bot-lane/facts.ts",
       "kind": "runtime-built-identifier",
       "fingerprint": "49b91267efa786ab4198",

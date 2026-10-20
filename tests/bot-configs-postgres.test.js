@@ -32,6 +32,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
+const { asTransition } = require('./lib/as-transition');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -207,7 +208,7 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
   await t.test('a live first version spawns its side builds on the App bench lane, linked to it', async () => {
     runId = await runRow();
     const snapshotId = await snapshotFor(runId);
-    const lane = { woke: 0, wake() { this.woke += 1; } };
+    const lane = { woke: 0, look() { this.woke += 1; } };
     spawned = await configs.spawnSideBuilds(pool, {}, { botRunId: runId, app, snapshotId, current, deps: { lane } });
     assert.deepEqual({ derived: spawned.derived, trials: spawned.trials, skipped: spawned.skipped }, { derived: 1, trials: 1, skipped: 0 });
     assert.equal(lane.woke, 1, 'the lane is woken');
@@ -262,7 +263,7 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
   await t.test('once the week\'s side budget is spent, a side build is skipped and says why', async () => {
     await pool.query("INSERT INTO platform_settings (key, value) VALUES ('bot_config_side_weekly_cents', '0')");
     const other = await runRow({ issue: 2 });
-    const out = await configs.spawnSideBuilds(pool, {}, { botRunId: other, app, snapshotId: await snapshotFor(other), current, deps: { lane: { wake() {} } } });
+    const out = await configs.spawnSideBuilds(pool, {}, { botRunId: other, app, snapshotId: await snapshotFor(other), current, deps: { lane: { look() {} } } });
     assert.deepEqual({ trials: out.trials, skipped: out.skipped, derived: out.derived }, { trials: 0, skipped: 1, derived: 1 });
     const { rows: [r] } = await pool.query(
       'SELECT status, error FROM bot_config_results WHERE bot_run_id = $1 AND config_version_id = $2', [other, allGlm.id],
@@ -429,7 +430,7 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
   await t.test('a side trial recorded by the lane: its reviewer calls beside the ledger, its branch not kept, its result made', async () => {
     const lanes = require('../src/services/bench/lane');
     const id = await runRow({ issue: 8 });
-    const out = await configs.spawnSideBuilds(pool, {}, { botRunId: id, app, snapshotId: await snapshotFor(id), current, deps: { lane: { wake() {} } } });
+    const out = await configs.spawnSideBuilds(pool, {}, { botRunId: id, app, snapshotId: await snapshotFor(id), current, deps: { lane: { look() {} } } });
     assert.equal(out.trials, 1);
     const { rows: [tr] } = await pool.query('SELECT id, run_id FROM bench_trials WHERE bot_run_id = $1', [id]);
     const { rows: [benchUser] } = await pool.query("INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bench', 'x', TRUE) RETURNING id");
@@ -442,7 +443,7 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
        VALUES ($1, $2, $3, 'codex_openrouter', 'completed', $4, 0.3, 1000, 100)`,
       [crypto.randomUUID(), sess.id, benchUser.id, GLM],
     );
-    await pool.query("UPDATE bench_trials SET status = 'running', session_id = $2, started_at = NOW() WHERE id = $1", [tr.id, sess.id]);
+    await asTransition(pool, "UPDATE bench_trials SET status = 'running', session_id = $2, started_at = NOW() WHERE id = $1", [tr.id, sess.id]);
     const row = await lanes.loadTrialContext(pool, tr.id);
     const deleted = [];
     const status = await lanes.recordTrial(pool, {
@@ -519,7 +520,7 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
   });
 
   await t.test('a first version given up stops its side builds; a side build the platform failed is skipped, not "didn\'t build"', async () => {
-    const lane = { wake() {} };
+    const lane = { look() {} };
     const id = await runRow({ issue: 14 });
     const out = await configs.spawnSideBuilds(pool, {}, { botRunId: id, app, snapshotId: await snapshotFor(id), current, deps: { lane } });
     assert.deepEqual([out.trials, out.derived], [1, 1]);
@@ -535,7 +536,8 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
     // A running one is stopped through the lane.
     const id2 = await runRow({ issue: 15 });
     await configs.spawnSideBuilds(pool, {}, { botRunId: id2, app, snapshotId: await snapshotFor(id2), current, deps: { lane } });
-    const { rows: [running] } = await pool.query("UPDATE bench_trials SET status = 'running' WHERE bot_run_id = $1 RETURNING id", [id2]);
+    // (Running as the lane's claim made it: only its transition may.)
+    const { rows: [running] } = await asTransition(pool, "UPDATE bench_trials SET status = 'running' WHERE bot_run_id = $1 RETURNING id", [id2]);
     await configs.abandonSideBuilds(pool, id2, 'lost', { lane: stopLane });
     assert.deepEqual(stopped, [running.id]);
     // The platform failing a side build says nothing about its configuration.
@@ -582,7 +584,7 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
       },
     };
     const outs = await Promise.all(runs.map((id, i) => configs.spawnSideBuilds(slow, {}, {
-      botRunId: id, app, snapshotId: snaps[i], current, deps: { lane: { wake() {} } },
+      botRunId: id, app, snapshotId: snaps[i], current, deps: { lane: { look() {} } },
     })));
     assert.equal(outs[0].trials + outs[1].trials, 1, 'one fits, and only one is made');
     assert.equal(outs[0].skipped + outs[1].skipped, 1, 'the other is skipped, and says why');

@@ -506,14 +506,12 @@ test('admins read the week\'s incidents newest first, and a line says what happe
 
 // ── Shutdown ─────────────────────────────────────────────────────────────
 
-test('shutdown stops the benchmark lane before the pool closes; the bot has no loop of its own to stop', async () => {
+test('neither the bot nor the benchmark has a loop of its own for shutdown to stop', async () => {
   const src = require('node:fs').readFileSync(require.resolve('../server'), 'utf8');
-  const cleanup = src.slice(src.indexOf('async function cleanup()'), src.indexOf("process.on('SIGTERM', cleanup);"));
-  const laneStop = cleanup.indexOf("require('./src/services/bench/lane').stop()");
-  const poolEnd = cleanup.indexOf('shutdownPool.end()');
-  assert.ok(laneStop > 0 && poolEnd > laneStop);
-  // The bot's loop is the bot-request and bot-lane machines, whose work
-  // stops with the workflow runtime: nothing in server.js starts or stops it.
+  // The bot's loop is the bot-request and bot-lane machines, the
+  // benchmark's the bench-lane machine, whose work stops with the workflow
+  // runtime: nothing in server.js starts or stops either.
   assert.doesNotMatch(src, /require\('\.\/src\/services\/homeroom-bot'\)\.(start|stop)\(/);
+  assert.doesNotMatch(src, /require\('\.\/src\/services\/bench\/lane'\)\.(start|stop)\(/);
   for (const gone of ['start', 'stop', 'drainBuilds', 'runOnce']) assert.equal(bot[gone], undefined, gone);
 });

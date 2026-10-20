@@ -13607,6 +13607,33 @@ ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS bot_config_version_id INTEGER
 CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_trials_side_build
   ON bench_trials(bot_run_id, bot_config_version_id, attempt) WHERE bot_run_id IS NOT NULL;
 
+-- The App bench lane's machine (src/workflow/bench-lane/) claims a trial in
+-- the transition that sends its build: `build_key` names that build
+-- (bot-build `trial:<id>@<nonce>`), and only it records the trial
+-- (bench/lane.js recordTrial). `session_ids`: every session the trial
+-- opened (a first version's triage, then its build), so a lost one is
+-- charged for all of them.
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS build_key TEXT;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS session_ids INTEGER[] NOT NULL DEFAULT '{}';
+-- A trial is claimed by the lane's machine only. An older build's lane,
+-- still running during a rollout, counts only its own process's claims, so
+-- its claims could pass the limits and the caps the machine keeps: they are
+-- refused, and its passes start nothing.
+CREATE OR REPLACE FUNCTION wf_guard_bench_claim() RETURNS TRIGGER AS $$
+BEGIN
+  IF current_setting('app.wf_writer', true) IS DISTINCT FROM 'transition' THEN
+    RAISE EXCEPTION 'WF_OWNERSHIP_VIOLATION: a bench trial is claimed only by the bench lane''s machine';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS bench_trials_wf_claim ON bench_trials;
+CREATE TRIGGER bench_trials_wf_claim
+  BEFORE UPDATE OF status ON bench_trials
+  FOR EACH ROW
+  WHEN (OLD.status = 'pending' AND NEW.status = 'running')
+  EXECUTE FUNCTION wf_guard_bench_claim();
+
 -- What one configuration version made of one live first version: the
 -- current version's from the live build itself (source 'live'), a side
 -- version equal to it with no reviewer from the live build's round-0
@@ -14907,21 +14934,13 @@ CREATE TABLE IF NOT EXISTS platform_db_roles (
 );
 COMMENT ON TABLE platform_db_roles IS 'staging:private';
 
--- What the leader keeps in memory and an admin screen reads, written by the
--- leader for the processes that do not lead (services/leader-status.js,
--- docs/plans/web-and-conductor.md): the bench lane, the domain sweep, the
--- preview reaper, ... One row per status, rewritten every few seconds while
--- its leader leads; a row nobody rewrote for two minutes is read as none.
-CREATE TABLE IF NOT EXISTS leader_status (
-  key          TEXT PRIMARY KEY,
-  value        JSONB NOT NULL,
-  process_id   TEXT,
-  published_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE leader_status IS 'staging:private';
+-- What the leader kept in memory for the processes that did not lead
+-- (the bench lane's status was the last): its machines read Postgres now.
+-- An older build's writes and reads of it, during a rollout, log and carry on.
+DROP TABLE IF EXISTS leader_status;
 
--- Before & after shots EVALS (services/shots-eval.js, its runner in
--- services/shots-eval-runner.js): an admin trying the shots agent with
+-- Before & after shots EVALS (services/shots-eval.js, its trials run by the
+-- shots-eval machine, src/workflow/shots-eval/): an admin trying the shots agent with
 -- another model, prompt or time budget on proposals that have already
 -- merged, through the connector, and comparing what it saves with what the
 -- live shots agent saves on the same proposals in the same batch. Nothing
@@ -15014,11 +15033,37 @@ CREATE TABLE IF NOT EXISTS shots_eval_trials (
     CHECK (state IN ('planned', 'provisioning', 'exploring', 'reviewing', 'verified', 'failed', 'cancelled')),
   CONSTRAINT shots_eval_trials_repetition_check CHECK (repetition BETWEEN 1 AND 3)
 );
--- What the Anthropic proxy billed for the trial on a process other than the
--- one running it (services/shots-eval-runner.js noteRemoteSpend): during a
--- release the runner may finish a trial on a Pod the Service no longer sends
--- its shots agent's calls to. Settled into cost_cents with the rest.
+-- What the Anthropic proxy billed for a trial an older release's runner
+-- runs (during a rollout; that runner settles it itself), on whichever
+-- process each call reached (services/shots-eval.js billFor). The shots-eval
+-- machine's trials are billed per attempt (shots_eval_attempt_costs); when
+-- one ends, what is here for its attempt moves there and is emptied.
 ALTER TABLE shots_eval_trials ADD COLUMN IF NOT EXISTS proxy_cents NUMERIC(12,4) NOT NULL DEFAULT 0;
+-- When the shots-eval machine decided a running trial ends (a cancel, a
+-- phase past its time, its row ended elsewhere): its work stops at its next
+-- step from then, though the row reads active until its cleanup is done
+-- and its end written. Emptied when the trial is put back.
+ALTER TABLE shots_eval_trials ADD COLUMN IF NOT EXISTS stopping_at TIMESTAMPTZ;
+-- A trial is claimed (planned to provisioning) and put back (to planned)
+-- by the shots-eval machine only (src/workflow/shots-eval/). An older
+-- build's runner, still running during a rollout, counts only its own
+-- process's trials: its claims and its recovery are refused, and the
+-- trials it already runs finish there.
+CREATE OR REPLACE FUNCTION wf_guard_eval_claim() RETURNS TRIGGER AS $$
+BEGIN
+  IF current_setting('app.wf_writer', true) IS DISTINCT FROM 'transition' THEN
+    RAISE EXCEPTION 'WF_OWNERSHIP_VIOLATION: a shots eval trial is claimed only by the shots-eval machine';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS shots_eval_trials_wf_claim ON shots_eval_trials;
+CREATE TRIGGER shots_eval_trials_wf_claim
+  BEFORE UPDATE OF state ON shots_eval_trials
+  FOR EACH ROW
+  WHEN ((OLD.state = 'planned' AND NEW.state = 'provisioning')
+        OR (OLD.state IN ('provisioning', 'exploring', 'reviewing') AND NEW.state = 'planned'))
+  EXECUTE FUNCTION wf_guard_eval_claim();
 CREATE UNIQUE INDEX IF NOT EXISTS idx_shots_eval_trials_arm
   ON shots_eval_trials (eval_run_id, session_id, COALESCE(config_id, 0), repetition);
 CREATE INDEX IF NOT EXISTS idx_shots_eval_trials_planned
@@ -15026,6 +15071,23 @@ CREATE INDEX IF NOT EXISTS idx_shots_eval_trials_planned
 CREATE INDEX IF NOT EXISTS idx_shots_eval_trials_active
   ON shots_eval_trials (session_id) WHERE state IN ('provisioning', 'exploring', 'reviewing');
 COMMENT ON TABLE shots_eval_trials IS 'staging:private';
+
+-- What one attempt of a shots-eval machine's trial cost, as it comes
+-- (src/workflow/shots-eval/costs.ts): what the proxy billed for its calls
+-- and what Claude Code reported its dispatches cost, each a running total,
+-- and what its trial and eval were charged for it. Settled by the trial's
+-- end (`settled_at`): charged the larger total; anything that comes after
+-- charges only what it adds to that larger total.
+CREATE TABLE IF NOT EXISTS shots_eval_attempt_costs (
+  attempt_id      VARCHAR(32) PRIMARY KEY CHECK (attempt_id ~ '^[0-9a-f]{32}$'),
+  trial_id        INTEGER NOT NULL REFERENCES shots_eval_trials(id) ON DELETE CASCADE,
+  proxy_cents     NUMERIC(12,4) NOT NULL DEFAULT 0,
+  reported_cents  NUMERIC(12,4) NOT NULL DEFAULT 0,
+  charged_cents   NUMERIC(12,4) NOT NULL DEFAULT 0,
+  settled_at      TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_shots_eval_attempt_costs_trial ON shots_eval_attempt_costs (trial_id);
+COMMENT ON TABLE shots_eval_attempt_costs IS 'staging:private';
 
 -- What a trial saved, stored the way a shots run's files are
 -- (shot_artifacts): one row per file, gone with the trial. Read only

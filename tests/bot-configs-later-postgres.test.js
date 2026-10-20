@@ -169,7 +169,7 @@ test('the later changes\' configurations against the full PostgreSQL schema', { 
     runId = await runRow({ issue: 1, proposal: await proposalSession('merged') });
     await pool.query('UPDATE homeroom_bot_runs SET bot_config_version_id = $2 WHERE id = $1', [runId, laterCurrent.id]);
     const snapshotId = await snapshotFor(runId);
-    const lane = { woke: 0, wake() { this.woke += 1; } };
+    const lane = { woke: 0, look() { this.woke += 1; } };
     const out = await configs.spawnSideBuilds(pool, {}, {
       botRunId: runId, app, snapshotId, current: laterCurrent, scope: 'later', deps: { lane },
     });
@@ -214,7 +214,7 @@ test('the later changes\' configurations against the full PostgreSQL schema', { 
     assert.equal(await configs.sideWeeklyCents(pool), 2500, 'the first versions\' is its own setting');
     const other = await runRow({ issue: 2 });
     const out = await configs.spawnSideBuilds(pool, {}, {
-      botRunId: other, app, snapshotId: await snapshotFor(other), current: laterCurrent, scope: 'later', deps: { lane: { wake() {} } },
+      botRunId: other, app, snapshotId: await snapshotFor(other), current: laterCurrent, scope: 'later', deps: { lane: { look() {} } },
     });
     assert.deepEqual({ trials: out.trials, skipped: out.skipped }, { trials: 0, skipped: 1 });
     const { rows: [r] } = await pool.query('SELECT status, error FROM bot_config_results WHERE bot_run_id = $1', [other]);
@@ -230,7 +230,7 @@ test('the later changes\' configurations against the full PostgreSQL schema', { 
     const skipped = await configs.spawnSideBuilds(pool, {}, {
       botRunId: platform, app, snapshotId: await snapshotFor(platform), current: laterCurrent, scope: 'later',
       skipReason: "the platform's own repository is left out of side builds (homeroom_bot_shadow_build_platform is off)",
-      deps: { lane: { wake() { throw new Error('nothing is queued'); } } },
+      deps: { lane: { look() { throw new Error('nothing is queued'); } } },
     });
     assert.deepEqual({ trials: skipped.trials, skipped: skipped.skipped }, { trials: 0, skipped: 1 });
     const { rows: [p] } = await pool.query('SELECT status, error FROM bot_config_results WHERE bot_run_id = $1', [platform]);
@@ -359,7 +359,7 @@ test('the later changes\' configurations against the full PostgreSQL schema', { 
   await t.test('a later build given up stops its side builds, in its own words', async () => {
     const id = await runRow({ issue: 6 });
     await pool.query('UPDATE homeroom_bot_runs SET bot_config_version_id = $2 WHERE id = $1', [id, laterCurrent.id]);
-    await configs.spawnSideBuilds(pool, {}, { botRunId: id, app, snapshotId: await snapshotFor(id), current: laterCurrent, scope: 'later', deps: { lane: { wake() {} } } });
+    await configs.spawnSideBuilds(pool, {}, { botRunId: id, app, snapshotId: await snapshotFor(id), current: laterCurrent, scope: 'later', deps: { lane: { look() {} } } });
     const stopped = await configs.abandonSideBuilds(pool, id, 'not needed any more', { lane: { cancelTrial() {} } });
     assert.equal(stopped, 1);
     const { rows: [tr] } = await pool.query('SELECT status, error FROM bench_trials WHERE bot_run_id = $1', [id]);

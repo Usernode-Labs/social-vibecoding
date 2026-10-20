@@ -15,7 +15,7 @@
 //
 // So when the before revision still carries the sentinel and the after
 // revision no longer does, the run takes and publishes the after side only
-// (shots-orchestrator.executeRun): the brief tells the agent so, the run
+// (shots-orchestrator.js buildCopies): the brief tells the agent so, the run
 // control refuses a before shot, and the card says "New app: nothing
 // before". The sentinel is read from each side's own checkout, never from
 // what a page shows. A ready-made or game starter (services/app-templates.js)

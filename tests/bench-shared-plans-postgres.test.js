@@ -17,6 +17,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
+const { asTransition } = require('./lib/as-transition');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -253,7 +254,7 @@ test('a studio run\'s shared plans against the full PostgreSQL schema', { timeou
 
   await t.test('what the plan and the early first look cost is charged with the trial, beside its turns', async () => {
     const [a] = trials;
-    await pool.query("UPDATE bench_trials SET status = 'running' WHERE id = $1", [a.id]);
+    await asTransition(pool, "UPDATE bench_trials SET status = 'running' WHERE id = $1", [a.id]);
     const { rows: [before] } = await pool.query('SELECT spent_usd FROM bench_runs WHERE id = $1', [run.id]);
     const status = await lane.recordTrial(pool, {
       trialRow: { id: a.id, run_id: run.id },
