@@ -18,12 +18,13 @@
  * together), the username label and its field card, then, past a flexible
  * spacer, Continue and the terms.
  *
- * THE ADDRESS RIDES THE EYEBROW (Evan, 20 Oct 2026). It stood alone between
+ * THE ADDRESS UNDER THE EYEBROW (Evan, 20 Oct 2026). It stood alone between
  * the card and the username, and a note under the field said how they sign
  * in ("You sign in with a code we email you…"). "You're in" is what the
- * address is about, so it sits there, in its own case, and the note is
- * gone: the page is for picking a name, and the sign-in sheet still says
- * how signing in works where it is asked. The class literals are the make screen's own,
+ * address is about, so it is the line under it, and the note is gone: the
+ * page is for picking a name, and the sign-in sheet still says how signing
+ * in works where it is asked. The three points are colour emoji on the make
+ * screen's idea tile, as that screen's ideas are. The class literals are the make screen's own,
  * spelled again here rather than shared so that file is untouched;
  * tests/release-link-straight-flow.test.js holds the two to the same
  * values.
@@ -48,8 +49,6 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 
 import { Button } from '@/components/ui/button';
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
-import { IconTile } from '@/components/ui/icon-tile';
-import { ChatIcon, CheckIcon, SparklesIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { useMessages } from '../../lib/i18n/react';
@@ -83,9 +82,9 @@ export const WELCOME_CARD = 'overflow-hidden rounded-2xl bg-white shadow-[inset_
 const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
 const LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
 const INPUT = 'w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
-// The address beside "You're in": the eyebrow's size, in its own case and
-// spacing, a step darker, so it reads as the account rather than a label.
-export const WELCOME_EMAIL = 'normal-case tracking-normal font-medium text-zinc-700 dark:text-zinc-300 [overflow-wrap:anywhere]';
+// The address on its own line under "You're in": the row type's 15px, a
+// step darker than the eyebrow, so it reads as the account, not a label.
+export const WELCOME_EMAIL = 'mt-1 text-[15px] leading-5 font-medium text-zinc-700 dark:text-zinc-300 [overflow-wrap:anywhere]';
 // The make screen's line under a heading (its import form's): here, what
 // Homeroom is.
 export const WELCOME_LEAD = 'mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400';
@@ -96,15 +95,19 @@ export const WELCOME_POINTS = [
   { key: 'ask', title: 'auth:welcomePage.ask.title', line: 'auth:welcomePage.ask.line' },
   { key: 'decide', title: 'auth:welcomePage.decide.title', line: 'auth:welcomePage.decide.line' },
 ] as const;
-// A sparkle for making, a bubble for asking, and a tick for deciding: the
-// set has no ticked box, so the tile is the box.
-const POINT_ICONS = { make: SparklesIcon, ask: ChatIcon, decide: CheckIcon } as const;
-// Rows to read, not to tap: the small tile, 8px of air and a 12px gap, so
+// In colour, as the make screen's ideas are (Evan, 20 Oct 2026): a sparkle
+// for making, a speech bubble for asking, a ballot box for deciding.
+const POINT_EMOJI = { make: '\u2728', ask: '\u{1F4AC}', decide: '\u{1F5F3}\uFE0F' } as const;
+// Rows to read, not to tap: the 40px tile, as tall as the row's two lines,
+// 8px of air (2px under 800px tall, where the row is its title alone, 44px)
+// and a 12px gap, so
 // the page fits a 390x844 phone above Continue with each line on one line
 // (a narrower phone wraps them rather than cutting them off). The hairline
 // starts where the words do, as the primitive's own insets do for its tile.
-const POINT_ROW = 'gap-3 py-2 [&:not(:last-child)]:after:left-[3.75rem] [@media(max-height:799px)]:py-1.5';
-const POINT_TILE = 'text-zinc-500 dark:text-zinc-400';
+const POINT_ROW = 'gap-3 py-2 [&:not(:last-child)]:after:left-[4.25rem] [@media(max-height:799px)]:py-0.5';
+// The make screen's idea tile (../first-session/make.tsx), a little smaller:
+// the app tile's face and hairline, the emoji at 22px.
+const POINT_TILE = 'app-icon-tile flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[22px] leading-none';
 /*
  * SAFARI'S VISIBLE AREA (15 Oct 2026). With Safari's status area and its
  * bottom toolbar the page gets about 402x717 on an iPhone 17 and 390x664 on
@@ -278,11 +281,8 @@ export function WelcomePage({ account, beforeFinish }: {
                 className={`mx-auto mt-2 block h-auto w-[140px] max-w-full ${SHORT_PICTURE_WIDTH}`}
               />
             </div>
-            <p className={WELCOME_EYEBROW}>
-              {t('auth:welcomePage.eyebrow')}
-              <span aria-hidden="true">{' \u00b7 '}</span>
-              <span data-welcome-page-email="" className={WELCOME_EMAIL}>{account.email}</span>
-            </p>
+            <p className={WELCOME_EYEBROW}>{t('auth:welcomePage.eyebrow')}</p>
+            <p data-welcome-page-email="" className={WELCOME_EMAIL}>{account.email}</p>
             <h1 id="welcome-page-title" className={WELCOME_TITLE}>{t('auth:story.welcome')}</h1>
           </div>
           {/* What Homeroom is: folded with the picture while the keys are up. */}
@@ -295,7 +295,6 @@ export function WelcomePage({ account, beforeFinish }: {
               <p className={`${WELCOME_LEAD} text-center`}>{t('auth:welcomePage.lead')}</p>
               <GroupedList tone="plane" role="list" className="mx-0 mb-1 mt-3" data-welcome-page-points="">
                 {WELCOME_POINTS.map((point) => {
-                  const Icon = POINT_ICONS[point.key];
                   return (
                     <ListRow
                       key={point.key}
@@ -303,7 +302,7 @@ export function WelcomePage({ account, beforeFinish }: {
                       data-welcome-page-point={point.key}
                       chevron={false}
                       className={POINT_ROW}
-                      leading={<IconTile size="xs" className={POINT_TILE}><Icon aria-hidden="true" /></IconTile>}
+                      leading={<span className={POINT_TILE} aria-hidden="true">{POINT_EMOJI[point.key]}</span>}
                       title={t(point.title)}
                       subtitle={t(point.line)}
                       titleClassName="whitespace-normal"
