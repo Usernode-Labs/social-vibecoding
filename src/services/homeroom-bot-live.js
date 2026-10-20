@@ -1117,6 +1117,56 @@ function specUserFacing(spec) {
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
 }
 
+// How many lines a plan card shows (homeroom-bot.js MAX_PLAN_BULLETS).
+const PLAN_LINES_MAX = 5;
+
+/** Pure: one line of a spec as plain words: no markdown, no em dash, no closing stop. */
+function plainSpecLine(text) {
+  const line = String(text || '')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/(\*\*|__|`)/g, '')
+    .replace(/(^|\s)[*_]([^*_\s][^*_]*?)[*_](?=[\s.,;:!?)]|$)/g, '$1$2')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return withoutEmDashes(line).replace(/[\s.:;,]+$/, '').trim();
+}
+
+/** Pure: a paragraph's first sentence. */
+function firstSentence(text) {
+  return String(text || '').split(/(?<=[.!?])\s+(?=["“(]?[A-Z0-9])/)[0];
+}
+
+/**
+ * 20 Oct 2026: a drafted spec as the few plain lines a plan card
+ * shows, for a complicated change whose triage gave its card none
+ * (homeroom-bot.js complicatedPlanBullets): its title (proposalTitle), then
+ * each point of its user-facing half, said by its bold lead when it has one
+ * ("**Two rows, then "and N more".** Like a stack…" is `Two rows, then "and
+ * N more"`), else by its first sentence; with no points, the first sentence
+ * under its title. At most five, [] when the spec says nothing usable.
+ */
+function specCardLines(spec) {
+  const out = [];
+  const add = (text) => {
+    const line = plainSpecLine(text);
+    if (line && out.length < PLAN_LINES_MAX && !out.some((l) => l.toLowerCase() === line.toLowerCase())) out.push(line);
+  };
+  // The name it would be proposed under: never a bare "Plan" or "Spec".
+  add(proposalTitle(spec));
+  for (const raw of String(specUserFacing(spec) || '').split('\n')) {
+    // Top-level points only: a nested list's lines are details of the one above.
+    const point = raw.match(/^(?:[-*+]|\d+[.)])\s+(.+)$/);
+    if (!point) continue;
+    const lead = point[1].trim().match(/^(?:\*\*|__)(.+?)(?:\*\*|__)/);
+    add(lead ? lead[1] : firstSentence(point[1].trim()));
+  }
+  if (out.length < 2) {
+    const intro = specSnippet(spec, specHeading(spec)).split(/\n\s*\n/)[0];
+    if (intro && !/^\s*#/.test(intro)) add(firstSentence(intro.replace(/\s+/g, ' ').trim()));
+  }
+  return out;
+}
+
 /**
  * What the build said, as the completion row a dev chat turn writes stores
  * it: `ccOutput` is its message with the DESCRIPTION block taken out, and
@@ -5151,6 +5201,7 @@ module.exports = {
   prepareProposal,
   proposalTitle,
   specUserFacing,
+  specCardLines,
   buildDescription,
   buildPrompt,
   specForBuild,

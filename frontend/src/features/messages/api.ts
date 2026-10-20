@@ -166,11 +166,22 @@ function normalizePlanQuestions(input: unknown): HomeroomBotPlanQuestion[] {
   return out;
 }
 
-/** B6: a first version's plan, or null: at most five bullets. */
+/**
+ * B6: a first version's plan, or null: at most five bullets. #4488: or a
+ * complicated change's, with the spec version it asks about. Until 20 Oct
+ * 2026 both were dropped here, so the card's note never showed and it could
+ * not show its plan (request #5580's card).
+ */
 function normalizePlan(input: unknown): HomeroomBotPlan | null {
   const row = record(input);
   const bullets = array(pick(row, 'bullets')).filter((b): b is string => typeof b === 'string' && !!b.trim()).slice(0, 5);
-  return bullets.length ? { bullets, questions: normalizePlanQuestions(pick(row, 'questions')) } : null;
+  if (!bullets.length) return null;
+  const plan: HomeroomBotPlan = { bullets, questions: normalizePlanQuestions(pick(row, 'questions')) };
+  if (pick(row, 'complicated') !== true) return plan;
+  const spec = record(pick(row, 'spec'));
+  const sessionId = strictId(pick(spec, 'sessionId'));
+  const version = strictId(pick(spec, 'version'));
+  return { ...plan, complicated: true, ...(sessionId && version ? { spec: { sessionId, version } } : {}) };
 }
 
 /**
