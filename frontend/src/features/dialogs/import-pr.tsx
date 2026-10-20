@@ -43,6 +43,18 @@
  * takes that predicate, so the backdrop, the Cancel button and a kit-initiated
  * Escape all respect it from one place — where the legacy code had to repeat
  * the check in `closeImportPrModal` AND in the backdrop listener.
+ *
+ * ── #5717: a fresh list, and it stays current while open ──────────────
+ *
+ * The candidates read talks to GitHub, so it often outlasts the service
+ * worker's 1s deadline; the worker then answered from an older saved copy and
+ * posted `api-updated` afterwards, and nothing here listened, so the stale
+ * rows stayed until a reopen. The fetch now asks with FRESH (`no-cache`), so
+ * the worker waits for the network, and while the dialog is open a live-reads
+ * watcher re-reads the list in place on a correction, a reconnect or the tab
+ * coming back. A re-read keeps the rows (and the pick, while its PR is still
+ * listed) and never returns to the loading line; a sequence number drops an
+ * older answer when two reads overlap.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -53,6 +65,7 @@ import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useHiddenClass } from '../../lib/legacy-dom';
+import { FRESH, watch } from '../../lib/live-reads';
 import { useDialog } from './use-dialog';
 
 interface Candidate {
@@ -76,6 +89,14 @@ type ListState =
 
 const NOTE_CLASS = 'text-sm text-zinc-500 dark:text-zinc-400 py-6 text-center';
 const ERROR_CLASS = 'text-sm text-red-700 dark:text-red-400 py-6 text-center';
+
+/**
+ * The candidates read. One builder for the fetch AND the watcher's `reads`
+ * match, so the two cannot drift apart.
+ */
+function candidatesPath(slug: string): string {
+  return `/api/apps/${encodeURIComponent(slug)}/pr-import/candidates`;
+}
 
 /**
  * Turn an import failure into copy the user can act on.
@@ -103,6 +124,10 @@ export function ImportPrDialog() {
   const progressRef = useRef<HTMLDivElement>(null);
   const slowRef = useRef<HTMLDivElement>(null);
   const slowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Every candidates read is numbered; an answer that is not the newest is
+  // dropped, so a close-and-reopen cannot be overwritten by the read it left
+  // behind.
+  const readSeq = useRef(0);
 
   const [list, setList] = useState<ListState>({ kind: 'loading' });
   const [selected, setSelected] = useState<number | null>(null);
@@ -142,32 +167,63 @@ export function ImportPrDialog() {
     [],
   );
 
+  // While the dialog is open it owns the candidates read: a correction to it,
+  // a socket reconnect or the tab coming back re-reads the list in place
+  // (lib/live-reads.ts). Closing the dialog or unmounting stops the watcher.
+  // Skipped while an import runs, so the list cannot change under the
+  // progress line.
+  useEffect(() => {
+    if (!dialog.isOpen) return undefined;
+    const slug = window.AppView?.appData?.slug as string | undefined;
+    if (!slug) return undefined;
+    return watch(
+      () => {
+        if (!busyRef.current) return loadCandidates({ inPlace: true });
+      },
+      { reads: (url) => url.pathname === candidatesPath(slug) },
+    );
+  }, [dialog.isOpen]);
+
   /**
    * Fetch + render the candidate rows into the (already open) picker.
    *
    * Split out of the open path — verbatim from `_loadImportPrCandidates` — so
    * a 409 "already imported" can refresh the list in place, dropping the stale
-   * row the user just tried.
+   * row the user just tried. A `live-reads` re-read (`inPlace`) keeps the rows
+   * already on screen if it fails, and keeps the pick only while its PR is
+   * still listed.
    */
-  async function loadCandidates() {
+  async function loadCandidates(options?: { inPlace?: boolean }) {
     const slug = window.AppView?.appData?.slug as string | undefined;
     if (!slug) return;
-    setSelected(null);
+    const inPlace = options?.inPlace === true;
+    const seq = ++readSeq.current;
+    if (!inPlace) setSelected(null);
     let data: { candidates?: Candidate[]; configured?: boolean } = {};
     let ok = false;
     try {
-      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/pr-import/candidates`);
+      // FRESH: the worker waits for the network instead of answering from the
+      // saved copy it would then correct later (see the header).
+      const res = await fetch(candidatesPath(slug), FRESH);
       ok = res.ok;
       data = await res.json().catch(() => ({}));
     } catch {
-      setList({ kind: 'error', text: 'dialogs:importPr.list.loadFailed' });
+      if (seq !== readSeq.current) return;
+      // A re-read that fails keeps the rows already on screen: an old list is
+      // better than replacing a working picker with an error.
+      setList((current) => (inPlace && current.kind === 'rows'
+        ? current
+        : { kind: 'error', text: 'dialogs:importPr.list.loadFailed' }));
       return;
     }
+    if (seq !== readSeq.current) return;
     if (!ok) {
       // A failed answer (GitHub unreachable, rate-limited, a server error) is
       // a load failure, never "nothing to import" (#4817). The GitHub-off
       // state arrives as a 200 with `configured: false`, below.
-      setList({ kind: 'error', text: 'dialogs:importPr.list.loadFailed' });
+      setList((current) => (inPlace && current.kind === 'rows'
+        ? current
+        : { kind: 'error', text: 'dialogs:importPr.list.loadFailed' }));
       return;
     }
     if (data.configured === false) {
@@ -175,6 +231,7 @@ export function ImportPrDialog() {
         kind: 'note',
         text: 'dialogs:importPr.list.notConfigured',
       });
+      if (inPlace) setSelected(null);
       return;
     }
     const rows = Array.isArray(data.candidates) ? data.candidates : [];
@@ -183,9 +240,17 @@ export function ImportPrDialog() {
         kind: 'note',
         text: 'dialogs:importPr.list.empty',
       });
+      if (inPlace) setSelected(null);
       return;
     }
     setList({ kind: 'rows', rows });
+    if (inPlace) {
+      // Keep the pick only while its PR is still listed; otherwise Import
+      // would stay enabled for a row that is no longer there.
+      setSelected((current) =>
+        current != null && rows.some((c) => Number(c.number) === current) ? current : null,
+      );
+    }
   }
 
   /**
