@@ -29,6 +29,13 @@
       media.addEventListener('change', applyTheme);
     })();
   </script>
+  <!-- What takes the loading shapes' place fades in, briefly, rather than
+       cutting over: an animation replays whenever [hidden] comes off, so
+       nothing has to start it. None under reduced motion. -->
+  <style>
+    @keyframes appear { from { opacity: 0; } to { opacity: 1; } }
+    @media (prefers-reduced-motion: no-preference) { .appear { animation: appear 200ms ease-out; } }
+  </style>
 </head>
 <body class="min-h-screen bg-ground text-fg">
   <!-- data-mode is how this app answers ('slots' or 'rsvp', chosen when the
@@ -74,7 +81,7 @@
     </div>
 
     <!-- The events coming up, soonest first. -->
-    <div id="events" class="flex flex-col gap-12" hidden></div>
+    <div id="events" class="flex flex-col gap-12 appear" hidden></div>
 
     <section class="flex flex-col gap-3 border-t border-line pt-8">
       <button id="new-event" type="button" class="btn-secondary w-full" aria-expanded="false" aria-controls="new-form">
@@ -114,7 +121,7 @@
       </form>
     </section>
 
-    <section id="past-section" class="flex flex-col" hidden>
+    <section id="past-section" class="flex flex-col appear" hidden>
       <h2 class="section-label">Past</h2>
       <ul id="past" class="list"></ul>
     </section>

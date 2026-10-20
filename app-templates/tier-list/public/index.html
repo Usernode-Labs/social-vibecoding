@@ -58,6 +58,13 @@
     .tier-d { background-color: rgb(var(--tier-d)); color: rgb(var(--on-tier)); }
     .tier-f { background-color: rgb(var(--tier-f)); color: rgb(var(--on-tier)); }
   </style>
+  <!-- What takes the loading shapes' place fades in, briefly, rather than
+       cutting over: an animation replays whenever [hidden] comes off, so
+       nothing has to start it. None under reduced motion. -->
+  <style>
+    @keyframes appear { from { opacity: 0; } to { opacity: 1; } }
+    @media (prefers-reduced-motion: no-preference) { .appear { animation: appear 200ms ease-out; } }
+  </style>
 </head>
 <body class="min-h-screen bg-ground text-fg">
   <!-- What this tier list ranks, and the add field's example, were filled
@@ -78,11 +85,20 @@
       <p id="status" class="text-small text-danger" role="alert" hidden></p>
     </form>
 
-    <!-- Loading: shapes where the tier list will be. -->
-    <div id="loading" class="flex flex-col gap-2" aria-label="Loading">
-      <div class="skeleton h-14 w-full"></div>
-      <div class="skeleton h-14 w-full"></div>
-      <div class="skeleton h-14 w-full"></div>
+    <!-- Loading: the board's own shape (the switch, its hint, the six tiers
+         and the tray), so nothing moves when the items arrive. -->
+    <div id="loading" class="flex flex-col gap-3" aria-label="Loading">
+      <div class="skeleton h-[3.25rem] w-56 rounded-xl"></div>
+      <div class="skeleton mx-1 h-4 w-3/4"></div>
+      <div class="list" aria-hidden="true">
+        <div class="flex min-h-14 items-stretch"><div class="skeleton w-14 shrink-0 rounded-none"></div><div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 px-3 py-2"><div class="skeleton h-8 w-20"></div><div class="skeleton h-8 w-16"></div></div></div>
+        <div class="flex min-h-14 items-stretch"><div class="skeleton w-14 shrink-0 rounded-none"></div><div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 px-3 py-2"><div class="skeleton h-8 w-24"></div></div></div>
+        <div class="flex min-h-14 items-stretch"><div class="skeleton w-14 shrink-0 rounded-none"></div><div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 px-3 py-2"><div class="skeleton h-8 w-16"></div><div class="skeleton h-8 w-20"></div><div class="skeleton h-8 w-14"></div></div></div>
+        <div class="flex min-h-14 items-stretch"><div class="skeleton w-14 shrink-0 rounded-none"></div><div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 px-3 py-2"></div></div>
+        <div class="flex min-h-14 items-stretch"><div class="skeleton w-14 shrink-0 rounded-none"></div><div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 px-3 py-2"><div class="skeleton h-8 w-20"></div></div></div>
+        <div class="flex min-h-14 items-stretch"><div class="skeleton w-14 shrink-0 rounded-none"></div><div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 px-3 py-2"></div></div>
+      </div>
+      <div class="skeleton h-24 w-full rounded-xl"></div>
     </div>
 
     <!-- Error: only when the load failed. -->
@@ -102,7 +118,7 @@
     <!-- One board, two rankings: yours, first (drag each into a tier, or tap
          it and then tap a tier) and the group's (every item in the tier its
          average lands in). -->
-    <section id="ranking" class="flex flex-col gap-3" hidden>
+    <section id="ranking" class="flex flex-col gap-3 appear" hidden>
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div id="view-toggle" role="radiogroup" aria-label="Whose ranking" class="inline-flex rounded-xl border border-line bg-surface p-1">
           <button type="button" role="radio" data-view="group" aria-checked="false" class="min-h-11 rounded-lg px-4 text-body font-medium">The group's</button>

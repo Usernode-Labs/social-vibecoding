@@ -29,6 +29,13 @@
       media.addEventListener('change', applyTheme);
     })();
   </script>
+  <!-- What takes the loading shapes' place fades in, briefly, rather than
+       cutting over: an animation replays whenever [hidden] comes off, so
+       nothing has to start it. None under reduced motion. -->
+  <style>
+    @keyframes appear { from { opacity: 0; } to { opacity: 1; } }
+    @media (prefers-reduced-motion: no-preference) { .appear { animation: appear 200ms ease-out; } }
+  </style>
 </head>
 <body class="min-h-screen bg-ground text-fg">
   <!-- What the polls are about, and the fields' examples, were filled in
@@ -71,14 +78,14 @@
       <p class="text-body text-muted">Ask the group something: start a poll below, add a few options, and everyone votes.</p>
     </div>
 
-    <div id="open-polls" class="flex flex-col gap-12" data-option-example="{{OPTION_EXAMPLE}}" hidden></div>
+    <div id="open-polls" class="flex flex-col gap-12 appear" data-option-example="{{OPTION_EXAMPLE}}" hidden></div>
 
     <button id="start-poll" type="button" class="btn-secondary w-full">
       <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
       Start a new poll
     </button>
 
-    <section id="decided-section" class="flex flex-col" hidden>
+    <section id="decided-section" class="flex flex-col appear" hidden>
       <h2 class="section-label">Decided</h2>
       <ul id="decided" class="list"></ul>
     </section>

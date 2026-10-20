@@ -668,5 +668,10 @@
   setInterval(function () { if (quiet()) load(); }, 30000);
   document.addEventListener('visibilitychange', function () { if (quiet()) load(); });
 
-  load();
+  // The first screen, drawn: Homeroom keeps its opening cover up until then
+  // (usernode.ready, the platform bridge), so the app appears in one step
+  // rather than as loading shapes that then change. The cover lifts after a
+  // few seconds regardless.
+  var first = load();
+  if (window.usernode && window.usernode.ready) window.usernode.ready(first);
 })();
