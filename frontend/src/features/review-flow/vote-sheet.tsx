@@ -10,7 +10,7 @@
  *
  * Votes go through the platform's own `AppView.castVote`, with the approval
  * epoch the server checks, so every other screen hears about them the usual
- * way. A No carries its line, which the server requires.
+ * way. A No may carry its line.
  */
 
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
@@ -244,7 +244,7 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
     const left = NO_LINE_MAX - line.length;
     body = (
       <form
-        onSubmit={(e: FormEvent) => { e.preventDefault(); if (line.trim()) void cast('no', line.trim()); }}
+        onSubmit={(e: FormEvent) => { e.preventDefault(); void cast('no', line.trim() || undefined); }}
       >
         {yesNo(true)}
         <label className="rf-ask-label" htmlFor="rf-no-line">{t('communities:review.no.ask')}</label>
@@ -259,7 +259,7 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
         {left < 40 ? <p className="rf-line rf-line-tight">{t('communities:review.no.left', { count: left })}</p> : null}
         <div className="rf-ends">
           <button type="button" className="rf-cancel" onClick={() => setState(vote ? 'voted' : 'ask')}>{t('communities:review.no.cancel')}</button>
-          <button type="submit" className="rf-go" disabled={!line.trim() || busy}>{t('communities:review.no.send')}</button>
+          <button type="submit" className="rf-go" disabled={busy}>{t('communities:review.no.send')}</button>
         </div>
       </form>
     );

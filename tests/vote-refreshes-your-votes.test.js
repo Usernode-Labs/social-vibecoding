@@ -56,7 +56,7 @@ test('castIssueVote does the same, only on an ok response', () => {
   );
   assert.match(fn, /window\.UsernodeReact\?\.profileProposals\?\.voted\?\.\(\);/);
   assert.match(fn, /window\.Leaderboard\?\.invalidateHistory\?\.\(\);/);
-  const refused = fn.indexOf("PlatformUI.toast((data.error === 'reason_required'");
+  const refused = fn.indexOf('PlatformUI.toast(data.error ||');
   const called = fn.indexOf('profileProposals?.voted');
   const caught = fn.indexOf('} catch (err) {');
   assert.ok(refused > -1, 'the refusal branch is found');

@@ -186,10 +186,10 @@ test('#3977: the picker\'s sides read Approve and Don\'t approve, with the note,
   assert.match(onYes, /Add a note, if you like\.<\/label>/, 'the optional note');
   assert.match(onYes, /<button type="button" class="dev-vote-reason-send dev-vote-reason-send-yes">Approve<\/button>/, 'and no note needed to approve');
   const onNo = picker({ side: 'no' });
-  assert.match(onNo, /What’s not working for you\? One line is plenty\.<\/label>/, 'a No\'s line, worded as any No\'s');
+  assert.match(onNo, /What’s not working for you\? Add a line, if you like\.<\/label>/, 'a No\'s line, worded as any No\'s');
   assert.match(onNo, /placeholder="What would you want to change\?"/);
-  assert.match(onNo, /<button type="button" class="dev-vote-reason-send dev-vote-reason-send-no" disabled="">Don’t approve<\/button>/,
-    'Don\'t approve waits for its line, as a No does (the server asks for one)');
+  assert.match(onNo, /<button type="button" class="dev-vote-reason-send dev-vote-reason-send-no">Don’t approve<\/button>/,
+    'Don\'t approve needs no line, as a No does');
   const typed = picker({ side: 'no', line: 'Sort the list by date' });
   assert.match(typed, /<button type="button" class="dev-vote-reason-send dev-vote-reason-send-no">Don’t approve<\/button>/);
   const group = picker({ approve: false, solo: false });
@@ -278,7 +278,7 @@ test('#3977: the Needs you tab\'s vote sheet is the same picker, as an approval'
   assert.match(solo, /dev-vote-switch-yes" aria-pressed="true" data-act="castVote">[\s\S]*?Approve<\/button>/);
   assert.match(solo, /dev-vote-switch-no" aria-pressed="false" data-act="castVote">[\s\S]*?Don’t approve<\/button>/);
   assert.match(solo, /dev-vote-reason-send-yes">Approve<\/button>/);
-  assert.match(draw(true, 'no'), /dev-vote-reason-send-no" disabled="">Don’t approve<\/button>/);
+  assert.match(draw(true, 'no'), /dev-vote-reason-send-no">Don’t approve<\/button>/, 'a Don\'t approve needs no line either');
   const group = draw(false);
   assert.match(group, />Your vote<\/div>/);
   assert.match(group, />Vote yes<\/button>/);
@@ -322,7 +322,7 @@ test('#4270: the feed across every project says Approve and Don\'t approve for t
   assert.match(form(solo), />Your approval<\/div>/);
   assert.match(form(solo), /dev-vote-switch-yes" aria-pressed="true" data-act="castVote">[\s\S]*?Approve<\/button>/);
   assert.match(form(solo), /dev-vote-switch-no" aria-pressed="false" data-act="castVote">[\s\S]*?Don’t approve<\/button>/);
-  assert.match(form(solo, 'no'), /dev-vote-reason-send-no" disabled="">Don’t approve<\/button>/);
+  assert.match(form(solo, 'no'), /dev-vote-reason-send-no">Don’t approve<\/button>/, 'no line needed');
 
   // A group's row is a vote, word for word.
   const groupHtml = draw([feedItem({ id: 8, title: 'Sort', author: 'ada', yes: 1, app: { slug: 'garden', name: 'Garden', icon_url: null, icon_emoji: null } })]);

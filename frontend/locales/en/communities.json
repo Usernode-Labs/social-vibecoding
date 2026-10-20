@@ -537,11 +537,11 @@
   },
   "review.no.ask": {
     "text": "What would make it a yes?",
-    "description": "Question over the line a person writes when they vote No in the vote sheet. The line goes to the person who made the change."
+    "description": "Question over the line a person writes when they vote No in the vote sheet. The line is optional; it goes to the person who made the change."
   },
   "review.no.placeholder": {
     "text": "One line for {{name}}",
-    "description": "Placeholder in the box for a No vote's line. {{name}} is the username of the person who made the change."
+    "description": "Placeholder in the box for a No vote's line, which is optional. {{name}} is the username of the person who made the change."
   },
   "review.no.placeholderNoName": {
     "text": "One line for whoever made it",
@@ -561,7 +561,7 @@
   },
   "review.no.send": {
     "text": "Send",
-    "description": "Button that casts the No vote with its line."
+    "description": "Button that casts the No vote, with its line if one is written."
   },
   "review.said.yes": {
     "text": "You said yes",

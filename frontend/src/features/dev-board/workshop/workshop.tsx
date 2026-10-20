@@ -3138,12 +3138,11 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
   });
   /**
    * The vote sheet's send (#3613): the switch's side with the line written
-   * under it. A No needs its line, as on a card; a Yes may go without one,
-   * and then sends none rather than asking.
+   * under it. The line is optional on either side, so a lineless No sends
+   * like a lineless Yes.
    */
   const voteTrimmed = voteLine.replace(/\s+/g, ' ').trim();
   const submitVote = () => {
-    if (voteSide === 'no' && !voteTrimmed) { voteBoxRef.current?.focus(); return; }
     answer(voteSide, undefined, voteTrimmed || null);
   };
   const onVoteBoxKey = (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => {
@@ -3151,8 +3150,8 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
     // The window's keys stand down inside a field, so the box closes itself.
     if (ev.key === 'Escape') { ev.preventDefault(); closeSheet(); }
   };
-  // The box takes focus the moment the switch lands on No, the side that
-  // needs a line — as the card's picker does. Not on opening: a keyboard
+  // The box takes focus the moment the switch lands on No, so writing a line
+  // is still one tap away — as the card's picker does. Not on opening: a keyboard
   // rising over a one-tap "Vote yes" would be in the way, and the Y and N
   // keys only work while the box is not focused.
   useLayoutEffect(() => {
