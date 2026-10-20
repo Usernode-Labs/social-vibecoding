@@ -239,8 +239,8 @@ function communityInviteRoutes(config) {
 
   // The link preview's thumbnail (previewTags): the project's icon as a PNG
   // a chat app will draw. An image icon is its own file; an emoji is drawn
-  // on the project's colour (services/emoji-tile.js). An emoji whose
-  // picture cannot be had is Homeroom's own icon, as the card showed before.
+  // on the project's colour (services/emoji-tile.js). An emoji with no
+  // picture there is Homeroom's own icon, as the card showed before.
   router.get('/api/public/invites/:token/icon.png', invitePreviewLimiter, async (req, res) => {
     try {
       const icon = invites.isToken(req.params.token)
@@ -248,7 +248,7 @@ function communityInviteRoutes(config) {
         : null;
       if (!icon || (!icon.imageId && !icon.emoji)) return res.status(404).json({ error: 'No icon' });
       if (icon.imageId) return res.redirect(302, `/app-icons/${encodeURIComponent(icon.imageId)}`);
-      const png = await emojiTile.tilePng({ emoji: icon.emoji, color: icon.color });
+      const png = emojiTile.tilePng({ emoji: icon.emoji, color: icon.color });
       if (!png) return res.redirect(302, '/apple-touch-icon.png');
       res.set({
         'Content-Type': 'image/png',
