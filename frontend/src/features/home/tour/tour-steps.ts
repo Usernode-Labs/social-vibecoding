@@ -115,15 +115,17 @@ export interface TourStep {
  * ── #3567: a fifth stop, first: what a community is ─────────────────────
  *
  * The join screen asks which communities to join and never says what one
- * does, and the four stops above take it for granted: My apps names a
- * private community's mark, Suggest an improvement posts a request "the members"
- * vote on. So the tour opens on the idea everything after it rests on:
- * communities build projects together, by proposing changes and voting them
- * in. It names the three audiences the way the screen does (AGENTS.md,
- * "Communities own projects"): Just you, a Private community, a Public
- * community. It points at the Communities tab, which is where the ones you
- * are in live, and like every step but the menu's it describes its target
- * rather than asking for a press: the tab navigates off Home.
+ * does, and the four stops above take it for granted: My apps names the
+ * community an app lives in, Suggest an improvement posts a request the
+ * community votes on. So the tour opens on the idea everything after it
+ * rests on: communities build apps together, by proposing changes and
+ * voting on them. It points at the Communities tab, which is where the ones
+ * you are in live, and like every step but the menu's it describes its
+ * target rather than asking for a press: the tab navigates off Home.
+ *
+ * #5676 shortened it: the three audiences (Just you, Private community,
+ * Public community) are not named any more, and it says apps rather than
+ * projects, the requester's word.
  */
 export const TOUR_STEPS: readonly TourStep[] = [
   {
@@ -169,9 +171,10 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // feedback and New change side by side, and people found both
     // confusing; the step says what the button does. B8: the request goes
     // to Homeroom bot, which builds it (or, where it does not build, it
-    // goes to the group). #4225: and it says so against what people expect
-    // of a feedback button elsewhere, honestly: the bot starts on it, or
-    // brings it to the group, never "it builds it" as a promise.
+    // goes to the community). #4225: and it says so against what people
+    // expect of a feedback button elsewhere, honestly: the bot can start
+    // building it or share your request with the community, never "it
+    // builds it" as a promise (#5676).
     //
     // NO "BUILD IT YOURSELF" SENTENCE (first-session run-through, 5 Oct
     // 2026). It said "To build it yourself with a coding agent, tap Build it
