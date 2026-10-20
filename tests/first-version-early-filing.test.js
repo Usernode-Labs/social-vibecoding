@@ -9,7 +9,7 @@
 // pin what changed:
 //
 //   - the project files its first version right after its repository is
-//     made (app-creator.js), and again once it runs (a no-op by then);
+//     made, beside its first deploy (src/workflow/app-creation/);
 //   - an issue one process files reaches every other process's open-issues
 //     copy over the bus (github.js noteIssueCreated, applyIssuesChange);
 //   - a first version just filed has its project refreshed at once, not
@@ -35,111 +35,11 @@ function stub(id, exports) {
 }
 
 // ── Filed once the repository is made ─────────────────────────────────────
-
-/** app-creator.js with nothing real behind it, recording what happens in order. */
-function loadAppCreator() {
-  const ids = {
-    logger: require.resolve('../src/services/logger'),
-    github: require.resolve('../src/services/github'),
-    docker: require.resolve('../src/services/docker'),
-    applicationRuntime: require.resolve('../src/services/application-runtime'),
-    caddy: require.resolve('../src/services/caddy'),
-    dbManager: require.resolve('../src/services/db-manager'),
-    appManifest: require.resolve('../src/services/app-manifest'),
-    appSecrets: require.resolve('../src/services/app-secrets'),
-    appLlmEnv: require.resolve('../src/services/app-llm-env'),
-    template: require.resolve('../src/services/template'),
-    pool: require.resolve('../src/db/pool'),
-    ws: require.resolve('../src/services/ws'),
-    dm: require.resolve('../src/services/homeroom-bot-dm'),
-    appCreator: require.resolve('../src/services/app-creator'),
-  };
-  const saved = Object.fromEntries(Object.values(ids).map((id) => [id, require.cache[id]]));
-  for (const id of Object.values(ids)) delete require.cache[id];
-  const order = [];
-  const pool = {
-    async query(sql) {
-      const s = String(sql);
-      if (/UPDATE apps SET repo_url = \$1/.test(s)) order.push('repo_url');
-      if (/UPDATE apps SET status = \$1, container_id/.test(s)) order.push('running');
-      if (/UPDATE apps SET status = \$1 WHERE id = \$2/.test(s)) order.push('status');
-      return { rows: [], rowCount: 1 };
-    },
-  };
-  stub(ids.logger, { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} });
-  stub(ids.github, {
-    isEnabled: () => true,
-    parseGithubUrl: () => ({ owner: 'usernode-bot', repo: 'club-votes' }),
-    getBotUsername: async () => 'usernode-bot',
-    createRepo: async (owner, slug) => ({ html_url: `https://github.com/${owner}/${slug}` }),
-    pushFiles: async () => { order.push('starter_pushed'); return { sha: 'a'.repeat(40) }; },
-    getCloneUrl: async () => 'https://github.com/usernode-bot/club-votes.git',
-  });
-  stub(ids.docker, { execFileAsync: async () => ({ stdout: 'f'.repeat(40), stderr: '' }) });
-  stub(ids.applicationRuntime, {
-    mode: () => 'docker',
-    async build() { order.push('build'); return { imageRef: 'img', buildRef: 'b', engine: 'docker' }; },
-    async deploy(_config, opts) {
-      order.push('deploy');
-      if (opts.onRollout) opts.onRollout();
-      return { hostname: 'club-votes.example.test', url: 'https://club-votes.example.test', runtimeKind: 'docker', runtimeName: 'c' };
-    },
-  });
-  stub(ids.caddy, { productionHostname: (slug) => `${slug}.example.test` });
-  stub(ids.dbManager, { appDbName: (slug) => `app_${slug}`, createDatabase: async () => ({ password: 'pw' }), connectionUrl: () => 'postgres://x' });
-  stub(ids.appManifest, {
-    read: () => ({ secrets: [] }),
-    reconcileAppName: async () => {}, reconcileAppVisibility: async () => {}, reconcileAppGovernance: async () => {},
-    reconcileAppScreenshot: async () => {}, reconcileAppIcon: async () => {}, reconcileAppAdmins: async () => {},
-    reconcileAppTopics: async () => null,
-  });
-  stub(ids.appSecrets, { getRawValues: async () => ({}), mergeForDeploy: () => ({ missingRequired: [], env: {} }), platformDefaultsFromEnv: () => ({}) });
-  stub(ids.appLlmEnv, { productionLlmEnv: async () => ({}) });
-  stub(ids.template, {
-    getTemplateFiles: () => [{ path: 'Dockerfile', content: 'FROM node:22-alpine\n' }, { path: 'dapp.json', content: '{}\n' }],
-    getConnectorScaffoldFiles: () => [],
-    getCanonicalRepoFile: () => null,
-  });
-  stub(ids.pool, { getPool: () => pool });
-  stub(ids.ws, { pushAppStatusUpdate: () => {}, pushAppCreationPhase: () => {} });
-  const filed = [];
-  stub(ids.dm, {
-    async fileFirstVersion(_pool, _config, appId) { order.push('file'); filed.push(appId); return null; },
-  });
-  const appCreator = require(ids.appCreator);
-  const restore = () => {
-    for (const [id, mod] of Object.entries(saved)) {
-      if (mod) require.cache[id] = mod; else delete require.cache[id];
-    }
-  };
-  return { appCreator, order, filed, restore };
-}
-
-test('a project files its first version as soon as its repository holds the starter, and again once it runs', async (t) => {
-  const slug = 'club-votes-early';
-  const { appCreator, order, filed, restore } = loadAppCreator();
-  t.after(() => { restore(); fs.rmSync(`/tmp/usernode-build-${slug}`, { recursive: true, force: true }); });
-
-  await appCreator.createApp({}, { id: 41, name: 'Club Votes', slug, created_by: 5, self_hosted: false });
-
-  assert.deepEqual(filed, [41, 41]);
-  assert.ok(order.indexOf('file') > order.indexOf('repo_url'), `after its repository is recorded: ${order}`);
-  assert.ok(order.indexOf('file') > order.indexOf('starter_pushed'), 'which holds the starter');
-  assert.ok(order.indexOf('file') < order.indexOf('build'), `before the starter is built: ${order}`);
-  assert.ok(order.lastIndexOf('file') > order.indexOf('running'), 'and once it runs, as before');
-});
-
-test('a creation whose repository could not be made files nothing early', async (t) => {
-  const slug = 'club-votes-no-repo';
-  const { appCreator, order, filed, restore } = loadAppCreator();
-  t.after(() => { restore(); fs.rmSync(`/tmp/usernode-build-${slug}`, { recursive: true, force: true }); });
-  require('../src/services/github').pushFiles = async () => { throw new Error('GitHub said no'); };
-
-  await appCreator.createApp({}, { id: 42, name: 'Club Votes', slug, created_by: 5, self_hosted: false });
-
-  assert.deepEqual(filed, [], 'no repository, nothing to file');
-  assert.ok(!order.includes('repo_url'));
-});
+//
+// By the project's making (src/workflow/app-creation/): its first request is
+// queued once its setup has made the repository, beside its first deploy
+// (tests/workflow-app-creation-postgres.test.js C7), and filed once
+// (tests/first-version-early-filing-postgres.test.js).
 
 // ── The created issue, on every process ──────────────────────────────────
 

@@ -165,8 +165,9 @@ test('a create names its own new repository', () => {
   const creator = read('src/services/app-creator.js');
   // No database URL (#4895): none goes into a repository, and the database
   // is made beside the repository rather than before it.
-  assert.match(creator, /repoUrl = repo\.html_url;[\s\S]{0,400}getTemplateFiles\(name, slug, null, repoUrl[,)]/,
+  assert.match(creator, /const repoUrl = repo\.html_url;[\s\S]{0,400}const files = starterFiles\(row, \{ repoUrl, sketch \}\);/,
     'the GitHub create passes the repository it just made');
+  assert.match(creator, /return getTemplateFiles\(row\.name, row\.slug, null, repoUrl, \{/);
 });
 
 // #4895: the database and the repository are made side by side, which holds
@@ -181,8 +182,8 @@ test('the starter writes no database URL, so it does not wait for the database',
 
 test('an import adds the pointer with the scaffold', () => {
   const creator = read('src/services/app-creator.js');
-  const start = creator.indexOf('} else if (repoUrl) {');
-  const branch = creator.slice(start, creator.indexOf('// 3. Clone (or write)', start));
+  const start = creator.indexOf('async function scaffoldImport(row) {');
+  const branch = creator.slice(start, creator.indexOf('\n}\n', start));
   assert.match(branch, /getCanonicalRepoFile\(repoUrl\)/);
   assert.match(branch, /\.\.\.getConnectorScaffoldFiles\(\),\s*\.\.\.\(canonicalRepoFile \? \[canonicalRepoFile\] : \[\]\)/);
 });

@@ -512,7 +512,7 @@ test('no container-env builder mentions a host-only platform key in code', () =>
   }
 });
 
-test('all four app-container env builders go through the shared helper', () => {
+test('all three app-container env builders go through the shared helper', () => {
   // Drift between the builders is the historical failure mode this helper
   // exists to prevent; if one stops using it, the leak checks above stop
   // covering that builder's identity env. (routes/sessions.js was a fifth
@@ -524,8 +524,9 @@ test('all four app-container env builders go through the shared helper', () => {
   // appIdentityEnv itself (so the same env can be fingerprinted into a
   // container label). staging.js therefore has one direct spread left — the
   // production rebuild — and the preview half is covered via staging-env.js.
+  // (app-creator.js was another until a project's first deploy became
+  // app delivery's, staging.js's production deploy.)
   const expected = {
-    'src/services/app-creator.js': 1,
     'src/services/staging.js': 1,
     'src/services/staging-env.js': 1,
     'src/services/app-respawn.js': 1,

@@ -481,7 +481,15 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE id = $1', [turn.id]);
   });
 
-  await t.test('a project\'s description is filed as its first version once it runs, under its creator', async () => {
+  // Filing as the project's making does (app.firstRequest), its steps kept
+  // in memory.
+  const { steps: makeSteps } = require('../src/workflow/kernel/steps.ts');
+  const fileFor = (appId, github) => {
+    const kept = { value: null };
+    return dm.fileFirstRequest(pool, {}, appId, { steps: makeSteps({ resumeFrom: null, checkpoint: async (v) => { kept.value = v; } }), deps: { github } });
+  };
+
+  await t.test('a project\'s description is filed as its first version, under its creator', async () => {
     const { rows: [project] } = await pool.query(
       `INSERT INTO apps (name, slug, status, created_by) VALUES ('Chore wheel', 'chore-wheel', 'creating', $1) RETURNING *`,
       [ada.id],
@@ -504,12 +512,9 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       async createIssue(owner, repo, body) { created.push({ owner, repo, ...body }); return { number: 1 }; },
       noteIssueCreated() {},
     };
-    assert.equal(await dm.fileFirstVersion(pool, {}, project.id, { github }), null, 'not while it is being created');
-    await pool.query(
-      `UPDATE apps SET status = 'running', repo_url = 'https://github.com/usernode-bot/chore-wheel' WHERE id = $1`,
-      [project.id],
-    );
-    const filed = await dm.fileFirstVersion(pool, {}, project.id, { github });
+    // Its making files it once its setup has made the repository.
+    await pool.query(`UPDATE apps SET repo_url = 'https://github.com/usernode-bot/chore-wheel' WHERE id = $1`, [project.id]);
+    const filed = await fileFor(project.id, github);
     assert.deepEqual(filed, { issueNumber: 1 });
     assert.equal(created.length, 1);
     assert.equal(created[0].title, 'First version of Chore wheel');
@@ -520,8 +525,8 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.equal(requester.firstVersion, true);
     const { rows: [issue] } = await pool.query('SELECT created_by FROM issues WHERE app_id = $1', [project.id]);
     assert.equal(issue.created_by, ada.id);
-    assert.equal(await dm.fileFirstVersion(pool, {}, project.id, { github }), null, 'filed once');
-    assert.equal(await dm.sweepFirstVersions(pool, {}, { github }), 0);
+    assert.deepEqual(await fileFor(project.id, github), { skipped: 'filed' }, 'filed once');
+    assert.equal(created.length, 1);
   });
 
   await t.test('anybody else\'s description is filed as the first request too, and the bot is left out of it', async () => {
@@ -559,8 +564,8 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
         [project.id],
       );
       issueUpdates.length = 0;
-      const filed = await dm.sweepFirstVersions(pool, {}, { github });
-      assert.equal(filed, 1, 'the sweep files it, the bot\'s or not');
+      const filed = await fileFor(project.id, github);
+      assert.deepEqual(filed, { issueNumber: 1 }, 'its making files it, the bot\'s or not');
     } finally {
       homeroomBot.noteIssueActivity = realNote;
     }
@@ -568,7 +573,8 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.equal(created[0].title, 'First version of Book club');
     assert.match(created[0].body, /^\*\*Source:\*\* Homeroom user \(sam_\d+\)/);
     assert.match(created[0].body, /read it together/);
-    assert.match(created[0].body, /sam_\d+ described this when they created the project\.$/);
+    assert.match(created[0].body, /sam_\d+ described this when they created the project\.\n\n<!-- homeroom-first-version:app-\d+ -->$/,
+      'and its marker, which GitHub does not show');
     assert.doesNotMatch(created[0].body, /Homeroom bot/);
     const { rows: [issue] } = await pool.query('SELECT created_by FROM issues WHERE app_id = $1', [project.id]);
     assert.equal(issue.created_by, sam.id, 'under its creator');

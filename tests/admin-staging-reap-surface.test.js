@@ -396,8 +396,10 @@ test('the newest build hands the previews another env built to the preview machi
   assert.ok(start > 0, 'the preview-env clock exists');
   const job = clocks.slice(start, clocks.indexOf('\n  },\n', start));
   assert.match(job, /everyMs: 15 \* MIN/);
-  assert.match(job, /machine = 'release' ORDER BY created_at DESC LIMIT 1/);
-  assert.match(job, /if \(newest && newest\.key !== `release:\$\{own\}`\) return \{ skipped: 'older_build' \};/);
+  // newestOnly: the clock's rule for a job only the newest build runs.
+  assert.match(job, /newestOnly: true/);
+  assert.match(clocks, /machine = 'release' ORDER BY created_at DESC LIMIT 1/);
+  assert.match(clocks, /if \(!await newestBuild\(deps\.pool, release\)\) return \{ skipped: 'older_build' \};/);
   assert.match(job, /legacy\('services\/staging-reap'\)\.tellStaleEnv\(config\)/);
   const reap = read('src/services/staging-reap.js');
   const fn = reap.slice(reap.indexOf('async function tellStaleEnv('));

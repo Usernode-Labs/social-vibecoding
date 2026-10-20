@@ -3,14 +3,16 @@
 // Newcomer run nine (15 Oct 2026): from the made screen's Submit to the first
 // version's spec took 40 s, 18 of them waiting for the starter app to be
 // built, deployed and answering before its request was filed, though the
-// request needs only the repository. A first version is filed once its
-// repository holds the starter and its card is settled, while the project is
-// still being set up (homeroom-bot-dm.js FILEABLE_SQL); the bot's refresh
-// takes such a project in (homeroom-bot.js listApps), and its read is started
-// first (firstVersionsToRead). Against the real schema, routes and DM:
+// request needs only the repository. A first version is filed by its
+// project's making once its setup has made the repository with the starter
+// and its card (src/workflow/app-creation/, app.firstRequest:
+// homeroom-bot-dm.js fileFirstRequest), while the project is still being
+// set up; the bot's refresh takes such a project in (homeroom-bot.js
+// listApps), and its read is started first (firstVersionsToRead). Against
+// the real schema, routes and DM:
 //
-//   - filed while 'creating' once the repository and the card are there,
-//     never for a project whose creation failed;
+//   - filed once: a try that stopped after GitHub made the issue finds its
+//     own by the marker in its body, and never files a second;
 //   - the maker's answers before it is filed go ahead the moment the bot
 //     reads it, and a Submit after it goes ahead with the plan waiting;
 //   - creation failing after the go-ahead stops the build before it starts,
@@ -58,6 +60,7 @@ require('../src/db/pool').getPool = () => pool;
 const bot = require('../src/services/homeroom-bot');
 const dm = require('../src/services/homeroom-bot-dm');
 const { appRoutes } = require('../src/routes/apps');
+const { steps: makeSteps } = require('../src/workflow/kernel/steps.ts');
 
 const QS = [
   { question: 'Who can make a poll?', answers: ['Anyone in the club', 'Only you'] },
@@ -147,53 +150,68 @@ test('a first version filed while its project is set up', { timeout: 180000 }, a
     async fetchIssueComments() { return { comments: [] }; },
     async createIssueComment(_o, _r, n, text) { comments.push({ n, text }); return { id: comments.length, created_at: new Date().toISOString() }; },
   };
+  // The making's work: its steps kept as the kernel keeps them.
+  const file = (app, { kept = { value: null }, last = false } = {}) => dm.fileFirstRequest(pool, {}, app.id, {
+    steps: makeSteps({ resumeFrom: kept.value, checkpoint: async (v) => { kept.value = v; } }), last, deps: { github },
+  });
   const woken = [];
   const realNote = bot.noteIssueActivity;
   bot.noteIssueActivity = (args) => { woken.push(args); return true; };
   t.after(() => { bot.noteIssueActivity = realNote; });
 
-  await t.test('filed while it is set up, once its repository holds the starter and its card is settled', async () => {
-    const app = await project('cv-card', { repo: false });
-    assert.equal(await dm.fileFirstVersion(pool, {}, app.id, { github }), null, 'not before its repository is made');
-    await setApp(app, 'repo_url = $2', ['https://github.com/usernode-bot/cv-card']);
-    await pool.query(`INSERT INTO app_sketches (app_id, user_id, status) VALUES ($1, $2, 'pending')`, [app.id, evan.id]);
-    assert.equal(await dm.fileFirstVersion(pool, {}, app.id, { github }), null, 'not while its card is still drawn');
-    await pool.query(
-      `UPDATE app_sketches SET status = 'ready', design = $2::jsonb, model = 'fallback', ready_at = NOW() WHERE app_id = $1`,
-      [app.id, JSON.stringify(CARD)],
-    );
-    assert.equal(await dm.fileFirstVersion(pool, {}, app.id, { github }), null, 'nor while the card is not in the repository yet');
-    assert.deepEqual(await fvOf(app), { status: 'waiting', issue_number: null, attempts: 0 }, 'and no attempt is spent on it');
-    await pool.query('UPDATE app_sketches SET committed_at = NOW() WHERE app_id = $1', [app.id]);
-
+  await t.test('filed once, as its making asks: the issue under the maker\'s name, its rows, the bot woken', async () => {
+    const app = await project('cv-card');
+    await pool.query(`INSERT INTO app_sketches (app_id, user_id, status, design, model, ready_at, committed_at)
+                      VALUES ($1, $2, 'ready', $3::jsonb, 'fallback', NOW(), NOW())`, [app.id, evan.id, JSON.stringify(CARD)]);
     woken.length = 0;
-    assert.deepEqual(await dm.fileFirstVersion(pool, {}, app.id, { github }), { issueNumber: 1 }, 'filed while it is still being set up');
+    assert.deepEqual(await file(app), { issueNumber: 1 }, 'filed while it is still being set up');
     const issue = created.at(-1);
     assert.equal(issue.repo, 'cv-card');
     assert.equal(issue.title, 'First version of Club Votes cv-card');
     assert.match(issue.body, /Polls for our club, so we can decide things together\./, 'the description');
     assert.match(issue.body, /\*\*Featured card:\*\* .*\(`design\/sketch\.json`\): "Polls for the club"/, 'and the card, committed');
+    assert.match(issue.body, new RegExp(`<!-- homeroom-first-version:app-${app.id} -->$`), 'its marker, to be found again');
     assert.deepEqual(await fvOf(app), { status: 'filed', issue_number: 1, attempts: 1 });
     const requester = await dm.requesterOf(pool, app.id, 1);
     assert.equal(requester.userId, evan.id);
     assert.equal(requester.firstVersion, true);
     assert.deepEqual(woken, [{ appId: app.id, issueNumber: 1, reason: 'first_version' }], 'the bot is woken for it, its project refreshed at once');
-    assert.equal(await dm.fileFirstVersion(pool, {}, app.id, { github }), null, 'filed once');
-    await setApp(app, `status = 'running'`);
-    assert.equal(await dm.fileFirstVersion(pool, {}, app.id, { github }), null, 'and the call once it runs files nothing more');
+    assert.deepEqual(await file(app), { skipped: 'filed' }, 'filed once');
     assert.equal(created.filter((c) => c.repo === 'cv-card').length, 1);
   });
 
-  await t.test('never for a project whose creation failed; its Retry files it while it is set up again', async () => {
-    const app = await project('cv-error', { status: 'error' });
+  await t.test('a try that stopped after GitHub made the issue finds its own, and files no second', async () => {
+    const app = await project('cv-twice');
     const before = created.length;
-    assert.equal(await dm.fileFirstVersion(pool, {}, app.id, { github }), null);
-    assert.equal(await dm.sweepFirstVersions(pool, {}, { github }), 0, 'the sweep files nothing for it either');
-    assert.equal((await fvOf(app)).status, 'waiting');
-    assert.equal(created.length, before);
-    await setApp(app, `status = 'creating'`);
-    assert.equal(await dm.sweepFirstVersions(pool, {}, { github }), 1, 'the sweep takes a project being set up');
-    assert.equal((await fvOf(app)).status, 'filed');
+    github.findIssueByMarker = async (owner, repo, marker) => (marker === `<!-- homeroom-first-version:app-${app.id} -->` ? { number: 7 } : null);
+    // The try before it asked GitHub (its step said so) and stopped before
+    // it kept the answer.
+    const kept = { value: { asked: true } };
+    assert.deepEqual(await file(app, { kept }), { issueNumber: 7 });
+    assert.equal(created.length, before, 'no second issue');
+    assert.deepEqual(await fvOf(app), { status: 'filed', issue_number: 7, attempts: 1 });
+    // Its rows were written, and the try that resumes after that writes
+    // none twice.
+    await pool.query(`UPDATE homeroom_bot_first_versions SET status = 'filing' WHERE app_id = $1`, [app.id]);
+    const resumed = { value: { asked: true, issue: 7 } };
+    assert.deepEqual(await file(app, { kept: resumed }), { issueNumber: 7 });
+    const { rows } = await pool.query('SELECT count(*)::int AS n FROM issues WHERE app_id = $1 AND github_issue_number = 7', [app.id]);
+    assert.equal(rows[0].n, 1, 'one issue row');
+    delete github.findIssueByMarker;
+  });
+
+  await t.test('a failure is tried again while tries are left; the last is recorded and told to its maker', async () => {
+    const app = await project('cv-fails');
+    const realCreate = github.createIssue;
+    github.createIssue = async () => { throw new Error('GitHub is down'); };
+    try {
+      await assert.rejects(file(app), /GitHub is down/);
+      assert.equal((await fvOf(app)).status, 'waiting', 'tried again');
+      assert.deepEqual(await file(app, { last: true }), { failed: 'GitHub is down' });
+      assert.equal((await fvOf(app)).status, 'failed');
+    } finally {
+      github.createIssue = realCreate;
+    }
   });
 
   await t.test('the bot\'s refresh takes in a project being set up once its first version is filed', async () => {
@@ -264,7 +282,7 @@ test('a first version filed while its project is set up', { timeout: 180000 }, a
     const res = await submit(app.slug, ['Only you', null]);
     assert.equal(res.status, 200);
     assert.deepEqual(await res.json(), { ok: true, building: false, answers: ['Only you', null] }, 'nothing filed yet to build');
-    assert.deepEqual(await dm.fileFirstVersion(pool, {}, app.id, { github }), { issueNumber: 1 });
+    assert.deepEqual(await file(app), { issueNumber: 1 });
     const result = await triage(app);
     assert.equal(result.early, true);
     assert.equal(result.acted, 'build_queued', 'gone ahead with no Build it');
@@ -279,7 +297,7 @@ test('a first version filed while its project is set up', { timeout: 180000 }, a
   let waitingRunId = null;
   await t.test('answered after it is filed: the plan waits for the maker, and their Submit goes ahead with it', async () => {
     const app = await project('cv-after');
-    assert.deepEqual(await dm.fileFirstVersion(pool, {}, app.id, { github }), { issueNumber: 1 });
+    assert.deepEqual(await file(app), { issueNumber: 1 });
     const result = await triage(app);
     assert.equal(result.acted, 'awaiting_go');
     const res = await submit(app.slug, [null, 'After everyone votes']);

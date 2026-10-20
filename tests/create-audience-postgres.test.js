@@ -3,9 +3,10 @@
 // POST /api/apps with the create screen's choices (communities, stage 3),
 // against the REAL schema in a throwaway PostgreSQL database: who the
 // project is for, the invites a Group is created with, and the approval rule
-// a Group or Community creator picks. The build itself (createApp) is
-// stubbed; what is pinned is the rows the route writes and the community
-// they make. Skipped when no server is reachable, required when
+// a Group or Community creator picks. Its making (src/workflow/app-creation/,
+// started by the row's insert) does not run here; what is pinned is the
+// rows the route writes in its one transaction, which the making reads,
+// and the community they make. Skipped when no server is reachable, required when
 // TEST_DATABASE_URL is set, like tests/communities-postgres.test.js.
 
 const test = require('node:test');
@@ -38,11 +39,16 @@ test('creating a project for someone, against the full schema', { timeout: 18000
                                       ALTER COLUMN profile_discoverable SET DEFAULT TRUE`);
 
   // The route and the services it calls read the pool through getPool; the
-  // build, the live pushes and analytics are stubbed before the route loads
-  // (apps.js destructures createApp at require time).
+  // live pushes and analytics are stubbed before the route loads.
   require('../src/db/pool').getPool = () => pool;
-  const built = [];
-  require('../src/services/app-creator').createApp = async (_config, row) => { built.push(row); };
+  // What the making is handed: the row as the route's transaction left it,
+  // and a Started event for it.
+  const made = async (id) => {
+    const { rows: [started] } = await pool.query(
+      `SELECT 1 FROM wf_events WHERE machine = 'app-creation' AND key = 'app:' || $1::text AND type = 'Started'`, [id]);
+    assert.ok(started, 'its insert started its making');
+    return (await pool.query('SELECT * FROM apps WHERE id = $1', [id])).rows[0];
+  };
   require('../src/services/ws').pushNotificationToUser = () => {};
   require('../src/services/events').record = async () => {};
   const mailed = [];
@@ -143,7 +149,7 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     assert.equal(res.data.app.approvals_required, 2);
     const approvers = await pool.query(`SELECT user_id, status FROM app_approvers WHERE app_id = $1`, [appId]);
     assert.deepEqual(approvers.rows.map((r) => [r.user_id, r.status]), [[maker.id, 'member']]);
-    const handed = built.find((row) => row.id === appId);
+    const handed = await made(appId);
     assert.equal(handed.approver_policy, 'invited', 'the build receives the governed row, for dapp.json');
     const governance = require('../src/services/governance');
     governance.invalidateGovernance?.(appId);
@@ -158,7 +164,7 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     assert.equal(res.status, 201, JSON.stringify(res.data));
     const { rows } = await pool.query(`SELECT manifest_snapshot FROM apps WHERE id = $1`, [res.data.app.id]);
     assert.deepEqual(rows[0].manifest_snapshot, { description: 'Swap seeds and plan the plots.', secrets: [] });
-    const handed = built.find((row) => row.id === res.data.app.id);
+    const handed = await made(res.data.app.id);
     assert.equal(handed.manifest_snapshot.description, 'Swap seeds and plan the plots.',
       'the build receives the described row, for dapp.json');
     const plain = await create({ name: 'Undescribed', audience: 'open' });
@@ -200,7 +206,7 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     const named = await create({ name: 'Named empty', audience: 'solo', template: 'empty' });
     assert.equal(named.status, 201, JSON.stringify(named.data));
     assert.equal(named.data.app.template, null, 'naming the empty starter stores nothing either');
-    assert.equal(built.find((row) => row.id === named.data.app.id).template, null,
+    assert.equal((await made(named.data.app.id)).template, null,
       'the build reads no template as the empty starter');
     // A ready-made app (services/app-templates.js) is stored, built from, and
     // has nothing for Homeroom bot to build or sketch, even with a description.
@@ -212,7 +218,7 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     });
     assert.equal(groceries.status, 201, JSON.stringify(groceries.data));
     assert.equal(groceries.data.app.template, 'grocery-list');
-    assert.equal(built.find((row) => row.id === groceries.data.app.id).template, 'grocery-list', 'the build makes the ready-made app');
+    assert.equal((await made(groceries.data.app.id)).template, 'grocery-list', 'the making makes the ready-made app');
     assert.equal(groceries.data.homeroomBot, undefined, 'no first version is started');
     // Its example picture, for the made screen's card to show at once.
     assert.equal(groceries.data.exampleScreen, '/illustrations/starters/grocery-list.png');
