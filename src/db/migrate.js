@@ -206,6 +206,7 @@ async function migrate(config) {
   // the demo user so the check viewer exercises the NON-owner spec panel.
   await seedStagingSharedSpecPanelSession(pool, config);
   await seedStagingHtmlSpecSession(pool, config);
+  await seedStagingComplicatedPlanSpec(pool, config);
   await seedStagingDemoProposal(pool, config);
   await seedStagingSpecUserShareFixtures(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
@@ -10931,6 +10932,89 @@ async function seedStagingHtmlSpecSession(pool, config) {
   log.info('db', 'Staging HTML-spec fixture seeded', { appId, sessionId: specSessionId });
 }
 
+// 20 Oct 2026: the plan behind the staging Homeroom bot chat's
+// complicated-change plan card (services/staging-messages.js
+// BOT_DM_COMPLICATED_PLAN_SPEC), whose card now shows its plan: a
+// leaderboard, as the card's lines say, with one phone screen before and
+// after. Shared to the group, as the bot
+// shares a plan it asks about, so the demo chat's reader may read it. Owned
+// by the demo user; fixed id 900832.
+async function seedStagingComplicatedPlanSpec(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const { specHtmlToMarkdown } = require('../services/spec-html');
+
+  const { rows: appRows } = await pool.query('SELECT id FROM apps WHERE slug = $1', [config.selfAppSlug]);
+  const appId = appRows[0]?.id;
+  const { rows: demoRows } = await pool.query('SELECT id FROM users WHERE username = $1', ['staging-demo-user']);
+  const demoUserId = demoRows[0]?.id;
+  if (!appId || !demoUserId) {
+    log.warn('db', 'Staging complicated-plan fixture skipped: self-app row or demo user missing');
+    return;
+  }
+
+  const html = `<article data-spec-styles="platform" data-spec>
+  <h1>Staging demo: a Leaderboard tab beside the list</h1>
+  <p>A staging fixture: the plan Homeroom bot's demo chat asks about before it builds request #17.</p>
+  <section data-spec-tab="user">
+    <figure data-screens>
+      <ol data-changes>
+        <li data-change="1" data-steps="Open the list → Leaderboard">A Leaderboard tab beside the list</li>
+        <li data-change="2" data-steps="Open the list → Leaderboard">Points for each item finished this week, your own place at the top</li>
+      </ol>
+      <template data-screen data-size="phone" data-focus="0 0 390 300">
+        <style>
+          .sl-page{font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;background:var(--bg-primary,#fff);color:var(--text-primary,#0a0a0a);height:844px;padding:20px 16px}
+          .sl-title{font-size:22px;font-weight:700;margin:0 0 14px}
+          .sl-tabs{display:flex;gap:8px;margin-bottom:14px}.sl-tabs span{padding:7px 14px;border-radius:999px;font-size:14px;font-weight:600;background:var(--bg-tertiary,#e9e9ec)}
+          .sl-tabs .on{background:#18181b;color:#fff}
+          .sl-row{display:flex;justify-content:space-between;align-items:center;padding:12px 4px;border-bottom:1px solid var(--border,#e3e3e6)}
+          .sl-muted{color:var(--text-muted,#68686c);font-size:13px}.sl-you{font-weight:700}
+        </style>
+        <div class="sl-page">
+          <p class="sl-title">Staging demo app</p>
+          <div class="sl-tabs" data-side="before"><span class="on">List</span></div>
+          <div class="sl-tabs" data-side="after" data-change="1"><span>List</span><span class="on">Leaderboard</span></div>
+          <div data-side="before">
+            <div class="sl-row"><span>Water the plants</span><span class="sl-muted">Today</span></div>
+            <div class="sl-row"><span>Take the bins out</span><span class="sl-muted">Tomorrow</span></div>
+            <div class="sl-row"><span>Clean the kitchen</span><span class="sl-muted">Friday</span></div>
+          </div>
+          <div data-side="after" data-change="2">
+            <div class="sl-row sl-you"><span>You · 2nd</span><span>40 points</span></div>
+            <div class="sl-row"><span>1. ada</span><span class="sl-muted">60 points</span></div>
+            <div class="sl-row"><span>3. mika</span><span class="sl-muted">25 points</span></div>
+          </div>
+        </div>
+      </template>
+    </figure>
+    <h3>What changes</h3>
+    <ul><li><b>A Leaderboard tab.</b> It sits beside the list.</li><li><b>Points for each item you finish.</b> They count up over the week and start again on Monday.</li><li><b>Your own place at the top.</b> Then everyone else, most points first.</li></ul>
+  </section>
+  <section data-spec-tab="tech">
+    <p>A staging fixture: no code stands behind this plan.</p>
+  </section>
+</article>`;
+  const markdown = specHtmlToMarkdown(html).trim();
+
+  const sessionId = 900832;
+  await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, session_title, status, spec_md, spec_html, created_at)
+     VALUES ($1, $2, $3, 'staging-fixture/complicated-plan', '[staging fixture] Staging demo: a leaderboard plan', 'paused',
+       $4, $5, NOW() - INTERVAL '30 minutes')
+     ON CONFLICT (id) DO UPDATE SET spec_md = EXCLUDED.spec_md, spec_html = EXCLUDED.spec_html`,
+    [sessionId, appId, demoUserId, markdown, html]
+  );
+  await pool.query(
+    `INSERT INTO chat_session_specs (session_id, version, content, content_html, shared_to_group_at)
+     VALUES ($1, 1, $2, $3, NOW() - INTERVAL '25 minutes')
+     ON CONFLICT (session_id, version) DO UPDATE SET content = EXCLUDED.content, content_html = EXCLUDED.content_html,
+       shared_to_group_at = COALESCE(chat_session_specs.shared_to_group_at, EXCLUDED.shared_to_group_at)`,
+    [sessionId, markdown, html]
+  );
+  log.info('db', 'Staging complicated-plan fixture seeded', { appId, sessionId });
+}
+
 // Checkbox-flicker fix fixture. The fix is a client-rendering change, but
 // every checkbox surface is data-driven, so seed a scout/proposal session
 // named "Staging demo proposal" carrying GFM task lists across all three
@@ -14879,7 +14963,7 @@ async function migrateAppDbsToPerRole(pool, config) {
   log.info('db', 'Running per-app role migration');
 
   const { rows } = await pool.query(
-    `SELECT id, slug, container_id, manifest_snapshot, db_password, status, self_hosted
+    `SELECT id, slug, name, container_id, manifest_snapshot, db_password, status, self_hosted
        FROM apps
        WHERE COALESCE(self_hosted, FALSE) = FALSE
          AND status NOT IN ('deleted', 'creating', 'awaiting_secrets')`

@@ -178,6 +178,12 @@ test('after Submit: one card carries the first look and the setup, under the pro
   const asks = card({ progress: { setup: false, words: 'Your plan is ready to review', note: 'It’s set up.', busy: false, asks: true } });
   assert.match(asks, /text-\[color:var\(--accent\)\]">Your plan is ready to review<\/p>/);
   assert.doesNotMatch(asks, /data-progress-ring-spinning/);
+  assert.doesNotMatch(asks, /--state-ok/, 'a plan that waits is not made yet');
+  // Ready or live, the full ring is green (20 Oct 2026: "the ring when it's
+  // done making should be green"), as a finished progress bar is.
+  const live = card({ progress: { setup: false, words: 'Live', note: 'It’s set up.', busy: false, asks: false, finished: true } });
+  assert.match(live, /stroke-\[color:var\(--state-ok\)\]/);
+  assert.doesNotMatch(live, /stroke-zinc-400|data-progress-ring-spinning/);
 
   // One height whatever it shows, so nothing under it moves: the same row,
   // the same phone, the same status row.

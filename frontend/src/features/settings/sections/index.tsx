@@ -88,8 +88,9 @@ export function SettingsSections() {
       <PasswordSection />
       <DeleteAccountSection />
       <LinkedAccountsSection />
-      {/* ── #5104: who can message or invite you, and who can find you. A
-          stateful pane; see ./privacy.tsx. */}
+      {/* ── #5104: who can message or invite you, and who can find you; and
+          #5097's Share usage analytics under them. A stateful pane; see
+          ./privacy.tsx. */}
       <PrivacySection />
       <WalletSection />
       {/* ── AI & building ── */}

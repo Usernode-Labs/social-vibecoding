@@ -1224,6 +1224,11 @@ async function becomeLeader() {
   // And the first session's card a restart kept out of a new repository
   // (services/app-sketch.js sweepUncommitted): every quarter hour.
   require('./src/services/app-sketch').startCommitSweep(config);
+  // Ready-made apps' images, built before anybody makes a project from one
+  // (services/starter-images.js): at boot every one whose code this release
+  // changed, then every minute what is queued (Admin > Templates' Rebuild) or
+  // failed. Not in a staging preview, nor with STARTER_PREBUILDS=off.
+  require('./src/services/starter-images').start(config, getPool(config));
 
   // Interface text merged in English and not yet in Homeroom's other
   // languages is translated and put to the community as one proposal. Every
@@ -4647,6 +4652,7 @@ async function cleanup() {
   for (const [name, stop] of [
     ['app creation', () => require('./src/services/app-creation-owner').stop()],
     ['sketch commit', () => require('./src/services/app-sketch').stopCommitSweep()],
+    ['starter image', () => require('./src/services/starter-images').stop()],
   ]) {
     try { stop(); } catch (err) { log.warn('server', `Stopping the ${name} sweep failed`, { err: err.message }); }
   }

@@ -60,7 +60,8 @@
 // Nobody blocked either way, nobody who has already read past it (they are
 // looking at the discussion), and nobody who switched the project's
 // "Every message in the discussion" off (notification-preferences.js
-// `channel_messages`, per project, then account-wide, then on by default).
+// `channel_messages`, per project, then account-wide, then on by default),
+// and nobody who muted #general (#5303, services/channel-mutes.js).
 //
 // ── One row per discussion, one ring per stretch ───────────────────────
 //
@@ -77,6 +78,7 @@
 const log = require('./logger');
 const notifications = require('./notifications');
 const notificationPreferences = require('./notification-preferences');
+const channelMutes = require('./channel-mutes');
 
 const KIND = 'channel_message';
 const CATEGORY = 'channel_messages';
@@ -238,6 +240,9 @@ async function notifyChannelMessage(pool, { appId, messageId, senderId, excludeU
   let ids = group.people.map(Number).filter((id) => Number.isInteger(id) && !skip.has(id));
   if (!ids.length) return [];
   ids = await notificationPreferences.filterUsersByCategory(pool, { userIds: ids, appId, categoryKey: CATEGORY });
+  if (!ids.length) return [];
+  // #5303: nor anybody who muted #general (services/channel-mutes.js).
+  ids = await channelMutes.filterUnmuted(pool, { userIds: ids, appId, ref: channelMutes.GENERAL });
   if (!ids.length) return [];
 
   const out = [];

@@ -130,6 +130,7 @@ type Legacy = {
     _WORKSHOP_VIEW_KEY?: string;
     _workshopViewPath?: (url: string) => string | null;
     _publishCommunityScope?: (slug: string | null) => void;
+    resumeWorkshopView?: () => boolean;
   };
   AppView?: {
     _landOnHub?: (slug: string) => void;
@@ -214,6 +215,20 @@ export function rememberCommunity(slug: string): void {
   App?._publishCommunityScope?.(slug);
   // And on its Hub tab, whatever tab the page was last left on.
   AppView?._landOnHub?.(slug);
+}
+
+/**
+ * #5528 FOR THE MAKER'S WALK TOO (newcomer run, 20 Oct 2026): the Home tour
+ * ends on Communities, and the walk ended where it started, on Home. Done on
+ * its last card, the Communities tab's ("{{app}}'s hub is here"), now opens
+ * that tab on the project's hub, as a press on the tab it rings does once
+ * the tab remembers the project (rememberCommunity, App.resumeWorkshopView);
+ * straight to the hub when the tab cannot resume it. Skip stays on Home.
+ */
+export function walkDoneLanding(slug: string): void {
+  rememberCommunity(slug);
+  if (legacy().App?.resumeWorkshopView?.()) return;
+  enterScreen('hub', slug);
 }
 
 type Box = { left: number; top: number; width: number; height: number };
@@ -548,7 +563,7 @@ export function StepDots({ at, total }: { at: number; total: number }) {
  * Done on the last.
  */
 export function Tour({ info, steps, onEnd: endTour, start = 0, moments = false, numbered = false }: {
-  info: FirstSessionInfo; steps: TourStep[]; onEnd: () => void; start?: number; moments?: boolean; numbered?: boolean;
+  info: FirstSessionInfo; steps: TourStep[]; onEnd: (how: 'done' | 'skipped') => void; start?: number; moments?: boolean; numbered?: boolean;
 }) {
   const t = useMessages('onboarding');
   // A screenshot state may open it part-way (tourShot, below), on its own
@@ -595,7 +610,7 @@ export function Tour({ info, steps, onEnd: endTour, start = 0, moments = false, 
       ended.current = true;
       noteMoment(info.slug, 'tour_ended', { step: indexRef.current + 1, steps: steps.length, how });
     }
-    endTour();
+    endTour(how);
   }, [info.slug, steps.length, endTour]);
   const onEnd = useCallback(() => finish('done'), [finish]);
 
@@ -1433,7 +1448,14 @@ export function FirstSession() {
   }, [mode.kind, tip, owing, startWalk]);
   const closeTip = useCallback(() => setTip(null), []);
 
-  const end = useCallback(() => setMode({ kind: 'none' }), []);
+  // A tour's end. The maker's walk, done (not skipped), goes on to its
+  // project's hub (walkDoneLanding); a private member's walk ends on its
+  // waitlist card, on Home, and stays there, as every other tour does.
+  const end = useCallback((how: 'done' | 'skipped') => {
+    const hub = how === 'done' && mode.kind === 'tour' && mode.path === 'walk' && !mode.info.privateMember ? mode.info.slug : null;
+    setMode({ kind: 'none' });
+    if (hub) walkDoneLanding(hub);
+  }, [mode]);
 
   // The Create door's screens own the device's back press, as the New
   // project dialog they replaced did (lib/back-stack.ts): back closes them,

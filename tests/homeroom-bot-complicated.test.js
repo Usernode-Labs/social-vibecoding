@@ -151,6 +151,95 @@ test('the plan card for an existing project says where its screens are and where
   assert.doesNotMatch(draw({ ...PLAN, complicated: true }, { state: 'built' }), /data-bot-plan-note/, 'only while it waits');
 });
 
+// 20 Oct 2026: the card asked for Build it to a plan it did not show. It shows it now.
+
+test('a card whose triage gave no lines reads them off the plan it drafted', () => {
+  const spec = [
+    '# Stack each project\'s notifications under its two newest',
+    '',
+    'The sheet groups notifications by project. Each group shows two.',
+    '',
+    '## User-facing changes',
+    '',
+    '**Before and after** (numbered as on the screens):',
+    '',
+    '1. Each project\'s group shows its two newest notifications. The rest fold. (Tap the bell)',
+    '',
+    '### What changes',
+    '',
+    '- **One group per project, on every tab.** Unread, Messages and All group them.',
+    '  - a detail of the point above',
+    '- A `code` word and [a link](https://example.com) \u2014 said *plainly*.',
+    '- **The newest project comes first.** Groups are ordered by their newest.',
+    '- **A sixth line.** Past the card\'s five.',
+    '',
+    '### Design',
+    '',
+    '- **Not a change.** The brief is the build\'s.',
+    '',
+    '## Technical implementation',
+    '',
+    '- **Not for the card.**',
+  ].join('\n');
+  assert.deepEqual(live.specCardLines(spec), [
+    'Stack each project\'s notifications under its two newest',
+    'Each project\'s group shows its two newest notifications',
+    'One group per project, on every tab',
+    'A code word and a link: said plainly',
+    'The newest project comes first',
+  ], 'its title, then each top-level point of its user-facing half: its bold lead, else its first sentence');
+  assert.deepEqual(live.specCardLines('# Plan\n\nIt adds a leaderboard tab. Then more.'), ['It adds a leaderboard tab'],
+    'a bare "Plan" is not a line; with no points, the first sentence under the title');
+  assert.deepEqual(live.specCardLines(''), []);
+  assert.deepEqual(bot.complicatedPlanBullets(PLAN, spec), PLAN.bullets, 'the triage\'s lines, when it wrote them');
+  assert.equal(bot.complicatedPlanBullets({ bullets: [] }, spec)[0], 'Stack each project\'s notifications under its two newest');
+  assert.deepEqual(bot.complicatedPlanBullets({}, null), ['The change this request asks for, as the plan and its screens below show it']);
+  assert.match(read('src/services/homeroom-bot.js'), /bullets: complicatedPlanBullets\(plan, drafted\.specMd\), questions, complicated: true,/);
+});
+
+test('a complicated plan keeps what makes it one as the chat reads it: its label and the spec it asks about', () => {
+  // 20 Oct 2026: the chat's reader kept only the bullets and questions, so the
+  // card's note never showed and the card had no spec to show.
+  const { normalizeBotMeta } = loadTsx('frontend/src/features/messages/api.ts');
+  const plan = (p) => normalizeBotMeta({ homeroomBot: { kind: 'plan', issueNumber: 17, plan: p } })?.homeroomBot.plan;
+  assert.deepEqual(plan({ ...PLAN, complicated: true, spec: { sessionId: 900832, version: '1' } }),
+    { ...PLAN, complicated: true, spec: { sessionId: 900832, version: 1 } });
+  assert.deepEqual(plan({ ...PLAN, complicated: true, spec: { sessionId: 'x', version: 1 } }), { ...PLAN, complicated: true },
+    'a spec it cannot name is left off');
+  assert.deepEqual(plan({ ...PLAN, spec: { sessionId: 5, version: 1 } }), PLAN, 'a first version\'s plan, as it was');
+  assert.equal(plan({ bullets: [], complicated: true }), undefined, 'no lines, no plan');
+});
+
+test('the chat\'s plan card shows the plan it asks about, under its lines, and opens the whole of it', () => {
+  const { PlanCardView, COMPLICATED_PLAN_NOTE_SHOWN } = loadTsx('frontend/src/features/messages/bot-plan-view.tsx');
+  const planSpec = createElement('div', { 'data-test-plan-spec': '' });
+  const draw = (props = {}) => renderToHtml(createElement(PlanCardView, {
+    appName: 'Chores', plan: { ...PLAN, complicated: true, spec: { sessionId: 5, version: 1 } }, state: 'open', planSpec, ...props,
+  }));
+  const open = draw();
+  assert.ok(open.indexOf('data-bot-plan-lines') < open.indexOf('data-test-plan-spec'), 'under its lines');
+  assert.ok(open.indexOf('data-test-plan-spec') < open.indexOf('data-bot-plan-build'), 'above Build it');
+  assert.equal(message(COMPLICATED_PLAN_NOTE_SHOWN), 'What you ask to change is posted on the request below, where the group can see it.');
+  assert.match(open, /data-bot-plan-note=""><svg[^>]*>[\s\S]*?<\/svg><span>What you ask to change is posted on the request below, where the group can see it\.<\/span>/);
+  assert.doesNotMatch(draw({ state: 'built' }), /data-test-plan-spec/, 'its answers take its place once built');
+  assert.doesNotMatch(draw({ state: 'replaced' }), /data-test-plan-spec/, 'a replaced plan folds away');
+
+  const { PlanSpec, PlanDocument } = loadTsx('frontend/src/features/messages/bot-plan-spec.tsx');
+  const reading = renderToHtml(createElement(PlanSpec, { sessionId: 5, version: 1 }));
+  assert.match(reading, /data-bot-plan-spec="reading"/);
+  assert.match(reading, /<figure[^>]*aria-busy="true"[^>]*data-bot-plan-pictures=""/, 'the pictures hold their place while it is read');
+  assert.match(reading, /<button type="button"[^>]*aria-expanded="false"[^>]*disabled=""[^>]*data-bot-plan-see=""><span>See the plan<\/span>/);
+  assert.equal(message('messages:bot.plan.spec.hide'), 'Hide the plan');
+  const doc = renderToHtml(createElement(PlanDocument, { read: { state: 'read', html: null, markdown: '# A plan\n\nIt adds a tab.' }, docKey: 'k' }));
+  assert.match(doc, /data-bot-plan-doc="markdown"[\s\S]*It adds a tab\./, 'a markdown plan, drawn as the chat draws markdown');
+
+  const host = read('frontend/src/features/messages/bot-plan.tsx');
+  assert.match(host, /const spec = meta\.plan\.complicated \? meta\.plan\.spec : null;/, 'a complicated change\'s card only');
+  assert.match(host, /planSpec=\{spec && Number\(spec\.sessionId\) > 0 && Number\(spec\.version\) > 0 \? <PlanSpec sessionId=\{Number\(spec\.sessionId\)\} version=\{Number\(spec\.version\)\} \/> : null\}/);
+  const src = read('frontend/src/features/messages/bot-plan-spec.tsx');
+  assert.match(src, /fetch\(`\/api\/sessions\/\$\{sessionId\}\/specs\/\$\{version\}`, \{ credentials: 'same-origin' \}\)/, 'the version the card names, which the bot shared');
+});
+
 test('Build it writes the plan and choices into the build note as the requester\'s, kept whole in the build prompt', () => {
   const chosen = [{ question: 'Who shows on the leaderboard?', answer: 'Only people who opt in' }];
   const note = bot.creatorChoiceNote(chosen, { bullets: PLAN.bullets, requester: true });

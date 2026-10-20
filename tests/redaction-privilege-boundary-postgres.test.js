@@ -204,6 +204,29 @@ function harness(t) {
   return dbManager;
 }
 
+// The postgres tests run in parallel against one server, and a file that
+// boots the workflow runtime can arm the orphan staging-database sweep
+// (tests/lib/test-net.js turns it off for every test process; a file that
+// loads without that preload can still sweep). Should a sweep drop this
+// copy between its CREATE DATABASE and pg_restore's first connection,
+// pg_restore says so — `database "…" does not exist … It seems to have just
+// been dropped or renamed`, SQLSTATE 3D000. Only that is retried, once:
+// cloneDatabaseDirect starts with dropOldTarget, so a second attempt starts
+// from nothing and cannot build on a half-written copy.
+const DROPPED_UNDER_US = /does not exist[\s\S]*just been dropped/;
+
+async function cloneRetryingIfDropped(dbManager, sourceDb, targetDb) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await dbManager.cloneDatabase(sourceDb, targetDb);
+    } catch (err) {
+      const dropped = (err && err.code === '3D000') || DROPPED_UNDER_US.test(String(err && err.message));
+      if (!dropped || attempt >= 2) throw err;
+      process.stderr.write(`clone-retry: ${targetDb} was dropped while it was being filled; retrying once\n`);
+    }
+  }
+}
+
 // db-manager's administrative connection uses a `usernode` maintenance
 // database. Create it if the server does not have one (as the two-server
 // postgres suite does), connecting on the default database. Returns a control
@@ -526,7 +549,7 @@ test('a trusted extension is restored as the copy\'s own owner, comment and all'
   const src = await connect(at(BASE, source));
   await src.query('CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public');
   await src.end();
-  await dbManager.cloneDatabase(source, target);
+  await cloneRetryingIfDropped(dbManager, source, target);
   // pg_extension is per database; read it inside the copy.
   const clone = await connect(at(BASE, target));
   const there = (await clone.query(

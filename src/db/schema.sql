@@ -13155,6 +13155,13 @@ COMMENT ON TABLE test_phone_sign_ins IS 'staging:private';
 -- so existing databases need nothing; nothing reads it.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_ask_answered_at TIMESTAMPTZ;
 
+-- "Share usage analytics" (#5097): whether this person lets Homeroom record
+-- how they use it (the shell's UI telemetry and the other usage events
+-- services/usage-analytics.js lists). Off for everyone, existing accounts and
+-- new ones, until they switch it on in Settings > Privacy; with it off the
+-- server drops those events on arrival and the shell does not send them.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS usage_analytics BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- "Are you 18 or older?" (#5095, compliance A-02): when the account said
 -- yes, asked the first time it opens a wallet, staking, node or passport
 -- feature. NULL until then, including "I'm under 18", which records
@@ -15117,6 +15124,28 @@ CREATE TABLE IF NOT EXISTS community_pins (
   FOREIGN KEY (community_id, user_id) REFERENCES community_members (community_id, user_id) ON DELETE CASCADE
 );
 
+-- ── Muted channels: a channel's Mute, the viewer's own (#5303) ──────────
+--
+-- A row says this person muted one of a project's channels (the Mute in the
+-- channel's header, frontend/src/features/dev-board/workshop/channel-head.tsx;
+-- services/channel-mutes.js). A muted channel's unread counts nowhere for
+-- them (services/places.js: the places list, the place bar's dot, the
+-- sidebar) and a small group's "every message" ring skips them
+-- (services/group-channel-notify.js). Mentions and replies still reach
+-- them: being addressed is not channel activity.
+--
+-- `channel_ref` is 0 for #general; a topic's channel would be its
+-- app_category_registry id. No row is the default: not muted.
+CREATE TABLE IF NOT EXISTS channel_mutes (
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  channel_ref INTEGER NOT NULL DEFAULT 0,
+  muted_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, app_id, channel_ref)
+);
+CREATE INDEX IF NOT EXISTS idx_channel_mutes_app ON channel_mutes (app_id, channel_ref);
+COMMENT ON TABLE channel_mutes IS 'staging:private';
+
 -- ── Platform signals: problems the platform found in itself ─────────────
 --
 -- One row per EPISODE of a problem the platform detected on its own (a
@@ -15404,3 +15433,47 @@ LANGUAGE sql STABLE AS $$
       OR EXISTS (SELECT 1 FROM users t WHERE t.id = target_id AND t.profile_discoverable)
       OR (viewer_id IS NOT NULL AND users_connected(target_id, viewer_id))
 $$;
+
+-- ── Ready-made apps' prebuilt images (services/starter-images.js) ───────
+--
+-- Every project made from one ready-made app (services/app-templates.js) is
+-- the same code: services/template.js writes nothing of one project's into
+-- what its image is built from. So each ready-made app's image is built
+-- once, on the platform, whenever its code changes (a release that changes a
+-- starter or the generator), and a new project made from it deploys that
+-- image instead of building its own. One row per ready-made app and version
+-- of its code: `context_key`, a SHA-256 over what goes into the image and how
+-- it is built (starter-images.js contextKey). A new project uses the row
+-- whose key is its own.
+--
+--   status     queued    to build: a new key, or Rebuild in Admin
+--              building  `owner` is building it, alive while its
+--                        heartbeat_at is fresh
+--              ready     image_ref is the image
+--              failed    the last attempt failed (`error`); retried a few
+--                        times on its own (attempts), then left for Rebuild
+--   image_ref  the image a project deploys, kept through a Rebuild that is
+--              under way or failed: a ready image stays usable until a newer
+--              one replaces it
+CREATE TABLE IF NOT EXISTS starter_images (
+  template      VARCHAR(64) NOT NULL,
+  context_key   VARCHAR(64) NOT NULL,
+  status        VARCHAR(12) NOT NULL DEFAULT 'queued'
+                  CHECK (status IN ('queued', 'building', 'ready', 'failed')),
+  image_ref     TEXT,
+  build_ref     TEXT,
+  engine        VARCHAR(16),
+  source_sha    VARCHAR(40),
+  build_ms      INTEGER,
+  error         TEXT,
+  attempts      INTEGER NOT NULL DEFAULT 0,
+  owner         TEXT,
+  heartbeat_at  TIMESTAMPTZ,
+  started_at    TIMESTAMPTZ,
+  built_at      TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (template, context_key)
+);
+CREATE INDEX IF NOT EXISTS idx_starter_images_key
+  ON starter_images (context_key) WHERE image_ref IS NOT NULL;

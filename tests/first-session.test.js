@@ -1257,3 +1257,50 @@ test('#4900: the tour waits for the app before the step is painted, with Skip an
   assert.doesNotMatch(html, /data-first-session-tour-wait/);
   assert.match(html, />Tap it<\/button>/);
 });
+
+// #5528 for the maker's walk (newcomer run, 20 Oct 2026): the Home tour ended
+// on Communities, and the walk ended where it started, on Home. Done on its
+// last card, the Communities tab's, opens that tab on the project's hub.
+test('the maker\'s walk, done, opens the Communities tab on its project\'s hub; skipped, it stays on Home', () => {
+  const src = read(`${DIR}/index.tsx`);
+  // The tour says how it ended; the walk's end reads it.
+  assert.match(src, /noteMoment\(info\.slug, 'tour_ended', \{ step: indexRef\.current \+ 1, steps: steps\.length, how \}\);\s+\}\s+endTour\(how\);/);
+  assert.match(src, /const hub = how === 'done' && mode\.kind === 'tour' && mode\.path === 'walk' && !mode\.info\.privateMember \? mode\.info\.slug : null;\s+setMode\(\{ kind: 'none' \}\);\s+if \(hub\) walkDoneLanding\(hub\);/);
+
+  const { walkDoneLanding } = loadTsx(`${DIR}/index.tsx`);
+  const before = { window: globalThis.window, localStorage: globalThis.localStorage };
+  const calls = [];
+  const stored = new Map();
+  globalThis.localStorage = { setItem: (k, v) => stored.set(k, v), getItem: (k) => stored.get(k) ?? null, removeItem: (k) => stored.delete(k) };
+  const harness = (resumes) => {
+    calls.length = 0;
+    stored.clear();
+    globalThis.window = {
+      App: {
+        _WORKSHOP_VIEW_KEY: 'usernode:workshop-view',
+        _workshopViewPath: (url) => url,
+        _publishCommunityScope: (slug) => calls.push(['scope', slug]),
+        resumeWorkshopView: () => { calls.push(['resume', stored.get('usernode:workshop-view')]); return resumes; },
+        navigateToApp: (slug, tab) => calls.push(['navigate', slug, tab]),
+      },
+      AppView: { _landOnHub: (slug) => calls.push(['hub', slug]) },
+    };
+  };
+  try {
+    // As a press on the tab would, once the tab remembers the project.
+    harness(true);
+    walkDoneLanding('city-tier-list');
+    assert.deepEqual(calls, [
+      ['scope', 'city-tier-list'],
+      ['hub', 'city-tier-list'],
+      ['resume', JSON.stringify({ slug: 'city-tier-list', path: '/app/city-tier-list/workshop' })],
+    ]);
+    // A tab that cannot resume it: straight to the hub.
+    harness(false);
+    walkDoneLanding('city-tier-list');
+    assert.deepEqual(calls.slice(-2), [['hub', 'city-tier-list'], ['navigate', 'city-tier-list', 'dev']]);
+  } finally {
+    globalThis.window = before.window;
+    globalThis.localStorage = before.localStorage;
+  }
+});

@@ -19,6 +19,7 @@ const events = require('../services/events');
 const llmTelemetry = require('../services/llm-telemetry');
 const appRollover = require('../services/app-rollover');
 const stagingReap = require('../services/staging-reap');
+const starterImages = require('../services/starter-images');
 // A scheduled job's last run (src/workflow/clock/), wherever it ran.
 const clocks = require('../services/clocks');
 
@@ -272,6 +273,45 @@ function adminRoutes(config) {
       });
     } catch (err) {
       log.error('admin', 'Rollover status failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Ready-made apps' prebuilt images ───────────────────────
+  //
+  // Admin > Templates (services/starter-images.js): each ready-made app, the
+  // key of its code as this platform build generates it, and where that
+  // key's image stands. Reading is for every admin; Rebuild queues a build
+  // the leader's next sweep runs, and is refused in a staging preview, which
+  // builds nothing.
+
+  router.get('/api/admin/templates', async (req, res) => {
+    try {
+      if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+        return res.json(starterImages.demoList(config));
+      }
+      res.json(await starterImages.list(config, getPool(config)));
+    } catch (err) {
+      log.error('admin', 'Template images listing failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/admin/templates/:id/rebuild', requireAdminWrite, async (req, res) => {
+    try {
+      if (!starterImages.prebuildsOn()) {
+        return res.status(400).json({
+          error: 'Images are not built here (a staging preview, or STARTER_PREBUILDS=off).',
+        });
+      }
+      const queued = await starterImages.requestRebuild(config, getPool(config), String(req.params.id || ''));
+      if (!queued) {
+        return res.status(409).json({ error: 'Not queued: not a ready-made app, or its image is being built now.' });
+      }
+      log.warn('admin', 'Template image rebuild queued', { by: req.user.username, template: req.params.id });
+      res.status(202).json(await starterImages.list(config, getPool(config)));
+    } catch (err) {
+      log.error('admin', 'Template image rebuild failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

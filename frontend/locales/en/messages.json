@@ -1867,6 +1867,10 @@
     "text": "by {{author}}",
     "description": "One fact in the dot-separated detail line of a card for a shared item, complete on its own: who created the item. It is joined to the other facts (the project, the item's status) by a middle dot. {{author}} is a username."
   },
+  "object.fromProject": {
+    "text": "From {{project}}",
+    "description": "On a card for a request, change or other item shared in a project's channel, when the item belongs to a different project than the channel's: says which project it comes from. {{project}} is that project's name. Joined to the item's status with a middle dot, for example \"From KasirKU · open\"."
+  },
   "channel.backCommunities": {
     "text": "Communities",
     "description": "Label of the back control on the #general channel when it leads to the Communities screen."
@@ -3366,6 +3370,34 @@
   "bot.plan.complicatedNote": {
     "text": "Its before and after screens are on the request below. What you ask to change is posted there, where the group can see it.",
     "description": "Note under Homeroom bot's plan card in a conversation, while a complicated change's plan waits: its before and after screens are on the request card below, and what the reader asks to change is posted there for the community to see."
+  },
+  "bot.plan.complicatedNoteShown": {
+    "text": "What you ask to change is posted on the request below, where the group can see it.",
+    "description": "Note under Homeroom bot's plan card in a conversation, while a complicated change's plan waits and the card itself shows the plan and its before and after screens: what the reader asks to change is posted on the request card below, for the community to see."
+  },
+  "bot.plan.spec.see": {
+    "text": "See the plan",
+    "description": "Row on Homeroom bot's plan card for a complicated change: opens the whole plan (what will change and its before and after screens) inside the card. \"See\" is a verb."
+  },
+  "bot.plan.spec.hide": {
+    "text": "Hide the plan",
+    "description": "The same row on Homeroom bot's plan card once the whole plan is open: folds the plan away again. \"Hide\" is a verb."
+  },
+  "bot.plan.spec.sections": {
+    "text": "Plan sections",
+    "description": "Accessible name of the two tabs over the whole plan opened on Homeroom bot's plan card."
+  },
+  "bot.plan.spec.tab.user": {
+    "text": "User-facing",
+    "description": "Tab over the whole plan opened on Homeroom bot's plan card: the half of the plan that says what people will see and do differently. Shown first."
+  },
+  "bot.plan.spec.tab.tech": {
+    "text": "Technical",
+    "description": "Tab over the whole plan opened on Homeroom bot's plan card: the half of the plan that says how it will be built, for developers."
+  },
+  "bot.plan.spec.tabEmpty": {
+    "text": "Nothing in this section.",
+    "description": "Shown in a tab of the whole plan opened on Homeroom bot's plan card when that half of the plan is empty."
   },
   "bot.track.state.queued": {
     "text": "Queued",

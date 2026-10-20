@@ -63,8 +63,10 @@ test('the made screen\'s moments are kept for its maker, test accounts included,
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
   const user = async (username, { test: testAccount = false } = {}) => (await pool.query(
-    `INSERT INTO users (username, password, has_platform_access, test_account_created_at)
-     VALUES ($1, 'x', TRUE, CASE WHEN $2 THEN NOW() END) RETURNING id, username`,
+    // Each switched "Share usage analytics" on (#5097); the last test below
+    // switches it off again.
+    `INSERT INTO users (username, password, has_platform_access, test_account_created_at, usage_analytics)
+     VALUES ($1, 'x', TRUE, CASE WHEN $2 THEN NOW() END, TRUE) RETURNING id, username`,
     [username, testAccount],
   )).rows[0];
   const alex = await user('alex_t1013', { test: true });
@@ -175,6 +177,19 @@ test('the made screen\'s moments are kept for its maker, test accounts included,
     assert.deepEqual(await res.json(), { ok: true, recorded: false });
     assert.equal((await moments()).length, before);
     viewer = alex;
+  });
+
+  await t.test('somebody who switched usage analytics off is answered, never recorded (#5097)', async () => {
+    const before = (await moments()).length;
+    await pool.query('UPDATE users SET usage_analytics = FALSE WHERE id = $1', [alex.id]);
+    try {
+      const res = await post({ kind: 'made_shown', clientAt: new Date().toISOString() });
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), { ok: true, recorded: false });
+      assert.equal((await moments()).length, before);
+    } finally {
+      await pool.query('UPDATE users SET usage_analytics = TRUE WHERE id = $1', [alex.id]);
+    }
   });
 
   await t.test('a client in a loop is held at 60 a minute, and its refused requests cost nothing', async () => {
