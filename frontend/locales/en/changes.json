@@ -6059,6 +6059,14 @@
     "text": "Show in light mode",
     "description": "Hover text and accessible name of the small round button at the right end of the before/after viewer's toolbar that switches the screenshots to their light-mode versions, when the run took them in both modes. It shows a sun."
   },
+  "shots.viewer.expand": {
+    "text": "Expand",
+    "description": "Hover text and accessible name of the small round button at the end of the before/after viewer's toolbar that opens the screenshots at nearly the size of the window, over the page."
+  },
+  "shots.viewer.collapse": {
+    "text": "Close",
+    "description": "Accessible name of the same small round button once the before/after screenshots are open at nearly the size of the window: it puts them back in the page."
+  },
   "shots.viewer.pickDesktop": {
     "text": "Screen {{index}} of {{total}}: desktop",
     "description": "Accessible name of the hidden option in the before/after viewer that picks one screenshot taken at desktop size. {{index}} is its number and {{total}} how many screenshots the viewer holds."

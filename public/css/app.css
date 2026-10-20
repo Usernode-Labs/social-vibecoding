@@ -2065,8 +2065,25 @@ form.agent-session-composer:focus-within {
      (`.messages-layout-embedded`) keeps its ✕. */
   .messages-layout:not(.messages-layout-embedded) > .messages-reply-pane [data-reply-close] { display: none; }
 }
+/* #5691: the divider between a chat and its open thread, dragged to trade
+   room between them. It sits in the 8px the thread pane's own margin leaves
+   (`.messages-reply-pane` is positioned), so the layout never shifts. At
+   rest it is the sheet's hairline; under the pointer or the keyboard it is
+   the accent, as a change session's side pane divider is. Drawn from 768px
+   only, where the two panes are side by side; on a phone the thread covers
+   the chat. */
+.messages-reply-resizer { display: none; }
 @media (min-width: 768px) {
-  .messages-reply-pane { flex: 0 0 min(420px, 42%); margin: 14px 12px 0 0; }
+  .messages-reply-pane { flex: 0 0 var(--messages-reply-width, min(420px, 42%)); margin: 14px 12px 0 0; }
+  /* A community page's embedded copy of a thread (#3653) keeps its own width:
+     the divider is Messages' alone. */
+  .messages-layout-embedded > .messages-reply-pane { flex-basis: min(420px, 42%); }
+  .messages-layout-embedded > .messages-reply-pane > .messages-reply-resizer { display: none; }
+  .messages-reply-resizer { display: block; position: absolute; left: -7px; top: 0; bottom: 0; width: 6px; z-index: 1;
+    border-radius: 3px; cursor: col-resize; touch-action: none;
+    background: linear-gradient(var(--app-sheet-line), var(--app-sheet-line)) center / 1px 100% no-repeat; }
+  .messages-reply-resizer:hover, .messages-reply-resizer:focus-visible { background: var(--accent, #2563eb); outline: none; }
+  .messages-reply-resizer:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 1px; }
   .messages-layout.messages-has-reply-thread > .messages-thread-pane { margin-right: 8px; }
 }
 @media (min-width: 768px) and (max-width: 1599px) {
@@ -16048,6 +16065,41 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .shots-theme-flip svg { width: 16px; height: 16px; flex: none; }
 .shots-theme-flip ~ .shots-screen-nav { margin-left: 0; }
 .shots-viewer:has(.shots-theme-pick:focus-visible) .shots-theme-flip { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
+/* The expand button (#5691): the same 30px round grey disc as the screen
+   arrows and the mode flip, at the bar's end. The viewer itself is its
+   popover, so the button opens and closes it without script; the arrow
+   pair points out while it is closed and in while it is open. */
+.shots-expand { display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 999px; cursor: pointer;
+  user-select: none; margin-left: auto; font: inherit; color: #3f3f46; background: rgba(24, 24, 27, 0.06); }
+.shots-expand:hover { background: rgba(24, 24, 27, 0.12); }
+.dark .shots-expand { color: #e4e4e7; background: rgba(255, 255, 255, 0.08); }
+.dark .shots-expand:hover { background: rgba(255, 255, 255, 0.14); }
+.shots-expand svg { width: 16px; height: 16px; flex: none; }
+.shots-theme-flip ~ .shots-expand { margin-left: 0; }
+.shots-expand ~ .shots-screen-nav { margin-left: 0; }
+.shots-expand:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
+.shots-expand-out, .shots-expand-in { display: inline-flex; align-items: center; }
+.shots-expand-in { display: none; }
+.shots-viewer:popover-open .shots-expand-out { display: none; }
+.shots-viewer:popover-open .shots-expand-in { display: inline-flex; }
+/* The word is the button's spoken name, and only the shown one counts. */
+.shots-expand-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@supports not selector(:popover-open) { .shots-expand { display: none; } }
+/* The viewer as a popover: closed it stays the block it always was (the UA
+   hides a closed popover and fixes an open one to the viewport, so both
+   boxes are neutralised); open it is drawn in the top layer at nearly the
+   window's size, over a dim on the page. It must be a popover rather than
+   position: fixed, because the reply pane and the app sheet it sits in
+   carry a backdrop-filter, which would trap a fixed viewer in the pane. */
+.shots-viewer[popover] { display: block; position: relative; inset: auto; margin: 0; padding: 0; border: 0; width: auto; height: auto;
+  overflow: hidden; color: inherit; background: transparent; }
+.shots-viewer:popover-open { position: fixed; inset: 0; margin: auto; height: fit-content; overflow: auto; overscroll-behavior: contain;
+  width: min(calc(100vw - 48px), calc((100vh - 200px) * 1.6)); max-height: calc(100vh - 48px); background: #fff; }
+.dark .shots-viewer:popover-open { background: #1c1c1e; }
+@supports (height: 100dvh) {
+  .shots-viewer:popover-open { width: min(calc(100vw - 48px), calc((100dvh - 200px) * 1.6)); max-height: calc(100dvh - 48px); }
+}
+.shots-viewer::backdrop { background: rgba(0, 0, 0, 0.55); }
 .shots-viewer:has(.shots-theme-dark:checked) .shots-theme-to-dark,
 .shots-viewer:has(.shots-theme-light:checked) .shots-theme-to-light { display: none; }
 /* Dark pick: a side that has a dark shot shows it instead of its light one;
