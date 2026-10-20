@@ -17,6 +17,17 @@
  *
  * The presets sheet is drawn through a portal on <body>: the make screen's
  * form rises on a transform, which would trap a fixed overlay inside it.
+ *
+ * WHAT HAPPENS NEXT (#5266, 20 Oct 2026): a small ⓘ right after the words
+ * opens a tip saying what Make it leads to — a ready-made idea ready in
+ * about a minute, Homeroom bot's plan and 20 to 30 min build, inviting
+ * people, and what the rule means once others join. It is a tip, not a side
+ * panel (the navigation review of 16 Oct: keep the idea tiles large, keep
+ * the explanation out of the way), and it covers nothing until asked for:
+ * it opens on hover where there is a mouse, and on a tap or click anywhere,
+ * and closes on Escape, a press elsewhere, or Change. It is absolutely
+ * positioned inside the line's own wrapper, so the form's transform does not
+ * trap it and it needs no portal.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -24,7 +35,7 @@ import { createPortal } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
 import { SectionHeader } from '@/components/ui/grouped-list';
-import { ShieldCheckIcon, XIcon } from '@/components/ui/icons';
+import { InfoCircleIcon, ShieldCheckIcon, XIcon } from '@/components/ui/icons';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { presetName, type PresetKey } from './model';
@@ -35,6 +46,11 @@ export const SHEET_SLIDE_MS = 200;
 
 function reducedMotion(): boolean {
   try { return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
+}
+
+/** A mouse, not a finger: only there does the ⓘ's tip open on hover (#5266). */
+function hasHover(): boolean {
+  try { return !!window.matchMedia?.('(hover: hover) and (pointer: fine)').matches; } catch { return false; }
 }
 
 /**
@@ -131,23 +147,77 @@ function PresetsSheet({ now, viewer, onPick, onGone }: {
 export function MakeRuleLine({ preset, onPick, who }: { preset: PresetKey; onPick: (key: PresetKey) => void; who: string }) {
   const t = useMessages('onboarding');
   const [open, setOpen] = useState(false);
+  // The ⓘ's tip (#5266): closed on the first render, so hydration matches.
+  const [tipOpen, setTipOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!tipOpen) return undefined;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setTipOpen(false); };
+    const onDown = (e: PointerEvent) => {
+      if (wrapperRef.current && e.target instanceof Node && wrapperRef.current.contains(e.target)) return;
+      setTipOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onDown);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onDown);
+    };
+  }, [tipOpen]);
   const viewer: Viewer = { isCreator: true, creator: who || null };
+  const bold = <b className="font-semibold text-zinc-900 dark:text-zinc-100" />;
   return (
     <>
-      <p data-make-rule={preset} className="mt-3 flex items-center gap-2 px-1 text-[13px] leading-[1.4] text-zinc-600 dark:text-zinc-300">
-        <ShieldCheckIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate">
-          <RichMessage
-            id="onboarding:firstSession.make.rule.line"
-            values={{ preset: presetName(preset, viewer) }}
-            components={[<b className="font-semibold text-zinc-900 dark:text-zinc-100" />]}
-          />
-        </span>
-        <button type="button" onClick={() => setOpen(true)} data-make-rule-change=""
-          className="shrink-0 font-semibold text-violet-700 dark:text-violet-400">
-          {t('onboarding:firstSession.make.rule.change')}
-        </button>
-      </p>
+      <div
+        ref={wrapperRef}
+        className="relative"
+        onMouseEnter={() => { if (hasHover()) setTipOpen(true); }}
+        onMouseLeave={() => { if (hasHover()) setTipOpen(false); }}
+      >
+        <p data-make-rule={preset} className="mt-3 flex items-center gap-2 px-1 text-[13px] leading-[1.4] text-zinc-600 dark:text-zinc-300">
+          <ShieldCheckIcon className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
+          <span className="min-w-0 truncate">
+            <RichMessage
+              id="onboarding:firstSession.make.rule.line"
+              values={{ preset: presetName(preset, viewer) }}
+              components={[<b className="font-semibold text-zinc-900 dark:text-zinc-100" />]}
+            />
+          </span>
+          {/* 44px of tap target, pulled back to the line's own height by its
+              margins, so nothing under the line moves. */}
+          <button
+            type="button"
+            data-make-rule-info=""
+            aria-expanded={tipOpen}
+            aria-controls="make-rule-tip"
+            aria-label={t('onboarding:firstSession.make.next.open')}
+            onClick={() => setTipOpen((was) => !was)}
+            className="-mx-2.5 -my-3.5 flex h-11 w-11 shrink-0 items-center justify-center text-zinc-500 dark:text-zinc-400"
+          >
+            <InfoCircleIcon className="h-4 w-4" aria-hidden="true" />
+          </button>
+          <button type="button" onClick={() => { setTipOpen(false); setOpen(true); }} data-make-rule-change=""
+            className="ml-auto shrink-0 font-semibold text-violet-700 dark:text-violet-400">
+            {t('onboarding:firstSession.make.rule.change')}
+          </button>
+        </p>
+        {tipOpen ? (
+          <div
+            id="make-rule-tip"
+            role="note"
+            data-make-rule-tip=""
+            className="absolute bottom-full right-0 z-10 mb-1.5 w-[min(20rem,calc(100vw-2rem))] rounded-2xl bg-white px-3.5 py-3 text-left shadow-[inset_0_0_0_1px_var(--app-sheet-line),0_8px_24px_rgba(0,0,0,0.14)] dark:bg-zinc-900"
+          >
+            <p className="text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{t('onboarding:firstSession.make.next.title')}</p>
+            <ul className="mt-1.5 list-disc pl-4 text-[13px] leading-[1.4] text-zinc-600 dark:text-zinc-300">
+              <li className="mt-1"><RichMessage id="onboarding:firstSession.make.next.readyMade" components={[bold]} /></li>
+              <li className="mt-1"><RichMessage id="onboarding:firstSession.make.next.custom" components={[bold]} /></li>
+              <li className="mt-1"><RichMessage id="onboarding:firstSession.make.next.invite" components={[bold]} /></li>
+              <li className="mt-1"><RichMessage id="onboarding:firstSession.make.next.rule" components={[bold]} /></li>
+            </ul>
+          </div>
+        ) : null}
+      </div>
       {open && typeof document !== 'undefined'
         ? createPortal(
           <PresetsSheet now={preset} viewer={viewer} onPick={onPick} onGone={() => setOpen(false)} />,

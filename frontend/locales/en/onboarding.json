@@ -1071,6 +1071,34 @@
     "text": "<0>Custom</0> · Homeroom bot builds it in 20 to 30 min",
     "description": "One line above \"Who can change it\" on the \"What do you want to make?\" screen, after a sparkle icon, while Make it would ask Homeroom bot to build the first version from the member's own description (their own words, a game, or a starting idea finished in their own words). \"it\" is the project; \"min\" is short for minutes. <0>…</0> is bold. Keep it short: it must fit on one line of a phone screen."
   },
+  "firstSession.make.welcome": {
+    "text": "Welcome to Homeroom. Pick an idea below or describe your own.",
+    "description": "Quiet line under the question \"What do you want to make?\" the first time a new member sees that screen, just after signing in. Homeroom is the product's name. It is not shown when a returning member opens New project from the Create button."
+  },
+  "firstSession.make.next.open": {
+    "text": "What happens next",
+    "description": "Spoken name of the small information (i) button after \"Who can change it\" on the \"What do you want to make?\" screen: opens a tip about what happens after Make it is pressed."
+  },
+  "firstSession.make.next.title": {
+    "text": "What happens next",
+    "description": "Title of the tip opened by the information (i) button beside \"Who can change it\" on the \"What do you want to make?\" screen: what happens after Make it is pressed."
+  },
+  "firstSession.make.next.readyMade": {
+    "text": "<0>A ready-made idea</0> is ready to use in about a minute.",
+    "description": "First line of the tip opened by the information (i) button on the \"What do you want to make?\" screen: nothing has to be built for one of Homeroom's ready-made apps. <0>…</0> is bold."
+  },
+  "firstSession.make.next.custom": {
+    "text": "<0>Anything else:</0> Homeroom bot writes a plan in about a minute, and asks you first if it needs you to choose something. Then it builds it in 20 to 30 min.",
+    "description": "Second line of the tip opened by the information (i) button on the \"What do you want to make?\" screen: what happens when Homeroom bot builds the first version from the member's own description. \"it\" is the project; \"min\" is short for minutes. Homeroom bot is a name. <0>…</0> is bold."
+  },
+  "firstSession.make.next.invite": {
+    "text": "<0>Then invite people</0> to use it and help improve it together.",
+    "description": "Third line of the tip opened by the information (i) button on the \"What do you want to make?\" screen: what the member does once the project is made. \"it\" is the project. <0>…</0> is bold."
+  },
+  "firstSession.make.next.rule": {
+    "text": "<0>Who can change it</0> says how changes go live once others join. You can change it later on the project’s page.",
+    "description": "Last line of the tip opened by the information (i) button on the \"What do you want to make?\" screen: what the \"Who can change it\" line right below the tip means. The first \"it\" is the approval rule; \"it\" in the second sentence is the project. <0>…</0> is bold."
+  },
   "firstSession.make.rule.line": {
     "text": "Who can change it: <0>{{preset}}</0>",
     "description": "One line under the description and name fields on the \"What do you want to make?\" screen, before the project exists: the approval rule it will be made with. <0>…</0> is bold. {{preset}} is the rule's name, such as \"You or the group\" or \"Two yeses\"."

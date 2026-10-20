@@ -121,6 +121,15 @@ import { SpeakButton } from '../dictation/speak-button';
  * about a minute; anything Homeroom bot builds (their own words, Write it
  * yourself, a game, Your own…) is Custom, 20 to 30 minutes. Before anything
  * is picked or typed there is no line: Make it would only ask for the answer.
+ *
+ * ARRIVING, NOT LANDING (#5266, 20 Oct 2026): on the first session a quiet
+ * line under the question says Welcome, and what to do here — someone just
+ * let in off the waitlist, or in from the story, has never seen this screen.
+ * It is not drawn from Create, which is a returning maker's New project. The
+ * column is wider from a tablet up (`md:max-w-xl`), and the spacer that
+ * pushed Make it to the foot of the window is gone, so Make it follows the
+ * rule line everywhere. The rule line's ⓘ says in a tip what happens next
+ * (../who-decides/make-rule.tsx).
  */
 
 import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
@@ -694,7 +703,7 @@ export function MakeScreen({
     });
     return null;
   }, [entry, onMade]);
-  const formClass = `mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))] ${motion}`;
+  const formClass = `mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))] md:max-w-xl ${motion}`;
   // From Create, the allowance when it bears on Make it (the New project
   // dialog's quiet row, #23): a returning maker can be at their limit, a new
   // account never is. The wrapper goes with it when there is nothing to say.
@@ -749,11 +758,17 @@ export function MakeScreen({
           />
         ) : (
         <form
-          className={`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))] ${motion}`}
+          className={`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))] md:max-w-xl ${motion}`}
           onSubmit={(e) => { e.preventDefault(); void make(); }}
         >
           <div className="text-center">
             <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">{makeTitle(entry, who)}</h1>
+            {/* #5266: the first session's, not New project's: someone who has
+                just come in has not seen this screen before. Props only, so
+                the prerender and the hydration say the same. */}
+            {fromCreate ? null : (
+              <p data-make-welcome="" className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.make.welcome')}</p>
+            )}
           </div>
           <p className="mt-6 pb-2 text-[13px] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.make.startFromIdea')}</p>
           <div className="grid grid-cols-2 gap-2" role="group" aria-label={t('onboarding:firstSession.make.ideasLabel')}>
@@ -958,7 +973,8 @@ export function MakeScreen({
           <MakeRuleLine preset={rule} onPick={setRule} who={who} />
           {allowance}
           {error ? <p role="alert" className="mt-3 text-[14px] text-red-700 dark:text-red-400">{error}</p> : null}
-          <div className="grow" />
+          {/* #5266: no spacer here any more: Make it follows the rule line,
+              and the form's leftover space stays under "Look around first". */}
           <Button
             type="submit"
             data-make-submit=""
