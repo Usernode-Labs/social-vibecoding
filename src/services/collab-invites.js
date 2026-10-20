@@ -31,6 +31,7 @@ const log = require('./logger');
 const notifications = require('./notifications');
 const events = require('./events');
 const appAccess = require('./app-access');
+const contactPrivacy = require('./contact-privacy');
 
 // Hydrate freshly inserted notification rows into the serialize() wire shape
 // (the column set listForUser produces) and push them live.
@@ -63,8 +64,16 @@ async function hydrateAndPush(pool, notifRows) {
  * cleanNote; null for none). Returns `{ ok: true }`, or `{ ok: false,
  * status }` when a row already existed (`status` is that row's: 'member' or
  * 'invited'). The notification and the event are best-effort; the row is not.
+ *
+ * #5104: `{ ok: false, status: 'contact_restricted' }` when `target` takes
+ * invitations only from people connected to them (users.contact_policy) and
+ * the inviter is not. Every caller is held to it, an invite by email claimed
+ * when its address is confirmed included (services/email-invites.js).
  */
 async function sendInvite(pool, { app, target, inviterId, note = null }) {
+  if (!(await contactPrivacy.mayContact(pool, inviterId, target.id))) {
+    return { ok: false, status: contactPrivacy.CONTACT_RESTRICTED_CODE };
+  }
   const { rows: inserted } = await pool.query(
     `INSERT INTO app_collaborators (app_id, user_id, status, invited_by, invite_note)
      VALUES ($1, $2, 'invited', $3, $4)
@@ -184,7 +193,7 @@ async function acceptAndPin(pool, appId, userId) {
     await client.query('BEGIN');
     const { rows } = await client.query(
       `UPDATE app_collaborators
-          SET status = 'member', accepted_at = NOW()
+          SET status = 'member', accepted_at = NOW(), accepted_via = 'invite'
         WHERE app_id = $1 AND user_id = $2 AND status = 'invited'
         RETURNING invited_by`,
       [appId, userId]

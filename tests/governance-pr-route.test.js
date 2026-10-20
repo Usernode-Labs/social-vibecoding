@@ -80,6 +80,10 @@ function defaultHandler() {
     if (/FROM app_collaborators WHERE app_id/.test(sql)) {
       return { rows: collaboratorIds.includes(params[1]) ? [{ 1: 1 }] : [] };
     }
+    // #5104: every invitee here takes invitations from the inviter.
+    if (/user_contactable_by/.test(sql)) {
+      return { rows: [{ ok: true }] };
+    }
     if (/INSERT INTO app_approvers/.test(sql)) {
       const conflicted = Object.entries(knownUsers)
         .some(([name, id]) => id === params[1] && approverInsertConflicts.includes(name));

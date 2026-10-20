@@ -54,6 +54,14 @@ const PUR_IFRAME = 'iframe';
 // welcomes guests verifies this audience on purpose.
 const PUR_GUEST = 'guest';
 const PUR_WORKER = 'worker:session';
+// The platform asking an app, server to server, to erase or export one
+// person's rows (#5118, "Your people's data" in src/prompts/app-conventions.md).
+// Signed with the app-identity key, so an app verifies it with the public key
+// it already holds, but under purposes of their own: a verifier that admits
+// only `pur: 'iframe'` never takes one for a signed-in person.
+const PUR_USER_DELETION = 'user-deletion';
+const PUR_USER_EXPORT = 'user-export';
+const USER_DATA_TTL = '10m';
 // Narrow, purpose-bound worker capabilities (review #2 / #6): the
 // general worker:session token is reserved for build/sync mutations. Agent
 // subprocesses receive only the capabilities their mode needs: proxy auth,
@@ -214,6 +222,31 @@ function signAppIdentityToken({ appId, user, ttl }) {
       issuer: ISSUER,
       audience: appAudience(appId),
       expiresIn: ttl || IFRAME_TTL,
+    }
+  );
+}
+
+// ── Platform requests about one person's data (#5118) ─────────────────
+//
+// Carries the person's id and wallet address (the two keys an app's rows
+// are found by), never a username: by the time an erasure is sent the
+// account is already anonymised. `jti` makes every request distinct.
+function signAppUserDataToken({ appId, userId, usernodePubkey = null, purpose }) {
+  if (purpose !== PUR_USER_DELETION && purpose !== PUR_USER_EXPORT) {
+    throw new Error('platform-jwt: unknown user-data purpose');
+  }
+  if (!Number.isSafeInteger(userId) || userId <= 0) {
+    throw new Error('platform-jwt: userId (positive integer) required');
+  }
+  return jwt.sign(
+    { id: userId, usernode_pubkey: usernodePubkey || null, pur: purpose },
+    iframePrivateKey(),
+    {
+      algorithm: 'RS256',
+      issuer: ISSUER,
+      audience: appAudience(appId),
+      expiresIn: USER_DATA_TTL,
+      jwtid: crypto.randomBytes(16).toString('hex'),
     }
   );
 }
@@ -653,6 +686,8 @@ module.exports = {
   PUR_IFRAME,
   PUR_GUEST,
   PUR_WORKER,
+  PUR_USER_DELETION,
+  PUR_USER_EXPORT,
   PUR_WORKER_PUSH,
   PUR_ISSUES_READ,
   PUR_ANTHROPIC_PROXY,
@@ -671,6 +706,7 @@ module.exports = {
   appAudience,
   appGuestAudience,
   signAppIdentityToken,
+  signAppUserDataToken,
   verifyAppIdentityToken,
   signGuestToken,
   verifyGuestToken,

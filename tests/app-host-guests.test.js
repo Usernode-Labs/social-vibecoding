@@ -353,6 +353,9 @@ function loadScaffoldMiddleware(source, env) {
     if (id === 'path') return require('path');
     if (id === 'jsonwebtoken') return jwt;
     if (id === 'pg') return { Pool: class { async query() { return { rows: [] }; } } };
+    // The platform's user-data routes (#5118) verify their own token;
+    // tests/scaffold-user-data.test.js covers them.
+    if (id === './usernode-user-data') return { mount: () => {} };
     throw new Error(`scaffold sandbox: unexpected require(${id})`);
   };
   // eslint-disable-next-line no-new-func

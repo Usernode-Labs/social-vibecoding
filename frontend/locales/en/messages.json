@@ -1999,6 +1999,10 @@
     "text": "Request failed ({{status}})",
     "description": "Error in Messages when a request to the server failed and the server gave no explanation. \"Request\" is a noun, the network request. {{status}} is the HTTP status number."
   },
+  "api.contactRestricted": {
+    "text": "This person only takes new messages and invitations from people in projects with them. You can send them an invite link instead.",
+    "description": "Error in Messages when you try to start a conversation with someone, or invite them to a group, and their Privacy setting allows that only from people who share a project with them. It must not say anything else about the person."
+  },
   "api.uploadFailed": {
     "text": "Upload failed ({{status}})",
     "description": "Error under the message box when uploading an attachment failed and the server gave no explanation. {{status}} is the HTTP status number."

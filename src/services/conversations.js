@@ -3,6 +3,7 @@
 const sharedObjects = require('./shared-objects');
 const messageBookmarks = require('./message-bookmarks');
 const log = require('./logger');
+const contactPrivacy = require('./contact-privacy');
 
 const MAX_ID = 2147483647;
 const MAX_MESSAGE_LENGTH = 8000;
@@ -859,6 +860,12 @@ async function listThread(pool, user, conversationId, rootId, { before = null, l
 // same statement, so there is no per-person lookup), then A to Z. The
 // projection is the public identity every message row already carries: id,
 // username and avatar.
+//
+// #5104: in a CHANNEL, whose members can be everybody (#general), a person
+// who keeps their profile out of searches (users.profile_discoverable) is
+// offered only to people connected to them, or once they have spoken in
+// the room, where their name is on screen anyway. A direct or group chat's
+// members already see each other, so nothing changes there.
 const MENTION_QUERY_MAX = 64;
 const MENTION_CANDIDATES_DEFAULT = 8;
 const MENTION_CANDIDATES_MAX = 25;
@@ -921,9 +928,10 @@ async function mentionCandidates(pool, user, conversationId, { q = '', limit } =
         AND NOT EXISTS (SELECT 1 FROM user_blocks b
                          WHERE (b.blocker_id = $2 AND b.blocked_user_id = u.id)
                             OR (b.blocker_id = u.id AND b.blocked_user_id = $2))
+        AND (NOT $5::boolean OR r.sender_id IS NOT NULL OR user_discoverable_by(u.id, $2))
       ORDER BY friend DESC, r.last_id DESC NULLS LAST, LOWER(u.username), u.id
       LIMIT $4`,
-    [conversationId, user.id, escaped, mentionLimit(limit)]
+    [conversationId, user.id, escaped, mentionLimit(limit), membership.kind === 'channel']
   );
   return rows.map((row) => ({
     id: row.id,
@@ -1183,7 +1191,21 @@ async function createDirect(pool, user, targetUserId) {
   const result = await transaction(pool, async (db) => {
     const [low, high] = await lockPair(db, user.id, targetUserId);
     const target = await db.query('SELECT id, is_synthetic FROM users WHERE id = $1 FOR UPDATE', [targetUserId]);
-    if (!target.rows.length || await blockedEitherWay(db, user.id, targetUserId)) return null;
+    if (!target.rows.length) return null;
+    // #5104: starting a NEW conversation with someone who takes them only
+    // from people they are connected to (users.contact_policy). A pair that
+    // already exists keeps the rules below: an open chat stays open, and
+    // answering their own request is consent. Asked before the block check,
+    // so a person who restricts contact answers a stranger the same way
+    // whether or not they also blocked them.
+    const pair = await db.query(
+      'SELECT 1 FROM conversation_direct_pairs WHERE user_low_id = $1 AND user_high_id = $2',
+      [low, high]
+    );
+    if (!pair.rows.length && !(await contactPrivacy.mayContact(db, user.id, targetUserId))) {
+      throw new contactPrivacy.ContactRestrictedError();
+    }
+    if (await blockedEitherWay(db, user.id, targetUserId)) return null;
     // #3624: a platform account (the Homeroom bot) cannot answer an
     // invitation, so a DM with one opens with both already in it, the same
     // conversation the platform opens when it writes first.
@@ -1299,6 +1321,10 @@ async function createGroup(pool, user, title, memberIds, inviteNote) {
     // block mutation takes the same normalized locks, making consent checks
     // stable through commit without a row-lock/advisory-lock inversion.
     await lockPairsFor(db, user.id, invitees);
+    // #5104: an invitation is something new started with each invitee.
+    if ((await contactPrivacy.restrictedAmong(db, user.id, invitees)).length) {
+      throw new contactPrivacy.ContactRestrictedError();
+    }
     if (!(await ensureEligibleInvitees(db, user.id, invitees))) return null;
     const created = await db.query(
       `INSERT INTO conversations (kind, title, created_by)
@@ -1545,6 +1571,10 @@ async function addMembers(pool, user, conversationId, rawIds, inviteNote) {
       [conversationId]
     );
     if (countResult.rows[0].count + inviteIds.length > MAX_GROUP_MEMBERS) return null;
+    // #5104: the same rule as createGroup, for the people newly invited.
+    if ((await contactPrivacy.restrictedAmong(db, user.id, inviteIds)).length) {
+      throw new contactPrivacy.ContactRestrictedError();
+    }
     if (!(await ensureEligibleInvitees(db, user.id, inviteIds))) return null;
     const notifications = [];
     for (const id of inviteIds) {

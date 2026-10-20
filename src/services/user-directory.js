@@ -178,6 +178,14 @@ async function lookupExact(pool, username) {
 // `excludeAppId` filters out users who already hold any app_collaborators
 // row (member or invited) on that app — used only by the platform's own
 // invite typeahead, which must not suggest people already on the list.
+//
+// `viewerId` is who is searching (#5104). A person who keeps their profile
+// out of searches (users.profile_discoverable, off by default) is found
+// only by people connected to them: friends, or people in the same project
+// by consent on both sides, never just a shared public community
+// (schema.sql user_consented_projects, users_connected). Without a viewer, only the
+// people who opted in are found. lookupExact above is not filtered: it
+// answers a handle the caller already knows, as a profile link does.
 async function searchPrefix(pool, q, limit, opts = {}) {
   const prefix = normalizeQuery(q);
   if (!prefix) return { users: [], hasMore: false };
@@ -185,6 +193,7 @@ async function searchPrefix(pool, q, limit, opts = {}) {
   const n = clampLimit(limit, opts);
   const escaped = escapeLike(prefix);
   const excludeAppId = opts.excludeAppId ?? null;
+  const viewerId = opts.viewerId ?? null;
 
   // Fetch n+1 so an extra row signals there is more to find — the same
   // trick the governance feed uses for its cursor pages.
@@ -195,9 +204,10 @@ async function searchPrefix(pool, q, limit, opts = {}) {
           SELECT user_id FROM app_collaborators WHERE app_id = $2
         ))
         AND is_synthetic IS NOT TRUE AND LOWER(username) <> ALL($4::text[])
+        AND user_discoverable_by(id, $5::int)
       ORDER BY LOWER(username), id
       LIMIT $3`,
-    [escaped, excludeAppId, n + 1, HIDDEN_USERNAMES]
+    [escaped, excludeAppId, n + 1, HIDDEN_USERNAMES, viewerId]
   );
 
   let hasMore = false;

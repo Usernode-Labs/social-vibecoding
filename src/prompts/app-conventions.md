@@ -373,6 +373,8 @@ guests. Nothing turns it on: write the app so a guest can look around.
   COLUMN IF NOT EXISTS` so repeated migrations are safe.
 - Connect via a single `pg.Pool({ connectionString: process.env.DATABASE_URL })`.
 - Record ownership with `user_id` / `username` from `req.user`.
+  Find a person's rows by `user_id`, never by `username` alone: account
+  deletion erases them by id (see "Your people's data").
 
 ## Graceful shutdown
 
@@ -2292,6 +2294,56 @@ const { members, has_more } = await resp.json();
 - Rate limit: shared with `/users/*` (120/min per app and user). Cache the
   list for a minute rather than asking on every request. `?limit=` defaults
   to 100, at most 200; `has_more` says there are more.
+
+## Your people's data: account deletion and export
+
+When a person deletes their Homeroom account, the platform erases what it
+holds about them, then asks every app they used to do the same in its own
+database. The app answers two server-to-server requests, sent only by the
+platform to the app's production container:
+
+- `POST /usernode/user-deletion`: erase or anonymise the person's rows,
+  then answer 2xx. It must be idempotent: the platform retries until it
+  gets a 2xx (at a doubling interval, for about a week), so a second call
+  for the same person finds nothing left and still answers 2xx.
+- `GET /usernode/user-export`: answer the person's rows as JSON
+  (`{ userId, tables: { <table>: [rows] } }`), for a copy of their data.
+
+Each request carries a platform token in the `x-usernode-platform-token`
+header (never `x-usernode-token`): RS256, signed by the same key as a
+person's sign-in token, so verify it with `USERNODE_JWT_PUBLIC_KEY`,
+`algorithms: ['RS256']`, issuer `usernode` and audience
+`usernode:app:<USERNODE_APP_ID>`, then check `pur` is `'user-deletion'` or
+`'user-export'` for the route. Its claims are the person's `id` and
+`usernode_pubkey` (their wallet address, or null), and the request has
+no body: read the person only from the verified token. It names no username: by
+then the account is anonymised, so find rows by `id` (or the wallet
+address), which is one more reason to key a person's rows by
+`req.user.id`. Refuse anything else with 403. Mount both routes before the
+sign-in check: the request carries no person's sign-in token.
+
+The scaffold does this in `usernode-user-data.js`, mounted from
+`server.js`. By default it erases (and exports) every row of every table
+with a `user_id` or `usernode_pubkey` column matching the person. When you
+add a table:
+
+- **Keyed by `user_id`, the person's own row** (a vote, an entry, a
+  comment): nothing to do.
+- **The person's row keyed another way** (`author_id`, `created_by`): add
+  it to `OWNED_BY` with `action: 'delete'`.
+- **A shared row other people's rows hang off** (a poll other people voted
+  in, a list others added to): add it to `OWNED_BY` with
+  `action: 'anonymise'` and the columns that name them in `clear`, so it
+  stays for the group without saying who made it.
+- **A `user_id` that is not the person the row is about**: add the table
+  to `SKIP`.
+
+An app with no handler is recorded on the deletion's receipt for an
+operator to follow up, so an app written before this contract (no
+`usernode-user-data.js`) should add the file and its mount. Files uploaded
+through the platform's storage are the platform's: a person's private
+files are deleted with their account, so the app only drops the rows that
+point at them.
 
 ## Don't `git push` yourself
 
