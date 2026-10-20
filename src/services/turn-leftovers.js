@@ -7,8 +7,9 @@
 // releasing it (its release failed: services/turns.js releaseLeftRecord),
 // which is the leader's orphan sweep and watchdog's case and stays. Once no
 // release from before the turn machine can run, delete the rollout parts:
-// the claims, headless and local passes, the `resume` flag in turns.js and
-// heldByLiveProcess.
+// the claims, headless and local passes, the `resume` flag in turns.js,
+// heldByLiveProcess, olderProcessHolding, receiveOlderStop (and ws.js's
+// `session_stop`) and the hold writes in processes.js.
 //
 // Every turn this release starts belongs to the turn machine
 // (src/workflow/turn/): its work item owns its conversation's claim, its
@@ -52,7 +53,9 @@ const LIVE_SECONDS = 45;
 const LIMIT = 50;
 
 // ROLLOUT-ONLY: an older release's process records what it runs in
-// process_holds; this release writes none (services/processes.js).
+// process_holds, and this release writes its own there for that release to
+// read (services/processes.js writeHolds): either is a live process still
+// working on the session, so nothing of it is left behind.
 const heldByLiveProcess = (ref) => `EXISTS (
   SELECT 1 FROM process_holds h JOIN platform_processes p ON p.id = h.process_id
    WHERE h.kind IN ('session', 'sync') AND h.ref = (${ref})::text
@@ -243,18 +246,40 @@ async function sweep(pool, { config, previous = null, deps = {} } = {}) {
 }
 
 /**
- * ROLLOUT-ONLY: the live process of an older release that holds the session
- * `sessionId` (it finishes its own turns while it drains), or null. Read by
- * the adoption before it takes a turn (turn-recovery.js adoptOrphanWorker).
- * Rejects on a database error: a caller that cannot tell must not act.
+ * ROLLOUT-ONLY: another live process that holds the session `sessionId` (one
+ * of an older release finishes its own turns while it drains), or null. Read
+ * by the adoption before it takes a turn (turn-recovery.js
+ * adoptOrphanWorker), which has asked this process's memory already: this
+ * process's own rows (processes.js writeHolds) are not read back. Rejects on
+ * a database error: a caller that cannot tell must not act.
  */
 async function olderProcessHolding(pool, sessionId) {
   const { rows: [r] } = await pool.query(
     `SELECT h.process_id FROM process_holds h JOIN platform_processes p ON p.id = h.process_id
-      WHERE h.kind IN ('session', 'sync') AND h.ref = $1::text
+      WHERE h.kind IN ('session', 'sync') AND h.ref = $1::text AND h.process_id <> $2
         AND p.heartbeat_at > NOW() - make_interval(secs => ${LIVE_SECONDS})
-      LIMIT 1`, [Number(sessionId)]);
+      LIMIT 1`, [Number(sessionId), require('./processes').ID]);
   return r ? r.process_id : null;
 }
 
-module.exports = { sweep, backfillUnanswered, olderProcessHolding, STALE_SECONDS, CLAIMS_SQL, RECORDS_SQL, HEADLESS_SQL, UNANSWERED_SQL };
+/**
+ * ROLLOUT-ONLY: a Stop an older release forwarded over the bus (its
+ * `session_stop`, sent when it saw this release's hold: processes.js
+ * writeHolds). Only the process running the turn acts, as that release's
+ * receiver did, and it asks the turn's machine, as this release's Stop route
+ * does (platform.ts stopWorkflowTurn), which stops the turn wherever its
+ * work item runs. The sender has taken its own durable path already.
+ */
+async function receiveOlderStop(payload, {
+  running = (id) => !!require('./stop-registry').get(id),
+  stopTurn = (p) => require('../workflow/platform.ts').stopWorkflowTurn(p),
+} = {}) {
+  const sessionId = Number(payload?.sessionId);
+  const by = payload?.user?.username;
+  if (!Number.isSafeInteger(sessionId) || sessionId <= 0 || !by || !running(sessionId)) return null;
+  const out = await stopTurn({ sessionId, by: String(by), expectedTurnId: payload.expectedTurnId || null });
+  log.info('turn-leftovers', 'Ran a stop an older release forwarded', { sessionId, status: out?.status ?? null });
+  return out;
+}
+
+module.exports = { sweep, backfillUnanswered, olderProcessHolding, receiveOlderStop, STALE_SECONDS, CLAIMS_SQL, RECORDS_SQL, HEADLESS_SQL, UNANSWERED_SQL };

@@ -122,10 +122,12 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       // An older release's wake for the bot's loop, which is the workflow's
       // now (bot-request, bot-lane): nothing to do.
       return;
-    // An older release's stop forward: a turn's stop reaches its machine's
-    // work item now (src/workflow/turn/), and the durable path reaches the
-    // rest. Never a socket event: nothing to do.
+    // ROLLOUT-ONLY: an older release's stop forward, for a turn it saw this
+    // release hold: the process running it asks the turn's machine
+    // (turn-leftovers.js receiveOlderStop). Never a socket event.
     case 'session_stop':
+      if (!oversize) void require('./turn-leftovers').receiveOlderStop(payload)
+        .catch((err) => log.warn('ws', 'A stop an older release forwarded failed', { err: err.message }));
       return;
     // A turn's stream has a new row (services/session-bus.js): this
     // process's subscribers to it read on. Never a socket event.
