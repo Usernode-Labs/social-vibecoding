@@ -2015,9 +2015,9 @@
     "text": "Your Home, your communities and Homeroom bot",
     "description": "Second line of the \"Go to Homeroom\" row in the app menu (the sheet opened from the app's name in the header): what is there. Home is the Home screen; Homeroom bot is Homeroom's assistant, a name."
   },
-  "appContext.addHomeroomToHomeScreen": {
-    "text": "Add Homeroom to your home screen",
-    "description": "Row in the app menu (the sheet opened from the app's name in the header) shown to a newcomer on a phone: opens the steps for putting Homeroom's icon on the phone's home screen."
+  "appContext.addAppToHomeScreen": {
+    "text": "Add this app to your home screen",
+    "description": "Row in the app menu (the sheet opened from the app's name in the header) shown to a newcomer on a phone: opens the page that puts the app they are in (not Homeroom) on the phone's home screen as its own icon."
   },
   "appContext.row.community": {
     "text": "Go to community",
