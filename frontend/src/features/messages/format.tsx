@@ -1,4 +1,4 @@
-import { useMemo, useState, type MouseEvent } from 'react';
+import { createContext, useContext, useMemo, useState, type MouseEvent } from 'react';
 
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
@@ -280,6 +280,29 @@ export function objectEyebrow(object: Pick<SharedObjectCard, 'type' | 'issueNumb
   return translate(OBJECT_LABELS[object.type]);
 }
 
+/**
+ * #5303: THE PROJECT A ROOM BELONGS TO, for the cards drawn in it: a
+ * project's channel provides its slug (dev-board/workshop/project-discussion.tsx).
+ * A card about another project's item then says where it is from ("From
+ * KasirKU") where its subline named the project plainly, so a request from
+ * elsewhere does not read as one of the room's own. Null (the default)
+ * changes nothing: Messages' own rooms belong to no project.
+ */
+export const CardHomeContext = createContext<string | null>(null);
+
+/**
+ * The card's subline project words: its project's name, or "From <name>"
+ * when the card is about another project's item than the room's (`home`).
+ * An app, a hub or a discussion card is the project itself, so it never says
+ * "From". Pure.
+ */
+export function cardProjectWords(object: Pick<SharedObjectCard, 'type' | 'appSlug' | 'subtitle'>, home: string | null): string | null {
+  const project = object.subtitle || null;
+  if (!project || !home || !object.appSlug || object.appSlug === home) return project;
+  if (object.type === 'app' || object.type === 'hub' || object.type === 'discussion') return project;
+  return translate('messages:object.fromProject', { project });
+}
+
 export function ObjectCard({ object, compact = false, inboxOnly = false }: {
   object: SharedObjectCard;
   compact?: boolean;
@@ -287,6 +310,7 @@ export function ObjectCard({ object, compact = false, inboxOnly = false }: {
   inboxOnly?: boolean;
 }) {
   const t = useMessages('messages');
+  const home = useContext(CardHomeContext);
   if (!object.available) {
     return (
       <div className="messages-object-card messages-object-unavailable" aria-disabled="true">
@@ -303,7 +327,7 @@ export function ObjectCard({ object, compact = false, inboxOnly = false }: {
         <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100 truncate">{object.title || t('messages:object.untitled')}</div>
         {!compact && (object.subtitle || object.state || object.author) ? (
           <div className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
-            {dotText([object.subtitle, object.state, object.author ? t('messages:object.byAuthor', { author: object.author }) : null])}
+            {dotText([cardProjectWords(object, home), object.state, object.author ? t('messages:object.byAuthor', { author: object.author }) : null])}
           </div>
         ) : null}
       </div>

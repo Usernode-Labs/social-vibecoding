@@ -9478,6 +9478,21 @@
     },
     {
       "source": "src/routes/notifications.js",
+      "method": "PUT",
+      "path": "/api/apps/:slug/channels/:handle/mute",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.put.apps.item.channels.item.mute.c20dad45",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app"
+    },
+    {
+      "source": "src/routes/notifications.js",
       "method": "GET",
       "path": "/api/me/notification-preferences",
       "expression": null,

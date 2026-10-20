@@ -15074,6 +15074,28 @@ CREATE TABLE IF NOT EXISTS community_pins (
   FOREIGN KEY (community_id, user_id) REFERENCES community_members (community_id, user_id) ON DELETE CASCADE
 );
 
+-- ── Muted channels: a channel's Mute, the viewer's own (#5303) ──────────
+--
+-- A row says this person muted one of a project's channels (the Mute in the
+-- channel's header, frontend/src/features/dev-board/workshop/channel-head.tsx;
+-- services/channel-mutes.js). A muted channel's unread counts nowhere for
+-- them (services/places.js: the places list, the place bar's dot, the
+-- sidebar) and a small group's "every message" ring skips them
+-- (services/group-channel-notify.js). Mentions and replies still reach
+-- them: being addressed is not channel activity.
+--
+-- `channel_ref` is 0 for #general; a topic's channel would be its
+-- app_category_registry id. No row is the default: not muted.
+CREATE TABLE IF NOT EXISTS channel_mutes (
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  channel_ref INTEGER NOT NULL DEFAULT 0,
+  muted_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, app_id, channel_ref)
+);
+CREATE INDEX IF NOT EXISTS idx_channel_mutes_app ON channel_mutes (app_id, channel_ref);
+COMMENT ON TABLE channel_mutes IS 'staging:private';
+
 -- ── Platform signals: problems the platform found in itself ─────────────
 --
 -- One row per EPISODE of a problem the platform detected on its own (a

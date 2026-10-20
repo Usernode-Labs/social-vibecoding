@@ -153,6 +153,9 @@ export interface PlaceChannel {
   /** Open requests filed under it; null for #general and retired topics. */
   requests: number | null;
   unread: number;
+  /** #5303: the viewer muted this channel (services/channel-mutes.js); its
+      `unread` is then 0. Absent when the server did not say. */
+  muted?: boolean;
   /** The figures its channel shows above the room (topic-figures.tsx);
       empty for #general and for a topic that names none. */
   figures?: string[];
@@ -217,6 +220,8 @@ export type CommunityPayload = {
     handle?: string | null;
     /** Where the hub's composer sends: the room's own write route. */
     post_url?: string | null;
+    /** #5303: the viewer muted #general; `unread_count` is then 0. */
+    muted?: boolean;
   } | null;
   /** Who has been around lately (communities.js activitySummary): the
       hub's people row reads the week's count and up to five of its people
