@@ -280,7 +280,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
 
   const item = open ? list[open.index] : null;
   const leaving = open && open.from != null ? list[open.from] : null;
-  const next = open ? nextIndex(list, open.index) : -1;
+  const next = open ? nextIndex(list, open.index, votes) : -1;
 
   const cardOf = (index: number) => rootRef.current?.querySelector<HTMLElement>(`[data-rf-card="${index}"]`) || null;
 
@@ -410,8 +410,8 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   /* ── Push: this change → the next ── */
   const goNext = () => {
     if (!open || busy.current) return;
-    const n = nextIndex(list, open.index);
-    if (n < 0) { close(); return; }
+    const n = nextIndex(list, open.index, votes);
+    if (n < 0) { setSheet('alldone'); return; }
     busy.current = true;
     setMarks(false);
     setFresh(false);
@@ -475,21 +475,27 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     return true;
   };
 
+  // Take the page down at once, without the collapse animation.
+  const teardownPage = () => {
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    rootRef.current?.getAnimations().forEach((a) => a.cancel());
+    document.querySelectorAll('.rf-fly').forEach((el) => el.remove());
+    busy.current = false;
+    setMarks(false);
+    setOpen(null);
+    setSheet('ask');
+  };
+  // Every change has a vote: Done takes the page down and goes where the
+  // end of the list goes (back to your communities, or the Workshop).
+  const finishAll = () => { teardownPage(); onDone(); };
+
   // Going anywhere else (a link on the page, a tab, Back) takes the page
   // down at once: it is fixed over the shell, and the screen under it may
   // only hide, not unmount.
   useEffect(() => {
     if (!open) return undefined;
-    const away = () => {
-      timers.current.forEach(clearTimeout);
-      timers.current = [];
-      rootRef.current?.getAnimations().forEach((a) => a.cancel());
-      document.querySelectorAll('.rf-fly').forEach((el) => el.remove());
-      busy.current = false;
-      setMarks(false);
-      setOpen(null);
-      setSheet('ask');
-    };
+    const away = teardownPage;
     window.addEventListener('hashchange', away);
     window.addEventListener('popstate', away);
     return () => {
@@ -554,6 +560,8 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
           onVote={vote}
           onUndo={undo}
           onNext={goNext}
+          onDone={finishAll}
+          doneLabel={doneLabel || t('communities:reel.done')}
           hasNext={next >= 0}
           maxHeight={Math.max(240, (typeof window !== 'undefined' ? window.innerHeight : 800) * 0.82)}
           fresh={fresh}

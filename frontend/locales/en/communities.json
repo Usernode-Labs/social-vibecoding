@@ -581,7 +581,11 @@
   },
   "review.said.done": {
     "text": "Done",
-    "description": "Button in the vote sheet after voting on the only change waiting on you: goes back to the list."
+    "description": "Button in the vote sheet after voting on the last change without your vote: opens the all-done message."
+  },
+  "review.alldone.line": {
+    "text": "That's everything for now",
+    "description": "Heading of the vote sheet in the new Needs you flow (an experiment), under a large check, after Done on the last change waiting on your vote."
   },
   "review.ask.note": {
     "text": "Only you see this. Answers come from the change itself.",

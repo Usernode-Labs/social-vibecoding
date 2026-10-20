@@ -216,16 +216,23 @@ test('going anywhere else takes the page down at once', () => {
   assert.match(src, /window\.addEventListener\('popstate', away\)/);
 });
 
-test('Next change moves to the next item, wrapping round, and the only item has none', () => {
-  const items = [{ key: 'a' }, { key: 'b' }, { key: 'c' }];
-  assert.equal(model.nextIndex(items, 0), 1);
-  assert.equal(model.nextIndex(items, 2), 0);
-  assert.equal(model.nextIndex([{ key: 'a' }], 0), -1);
+test('Next change moves to the next change without a vote, wrapping round and skipping decisions', () => {
+  const items = [{ key: 'a', kind: 'proposal' }, { key: 'b', kind: 'proposal' }, { key: 'c', kind: 'proposal' }];
+  assert.equal(model.nextIndex(items, 0, {}), 1);
+  assert.equal(model.nextIndex(items, 2, {}), 0, 'wraps to an earlier change');
+  assert.equal(model.nextIndex(items, 0, { b: 'yes' }), 2, 'a change with a vote is skipped');
+  assert.equal(model.nextIndex(items, 1, { c: 'yes' }), 0, 'forward is voted, so it wraps');
+  assert.equal(model.nextIndex(items, 1, { a: 'yes', c: 'yes' }), -1, 'every other change has a vote');
+  assert.equal(model.nextIndex([{ key: 'a' }], 0, {}), -1, 'the only change has none');
+  const mixed = [{ key: 'a', kind: 'proposal' }, { key: 'g', kind: 'governance' }, { key: 'c', kind: 'proposal' }];
+  assert.equal(model.nextIndex(mixed, 0, {}), 2, 'group decisions open their own page and are skipped');
+  assert.equal(model.nextIndex([{ key: 'a', kind: 'proposal' }, { key: 'g', kind: 'governance' }], 0, {}), -1);
 });
 
 test('the sheet covers the page only while it is open', () => {
   assert.equal(sheet.sheetOpen('ask'), false);
   assert.equal(sheet.sheetOpen('voted'), false);
+  assert.equal(sheet.sheetOpen('alldone'), false);
   for (const s of ['unsure', 'no', 'askq', 'talk', 'try', 'about', 'more']) assert.equal(sheet.sheetOpen(s), true, s);
 });
 
@@ -233,7 +240,7 @@ function sheetHtml(props) {
   const [item] = model.toReviewItems([feedItem()], () => ({ screens: [SCREEN] }));
   return renderToHtml(createElement(sheet.VoteSheet, {
     item, vote: null, state: 'ask', setState() {}, onVote: async () => true, onUndo: async () => true,
-    onNext() {}, hasNext: true, maxHeight: 600, fresh: false, ...props,
+    onNext() {}, onDone() {}, doneLabel: 'Back', hasNext: true, maxHeight: 600, fresh: false, ...props,
   }));
 }
 
@@ -258,6 +265,24 @@ test('after a vote: a large mark, what you said, Undo beside Next change', () =>
   const last = sheetHtml({ vote: 'no', state: 'voted', hasNext: false });
   assert.ok(last.includes(message('communities:review.said.no')));
   assert.ok(last.includes(message('communities:review.said.done')));
+});
+
+test('once every change has a vote, the sheet says everything is done, with the way back', () => {
+  const html = sheetHtml({ vote: 'yes', state: 'alldone', doneLabel: 'Back to your communities' });
+  assert.match(html, /data-rf-alldone=""/);
+  assert.ok(html.includes(message('communities:review.alldone.line').replace(/'/g, '&#x27;')));
+  assert.match(html, /data-rf-alldone-btn=""[^>]*>Back to your communities</);
+  assert.doesNotMatch(html, /data-rf-undo/);
+});
+
+test('the flow reads every vote, and Done opens the all-done message instead of closing', () => {
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  assert.match(src, /nextIndex\(list, open\.index, votes\)/);
+  assert.match(src, /if \(n < 0\) \{ setSheet\('alldone'\); return; \}/);
+  const start = src.indexOf('const goNext');
+  const goNext = src.slice(start, src.indexOf('useLayoutEffect', start));
+  assert.doesNotMatch(goNext, /close\(\)/, 'the last vote no longer closes the page silently');
+  assert.match(src, /onDone=\{finishAll\}/);
 });
 
 test('a No asks for its line, held to the server\'s limit', () => {
