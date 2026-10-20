@@ -139,6 +139,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
 import { prepareComment } from '../improve/suggest-shortcut';
 import { openReport } from '../dialogs/report';
+import { waitlistOptions } from '../auth/waitlist-shared';
 import { improveStore } from '../improve/improve-store.js';
 import { Improve } from '../improve/improve-controller.js';
 import { appContextStore } from './app-context-store.js';
@@ -306,6 +307,20 @@ export function AppsSwitcherSheet(): ReactNode {
   // it once (App._privateNoClose), and no Developer terminal: they suggest
   // changes to Homeroom bot instead.
   const { privateMember } = useStoreState(navStore);
+  // Homeroom's privacy notice, for the foot's Privacy link (#5116): the
+  // address GET /api/public/waitlist/options serves (marketing-links.js
+  // privacyNoticeUrl). Asked for when the sheet first opens, not at boot;
+  // the fetch is shared with every other screen that names the notice. The
+  // link is left out until the address is known.
+  const [privacyHref, setPrivacyHref] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open || privacyHref) return undefined;
+    let live = true;
+    void waitlistOptions().then((options) => {
+      if (live && options?.privacy_link) setPrivacyHref(options.privacy_link);
+    });
+    return () => { live = false; };
+  }, [open, privacyHref]);
   const readOnly = writeBarred || privateMember;
   // Votes this viewer owes on the app in context — the badge on the
   // "Go to community hub" row. See the fetch below.
@@ -853,20 +868,39 @@ export function AppsSwitcherSheet(): ReactNode {
               than for it, and a row of the same weight as Go to community
               read as one more place to go. Same id, same gate, same dialog.
           */}
-          {slug && canReport ? (
-            <div className="px-5 pt-3 pb-1">
-              <button
-                id="improve-row-report"
-                type="button"
-                className="inline-flex items-center gap-1.5 min-h-[32px] text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:underline"
-                onClick={async () => {
-                  await AppContext.close();
-                  openReport({ targetType: 'app', target: slug, label: appLabel });
-                }}
-              >
-                <FlagIcon className="w-3.5 h-3.5" aria-hidden="true" />
-                {t('agent:appContext.reportApp')}
-              </button>
+          {/*
+              PRIVACY SITS BESIDE IT (#5116): "Privacy · Report app", the
+              same two links the bridge's footer carries on an app opened at
+              its own address. Privacy is Homeroom's notice, in a new tab.
+          */}
+          {(slug && canReport) || privacyHref ? (
+            <div id="app-menu-legal" className="flex flex-wrap items-center gap-x-2 px-5 pt-3 pb-1 text-xs text-zinc-500 dark:text-zinc-400">
+              {privacyHref ? (
+                <a
+                  id="app-menu-privacy"
+                  href={privacyHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center min-h-[32px] hover:text-zinc-700 dark:hover:text-zinc-200 hover:underline"
+                >
+                  {t('agent:appContext.privacy')}
+                </a>
+              ) : null}
+              {privacyHref && slug && canReport ? <span aria-hidden="true">·</span> : null}
+              {slug && canReport ? (
+                <button
+                  id="improve-row-report"
+                  type="button"
+                  className="inline-flex items-center gap-1.5 min-h-[32px] text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:underline"
+                  onClick={async () => {
+                    await AppContext.close();
+                    openReport({ targetType: 'app', target: slug, label: appLabel });
+                  }}
+                >
+                  <FlagIcon className="w-3.5 h-3.5" aria-hidden="true" />
+                  {t('agent:appContext.reportApp')}
+                </button>
+              ) : null}
             </div>
           ) : null}
           </>

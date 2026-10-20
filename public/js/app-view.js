@@ -999,6 +999,16 @@ const AppView = {
       Secrets.applyMissingBadge(appData.missingSecrets || null);
     }
 
+    // #5116: `?report=app` is the Report link of the footer the bridge draws
+    // on an app opened at its own address or on a custom domain
+    // (/?report=app#app/<slug>, the __USERNODE_PLATFORM_LINK__ block of
+    // public/usernode-bridge/v1/bridge.js). It opens the same report dialog
+    // the app menu's "Report app" opens, for this app, when the server says
+    // this viewer may report it (`can_report`). The parameter is taken off
+    // the address first, so a reload or Back does not ask again. Deferred
+    // and slug-guarded for the reasons the `?shot=` links below give.
+    AppView._openReportFromLink(slug, appData);
+
     // Screenshot-state deep link (`?shot=secrets`): the secrets panel —
     // "Platform variables" on the platform's own row — is a modal reached
     // from the "+" menu, so plain navigation can't render it and the
@@ -1501,6 +1511,27 @@ const AppView = {
         }, 300);
       }
     } catch { /* malformed query string — nothing to open */ }
+  },
+
+  // #5116: the `?report=app` link (see the call in open()). Returns true when
+  // a report dialog was scheduled. A viewer who may not report this app (not
+  // signed in, its maker, a demo) gets the app and nothing else.
+  _openReportFromLink(slug, appData) {
+    let params;
+    try { params = new URLSearchParams(location.search); } catch { return false; }
+    if (params.get('report') !== 'app') return false;
+    params.delete('report');
+    try {
+      const query = params.toString();
+      history.replaceState(history.state, '', `${location.pathname}${query ? `?${query}` : ''}${location.hash}`);
+    } catch { /* the address keeps it; the dialog still opens once */ }
+    if (!appData || appData.slug !== slug || appData.can_report !== true) return false;
+    const label = appData.name || slug;
+    setTimeout(() => {
+      if (AppView.appData?.slug !== slug) return;
+      window.UsernodeReact?.dialogs?.report?.open({ targetType: 'app', target: slug, label });
+    }, 300);
+    return true;
   },
 
   // #816: paint one staging-preview loader state with no preview behind it.

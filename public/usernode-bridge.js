@@ -7720,10 +7720,14 @@
   // it IS a Homeroom app, and there is no way back to it inside Homeroom.
   // The bridge is the one piece of platform code every app loads, so it
   // draws a small Homeroom button in the bottom-right corner (#3657). Tapping
-  // it opens a small panel: the app's name, one line about Homeroom, and
-  // three rows: "Open in Homeroom" (the app inside the platform), "Show the
-  // Homeroom header" (a slim bar with the wordmark and the app's name) and
-  // "What is Homeroom?" (the site's front door).
+  // it opens a small panel: the app's name, one line about Homeroom, two
+  // rows, "Open in Homeroom" (the app inside the platform) and "Show the
+  // Homeroom header" (a slim bar with the wordmark and the app's name), and
+  // a footer line, "Built on Homeroom · Privacy · Report" (#5116): the
+  // site's front door, Homeroom's privacy notice, and the platform's report
+  // dialog for this app, so a person using the app at its own address or on
+  // a custom domain can find the notice and report it. Inside the platform
+  // the app menu carries the same Privacy and Report links.
   //
   // Shown ONLY when ALL of these hold:
   //   * top frame         : inside the platform an app renders in an
@@ -7775,6 +7779,12 @@
     var HOST_ID = "__un-platform-link";
 
     var ABOUT_LINE = "A Homeroom app, built and voted on by its community.";
+    var BUILT_ON = "Built on Homeroom";
+    var PRIVACY = "Privacy";
+    var REPORT = "Report";
+    // Where the privacy notice lives on the site when platform.json does not
+    // name it (src/services/marketing-links.js PRIVACY_NOTICE_PATH).
+    var PRIVACY_PATH = "/legal/privacy-notice";
     var SHOW_HEADER = "Show the Homeroom header";
     var HIDE_HEADER = "Hide the Homeroom header";
 
@@ -7834,6 +7844,27 @@
       return u;
     }
 
+    // Every address the button links to, from the platform's own document.
+    // The privacy notice is platform.json's privacy_url when it is a clean
+    // https URL, else the site's own notice path. Report opens this app in
+    // the platform with ?report=app, which the shell turns into its report
+    // dialog for the app (public/js/app-view.js); reporting needs an account,
+    // and the platform is where that is.
+    function linksFor(config, platform, slug) {
+      var site = httpsUrl(config.site_url);
+      var origin = platform.protocol + "//" + platform.host;
+      var privacy = httpsUrl(config.privacy_url);
+      var privacyHref = privacy ? privacy.href
+        : (site ? site.protocol + "//" + site.host + site.pathname.replace(/\/+$/, "") + PRIVACY_PATH : null);
+      return {
+        slug: slug,
+        openHref: origin + "/#app/" + slug,
+        siteHref: site ? site.href : origin + "/",
+        privacyHref: privacyHref,
+        reportHref: origin + "/?report=app#app/" + slug,
+      };
+    }
+
     // Gate 2: the platform's own answer, checked against this page's host.
     // Returns the targets, or null for "draw nothing".
     function targetsFrom(config, slug) {
@@ -7854,13 +7885,7 @@
       // A tag that names a host must name this deployment's platform.
       var tagged = taggedHost();
       if (tagged && tagged !== platformHost) return null;
-      var site = httpsUrl(config.site_url);
-      var origin = platform.protocol + "//" + platform.host;
-      return {
-        slug: slug,
-        openHref: origin + "/#app/" + slug,
-        siteHref: site ? site.href : origin + "/",
-      };
+      return linksFor(config, platform, slug);
     }
 
     // A CUSTOM DOMAIN (#4405): an app served at an address its manager owns,
@@ -7890,13 +7915,7 @@
       if (typeof slug !== "string" || !/^[a-z0-9-]+$/.test(slug)) return null;
       var platform = httpsUrl(config.platform_origin);
       if (!platform) return null;
-      var site = httpsUrl(config.site_url);
-      var origin = platform.protocol + "//" + platform.host;
-      return {
-        slug: slug,
-        openHref: origin + "/#app/" + slug,
-        siteHref: site ? site.href : origin + "/",
-      };
+      return linksFor(config, platform, slug);
     }
 
     // The app's name: what its page calls itself, trimmed and clamped, or a
@@ -7927,6 +7946,11 @@
       ".about{margin:0 10px 8px;font-size:13px;color:#52525b}",
       ".row{display:flex;align-items:center;width:100%;min-height:44px;padding:0 10px;margin:0;border:0;border-radius:10px;background:transparent;color:inherit;font:inherit;font-weight:550;text-align:left;text-decoration:none;cursor:pointer}",
       ".row:hover,.row:focus-visible{background:#f4f4f5;outline:none}",
+      // The footer line: small, muted, wraps on a narrow panel, each link a
+      // 32px-tall target.
+      ".foot{display:flex;flex-wrap:wrap;align-items:center;gap:0 6px;margin:6px 10px 2px;padding-top:6px;border-top:1px solid rgba(0,0,0,0.08);font-size:12px;color:#71717a}",
+      ".foot a{display:inline-flex;align-items:center;min-height:32px;color:inherit;text-decoration:none}",
+      ".foot a:hover,.foot a:focus-visible{color:#18181b;text-decoration:underline;outline:none}",
       ".bar{position:fixed;left:0;right:0;top:0;z-index:999998;display:flex;align-items:center;gap:8px;min-height:calc(40px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) calc(8px + env(safe-area-inset-right,0px)) 0 calc(12px + env(safe-area-inset-left,0px));background:#fff;color:#18181b;box-shadow:0 1px 0 rgba(0,0,0,0.08);font:14px/1.2 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}",
       ".bar img{display:block;width:22px;height:22px}",
       ".brand{font-weight:700}",
@@ -7934,7 +7958,7 @@
       ".title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#52525b}",
       ".close{width:32px;height:32px;padding:0;margin:0;border:0;border-radius:8px;background:transparent;color:#52525b;font:20px/1 system-ui,sans-serif;cursor:pointer}",
       ".close:hover,.close:focus-visible{background:#f4f4f5;outline:none}",
-      "@media (prefers-color-scheme: dark){.panel,.bar{background:#18181b;color:#f4f4f5;box-shadow:0 10px 30px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.08)}.about,.title,.close{color:#a1a1aa}.row:hover,.row:focus-visible,.close:hover,.close:focus-visible{background:#27272a}}",
+      "@media (prefers-color-scheme: dark){.panel,.bar{background:#18181b;color:#f4f4f5;box-shadow:0 10px 30px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.08)}.about,.title,.close,.foot{color:#a1a1aa}.foot{border-top-color:rgba(255,255,255,0.1)}.foot a:hover,.foot a:focus-visible{color:#f4f4f5}.row:hover,.row:focus-visible,.close:hover,.close:focus-visible{background:#27272a}}",
     ].join("\n");
 
     function el(tag, cls, text) {
@@ -7996,15 +8020,33 @@
       var toggle = el("button", "row", SHOW_HEADER);
       toggle.type = "button";
       toggle.setAttribute("aria-pressed", "false");
-      var what = el("a", "row", "What is Homeroom?");
-      what.href = t.siteHref;
-      what.target = "_blank";
-      what.rel = "noopener";
+      // Built on Homeroom · Privacy · Report. Each opens in a new tab, so
+      // the app stays where it was.
+      var foot = el("div", "foot");
+      foot.setAttribute("role", "navigation");
+      foot.setAttribute("aria-label", BUILT_ON);
+      function footLink(text, href) {
+        if (!href) return null;
+        var a = el("a", null, text);
+        a.href = href;
+        a.target = "_blank";
+        a.rel = "noopener";
+        if (foot.children && foot.children.length) {
+          var dot = el("span", null, "·");
+          dot.setAttribute("aria-hidden", "true");
+          foot.appendChild(dot);
+        }
+        foot.appendChild(a);
+        return a;
+      }
+      var what = footLink(BUILT_ON, t.siteHref);
+      var privacy = footLink(PRIVACY, t.privacyHref);
+      var report = footLink(REPORT, t.reportHref);
       panel.appendChild(name);
       panel.appendChild(about);
       panel.appendChild(open);
       panel.appendChild(toggle);
-      panel.appendChild(what);
+      panel.appendChild(foot);
 
       // The button.
       var fab = el("button", "fab");
@@ -8059,7 +8101,7 @@
       }, true);
 
       document.body.appendChild(host);
-      return { host: host, root: root, fab: fab, panel: panel, bar: bar, toggle: toggle, close: close, name: name, title: title, open: open, what: what };
+      return { host: host, root: root, fab: fab, panel: panel, bar: bar, toggle: toggle, close: close, name: name, title: title, open: open, what: what, privacy: privacy, report: report };
     }
 
     function start() {
