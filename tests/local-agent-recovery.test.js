@@ -24,7 +24,6 @@ const localAgent = require('../src/services/local-agent');
 const recovery = require('../src/services/local-agent-recovery');
 const activeWorkers = require('../src/services/active-workers');
 const stopRegistry = require('../src/services/stop-registry');
-const agentTurn = require('../src/services/mayor/agent-turn');
 
 const SESSION = {
   id: 42, status: 'active', user_id: 5, app_id: 3, is_headless: false,
@@ -137,8 +136,8 @@ test('a build the laptop finished while the platform was down gets its whole tai
   assert.equal(seen.wrapUps[0].outcome, 'code');
   assert.match(seen.wrapUps[0].dispatchSummary, /Opened PR #3/);
   assert.deepEqual(seen.notifications.map(([kind]) => kind), ['done']);
-  assert.deepEqual(seen.handBacks, [{ pool, changeId: 42, finished: true }],
-    'the conversation that dispatched it is handed back, as finished');
+  assert.deepEqual(seen.handBacks, [{ pool, changeId: 42 }],
+    'the conversation that dispatched it hears the build is over');
   assert.equal(turn.row.tail_finished_at, 'now');
   assert.ok(pool.calls.some((c) => /SET last_turn_runner = \$2/.test(c.sql) && c.params[1] === 'local'));
   // The progress card is rebuilt from the turn's own lines and closed.
@@ -247,28 +246,6 @@ test('a pass takes over each quiet turn and finishes it in the background', asyn
   assert.equal(seen.finalize.length, 1);
 });
 
-// ── The conversation waits for it rather than offering Retry ───────────
-
-test('a dead turn whose local build recovery will finish is not ended as interrupted', async () => {
-  const ended = [];
-  const run = (pending) => agentTurn.sweepInterruptedTurns({
-    pool: {},
-    deps: {
-      agentSessions: {
-        staleTurnLeases: async () => [{ agentSessionId: 9, userId: 5, turnId: 'dead', activeChangeId: 42, changeTurn: false }],
-        endInterruptedTurn: async (_pool, args) => { ended.push(args); return true; },
-      },
-      isChangeBusy: () => false,
-      localTurnPending: async (_pool, changeId) => pending && changeId === 42,
-      notifyUser: () => {},
-      sessionBus: { publish() {} },
-    },
-  });
-  assert.equal(await run(true), 0, 'left to the recovery, which hands the conversation back itself');
-  assert.equal(ended.length, 0);
-  assert.equal(await run(false), 1, 'with nothing of the platform\'s left, it ends as before');
-});
-
 // ── Wiring ─────────────────────────────────────────────────────────────
 
 test('the leader runs the pass at boot, on its own tick, and after every lease sweep', () => {
@@ -282,8 +259,6 @@ test('the leader runs the pass at boot, on its own tick, and after every lease s
   const tick = Number((server.match(/const LOCAL_AGENT_RECOVERY_MS = (\d+) \* 1000;/) || [])[1]) * 1000;
   assert.ok(tick > 0 && tick < localAgent.WAITER_STALE_SECONDS * 1000,
     'a quiet waiter is taken over within its stale window plus one tick');
-  assert.ok(localAgent.WAITER_STALE_SECONDS * 1000 + tick < require('../src/services/agent-sessions').TURN_LEASE_STALE_SECONDS * 1000,
-    'before the dispatching conversation\'s own lease goes stale');
   assert.ok(localAgent.WAITER_RENEW_MS * 3 < localAgent.WAITER_STALE_SECONDS * 1000,
     'a live waiter can miss renewals before it is taken for dead');
 });

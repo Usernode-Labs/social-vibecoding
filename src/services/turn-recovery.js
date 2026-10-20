@@ -360,7 +360,11 @@ async function adoptBotOrphan({ pool, session, sessionId, containerName, contain
   });
 }
 
-async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcastGlobal }) {
+// `owned`: the caller is the work item the turn's record names as its owner
+// (a turn carried on after its process went: services/turns.js), so the
+// turn is its to finish: none of the checks that leave a turn to someone
+// else apply.
+async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcastGlobal }, { owned = false } = {}) {
   const { name: containerName, sessionId } = orphan;
   let containerState = orphan.state;
   const kubernetesWorker = worker.usesKubernetesWorkers();
@@ -402,7 +406,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   // promoted; adopting its own live turn here put a second consumer on its
   // journal and finished it twice (cards, vote resets, wrap-ups), and the
   // adoption's `finally` took the live owner's busy flag with it.
-  if (worker.getActiveTurnMode(sessionId) || activeWorkersSvc.isSessionBusyHere(sessionId)) {
+  if (!owned && (worker.getActiveTurnMode(sessionId) || activeWorkersSvc.isSessionBusyHere(sessionId))) {
     log.info('server', 'A turn on this worker is live in this process; not adopting it', { containerName, sessionId });
     return;
   }
@@ -410,9 +414,9 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   // finishes its turns while this one leads (docs/plans/draining-releases.md),
   // holding their sessions until they end (services/processes.js). Read
   // exactly: a session whose holders cannot be read is retried, not taken.
-  let holders;
+  let holders = [];
   try {
-    holders = await processes.holders(['session', 'sync'], sessionId, pool);
+    if (!owned) holders = await processes.holders(['session', 'sync'], sessionId, pool);
   } catch (err) {
     throw retryRuntimeRecovery(`could not read who holds the session: ${err.message}`);
   }
@@ -428,7 +432,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   // that work's, which the next leader claims and carries on from its last
   // saved step. The worker is kept and registered; nothing else is done to
   // it here.
-  if (session.workflow_owned) {
+  if (session.workflow_owned && !owned) {
     if (containerState === 'running') worker.adoptWarmWorker(sessionId, containerName);
     log.info('server', 'Leaving a workflow turn\'s worker to its work', {
       containerName, sessionId, owner: session.workflow_owner, state: containerState,
@@ -2202,7 +2206,56 @@ async function resumeDetachedTurnInner({
 }
 
 
+/**
+ * Carry on the coding turn on session `sessionId` whose record names the
+ * caller's work item as its owner (a turn's work item, resumed after its
+ * process went: services/turns.js): followed through its journal to its
+ * end, its tail and wrap-up finished; or, its worker gone, abandoned with
+ * what it left. What the leader's adoption did for an orphaned turn.
+ */
+async function recoverOwnedTurn({ config = sharedConfig(), pool, sessionId }) {
+  const containerName = worker.workerContainerName(sessionId);
+  let state = 'not_found';
+  try {
+    state = await worker.getWorkerStatus(containerName);
+  } catch (err) {
+    // An unreadable runtime is not a gone worker: tried again by the item.
+    throw Object.assign(new Error(`could not read the worker's state: ${err.message}`), { retryWorkerRecovery: true });
+  }
+  await adoptOrphanWorker({ name: containerName, sessionId: Number(sessionId), state }, {
+    config, pool, staging: stagingSvc, ghub: github, broadcastGlobal: ws.broadcastGlobal,
+  }, { owned: true });
+}
+
+/**
+ * A coding turn record the work item `workId` still holds as it ends (a
+ * record its recovery could not take to an end: written, then cut before its
+ * agent started): released, with the unfinished-turn note and its retry
+ * pills, so the change is not left busy for good. Resolves the session id,
+ * or null when the item holds none.
+ */
+async function releaseLeftRecord({ pool, workId }) {
+  const { rows: [r] } = await pool.query(
+    `SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1`,
+    [String(workId)]);
+  if (!r) return null;
+  const sessionId = Number(r.id);
+  log.warn('server', 'A turn ended holding its coding record; releasing it', { sessionId, workId });
+  await worker.clearActiveTurn(sessionId, turnCleanupArgs(r.active_turn));
+  await appendTerminalProgressLine(pool, sessionId, '[interrupted]');
+  const pills = recoveryPills.buildRecoveryQuickReplies('unrecoverable');
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3)`,
+    [sessionId, recoveryPills.TURN_UNFINISHED_BREADCRUMB,
+      JSON.stringify({ ...(pills ? { quickReplies: pills } : {}), recovered: true, recoveredReason: 'turn_ended_holding' })],
+  ).catch(() => {});
+  await notifyTurnStalled(pool, sessionId).catch(() => {});
+  return sessionId;
+}
+
 module.exports = {
+  recoverOwnedTurn,
+  releaseLeftRecord,
   persistedActiveTurnExists,
   turnCleanupArgs,
   reconcilePendingTurnCleanup,

@@ -91,7 +91,9 @@ test('the bot\'s and the bench\'s own endings close through the machine (bug 15)
   assert.match(read('src/services/homeroom-bot.js'), /archiveSession\(\{ pool, sessionId: session\.id, reason: 'bot-recovered', from: now\.status \}\)/);
   assert.match(read('src/services/bench/lane.js'), /closeOwnSession\(\{ pool, sessionId: id, reason: 'bench' \}\)/);
   assert.match(read('src/services/bench/studio.js'), /closeOwnSession\(\{ pool, sessionId: r\.session_id, reason: 'bench-preview-expired' \}\)/);
-  assert.match(read('server.js'), /closeProposal\(\{ sessionId: Number\(sessionId\), reason: 'bench', from: now\.status \}\)/);
+  // (In what a turn's recovery runs, moved out of server.js unchanged:
+  // services/turn-recovery.js.)
+  assert.match(read('src/services/turn-recovery.js'), /closeProposal\(\{ sessionId: Number\(sessionId\), reason: 'bench', from: now\.status \}\)/);
   // proposal_start's predecessor is closed in the successor's own transaction.
   assert.match(read('src/routes/proposal-handoff.js'), /closeProposal\(\{\s*sessionId: Number\(replacementSession\.id\)[^}]*reason: 'proposal-replaced'[^}]*db: client/);
 });

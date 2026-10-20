@@ -24,7 +24,10 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
-const SERVER_SRC = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
+// With what a turn's recovery runs, moved out of server.js unchanged
+// (services/turn-recovery.js).
+const SERVER_SRC = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '../src/services/turn-recovery.js'), 'utf8');
 const recoveryPills = require('../src/services/recovery-pills');
 
 // ── 1. The breadcrumb wording ───────────────────────────────────────────

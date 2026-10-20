@@ -39,6 +39,7 @@ const ATT_B = 'b'.repeat(32);
 
 const poolMod = require('../src/db/pool');
 const agentTurn = require('../src/services/mayor/agent-turn');
+const { installTurnPlatform } = require('./lib/turn-platform');
 
 function recordingPool(handlers = {}) {
   const calls = [];
@@ -152,10 +153,11 @@ test('a file is served to its owner only: images inline, the rest as downloads, 
 });
 
 test('a turn names only its own unsent uploads, and files alone are a message', async () => {
-  const saved = { runAgentTurn: agentTurn.runAgentTurn, resolveAgentMayor: agentTurn.resolveAgentMayor };
-  const runs = [];
+  const saved = { resolveAgentMayor: agentTurn.resolveAgentMayor };
   agentTurn.resolveAgentMayor = async () => ({ ok: true, apiKey: 'k' });
-  agentTurn.runAgentTurn = async (args) => { runs.push(args); args.res.end(); };
+  // The turn is its machine's to run: what the route asks it is what runs.
+  const turns = installTurnPlatform();
+  const runs = turns.asks;
   const unsent = new Map([
     [ATT_A, { id: ATT_A, kind: 'image', filename: 'shot.png', content_type: 'image/png', size_bytes: PNG.length, meta: null }],
     [ATT_B, { id: ATT_B, kind: 'zip', filename: 'site.zip', content_type: 'application/zip', size_bytes: 900, meta: { entryCount: 2 } }],
@@ -171,11 +173,12 @@ test('a turn names only its own unsent uploads, and files alone are a message', 
       const filesOnly = await call('POST', '/api/agent-sessions/5/turns', { attachmentIds: [ATT_B, ATT_A] });
       assert.equal(filesOnly.status, 200);
       assert.equal(runs.length, 1);
-      assert.equal(runs[0].messageText, '(attached files)', 'the dev chat\'s stand-in, which the transcript hides');
-      assert.deepEqual(runs[0].recorded, { id: 99, clientMessageId: null }, 'written by the route, with the lease, before the stream');
+      assert.deepEqual([turns.asks[0].key, turns.asks[0].kind], ['agent:5', 'agent'], 'asked of the conversation\'s turn machine');
+      assert.equal(turns.asks[0].input.messageText, '(attached files)', 'the dev chat\'s stand-in, which the transcript hides');
+      assert.deepEqual(turns.asks[0].input.recorded, { id: 99, clientMessageId: null }, 'written by the route, with the claim, before the stream');
       const link = pool.calls.find((c) => /UPDATE chat_session_attachments SET message_id/.test(c.sql));
       assert.deepEqual(link.params, [99, [ATT_B, ATT_A], 5], 'the files belong to the message the route wrote');
-      assert.deepEqual(runs[0].attachments.map((a) => [a.id, a.kind, a.filename, a.contentType, a.sizeBytes, a.meta || null]), [
+      assert.deepEqual(turns.asks[0].input.attachments.map((a) => [a.id, a.kind, a.filename, a.contentType, a.sizeBytes, a.meta || null]), [
         [ATT_B, 'zip', 'site.zip', 'application/zip', 900, { entryCount: 2 }],
         [ATT_A, 'image', 'shot.png', 'image/png', PNG.length, null],
       ], 'in the order they were attached');
@@ -197,6 +200,7 @@ test('a turn names only its own unsent uploads, and files alone are a message', 
       assert.equal(runs.length, 1);
     });
   } finally {
+    turns.restore();
     Object.assign(agentTurn, saved);
   }
 });

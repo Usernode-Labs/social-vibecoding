@@ -108,7 +108,7 @@ test('the scout is asked for HTML on apps in the setting, with the right stylesh
   // Each capture site stores the document beside its markdown copy.
   assert.equal((src.match(/const capturedSpec = captureSpecOutput\(result\.lastResultText\);/g) || []).length, 2);
   assert.equal((src.match(/contentHtml: capturedSpec\.html,/g) || []).length, 2);
-  assert.match(read('server.js'), /contentHtml: capturedSpec\.html,/);
+  assert.match(read('src/services/turn-recovery.js'), /contentHtml: capturedSpec\.html,/);
   const { SPEC_HTML_CONTRACT } = require('../src/services/prompts.js');
   for (const rule of ['<article data-spec>', '<section data-spec-tab="user">', '<figure data-screens>', 'data-side="before"', 'data-change="N"', 'data-focus="x y w h"', 'scripts off and no network', 'spec-box-new']) {
     assert.ok(SPEC_HTML_CONTRACT.includes(rule), `the contract names ${rule}`);

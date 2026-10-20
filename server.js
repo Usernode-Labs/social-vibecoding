@@ -1254,12 +1254,8 @@ async function becomeLeader() {
   // heartbeating, and fail the turn they were holding.
   startLocalAgentLeaseSweeper(config);
 
-  // Agent sessions: a Mayor turn whose process died (a crash, a kill) left
-  // its lease to go stale; say in its conversation that it was interrupted,
-  // with Retry, and hand the lease back (services/mayor/agent-turn.js).
-  require('./src/services/mayor/agent-turn').startInterruptedTurnSweeper({
-    pool: require('./src/db/pool').getPool(config),
-  });
+  // (A Mayor turn in an agent session is its turn machine's work item, which
+  // a process that goes leaves to the next: src/workflow/turn/.)
 
   // (A merge by hand on GitHub, an imported PR's head, the measurement
   // against main and a fixed check on main are the proposal machine's; a
@@ -2184,17 +2180,9 @@ async function cleanup() {
   }
   // From SIGTERM, not from here: waiting for a successor spends the drain.
   const drainDeadline = cleanupStartedAt + drainMs;
-  // The Mayor's turns in agent sessions end with this process: each one
-  // records what it had said and that it was interrupted (with Retry), and
-  // hands its lease back, so the conversation is never left looking busy
-  // with nobody working. A turn whose coding agent is running is left to
-  // restart recovery. Awaited with the drain below, before the pool closes.
-  // A process finishing its work ends only those still running at its
-  // drain's end.
-  const endAgentTurns = () => require('./src/services/mayor/agent-turn').interruptLocalTurns({ timeoutMs: 3000 })
-    .catch((err) => log.warn('server', 'Interrupting agent turns failed', { err: err.message }));
-  let agentTurnsEnded = finishesWork ? null : endAgentTurns();
-  require('./src/services/mayor/agent-turn').stopInterruptedTurnSweeper();
+  // (The Mayor's turns are workflow work: a draining process finishes those
+  // it runs as it finishes any work, and leaves the rest to the next process
+  // when the runtime stops, which carries each on from its turn's record.)
   // The leader's loops: nothing new is claimed or dispatched on a process
   // whose pool is about to close. Their turns already running are restart
   // recovery's to finish.
@@ -2257,7 +2245,6 @@ async function cleanup() {
   if (finishesWork) {
     await drainUntilIdle({ deadline: drainDeadline, announced });
     closeListener(DRAIN_TIMEOUT_MS);
-    agentTurnsEnded = endAgentTurns();
     await workflowStop;
     workflowStop = stopWorkflowNow();
     handlerDrainMs = DRAIN_TIMEOUT_MS;
@@ -2311,7 +2298,6 @@ async function cleanup() {
     log.info('server', 'In-flight requests and background work drained');
   }
   await pushStop;
-  await agentTurnsEnded;
 
   // The checks runs this process launched go on without it: their Jobs
   // belong to the cluster. Their rows still carry this process's heartbeat,

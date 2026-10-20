@@ -23,10 +23,12 @@ const settings = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'),
   'utf8',
 );
+// With what a turn's recovery runs, moved out of server.js unchanged
+// (services/turn-recovery.js).
 const server = fs.readFileSync(
   path.join(__dirname, '..', 'server.js'),
   'utf8',
-);
+) + fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-recovery.js'), 'utf8');
 
 // #2779: the chat route hands the turn itself to services/mayor/turn.js, so
 // "the chat route" is the route handler followed by that module.

@@ -9414,6 +9414,9 @@ async function runScoutTool({
   // (and its stable receipt id) before this per-dispatch owner is released.
   deferTurnCleanup = false,
   beforeTurnCleanup = null,
+  // The work item that runs the turn (a person's turn is its machine's:
+  // services/turns.js), named on the run's record.
+  owner = null,
 }) {
   await activeWorkers.enter(session.id);
   // #50: wall-clock start for the durationMs persisted on terminal
@@ -9779,6 +9782,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
         baseSha: session.checks_commit_sha || null,
         branchName: session.branch_name,
         mode: 'scout',
+        owner,
       });
       // The lease lapsed between the routing decision above and here.
       if (!queued) {
@@ -9847,6 +9851,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
         const isClaudeDispatch = !ctx || !ctx.logicalTurnId;
         if (isClaudeDispatch) claudeTelemetryAttemptNumber += 1;
         return worker.execInWorker(session.id, {
+          ...(owner ? { owner } : {}),
           mode: 'scout',
           prompt: scoutPrompt,
           model: turnModel,
@@ -9907,7 +9912,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
       // legacy path below. plan.md PR5/PR6.
       const routed = await runCodexAttemptLoop({
         pool, session, userId: req.user.id, config, isCodexSession,
-        turnModel, resumeThreadId, mode: 'scout',
+        turnModel, resumeThreadId, mode: 'scout', owner,
         telemetryComponent: headless ? 'coding_agent_headless' : 'coding_agent_scout',
         resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
           pool, session, userId: req.user.id, model: turnModel,
@@ -11686,6 +11691,9 @@ async function runClaudeCodeTool({
   directSessionTurn = false,
   deferTurnCleanup = false,
   beforeTurnCleanup = null,
+  // The work item that runs the turn (services/turns.js), named on the
+  // run's record.
+  owner = null,
 }) {
   await activeWorkers.enter(session.id);
   // #50: wall-clock start for the durationMs persisted on terminal
@@ -12494,6 +12502,8 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         // kind allowed to upload a commit, and saying so at the call site is
         // what makes the scout path's `mode: 'scout'` legible as the contrast.
         mode: 'build',
+        // The turn's work item is its waiter (services/turns.js).
+        owner,
       });
       // The lease lapsed in the moment between the routing decision above
       // and here (the laptop closed mid-sentence). Nothing was dispatched, so
@@ -12584,6 +12594,7 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
           ? openRouterBuildFor(ctx)
           : null;
         return worker.execInWorker(session.id, {
+          ...(owner ? { owner } : {}),
           mode: 'build',
           prompt: openRouterBuild ? openRouterBuild.prompt : claudePrompt,
           // Present only for the first hosted-Claude build after an exact
@@ -12640,7 +12651,7 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
       // that never overwrites the first attempt's usage.
       const routed = await runCodexAttemptLoop({
         pool, session, userId: req.user.id, config, isCodexSession,
-        turnModel, resumeThreadId, mode: 'build',
+        turnModel, resumeThreadId, mode: 'build', owner,
         telemetryComponent: headless ? 'coding_agent_headless' : 'coding_agent_build',
         resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
           pool, session, userId: req.user.id, model: turnModel,

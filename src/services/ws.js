@@ -82,8 +82,8 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
         .catch(() => log.warn('ws', 'Account stream cleanup will retry'));
       return;
     case 'agent_stop':
-      if (!oversize) void require('./mayor/agent-turn').receiveStopRequest(_pool, payload)
-        .catch(() => log.warn('ws', 'Agent stop notification will retry from durable state'));
+      // An older release's wake for a Mayor turn's stop: a turn's Stop is its
+      // machine's now (src/workflow/turn/), read from the turn's claim.
       return;
     case 'issues_closed':
       // From a workflow transition only: issues it closed on GitHub, for

@@ -1704,6 +1704,15 @@ ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS tail_finished_at TIMESTAM
 CREATE INDEX IF NOT EXISTS local_agent_turns_waiting_idx
   ON local_agent_turns (waiter_seen_at)
   WHERE waiter_id IS NOT NULL AND tail_claimed_at IS NULL;
+-- The work item whose turn dispatched it (src/workflow/turn/: its
+-- `turnOwner`, as a coding turn's record names it). Its waiter is that item:
+-- when the item's process goes, the process that claims the item next takes
+-- the waiter id over and finishes the turn (services/turns.js), and no
+-- recovery pass touches it. NULL on a turn no item dispatched.
+ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS owner JSONB;
+CREATE INDEX IF NOT EXISTS local_agent_turns_owner_idx
+  ON local_agent_turns ((owner->>'workId'))
+  WHERE owner IS NOT NULL AND tail_claimed_at IS NULL;
 
 -- Both tables describe a specific person's machine and the prompts sent to
 -- it, so a staging clone must never carry them. See tools/clone-db.
@@ -12268,7 +12277,8 @@ END;
 $$;
 
 -- `busy` is a hint for the lists' spinner; the screen re-reads for the
--- truth. 90 seconds is services/agent-sessions.js TURN_LEASE_STALE_SECONDS.
+-- truth. A conversation's claim lasts exactly as long as its turn
+-- (services/agent-sessions.js, the turn machine releases it).
 CREATE OR REPLACE FUNCTION agent_session_state_announce() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -12280,9 +12290,7 @@ BEGIN
       'type', 'agent_session_changed',
       'agentSessionId', NEW.id,
       'version', NEW.state_version,
-      'busy', (NEW.active_turn IS NOT NULL
-               AND COALESCE(NEW.active_turn->>'renewedAt', NEW.active_turn->>'startedAt')::timestamptz
-                   >= NOW() - interval '90 seconds')
+      'busy', (NEW.active_turn IS NOT NULL)
     )
   )::text);
   RETURN NULL;

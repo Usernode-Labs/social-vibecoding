@@ -24,6 +24,11 @@ const agentSessions = require('../services/agent-sessions');
 const actions = require('../services/agent-session-actions');
 const agentTurn = require('../services/mayor/agent-turn');
 const agentStop = require('../services/agent-session-stop');
+const sessionBus = require('../services/session-bus');
+
+function platform() {
+  return require('../workflow/platform.ts');
+}
 const models = require('../services/models');
 const agentPreferences = require('../services/agent-preferences');
 const notifications = require('../services/notifications');
@@ -58,44 +63,63 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
   // conversation's bus, which GET .../events follows. It only runs when the
   // conversation is free and somebody can pay for it; otherwise the outcome
   // simply waits in the conversation for the next turn.
+  // The turn runs as its machine's work item, wherever the workflow runs it
+  // (services/turns.js): asked for here with the claim.
   const startFollowUp = async ({ user, agentSessionId, outcome }) => {
-    const turnId = agentTurn.newTurnId();
-    const leased = await agentSessions.acquireTurnLease(pool, { agentSessionId, userId: user.id, turnId });
-    if (!leased) return null;
     let mayor = null;
     try {
       mayor = await agentTurn.resolveAgentMayor({ pool, config, userId: user.id, agentSessionId });
     } catch (err) {
       log.warn('agent-sessions', 'Follow-up turn could not resolve the Mayor', { agentSessionId, err: err.message });
     }
-    if (!mayor || !mayor.ok) {
-      await agentSessions.releaseTurnLease(pool, { agentSessionId, turnId }).catch(() => {});
-      return null;
-    }
-    agentTurn.runAgentTurn({
-      pool,
-      config,
-      user,
-      agentSessionId,
-      turnId,
-      followUp: {
-        toolName: outcome.toolName,
-        title: actions.ACTION_LABELS[outcome.toolName] || outcome.toolName,
-        ok: outcome.status === 'done',
-      },
-      mayor,
-      res: null,
-      scheduleInteractiveRecovery,
-    }).catch((err) => {
-      log.error('agent-sessions', 'Follow-up turn crashed', { agentSessionId, err: err.message });
+    if (!mayor || !mayor.ok) return null;
+    const turnId = agentTurn.newTurnId();
+    const leased = await agentSessions.acquireTurnLease(pool, {
+      agentSessionId, userId: user.id, turnId,
+      ask: (db) => platform().askTurn(db, {
+        key: agentTurn.turnKey(agentSessionId), turnId, kind: 'agent',
+        input: {
+          agentSessionId, userId: user.id,
+          followUp: {
+            toolName: outcome.toolName,
+            title: actions.ACTION_LABELS[outcome.toolName] || outcome.toolName,
+            ok: outcome.status === 'done',
+          },
+        },
+      }),
     });
-    return { turnId };
+    return leased ? { turnId } : null;
   };
 
   const requireUser = (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     return next();
   };
+
+  // A turn this request asked for, followed on its conversation's stream
+  // (services/session-bus.js) from the position read before it was asked,
+  // until its `done`: the turn runs in a workflow process, and its events
+  // reach this request whichever process that is. A request that goes leaves
+  // the turn running, as a dropped stream always did.
+  const followTurn = (req, res, { streamKey, from }) => new Promise((resolve) => {
+    let ended = false;
+    let off = () => {};
+    const heartbeat = setInterval(() => { try { res.write(':heartbeat\n\n'); } catch { /* client gone */ } }, 15000);
+    const end = () => {
+      if (ended) return;
+      ended = true;
+      clearInterval(heartbeat);
+      off();
+      try { res.end(); } catch { /* already closed */ }
+      resolve();
+    };
+    off = sessionBus.subscribe(streamKey, (event) => {
+      if (ended) return;
+      try { res.write(`data: ${JSON.stringify(event)}\n\n`); } catch { /* client gone */ }
+      if (event.type === 'done') end();
+    }, { afterId: from });
+    req.on('close', end);
+  });
 
   // The composer's model choice, validated the way the dev chat's picker is.
   // `{ backend: 'claude_code', model }` names one of the Anthropic models
@@ -281,22 +305,8 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
         require('../services/ws').pushToUser(req.user.id, { type: 'agent_session_changed', agentSessionId: id, busy: false });
       }
       const ask = { userId: req.user.id, id, version: number(req.query.version), rev: number(req.query.rev) };
-      let state = await agentSessions.readState(pool, ask);
+      const state = await agentSessions.readState(pool, ask);
       if (!state) return res.status(404).json({ error: 'Agent session not found' });
-      // The turn's process died and no sweep has ended it yet: end it now
-      // (the interrupted note with Retry) and answer with that, so the
-      // screen goes from working straight to Retry, never through an idle
-      // conversation that shows no answer.
-      if (state.stale && !agentTurn.turnState(id)) {
-        const ended = await agentTurn.sweepInterruptedTurns({ pool, agentSessionId: id }).catch((err) => {
-          log.warn('agent-sessions', 'Could not end an interrupted turn on read', { agentSessionId: id, err: err.message });
-          return 0;
-        });
-        if (ended) {
-          state = await agentSessions.readState(pool, ask);
-          if (!state) return res.status(404).json({ error: 'Agent session not found' });
-        }
-      }
       const local = agentTurn.turnState(id);
       const recovered = !local && !state.busy && !(state.session && state.session.busy)
         ? agentTurn.recoveredRunState(id, state.activeChangeId)
@@ -585,9 +595,19 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
           ...(mayor.verificationRequired ? { verificationRequired: true } : {}),
         });
       }
-      let recorded = null;
+      // The turn: its machine's work item, run wherever the workflow runs
+      // (services/turns.js), asked for in the same transaction as the claim
+      // and the message. This request follows its stream from here.
+      const key = agentTurn.turnKey(id);
+      const from = await sessionBus.position(agentTurn.busKey(id));
+      const asked = (input) => (db) => platform().askTurn(db, {
+        key, turnId, kind: 'agent',
+        input: { agentSessionId: id, userId: req.user.id, model: body.model ?? null, ...input },
+      });
       if (retry) {
-        const leased = await agentSessions.acquireTurnLease(pool, { agentSessionId: id, userId: req.user.id, turnId });
+        const leased = await agentSessions.acquireTurnLease(pool, {
+          agentSessionId: id, userId: req.user.id, turnId, ask: asked({ retry: true }),
+        });
         if (!leased) return res.status(409).json({ error: 'The Mayor is already answering in this conversation.', busy: true });
       } else {
         const started = await agentSessions.startTurnWithMessage(pool, {
@@ -599,12 +619,14 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
           attachments,
           clientMessageId,
           title: session.title ? null : agentTurn.titleFromMessage(message),
+          ask: (db, { messageId }) => asked({
+            messageText: message, attachments, recorded: { id: messageId, clientMessageId },
+          })(db),
         });
         if (started.duplicate) return duplicate(started);
         if (started.busy) {
           return res.status(409).json({ error: 'The Mayor is already answering in this conversation.', busy: true });
         }
-        recorded = { id: started.messageId, clientMessageId };
         // #3752: a conversation opened on a request is named after the
         // request, not after this message. Not awaited: the request is read
         // from GitHub, and the turn never waits on that.
@@ -618,11 +640,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
         Connection: 'keep-alive',
         'X-Accel-Buffering': 'no',
       });
-      await agentTurn.runAgentTurn({
-        pool, config, user: req.user, agentSessionId: id, turnId,
-        messageText: retry ? null : message, attachments, recorded, retry, mayor, res,
-        scheduleInteractiveRecovery,
-      });
+      await followTurn(req, res, { streamKey: agentTurn.busKey(id), from });
       return undefined;
     } catch (err) {
       if (res.headersSent) {
@@ -638,11 +656,14 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
   // the conversation's bus still holds after Last-Event-Id, then follows it.
   router.get('/api/agent-sessions/:id/events', requireUser, async (req, res) => {
     const id = positiveId(req.params.id);
+    // The turn running there, from its claim: it runs in a workflow process.
+    let runningTurnId = null;
     try {
       const { rows } = id
-        ? await pool.query('SELECT id FROM agent_sessions WHERE id = $1 AND user_id = $2', [id, req.user.id])
+        ? await pool.query('SELECT id, active_turn->>\'id\' AS turn_id FROM agent_sessions WHERE id = $1 AND user_id = $2', [id, req.user.id])
         : { rows: [] };
       if (!rows.length) return res.status(404).end();
+      runningTurnId = rows[0].turn_id || null;
     } catch {
       return res.status(500).end();
     }
@@ -654,7 +675,6 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     });
     try { res.write(':ok\n\n'); } catch { /* client gone */ }
     let since = req.headers['last-event-id'] || req.query.since || null;
-    const sessionBus = require('../services/session-bus');
     const write = (event) => {
       const { _id, ...shown } = event;
       try {
@@ -666,9 +686,8 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     // far, and none of an earlier turn's tail; then follows on from the
     // last of those rows, so nothing published meanwhile is missed.
     if (!since) {
-      const running = agentTurn.turnState(id);
-      if (running && running.id) {
-        const told = await sessionBus.snapshot(agentTurn.busKey(id), { seqPrefix: `${String(running.id).slice(0, 8)}-` })
+      if (runningTurnId) {
+        const told = await sessionBus.snapshot(agentTurn.busKey(id), { seqPrefix: `${String(runningTurnId).slice(0, 8)}-` })
           .catch(() => []);
         told.forEach(write);
         if (told.length) since = { afterId: told[told.length - 1]._id };

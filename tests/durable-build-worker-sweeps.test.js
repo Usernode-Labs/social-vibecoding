@@ -102,6 +102,9 @@ test('no sweep stops a worker a durable build holds: the eviction clock reads it
   assert.match(work.slice(work.indexOf('export function workedOnSql()')), /OR \$\{buildHoldSql\('cs'\)\}/);
   // Adoption keeps a durable build's worker as it is
   // (tests/homeroom-bot-restart-recovery.test.js).
-  const adopt = src.slice(src.indexOf('async function adoptOrphanWorker('));
-  assert.match(adopt.slice(0, 6000), /if \(session\.workflow_owned\) \{\s*if \(containerState === 'running'\) worker\.adoptWarmWorker\(sessionId, containerName\);/);
+  // (Moved out of server.js unchanged: services/turn-recovery.js. A turn's
+  // own item adopts with `owned`, past this check: services/turns.js.)
+  const recovery = fs.readFileSync(path.join(__dirname, '..', 'src/services/turn-recovery.js'), 'utf8');
+  const adopt = recovery.slice(recovery.indexOf('async function adoptOrphanWorker('));
+  assert.match(adopt.slice(0, 6000), /if \(session\.workflow_owned && !owned\) \{\s*if \(containerState === 'running'\) worker\.adoptWarmWorker\(sessionId, containerName\);/);
 });

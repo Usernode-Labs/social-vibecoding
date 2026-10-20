@@ -263,6 +263,9 @@
       "services | uses src/services/shots-orchestrator.js:dispatchAgent": "eval.agent: the shots agent's turn on a trial's copies, a durable step over the item's checkpoint, owned by the item (the proxy bills a turn so owned to its trial)",
       "services | uses src/services/shots-orchestrator.js:visibleError": "a step's failure in the words the trial shows (pure)",
       "services | uses src/services/shots-eval.js:trialRecipe": "the arm a trial runs (eval.agent): its configuration's recipe resolved against the deployment's own, its summary kept on the trial's attempt; keeps nothing"
+    },
+    "turn": {
+      "services | uses src/services/turns.js:run": "a person's turn, run whole as the turn machine's turn.run item (the Mayor's rounds, the coding run it dispatches in the change's worker or on the person's machine, its tail and wrap-up), or carried on from its record after its process went: the turn's own pipeline (mayor/agent-turn.js, routes/sessions.js, turn-recovery.js), which only those modules know; the machine owns that a turn runs, in order, and that its claim is released; keeps nothing beyond the turn (workflow-foundation/design-turns-and-lock.md 8.1)"
     }
   }
 }

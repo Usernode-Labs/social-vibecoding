@@ -145,6 +145,7 @@ test('nothing is renamed without a request, a readable title, or an automatic na
 
 const poolMod = require('../src/db/pool');
 const agentTurn = require('../src/services/mayor/agent-turn');
+const { installTurnPlatform } = require('./lib/turn-platform');
 
 const SESSION_ROW = {
   id: 5, user_id: 7, title: null, title_source: 'auto', status: 'open', focus_app_id: 3,
@@ -161,7 +162,6 @@ async function sendFirstMessage(row) {
   });
   const saved = {
     getPool: poolMod.getPool,
-    runAgentTurn: agentTurn.runAgentTurn,
     resolveAgentMayor: agentTurn.resolveAgentMayor,
     nameFromRequest: agentSessions.nameFromRequest,
   };
@@ -169,7 +169,11 @@ async function sendFirstMessage(row) {
   const order = [];
   poolMod.getPool = () => pool;
   agentTurn.resolveAgentMayor = async () => ({ ok: true, apiKey: 'k' });
-  agentTurn.runAgentTurn = async (args) => { order.push('turn'); args.res.end(); };
+  // The turn is asked of its machine with the message; this stand-in ends
+  // its stream as a finished run would.
+  const turns = installTurnPlatform();
+  const askTurn = require('../src/workflow/platform.ts').askTurn;
+  require('../src/workflow/platform.ts').askTurn = async (...args) => { order.push('turn'); return askTurn(...args); };
   // Never settles: the turn must not wait for the request to be read.
   agentSessions.nameFromRequest = (_pool, args) => { order.push('name'); named.push(args); return new Promise(() => {}); };
   delete require.cache[require.resolve('../src/routes/agent-sessions')];
@@ -193,7 +197,8 @@ async function sendFirstMessage(row) {
   } finally {
     server.close();
     Object.assign(poolMod, { getPool: saved.getPool });
-    Object.assign(agentTurn, { runAgentTurn: saved.runAgentTurn, resolveAgentMayor: saved.resolveAgentMayor });
+    turns.restore();
+    Object.assign(agentTurn, { resolveAgentMayor: saved.resolveAgentMayor });
     agentSessions.nameFromRequest = saved.nameFromRequest;
     delete require.cache[require.resolve('../src/routes/agent-sessions')];
   }
@@ -203,7 +208,8 @@ test('the first message of a conversation opened on a request starts the naming,
   const opened = await sendFirstMessage(SESSION_ROW);
   assert.equal(opened.firstName, 'can you implement this?', 'the message names it first, with the message, as before');
   assert.deepEqual(opened.named, [{ agentSessionId: 5, userId: 7 }]);
-  assert.deepEqual(opened.order, ['name', 'turn'], 'started after the message is written, and the turn runs at once');
+  assert.deepEqual(opened.order, ['turn', 'name'],
+    'started once the message is written and its turn asked for; the request ends though the naming never settles');
 
   const titled = await sendFirstMessage({ ...SESSION_ROW, title: 'Checklist order', title_source: 'manual' });
   assert.deepEqual(titled.named, [], 'a conversation that already has a name keeps it');

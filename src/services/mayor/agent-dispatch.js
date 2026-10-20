@@ -249,6 +249,9 @@ async function runDispatch({
   onStopHandle = () => {},
   shouldStop = async () => false,
   scheduleInteractiveRecovery = null,
+  // The turn's work item (agent-turn.js `owner`): named on the coding run's
+  // record, so the run is that item's wherever it runs.
+  owner = null,
   deps = {},
 }) {
   const d = defaults(deps);
@@ -369,6 +372,7 @@ async function runDispatch({
     stopHandle,
     userApiKey: apiKey,
     deferTurnCleanup: true,
+    owner,
   };
 
   const releaseAll = () => {

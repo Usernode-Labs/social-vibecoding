@@ -18,7 +18,9 @@ function fixture({ lease = null, job = { turnId: 'job-1', mode: 'build', started
     throw new Error(`Unexpected SQL: ${sql}`);
   } };
   const deps = {
-    mayor: { turnState: () => local, stopAgentTurn: (id, args) => calls.push(['mayor', id, args]), handBackOrphanedTurn: async () => true },
+    mayor: { turnState: () => local, stopAgentTurn: (id, args) => calls.push(['mayor', id, args]) },
+    // The conversation's turn machine (src/workflow/turn/), told of the stop.
+    platform: { stopTurn: async (stop) => { calls.push(['machine', stop]); return { ok: true }; } },
     registry: { get: () => null }, isChangeBusy: () => !!row.change_turn, activeTurnMode: () => null,
     stopJob: async (args) => {
       calls.push(['job', args]);
@@ -92,7 +94,9 @@ test('a chat-only stop is durable, and a final wrap-up remains protected', async
   const f = fixture({ job: null, lease: { id: 'mayor-1', phase: 'mayor', startedAt: new Date().toISOString() } });
   assert.equal((await requestStop(f.args, f.deps)).status, 202);
   assert.equal((await f.read()).turn.stopping, true);
-  assert.ok(f.row.active_turn.stopRequestedAt);
+  assert.ok(f.row.active_turn.stopRequestedAt, 'stamped on the claim, which the turn reads wherever it runs');
+  assert.deepEqual(f.calls.filter((c) => c[0] === 'machine').map((c) => c[1]), [{ key: 'agent:5', by: 'ada' }],
+    'and told to the turn\'s machine, which stops a coding run by its journal');
   assert.equal(f.calls.filter((c) => c[0] === 'job').length, 0);
   f.row.active_turn.phase = 'mayor2';
   const before = f.calls.length;

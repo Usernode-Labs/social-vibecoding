@@ -33,7 +33,9 @@ const path = require('node:path');
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const DEV_CHAT = read('frontend/src/features/dev-chat/dev-chat.js');
 const SESSIONS = read('src/routes/sessions.js');
-const SERVER = read('server.js');
+// With what a turn's recovery runs, moved out of server.js unchanged
+// (services/turn-recovery.js).
+const SERVER = read('server.js') + read('src/services/turn-recovery.js');
 const APP_CSS = read('public/css/app.css');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');

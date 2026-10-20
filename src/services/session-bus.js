@@ -364,6 +364,19 @@ async function snapshot(sessionId, { seqPrefix = null } = {}) {
   return rows.map((r) => ({ ...r.event, _id: Number(r.id) }));
 }
 
+/**
+ * Where stream `sessionId` is now (its newest row's id, 0 for none), for a
+ * subscriber that must see everything from this moment on, published by
+ * any process: subscribe with { afterId: position }.
+ */
+async function position(sessionId) {
+  const pool = db();
+  if (!pool) return 0;
+  await flush();
+  const { rows: [r] } = await pool.query('SELECT COALESCE(MAX(id), 0) AS id FROM stream_events WHERE stream_key = $1', [String(sessionId)]);
+  return Number(r.id);
+}
+
 /** The newest event of the stream matching `predicate`, or null. */
 async function findLast(sessionId, predicate) {
   const pool = db();
@@ -403,6 +416,6 @@ async function prune(pool = db(), { maxAgeHours = 6 } = {}) {
 }
 
 module.exports = {
-  init, publish, subscribe, snapshot, findLast, clearSession, subscriberCount, wake, flush, settle, prune,
+  init, publish, subscribe, snapshot, position, findLast, clearSession, subscriberCount, wake, flush, settle, prune,
   STREAM_KIND, TOKEN_JOIN_MS,
 };

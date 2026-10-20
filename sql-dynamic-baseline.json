@@ -17,13 +17,6 @@
       "preview": "`SELECT cs.id FROM chat_sessions cs WHERE cs.active_turn IS NOT NULL AND cs.active_turn->>'phase' = ANY($1::text[]) AND COALESCE(cs.active_turn->>'lifecycleUpda"
     },
     {
-      "source": "server.js",
-      "kind": "structural-template",
-      "fingerprint": "f61373012d6b3e42df26",
-      "count": 1,
-      "preview": "`SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted AS app_self_hosted, u.username, u.is_synthetic AS user_is_synthetic, ((cs.workfl"
-    },
-    {
       "source": "src/db/migrate.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",
@@ -920,6 +913,13 @@
       "preview": "`SELECT 1 FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id JOIN users u ON u.id = pv.user_id WHERE pv.session_id = $1 AND pv.vote = 'yes' AND ${c"
     },
     {
+      "source": "src/services/agent-sessions.js",
+      "kind": "runtime-expression",
+      "fingerprint": "6c88e7a28c84e859a76f",
+      "count": 1,
+      "preview": "claimed ? 'COMMIT' : 'ROLLBACK'"
+    },
+    {
       "source": "src/services/agent-turn.js",
       "kind": "structural-template",
       "fingerprint": "f3a6d402b0a112ee09c3",
@@ -1646,6 +1646,13 @@
       "fingerprint": "ffdbcfbaa56765b4a618",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET headless_status = $4, headless_outcome = COALESCE($5, headless_outcome), headless_step = NULL, headless_turn_id = NULL, last_activity_"
+    },
+    {
+      "source": "src/services/turn-recovery.js",
+      "kind": "structural-template",
+      "fingerprint": "f61373012d6b3e42df26",
+      "count": 1,
+      "preview": "`SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted AS app_self_hosted, u.username, u.is_synthetic AS user_is_synthetic, ((cs.workfl"
     },
     {
       "source": "src/services/ui-telemetry.js",

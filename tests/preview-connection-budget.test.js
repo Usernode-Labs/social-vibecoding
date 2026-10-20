@@ -127,11 +127,13 @@ test('#1771: becomeLeader is still where the fleet duties live', () => {
   assert.match(armed, /const runs = legacy\('config'\)\.runsClusterMaintenance\(\);/);
   assert.match(armed, /if \(runs && CLOCK_JOB_NAMES\.has\(job\)\) continue;/, 'one armed there before is retired');
   assert.match(armed, /if \(!runs\) return 0;/, 'no clock is armed on a staging preview');
-  // What each process sweeps of its own (the idle eviction of its warm
-  // workers) runs whether or not it leads, and still never on a preview.
+  // What each process sweeps of its own runs whether or not it leads, and
+  // still never on a preview. Idle workers are a clock's, not a process's
+  // (services/worker-eviction.js), so a preview arms no eviction either.
   assert.match(src, /if \(runsClusterMaintenance\(\)\) startProcessDuties\(\);/);
   const duties = src.slice(src.indexOf('function startProcessDuties()'), src.indexOf('async function becomeLeader()'));
-  assert.ok(duties.includes('startIdleEvictionSweeper('), 'the idle eviction is a process duty');
+  assert.ok(!/startIdleEvictionSweeper\(/.test(stripComments(duties)), 'no process evicts idle workers of its own');
+  assert.match(read('src/workflow/clock/services.ts'), /name: 'worker-eviction', everyMs: 2 \* MIN/, 'the eviction clock does');
 });
 
 // ─── a preview's pool ceiling ───────────────────────────────────────

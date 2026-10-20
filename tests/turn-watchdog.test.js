@@ -175,7 +175,10 @@ test('isSessionBusy: a non-worker session operation blocks turns until its idemp
 
 // ── 3. Source guards ────────────────────────────────────────────────────
 
-const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+// With what a turn's recovery runs, moved out of server.js unchanged
+// (services/turn-recovery.js).
+const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-recovery.js'), 'utf8');
 const sessionsSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8');
 const runCcSrc = fs.readFileSync(path.join(__dirname, '..', 'worker', 'run-cc.sh'), 'utf8');
 

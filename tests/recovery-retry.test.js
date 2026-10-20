@@ -262,7 +262,10 @@ test('an onExhausted hook that throws still releases the job', async () => {
 test('both retained-recovery schedulers terminalize what the user sees when they give up', () => {
   const fs = require('node:fs');
   const path = require('node:path');
-  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  // With what a turn's recovery runs, moved out of server.js unchanged
+  // (services/turn-recovery.js).
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8')
+    + fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-recovery.js'), 'utf8');
   const sessions = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8');
   const orphan = server.slice(server.indexOf('function scheduleRetainedOrphanRecovery('),
     server.indexOf('function scheduleInteractiveTurnRecovery('));
