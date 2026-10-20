@@ -102,7 +102,10 @@ const DIALOG_IDS = [
  */
 // controller-text.tsx is the first words of a node a controller module then
 // owns (feedback, members, app secrets); it renders text, never a root.
-const SUPPORT_FILES = ['create-progress.tsx', 'app-allowance.tsx', 'controller-text.tsx'];
+// feedback-preview.tsx is an attached file opened full size (#5687): a portal
+// with no modal root or visibility of its own, drawn by feedback.tsx beside
+// its root rather than by index.tsx.
+const SUPPORT_FILES = ['create-progress.tsx', 'app-allowance.tsx', 'controller-text.tsx', 'feedback-preview.tsx'];
 
 const allFiles = fs.readdirSync(DIALOGS)
   .filter((f) => f.endsWith('.tsx') && f !== 'index.tsx');

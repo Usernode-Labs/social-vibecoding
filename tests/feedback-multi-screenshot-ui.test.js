@@ -78,6 +78,11 @@ function makeEl(tag, id = '') {
       child.parentNode = el;
       return child;
     },
+    // The video row swaps its whole thumbnail in through this.
+    replaceChildren(...nodes) {
+      el.children.length = 0;
+      for (const node of nodes) el.appendChild(node);
+    },
     remove() {
       const p = el.parentNode;
       if (!p) return;
@@ -173,8 +178,15 @@ function makeHarness({ offline = false, uploadPlan = null, prepareFile = null, f
     for (let i = 0; i < 6; i += 1) await new Promise((r) => setImmediate(r));
   };
   const list = () => el('feedback-screenshot-preview').children;
-  const thumbImg = (item) => item.children.find((c) => c.tagName === 'IMG');
-  const thumbRemove = (item) => item.children.find((c) => c.tagName === 'BUTTON');
+  // #5687: the picture now sits inside its own button (data-feedback-
+  // screenshot-open), so the image is found one level down and the remove
+  // button is the one that is not the opener.
+  const thumbOpen = (item) => item.children.find(
+    (c) => c.tagName === 'BUTTON' && c.getAttribute('data-feedback-screenshot-open') !== null
+  );
+  const thumbRemove = (item) => item.children.find((c) => c.tagName === 'BUTTON' && c !== thumbOpen(item));
+  const findImg = (node) => (node.tagName === 'IMG' ? node : node.children.map(findImg).find(Boolean) || null);
+  const thumbImg = (item) => findImg(item);
 
   return {
     sandbox,
@@ -184,8 +196,9 @@ function makeHarness({ offline = false, uploadPlan = null, prepareFile = null, f
     flush,
     list,
     thumbImg,
+    thumbOpen,
     thumbRemove,
-    open() { sandbox.Feedback._open({}); },
+    open(opts = {}) { sandbox.Feedback._open(opts); },
     close() { sandbox.Feedback._reset(); },
     // What the OS picker hands back: one or several files at once.
     async pick(...names) {
@@ -270,6 +283,65 @@ test('each thumbnail has its own labelled remove button, and removing one frees 
   h.type('Two pictures left');
   await h.submit();
   assert.deepEqual(h.filed()[0].screenshotIds, ['1'.repeat(32), '3'.repeat(32)], 'the removed one is not sent');
+});
+
+test('#5687: a thumbnail opens its picture full size, pins and all', async () => {
+  const h = makeHarness();
+  const opened = [];
+  h.sandbox.Feedback._preview = (item) => opened.push(item);
+  class FakeBlob { constructor(name) { this.name = name; } }
+  h.sandbox.Blob = FakeBlob;
+  h.open({ screenshots: [{
+    blob: new FakeBlob('pinned.png'),
+    pins: [{ x: 0.4, y: 0.3, n: 1, note: 'The Done button' }],
+  }] });
+  await h.flush();
+
+  const item = h.list()[0];
+  const open = h.thumbOpen(item);
+  assert.ok(open, 'the thumbnail is a button');
+  assert.equal(open.getAttribute('aria-label'), 'View image 1');
+  await open.click();
+  assert.equal(opened.length, 1, 'a tap hands the file to the island\'s preview');
+  assert.equal(opened[0].kind, 'image');
+  assert.equal(opened[0].src, 'blob:pinned.png');
+  assert.equal(opened[0].alt, 'Image 1 preview');
+  assert.deepEqual([...opened[0].pins], [{ x: 0.4, y: 0.3, n: 1, note: 'The Done button' }]);
+});
+
+test('#5687: an attached clip opens full size from its first frame', async () => {
+  const h = makeHarness();
+  const opened = [];
+  h.sandbox.Feedback._preview = (item) => opened.push(item);
+  // The clip's duration is read through a probe video's metadata; the fake
+  // DOM never fires it, so this one answers as soon as the handler is set.
+  const create = h.sandbox.document.createElement;
+  h.sandbox.document.createElement = (tag) => {
+    const node = create(tag);
+    if (String(tag).toLowerCase() === 'video') {
+      node.duration = 5;
+      let meta = null;
+      Object.defineProperty(node, 'onloadedmetadata', {
+        get: () => meta,
+        set(fn) { meta = fn; setImmediate(() => fn && fn()); },
+      });
+    }
+    return node;
+  };
+  h.open();
+  const input = h.el('feedback-video-input');
+  input.files = [{ name: 'clip.mp4', size: 10, type: 'video/mp4' }];
+  await input.fire('change');
+  await h.flush();
+
+  const item = h.el('feedback-video-preview').children[0];
+  const open = item.children.find((c) => c.getAttribute('data-feedback-video-open') !== null);
+  assert.ok(open, 'the clip thumbnail is a button');
+  assert.equal(open.getAttribute('aria-label'), 'View video');
+  await open.click();
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].kind, 'video');
+  assert.equal(opened[0].src, 'blob:clip.mp4');
 });
 
 test('picking more files than there is room for keeps the first ones and says so', async () => {

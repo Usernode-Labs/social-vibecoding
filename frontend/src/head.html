@@ -794,6 +794,24 @@
        serves to every app). Loaded before app.css so the platform's
        --un-* overrides there win the cascade. -->
   <link rel="stylesheet" href="/usernode-native/v1/native.css">
+  <!-- #5687: the full-size preview of a file attached to a request owns
+       Escape while it is up. The kit installs its own Escape listener in
+       native.js below, in the capture phase on window; registered first, it
+       would dismiss the feedback dialog under the preview. This guard runs
+       earlier in the same phase, stops the press there, and hands it to the
+       preview (features/dialogs/feedback-preview.tsx), which closes itself
+       and leaves the form up. -->
+  <script>
+    (function () {
+      window.addEventListener('keydown', function (event) {
+        if (event.key !== 'Escape') return;
+        if (!document.querySelector('[data-feedback-preview]')) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        window.dispatchEvent(new Event('feedback-preview:escape'));
+      }, true);
+    })();
+  </script>
   <script src="/usernode-native/v1/native.js"></script>
   <link rel="stylesheet" href="/css/app.css">
   <!-- Tailwind, COMPILED and served by this app (was cdn.tailwindcss.com's
