@@ -114,8 +114,8 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   // The whole My apps section, heading included, so the card never sits on
   // the heading the step is about (#3240); the grid is the fallback.
   assert.deepEqual([...byId.apps.targets], ['#home-apps-section', '#app-list']);
-  assert.match(message(byId.apps.body), /people for a private community, a lock for one that is just yours/,
-    'the step names the tile marks the grid draws');
+  assert.match(message(byId.apps.body), /select \+ New project to start your own/,
+    'the step names the + New project tile the grid ends with');
   // The way into Settings is the Me tab, whose screen carries
   // #profile-row-settings (#2718) — on a phone it is the only entrance,
   // since the phone has no sidebar gear to point the tour at.
@@ -125,7 +125,8 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   // #4604: the Messages tab, where the bot's DM is the first row.
   assert.deepEqual([...byId['meet-bot'].targets], ['#platform-tab-messages']);
   assert.equal(message(byId['meet-bot'].title), 'Meet Homeroom bot');
-  assert.match(message(byId['meet-bot'].body), /build a change, file an idea or fix a bug for you\. Find it in Messages\./);
+  assert.match(message(byId['meet-bot'].body),
+    /^Your AI assistant to build a change, file an idea or fix a bug for you\. Find it in Messages\.$/);
   assert.match(read('frontend/src/features/nav/tab-bar.tsx'),
     /\{ key: 'messages' as const, label: 'core:tabs\.messages', href: '#messages'/,
     'the tab the step points at is Messages');
@@ -801,7 +802,7 @@ test('the first render is the hidden overlay, with nothing measured', () => {
   assert.match(html, /Are you sure\? You can reopen this from Settings\./);
   // Step 1 is what a step-less render shows, on both sides of hydration.
   assert.match(html, /1 of 6/);
-  assert.match(html, /Homeroom is made of communities/);
+  assert.match(html, /Communities here build apps together/);
   // No geometry in the markup: the hole and the card position are style
   // writes through refs, and a measured pixel in the prerender would be a
   // hydration mismatch waiting for the first viewport that differs.
@@ -872,17 +873,15 @@ test('?shot=welcome-tour opens the tour at step 1 and writes nothing (#3567)', (
 });
 
 test('the communities step names what the screen names (#3567)', () => {
-  // AGENTS.md, "Communities own projects": a community owns projects, and
-  // people see it by its audience, in the screen's own words.
+  // The short copy (a 2026-10 wording pass) keeps the step to what a
+  // community does and where yours are; the three audiences are left to
+  // the tiles' marks and the join screen.
   const step = steps.TOUR_STEPS[0];
   assert.equal(step.id, 'communities');
   assert.equal(message(step.title), 'Communities');
-  assert.match(message(step.body), /communities that build projects together/);
-  assert.match(message(step.body), /propose a change, and the group votes it in/);
-  for (const audience of ['Just you', 'a Private community', 'a Public community']) {
-    assert.ok(message(step.body).includes(audience), `names ${audience}`);
-  }
-  assert.doesNotMatch(message(step.body), /\bapps?\b/, 'a thing being built is a project');
+  assert.match(message(step.body), /^Communities here build apps together\. /);
+  assert.match(message(step.body), /propose a change, and the community votes on it/);
+  assert.match(message(step.body), /Find yours here\.$/);
 });
 
 test('nothing opens the tour by itself: a request, or a reload under one in progress', () => {
