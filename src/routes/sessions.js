@@ -24,6 +24,7 @@ const agentSessions = require('../services/agent-sessions');
 const classicSessions = require('../services/classic-sessions');
 const { claimIssueForUser } = require('../services/issue-claims');
 const visuals = require('../services/visuals');
+const sessionCost = require('../services/session-cost');
 const docker = require('../services/docker');
 const applicationRuntime = require('../services/application-runtime');
 const caddy = require('../services/caddy');
@@ -4038,6 +4039,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             .getForSession(pool, session, session.app_slug)
           : null;
       } catch { session.shots = null; }
+      // #3249: the meter's "this change $X" — what this change has cost so
+      // far. Best-effort like the two above: `null` hides the figure.
+      try {
+        session.cost_total_cents = await sessionCost.sessionCostCents(pool, session.id);
+      } catch { session.cost_total_cents = null; }
 
       // #940: the session's saved drafts ride along so opening a session
       // needs no second round trip on the hot path. Best-effort: `null`
@@ -6058,6 +6064,16 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       attached = demo.localAgent;
     }
 
+    // #3249: the change's running cost total for the meter, idle or busy.
+    // After the visibility check above, so only a viewer of the session
+    // gets it. `null` when the read failed: the client keeps its figure.
+    let costTotalCents = null;
+    try {
+      costTotalCents = await sessionCost.sessionCostCents(pool, sessionId);
+    } catch (err) {
+      log.warn('sessions', 'Session cost read failed', { sessionId, err: err.message });
+    }
+
     let delivery;
     if (deliveryId.value) {
       try {
@@ -6075,7 +6091,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // fallback read this the same way the resolving banner reads
     // `resolving`.
     // Keys: busy, progress, phase, stopping, stopRequestedAt, stoppable,
-    // estimate, turn ({ startedAt, kind } | null, #4533)
+    // estimate, turn ({ startedAt, kind } | null, #4533), costTotalCents
+    // (the change's cost so far in cents | null, #3249)
     // (+ resolving, sync, status, and `delivery` when asked for, #3177).
     // `estimate` is { text, remainingSeconds,
     // estimatedAt } | null — see workerProgress.setEstimate /
@@ -6090,6 +6107,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       sync,
       status: mergeStatus,
       runner, runnerLabel, localAgent: attached,
+      costTotalCents,
       ...(delivery !== undefined ? { delivery } : {}),
     });
   });

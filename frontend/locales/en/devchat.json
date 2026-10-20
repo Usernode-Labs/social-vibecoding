@@ -1239,6 +1239,14 @@
     "text": "this turn ~${{amount}}",
     "description": "Part of the meter in the dev chat message box: an estimate of what the coding agent's current request has cost so far. {{amount}} is a number with two decimals; keep the ~ and the dollar sign. Lower case."
   },
+  "budget.pill.thisChange": {
+    "text": "this change ${{amount}}",
+    "description": "Part of the meter in the dev chat message box: what the whole change (a dev session, all its turns so far) has cost. {{amount}} is a number with two decimals; the dollar sign is in the text. Lower case, like 'this turn' beside it."
+  },
+  "budget.pill.thisChangeTitle": {
+    "text": "Everything this change has cost so far, at list price: Homeroom’s replies and the coding agent’s work. Your credits are billed from their own usage records.",
+    "description": "Tooltip on the 'this change' figure of the dev chat meter, explaining what the running total counts and that it is not the credit balance."
+  },
   "budget.pill.thisTurnTitle.openRouter": {
     "text": "Estimated from the model’s OpenRouter list price and the tokens this turn used. OpenRouter’s own usage records determine billing.",
     "description": "Tooltip on the 'this turn' figure of the dev chat meter in a session that runs on OpenRouter. A 'turn' is one request to the coding agent."
