@@ -12126,6 +12126,21 @@
       "classicPath": "#apps"
     },
     {
+      "source": "src/routes/test-accounts.js",
+      "method": "POST",
+      "path": "/api/test-accounts/:id/notifications",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.test.accounts.item.notifications.e2ea8faa",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
       "source": "src/routes/topic-attributes.js",
       "method": "GET",
       "path": "/api/apps/:slug/topics/:targetType/:targetRef/attributes",
