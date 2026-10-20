@@ -36,6 +36,10 @@ poolMod.getPool = () => ({
     capturedQueries.push({ sql: String(sql), params });
     return poolQueryHandler(sql, params);
   },
+  connect: async () => ({ query: (sql, params) => {
+    capturedQueries.push({ sql: String(sql), params, client: true });
+    return poolQueryHandler(sql, params);
+  }, release() {} }),
 });
 
 const limits = require('../src/services/limits');
@@ -56,7 +60,6 @@ ws.broadcastGlobal = (payload) => { broadcasts.push(payload); };
 const sessionBus = require('../src/services/session-bus');
 // Its streams kept in this process: no database here (services/session-bus.js).
 sessionBus.init({ memory: true });
-const stopRegistry = require('../src/services/stop-registry');
 const chatDelivery = require('../src/services/chat-delivery');
 // #3976: classic sessions are read-only, so POST /api/sessions/:id/chat now
 // refuses every row this suite drives (src/services/classic-sessions.js). The
@@ -64,6 +67,12 @@ const chatDelivery = require('../src/services/chat-delivery');
 // so the suite lifts that one gate, the way it stubs billing;
 // tests/classic-session-read-only.test.js pins the refusal itself.
 require('../src/services/classic-sessions').isClassicSession = () => false;
+// The route asks the turn machine for the turn and follows its stream; the
+// turn's real handler (services/turns.js) runs here, as a workflow process
+// would run it.
+require('./lib/turn-platform').installTurnPlatform({
+  run: { config: { jwtSecret: 's' }, pool: poolMod.getPool() },
+});
 const { sessionRoutes } = require('../src/routes/sessions');
 const express = require('express');
 
@@ -101,6 +110,8 @@ function installHandlers({ lookup = () => [], insert = () => [{ id: 1001 }] } = 
   let lookups = 0;
   poolQueryHandler = async (sql) => {
     const s = String(sql);
+    // Who asked for the turn, read when it runs (services/turns.js).
+    if (/^SELECT id, username FROM users WHERE id = \$1$/.test(s.trim())) return { rows: [{ id: 7, username: 'tester' }] };
     if (isLookup(s)) { lookups += 1; return { rows: lookup(lookups) }; }
     if (/SELECT user_id, status, shared_at FROM chat_sessions/.test(s)) {
       return { rows: [{ user_id: SESSION_ROW.user_id, status: SESSION_ROW.status, shared_at: null }] };
@@ -211,7 +222,7 @@ test('a retry with the same id answers with the stored message and starts no sec
   await withServer(t, async (server) => {
     const original = parseSse(await (await post(server, { message: 'build it', client_message_id: CLIENT_ID })).text());
     const accepted = original[0];
-    assert.equal(billingCalls, 1);
+    assert.equal(billingCalls, 2, 'the payer read by the route, to refuse early, and by the turn as it runs');
 
     capturedQueries = [];
     const res = await post(server, { message: 'build it', clientMessageId: CLIENT_ID });
@@ -229,7 +240,7 @@ test('a retry with the same id answers with the stored message and starts no sec
     }, 'the original accepted _seq, so since= replays that same turn');
 
     assert.ok(!capturedQueries.some((q) => isUserInsert(q.sql)), 'nothing stored again');
-    assert.equal(billingCalls, 1, 'the retry reaches no billing gate');
+    assert.equal(billingCalls, 2, 'the retry reaches no billing gate');
     assert.ok(!capturedQueries.some((q) => /INSERT INTO chat_session_messages/.test(q.sql)),
       'and no turn ran (it would have written a status row)');
   });
@@ -254,6 +265,32 @@ test('two retries racing past the lookup: the insert that loses answers as a dup
     const insert = capturedQueries.find((q) => isUserInsert(q.sql));
     assert.match(insert.sql, /ON CONFLICT \(session_id, client_message_id\) WHERE client_message_id IS NOT NULL DO NOTHING/);
   });
+});
+
+test('the message and its turn\'s Asked are one transaction: an ask that fails stores nothing', async (t) => {
+  installHandlers();
+  const platform = require('../src/workflow/platform.ts');
+  const askTurn = platform.askTurn;
+  const asked = [];
+  platform.askTurn = async (db, ask) => { asked.push(ask); throw new Error('workflow down'); };
+  try {
+    await withServer(t, async (server) => {
+      const res = await post(server, { message: 'add a toggle', client_message_id: CLIENT_ID });
+      assert.equal(res.status, 500);
+      const sql = capturedQueries.map((q) => q.sql.trim());
+      const begin = sql.indexOf('BEGIN');
+      const insert = capturedQueries.findIndex((q) => isUserInsert(q.sql));
+      assert.ok(begin >= 0 && begin < insert, 'the message is written inside the transaction');
+      assert.equal(capturedQueries[insert].client, true, 'on its connection');
+      assert.equal(sql[sql.length - 1], 'ROLLBACK', 'and goes with the failed ask');
+      assert.ok(!sql.includes('COMMIT'));
+      assert.deepEqual([asked[0].key, asked[0].kind, asked[0].input.userMessageId, asked[0].input.clientMessageId],
+        [`session:${SESSION_ID}`, 'classic', 1001, CLIENT_ID], 'asked of the change\'s turn machine, naming its message');
+      assert.ok(!('userApiKey' in asked[0].input), 'never a key');
+    });
+  } finally {
+    platform.askTurn = askTurn;
+  }
 });
 
 test('a malformed client_message_id is refused before anything is stored', async (t) => {
@@ -296,8 +333,17 @@ test('GET /status answers delivery only when asked', async (t) => {
     });
 
     // The live turn is this message's: running, resumable from its accepted.
-    const handle = { abort: new AbortController(), phase: 'cc', stopped: false, userMessageId: 1003, send() {} };
-    stopRegistry.set(SESSION_ID, handle);
+    // It is the turn machine's, in whichever process: its instance names the
+    // message it answers (services/turns.js), never an in-process handle.
+    let liveMessage = '1003';
+    const base = poolQueryHandler;
+    poolQueryHandler = async (sql, params) => {
+      if (/FROM wf_instances/.test(String(sql)) && /machine = 'turn'/.test(String(sql))) {
+        assert.deepEqual(params, [`session:${SESSION_ID}`]);
+        return { rows: liveMessage ? [{ message_id: liveMessage }] : [] };
+      }
+      return base(sql, params);
+    };
     sessionBus.publish(SESSION_ID, { type: 'accepted', _seq: 'test-1', messageId: 1003, clientMessageId: CLIENT_ID });
     try {
       const running = await status(server, `?client_message_id=${CLIENT_ID}`);
@@ -305,12 +351,12 @@ test('GET /status answers delivery only when asked', async (t) => {
       assert.equal(running.body.delivery.since, 'test-1');
 
       // Another message's turn is live: this one's turn is over.
-      handle.userMessageId = 2000;
+      liveMessage = '2000';
       row = { id: 1003, has_later: true, latest_user: false };
       const done = await status(server, `?client_message_id=${CLIENT_ID}`);
       assert.equal(done.body.delivery.state, 'done');
     } finally {
-      stopRegistry.deleteIf(SESSION_ID, handle);
+      poolQueryHandler = base;
       sessionBus.clearSession(SESSION_ID);
     }
   });

@@ -127,7 +127,8 @@ export function botLookingSql(sessionId: string): string {
 // The instance whose workflow turn is on the session `$1`, starting or
 // running, for a Stop (one row: machine, key), most specific first: the
 // record's owner, then, only while no turn record is on the session (a
-// workflow turn spinning up), a sync, a shots run, a durable build, the bot.
+// workflow turn spinning up), a sync, a shots run, a durable build, the bot,
+// a person's own dev chat turn (the turn machine's, in its Mayor's phase).
 // A record that is not a workflow's held turn (a person's own, an orphan)
 // answers nothing here: that Stop is the person's turn's, on the old path,
 // and never ends a platform job that merely waits beside it.
@@ -148,6 +149,9 @@ export const TURN_OWNER_SQL = `
     SELECT 5, 'bot-request', bl.key FROM wf_instances bl
      WHERE bl.machine = 'bot-request' AND bl.state IN (${BOT_LOOKING_STATES.map((st) => `'${st}'`).join(', ')})
        AND (bl.data->'look'->>'sessionId')::int = $1
+    UNION ALL
+    SELECT 6, 'turn', t.key FROM wf_instances t
+     WHERE t.machine = 'turn' AND t.key = 'session:' || $1 AND t.state = 'running'
   ) o WHERE rank = 1 OR ${NO_RECORD} ORDER BY rank LIMIT 1`;
 
 // True while anything above works on the session `sessionId` (an SQL

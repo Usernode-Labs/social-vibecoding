@@ -57,8 +57,13 @@ test('interactive OpenRouter chat bypasses Claude billing', () => {
   // there is no Anthropic key to spill onto and no Anthropic allowance to
   // consume. What it does now is share ONE weekly pool when the key is the
   // company-funded one, so that case is gated by checkBudget directly.
-  assert.match(route, /if \(isOpenRouterSession\) \{\s*if \(await managedOpenRouter\.usesIncludedKey\(pool, req\.user\.id\)\) \{\s*const budget = await limits\.checkBudget\(pool, req\.user\.id\);/);
-  assert.match(route, /\} else \{\s*billing = await limits\.resolveBillingPath/,
+  // The route asks resolveClassicPayer, and so does the turn as it runs
+  // (services/turns.js): one rule for both.
+  assert.match(route, /const payer = await resolveClassicPayer\(\{ pool, config, userId: req\.user\.id, isOpenRouterSession \}\);/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turns.js'), 'utf8'), /sessions\.resolveClassicPayer\(\{\s*pool, config, userId: user\.id, isOpenRouterSession: input\.isOpenRouterSession === true,/);
+  const payer = between(sessions, 'async function resolveClassicPayer(', 'const MAYOR_TURN_DEPS');
+  assert.match(payer, /if \(isOpenRouterSession\) \{\s*if \(await managedOpenRouter\.usesIncludedKey\(pool, userId\)\) \{\s*const budget = await limits\.checkBudget\(pool, userId\);/);
+  assert.match(payer, /return \{ ok: true, userApiKey: null \};\s*\}\s*const billing = await limits\.resolveBillingPath/,
     'the Claude path keeps the limit-first platform/BYOK contract');
 
   const direct = between(

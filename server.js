@@ -140,7 +140,7 @@ const stagingRecovery = require('./src/services/staging-recovery');
 const turnRecovery = require('./src/services/turn-recovery');
 const {
   turnCleanupArgs, scheduleRetainedOrphanRecovery, scheduleInteractiveTurnRecovery, homeroomBotRecovery,
-  adoptOrphanWorker, reconcilePendingTurnCleanup, notifyTurnStalled, appendTerminalProgressLine,
+  adoptOrphanWorker, reconcilePendingTurnCleanup, notifyTurnStalled, appendTerminalProgressLine, repairUnansweredTurn,
 } = turnRecovery;
 // Named stagingSvc because recoverActiveWorkers() already binds a local
 // `staging`.
@@ -1579,6 +1579,10 @@ async function restoreMissingQuickReplies(config) {
        AND source IS DISTINCT FROM 'imported'
        AND is_headless = FALSE
        AND active_turn IS NULL
+       -- A dev chat turn its machine runs, in whichever process: its item
+       -- repairs its own change if it is cut (services/turns.js).
+       AND NOT EXISTS (SELECT 1 FROM wf_instances t
+                        WHERE t.machine = 'turn' AND t.key = 'session:' || chat_sessions.id AND t.state = 'running')
        AND last_activity_at > NOW() - make_interval(days => $1::int)
      ORDER BY last_activity_at DESC
      LIMIT $2`,
@@ -1593,10 +1597,9 @@ async function restoreMissingQuickReplies(config) {
   for (const session of rows) {
     try {
       // A change an agent session started has no dev chat of its own: its
-      // rows are the conversation's, whose Mayor holds a lease of its own
-      // (agent-sessions.js) and whose dead turns end, once that lease is
-      // stale, with the conversation's own Retry note (agent-turn.js
-      // sweepInterruptedTurns). A Mayor turn still running on this pod or
+      // rows are the conversation's, whose turns are its turn machine's and
+      // end, when cut, with the conversation's own Retry note
+      // (services/turns.js). A Mayor turn still running on this pod or
       // another sets no busy flag on the change, so this sweep would read
       // its message as unanswered, bell "stopped before finishing", and pin
       // dev-chat pills onto the conversation's Mayor rows. None of that is
@@ -1612,77 +1615,9 @@ async function restoreMissingQuickReplies(config) {
         continue;
       }
 
-      // System rows are transparent to the client's pill resolution, so
-      // the deciding row is the newest user/assistant one.
-      const { rows: lastRows } = await pool.query(
-        `SELECT id, role, content, metadata FROM chat_session_messages
-         WHERE session_id = $1 AND role IN ('user', 'assistant')
-         ORDER BY id DESC LIMIT 1`,
-        [session.id]
-      );
-      const lastRow = lastRows[0] || null;
-      const verdict = recoveryPills.classifyMissingPills({ lastRow });
-
-      if (verdict === 'attach_assistant') {
-        const kind = recoveryPills.backfillKindForSession({
-          hasPr: session.pr_number != null,
-          hasSpec: !!(session.spec_md || '').trim(),
-        });
-        const pills = recoveryPills.buildRecoveryQuickReplies(kind);
-        if (!pills) { skipped++; continue; }
-        await pool.query(
-          `UPDATE chat_session_messages
-           SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{quickReplies}', $1::jsonb)
-           WHERE id = $2`,
-          [JSON.stringify(pills), lastRow.id]
-        );
-        attached++;
-        continue;
-      }
-
-      if (verdict === 'breadcrumb_unanswered') {
-        // Idempotence across boots: if this sweep already posted its
-        // breadcrumb (and the user hasn't sent anything since), the row is
-        // still the session's newest system row.
-        const { rows: sysRows } = await pool.query(
-          `SELECT content FROM chat_session_messages
-           WHERE session_id = $1 AND role = 'system'
-           ORDER BY id DESC LIMIT 1`,
-          [session.id]
-        );
-        // #896: match earlier wordings too — the breadcrumb text changed,
-        // and comparing only against the current string would post a
-        // second breadcrumb on top of a pre-rename one at the next boot.
-        if (sysRows.length && recoveryPills.isUnansweredBreadcrumb(sysRows[0].content)) {
-          skipped++;
-          continue;
-        }
-        const pills = recoveryPills.buildRecoveryQuickReplies('unanswered', {
-          lastUserText: lastRow.content || '',
-        });
-        await pool.query(
-          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-           VALUES ($1, 'system', $2, $3)`,
-          [session.id, recoveryPills.UNANSWERED_BREADCRUMB,
-            JSON.stringify({
-              ...(pills ? { quickReplies: pills } : {}),
-              recovered: true,
-              recoveredReason: 'unanswered',
-            })]
-        );
-        broadcastGlobal({
-          type: 'session_event', sessionId: session.id, event: 'status',
-          text: recoveryPills.UNANSWERED_BREADCRUMB,
-          quickReplies: pills || undefined,
-        });
-        // #3181: the turn died before it could answer, which is a session
-        // that stopped before finishing. Once per breadcrumb: the check
-        // above skips a session this sweep already narrated.
-        await notifyTurnStalled(pool, session.id);
-        breadcrumbs++;
-        continue;
-      }
-
+      const repaired = await repairUnansweredTurn(pool, session);
+      if (repaired === 'attached') { attached++; continue; }
+      if (repaired === 'breadcrumb') { breadcrumbs++; continue; }
       skipped++;
     } catch (err) {
       skipped++;

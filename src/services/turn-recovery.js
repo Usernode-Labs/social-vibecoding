@@ -2207,6 +2207,92 @@ async function resumeDetachedTurnInner({
 
 
 /**
+ * A dev chat turn that ended without its reply, or without its reply's
+ * pills (#786): the reply's pills attached, or the "didn't answer" note
+ * posted with its own, once. `session` is the change's row (id,
+ * pr_number, spec_md) or its id. Resolves 'attached', 'breadcrumb' or
+ * 'skipped'. The boot backfill runs it for each recent change (server.js
+ * restoreMissingQuickReplies), and a classic turn's item for its own change
+ * when it resumes after its process went (services/turns.js).
+ */
+async function repairUnansweredTurn(pool, session) {
+  if (typeof session !== 'object' || session === null) {
+    const { rows: [row] } = await pool.query('SELECT id, pr_number, spec_md FROM chat_sessions WHERE id = $1', [Number(session)]);
+    if (!row) return 'skipped';
+    session = row;
+  }
+  const sessionId = Number(session.id);
+  // System rows are transparent to the client's pill resolution, so
+  // the deciding row is the newest user/assistant one.
+  const { rows: lastRows } = await pool.query(
+    `SELECT id, role, content, metadata FROM chat_session_messages
+     WHERE session_id = $1 AND role IN ('user', 'assistant')
+     ORDER BY id DESC LIMIT 1`,
+    [sessionId]
+  );
+  const lastRow = lastRows[0] || null;
+  const verdict = recoveryPills.classifyMissingPills({ lastRow });
+
+  if (verdict === 'attach_assistant') {
+    const kind = recoveryPills.backfillKindForSession({
+      hasPr: session.pr_number != null,
+      hasSpec: !!(session.spec_md || '').trim(),
+    });
+    const pills = recoveryPills.buildRecoveryQuickReplies(kind);
+    if (!pills) return 'skipped';
+    await pool.query(
+      `UPDATE chat_session_messages
+       SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{quickReplies}', $1::jsonb)
+       WHERE id = $2`,
+      [JSON.stringify(pills), lastRow.id]
+    );
+    return 'attached';
+  }
+
+  if (verdict === 'breadcrumb_unanswered') {
+    // Idempotence across boots: if an earlier repair posted its
+    // breadcrumb (and the user hasn't sent anything since), the row is
+    // still the session's newest system row.
+    const { rows: sysRows } = await pool.query(
+      `SELECT content FROM chat_session_messages
+       WHERE session_id = $1 AND role = 'system'
+       ORDER BY id DESC LIMIT 1`,
+      [sessionId]
+    );
+    // #896: match earlier wordings too — the breadcrumb text changed,
+    // and comparing only against the current string would post a
+    // second breadcrumb on top of a pre-rename one at the next boot.
+    if (sysRows.length && recoveryPills.isUnansweredBreadcrumb(sysRows[0].content)) {
+      return 'skipped';
+    }
+    const pills = recoveryPills.buildRecoveryQuickReplies('unanswered', {
+      lastUserText: lastRow.content || '',
+    });
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3)`,
+      [sessionId, recoveryPills.UNANSWERED_BREADCRUMB,
+        JSON.stringify({
+          ...(pills ? { quickReplies: pills } : {}),
+          recovered: true,
+          recoveredReason: 'unanswered',
+        })]
+    );
+    ws.broadcastGlobal({
+      type: 'session_event', sessionId, event: 'status',
+      text: recoveryPills.UNANSWERED_BREADCRUMB,
+      quickReplies: pills || undefined,
+    });
+    // #3181: the turn died before it could answer, which is a session
+    // that stopped before finishing. Once per breadcrumb: the check
+    // above skips a session already narrated.
+    await notifyTurnStalled(pool, sessionId);
+    return 'breadcrumb';
+  }
+  return 'skipped';
+}
+
+/**
  * Carry on the coding turn on session `sessionId` whose record names the
  * caller's work item as its owner (a turn's work item, resumed after its
  * process went: services/turns.js): followed through its journal to its
@@ -2255,6 +2341,7 @@ async function releaseLeftRecord({ pool, workId }) {
 
 module.exports = {
   recoverOwnedTurn,
+  repairUnansweredTurn,
   releaseLeftRecord,
   persistedActiveTurnExists,
   turnCleanupArgs,

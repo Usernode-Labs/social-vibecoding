@@ -110,6 +110,9 @@ async function runMayorTurn(ctx, deps) {
     // client sent with it (null when none was sent).
     userMessageId = null,
     clientMessageId = null,
+    // The turn machine's work item running this turn (src/workflow/turn/,
+    // services/turns.js), named on the coding run's record as its owner.
+    owner = null,
   } = ctx;
   // Reassigned when a later model call needs a fresh payer (#664).
   let { userApiKey } = ctx;
@@ -476,7 +479,7 @@ async function runMayorTurn(ctx, deps) {
 
       setPhase('cc');
       const toolResult = await runClaudeCodeTool({
-        pool, config, req, res, session, selectedModel,
+        pool, config, req, res, session, selectedModel, owner,
         userMessage: messageText,
         toolPromptArg: messageText,
         attachmentsBlock,
@@ -1530,7 +1533,7 @@ async function runMayorTurn(ctx, deps) {
 
       setPhase('cc');
       toolResult = await runScoutTool({
-        pool, config, req, res, session, selectedModel,
+        pool, config, req, res, session, selectedModel, owner,
         userMessage: messageText,
         toolPromptArg,
         attachmentsBlock,
@@ -1571,7 +1574,7 @@ async function runMayorTurn(ctx, deps) {
 
       setPhase('cc');
       toolResult = await runClaudeCodeTool({
-        pool, config, req, res, session, selectedModel,
+        pool, config, req, res, session, selectedModel, owner,
         userMessage: messageText,
         toolPromptArg,
         attachmentsBlock,

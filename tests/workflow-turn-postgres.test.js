@@ -445,4 +445,119 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     assert.equal((await claim(c)).active_turn, null);
     assert.equal((await instance(c)).state, 'idle');
   });
+
+  // ── 3. A change's own dev chat turn (the classic kind) ──────────────
+  const mayorTurn = require('../src/services/mayor/turn');
+  const sessionsRoutes = require('../src/routes/sessions');
+  const limits = require('../src/services/limits');
+  const savedClassic = {
+    runMayorTurn: mayorTurn.runMayorTurn, requestSessionStop: sessionsRoutes.requestSessionStop,
+    notifySessionStalled: sessionsRoutes.notifySessionStalled, resolveBillingPath: limits.resolveBillingPath,
+  };
+  t.after(() => {
+    mayorTurn.runMayorTurn = savedClassic.runMayorTurn;
+    sessionsRoutes.requestSessionStop = savedClassic.requestSessionStop;
+    sessionsRoutes.notifySessionStalled = savedClassic.notifySessionStalled;
+    limits.resolveBillingPath = savedClassic.resolveBillingPath;
+  });
+  const classic = { turns: [], stops: [], stalled: [] };
+  let classicRun = async () => {};
+  mayorTurn.runMayorTurn = async (args, deps) => { classic.turns.push({ args, deps }); await classicRun(args); };
+  sessionsRoutes.requestSessionStop = async (args) => { classic.stops.push(args); return { status: 202, body: {} }; };
+  sessionsRoutes.notifySessionStalled = async (_pool, id) => { classic.stalled.push(id); };
+  limits.resolveBillingPath = async () => ({ apiKey: 'their-own-key' });
+  async function change() {
+    const { rows: [u] } = await pool.query(
+      `INSERT INTO users (username, password) VALUES ($1, 'x') RETURNING id, username`, [`tc_${++seq}`]);
+    const { rows: [a] } = await pool.query(
+      `INSERT INTO apps (name, slug, created_by, repo_url) VALUES ($1::text, $1::text, $2, 'https://github.com/acme/x') RETURNING id`,
+      [`tc-app-${++seq}`, u.id]);
+    const { rows: [cs] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, branch_name, source) VALUES ($1, $2, 'active', 'dev/x', 'cli_handoff') RETURNING id`,
+      [a.id, u.id]);
+    return { id: cs.id, user: u, key: `session:${cs.id}` };
+  }
+  const classicCtx = (c, turnId, { lost = 0, input = {} } = {}) => ({
+    workId: crypto.randomUUID(), kind: WORK.run, key: `run:${turnId}`, resumeFrom: null, lostAttempts: lost,
+    signal: new AbortController().signal,
+    input: { sessionId: c.id, userId: c.user.id, messageText: 'Add a toggle', selectedModel: 'claude-x', isOpenRouterSession: false,
+      turnAttachments: [{ id: 'f1' }], userMessageId: 77, clientMessageId: 'c-1', turnId, kind: 'classic', instanceKey: c.key, ...input },
+  });
+
+  await t.test('C1 a dev chat turn runs the Mayor with what was asked, its payer read as it runs, its owner this item', async () => {
+    classic.turns.length = 0;
+    const c = await change();
+    const ctx = classicCtx(c, 'c1');
+    assert.deepEqual(await turns.run(ctx, { config: {}, pool }), { ended: 'done' });
+    const [{ args, deps }] = classic.turns;
+    assert.equal(args.session.id, c.id);
+    assert.deepEqual([args.req.user.id, args.messageText, args.selectedModel, args.turnAttachments, args.userMessageId, args.clientMessageId],
+      [c.user.id, 'Add a toggle', 'claude-x', [{ id: 'f1' }], 77, 'c-1']);
+    assert.equal(args.userApiKey, 'their-own-key', 'the key is read when the turn runs, never carried in what it was asked');
+    assert.deepEqual(args.owner, { machine: MACHINE, key: c.key, kind: WORK.run, workKey: 'run:c1', workId: ctx.workId });
+    assert.equal(args.res, turns.NO_RESPONSE, 'its events reach the request through its stream');
+    assert.equal(await args.scheduleInteractiveRecovery(c.id), true, 'a retained record is the item\'s own to carry on');
+    assert.equal(deps, sessionsRoutes.MAYOR_TURN_DEPS);
+
+    // A change that can no longer take a message here: said on its stream.
+    classic.turns.length = 0;
+    await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [c.id]);
+    assert.deepEqual(await turns.run(classicCtx(c, 'c1b'), { config: {}, pool }), { ended: 'gone' });
+    assert.deepEqual(classic.turns, []);
+    assert.deepEqual((await sessionBus.snapshot(c.id)).map((e) => (e.event || e).type).slice(-2), ['error', 'done']);
+  });
+
+  await t.test('C2 a person\'s Stop reaches the running turn from its instance, wherever it runs, once', async () => {
+    classic.turns.length = 0; classic.stops.length = 0;
+    const c = await change();
+    const was = turns.STOP_POLL.ms;
+    turns.STOP_POLL.ms = 20;
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    classicRun = () => gate;
+    work.answer = () => new Promise(() => {});
+    try {
+      await send(c, 'Asked', { turnId: 'c2', kind: 'classic', input: {} });
+      await rt.drain();
+      const running = turns.run(classicCtx(c, 'c2'), { config: {}, pool });
+      await new Promise((r) => setTimeout(r, 80));
+      assert.deepEqual(classic.stops, [], 'nothing until a person stops it');
+      // The Stop route, from any process: the turn's instance is where it lands.
+      const { rows: [owner] } = await pool.query(require('../src/workflow/session-work.ts').TURN_OWNER_SQL, [c.id]);
+      assert.deepEqual({ ...owner }, { machine: 'turn', key: c.key }, 'a Mayor turn with no record yet is found by its instance');
+      await send(c, 'StopRequested', { by: 'ada' });
+      await rt.drain();
+      await new Promise((r) => setTimeout(r, 120));
+      assert.equal(classic.stops.length, 1, 'applied once');
+      assert.deepEqual([classic.stops[0].sessionId, classic.stops[0].forwarded, classic.stops[0].user.username, classic.stops[0].user.id],
+        [c.id, true, 'ada', c.user.id], 'through the turn\'s own handle, past the routing it already went through');
+      release();
+      await running;
+    } finally {
+      turns.STOP_POLL.ms = was; classicRun = async () => {}; work.answer = null; release();
+    }
+  });
+
+  await t.test('C3 resumed: what it dispatched is carried on; a turn cut before its reply gets the dev chat\'s note, once', async () => {
+    reset(); classic.turns.length = 0; classic.stalled.length = 0;
+    const c = await change();
+    const ctx = classicCtx(c, 'c3', { lost: 1 });
+    await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`, [c.id, JSON.stringify({
+      turnId: 'job', mode: 'build', owner: { machine: MACHINE, key: c.key, kind: WORK.run, workKey: 'run:c3', workId: ctx.workId } })]);
+    assert.deepEqual(await turns.run(ctx, { config: {}, pool }), { ended: 'recovered' });
+    assert.deepEqual(seen.recovered, [c.id]);
+    assert.deepEqual(classic.turns, [], 'the Mayor is not asked again');
+
+    const d = await change();
+    await pool.query(`INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'user', 'Add a toggle', '{}')`, [d.id]);
+    assert.deepEqual(await turns.run(classicCtx(d, 'c3b', { lost: 1 }), { config: {}, pool }), { ended: 'interrupted' });
+    assert.deepEqual(await turns.run(classicCtx(d, 'c3b', { lost: 2 }), { config: {}, pool }), { ended: 'interrupted' });
+    const { rows: crumbs } = await pool.query(
+      `SELECT content, metadata FROM chat_session_messages WHERE session_id = $1 AND role = 'system'`, [d.id]);
+    assert.equal(crumbs.length, 1, 'once');
+    assert.equal(crumbs[0].metadata.recoveredReason, 'unanswered');
+    assert.ok(Array.isArray(crumbs[0].metadata.quickReplies), 'with its pills');
+    assert.deepEqual(classic.stalled, [d.id], 'and the bell says it stopped before finishing');
+    assert.equal((await sessionBus.snapshot(d.id)).map((e) => (e.event || e).type).pop(), 'done');
+  });
 });

@@ -22,8 +22,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -32,7 +36,10 @@
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Request #34 asks for exactly this. Want a quick spec first?\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Write the spec for #34\",\"Keep the toggle in the toolbar\",\"Which screens change?\"],\"quickRepliesSource\":\"model\"}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-1\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-1\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-1\"]"
     ],
     "llm": [
       {
@@ -64,6 +71,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}"
     ],
@@ -113,8 +121,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"What does https://example.com/spec say?\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -125,7 +137,10 @@
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Fetching example.com...\",{\"json\":{}}]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about what came back...\",{\"json\":{}}]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"The page says hello, so there is nothing to change yet.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Draft a spec anyway\",\"Read the issue list\",\"What would change?\"],\"quickRepliesSource\":\"model\"}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-2\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-2\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-2\"]"
     ],
     "llm": [
       {
@@ -228,6 +243,7 @@
     ],
     "billing": [
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}"
@@ -271,8 +287,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -282,7 +302,10 @@
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO events (user_id, app_id, session_id, event_type, metadata) VALUES ($1, $2, $3, $4, $5::jsonb) :: [7,31,4242,\"model_refusal\",{\"json\":{\"requested\":\"claude-opus-5-5\",\"served\":\"claude-fallback\",\"category\":\"cyber\",\"source\":\"mayor\"}}]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Opus 5.5's safety classifiers declined this request (safety classifier: cyber) and the fallback couldn't complete it. Try rephrasing or switching models.\",{\"json\":{\"modelRefusal\":{\"requested\":\"claude-opus-5-5\",\"category\":\"cyber\"},\"quickReplies\":[\"Try that again\",\"What went wrong?\"]}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-3\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-3\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-3\"]"
     ],
     "llm": [
       {
@@ -314,6 +337,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}"
     ],
@@ -355,8 +379,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -367,7 +395,10 @@
       "INSERT INTO events (user_id, app_id, session_id, event_type, metadata) VALUES ($1, $2, $3, $4, $5::jsonb) :: [7,31,4242,\"model_fallback\",{\"json\":{\"requested\":\"claude-opus-5-5\",\"served\":\"claude-sonnet-5-5\",\"category\":\"bio\",\"source\":\"mayor\"}}]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Opus 5.5 declined part of this request (safety classifier: bio). It was completed by Sonnet 5.5.\",{\"json\":{\"modelFallback\":{\"requested\":\"claude-opus-5-5\",\"served\":\"claude-sonnet-5-5\",\"category\":\"bio\"}}}]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Here is the plan.\",\"claude-sonnet-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Build the spec\",\"Change the toggle icon\",\"What files change?\"],\"quickRepliesSource\":\"model\"}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-4\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-4\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-4\"]"
     ],
     "llm": [
       {
@@ -399,6 +430,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}"
     ],
@@ -439,8 +471,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -449,7 +485,10 @@
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Sure, happy to help.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Keep the moon icon\",\"Default to the system theme\",\"Which pages get dark colours?\"],\"quickRepliesSource\":\"enforced\"}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-5\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-5\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-5\"]"
     ],
     "llm": [
       {
@@ -485,6 +524,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
@@ -526,8 +566,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -536,7 +580,10 @@
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Sure, happy to help.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Use a darker grey\",\"Keep the toolbar light\",\"What about exports?\"],\"quickRepliesSource\":\"generated\"}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-6\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-6\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-6\"]"
     ],
     "llm": [
       {
@@ -576,6 +623,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
@@ -619,8 +667,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -629,7 +681,10 @@
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"1. Should it follow the system theme?\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"suggestions\":[{\"question\":\"Should it follow the system theme?\",\"answers\":[\"Yes\",\"No, always light by default\"]}]}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-7\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-7\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-7\"]"
     ],
     "llm": [
       {
@@ -661,6 +716,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}"
     ],
@@ -698,8 +754,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -708,7 +768,10 @@
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Stopped by @tester.\",{\"json\":{\"quickReplies\":[\"Try that again\",\"What went wrong?\"]}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-8\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-8\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-8\"]"
     ],
     "llm": [
       {
@@ -740,6 +803,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}"
     ],
     "worker": [
@@ -773,8 +837,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -784,7 +852,10 @@
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "SELECT active_turn FROM chat_sessions WHERE id = $1 :: [4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"This turn failed: The AI provider is overloaded right now. Try again in a minute. Send your message again to retry.\",{\"json\":{\"turnError\":true,\"quickReplies\":[\"Try that again\",\"What went wrong?\"]}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-9\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-9\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-9\"]"
     ],
     "llm": [
       {
@@ -816,6 +887,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}"
     ],
     "worker": [
@@ -847,8 +919,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -856,10 +932,14 @@
       "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-10\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-10\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-10\"]"
     ],
     "llm": [],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}"
     ],
     "worker": [
@@ -915,8 +995,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle (#34)\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -959,7 +1043,10 @@
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"The spec is in the viewer. Build it when you are ready.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Build the spec\",\"Make the toggle remember per account\",\"What will this change?\"],\"quickRepliesSource\":\"model\"}}]",
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-scout-1\",\"turn_wrapup_message\",{\"json\":{\"persisted\":true}}]",
       "COMMIT :: []",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-11\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-11\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-11\"]"
     ],
     "llm": [
       {
@@ -1053,6 +1140,7 @@
     ],
     "billing": [
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
@@ -1132,8 +1220,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Build it\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -1187,7 +1279,10 @@
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Done. The toggle is in the toolbar and remembers each device.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Try it in the preview\",\"Use a softer dark grey\",\"What did it change?\"],\"quickRepliesSource\":\"model\"}}]",
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-build-1\",\"turn_wrapup_message\",{\"json\":{\"persisted\":true}}]",
       "COMMIT :: []",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-12\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-12\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-12\"]"
     ],
     "llm": [
       {
@@ -1294,6 +1389,7 @@
     ],
     "billing": [
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
@@ -1379,8 +1475,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Build it\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -1421,7 +1521,10 @@
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"The agent found nothing to change.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Try that again\",\"What went wrong?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"turn_failed\"}}]",
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-build-2\",\"turn_wrapup_message\",{\"json\":{\"persisted\":true}}]",
       "COMMIT :: []",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-14\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-14\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-14\"]"
     ],
     "llm": [
       {
@@ -1521,6 +1624,7 @@
     ],
     "billing": [
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
@@ -1592,8 +1696,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Build it\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -1613,7 +1721,10 @@
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Claude Code stopped by @tester.\",{\"json\":{\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\",\"durationMs\":\"<num>\",\"stopLanding\":{\"headline\":\"Claude Code stopped by @tester\",\"commits\":0,\"sha\":null,\"pushOk\":false},\"quickReplies\":[\"Try that again\",\"What went wrong?\"]}}]",
       "UPDATE chat_sessions SET last_turn_runner = $2, local_agent_label = $3 WHERE id = $1 :: [4242,\"platform\",null]",
       "UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1 :: [4242]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-15\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-15\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-15\"]"
     ],
     "llm": [
       {
@@ -1653,6 +1764,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
@@ -1704,8 +1816,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Build it\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -1714,7 +1830,10 @@
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"The coding agent is still running. I will wait for it.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"How is it going?\",\"Stop this build\",\"What is it doing?\"],\"quickRepliesSource\":\"model\"}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-16\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-16\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-16\"]"
     ],
     "llm": [
       {
@@ -1744,6 +1863,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}"
     ],
@@ -1783,8 +1903,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -1793,7 +1917,10 @@
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Sure. Should the toggle live in the toolbar?\",\"openai/gpt-5.3-codex\",150,1.5,{\"json\":{\"quickReplies\":[\"Put it in the toolbar\",\"Put it in settings\",\"What changes for users?\"],\"quickRepliesSource\":\"model\"}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-17\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-17\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-17\"]"
     ],
     "llm": [
       {
@@ -1880,8 +2007,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -1927,7 +2058,10 @@
       "INSERT INTO chat_session_messages (session_id, role, content, model, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5) :: [4242,\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nThe staging preview is building; its checks run once it is up.\",\"openrouter/openai/gpt-5.3-codex\",12,{\"json\":{\"quickReplies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"code_done\",\"openRouterDirect\":true,\"costEstimated\":true}}]",
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-or-1\",\"turn_wrapup_message\",{\"json\":{\"persisted\":true}}]",
       "COMMIT :: []",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-18\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-18\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-18\"]"
     ],
     "llm": [
       {
@@ -2031,8 +2165,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
@@ -2070,7 +2208,10 @@
       "INSERT INTO chat_session_messages (session_id, role, content, model, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5) :: [4242,\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nThe staging preview is building; its checks run once it is up.\",\"openrouter/openai/gpt-5.3-codex\",12,{\"json\":{\"quickReplies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"code_done\",\"openRouterDirect\":true,\"costEstimated\":true}}]",
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-or-1\",\"turn_wrapup_message\",{\"json\":{\"persisted\":true}}]",
       "COMMIT :: []",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-19\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-19\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-19\"]"
     ],
     "llm": [],
     "billing": [
@@ -2143,8 +2284,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
@@ -2182,7 +2327,10 @@
       "INSERT INTO chat_session_messages (session_id, role, content, model, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5) :: [4242,\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nThe staging preview is building; its checks run once it is up.\",\"openrouter/openai/gpt-5.3-codex\",12,{\"json\":{\"quickReplies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"code_done\",\"openRouterDirect\":true,\"costEstimated\":true}}]",
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-or-1\",\"turn_wrapup_message\",{\"json\":{\"persisted\":true}}]",
       "COMMIT :: []",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-20\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-20\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-20\"]"
     ],
     "llm": [],
     "billing": [
@@ -2269,8 +2417,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Build it\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -2297,7 +2449,10 @@
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Done on your laptop. The toggle is in the toolbar.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Try it in the preview\",\"What did it change?\"],\"quickRepliesSource\":\"model\"}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-13\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-13\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-13\"]"
     ],
     "llm": [
       {
@@ -2387,6 +2542,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",

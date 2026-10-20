@@ -88,6 +88,10 @@ async function poolQuery(sql, params = []) {
     return { rows: effect ? [{ ...effect }] : [], rowCount: effect ? 1 : 0 };
   }
 
+  // The turn's run reads who asked for it (services/turns.js).
+  if (/^SELECT id, username FROM users WHERE id = \$1$/.test(s.trim())) {
+    return { rows: Number(params[0]) === VIEWER.id ? [{ ...VIEWER }] : [] };
+  }
   if (/FROM chat_sessions cs/.test(s) && /status IN \('promoted', 'merging'\)/.test(s)) {
     return { rows: db.openProposals.map((p) => ({ ...p })) };
   }
@@ -351,6 +355,12 @@ const stopRegistry = require('../src/services/stop-registry');
 // so the suite lifts that one gate, the way it stubs billing;
 // tests/classic-session-read-only.test.js pins the refusal itself.
 require('../src/services/classic-sessions').isClassicSession = () => false;
+// The route asks the turn machine for the turn and follows its stream; the
+// turn's real handler (services/turns.js) runs here, as a workflow process
+// would run it, so everything the turn does is still observed below.
+const turnPlatform = require('./lib/turn-platform').installTurnPlatform({
+  run: { config: { jwtSecret: 'golden', dataEncryptionKey: 'golden-key' }, pool: fakePool },
+});
 const { sessionRoutes } = require('../src/routes/sessions');
 const express = require('express');
 
@@ -422,6 +432,7 @@ async function runTurn({ session = {}, history = [], message = 'Add a dark mode 
     });
     const status = res.status;
     const events = parseSse(await res.text());
+    await Promise.all(turnPlatform.ran.splice(0));
     await settle();
     // One line per entry: compact, and a golden diff reads as a list.
     const line = (v) => JSON.stringify(v);

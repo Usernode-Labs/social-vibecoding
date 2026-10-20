@@ -415,7 +415,37 @@ async function prune(pool = db(), { maxAgeHours = 6 } = {}) {
   return { events: events.rowCount || 0, watchers: watchers.rowCount || 0 };
 }
 
+/**
+ * A turn a request asked for, relayed to it as server-sent events from
+ * `afterId` (a `position` read before the turn was asked) until the turn's
+ * `done`: the turn runs in a workflow process (services/turns.js), and its
+ * events reach the request whichever process that is. A request that goes
+ * leaves the turn running, as a dropped stream always did. The caller has
+ * written the response's head.
+ */
+function relay(req, res, key, { afterId = 0, heartbeatMs = 15000 } = {}) {
+  return new Promise((resolve) => {
+    let ended = false;
+    let off = () => {};
+    const heartbeat = setInterval(() => { try { res.write(':heartbeat\n\n'); } catch { /* client gone */ } }, heartbeatMs);
+    const end = () => {
+      if (ended) return;
+      ended = true;
+      clearInterval(heartbeat);
+      off();
+      try { res.end(); } catch { /* already closed */ }
+      resolve();
+    };
+    off = subscribe(key, (event) => {
+      if (ended) return;
+      try { res.write(`data: ${JSON.stringify(event)}\n\n`); } catch { /* client gone */ }
+      if (event.type === 'done') end();
+    }, { afterId });
+    req.on('close', end);
+  });
+}
+
 module.exports = {
-  init, publish, subscribe, snapshot, position, findLast, clearSession, subscriberCount, wake, flush, settle, prune,
+  init, publish, subscribe, relay, snapshot, position, findLast, clearSession, subscriberCount, wake, flush, settle, prune,
   STREAM_KIND, TOKEN_JOIN_MS,
 };

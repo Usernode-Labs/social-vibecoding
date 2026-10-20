@@ -15,9 +15,18 @@
 //             finished the same way (services/local-agent-recovery.js); one
 //             cut before its dispatch is ended as interrupted, with Retry;
 //             one whose wrap-up was written is over.
+//   classic   a change's own dev chat (services/mayor/turn.js runMayorTurn,
+//             for the changes that still take one: a CLI hand-off, a
+//             request's spec), with the coding run it dispatches. Resumed:
+//             what it dispatched is carried on as above; a turn cut before
+//             its reply gets the dev chat's own repair (the reply's pills,
+//             or the "didn't answer" note: turn-recovery.js
+//             repairUnansweredTurn).
 //
 // What the turn shows goes to its stream (services/session-bus.js), which
-// the request that asked for it follows from any process.
+// the request that asked for it follows from any process. A coding record
+// a turn leaves retained (its cleanup not confirmed) is this item's to carry
+// on as it ends (carryOn), so the turn's "recovering" scheduler only says so.
 
 const log = require('./logger');
 const { turnOwner } = require('../workflow/rules/turn-stop.ts');
@@ -122,6 +131,7 @@ async function runAgent(ctx, { config, pool }, input) {
     mayor,
     res: null,
     owner: turnOwner(ctx, 'turn', input.instanceKey),
+    scheduleInteractiveRecovery: ITEM_CARRIES_ON,
   });
   // A run this item dispatched and still holds after the turn returned (its
   // dispatch failed part way): carried to its end here, as a restart would.
@@ -153,8 +163,125 @@ async function resumeAgent(ctx, { config, pool }, input) {
   return { ended: 'interrupted' };
 }
 
+// The retained-turn scheduler a turn under an item is given: the item
+// carries the record on itself (carryOn, as it ends).
+const ITEM_CARRIES_ON = async () => true;
+
+// A response nobody reads: the turn's events reach its request through its
+// stream (runMayorTurn publishes every one there).
+const NO_RESPONSE = Object.freeze({
+  write() { return true; }, end() {}, writeHead() {}, setHeader() {}, on() {}, once() {},
+  destroyed: false, writableEnded: false, headersSent: true,
+});
+
+const CLASSIC_SESSION_SQL = `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
+        a.self_hosted as app_self_hosted
+   FROM chat_sessions cs
+   JOIN apps a ON cs.app_id = a.id
+  WHERE cs.id = $1 AND cs.user_id = $2
+    AND cs.status IN ('active', 'promoted')
+    AND cs.is_headless = FALSE
+    AND cs.source IS DISTINCT FROM 'imported'
+    AND cs.agent_session_id IS NULL`;
+
+// The end of a change's turn that never got going, on the change's stream.
+function endUnstartedChange({ sessionId, turnId, error }) {
+  const sessionBus = require('./session-bus');
+  const seq = `t${String(turnId).slice(0, 8)}`;
+  sessionBus.publish(Number(sessionId), { type: 'error', _seq: `${seq}-e`, error });
+  sessionBus.publish(Number(sessionId), { type: 'done', _seq: `${seq}-z` });
+}
+
+// How often a running classic turn reads whether a person stopped it.
+const STOP_POLL = { ms: 2000 };
+
+// A person's Stop of a classic turn is its instance's (StopRequested sets
+// `stoppedBy`, from any process: workflow/platform.ts stopWorkflowTurn);
+// the turn reads it between its steps and stops itself the way the dev
+// chat's Stop always has, through its in-process handle
+// (routes/sessions.js requestSessionStop, forwarded: past the routing it
+// already went through). Returns the function that stops watching.
+function watchClassicStop({ pool, key, turnId, session }) {
+  let acted = false;
+  let busy = false;
+  const timer = setInterval(async () => {
+    if (acted || busy) return;
+    busy = true;
+    try {
+      const { rows: [r] } = await pool.query(
+        `SELECT data->'running'->>'stoppedBy' AS by FROM wf_instances
+          WHERE machine = 'turn' AND key = $1 AND data->'running'->>'turnId' = $2`, [key, String(turnId)]);
+      if (!r || !r.by) return;
+      acted = true;
+      log.info('turns', 'A person stopped a dev chat turn', { sessionId: session.id, by: r.by });
+      await require('../routes/sessions').requestSessionStop({
+        pool, sessionId: Number(session.id), forwarded: true,
+        user: { id: Number(session.user_id), username: r.by, canAdminWrite: true },
+      });
+    } catch (err) {
+      log.warn('turns', 'Could not read or apply a dev chat turn\'s stop', { sessionId: session.id, err: err.message });
+    } finally {
+      busy = false;
+    }
+  }, STOP_POLL.ms);
+  if (typeof timer.unref === 'function') timer.unref();
+  return () => clearInterval(timer);
+}
+
+async function runClassic(ctx, { config, pool }, input) {
+  const sessionId = Number(input.sessionId);
+  const user = await loadUser(pool, input.userId);
+  const { rows: [session] } = user ? await pool.query(CLASSIC_SESSION_SQL, [sessionId, user.id]) : { rows: [] };
+  if (!session) {
+    endUnstartedChange({ sessionId, turnId: input.turnId, error: 'This change can no longer take a message here.' });
+    return { ended: 'gone' };
+  }
+  const sessions = require('../routes/sessions');
+  const payer = await sessions.resolveClassicPayer({
+    pool, config, userId: user.id, isOpenRouterSession: input.isOpenRouterSession === true,
+  });
+  if (!payer.ok) {
+    endUnstartedChange({ sessionId, turnId: input.turnId, error: payer.body.error });
+    return { ended: 'no_payer' };
+  }
+  const unwatch = watchClassicStop({ pool, key: input.instanceKey, turnId: input.turnId, session });
+  try {
+    await require('./mayor/turn').runMayorTurn({
+      session,
+      isOpenRouterSession: input.isOpenRouterSession === true,
+      res: NO_RESPONSE,
+      pool,
+      config,
+      req: { user },
+      messageText: input.messageText,
+      selectedModel: input.selectedModel,
+      turnAttachments: Array.isArray(input.turnAttachments) ? input.turnAttachments : [],
+      scheduleInteractiveRecovery: ITEM_CARRIES_ON,
+      userApiKey: payer.userApiKey,
+      userMessageId: input.userMessageId ?? null,
+      clientMessageId: input.clientMessageId ?? null,
+      owner: turnOwner(ctx, 'turn', input.instanceKey),
+    }, sessions.MAYOR_TURN_DEPS);
+  } finally {
+    unwatch();
+  }
+  await carryOn(ctx, { config, pool });
+  return { ended: 'done' };
+}
+
+async function resumeClassic(ctx, { config, pool }, input) {
+  const sessionId = Number(input.sessionId);
+  if (await carryOn(ctx, { config, pool })) return { ended: 'recovered' };
+  // Cut before it replied, or before its reply's pills landed: the dev
+  // chat's own repair, then its stream settles.
+  await require('./turn-recovery').repairUnansweredTurn(pool, sessionId);
+  require('./session-bus').publish(sessionId, { type: 'done', _seq: `t${String(input.turnId).slice(0, 8)}-z` });
+  return { ended: 'interrupted' };
+}
+
 const KINDS = new Map([
   ['agent', { run: runAgent, resume: resumeAgent }],
+  ['classic', { run: runClassic, resume: resumeClassic }],
 ]);
 
 /** The turn machine's `turn.run` handler (src/workflow/turn/services.ts). */
@@ -176,4 +303,4 @@ async function run(ctx, deps) {
   }
 }
 
-module.exports = { run, ownedChange, RECOVERY_RETRY };
+module.exports = { run, ownedChange, RECOVERY_RETRY, STOP_POLL, NO_RESPONSE };

@@ -440,7 +440,6 @@ const {
 const {
   getMayorSystemPrompt,
 } = require('../services/mayor/prompt');
-const { runMayorTurn } = require('../services/mayor/turn');
 // #937: pure stop policy — the pre-dispatch gate predicate and the
 // confirm-loop's retry/give-up decision. Kept out of here so both are
 // unit-testable without docker (same pattern as services/turn-watchdog).
@@ -5305,30 +5304,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // key the user pasted in is their own money: neither blocked nor
       // billed, exactly as before. Claude sessions retain the existing
       // limit-first platform/BYOK contract.
-      let billing = { apiKey: null };
-      if (isOpenRouterSession) {
-        if (await managedOpenRouter.usesIncludedKey(pool, req.user.id)) {
-          const budget = await limits.checkBudget(pool, req.user.id);
-          if (budget.error) return res.status(429).json({
-            error: budget.error,
-            code: 'budget_exceeded',
-            reason: budget.reason || null,
-            verificationRequired: !!budget.verificationRequired,
-          });
-        }
-      } else {
-        billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
-        if (billing.error) return res.status(429).json({
-          error: billing.error,
-          code: 'budget_exceeded',
-          reason: billing.reason || null,
-          verificationRequired: !!billing.verificationRequired,
-        });
-      }
-      // Mutable since #664: an expensive CC phase can exhaust the
-      // allowance mid-turn, so billing is re-resolved after the tool
-      // completes and the wrap-up phase bills the fresh payer.
-      let userApiKey = billing.apiKey;
+      // Decided here, so a refusal is a plain 429 and writes nothing, and
+      // again when the turn runs (services/turns.js): a key is never part
+      // of what a turn is asked with.
+      const payer = await resolveClassicPayer({ pool, config, userId: req.user.id, isOpenRouterSession });
+      if (!payer.ok) return res.status(payer.status).json(payer.body);
 
       // #450: verify every attachment id is this user's, this session's,
       // and unlinked BEFORE inserting the message row (we're still in
@@ -5402,38 +5382,6 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           }
         : {};
 
-      // #3177: ON CONFLICT covers two retries racing past the lookup above;
-      // the one that loses answers as a duplicate. A row without a
-      // client_message_id never conflicts.
-      const { rows: userMsgRows } = await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id)
-         VALUES ($1, 'user', $2, $3, $4)
-         ON CONFLICT (session_id, client_message_id) WHERE client_message_id IS NOT NULL DO NOTHING
-         RETURNING id`,
-        [session.id, messageText, JSON.stringify(userMeta), clientMessageId]
-      );
-      if (clientMessageId && !userMsgRows.length) {
-        return chatDelivery.answerDuplicate(res, await chatDelivery.lookup(pool, {
-          sessionId: session.id, clientMessageId, viewer: req.user,
-        }));
-      }
-      const userMessageId = userMsgRows[0]?.id ?? null;
-      if (turnAttachments.length) {
-        await pool.query(
-          `UPDATE chat_session_attachments SET message_id = $1 WHERE id = ANY($2)`,
-          [userMsgRows[0].id, attIds]
-        );
-      }
-      // Mark the session as freshly active so the auto-pause sweeper
-      // leaves it alone (see server.js session sweeper + schema
-      // last_activity_at). A chat turn is the strongest activity signal.
-      // Sending a message also proves presence, so any stale
-      // notify-on-done arming from a previous turn is reset (#161).
-      await pool.query(
-        `UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1`,
-        [session.id]
-      );
-
       // Validate against the server-side allowlist (src/services/models.js).
       // A bogus or unrecognized `model` falls back to the default — this
       // is the user-facing escape hatch for HIGH #2 (client-controlled
@@ -5442,30 +5390,77 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // offers and what the server accepts.
       const selectedModel = models.resolve(model);
 
+      // The turn (the Mayor loop, the dispatch and its wrap-up:
+      // services/mayor/turn.js) is the turn machine's work item on the
+      // change, run wherever the workflow runs it (services/turns.js). It is
+      // asked for in the transaction that stores the message, and this
+      // request follows its stream from here.
+      const from = await sessionBus.position(session.id);
+      const turnId = crypto.randomUUID();
+      const db = await pool.connect();
+      let userMessageId = null;
+      try {
+        await db.query('BEGIN');
+        // #3177: ON CONFLICT covers two retries racing past the lookup
+        // above; the one that loses answers as a duplicate. A row without a
+        // client_message_id never conflicts.
+        const { rows: userMsgRows } = await db.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id)
+           VALUES ($1, 'user', $2, $3, $4)
+           ON CONFLICT (session_id, client_message_id) WHERE client_message_id IS NOT NULL DO NOTHING
+           RETURNING id`,
+          [session.id, messageText, JSON.stringify(userMeta), clientMessageId]
+        );
+        if (clientMessageId && !userMsgRows.length) {
+          await db.query('ROLLBACK');
+          return chatDelivery.answerDuplicate(res, await chatDelivery.lookup(pool, {
+            sessionId: session.id, clientMessageId, viewer: req.user,
+          }));
+        }
+        userMessageId = userMsgRows[0]?.id ?? null;
+        if (turnAttachments.length) {
+          await db.query(
+            `UPDATE chat_session_attachments SET message_id = $1 WHERE id = ANY($2)`,
+            [userMessageId, attIds]
+          );
+        }
+        // Mark the session as freshly active so the auto-pause sweeper
+        // leaves it alone (see server.js session sweeper + schema
+        // last_activity_at). A chat turn is the strongest activity signal.
+        // Sending a message also proves presence, so any stale
+        // notify-on-done arming from a previous turn is reset (#161).
+        await db.query(
+          `UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1`,
+          [session.id]
+        );
+        await require('../workflow/platform.ts').askTurn(db, {
+          key: `session:${Number(session.id)}`, turnId, kind: 'classic', appId: session.app_id,
+          input: {
+            sessionId: Number(session.id),
+            userId: req.user.id,
+            messageText,
+            selectedModel,
+            isOpenRouterSession,
+            turnAttachments,
+            userMessageId,
+            clientMessageId,
+          },
+        });
+        await db.query('COMMIT');
+      } catch (err) {
+        await db.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        db.release();
+      }
+
       // SSE response
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
       });
-
-      // #2779: the turn itself (the stream, the Mayor loop, the dispatch and
-      // its wrap-up) runs in services/mayor/turn.js.
-      await runMayorTurn({
-        session,
-        isOpenRouterSession,
-        res,
-        pool,
-        config,
-        req,
-        messageText,
-        selectedModel,
-        turnAttachments,
-        scheduleInteractiveRecovery,
-        userApiKey,
-        userMessageId,
-        clientMessageId,
-      }, MAYOR_TURN_DEPS);
+      await sessionBus.relay(req, res, session.id, { afterId: from });
     } catch (err) {
       log.error('sessions', 'Chat setup error', { message: err.message });
       if (!res.headersSent) {
@@ -13481,6 +13476,39 @@ function parseFileChanges(text) {
 // The routes/sessions.js helpers a Mayor turn calls (services/mayor/turn.js,
 // #2779). Handed over rather than required from there, which would be a
 // require cycle.
+// Who pays for a classic turn (#212): the shared allowance first, then the
+// caller's own key (#30) once the budget is spent. Asked by the chat route,
+// to refuse before anything is written, and by the turn when it runs
+// (services/turns.js), which takes the key from here and never from what the
+// turn was asked with. `{ ok: true, userApiKey }` (null: platform-billed), or
+// `{ ok: false, status, body }` for the route's answer.
+//
+// OpenRouter sessions are a single-provider path: their selected model
+// handles the whole turn directly, so they never draw on an Anthropic key.
+// #2571 splits them by WHOSE OpenRouter key it is. The included
+// (company-funded) key is platform money and shares ONE weekly pool with
+// Claude spend, so it is gated by the same checkBudget, without
+// resolveBillingPath, whose BYOK spill-over and "add your own Anthropic key"
+// advice belong to the Claude path alone. A personal key the user pasted in
+// is their own money: neither blocked nor billed.
+async function resolveClassicPayer({ pool, config, userId, isOpenRouterSession }) {
+  const refusal = (r) => ({
+    ok: false,
+    status: 429,
+    body: { error: r.error, code: 'budget_exceeded', reason: r.reason || null, verificationRequired: !!r.verificationRequired },
+  });
+  if (isOpenRouterSession) {
+    if (await managedOpenRouter.usesIncludedKey(pool, userId)) {
+      const budget = await limits.checkBudget(pool, userId);
+      if (budget.error) return refusal(budget);
+    }
+    return { ok: true, userApiKey: null };
+  }
+  const billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, userId);
+  if (billing.error) return refusal(billing);
+  return { ok: true, userApiKey: billing.apiKey };
+}
+
 const MAYOR_TURN_DEPS = Object.freeze({
   TURN_WRAPUP_EFFECT_KEYS,
   buildOpenProposalsBlock,
@@ -13501,7 +13529,7 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { requestSessionStop, receiveSessionStop, changePlanFor, attachChangePlans, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, receiveSessionStop, resolveClassicPayer, changePlanFor, attachChangePlans, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
 // #4524: the topic page's fast open asks GET /api/apps/:slug/proposals/:id
 // for its item beside the board load, and production serves an active or
 // paused session there when it is the viewer's own or shared. The demo rows

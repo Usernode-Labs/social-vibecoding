@@ -59,6 +59,10 @@ test('chat delivery against the full schema', { timeout: 120000 }, async (t) => 
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
     }
+    // The route follows each turn's stream, which counts it as a watcher
+    // under this process's presence lock (services/session-bus.js): that
+    // connection goes before the database.
+    await require('../src/services/process-presence').reset().catch(() => {});
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
@@ -81,6 +85,7 @@ test('chat delivery against the full schema', { timeout: 120000 }, async (t) => 
       }
       return pool.query(sql, params);
     },
+    connect: () => pool.connect(),
   };
   require('../src/db/pool').getPool = () => routePool;
   require('../src/services/limits').resolveBillingPath = async () => ({ apiKey: null });
@@ -93,6 +98,11 @@ test('chat delivery against the full schema', { timeout: 120000 }, async (t) => 
   // so the suite lifts that one gate, the way it stubs billing;
   // tests/classic-session-read-only.test.js pins the refusal itself.
   require('../src/services/classic-sessions').isClassicSession = () => false;
+  // The route asks the turn machine for the turn and follows its stream; the
+  // turn's real handler (services/turns.js) runs here, as a workflow process
+  // would run it.
+  require('./lib/turn-platform').installTurnPlatform({ run: { config: { jwtSecret: 's' }, pool: routePool } });
+  require('../src/services/session-bus').init({ pool });
   const { sessionRoutes } = require('../src/routes/sessions');
 
   await pool.query(`

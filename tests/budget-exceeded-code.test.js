@@ -24,8 +24,12 @@ const TAGGED_429 =
 test('sessions.js tags both billing 429s (chat turn + headless start) with budget_exceeded', () => {
   const src = read('src/routes/sessions.js');
   const tagged = src.match(TAGGED_429) || [];
-  assert.equal(tagged.length, 2,
-    'expected exactly the chat-turn and headless-session billing 429s to carry the code');
+  assert.equal(tagged.length, 1, 'the headless-session billing 429 carries the code');
+  // The chat turn's payer is resolveClassicPayer (the route and the turn,
+  // as it runs, ask it), whose refusal is the route's 429 body.
+  const payer = src.slice(src.indexOf('async function resolveClassicPayer('), src.indexOf('const MAYOR_TURN_DEPS'));
+  assert.match(payer, /status: 429,\s*body: \{ error: r\.error, code: 'budget_exceeded', reason: r\.reason \|\| null,/);
+  assert.match(src, /if \(!payer\.ok\) return res\.status\(payer\.status\)\.json\(payer\.body\);/);
   // No billing 429 left untagged. Extra entitlement fields are allowed so
   // the client can render a direct identity-unlock action.
   assert.doesNotMatch(src,
@@ -67,10 +71,10 @@ test('the billing 429s forward checkBudget’s reason, so weekly and daily stay 
   // Scoped to the two tagged response bodies themselves — `billing.reason`
   // is also threaded into several log lines, which is not what this is about.
   const forwarded = src.match(
-    /code: 'budget_exceeded',\s*reason: billing\.reason \|\| null,/g
+    /code: 'budget_exceeded',\s*reason: (?:billing|r)\.reason \|\| null,/g
   ) || [];
   assert.equal(forwarded.length, 2,
-    'both browser-facing billing 429s carry the reason, matching the two tagged sites above');
+    'both browser-facing billing 429s carry the reason: the headless start\'s and the chat payer\'s');
 });
 
 test('checkBudget names the weekly refusal and the no-allowance one', () => {

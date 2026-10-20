@@ -96,31 +96,6 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     return next();
   };
 
-  // A turn this request asked for, followed on its conversation's stream
-  // (services/session-bus.js) from the position read before it was asked,
-  // until its `done`: the turn runs in a workflow process, and its events
-  // reach this request whichever process that is. A request that goes leaves
-  // the turn running, as a dropped stream always did.
-  const followTurn = (req, res, { streamKey, from }) => new Promise((resolve) => {
-    let ended = false;
-    let off = () => {};
-    const heartbeat = setInterval(() => { try { res.write(':heartbeat\n\n'); } catch { /* client gone */ } }, 15000);
-    const end = () => {
-      if (ended) return;
-      ended = true;
-      clearInterval(heartbeat);
-      off();
-      try { res.end(); } catch { /* already closed */ }
-      resolve();
-    };
-    off = sessionBus.subscribe(streamKey, (event) => {
-      if (ended) return;
-      try { res.write(`data: ${JSON.stringify(event)}\n\n`); } catch { /* client gone */ }
-      if (event.type === 'done') end();
-    }, { afterId: from });
-    req.on('close', end);
-  });
-
   // The composer's model choice, validated the way the dev chat's picker is.
   // `{ backend: 'claude_code', model }` names one of the Anthropic models
   // (none means the default); `{ backend: 'codex_openrouter', model,
@@ -640,7 +615,9 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
         Connection: 'keep-alive',
         'X-Accel-Buffering': 'no',
       });
-      await followTurn(req, res, { streamKey: agentTurn.busKey(id), from });
+      // Followed on the conversation's stream until its end, from wherever
+      // the workflow runs it.
+      await sessionBus.relay(req, res, agentTurn.busKey(id), { afterId: from });
       return undefined;
     } catch (err) {
       if (res.headersSent) {
