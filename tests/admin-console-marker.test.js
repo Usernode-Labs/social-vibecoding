@@ -38,6 +38,10 @@ test('the chassis renders the console band, hidden, with an Exit link', () => {
     'Exit is a real anchor to the Me tab, refined on press');
   assert.doesNotMatch(islandTsx, /@\/components\/ui/,
     'the console does not draw with the shell primitives');
+  assert.match(islandTsx, /bg-amber-50 .*text-amber-900 dark:border-amber-800 dark:bg-amber-950\/50 dark:text-amber-100/,
+    'the band is amber (#5627), the View-only strip\'s warning shades, not an inverted zinc row');
+  assert.match(islandTsx, /Be careful before changing anything\./,
+    'the band asks you to be careful before changing anything (#5627)');
 });
 
 test('the band is toggled through classList, and hidden in public mode', () => {
