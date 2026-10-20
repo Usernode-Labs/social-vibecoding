@@ -111,3 +111,30 @@ test('the places block zeroes a muted #general\'s unread, and a small group\'s r
   assert.match(schema, /CREATE TABLE IF NOT EXISTS channel_mutes \(/);
   assert.match(schema, /COMMENT ON TABLE channel_mutes IS 'staging:private';/);
 });
+
+test('a muted #general counts on the hub\'s For you row no more than in the places', () => {
+  const places = require('../src/services/places');
+  assert.equal(places.generalMuted({ channels: [general({ muted: true })] }), true);
+  assert.equal(places.generalMuted({ channels: [general({ muted: false })] }), false);
+  assert.equal(places.generalMuted(null), false);
+  // The route zeroes the channel the hub reads once the places say muted.
+  const route = read('src/routes/apps.js');
+  assert.match(route, /if \(channel && places\.generalMuted\(placesPayload\)\) \{\s*channel = \{ \.\.\.channel, unread_count: 0, muted: true \};/);
+  const placesAt = route.indexOf('placesPayload = await places.placesFor(');
+  const zeroAt = route.indexOf('places.generalMuted(placesPayload)');
+  const sentAt = route.indexOf('res.json({', placesAt);
+  assert.ok(placesAt > 0 && placesAt < zeroAt && zeroAt < sentAt, 'zeroed after the places are read, before the record is sent');
+  // And the row draws no count for it.
+  const { ForYouCard } = loadTsx('frontend/src/features/dev-board/workshop/hub-cards.tsx');
+  const row = renderToHtml(createElement(ForYouCard, {
+    slug: 'homeroom', queue: [], mine: null, alone: false, canPost: true,
+    onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {},
+    data: { ...record(), audience: 'open', audience_label: 'Public community', is_member: true, members: [],
+      channel: { recent: [], unread_count: 0, muted: true, last_at: null, href: '#messages/1', handle: 'general' } },
+  }));
+  assert.match(row, /data-ws-channel="preview"/);
+  assert.doesNotMatch(row, /data-ws-channel-unread/);
+  // Messages' app discussions leave a muted discussion's unread out too.
+  assert.match(read('src/routes/messages-overview.js'),
+    /SELECT 1 FROM channel_mutes cm\s+WHERE cm\.user_id = \$1 AND cm\.app_id = m\.app_id AND cm\.channel_ref = 0/);
+});

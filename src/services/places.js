@@ -241,7 +241,14 @@ async function placesFor(pool, app, viewer, { general = null, member = false, sh
   return { owed, channels };
 }
 
+/** #5303: whether a places block says the viewer muted #general. Pure. */
+function generalMuted(payload) {
+  const channels = payload && Array.isArray(payload.channels) ? payload.channels : [];
+  return channels.some((c) => c && c.kind === 'general' && c.muted === true);
+}
+
 module.exports = {
+  generalMuted,
   shapeTopic,
   topicRows,
   findTopic,

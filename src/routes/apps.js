@@ -4334,6 +4334,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       } catch (err) {
         log.warn('apps', 'Could not read the places for the hub', { slug: app.slug, message: err.message });
       }
+      // #5303: a #general the viewer muted counts nowhere, the hub's For you
+      // row included (hub-cards.tsx draws `channel.unread_count`).
+      if (channel && places.generalMuted(placesPayload)) {
+        channel = { ...channel, unread_count: 0, muted: true };
+      }
       res.json({
         slug: app.slug,
         name: app.name,

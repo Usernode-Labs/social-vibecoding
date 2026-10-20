@@ -220,6 +220,8 @@ export type CommunityPayload = {
     handle?: string | null;
     /** Where the hub's composer sends: the room's own write route. */
     post_url?: string | null;
+    /** #5303: the viewer muted #general; `unread_count` is then 0. */
+    muted?: boolean;
   } | null;
   /** Who has been around lately (communities.js activitySummary): the
       hub's people row reads the week's count and up to five of its people

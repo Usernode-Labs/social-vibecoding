@@ -498,7 +498,7 @@ function notificationsRoutes(config) {
   // reach them (services/channel-mutes.js). #general only for now, so any
   // other handle is a 404. For anyone who may see the project: muting is
   // not taking part, so it needs no membership.
-  router.put('/api/apps/:slug/channels/:handle/mute', async (req, res) => {
+  router.put('/api/apps/:slug/channels/:handle/mute', sameOriginBrowserOnly, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {
