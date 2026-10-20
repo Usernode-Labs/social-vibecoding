@@ -318,17 +318,39 @@ export const WARM_DELAY_MS = 3000;
 let warmed = false;
 
 /**
+ * Whether this document is a `?shot=` / `?demo=` capture route. Those render
+ * ONE state deterministically for a declared check or a before/after shot,
+ * and comment mode's chunk, its 250 KB library or a picture being drawn in
+ * the background is exactly the nondeterminism they exist to be free of: the
+ * `?shot=app-context` check, whose menu now prepares comment mode because the
+ * mode is the default, sat in network idle past 29 s while the picture of the
+ * page fetched its images. Same guard, for the same reason, as
+ * `AdminConsole.prefetchSections` and `prefetchSettings`. Nothing is lost: an
+ * open still loads the mode, which is what a real open does anyway.
+ */
+export function onCaptureRoute(
+  win: { location?: { search?: string } } | null = typeof window !== 'undefined' ? window : null,
+): boolean {
+  try {
+    const q = new URLSearchParams(win?.location?.search || '');
+    return !!(q.get('shot') || q.get('demo'));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Comment mode's code and its drawing library, fetched ahead of time unless
  * this device has turned it off: a few seconds after the page loads, and
  * when it is turned back on. Without it the first picture of a session
  * waited on both downloads (about 250 KB for the library), and a quick tap
  * on "Suggest an improvement" right after the app opened sat on a still
  * screen for over a second (iPhone 17 simulator, production, 12 Oct 2026).
- * Once per page; nothing is drawn, and nothing at all where the device has
- * turned it off.
+ * Once per page; nothing is drawn, nothing at all where the device has
+ * turned it off, and nothing on a capture route.
  */
 export function warmComment(): void {
-  if (warmed || !suggestOpensComment()) return;
+  if (warmed || !suggestOpensComment() || onCaptureRoute()) return;
   warmed = true;
   import('../comment-pin/comment-pin')
     .then((m) => m.warmCommentMode())
@@ -346,10 +368,11 @@ export function scheduleWarmComment(win: Pick<Window, 'setTimeout' | 'addEventLi
  * The Homeroom menu or the form has opened, and comment mode is one tap
  * away: load its code and draw the page now, while it sits still under the
  * sheet, so the mode opens on it at once (comment-pin.tsx
- * `prepareCommentView`). Nothing at all where the device has turned it off.
+ * `prepareCommentView`). Nothing at all where the device has turned it off,
+ * and nothing on a capture route (`onCaptureRoute`).
  */
 export function prepareComment(): void {
-  if (!suggestOpensComment()) return;
+  if (!suggestOpensComment() || onCaptureRoute()) return;
   import('../comment-pin/comment-pin')
     .then((m) => m.prepareCommentView())
     .catch(() => { /* the mode loads when it opens, as before */ });

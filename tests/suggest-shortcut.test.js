@@ -458,7 +458,17 @@ test('comment mode\'s code and drawing library are fetched a few seconds after t
   assert.deepEqual(calls, [['timeout', 3000]]);
   // Only where comment mode is the way Suggest opens, once per page, and the
   // mode's own warm-up fetches the library without drawing anything.
-  assert.match(src, /export function warmComment\(\): void \{\s*if \(warmed \|\| !suggestOpensComment\(\)\) return;\s*warmed = true;\s*import\('\.\.\/comment-pin\/comment-pin'\)\s*\.then\(\(m\) => m\.warmCommentMode\(\)\)/);
+  assert.match(src, /export function warmComment\(\): void \{\s*if \(warmed \|\| !suggestOpensComment\(\) \|\| onCaptureRoute\(\)\) return;\s*warmed = true;\s*import\('\.\.\/comment-pin\/comment-pin'\)\s*\.then\(\(m\) => m\.warmCommentMode\(\)\)/);
+  assert.match(src, /export function prepareComment\(\): void \{\s*if \(!suggestOpensComment\(\) \|\| onCaptureRoute\(\)\) return;/,
+    'neither warms nor draws on a capture route');
+  // A `?shot=` / `?demo=` page renders one state for a check or a still: the
+  // picture drawn at boot there fetched the page's images for over 29 s and
+  // the `?shot=app-context` check never reached network idle.
+  assert.equal(shortcut.onCaptureRoute({ location: { search: '?shot=app-context' } }), true);
+  assert.equal(shortcut.onCaptureRoute({ location: { search: '?demo=1&ws=all' } }), true);
+  assert.equal(shortcut.onCaptureRoute({ location: { search: '?panel=1#app/x' } }), false);
+  assert.equal(shortcut.onCaptureRoute({ location: { search: '' } }), false);
+  assert.equal(shortcut.onCaptureRoute(null), false, 'no window: nothing to skip for');
   assert.match(src, /scheduleWarmComment\(window\);/);
   assert.match(src, /setEnabled: \(on: boolean\) => \{\s*setSuggestShortcutEnabled\(!!on\);\s*if \(on\) warmComment\(\);\s*\},/, 'and when the switch is turned on');
   const mode = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/comment-pin/comment-pin.tsx'), 'utf8');
