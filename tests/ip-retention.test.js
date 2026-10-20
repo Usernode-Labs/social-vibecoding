@@ -7,7 +7,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
-const path = require('node:path');
 const { Pool } = require('pg');
 const ipRetention = require('../src/services/ip-retention');
 
@@ -53,9 +52,18 @@ test('a failing table does not keep the others from being cleared', async () => 
   assert.ok(seen.every((params) => params[0] === 30));
 });
 
-test('the server runs the sweep daily on the durable leader clock', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  assert.match(src, /leaderTimers\.every\('ip-retention', runIpRetention, 24 \* 60 \* 60 \* 1000, \{ durable: getPool\(config\) \}\)/);
+// The sweep is the ip-retention clock's run (src/workflow/clock/services.ts):
+// one at a time across every process, daily.
+test('the ip-retention clock runs the sweep daily', async () => {
+  const { JOBS } = require('../src/workflow/clock/services.ts');
+  const job = JOBS.find((j) => j.name === 'ip-retention');
+  assert.ok(job, 'the ip-retention clock exists');
+  assert.equal(job.everyMs, 24 * 60 * 60 * 1000);
+  assert.equal(job.item, undefined, 'clearing a column is safe to run twice: no targets');
+  const seen = [];
+  const pool = { query: async (sql, params) => { seen.push(params); return { rowCount: 0 }; } };
+  await job.run({ input: {} }, { config: {}, pool });
+  assert.equal(seen.length, ipRetention.TARGETS.length, 'the run is purgeExpiredIps on the pool');
 });
 
 test('the purge against the full PostgreSQL schema', { timeout: 120000 }, async (t) => {
