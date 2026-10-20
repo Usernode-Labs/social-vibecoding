@@ -281,9 +281,10 @@ async function heartbeat(pool, { leaseId, userId }) {
 // Release a lease and terminate whatever it was running.
 //
 // A live turn owned by a released lease is marked 'abandoned', not 'failed':
-// the distinction matters because the waiting platform side re-routes an
-// abandoned turn to a worker container, whereas a failed one is reported to
-// the user as a failed build.
+// nothing re-runs it, but the waiting platform side reports it as the
+// machine having disconnected before finishing (buildTurnResult), which is
+// nobody's fault, whereas a failed one is reported as a failed build in the
+// runtime's own words.
 async function release(pool, { leaseId, userId, reason }) {
   const { rows } = await pool.query(
     `UPDATE session_agent_leases
@@ -633,7 +634,9 @@ async function awaitTurnResult(pool, turnId, {
     // A queued/offered turn nobody picked up. Abandon it here rather than
     // waiting out the full turn timeout: an attached-but-not-listening
     // machine is a common, boring failure (laptop asleep) and the user
-    // should get their platform-worker fallback in seconds, not an hour.
+    // should hear that it disconnected in seconds, not an hour. The turn is
+    // not re-run on a worker; the next one goes to a worker only once the
+    // lease is gone.
     if (turn.status === 'queued' || turn.status === 'offered') {
       if (Date.now() - started > offerTimeoutMs) {
         const abandoned = await pool.query(
