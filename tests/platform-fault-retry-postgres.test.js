@@ -2,10 +2,12 @@
 
 // The error lane's platform-fault rule against a real PostgreSQL
 // (tests/platform-fault-retry.test.js pins its shape): storeChecks writes
-// chat_sessions.check_error_platform, findStuckCheckSessions keeps such a row
-// past CHECK_MAX_AUTO_RETRIES for a day from its first failure, and leaves
-// a session the preview machine holds to the machine's own retry (which a
-// release re-arms at boot: tests/workflow-preview-postgres.test.js P25).
+// chat_sessions.check_error_platform with the streak, and
+// errorWithinAutoRetries, which the connector reads, keeps such a row past
+// CHECK_MAX_AUTO_RETRIES for a day from its first failure. The retry itself
+// is the preview machine's own timer (tests/workflow-preview-postgres.test.js
+// P17; a release re-arms it: P25); the leader's stuck-checks sweep that ran
+// the lane in SQL is gone.
 //
 // Skips when no postgres is reachable (TEST_DATABASE_URL, else DATABASE_URL,
 // else localhost); a set TEST_DATABASE_URL that cannot be reached fails.
@@ -41,9 +43,6 @@ const DDL = [
      test_results JSONB NOT NULL DEFAULT '[]', handoff_head_sha TEXT, handoff_uploaded_sha TEXT,
      handoff_upload_checked_sha TEXT, promoted_at TIMESTAMPTZ, last_activity_at TIMESTAMPTZ,
      created_at TIMESTAMPTZ DEFAULT NOW())`,
-  'CREATE TABLE check_runs (run_id TEXT PRIMARY KEY, session_id INTEGER, admitted_at TIMESTAMPTZ)',
-  'CREATE TABLE wf_instances (machine TEXT, key TEXT, state TEXT, deadline_at TIMESTAMPTZ, PRIMARY KEY (machine, key))',
-  'CREATE TABLE wf_work (machine TEXT, key TEXT, kind TEXT, status TEXT)',
   ...STREAK_COLUMNS,
 ].join(';\n');
 
@@ -66,7 +65,7 @@ test('every failure-streak column comes from schema.sql', () => {
   assert.equal(STREAK_COLUMNS.length, 8);
 });
 
-test('a platform fault is retried past the cap for a day, any other error is not, and a held session is the machine\'s', async (t) => {
+test('a platform fault is retried past the cap for a day, any other error is not', async (t) => {
   const conn = await connect();
   if (!conn) { t.skip('the pg driver is not installed in this environment'); return; }
   if (conn.error) {
@@ -89,11 +88,7 @@ test('a platform fault is retried past the cap for a day, any other error is not
       for (let i = 0; i < 6; i += 1) {
         assert.equal(await rowStore.storeChecks(client, id, sha, { state: 'error', results: [], platformFault }, detail), true);
       }
-      // Its scheduled retry has come.
-      await client.query("UPDATE chat_sessions SET check_next_retry_at = NOW() - INTERVAL '1 minute' WHERE id = $1", [id]);
     };
-    const stuckIds = async () => (await stagingRecovery.findStuckCheckSessions({ pool: client, staleMs: 600000, maxAutoRetries: 6 }))
-      .rows.map((r) => r.id);
     const row = async (id) => (await client.query('SELECT * FROM chat_sessions WHERE id = $1', [id])).rows[0];
 
     const platform = await session('sha-platform');
@@ -108,21 +103,12 @@ test('a platform fault is retried past the cap for a day, any other error is not
     assert.equal(p.consecutive_check_failures, 6);
     assert.equal(p.check_error_platform, true);
     assert.equal((await row(boot)).check_error_platform, false);
-    assert.deepEqual(await stuckIds(), [platform], 'past the cap only the platform fault inside its day is retried');
-    assert.equal(stagingRecovery.errorWithinAutoRetries(p, { maxAutoRetries: 6 }), true, 'the code says the same');
+    assert.ok(p.first_check_failure_at, 'the streak keeps when it began');
+    assert.ok(p.check_next_retry_at > p.last_check_failure_at, 'and when its retry comes');
+    assert.equal(stagingRecovery.errorWithinAutoRetries(p, { maxAutoRetries: 6 }), true,
+      'past the cap only the platform fault inside its day is retried');
     assert.equal(stagingRecovery.errorWithinAutoRetries(await row(boot), { maxAutoRetries: 6 }), false);
     assert.equal(stagingRecovery.errorWithinAutoRetries(await row(old), { maxAutoRetries: 6 }), false);
-
-    // A session the preview machine holds runs again on the machine's own
-    // timer while it is set; with none set (it was not up for approval when
-    // it failed) the lane here runs it, as for a verdict from before.
-    await client.query("INSERT INTO wf_instances (machine, key, state, deadline_at) VALUES ('preview', $1, 'failed', NOW() + INTERVAL '5 minutes')", [`session:${platform}`]);
-    assert.deepEqual(await stuckIds(), []);
-    await client.query('UPDATE wf_instances SET deadline_at = NULL');
-    assert.deepEqual(await stuckIds(), [platform], 'a failure the machine set no timer for is the lane\'s');
-    // Waiting out its backoff, nothing picks it up.
-    await client.query("UPDATE chat_sessions SET check_next_retry_at = NOW() + INTERVAL '30 minutes'");
-    assert.deepEqual(await stuckIds(), []);
 
     // Another error on the same head is that error, and stops at the cap.
     await rowStore.storeChecks(client, platform, 'sha-platform', { state: 'error', results: [] }, 'The staging preview did not start.');

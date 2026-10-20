@@ -1,4 +1,4 @@
-// The Challenges tab's "your standing" card: "#22 of 161 people". It is where
+// The Challenges tab's "your standing" card: "#22 of 161 ranked". It is where
 // the Me screen's rank and token allocation went when Me became the
 // prototype's compact page. The Semi design (2026-10-16) took the season off
 // it: no season name, no update note and no points by event. #5473 brought
@@ -62,16 +62,16 @@ const renderCard = (state) => {
   return renderToHtml(createElement(mod.YourStanding, {}));
 };
 
-test('the card reads "#3 of 12 people", inside the grid', () => {
+test('the card reads "#3 of 12 ranked", inside the grid (polish N11: ranked, beside the event bar\'s "taking part")', () => {
   const html = renderCard({ status: 'ready', ranking: { ...RANKING, total_tokens: 4200 }, revealed: false });
   assert.match(html, /<section id="lb-your-standing" aria-label="Your standing"/);
-  assert.match(html, /<span class="[^"]*text-2xl[^"]*">#3<\/span> of 12 people<\/p>/,
+  assert.match(html, /<span class="[^"]*text-2xl[^"]*">#3<\/span> of 12 ranked<\/p>/,
     'the rank drawn large, among how many people, in one message');
-  assert.equal(message('leaderboard:standing.rankOf', { rank: 3, count: 12, number: '12' }), '<0>#3</0> of 12 people');
+  assert.equal(message('leaderboard:standing.rankOf', { rank: 3, count: 12, number: '12' }), '<0>#3</0> of 12 ranked');
   // #3226: one line on what points are for, under the rank, before the tokens.
   const pointsNote = message('leaderboard:standing.pointsNote');
   assert.equal(pointsNote, 'Your place comes from the points you earn in challenges.');
-  assert.ok(html.indexOf(pointsNote) > html.indexOf('of 12 people'), 'after the rank');
+  assert.ok(html.indexOf(pointsNote) > html.indexOf('of 12 ranked'), 'after the rank');
   assert.ok(html.indexOf(pointsNote) < html.indexOf('Token allocation'), 'before the token block');
   // #5473: under the points note, why the place can move with no activity,
   // and how soon the standings catch up.

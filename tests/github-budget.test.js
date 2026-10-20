@@ -128,7 +128,8 @@ test('a window whose reset has passed reads as the whole budget again', () => {
   assert.equal(c.expired, true);
   assert.equal(c.remaining, 5000);
   assert.equal(c.used, 0);
-  assert.deepEqual(budget.alertFigures('pat', { now: later }), { used: 0, cap: 5000 });
+  // A window this process has not heard of yet: no reset to name.
+  assert.deepEqual(budget.alertFigures('pat', { now: later }), { used: 0, cap: 5000, resetAt: null });
 });
 
 test('the search and graphql budgets are kept apart from core', () => {
@@ -186,12 +187,15 @@ test('without a bot token, background work asks the App installation it would us
 });
 
 test('alertFigures: the bot token, and the most-used App installation', () => {
-  assert.deepEqual(budget.alertFigures('pat', { now: NOW }), { used: 0, cap: 0 });
+  assert.deepEqual(budget.alertFigures('pat', { now: NOW }), { used: 0, cap: 0, resetAt: null });
   budget.record('pat', headers({ remaining: 900, used: 4100 }), { now: NOW });
   budget.record('installation:a', headers({ limit: 12500, remaining: 12000 }), { now: NOW });
   budget.record('installation:b', headers({ limit: 5000, remaining: 1000 }), { now: NOW });
-  assert.deepEqual(budget.alertFigures('pat', { now: NOW }), { used: 4100, cap: 5000 });
-  assert.deepEqual(budget.alertFigures('installation', { now: NOW }), { used: 4000, cap: 5000 });
+  // With the window the figures are about (its reset), which the alert's
+  // level belongs to (platform-limit-alerts.js).
+  const window = Number(inMin(30)) * 1000;
+  assert.deepEqual(budget.alertFigures('pat', { now: NOW }), { used: 4100, cap: 5000, resetAt: window });
+  assert.deepEqual(budget.alertFigures('installation', { now: NOW }), { used: 4000, cap: 5000, resetAt: window });
 });
 
 // ─── 3. Saying what happened ────────────────────────────────────────────
@@ -378,55 +382,56 @@ test('the timer-driven GitHub callers ask before they spend', () => {
   ]) {
     assert.match(read(rel), asks, `${rel} asks services/github-budget.js`);
   }
-  const server = read('server.js');
-  const audit = server.slice(server.indexOf('async function auditExistingRepoPrivacy'));
-  assert.match(audit.slice(0, audit.indexOf('\n}\n')), /githubBudget\.budgetAllows\('background'\)/, 'the daily privacy audit');
-  const headSync = server.slice(server.indexOf('// Pass 6: imported-PR head sync'));
-  assert.match(headSync.slice(0, 1800), /if \(!githubBudget\.budgetAllows\('background'\)\) break;/, 'the imported-PR head sync');
-  const observe = server.slice(server.indexOf('async function observeMergedOnGithub'));
-  assert.match(observe.slice(0, observe.indexOf('\n}\n')), /if \(!githubBudget\.budgetAllows\('background'\)\) \{/,
-    'the six-hourly merged-by-hand lookup');
+  assert.match(read('src/services/repo-privacy-audit.js'), /githubBudget\.budgetAllows\('background'\)/, 'the daily privacy audit');
+  // The imported-PR look and the six-hourly merged-by-hand lookup, each a
+  // clock's target (services/proposal-scans.js): a spent budget is a look
+  // skipped, which the next run makes again.
+  const scans = read('src/services/proposal-scans.js');
+  assert.match(scans, /function budgetAllows\(\) \{\n\s+return require\('\.\/github-budget'\)\.budgetAllows\('background'\);/);
+  const fn = (name) => scans.slice(scans.indexOf(`async function ${name}(`), scans.indexOf('\n}\n', scans.indexOf(`async function ${name}(`)));
+  const imported = fn('lookImported');
+  assert.ok(imported.indexOf("if (!budgetAllows()) return { skipped: 'budget' };") !== -1
+    && imported.indexOf("if (!budgetAllows()) return { skipped: 'budget' };") < imported.indexOf('syncImportedProposal('),
+  'the imported-PR head sync asks before it reads');
+  const byHand = fn('lookMergedByHand');
+  assert.ok(byHand.indexOf("if (!budgetAllows()) return { skipped: 'budget' };") !== -1
+    && byHand.indexOf("if (!budgetAllows()) return { skipped: 'budget' };") < byHand.indexOf('github.getPR('),
+  'the six-hourly merged-by-hand lookup asks before it reads');
+  assert.match(byHand, /if \(githubBudget\.isRateLimitError\(err\)\) return \{ skipped: 'budget' \};/,
+    'and a rate limit GitHub answered is a look skipped, not a failure');
 });
 
 // 19 Oct 2026: some twenty leader changes, eight in one hour, and each
 // election read every app's repository (~150) and every proposal up for a
 // vote from GitHub again: an audit whose result is only logged, while every
 // worker start checks privacy itself, and a look for merges made by hand.
-// Both keep a durable clock now (services/leader-timers.js): a new leader
-// runs one only when leader_sweeps says it is due.
+// Neither runs at an election now. Both are clocks of the workflow
+// (src/workflow/clock/services.ts), first due when their leader timers would
+// have run.
 test('an election does not re-run the privacy audit or the merged-by-hand lookup', () => {
   const server = read('server.js');
   const becomeLeader = server.slice(server.indexOf('async function becomeLeader()'), server.indexOf('async function start()'));
   assert.ok(becomeLeader.length > 0, 'becomeLeader() exists');
 
-  assert.match(becomeLeader, /const runRepoPrivacyAudit = \(\) => auditExistingRepoPrivacy\(getPool\(config\)\)\n/);
-  assert.match(becomeLeader,
-    /leaderTimers\.every\('repo-privacy-audit', runRepoPrivacyAudit, 24 \* 60 \* 60 \* 1000, \{ durable: getPool\(config\) \}\);/,
-    'the privacy audit: daily, on the durable clock');
-  assert.match(becomeLeader, /const runMergedByHandLookup = \(\) => observeMergedOnGithub\(config\)\n/);
-  assert.match(becomeLeader,
-    /leaderTimers\.every\('merged-by-hand-lookup', runMergedByHandLookup, 6 \* 60 \* 60 \* 1000, \{ durable: getPool\(config\) \}\);/,
-    'the merged-by-hand lookup: every six hours, on the durable clock');
+  const clocks = read('src/workflow/clock/services.ts');
+  assert.match(clocks, /name: 'repo-privacy-audit', everyMs: 24 \* HOUR, leaderSweep: 'repo-privacy-audit'/,
+    'the privacy audit: a daily clock, first due when its leader timer would have run');
+  assert.ok(!/auditExistingRepoPrivacy|repo-privacy/.test(server), 'and no leader runs it');
+  assert.match(clocks, /name: 'merged-by-hand', everyMs: 6 \* HOUR, leaderSweep: 'merged-by-hand-lookup',/,
+    'the merged-by-hand lookup: every six hours, first due when its leader timer would have run');
+  assert.ok(!/observeMergedOnGithub|merged-by-hand/.test(server), 'and no leader runs it');
+  // Each proposal is a target of its own: a run stopped part way leaves the
+  // rest to be looked at, rather than the whole lookup to run again.
+  const job = clocks.slice(clocks.indexOf("name: 'merged-by-hand'"), clocks.indexOf("name: 'proposal-revisions'"));
+  assert.match(job, /legacy\('services\/proposal-scans'\)\.mergedByHandTargets\(pool, page\(ctx\)\)/);
+  assert.match(job, /item: \{\n\s+concurrency: \d+,\n\s+run: [^\n]*legacy\('services\/proposal-scans'\)\.lookMergedByHand\(pool, Number\(ctx\.input\.input\?\.sessionId\)\)/);
 
-  // Each is called from its timer and nowhere else: a bare call at election
-  // is the spend this removed.
-  const calls = (name) => becomeLeader.split(`${name}(`).length - 1;
-  assert.equal(calls('auditExistingRepoPrivacy'), 1, 'the audit runs only from its timer');
-  assert.equal(calls('observeMergedOnGithub'), 1, 'the lookup runs only from its timer');
-
-  // A run the drain cut short records nothing, so the next leader runs it.
-  for (const name of ['runRepoPrivacyAudit', 'runMergedByHandLookup']) {
-    const def = becomeLeader.slice(becomeLeader.indexOf(`const ${name} =`));
-    assert.match(def.slice(0, def.indexOf(';\n')),
-      /\.then\(\(\) => \(lifecycle\.isShuttingDown\(\) \? leaderTimers\.SKIPPED : undefined\)\)$/, name);
-  }
-  const audit = server.slice(server.indexOf('async function auditExistingRepoPrivacy'));
-  assert.match(audit.slice(0, audit.indexOf('\n}\n')), /while \(queue\.length && !lifecycle\.isShuttingDown\(\)\) \{/,
-    'the audit stops at its next row once shutdown begins, so it never holds a drain');
-
-  // The stuck-check reconcile still runs at once on election, no longer
-  // behind the lookup: its sweeps' first passes come a minute or more later.
-  assert.match(becomeLeader, /\n {2}reconcileStuckChecks\(config\)\.catch\(\(err\) => \{/);
+  // The audit stops at its next row once its run is stopped, so it never
+  // holds a drain; a run stopped before the end fails, and the clock tries
+  // again sooner.
+  const audit = read('src/services/repo-privacy-audit.js');
+  assert.match(audit, /while \(queue\.length && !shouldStop\(\)\) \{/);
+  assert.match(audit, /if \(queue\.length && !held\) throw new Error/);
 });
 
 // The bot's refresh, a look and a build's start read GitHub, and they are

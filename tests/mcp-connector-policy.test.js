@@ -609,11 +609,11 @@ test('the benchmark\'s nine connector routes are allowed, and every one is full-
 
 // The App bench studio, the benchmark's suites and trials, the live Homeroom
 // bot and the recent before/after screenshots (routes/bench-studio.js):
-// twenty-three routes outside /api/admin, allowed because every handler
+// twenty-five routes outside /api/admin, allowed because every handler
 // refuses anybody who is not a full platform admin before it reads a thing.
 // They read builds, tasks and screenshots of every app, private ones
 // included, and a launch spends the platform's money.
-test('the studio\'s twenty-four connector routes are allowed, and every one is full-admin gated first', () => {
+test('the studio\'s twenty-five connector routes are allowed, and every one is full-admin gated first', () => {
   for (const [method, target] of [
     ['GET', '/api/bot-studio'],
     ['GET', '/api/bot-studio/gallery'],
@@ -637,6 +637,7 @@ test('the studio\'s twenty-four connector routes are allowed, and every one is f
     ['GET', '/api/bot-studio/trials/3/transcript'],
     ['GET', '/api/bot-studio/bot'],
     ['POST', '/api/bot-studio/bot/runs/5/rating'],
+    ['POST', '/api/bot-studio/bot/settings'],
     ['GET', '/api/bot-studio/shots'],
     ['GET', '/api/bot-studio/shots/77'],
   ]) {
@@ -649,6 +650,9 @@ test('the studio\'s twenty-four connector routes are allowed, and every one is f
     ['POST', '/api/bot-studio/trials/3'],
     ['GET', '/api/bot-studio/trials/3/preview'],
     ['POST', '/api/bot-studio/bot'],
+    ['GET', '/api/bot-studio/bot/settings'],
+    ['PUT', '/api/bot-studio/bot/settings'],
+    ['PUT', '/api/admin/homeroom-bot/settings'],
     ['POST', '/api/bot-studio/shots/77'],
     ['GET', '/api/bot-studio/launch'],
     ['GET', '/api/admin/homeroom-bot/bench/studio'],
@@ -658,14 +662,14 @@ test('the studio\'s twenty-four connector routes are allowed, and every one is f
   }
   const src = fs.readFileSync(path.join(__dirname, '../src/routes/bench-studio.js'), 'utf8');
   const routes = [...src.matchAll(/router\.(get|post)\('(\/api\/bot-studio[^']*)', ([a-zA-Z]+)/g)];
-  assert.equal(routes.length, 24);
+  assert.equal(routes.length, 25);
   for (const [, method, route, gate] of routes) {
     assert.equal(gate, 'requireAdminWrite', `${method.toUpperCase()} ${route} is full-admin gated first`);
   }
   // Every write is rate-limited per person and guarded after the limiter. A
   // launch shares the benchmark's launch limiter, since both spend money.
   const writes = [...src.matchAll(/router\.post\('(\/api\/bot-studio[^']*)', ([^(]+)handler\(/g)];
-  assert.equal(writes.length, 10);
+  assert.equal(writes.length, 11);
   for (const [, route, chain] of writes) {
     const limiter = route === '/api/bot-studio/launch' ? 'benchRunLimiter' : 'benchStudioLimiter';
     assert.match(chain, new RegExp(`requireAdminWrite, ${limiter}, sameOriginBrowserOnly,`), `${route} is limited, then guarded`);

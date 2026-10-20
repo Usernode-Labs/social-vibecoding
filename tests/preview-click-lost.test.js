@@ -36,9 +36,29 @@ test('a Preview click on a preview the machine serves reports it lost', async ()
   assert.deepEqual(calls, [['lost', 31, 'preview-click']], 'never a plain ensure the machine would refuse as already serving');
 });
 
-test('the heal pass reports it the same way, as before', async () => {
+test('the preview-runtimes clock reports a vote-backed preview whose runtime is gone the same way', async () => {
+  // The leader's heal pass is gone: the clock (lookForLostPreviews) looks at
+  // every preview the machine says serves a proposal up for a vote.
+  const queries = [];
+  const rows = [
+    { id: 41, app_id: 4, staging_url: null },
+    { id: 42, app_id: 4, staging_url: null },
+  ];
+  stub('../src/db/pool', { getPool: () => ({ query: async (sql) => { queries.push(String(sql)); return { rows }; } }) });
+  const { lookForLostPreviews } = require('../src/services/staging-recovery');
   calls.length = 0;
-  const out = await rebuildSessionStaging({ config: {}, pool: null, session: SESSION, reason: 'heal' });
-  assert.equal(out, 'handed_off');
-  assert.deepEqual(calls, [['lost', 31, 'heal']]);
+  serving.now = true;
+  assert.deepEqual(await lookForLostPreviews({}), { examined: 2, lost: 2 });
+  assert.deepEqual(calls, [['lost', 41, 'runtime gone'], ['lost', 42, 'runtime gone']], 'reported lost, never asked to build');
+  assert.match(queries[0], /cs\.status IN \('promoted', 'merging'\)/, 'only previews that back a vote');
+
+  // One the machine no longer serves is not counted; an ended lease stops the look.
+  calls.length = 0;
+  serving.now = false;
+  assert.deepEqual(await lookForLostPreviews({}), { examined: 2, lost: 0 });
+  const stop = new AbortController();
+  stop.abort();
+  calls.length = 0;
+  assert.deepEqual(await lookForLostPreviews({}, { signal: stop.signal }), { examined: 2, lost: 0 });
+  assert.deepEqual(calls, []);
 });

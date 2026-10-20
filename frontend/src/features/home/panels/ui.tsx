@@ -180,7 +180,7 @@ export function cardTint(key: string, tint?: unknown): string {
  * ── …and why the CONTROLS followed it out ─────────────────────────────
  *
  * They did not, at first, and that was worse than leaving the title in. The
- * bar's remaining occupants — Discover's "Browse all apps", Challenges' "Open
+ * bar's remaining occupants — Discover's "See all", Challenges' "Open
  * leaderboard", the ⋮ every block carries — are all `shrink-0`, so with the
  * title gone the first row of every card was a strip of white with three
  * quarters of it empty and one link floating at the right. The card opened on
@@ -246,7 +246,7 @@ export function BrowseLink() {
         window.location.hash = '#apps';
       }}
     >
-      <span className="whitespace-nowrap">{t('home:discover.browseAll.label')}</span>
+      <span className="whitespace-nowrap">{t('home:discover.browseAll.text')}</span>
     </button>
   );
 }

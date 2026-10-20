@@ -117,8 +117,11 @@ test('Q18: the Messages "+" and the conversation ⋯ are keyboard menus', () => 
   assert.match(head, /className="messages-thread-menu" role="menu"/);
   // Includes Rename group and the conversation-level Report user action.
   // The Homeroom bot DM's "Activity & history" (#3692) left the menu: the
-  // bot's name block in the header opens the panel now.
-  assert.equal((head.match(/role="menuitem"/g) || []).length, 5, 'every row is a menuitem');
+  // bot's name block in the header opens the panel now. Polish N15: the bot
+  // DM offers feedback about the bot in place of Block and Report.
+  assert.equal((head.match(/role="menuitem"/g) || []).length, 6, 'every row is a menuitem');
+  assert.match(head, /withBot\s*\n?\s*\? <button type="button" role="menuitem" data-bot-feedback=""/, 'the bot DM has its own row');
+  assert.match(head, /\{peer && !withBot \? <button/, 'and no Report user');
 });
 
 test('Q18: the Workshop "+" menu closes on Escape and on a press anywhere, and roves with the arrows', () => {
@@ -300,5 +303,8 @@ test('Q18: Skip to navigation is the first island in the shell and lands on the 
   assert.match(link, /event\.preventDefault\(\);/, 'the fragment would route to a screen called "platform-tabs"');
   assert.match(link, /nav\.querySelectorAll<HTMLElement>\('a\.platform-tab'\)/);
   assert.match(link, /useVisibility\('platform-tabs', true\)/, 'hidden where the route has no rail');
+  // Polish N10: a signed-out boot publishes the rail away before hydration,
+  // and hydration does not patch the attribute, so the answer lands after it.
+  assert.match(link, /hidden=\{hydrated && !railOnRoute\}/, 'the published answer applies after hydration');
   assert.doesNotMatch(link, /\sid=/, 'no new id in the shell inventory');
 });

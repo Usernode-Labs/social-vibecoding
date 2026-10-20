@@ -170,13 +170,17 @@ test('the idle check leaves a session a durable build holds, and pauses the othe
 
 test('every sweep that stops a worker unasked asks first; adoption already keeps a durable build\'s', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  // The interval runs the pass. The session sweeper pauses nothing itself:
-  // its first pass hands every session holding a slot to the proposal
-  // machine, whose idle check is the pause.
+  // The interval runs the pass. Nothing in server.js pauses a session: every
+  // session holding a slot is the proposal machine's from its INSERT (the
+  // wf_enrol_proposal trigger, src/db/schema.sql), and the release adopts
+  // any an older build left out; the machine's idle check is the pause.
   assert.match(src, /sweeperHandle = setInterval\(async \(\) => \{\s*if \(lifecycle\.isShuttingDown\(\)\) return;\s*await sweepIdleWarmWorkers\(\)\.catch/);
   assert.doesNotMatch(src, /autoPauseIdleSessions/);
-  assert.match(src, /\/\/ Pass 1:[\s\S]*?await adoptProposals\(\);/);
-  assert.match(src, /const adoptProposals = async \(\) => \{\n {2}const platform = require\('\.\/src\/workflow\/platform\.ts'\);\n {2}await platform\.adoptProposals\(\)/);
+  assert.doesNotMatch(src, /adoptProposals|startSessionAutoPauseSweeper/, 'no leader pass adopts or pauses');
+  const schema = fs.readFileSync(path.join(__dirname, '..', 'src/db/schema.sql'), 'utf8');
+  assert.match(schema, /CREATE TRIGGER chat_sessions_wf_enrol_proposal\n {2}AFTER INSERT ON chat_sessions\n {2}FOR EACH ROW\n {2}WHEN \(NEW\.status IN \('active', 'promoted', 'merging'\)\)\n {2}EXECUTE FUNCTION wf_enrol_proposal\(\);/);
+  const platform = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/platform.ts'), 'utf8');
+  assert.match(platform, /\['proposals', \(\) => adoptProposals\(\)\],/);
   assert.match(src, /function heldByDurableBuild\(sessionId, pool = getPool\(config\)\) \{\s*return require\('\.\/src\/services\/build-runs'\)\.holdsSession\(pool, sessionId\);/);
   // The left-behind sweep adopts through adoptOrphanWorker, which keeps a
   // durable build's worker as it is (tests/homeroom-bot-restart-recovery.test.js).

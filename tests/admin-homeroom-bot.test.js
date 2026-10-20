@@ -685,6 +685,16 @@ test('Save changes sends only what changed, in the route\'s own shape, or says w
   assert.deepEqual(buildPatch({ ...saved, defaultModel: '' }, { ...saved, defaultModel: 'z-ai/glm-5.3-flash' }, ['defaultModel']).patch,
     { defaultModel: '' }, 'back to the deployment default is a blank');
   assert.match(buildPatch({ ...saved, defaultModel: 'not a model' }, saved, ['defaultModel']).error, /^Platform default: a model is an OpenRouter id/);
+  // The helper calls' model (services/helper-model.js): an id, or a blank
+  // for the built-in GLM.
+  assert.equal(saved.helperModel, '', 'unset is the built-in model');
+  assert.equal(savedForm({ settings: { mode: 'shadow', helperModel: 'deepseek/deepseek-v4.1-flash-1017' }, bot: null }).helperModel,
+    'deepseek/deepseek-v4.1-flash-1017');
+  assert.deepEqual(buildPatch({ ...saved, helperModel: 'deepseek/deepseek-v4.1-flash-1017' }, saved, ['helperModel']),
+    { patch: { helperModel: 'deepseek/deepseek-v4.1-flash-1017' }, error: null });
+  assert.deepEqual(buildPatch({ ...saved, helperModel: '' }, { ...saved, helperModel: 'deepseek/deepseek-v4.1-flash-1017' }, ['helperModel']).patch,
+    { helperModel: '' }, 'back to the built-in model is a blank');
+  assert.match(buildPatch({ ...saved, helperModel: 'not a model' }, saved, ['helperModel']).error, /^Helper calls: a model is an OpenRouter id/);
 
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
   assert.match(tsx, /id="admin-homeroom-bot-savebar"/);
@@ -694,7 +704,7 @@ test('Save changes sends only what changed, in the route\'s own shape, or says w
   assert.doesNotMatch(tsx, /onBlur=/, 'nothing saves when a field loses focus any more');
 });
 
-test('a model picked in the Benchmark fills the form in and waits for Save', () => {
+test('a model picked in the Benchmark drafts a side version in Configurations, which waits for Save', () => {
   const { benchHint } = loadBotSection();
   const best = {
     stages: ['triage', 'checks_fix'], models: ['a/glm'],
@@ -713,10 +723,11 @@ test('a model picked in the Benchmark fills the form in and waits for Save', () 
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
   assert.match(tsx, /<BenchmarkArea canWrite=\{canWrite\} active=\{tab === 'benchmark'\} inUse=\{modelsInUse\(payload\)\}\s+defaultModel=\{payload\?\.defaultModel \|\| null\} onUseModel=\{applyBenchModel\} \/>/,
     'the Benchmark reads the model in use from this section\'s own data, and writes its address only while it is the tab on screen');
-  const fn = tsx.slice(tsx.indexOf('const applyBenchModel = '), tsx.indexOf('const liveNow = '));
-  assert.match(fn, /setModel\(stage, id\);/);
-  assert.match(fn, /showTab\('settings'\);/);
-  assert.doesNotMatch(fn, /write\(|fetch\(/, 'nothing is saved until a person presses Save changes');
+  const at = tsx.indexOf('const applyBenchModel = ');
+  const fn = tsx.slice(at, tsx.indexOf('\n  };\n', at));
+  assert.match(fn, /setConfigAsk\(\{ stage, model: id, nonce: Date\.now\(\) \}\);/);
+  assert.match(fn, /showTab\('configs'\);/);
+  assert.doesNotMatch(fn, /write\(|fetch\(/, 'nothing is saved until a person saves the draft');
 });
 
 // The configurations' blind pairs are picked only through the connector,
@@ -759,35 +770,43 @@ test('the tabs have addresses of their own, and Settings and the Overview stay r
 // (and a first version's triage) over the stage's own picker, which is then
 // only the fallback: the Models card says what runs, and the Benchmark's
 // "In use" reads it too.
-test('the Models card names what a configuration runs, over the fallback pickers', () => {
-  const { configuredLine, modelsInUse } = loadBotSection();
+test('Settings says what each stage runs on, from the current configurations, and sends a change to Configurations', () => {
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const { stageCell, modelsInUse, StagesInUse } = loadBotSection();
   const both = {
-    firstVersion: { id: 15, key: 'fv', label: 'FV', version: 1, models: { triage: 'z-ai/glm-5.3-flash', spec: 'anthropic/claude-opus-5.5', build: 'deepseek/deepseek-v4.1-flash-1017' } },
-    later: { id: 5, key: 'later', label: 'Later', version: 1, models: { spec: 'anthropic/claude-opus-5.5', build: 'z-ai/glm-5.3-flash' } },
+    firstVersion: {
+      id: 16, key: 'fv', label: 'FV', version: 2,
+      models: { triage: 'deepseek/deepseek-v4.1-flash-1017', spec: 'anthropic/claude-opus-5.5', build: 'deepseek/deepseek-v4.1-flash-1017' },
+      effort: { triage: null, spec: null, build: 'max' }, clocks: { triage: null, spec: null, build: 40 },
+    },
+    later: {
+      id: 14, key: 'later', label: 'Later', version: 1,
+      models: { triage: 'deepseek/deepseek-v4.1-flash-1017', spec: 'anthropic/claude-opus-5.5', build: 'deepseek/deepseek-v4.1-flash-1017', followup: 'deepseek/deepseek-v4.1-flash-1017' },
+      effort: {}, clocks: {},
+    },
   };
-  assert.equal(configuredLine('build', both),
-    'First versions build on deepseek/deepseek-v4.1-flash-1017 and later changes build on z-ai/glm-5.3-flash, as the current bot configurations say. The picker below applies only when no configuration is current.');
-  assert.equal(configuredLine('spec', both, (id) => (id === 'anthropic/claude-opus-5.5' ? 'Claude Opus 5.5' : id)),
-    'First versions plan on Claude Opus 5.5 and later changes plan on Claude Opus 5.5, as the current bot configurations say. The picker below applies only when no configuration is current.');
-  assert.equal(configuredLine('triage', both),
-    'A project\'s first version is triaged on z-ai/glm-5.3-flash, as its bot configuration says. Every other request uses the picker below.');
-  assert.equal(configuredLine('followup', both), '', 'follow-ups are always the picker\'s');
-  assert.equal(configuredLine('build', { firstVersion: null, later: both.later }),
-    'Later changes build on z-ai/glm-5.3-flash, as the current bot configurations say. First versions use the picker below.');
-  assert.equal(configuredLine('build', { firstVersion: both.firstVersion, later: null }),
-    'First versions build on deepseek/deepseek-v4.1-flash-1017, as the current bot configurations say. Later changes use the picker below.');
-  assert.equal(configuredLine('triage', { firstVersion: null, later: both.later }), '', 'a later change\'s triage is the picker\'s');
-  assert.equal(configuredLine('build', null), '', 'with no configuration the picker decides');
+  assert.equal(stageCell('build', 'firstVersion', both, 'x/y'), 'deepseek/deepseek-v4.1-flash-1017 · effort max · 40 min');
+  assert.equal(stageCell('spec', 'later', both, 'x/y', (id) => (id === 'anthropic/claude-opus-5.5' ? 'Claude Opus 5.5' : id)), 'Claude Opus 5.5');
+  assert.equal(stageCell('followup', 'firstVersion', both, 'x/y'), 'As later changes', 'a proposal\'s follow-ups are the later changes\'');
+  assert.equal(stageCell('followup', 'later', { ...both, later: { ...both.later, models: { ...both.later.models, followup: null } } }, 'x/y'),
+    'x/y (the per-stage setting)', 'a stage it does not name falls back');
+  assert.equal(stageCell('build', 'later', null, null), 'The per-stage setting');
+
+  const html = renderToHtml(createElement(StagesInUse, { configurations: both, fallback: () => 'x/y', onOpen() {} }));
+  assert.match(html, /id="admin-homeroom-bot-stages"/);
+  assert.match(html, /data-stage-row="followup"/);
+  assert.match(html, /FV v2/);
+  assert.match(html, /id="admin-homeroom-bot-stages-open"[^>]*>Change it in Configurations</);
 
   const stages = { triage: 'd/x', spec: 'd/x', build: 'd/x', followup: 'd/x' };
-  assert.deepEqual(modelsInUse({ bot: { models: stages }, configurations: both }),
-    { triage: 'd/x', spec: 'anthropic/claude-opus-5.5', build: 'z-ai/glm-5.3-flash', followup: 'd/x' },
-    'the benchmark\'s plan and build tasks are later changes');
+  assert.deepEqual(modelsInUse({ bot: { models: stages }, configurations: both }), both.later.models,
+    'the benchmark\'s tasks are later changes, every stage its configuration\'s');
   assert.deepEqual(modelsInUse({ bot: { models: stages }, configurations: null }), stages);
   assert.equal(modelsInUse({ bot: null, configurations: both }), null);
 
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
-  assert.match(tsx, /configurations=\{payload\?\.configurations \|\| null\}/, 'each stage row is handed the configurations');
-  assert.match(tsx, /<a className=\{AdminUI\.btn\.link\} href="#admin\/bot-configs">Bot configurations<\/a>/);
-  assert.match(tsx, /data-model-configured=\{stage\}/);
+  assert.doesNotMatch(tsx, /MODEL_STAGES\.map\(\(m\) => \(\n\s+<ModelPicker/, 'no stage has a picker of its own in Settings any more');
+  assert.match(tsx, /<StagesInUse\n\s+configurations=\{payload\?\.configurations \|\| null\}/);
+  assert.match(tsx, /onOpen=\{\(\) => showTab\('configs'\)\}/);
+  assert.doesNotMatch(tsx, /href="#admin\/bot-configs"/, 'the old section\'s address is not linked');
 });

@@ -6292,10 +6292,8 @@ async function checkAndOpenRevert(config, pool, session, decider) {
     ]
   );
   const revertSessionId = revertRows[0].id;
-  // Born in review: the proposal machine adopts it now (its review check
-  // armed). The leader's sweep adopts any row this missed.
-  await require('../workflow/platform.ts').proposalAdopted({ sessionId: revertSessionId, appId: session.app_id })
-    .catch((err) => log.warn('votes', 'Could not hand a proposal born in review to the proposal machine', { sessionId: revertSessionId, err: err.message }));
+  // (Born in review: its insert enrolled it in the proposal machine,
+  // schema.sql wf_enrol_proposal.)
   await topicAttrs.selfAssignProposal(
     pool, session.app_id, revertSessionId, decider
   );

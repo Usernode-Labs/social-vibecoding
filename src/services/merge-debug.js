@@ -127,22 +127,18 @@ function endRun(poolOrConfig, runId, { status, summary } = {}) {
 }
 
 // Retention sweep — delete runs older than `days` (steps cascade). Bounds
-// table growth on a busy platform. Best-effort; logs the row count. Called
-// at boot and on a slow timer from server.js.
+// table growth on a busy platform. One pass of the `merge-debug-prune`
+// clock (src/workflow/clock/services.ts): a failure throws, so the clock records
+// it and tries again sooner.
 async function pruneOldRuns(poolOrConfig, days = 30) {
-  try {
-    const pool = resolvePool(poolOrConfig);
-    const n = Math.max(1, parseInt(days, 10) || 30);
-    const { rowCount } = await pool.query(
-      `DELETE FROM merge_debug_runs WHERE started_at < NOW() - ($1 || ' days')::interval`,
-      [String(n)]
-    );
-    if (rowCount) log.info('merge-debug', 'Pruned old merge-debug runs', { deleted: rowCount, olderThanDays: n });
-    return rowCount || 0;
-  } catch (err) {
-    log.warn('merge-debug', 'pruneOldRuns failed', { err: err.message });
-    return 0;
-  }
+  const pool = resolvePool(poolOrConfig);
+  const n = Math.max(1, parseInt(days, 10) || 30);
+  const { rowCount } = await pool.query(
+    `DELETE FROM merge_debug_runs WHERE started_at < NOW() - ($1 || ' days')::interval`,
+    [String(n)]
+  );
+  if (rowCount) log.info('merge-debug', 'Pruned old merge-debug runs', { deleted: rowCount, olderThanDays: n });
+  return rowCount || 0;
 }
 
 module.exports = { startRun, step, endRun, pruneOldRuns };

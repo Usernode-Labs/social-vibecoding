@@ -2060,6 +2060,10 @@ form.agent-session-composer:focus-within {
 @media (max-width: 767px) {
   .messages-layout.messages-has-reply-thread > .messages-thread-pane { display: none; }
   .messages-reply-pane { flex: 1 1 auto; width: 100%; margin-top: 12px; }
+  /* One way back (polish N16): the header bar's arrow. The thread's own ✕
+     beside it said the same thing a second time. A community page's copy
+     (`.messages-layout-embedded`) keeps its ✕. */
+  .messages-layout:not(.messages-layout-embedded) > .messages-reply-pane [data-reply-close] { display: none; }
 }
 @media (min-width: 768px) {
   .messages-reply-pane { flex: 0 0 min(420px, 42%); margin: 14px 12px 0 0; }
@@ -3874,6 +3878,13 @@ html[data-browser-scroller^="auth-"] :is(
 ) {
   display: none;
 }
+/* UNDER THE SIGNED-OUT LANDING the platform header is covered (the landing
+   is a fixed overlay with its own bar) but was still read out: an empty
+   level-1 heading beside the page's own on a desktop (polish N10). In a
+   phone browser the rule above already takes it out of the layout. */
+body:has(#auth-landing-screen:not(.hidden)) #platform-header {
+  visibility: hidden;
+}
 /* IN BROWSER-SCROLLER MODE the document is the scroller and this bar is
    sticky over it, so it has to hide the content sliding under it rather than
    letting it read through — which is why it takes a near-opaque wash of the
@@ -4305,6 +4316,21 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
       var(--home-grain) 0 0 / 240px 240px repeat,
       var(--home-washes);
   }
+}
+/* THE HEADER STAYS CLEAR OF THE STAR in a running app and on New project
+   (polish N20). On Home the star sits behind the bell by design, but over
+   somebody's app the bar is the app's header, and on the make screen the
+   bar holds only the ✕ and the mark: there it read as a stray shape showing
+   through. Both draw the same wallpaper with its first layer, the star,
+   left out. `html:root` lifts this past the dark and wide rules above,
+   which define the full shorthand at the same route test. The make screen
+   paints `var(--home-wallpaper)` on its own root (make.tsx), so the
+   variable is redefined there too; it reads the body's grain and washes. */
+html:root body:has(#app-view:not(.hidden):not([data-app-surface="platform"])),
+[data-first-session-make] {
+  --home-wallpaper:
+    var(--home-grain) 0 0 / 240px 240px repeat,
+    var(--home-washes);
 }
 /* THE BAR OVER THE WALLPAPER. On every wallpaper route the header's
    zinc-200 surface goes, so the wallpaper (and the star) run up behind the
@@ -19650,14 +19676,24 @@ html[data-nav-drawer] #app-view { touch-action: pan-y; }
   .messages-thread-peek { overflow: hidden; }
   .messages-thread-peek > .messages-peek-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
   .messages-thread-peek .messages-thread-scroll { overflow: hidden; }
+  .messages-thread-peek .messages-peek-head { flex: none; display: flex; padding: 14px 16px 8px; }
+  .messages-thread-peek .messages-message > :first-child { visibility: hidden; }
   .messages-peek-open {
     position: absolute; inset: 0; margin: 0; padding: 0; border: 0;
     background: rgba(0, 0, 0, 0.05); cursor: pointer; -webkit-tap-highlight-color: transparent;
   }
   :is(.dark) .messages-peek-open { background: rgba(0, 0, 0, 0.22); }
   .messages-peek-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; }
-  /* In a conversation the header names it, so its sheet keeps only its discs. */
-  .messages-layout.messages-drawer .messages-thread-header { padding-top: 8px; padding-bottom: 0; }
+  /* In a conversation the header names it, so its sheet keeps only its discs,
+     and they take no row of their own (polish N15: a 48px row held the ⋯
+     alone). They float at the conversation's top-right corner, over the
+     Homeroom bot's Activity strip, which leaves them its right end. */
+  .messages-layout.messages-drawer > .messages-thread-pane > .messages-thread-header {
+    position: absolute; top: 4px; right: 12px; z-index: 25; padding: 0; gap: 8px;
+  }
+  .messages-layout.messages-drawer > .messages-thread-pane > .messages-thread-header .messages-thread-action { width: 32px; height: 32px; }
+  .messages-layout.messages-drawer > .messages-thread-pane > .messages-thread-header .messages-thread-action svg { width: 18px; height: 18px; }
+  .messages-layout.messages-drawer > .messages-thread-pane [data-bot-strip-toggle] { padding-right: 56px; }
 }
 
 /* ── The hero's rows (community-card.tsx) ──
@@ -19665,9 +19701,12 @@ html[data-nav-drawer] #app-view { touch-action: pan-y; }
    phrase, the audience's glyph leading it. Then one row of what you can do:
    Open app in the community's colour, Invite, the ⋯, and Join at the far
    end. Leave is a row of the ⋯ (#4045). */
-.dev-ws-hero-audience { display: inline-flex; align-items: center; gap: 4px; vertical-align: -3px; }
+/* The words sit on the line's own baseline, so "Public community" and
+   " · 23 members" read as one line; only the glyph is centred. A
+   `vertical-align` nudge here dropped the audience 3px below the count. */
+.dev-ws-hero-audience { display: inline-flex; align-items: baseline; gap: 4px; }
 .dev-ws-hero-audience b { font-weight: 650; }
-.dev-ws-hero-audience svg { width: 16px; height: 16px; flex: none; color: var(--text-muted); }
+.dev-ws-hero-audience svg { width: 16px; height: 16px; flex: none; align-self: center; color: var(--text-muted); }
 .dev-ws-hero-row { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 32px; }
 .dev-ws-hero-row > .dev-ws-hero-actions { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; }
 .dev-ws-hero-member { margin-left: auto; flex: none; display: flex; }
@@ -21893,6 +21932,40 @@ html[data-browser-scroller] #landing-header::before {
   background:
     linear-gradient(var(--fake-glass-tint, var(--dc-sheet-fill)), var(--fake-glass-tint, var(--dc-sheet-fill))),
     var(--home-washes, var(--dc-sheet-solid));
+}
+/* DISCOVER'S SEARCH BAND FROM 768px (polish N12), the same faked layer.
+   It pinned on a flat `--home-ground` fill: the washes behind the page do
+   not reach it, so it read as a band of a different colour across them, and
+   with no edge the cards slid under it into nothing. Now it paints the
+   wallpaper's own grain and washes, fixed so they line up with the body's
+   pixel for pixel: the band is the page, opaque, and only its hairline
+   says where the cards pass under. The phone's head is not sticky
+   (`browse-pane-head` above) and keeps its transparent fill. */
+@media (min-width: 768px) {
+  #browse-search-bar {
+    background: transparent;
+    clip-path: inset(0);
+  }
+  #browse-search-bar::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      var(--home-grain, none) 0 0 / 240px 240px repeat,
+      var(--home-washes, var(--dc-sheet-solid));
+  }
+  #browse-search-bar::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 1px;
+    background: var(--app-sheet-line);
+    pointer-events: none;
+  }
 }
 /* THE HAIRLINE GOES BACK ON TOP. The layer paints over its surface's own
    border (a stacking context's negative layer comes after its background and
