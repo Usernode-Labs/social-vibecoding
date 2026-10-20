@@ -129,6 +129,15 @@
       "mobileSupported": true
     },
     {
+      "key": "phones",
+      "label": "Linked phones",
+      "group": "Account",
+      "gate": null,
+      "capabilityId": "settings.open.phones",
+      "classicPath": "#settings/phones",
+      "mobileSupported": true
+    },
+    {
       "key": "wallet",
       "label": "Homeroom Wallet",
       "group": "Account",
@@ -4031,6 +4040,36 @@
       "expression": null,
       "status": "mapped",
       "capabilityId": "apps.post.me.contact.privacy.6d2b3e6d",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/auth.js",
+      "method": "GET",
+      "path": "/api/me/phones",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.me.phones.5bb2366d",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/auth.js",
+      "method": "DELETE",
+      "path": "/api/me/phones/:id",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.delete.me.phones.item.7c732dfd",
       "domain": "apps",
       "risk": "external_write",
       "confirmation": "required",

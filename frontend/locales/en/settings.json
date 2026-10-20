@@ -1587,6 +1587,62 @@
     "text": "Could not save that. Try again.",
     "description": "Error under the Share usage analytics switch in Settings > Privacy when saving the choice failed; the switch goes back to how it was."
   },
+  "phones.title": {
+    "text": "Linked phones",
+    "description": "Heading of the Settings > Linked phones page, which lists the phones signed in to the account through the Homeroom mobile app."
+  },
+  "phones.intro": {
+    "text": "Phones signed in to your account with the Homeroom app. Unlink one you no longer use, or don't recognise: it is signed out and stops getting your notifications.",
+    "description": "Explanation under the Linked phones heading in Settings > Linked phones."
+  },
+  "phones.empty": {
+    "text": "No phones are linked. Sign in with the Homeroom app on your phone and it shows up here.",
+    "description": "Shown in Settings > Linked phones when no phone is signed in to the account through the Homeroom mobile app."
+  },
+  "phones.platform.android": {
+    "text": "Android phone",
+    "description": "Name of a row in Settings > Linked phones: a phone running Android that is signed in to the account."
+  },
+  "phones.platform.ios": {
+    "text": "iPhone",
+    "description": "Name of a row in Settings > Linked phones: an iPhone that is signed in to the account."
+  },
+  "phones.platform.unknown": {
+    "text": "Phone",
+    "description": "Name of a row in Settings > Linked phones when Homeroom does not know whether the phone is an Android phone or an iPhone (it never turned on notifications)."
+  },
+  "phones.thisPhone": {
+    "text": "This phone",
+    "description": "Small label beside the name of a row in Settings > Linked phones: the row is the phone this page is open on."
+  },
+  "phones.detail": {
+    "text": "Last used {{lastUsed}} · Linked {{linked}}",
+    "description": "Line under a phone in Settings > Linked phones. {{lastUsed}} is the date the Homeroom app last used the account on that phone; {{linked}} is the date it was first signed in there. Both are already-formatted dates."
+  },
+  "phones.unlink": {
+    "text": "Unlink",
+    "description": "Red button on a row of Settings > Linked phones: signs that phone out of the account (verb). Pressed once it asks to confirm; pressed again it unlinks."
+  },
+  "phones.cancel": {
+    "text": "Cancel",
+    "description": "Button beside Unlink on a row of Settings > Linked phones while it asks to confirm: keeps the phone linked."
+  },
+  "phones.confirm": {
+    "text": "Press Unlink again to sign this phone out.",
+    "description": "Replaces the dates under a phone in Settings > Linked phones after Unlink was pressed once, asking to confirm."
+  },
+  "phones.confirmThisPhone": {
+    "text": "This is the phone you are using. Press Unlink again to sign out here.",
+    "description": "Replaces the dates under the phone this page is open on in Settings > Linked phones after Unlink was pressed once: unlinking it signs the person out on this phone."
+  },
+  "phones.loadFailed": {
+    "text": "Couldn't load your linked phones. Try again in a moment.",
+    "description": "Error on the Settings > Linked phones page when reading the list from the server failed."
+  },
+  "phones.unlinkFailed": {
+    "text": "Couldn't unlink that phone. Try again in a moment.",
+    "description": "Error on the Settings > Linked phones page when unlinking a phone failed; the phone stays in the list."
+  },
   "devConsole.title": {
     "text": "Developer console",
     "description": "Heading of the section in Settings about the log panel that shows an app's console output and errors."
@@ -2103,6 +2159,10 @@
     "text": "Privacy",
     "description": "Name of a part of Settings: the Privacy page (who can message or invite you, and whether people can find your profile). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
   },
+  "nav.part.phones": {
+    "text": "Linked phones",
+    "description": "Name of a part of Settings: the Linked phones page (the phones signed in to the account with the Homeroom app, and unlinking one). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
+  },
   "nav.part.wallet": {
     "text": "Homeroom Wallet",
     "description": "Name of a part of Settings: the Homeroom Wallet page (linking a crypto wallet). Homeroom is the product name. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
@@ -2258,6 +2318,10 @@
   "nav.keywords.contactPrivacy": {
     "text": "privacy messages message dm invite invitations contact strangers safety find search discoverable profile friend requests analytics usage tracking telemetry",
     "description": "Not shown on screen. Extra search words for \"Privacy\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
+  },
+  "nav.keywords.phones": {
+    "text": "phone phones mobile app device devices signed in sessions sign out log out unlink disconnect android iphone",
+    "description": "Not shown on screen. Extra search words for \"Linked phones\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.wallet": {
     "text": "crypto link qr",

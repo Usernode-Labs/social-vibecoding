@@ -35,6 +35,7 @@ const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
 const usernames = require('../services/usernames');
 const contactPrivacy = require('../services/contact-privacy');
+const linkedPhones = require('../services/linked-phones');
 const uiTelemetry = require('../services/ui-telemetry');
 const usageAnalytics = require('../services/usage-analytics');
 const { verificationKeyFor } = require('../services/wallet-signing-key');
@@ -1396,6 +1397,48 @@ function authRoutes(config) {
       res.json(settings);
     } catch (err) {
       log.error('settings', 'Failed to save contact privacy', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #4938: Settings › Linked phones. The phones signed in to this account
+  // through the Homeroom app (services/linked-phones.js), and unlinking one,
+  // which signs that phone out and stops its notifications. Only the
+  // signed-in account's own phones: any other id is a 404.
+  async function currentNativeCredential(req) {
+    const token = req.cookies?.session;
+    if (!token) return null;
+    const { rows } = await pool.query(
+      'SELECT native_session_credential_reference FROM sessions WHERE token = $1 AND user_id = $2',
+      [token, req.user.id]
+    );
+    return rows[0]?.native_session_credential_reference || null;
+  }
+
+  router.get('/api/me/phones', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      const currentCredential = await currentNativeCredential(req);
+      const phones = await linkedPhones.listLinkedPhones(pool, req.user.id, { currentCredential });
+      res.json({ phones });
+    } catch (err) {
+      log.error('settings', 'Failed to list linked phones', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.delete('/api/me/phones/:id', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const phoneId = req.params.id;
+    if (!linkedPhones.isPhoneId(phoneId)) return res.status(404).json({ error: 'Not found' });
+    try {
+      const unlinked = await withTransaction(pool, (client) => linkedPhones.unlinkPhone(client, req.user.id, phoneId));
+      if (!unlinked) return res.status(404).json({ error: 'Not found' });
+      log.info('settings', 'Linked phone unlinked', { userId: req.user.id });
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('settings', 'Failed to unlink phone', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
