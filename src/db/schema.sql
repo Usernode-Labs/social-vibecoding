@@ -4419,6 +4419,57 @@ CREATE INDEX IF NOT EXISTS idx_admin_access_reviews_at
   ON admin_access_reviews (reviewed_at DESC);
 COMMENT ON TABLE admin_access_reviews IS 'staging:private';
 
+-- ── Compliance report (#5634) ──────────────────────────────────────────
+--
+-- The records behind the console's Compliance section
+-- (services/compliance.js, #admin/compliance). The plan's items are a fixed
+-- list in code (services/compliance-items.js); these tables hold only what
+-- happened to them. All three are append-only.
+--
+-- compliance_status_changes: one row each time an admin saves an item's
+-- status. The newest row per item is its status; an item with no row shows
+-- the plan's starting value. `item_code` is not a foreign key: the items
+-- live in code, and a retired item's history stays readable.
+--
+-- compliance_scans / compliance_scan_results: one scan per run of the
+-- `compliance-scan` clock or an admin's Scan now, and one result per check
+-- in it. `failing` names the projects a per-project check failed on, as
+-- [{ "slug": "…", "name": "…", "reason": "missing" }], at most 200.
+-- Project slugs and names are not private, so the scans copy to staging;
+-- the status notes are an admin's words, so they do not.
+CREATE TABLE IF NOT EXISTS compliance_status_changes (
+  id          BIGSERIAL PRIMARY KEY,
+  item_code   VARCHAR(8) NOT NULL,
+  status      VARCHAR(16) NOT NULL CHECK (status IN ('todo', 'partial', 'done')),
+  note        TEXT CHECK (note IS NULL OR char_length(note) <= 1000),
+  changed_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  changed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_compliance_status_changes_item
+  ON compliance_status_changes (item_code, changed_at DESC);
+COMMENT ON TABLE compliance_status_changes IS 'staging:private';
+
+CREATE TABLE IF NOT EXISTS compliance_scans (
+  id           BIGSERIAL PRIMARY KEY,
+  started_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_compliance_scans_finished
+  ON compliance_scans (finished_at DESC) WHERE finished_at IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS compliance_scan_results (
+  scan_id    BIGINT NOT NULL REFERENCES compliance_scans(id) ON DELETE CASCADE,
+  check_key  VARCHAR(32) NOT NULL,
+  state      VARCHAR(8) NOT NULL CHECK (state IN ('pass', 'fail', 'error')),
+  summary    TEXT NOT NULL,
+  checked    INTEGER CHECK (checked IS NULL OR checked >= 0),
+  failed     INTEGER CHECK (failed IS NULL OR failed >= 0),
+  failing    JSONB NOT NULL DEFAULT '[]'::jsonb,
+  PRIMARY KEY (scan_id, check_key)
+);
+CREATE INDEX IF NOT EXISTS idx_compliance_scan_results_check
+  ON compliance_scan_results (check_key);
+
 -- ── Platform environment variables ───────────────────────────────────
 --
 -- In-platform management of the *platform's own* env vars — the ones
