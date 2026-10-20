@@ -54,6 +54,7 @@ const modelCosts = require('../services/model-costs');
 const homeroomBot = require('../services/homeroom-bot');
 const smallChange = require('../services/small-change');
 const shotsExport = require('../services/shots-export');
+const shotsDensity = require('../services/shots-density');
 const welcomeDm = require('../services/welcome-dm');
 const onboarding = require('../services/onboarding');
 const journeyLeftOut = require('../services/journey-left-out');
@@ -1679,6 +1680,31 @@ function adminRoutes(config) {
   // Streamed, not buffered, and every value goes through `csvField`: the
   // declared changes, titles and failure text are author- and model-written,
   // which is the case the formula-injection guard exists for.
+  // Experimental: before/after shots at the screen's own density (3x phone,
+  // 2x desktop) instead of 1x. Off until switched on here; a run reads it
+  // as it starts (services/shots-density.js).
+  router.get('/api/admin/shots/device-density', async (req, res) => {
+    try {
+      res.json({ enabled: await shotsDensity.enabled(pool) });
+    } catch (err) {
+      log.error('admin', 'Read shots device density failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/shots/device-density', requireAdminWrite, async (req, res) => {
+    const on = req.body?.enabled;
+    if (typeof on !== 'boolean') return res.status(400).json({ error: 'enabled must be true or false' });
+    try {
+      const enabled = await shotsDensity.setEnabled(pool, on, req.user.id);
+      log.info('admin', 'Shots device density switched', { by: req.user.username, enabled });
+      res.json({ enabled });
+    } catch (err) {
+      log.error('admin', 'Switch shots device density failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.get('/api/admin/shots/export.csv', requireAdminWrite, async (req, res) => {
     const parsed = shotsExport.parseFilters(req.query || {});
     if (!parsed.ok) return res.status(400).json({ error: parsed.error });

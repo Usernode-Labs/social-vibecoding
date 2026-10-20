@@ -5,8 +5,9 @@
 // before/after turns. Listing tools catches a missing MCP binary; calling a
 // browser tool also catches Chromium startup failures in the worker image,
 // and a named screenshot proves shots land where the shots bridge reads them,
-// saved at the browser's device density (patch-playwright-mcp-screenshot.js):
-// the file is the image the tool answered with, times that density, wide.
+// at 1x as every run takes them today, and, as a run taken at device density
+// does (patch-playwright-mcp-screenshot.js), at the browser's density: the
+// file is the image the tool answered with, times that density, wide.
 
 const { spawn, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -157,9 +158,13 @@ async function main() {
     }));
     const diagnosticFile = path.join(dir, 'browser-diagnostics.log');
     fs.writeFileSync(diagnosticFile, '');
-    execFileSync(process.execPath, [path.join(__dirname, 'write-shots-mcp-config.js'), output], {
+    // Each browser as a run takes it today (1x), then the two kinds again as
+    // a run taken at device density does (services/shots-density.js).
+    const dense = path.join(dir, 'mcp-dense.json');
+    for (const [file, density] of [[output, '0'], [dense, '1']]) execFileSync(process.execPath, [path.join(__dirname, 'write-shots-mcp-config.js'), file], {
       env: {
         ...process.env,
+        SHOTS_DEVICE_DENSITY: density,
         SHOTS_BROWSER_STATE_DIR: stateDir,
         SHOTS_BROWSER_DIAGNOSTIC_FILE: diagnosticFile,
         SHOTS_PROXY_SERVER: 'http://127.0.0.1:17891',
@@ -176,13 +181,15 @@ async function main() {
     for (const persona of ['member', 'admin', 'full_admin', 'guest']) {
       fs.mkdirSync(path.join(dir, 'shots', persona), { recursive: true });
     }
-    const config = JSON.parse(fs.readFileSync(output, 'utf8'));
-    for (const persona of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest',
-      'browser_member_phone']) {
+    const configs = { 1: JSON.parse(fs.readFileSync(output, 'utf8')), device: JSON.parse(fs.readFileSync(dense, 'utf8')) };
+    for (const [persona, mode] of [['browser_member', 1], ['browser_admin', 1], ['browser_full_admin', 1],
+      ['browser_guest', 1], ['browser_member_phone', 1], ['browser_member', 'device'], ['browser_member_phone', 'device']]) {
       fs.writeFileSync(diagnosticFile, '');
       const phone = persona.endsWith('_phone');
-      // The iPhone 15 device's density, and the desktop browsers' own.
-      const tools = await verifyBrowser(config.mcpServers[persona], [], { density: phone ? 3 : 2 });
+      // 1x while the experiment is off; on, the iPhone 15 device's density,
+      // and the desktop browsers' own.
+      const density = mode === 1 ? 1 : phone ? 3 : 2;
+      const tools = await verifyBrowser(configs[mode].mcpServers[persona], [], { density });
       const records = fs.readFileSync(diagnosticFile, 'utf8').trim().split('\n')
         .filter((line) => line.startsWith('__USERNODE_SHOTS_BROWSER__ '))
         .flatMap((line) => {
@@ -196,7 +203,7 @@ async function main() {
           || !records.some((event) => event.kind === 'browser_call_end')) {
         throw new Error(`Browser observer did not record ${persona} tool timing`);
       }
-      process.stdout.write(`${persona}: ${tools.length} MCP tools available; Chromium opened a tab; shots at ${phone ? 3 : 2}x\n`);
+      process.stdout.write(`${persona}: ${tools.length} MCP tools available; Chromium opened a tab; shots at ${density}x\n`);
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

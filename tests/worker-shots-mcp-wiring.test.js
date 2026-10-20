@@ -386,19 +386,36 @@ test('the config writer gives each persona its own shots directory and records c
       }
     }
 
-    // Every desktop browser draws at 2 device pixels per CSS pixel, from a
-    // private config beside the MCP config: Playwright takes a density only
-    // with a fixed viewport, the size the browser opened at before.
+    // Shots at the screen's own density are experimental: off unless the
+    // run says so, every browser saves at 1x, as it always did.
+    for (const value of [undefined, '0', 'true', '']) {
+      const off = writeConfig(dir, { SHOTS_DEVICE_DENSITY: value, SHOTS_PHONE_PERSONAS: '["member"]' });
+      for (const [server, entry] of Object.entries(off.config.mcpServers).filter(([name]) => name !== 'shots')) {
+        assert.equal(entry.args.includes('--config'), false, `${server} ${value}`);
+        assert.equal(Object.hasOwn(entry.env, 'SHOTS_SCREENSHOT_SCALE'), false, `${server} ${value}`);
+      }
+      assert.equal(fs.existsSync(path.join(path.dirname(off.output), 'shots-desktop-browser.json')), false);
+    }
+    // On, every desktop browser draws at 2 device pixels per CSS pixel, from
+    // a private config beside the MCP config (Playwright takes a density only
+    // with a fixed viewport, the size the browser opened at before), and every
+    // browser, the phone's included, saves at device scale.
+    const dense = writeConfig(dir, { SHOTS_DEVICE_DENSITY: '1', SHOTS_PHONE_PERSONAS: '["member"]' });
     for (const server of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest']) {
-      const args = config.mcpServers[server].args;
+      const args = dense.config.mcpServers[server].args;
       assert.equal(args.filter((arg) => arg === '--config').length, 1, server);
       const file = args[args.indexOf('--config') + 1];
-      assert.equal(path.dirname(file), path.dirname(output));
+      assert.equal(path.dirname(file), path.dirname(dense.output));
       assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')),
         { browser: { contextOptions: { viewport: { width: 1280, height: 720 }, deviceScaleFactor: 2 } } });
       assert.equal(fs.statSync(file).mode & 0o777, 0o600);
       assert.equal(args.includes('--device'), false, 'a desktop browser presents as no device');
     }
+    for (const server of ['browser_member', 'browser_member_phone']) {
+      assert.equal(dense.config.mcpServers[server].env.SHOTS_SCREENSHOT_SCALE, 'device', server);
+    }
+    assert.equal(dense.config.mcpServers.browser_member_phone.args.includes('--config'), false,
+      'the phone\'s density is its device\'s');
 
     // Without a shots directory there is nowhere safe to save, so no config.
     for (const missing of [undefined, '']) {
@@ -444,9 +461,6 @@ test('a persona with a phone screen gets a phone browser: its sign-in, its proxy
       // session record per directory (shots-boundary.js).
       assert.equal(args[args.indexOf('--output-dir') + 1], path.join(shotsDir, `${persona}_phone`));
       assert.ok(fs.statSync(path.join(shotsDir, `${persona}_phone`)).isDirectory());
-      // Its density is the device's (3); the desktop browser's own config
-      // sets 2, so the phone browser carries none.
-      assert.equal(args.includes('--config'), false);
       // Everything else is the persona's own browser: the same storage state
       // (signed in as the same persona, or the guest's signed-out state), the
       // same proxy listener (the same identity on a hosted app), the same

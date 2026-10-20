@@ -38,11 +38,12 @@ const planContract = require('./visible-changes');
 const { SAMPLE_NAMES, MAX_FILES: MAX_SAMPLE_FILES } = require('../../worker/shots-samples');
 
 const SHOTS_MODE = 'shots';
-// A still is saved at its device's density (densityFor): a 2x desktop
-// screen of a photo-heavy page passes 6 MB, and the agent cannot choose a
-// smaller scale, so the cap leaves room for one. It stays under the internal
-// route's 21 MB body limit (routes/internal.js).
-const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+// A run taken at the screen's own density (services/shots-density.js): a 2x
+// desktop screen of a photo-heavy page passes 6 MB, and the agent cannot
+// choose a smaller scale, so its cap leaves room for one. It stays under the
+// internal route's 21 MB body limit (routes/internal.js).
+const MAX_DENSE_IMAGE_BYTES = 12 * 1024 * 1024;
 const MAX_CLIP_BYTES = 20 * 1024 * 1024;
 const MIN_CLIP_BYTES = 1024;
 const MAX_IMAGE_EDGE = 8192;
@@ -89,13 +90,13 @@ function sha256(buffer) {
 
 // Structural checks only: the platform image ships no codecs, and the header
 // plus terminator is enough to refuse anything that is not one whole PNG.
-function inspectImage(buffer) {
+function inspectImage(buffer, { maxBytes = MAX_IMAGE_BYTES } = {}) {
   if (!Buffer.isBuffer(buffer) || buffer.length < PNG_SIGNATURE.length + 25 + PNG_IEND.length) {
     throw new ShotError('invalid_shot_image', 'A shot must be a complete PNG image.');
   }
-  if (buffer.length > MAX_IMAGE_BYTES) {
+  if (buffer.length > maxBytes) {
     throw new ShotError('shot_too_large',
-      `A shot may be at most ${MAX_IMAGE_BYTES} bytes; save the visible screen or one element, not the full page.`, 413);
+      `A shot may be at most ${maxBytes} bytes; save the visible screen or one element, not the full page.`, 413);
   }
   if (!buffer.subarray(0, 8).equals(PNG_SIGNATURE)
       || buffer.readUInt32BE(8) !== 13
@@ -290,9 +291,9 @@ function stored(target, buffer, info) {
 }
 
 // Device pixels per CSS pixel of a screen shot: its width over the declared
-// screen's. The shots browsers save at their device's density (3 on a
-// phone, 2 on a desktop: worker/write-shots-mcp-config.js), and every run
-// before them saved at 1. Only a whole multiple counts; any other width is a
+// screen's. A run taken at device density (services/shots-density.js) saves
+// at the browser's (3 on a phone, 2 on a desktop: worker/write-shots-mcp-
+// config.js); every other run saves at 1. Only a whole multiple counts; any other width is a
 // screen shot taken at the wrong size, read as 1, the way it always was.
 const DENSITIES = Object.freeze([1, 2, 3, 4]);
 // The density the browser that shoots a screen saves at: a phone screen's
@@ -313,13 +314,15 @@ function densityFor(imageWidth, screenWidth) {
 // read. `screenFile` is the same side's screen shot when it is saved: its
 // density (densityFor) is the element shot's too, so its element shots may
 // be as much larger. Before it is saved (the agent may save the element
-// first), the element may be as dense as the screen's browser saves.
+// first), the element may be as dense as the screen's browser saves in a
+// run taken at device density (`deviceDensity`), else 1x.
 // Sizes in the messages are CSS pixels, the screen's own.
-function checkElementSize(story, target, info, screenFile = null) {
+function checkElementSize(story, target, info, screenFile = null, { deviceDensity = false } = {}) {
   if (target.variant !== 'focus' || !info?.width) return;
   const viewport = story.viewports.find((candidate) => candidate.name === target.viewport);
   if (!viewport) return;
-  const scale = screenFile?.width ? densityFor(screenFile.width, viewport.width) : browserDensity(viewport);
+  const scale = screenFile?.width ? densityFor(screenFile.width, viewport.width)
+    : deviceDensity ? browserDensity(viewport) : 1;
   const maxWidth = Math.round(viewport.width * scale) + 1;
   const maxHeight = Math.round(viewport.height * scale * MAX_ELEMENT_SCREENS_TALL) + 1;
   if (info.width > maxWidth) {
@@ -498,6 +501,7 @@ function isShotsVerdict(verdict) {
 module.exports = {
   SHOTS_MODE,
   MAX_IMAGE_BYTES,
+  MAX_DENSE_IMAGE_BYTES,
   MAX_CLIP_BYTES,
   MAX_NOTICE,
   MAX_NOTICES,

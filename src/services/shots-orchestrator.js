@@ -16,6 +16,7 @@ const github = require('./github');
 const log = require('./logger');
 const shotsDiff = require('./shots-diff');
 const shotsFiles = require('./shots-files');
+const shotsDensity = require('./shots-density');
 const logRedaction = require('./log-redaction');
 const shotsAgent = require('./shots-agent');
 const shotsControl = require('./shots-control');
@@ -1338,6 +1339,7 @@ async function buildCopies(config, pool, {
     shotsHomeTile: injected.shotsHomeTile || shotsHomeTile,
     github: injected.github || github,
     removeCopies: injected.removeCopies || removeCopies,
+    shotsDensity: injected.shotsDensity || shotsDensity,
   };
   const row = await loadSession(pool, sessionId);
   const { session, app } = publicSessionAndApp(row);
@@ -1424,6 +1426,10 @@ async function buildCopies(config, pool, {
       // proxy does the same. The platform serves its own.
       platformAssets: !selfApp,
       selfApp,
+      // Experimental and off by default: stills at the screen's own density
+      // (3x phone, 2x desktop) instead of 1x. Read once, so the whole run
+      // takes one density (services/shots-density.js).
+      deviceDensity: await deps.shotsDensity.enabledOrOff(pool),
     };
     if (await ended()) return { stale: true };
     await shotsControl.create(pool, {
@@ -1572,6 +1578,7 @@ async function dispatchAgent(config, pool, {
         phonePersonas: a.phonePersonas || [],
         browserPersonas: Array.isArray(a.browserPersonas) ? a.browserPersonas : [],
         platformAssets: a.platformAssets === true,
+        deviceDensity: a.deviceDensity === true,
         onProgress: onProgress ? (line) => onProgress(`Shots agent: ${line}`) : null,
         onShotsDiagnostic,
         resumeThreadId: null,

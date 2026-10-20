@@ -1,10 +1,12 @@
 'use strict';
 
-// Before/after shots are saved at the browser's device density: 3 on a
+// Before/after shots can be saved at the browser's device density: 3 on a
 // phone (the iPhone 15 device), 2 on a desktop (write-shots-mcp-config.js).
-// The pinned Playwright MCP saves every screenshot at CSS scale, so the
-// worker image patches its screenshot tool (patch-playwright-mcp-screenshot.js)
-// and proves the result in a real browser (verify-shots-browser-mcp.js).
+// Experimental, off unless the platform switches it on for a run
+// (services/shots-density.js). The pinned Playwright MCP saves every
+// screenshot at CSS scale, so the worker image patches its screenshot tool
+// (patch-playwright-mcp-screenshot.js) to follow SHOTS_SCREENSHOT_SCALE, and
+// proves both modes in a real browser (verify-shots-browser-mcp.js).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -19,15 +21,15 @@ const root = path.join(__dirname, '..');
 // Apache-2.0, Microsoft Corporation).
 const HANDLE = fs.readFileSync(path.join(__dirname, 'fixtures', 'playwright-mcp-0.0.41-screenshot-handle.txt'), 'utf8');
 
-test('the patched tool saves at device scale and answers the agent at CSS scale', () => {
+test('the patched tool saves at device scale only when asked, and always answers the agent at CSS scale', () => {
   assert.match(HANDLE, /scale: "css",\n {6}path: fileName,/, 'the fixture is the unpatched tool');
   const patched = patchSource(HANDLE);
-  assert.match(patched, /scale: "device",\n {6}path: fileName,/);
-  assert.doesNotMatch(patched, /data: buffer\n/);
-  // The file is the device-scale capture; the image the model reads is a
-  // second capture at CSS scale, saved nowhere.
+  assert.match(patched, /scale: process\.env\.SHOTS_SCREENSHOT_SCALE === "device" \? "device" : "css",\n {6}path: fileName,/);
+  // Asked (a run taken at device density), the file is the device-scale
+  // capture and the image the model reads a second capture at CSS scale,
+  // saved nowhere. Not asked, the one CSS-scale capture serves both, as before.
   assert.match(patched, /const buffer = locator \? await locator\.screenshot\(options\) : await tab\.page\.screenshot\(options\);/);
-  assert.match(patched, /data: await \(locator \? locator\.screenshot\(\{ \.\.\.options, path: void 0, scale: "css" \}\) : tab\.page\.screenshot\(\{ \.\.\.options, path: void 0, scale: "css" \}\)\)/);
+  assert.match(patched, /data: options\.scale === "css" \? buffer : await \(locator \? locator\.screenshot\(\{ \.\.\.options, path: void 0, scale: "css" \}\) : tab\.page\.screenshot\(\{ \.\.\.options, path: void 0, scale: "css" \}\)\)/);
   // A full-page screenshot still answers no image.
   assert.match(patched, /if \(!params\.fullPage\) \{\n {6}response\.addImage/);
   // Still a function the module can load.
@@ -49,7 +51,9 @@ test('the worker image patches the tool right after installing it, and verifies 
   const verify = dockerfile.indexOf('RUN node /usr/local/bin/verify-shots-browser-mcp.js');
   assert.ok(install >= 0 && install < copy && copy < patch && patch < verify, 'install, patch, then verify');
   const verifier = fs.readFileSync(path.join(root, 'worker', 'verify-shots-browser-mcp.js'), 'utf8');
-  assert.match(verifier, /verifyBrowser\(config\.mcpServers\[persona\], \[\], \{ density: phone \? 3 : 2 \}\)/);
+  assert.match(verifier, /const density = mode === 1 \? 1 : phone \? 3 : 2;/);
+  assert.match(verifier, /verifyBrowser\(configs\[mode\]\.mcpServers\[persona\], \[\], \{ density \}\)/);
+  assert.match(verifier, /\['browser_member', 'device'\], \['browser_member_phone', 'device'\]/);
   assert.match(verifier, /saved !== answered \* density/);
 });
 

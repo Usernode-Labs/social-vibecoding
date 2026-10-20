@@ -546,3 +546,20 @@ test('a dark shot that matches its light copy answers sameAsLight and stores not
     fixtures.png());
   assert.equal(beforeDark.saved, true);
 });
+
+test('only a run taken at device density saves stills over 6 MB, and its element shots may be that dense', () => {
+  const over = Buffer.alloc(6 * 1024 * 1024 + 1);
+  const element = { change: 'invite-suggestions', screen: 'desktop', side: 'before', kind: 'element' };
+  // Off (every run unless the experiment is on): today's caps.
+  const plain = control();
+  assert.throws(() => plain.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, over),
+    { code: 'shot_too_large', status: 413 });
+  assert.throws(() => plain.saveShot(element, fixtures.png({ width: 2400, height: 40 })), { code: 'element_shot_too_wide' });
+  // On: the size passes (this buffer then fails as no PNG), and a 2x desktop
+  // element saved before its screen shot is kept.
+  const dense = control();
+  dense.agent = { deviceDensity: true };
+  assert.throws(() => dense.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, over),
+    { code: 'invalid_shot_image' });
+  assert.doesNotThrow(() => dense.saveShot(element, fixtures.png({ width: 2400, height: 40 })));
+});

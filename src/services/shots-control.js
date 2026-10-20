@@ -125,7 +125,11 @@ class RunControl {
           'This app is new: the before address shows only the starter template\'s placeholder, so this run '
           + 'takes after shots only. Save the after side of each change and leave the before address alone.', 400);
       }
-      const info = target.media === 'webm' ? shots.inspectClip(buffer) : shots.inspectImage(buffer);
+      // A run taken at the screen's own density (services/shots-density.js)
+      // saves larger stills, and its element shots may be that much larger.
+      const deviceDensity = this.agent?.deviceDensity === true;
+      const info = target.media === 'webm' ? shots.inspectClip(buffer)
+        : shots.inspectImage(buffer, deviceDensity ? { maxBytes: shots.MAX_DENSE_IMAGE_BYTES } : {});
       // A dark shot identical to its light one is not kept (#4459): there
       // would be nothing to switch to, and the answer tells the agent this
       // app does not change with the mode, so it can stop taking dark shots.
@@ -147,6 +151,7 @@ class RunControl {
       shots.checkElementSize(
         this.declaredChange(target.storyId), target, info,
         this.saved.get(shots.slotKey({ ...target, variant: 'context' })),
+        { deviceDensity },
       );
       const slot = shots.slotKey(target);
       this.saved.set(slot, shots.stored(target, buffer, info));

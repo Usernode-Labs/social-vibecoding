@@ -78,13 +78,16 @@ test('the steps of a shots run against the full PostgreSQL schema', { timeout: 1
     getRepoHead: async () => ({ defaultBranch: 'main' }),
     getProposalDiff: async () => ({ diff: '+ suggestions', fileCount: 1, truncated: false }),
   };
-  function copiesDeps({ provenance = {}, afterOnly = false, removed = [] } = {}) {
+  function copiesDeps({ provenance = {}, afterOnly = false, removed = [], deviceDensity = null } = {}) {
     const calls = { prepare: [], reset: 0, guest: 0, removed: [], tiles: 0 };
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'usernode-shots-test-'));
     return {
       calls, rootDir,
       deps: {
         github,
+        // The experimental density switch (services/shots-density.js): the
+        // real setting, off, unless a test turns it on.
+        ...(deviceDensity === null ? {} : { shotsDensity: { enabledOrOff: async () => deviceDensity } }),
         removeCopies: async (_config, ref) => { calls.removed.push(ref); return removed; },
         environment: {
           preparePair: async (_config, o) => {
@@ -255,6 +258,21 @@ test('the steps of a shots run against the full PostgreSQL schema', { timeout: 1
     // A shots turn is its run's work item's: a person's Stop is an event to
     // the shots machine, never a marker left on the session to clear.
     assert.equal(calls.clears, 0, 'no stop marker is read or cleared');
+    // Stills at the screen's own density are experimental and off.
+    assert.equal(options.deviceDensity, false);
+  });
+
+  await t.test('a run started with the density experiment on takes all its stills at device density', async () => {
+    const s = await proposal();
+    const id = await prepared(s, { deviceDensity: true });
+    const { deps, calls } = agentDeps(async (options) => {
+      await save(options, 'invite-suggestions', 'before', 10);
+      await save(options, 'invite-suggestions', 'after', 200);
+      return { backend: 'claude_code', model: 'claude-sonnet-5-5', result: { exitCode: 0 } };
+    });
+    await agent(s, id, deps);
+    assert.equal(calls.dispatches[0].deviceDensity, true);
+    assert.equal((await shotsControl.read(pool, id)).agent.deviceDensity, true, 'the run keeps its own choice');
   });
 
   await t.test('a skipped change, a broken one, and nothing saved: each says why, for the machine to fail on', async () => {

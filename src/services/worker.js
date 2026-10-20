@@ -3550,6 +3550,9 @@ async function execInWorker(sessionId, {
   // The phone browsers record at the phone motion screens' size.
   shotsClipSize = null,
   shotsPhoneClipSize = null,
+  // Experimental (services/shots-density.js): save stills at the screen's
+  // own density, 3x on a phone and 2x on a desktop, instead of 1x.
+  shotsDeviceDensity = false,
   // The personas that get a phone browser beside their desktop one: those
   // with a phone screen (visible-changes.phonePersonas).
   shotsPhonePersonas = [],
@@ -3883,6 +3886,7 @@ async function execInWorker(sessionId, {
       // cannot read src/services, so the key rides the environment.
       SHOTS_LISTED_HOME_KEY: `usernode:private-home:${fixtures.INVITED_MEMBER_LISTED_USER_ID}`,
       SHOTS_PLATFORM_ASSETS: shotsPlatformAssets ? '1' : '0',
+      SHOTS_DEVICE_DENSITY: shotsDeviceDensity === true ? '1' : '0',
     } : {}),
     ...(isClaude ? {
       MODEL: claudeModel,

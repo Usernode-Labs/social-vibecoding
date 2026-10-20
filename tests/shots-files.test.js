@@ -79,7 +79,11 @@ test('anything but one whole PNG within bounds is refused with a code', () => {
   // agent knows to shoot the visible screen rather than the full page.
   assert.throws(() => shots.inspectImage(Buffer.alloc(shots.MAX_IMAGE_BYTES + 1)),
     refusal('shot_too_large', 413));
-  assert.equal(shots.MAX_IMAGE_BYTES, 12 * 1024 * 1024, 'room for a 2x desktop screen of a busy page');
+  assert.equal(shots.MAX_IMAGE_BYTES, 6 * 1024 * 1024);
+  // A run taken at device density has room for a 2x desktop screen of a busy page.
+  assert.equal(shots.MAX_DENSE_IMAGE_BYTES, 12 * 1024 * 1024);
+  assert.throws(() => shots.inspectImage(Buffer.alloc(shots.MAX_DENSE_IMAGE_BYTES + 1), { maxBytes: shots.MAX_DENSE_IMAGE_BYTES }),
+    refusal('shot_too_large', 413));
 });
 
 test('a clip must be a browser WebM between 1 KB and 20 MB', () => {
@@ -616,12 +620,15 @@ test('an element shot must fit the screen it was taken on', () => {
     refusal('element_shot_too_wide'));
   // Screen shots and clips are not element shots.
   assert.doesNotThrow(() => shots.checkElementSize(story, target('mobile', 'screen'), size(390, 5000)));
-  // Saved before its screen shot, an element may be as dense as the screen's
-  // browser saves: 3x on a phone screen, 2x on a desktop one.
-  assert.doesNotThrow(() => shots.checkElementSize(story, target('mobile'), size(1100, 300)));
-  assert.doesNotThrow(() => shots.checkElementSize(story, target('desktop'), size(2400, 300)));
-  assert.throws(() => shots.checkElementSize(story, target('desktop'), size(2600, 300)),
+  // Saved before its screen shot in a run taken at device density, an
+  // element may be as dense as the screen's browser saves: 3x on a phone
+  // screen, 2x on a desktop one. Any other run's browsers save at 1x.
+  const dense = { deviceDensity: true };
+  assert.doesNotThrow(() => shots.checkElementSize(story, target('mobile'), size(1100, 300), null, dense));
+  assert.doesNotThrow(() => shots.checkElementSize(story, target('desktop'), size(2400, 300), null, dense));
+  assert.throws(() => shots.checkElementSize(story, target('desktop'), size(2600, 300), null, dense),
     refusal('element_shot_too_wide'));
+  assert.throws(() => shots.checkElementSize(story, target('mobile'), size(1100, 300)), refusal('element_shot_too_wide'));
   // A 3x screen shot, and the message speaks in the screen's CSS pixels.
   assert.throws(() => shots.checkElementSize(story, target('mobile'), size(1206, 300), { width: 1170, height: 2532 }),
     (error) => error.code === 'element_shot_too_wide' && /is 402 px wide, wider than the mobile screen \(390 px\)/.test(error.message));
