@@ -15636,3 +15636,19 @@ CREATE INDEX IF NOT EXISTS idx_turn_spend_open_user ON turn_spend (user_id, crea
 CREATE INDEX IF NOT EXISTS idx_turn_spend_open_day ON turn_spend (created_at) WHERE settled_at IS NULL AND NOT byok;
 CREATE INDEX IF NOT EXISTS idx_turn_spend_turn ON turn_spend (turn_id) WHERE turn_id IS NOT NULL;
 COMMENT ON TABLE turn_spend IS 'staging:private';
+
+-- A change's worker (services/worker.js: a container, or a Kubernetes
+-- Deployment, named by the session), and when anything last used it: written
+-- by every process that ensures it or runs something in it, and read by the
+-- worker-eviction clock, which evicts a worker nothing has used for
+-- WORKER_IDLE_EVICTION_MS and nothing works on (session-work.ts
+-- workedOnSql). Before, each process kept its own registry of the workers it
+-- kept warm and evicted those; a worker a process left behind was the
+-- leader's to adopt.
+CREATE TABLE IF NOT EXISTS session_workers (
+  session_id    INTEGER PRIMARY KEY REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  last_used_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_session_workers_used ON session_workers (last_used_at);
+COMMENT ON TABLE session_workers IS 'staging:private';

@@ -1767,6 +1767,13 @@
       "preview": "PENDING_SQL"
     },
     {
+      "source": "src/services/worker-eviction.js",
+      "kind": "structural-template",
+      "fingerprint": "c4aead63358129d5b7a9",
+      "count": 1,
+      "preview": "`SELECT sw.session_id, sw.last_used_at::text AS last_used_at FROM session_workers sw JOIN chat_sessions cs ON cs.id = sw.session_id WHERE sw.last_used_at < NOW("
+    },
+    {
       "source": "src/services/workshop-themes.js",
       "kind": "structural-template",
       "fingerprint": "64f5704bd705d843a9c5",

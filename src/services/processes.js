@@ -53,13 +53,11 @@ const KINDS = Object.freeze([
   'deploy',         // a production deploy, by app slug (app-deploy-status.js)
   'agent_turn',     // the Mayor's turn in an agent session (mayor/agent-turn.js)
   'global_turn',    // a Global Chat turn (routes/global-chat.js)
-  'warm',           // a session's worker this process keeps warm (worker.js): a MARKER
 ]);
 const KNOWN = new Set(KINDS);
-// What a process has rather than does: another process reads it (a worker
-// warm here is not an orphan there, nor one to evict), but a drain does not
-// wait for it, and it is not counted as work (localCount, localSnapshot).
-const MARKERS = new Set(['warm']);
+// What a process has rather than does: none now (a worker kept warm was one,
+// until idle workers became the worker-eviction clock's: session_workers).
+const MARKERS = new Set();
 
 const ID = `${os.hostname()}:${process.pid}:${crypto.randomBytes(4).toString('hex')}`;
 

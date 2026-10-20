@@ -159,30 +159,18 @@ test('a DM answer asked again later is the DM machine\'s, never a process\'s mar
 
 // ── Warm workers ──────────────────────────────────────────────────────
 
-test('a worker warm here is a marker other processes read, never work a drain waits for', (t) => {
-  processes._reset();
-  t.after(() => processes._reset());
-  const worker = require('../src/services/worker');
-  worker._registryUpsertForTests(9201, { lastUsedMs: Date.now(), inFlight: false });
-  assert.equal(processes.heldHere('warm', 9201), true);
-  assert.equal(processes.localCount(), 0, 'warm is had, not done');
-  assert.deepEqual(processes.localSnapshot(), []);
-  worker._registryUpsertForTests(9201, { inFlight: true });
-  assert.equal(processes.localCount(), 1, 'a turn in it is');
-  worker.forgetWorker(9201);
-  assert.equal(processes.heldHere('warm', 9201), false);
-  assert.equal(processes.heldHere('session', 9201), false);
-});
-
-test('the idle sweep leaves a worker another process keeps warm, and adoption leaves it too', () => {
-  const sweeper = serverJs.slice(serverJs.indexOf('function startIdleEvictionSweeper()'));
-  assert.match(sweeper.slice(0, 3000), /if \(processes\.heldElsewhere\('warm', meta\.sessionId\)\) \{\n\s+worker\.forgetWorker\(meta\.sessionId\);/,
-    'the last one keeping it warm evicts it');
-  // A draining process lets go of its idle ones, so the next leader adopts them.
+test('a worker used here is noted for every process, never held by this one', () => {
+  // Which process last used a worker says nothing about who may evict it:
+  // every process writes session_workers as it uses one, and the
+  // worker-eviction clock evicts what nobody used for the window.
+  const worker = fs.readFileSync(path.join(__dirname, '..', 'src/services/worker.js'), 'utf8');
+  assert.doesNotMatch(worker, /hold\('warm'/);
+  assert.match(worker, /INSERT INTO session_workers \(session_id, last_used_at\)/);
+  const processesSrc = fs.readFileSync(path.join(__dirname, '..', 'src/services/processes.js'), 'utf8');
+  assert.doesNotMatch(processesSrc.slice(processesSrc.indexOf('const KINDS'), processesSrc.indexOf('const KNOWN')), /'warm'/);
+  // A draining process forgets nothing: its idle workers are noted already.
   const cleanupBody = serverJs.slice(serverJs.indexOf('async function cleanup()'));
-  assert.match(cleanupBody.slice(0, 4000), /if \(!meta\.inFlight && !meta\.bootstrapping\) worker\.forgetWorker\(meta\.sessionId\);/);
-  const adopt = serverJs.slice(serverJs.indexOf('async function adoptOrphanWorker('));
-  assert.match(adopt, /processes\.holders\('warm', sessionId, pool\)/);
+  assert.doesNotMatch(cleanupBody.slice(0, 4000), /forgetWorker/);
 });
 
 // A heal is app delivery's work (src/workflow/app-delivery/): one at a time

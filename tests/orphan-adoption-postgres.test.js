@@ -160,79 +160,9 @@ test('the leader adopts only what no live process holds', { timeout: 120000 }, a
     assert.ok(!adopted.includes(heldLive));
   });
 
-  await t.test('the warm workers a process left behind are adopted; one kept warm or busy elsewhere, or with a turn, is not', async () => {
-    // docs/plans/web-and-conductor.md: a web process's release or crash
-    // elects nobody, so this sweep is what adopts (and later evicts) them.
-    async function idle(label) {
-      const { rows: [s] } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title)
-         VALUES ($1, $2, $3, 'active', $4) RETURNING id`, [app.id, user.id, `b-${label}`, label]);
-      return s.id;
-    }
-    const leftWarm = await idle('left-warm');
-    const warmThere = await idle('warm-there');
-    const busyThere = await idle('busy-there');
-    const stopped = await idle('stopped');
-    await pool.query(`INSERT INTO process_holds (process_id, kind, ref) VALUES ('pod-old', 'warm', $1), ('pod-old', 'session', $2)`,
-      [String(warmThere), String(busyThere)]);
-    await pool.query(`UPDATE platform_processes SET heartbeat_at = NOW() WHERE id = 'pod-old'`);
-    const list = async () => [leftWarm, warmThere, busyThere, left].map((id) => ({ name: `usernode-worker-${id}`, sessionId: id, state: 'running' }))
-      .concat([{ name: `usernode-worker-${stopped}`, sessionId: stopped, state: 'exited' }]);
-    const adopted = [];
-    const n = await server.sweepLeftWarmWorkers({}, { list, adopt: async (w) => { adopted.push(w.sessionId); } });
-    assert.equal(n, 1);
-    assert.deepEqual(adopted, [leftWarm], 'not one warm or busy on a live process, nor one with a turn (the turn sweep\'s), nor one not running');
-    // Nor one this process keeps warm itself.
-    const release = processes.hold('warm', leftWarm);
-    try {
-      adopted.length = 0;
-      assert.equal(await server.sweepLeftWarmWorkers({}, { list, adopt: async (w) => { adopted.push(w.sessionId); } }), 0);
-    } finally { release(); }
-  });
-
-  // 14 Oct 2026 (#5162's follow-up): the worker a DRAINING process's durable
-  // build uses between its turns. That process forgot it as idle, this
-  // leader adopts it as left behind, and keeps it; its idle eviction then
-  // leaves it alone while the build holds the session (build-runs.js
-  // holdsSession, read from the real tables), and evicts it once the build
-  // has ended. tests/durable-build-worker-sweeps.test.js has the rest.
-  await t.test('a left-behind worker a durable build holds is adopted and kept, and evicted once the build ends', async () => {
-    const { rows: [s] } = await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, workflow_owner)
-       VALUES ($1, $2, 'b-draining-build', 'active', 'draining-build', 'bot-build/run:9') RETURNING id`, [app.id, user.id]);
-    const held = s.id;
-    const list = async () => [{ name: `usernode-worker-${held}`, sessionId: held, state: 'running' }];
-    workerCalls.length = 0;
-    assert.equal(await server.sweepLeftWarmWorkers({}, { list }), 1);
-    await new Promise((r) => setImmediate(r));
-    assert.deepEqual(workerCalls, [['adoptWarmWorker', held, `usernode-worker-${held}`]], 'kept and registered, never destroyed');
-    // Idle past the eviction window in this registry: left to its build.
-    warm = [{ sessionId: held, containerName: `usernode-worker-${held}`, lastUsedMs: Date.now() - 30 * 60 * 1000 }];
-    try {
-      workerCalls.length = 0;
-      await server.sweepIdleWarmWorkers();
-      assert.deepEqual(workerCalls, [], 'not evicted while its build is under way');
-      // The build ended: the next pass evicts it like any idle worker.
-      const c = await pool.connect();
-      try {
-        await c.query('BEGIN');
-        await c.query(`SET LOCAL app.wf_writer = 'transition'`);
-        await c.query(`UPDATE wf_instances SET state = 'done' WHERE machine = 'bot-build' AND key = 'run:9'`);
-        await c.query('COMMIT');
-      } finally { c.release(); }
-      await server.sweepIdleWarmWorkers();
-      assert.deepEqual(workerCalls, [['evictWorker', held]]);
-    } finally {
-      warm = [];
-      const c = await pool.connect();
-      try {
-        await c.query('BEGIN');
-        await c.query(`SET LOCAL app.wf_writer = 'transition'`);
-        await c.query(`UPDATE wf_instances SET state = 'building' WHERE machine = 'bot-build' AND key = 'run:9'`);
-        await c.query('COMMIT');
-      } finally { c.release(); }
-    }
-  });
+  // (A worker a process left behind is the worker-eviction clock's, from
+  // session_workers: tests/worker-eviction-postgres.test.js, a durable
+  // build's included.)
 
   await t.test('nor what this process itself holds', async () => {
     const release = processes.hold('session', left);

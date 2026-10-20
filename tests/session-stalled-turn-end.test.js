@@ -196,7 +196,10 @@ test('a failed turn the platform is recovering does not claim a stall', async ()
 
 // ── 3. The endings outside the chat handler ─────────────────────────────
 
-const SERVER_SRC = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+const SERVER_SRC = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8')
+  // With what a turn's recovery runs, moved out of server.js unchanged
+  // (services/turn-recovery.js).
+  + fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-recovery.js'), 'utf8');
 const SESSIONS_SRC = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8');
 
 test('every "didn\'t finish" breadcrumb after a lost worker notifies the owner', () => {
@@ -205,7 +208,7 @@ test('every "didn\'t finish" breadcrumb after a lost worker notifies the owner',
   const calls = SERVER_SRC.match(/await notifyTurnStalled\(pool, (?:sessionId|session\.id)\);/g) || [];
   assert.equal(calls.length, 5, 'one call per unfinished-turn breadcrumb');
   assert.match(SERVER_SRC,
-    /async function notifyTurnStalled\(pool, sessionId\) \{\s*\n\s*await require\('\.\/src\/routes\/sessions'\)\.notifySessionStalled\(pool, sessionId\);/);
+    /async function notifyTurnStalled\(pool, sessionId\) \{\s*\n\s*await require\('(?:\.\/src|\.\.)\/routes\/sessions'\)\.notifySessionStalled\(pool, sessionId\);/);
   assert.match(SERVER_SRC, /if \(!landed\) await notifyTurnStalled\(pool, sessionId\);/,
     'a dangling tail whose code landed is not a stall');
 });

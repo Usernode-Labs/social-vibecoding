@@ -462,7 +462,10 @@ test('every non-idempotent tail step stamps a milestone', () => {
 
 // ── 4. finalizeRecoveredTurn skips what already landed ──────────────────
 
-const SERVER_SRC = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
+const SERVER_SRC = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8')
+  // With what a turn's recovery runs, moved out of server.js unchanged
+  // (services/turn-recovery.js).
+  + fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-recovery.js'), 'utf8');
 
 test('live retained turns are handed to the interactive recovery scheduler', async () => {
   const { scheduleRetainedInteractiveTurn } = require('../src/routes/sessions');
@@ -568,7 +571,7 @@ test('a resumed tail hands its commit to the preview machine, and joins a previe
   // The machine builds and checks the recovered commit: nothing here builds
   // a preview or runs its checks in-process.
   assert.match(body,
-    /require\('\.\/src\/services\/preview-workflow'\)\.revision\(\{\s*pool, session, head: result\.sha, source: 'turn', trigger: 'boot-reconcile',\s*\}\)\.catch\(/,
+    /require\('\.\/(?:src\/services\/)?preview-workflow'\)\.revision\(\{\s*pool, session, head: result\.sha, source: 'turn', trigger: 'boot-reconcile',\s*\}\)\.catch\(/,
     'the exact commit is handed over, and a failed hand-off is not fatal');
   assert.doesNotMatch(body, /buildAndDeployStaging|captureForSession|stagingNeedsRebuild/);
   // The live tail handed this commit over before it died and the machine

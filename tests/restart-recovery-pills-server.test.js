@@ -80,7 +80,10 @@ try {
 
 const activeWorkersSvc = require('../src/services/active-workers');
 
-const SERVER_SRC = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+const SERVER_SRC = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8')
+  // With what a turn's recovery runs, moved out of server.js unchanged
+  // (services/turn-recovery.js).
+  + fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-recovery.js'), 'utf8');
 
 // Collect the metadata of every chat_session_messages INSERT a pool saw.
 function insertedRows(calls) {
@@ -188,7 +191,7 @@ test('the recovered-turn success tail picks its wrap-up pill kind from the outco
   assert.match(SERVER_SRC,
     /wrapUpPillKind = finalizeOutcome === 'push_failed' \? 'push_failed' : 'code_done'/,
     'a recovered build wrap-up must fall back to code_done pills, or push_failed when the push failed');
-  assert.match(SERVER_SRC, /const \{ runRecoveredWrapUp \} = require\('\.\/src\/routes\/sessions'\)/,
+  assert.match(SERVER_SRC, /const \{ runRecoveredWrapUp \} = require\('(?:\.\/src|\.\.)\/routes\/sessions'\)/,
     'the build/scout branches end by re-issuing the Mayor wrap-up');
   assert.match(SERVER_SRC,
     /fallbackPillKind: wrapUpPillKind/,

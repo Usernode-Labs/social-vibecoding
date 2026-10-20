@@ -130,6 +130,14 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/cli-auth').cleanupCliAuth(pool),
   },
   {
+    // A change's worker nothing has used for WORKER_IDLE_EVICTION_MS and
+    // nothing works on, evicted (its volume kept); a running worker with no
+    // row counted as used from now; one whose change is gone, destroyed
+    // (services/worker-eviction.js). Every process writes when it uses one.
+    name: 'worker-eviction', everyMs: 2 * MIN, leaseMs: 5 * MIN,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/worker-eviction').sweep(pool),
+  },
+  {
     // Model calls no live turn will settle into llm_usage (its record went
     // without settling them, or there was none), after two hours
     // (services/limits.js settleOpenTurnSpend).

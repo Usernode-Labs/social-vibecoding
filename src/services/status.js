@@ -137,6 +137,11 @@ async function gatherFull(config) {
     warmByName.set(meta.containerName, meta);
   }
 
+  // Workers some process used lately (session_workers: what the
+  // worker-eviction clock reads), for a worker this process has not
+  // registered.
+  const usedElsewhere = new Set((await pool.query('SELECT session_id FROM session_workers').catch(() => ({ rows: [] })))
+    .rows.map((r) => Number(r.session_id)));
   const workerContainers = containers.filter((c) =>
     c.resourceType === 'worker' || c.name.startsWith(WORKER_PREFIX)
   );
@@ -161,8 +166,8 @@ async function gatherFull(config) {
     // workerMode classifies what the worker is doing right now:
     //   - 'in-flight'  : a `docker exec` is running run-cc.sh
     //   - 'warm-idle'  : sleep wrapper is alive, waiting for the next
-    //                    dispatch. Costs ~256MB until the idle sweeper
-    //                    evicts it.
+    //                    dispatch. Costs ~256MB until the
+    //                    worker-eviction clock evicts it.
     //   - 'bootstrapping' : ensureWorker is racing through clone +
     //                       checkout + warm-ready
     //   - 'unregistered'  : container exists but isn't in the warm
@@ -179,7 +184,7 @@ async function gatherFull(config) {
       // what it is doing (services/processes.js).
       const processes = require('./processes');
       if (processes.heldElsewhere('session', sessionId)) workerMode = 'in-flight';
-      else if (processes.heldElsewhere('warm', sessionId)) workerMode = 'warm-idle';
+      else if (usedElsewhere.has(Number(sessionId))) workerMode = 'warm-idle';
     }
     const idleMs = warm && !warm.inFlight ? Date.now() - warm.lastUsedMs : null;
     return {

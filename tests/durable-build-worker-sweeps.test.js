@@ -7,21 +7,23 @@
 // workflow_owner set and its build still 'building'), and flagged a risk it
 // did not test. When a release replaces a process, the draining process
 // forgets its idle warm workers (server.js cleanup) and the new leader
-// adopts them (sweepLeftWarmWorkers, which keeps a durable build's worker:
-// adoptOrphanWorker). The new process's own sweeps could then stop the
-// worker a DRAINING process's build is still using between its turns: the
-// idle eviction (idle 10 minutes) and the idle pause (idle minutes, then the
-// pause destroys the worker). The idle pause is the proposal machine's
+// adopts them (adoptOrphanWorker, which keeps a durable build's worker).
+// The new process's own sweeps could then stop the worker a DRAINING
+// process's build is still using between its turns: the idle eviction (idle
+// 10 minutes) and the idle pause (idle minutes, then the pause destroys the
+// worker). Idle workers are the worker-eviction clock's now
+// (services/worker-eviction.js), one for every process, read from
+// session_workers. The idle pause is the proposal machine's
 // IdleCheck now (src/workflow/proposal/machine.ts), which reads the build's
 // hold under the session's lock with everything else it decides on; slot
 // eviction is the same machine's Pause guard (P8 in
 // tests/workflow-proposal-postgres.test.js).
 //
-// Pinned here: the idle eviction skips a session a durable build holds, says
-// so once, and still acts on every other; a read that fails is today's
-// behaviour. The holds are answered by the real holdsSession, from a pool
-// that plays the database. The idle check's own decision is driven as the
-// pure transition it is.
+// Pinned here: the worker-eviction clock never evicts a worker a durable
+// build holds (its candidates exclude what session-work.ts workedOnSql
+// reads, the build's hold included: tests/worker-eviction-postgres.test.js
+// drives it), and the idle check's own decision, driven as the pure
+// transition it is.
 //
 // Run with: node --test tests/durable-build-worker-sweeps.test.js
 
@@ -37,98 +39,9 @@ process.env.ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt';
 require('./platform-keys').setPlatformKeys();
 
-// ── The database, as holdsSession reads it ──────────────────────────────
-const db = { held: new Set(), fail: false };
-const calls = [];
-const pool = {
-  async query(sql, params) {
-    calls.push({ sql: String(sql), params });
-    if (/FROM wf_instances w/.test(sql)) {
-      if (db.fail) throw new Error('connection reset');
-      return { rows: [{ held: db.held.has(Number(params[0])) }] };
-    }
-    return { rows: [] };
-  },
-};
-require('../src/db/pool').getPool = () => pool;
-
-// ── The worker registry ─────────────────────────────────────────────────
-let registry = [];
-const evicted = [];
-const forgotten = [];
-const workerPath = require.resolve('../src/services/worker');
-const realWorker = require(workerPath);
-require.cache[workerPath].exports = {
-  ...realWorker,
-  warmRegistrySnapshot: () => registry.map((m) => ({ ...m })),
-  evictWorker: async (sessionId) => { evicted.push(Number(sessionId)); },
-  forgetWorker: (sessionId) => { forgotten.push(Number(sessionId)); },
-};
-
-// What the sweeps say.
-const logger = require('../src/services/logger');
-const said = [];
-const realInfo = logger.info;
-logger.info = (scope, message, fields) => { said.push([message, fields?.sessionId]); };
-
-const origSetInterval = global.setInterval;
-const origSetTimeout = global.setTimeout;
-global.setInterval = (...a) => { const t = origSetInterval(...a); if (t && t.unref) t.unref(); return t; };
-global.setTimeout = (...a) => { const t = origSetTimeout(...a); if (t && t.unref) t.unref(); return t; };
-let server;
-try { server = require('../server'); } finally {
-  global.setInterval = origSetInterval;
-  global.setTimeout = origSetTimeout;
-}
-test.after(() => { logger.info = realInfo; });
-
 const MIN = 60 * 1000;
 const NOW = Date.parse('2026-10-14T12:00:00Z');
 const idleFor = (min) => NOW - min * MIN;
-
-function reset({ held = [], fail = false } = {}) {
-  db.held = new Set(held);
-  db.fail = fail;
-  calls.length = 0;
-  evicted.length = 0;
-  forgotten.length = 0;
-  said.length = 0;
-}
-const asked = () => calls.filter((c) => /FROM wf_instances w/.test(c.sql)).map((c) => Number(c.params[0]));
-
-test('the idle eviction leaves a worker a durable build holds, and evicts the others', async () => {
-  registry = [
-    { sessionId: 41, containerName: 'usernode-worker-41', lastUsedMs: idleFor(25) }, // a draining build's, between turns
-    { sessionId: 42, containerName: 'usernode-worker-42', lastUsedMs: idleFor(25) }, // nobody's: evicted
-    { sessionId: 43, containerName: 'usernode-worker-43', lastUsedMs: idleFor(2) }, // not idle long enough
-    { sessionId: 44, containerName: 'usernode-worker-44', lastUsedMs: idleFor(25), inFlight: true },
-  ];
-  reset({ held: [41, 43, 44] });
-  await server.sweepIdleWarmWorkers({ now: NOW });
-  assert.deepEqual(evicted, [42]);
-  assert.deepEqual(asked(), [41, 42], 'asked only of a worker it would otherwise evict');
-  assert.deepEqual(said.filter(([m]) => /durable build/.test(m)),
-    [['Not evicting an idle warm worker: a durable build holds its session', 41]]);
-  // Said once while it stays held, not on every pass.
-  said.length = 0;
-  await server.sweepIdleWarmWorkers({ now: NOW + MIN });
-  assert.deepEqual(said.filter(([m]) => /durable build/.test(m)), []);
-  assert.deepEqual(evicted, [42, 42]);
-  // Its build ended: the next pass evicts it as any idle worker.
-  reset({ held: [] });
-  await server.sweepIdleWarmWorkers({ now: NOW + 2 * MIN });
-  assert.deepEqual(evicted.sort(), [41, 42]);
-});
-
-test('the idle eviction: a read that fails evicts as before', async () => {
-  registry = [
-    { sessionId: 41, containerName: 'usernode-worker-41', lastUsedMs: idleFor(25) },
-    { sessionId: 42, containerName: 'usernode-worker-42', lastUsedMs: idleFor(25) },
-  ];
-  reset({ held: [41], fail: true });
-  await server.sweepIdleWarmWorkers({ now: NOW });
-  assert.deepEqual(evicted, [41, 42]);
-});
 
 // The idle pause: the proposal machine's IdleCheck, a timer's event to a
 // session holding its slot. Idle past the window, it pauses (its worker is
@@ -168,25 +81,27 @@ test('the idle check leaves a session a durable build holds, and pauses the othe
   assert.match(facts, /buildHoldSql\(/);
 });
 
-test('every sweep that stops a worker unasked asks first; adoption already keeps a durable build\'s', () => {
+test('no sweep stops a worker a durable build holds: the eviction clock reads its hold; adoption keeps its worker', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  // The interval runs the pass. Nothing in server.js pauses a session: every
-  // session holding a slot is the proposal machine's from its INSERT (the
-  // wf_enrol_proposal trigger, src/db/schema.sql), and the release adopts
-  // any an older build left out; the machine's idle check is the pause.
-  assert.match(src, /sweeperHandle = setInterval\(async \(\) => \{\s*if \(lifecycle\.isShuttingDown\(\)\) return;\s*await sweepIdleWarmWorkers\(\)\.catch/);
+  // Nothing in server.js evicts an idle worker or pauses a session: idle
+  // workers are the worker-eviction clock's, and every session holding a
+  // slot is the proposal machine's from its INSERT (the wf_enrol_proposal
+  // trigger, src/db/schema.sql); the machine's idle check is the pause.
+  assert.doesNotMatch(src, /sweepIdleWarmWorkers|startIdleEvictionSweeper|sweepLeftWarmWorkers|forgetWorker/);
   assert.doesNotMatch(src, /autoPauseIdleSessions/);
   assert.doesNotMatch(src, /adoptProposals|startSessionAutoPauseSweeper/, 'no leader pass adopts or pauses');
   const schema = fs.readFileSync(path.join(__dirname, '..', 'src/db/schema.sql'), 'utf8');
   assert.match(schema, /CREATE TRIGGER chat_sessions_wf_enrol_proposal\n {2}AFTER INSERT ON chat_sessions\n {2}FOR EACH ROW\n {2}WHEN \(NEW\.status IN \('active', 'promoted', 'merging'\)\)\n {2}EXECUTE FUNCTION wf_enrol_proposal\(\);/);
   const platform = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/platform.ts'), 'utf8');
   assert.match(platform, /\['proposals', \(\) => adoptProposals\(\)\],/);
-  assert.match(src, /function heldByDurableBuild\(sessionId, pool = getPool\(config\)\) \{\s*return require\('\.\/src\/services\/build-runs'\)\.holdsSession\(pool, sessionId\);/);
-  // The left-behind sweep adopts through adoptOrphanWorker, which keeps a
-  // durable build's worker as it is (tests/homeroom-bot-restart-recovery.test.js).
+  // The clock's candidates leave out whatever works on the session, a
+  // durable build's hold among them.
+  const eviction = fs.readFileSync(path.join(__dirname, '..', 'src/services/worker-eviction.js'), 'utf8');
+  assert.match(eviction, /AND NOT \$\{workedOnSql\(\)\}/);
+  const work = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/session-work.ts'), 'utf8');
+  assert.match(work.slice(work.indexOf('export function workedOnSql()')), /OR \$\{buildHoldSql\('cs'\)\}/);
+  // Adoption keeps a durable build's worker as it is
+  // (tests/homeroom-bot-restart-recovery.test.js).
   const adopt = src.slice(src.indexOf('async function adoptOrphanWorker('));
   assert.match(adopt.slice(0, 6000), /if \(session\.workflow_owned\) \{\s*if \(containerState === 'running'\) worker\.adoptWarmWorker\(sessionId, containerName\);/);
-  // A draining process only forgets its idle workers; it stops none.
-  const cleanup = src.slice(src.indexOf('async function cleanup()'));
-  assert.match(cleanup.slice(0, 4000), /if \(!meta\.inFlight && !meta\.bootstrapping\) worker\.forgetWorker\(meta\.sessionId\);/);
 });

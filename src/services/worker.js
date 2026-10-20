@@ -2753,26 +2753,29 @@ function _inFlightHold(sessionId, inFlight) {
     release();
   }
 }
-// And while it is registered at all, its worker is warm here: a marker
-// (services/processes.js 'warm', which no drain waits for) so another
-// process neither reports the worker as an orphan, nor adopts it, nor
-// evicts it from under this one (docs/plans/web-and-conductor.md).
-const _warmHolds = new Map(); // sessionId -> release
-function _warmHold(sessionId, warm) {
-  if (warm && !_warmHolds.has(sessionId)) {
-    try { _warmHolds.set(sessionId, require('./processes').hold('warm', Number(sessionId))); } catch { /* no ref */ }
-  } else if (!warm && _warmHolds.has(sessionId)) {
-    const release = _warmHolds.get(sessionId);
-    _warmHolds.delete(sessionId);
-    release();
-  }
+// When anything last used a session's worker, for every process
+// (session_workers, read by the worker-eviction clock: services/
+// worker-eviction.js): a worker is evicted by how long nobody used it,
+// never by which process's registry has it. Written as it is used; a write
+// that fails is logged (the clock counts an unknown running worker as used
+// when it first sees it).
+function noteWorkerUsed(sessionId) {
+  const pool = _getPoolSafe();
+  if (!pool) return;
+  pool.query(
+    `INSERT INTO session_workers (session_id, last_used_at) SELECT id, NOW() FROM chat_sessions WHERE id = $1
+     ON CONFLICT (session_id) DO UPDATE SET last_used_at = NOW()`, [Number(sessionId)],
+  ).catch((err) => log.warn('worker', 'Could not note a worker as used', { sessionId, err: err.message }));
+}
+function noteWorkerGone(sessionId) {
+  const pool = _getPoolSafe();
+  if (!pool) return;
+  pool.query('DELETE FROM session_workers WHERE session_id = $1', [Number(sessionId)]).catch(() => {});
 }
 class WarmRegistry extends Map {
-  set(sessionId, value) { _warmHold(sessionId, true); return super.set(sessionId, value); }
-  delete(sessionId) { _inFlightHold(sessionId, false); _warmHold(sessionId, false); return super.delete(sessionId); }
+  delete(sessionId) { _inFlightHold(sessionId, false); return super.delete(sessionId); }
   clear() {
     for (const id of [..._inFlightHolds.keys()]) _inFlightHold(id, false);
-    for (const id of [..._warmHolds.keys()]) _warmHold(id, false);
     super.clear();
   }
 }
@@ -2794,6 +2797,7 @@ function _registryUpsert(sessionId, patch) {
   const next = { ...prev, ...patch };
   _warmRegistry.set(sessionId, next);
   _inFlightHold(sessionId, !!next.inFlight);
+  if (patch.lastUsedMs != null || !!prev.inFlight !== !!next.inFlight || !existing) noteWorkerUsed(sessionId);
   // #1038: the inner docker-exec window is one of the two signals
   // isSessionBusy() ORs together, so a change here can flip a session's
   // working state for every client. Only the actual transition notifies —
@@ -2845,12 +2849,6 @@ function warmRegistrySnapshot() {
 
 // Register a warm container that already exists (either spawned by us
 // earlier in this process, or adopted from a previous server run).
-// Drop this process's record of a session's worker and leave the worker
-// as it is: another process keeps it warm too (server.js idle eviction).
-function forgetWorker(sessionId) {
-  return _warmRegistry.delete(sessionId);
-}
-
 function adoptWarmWorker(sessionId, containerName = null) {
   _registryUpsert(sessionId, {
     containerName: containerName || workerContainerName(sessionId),
@@ -5487,14 +5485,14 @@ async function clearDetachedCapture(containerName, id) {
 }
 
 /**
- * Keep a warm worker from the idle sweeper while a detached step runs in it:
- * no turn is in flight, so nothing else marks it used. A worker this process
- * has not registered is left alone.
+ * Keep a warm worker from the worker-eviction clock while a detached step
+ * runs in it: no turn is in flight, so nothing else marks it used.
  */
 function touchWorker(sessionId) {
   for (const key of [sessionId, Number(sessionId)]) {
     if (_warmRegistry.has(key)) { _registryUpsert(key, { lastUsedMs: Date.now() }); return; }
   }
+  noteWorkerUsed(sessionId);
 }
 
 // Tear down a warm worker container (eviction). Volume is preserved so
@@ -5532,6 +5530,7 @@ async function evictWorker(sessionId) {
     await docker.stopAndRemove(containerName).catch(() => {});
   }
   _warmRegistry.delete(sessionId);
+  noteWorkerGone(sessionId);
   log.info('worker', 'Worker evicted (volume preserved)', { containerName });
 }
 
@@ -5807,7 +5806,10 @@ async function destroyWorker(containerName) {
   } else {
     await docker.stopAndRemove(containerName).catch(() => {});
   }
-  if (m) _warmRegistry.delete(parseInt(m[1], 10));
+  if (m) {
+    _warmRegistry.delete(parseInt(m[1], 10));
+    noteWorkerGone(parseInt(m[1], 10));
+  }
   log.info('worker', 'Worker destroyed', { containerName });
 }
 
@@ -5863,6 +5865,7 @@ async function removeSessionRuntime(sessionId, {
     }
   }
   _warmRegistry.delete(sessionId);
+  noteWorkerGone(sessionId);
   log.info('worker', volume ? 'Worker and its Claude Code volume removed' : 'Worker destroyed', { sessionId });
   return { removed: true };
 }
@@ -6190,7 +6193,6 @@ module.exports = {
   BENCH_CAPTURE_SCRIPT_PATH,
   warmRegistrySnapshot,
   adoptWarmWorker,
-  forgetWorker,
   isInFlight,
   isWorkerExecuting,
   getActiveTurnMode,
@@ -6218,6 +6220,9 @@ module.exports = {
   newWatchState,
   _recordClaudeCodingRunForTests: recordClaudeCodingRun,
   _registryUpsertForTests: _registryUpsert,
+  // A process with no record of a session's worker (a restart, or another
+  // process), for tests.
+  _registryForgetForTests: (sessionId) => _warmRegistry.delete(sessionId),
   _mintHomeroomReadGrantForTests: mintHomeroomReadGrant,
   parseLine,
   newWatchdogCounters,

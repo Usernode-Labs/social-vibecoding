@@ -166,28 +166,13 @@ test('singleton background work lives in becomeLeader(), not start()', () => {
   }
 });
 
-test('each process sweeps its own warm workers, whether or not it leads', () => {
+test('no process sweeps workers of its own: idle workers are the worker-eviction clock\'s', () => {
   // A web process never leads (docs/plans/web-and-conductor.md), and the
-  // workers of the turns it ran are in its registry alone.
-  const duties = serverJs.slice(
-    serverJs.indexOf('function startProcessDuties()'),
-    serverJs.indexOf('async function becomeLeader()')
-  );
-  assert.ok(duties.includes('startIdleEvictionSweeper()'), 'startProcessDuties() owns the idle eviction');
-  const startBody = serverJs.slice(
-    serverJs.indexOf('async function start()'),
-    serverJs.indexOf('// Boot only when run as the entry point')
-  );
-  assert.match(startBody, /if \(runsClusterMaintenance\(\)\) startProcessDuties\(\);/,
-    'every process that maintains the cluster runs them; a staging preview does not');
-  const becomeLeaderBody = serverJs.slice(
-    serverJs.indexOf('async function becomeLeader()'),
-    serverJs.indexOf('async function start()')
-  );
-  assert.ok(!becomeLeaderBody.includes('startIdleEvictionSweeper()'), 'not only on the leader');
-  // A session busy anywhere is left alone: its worker may be in use there.
-  const sweeper = serverJs.slice(serverJs.indexOf('function startIdleEvictionSweeper()'));
-  assert.match(sweeper.slice(0, 2000), /isSessionBusyElsewhere\(meta\.sessionId\)\) continue;/);
+  // worker of a turn it ran is any process's to use next: idle eviction is
+  // one clock reading session_workers (services/worker-eviction.js).
+  assert.doesNotMatch(serverJs, /startIdleEvictionSweeper|sweepIdleWarmWorkers|sweepLeftWarmWorkers/);
+  const clock = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/clock/services.ts'), 'utf8');
+  assert.match(clock, /name: 'worker-eviction'[\s\S]*?legacy\('services\/worker-eviction'\)\.sweep\(pool\)/);
 });
 
 test('cleanup releases leadership after the drain so the standby promotes cleanly', () => {
