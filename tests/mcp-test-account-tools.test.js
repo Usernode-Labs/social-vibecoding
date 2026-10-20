@@ -115,6 +115,30 @@ test('create_test_account hands back the account once, with sign-in steps on thi
   assert.match(sc.nextStep, /once/i);
 });
 
+test('create_test_account with everyTemplate asks for a project from each template and lists them', async (t) => {
+  const projects = [
+    { slug: 'restaurant-tier-list-a1b2c3', name: 'Restaurant tier list', template: 'tier-list-restaurants', kind: 'ready-made' },
+    { slug: 'board-game-starter-d4e5f6', name: 'Board game starter', template: 'game-board', kind: 'game' },
+  ];
+  const calls = stubFetch(t, () => ({
+    body: { account: { userId: 77, username: 'member_ab12', password: 'one-time-Secret_2', needsUsernameChoice: true, platformAccess: true, welcomeDm: false, projects } },
+  }));
+  const { handlers, specs } = register({ user: { ...ADMIN } });
+  assert.match(specs.get('create_test_account').description, /everyTemplate true/);
+  const out = await handlers.get('create_test_account')({ everyTemplate: true });
+  assert.deepEqual(calls[0].body, { everyTemplate: true });
+  const sc = out.structuredContent;
+  assert.deepEqual(sc.projects, projects);
+  assert.match(sc.nextStep, /its 2 projects are being set up/);
+  assert.match(sc.nextStep, /retiring the account takes them down/);
+  // An account made without it has none, and the next step says nothing of projects.
+  const none = stubFetch(t, () => ({ body: { account: { userId: 78, username: 'member_cd34', password: 'p', projects: [] } } }));
+  const out2 = await handlers.get('create_test_account')({});
+  assert.equal(none.length, 1);
+  assert.deepEqual(out2.structuredContent.projects, []);
+  assert.doesNotMatch(out2.structuredContent.nextStep, /projects/);
+});
+
 test('create_test_account refuses an over-long note before any call', async (t) => {
   const calls = stubFetch(t, () => ({ body: {} }));
   const { handlers } = register({ user: { ...ADMIN } });
@@ -337,6 +361,7 @@ test('the charter tells the session how to handle the password and when to retir
   assert.match(section.text, /seen by everyone/);
   assert.match(section.text, /get_run_report/);
   assert.match(section.text, /before or after retiring/);
+  assert.match(section.text, /everyTemplate true also starts it with one private project from each different template/);
 });
 
 test('create_test_phone_sign_in hands back a number and a one-time code once, with the Join steps', async (t) => {

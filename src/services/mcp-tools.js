@@ -8718,11 +8718,12 @@ function registerTools(server, ctx) {
 
     server.registerTool('create_test_account', {
       title: 'Test accounts: make one',
-      description: `Admin only. Make a genuinely new Homeroom account for first-time-user testing and get back its username and a one-time password. Signing in with them through the ordinary sign-in form (web, or the iOS app, which signs in through the same form) gives a real first run: terms, the community picker, the tour and the First challenges, with no history. It is let in at once unless platformAccess is false (to test the waiting room). With no username it gets a placeholder and the tester picks a handle in the real first-run step. It is a test account for good: left out of leaderboards, Journey and vote thresholds, its votes on apps real people made are recorded but not counted, and it gets no welcome DM unless welcomeDm is true; Homeroom bot's hello reaches it as it reaches any newcomer, in Messages as it answers the first session (making a project, or Look around first), joins by an invite or asks for its first change. Relay the password ONCE, tell the person to sign out on the device first, and retire the account with retire_test_account when testing is done. At most 25 are live at once. Read get_connector_guidance's "test-accounts" section first.`,
+      description: `Admin only. Make a genuinely new Homeroom account for first-time-user testing and get back its username and a one-time password. Signing in with them through the ordinary sign-in form (web, or the iOS app, which signs in through the same form) gives a real first run: terms, the community picker, the tour and the First challenges, with no history. It is let in at once unless platformAccess is false (to test the waiting room). With no username it gets a placeholder and the tester picks a handle in the real first-run step. It is a test account for good: left out of leaderboards, Journey and vote thresholds, its votes on apps real people made are recorded but not counted, and it gets no welcome DM unless welcomeDm is true; Homeroom bot's hello reaches it as it reaches any newcomer, in Messages as it answers the first session (making a project, or Look around first), joins by an invite or asks for its first change. With everyTemplate true it also starts with one private project from each different template, the ready-made apps and the game starters (one of each, not every variant: one tier list, one poll), as if it had made them itself, so its first run opens on Home with them; they take a few minutes to be set up, and retiring the account takes them down with it. Relay the password ONCE, tell the person to sign out on the device first, and retire the account with retire_test_account when testing is done. At most 25 are live at once. Read get_connector_guidance's "test-accounts" section first.`,
       inputSchema: {
         username: z.string().optional().describe('A handle to use, checked like any username. Omit it for a placeholder and the real "choose your username" step.'),
         platformAccess: z.boolean().optional().describe('Let the account in at once (default true). false leaves it in the waiting room.'),
         welcomeDm: z.boolean().optional().describe('Let the welcome DM reach it (default false). The welcome DM puts staff into a group with the account. Homeroom bot\'s hello reaches it either way, once it makes a project, looks around or joins by an invite.'),
+        everyTemplate: z.boolean().optional().describe('Also make it one private project from each different template (default false): every ready-made app and game starter once, not every variant. They count against the server\'s app limit, all of them or none.'),
         note: z.string().optional().describe(`What the account is for, at most ${TEST_ACCOUNT_NOTE_MAX} characters. Shown by list_test_accounts.`),
       },
       outputSchema: {
@@ -8732,12 +8733,13 @@ function registerTools(server, ctx) {
         needsUsernameChoice: z.boolean(),
         platformAccess: z.boolean(),
         welcomeDm: z.boolean(),
+        projects: z.array(z.object({ slug: z.string(), name: z.string(), template: z.string(), kind: z.string() })),
         signIn: z.object({ url: z.string(), steps: z.array(z.string()) }),
         retireWith: z.string(),
         nextStep: z.string(),
       },
       annotations: writeAnnotations,
-    }, async ({ username, platformAccess, welcomeDm, note }) => {
+    }, async ({ username, platformAccess, welcomeDm, everyTemplate, note }) => {
       const guard = scopeGuard(WRITE_SCOPE) || testAccountAdminOnly();
       if (guard) return guard;
       let noteText;
@@ -8747,11 +8749,17 @@ function registerTools(server, ctx) {
         noteText = check.value;
       }
       const r = await callPlatform(baseUrl, accessToken, 'POST', '/api/test-accounts', {
-        username, platformAccess, welcomeDm, note: noteText,
+        username, platformAccess, welcomeDm, everyTemplate, note: noteText,
       });
       if (!r.ok) return testAccountRefusal(r);
       const a = (r.body && r.body.account) || {};
       const userId = num(a.userId);
+      const projects = (Array.isArray(a.projects) ? a.projects : []).map((p) => ({
+        slug: String(p && p.slug || ''),
+        name: String(p && p.name || ''),
+        template: String(p && p.template || ''),
+        kind: String(p && p.kind || ''),
+      }));
       return toolResult({
         userId,
         username: String(a.username || ''),
@@ -8759,6 +8767,7 @@ function registerTools(server, ctx) {
         needsUsernameChoice: !!a.needsUsernameChoice,
         platformAccess: a.platformAccess !== false,
         welcomeDm: !!a.welcomeDm,
+        projects,
         signIn: {
           url: `${origin || ''}/#login`,
           steps: [
@@ -8768,7 +8777,11 @@ function registerTools(server, ctx) {
           ],
         },
         retireWith: `retire_test_account({ userId: ${userId}, confirm: "RETIRE" })`,
-        nextStep: 'Give the person the username and password once, with the sign-in steps. Do not repeat the password later in the conversation. Retire the account when they have finished testing.',
+        nextStep: 'Give the person the username and password once, with the sign-in steps. Do not repeat the password later in the conversation. '
+          + (projects.length
+            ? `Say that its ${projects.length} projects are being set up and open from Home within a few minutes, and that retiring the account takes them down with it. `
+            : '')
+          + 'Retire the account when they have finished testing.',
       });
     });
 
