@@ -1260,8 +1260,10 @@ function cliBrowserRoutes(config) {
     const leaseId = parseCanonicalPositiveBigint(req.params.leaseId);
     if (!leaseId) return res.status(400).json({ error: 'invalid_request' });
     try {
+      // 'revoked' is the owner letting the machine go from the browser; the
+      // release_reason CHECK allows nothing else for it.
       const released = await localAgent.release(pool, {
-        leaseId, userId: req.user.id, reason: 'settings',
+        leaseId, userId: req.user.id, reason: 'revoked',
       });
       return released ? res.status(204).end() : res.status(404).json({ error: 'not_found' });
     } catch (err) {
