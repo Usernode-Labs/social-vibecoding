@@ -227,6 +227,10 @@
     "text": "An invite counts when the person joins your community through your invite link, or accepts your invite, while this challenge is open. Each person counts once, for the first invite they took. Counts run on a schedule, so a new join shows here a little later.",
     "description": "Under the progress rail on the Invite 3 people challenge's page: the plain-language rule the scorer pays by."
   },
+  "challenges.feedback.note": {
+    "text": "A report counts when you send it while this challenge is open, about Homeroom or a project somebody else made. Feedback on a project you made, or on one only you are in, doesn't count here, and nor does a report too short to act on or a copy of one you already sent. Counts run on a schedule and each report is graded, so a new one shows here a little later.",
+    "description": "Under the progress rail on the feedback challenge's page (Send useful feedback): the plain-language rule the scorer pays by."
+  },
   "challenges.invites.heading": {
     "text": "Your invites",
     "description": "Heading of the per-person invite list on the Invite 3 people challenge's page, before What counts."

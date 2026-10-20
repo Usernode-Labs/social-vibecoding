@@ -468,8 +468,8 @@
     "description": "Accessible name of the × button on the \"Your feedback\" sheet: closes the sheet. \"Close\" is a verb."
   },
   "feedback.legend": {
-    "text": "Received: it was filed as a request. Counted: it earned points in the feedback challenge.",
-    "description": "Explanation at the top of the \"Your feedback\" sheet of its two status labels, \"Received\" and \"Counted\". Use the same words as those labels."
+    "text": "Received: it was filed as a request. Counted: it earned points in a feedback challenge. Feedback on a project you made, or on one only you are in, is received but not counted, except once in your First challenges.",
+    "description": "Explanation at the top of the \"Your feedback\" sheet of its two status labels, \"Received\" and \"Counted\". Use the same words as those labels. \"First challenges\" is the heading of the newcomer's first group on the Challenges tab."
   },
   "feedback.loadFailed": {
     "text": "Your feedback could not be loaded. Check your connection and try again.",

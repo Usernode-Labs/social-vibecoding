@@ -1544,6 +1544,14 @@ const TopochainChallenges = {
       // A flag, not an href: the page's one computed href stays the guarded
       // CTA, and this link's address is a constant in the pane.
       feedbackLink: TopochainChallenges._isFeedback(challenge),
+      // #4036: and, under the rail, what makes a report count. A report on
+      // the viewer's own project is filed but never counted here (the
+      // scorer's USEFUL_FEEDBACK_SQL), and the count lands on the scorer's
+      // schedule after grading; without this line a filed report the rail
+      // never moves for read as a counter that failed to sync.
+      feedbackNote: TopochainChallenges._isFeedback(challenge)
+        ? PlatformI18n.t('leaderboard:challenges.feedback.note')
+        : null,
       // #3650: on an invite challenge, the plain-language line under the
       // rail (what makes an invite count) and the per-person list. On any
       // other challenge both are absent, so the page is exactly as it was.
