@@ -266,9 +266,12 @@ async function resolveCodexRuntimeContext({
   // A user's explicit choice — this turn's, or the one stored on the session
   // when it was created — always wins. The platform default only fills a
   // blank, so raising it never overrides anybody's setting (#2600).
-  const requestedReasoningEffort = reasoningEffort
+  const asked = reasoningEffort
     || session.agent_reasoning_effort
     || defaultReasoningEffortForModel(catalogModel, config);
+  // 'max' is Claude Code's level alone (a bot configuration may name it,
+  // bot-configs.js EFFORTS); Codex's scale tops out at 'xhigh'.
+  const requestedReasoningEffort = asked === 'max' && agentHarness !== 'claude' ? 'xhigh' : asked;
 
   // A saved thread belongs to the CLI that wrote it: a Codex thread id means
   // nothing to `claude --resume`, and the reverse. When the harness for this

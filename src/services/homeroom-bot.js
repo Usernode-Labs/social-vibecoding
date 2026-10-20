@@ -712,6 +712,41 @@ function stageModel(settings, config, stage) {
   return platformDefaultModel(settings, config);
 }
 
+// The later changes' current configuration (bot-configs.js laterVersion),
+// which decides the triage and the follow-ups of every request that is not
+// a first version: its recipe, or null for none (or one the catalog cannot
+// run), when the per-stage settings apply as before. Read at most every
+// LATER_RECIPE_TTL_MS, since a triage runs often and the check reads the
+// whole catalog; a build reads it afresh (buildLive).
+const LATER_RECIPE_TTL_MS = 30 * 1000;
+let laterRecipeCache = null;
+async function laterRecipe(pool) {
+  if (laterRecipeCache && Date.now() - laterRecipeCache.at < LATER_RECIPE_TTL_MS) return laterRecipeCache.recipe;
+  let recipe = null;
+  try {
+    const version = await botConfigs().laterVersion(pool);
+    recipe = version ? botConfigs().recipeOf(version.recipe) : null;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read the later changes\' configuration; the per-stage settings apply', { err: err.message });
+  }
+  laterRecipeCache = { recipe, at: Date.now() };
+  return recipe;
+}
+
+/**
+ * What a recipe gives one stage's turn: its model (else `fallback`), its
+ * reasoning effort (null: the deployment's) and its clock in ms (null:
+ * `fallbackMs`). Pure.
+ */
+function recipeStage(recipe, stage, { fallback = null, fallbackMs = null } = {}) {
+  const r = recipe ? botConfigs().recipeOf(recipe) : null;
+  return {
+    model: (r && r.models[stage]) || fallback,
+    effort: r ? botConfigs().stageEffort(r, stage) : null,
+    clockMs: (r && botConfigs().stageClockMs(r, stage)) || fallbackMs,
+  };
+}
+
 function clampInt(raw, fallback, min, max) {
   const n = parseInt(raw, 10);
   if (!Number.isFinite(n)) return fallback;
@@ -3381,9 +3416,13 @@ async function runTriage(pool, config, {
   // when it was created, so changing the model changed the ledger and not
   // the turn. stampSessionModel below makes the two agree.
   // A project's first version is read on the current configuration's
-  // triage model instead (below, once who it is for is known).
+  // triage model instead (below, once who it is for is known), and every
+  // other request on the later changes' current configuration's, with its
+  // effort and its clock; the per-stage setting only when there is none.
   let model = stageModel(settings, config, 'triage');
   let triageHarness = 'auto';
+  let triageEffort = null;
+  let triageBudgetMs = turnBudgetMs;
   let triageGuidance = null;
   // What this turn read, recorded beside every run it produces once the
   // prompt exists (#3654), so it can be replayed by the benchmark.
@@ -3519,10 +3558,14 @@ async function runTriage(pool, config, {
       // (#3264), while it is still up for a vote.
       if (open.status === 'promoted') {
         followUpTurn = true;
+        // The later changes' configuration's follow-ups: model, effort, clock.
+        const f = recipeStage(await laterRecipe(pool), 'followup', {
+          fallback: stageModel(settings, config, 'followup'), fallbackMs: turnBudgetMs,
+        });
         return runFollowUp(pool, config, {
           bot, app, repo, item, issue, proposal: open, runMode,
-          model: stageModel(settings, config, 'followup'),
-          turnBudgetMs: followUpBudgetMs(app, config, turnBudgetMs), startedMs,
+          model: f.model, reasoningEffort: f.effort,
+          turnBudgetMs: followUpBudgetMs(app, config, f.clockMs), startedMs,
           recordFailure,
           deps: {
             github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
@@ -3687,9 +3730,21 @@ async function runTriage(pool, config, {
   if (liveMode && requester?.firstVersion) {
     const version = await botConfigs().currentVersion(pool);
     if (version) {
-      model = version.recipe.models.triage;
+      const t = recipeStage(version.recipe, 'triage', { fallback: model, fallbackMs: turnBudgetMs });
+      model = t.model;
+      triageEffort = t.effort;
+      triageBudgetMs = t.clockMs;
       triageHarness = live.recipeHarness(model, config);
       triageGuidance = (await botConfigs().recipeGuidance(pool, version.recipe))?.triage || null;
+    }
+  } else {
+    const recipe = await laterRecipe(pool);
+    if (recipe) {
+      const t = recipeStage(recipe, 'triage', { fallback: model, fallbackMs: turnBudgetMs });
+      model = t.model;
+      triageEffort = t.effort;
+      triageBudgetMs = t.clockMs;
+      triageHarness = live.recipeHarness(model, config);
     }
   }
   // A project made from a game starter: its plan is the creator's game
@@ -3772,7 +3827,7 @@ async function runTriage(pool, config, {
 
   // A turn record nothing owns any more would refuse every turn from here
   // on. Checked after the container is up, so a live turn is never touched.
-  await clearStaleTurn(pool, session, { worker, maxAgeMs: turnBudgetMs })
+  await clearStaleTurn(pool, session, { worker, maxAgeMs: Math.max(turnBudgetMs, triageBudgetMs) })
     .catch((err) => log.warn('homeroom-bot', 'Stale turn check failed', { err: err.message }));
 
   // A fresh model conversation for every issue (#3035). Passing a null
@@ -3815,7 +3870,7 @@ async function runTriage(pool, config, {
   // starts again on its whole clock.
   const turn = async (resumeThreadId, key) => {
     const ran = await durableTurn.runTurn(look.steps || durableSteps.none(), key, {
-      pool, session, mode: 'scout', budgetMs: turnBudgetMs, owner: look.owner, fullBudgetAgain: true,
+      pool, session, mode: 'scout', budgetMs: triageBudgetMs, owner: look.owner, fullBudgetAgain: true,
       deps: { worker, agentTurn },
       stop: () => durableTurn.clockStop(worker, pool, session.id, look.owner),
       dispatch: (extra = {}) => sessions.runCodexAttemptLoop({
@@ -3829,6 +3884,8 @@ async function runTriage(pool, config, {
           // makes it (#3296): GLM runs in Claude Code. A first version's
           // configuration may name an Anthropic model, which runs there too.
           harness: triageHarness,
+          // And the effort its configuration gives the triage, if it names one.
+          ...(triageEffort ? { reasoningEffort: triageEffort } : {}),
         }),
         dispatchOnce: (ctx) => {
           pricing = ctx?.pricingSnapshot || pricing;
@@ -4075,7 +4132,7 @@ async function runTriage(pool, config, {
     const repair = await askForVerdictBlock(pool, config, {
       bot, session, model, containerName, harness: triageHarness,
       threadId: result.agentThreadId || null,
-      budgetMs: Math.min(VERDICT_REPAIR_MS, turnBudgetMs),
+      budgetMs: Math.min(VERDICT_REPAIR_MS, triageBudgetMs),
       deps: { worker, agentTurn, sessions },
     });
     if (repair) {
@@ -4240,6 +4297,26 @@ function buildBudgets(app, config, turnBudgetMs, { firstVersion = false } = {}) 
  * (PR #4582, change 7490). It gets what the build got; a first version's
  * longer clock is for its size, which a follow-up does not have.
  */
+/**
+ * buildBudgets with a configuration's own clocks (bot-configs.js
+ * recipe.clocks) for the stages it names: its spec's and build's minutes
+ * are its scope's own, so a first version's carry no factor of their own,
+ * and the platform's repository still gets PLATFORM_BUILD_TIME_FACTOR times
+ * them. A recipe that names no clock is buildBudgets exactly. Pure.
+ */
+function recipeBudgets(app, config, turnBudgetMs, { firstVersion = false, recipe = null } = {}) {
+  const base = buildBudgets(app, config, turnBudgetMs, { firstVersion });
+  const r = recipe ? botConfigs().recipeOf(recipe) : null;
+  if (!r || !r.clocks) return base;
+  const factor = isPlatformRepo(app, config) ? PLATFORM_BUILD_TIME_FACTOR : 1;
+  const build = botConfigs().stageClockMs(r, 'build');
+  const spec = botConfigs().stageClockMs(r, 'spec');
+  return {
+    turnBudgetMs: build ? build * factor : base.turnBudgetMs,
+    specBudgetMs: spec ? spec * factor : base.specBudgetMs,
+  };
+}
+
 function followUpBudgetMs(app, config, turnBudgetMs) {
   return isPlatformRepo(app, config) ? turnBudgetMs * PLATFORM_BUILD_TIME_FACTOR : turnBudgetMs;
 }
@@ -4722,6 +4799,9 @@ function replyFailedWhy(error) {
 async function runFollowUp(pool, config, {
   bot, app, repo, item, issue, proposal, runMode, model, turnBudgetMs, startedMs,
   recordFailure, deps,
+  // The effort the later changes' configuration gives follow-ups, or null
+  // for the deployment's (runTriage, recipeStage).
+  reasoningEffort = null,
 }) {
   const { github, threadContext, sessions, limits, managedOpenRouter, agentTurn } = deps;
   const issueNumber = Number(item.issue_number);
@@ -4964,7 +5044,7 @@ async function runFollowUp(pool, config, {
   if (checks) {
     return runChecksFix(pool, config, {
       bot, app, repo, item, issue, session, checks, canRevise, mode, runMode, model, turnBudgetMs, startedMs,
-      recordFailure, lastRun, seedReadAt, comments, issueThread, proposalThread, botLogin, deps,
+      recordFailure, lastRun, seedReadAt, comments, issueThread, proposalThread, botLogin, deps, reasoningEffort,
     });
   }
   // A fix still due after this turn (it answered, or its change did not
@@ -5023,6 +5103,7 @@ async function runFollowUp(pool, config, {
 
   turn = await followup.runFollowUpTurn({
     pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps: { github, ...deps },
+    reasoningEffort,
     steps: look.steps, owner: look.owner, key: 'reply',
     // #4610: once the turn is really going ahead, the person hears so. An
     // ask was told so by the voice when it was queued.
@@ -5463,7 +5544,7 @@ async function queueChecksFix(pool, { sessionId, head = null } = {}) {
  */
 async function runChecksFix(pool, config, {
   bot, app, repo, item, issue, session, checks, canRevise, mode, runMode, model, turnBudgetMs, startedMs,
-  recordFailure, lastRun, seedReadAt, comments, issueThread, proposalThread, botLogin, deps,
+  recordFailure, lastRun, seedReadAt, comments, issueThread, proposalThread, botLogin, deps, reasoningEffort = null,
 }) {
   const { github, threadContext, sessions, limits, managedOpenRouter, agentTurn } = deps;
   const issueNumber = Number(item.issue_number);
@@ -5694,6 +5775,7 @@ async function runChecksFix(pool, config, {
   turn = await followup.runFollowUpTurn({
     // `mode` is runFollowUp's: a build turn, since revisions remain.
     pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps: { github, ...deps },
+    reasoningEffort,
     steps: look.steps, owner: look.owner, key: 'checks',
     // A fix round's own message, which the reconcile reads back to know
     // the move changed how the change works, not what it does
@@ -6861,7 +6943,7 @@ function complicatedPlanBullets(plan) {
  */
 async function planBeforeBuilding({
   pool, config, bot, app, repo, issueNumber, issue, parsed, plan = null, runId, seed, seedReadAt, postedAt,
-  turnBudgetMs, model, specModel, guidance = null, harnessed = false, say, deps,
+  turnBudgetMs, model, specModel, guidance = null, harnessed = false, recipe = null, say, deps,
 }) {
   const { github, ws } = deps;
   const questions = planQuestions(plan?.questions || []);
@@ -6877,12 +6959,15 @@ async function planBeforeBuilding({
     drafted = await planSteps.once('plan', () => live.buildAndPropose({
       pool, config, bot, app, repo, issueNumber, issue, seed,
       buildNote: `${parsed.buildNote || ''}${planChoicesNote(questions)}`,
-      ...buildBudgets(app, config, turnBudgetMs), model, specModel, deps: { ...deps, durable: planSteps.scope('plan') },
+      ...recipeBudgets(app, config, turnBudgetMs, { recipe }), model, specModel, deps: { ...deps, durable: planSteps.scope('plan') },
       platformRepo: isPlatformRepo(app, config), planOnly: true,
       locale: requester?.locale || null,
       skipCheck: () => whyNotBuild(pool, { runId, botId: bot.id, appId: app.id, issueNumber, github, repo }),
       origin: { lane: 'live', runId },
-      ...(harnessed ? { harnessOf: live.recipeHarness, specGuidance: guidance?.spec || null } : {}),
+      ...(harnessed ? {
+        harnessOf: live.recipeHarness, specGuidance: guidance?.spec || null,
+        efforts: { spec: botConfigs().stageEffort(recipe, 'spec'), build: null },
+      } : {}),
     }));
   }
   await debitBuildOnce(planSteps, 'plan_debited', drafted.costUsd, async (usd) => {
@@ -7282,7 +7367,7 @@ async function buildLive({
   if (checkFirst && !presetSpec) {
     return planBeforeBuilding({
       pool, config, bot, app, repo, issueNumber, issue, parsed, plan, runId, seed, seedReadAt, postedAt,
-      turnBudgetMs, model, specModel, guidance, harnessed: !!version, say, deps,
+      turnBudgetMs, model, specModel, guidance, harnessed: !!version, recipe, say, deps,
     });
   }
   // The spec is posted on the issue the moment it is written, and the
@@ -7358,7 +7443,7 @@ async function buildLive({
       .requesterOf(pool, app.id, issueNumber).catch(() => null);
     const buildArgs = {
       pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
-      ...buildBudgets(app, config, turnBudgetMs, { firstVersion }), model, specModel, deps, onSpec, proposalCeiling,
+      ...recipeBudgets(app, config, turnBudgetMs, { firstVersion, recipe }), model, specModel, deps, onSpec, proposalCeiling,
       platformRepo: isPlatformRepo(app, config), presetSpec,
       locale: requester?.locale || null,
       // #3737: a first version's spec and build decide and record its look;
@@ -7454,6 +7539,9 @@ async function buildLive({
       })() : {}),
       ...(version ? {
         harnessOf: live.recipeHarness,
+        // The effort its configuration gives the spec and the build (and
+        // the review's fixes, which are build turns), where it names one.
+        efforts: { spec: botConfigs().stageEffort(recipe, 'spec'), build: botConfigs().stageEffort(recipe, 'build') },
         review,
         specGuidance: guidance?.spec || null,
         buildGuidance: guidance?.build || null,
@@ -8747,12 +8835,24 @@ async function currentConfigurations(pool) {
   const shape = (v, stages) => (v && v.recipe && v.recipe.models ? {
     id: v.id, key: v.key, label: v.label, version: v.version,
     models: Object.fromEntries(stages.map((stage) => [stage, v.recipe.models[stage] || null])),
+    // What it gives each stage beyond its model, where it names it: the
+    // reasoning effort and the clock in minutes (null: the defaults).
+    effort: Object.fromEntries(stages.map((stage) => [stage, botConfigs().stageEffort(v.recipe, stage)])),
+    clocks: Object.fromEntries(stages.map((stage) => {
+      const ms = botConfigs().stageClockMs(v.recipe, stage);
+      return [stage, ms ? ms / 60000 : null];
+    })),
   } : null);
   const [first, later] = await Promise.all([
     botConfigs().currentVersion(pool).catch(() => null),
     botConfigs().laterVersion(pool).catch(() => null),
   ]);
-  return { firstVersion: shape(first, ['triage', 'spec', 'build']), later: shape(later, ['spec', 'build']) };
+  // A later change's triage and follow-ups are its configuration's too
+  // (runTriage, recipeStage); a first version has no follow-ups of its own.
+  return {
+    firstVersion: shape(first, ['triage', 'spec', 'build']),
+    later: shape(later, ['triage', 'spec', 'build', 'followup']),
+  };
 }
 
 async function adminPayload(pool, config, {
@@ -9549,6 +9649,8 @@ module.exports = {
   enqueueNow,
   // #3654: per-stage models and the pieces the benchmark replays with.
   stageModel,
+  recipeStage,
+  recipeBudgets,
   platformDefaultModel,
   currentConfigurations,
   checkDefaultModel,
@@ -9779,7 +9881,7 @@ module.exports = {
   rememberedRead,
   iterateRunsForExport,
   _resetForTests() {
-    triagePromptCache = null; platformSlugsCache = null;
+    triagePromptCache = null; platformSlugsCache = null; laterRecipeCache = null;
   },
   // A look's context, for a test that runs a look's steps itself.
   _newLookForTests: newLook,
