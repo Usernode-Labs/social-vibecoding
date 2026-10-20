@@ -268,6 +268,13 @@ test('the Workshop tab asks the router before its href runs', () => {
   const fn = TAB.slice(TAB.indexOf('function onWorkshopClick('));
   const body = fn.slice(0, fn.indexOf('\n}'));
   assert.match(body, /isNativeClick\?\.\(event\)\) return;/, 'a modified click is left alone');
-  assert.match(body, /if \(app\?\.resumeWorkshopView\?\.\(\)\) event\.preventDefault\(\);/,
+  assert.match(body, /if \(app\?\.resumeWorkshopView\?\.\(\)\) \{ event\.preventDefault\(\); return; \}/,
     'and the href runs unless the router took over');
+  // #5581: on a phone the href (the full-screen All communities page) is not
+  // what a press means: the drawer's list is, and that is goToCommunity's.
+  assert.match(body, /if \(wideWindow\(\)\) return;\s*event\.preventDefault\(\);\s*goToCommunity\(null\);/,
+    'a phone takes the All communities door, which opens the drawer\'s list');
+  // The late road (the pill slid first) takes the same door.
+  const go = TAB.slice(TAB.indexOf('function goToTab('), TAB.indexOf('export function PlatformTabs()'));
+  assert.match(go, /if \(key === 'workshop' && !wideWindow\(\)\) \{\s*goToCommunity\(null\);\s*return;\s*\}/);
 });

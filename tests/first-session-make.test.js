@@ -281,6 +281,7 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   assert.equal(require('../src/services/homeroom-bot-dm').MIN_BRIEF_CHARS, 10, 'the server\'s floor');
   for (const [id, words] of [
     ['onboarding:firstSession.make.title', 'What do you want to make?'],
+    ['onboarding:firstSession.make.titleHello', 'Hi {{name}}, what do you want to make?'],
     ['onboarding:firstSession.make.briefLabel', 'What should it do?'],
     ['onboarding:firstSession.make.nameLabel', 'What should we call it?'],
     ['onboarding:firstSession.make.lookAround', 'Not sure yet? <0>Look around first</0>'],

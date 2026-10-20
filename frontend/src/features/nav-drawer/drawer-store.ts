@@ -316,8 +316,31 @@ export function setShown(shown: Shown): void {
 }
 
 /**
+ * THE LIST IS THE DOOR, SOMETIMES (#5581). The Communities tab pressed from
+ * another tab, and "All communities" in the switcher, mean your communities
+ * on a phone: the drawer's level 0, not the page. Both ask for it before the
+ * community's page is on screen, so the request waits here until the drawer
+ * turns on (`setOn`) and is spent then. It expires so a request whose page
+ * never came cannot open the drawer's list under something else later.
+ */
+const OUTER_REQUEST_MS = 10_000;
+let outerAskedAt = 0;
+
+/** The next time the drawer turns on, it opens on your communities. */
+export function requestOuter(): void {
+  outerAskedAt = Date.now();
+}
+
+function outerRequested(): boolean {
+  const asked = outerAskedAt;
+  outerAskedAt = 0;
+  return asked > 0 && Date.now() - asked <= OUTER_REQUEST_MS;
+}
+
+/**
  * The drawer applies, or stops applying (another tab, a wide window, a card
- * opened from the page). Either way it starts again on the page, at once: a
+ * opened from the page). Either way it starts again at once: on the page, or
+ * on your communities when something asked for the list (`requestOuter`). A
  * record still held is let go as a navigating release, because whatever
  * turned the drawer off has usually pushed an entry of its own.
  */
@@ -325,6 +348,12 @@ export function setOn(on: boolean): void {
   const s = drawerStore.get();
   if (on === s.on) return;
   letGoBack(true);
-  communitiesDepth.cut(2);
-  drawerStore.set({ on, level: 2, searching: false, moving: false, ...(on ? {} : { pending: null }) });
+  // Spent either way: a request answered by the drawer's going off is not
+  // left to open the list the next time it comes on.
+  const asked = outerRequested();
+  const level: Level = on && asked ? 0 : 2;
+  communitiesDepth.cut(level);
+  drawerStore.set({ on, level, searching: false, moving: false, ...(on ? {} : { pending: null }) });
+  // Off the page, Back returns to it (holdBack's own rule).
+  if (on && level === 0) holdBack();
 }
