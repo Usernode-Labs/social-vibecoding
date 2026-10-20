@@ -920,6 +920,24 @@ export function NotificationsSheetView() {
   }, []);
   const t = useMessages('notifications');
 
+  // `?shot=notifications-all` lands on All, so the capture pipeline and the
+  // declared checks can reach the archive, which is otherwise one click away
+  // and so invisible to both. It is where a plain message's notification is
+  // listed (#18: Unread leaves those to the Messages screen), since #5289
+  // took out the Messages filter that used to be this address's.
+  //
+  // In an effect and not in the initial state, for the reason every deep link
+  // in this bundle is: the SSG pass renders this island in Node, where there
+  // is no `location`, and the prerendered markup has to match the client's
+  // first pass byte for byte. A console error on any route fails proposal
+  // checks.
+  useIsomorphicLayoutEffect(() => {
+    let shot: string | null = null;
+    try { shot = new URLSearchParams(window.location.search).get('shot'); }
+    catch { shot = null; }
+    if (shot === 'notifications-all') setTab('all');
+  }, []);
+
   // #5460: the remembered search comes back after mount, not in the initial
   // state — the SSG pass renders this island in Node with no sessionStorage,
   // and the prerendered field has to stay empty so hydration matches (the
@@ -983,8 +1001,12 @@ export function NotificationsSheetView() {
   // Unread LISTS what was unread while the sheet has been open (polish #7,
   // useHeldUnread); its count and Mark all read follow what still is.
   const held = useHeldUnread(open, all);
-  const unread = all.filter((view) => held.listed(view));
-  const unreadNow = all.filter((view) => view.unread);
+  // #18 (19 Oct 2026 polish board): plain messages are the Messages
+  // screen's, as the bell's count (_badgeTotal, less messageUnread) leaves
+  // them out, so Unread lists what the number it prints counts. All still
+  // has them.
+  const unread = all.filter((view) => held.listed(view) && !view.plainMessage);
+  const unreadNow = all.filter((view) => view.unread && !view.plainMessage);
   const rows = tab === 'unread' ? unread : all;
   // What the tab DRAWS. On Unread expanded (#4700) the older rows — the read
   // ones already in hand, plus any further page the server still has — show

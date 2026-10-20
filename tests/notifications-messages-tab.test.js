@@ -154,6 +154,13 @@ test('declared checks follow the agent rows to Messages and keep a collapsed row
   assert.ok(!has('#notifications-all-messages'));
   assert.ok(!dapp.tests.some((t) => /shot=notifications-messages/.test(t.path)));
   assert.ok(has('[data-notif-id="990207"] [aria-label="2 notifications"]'), 'a collapsed count is checked');
+  // #18: a plain message is not on Unread, so its rows are checked on All,
+  // which `?shot=notifications-all` opens the sheet on.
+  const messageChecks = dapp.tests.filter((t) => (t.expectSelector || '').includes('[data-notif-id="990207"]'));
+  assert.ok(messageChecks.length >= 2);
+  for (const check of messageChecks) assert.equal(check.path, '/?shot=notifications-all&demo=1', check.name);
+  assert.match(FE_SRC, /shot !== 'notifications-all'\) return;/, 'the All link opens the sheet');
+  assert.match(SHEET_SRC, /if \(shot === 'notifications-all'\) setTab\('all'\);/, 'and the sheet lands on All');
   assert.ok(has('#messages-screen:not(.hidden) [data-improve-row="task"][href$="/dev/issues/900002"]'),
     'the work-order row is checked where it lives now');
 });

@@ -569,14 +569,15 @@ const Notifications = {
   // #5289: `?shot=notifications-messages` opened it on the Messages tab.
   // That tab is gone (the Messages screen, one tab away in the bar, is where
   // conversations and agents are), so the old link still opens the sheet,
-  // on Unread like any other opening.
+  // on Unread like any other opening. `?shot=notifications-all` opens it on
+  // All (the sheet reads the parameter for the tab; this only opens it).
   //
   _shotOpened: false,
   _maybeShotOpen() {
     if (Notifications._shotOpened || Notifications.open) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
-    if (shot !== 'notifications' && shot !== 'notifications-messages') return;
+    if (shot !== 'notifications' && shot !== 'notifications-messages' && shot !== 'notifications-all') return;
     Notifications._shotOpened = true;
     // The list is the Notifications SHEET now (Streamlined Concept), so the
     // deep link resolves a screen underneath and presents over it rather

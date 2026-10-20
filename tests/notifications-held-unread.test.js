@@ -110,13 +110,16 @@ test('the sheet lists the held rows, counts the unread ones, and dims what was r
   const body = SHEET_SRC.slice(SHEET_SRC.indexOf('export function NotificationsSheetView('));
   // #18: plain messages are the Messages tab's, as the bell leaves them out.
   assert.match(body, /const held = useHeldUnread\(open, all\);[\s\S]{0,300}const unread = all\.filter\(\(view\) => held\.listed\(view\) && !view\.plainMessage\);\s*const unreadNow = all\.filter\(\(view\) => view\.unread && !view\.plainMessage\);/);
-  assert.match(body, /const unreadCount = unreadNow\.reduce\(/, 'the tab says what is still unread');
+  // #5289: the tab prints the bell's number, which leaves plain messages out
+  // too (_badgeTotal, less messageUnread), so list and count agree.
+  assert.match(body, /const unreadCount = snap\.badgeTotal \|\| 0;/, 'the tab says what the bell says');
   assert.match(body, /disabled=\{!unreadNow\.length\}/, 'Mark all read has nothing to do once all of it is read');
   assert.match(body, /held=\{tab === 'unread' && !entry\.view\.unread && !olderShown\}/,
     'dim only on collapsed Unread: on All and in the older rows a read row is an ordinary row');
   assert.match(body, /held\.release\(unread\.map\(\(view\) => view\.id\)\);\s*void controller\(\)\?\.markAllRead\(\);/);
   assert.match(SHEET_SRC, /onRead\?\.\(\);\s*Promise\.resolve\(controller\(\)\?\.markAppRead\(appId\)\)/);
-  assert.match(SHEET_SRC, /onRelease\?\.\(\[view\.id\]\);\s*void controller\(\)\?\.clearNotification\(view\.id\);/,
+  // #5289: a folded row lets all of its notifications go, and clears them all.
+  assert.match(SHEET_SRC, /onRelease\?\.\(groupIds \|\| \[view\.id\]\);\s*void controller\(\)\?\.clearNotification\(view\.id, groupIds \|\| undefined\);/,
     'the × lets the row go before clearing it');
 });
 

@@ -3016,8 +3016,8 @@
       "expectSelector": "#platform-tabs a#platform-tab-me[href=\"#profile\"][aria-label^=\"You, \"]:has(> .platform-tab-label)"
     },
     {
-      "name": "A message notification is listed in the notifications sheet, on its Messages tab (#18: the bell's Unread leaves plain messages to Messages)",
-      "path": "/?shot=notifications-messages&demo=1",
+      "name": "A message notification is listed in the notifications sheet under All (#18: the bell's Unread leaves plain messages to Messages; #5289)",
+      "path": "/?shot=notifications-all&demo=1",
       "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990207\"]",
       "expectText": "[Mock] Did the notifications change land yet?"
     },
@@ -3167,7 +3167,7 @@
     },
     {
       "name": "Consecutive messages from one conversation collapse to a counted row",
-      "path": "/?shot=notifications&demo=1",
+      "path": "/?shot=notifications-all&demo=1",
       "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990207\"] [aria-label=\"2 notifications\"]"
     },
     {

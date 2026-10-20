@@ -215,6 +215,10 @@ test('a work order row points at its request, not at a session page', () => {
   assert.match(fn, /busy: false/,
     'the agent runs where the platform cannot see it; a spinner would be invented');
   assert.match(fn, /kind: 'task'/);
+  // #5289: Messages' agents list sorts and ages a row on lastActivityAt; a
+  // work order without one sorted last and stayed behind "N older chats".
+  assert.match(fn, /lastActivityAt: task\.created_at/,
+    'a work order carries the clock the Messages inbox reads');
 });
 
 test('the two kinds cannot collide on a React key', () => {
