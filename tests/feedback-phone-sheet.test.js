@@ -121,6 +121,18 @@ test('app.css bottoms the card, slides it, and clears the keyboard', () => {
     'the actions row stays at the foot while the form scrolls');
 });
 
+test('the sheet card is the one scroller, and a drag in it is never handed to the page (#5701)', () => {
+  const at = APP_CSS.indexOf('[data-dialog-sheet] { overflow: hidden; }');
+  const block = APP_CSS.slice(at, APP_CSS.indexOf('/* THE COMMENT SHEET', at));
+  const card = /\[data-dialog-sheet\] \[data-modal-backdrop\] > div \{([\s\S]*?)\n  \}/.exec(block);
+  assert.ok(card, 'the card\'s rule');
+  assert.match(card[1], /overflow-y: auto;/, 'the card scrolls its fields');
+  assert.match(card[1], /overscroll-behavior: contain;/, 'and its end is its end, not the page behind it');
+  assert.match(card[1], /transform: translateY\(100%\)/, 'still sliding up as a sheet');
+  assert.match(block, /\[data-dialog-sheet\] \.feedback-actions \{\s*position: sticky;\s*bottom: 0;/,
+    'Cancel and Post request stay at its foot');
+});
+
 test('the form takes the keyboard without panning the page', () => {
   // A plain focus() had iOS pan the whole page while the sheet slid up and
   // the keys rose, and the sheet bounced between them (12 Oct 2026).
