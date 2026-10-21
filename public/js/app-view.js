@@ -3631,19 +3631,28 @@ const AppView = {
     // maker puts the phone down while it builds. They are told when it goes
     // live (Homeroom bot's Live, in the bell: homeroom-bot-dm.js
     // 'build_live'), so their screen promises that, with a small check, in
-    // place of "It opens here when it’s ready." Nobody else is told (#4396),
-    // so everyone else keeps that line. `tourSays` stays on both: it is also
-    // how the tour knows this screen is the one its card is for
-    // (first-session/tour-wait.ts).
-    const told = fv.mine === true;
+    // place of "It opens here when it’s ready." Since 21 Oct 2026 the
+    // project's other members are told too (#4396: 'project_opened',
+    // services/project-opened.js, `member` the server's read), so they get
+    // the promise as well. A member who is not its maker keeps "It opens
+    // here when it’s ready." over it, and gets the notification ask under
+    // it: "Get a ping when it opens?" (`ask`, app-frame/app-status.tsx). The
+    // maker's own ask was the made screen's. Somebody looking in who is not
+    // a member is told nothing, so they keep the line alone. `tourSays` stays
+    // on all of them: it is also how the tour knows this screen is the one
+    // its card is for (first-session/tour-wait.ts).
+    const promise = PlatformI18n.t('changes:firstVersion.notifyWhenLive');
+    const opens = PlatformI18n.t('changes:firstVersion.opensWhenReady');
     return {
       dot: null,
       message: appData.name || appData.slug,
       detail: null,
       ...thumb,
-      ...(told
-        ? { promise: PlatformI18n.t('changes:firstVersion.notifyWhenLive') }
-        : { lines: [PlatformI18n.t('changes:firstVersion.opensWhenReady')] }),
+      ...(fv.mine === true
+        ? { promise }
+        : fv.member === true
+          ? { lines: [opens], promise, ask: 'project_opens' }
+          : { lines: [opens] }),
       tourSays: true,
       action: chat,
       ...(waiting ? { waiting } : {}),

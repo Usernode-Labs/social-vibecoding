@@ -9624,6 +9624,36 @@
     },
     {
       "source": "src/routes/notifications.js",
+      "method": "GET",
+      "path": "/api/me/notification-asks",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "notifications.get.me.notification.asks.6cf04151",
+      "domain": "notifications",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "notification",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#notifications"
+    },
+    {
+      "source": "src/routes/notifications.js",
+      "method": "POST",
+      "path": "/api/me/notification-asks",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "notifications.post.me.notification.asks.0e541e6b",
+      "domain": "notifications",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "notification",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#notifications"
+    },
+    {
+      "source": "src/routes/notifications.js",
       "method": "PATCH",
       "path": "/api/me/mobile-push-preferences",
       "expression": null,
@@ -10581,6 +10611,14 @@
       "source": "src/routes/public-api.js",
       "method": "GET",
       "path": "/api/public/mobile-app",
+      "expression": null,
+      "status": "exempt",
+      "reason": "anonymous public integration and waitlist surface"
+    },
+    {
+      "source": "src/routes/public-api.js",
+      "method": "GET",
+      "path": "/get-app",
       "expression": null,
       "status": "exempt",
       "reason": "anonymous public integration and waitlist surface"

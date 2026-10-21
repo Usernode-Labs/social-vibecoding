@@ -7,6 +7,7 @@ const messageBookmarks = require('../services/message-bookmarks');
 const notificationBookmarks = require('../services/notification-bookmarks');
 const { notificationBookmarkLimiter } = require('../middleware/rate-limits');
 const mobilePushPreferences = require('../services/mobile-push-preferences');
+const notificationAsks = require('../services/notification-asks');
 const notificationPreferences = require('../services/notification-preferences');
 const groupChannelNotify = require('../services/group-channel-notify');
 const channelMutes = require('../services/channel-mutes');
@@ -443,6 +444,38 @@ function notificationsRoutes(config) {
       return res.json({ preferences });
     } catch (err) {
       log.error('mobile-push-preferences', 'read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The notification ask (services/notification-asks.js): what this account
+  // was asked at each moment and answered, whether a phone of theirs can take
+  // a push, and whether Homeroom would email them instead. The client decides
+  // from it whether to ask (frontend/src/features/notify-ask/decide.ts).
+  router.get('/api/me/notification-asks', async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      return res.json(await notificationAsks.readAsks(pool, req.user.id));
+    } catch (err) {
+      log.error('notification-asks', 'read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/me/notification-asks', (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    return next();
+  }, sameOriginBrowserOnly, async (req, res) => {
+    const { details, value } = notificationAsks.validateAsk(req.body);
+    if (!value) {
+      return res.status(422).json({ error: 'The given data was invalid.', details });
+    }
+    try {
+      return res.json(await notificationAsks.recordAsk(pool, req.user.id, value));
+    } catch (err) {
+      log.error('notification-asks', 'record failed', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

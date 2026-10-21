@@ -2,12 +2,16 @@
 
 // WP-E: the email that stands in for a push somebody cannot get.
 //
-// Two moments only: something they asked Homeroom bot for is ready to try
+// Four moments only: something they asked Homeroom bot for is ready to try
 // (`build_ready`; for a project's first version, its going live instead, the
-// moment its maker was promised: homeroom-bot-dm.js sendDm), and the first
+// moment its maker was promised: homeroom-bot-dm.js sendDm), the first
 // of a day's news about the people their invite link brought
-// (`invite_activity`, services/invite-activity.js). Sent only when ALL of
-// these hold:
+// (`invite_activity`, services/invite-activity.js), a project they joined
+// while it was made opening (`project_opened`, services/project-opened.js),
+// and the day's changes waiting on their vote (`votes_owed`,
+// services/vote-digest.js). Each is a moment the notification ask promises
+// "Until then, we'll email you" for (frontend/src/features/notify-ask/
+// decide.ts EMAILED_MOMENTS). Sent only when ALL of these hold:
 //   - they have no phone that could take the push (no live registration,
 //     the same test schema.sql enqueue_mobile_push_deliveries makes). A
 //     phone with the category switched off is a choice, not a gap: no mail.
@@ -24,7 +28,7 @@ const crypto = require('crypto');
 const log = require('./logger');
 const { PRODUCTION_ORIGIN } = require('./cli-auth-constants');
 
-const KINDS = Object.freeze(['build_ready', 'invite_activity']);
+const KINDS = Object.freeze(['build_ready', 'invite_activity', 'project_opened', 'votes_owed']);
 
 // The platform config, for the mail transport and the secret the
 // unsubscribe links are signed with. server.js hands it over at boot; until
@@ -113,7 +117,7 @@ async function readyRow(pool, { userId, conversationId }) {
  */
 async function emailIfNoPush(pool, {
   userId, kind, appName = null, appSlug = null, line = null, conversationId = null, notWorking = false,
-  detail = null, threadRootId = null, messageId: rangFor = null,
+  detail = null, threadRootId = null, messageId: rangFor = null, count = null, hashRoute = null,
 }) {
   try {
     if (!config || !KINDS.includes(kind) || !userId) return 'off';
@@ -146,9 +150,14 @@ async function emailIfNoPush(pool, {
       to: user.email,
       appName: appName || 'Your project',
       line,
+      ...(count != null ? { count } : {}),
       ...(notWorking ? { notWorking: true } : {}),
       ...(words ? { subject: words.subject, lead: words.lead } : {}),
-      url: openUrl({ appSlug, conversationId, threadRootId: root, messageId }),
+      // `hashRoute`: a shell screen of no one project (the vote digest's
+      // Needs you), as `#communities`.
+      url: typeof hashRoute === 'string' && /^#[a-z][a-z0-9/_-]*$/.test(hashRoute)
+        ? `${origin()}/${hashRoute}`
+        : openUrl({ appSlug, conversationId, threadRootId: root, messageId }),
       unsubscribeUrl: unsubscribe,
     });
     return 'sent';

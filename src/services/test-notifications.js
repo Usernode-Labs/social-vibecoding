@@ -97,6 +97,7 @@ const KINDS = Object.freeze([
   { kind: 'app_health', app: true, detail: 'deploy_failed' },
   { kind: 'invite_opened', app: true },
   { kind: 'member_joined', app: true, actor: true },
+  { kind: 'project_opened', app: true },
   { kind: 'first_message', app: true, chat: 'any', actor: true },
   { kind: 'app_delete_attempted', app: true, actor: true },
   { kind: 'app_deleted', actor: true, detail: 'Notification test project' },

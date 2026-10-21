@@ -5775,6 +5775,10 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   -- switch in services/notification-preferences.js (voted_changes_live) is
   -- the first gate.
   ('voted_change_merged', 'proposal_alerts', TRUE),
+  -- #4396: a project you joined while it was made is open
+  -- (services/project-opened.js). Its first version going live is the
+  -- change lifecycle Change alerts already carries.
+  ('project_opened', 'proposal_alerts', TRUE),
   ('issue_opened', 'app_alerts', TRUE),
   ('app_health', 'app_alerts', TRUE),
   -- A server-wide cap nearing its ceiling, for full admins only
@@ -5849,7 +5853,9 @@ DELETE FROM mobile_push_kind_categories
    'platform_incident',
    -- WP-E.
    'build_ready', 'build_needs_you', 'build_stopped', 'build_live',
-   'invite_opened', 'member_joined', 'first_message'
+   'invite_opened', 'member_joined', 'first_message',
+   -- #4396.
+   'project_opened'
  );
 
 -- Sparse account overrides. The closed policy above supplies defaults, so
@@ -15737,3 +15743,21 @@ CREATE TABLE IF NOT EXISTS session_workers (
 );
 CREATE INDEX IF NOT EXISTS idx_session_workers_used ON session_workers (last_used_at);
 COMMENT ON TABLE session_workers IS 'staging:private';
+
+-- The notification ask (services/notification-asks.js): when Homeroom asked
+-- somebody to turn notifications on, at which moment, on which surface
+-- ('app', the Homeroom app on a phone; 'web', a browser, where the ask is to
+-- get the app), and what they said. Kept per account so a Not now holds on
+-- every device. One row per ask: a later answer replaces the earlier one.
+CREATE TABLE IF NOT EXISTS notification_asks (
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  surface     VARCHAR(8) NOT NULL CHECK (surface IN ('app', 'web')),
+  moment      VARCHAR(32) NOT NULL CHECK (moment IN (
+                'app_building', 'invite_sent', 'suggestion', 'reply',
+                'community', 'project_opens'
+              )),
+  answer      VARCHAR(16) NOT NULL CHECK (answer IN ('yes', 'not_now')),
+  answered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, surface, moment)
+);
+COMMENT ON TABLE notification_asks IS 'staging:private';

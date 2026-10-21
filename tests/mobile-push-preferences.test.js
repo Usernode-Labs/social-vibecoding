@@ -62,6 +62,9 @@ const CURRENT_KINDS = [
   // invite link brings back to its maker ("Your invites").
   'build_ready', 'build_needs_you', 'build_stopped', 'build_live',
   'invite_opened', 'member_joined', 'first_message',
+  // #4396: a project the person joined while it was made is open
+  // (proposal_alerts, services/project-opened.js).
+  'project_opened',
   // A person's message in a small private group's discussion, the group's
   // chat, so it rides the Messages switch.
   'channel_message',

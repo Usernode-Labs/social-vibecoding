@@ -1305,6 +1305,14 @@ const Notifications = {
       window.location.hash = `#app/${encodeURIComponent(item.appSlug)}`;
       return;
     }
+    // #4396: a project the reader joined while it was made is open: the
+    // row opens the app itself, which is what there now is to see.
+    if (item.kind === 'project_opened' && item.appSlug) {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.openAppTab) return App.openAppTab(item.appSlug, 'app');
+      window.location.hash = `#app/${encodeURIComponent(item.appSlug)}`;
+      return;
+    }
     if (item.kind === 'vote_digest' && !item.appSlug) {
       Notifications._dismissSheetForNav();
       window.UsernodeReact?.workshop?.setTab?.('needs');
@@ -3544,6 +3552,19 @@ function rowView(n) {
             : (username ? `@${username}` : t('notifications:row.channel.someone')),
         )
         : headline(asked ? t(CHANNEL_ASKED_IDS[which], names) : t(CHANNEL_SAID_IDS[which], names), snippet || null)),
+    };
+  }
+
+  // #4396: a project the reader joined while it was made is open
+  // (src/services/project-opened.js). The meta line names the project, so
+  // the label is the whole headline.
+  if (n.kind === 'project_opened') {
+    return {
+      ...base,
+      wrap: true,
+      icon: '\u{1F389}',
+      by: null,
+      ...headline(t('notifications:row.projectOpened.label'), null),
     };
   }
 

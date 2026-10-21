@@ -62,6 +62,7 @@ import {
 import { useMessages } from '../../lib/i18n/react';
 import { t } from '../../lib/i18n/runtime';
 import { daysUntil } from './invite-model';
+import { NotifyAsk } from '../notify-ask/notify-ask';
 
 export type { InviteLink, InviteState } from './invite-data';
 
@@ -204,6 +205,8 @@ export function InvitePane({ slug, label, unnamed = false }: { slug: string | nu
   const [error, setError] = useState<string | null>(prepared?.error ?? null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  // The link went out from here (copied or shared): the notification ask.
+  const [sentOut, setSentOut] = useState(false);
   const [changing, setChanging] = useState(false);
   const [days, setDays] = useState(prepared?.state?.defaults.days ?? 7);
   const [uses, setUses] = useState(prepared?.state?.defaults.maxUses ?? 25);
@@ -255,6 +258,7 @@ export function InvitePane({ slug, label, unnamed = false }: { slug: string | nu
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
+      setSentOut(true);
       setTimeout(() => setCopied(false), 1600);
     } catch {
       setError(t('agent:appContext.invite.copyFailed'));
@@ -262,7 +266,10 @@ export function InvitePane({ slug, label, unnamed = false }: { slug: string | nu
   };
   const share = async () => {
     if (!url || typeof navigator.share !== 'function') return;
-    try { await navigator.share({ title: unnamed ? t('agent:appContext.invite.shareTitleUnnamed') : t('agent:appContext.invite.shareTitle', { project: label }), url }); } catch { /* dismissed */ }
+    try {
+      await navigator.share({ title: unnamed ? t('agent:appContext.invite.shareTitleUnnamed') : t('agent:appContext.invite.shareTitle', { project: label }), url });
+      setSentOut(true);
+    } catch { /* dismissed */ }
   };
   const make = async () => {
     if (!base) return;
@@ -350,6 +357,8 @@ export function InvitePane({ slug, label, unnamed = false }: { slug: string | nu
         </>
       ) : null}
       {error ? <p role="alert" className="px-5 pt-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+      {/* The link went out: hear when they join? (the notification ask). */}
+      {sentOut ? <div className="px-5 pt-3"><NotifyAsk moment="invite_sent" /></div> : null}
 
       <div id="app-invite-links">
         <div className={SECTION_ROW}>

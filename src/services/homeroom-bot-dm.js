@@ -683,6 +683,11 @@ async function sendDm(pool, {
       conversationId: opened.conversationId, messageId, threadRootId: root, detail,
     });
   }
+  if (!result.duplicate && story === 'live' && metadata?.firstVersion && metadata?.appSlug) {
+    // #4396: the people who joined while it was made are told it is open
+    // (services/project-opened.js), whatever its maker chose for their own.
+    void require('./project-opened').tellMembers(pool, { appSlug: metadata.appSlug, makerId: userId });
+  }
   if (!result.duplicate) {
     await retireSuggestions(pool, {
       botId: bot.id, conversationId: opened.conversationId, keepMessageId: messageId, userId,

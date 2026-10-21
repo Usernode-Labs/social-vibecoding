@@ -989,6 +989,7 @@ recoverable rather than a dead end.
 | `setFacematchStrict(enabled)` | `{ enabled: bool }` | toggles strict ZK-passport facematch |
 | `requestPermissions()` | — | native alarm-permission prompt; snapshot plus a `granted` bool |
 | `requestAlarmPermissions()` | — | Android: opens the first missing producer permission only (the exact-alarm settings page, else the battery dialog), never the notification prompt; call again for the next step. Snapshot plus a `granted` bool (exact alarms) |
+| `requestNotificationPermission()` | — | the notification permission alone: Android's POST_NOTIFICATIONS dialog (where `requestPermissions()` is the exact-alarm chain), iOS's notification prompt. Snapshot plus a `granted` bool. SV calls it only behind an in-app "Notify me" at its notification-ask moments (`frontend/src/features/notify-ask/`). App builds before flutter-mobile-app#614 resolve 500 ms after the Android dialog opens, before the person answers, so SV watches the snapshot for the grant a while after (`NativeChrome._watchAndroidGrant`) |
 
 `setIosKeepAlive` was removed in v4 with the iOS keep-alive service.
 

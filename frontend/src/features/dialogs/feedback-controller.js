@@ -432,6 +432,11 @@ export function init() {
       sentChat?.classList.toggle('hidden', !building);
       sentMine?.classList.toggle('hidden', building);
       sentFix?.classList.toggle('hidden', !(building && bot.canFix));
+      // Homeroom bot builds it, so there is a "ready to try" to hear about:
+      // the notification ask, under the line (../notify-ask/suggestion-ask.tsx).
+      const ask = window.UsernodeReact?.notifyAsk;
+      if (building) ask?.showSuggestion?.();
+      else ask?.hideSuggestion?.();
       sentNotice.textContent = edited ? joinSentences([notice, t('dialogs:feedback.edit.saved')]) : notice;
       sentNotice.classList.toggle('hidden', !sentNotice.textContent);
       feedbackForm.classList.add('hidden');
@@ -444,6 +449,7 @@ export function init() {
     };
     const hideSent = () => {
       sentSection?.classList.add('hidden');
+      window.UsernodeReact?.notifyAsk?.hideSuggestion?.();
     };
     // B8: Open chat is the chat with Homeroom bot, where the request's card is.
     sentChat?.addEventListener('click', () => {

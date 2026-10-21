@@ -30,7 +30,7 @@
   ]);
   const SCREENS = new Set([
     'shell_boot', 'app_detail', 'app_discussion', 'feedback_dialog',
-    'report_dialog', 'change_workspace', 'preview', 'ping_ask', ...NAV_SCREENS,
+    'report_dialog', 'change_workspace', 'preview', 'ping_ask', 'notify_ask', ...NAV_SCREENS,
   ]);
   // A full page load is credited to the first REAL screen the shell showed
   // (#4965): the twelve screen roots people land on, never a first-run sheet
