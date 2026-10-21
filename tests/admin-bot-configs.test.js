@@ -323,6 +323,10 @@ test('a draft copies a version, a stage\'s model swapped in where asked, and sav
   assert.equal(asked.label, 'Later, build on glm-5.3-flash');
   assert.equal(recipeOfDraft(asked).recipe.models.followup, 'deepseek/deepseek-v4.1-flash-1017');
   assert.equal(draftFrom(FV, { stage: 'followup', model: 'a/b' }).models.followup, '', 'a first version takes no follow-up model');
+  const atMax = draftFrom(LATER, { stage: 'build', model: 'z-ai/glm-5.3-flash@max' });
+  assert.equal(atMax.models.build, 'z-ai/glm-5.3-flash', 'an arm at an effort is its model');
+  assert.equal(atMax.effort.build, 'max', 'and that stage\'s effort');
+  assert.equal(atMax.label, 'Later, build on glm-5.3-flash at max');
 });
 
 test('the draft form names every stage the scope decides, with effort and clock, and saves as a side version', () => {
@@ -347,8 +351,13 @@ test('compare on the benchmark: a first version in the studio beside the current
   assert.deepEqual(benchRequestFor(laterSide, LATER), {
     view: 'launch', preset: { stages: ['build'], models: ['z-ai/glm-5.3-flash', 'deepseek/deepseek-v4.1-flash-1017'] },
   });
+  // An effort is an arm of its own (bench-arms.ts): the same model at max beside it at the bot's own.
   const effortOnly = { ...LATER, id: 22, role: 'side', recipe: { ...LATER.recipe, effort: { build: 'max' } } };
-  assert.equal(benchRequestFor(effortOnly, LATER), null, 'the benchmark compares models; effort alone is for the blind pairs');
+  assert.deepEqual(benchRequestFor(effortOnly, LATER), {
+    view: 'launch', preset: { stages: ['build'], models: [`${LATER.recipe.models.build}@max`, LATER.recipe.models.build] },
+  });
+  const clocksOnly = { ...LATER, id: 23, role: 'side', recipe: { ...LATER.recipe, clocks: { build: 40 } } };
+  assert.equal(benchRequestFor(clocksOnly, LATER), null, 'a clock the benchmark does not change is for the blind pairs');
   assert.equal(benchText(null), '');
   assert.equal(benchText({ runs: 2, trials: 10, ok: 9, avgCostUsd: 1.1, medianMs: 18 * 60000, lastRunId: 245 }), '2 runs: 9 of 10 built, $1.10, 18 min');
 });
