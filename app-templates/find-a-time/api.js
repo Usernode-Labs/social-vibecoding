@@ -1,7 +1,15 @@
-// This app's API: the group's plans for finding a time. A plan is a name and
-// a few suggested times; everyone marks each time free, if needed or can't,
-// and the time the most people can make is named as the best so far.
-// Whoever started a plan sets its time, which closes it, and can reopen it.
+// This app's API, in one of two modes chosen when the project was made
+// (MODE below):
+//
+//   - 'dates': the group's plans for finding a time. A plan is a name and a
+//     few suggested times; everyone marks each time free, if needed or
+//     can't, and the time the most people can make is named as the best so
+//     far. Whoever started a plan sets its time, which closes it, and can
+//     reopen it.
+//   - 'weekly': a group that meets every week finding its regular time.
+//     Everyone marks the hours of the week that work for them, and the hour
+//     the most people can make is named as the best ("The week" below).
+//
 // server.js mounts it after the sign-in check: a write always has req.user
 // ({ id, username }); a read may come from a guest with no account
 // (req.guest, no req.user).
@@ -25,6 +33,10 @@
 // It came from Homeroom's ready-made find-a-time app. Change it freely.
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+// How this app finds a time, set when the project was made: 'dates' (a
+// plan's suggested days and times) or 'weekly' (the hours of every week).
+// Only that mode's tables and routes are made.
+const MODE = '{{TIME_MODE}}' === 'weekly' ? 'weekly' : 'dates';
 const PLATFORM_API_BASE = process.env.USERNODE_PLATFORM_API_V1_URL || process.env.USERNODE_PLATFORM_API_URL;
 
 const NAME_MAX = 80;
@@ -118,7 +130,7 @@ async function members(req) {
   }
 }
 
-async function migrate(pool) {
+async function migratePlans(pool) {
   // A plan; set_slot_id is the time its starter set (NULL while it is open).
   await pool.query(`
     CREATE TABLE IF NOT EXISTS time_plans (
@@ -242,7 +254,7 @@ function bestOf(slots) {
   return candidates[0] || null;
 }
 
-function routes(app, pool) {
+function planRoutes(app, pool) {
   // The open plans (soonest first), each with its times, everyone's marks,
   // the best time so far and who has not answered yet; then the last few
   // plans that are over.
@@ -516,6 +528,195 @@ function routes(app, pool) {
       fail(res, err);
     }
   });
+}
+
+// ── The week ─────────────────────────────────────────────────────────────
+//
+// HOW AN HOUR IS STORED. A weekly hour is a day of the week (0 Monday to 6
+// Sunday) and an hour of the day (FIRST_HOUR to LAST_HOUR - 1, the hour
+// that starts then): a wall-clock time for the group, "Tuesdays at 7 PM",
+// with no time zone and no date. Everyone sees the same hours, wherever
+// they are, which is what a group that meets in one place means by it.
+// week_free holds one row per person per hour that works for them; an hour
+// not there does not. Somebody has answered once they have marked one.
+
+const FIRST_HOUR = 8;
+const LAST_HOUR = 22; // the last hour shown starts at 9 PM and ends at 10 PM
+const DAYS = 7;
+const BEST_SHOWN = 3;
+
+const hourKey = (day, hour) => `${day}-${hour}`;
+
+async function migrateWeek(pool) {
+  // One row per person per weekly hour that works for them. marked_at is
+  // when they first marked it, kept while they keep it, so who answered
+  // first stays first however often they change their week.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS week_free (
+      user_id INTEGER NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      day SMALLINT NOT NULL CHECK (day BETWEEN 0 AND 6),
+      hour SMALLINT NOT NULL CHECK (hour BETWEEN 0 AND 23),
+      marked_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (user_id, day, hour)
+    )
+  `);
+
+  // A staging preview starts with no rows, so seed five made-up people's
+  // weeks for the checks in dapp.json to find (the shaded grid and the best
+  // weekly time): Tuesday evening suits the most. Everyone in it is a fake
+  // identity, ON CONFLICT keeps it idempotent across rebuilds, and it never
+  // runs in production.
+  if (IS_STAGING) {
+    const people = [[0, 'staging-demo-user'], [-1, 'staging-demo-ana'], [-2, 'staging-demo-ben'], [-3, 'staging-demo-cy'], [-4, 'staging-demo-dee']];
+    // [day, from, to] blocks per person, in the order above.
+    const weeks = [
+      [[1, 18, 21], [3, 19, 21]],
+      [[1, 19, 22], [2, 18, 20], [5, 10, 13]],
+      [[1, 19, 21], [3, 18, 21]],
+      [[1, 17, 20], [5, 9, 12]],
+      [[3, 19, 22], [6, 14, 17]],
+    ];
+    const ids = [];
+    const names = [];
+    const days = [];
+    const hours = [];
+    weeks.forEach((blocks, i) => {
+      for (const [day, from, to] of blocks) {
+        for (let hour = from; hour < to; hour += 1) {
+          ids.push(people[i][0]);
+          names.push(people[i][1]);
+          days.push(day);
+          hours.push(hour);
+        }
+      }
+    });
+    await pool.query(
+      `INSERT INTO week_free (user_id, username, day, hour, marked_at)
+       SELECT t.user_id, t.username, t.day, t.hour, NOW()
+         FROM unnest($1::int[], $2::text[], $3::smallint[], $4::smallint[]) AS t(user_id, username, day, hour)
+       ON CONFLICT (user_id, day, hour) DO NOTHING`,
+      [ids, names, days, hours]
+    );
+  }
+}
+
+/**
+ * The best weekly hours: the most people free, then the most free in the
+ * hour after (a meeting runs on), then the earliest in the week. An hour
+ * next to one already named on the same day is the same evening, so it is
+ * skipped for the next best.
+ */
+function bestHours(free) {
+  const count = (day, hour) => (free.get(hourKey(day, hour)) || []).length;
+  const candidates = [];
+  for (const [key, ids] of free) {
+    const [day, hour] = key.split('-').map(Number);
+    if (ids.length) candidates.push({ day, hour, n: ids.length, next: count(day, hour + 1) });
+  }
+  candidates.sort((a, b) => (b.n - a.n) || (b.next - a.next) || (a.day - b.day) || (a.hour - b.hour));
+  const picked = [];
+  for (const c of candidates) {
+    if (picked.length >= BEST_SHOWN) break;
+    if (picked.some((p) => p.day === c.day && Math.abs(p.hour - c.hour) <= 1)) continue;
+    picked.push(c);
+  }
+  return picked.map((c) => ({ day: c.day, hour: c.hour }));
+}
+
+function weekRoutes(app, pool) {
+  // The week: who has answered (you first, then in the order they did),
+  // which of them can make each hour, the best hours, and who in the
+  // project has not answered yet.
+  app.get('/api/week', async (req, res) => {
+    try {
+      const me = req.user ? req.user.id : null;
+      const { rows } = await pool.query(
+        `SELECT user_id, username, day, hour, marked_at FROM week_free
+          WHERE hour >= $1 AND hour < $2 ORDER BY marked_at, user_id, day, hour`,
+        [FIRST_HOUR, LAST_HOUR]
+      );
+      const people = [];
+      const free = new Map();
+      for (const r of rows) {
+        if (!people.some((p) => p.id === r.user_id)) people.push({ id: r.user_id, username: r.username, me: r.user_id === me });
+        const key = hourKey(r.day, r.hour);
+        if (!free.has(key)) free.set(key, []);
+        free.get(key).push(r.user_id);
+      }
+      people.sort((a, b) => Number(b.me) - Number(a.me));
+      const roster = await members(req);
+      res.json({
+        me: req.user ? { id: me, username: req.user.username } : null,
+        days: DAYS,
+        firstHour: FIRST_HOUR,
+        lastHour: LAST_HOUR,
+        members: roster.status,
+        people,
+        // "day-hour" -> the ids of everyone who can make it, in answer order.
+        free: Object.fromEntries([...free.entries()].sort()),
+        best: bestHours(free),
+        // Members who have not marked an hour yet, or null when the member
+        // list is not known (see members() above).
+        waiting: roster.members
+          ? roster.members.filter((m) => !people.some((p) => p.id === m.id)).map((m) => ({ id: m.id, username: m.username, me: m.id === me }))
+          : null,
+      });
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  // Your week: { hours: [[day, hour], ...] }, every hour that works for you,
+  // which replaces what you said before. An empty list takes your answer
+  // back. Hours you keep keep when you first marked them.
+  app.put('/api/week/mine', async (req, res) => {
+    const raw = req.body && req.body.hours;
+    if (!Array.isArray(raw)) return res.status(400).json({ error: 'Say which hours work for you.' });
+    if (raw.length > DAYS * (LAST_HOUR - FIRST_HOUR)) return res.status(400).json({ error: 'That is more hours than the week has.' });
+    const keys = new Map();
+    for (const h of raw) {
+      const day = Array.isArray(h) ? h[0] : NaN;
+      const hour = Array.isArray(h) ? h[1] : NaN;
+      if (!Number.isInteger(day) || day < 0 || day >= DAYS || !Number.isInteger(hour) || hour < FIRST_HOUR || hour >= LAST_HOUR) {
+        return res.status(400).json({ error: 'Pick hours from the week\'s grid.' });
+      }
+      keys.set(hourKey(day, hour), [day, hour]);
+    }
+    const hours = [...keys.values()];
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `DELETE FROM week_free w WHERE w.user_id = $1
+            AND NOT EXISTS (SELECT 1 FROM unnest($2::smallint[], $3::smallint[]) AS t(day, hour) WHERE t.day = w.day AND t.hour = w.hour)`,
+        [req.user.id, hours.map((x) => x[0]), hours.map((x) => x[1])]
+      );
+      await client.query(
+        `INSERT INTO week_free (user_id, username, day, hour, marked_at)
+         SELECT $1, $2, t.day, t.hour, $5 FROM unnest($3::smallint[], $4::smallint[]) AS t(day, hour)
+         ON CONFLICT (user_id, day, hour) DO UPDATE SET username = EXCLUDED.username`,
+        [req.user.id, req.user.username, hours.map((x) => x[0]), hours.map((x) => x[1]), req.now]
+      );
+      await client.query('COMMIT');
+      res.json({ ok: true, hours: hours.length });
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      fail(res, err);
+    } finally {
+      client.release();
+    }
+  });
+}
+
+async function migrate(pool) {
+  if (MODE === 'weekly') await migrateWeek(pool);
+  else await migratePlans(pool);
+}
+
+function routes(app, pool) {
+  if (MODE === 'weekly') weekRoutes(app, pool);
+  else planRoutes(app, pool);
 }
 
 module.exports = { migrate, routes };

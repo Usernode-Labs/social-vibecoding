@@ -100,19 +100,20 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   assert.match(LANDER, /\{band\}\s*\{tray\}/);
   // The hub's order, as agreed (the hub as the project's summary; 15 Oct
   // 2026): the hero (what it is, who is around, what you can do), the first
-  // version while Homeroom bot builds it (tests/hub-just-you.test.js), Share
-  // it for a project that is just yours, "What do you want to change?" for
-  // one nobody has started on, For you (Needs you, Your work, the
-  // Discussion), the first look while it is built, and Recently live. One
+  // version while Homeroom bot builds it, with its maker's first look once
+  // it is drawn (tests/hub-just-you.test.js, tests/hub-first-look.test.js),
+  // Share it for a project that is just yours, "What do you want to change?"
+  // for one nobody has started on, For you (Needs you, Your work, the
+  // Discussion), and Recently live. One
   // column at every width, and no metrics card or chart anywhere on it.
   // Start a new change ended it until #852's review moved it into the
   // hero's ⋯ (tests/improve-action-deduplication.test.js).
   const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("), LANDER.indexOf("{isChannelPlace(tab) ? ("));
-  const order = ['<CommunityCard', '<FirstVersionCard', '<ShareItCard', '<StartHereBanner', '<ForYouCard', '<FirstLookCard', '<RecentlyLive']
+  const order = ['<CommunityCard', '<FirstVersionCard', '<ShareItCard', '<StartHereBanner', '<ForYouCard', '<RecentlyLive']
     .map((x) => hub.indexOf(x));
-  assert.ok(order.every((n) => n >= 0), `all seven on the hub: ${JSON.stringify(order)}`);
+  assert.ok(order.every((n) => n >= 0), `all six on the hub: ${JSON.stringify(order)}`);
   assert.deepEqual([...order].sort((a, b) => a - b), order,
-    'hero, first version, Share it, what to change, for you, first look, recently live');
+    'hero, first version, Share it, what to change, for you, recently live');
   assert.doesNotMatch(hub, /<SinceSummaryCard|<YourWorkCard|<NeedsCard|<ChannelCard|<GoingCard|ApprovalRules/,
     'what landed since your last visit, your work in full and the approval rule are the Workshop\'s');
   assert.doesNotMatch(hub, /data-ws-start-change/, 'no Start a new change at its foot');

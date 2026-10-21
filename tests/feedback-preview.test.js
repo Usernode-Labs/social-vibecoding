@@ -1,8 +1,9 @@
 // #5687: an attached picture or clip opens full size before the request is
 // posted. This suite pins the seams that are easy to lose and cannot be seen
 // from a screenshot: the preview is a portal beside the dialog root (so its
-// backdrop is its own), Escape is taken before the kit modal's own listener,
-// Back is claimed, and every id it asks for exists.
+// backdrop is its own), Escape closes the preview alone (the kit modal's own
+// listener stands aside for it), Back is claimed, and every id it asks for
+// exists.
 //
 // The thumbnail taps themselves are behavioural, in
 // tests/feedback-multi-screenshot-ui.test.js, against the real controller.
@@ -13,6 +14,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const ROOT = path.join(__dirname, '..');
 const PREVIEW = fs.readFileSync(
@@ -21,6 +23,10 @@ const PREVIEW = fs.readFileSync(
 );
 const DIALOG = fs.readFileSync(
   path.join(ROOT, 'frontend', 'src', 'features', 'dialogs', 'feedback.tsx'),
+  'utf8'
+);
+const NATIVE = fs.readFileSync(
+  path.join(ROOT, 'public', 'usernode-native', 'v1', 'native.js'),
   'utf8'
 );
 const CATALOG = JSON.parse(
@@ -33,8 +39,8 @@ test('the preview is portalled to the body, outside the kit modal card', () => {
 });
 
 // The kit's own Escape listener is registered on `window` capture by
-// native.js, loaded before the shell bundle, so it runs first and dismisses
-// the lifted card too. That limit is written down in the component; what is
+// native.js, loaded before the shell bundle, so it runs first; it stands
+// aside for an open `[data-owns-escape]` element (pinned below). What is
 // pinned here is that the preview takes the press, stops it travelling
 // further, and closes itself.
 test('Escape is caught in the capture phase and closes the preview', () => {
@@ -44,6 +50,47 @@ test('Escape is caught in the capture phase and closes the preview', () => {
   assert.match(onKey, /event\.stopPropagation\(\)/, 'nothing else in the page treats it as its own');
   assert.match(onKey, /onCloseRef\.current\(\)/);
   assert.match(PREVIEW, /window\.removeEventListener\('keydown', onKey, true\)/);
+});
+
+test('the preview root claims Escape from the kit modal behind it', () => {
+  const root = PREVIEW.slice(PREVIEW.indexOf('role="dialog"'), PREVIEW.indexOf('onClick={(event)'));
+  assert.match(root, /data-feedback-preview=""/);
+  assert.match(root, /data-owns-escape=""/, 'the root is the element the kit looks for');
+  assert.doesNotMatch(PREVIEW, /KNOWN LIMIT/, 'Escape no longer closes the form too');
+});
+
+// The kit's modal-stack Escape listener, run for real: the section from
+// `var modalStack` up to the next banner comment holds it.
+function kitEscape({ owner }) {
+  let onKeydown = null;
+  const context = vm.createContext({
+    document: { querySelector: (sel) => (sel === '[data-owns-escape]' ? owner : null) },
+    window: {
+      addEventListener(type, fn, capture) {
+        if (type === 'keydown' && capture === true && !onKeydown) onKeydown = fn;
+      },
+    },
+    activePopover: null,
+    getComputedStyle: () => ({ opacity: '0' }),
+    requestAnimationFrame: () => 0,
+    cancelAnimationFrame() {},
+    setTimeout: () => 0,
+    clearTimeout() {},
+  });
+  const at = NATIVE.indexOf('  var modalStack = []');
+  vm.runInContext(`${NATIVE.slice(at, NATIVE.indexOf('\n  /* ', at))}\nthis.modalStack = modalStack;`, context);
+  let dismissed = 0;
+  context.modalStack.push({ dismissible: true, dismiss: () => { dismissed += 1; } });
+  let prevented = false;
+  onKeydown({ key: 'Escape', preventDefault() { prevented = true; } });
+  return { dismissed, prevented };
+}
+
+test('the kit modal stands aside on Escape while a [data-owns-escape] element is open', () => {
+  assert.deepEqual(kitEscape({ owner: { nodeType: 1 } }), { dismissed: 0, prevented: false },
+    'the form behind the picture stays open');
+  assert.deepEqual(kitEscape({ owner: null }), { dismissed: 1, prevented: true },
+    'with nothing marked, Escape still closes the topmost modal');
 });
 
 test('Back closes the preview and is handed back when it closes any other way', () => {

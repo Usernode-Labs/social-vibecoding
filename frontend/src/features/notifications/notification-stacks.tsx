@@ -425,6 +425,212 @@ export function historyLines(view: StoryRowView, steps: HistoryStep[], t: Transl
 
 type Loaded = { state: 'loading' } | { state: 'failed' } | { state: 'ready'; steps: HistoryStep[] };
 
+/**
+ * How a card shows its history growing and folding. It used to animate the
+ * box's `height`, which WebKit runs on the main thread: in the iPhone app it
+ * stopped advancing for up to 6 s while the page was otherwise free, and
+ * painted the end only when another touch came. Transforms run in Core
+ * Animation, so the card now lays out at its new size in one step and every
+ * part of it moves by `translateY` alone:
+ *
+ *   - the card (its slot) is the window: it clips what is in it, at its own
+ *     rounded corners, and moves by how much of the history is still hidden,
+ *     so its bottom edge is where the history has got to;
+ *   - what is inside the card moves the other way by as much, so the words
+ *     and the history stand still while the edge passes over them;
+ *   - what follows the card moves with its edge.
+ *
+ * A grow lays out first and plays back from where the card was; a fold plays
+ * first and lays out (the box out of the layout) at its end, in the same step
+ * the transforms let go, so nothing moves then. A fold that leaves the list
+ * shorter than its scroller pulls the scroller back by `pull`, and what is
+ * above the card moves down by it on the way rather than at the end.
+ *
+ * Each step starts where the last one has everything on screen, so the
+ * history that lands after "Loading…" goes on growing from there.
+ */
+type Part = 'card' | 'inside' | 'after' | 'before';
+
+export type HistoryMotion = {
+  card: HTMLElement;
+  runs: Map<HTMLElement, { run: Animation; part: Part }>;
+  fade: Animation | null;
+  /** The box's layout height the parts' offsets are measured from. */
+  height: number;
+  timer: ReturnType<typeof setTimeout> | null;
+  /** On a desk the slot is the card's surface; it lends it to a layer under its contents while it moves. */
+  surface: HTMLElement | null;
+};
+
+function scrollParentOf(el: HTMLElement): HTMLElement {
+  for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+    const oy = window.getComputedStyle(p).overflowY;
+    if (oy === 'auto' || oy === 'scroll' || oy === 'overlay') return p;
+  }
+  return (document.scrollingElement as HTMLElement | null) || document.documentElement;
+}
+
+/** The elements before or after `el`, up to its scroller. */
+function besides(el: HTMLElement, scroller: HTMLElement, after: boolean): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  for (let n: HTMLElement | null = el; n && n !== scroller && n !== document.body; n = n.parentElement) {
+    for (let s = after ? n.nextElementSibling : n.previousElementSibling; s; s = after ? s.nextElementSibling : s.previousElementSibling) {
+      out.push(s as HTMLElement);
+    }
+  }
+  return out;
+}
+
+/** How far an element is moved from where it lays out, as painted now. */
+function offsetY(el: HTMLElement): number {
+  const transform = window.getComputedStyle(el).transform;
+  if (!transform || transform === 'none') return 0;
+  const m = /^matrix\((?:[^,]+,){5}\s*([-+\d.e]+)\)$/.exec(transform) || /^matrix3d\((?:[^,]+,){13}\s*([-+\d.e]+),/.exec(transform);
+  return m ? Number(m[1]) || 0 : 0;
+}
+
+/** Swap a style without the slot's own background transition playing it. */
+function restyle(el: HTMLElement, styles: Record<string, string>): void {
+  el.style.transition = 'none';
+  Object.assign(el.style, styles);
+  void window.getComputedStyle(el).backgroundColor;
+  el.style.transition = '';
+}
+
+function lendSurface(card: HTMLElement): HTMLElement | null {
+  const cs = window.getComputedStyle(card);
+  const clear = cs.backgroundColor === 'transparent' || /[,/]\s*0(\.0*)?\)$/.test(cs.backgroundColor);
+  if (clear && cs.boxShadow === 'none') return null;
+  const surface = document.createElement('span');
+  surface.setAttribute('aria-hidden', 'true');
+  Object.assign(surface.style, {
+    position: 'absolute', inset: '0', zIndex: '-1', borderRadius: 'inherit', pointerEvents: 'none',
+    background: cs.backgroundColor, boxShadow: cs.boxShadow,
+  });
+  card.insertBefore(surface, card.firstChild);
+  restyle(card, { background: 'transparent', boxShadow: 'none' });
+  return surface;
+}
+
+/** Stop a motion where it is; `release` also gives the card back its own clip and surface. */
+function stopMotion(m: HistoryMotion, release: boolean): void {
+  if (m.timer) clearTimeout(m.timer);
+  m.timer = null;
+  for (const { run } of m.runs.values()) run.cancel();
+  m.fade?.cancel();
+  m.runs = new Map();
+  m.fade = null;
+  if (!release) return;
+  m.card.style.overflow = '';
+  m.card.style.isolation = '';
+  if (m.surface) {
+    m.surface.remove();
+    restyle(m.card, { background: '', boxShadow: '' });
+    m.surface = null;
+  }
+}
+
+/**
+ * Open (grow) or fold a card's history over `ms`. A fold runs `onFolded`
+ * once the box is out of the layout. A motion cut short by the next one runs
+ * none of its endings.
+ */
+export function moveHistory(box: HTMLElement, motion: { current: HistoryMotion | null }, open: boolean, ms: number, onFolded?: () => void): void {
+  const prev = motion.current;
+  const card = box.closest<HTMLElement>('.notifications-row-slot');
+  if (open) box.style.display = '';
+  if (!card || typeof card.animate !== 'function') {
+    if (!open) onFolded?.();
+    return;
+  }
+  // Where everything is on screen now, read before the running motion lets go.
+  const at = new Map<HTMLElement, number>();
+  if (prev) for (const el of prev.runs.keys()) at.set(el, offsetY(el));
+  const parts = new Map<HTMLElement, Part>();
+  if (prev) for (const [el, { part }] of prev.runs) if (el.isConnected) parts.set(el, part);
+  const fade = !prev && open ? 0 : Number(window.getComputedStyle(box).opacity);
+  if (prev) stopMotion(prev, prev.card !== card);
+
+  // Its height as laid out, to the fraction (offsetHeight rounds): a move
+  // translates the box but never scales it.
+  const height = box.getBoundingClientRect().height;
+  // How far the layout under the card moved since the offsets were measured.
+  const shift = height - (prev ? prev.height : open ? 0 : height);
+  const scroller = scrollParentOf(card);
+  const pull = open ? 0
+    : Math.max(0, scroller.scrollTop - Math.max(0, scroller.scrollHeight - height - scroller.clientHeight));
+
+  const surface = prev && prev.card === card && prev.surface ? prev.surface : lendSurface(card);
+  card.style.overflow = 'hidden';
+  card.style.isolation = 'isolate';
+  parts.set(card, 'card');
+  for (const el of Array.from(card.children) as HTMLElement[]) parts.set(el, 'inside');
+  for (const el of besides(card, scroller, true)) parts.set(el, 'after');
+  if (pull) for (const el of besides(card, scroller, false)) parts.set(el, 'before');
+
+  const from = (el: HTMLElement, part: Part): number => {
+    const now = at.get(el) || 0;
+    return part === 'card' || part === 'after' ? now - shift : part === 'inside' ? now + shift : now;
+  };
+  const to = (part: Part): number => {
+    if (open) return 0;
+    return part === 'card' || part === 'after' ? pull - height : part === 'inside' ? height : pull;
+  };
+  const view = scroller === document.scrollingElement || scroller === document.documentElement
+    ? { top: 0, bottom: window.innerHeight }
+    : scroller.getBoundingClientRect();
+  const fill: FillMode = open ? 'none' : 'forwards';
+  const runs = new Map<HTMLElement, { run: Animation; part: Part }>();
+  for (const [el, part] of parts) {
+    const a = from(el, part);
+    const b = to(part);
+    if (Math.abs(a) < 0.5 && Math.abs(b) < 0.5) continue;
+    if (part === 'after' || part === 'before') {
+      // Off screen the whole way: nothing to see, and no layer to make.
+      const r = el.getBoundingClientRect();
+      if (r.bottom + Math.max(a, b) < view.top || r.top + Math.min(a, b) > view.bottom) continue;
+    }
+    const run = el.animate(
+      [{ transform: `translateY(${a}px)` }, { transform: `translateY(${b}px)` }],
+      { duration: ms, easing: EASE, fill },
+    );
+    run.pause();
+    runs.set(el, { run, part });
+  }
+  const fadeRun = box.animate(
+    [{ opacity: Number.isFinite(fade) ? fade : 1 }, { opacity: open ? 1 : 0 }],
+    { duration: ms, easing: EASE, fill },
+  );
+  fadeRun.pause();
+  const m: HistoryMotion = { card, runs, fade: fadeRun, height, timer: null, surface };
+  motion.current = m;
+  // Everything holds its first frame and plays from the frame after next.
+  // The next frame lays out the new size and makes a layer of each moving
+  // part, and in Mobile Safari a motion started before it was first painted
+  // 34-61% of the way; started after it, 0-28%. A timer starts it if no
+  // frame comes.
+  const go = () => {
+    if (motion.current !== m || m.runs !== runs || m.fade !== fadeRun) return;
+    for (const { run } of runs.values()) if (run.playState === 'paused') run.play();
+    if (fadeRun.playState === 'paused') fadeRun.play();
+  };
+  window.requestAnimationFrame(() => window.requestAnimationFrame(go));
+  setTimeout(go, 80);
+  // The end, on a timer as well, since a stalled main thread never reports
+  // that an animation finished.
+  const end = () => {
+    if (motion.current !== m) return;
+    if (!open) box.style.display = 'none';
+    stopMotion(m, true);
+    if (open) return;
+    motion.current = null;
+    onFolded?.();
+  };
+  m.timer = setTimeout(end, ms + 200);
+  Promise.all([...Array.from(runs.values(), (r) => r.run.finished), fadeRun.finished])
+    .then(end, () => { /* cut short by the next motion, which owns the card now */ });
+}
+
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Notifications : null) || null;
 }
@@ -459,38 +665,38 @@ export function CardHistory({ view, open }: { view: StoryRowView; open: boolean 
   }, [open, view.id]);
 
   // Opening shows it at once and grows it; closing folds it, then lets it go.
+  // A card still folding (opened again mid-fold) grows from where it is; a
+  // new one from nothing.
+  const motion = useRef<HistoryMotion | null>(null);
   useIsomorphicLayoutEffect(() => {
     const box = boxRef.current;
     if (open) {
       setShown(true);
       if (!box || stillMotion()) return;
-      const h = box.scrollHeight;
-      box.style.overflow = 'hidden';
-      const run = box.animate([{ height: '0px', opacity: 0 }, { height: `${h}px`, opacity: 1 }], { duration: 360, easing: EASE });
-      const done = () => { box.style.overflow = ''; };
-      run.finished.then(done, done);
+      moveHistory(box, motion, true, 360);
       return;
     }
     if (!box || stillMotion()) { setShown(false); return; }
-    box.style.overflow = 'hidden';
-    const run = box.animate([{ height: `${box.offsetHeight}px`, opacity: 1 }, { height: '0px', opacity: 0 }],
-      { duration: 300, easing: EASE, fill: 'forwards' });
-    const done = () => setShown(false);
-    run.finished.then(done, done);
+    moveHistory(box, motion, false, 300, () => setShown(false));
   }, [open]);
 
-  // The history lands after it opened on "Loading…": grow to it, not jump.
-  const lastHeight = useRef(0);
+  // The history lands after it opened on "Loading…": it goes on growing from
+  // wherever the opening has it to the whole history, rather than starting
+  // again from a height read before (21 Oct 2026: it snapped back up, grew
+  // again, and then jumped down to its real height when the first grow let go).
+  // Landing mid-fold, the fold goes on to the new height.
   useIsomorphicLayoutEffect(() => {
     const box = boxRef.current;
-    const was = lastHeight.current;
-    lastHeight.current = box ? box.offsetHeight : 0;
-    if (!box || !open || !was || stillMotion() || Math.abs(box.offsetHeight - was) < 1) return;
-    box.style.overflow = 'hidden';
-    const run = box.animate([{ height: `${was}px` }, { height: `${box.offsetHeight}px` }], { duration: 280, easing: EASE });
-    const done = () => { box.style.overflow = ''; };
-    run.finished.then(done, done);
+    if (!box || stillMotion() || !loaded || loaded.state === 'loading') return;
+    if (open) moveHistory(box, motion, true, 280);
+    else if (motion.current) moveHistory(box, motion, false, 300, () => setShown(false));
   }, [loaded]);
+
+  // A card that goes away mid-motion leaves nothing moved behind it.
+  useEffect(() => () => {
+    if (motion.current) stopMotion(motion.current, true);
+    motion.current = null;
+  }, []);
 
   if (!open && !shown) return null;
   const viewer = controller()?.viewerUsername?.() || null;
@@ -501,11 +707,10 @@ export function CardHistory({ view, open }: { view: StoryRowView; open: boolean 
   const on = !view.story && view.storyRef ? view.storyRef : null;
   const onTitle = on && on.title && on.title !== plain(view.segments) ? on.title : null;
   return (
-    <div
-      ref={boxRef}
-      data-notif-history-list={view.id}
-      className="col-start-1 row-start-2 pl-[4.75rem] pr-4 pb-2"
-    >
+    <div ref={boxRef} data-notif-history-list={view.id} className="col-start-1 row-start-2">
+      {/* The padding is the inner box's, so the outer one is exactly as
+          tall as the card grows by. */}
+      <div className="pl-[4.75rem] pr-4 pb-2">
       {on ? (
         <div className="py-1.5 border-t border-black/[.06] dark:border-white/[.08]">
           <span className="block text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">
@@ -570,6 +775,7 @@ export function CardHistory({ view, open }: { view: StoryRowView; open: boolean 
           <div key={line.key} className={cls}>{inner}</div>
         );
       })}
+      </div>
     </div>
   );
 }

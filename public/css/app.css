@@ -6624,6 +6624,17 @@ body:has(#platform-header.hidden) #app-frame-host {
 
 .dc-msg-content a { color: var(--accent); text-decoration: underline; word-break: break-all; }
 .dc-msg-content a:hover { color: var(--accent-light); }
+/* #5728: a `#N` / `PR#N` chip in a reply (an agent session, a change's chat)
+   is the app chat's reference chip, not a markdown link: no underline until
+   it is hovered, and no breaking the number across lines. The issue ink is
+   the chip's own emerald, softened on the light sheet as Messages is; a PR
+   chip keeps the accent ink above, which is the blue it already wears. */
+.dc-msg-content a.gc-ref { text-decoration: none; word-break: normal; }
+.dc-msg-content a.gc-ref-issue { color: var(--state-ok); }
+html:not(.dark) .dc-msg-content a.gc-ref-issue { background: rgba(16, 185, 129, 0.05); }
+@media (hover: hover) {
+  .dc-msg-content a.gc-ref:hover { text-decoration: underline; }
+}
 
 .dc-msg-content strong { font-weight: 600; color: var(--text-primary); }
 .dc-msg-content em { font-style: italic; color: var(--text-faint); }
@@ -15945,6 +15956,28 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   border-radius: 10px;
 }
 .dev-ledger-fails > .dev-ledger-check-why { display: block; }
+/* The app's own tests, failed: what the suite is and how many of its tests
+   failed, the tests that failed with their message and place, and the
+   runner's output folded under them. */
+.dev-ledger-fails > .dev-ledger-check-unit { display: block; padding: 8px 10px; }
+.dev-ledger-unit-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; min-width: 0; }
+.dev-ledger-unit-name { font-weight: 600; color: var(--text-primary); }
+.dev-ledger-unit-cmd { font-size: 11.5px; color: var(--text-muted); }
+.dev-ledger-unit-count { margin-left: auto; font-weight: 600; color: var(--state-blocked); }
+.dev-ledger-unit-part { margin-top: 8px; }
+.dev-ledger-unit-k { font-size: 11.5px; font-weight: 600; color: var(--text-muted); }
+.dev-ledger-unit-tests { margin: 2px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.dev-ledger-unit-tests > li { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.dev-ledger-unit-test { color: var(--text-primary); overflow-wrap: anywhere; }
+.dev-ledger-unit-said { color: var(--text-secondary); overflow-wrap: anywhere; }
+.dev-ledger-unit-where { font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
+.dev-ledger-unit-reason { margin: 6px 0 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+.dev-ledger-unit-output { margin-top: 8px; }
+/* A failed run's "What went wrong", over its failures. */
+.dev-ledger-explain { margin: 2px 0 8px; font-size: 12.5px; }
+.dev-ledger-explain-text { margin: 2px 0 0; line-height: 1.45; color: var(--text-primary); }
+.dev-ledger-explain-source { margin-top: 2px; font-size: 11px; color: var(--text-muted); }
+.dev-ledger-fix-refused { flex-basis: 100%; font-size: 12px; color: var(--state-blocked); }
 .dev-ledger-check-glyph { flex: none; }
 .dev-ledger-check-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dev-ledger-check-path { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--text-muted); }
@@ -17138,6 +17171,19 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   color: var(--accent);
 }
 .dev-change-gate-link:hover { text-decoration: underline; }
+/* A failed run: what went wrong, in the card's own ink over the muted line,
+   then the author's Fix it with the re-run beside it, and a refusal under
+   them when the agent could not take it. */
+.dev-change-gate-why { grid-column: 1 / -1; margin: 10px 0 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); overflow-wrap: anywhere; }
+.dev-change-gate-fix { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.dev-change-gate-fix .gc-vote-btn {
+  height: 34px;
+  padding: 0 14px;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.dev-change-gate-refused { grid-column: 1 / -1; margin: 6px 0 0; font-size: 13px; line-height: 1.4; color: var(--state-blocked); }
 @media (prefers-reduced-motion: reduce) {
   .dev-change-bar-fill { transition: none; }
 }
@@ -18556,12 +18602,13 @@ button.dev-ws-recent-card {
 }
 .dev-ws-share:has(.dev-ws-join-pop) { position: relative; z-index: 5; }
 
-/* ── First look (hub-cards.tsx FirstLookCard, newcomer run six) ──────
-   The maker's, under Share it, while their first version is built: the
-   picture Homeroom bot drew of its main screen, small and phone-shaped
-   (cropped from the top, as a phone shows a screen), beside a small-caps
-   kicker, the card's sentence-case title and line in Share it's own type,
-   and its one button. The picture's box is fixed, so nothing moves as it
+/* ── First look (hub-cards.tsx FirstLookView, newcomer run six) ──────
+   The maker's First version card while their first version is built
+   (21 Oct 2026; a card of its own after For you until then): the picture
+   Homeroom bot drew of its main screen, small and phone-shaped (cropped
+   from the top, as a phone shows a screen), beside the project's name as
+   the thumbnail row draws it, the build line, one line in Share it's own
+   type, and its button. The picture's box is fixed, so nothing moves as it
    loads. */
 .dev-ws-strip.dev-ws-first-look { position: relative; flex-direction: row; align-items: flex-start; gap: 14px; }
 /* #5618: the picture and the words open the maker's chat with Homeroom
@@ -18584,13 +18631,12 @@ button.dev-ws-recent-card {
   flex: 1 1 auto; min-width: 0;
   display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
 }
-.dev-ws-first-look-kicker {
-  margin: 0; font-size: 12px; font-weight: 700; line-height: 16px;
-  letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted);
+.dev-ws-first-look-name {
+  margin: 0; max-width: 100%; font-size: 15px; font-weight: 650; line-height: 20px;
+  color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.dev-ws-first-look-body .dev-ws-head-title { margin: 0; }
 .dev-ws-first-look-body .dev-ws-strip-text { color: var(--text-muted); }
-/* Watch keeps its own tap, over the door (#5618). */
+/* Its buttons keep their own taps, over the door (#5618). */
 .dev-ws-first-look-body > button { position: relative; z-index: 2; margin-top: 8px; }
 
 /* ── Approval rules (community-card.tsx ApprovalRules) ─────────────── */

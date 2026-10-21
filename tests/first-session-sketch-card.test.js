@@ -116,6 +116,21 @@ test('the build line: the same words everywhere, a spinner that turns, one blue 
   // Not the dot that only fades (app.css .status-dot.creating, which stands
   // still in the Homeroom app on iPhone).
   assert.doesNotMatch(LINE_SRC, /className="[^"]*status-dot/);
+  // Evan, 21 Oct 2026: beside a tile, "Working out the details · 2 min so
+  // far" was cut. Stacked, the note is a line of its own under the words,
+  // not under the spinner; with no note, stacked changes nothing.
+  const note = { state: 'building', words: 'Working out the details', note: '2 min so far' };
+  const joined = renderToHtml(createElement(lineMod.BuildLine, note));
+  assert.match(joined, /<span class="truncate">Working out the details · 2 min so far<\/span><\/span>$/, 'one line where there is room');
+  const stacked = renderToHtml(createElement(lineMod.BuildLine, { ...note, stacked: true }));
+  assert.match(stacked, /^<span role="status" data-build-line="building" class="grid min-w-0 grid-cols-\[auto_minmax\(0,1fr\)\] items-center gap-x-2 /);
+  assert.match(stacked, /<\/svg><span class="truncate">Working out the details<\/span><span data-build-line-note="" class="col-start-2 truncate text-\[13px\] font-normal leading-\[18px\] text-zinc-500 dark:text-zinc-400">2 min so far<\/span><\/span>$/);
+  assert.equal(renderToHtml(createElement(lineMod.BuildLine, { state: 'building', stacked: true })), draw('building'));
+  // The thumbnail row stacks it; the featured card's line, full width under
+  // the card, keeps it on one line.
+  const card = read(`${DIR}/sketch-card.tsx`);
+  assert.match(card, /<BuildLine state=\{line\} note=\{lineNote\} words=\{lineWords\} stacked \/>/);
+  assert.match(card, /<div data-featured-card-line="" className="px-1">\s*<BuildLine state=\{line\} note=\{lineNote\} words=\{lineWords\} \/>/);
 });
 
 test('the same lines on a Home tile, in short words that fit its one line; blue still asks', () => {

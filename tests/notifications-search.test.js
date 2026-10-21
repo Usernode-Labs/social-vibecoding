@@ -172,7 +172,7 @@ test('while searching the headings, pinned sections and pager step aside', () =>
   // headings and the per-app groups under one `!searching &&` gate, so the
   // pin is the gate plus the headings sitting inside it.
   const gate = SHEET_SRC.indexOf(
-    '{!searching && (groupedUnread ? appGroups.map(renderAppGroup) : ('
+    '{!searching && (groupedUnread ? appGroups.map(renderAppGroup) : olderGrouped ? ('
   );
   assert.ok(gate > 0, 'the headings block is skipped while searching');
   const todayHead = SHEET_SRC.indexOf('{today.length ? (');

@@ -669,6 +669,16 @@ function rateLimitNotice(err, { now = Date.now() } = {}) {
   return `GitHub's hourly limit for Homeroom is used up. ${when}`;
 }
 
+/**
+ * How long GitHub asked a secondary-limit refusal to wait (its Retry-After,
+ * in ms), or null: another error, or a refusal that says nothing.
+ */
+function secondaryRetryAfterMs(err) {
+  if (!isSecondaryRateLimitError(err)) return null;
+  const seconds = Number(headerGetter(err.response && err.response.headers)('retry-after'));
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : null;
+}
+
 /** Seconds until the refusing budget resets, or null (for a Retry-After). */
 function rateLimitRetryAfterSeconds(err, { now = Date.now() } = {}) {
   if (!isRateLimitError(err)) return null;
@@ -714,6 +724,7 @@ module.exports = {
   budgetAllows,
   isRateLimitError,
   isSecondaryRateLimitError,
+  secondaryRetryAfterMs,
   rateLimitNotice,
   rateLimitRetryAfterSeconds,
   githubUnavailableBody,

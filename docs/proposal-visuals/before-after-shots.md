@@ -496,7 +496,7 @@ The platform checks:
 - it is addressed to a declared change, one of that change's screens, and a
   side;
 - a shot is one complete PNG under 6 MB (12 MB in a run taken at device
-  density, where a 2x desktop screen of a photo-heavy page passes 6 MB) and
+  density, where a 3x desktop screen of a photo-heavy page passes 6 MB) and
   at most 8192 px on each edge;
 - an element shot fits its screen: no wider than the screen (scaled by the
   same side's screen shot's density, or, before that is saved and in a run
@@ -802,9 +802,10 @@ agent.
 
 Shots can be saved at the screen's own density, so a card can zoom into a
 change without drawing it soft: a phone browser's is its device's (3, so a
-390 x 844 screen is a 1170 x 2532 PNG), and every desktop browser draws at 2
+390 x 844 screen is a 1170 x 2532 PNG), and every desktop browser draws at 3
 from a private Playwright config `write-shots-mcp-config.js` writes beside
-the MCP config (`deviceScaleFactor: 2`; Playwright takes it only with a fixed
+the MCP config (`deviceScaleFactor: 3`, 2 until the close-up capture
+design of 2026-10-21 found one desktop piece in eight needed more; Playwright takes it only with a fixed
 viewport, so the desktop browser opens at 1280x720, and the agent resizes to
 each declared screen as before).
 
@@ -816,8 +817,8 @@ each declared screen as before).
   starts and keeps it in its `agent` (the shots control), so it never
   changes density halfway, and its saves follow its own choice (the 12 MB
   cap, the element allowance). A worker image without this change
-  takes 1x shots whatever it says (its build log says `shots at 3x` /
-  `shots at 2x` once it has it). The worker learns it as
+  takes 1x shots whatever it says (its build log says `shots at 3x`
+  for every browser once it has it). The worker learns it as
   `SHOTS_DEVICE_DENSITY=1`, and its browsers as `SHOTS_SCREENSHOT_SCALE`.
 
 - **The screenshot tool.** The pinned Playwright MCP hard-codes
@@ -831,12 +832,12 @@ each declared screen as before).
   did. Each edit must match exactly once, so a pin bump that moves the code
   fails the image build, and `verify-shots-browser-mcp.js` proves both
   modes: 1x with the switch off, and the saved width as the answered width
-  times the browser's density (3 phone, 2 desktop) with it on. A newer Playwright takes
+  times the browser's density (3, phone and desktop) with it on. A newer Playwright takes
   a `scale` argument, but it also renames the element target and stops
   answering with the image of a named screenshot; moving to it is its own
   change.
 - **Two copies of each dense still.** The bridge says what each still was
-  saved at (`density`, 3 from a phone browser, 2 from a desktop one, only in
+  saved at (`density`, 3 from a phone or a desktop browser, only in
   a run taken at device density); a whole screen's must match its width
   over its declared screen's (`shots-files.densityFor`). The platform keeps
   such a still twice (`shots-control.saveShot`): `data` is the same still

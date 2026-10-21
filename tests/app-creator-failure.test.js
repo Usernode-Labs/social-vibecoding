@@ -41,6 +41,10 @@ function loadAppCreator({ githubStubs = {}, forkerStubs = {}, app }) {
       if (/SELECT \* FROM apps WHERE id = \$1/.test(sql)) return { rows: [app] };
       return { rows: [], rowCount: 1 };
     },
+    // The repository's turn in line: its advisory lock's client.
+    async connect() {
+      return { query: async (sql, params) => { queries.push({ sql: String(sql), params, client: true }); return { rows: [] }; }, release() {} };
+    },
   };
   stub(ids.logger, { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} });
   stub(ids.github, {
@@ -121,6 +125,76 @@ test('an adopted repository whose head cannot be read fails the setup, and pushe
   assert.equal(out.failed.stage, 'repo');
   assert.match(out.failed.reason, /Server Error/);
   assert.deepEqual(pushed, []);
+  assert.ok(!queries.some((q) => /SET repo_url/.test(q.sql)));
+});
+
+// 21 Oct 2026: GitHub refused four of fourteen projects made together
+// with its secondary limit, and their setups failed with GitHub's text
+// (services/repo-create-queue.js).
+const queue = require('../src/services/repo-create-queue');
+const { REPO_SLOW_DOWN } = require('../src/services/deploy-failure');
+const slowDown = () => Object.assign(new Error('You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later.'),
+  { status: 403, response: { status: 403, headers: {} } });
+const lockTurns = (queries) => queries.filter((q) => q.client && /pg_advisory_xact_lock/.test(q.sql)).length;
+
+test('GitHub\'s secondary limit is waited out: the repository is made on a later turn in line', async () => {
+  queue._forTest.setTiming({ gapMs: 0, firstWaitMs: 5, maxWaitMs: 20, budgetMs: 1000 });
+  let creates = 0;
+  const { appCreator, pool, queries } = loadAppCreator({
+    app: row(),
+    githubStubs: {
+      createRepo: async (owner, slug) => {
+        creates += 1;
+        if (creates <= 2) throw slowDown();
+        return { html_url: `https://github.com/${owner}/${slug}` };
+      },
+    },
+  });
+  const out = await appCreator.setUp({}, pool, 42, workContext());
+  assert.equal(out.failed, undefined);
+  assert.equal(out.sha, 'a'.repeat(40));
+  assert.equal(creates, 3);
+  assert.equal(lockTurns(queries), 3, 'every try takes its turn under the platform-wide lock');
+  assert.equal(queries.find((q) => /SET repo_url = \$1/.test(q.sql)).params[0], 'https://github.com/usernode-bot/test-app');
+});
+
+test('a push the limit refused is tried again on the repository the refused try made, adopted', async () => {
+  queue._forTest.setTiming({ gapMs: 0, firstWaitMs: 5, maxWaitMs: 20, budgetMs: 1000 });
+  let creates = 0;
+  const pushed = [];
+  const { appCreator, pool } = loadAppCreator({
+    app: row(),
+    githubStubs: {
+      createRepo: async (owner, slug, opts = {}) => {
+        creates += 1;
+        assert.equal(opts.adoptExisting, true);
+        return { html_url: `https://github.com/${owner}/${slug}`, ...(creates > 1 ? { adopted: true } : {}) };
+      },
+      headCommit: async () => ({ sha: 'b'.repeat(40), message: 'Initial commit' }),
+      pushFiles: async (owner, repo, files, opts) => {
+        pushed.push(opts.message);
+        if (pushed.length === 1) throw slowDown();
+        return { sha: 'c'.repeat(40) };
+      },
+    },
+  });
+  const out = await appCreator.setUp({}, pool, 42, workContext());
+  assert.equal(out.sha, 'c'.repeat(40));
+  assert.equal(creates, 2);
+  assert.deepEqual(pushed, ['Initialize Test App from Homeroom template', 'Initialize Test App from Homeroom template']);
+});
+
+test('still refused once the waits are spent: the setup fails at the repository, in words, not GitHub\'s', async () => {
+  queue._forTest.setTiming({ gapMs: 0, firstWaitMs: 5, maxWaitMs: 10, budgetMs: 30 });
+  let creates = 0;
+  const { appCreator, pool, queries } = loadAppCreator({
+    app: row(),
+    githubStubs: { createRepo: async () => { creates += 1; throw slowDown(); } },
+  });
+  const out = await appCreator.setUp({}, pool, 42, workContext());
+  assert.equal(out.failed.stage, 'repo');
+  assert.equal(out.failed.reason, REPO_SLOW_DOWN);
+  assert.ok(creates > 1, 'it waited and tried again first');
   assert.ok(!queries.some((q) => /SET repo_url/.test(q.sql)));
 });
 

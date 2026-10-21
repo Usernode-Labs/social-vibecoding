@@ -140,30 +140,49 @@ export function buildLineStopped(state: BuildLineState | null): boolean {
  * (#4392, Homeroom bot's thanks: "Building it · usually 10 to 25 min").
  * `words` (N4): the stage's own words in place of the line's, already in
  * the language on screen ("Working out the details" while it is `building`).
+ * `stacked` (Evan, 21 Oct 2026): the note on a line of its own under the
+ * words, for a line beside a tile or a picture, where "Working out the
+ * details · 2 min so far" ran out of room and was cut.
  */
-export function BuildLine({ state, note = null, words: own = null, className = '' }: {
-  state: BuildLineState; note?: string | null; words?: string | null; className?: string;
+export function BuildLine({ state, note = null, words: own = null, stacked = false, className = '' }: {
+  state: BuildLineState; note?: string | null; words?: string | null; stacked?: boolean; className?: string;
 }): ReactNode {
   const t = useMessages('onboarding');
   const asks = buildLineAsks(state);
   const done = buildLineDone(state);
   const words = own || t(state === 'working' ? WORKING_LINE_WORDS : BUILD_LINE_WORDS[state]);
+  const tone = asks ? 'font-semibold text-[color:var(--accent)]' : 'text-zinc-500 dark:text-zinc-400';
+  const icon = asks ? (
+    <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-[color:var(--accent)]" />
+  ) : buildLineStopped(state) ? (
+    <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-[color:var(--state-attention)]" />
+  ) : done ? (
+    <CheckIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+  ) : (
+    <SpinnerRingIcon className="h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+  );
+  if (stacked && note) {
+    // The note under the words, not under the spinner.
+    return (
+      <span
+        role="status"
+        data-build-line={state}
+        className={`grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 text-[15px] leading-5 ${tone} ${className}`}
+      >
+        {icon}
+        <span className="truncate">{words}</span>
+        <span data-build-line-note="" className="col-start-2 truncate text-[13px] font-normal leading-[18px] text-zinc-500 dark:text-zinc-400">{note}</span>
+      </span>
+    );
+  }
   // A span, so it can sit in a row's text as well as in a card.
   return (
     <span
       role="status"
       data-build-line={state}
-      className={`flex min-h-[24px] min-w-0 items-center gap-2 text-[15px] leading-5 ${asks ? 'font-semibold text-[color:var(--accent)]' : 'text-zinc-500 dark:text-zinc-400'} ${className}`}
+      className={`flex min-h-[24px] min-w-0 items-center gap-2 text-[15px] leading-5 ${tone} ${className}`}
     >
-      {asks ? (
-        <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-[color:var(--accent)]" />
-      ) : buildLineStopped(state) ? (
-        <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-[color:var(--state-attention)]" />
-      ) : done ? (
-        <CheckIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
-      ) : (
-        <SpinnerRingIcon className="h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />
-      )}
+      {icon}
       <span className="truncate">{note ? t('onboarding:buildLine.withNote', { line: words, note }) : words}</span>
     </span>
   );

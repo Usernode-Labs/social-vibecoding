@@ -209,7 +209,7 @@ test('the screen reads the stream in two places only, and past replies keep thei
   assert.deepEqual(readers.sort(), ['FollowOutput', 'LiveTurn']);
   // Rows are memo()'d and a reply's markdown keeps its wrapper.
   assert.match(panel, /^const Item = memo\(function Item\(/m);
-  assert.match(panel, /^const MayorText = memo\(function MayorText\(/m);
+  assert.match(panel, /^(?:export )?const MayorText = memo\(function MayorText\(/m);
   const mayor = panel.slice(panel.indexOf('const MayorText'), panel.indexOf('function appInitial'));
   assert.match(mayor, /const inner = useInnerHtml\(html \|\| ''\);/);
   assert.match(mayor, /dangerouslySetInnerHTML=\{inner\}/);

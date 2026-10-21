@@ -597,6 +597,9 @@ function stagingMockProposals(viewer) {
         '[Mock] #2061: waiting on the author — checks are failing',
         5, 3, 0, 4, { required: 3 }),
       check_state: 'failing',
+      // What the model writes for this run (services/checks-explanation.js),
+      // served by the ?demo=1 branch of GET /api/sessions/:id/checks-explanation.
+      checks_explanation: 'Kudos totals come out one too high after somebody changes their name, and the board stops loading on a narrow screen.',
       // #3978: the failing rows carry their diagnosis, and the unit-suite
       // row carries its per-test excerpts, so the "Why it failed" fold on
       // this route shows what a real failing proposal shows. Kept in the
@@ -1254,10 +1257,42 @@ function stagingMockProposals(viewer) {
         '[Mock] Your change needs a fix: its checks are failing',
         0.6, 0, 0, 0, { required: 3, windowEndsAt: null }),
       check_state: 'failing',
+      // The app's own tests failed on one test, so its page says what went
+      // wrong in plain words and offers its author Fix it, which needs the
+      // build conversation the change was made in (990804 is the staging
+      // fixture's, migrate.js seedStagingAgentFailingChecks). The sentence
+      // is what the model writes for such a run (services/
+      // checks-explanation.js), served by the ?demo=1 branch of
+      // GET /api/sessions/:id/checks-explanation, since a preview has none.
+      agent_session_id: 990804,
+      checks_explanation: 'Every message the app shows needs a Spanish version, and this one doesn’t have one yet: “Pick a date, or choose I don’t remember.”',
       test_results: [
+        { name: 'Home loads', path: '/', status: 'pass', consoleErrors: [] },
         {
-          name: 'Home loads', path: '/', status: 'fail', consoleErrors: [],
-          failureReason: 'Expected element "[data-mock-fix]" was not found',
+          index: -3,
+          name: 'Repo unit suite (npm test) passes', path: 'package.json', status: 'fail',
+          advisory: false, consoleErrors: [],
+          failureReason: 'tests/i18n.test.js (1): every message the server can send has a Spanish wording | # tests 26 | # pass 25 | # fail 1 | # cancelled 0',
+          failureDetails: [
+            {
+              file: 'tests/i18n.test.js',
+              test: 'every message the server can send has a Spanish wording',
+              excerpt: [
+                '  duration_ms: 0.905959',
+                "  type: 'test'",
+                "  location: '/tmp/tmp.p7vv74EHLR/tests/i18n.test.js:133:1'",
+                "  failureType: 'testCodeFailure'",
+                "  error: \"Spanish for: Pick a date, or choose I don't remember.\"",
+                "  code: 'ERR_ASSERTION'",
+                "  name: 'AssertionError'",
+                '  expected: true',
+                "  operator: '=='",
+                '  stack: |-',
+                '    /tmp/tmp.p7vv74EHLR/tests/i18n.test.js:142:12',
+                '    Set.forEach (<anonymous>)',
+              ].join('\n'),
+            },
+          ],
         },
       ],
     },
@@ -1328,6 +1363,12 @@ function ownDemoProposals(rows, user) {
   if (!user || user.id == null || !user.username) return rows;
   return rows.map((row) => (OWN_DEMO_PROPOSALS.has(row.id)
     ? { ...row, user_id: user.id, username: user.username } : row));
+}
+
+// One ?demo=1 proposal, as `user` reads it, or null: for a route outside
+// this file that answers for a mock (sessions.js's checks explanation).
+function stagingMockProposalFor(id, user) {
+  return ownDemoProposals(stagingMockProposals(user && user.username), user).find((m) => m.id === id) || null;
 }
 
 // The ?demo=1 merged change that waits for the platform's next release.
@@ -6601,6 +6642,7 @@ async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderU
 // asserts its PR body never carries a live @mention).
 module.exports = {
   voteRoutes,
+  stagingMockProposalFor,
   evaluateMergeGate,
   attemptMerge,
   refusalKind,

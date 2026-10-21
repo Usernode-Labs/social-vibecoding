@@ -21,6 +21,10 @@ function stub(id, exports) {
   require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
 }
 
+// The repository's turn in line (services/repo-create-queue.js) takes a
+// client for its advisory lock; with no gap after it, here.
+require('../src/services/repo-create-queue')._forTest.setTiming({ gapMs: 0 });
+
 function makeRecordingPool(rows = {}) {
   const queries = [];
   return {
@@ -29,6 +33,9 @@ function makeRecordingPool(rows = {}) {
       queries.push({ sql: String(sql), params });
       if (/SELECT \* FROM apps WHERE id = \$1/.test(sql)) return { rows: [rows.app] };
       return { rows: [], rowCount: 1 };
+    },
+    async connect() {
+      return { query: async (sql, params) => { queries.push({ sql: String(sql), params }); return { rows: [] }; }, release() {} };
     },
   };
 }

@@ -64,6 +64,9 @@ const COMPONENTS = new Set([
   'challenge_grade',
   'challenge_grade_feedback',
   'challenge_grade_proposal',
+  // A failed run's checks in plain words, on the change's page
+  // (services/checks-explanation.js).
+  'checks_explanation',
   'chat_ask',
   'workshop_ask',
   'content_review',
@@ -1219,7 +1222,7 @@ const HELPER_CALL_COMPONENTS = Object.freeze([
   'issue_title', 'quick_replies', 'short_description', 'chat_ask', 'workshop_ask',
   'app_sketch', 'first_version_plan', 'first_version_look', 'session_title',
   'progress_estimate', 'challenge_grade', 'challenge_grade_feedback', 'challenge_grade_proposal',
-  'report_summary', 'content_review', 'small_change',
+  'report_summary', 'content_review', 'small_change', 'checks_explanation',
 ]);
 
 const HELPER_CALLS_SQL = `

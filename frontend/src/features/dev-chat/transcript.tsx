@@ -30,6 +30,7 @@ import {
 } from 'react';
 
 import { useMessages } from '../../lib/i18n/react';
+import { linkRefsInHtml } from '../messages/channels';
 import { useStoreState } from '../../lib/use-store-state';
 import { createLogFollower, revealDisclosure, type LogFollower } from './log-follow';
 import {
@@ -606,13 +607,16 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
  * first frame lands (and after the turn seals, when `renderMessages` moves the
  * final text into the row model) it renders the model's own html.
  */
-function LiveContent({ rowKey, html }: { rowKey: string; html: string }): ReactNode {
+function LiveContent({ rowKey, html, appSlug }: { rowKey: string; html: string; appSlug?: string | null }): ReactNode {
   const s = useStoreState(streamStore);
   const live = s.key === rowKey ? s.html : '';
+  // #5728: the reply's refs are chipped once the project is known; a row
+  // without one renders exactly as it always did.
+  const shown = useMemo(() => linkRefsInHtml(live || html, appSlug), [live, html, appSlug]);
   // `Html`, like every other sink: a transcript republish mid-turn (a
   // progress line, a status row) re-renders this row with the same frame,
   // and a new wrapper would rewrite the bubble the stream just painted.
-  return <Html className="dc-msg-content" html={live || html} />;
+  return <Html className="dc-msg-content" html={shown} />;
 }
 
 function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
@@ -632,6 +636,9 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
   const whoClass = r.who === 'user'
     ? 'sr-only'
     : 'text-emerald-700 dark:text-emerald-400';
+  // #5728: a reply that names its project chips `#N` / `PR#N` as links; one
+  // without a project is left as it was drawn.
+  const html = useMemo(() => linkRefsInHtml(r.contentHtml, r.appSlug), [r.contentHtml, r.appSlug]);
   return (
     <div className={`dc-msg ${r.who === 'user' ? 'dc-msg-user' : 'dc-msg-assistant'}`}>
       <div className="dc-msg-header">
@@ -640,8 +647,8 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
         <span className="dc-msg-meta">{r.stamp}</span>
       </div>
       {r.live
-        ? <LiveContent rowKey={r.key} html={r.contentHtml} />
-        : <Html className="dc-msg-content" html={r.contentHtml} />}
+        ? <LiveContent rowKey={r.key} html={r.contentHtml} appSlug={r.appSlug} />
+        : <Html className="dc-msg-content" html={html} />}
       {r.more ? (
         <details
           className="dc-cc-log" style={{ marginTop: '6px' }}

@@ -237,6 +237,12 @@ export type TranscriptRow =
     model: string;
     stamp: string;
     contentHtml: string;
+    /**
+     * #5728: the project the AI's reply is about (`DevChat._appSlug()` when
+     * the row was built). Its `#N` / `PR#N` chips open that project's board
+     * when it is set; user and Claude Code rows carry none.
+     */
+    appSlug?: string | null;
     /** True on the one row a live turn is writing into — see the header. */
     live?: boolean;
     /** A user row's attachment strip. */

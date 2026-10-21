@@ -46,7 +46,10 @@ function escapeRe(text) {
 function vocabulary(modelIds = []) {
   const words = new Set(KNOWN_NAMES);
   for (const raw of modelIds) {
-    const id = String(raw || '').toLowerCase().trim();
+    // An arm at an effort (`vendor/model@max`, arms.js) is its model's
+    // words: the effort is not a name, and a word as common as `max` or
+    // `high` would garble the very diff being judged.
+    const id = require('./arms').modelOf(String(raw || '')).toLowerCase().trim();
     if (!id) continue;
     words.add(id);
     const [vendor, model = ''] = id.split('/');

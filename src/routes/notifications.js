@@ -16,6 +16,9 @@ const storyHistory = require('../services/story-history');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+// The most notification ids one `{ ids }` mark-read takes: what the sheet can
+// hold (the first page and the five Unread batches it fills itself with).
+const MAX_MARK_READ_IDS = 600;
 
 // ── Staging mock data ──────────────────────────────────────────────────
 // Request-time (?demo=1) injection of the session-related notification
@@ -985,10 +988,19 @@ function notificationsRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     res.set('Cache-Control', 'private, no-store');
     const {
-      id, all, chat_message_id: chatMessageId, app_id: appId,
+      id, ids, all, chat_message_id: chatMessageId, app_id: appId,
       conversation_id: conversationId, session_id: sessionId,
       kinds, exclude_kinds: excludeKinds,
     } = req.body || {};
+    // `{ ids }`: one clear that is several notifications, read in one
+    // statement (markRead). Positive int4 ids only, at most a page's worth.
+    let idList = null;
+    if (ids != null) {
+      const valid = Array.isArray(ids) && ids.length > 0 && ids.length <= MAX_MARK_READ_IDS
+        && ids.every((value) => Number.isSafeInteger(value) && value > 0 && value <= 2147483647);
+      if (!valid) return res.status(400).json({ error: 'Invalid notification ids' });
+      idList = [...new Set(ids)];
+    }
     // Kind scoping for the split drawers (cog vs bell). Sanitize to
     // string arrays; anything else is treated as absent.
     const kindList = Array.isArray(kinds) ? kinds.filter((k) => typeof k === 'string') : null;
@@ -1096,7 +1108,7 @@ function notificationsRoutes(config) {
       // making "Mark all read" look like it did nothing. Fan out exactly
       // like the branches above whenever something actually changed.
       const cleared = await notifications.markRead(pool, req.user.id, {
-        id, all: !!all, kinds: kindList, excludeKinds: excludeList,
+        id, ids: idList, all: !!all, kinds: kindList, excludeKinds: excludeList,
       });
       const { unread, messageUnread } = await notifications.countUnreadSplit(pool, req.user.id);
       if (cleared > 0) {

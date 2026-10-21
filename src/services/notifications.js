@@ -1280,8 +1280,16 @@ async function hydrateNotification(q, id) {
      LEFT JOIN users su ON su.id = n.source_user_id
      LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
      ${FILED_MESSAGE_JOIN_SQL}
-     WHERE n.id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`,
-    [id]
+     WHERE n.id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+       AND ${PARKED_KINDS_SQL}
+       AND NOT (n.kind = ANY($2::text[]) AND cs.status IS NOT DISTINCT FROM 'merged')`,
+    // Only what the bell lists (listForUser's own rules: a parked kind, and
+    // news about a change that has merged, #4795/#5487). A row it will never
+    // list was pushed anyway, drawn, and dropped by the next read of the
+    // feed: on 21 Oct 2026 a notification showed in the opened sheet for a
+    // moment and then disappeared. The phone push is the mobile_push_deliveries
+    // trigger's, at the insert, and is unchanged.
+    [id, MERGED_HIDDEN_KINDS]
   );
   if (!rows.length) return null;
   return { userId: rows[0].user_id, notification: serialize(rows[0]) };
@@ -2082,7 +2090,20 @@ async function markReadForConversation(pool, userId, conversationId) {
 // Single-id and mark-all clears. Returns rows actually cleared (like the
 // scoped helpers above) so the route can decide whether to fan out a
 // cross-tab `notifications_changed` refresh.
-async function markRead(pool, userId, { id, all = false, kinds = null, excludeKinds = null } = {}) {
+async function markRead(pool, userId, { id, ids = null, all = false, kinds = null, excludeKinds = null } = {}) {
+  // One clear that is several notifications (a story card, a folded row, a
+  // conversation run): one statement, so the count the route reads back
+  // after it is the count after all of them. One request per member raced:
+  // each answer counted before the others had committed, and the last to
+  // land put a higher count back on the bell after the clear (21 Oct 2026).
+  if (Array.isArray(ids) && ids.length) {
+    const { rowCount } = await pool.query(
+      `UPDATE notifications SET read_at = NOW()
+        WHERE user_id = $1 AND id = ANY($2::int[]) AND read_at IS NULL`,
+      [userId, ids]
+    );
+    return rowCount || 0;
+  }
   if (all) {
     // Optional kind scoping for the split drawers: the header cog's
     // "Mark all read" sends kinds=[the session-related set] so it only

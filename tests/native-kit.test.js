@@ -11,6 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const { physics } = require('../public/usernode-native/v1/native.js');
 
@@ -34,6 +35,9 @@ const {
   PTR_LIMIT,
   PTR_LAYER_H,
   decideSheetRelease,
+  decideSheetDrag,
+  SHEET_PULL_SLOP,
+  holdsSheetPull,
   remeasuredSheetY,
   keyboardInset,
   isTextEntryField,
@@ -219,6 +223,55 @@ test('sheet release: flick dismisses, deep drag dismisses, shallow drag cancels'
   assert.equal(decideSheetRelease({ y: 80, v: 0, sheetHeight: 400 }), false);
   // Past the line but drifting back UP at release: cancels.
   assert.equal(decideSheetRelease({ y: 230, v: -1, sheetHeight: 400 }), false);
+});
+
+// A sheet that holds a list (the platform's notifications and messages
+// sheets, `touch-action: pan-y`). On 21 Oct 2026 a pull on the bell's list
+// moved the whole sheet ~35pt, then the browser took the pan for the list,
+// cancelled the pointer, and the sheet sprang back while the list bounced.
+test('sheet drag on a list: the list\'s, unless it is at its top and the drag pulls down', () => {
+  // Outside any list (the grabber, the title), every vertical drag is the sheet's.
+  assert.equal(decideSheetDrag({ dy: 20, scrollTop: null }), true);
+  assert.equal(decideSheetDrag({ dy: -20, scrollTop: null }), true);
+  // A list at its top: a pull down drags the sheet, as on an iOS sheet...
+  assert.equal(decideSheetDrag({ dy: 12, scrollTop: 0 }), true);
+  // ...a push up scrolls the list.
+  assert.equal(decideSheetDrag({ dy: -12, scrollTop: 0 }), false);
+  // A list scrolled away from its top keeps every drag, down included.
+  assert.equal(decideSheetDrag({ dy: 12, scrollTop: 140 }), false);
+  assert.equal(decideSheetDrag({ dy: -12, scrollTop: 140 }), false);
+});
+
+test('a pull from the list\'s top is held back from the browser past a tap\'s jitter, downward only', () => {
+  assert.equal(SHEET_PULL_SLOP, 3);
+  // A tap's jitter stays the browser's, so the tap still clicks.
+  assert.equal(holdsSheetPull({ atTop: true, dx: 0, dy: 2 }), false);
+  assert.equal(holdsSheetPull({ atTop: true, dx: 1, dy: 3 }), false);
+  // A pull down from the top: held, so the list does not bounce under it.
+  assert.equal(holdsSheetPull({ atTop: true, dx: 1, dy: 6 }), true);
+  // Sideways (a row's swipe) and upward (a scroll) are never held.
+  assert.equal(holdsSheetPull({ atTop: true, dx: -9, dy: 5 }), false);
+  assert.equal(holdsSheetPull({ atTop: true, dx: 0, dy: -8 }), false);
+  // Away from the top the list scrolls back toward it: never held.
+  assert.equal(holdsSheetPull({ atTop: false, dx: 0, dy: 30 }), false);
+});
+
+test('presentSheet: a drag that began in a list asks decideSheetDrag, and the blocking touchmove waits for the top', () => {
+  const at = NATIVE_JS.indexOf('  function presentSheet(options) {');
+  const fn = NATIVE_JS.slice(at, NATIVE_JS.indexOf('\n  function ', at + 40));
+  // The list a drag began in is found at pointerdown (not when caught mid-spring).
+  assert.match(fn, /scroller: immediate \? null : scrollerAt\(e\.target\)/);
+  // Asked at the axis lock, before the sheet claims the finger.
+  assert.match(fn, /if \(!decideSheetDrag\(\{ dy: dy, scrollTop: drag\.scroller \? drag\.scroller\.scrollTop : null \}\)\) \{ drag = null; return; \}\s*if \(!gestures\.claim/);
+  // The non-passive touchmove is bound and unbound as the list crosses its
+  // top, never left on for a list scrolled away from it.
+  assert.match(fn, /sheet\.addEventListener\('touchmove', onTouchMove, \{ passive: false \}\)/);
+  assert.match(fn, /sheet\.removeEventListener\('touchmove', onTouchMove, \{ passive: false \}\)/);
+  assert.match(fn, /bindMove\(t\.scrollTop <= 0 \|\| !!\(drag && drag\.locked\)\)/);
+  assert.match(fn, /sheet\.addEventListener\('scroll', onInnerScroll, \{ capture: true, passive: true \}\)/);
+  // Once the sheet has the drag, the browser gets none of it.
+  assert.match(fn, /if \(drag && drag\.locked === 'y'\) \{ e\.preventDefault\(\); return; \}/);
+  assert.match(fn, /if \(holdsSheetPull\(\{ atTop: touch\.top, dx: dx, dy: dy \}\)\) e\.preventDefault\(\);/);
 });
 
 // ── Sheet re-measure (issue #742) ──────────────────────────────────────
@@ -1844,4 +1897,187 @@ test('sheet, panel and action sheet release pointer input when they start to lea
     ['actionSheet', /settled = true;\s*settleAction = action \|\| null;\s*releaseInput\(backdrop, wrap\);\s*springTo\(height, 0, finishSettle\)/],
   ];
   for (const [name, re] of exits) assert.match(src, re, `${name} releases input before its exit spring`);
+});
+
+// ── A committed swipe row closes its place with transforms ─────────────
+// The wrap's CSS `height` transition ran on WebKit's main thread, and in
+// Mobile Safari (and the iPhone app's web view) it never painted a frame:
+// the grey tray stood for the 400ms safety timer and then popped. The place
+// now goes in one step and what moved is played back with transform-only
+// animations (closeSwipeGap). Run here for real in a vm, over a fake column
+// layout: every box is as tall as its children, stacked top to bottom.
+
+// Keyframes made in the vm have its Object, so compare them as plain data.
+const plain = (v) => JSON.parse(JSON.stringify(v));
+
+function swipeGapHarness({ edge = false, reduced = false } = {}) {
+  const frames = [];
+  const timers = [];
+  const anims = [];
+  const SLOT = 80;
+  class Box {
+    constructor(name, { h = 0, css = {}, abs = false } = {}) {
+      // A style declaration reads '' for what was never set, as a real one does.
+      const style = new Proxy({}, { get: (t, k) => (k in t ? t[k] : '') });
+      Object.assign(this, { name, h, css, abs, kids: [], parent: null, style });
+    }
+    add(...kids) { for (const k of kids) { k.parent = this; this.kids.push(k); } return this; }
+    get parentElement() { return this.parent; }
+    get firstElementChild() { return this.kids[0] || null; }
+    get lastElementChild() { return this.kids[this.kids.length - 1] || null; }
+    get nextElementSibling() { const s = this.parent && this.parent.kids; return s ? s[s.indexOf(this) + 1] || null : null; }
+    get height() {
+      if (this.style.height) return parseFloat(this.style.height);
+      return this.kids.length ? this.kids.filter((k) => !k.abs).reduce((sum, k) => sum + k.height, 0) : this.h;
+    }
+    get offsetHeight() { return this.height; }
+    get top() {
+      if (!this.parent) return 0;
+      let top = this.parent.top;
+      if (this.abs) return top;
+      for (const k of this.parent.kids) { if (k === this) break; if (!k.abs) top += k.height; }
+      return top;
+    }
+    getBoundingClientRect() { return { top: this.top, bottom: this.top + this.height, height: this.height, left: 0, right: 390, width: 390 }; }
+    animate(keyframes, timing) {
+      let resolve;
+      const run = {
+        el: this, keyframes, timing, state: 'running',
+        finished: new Promise((r) => { resolve = r; }),
+        pause() { this.state = 'paused'; },
+        play() { this.state = 'running'; },
+        cancel() { this.state = 'cancelled'; },
+        finish() { this.state = 'finished'; resolve(this); },
+      };
+      anims.push(run);
+      return run;
+    }
+  }
+  const scroller = new Box('scroller', { css: { overflowY: 'auto' } });
+  scroller.style.height = '800px';
+  const stack = new Box('stack', { css: edge ? { backgroundColor: 'rgb(255, 255, 255)', overflowY: 'hidden' } : {} });
+  const wrap = new Box('wrap', { css: { overflowY: 'hidden' } });
+  const tray = new Box('tray', { abs: true }).add(new Box('save'), new Box('clear'));
+  tray.style.transform = 'translateX(-390px)';
+  const row = new Box('row', { h: SLOT });
+  const slotA = new Box('slotA').add(wrap.add(tray, row));
+  stack.add(new Box('head', { h: 30 }), slotA, new Box('slotB', { h: SLOT }), new Box('slotC', { h: SLOT }));
+  scroller.add(stack, new Box('after', { h: 100 }));
+  const body = new Box('body').add(scroller);
+  const context = vm.createContext({
+    prefersReducedMotion: reduced,
+    document: { body, documentElement: body, scrollingElement: body },
+    window: { innerHeight: 800 },
+    getComputedStyle: (box) => ({
+      overflowY: box.css.overflowY || 'visible',
+      backgroundColor: box.css.backgroundColor || 'rgba(0, 0, 0, 0)',
+      backgroundImage: 'none', boxShadow: 'none', borderTopWidth: '0px', borderBottomWidth: '0px',
+      height: `${box.height}px`, transform: 'none', marginTop: '0px', marginBottom: '0px',
+      borderRadius: '20px', borderTopLeftRadius: '20px', borderTopRightRadius: '20px',
+    }),
+    requestAnimationFrame: (fn) => { frames.push(fn); return frames.length; },
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimeout: () => {},
+    Promise,
+  });
+  vm.runInContext(NATIVE_JS.slice(NATIVE_JS.indexOf('  var SWIPE_GAP_MS'), NATIVE_JS.indexOf('  // attachSwipeActions(rowEl,')), context);
+  const find = (name) => [...anims].reverse().find((a) => a.el.name === name);
+  return { context, anims, frames, timers, find, scroller, stack, wrap, tray, row, by: (name) => {
+    const walk = (b) => (b.name === name ? b : b.kids.map(walk).find(Boolean));
+    return walk(body);
+  } };
+}
+
+test('a committed row\'s place closes in one step, and what moved slides back by transform alone', async () => {
+  const h = swipeGapHarness();
+  let done = 0;
+  h.context.closeSwipeGap(h.wrap, h.tray, h.row, () => { done++; });
+  // One step: the wrap is 0 tall (its end state, as before); the tray keeps
+  // the row's size and corners and stands in for it.
+  assert.equal(h.wrap.style.height, '0px');
+  assert.equal(h.wrap.style.overflow, 'visible');
+  assert.equal(h.row.style.visibility, 'hidden');
+  assert.equal(h.tray.style.height, '80px');
+  assert.equal(h.tray.style.overflow, 'hidden');
+  assert.equal(h.tray.style.borderRadius, '20px');
+  assert.equal(h.by('save').style.borderTopLeftRadius, '20px', 'the tray\'s box rises, so its top corners are the buttons\'');
+  assert.equal(h.by('clear').style.borderTopRightRadius, '20px');
+  // Everything that moved is played from where it was, by transform alone.
+  for (const name of ['slotB', 'slotC', 'after']) {
+    assert.deepEqual(plain(h.find(name).keyframes), [{ transform: 'translateY(80px)' }, { transform: 'translateY(0px)' }], name);
+  }
+  assert.equal(h.find('head'), undefined, 'what did not move is not animated');
+  // The tray's box rises off the place while its buttons stay put.
+  assert.deepEqual(plain(h.find('tray').keyframes), [
+    { transform: 'translateX(-390px) translateY(0px)' }, { transform: 'translateX(-390px) translateY(-80px)' },
+  ]);
+  assert.deepEqual(plain(h.find('clear').keyframes), [{ transform: 'translateY(0px)' }, { transform: 'translateY(80px)' }]);
+  for (const run of h.anims) {
+    assert.deepEqual(Object.keys(run.keyframes[0]), ['transform'], `${run.el.name} animates a transform only`);
+    assert.equal(run.timing.delay, undefined, 'no delay: a delayed animation stays on the main thread in WebKit');
+    assert.equal(run.timing.duration, 300);
+  }
+  // They hold their first frame until the next frame, so the long frame
+  // that lays this out is not where they start.
+  assert.ok(h.anims.every((run) => run.state === 'paused'));
+  for (const fn of h.frames.splice(0)) fn(16);
+  assert.ok(h.anims.every((run) => run.state === 'running'));
+  // The row leaves the document (done) once the motion has finished, and the
+  // held end states let go after it.
+  assert.equal(done, 0);
+  for (const run of h.anims) run.finish();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(done, 1);
+  assert.ok(h.anims.every((run) => run.state === 'cancelled'));
+  for (const t of h.timers) t.fn();
+  assert.equal(done, 1, 'done runs once');
+});
+
+test('a stalled main thread still ends the commit: the timer starts and ends the motion', () => {
+  const h = swipeGapHarness();
+  let done = 0;
+  h.context.closeSwipeGap(h.wrap, h.tray, h.row, () => { done++; });
+  // No frame comes and no animation reports its end.
+  const start = h.timers.find((t) => t.ms === 50);
+  assert.ok(start, 'a timer starts the motion if no frame comes');
+  start.fn();
+  assert.ok(h.anims.every((run) => run.state === 'running'));
+  const end = h.timers.find((t) => t.ms > 300);
+  assert.ok(end && end.ms <= 500, 'and another ends it shortly after its 300ms');
+  end.fn();
+  assert.equal(done, 1);
+});
+
+test('a box that shows its own edge keeps its height through the step, then eases it down', () => {
+  const h = swipeGapHarness({ edge: true });
+  let done = 0;
+  h.context.closeSwipeGap(h.wrap, h.tray, h.row, () => { done++; });
+  // The rows inside still move by transform; the box pins its old height so
+  // nothing outside it moves in the step, and eases to the new one.
+  assert.deepEqual(plain(h.find('slotB').keyframes), [{ transform: 'translateY(80px)' }, { transform: 'translateY(0px)' }]);
+  assert.equal(h.find('after'), undefined, 'what is outside the box follows it in the layout');
+  assert.equal(h.stack.style.height, '270px');
+  assert.deepEqual(plain(h.find('stack').keyframes), [{ height: '270px' }, { height: '190px' }]);
+  for (const fn of h.frames.splice(0)) fn(16);
+  h.timers.find((t) => t.ms > 300).fn();
+  assert.equal(done, 1);
+  assert.equal(h.stack.style.height, '', 'its own height is given back');
+});
+
+test('with reduced motion a committed row leaves at once', () => {
+  const h = swipeGapHarness({ reduced: true });
+  let done = 0;
+  h.context.closeSwipeGap(h.wrap, h.tray, h.row, () => { done++; });
+  assert.equal(done, 1);
+  assert.equal(h.anims.length, 0);
+});
+
+test('the commit slides out like a dismissal, then closes the place, then leaves, then hands over', () => {
+  const swipe = NATIVE_JS.slice(NATIVE_JS.indexOf('function attachSwipeActions('));
+  const commit = swipe.slice(swipe.indexOf('function commit(action, velocity) {'), swipe.indexOf('function onPointerDown(e) {'));
+  assert.match(commit, /springTo\(-rowWidth\(\), velocity \|\| 0, 'stiff', function \(\) \{\s*closeSwipeGap\(wrap, tray, rowEl, function \(\) \{\s*if \(wrap\.parentNode\) wrap\.parentNode\.removeChild\(wrap\);\s*action\.handler && action\.handler\(\);\s*\}\);\s*\}, true\);/,
+    'the row is out of the document before the handler runs, as the API promises');
+  assert.match(swipe, /preset: preset \|\| 'default', exit: !!exit,/, 'the slide-out rests once the row is gone, not a few pixels later');
+  assert.doesNotMatch(NATIVE_CSS, /un-collapsing/, 'no height transition is left to stall');
+  assert.doesNotMatch(NATIVE_JS, /un-collapsing|transitionend', finish/);
 });

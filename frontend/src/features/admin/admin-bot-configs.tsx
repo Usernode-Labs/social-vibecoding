@@ -6,6 +6,7 @@ import type { ReactNode } from 'react';
 import { AdminUI } from './admin-console.js';
 import { requestBenchLaunch } from './admin-homeroom-bench';
 import type { BenchRequest } from './admin-homeroom-bench';
+import { EFFORTS, armOf, parseArm } from './bench-arms';
 
 // Homeroom bot → Configurations (#admin/homeroom-bot/configs). It was a
 // section of its own, #admin/bot-configs, which still opens this tab.
@@ -49,8 +50,8 @@ export const RECIPE_STAGES: { key: RecipeStage; label: string }[] = [
   { key: 'build', label: 'Build' },
   { key: 'followup', label: 'Follow-ups and check fixes' },
 ];
-// bot-configs.js EFFORTS; blank is the deployment's own.
-export const EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+// bot-configs.js EFFORTS (bench-arms.ts); blank is the deployment's own.
+export { EFFORTS };
 export const MAX_CLOCK_MINUTES = 180;
 
 export interface Recipe {
@@ -222,21 +223,29 @@ export interface Draft {
   from: string;
 }
 
-/** A draft copied from `v`, with `change` (a stage and its model) applied. Pure. */
+/**
+ * A draft copied from `v`, with `change` (a stage and its model) applied:
+ * the Benchmark's Use for, whose model may be an arm at an effort
+ * (`vendor/model@max`, bench-arms.ts), which sets that stage's effort too. Pure.
+ */
 export function draftFrom(v: BotConfigVersion, change: { stage: RecipeStage; model: string } | null = null): Draft {
   const r = v.recipe;
   const scope: Scope = v.scope === 'later' ? 'later' : 'first_version';
   const each = (fn: (st: RecipeStage) => string) => Object.fromEntries(RECIPE_STAGES.map((st) => [st.key, fn(st.key)])) as Record<RecipeStage, string>;
+  const arm = change ? parseArm(change.model) : null;
   const draft: Draft = {
     scope,
-    label: change ? `${v.label}, ${change.stage} on ${change.model.split('/').pop()}` : `${v.label} (copy)`,
+    label: change && arm ? `${v.label}, ${change.stage} on ${arm.model.split('/').pop()}${arm.effort ? ` at ${arm.effort}` : ''}` : `${v.label} (copy)`,
     models: each((st) => (r.models as Record<string, string | undefined>)[st] || ''),
     effort: each((st) => r.effort?.[st] || ''),
     clocks: each((st) => (r.clocks?.[st] ? String(r.clocks[st]) : '')),
     base: { reviewer: r.reviewer, pack: r.pack, ...(r.tweaks?.length ? { tweaks: r.tweaks } : {}) },
     from: `${v.label} v${v.version}`,
   };
-  if (change && (scope === 'later' || change.stage !== 'followup')) draft.models[change.stage] = change.model;
+  if (change && arm && (scope === 'later' || change.stage !== 'followup')) {
+    draft.models[change.stage] = arm.model;
+    if (arm.effort) draft.effort[change.stage] = arm.effort;
+  }
   return draft;
 }
 
@@ -347,8 +356,9 @@ export function DraftForm({ draft, busy, onChange, onSave, onCancel }: {
 /**
  * What "Compare on the benchmark" asks the Benchmark for: a first version's
  * studio arms (this version and the current one), or for a later change the
- * launcher on the stages the two name different models for, with both
- * models; null when they differ only in effort, clocks or what the bench
+ * launcher on the stages the two run differently, in a model or in an
+ * effort, with each one's arm there (`vendor/model@effort` for an effort,
+ * bench-arms.ts); null when they differ only in clocks or what the bench
  * does not run (a later change is then compared by its blind pairs). Pure.
  */
 export function benchRequestFor(v: BotConfigVersion, current: BotConfigVersion | null):
@@ -357,13 +367,17 @@ export function benchRequestFor(v: BotConfigVersion, current: BotConfigVersion |
   | null {
   if (v.scope !== 'later') return { view: 'studio', models: current && current.id !== v.id ? `config:${v.id}, config:${current.id}` : `config:${v.id}` };
   if (!current || current.id === v.id) return null;
-  const mine = v.recipe.models as Record<string, string | undefined>;
-  const theirs = current.recipe.models as Record<string, string | undefined>;
+  // Each one's arm at a stage: its model, at its effort there when it names one.
+  const armAt = (r: Recipe, st: RecipeStage) => {
+    const model = (r.models as Record<string, string | undefined>)[st];
+    return model ? armOf(model, r.effort?.[st] || null) : '';
+  };
   // The benchmark's own stage for each (a follow-up's fix is its checks fix).
   const benchStage: Record<RecipeStage, string> = { triage: 'triage', spec: 'spec', build: 'build', followup: 'checks_fix' };
-  const differ = RECIPE_STAGES.map((st) => st.key).filter((st) => mine[st] && theirs[st] && mine[st] !== theirs[st]);
+  const differ = RECIPE_STAGES.map((st) => st.key)
+    .filter((st) => armAt(v.recipe, st) && armAt(current.recipe, st) && armAt(v.recipe, st) !== armAt(current.recipe, st));
   if (!differ.length) return null;
-  const models = [...new Set(differ.flatMap((st) => [mine[st] as string, theirs[st] as string]))];
+  const models = [...new Set(differ.flatMap((st) => [armAt(v.recipe, st), armAt(current.recipe, st)]))];
   return { view: 'launch', preset: { stages: differ.map((st) => benchStage[st]), models } };
 }
 
@@ -697,7 +711,7 @@ function BotConfigsSection({ onOpenBenchmark, asked = null }: {
     const current = (payload?.versions || []).find((x) => x.role === 'current') || null;
     const request = benchRequestFor(v, current);
     if (!request) {
-      console_()._alert('These two name the same models wherever the benchmark runs one, so it cannot tell them apart. Their blind pairs on live builds compare them.');
+      console_()._alert('These two run the same models at the same efforts wherever the benchmark runs one, so it cannot tell them apart. Their blind pairs on live builds compare them.');
       return;
     }
     requestBenchLaunch(request as BenchRequest);
