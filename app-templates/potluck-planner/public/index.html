@@ -20,7 +20,6 @@
        how the app answers the shell, so keep it even if no bridge API is
        called. -->
   <script src="/usernode-bridge/v1/bridge.js"></script>
-  <script src="/usernode-native/v1/native.js"></script>
   <!-- Follow the viewer's Homeroom theme (the bridge reports it), with the
        OS preference as the fallback outside Homeroom. -->
   <script>
@@ -36,6 +35,9 @@
       media.addEventListener('change', applyTheme);
     })();
   </script>
+  <!-- The native kit's script (its stylesheet is above). After the theme
+       script, which runs first so the page never paints in the wrong look. -->
+  <script src="/usernode-native/v1/native.js"></script>
   <!-- What takes the loading shapes' place fades in, briefly, rather than
        cutting over: an animation replays whenever [hidden] comes off, so
        nothing has to start it. None under reduced motion. -->
