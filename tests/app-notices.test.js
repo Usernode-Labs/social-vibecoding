@@ -134,10 +134,12 @@ test('a door to a project\'s hub opens the hub; a page opened again reads the ta
   // The doors: the logo menu row, Discover's rows and a Needs you card's
   // project name. Back and Forward are not doors, and nor is a row of All
   // communities: a switch keeps the place you were on (landKeepingPlace).
-  // The menu row lands on the hub before it follows its link, which is full
-  // width everywhere, beside a running app too: a community's page is never
-  // the side panel's (side-panel/routes.ts).
-  assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'), /onClick=\{\(e\) => \{\n\s*if \(slug\) \(window as any\)\.AppView\?\._landOnHub\?\.\(slug\);\n\s*followThenDismiss\(e,/);
+  // The menu row lands before it follows its link, which is full width
+  // everywhere, beside a running app too: a community's page is never the
+  // side panel's (side-panel/routes.ts). #5726: a row showing votes owed is
+  // the door to that queue, Needs you; with no figure it is the hub's.
+  assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'),
+    /onClick=\{\(e\) => \{\n\s*if \(slug\) \{\n\s*const view = \(window as any\)\.AppView;\n\s*if \(owed\) view\?\._landOnTab\?\.\(slug, 'needs'\);\n\s*else view\?\._landOnHub\?\.\(slug\);\n\s*\}\n\s*followThenDismiss\(e,/);
   assert.match(read('frontend/src/features/apps/browse.js'), /if \(typeof AppView !== 'undefined' && AppView\._landOnHub\) AppView\._landOnHub\(view\.slug\);\n\s*location\.hash = href;/);
   assert.match(read('frontend/src/features/workshop/index.tsx'), /landKeepingPlace\(row\.slug\);\n\s*win\.App\?\.navigateToApp\?\.\(row\.slug, 'dev'\);/);
   assert.match(read('frontend/src/features/workshop/needs-reel.tsx'), /onClick=\{\(\) => \{ \(window as any\)\.AppView\?\._landOnHub\?\.\(app\.slug\); \}\}/);
