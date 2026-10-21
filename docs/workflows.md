@@ -152,8 +152,10 @@ browser. What `ws.js`'s push helpers also kick in the process that calls them ri
 the push or its statement:
 - **the Workshop's board-change reaction**: a push marked `routing.boardChange`
   (`pushes.ts boardMoved`) is handed to the Workshop's listener in every web process
-  that relays it (`ws.js _onBusMessage`): each process debounces it and reads the board
-  once, and the row lease (or an unchanged board) leaves one reconcile to run;
+  that relays it (`ws.js _onBusMessage`): each owes the app a pass on its row
+  (`app_workshop_themes.reconcile_due_at`, due 30 s after the first change, so a second
+  relay changes nothing), and the `workshop-changes` clock runs each pass due as a
+  target, taking it off the row only as it listed it;
 - **the phone badge sync**: everyone a push tells `notifications_changed` is owed a
   re-badge, a row of `mobile_push_badge_syncs` written in the same statement as the
   pushes (`publishPushes`, where phone push is on) and drained by the push sender,
@@ -759,6 +761,13 @@ per turn, run whole in whichever workflow process claims it.
   (`session-work.ts` `workedOnSql`: a turn's record, a running turn instance, a local
   turn, shots, a live operation, a build, a sync, the bot's look), never from another
   process's memory. A process's holds (`services/processes.js`) are its own drain's.
+- **What a turn owes after it** is the machine's work, never a call after its end: a
+  turn that stopped before finishing tells its person once (`turn.stalled`,
+  `turns.tellStalled`), and a conversation opened on a request is named from it beside its
+  run (`turn.name`, `agent-sessions.nameFromRequest`). A change's `session_state` (busy or
+  idle) is pushed from the transition that starts or ends its turn (`pushes.ts
+  sessionState`), from the change's row; `session-state.js` reads busy from the durable
+  records above, never from what one process last published.
 - **Leftovers** (`services/turn-leftovers.js`, the `turn-leftovers` clock, every minute):
   a coding record whose item settled without releasing it gets a `recover` turn, asked
   again ten minutes after the last while it is still there, four times at most; the last
@@ -1176,6 +1185,11 @@ Make it, an import, a ready-made app, a remix, the bench studio's host.
   another build is alive, or the row is older than the 30 minutes an older build's sweep
   allowed one); until then the work waits. A first request an older build left open on a
   made project is adopted by the release (`firstRequests`: `FirstRequestOwed`).
+- **A first version's plan** at Make it is claimed with `PlanOwed` (from
+  `first-version-plan.startEarlyPlan`, its row claimed in the same statement): `app.plan`
+  drafts it (`runEarlyPlan`), then `app.earlyLook` draws its first look, each work a
+  restart carries on. They were promises in the memory of the process that made the
+  project.
 - **One deadline: its time limit** (15 minutes from its setup's start). Past it a setup
   still running is cancelled and the project reads failed; a first deploy still to come
   makes it run when it answers. One whose ask app-delivery never took up reads
@@ -1214,6 +1228,9 @@ release built is known, and retired by identity once a newer attempt serves).
   verdict, no retry; the studio reads the outcome off the instance). A head that is not the row's pin for its kind (an
   import's head, a promoted proposal's reviewed head, a submitted hand-off) is refused
   `head_superseded`; the head being built or served joins.
+- **A deferred head that measures clean** tells it (`ConflictResolved`) in the
+  measurement's own statement (`integration.js`), so a restart between the two cannot
+  leave it deferred; the boot hook that did it after the commit is gone.
 - **One build at a time, one checks run at a time.** A build is an attempt
   (`preview.prepare`): its own checkout, database and env Secret, then the session's
   runtime updated in place, fenced by attempt and claim (`n.k`), the serving template
@@ -1482,6 +1499,9 @@ on, `reviewed_head_sha` and `approval_epoch`, and what makes each platform sync 
   `pr-import-sync.applyHeadChange`, `vote-revision`'s authored push and
   `integration.clearApprovals` append `ReviewHeadMoved` / `ApprovalsCleared`, never on a
   closed or merged proposal, and the move tells the shots machine (`HeadMoved`).
+- **A hosted build's diagram** is stored together with this machine's `DiagramStored`
+  (`proposal-diagram.storeDeclared`, one transaction), and its block in the pull request's
+  body is a GitHub move of the proposal (`pr.diagram`): one at a time, the newest waiting.
 - **Who works on a session** is `session-work.ts` read under the lock, in every one of these
   decisions; a hand-off's promote names its own operation, and the pipeline checking the very
   commit being proposed does not count.
@@ -1576,6 +1596,11 @@ requires a run of the bot's that proposed the session.
   - **Closed**: the requester's tray reads again (a push the close's own write sends),
     and nothing more is said; a closed change reopened and put up for a vote again is
     followed again. **Live** is the end.
+- **A vote on it** tells it in the vote's own statement (`Voted`, from `routes/votes.js`
+  `recordVote`, and from `retractVote` in its transaction): the requester's tray reads
+  again, and a yes is said to the requester once per voter and approval epoch
+  (`bot.tellApproved`, `homeroom-bot-dm.sayApproved`). It was a call after the vote's
+  commit, which a restart in between lost.
 - **Its work only sends, strict:** a failure throws and is retried, instead of reporting
   success with nothing done. Each is keyed so a retry says nothing twice: the DMs by their
   idempotency keys (a duplicate send records what its first attempt never got to), the
@@ -1646,6 +1671,10 @@ bot owes them there. One instance per person (`person:<userId>`).
   per trigger: each project joined owes its own); every hello is claimed in the transaction
   that sends it (`sendDm`'s `hello`), so none is claimed and then not sent, and a person
   has one.
+- **Its email.** A bot DM that rang a person owes them its email when no phone push
+  reached them: `MailOwed`, appended with the message (`sendDm`'s write), and `dm.mail`
+  sends it (`activity-mail.emailIfNoPush`, which waits for the send and throws when it
+  cannot decide, so the work retries). It was a send after the commit, lost to a restart.
 - **During a rollout** the later tries an older release promised (its turn rows say so)
   are adopted by the release machine, for people with no instance yet (`adoptDeferredDms`). DM keys and wording are
   unchanged, so an older leader and this machine asking the same message send one answer.
@@ -1729,6 +1758,21 @@ intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
 - **Run now.** Admin → Workflows' "Run now" (`RunNow`), and the storage page's "Measure now",
   which waits for the run it asked for (`platform.runClockNow`; on a staging preview, where
   nothing is armed, it measures on the spot). During a run it runs once more after it.
+- **Asked for, not scheduled** (`onDemand`): an admin's fleet job, `container-rollover`
+  (Admin › Rollover) and `preview-reap` (Admin › Staging's "reap now"), has no deadline and
+  runs only when an admin asks (`platform.askClockRun`: `RunNow` with who asked, which the
+  run's input carries as `asked`). One asked while it runs is refused (`running`), so two
+  presses on two processes are one sweep. Each unit (an app, a preview) is a step of the
+  run's work item (`services/fleet-job.js`): a restart carries the job on after the units
+  it finished, and its progress is that checkpoint, which the console reads from any
+  process (`platform.clockRunOf`). An older build, which knows no on-demand job, arms one
+  on a day's interval; a run nobody asked for does nothing (`skipped: not_asked`).
+- **Refused by an older build** (`reask-refused`, every minute, newest build only): during
+  a rollout an older workflow process refuses an event type its machine gained in the
+  newer build (`unknown_event`), and what it owed would be lost. Once no older build
+  serves, each refusal of the last two days whose type this build's machine knows is
+  appended again as it was, keyed `reask:<id>` and caused by the refusal, so it is asked
+  once (`platform.reaskRefused`).
 - **First runs** are due when the leader timer a job replaces would have run, else spread over
   the next two minutes.
 - **The newest build only** (`newestOnly`): a job whose work depends on the build (its
@@ -1755,6 +1799,12 @@ intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
 - **Production apps.** `app-health` (each running app's runtime, every minute) and
   `main-drift` (each running app's main on GitHub, every 5 minutes) report to app-delivery
   (`Unhealthy`, `MainMoved`), which decides.
+- **People's round trips and limits.** `wallet-links` reads the explorer for wallet-link
+  memos (continuous, resting 4 s, longer while the explorer fails), its chain, cursor and
+  outage streak carried in its result; `rate-limit-retention` deletes the shared limiters'
+  spent windows (`rate_limit_hits`); `invite-mail` sends the email an invite moment's
+  notice owes (`notifications.mailed_at` NULL); `workshop-changes` (every 10 s) runs each
+  Workshop pass a board change owed.
 - **Previews and proposals.** `preview-runtimes`, `preview-gc`, `preview-env`,
   `preview-orphan-dbs`, `preview-pressure` and `worker-volumes` read the runtimes
   and the database servers;
