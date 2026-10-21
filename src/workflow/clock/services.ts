@@ -114,6 +114,14 @@ const HOUR = 60 * MIN;
 // paged: each run takes the next page after the last one it reached, kept
 // as `after` in its result, and starts over once a page comes back short.)
 const page = (ctx: WorkContext) => ({ after: (ctx.input.previous as any)?.after ?? null, limit: MAX_ITEMS });
+// A clock whose every target reads GitHub reads at most GITHUB_READS_PER_HOUR
+// of them an hour, whatever the GitHub budget's headers say (a process that
+// has made no call yet knows none): its page is that hour's share of its
+// interval, and the pages after it cover the rest on the next runs.
+export const GITHUB_READS_PER_HOUR = 600;
+const githubPage = (ctx: WorkContext, everyMs: number) =>
+  ({ ...page(ctx), limit: Math.max(1, Math.min(MAX_ITEMS, Math.ceil(GITHUB_READS_PER_HOUR * everyMs / HOUR))) });
+const importedEveryMs = () => Math.max(parseInt(process.env.IMPORTED_HEAD_SYNC_COOLDOWN_MS || '', 10) || 3 * MIN, 30 * 1000);
 const stopped = (ctx: WorkContext) => () => ctx.signal.aborted;
 
 // WORKSHOP_THEMES_SWEEP_INTERVAL_MS (config.js workshopSweepIntervalMs): 0
@@ -602,8 +610,8 @@ export const JOBS: readonly Job[] = Object.freeze([
     // GitHub merged or closed it. IMPORTED_HEAD_SYNC_COOLDOWN_MS sets how
     // often (at least 30 seconds).
     name: 'imported-prs',
-    get everyMs() { return Math.max(parseInt(process.env.IMPORTED_HEAD_SYNC_COOLDOWN_MS || '', 10) || 3 * MIN, 30 * 1000); },
-    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').importedTargets(pool, page(ctx)),
+    get everyMs() { return importedEveryMs(); },
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').importedTargets(pool, githubPage(ctx, importedEveryMs())),
     item: {
       concurrency: 2,
       leaseMs: 10 * MIN,
@@ -614,7 +622,7 @@ export const JOBS: readonly Job[] = Object.freeze([
     // Each native proposal up for a vote: one merged by hand on GitHub is
     // recorded.
     name: 'merged-by-hand', everyMs: 6 * HOUR,
-    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').mergedByHandTargets(pool, page(ctx)),
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').mergedByHandTargets(pool, githubPage(ctx, 6 * HOUR)),
     item: {
       concurrency: 4,
       run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').lookMergedByHand(pool, Number(ctx.input.input?.sessionId)),
@@ -624,7 +632,7 @@ export const JOBS: readonly Job[] = Object.freeze([
     // Each native proposal in review: its reviewed head read again (a push
     // made outside Homeroom), and its explicit-approval flag.
     name: 'proposal-revisions', everyMs: HOUR,
-    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').revisionTargets(pool, page(ctx)),
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').revisionTargets(pool, githubPage(ctx, HOUR)),
     item: {
       concurrency: 2,
       leaseMs: 5 * MIN,

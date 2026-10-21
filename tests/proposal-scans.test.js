@@ -82,9 +82,29 @@ test('the targets are paged, so a list longer than a run takes is gone through a
 test('a clock that lists proposals hands its last page on to its next run', () => {
   const clocks = require('node:fs').readFileSync(require.resolve('../src/workflow/clock/services.ts'), 'utf8');
   assert.match(clocks, /const page = \(ctx: WorkContext\) => \(\{ after: \(ctx\.input\.previous as any\)\?\.after \?\? null, limit: MAX_ITEMS \}\);/);
-  for (const call of ['importedTargets(pool, page(ctx))', 'mergedByHandTargets(pool, page(ctx))', 'revisionTargets(pool, page(ctx))', 'leftovers(config, page(ctx))']) {
+  for (const call of ['importedTargets(pool, githubPage(ctx, importedEveryMs()))', 'mergedByHandTargets(pool, githubPage(ctx, 6 * HOUR))',
+    'revisionTargets(pool, githubPage(ctx, HOUR))', 'leftovers(config, page(ctx))']) {
     assert.ok(clocks.includes(call), call);
   }
+});
+
+test('the imported-PR clock reads at most its share of GitHub reads an hour, paging through the rest', async () => {
+  // Every imported PR is a GitHub read: at 600 an hour and a run every three
+  // minutes, a run hands back 30, and the runs after it the rest.
+  const { JOBS, GITHUB_READS_PER_HOUR } = require('../src/workflow/clock/services.ts');
+  assert.equal(GITHUB_READS_PER_HOUR, 600);
+  const job = JOBS.find((j) => j.name === 'imported-prs');
+  const ids = Array.from({ length: 500 }, (_, i) => i + 1);
+  const p = { query: async (_sql, [after, limit]) => ({ rows: ids.filter((id) => id > after).slice(0, limit).map((id) => ({ id })) }) };
+  const seen = new Set();
+  let previous = null;
+  for (let run = 0; run < 17; run++) {
+    const out = await job.run({ input: { previous }, signal: new AbortController().signal }, { pool: p, config: {} });
+    assert.ok(out.items.length <= 30, `run ${run}: ${out.items.length} reads`);
+    for (const item of out.items) seen.add(item.input.sessionId);
+    previous = out;
+  }
+  assert.equal(seen.size, 500, 'every PR within the hour\'s runs');
 });
 
 test('an imported look skips a session worked on or a spent budget, and otherwise syncs it', async () => {

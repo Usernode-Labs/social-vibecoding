@@ -419,7 +419,7 @@ test('a release does not re-run the privacy audit or the merged-by-hand lookup',
   // Each proposal is a target of its own: a run stopped part way leaves the
   // rest to be looked at, rather than the whole lookup to run again.
   const job = clocks.slice(clocks.indexOf("name: 'merged-by-hand'"), clocks.indexOf("name: 'proposal-revisions'"));
-  assert.match(job, /legacy\('services\/proposal-scans'\)\.mergedByHandTargets\(pool, page\(ctx\)\)/);
+  assert.match(job, /legacy\('services\/proposal-scans'\)\.mergedByHandTargets\(pool, githubPage\(ctx, 6 \* HOUR\)\)/);
   assert.match(job, /item: \{\n\s+concurrency: \d+,\n\s+run: [^\n]*legacy\('services\/proposal-scans'\)\.lookMergedByHand\(pool, Number\(ctx\.input\.input\?\.sessionId\)\)/);
 
   // The audit stops at its next row once its run is stopped, so it never
