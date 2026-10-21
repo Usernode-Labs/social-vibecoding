@@ -240,7 +240,7 @@ test('every moment is placed where it means something', () => {
 
 // ── 5. Members told, and the emails ─────────────────────────────────────
 
-test('tellMembers: one project_opened per member, never its maker, then the push and the email', async () => {
+test('tellMembers: one project_opened per member, never its maker, its email owed with it, then the bell', async () => {
   const projectOpened = require('../src/services/project-opened');
   assert.match(projectOpened.MEMBERS_SQL, /cm\.user_id IS DISTINCT FROM a\.created_by/, 'never its maker');
   assert.match(projectOpened.MEMBERS_SQL, /u\.is_synthetic = FALSE/, 'never the bot');
@@ -252,6 +252,7 @@ test('tellMembers: one project_opened per member, never its maker, then the push
       if (sql === projectOpened.MEMBERS_SQL) return { rows: [{ user_id: 11 }, { user_id: 12 }] };
       if (/INSERT INTO notifications/.test(sql)) {
         assert.match(sql, /NOT EXISTS/, 'once per person and project');
+        assert.match(sql, /kind, mailed_at\)\s+SELECT u, \$2, NULL, 'project_opened', NULL/, 'its email owed by the notice (the notice-mail clock)');
         inserted.push(params);
         return { rows: params[0].map((u, i) => ({ id: 100 + i, user_id: u, app_id: 3, kind: 'project_opened' })) };
       }
@@ -266,13 +267,14 @@ test('tellMembers: one project_opened per member, never its maker, then the push
     'never throws');
 });
 
-test('the first version going live tells its members, whatever its maker chose', () => {
+test('the first version going live tells its members in its message\'s own transaction, whatever its maker chose', () => {
   const dm = read('src', 'services', 'homeroom-bot-dm.js');
-  const at = dm.indexOf("require('./project-opened').tellMembers");
-  assert.ok(at > 0);
-  const guard = dm.slice(dm.lastIndexOf('if (', at), at);
-  assert.match(guard, /story === 'live' && metadata\?\.firstVersion/);
+  const guard = dm.slice(dm.indexOf('const opens = '), dm.indexOf(';', dm.indexOf('const opens = ')));
+  assert.match(guard, /story === 'live' && !!metadata\?\.firstVersion && !!metadata\?\.appSlug/);
   assert.doesNotMatch(guard, /muted/, 'the maker\'s own switch is theirs');
+  assert.match(dm, /if \(opens\) toldOpen = await require\('\.\/project-opened'\)\.oweTold\(db, \{ appSlug: metadata\.appSlug, makerId: userId \}\);/,
+    'owed by the message\'s insert (afterInsert), not a call after its commit');
+  assert.match(dm, /if \(toldOpen\.length\) await require\('\.\/project-opened'\)\.pushTold\(pool, toldOpen\);/, 'then the bells');
 });
 
 test('project_opened is a Change alert, in the push policy, the seed and the bell', () => {
@@ -305,11 +307,31 @@ test('the two new emails are activity mail: framed, throttled, and say why they 
   }
 });
 
-test('the vote digest is emailed when no phone can take it', () => {
+test('the vote digest is emailed when no phone can take it, owed by its notice', async () => {
   const src = read('src', 'services', 'vote-digest.js');
-  assert.match(src, /void emailDigest\(pool, \{ userId, pending/);
-  assert.match(src, /kind: 'votes_owed'/);
-  assert.match(src, /hashRoute: '#communities'/, 'several open Needs you, as the bell\'s row does');
+  assert.match(src, /kind, detail, mailed_at\)\s+SELECT \$1, \$3, \$4, NULL, 'vote_digest', \$2, NULL/);
+  assert.doesNotMatch(src, /emailIfNoPush|emailDigest/, 'no send after the commit');
+  // What the notice-mail clock sends for it (services/activity-mail.js).
+  const activityMail = require('../src/services/activity-mail');
+  const real = activityMail.emailIfNoPush;
+  const sent = [];
+  activityMail.emailIfNoPush = async (_pool, args) => { sent.push(args); return 'sent'; };
+  try {
+    const steps = { once: async (_k, fn) => fn() };
+    for (const row of [
+      { id: 1, user_id: 7, kind: 'vote_digest', detail: '4', mailed_at: null, recent: true, app_slug: null, app_name: null },
+      { id: 2, user_id: 7, kind: 'vote_digest', detail: '1', mailed_at: null, recent: true, app_slug: 'run-club', app_name: 'Run Club' },
+      { id: 3, user_id: 8, kind: 'project_opened', detail: null, mailed_at: null, recent: true, app_slug: 'run-club', app_name: 'Run Club' },
+    ]) {
+      const pool = { query: async (sql) => (/FROM notifications n/.test(sql) ? { rows: [row] } : { rows: [], rowCount: 1 }) };
+      assert.deepEqual(await activityMail.mailNotice(pool, row.id, steps), { said: 'sent' });
+    }
+  } finally { activityMail.emailIfNoPush = real; }
+  assert.deepEqual(sent, [
+    { userId: 7, kind: 'votes_owed', count: 4, hashRoute: '#communities' },
+    { userId: 7, kind: 'votes_owed', count: 1, appName: 'Run Club', appSlug: 'run-club' },
+    { userId: 8, kind: 'project_opened', appName: 'Run Club', appSlug: 'run-club' },
+  ], 'several open Needs you, as the bell\'s row does; one opens its project');
 });
 
 // ── 6. The agent session's browser prompt ───────────────────────────────

@@ -422,7 +422,7 @@ test('the maker\'s footer promises the notification, beside a small check; a mem
   assert.equal(member.promise, 'We’ll notify you when it’s live');
   assert.deepEqual(member.lines, ['It opens here when it’s ready.']);
   assert.equal(member.ask, 'project_opens');
-  assert.match(read('src/services/homeroom-bot-dm.js'), /require\('\.\/project-opened'\)\.tellMembers/);
+  assert.match(read('src/services/homeroom-bot-dm.js'), /require\('\.\/project-opened'\)\.oweTold\(db,/);
   // Its maker is the one Homeroom bot tells it is live, in the bell.
   const dm = read('src/services/homeroom-bot-dm.js');
   assert.match(dm, /live: 'build_live',/);

@@ -1816,8 +1816,9 @@ intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
 - **People's round trips and limits.** `wallet-links` reads the explorer for wallet-link
   memos (continuous, resting 4 s, longer while the explorer fails), its chain, cursor and
   outage streak carried in its result; `rate-limit-retention` deletes the shared limiters'
-  spent windows (`rate_limit_hits`); `invite-mail` sends the email an invite moment's
-  notice owes (`notifications.mailed_at` NULL); `workshop-changes` (every 10 s) runs each
+  spent windows (`rate_limit_hits`); `notice-mail` sends the email a notice owes when no
+  phone could take its push (an invite moment, a project opening, the vote digest:
+  `notifications.mailed_at` NULL, written with the notice); `workshop-changes` (every 10 s) runs each
   Workshop pass a board change owed.
 - **Previews and proposals.** `preview-runtimes`, `preview-gc`, `preview-env`,
   `preview-orphan-dbs`, `preview-pressure` and `worker-volumes` read the runtimes

@@ -383,7 +383,7 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
   });
 
   // The email a day's first join or hello owes is written with the notice
-  // that rang (mailed_at NULL) and sent by the invite-mail clock, once:
+  // that rang (mailed_at NULL) and sent by the notice-mail clock, once:
   // sent after the commit before, a restart in between lost it for good.
   await t.test('a day\'s first join or hello owes its email with its notice; the clock sends each once and marks it', async () => {
     const activityMail = require('../src/services/activity-mail');
@@ -400,25 +400,25 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
       const hi = await say(app, lee, 'hello from lee');
       await activity.noteFirstMessage(pool, { appId: app.id, userId: lee.id, chatMessageId: hi });
       await activity.noteOpened(pool, { token: invite.token, viewerId: alex.id, browser: browser('mail') });
-      const owed = await activity.mailTargets(pool);
+      const owed = await activityMail.noticeMailTargets(pool);
       const [joined] = (await rowsOf(maya.id, 'member_joined')).filter((r) => r.app_id === app.id);
       const [hello] = (await rowsOf(maya.id, 'first_message')).filter((r) => r.app_id === app.id);
       assert.deepEqual(owed.items.map((i) => i.target), [`notification:${joined.id}`, `notification:${hello.id}`],
         'the day\'s first of each, never the fold or an open');
       const steps = () => { const kept = new Map(); return { once: async (k, fn) => (kept.has(k) ? kept.get(k) : kept.set(k, await fn()).get(k)) }; };
-      for (const item of owed.items) assert.deepEqual(await activity.mailOne(pool, item.input.notificationId, steps()), { said: 'sent' });
+      for (const item of owed.items) assert.deepEqual(await activityMail.mailNotice(pool, item.input.notificationId, steps()), { said: 'sent' });
       assert.deepEqual(sent.map((m) => [m.userId, m.kind, m.appSlug, m.line]), [
         [maya.id, 'invite_activity', app.slug, `@old_member joined ${app.name} through your invite.`],
         [maya.id, 'invite_activity', app.slug, `@lee said hi in ${app.name}.`],
       ]);
-      assert.deepEqual((await activity.mailTargets(pool)).items, [], 'marked once handled');
-      assert.deepEqual(await activity.mailOne(pool, joined.id, steps()), { said: 'settled' }, 'a second item sends nothing');
+      assert.deepEqual((await activityMail.noticeMailTargets(pool)).items, [], 'marked once handled');
+      assert.deepEqual(await activityMail.mailNotice(pool, joined.id, steps()), { said: 'settled' }, 'a second item sends nothing');
       // Past a day it is not news any more.
       const { app: later, invite: laterInvite } = await project();
       await joinBy(laterInvite, later, sam);
       await activity.noteJoined(pool, { inviteId: laterInvite.id, user: { id: sam.id } });
       await pool.query(`UPDATE notifications SET created_at = NOW() - INTERVAL '25 hours' WHERE app_id = $1`, [later.id]);
-      assert.deepEqual((await activity.mailTargets(pool)).items, []);
+      assert.deepEqual((await activityMail.noticeMailTargets(pool)).items, []);
       assert.equal(sent.length, 2);
     } finally {
       activityMail.emailIfNoPush = real;

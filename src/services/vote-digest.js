@@ -175,8 +175,8 @@ async function sweep(pool) {
       const created = await withTransaction(pool, async (db) => {
         await db.query('SELECT pg_advisory_xact_lock($1, $2)', [VOTE_DIGEST_LOCK, userId]);
         const { rows: made } = await db.query(
-          `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
-           SELECT $1, $3, $4, NULL, 'vote_digest', $2
+          `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail, mailed_at)
+           SELECT $1, $3, $4, NULL, 'vote_digest', $2, NULL
             WHERE NOT EXISTS (
               SELECT 1 FROM notifications n
                WHERE n.user_id = $1 AND n.kind = 'vote_digest'
@@ -190,9 +190,10 @@ async function sweep(pool) {
       if (created) {
         result.sent += 1;
         await notifications.hydrateAndPush(pool, created);
-        // By email when no phone can take the push (services/activity-mail.js):
-        // the votes are what the notification ask's community promise names.
-        void emailDigest(pool, { userId, pending, appId: one ? Number(row.only_app_id) : null });
+        // By email when no phone can take the push: owed by the notice
+        // (`mailed_at` NULL), sent by the notice-mail clock
+        // (services/activity-mail.js). The votes are what the notification
+        // ask's community promise names.
       }
     } catch (err) {
       // One user's digest failing must not end the sweep for everybody
@@ -202,26 +203,6 @@ async function sweep(pool) {
   }
   if (result.sent) log.info('vote-digest', 'Digests sent', result);
   return result;
-}
-
-/** The digest by email, when no phone of theirs can take its push. Never throws. */
-async function emailDigest(pool, { userId, pending, appId }) {
-  try {
-    let app = null;
-    if (appId) {
-      const { rows } = await pool.query('SELECT slug, name FROM apps WHERE id = $1', [appId]);
-      app = rows[0] || null;
-    }
-    await require('./activity-mail').emailIfNoPush(pool, {
-      userId, kind: 'votes_owed', count: pending,
-      appName: app ? (app.name || app.slug) : null,
-      appSlug: app ? app.slug : null,
-      // Several: no one project; Needs you lists them all, as the bell's row opens.
-      ...(app ? {} : { hashRoute: '#communities' }),
-    });
-  } catch (err) {
-    log.warn('vote-digest', 'Digest email failed', { userId, err: err.message });
-  }
 }
 
 module.exports = {

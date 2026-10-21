@@ -220,7 +220,8 @@ async function mailNotice(pool, notificationId, steps) {
     [notificationId, NOTICE_MAIL_WITHIN_HOURS],
   );
   if (!row || row.mailed_at || !NOTICE_MAIL_KINDS.has(row.kind)) return { said: 'settled' };
-  const said = !row.recent ? 'stale' : await steps.once('sent', () => emailIfNoPush(pool, { userId: row.user_id, ...noticeEmail(row) }));
+  const said = !row.recent ? 'stale'
+    : await steps.once('sent', () => module.exports.emailIfNoPush(pool, { userId: row.user_id, ...noticeEmail(row) }));
   await pool.query('UPDATE notifications SET mailed_at = NOW() WHERE id = $1 AND mailed_at IS NULL', [row.id]);
   return { said };
 }

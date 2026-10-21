@@ -40,18 +40,14 @@
 //
 // Everything here is best-effort and never throws: a join, a page view or a
 // message must not fail because telling somebody about it did. The email is
-// the exception: it is owed by the notice that rang, and sent as work that
-// tries again (mailTargets, mailOne).
+// the exception: it is owed by the notice that rang (`mailed_at` NULL), and
+// sent by the notice-mail clock as work that tries again (activity-mail.js).
 
 const crypto = require('crypto');
 const events = require('./events');
 const log = require('./logger');
 
 const KINDS = Object.freeze(['invite_opened', 'member_joined', 'first_message']);
-// The moments whose day's first is emailed when no phone could take its push
-// (mailTargets), and for how long that is still news.
-const MAIL_KINDS = new Set(['member_joined', 'first_message']);
-const MAIL_WITHIN_HOURS = 24;
 // A first message counts as a hello for this long after joining. Past it, the
 // maker has long since heard they joined, and "said hi" would be news about
 // somebody who has been around for weeks.
@@ -127,13 +123,13 @@ async function ring(pool, { userId, appId, kind, sourceUserId = null, chatMessag
     let row = bumped[0] || null;
     const fresh = !row;
     if (!row) {
-      // The day's first owes its email (MAIL_KINDS): `mailed_at` NULL, which
-      // the invite-mail clock sends (mailTargets, mailOne).
+      // The day's first owes its email (activity-mail.js NOTICE_MAIL_KINDS):
+      // `mailed_at` NULL, which the notice-mail clock sends.
       const { rows } = await client.query(
         `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind, mailed_at)
          VALUES ($1, $2, $3, $4, $5, CASE WHEN $6 THEN NULL ELSE NOW() END)
          RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, detail, created_at`,
-        [userId, appId, chatMessageId, sourceUserId, kind, MAIL_KINDS.has(kind)],
+        [userId, appId, chatMessageId, sourceUserId, kind, require('./activity-mail').NOTICE_MAIL_KINDS.has(kind)],
       );
       row = rows[0];
     }
@@ -147,56 +143,6 @@ async function ring(pool, { userId, appId, kind, sourceUserId = null, chatMessag
   } finally {
     client.release();
   }
-}
-
-/**
- * The email that stands in for a push the maker cannot get
- * (services/activity-mail.js): only for the first moment of a day, and not
- * for an open. Owed by the notice that rang, in its own insert (ring), and
- * sent by the invite-mail clock (src/workflow/clock/services.ts): each owed
- * notice a target (mailTargets), whose item sends it and marks it handled
- * (mailOne). Past a day it is not news any more, and is not sent.
- */
-
-async function mailTargets(pool, { limit = 200 } = {}) {
-  const { rows } = await pool.query(
-    `SELECT id FROM notifications
-      WHERE mailed_at IS NULL AND kind = ANY($1::text[])
-        AND created_at > NOW() - make_interval(hours => $2::int)
-      ORDER BY id LIMIT $3`,
-    [[...MAIL_KINDS], MAIL_WITHIN_HOURS, limit],
-  );
-  return { owed: rows.length, items: rows.map((r) => ({ target: `notification:${r.id}`, input: { notificationId: r.id } })) };
-}
-
-// The line each one says, worded from the notice: who and where.
-function mailLine(row) {
-  if (row.kind === 'first_message') return `@${row.username} said hi in ${row.app_name}.`;
-  return `${row.username ? `@${row.username}` : 'Someone'} joined ${row.app_name} through your invite.`;
-}
-
-/**
- * Send notice `notificationId`'s email when no phone could take its push,
- * then mark it handled. `steps` (the item's, kernel/steps.ts) keeps the send
- * to once across tries; a send cut off before it was kept may be sent again.
- * Resolves what activity mail said, or why nothing was sent.
- */
-async function mailOne(pool, notificationId, steps) {
-  const { rows: [row] } = await pool.query(
-    `SELECT n.id, n.user_id, n.kind, n.mailed_at, n.created_at > NOW() - make_interval(hours => $2::int) AS recent,
-            a.slug AS app_slug, a.name AS app_name, u.username
-       FROM notifications n
-       JOIN apps a ON a.id = n.app_id
-       LEFT JOIN users u ON u.id = n.source_user_id
-      WHERE n.id = $1`,
-    [notificationId, MAIL_WITHIN_HOURS],
-  );
-  if (!row || row.mailed_at || !MAIL_KINDS.has(row.kind)) return { said: 'settled' };
-  const said = !row.recent ? 'stale' : await steps.once('sent', () => require('./activity-mail').emailIfNoPush(pool, {
-    userId: row.user_id, kind: 'invite_activity', appName: row.app_name, appSlug: row.app_slug, line: mailLine(row),
-  }));
-  await pool.query('UPDATE notifications SET mailed_at = NOW() WHERE id = $1 AND mailed_at IS NULL', [row.id]);
-  return { said };
 }
 
 /**
@@ -545,6 +491,4 @@ module.exports = {
   noteOpened,
   settleOpen,
   noteFirstMessage,
-  mailTargets,
-  mailOne,
 };
