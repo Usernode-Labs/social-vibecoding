@@ -17188,6 +17188,23 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 
 /* Votes, then Testing: two cards in the Messages surface. */
 .dev-change-pair { margin-top: 12px; display: grid; gap: 8px; }
+/* #5725: the Votes card repeated at the top of a change's thread, in the
+   scroller's pin host (#gc-thread-pin, group-chat/thread-shell.tsx). The
+   host is a child of the scroller, so sticky gives the card the whole
+   transcript to travel: it pins to the reading area's top edge while the
+   replies pass under it, and where the vote stands and its button stay on
+   screen at any scroll position (evan asked for it to stick as you scroll,
+   not only sit at the bottom). `--dc-sheet-solid` is the plane colour for a
+   surface content passes behind, so nothing shows through the card's
+   padding. It sits in the transcript's column, with a message's own side
+   padding, and is hidden while the card under the description is on screen,
+   so a short page shows one card and not two. */
+/* `-4px` is `.messages-thread-scroll`'s own top padding: at `top: 0` the
+   card stopped 4px below the reading area's edge, and the sliver of the
+   reply scrolling behind it showed through. */
+#gc-thread-pin { position: sticky; top: -4px; z-index: 10; }
+.dev-change-gate-repeat { padding: 8px 16px 12px; background-color: var(--dc-sheet-solid); }
+.dev-change-gate-repeat[hidden] { display: none; }
 .dev-change-gate {
   min-width: 0;
   display: grid;
@@ -25325,3 +25342,151 @@ html.in-side-panel body {
 .rf-tplate { position: absolute; overflow: hidden; display: block; }
 .rf-tplate img { position: absolute; display: block; max-width: none; }
 .rf-tplate-pair img { position: static; width: 100%; height: 100%; object-fit: cover; object-position: center; }
+
+/* ── THE NEW LOOK, AN EXPERIMENT (Settings › Experimental, off by default) ──
+   Every rule here is scoped to html[data-skin="brand"], which the head's
+   window.Skin sets from the device's stored choice before this sheet
+   applies; without it not one rule below matches. Light shell only, and not
+   over a dark app either (:not(.dark), :not([data-app-tone="dark"])): dark
+   is the standard dark either way.
+   The look, from the brand-kit pass: a flat cream ground, without the grain,
+   the star or the washes; Geist for every word; warm hairlines; where you
+   are in ink on a pale blue pill with an ink edge; unread counts in ink; on
+   a project's Hub, the actions raised by an ink edge and a hard shadow; a
+   change's picture framed by a plain ink outline.
+   Appended last on purpose. The declarations other rules count
+   (--home-washes, --home-wallpaper, --dc-sheet-fill) are not redeclared:
+   the ground and the bars are painted over them instead. */
+@font-face {
+  font-family: 'Geist';
+  /* Absolute: the build-scoped copy of this sheet (/b/<sha>/css/app.css)
+     serves only .js and .css, so a relative url would 404 there. A browser
+     without the new look never matches a rule that names Geist, so it never
+     downloads the file. */
+  src: url('/fonts/geist/Geist-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) {
+  font-family: 'Geist', ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  background-color: #fcfbf3;
+  /* Cards are white on the cream ground. */
+  --dc-sheet-solid: #ffffff;
+  /* Where you are: ink on a pale blue pill with an ink edge. */
+  --lit-ink: #111111;
+  --lit-tint: #dcebfa;
+  --lit-line: #111111;
+  /* The header's own ink on the top-level screens. A project's bar sets
+     its own on #platform-header (white on the project's colour). */
+  --brand-ink: #111111;
+  --brand-tint: #f1efe6;
+  --brand-line: #e2dfcf;
+}
+/* Warm hairlines, unless high contrast asked for darker ones. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-contrast="more"]) {
+  --app-sheet-line: #e7e4d4;
+}
+
+/* THE GROUND. The wallpaper is drawn on <body> by the route rule (one id
+   deep); `:has(#platform-tabs)` is always true in the shell and makes this
+   rule one id deep as well, so it wins by its classes. The tile zoom paints
+   the moving view from --un-zoom-bg, so it follows. --home-ground moves with
+   it: the browser scroller paints the body from it (!important), and the
+   launch cover and the washes end on it. The scroller's fixed layer repaints
+   the wallpaper; it is flat here too. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) body:has(#platform-tabs) {
+  --home-ground: #fcfbf3;
+  --un-zoom-bg: #fcfbf3;
+  background: #fcfbf3;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) body::before {
+  background: #fcfbf3;
+}
+
+/* THE BARS. On the top-level screens the header is a flat cream bar with a
+   hairline foot and square corners, not the faked glass with the rounded
+   notch; a project's bar (html[data-community-tint]) keeps its colour. The
+   doubled id outranks the route rules (two ids deep) by its classes. The
+   tab bar keeps its own layer, filled flat. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-community-tint]) #platform-header#platform-header {
+  background-color: #fcfbf3;
+  clip-path: none;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  box-shadow: inset 0 -1px 0 #e7e4d4;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-community-tint]) #platform-header#platform-header::before {
+  display: none;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tabs::before {
+  background: #fcfbf3;
+}
+/* Unread conversations count in ink (the vote count keeps the accent). */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab-badge {
+  background: #111111;
+  color: #fcfbf3;
+}
+
+/* A PROJECT'S HUB. Open app, Invite and the ⋯ beside them are raised: an
+   ink edge and a hard shadow, pressed down a pixel when tapped. Open app
+   takes the accent, the other two are white. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-open-app[data-ws-community-open-app],
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-community-invite],
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-plus-btn-hero {
+  border: 1px solid #111111;
+  box-shadow: 1.5px 2px 0 #111111;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-open-app[data-ws-community-open-app] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-community-invite],
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-plus-btn-hero {
+  background: #ffffff;
+  color: #111111;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-open-app[data-ws-community-open-app]:active,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-community-invite]:active,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-plus-btn-hero:active {
+  transform: translate(1px, 1px);
+  box-shadow: 0.5px 1px 0 #111111;
+}
+/* For you: each row's glyph on its own pale colour, and the channel's
+   unread count in ink. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-hub-needs] .dev-ws-foryou-row > :first-child {
+  background: #fcfab3;
+  color: #111111;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-mine-card] > :first-child {
+  background: #dcebfa;
+  color: #111111;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-channel="preview"] > :first-child {
+  background: #e1efd9;
+  color: #111111;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-foryou-pill[data-ws-channel-unread] {
+  background: #111111;
+  color: #fcfbf3;
+}
+
+/* PICTURES OF A CHANGE: a plain ink outline, drawn over the picture so an
+   image filling the box does not hide it. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-recent-pic,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-media-view {
+  outline: 1px solid #111111;
+  outline-offset: -1px;
+}
+
+/* HOME: warm hairlines on the app tiles and the community cards, and Join
+   in ink. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .app-icon-tile,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .home-discover-card {
+  border-color: #e7e4d4;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .card-add-btn[data-join] {
+  border-color: #111111;
+  color: #111111;
+  box-shadow: none;
+}

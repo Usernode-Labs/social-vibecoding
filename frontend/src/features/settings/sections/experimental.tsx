@@ -42,6 +42,11 @@ import { LocalAgentsList } from '../local-agents-list';
  * a vote sheet) instead of the reel. ../../review-flow/settings.ts keeps the
  * switch and publishes window.UsernodeReact.reviewFlow for settings.js.
  *
+ * New look (default OFF) is kept on the DEVICE as well. The head's
+ * window.Skin (src/head.html) stores it and sets data-skin="brand" on <html>
+ * before first paint; app.css draws the look from that attribute, in light
+ * mode only. settings.js paints and saves the switch through window.Skin.
+ *
  * #907 Local coding agent lives in the same pane (not the CLI section) because
  * it is a preview of the same feature the dev chat's "Run on" selector
  * exposes, and because a lease is NOT a credential: revoking a CLI token is a
@@ -83,6 +88,14 @@ export function ExperimentalSection() {
           </SwitchRow>
           <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
             {t('settings:experimental.reviewFlow.description')}
+          </p>
+        </div>
+        <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+          <SwitchRow id="new-look-enabled">
+            {t('settings:experimental.newLook.label')}
+          </SwitchRow>
+          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+            {t('settings:experimental.newLook.description')}
           </p>
         </div>
       </div>

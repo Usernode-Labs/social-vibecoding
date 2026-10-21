@@ -1447,6 +1447,14 @@
     "text": "Try a calmer way through what's waiting on you: one change at a time, with its before and after side by side. On for your account on every device.",
     "description": "Explanation under the New Needs you switch in Settings, Experimental."
   },
+  "experimental.newLook.label": {
+    "text": "New look",
+    "description": "Label of a switch in Settings, Experimental. When on, Homeroom is drawn in its new visual style: a warmer background, a new typeface and calmer colours."
+  },
+  "experimental.newLook.description": {
+    "text": "Try Homeroom's new look: a warmer background, the Geist typeface and calmer colours, closer to the Homeroom website. Light mode only. On for this browser.",
+    "description": "Explanation under the New look switch in Settings, Experimental. Geist is the name of a typeface; keep it as is. Homeroom is the product name."
+  },
   "experimental.localAgents.title": {
     "text": "Local coding agent",
     "description": "Heading of a block in Settings > Experimental that lists the person's own computers attached to run the coding agent."
@@ -2348,7 +2356,7 @@
     "description": "Not shown on screen. Extra search words for \"Global Chat (experimental)\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.experimental": {
-    "text": "beta labs progress estimate session bridge local agent",
+    "text": "beta labs progress estimate session bridge local agent new look design",
     "description": "Not shown on screen. Extra search words for \"Experimental\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.theme": {

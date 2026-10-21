@@ -374,6 +374,8 @@ const RETIRED_IDS = {
 const ADDED_IDS = {
   // ── New Needs you (an experiment) ──────────────────────────────────
   'review-flow-enabled': 'New Needs you: the switch in Settings, Experimental (off by default, kept on the device by features/review-flow/settings.ts) that draws the Communities tab\'s Needs you as the new review flow. settings.js paints and saves it through window.UsernodeReact.reviewFlow.',
+  // ── New look (an experiment) ───────────────────────────────────────
+  'new-look-enabled': 'New look: the switch in Settings, Experimental (off by default, kept on the device by the head\'s window.Skin) that sets data-skin="brand" on <html>, which app.css draws the new look from in light mode. settings.js paints and saves it through window.Skin.',
   // ── #5097: Settings > Privacy, "Share usage analytics" ──────────────
   'settings-usage-analytics': '#5097: the Share usage analytics switch (features/settings/sections/usage-analytics.tsx, the last block of Settings > Privacy). Off, and disabled until the saved choice is read.',
   'settings-usage-analytics-section': '#5097: the Usage analytics block, the last of Settings > Privacy under #5104\'s contact settings (features/settings/sections/usage-analytics.tsx).',

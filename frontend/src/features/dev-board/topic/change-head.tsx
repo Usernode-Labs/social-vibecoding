@@ -142,8 +142,8 @@ function FixRow({ fix, rerun }: { fix: FixChecksView; rerun: ReactNode }): React
  * beside it (`fix`, `rerun`). From the tap until the build conversation's
  * turn ends it reads "Fixing", with a door into that conversation.
  */
-function GateCard({ which, g, action, rerun = null, id }: {
-  which: 'votes' | 'testing'; g: ChangeGateView; action: ReactNode; rerun?: ReactNode; id: number | null;
+function GateCard({ which, g, action, rerun = null, id, repeat = false }: {
+  which: 'votes' | 'testing'; g: ChangeGateView; action: ReactNode; rerun?: ReactNode; id: number | null; repeat?: boolean;
 }): ReactNode {
   const t = useMessages('project');
   const open = () => (window as any).AppView?.openTechnicalDetails?.(id, 'checks');
@@ -179,7 +179,11 @@ function GateCard({ which, g, action, rerun = null, id }: {
   return (
     <div
       className="dev-change-gate"
-      data-change-gate={which}
+      // #5725: the repeat at the foot of the page is the same card, but
+      // `data-change-gate` stays the ONE card declared checks, votes-in-view
+      // and tests find; the repeat carries its own attribute instead.
+      data-change-gate={repeat ? undefined : which}
+      data-change-gate-repeat={repeat ? which : undefined}
       data-done={shown.done ? 'true' : 'false'}
       data-tone={shown.tone}
       data-change-fixing={fixing ? '' : undefined}
@@ -307,10 +311,83 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
     const off = onVotesAsked(show);
     return () => { off(); release?.(); };
   }, [id]);
+  // #5725: the Votes card repeated in the thread's pin host, at the top of
+  // the scroller, so a long page keeps where the vote stands and its button
+  // on screen however far down the reader is (evan asked for it to stick as
+  // you scroll rather than only sit at the bottom). The pin host is a child
+  // of the scroller and `position: sticky` (app.css): the reading area's top
+  // edge is its offset, with the scroller's own 4px top padding pulled in so
+  // no reply shows in the slit above the card, and the replies scroll under
+  // it. Nothing else pins inside this scroller, so nothing is overlapped.
+  //
+  // It is HIDDEN while the card under the description is on screen, so a
+  // page short enough to show both still shows one card. It is in the DOM
+  // from the first paint (hidden), so a reader who scrolled before this
+  // mounted still gets it.
+  //
+  // BOTH ends are found from the card itself, never by a document-wide id:
+  // the pin host through the scroller that holds the card, and "on screen"
+  // through an observer with no root. A second thread — the Workshop's panel,
+  // another pane — can hold a host of the same id, and a document-wide
+  // `#gc-thread-scroll` can be that thread's box (#4640), which clamps nothing
+  // this card is in and so never reports it gone.
+  //
+  // The observer's root is the viewport (#5725, second run): it applies every
+  // clipping ancestor itself, so the card counts as in view only where a
+  // reader can see it, whichever box moved it — the thread's own scroller,
+  // the page, a restored scroll position on reload, or a reflow of the words
+  // above it. A `scroll` listener only hears the scroller it was attached to,
+  // and the card stayed hidden when that was not the box that moved.
+  const [pin, setPin] = useState<Element | null>(null);
+  const [topInView, setTopInView] = useState(true);
+  useEffect(() => {
+    const card = pair.current?.querySelector<HTMLElement>('[data-change-gate="votes"]');
+    const scroller = card ? card.closest<HTMLElement>('#gc-thread-scroll') : null;
+    setPin(scroller ? scroller.querySelector('#gc-thread-pin') : null);
+    if (!card) { setTopInView(true); return; }
+    if (typeof IntersectionObserver === 'function') {
+      const io = new IntersectionObserver((entries) => {
+        const entry = entries[entries.length - 1];
+        if (entry) setTopInView(entry.isIntersecting);
+      });
+      io.observe(card);
+      return () => io.disconnect();
+    }
+    // No IntersectionObserver: the card's box against its nearest scroller
+    // and the window, re-measured on any scroll of the document (capture, so
+    // it hears every scroller) and on resize.
+    const view = () => {
+      const box = card.getBoundingClientRect();
+      const clip = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight || 0 };
+      const top = Math.max(clip.top, 0);
+      const bottom = Math.min(clip.bottom, window.innerHeight || 0);
+      return box.height > 0 && box.bottom > top && box.top < bottom;
+    };
+    let frame = 0;
+    const measure = () => { frame = 0; if (card.isConnected) setTopInView(view()); };
+    const schedule = () => { if (!frame) frame = window.requestAnimationFrame(measure); };
+    measure();
+    document.addEventListener('scroll', schedule, { capture: true, passive: true });
+    window.addEventListener('resize', schedule);
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : null;
+    ro?.observe(card);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      document.removeEventListener('scroll', schedule, { capture: true });
+      window.removeEventListener('resize', schedule);
+      ro?.disconnect();
+    };
+  }, [id]);
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
       {bar ? createPortal(<ChangeBar v={v} menuKey={card.rail?.menuKey || ''} detailsId={id && body.changeId ? id : null} />, bar) : null}
+      {pin ? createPortal(
+        <div className="dev-change-gate-repeat" hidden={topInView}>
+          <GateCard which="votes" g={v.votes} action={voteAction} id={id} repeat />
+        </div>,
+        pin,
+      ) : null}
       {images.viewer}
       <article className="messages-message dev-request-root dev-change-root" data-change-root={id ?? ''}>
         <Avatar shape="square" size="sm" color={swatchFor(v.author)} aria-hidden="true">
