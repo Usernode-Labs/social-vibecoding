@@ -328,7 +328,6 @@ const ADOPTIONS: readonly Adoption[] = Object.freeze([
   ['mergeQueues', () => adoptMergeQueues()],
   ['previews', (release: string) => restPreviews(release)],
   ['platformFaults', () => retryPlatformFaults()],
-  // Up to a few thousand appends on the first release.
   ['closedProposals', (release: string) => retainClosedProposals(release)],
   // What the cluster runs for every app, as this build says: the shared
   // hosted-asset backend. (The app-host gate's routing is a clock only the
@@ -1089,9 +1088,10 @@ export async function previewEnvStale(sessionId: number, appId: number | null, a
 }
 
 // A closed proposal whose CC volume is still there and that has no purge
-// queued (closed before the proposal machine queued one with the close, or
-// never held by it) gets its retention purge: a held one by Rearm, an
-// unheld one by its adoption. Once per release. Resolves how many.
+// queued (one given up after its attempts, or retention switched on after
+// the close) gets its retention purge again, by Rearm. Once per release.
+// Every close is the proposal machine's (Close creates its instance), so no
+// archived proposal is without one. Resolves how many.
 async function retainClosedProposals(release: string): Promise<number> {
   if (!runtime || process.env.USERNODE_ENV === 'staging' || !(Number(appConfig?.archivedRetentionMs) > 0)) return 0;
   const { rows: held } = await kernelPool!.query(
@@ -1105,16 +1105,7 @@ async function retainClosedProposals(release: string): Promise<number> {
       { requestKey: `retain:${release}:${r.id}`, source: sys('release'), appId: r.app_id ?? undefined })
       .catch((err: Error) => log!.warn('workflow', 'Could not queue a closed proposal\'s purge', { sessionId: r.id, message: err.message }));
   }
-  const { rows: unheld } = await kernelPool!.query(
-    `SELECT cs.id, cs.app_id FROM chat_sessions cs
-      WHERE cs.status = 'archived' AND cs.cc_purged = FALSE AND cs.archived_at IS NOT NULL
-        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'session:' || cs.id)
-      ORDER BY cs.id LIMIT 2000`, [PROPOSAL]);
-  for (const r of unheld) {
-    await proposalAdopted({ sessionId: r.id, appId: r.app_id })
-      .catch((err: Error) => log!.warn('workflow', 'Could not adopt a closed proposal', { sessionId: r.id, message: err.message }));
-  }
-  return held.length + unheld.length;
+  return held.length;
 }
 
 // A release is when a fix to the platform's own fault (a check Job refused

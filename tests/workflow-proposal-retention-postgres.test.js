@@ -238,3 +238,13 @@ test('proposal machine rules against the full PostgreSQL schema', { timeout: 120
     assert.equal((await purges(legacy)).length, 0, 'closed with no time recorded: kept, as the old GC kept it');
   });
 });
+
+test('a release re-arms a closed proposal\'s given-up purge, and adopts nothing: every close creates its instance', () => {
+  // The adoption of archived proposals no instance held (up to 2000 a
+  // release) is gone: every close is the proposal machine's Close, which
+  // creates the instance, and production had none left (2026-10-21).
+  const src = require('node:fs').readFileSync(require.resolve('../src/workflow/platform.ts'), 'utf8');
+  const fn = src.slice(src.indexOf('async function retainClosedProposals('), src.indexOf('\n}\n', src.indexOf('async function retainClosedProposals(')));
+  assert.match(fn, /type: 'Rearm'/);
+  assert.doesNotMatch(fn, /proposalAdopted|LIMIT 2000|NOT EXISTS \(SELECT 1 FROM wf_instances/);
+});
