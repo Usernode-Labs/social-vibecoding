@@ -107,7 +107,7 @@ export function ChangeBar({ v, menuKey, detailsId = null }: { v: ChangeThreadVie
  * one is full and green, with a green check and figure (AGENTS.md: a
  * finished progress bar may be green).
  */
-function GateCard({ which, g, action, id }: { which: 'votes' | 'testing'; g: ChangeGateView; action: ReactNode; id: number | null }): ReactNode {
+function GateCard({ which, g, action, id, repeat = false }: { which: 'votes' | 'testing'; g: ChangeGateView; action: ReactNode; id: number | null; repeat?: boolean }): ReactNode {
   const t = useMessages('project');
   const open = () => (window as any).AppView?.openTechnicalDetails?.(id, 'checks');
   // A merge of Homeroom itself: when its release comes, counted down here
@@ -119,7 +119,18 @@ function GateCard({ which, g, action, id }: { which: 'votes' | 'testing'; g: Cha
   const note = sentences(release ? [...g.note, t('project:topic.change.gate.release', { release })] : g.note);
   const door = <button type="button" className="dev-change-gate-link" onClick={open} />;
   return (
-    <div className="dev-change-gate" data-change-gate={which} data-done={g.done ? 'true' : 'false'} data-tone={g.tone} role="group" aria-label={g.name}>
+    <div
+      className="dev-change-gate"
+      // #5725: the repeat at the foot of the page is the same card, but
+      // `data-change-gate` stays the ONE card declared checks, votes-in-view
+      // and tests find; the repeat carries its own attribute instead.
+      data-change-gate={repeat ? undefined : which}
+      data-change-gate-repeat={repeat ? which : undefined}
+      data-done={g.done ? 'true' : 'false'}
+      data-tone={g.tone}
+      role="group"
+      aria-label={g.name}
+    >
       <div className="dev-change-gate-main">
         <div className="dev-change-gate-head">
           <span className="dev-change-gate-name">
@@ -227,10 +238,34 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
     const off = onVotesAsked(show);
     return () => { off(); release?.(); };
   }, [id]);
+  // #5725: the Votes card repeated after the last reply, so a long page does
+  // not send people back up to find where the vote stands. It shows only
+  // while the card at the top is out of the scroller; a page short enough to
+  // show both would otherwise show it twice. Without IntersectionObserver
+  // the state stays true and the page looks as it did.
+  const foot = host('gc-thread-foot');
+  const [topInView, setTopInView] = useState(true);
+  useEffect(() => {
+    setTopInView(true);
+    const card = pair.current?.querySelector<HTMLElement>('[data-change-gate="votes"]');
+    if (!card || typeof IntersectionObserver !== 'function') return;
+    const io = new IntersectionObserver((entries) => {
+      const entry = entries[entries.length - 1];
+      if (entry) setTopInView(entry.isIntersecting);
+    }, { root: document.getElementById('gc-thread-scroll'), threshold: 0 });
+    io.observe(card);
+    return () => { io.disconnect(); };
+  }, [id]);
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
       {bar ? createPortal(<ChangeBar v={v} menuKey={card.rail?.menuKey || ''} detailsId={id && body.changeId ? id : null} />, bar) : null}
+      {foot && !topInView ? createPortal(
+        <div className="dev-change-gate-repeat">
+          <GateCard which="votes" g={v.votes} action={voteAction} id={id} repeat />
+        </div>,
+        foot,
+      ) : null}
       {images.viewer}
       <article className="messages-message dev-request-root dev-change-root" data-change-root={id ?? ''}>
         <Avatar shape="square" size="sm" color={swatchFor(v.author)} aria-hidden="true">

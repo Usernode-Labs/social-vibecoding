@@ -159,6 +159,10 @@ function RequestShell(props: ThreadShellProps) {
         <div ref={scroll} id="gc-thread-scroll" className="messages-thread-scroll dev-request-scroll overscroll-contain">
           <div id="gc-thread-head" />
           <div id="gc-thread-messages" />
+          {/* #5725: a change page's foot, where its Votes card is repeated
+              after the last reply (topic/change-head.tsx). A request page
+              renders none, so its markup is unchanged. */}
+          {change ? <div id="gc-thread-foot" /> : null}
         </div>
         {/* #4553: the button docks in a strip, so it never covers the change
             or request cards (their Vote, Re-run checks, Preview) under it. */}

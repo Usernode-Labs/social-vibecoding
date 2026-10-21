@@ -148,12 +148,30 @@ test('the shell draws a change page as the request page’s sheet, with Messages
     fill: true, withHeader: true, readOnly: false, notice: '', placeholder: 'Reply…', maxLength: 4000, change: true,
   });
   assert.match(html, /^<div class="dev-request dev-change platform-kb-column"><div id="gc-thread-back" class="dev-request-back"><\/div><section class="dev-request-sheet dc-lift dc-lift-session" aria-label="Change"><div id="gc-thread-bar" class="dev-request-bar"><\/div>/);
-  assert.match(html, /<div id="gc-thread-head"><\/div><div id="gc-thread-messages"><\/div>/);
+  assert.match(html, /<div id="gc-thread-head"><\/div><div id="gc-thread-messages"><\/div><div id="gc-thread-foot"><\/div>/);
   assert.match(html, /class="messages-composer messages-composer-thread platform-safe-bar"/);
   const request = renderComponent(SHELL, 'ThreadShell', {
     fill: true, withHeader: true, readOnly: false, notice: '', placeholder: 'Reply…', maxLength: 4000, request: true,
   });
   assert.match(request, /^<div class="dev-request platform-kb-column">[\s\S]*aria-label="Request"/, 'the request page is unchanged');
+  assert.doesNotMatch(request, /gc-thread-foot/, 'a request page has no foot host');
+});
+
+// #5725: on a long change page the Votes card sat far above the conversation.
+// A second copy appears after the last reply, in a host at the foot of the
+// scroller, only while the card at the top is out of view.
+test('the Votes card repeats at the foot of a change’s page, while the top one is out of view', () => {
+  const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
+  // The repeat portals into the shell's foot host, in its own class.
+  assert.match(src, /const foot = host\('gc-thread-foot'\);/);
+  assert.match(src, /\{foot && !topInView \? createPortal\(\s*<div className="dev-change-gate-repeat">\s*<GateCard which="votes" g=\{v\.votes\} action=\{voteAction\} id=\{id\} repeat \/>/);
+  // It is the observer over the TOP Votes card that reveals it.
+  assert.match(src, /new IntersectionObserver\(\(entries\) => \{[\s\S]*?setTopInView\(entry\.isIntersecting\);[\s\S]*?\}, \{ root: document\.getElementById\('gc-thread-scroll'\), threshold: 0 \}\);/);
+  assert.match(src, /const card = pair\.current\?\.querySelector<HTMLElement>\('\[data-change-gate="votes"\]'\);/);
+  assert.match(src, /const \[topInView, setTopInView\] = useState\(true\);/);
+  // A repeat is the same card in every state, including with no action.
+  assert.match(src, /repeat\?: boolean/);
+  assert.match(read('public/css/app.css'), /\.dev-change-gate-repeat \{[^}]*padding: 8px 16px 12px;[^}]*\}/);
 });
 
 test('group-chat.js carries the change language from the mount to the shell and the transcript', () => {
@@ -241,6 +259,18 @@ test('a moving bar is the lit ink, a finished one green with its check, and AGEN
   assert.match(css, /\.dev-change-gate-check \{[^}]*color: var\(--state-ok\);/);
   assert.match(css, /\.dev-change-shots \.shots-stage \{ margin: 0 8px; aspect-ratio: 4 \/ 5; \}/, 'a taller frame on a phone');
   assert.match(read('AGENTS.md'), /A finished progress bar may be green \(`--state-ok`/);
+});
+
+// #5725: declared checks, votes-in-view and the tests find exactly one
+// `[data-change-gate="votes"]`, so the repeat names itself differently.
+test('a repeated gate card carries data-change-gate-repeat, never data-change-gate', () => {
+  const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
+  assert.match(src, /data-change-gate=\{repeat \? undefined : which\}/);
+  assert.match(src, /data-change-gate-repeat=\{repeat \? which : undefined\}/);
+  const dapp = JSON.parse(read('dapp.json'));
+  const selectors = dapp.tests.map((t) => t.expectSelector).filter(Boolean);
+  assert.ok(selectors.some((s) => String(s).includes('[data-change-gate=')), 'declared checks read the attribute');
+  assert.ok(!selectors.some((s) => String(s).includes('data-change-gate-repeat')), 'none selects the repeat');
 });
 
 // Issue #5712: at phone width the Testing card's buttons took the auto
