@@ -3371,6 +3371,13 @@ END $$;
 --     the scaffold's gated-by-default behavior.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS anon_shell VARCHAR(10) NOT NULL DEFAULT 'unknown';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS anon_shell_checked_at TIMESTAMPTZ;
+--   guest_shell: the same two GETs made as a GUEST, with the guest token
+--     the app-host gate hands a visitor who has no account
+--     (services/edge-gate.js, "Guests (P15)"). Same three values, written
+--     by the same probe in the same pass, and only while that sign-in half
+--     is on. GET /api/public/apps reads it into `guest_ready`, which is
+--     what decides whether the guest Discover offers "Try it".
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS guest_shell VARCHAR(10) NOT NULL DEFAULT 'unknown';
 
 -- Per-app proposal-approval governance (issue #646).
 --   approver_policy:    who can approve proposals. 'anyone' = every
@@ -10324,6 +10331,16 @@ BEGIN
       CHECK (density BETWEEN 1 AND 4 AND ((density = 1) = (dense_data IS NULL)));
   END IF;
 END $$;
+
+-- Whether a still may be shown to somebody who is not signed in: the shots
+-- agent's answer, as it saved the still, to "does this show a real person's
+-- name, words or email address, or another project?" (save_shot's
+-- showsPrivate). TRUE only on a clear no. NULL is a still saved without an
+-- answer, and is never shown publicly. The copies the shots are taken on
+-- start from the app's own data, so a still can show real people
+-- (services/shots-public.js says which stills a visitor may see).
+ALTER TABLE shot_run_files ADD COLUMN IF NOT EXISTS public_safe BOOLEAN;
+ALTER TABLE shot_artifacts ADD COLUMN IF NOT EXISTS public_safe BOOLEAN;
 
 -- #2377: experimental Global Chat. These records are deliberately separate
 -- from repository-development chat_sessions and user_agent_preferences: the

@@ -1811,7 +1811,7 @@
     {
       "name": "Landing tells the story and asks people to get started (first session)",
       "path": "/?shot=anon#landing",
-      "expectSelector": "#auth-landing-screen:not(.hidden) [data-landing-story] a[data-landing-story-start][href=\"#signup\"]",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has(#landing-header [data-landing-sign-in]:not(.hidden)) [data-guest-discover] [data-landing-story] h1",
       "expectText": "On Homeroom, communities make apps together.",
       "allowConsoleErrors": true
     },
@@ -1967,10 +1967,10 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Landing's one Continue button is for new and returning people, with the email line under it and nothing after (first session)",
+      "name": "Landing has one Sign in and one Sign up, both in its bar, and nothing to press in the story under it (first session)",
       "path": "/?shot=anon#landing",
-      "expectSelector": "#auth-landing-screen:not(.hidden) [data-landing-story] a[data-landing-story-start][href=\"#signup\"] + p[data-landing-story-how]:last-child",
-      "expectText": "Sign in or join with your email.",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has(#landing-header button[data-landing-sign-up]):not(:has([data-landing-story] button, [data-landing-story] a)) #landing-header [data-landing-sign-in]:not(.hidden)",
+      "expectText": "Sign in",
       "allowConsoleErrors": true
     },
     {
@@ -5010,6 +5010,13 @@
       "path": "/?demo=1&ws=bot#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop [data-ws-bot-slots-page]:has([data-ws-bot-waiting] [data-ws-bot-slot-excerpt]):has([data-ws-bot-taken] [data-ws-open]):has([data-ws-bot-up-next] [data-ws-bot-older-badge]):has([data-ws-bot-left]) [data-ws-bot-slots-used=\"5/5\"]",
       "expectText": "5 of 5 in use"
+    },
+    {
+      "name": "Inside the Homeroom app the landing is the whole story, with a Look around first link under it (first session)",
+      "path": "/?shot=anon&un-native-webview=1#landing",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has([data-landing-story]:not([data-landing-story-compact]) [data-landing-story-start]):not(:has([data-guest-discover])) [data-landing-story] a[data-landing-story-look][href=\"#apps\"]",
+      "expectText": "Look around first",
+      "allowConsoleErrors": true
     }
   ],
   "governance": {
