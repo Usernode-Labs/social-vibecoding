@@ -312,6 +312,50 @@ function stagingMockNotifications() {
       prTitle: null, branchName: 'dev/mockuser-1700000000003',
       prNumber: null, headlessIssueNumber: null,
     },
+    // The older rows Unread shows once "See older notifications" is tapped:
+    // one card per change, in Today / Yesterday / Last 7 days / Older. Four
+    // more read rows, newest first, so a preview has a card in each section
+    // besides 990206's in Last 7 days, and one request's story (990217 and
+    // 990218, both about mock request 990302) folded into one card there.
+    // Read, so they never touch the bell's count or the Unread stacks.
+    {
+      ...base,
+      id: 990216, kind: 'pr_proposed',
+      createdAt: new Date(now - 2 * 60 * 60 * 1000).toISOString(),
+      readAt: new Date(now - 90 * 60 * 1000).toISOString(),
+      sourceUsername: 'staging-demo-user',
+      sessionId: 990110,
+      prTitle: '[Mock] A dark mode for the board', prNumber: 9902, headlessIssueNumber: null,
+    },
+    {
+      ...base,
+      id: 990217, kind: 'issue_mention',
+      createdAt: new Date(now - 26 * 60 * 60 * 1000).toISOString(),
+      readAt: new Date(now - 25 * 60 * 60 * 1000).toISOString(),
+      sourceUsername: 'staging-demo-reviewer',
+      detail: '990302',
+      storyTitle: '[Mock] A high-score table',
+      sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
+    {
+      ...base,
+      id: 990218, kind: 'issue_opened',
+      createdAt: new Date(now - 29 * 60 * 60 * 1000).toISOString(),
+      readAt: new Date(now - 25 * 60 * 60 * 1000).toISOString(),
+      sourceUsername: 'staging-demo-user',
+      detail: '990302',
+      storyTitle: '[Mock] A high-score table',
+      sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
+    {
+      ...base,
+      id: 990219, kind: 'pr_proposed',
+      createdAt: new Date(now - 12 * 24 * 60 * 60 * 1000).toISOString(),
+      readAt: new Date(now - 11 * 24 * 60 * 60 * 1000).toISOString(),
+      sourceUsername: 'staging-demo-reviewer',
+      sessionId: 990111,
+      prTitle: '[Mock] Bigger buttons on phones', prNumber: 9903, headlessIssueNumber: null,
+    },
   ];
 }
 
@@ -399,6 +443,18 @@ function stagingMockHistory(id) {
       steps: [
         { at: ago(180), kind: 'vote', actor: 'staging-demo-reviewer', vote: 'yes' },
         { at: ago(300), kind: 'proposed', actor: 'staging-demo-user' },
+      ],
+    };
+  }
+  // The older rows' story: mock request 990302, asked, planned, then a
+  // mention (the two notifications stand for the ask and the mention).
+  if (id === 990217 || id === 990218) {
+    return {
+      issueNumber: 990302,
+      sessionIds: [],
+      steps: [
+        { at: ago(27.5 * 60), kind: 'plan', actor: 'homeroom_bot', words: '[Mock] The ten best scores, reset every Monday' },
+        { at: ago(29 * 60), kind: 'asked', actor: 'staging-demo-user' },
       ],
     };
   }
@@ -851,11 +907,11 @@ function notificationsRoutes(config) {
         // is simply the total now.)
         //
         // Only the UNREAD mocks are counted. This used to add `mocks.length`
-        // outright, which was right while every mock was unread; one of them
-        // now ships with a `readAt` (so the drawer's "older notifications"
-        // view has something behind it), and counting that one would claim an
-        // already-read row as unread — inflating the red badge by one and
-        // leaving "Mark all read" enabled with nothing left to mark.
+        // outright, which was right while every mock was unread; five of them
+        // now ship with a `readAt` (so the drawer's "older notifications"
+        // view has something behind it), and counting those would claim
+        // already-read rows as unread — inflating the red badge and leaving
+        // "Mark all read" enabled with nothing left to mark.
         if (IS_STAGING && req.query.demo === '1') {
           const mocks = stagingMockNotifications();
           payload.notifications = [...mocks, ...payload.notifications];

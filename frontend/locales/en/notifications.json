@@ -51,6 +51,10 @@
     "text": "{{count}} notifications",
     "description": "Small last line of a card on the Unread filter that stands for several notifications about one request or proposal whose number is not known: how many notifications the card is. {{count}} is that number."
   },
+  "story.projectMeta": {
+    "text": "<0>{{project}}</0> · {{meta}}",
+    "description": "Small last line of a notification card that sits under no project heading (the older notifications on the Unread filter, one card per request or proposal): the card's project, emphasized, then the rest of the line. Keep the <0></0> tags around the project's name. {{project}} is the project's name, like Book club; {{meta}} is the rest of the line, like \"#5580 · 3 notifications\" or \"by @ana\"."
+  },
   "history.show": {
     "text": "Show what happened",
     "description": "Accessible name of the small arrow at the foot of a notification about a request or proposal: opens, inside the card, everything that happened on it (votes, comments, updates, going live)."
@@ -210,6 +214,18 @@
   "sheet.earlier": {
     "text": "Earlier",
     "description": "Heading over the notifications that arrived before today, in the notifications sheet."
+  },
+  "sheet.yesterday": {
+    "text": "Yesterday",
+    "description": "Heading over the older notifications that arrived yesterday, on the notifications sheet's Unread filter once its older notifications are showing."
+  },
+  "sheet.lastWeek": {
+    "text": "Last 7 days",
+    "description": "Heading over the older notifications that arrived in the rest of the past week (from two to six days ago), on the notifications sheet's Unread filter once its older notifications are showing. It follows the Today and Yesterday headings."
+  },
+  "sheet.longAgo": {
+    "text": "Older",
+    "description": "Heading over the older notifications that arrived more than a week ago, on the notifications sheet's Unread filter once its older notifications are showing. It follows the Last 7 days heading."
   },
   "sheet.empty.unread": {
     "text": "You’re all caught up.",

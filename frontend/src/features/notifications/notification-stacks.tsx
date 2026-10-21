@@ -79,6 +79,11 @@ export type CardPlace = {
   top?: { more: number; closed: boolean; open: () => void } | null;
   /** Under the top card of a closed stack: 1 and 2 peek out, 3 stands for the rest. */
   behind?: number;
+  /**
+   * A card in no stack (Unread's older rows, one card per change): no
+   * heading names its project, so its meta line leads with `groupName`.
+   */
+  leadsWithProject?: boolean;
 };
 
 /** How many notifications one entry stands for. */
