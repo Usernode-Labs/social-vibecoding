@@ -33,6 +33,13 @@
 //     connection is given up: one that went half-open would otherwise hold
 //     every lock of the process behind it until the OS gave up on it.
 //
+// The same connection carries the process's own coordination statements
+// (coordinationQuery: services/processes.js, its heartbeat and the roster it
+// reads while draining). They must never wait on the main pool: a draining
+// process's pool can be all checked out by the work it is finishing, and a
+// roster read that waits there cannot tell it to hand over, nor can a
+// heartbeat that waits keep it counted as live.
+//
 // `pool` names the database (its connection string): the pg Pool the caller
 // would otherwise have used. A pool that is not a pg Pool (a test's fake)
 // runs the work unlocked, as callers always degraded.
@@ -233,7 +240,24 @@ function createSessionLocks({ makeClient = (connectionString) => new Client({
     }
   }
 
+  // One statement on the lock connection (see the header). A pool that is
+  // not a pg Pool (a test's fake) answers it itself.
+  async function coordinationQuery(pool, sql, params) {
+    const connectionString = pool && pool.options && pool.options.connectionString;
+    if (!connectionString || typeof pool.connect !== 'function') return pool.query(sql, params);
+    closeWithPool(pool, connectionString);
+    const entry = connectionFor(connectionString);
+    entry.users += 1;
+    try {
+      return await onConnection(entry, sql, params);
+    } finally {
+      entry.users -= 1;
+      unused(connectionString, entry);
+    }
+  }
+
   return {
+    coordinationQuery,
     // Waits for the lock, then runs `fn` under it.
     withSessionLock: (pool, key, fn, opts = {}) => run(pool, key, fn, { ...opts, wait: true }),
     // Runs `fn` under the lock if it is free now; resolves BUSY otherwise.

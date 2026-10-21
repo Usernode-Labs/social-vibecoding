@@ -49,6 +49,15 @@ const LIVE_SECONDS = 45;
 // read them as live.
 const REAP_AFTER_SECONDS = 10 * 60;
 
+// Every statement of the roster about this process runs on the process's
+// lock connection, never through the main pool (db/session-locks.js
+// coordinationQuery): a draining process's pool can be all checked out by
+// the work it is finishing, and its heartbeat and its reads of who started
+// since must not wait behind that (item 4, the connection budget).
+function q(db, sql, params) {
+  return require('../db/session-locks').coordinationQuery(db, sql, params);
+}
+
 const KINDS = Object.freeze([
   'session',        // a turn or an operation on a dev session (active-workers.js)
   'handoff',        // a hand-off pipeline (handoff-pipeline.js)
@@ -111,7 +120,7 @@ function writeHolds() {
     if (!started || !pool) return;
     const held = [...local.keys()].map(splitKey);
     try {
-      await pool.query(WRITE_HOLDS_SQL, [ID, held.map((h) => h.kind), held.map((h) => h.ref)]);
+      await q(pool, WRITE_HOLDS_SQL, [ID, held.map((h) => h.kind), held.map((h) => h.ref)]);
     } catch (err) {
       log.warn('processes', 'Could not write this process\'s holds; the next beat writes them', { err: err.message });
     }
@@ -207,7 +216,7 @@ function localSnapshot(limit = 50) {
 // The row, written again with every beat: a row the process-reap clock
 // reaped while this process was stalled comes back.
 function writeRow(db) {
-  return db.query(
+  return q(db,
     `INSERT INTO platform_processes (id, release, role, host, ip, state, drain_started_at, drain_deadline_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT (id) DO UPDATE SET heartbeat_at = NOW(), state = EXCLUDED.state,
@@ -246,7 +255,7 @@ async function start({ pool: db, role: r = 'all' } = {}) {
   // not be read as live for LIVE_SECONDS after its last beat. Elsewhere one machine may run several (tests, local development).
   if (process.env.KUBERNETES_SERVICE_HOST) {
     try {
-      const { rowCount } = await pool.query('DELETE FROM platform_processes WHERE host = $1 AND id <> $2', [os.hostname(), ID]);
+      const { rowCount } = await q(pool, 'DELETE FROM platform_processes WHERE host = $1 AND id <> $2', [os.hostname(), ID]);
       if (rowCount) log.info('processes', 'Removed the row of this Pod\'s previous process', { count: rowCount });
     } catch (err) {
       log.warn('processes', 'Could not remove this Pod\'s previous process', { err: err.message });
@@ -266,7 +275,7 @@ async function start({ pool: db, role: r = 'all' } = {}) {
 async function markDraining(deadline) {
   draining = { since: new Date(), deadline: deadline ? new Date(deadline) : null };
   if (!started || !pool) return;
-  await pool.query(
+  await q(pool,
     `UPDATE platform_processes SET state = 'draining', drain_started_at = $2, drain_deadline_at = $3,
             heartbeat_at = NOW() WHERE id = $1`, [ID, draining.since, draining.deadline]);
 }
@@ -282,7 +291,7 @@ async function markDraining(deadline) {
  */
 async function newerDraining() {
   if (!started || !pool || !draining) return 0;
-  const { rows: [row] } = await pool.query(
+  const { rows: [row] } = await q(pool,
     `SELECT count(DISTINCT COALESCE(release, id))::int AS n FROM platform_processes
       WHERE id <> $1 AND role = ANY($2::text[]) AND state = 'draining' AND drain_started_at > $3
         AND heartbeat_at > NOW() - make_interval(secs => $4)
@@ -302,7 +311,7 @@ async function newerDraining() {
  */
 async function servingOthers() {
   if (!started || !pool) return 0;
-  const { rows: [row] } = await pool.query(
+  const { rows: [row] } = await q(pool,
     `SELECT count(*)::int AS n FROM platform_processes p
       WHERE p.id <> $1 AND p.role = ANY($2::text[]) AND p.state = 'serving'
         AND p.heartbeat_at > NOW() - make_interval(secs => $3)
@@ -321,7 +330,7 @@ async function servingOthers() {
  */
 async function startedSinceDrain() {
   if (!started || !pool || !draining) return 0;
-  const { rows: [row] } = await pool.query(
+  const { rows: [row] } = await q(pool,
     `SELECT count(*)::int AS n FROM platform_processes
       WHERE id <> $1 AND role = ANY($2::text[]) AND started_at > $3
         AND heartbeat_at > NOW() - make_interval(secs => $4)`,
@@ -359,7 +368,7 @@ async function stop() {
   started = false;
   clearInterval(heartbeatTimer); heartbeatTimer = null;
   const db = pool;
-  if (db) await db.query('DELETE FROM platform_processes WHERE id = $1', [ID]).catch((err) => {
+  if (db) await q(db, 'DELETE FROM platform_processes WHERE id = $1', [ID]).catch((err) => {
     log.warn('processes', 'Could not remove this process\'s row; it lapses on its own', { err: err.message });
   });
 }

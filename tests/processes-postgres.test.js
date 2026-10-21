@@ -188,6 +188,18 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
     await other('pod-conductor-new', { role: 'conductor' });
     await other('pod-all-new-draining', { state: 'draining', drainStartedAt: new Date() });
     assert.equal(await processes.startedSinceDrain(), 2);
+    // The roster never waits on the main pool: a draining process whose pool
+    // is all checked out (the connections it kept when it shrank) still
+    // beats and still sees the Pod that should make it hand over.
+    const taken = await Promise.all(Array.from({ length: 6 }, () => pool.connect()));
+    try {
+      const within = (p) => Promise.race([p, new Promise((r) => setTimeout(() => r('waited on the pool'), 3000))]);
+      assert.equal(await within(processes.startedSinceDrain()), 2);
+      assert.equal(await within(processes.newerDraining()), 1, 'pod-all-new-draining');
+      assert.notEqual(await within(processes.beat().then(() => 'beat')), 'waited on the pool');
+    } finally {
+      for (const c of taken) c.release();
+    }
     // A beat keeps the drain: it does not put the row back to serving.
     await processes.beat();
     assert.equal((await pool.query('SELECT state FROM platform_processes WHERE id = $1', [processes.ID])).rows[0].state, 'draining');
