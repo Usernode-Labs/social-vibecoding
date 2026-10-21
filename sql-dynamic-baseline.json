@@ -1515,13 +1515,6 @@
       "preview": "sql"
     },
     {
-      "source": "src/services/server-budget.js",
-      "kind": "structural-template",
-      "fingerprint": "a7556049a8778215a086",
-      "count": 1,
-      "preview": "`GRANT pg_use_reserved_connections TO ${user}`"
-    },
-    {
       "source": "src/services/session-bus.js",
       "kind": "structural-template",
       "fingerprint": "2258237abfc603d59087",

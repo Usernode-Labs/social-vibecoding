@@ -409,15 +409,16 @@ replaced Pods finish at once; the oldest hands its work over first.
 A replaced Pod starts nothing new, so it keeps small pools while it finishes:
 `platform.drainPools` (its main pool, workflow pool and db-manager operations).
 That is what makes the overlap affordable. `postgresql.platformConnections` is
-the connection budget: the connections the main PostgreSQL server reserves for
-the platform's user (`reserved_connections`, granted with
-`pg_use_reserved_connections`), which the child apps cannot take. The chart
+the connection budget: the connections the main PostgreSQL server keeps from
+ordinary roles (`reserved_connections`), which the child apps cannot take; the
+platform's user is a superuser, which PostgreSQL never holds to them. The chart
 refuses values whose most connections at once exceed it, and its error names
 each role's share. Per role, that is its serving Pods plus one more for the
 rollout's surge at their full pools (`config.dbPoolMax`, `config.wfPoolMax`,
 `config.databaseOperations` for web; `platform.conductor`'s for the conductor),
 `drainingMax` replaced Pods per replica at `platform.drainPools`, and five
-connections per process outside the pools. The migration Job adds
+connections per process outside the pools; a database operation counts twice
+(it can hold two connections, `pg_dump` beside `pg_restore`). The migration Job adds
 `migration.dbPoolMax` plus two. `0` checks nothing.
 
 Both Pods may serve independent requests during the brief overlap, and a

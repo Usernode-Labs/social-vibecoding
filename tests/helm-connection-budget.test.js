@@ -39,9 +39,12 @@ function podEnvs(stdout) {
 function budget({ web = [10, 2, 2], conductor = [30, 10, 4], replicas = 1, conductors = 1, draining = 2,
   drain = [4, 2, 1], migration = 4, split = true } = {}) {
   const outside = 5;
+  // [main pool, workflow pool, database operations]; an operation can hold
+  // two connections at once.
+  const size = ([db, wf, ops]) => db + wf + 2 * ops;
   const sum = (xs) => xs.reduce((a, b) => a + b, 0);
-  const drainEach = sum(drain) + outside;
-  const role = (n, pools) => (n + 1) * (sum(pools) + outside) + n * draining * drainEach;
+  const drainEach = size(drain) + outside;
+  const role = (n, pools) => (n + 1) * (size(pools) + outside) + n * draining * drainEach;
   const parts = split
     ? [['web', role(replicas, web)], ['conductor', role(conductors, conductor)]]
     : [['platform', role(replicas, [web[0], conductor[1], conductor[2]])]];

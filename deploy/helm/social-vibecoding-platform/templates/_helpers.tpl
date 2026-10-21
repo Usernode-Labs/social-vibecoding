@@ -98,7 +98,8 @@ share reserved for its user. Each role counts its serving Pods plus one more
 (the Deployments' maxSurge 1), drainingMax replaced Pods per replica at
 platform.drainPools, and five connections per process outside its pools
 (the bus listener, presence, the lock connection, the debug pool, the
-build-retention guard). The migration Job adds its pool plus two (its
+build-retention guard). A database operation counts twice: one can hold two
+connections at once (pg_dump beside pg_restore; services/db-manager.js). The migration Job adds its pool plus two (its
 administrative connection and a psql).
 */}}
 {{- define "social-vibecoding-platform.connectionBudget" -}}
@@ -109,13 +110,13 @@ administrative connection and a psql).
   {{- fail "platform.drainPools needs dbPoolMax 1 or more, wfPoolMax 2 or more (its outcome listener and one more) and databaseOperations 1 or more" -}}
 {{- end -}}
 {{- $outside := 5 -}}
-{{- $drainEach := add (int $d.dbPoolMax) (int $d.wfPoolMax) (int $d.databaseOperations) $outside -}}
+{{- $drainEach := add (int $d.dbPoolMax) (int $d.wfPoolMax) (mul 2 (int $d.databaseOperations)) $outside -}}
 {{- $roles := list -}}
 {{- if $p.conductor.enabled -}}
-  {{- $roles = append $roles (dict "name" "web" "replicas" (int $p.replicas) "serving" (add (int $c.dbPoolMax) (int $c.wfPoolMax) (int $c.databaseOperations) $outside)) -}}
-  {{- $roles = append $roles (dict "name" "conductor" "replicas" (int $p.conductor.replicas) "serving" (add (int (default $c.dbPoolMax $p.conductor.dbPoolMax)) (int $p.conductor.wfPoolMax) (int $p.conductor.databaseOperations) $outside)) -}}
+  {{- $roles = append $roles (dict "name" "web" "replicas" (int $p.replicas) "serving" (add (int $c.dbPoolMax) (int $c.wfPoolMax) (mul 2 (int $c.databaseOperations)) $outside)) -}}
+  {{- $roles = append $roles (dict "name" "conductor" "replicas" (int $p.conductor.replicas) "serving" (add (int (default $c.dbPoolMax $p.conductor.dbPoolMax)) (int $p.conductor.wfPoolMax) (mul 2 (int $p.conductor.databaseOperations)) $outside)) -}}
 {{- else -}}
-  {{- $roles = append $roles (dict "name" "platform" "replicas" (int $p.replicas) "serving" (add (int $c.dbPoolMax) (int $p.conductor.wfPoolMax) (int $p.conductor.databaseOperations) $outside)) -}}
+  {{- $roles = append $roles (dict "name" "platform" "replicas" (int $p.replicas) "serving" (add (int $c.dbPoolMax) (int $p.conductor.wfPoolMax) (mul 2 (int $p.conductor.databaseOperations)) $outside)) -}}
 {{- end -}}
 {{- $total := 0 -}}
 {{- $parts := list -}}

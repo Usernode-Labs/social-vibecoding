@@ -114,9 +114,9 @@ postgresql:
   database: usernode
   applicationDatabase: app_usernode_2d5619
   username: usernode
-  # The connection budget. The connections the main server keeps for the
-  # platform's own user (its reserved_connections, granted to that user
-  # through pg_use_reserved_connections): the child apps cannot take them.
+  # The connection budget. The connections the main server keeps from
+  # ordinary roles (its reserved_connections): the child apps cannot take
+  # them, and the platform's user, a superuser, is never held to them.
   # The chart refuses pools that could open more than this at once: every
   # role's serving Pods plus one more each for a rollout's surge, drainingMax
   # replaced Pods per replica at platform.drainPools, and the migration Job.

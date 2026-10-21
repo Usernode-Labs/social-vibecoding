@@ -1,8 +1,7 @@
 'use strict';
 
 // The main server's side of the connection budget (item 4, Q3), against
-// PostgreSQL: the platform's user is granted the reserved connections, each
-// app's database is capped (an app made from now on when it is made, those
+// PostgreSQL: each app's database is capped (an app made from now on when it is made, those
 // made before by the migration Job), the platform's own database never is,
 // a limit set by hand stays, and a second run changes nothing.
 //
@@ -54,29 +53,24 @@ test('the migration Job ensures it on every release, after the roles, never fail
   assert.match(ensure, /catch \(error\) \{\n\s+console\.error\('\[migration\] connection budget not ensured'/);
 });
 
-test('the migration Job grants the reserve and caps the apps made before', { timeout: 60000 }, async (t) => {
+test('the migration Job caps the apps made before', { timeout: 60000 }, async (t) => {
   const admin = new Client({ connectionString: DSN, connectionTimeoutMillis: 3000 });
   try { await admin.connect(); } catch (err) {
     if (process.env.TEST_DATABASE_URL) throw err;
     t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
   }
-  const { rows: [has] } = await admin.query("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pg_use_reserved_connections') AS ok");
-  if (!has.ok) { await admin.end(); t.skip('PostgreSQL before 16 has no reserved connections'); return; }
   const tag = `${process.pid}_${Math.floor(Math.random() * 1e6)}`;
-  const user = `sb_platform_${tag}`;
   const [own, a, b] = ['own', 'a', 'b'].map((n) => `app_sb_${n}_${tag}`);
   t.after(async () => {
     for (const db of [own, a, b]) await admin.query(`DROP DATABASE IF EXISTS ${db}`).catch(() => {});
-    await admin.query(`DROP ROLE IF EXISTS ${user}`).catch(() => {});
     await admin.end();
   });
-  await admin.query(`CREATE ROLE ${user} LOGIN`);
   for (const db of [own, a, b]) await admin.query(`CREATE DATABASE ${db}`);
   await admin.query(`ALTER DATABASE ${b} CONNECTION LIMIT 5`);
-  const config = { databaseUrl: DSN.replace(/\/\/[^@]*@/, `//${user}:x@`).replace(/\/[^/]*$/, `/${own}`) };
+  const config = { databaseUrl: DSN.replace(/\/[^/]*$/, `/${own}`) };
   // The apps table as the platform's pool answers it: a self-hosted row
-  // (the platform's own) is left out by the query, one whose database is
-  // gone is skipped.
+  // (the platform's own) is left out by the query; here its database is
+  // listed anyway, and one whose database is gone is skipped.
   const pool = {
     async query(sql) {
       assert.match(sql, /NOT self_hosted/);
@@ -86,11 +80,7 @@ test('the migration Job grants the reserve and caps the apps made before', { tim
   const limits = async () => Object.fromEntries((await admin.query(
     'SELECT datname, datconnlimit FROM pg_database WHERE datname = ANY($1::text[])', [[own, a, b]])).rows.map((r) => [r.datname, r.datconnlimit]));
 
-  const first = await ensureServerBudget(config, { admin, pool });
-  assert.deepEqual(first, { granted: true, capped: [a] });
+  assert.deepEqual(await ensureServerBudget(config, { admin, pool }), { capped: [a] });
   assert.deepEqual(await limits(), { [own]: -1, [a]: 20, [b]: 5 }, 'the platform\'s own never, a limit set by hand kept');
-  const { rows: [m] } = await admin.query("SELECT pg_has_role($1, 'pg_use_reserved_connections', 'MEMBER') AS member", [user]);
-  assert.equal(m.member, true);
-
-  assert.deepEqual(await ensureServerBudget(config, { admin, pool }), { granted: false, capped: [] }, 'a second release changes nothing');
+  assert.deepEqual(await ensureServerBudget(config, { admin, pool }), { capped: [] }, 'a second release changes nothing');
 });
