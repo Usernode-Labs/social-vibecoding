@@ -861,6 +861,50 @@ each declared screen as before).
   the display's (`window.devicePixelRatio`), so it never draws past the
   pixels it has.
 - **Clips** are recorded at the screen's CSS size, as before.
+
+### Close-ups (experimental)
+
+A change much smaller than its screen (a badge, a count, an icon) is drawn
+large on the New Needs you card, past the density of its screen still. The
+close-up capture design (2026-10-21) measured that on 21 production runs;
+Lukas chose platform-directed close-ups of the after side only, at most 2 a
+screen, 6 a run and 4 MP each (`src/services/shots-closeups.js`).
+
+- **Which.** In a run taken at device density, once a change's before and
+  after screen shots are both saved, the platform compares them as the run's
+  verdict does (`shots-diff.screensFor`), takes the card's pieces of each
+  after screen (the same rules as `model.ts` `piecesOf`, its 16 px of
+  surroundings, the title shot's 0.75 shape, a 358-wide phone card at 3 and a
+  488-wide desktop card at 2; a test holds them to the client's source) and
+  wants a close-up of each piece the still is not dense enough for, at the
+  density the card needs (one decimal), the most wanted first
+  (`GET /api/internal/shots/:runId/closeups`).
+- **How.** Right after `save_shot` uploads a change, the shots bridge has
+  that change's browser (its observer's `closeup` action) take each wanted
+  close-up with the screenshot tool's `closeup` argument: Chrome's own
+  `Page.captureScreenshot` clip at that density, measured to be pixel for
+  pixel what a page drawn at that density gives, in about 55 ms, without the
+  page seeing anything. The region is the screen still's; the tool adds the
+  scroll offset and divides out a zoomed-out phone page's zoom. The agent
+  takes no extra step: the close-ups ride on its save.
+- **Kept only when right.** The platform keeps a close-up
+  (`POST /api/internal/shots/:runId/closeup`) only when it is wanted, the
+  size asked for, and, averaged down to 1x, at most 6% of its pixels differ
+  from the after still there and it is closer to it than to the before
+  still, which a close-up taken after the page moved on is not. Refused, the
+  bridge's answer tells the agent to open the after state again and save its
+  screen shot again, which takes the close-up again.
+- **Stored** as a `closeup` artifact of the after side, its number on the
+  screen (`part` 1 or 2), its region (`focus_rect`, CSS px of that change's
+  after screen) and density (`scale`). It is published with a ready change,
+  never what makes one ready, and left out of evals.
+- **Shown** only to an account in the New Needs you experiment: the shots
+  view gives it as `{ variant: 'closeup', side: 'head', storyId, viewport,
+  theme: 'light', part, rect, width, height, density, url }`, its url in the
+  `?density=device` form, and the artifact route serves it to no one else.
+  The card draws a piece from a close-up whose `rect` holds the piece's
+  framed box on the same screen, with its zoom capped at the close-up's
+  density over the display's.
 - The init script (`worker/shots-page-init.js`) still records the install
   strip's dismissal on every page (#4087), the phone browsers' included, so a
   phone shot shows the screen rather than the strip over it. A top-level page

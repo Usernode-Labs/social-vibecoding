@@ -199,6 +199,47 @@ test('the pill names the side most of the window shows, with hysteresis, and col
   assert.equal(compare.saturationFor(0), 0);
 });
 
+test('the magnifier shows what is under the finger at the zoom, and stays inside the window', () => {
+  const place = { scale: 1.2, tx: -10, ty: -40 };
+  const lens = compare.lensPlace(place, { x: 100, y: 80 }, 2.5, 132);
+  assert.equal(lens.scale, 3, 'the drawn scale times the zoom');
+  const layerX = (100 - place.tx) / place.scale;
+  const layerY = (80 - place.ty) / place.scale;
+  assert.ok(Math.abs(lens.tx + layerX * lens.scale - 66) < 1e-9, 'the point lands at the circle\'s centre');
+  assert.ok(Math.abs(lens.ty + layerY * lens.scale - 66) < 1e-9);
+  const identity = compare.lensPlace(null, { x: 50, y: 20 }, 2.5, 132);
+  assert.equal(identity.scale, 2.5, 'a whole pair magnifies by the zoom alone');
+
+  const size = { w: 366, h: 275 };
+  assert.deepEqual(compare.lensBox({ x: 183, y: 200 }, size, 132, 0), { x: 117, y: 134 }, 'a mouse: centred under the pointer');
+  assert.deepEqual(compare.lensBox({ x: 183, y: 200 }, size, 132, 24), { x: 117, y: 44 }, 'a finger: raised clear of the fingertip');
+  assert.deepEqual(compare.lensBox({ x: 0, y: 0 }, size, 132, 0), { x: 0, y: 0 });
+  assert.deepEqual(compare.lensBox({ x: 366, y: 275 }, size, 132, 0), { x: 234, y: 143 });
+  assert.deepEqual(compare.lensBox({ x: 366, y: 275 }, size, 132, 24), { x: 234, y: 119 }, 'inside at every edge');
+});
+
+test('a still press of a third of a second opens the magnifier; moving early does not', () => {
+  const src = read('frontend/src/features/review-flow/compare.tsx');
+  assert.match(src, /const HOLD_TO_ZOOM = 300;/);
+  assert.match(src, /const LENS_ZOOM = 2\.5;/);
+  assert.match(src, /Math\.hypot\(dx, dy\) > HOLD_SLOP\) clearTimeout\(zoomTimer\.current\)/, 'moving off the spot cancels the hold');
+  assert.match(src, /Math\.abs\(dy\) > 8 && Math\.abs\(dy\) > Math\.abs\(dx\)/, 'the vertical threshold is unchanged');
+  assert.match(src, /Math\.abs\(dx\) < 6/, 'the drag threshold is unchanged');
+  assert.match(src, /addEventListener\('touchmove', hold, \{ passive: false \}\)/, 'the page does not scroll while the magnifier is open');
+  assert.match(src, /if \(lensRef\.current\) \{\n\s+const p = pointAt\(e\)/, 'once open it follows the finger, not the seam');
+  assert.match(src, /className="rf-lens"\s+aria-hidden="true"/, 'the magnifier is visual only');
+  assert.match(src, /onContextMenu=\{\(e\) => e\.preventDefault\(\)\}/, 'the phone\'s long-press menu stays shut');
+
+  const css = read('public/css/app.css');
+  assert.match(css, /\n\.rf-lens \{ position: absolute; left: 0; top: 0; z-index: 6; width: 132px; height: 132px; border-radius: 999px;/);
+  assert.match(css, /\.rf-compare \{[^}]*\-webkit-touch-callout: none;/);
+  assert.match(
+    css,
+    /@media \(prefers-reduced-motion: reduce\) \{\n  \.rf-sheet, \.rf-scrim, \.rf-seam, \.rf-tab, \.rf-pill \{ transition: none; \}\n  \.rf-lens \{ animation: none; \}/,
+    'the magnifier opens at once when motion is reduced',
+  );
+});
+
 // ── 2b. The preview card ────────────────────────────────────────────────
 
 test('the change page sets its picture and thumbnails apart in an inset card', () => {
@@ -315,11 +356,14 @@ test('after a vote: a large mark, what you said, Undo beside Next change', () =>
   assert.ok(last.includes(message('communities:review.said.done')));
 });
 
-test('a No asks for its line, held to the server\'s limit', () => {
+test('a No asks for its line, held to the server\'s limit, and sends without one', () => {
   const html = sheetHtml({ state: 'no' });
   assert.ok(html.includes(message('communities:review.no.ask')));
   assert.match(html, /maxLength="280"/);
   assert.match(html, /aria-pressed="true"/);
+  const send = message('communities:review.no.send');
+  assert.ok(html.includes(`class="rf-go">${send}</button>`), 'Send is enabled with an empty line');
+  assert.ok(!html.includes('class="rf-go" disabled'), 'not greyed out until a line is written');
 });
 
 // ── 4. The copy ──────────────────────────────────────────────────────────

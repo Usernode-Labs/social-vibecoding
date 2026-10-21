@@ -1,10 +1,11 @@
 'use strict';
 
-// The six connector tools that let a full platform admin make, list and
+// The seven connector tools that let a full platform admin make, list and
 // retire test accounts for first-run testing, mint a one-time phone sign-in
 // for a test number, send the waitlist's release mail to a test address
-// (services/test-accounts.js), and read a test project's run report
-// (services/run-report.js).
+// (services/test-accounts.js), read a test project's run report
+// (services/run-report.js), and send a test account a notification of every
+// kind (services/test-notifications.js).
 // Admin-only three times over, like the benchmark's tools: registered only for
 // a full admin, refused in the handler, refused by the route (which
 // tests/test-accounts-postgres.test.js and tests/mcp-connector-policy.test.js
@@ -17,8 +18,8 @@ const assert = require('node:assert/strict');
 const tools = require('../src/services/mcp-tools');
 const { READ_SCOPE, WRITE_SCOPE } = require('../src/services/mcp-connect-constants');
 
-const TOOLS = ['create_test_account', 'create_test_phone_sign_in', 'send_test_release_email', 'list_test_accounts', 'retire_test_account', 'get_run_report'];
-const WRITES = ['create_test_account', 'create_test_phone_sign_in', 'send_test_release_email', 'retire_test_account'];
+const TOOLS = ['create_test_account', 'create_test_phone_sign_in', 'send_test_release_email', 'list_test_accounts', 'retire_test_account', 'get_run_report', 'send_test_notifications'];
+const WRITES = ['create_test_account', 'create_test_phone_sign_in', 'send_test_release_email', 'retire_test_account', 'send_test_notifications'];
 
 function register({ user, scopes = [READ_SCOPE, WRITE_SCOPE], origin = 'https://homeroom.example' }) {
   const specs = new Map();
@@ -498,4 +499,49 @@ test('the charter names the release email and who it may go to', () => {
   const section = require('../src/services/mcp-charter').CHARTER_SECTIONS.find((s) => s.id === 'test-accounts');
   assert.match(section.text, /send_test_release_email/);
   assert.match(section.text, /never to somebody else's/);
+});
+
+test('send_test_notifications posts the kinds for the account and says what reached the bell and the phone', async (t) => {
+  const answer = {
+    userId: 77, username: 'member_ab12',
+    sent: [
+      { kind: 'mention', notificationId: 501, listed: true, pushes: 1 },
+      { kind: 'app_deleted', notificationId: 502, listed: true, pushes: 0 },
+    ],
+    skipped: [{ kind: 'kudos', reason: 'parked' }],
+    project: 'restaurant-tier-list-a1b2c3', projectMessage: true, conversationId: 9, registrations: 1, pushCategoriesEnabled: true,
+  };
+  const calls = stubFetch(t, () => ({ body: { notifications: answer } }));
+  const { handlers, specs } = register({ user: { ...ADMIN } });
+  assert.match(specs.get('send_test_notifications').description, /^Admin only\. Send a test account one notification of every kind/);
+  const out = await handlers.get('send_test_notifications')({ userId: 77, kinds: ['mention', 'app_deleted'] });
+  assert.equal(calls[0].method, 'POST');
+  assert.equal(calls[0].url, 'http://platform.internal/api/test-accounts/77/notifications');
+  assert.deepEqual(calls[0].body, { kinds: ['mention', 'app_deleted'] });
+  const sc = out.structuredContent;
+  assert.deepEqual(sc.sent, answer.sent);
+  assert.deepEqual(sc.skipped, answer.skipped);
+  assert.equal(sc.project, 'restaurant-tier-list-a1b2c3');
+  assert.equal(sc.registrations, 1);
+  assert.match(sc.nextStep, /^2 sent, in the account's bell now\. 1 queued a push/);
+  assert.match(sc.nextStep, /marks its rows read, which stops pushes still on their way/);
+  assert.equal(sc.projectMessage, true);
+  assert.doesNotMatch(sc.nextStep, /no message yet/);
+  stubFetch(t, () => ({ body: { notifications: { ...answer, projectMessage: false } } }));
+  const quiet = (await handlers.get('send_test_notifications')({ userId: 77 })).structuredContent;
+  assert.match(quiet.nextStep, /Its project's discussion has no message yet, so the kinds about one show no words/);
+  // No phone signed in, and no project: it says so.
+  stubFetch(t, () => ({ body: { notifications: { ...answer, registrations: 0, skipped: [{ kind: 'mention', reason: 'needs_project' }] } } }));
+  const none = (await handlers.get('send_test_notifications')({ userId: 77 })).structuredContent;
+  assert.match(none.nextStep, /No phone is signed in as the account, so nothing pushed/);
+  assert.match(none.nextStep, /the account has no project yet/);
+});
+
+test('send_test_notifications refuses a bad id before any call and passes the route\'s refusal on', async (t) => {
+  const calls = stubFetch(t, () => ({ status: 404, body: { error: 'That account is not a live test account.', code: 'not_test_account' } }));
+  const { handlers } = register({ user: { ...ADMIN } });
+  assert.equal((await handlers.get('send_test_notifications')({ userId: 0 })).structuredContent.code, 'invalid_request');
+  assert.equal(calls.length, 0);
+  const out = await handlers.get('send_test_notifications')({ userId: 5 });
+  assert.equal(out.structuredContent.code, 'not_test_account');
 });

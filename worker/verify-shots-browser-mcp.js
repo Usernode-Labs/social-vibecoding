@@ -28,7 +28,11 @@ function pngWidth(buffer) {
   return buffer.length > 24 && buffer.toString('latin1', 12, 16) === 'IHDR' ? buffer.readUInt32BE(16) : 0;
 }
 
-function verifyBrowser(server, navigationChecks = [], { density = null } = {}) {
+// A close-up of a 20 x 10 region at 6.5 (patch-playwright-mcp-screenshot.js
+// `closeup`) must be saved 130 x 65, and answer with no image.
+const CLOSEUP = { x: 0, y: 0, width: 20, height: 10, scale: 6.5 };
+
+function verifyBrowser(server, navigationChecks = [], { density = null, closeup = false } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(server.command, server.args, {
       env: { ...process.env, ...server.env }, stdio: ['pipe', 'pipe', 'pipe'],
@@ -96,6 +100,12 @@ function verifyBrowser(server, navigationChecks = [], { density = null } = {}) {
               || !fs.existsSync(path.join(outputDir, 'image-smoke.png'))) {
             return finish(new Error(`Browser MCP did not save a named screenshot in its shots directory: ${JSON.stringify(message.error || message.result).slice(0, 600)}`));
           }
+          if (closeup) {
+            phase = 'browser_take_screenshot closeup';
+            child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 91, method: 'tools/call', params: {
+              name: 'browser_take_screenshot', arguments: { filename: 'closeup-smoke.png', closeup: CLOSEUP },
+            } })}\n`);
+          }
           if (density) {
             const saved = pngWidth(fs.readFileSync(path.join(outputDir, 'image-smoke.png')));
             const image = (message.result?.content || []).find((item) => item.type === 'image');
@@ -105,12 +115,24 @@ function verifyBrowser(server, navigationChecks = [], { density = null } = {}) {
                 + `shots must be saved at ${density}x (patch-playwright-mcp-screenshot.js, write-shots-mcp-config.js).`));
             }
           }
+          if (closeup) return undefined;
           if (navigationChecks.length) {
             phase = 'browser_navigate';
             child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: {
               name: 'browser_navigate', arguments: { url: navigationChecks[0].url },
             } })}\n`);
           } else return finish(null, tools);
+        } else if (message.id === 91) {
+          const outputDir = server.args[server.args.indexOf('--output-dir') + 1];
+          const file = path.join(outputDir, 'closeup-smoke.png');
+          const saved = fs.existsSync(file) ? fs.readFileSync(file) : Buffer.alloc(0);
+          const size = saved.length > 24 ? [saved.readUInt32BE(16), saved.readUInt32BE(20)] : [0, 0];
+          if (message.error || message.result?.isError || size[0] !== 130 || size[1] !== 65
+              || (message.result?.content || []).some((item) => item.type === 'image')) {
+            return finish(new Error(`Browser MCP close-up was not saved 130 x 65 without an image (${size.join(' x ')}): `
+              + `${JSON.stringify(message.error || message.result).slice(0, 600)}`));
+          }
+          return finish(null, tools);
         } else if (message.id >= 5 && message.id < 5 + navigationChecks.length) {
           const index = message.id - 5;
           const response = (message.result?.content || []).filter((item) => item.type === 'text').map((item) => item.text).join('\n');
@@ -189,7 +211,8 @@ async function main() {
       // 1x while the experiment is off; on, 3: the iPhone 15 device's
       // density, and the desktop browsers' own (write-shots-mcp-config.js).
       const density = mode === 1 ? 1 : 3;
-      const tools = await verifyBrowser(configs[mode].mcpServers[persona], [], { density });
+      // Close-ups are taken only in runs at device density.
+      const tools = await verifyBrowser(configs[mode].mcpServers[persona], [], { density, closeup: mode !== 1 });
       const records = fs.readFileSync(diagnosticFile, 'utf8').trim().split('\n')
         .filter((line) => line.startsWith('__USERNODE_SHOTS_BROWSER__ '))
         .flatMap((line) => {

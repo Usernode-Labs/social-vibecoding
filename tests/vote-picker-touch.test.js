@@ -9,7 +9,7 @@
 //   1. the panel: the "Your vote" header, the switch and its tallies,
 //      "Still yes" / "Not this time"
 //      on a prior Yes, the label and placeholder that follow the side, and
-//      the button that is off on a No until there is a line;
+//      the button that sends whichever side is chosen, line or not;
 //   2. VoteButton draws the panel once for both homes; on touch the kit
 //      sheet comes first and the action sheet + prompt card are the
 //      fallback; the box takes focus with the tap that needs it;
@@ -55,7 +55,7 @@ test('the switch: Yes on by default with its tally, No beside it; "Still yes" / 
   assert.match(prior, />Not this time<span/);
 });
 
-test('the box is there from the start and its words follow the switch; Vote no is off until there is a line', () => {
+test('the box is there from the start and its words follow the switch; a No sends without a line', () => {
   const onYes = picker();
   assert.match(onYes, /<div class="dev-vote-reason" data-vote-reason="yes">/);
   assert.match(onYes, /<label class="dev-vote-reason-label" for="dev-vote-reason-7">Add a line for the group, if you like\.<\/label>/);
@@ -64,29 +64,31 @@ test('the box is there from the start and its words follow the switch; Vote no i
     'Cancel, then the one button: a Yes is one click');
   const onNo = picker({ side: 'no' });
   assert.match(onNo, /<div class="dev-vote-reason" data-vote-reason="no">/);
-  assert.match(onNo, /What’s not working for you\? One line is plenty\.<\/label>/);
+  assert.ok(onNo.includes(message('project:card.vote.picker.noLabel')), 'the label says the line is optional');
+  assert.ok(onNo.includes('Add a line, if you like.'), 'and reads the new wording');
   assert.match(onNo, /placeholder="What would you want to change\?"/);
-  assert.match(onNo, /<button type="button" class="dev-vote-reason-send dev-vote-reason-send-no" disabled="">Vote no<\/button>/);
+  assert.match(onNo, /<button type="button" class="dev-vote-reason-send dev-vote-reason-send-no">Vote no<\/button>/,
+    'an empty No is ready to send');
   const typed = picker({ side: 'no', line: '  The colors  clash ' });
-  assert.match(typed, /<button type="button" class="dev-vote-reason-send dev-vote-reason-send-no">Vote no<\/button>/, 'a line turns it on');
+  assert.match(typed, /<button type="button" class="dev-vote-reason-send dev-vote-reason-send-no">Vote no<\/button>/, 'a line changes nothing');
   const blank = picker({ side: 'no', line: '   ' });
-  assert.match(blank, /dev-vote-reason-send-no" disabled=""/, 'whitespace is not a line');
+  assert.match(blank, /class="dev-vote-reason-send dev-vote-reason-send-no">Vote no<\/button>/, 'whitespace is no line, and no line is fine');
 });
 
-test('#22: on a project that is just yours the Yes line is a note; the No side is unchanged', () => {
+test('#22: on a project that is just yours the Yes line is a note; the No side is the same', () => {
   // "Add a line for the group" spoke to a group that a solo project does not
-  // have. Only the Yes side's optional line changes: No keeps its words and
-  // still needs its line before it can be sent.
+  // have. Only the Yes side's optional line changes: No keeps its words, and
+  // now its line is optional too.
   const onYes = picker({ solo: true });
   assert.match(onYes, /<label class="dev-vote-reason-label" for="dev-vote-reason-7">Add a note, if you like\.<\/label>/);
   assert.doesNotMatch(onYes, /for the group/);
   assert.match(onYes, /placeholder="What do you like about it\?"/, 'the box itself is the same');
   assert.match(onYes, /class="dev-vote-reason-send dev-vote-reason-send-yes">Vote yes<\/button>/, 'and a Yes needs no note');
   const onNo = picker({ solo: true, side: 'no' });
-  assert.match(onNo, /What’s not working for you\? One line is plenty\.<\/label>/);
+  assert.ok(onNo.includes(message('project:card.vote.picker.noLabel')), 'the No line is optional on a solo project too');
   assert.match(onNo, /placeholder="What would you want to change\?"/);
-  assert.match(onNo, /class="dev-vote-reason-send dev-vote-reason-send-no" disabled="">Vote no<\/button>/,
-    'No still waits for its line');
+  assert.match(onNo, /class="dev-vote-reason-send dev-vote-reason-send-no">Vote no<\/button>/,
+    'a No sends without its line');
   assert.match(picker({ solo: false }), /Add a line for the group, if you like\./, 'a group keeps its wording');
   // The card's button reads it off the Yes spec, which app-view.js marks
   // from the app's own record.
@@ -98,13 +100,14 @@ test('#22: on a project that is just yours the Yes line is a note; the No side i
 // is a note even when the caller's `solo` has not caught up: the Needs you
 // sheet reads it from a community lookup that may not have landed, and the
 // staging demo's Just you project reads as public.
-test('an approval\'s Yes line is a note whatever `solo` says; its No side is unchanged', () => {
+test('an approval\'s Yes line is a note whatever `solo` says; its No side is the same', () => {
   for (const solo of [false, undefined]) {
     const onYes = picker({ approve: true, solo });
     assert.match(onYes, /<label class="dev-vote-reason-label" for="dev-vote-reason-7">Add a note, if you like\.<\/label>/, String(solo));
     assert.doesNotMatch(onYes, /for the group/, String(solo));
     const onNo = picker({ approve: true, solo, side: 'no' });
-    assert.match(onNo, /What’s not working for you\? One line is plenty\.<\/label>/, String(solo));
+    assert.ok(onNo.includes(message('project:card.vote.picker.noLabel')), String(solo));
+    assert.match(onNo, /class="dev-vote-reason-send dev-vote-reason-send-no">Don’t approve<\/button>/, 'no line needed');
   }
   assert.match(picker({ approve: false, solo: false }), /Add a line for the group, if you like\./, 'a group vote keeps its wording');
 });
@@ -154,7 +157,7 @@ test('VoteButton draws the panel once for both homes, opens on Yes, and sends on
   assert.match(fn, /aria-haspopup="dialog"/, 'the face says what it opens');
   assert.match(fn, /const startSide = \(\): 'yes' \| 'no' => \(mine === 'no' \? 'no' : 'yes'\);/, 'Yes by default; a viewer who voted No starts from No');
   assert.match(fn, /if \(open \|\| sheetRef\.current\) \{ shut\(\); return; \}\s*setSide\(startSide\(\)\);\s*setLine\(''\);/, 'reset on every open');
-  assert.match(fn, /const canSend = !isVote \|\| side === 'yes' \|\| !!trimmed;/);
+  assert.doesNotMatch(fn, /canSend/, 'no side is held back for a line');
   assert.match(fn, /send\(spec, isVote \? \(trimmed \|\| null\) : null\);/, 'one call: the side\'s spec with the line, null for none');
   assert.match(fn, /if \(!isVote\) \{ call\(a\.act\); return; \}/, 'anything that is not a vote is the spec\'s own call');
   assert.doesNotMatch(fn, /dev-vote-reason-box|dev-vote-opt|data-asking|setAsking/, 'the rows and the two-step are gone');

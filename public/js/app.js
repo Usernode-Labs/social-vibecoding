@@ -1727,6 +1727,13 @@ const App = {
   // Pure UI state, no writes, deliberately NOT env-gated — same reasoning as
   // ?shot=improve above: an IS_STAGING-only link would starve the production
   // "before" shot forever.
+  //
+  // Every one of these states IS the form (its bounty row, its screenshot
+  // row, its destination row, its refusals), so the open asks for the form
+  // by name (`mode: 'form'`, #4289). Without that a plain open follows the
+  // device's setting, and since comment mode became the default it opened
+  // the page layer instead: the modal never appeared and every feedback
+  // check photographed the home feed.
   _applyFeedbackShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
@@ -1845,7 +1852,7 @@ const App = {
           Kudos.Budget.state = { given_this_week: limit, remaining: 0, limit };
           Kudos.Budget.refresh = () => Promise.resolve();
         }
-        App.openFeedbackModal();
+        App.openFeedbackModal({ mode: 'form' });
         if (shot === 'feedback-first') {
           let firstTries = App.IMPROVE_SHOT_TRIES;
           const showFirst = () => {

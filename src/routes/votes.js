@@ -2234,9 +2234,8 @@ function revisionChangedVoteResponse(res, headSha, message = null, epoch = null)
 // head_sha is still recorded. It no longer decides anything, but it is the
 // only record of which commit a person was looking at when they approved,
 // and that is worth keeping.
-// The longest line a vote may carry, and what a No without one is answered
-// (#1688; src/workflow/rules/vote-reason.ts).
-const { VOTE_REASON_MAX, VOTE_REASON_REQUIRED } = require('../workflow/rules/vote-reason.ts');
+// The longest line a vote may carry (#1688; src/workflow/rules/vote-reason.ts).
+const { VOTE_REASON_MAX } = require('../workflow/rules/vote-reason.ts');
 
 // The one-line reason on a vote, normalised: whitespace collapsed, empty
 // becomes null (no line), anything else trimmed. `{ error }` when the line is
@@ -3260,17 +3259,6 @@ function voteRoutes(config) {
       const previousVote = prevRows[0]?.vote || null;
       const previousReason = prevRows[0]?.reason || null;
       const voteHeadSha = reviewedHeadForSession(session);
-      // #1688: a No always carries a line, so the proposer learns what to
-      // fix rather than only that somebody minded. The one No that need not
-      // bring a new one is a re-cast of a No that already has its line —
-      // the upsert keeps it (see VOTE_REASON_UPSERT_SQL).
-      if (vote === 'no' && !reason && !(previousVote === 'no' && previousReason)) {
-        return res.status(400).json({
-          error: 'reason_required',
-          message: VOTE_REASON_REQUIRED,
-          maxLength: VOTE_REASON_MAX,
-        });
-      }
       // #2038: "unchanged" means the same person voting the same way on the
       // same PROPOSAL. Keying it on the commit made a re-vote after a
       // mechanical sync look like a change, re-posting to group chat and
@@ -6606,7 +6594,6 @@ module.exports = {
   // #1688: the line on a vote and the names at merge, unit-tested directly.
   normalizeVoteReason,
   VOTE_REASON_MAX,
-  VOTE_REASON_REQUIRED,
   // (#1115) The applied-close demo rows live here because they belong to the
   // Completed stream, but GET /api/apps/:slug/governance/:id in issues.js has
   // to resolve them too for a ?demo=1 deep link. Exported for that handler's

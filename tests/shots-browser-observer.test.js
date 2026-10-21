@@ -713,3 +713,61 @@ test('the observer opens no control without its directory and a well-formed toke
   assert.equal(startControl({ dir: os.tmpdir(), name: 'member', token: 'short', parker }), null);
   assert.equal(startControl({ dir: os.tmpdir(), name: '../member', token: 'e'.repeat(64), parker }), null);
 });
+
+test('a close-up is taken on the observer\'s own socket, saved under its own name, and stamped with the page it shows', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-closeup-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const outDir = path.join(dir, 'member');
+  fs.mkdirSync(outDir);
+  const received = path.join(dir, 'received.log');
+  const diagnosticFile = path.join(dir, 'diagnostics.log');
+  fs.writeFileSync(diagnosticFile, '');
+  const token = 'e'.repeat(64);
+  const observerPath = path.join(__dirname, '..', 'worker', 'shots-browser-observer.js');
+  // A browser that saves what it is asked to, and says which page it is on.
+  const stub = `const fs=require('fs'),path=require('path');process.stdin.setEncoding('utf8');let b='';process.stdin.on('data',c=>{b+=c;let i;while((i=b.indexOf('\\n'))>=0){const line=b.slice(0,i);b=b.slice(i+1);fs.appendFileSync(${JSON.stringify(received)},line+'\\n');const m=JSON.parse(line);let text='### Page state\\n- Page URL: http://head.internal/invite';if(m.params.name==='browser_take_screenshot'){const f=path.join(${JSON.stringify(outDir)},m.params.arguments.filename);fs.writeFileSync(f,'png');text='Took the close-up screenshot and saved it as '+f}process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{content:[{type:'text',text}]}})+'\\n')}});`;
+  const launcher = `require(${JSON.stringify(observerPath)}).start({persona:'member',binary:process.execPath,args:['-e',${JSON.stringify(stub)},'--','--output-dir',${JSON.stringify(outDir)}],controlDir:${JSON.stringify(dir)},controlToken:${JSON.stringify(token)},diagnosticFile:${JSON.stringify(diagnosticFile)}});`;
+  const child = spawn(process.execPath, ['-e', launcher], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const stdout = [];
+  child.stdout.on('data', (chunk) => stdout.push(chunk));
+  t.after(() => child.kill('SIGKILL'));
+  const socketPath = path.join(dir, 'member.sock');
+  for (let i = 0; i < 300; i += 1) {
+    try { if ((fs.statSync(socketPath).mode & 0o777) === 0o600) break; } catch { /* not yet */ }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  // The agent opened the after page.
+  child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'browser_navigate', arguments: { url: 'http://head.internal/invite' } } })}\n`);
+  for (let i = 0; i < 300 && !Buffer.concat(stdout).toString().includes('"id":1'); i += 1) await new Promise((r) => setTimeout(r, 10));
+  const ask = (message) => new Promise((resolve, reject) => {
+    const socket = require('node:net').createConnection(socketPath);
+    let data = '';
+    socket.on('connect', () => socket.write(`${JSON.stringify(message)}\n`));
+    socket.on('data', (chunk) => { data += chunk; });
+    socket.on('end', () => resolve(JSON.parse(data)));
+    socket.on('error', reject);
+  });
+  const answer = await ask({ token, action: 'closeup', rect: { x: 40, y: 30, w: 66, h: 40 }, scale: 8.23 });
+  assert.equal(answer.ok, true);
+  assert.match(answer.file, /^closeup-[0-9a-f]{16}\.png$/);
+  const sent = fs.readFileSync(received, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(sent.at(-1).params, { name: 'browser_take_screenshot',
+    arguments: { filename: answer.file, closeup: { x: 40, y: 30, width: 66, height: 40, scale: 8.2 } } });
+  assert.equal(require('../worker/shots-boundary').screenshotOrigin(outDir, answer.file, fs.readFileSync(path.join(outDir, answer.file))),
+    'http://head.internal', 'stamped with the page it shows');
+  for (const message of [
+    { token, action: 'closeup', rect: { x: 40, y: 30, w: 0, h: 40 }, scale: 4 },
+    { token, action: 'closeup', rect: { x: 40, y: 30, w: 66, h: 40 }, scale: 1 },
+    { token, action: 'closeup', rect: { x: 40, y: 30, w: 66, h: 40 }, scale: 17 },
+    { token, action: 'closeup', rect: { x: '40', y: 30, w: 66, h: 40 }, scale: 4 },
+  ]) assert.deepEqual(await ask(message), { ok: false, code: 'invalid_closeup' }, JSON.stringify(message));
+  assert.equal((await ask({ token: 'f'.repeat(64), action: 'closeup', rect: { x: 1, y: 1, w: 1, h: 1 }, scale: 4 })).code, 'forbidden');
+  // The agent's stream carried only its own answer.
+  assert.equal(Buffer.concat(stdout).toString().trim().split('\n').length, 1);
+  const events = fs.readFileSync(diagnosticFile, 'utf8').trim().split('\n').filter(Boolean)
+    .map((line) => JSON.parse(line.slice(MARKER.length)));
+  assert.deepEqual(events.filter((event) => event.kind === 'closeup'), [{ kind: 'closeup', persona: 'member', outcome: 'ok' }]);
+  child.stdin.end();
+  child.kill('SIGTERM');
+  await once(child, 'close');
+});

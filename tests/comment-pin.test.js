@@ -376,8 +376,11 @@ test('the picture is drawn ahead while the menu or the form is open, and opens a
   const shortcut = read('frontend/src/features/improve/suggest-shortcut.ts');
   const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
   const form = read('frontend/src/features/dialogs/feedback.tsx');
-  assert.match(shortcut, /export function prepareComment\(\): void \{\s*if \(!suggestOpensComment\(\)\) return;\s*import\('\.\.\/comment-pin\/comment-pin'\)\s*\.then\(\(m\) => m\.prepareCommentView\(\)\)/,
-    'only where the switch is on, and the mode\'s code loads with it');
+  // And never on a ?shot= / ?demo= page: those render one state for a check
+  // or a still, and drawing the page there held the ?shot=app-context check
+  // in network idle until it timed out.
+  assert.match(shortcut, /export function prepareComment\(\): void \{\s*if \(!suggestOpensComment\(\) \|\| onCaptureRoute\(\)\) return;\s*import\('\.\.\/comment-pin\/comment-pin'\)\s*\.then\(\(m\) => m\.prepareCommentView\(\)\)/,
+    'only where the switch is on and this is not a capture route, and the mode\'s code loads with it');
   assert.match(menu, /useEffect\(\(\) => \{\s*if \(open\) prepareComment\(\);\s*\}, \[open\]\);/);
   assert.match(form, /Feedback\._open\(opts \|\| \{\}\);[\s\S]*?prepareComment\(\);\s*\},/);
   // Drawn once the sheet has slid in, watched from the moment it starts, and

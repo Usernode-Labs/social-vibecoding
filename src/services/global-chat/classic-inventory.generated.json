@@ -8483,6 +8483,22 @@
     },
     {
       "source": "src/routes/internal.js",
+      "method": "GET",
+      "path": "/api/internal/shots/:runId/closeups",
+      "expression": null,
+      "status": "exempt",
+      "reason": "platform-to-worker/internal service protocol"
+    },
+    {
+      "source": "src/routes/internal.js",
+      "method": "POST",
+      "path": "/api/internal/shots/:runId/closeup",
+      "expression": null,
+      "status": "exempt",
+      "reason": "platform-to-worker/internal service protocol"
+    },
+    {
+      "source": "src/routes/internal.js",
       "method": "POST",
       "path": "/api/internal/shots/:runId/skip",
       "expression": null,
@@ -12117,6 +12133,21 @@
       "expression": null,
       "status": "mapped",
       "capabilityId": "apps.post.test.accounts.item.retire.fd2a4657",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/test-accounts.js",
+      "method": "POST",
+      "path": "/api/test-accounts/:id/notifications",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.test.accounts.item.notifications.e2ea8faa",
       "domain": "apps",
       "risk": "external_write",
       "confirmation": "required",

@@ -484,7 +484,8 @@ async function storeTrialFiles(pool, trialId, attemptId, slots) {
       [Number(trialId), String(attemptId)]);
     if (!row) throw Object.assign(new Error('This trial no longer owns its shots; they were discarded.'), { code: 'stale_shots_operation' });
     await client.query('DELETE FROM shots_eval_artifacts WHERE trial_id = $1', [Number(trialId)]);
-    const kept = files.filter((a) => a?.theme !== 'dark');
+    // Dark shots and close-ups (shots-closeups.js) are extras an eval does not judge.
+    const kept = files.filter((a) => a?.theme !== 'dark' && a?.variant !== 'closeup');
     for (const a of kept) {
       // eslint-disable-next-line no-await-in-loop
       await client.query(

@@ -465,9 +465,7 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
       open: {
         Filed: { ignore: 'already_filed' },
         VoteCast: watchingOutside({
-          // A No needs its line, except as a retraction (the same click again).
-          guard: (s, e, f) => (f.voter!.existing !== e.payload.vote && e.payload.vote === 'down' && !e.payload.reason
-            ? reject('reason_required') : ok()),
+          // A No may carry its line; a lineless No is a vote like any other.
           to: (s, e, f, ctx) => {
             const issue = f.issue!;
             const vote: Vote | null = f.voter!.existing === e.payload.vote ? null : e.payload.vote;

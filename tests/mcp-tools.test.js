@@ -2930,8 +2930,10 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'save_bot_config',
     'save_challenge_event', 'save_challenge_scoring_rule', 'save_challenge_template',
     'save_shots_config',
-    // The waitlist's "you're in" mail sent to a test address: full platform
-    // admins only, like the other test-account tools.
+    // The waitlist's "you're in" mail sent to a test address, and a test
+    // account's notification of every kind: full platform admins only, like
+    // the other test-account tools.
+    'send_test_notifications',
     'send_test_release_email',
     'set_bot_config_budget', 'set_bot_config_role',
     // The bot's settings, as the console's Save saves them: full admins only.
@@ -3159,7 +3161,7 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
     // The Homeroom bot's configurations: full admins only.
     // Before & after shots evals: full admins only.
     // The programme's challenges: full admins only.
-    'save_bot_config', 'save_challenge_event', 'save_challenge_scoring_rule', 'save_challenge_template', 'save_shots_config', 'send_test_release_email', 'set_bot_config_budget', 'set_bot_config_role',
+    'save_bot_config', 'save_challenge_event', 'save_challenge_scoring_rule', 'save_challenge_template', 'save_shots_config', 'send_test_notifications', 'send_test_release_email', 'set_bot_config_budget', 'set_bot_config_role',
     'set_homeroom_bot_settings', 'start_change',
     'start_platform_build', 'submit_bench_grade', 'submit_bench_reference', 'submit_bot_config_pick',
     'submit_platform_build', 'submit_shots_eval_pick', 'submit_work', 'sync_change',

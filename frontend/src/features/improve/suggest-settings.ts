@@ -1,17 +1,16 @@
 /**
- * The experimental switch for comment mode (#4289 and its follow-ups),
- * Settings, Experimental's "Comment on the page" (it was "Press C to comment
- * on the page" until the name had to work on a phone too), kept apart from
+ * Comment mode's device setting (#4289 and its follow-ups), kept apart from
  * ../improve/suggest-shortcut.ts so a screen can read it without installing
- * the shortcut's listeners. Off by default. While it is on, "Suggest an
- * improvement" opens comment mode, and its form is one switch away.
+ * the shortcut's listeners. On by default: "Suggest an improvement" opens
+ * comment mode, and its form is one switch away. It used to be an
+ * Experimental switch in Settings; that switch is gone.
  *
  * Kept on the DEVICE (localStorage), not the account: a keyboard shortcut
  * and a pointer to comment with belong to the computer in front of the
  * person.
  */
 
-/** Where the switch is kept: `'1'` when on, absent when off (the default). */
+/** Where the setting is kept: `'0'` when a device has turned it off, absent (on) otherwise. */
 export const SUGGEST_SHORTCUT_STORAGE_KEY = 'usernode:suggest-shortcut';
 
 export type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
@@ -24,12 +23,12 @@ export function defaultStorage(): StorageLike | null {
   }
 }
 
-/** Whether this device has the shortcut turned on. Off when storage is unreadable. */
+/** Whether this device opens comment mode. On unless it stored `'0'`, and on when storage is unreadable. */
 export function suggestShortcutEnabled(storage: StorageLike | null = defaultStorage()): boolean {
   try {
-    return !!storage && storage.getItem(SUGGEST_SHORTCUT_STORAGE_KEY) === '1';
+    return storage?.getItem(SUGGEST_SHORTCUT_STORAGE_KEY) !== '0';
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -39,7 +38,6 @@ export function setSuggestShortcutEnabled(
 ): void {
   if (!storage) return;
   try {
-    if (on) storage.setItem(SUGGEST_SHORTCUT_STORAGE_KEY, '1');
-    else storage.removeItem(SUGGEST_SHORTCUT_STORAGE_KEY);
-  } catch { /* private mode: the switch simply does not stick */ }
+    storage.setItem(SUGGEST_SHORTCUT_STORAGE_KEY, on ? '1' : '0');
+  } catch { /* private mode: the setting simply does not stick */ }
 }

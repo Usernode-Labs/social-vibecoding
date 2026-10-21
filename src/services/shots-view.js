@@ -132,11 +132,38 @@ function denseOf(artifact) {
 // `dense`: the viewer is in the New Needs you experiment, the only accounts
 // shown stills at device density. Everyone else is shown each still's 1x
 // copy, its size and `density: 1`, exactly what they were shown before.
+// A close-up (services/shots-closeups.js): the after side of a change on
+// one screen, `rect` the region of that change's after screen shot it shows
+// (CSS px), `density` its device px per CSS px (one decimal), `width` and
+// `height` its own pixels. Null for anything malformed.
+const wholePx = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 20000;
+function cleanCloseup(artifact, { slug, sessionId }) {
+  const rect = artifact?.focusRect;
+  const density = Math.round(Number(artifact?.scale) * 10) / 10;
+  if (!ARTIFACT_ID_RE.test(String(artifact?.id || '')) || !STORY_ID_RE.test(String(artifact.storyId || ''))
+      || !VIEWPORT_RE.test(String(artifact.viewport || '')) || artifact.side !== 'head' || artifact.media !== 'png'
+      || artifact.contentType !== MEDIA_TYPE.png || ![1, 2].includes(artifact.part)
+      || !(density > 1 && density <= 16) || !rect || !['x', 'y', 'w', 'h'].every((key) => wholePx(rect[key]))
+      || rect.w < 1 || rect.h < 1 || !wholePx(artifact.width) || !wholePx(artifact.height)) return null;
+  return {
+    id: artifact.id, storyId: artifact.storyId, viewport: artifact.viewport,
+    side: 'head', variant: 'closeup', media: 'png', theme: 'light', contentType: MEDIA_TYPE.png,
+    part: artifact.part, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h },
+    width: artifact.width, height: artifact.height, density,
+    bytes: Number.isInteger(artifact.bytes) ? artifact.bytes : null,
+    url: artifactUrl(slug, sessionId, artifact.id, { dense: true }),
+  };
+}
+
 function cleanArtifacts(items, { slug, sessionId, verified, dense = false }) {
   if (!verified || !Array.isArray(items)) return [];
+  // Close-ups are shown only to an account in the New Needs you
+  // experiment, beside the stills, never in their place.
+  const closeups = dense ? items.filter((artifact) => artifact?.variant === 'closeup')
+    .map((artifact) => cleanCloseup(artifact, { slug, sessionId })).filter(Boolean).slice(0, 6) : [];
   // Up to 48: three changes more than the old 36, the room a run's dark
   // shots (#4459) take beside their light ones.
-  return items.slice(0, 48).filter((artifact) => {
+  return items.filter((artifact) => artifact?.variant !== 'closeup').slice(0, 48).filter((artifact) => {
     if (!artifact || !ARTIFACT_ID_RE.test(String(artifact.id || ''))
         || !STORY_ID_RE.test(String(artifact.storyId || ''))
         || !VIEWPORT_RE.test(String(artifact.viewport || ''))
@@ -175,7 +202,7 @@ function cleanArtifacts(items, { slug, sessionId, verified, dense = false }) {
         : null,
       url: artifactUrl(slug, sessionId, artifact.id, { dense: !!sharp }),
     };
-  });
+  }).concat(closeups);
 }
 
 // #2601/#2558: why a run that is still 'planned' never got under way, as
@@ -334,8 +361,9 @@ async function getForSessions(pool, sessions, slug, { viewer = null } = {}) {
                   'contentType', a.content_type, 'width', a.width,
                   'height', a.height, 'bytes', a.bytes,
                   'density', a.density, 'denseWidth', a.dense_width, 'denseHeight', a.dense_height,
-                  'focusRect', a.focus_rect, 'stageLabels', a.stage_labels
-                ) ORDER BY a.story_id, a.viewport, a.side, a.variant, a.theme)
+                  'focusRect', a.focus_rect, 'stageLabels', a.stage_labels,
+                  'part', a.part, 'scale', a.scale
+                ) ORDER BY a.story_id, a.viewport, a.side, a.variant, a.theme, a.part)
                   FROM shot_artifacts a WHERE a.run_id = r.id
               ), '[]'::jsonb) AS artifact_summary
          FROM shot_runs r WHERE r.id = ANY($1::varchar[])`,

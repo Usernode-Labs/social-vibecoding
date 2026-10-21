@@ -1213,3 +1213,67 @@ test('in a run taken at device density each saved still says its density: 3 from
     assert.equal(narrow.query.density, expected.phone, `phone, ${density}`);
   }
 });
+
+test('in a dense run, save_shot has the screen\'s browser take the close-ups wanted of the changes it saved', async (t) => {
+  const bridge = bridgeFixture(t);
+  const ctl = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-ctl-'));
+  const member = path.join(bridge.shotsDir, 'member');
+  let stampAt = `${HEAD}/`;
+  const asked = [];
+  const observer = require('node:net').createServer((socket) => {
+    let data = '';
+    socket.on('data', (chunk) => {
+      data += chunk;
+      if (!data.includes('\n')) return;
+      const message = JSON.parse(data);
+      asked.push(message);
+      const file = `closeup-${String(asked.length).padStart(16, '0')}.png`;
+      fs.writeFileSync(path.join(member, file), `close-up ${asked.length}`);
+      stamp(bridge, 'member', file, stampAt);
+      socket.end(`${JSON.stringify({ ok: true, file })}\n`);
+    });
+  });
+  await new Promise((resolve) => observer.listen(path.join(ctl, 'member.sock'), resolve));
+  t.after(() => { observer.close(); fs.rmSync(ctl, { recursive: true, force: true }); });
+  const wanted = [
+    { change: 'invite-suggestions', screen: 'desktop', part: 1, rect: { x: 4, y: 4, w: 10, h: 10 }, scale: 6, saved: false },
+    { change: 'invite-suggestions', screen: 'desktop', part: 2, rect: { x: 40, y: 4, w: 10, h: 10 }, scale: 5, saved: true },
+    { change: 'admin-banner', screen: 'desktop', part: 1, rect: { x: 4, y: 4, w: 10, h: 10 }, scale: 6, saved: false },
+  ];
+  const platformFetch = async (url, init) => (new URL(url).pathname.endsWith('/closeups')
+    ? (bridge.calls.push({ path: new URL(url).pathname }), new Response(JSON.stringify({ ok: true, result: { closeups: wanted } }), { status: 200 }))
+    : bridge.platformFetch(url, init));
+  const save = async (env) => {
+    const { tools } = loadBridge({ ...bridge.env, SHOTS_BROWSER_CONTROL_DIR: ctl, SHOTS_BROWSER_CONTROL_TOKEN: 'd'.repeat(64), ...env },
+      platformFetch);
+    fs.writeFileSync(path.join(member, 'invite-desktop-after.png'), 'after still');
+    stamp(bridge, 'member', 'invite-desktop-after.png', `${HEAD}/`);
+    const result = await tools.get('save_shot')({ shots: [
+      { change: 'invite-suggestions', screen: 'desktop', side: 'after', file: 'invite-desktop-after.png' },
+    ] });
+    return JSON.parse(result.content[0].text);
+  };
+
+  // A run not taken at device density asks for nothing.
+  const plain = await save({});
+  assert.equal(Object.hasOwn(plain, 'closeups'), false);
+  assert.equal(bridge.calls.some((sent) => sent.path.endsWith('/closeups')), false);
+
+  const dense = await save({ SHOTS_DEVICE_DENSITY: '1' });
+  // Only the unsaved one of the change it saved, in that change's browser.
+  assert.deepEqual(dense.closeups, [{ change: 'invite-suggestions', screen: 'desktop', part: 1, scale: 6, saved: true }]);
+  assert.equal(Object.hasOwn(dense, 'closeupHint'), false);
+  assert.deepEqual(asked.map(({ action, rect, scale }) => ({ action, rect, scale })),
+    [{ action: 'closeup', rect: wanted[0].rect, scale: 6 }]);
+  const upload = bridge.calls.at(-1);
+  assert.equal(upload.path, `/api/internal/shots/${bridge.runId}/closeup`);
+  assert.deepEqual(upload.query, { change: 'invite-suggestions', screen: 'desktop', part: '1' });
+  assert.equal(Buffer.from(upload.body).toString(), 'close-up 1');
+
+  // A close-up of the before address (the page moved on) is never sent, and the agent is told how to retake it.
+  stampAt = `${BASE}/`;
+  const moved = await save({ SHOTS_DEVICE_DENSITY: '1' });
+  assert.deepEqual(moved.closeups, [{ change: 'invite-suggestions', screen: 'desktop', part: 1, scale: 6, saved: false, code: 'shot_not_on_app' }]);
+  assert.match(moved.closeupHint, /Open its after state again, take the after screen shot again and save it/);
+  assert.equal(bridge.calls.filter((sent) => sent.path.endsWith('/closeup')).length, 1, 'still only the first');
+});

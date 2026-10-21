@@ -134,10 +134,12 @@ function changeFor(intent, changeId) {
   return story;
 }
 
-function slotKey({ storyId, viewport, side, variant, theme }) {
-  // A dark slot's key extends the light one only when it is dark, so every
-  // light key stays exactly as it is now.
-  return `${storyId}\u0000${viewport}\u0000${side}\u0000${variant}${theme === 'dark' ? '\u0000dark' : ''}`;
+function slotKey({ storyId, viewport, side, variant, theme, part }) {
+  // A dark slot's key extends the light one only when it is dark, and a
+  // close-up's (shots-closeups.js) by its number on the screen, so every
+  // other key stays exactly as it is now.
+  return `${storyId}\u0000${viewport}\u0000${side}\u0000${variant}${theme === 'dark' ? '\u0000dark' : ''}`
+    + `${variant === 'closeup' ? `\u0000${Number(part) || 1}` : ''}`;
 }
 
 // Where a saved file belongs: a declared change, one of its screen sizes, a
@@ -296,6 +298,20 @@ function stored(target, buffer, info, dense = null) {
   };
 }
 
+// A close-up (shots-closeups.js) as a run keeps it: the after side of a
+// change on one screen, its number there (1 or 2), the region of the after
+// still it shows (CSS px) and its density (device px per CSS px, one
+// decimal). Its PNG is the only copy: only the New Needs you experiment's
+// accounts are ever shown one.
+function storedCloseup({ storyId, viewport, part, rect, scale }, buffer, info) {
+  return {
+    storyId, viewport, side: 'head', variant: 'closeup', media: 'png', theme: 'light', part,
+    contentType: 'image/png', data: buffer,
+    width: info.width, height: info.height, bytes: info.bytes, sha256: info.sha256,
+    density: 1, dense: null, scale, focusRect: { ...rect }, stageLabels: null,
+  };
+}
+
 // Device pixels per CSS pixel of a screen shot: its width over the declared
 // screen's. A run taken at device density (services/shots-density.js) saves
 // at the browser's (3 on a phone and on a desktop: worker/write-shots-mcp-
@@ -446,7 +462,11 @@ function summarize(intent, saved, skipped = new Map(), {
       }
     }
     if (!missing.length) {
-      published.push(...files, ...darkFiles);
+      // Close-ups are extras of the after side, like dark shots.
+      const closeups = story.viewports.flatMap((viewport) => [1, 2]
+        .map((part) => saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side: 'head', variant: 'closeup', part })))
+        .filter(Boolean));
+      published.push(...files, ...darkFiles, ...closeups);
       const note = notes.get(story.id);
       return { id: story.id, status: 'ready', files: files.length, ...(note ? { note } : {}) };
     }
@@ -468,7 +488,9 @@ function summarize(intent, saved, skipped = new Map(), {
   const stories = afterOnly ? results : markUnchanged(results, identicalStories(intent, saved));
   const ready = stories.filter((story) => story.status === 'ready').length;
   const manifest = published
-    .map(({ storyId, viewport, side, variant, theme, sha256: digest }) => ({ storyId, viewport, side, variant, theme, sha256: digest }))
+    .map(({ storyId, viewport, side, variant, theme, part, sha256: digest }) => ({
+      storyId, viewport, side, variant, theme, ...(variant === 'closeup' ? { part } : {}), sha256: digest,
+    }))
     .sort((a, b) => slotKey(a).localeCompare(slotKey(b)));
   const publishedSlots = new Set(published.map(slotKey));
   const noticed = (Array.isArray(notices) ? notices : []).slice(0, MAX_NOTICES).map((entry) => ({
@@ -542,6 +564,7 @@ module.exports = {
   sameCondition,
   cleanConditions,
   stored,
+  storedCloseup,
   summarize,
   failedReason,
   isShotsVerdict,

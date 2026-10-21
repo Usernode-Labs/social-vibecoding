@@ -187,6 +187,30 @@ function internalRoutes(_config) {
     } catch (err) { return shotsError(res, err); }
   });
 
+  // The close-ups this run wants now (services/shots-closeups.js), each
+  // with whether it is saved. Empty unless the run is taken at device density.
+  router.get('/api/internal/shots/:runId/closeups', shotsAuth, shotsLimiter, async (req, res) => {
+    try {
+      const result = await withShotsControl(req, (c, db) => shotsControl.wantedCloseups(db, c), { readOnly: true });
+      return res.json({ ok: true, result: { closeups: result } });
+    } catch (err) { return shotsError(res, err); }
+  });
+
+  // One close-up the shots bridge took, as the raw body, with which one it
+  // is as query fields: kept only when it is wanted, the size asked for, and
+  // the after screen shot at that place.
+  router.post('/api/internal/shots/:runId/closeup', shotsAuth, shotsLimiter, shotBody, async (req, res) => {
+    try {
+      const result = await withShotsControl(req, async (c, db) => {
+        const raw = { change: req.query.change, screen: req.query.screen, part: Number(req.query.part) };
+        const asked = await shotsControl.wantedCloseups(db, c);
+        const stills = await shotsControl.stillsFor(db, c, { change: String(raw.change || ''), screen: String(raw.screen || '') });
+        return c.saveCloseup(raw, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), { asked, ...stills });
+      });
+      return res.json({ ok: true, result });
+    } catch (err) { return shotsError(res, err); }
+  });
+
   router.post('/api/internal/shots/:runId/skip', shotsAuth, shotsLimiter, async (req, res) => {
     try {
       const result = await withShotsControl(req, (c) => c.skipChange(req.body || {}));

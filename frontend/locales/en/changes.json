@@ -7529,15 +7529,15 @@
   },
   "vote.reason.noTitle": {
     "text": "What’s not working for you?",
-    "description": "Title of the prompt shown after pressing No on a proposal or a request's vote: asks for one line saying why."
+    "description": "Title of the prompt shown after pressing No on a proposal or a request's vote: offers a line saying why, if the voter wants to write one."
   },
   "vote.reason.yesTitle": {
     "text": "Add a line for the group?",
     "description": "Title of the prompt shown after pressing Yes on a proposal or a request's vote: offers to add an optional one-line comment."
   },
   "vote.reason.noMessage": {
-    "text": "One line is plenty. It goes to the proposer with your vote.",
-    "description": "Text under the title of the prompt shown after pressing No on a vote. \"It\" is the line the voter writes; the proposer is the person who made the proposal."
+    "text": "Optional. It goes to the proposer with your vote.",
+    "description": "Text under the title of the prompt shown after pressing No on a vote, saying the line is optional. \"It\" is the line the voter writes; the proposer is the person who made the proposal."
   },
   "vote.reason.yesMessage": {
     "text": "Optional. It shows beside your vote.",
@@ -7553,7 +7553,7 @@
   },
   "vote.reason.voteNo": {
     "text": "Vote No",
-    "description": "Confirm button of the prompt shown after pressing No on a vote: casts the No vote with the line written. No is one of the two sides of the vote."
+    "description": "Confirm button of the prompt shown after pressing No on a vote: casts the No vote with the line written, if any. No is one of the two sides of the vote."
   },
   "vote.reason.voteYes": {
     "text": "Vote Yes",
@@ -7562,10 +7562,6 @@
   "vote.reason.skip": {
     "text": "Skip",
     "description": "Second button of the prompt shown after pressing Yes on a vote: casts the Yes vote without adding a line."
-  },
-  "vote.reason.noNeedsLine": {
-    "text": "A No comes with a line: what is not working for you?",
-    "description": "Brief notice when someone tried to vote No and left the reason empty; the vote was not cast. \"A No\" is a No vote."
   },
   "vote.toast.failedHttp": {
     "text": "Vote failed (HTTP {{status}}).",

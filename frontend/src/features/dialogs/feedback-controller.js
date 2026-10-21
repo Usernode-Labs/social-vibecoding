@@ -2803,9 +2803,9 @@ export function init() {
   // for the ?shot=feedback deep links. Forwards to the island so React state
   // stays the source of truth.
   //
-  // Experimental (#4289's comment mode): where the device's switch is on, a
-  // plain open is comment mode instead (features/improve/suggest-shortcut.ts
-  // decides, `opensComment`), and this form is one switch away from it. Not
+  // #4289's comment mode: where the device has not turned it off, a plain
+  // open is comment mode (features/improve/suggest-shortcut.ts decides,
+  // `opensComment`), and this form is one switch away from it. Not
   // an open that carries something for the form (a handed-over comment, the
   // first-request moment) or that asks for the form by name (`mode: 'form'`,
   // comment mode's Form).

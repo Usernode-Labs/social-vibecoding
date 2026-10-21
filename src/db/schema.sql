@@ -10218,8 +10218,43 @@ BEGIN
       CHECK (theme IN ('light', 'dark') AND (theme = 'light' OR (variant = 'context' AND media = 'png')));
   END IF;
 END $$;
-CREATE UNIQUE INDEX IF NOT EXISTS shot_artifacts_slot_key
-  ON shot_artifacts(run_id, story_id, viewport, side, variant, media, theme);
+-- Close-ups (services/shots-closeups.js): a change too small for its screen
+-- still's density, captured again on its own. A screen keeps up to two, so
+-- a close-up's slot carries its number (`part`, 0 for every other file); its
+-- region of the after still (CSS px) is `focus_rect`, its density `scale`.
+ALTER TABLE shot_run_files ADD COLUMN IF NOT EXISTS part SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE shot_run_files ADD COLUMN IF NOT EXISTS scale NUMERIC(4,1);
+ALTER TABLE shot_run_files ADD COLUMN IF NOT EXISTS focus_rect JSONB;
+ALTER TABLE shot_artifacts ADD COLUMN IF NOT EXISTS part SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE shot_artifacts ADD COLUMN IF NOT EXISTS scale NUMERIC(4,1);
+DO $$
+DECLARE old record;
+BEGIN
+  -- The variant check that predates close-ups gives way to one that has them.
+  FOR old IN
+    SELECT c.conrelid::regclass AS tbl, c.conname FROM pg_constraint c
+     WHERE c.conrelid IN ('shot_run_files'::regclass, 'shot_artifacts'::regclass) AND c.contype = 'c'
+       AND pg_get_constraintdef(c.oid) LIKE '%variant%animation%'
+       AND pg_get_constraintdef(c.oid) NOT LIKE '%closeup%'
+  LOOP
+    EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', old.tbl, old.conname);
+  END LOOP;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'shot_run_files'::regclass AND conname = 'shot_run_files_variant_closeup_check') THEN
+    ALTER TABLE shot_run_files ADD CONSTRAINT shot_run_files_variant_closeup_check
+      CHECK (variant IN ('focus', 'context', 'animation', 'closeup')
+        AND ((variant = 'closeup') = (part BETWEEN 1 AND 2 AND scale IS NOT NULL AND focus_rect IS NOT NULL AND side = 'head' AND media = 'png'))
+        AND (variant = 'closeup' OR part = 0));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'shot_artifacts'::regclass AND conname = 'shot_artifacts_variant_closeup_check') THEN
+    ALTER TABLE shot_artifacts ADD CONSTRAINT shot_artifacts_variant_closeup_check
+      CHECK (variant IN ('focus', 'context', 'animation', 'closeup')
+        AND ((variant = 'closeup') = (part BETWEEN 1 AND 2 AND scale IS NOT NULL AND focus_rect IS NOT NULL AND side = 'head' AND media = 'png'))
+        AND (variant = 'closeup' OR part = 0));
+  END IF;
+END $$;
+DROP INDEX IF EXISTS shot_artifacts_slot_key;
+CREATE UNIQUE INDEX IF NOT EXISTS shot_artifacts_slot_part_key
+  ON shot_artifacts(run_id, story_id, viewport, side, variant, media, theme, part);
 COMMENT ON TABLE shot_run_files IS 'staging:private';
 -- Shots at the screen's own density (services/shots-density.js), an
 -- experiment. A still saved at more than one device pixel per CSS pixel
@@ -10503,14 +10538,14 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_prev_approvals INTEGER;
 
 -- #1688: warmer voting.
 --
--- pr_votes.reason — the sentence behind a vote. routes/votes.js requires one
--- on a No and accepts one on a Yes; a row written before this column, or a
--- Yes cast without a line, is NULL and reads exactly as it did. The upsert
+-- pr_votes.reason — the sentence behind a vote. routes/votes.js accepts one
+-- on a No or a Yes; a row written before this column, or a vote cast without
+-- a line, is NULL and reads exactly as it did. The upsert
 -- keeps an earlier line when the same person re-casts the same side without
 -- a new one, which is what carries a Yes onto a proposal's next version.
 ALTER TABLE pr_votes ADD COLUMN IF NOT EXISTS reason TEXT;
--- #2603: the same line, on a governance vote. The governance machine requires one on
--- a No (`down`) and accepts one on a Yes (`up`), with the identical 280-char
+-- #2603: the same line, on a governance vote. The governance machine accepts one on
+-- a No (`down`) or a Yes (`up`), with the identical 280-char
 -- cap; a row written before this column is NULL and reads exactly as it did.
 -- An issue vote toggles OFF when it is re-cast on the same side, so there is
 -- no same-side upsert to carry a line across: a flip simply replaces it, the
