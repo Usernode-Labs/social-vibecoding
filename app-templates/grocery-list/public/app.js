@@ -27,7 +27,8 @@
 //     and due dates; also Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z or Ctrl+Y.
 //   - Search filters as you type; a category whose name matches shows all
 //     of its items. Pull the list down to fetch it again.
-//   - Markdown export and import, in Todo List's format.
+//   - Markdown export and import, in Todo List's format. An export list that
+//     copies or shares what is left to buy as a plain checklist.
 //   - Offline: the list opens from the copy saved on this device (the
 //     service worker in sw.js keeps the page itself). Adding, ticking,
 //     editing, due dates and deleting work offline too: each change shows at
@@ -1575,6 +1576,7 @@
       { label: 'Show all completed', handler: function () { setShowCompleted(true); } },
       { label: 'Hide all completed', handler: function () { setShowCompleted(false); } },
       { label: datesOn() ? 'Turn off due dates' : 'Turn on due dates', disabled: !isOnline(), handler: function () { setDueDates(!datesOn()); } },
+      { label: 'Export list', handler: openChecklist },
       { label: 'Export markdown', handler: openExport },
       { label: 'Import markdown', disabled: !isOnline(), handler: openImport },
     ];
@@ -1684,6 +1686,40 @@
     return box;
   }
 
+  // What is left to buy, as a plain checklist: the list's name, then each
+  // category's unticked items under its name, in the order the screen shows
+  // them. General has no heading, and a category with nothing left is left
+  // out. An empty string means everything is ticked off. Reads `data` only:
+  // the search and the folded categories do not narrow it.
+  function buildChecklist() {
+    var lines = [listName()];
+    displayCategories().forEach(function (c) {
+      var un = sectionItems(c.id, false);
+      if (!un.length) return;
+      lines.push('');
+      if (!c.is_default) lines.push(c.name);
+      un.forEach(function (i) { lines.push('☐ ' + i.text); });
+    });
+    return lines.length > 1 ? lines.join('\n') + '\n' : '';
+  }
+
+  // On the clipboard, in a tap: writeText where the browser has it, else the
+  // old selection-and-copy. `okMessage` is what the toast says when it works.
+  function copyText(text, okMessage) {
+    function fallback() {
+      text.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      toast(ok ? (okMessage || 'Copied to clipboard') : 'Select the text and copy it');
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text.value).then(function () {
+        toast(okMessage || 'Copied to clipboard');
+      }, fallback);
+    }
+    fallback();
+  }
+
   function openExport() {
     if (!data || !kit()) return;
     var box = sheetBox('Export markdown', 'Copy this markdown, or select it and copy it yourself.');
@@ -1696,19 +1732,62 @@
     var actions = h('div', 'flex flex-wrap justify-end gap-2');
     var modal = null;
     actions.appendChild(button('btn-secondary', 'Close', function () { modal.dismiss(); }));
-    actions.appendChild(button('btn-primary', 'Copy', function () {
-      function fallback() {
-        text.select();
-        var ok = false;
-        try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-        toast(ok ? 'Copied to clipboard' : 'Select the text and copy it');
-      }
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text.value).then(function () { toast('Copied to clipboard'); }, fallback);
-      } else {
-        fallback();
-      }
-    }));
+    actions.appendChild(button('btn-primary', 'Copy', function () { copyText(text); }));
+    box.appendChild(actions);
+    modal = kit().presentModal({ contentEl: box });
+  }
+
+  // Sharing is offered only where the browser can actually open a share
+  // sheet. Homeroom's app frame does not delegate `web-share`, and where the
+  // browser can say so, Share is not shown at all (src/services/
+  // app-permissions.js keeps it out of the frame's allow list on purpose).
+  function canShare() {
+    if (typeof navigator.share !== 'function') return false;
+    var policy = document.permissionsPolicy || document.featurePolicy;
+    if (policy && typeof policy.allowsFeature === 'function') {
+      try {
+        // A browser that does not know `web-share` cannot answer, and it says
+        // so by warning; Share is offered and a refusal on the tap copies the
+        // list instead.
+        var known = typeof policy.features === 'function' ? policy.features().indexOf('web-share') > -1 : true;
+        if (known && !policy.allowsFeature('web-share')) return false;
+      } catch (e) { /* ask on the tap */ }
+    }
+    return true;
+  }
+
+  function openChecklist() {
+    if (!data || !kit()) return;
+    var value = buildChecklist();
+    var box = sheetBox('Export list', value
+      ? 'Everything not ticked off yet, as a plain checklist. Copy it, or share it to another app or to print.'
+      : 'Everything is ticked off, so there is nothing left to buy.');
+    var text = null;
+    if (value) {
+      text = h('textarea', 'field min-h-[12rem] resize-y font-mono text-small');
+      text.readOnly = true;
+      text.spellcheck = false;
+      text.setAttribute('aria-label', 'The list as a checklist');
+      text.value = value;
+      box.appendChild(text);
+    }
+    var actions = h('div', 'flex flex-wrap justify-end gap-2');
+    var modal = null;
+    actions.appendChild(button('btn-secondary', 'Close', function () { modal.dismiss(); }));
+    if (text && canShare()) {
+      actions.appendChild(button('btn-secondary', 'Share', function () {
+        navigator.share({ title: listName(), text: text.value }).catch(function (err) {
+          var name = err && err.name;
+          if (name === 'AbortError') return; // the person closed the sheet
+          if (name === 'NotAllowedError') {
+            copyText(text, 'Sharing is not allowed here, so the list was copied');
+            return;
+          }
+          toast('Could not share the list: copy it instead');
+        });
+      }));
+    }
+    if (text) actions.appendChild(button('btn-primary', 'Copy', function () { copyText(text); }));
     box.appendChild(actions);
     modal = kit().presentModal({ contentEl: box });
   }
