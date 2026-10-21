@@ -134,38 +134,34 @@ test('the menu row that opens it is a button, and says so', () => {
   assert.match(row, /w-full/, 'and fills the sheet, so its chevron sits at the edge');
 });
 
-test('the Workshop row says what it owes you, and stays silent when it cannot', () => {
-  // The design study drew "2 to vote" here. It is the one thing on this menu
-  // that REPORTS rather than navigates, which the sheet's own header calls
-  // the decay signal — and it earns the exception the way the row does: it is
-  // a property of the destination, like a folder saying how many files are in
+test('the Needs you row says what it owes you, and stays silent when it cannot', () => {
+  // The design study drew "2 to vote" in this menu. It is the one thing here
+  // that REPORTS rather than navigates, which the sheet's own header calls the
+  // decay signal — and it earns the exception the way a row does: it is a
+  // property of the destination, like a folder saying how many files are in
   // it. A row that sends you to a queue and will not say whether the queue is
   // empty makes you go and look.
-  // IT RIDES THE "Go to workshop" ROW (#2761). It spent a round on the App |
-  // Workshop strip's Workshop segment; the strip retired to a plain row, and
-  // the figure came with it. The number is a count badge and the words are
-  // its accessible name.
+  // IT RIDES A ROW OF ITS OWN SINCE #5726. It spent a round on the App |
+  // Workshop strip's Workshop segment, then on "Go to community", where a
+  // figure saying "2 to vote" sat on a door to the hub and made you find the
+  // votes again. The row it rides now is the queue it counts.
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /id="app-menu-row-workshop"[\s\S]{0,400}trailing=\{owed \?/,
-    'the badge is the Workshop row\'s trailing figure');
-  assert.match(sheet, /id="app-menu-workshop-owed"/);
-  assert.match(sheet, /aria-label=\{t\('agent:appContext\.row\.toVote', \{ count: owed \}\)\}/);
+  const at = sheet.indexOf('id="app-menu-row-needs"');
+  assert.ok(at > 0, 'the Needs you row');
+  const row = sheet.slice(at, sheet.indexOf(') : null}', at));
+  assert.match(row, /id="app-menu-needs-owed"/, 'carries the figure');
+  assert.match(row, /aria-label=\{t\('agent:appContext\.row\.toVote', \{ count: owed \}\)\}/);
   assert.equal(message('agent:appContext.row.toVote', { count: 3 }), '3 to vote');
-
-  // THE FIGURE NAMES WHERE THE ROW LANDS (#5726). A row that says "2 to vote"
-  // sent you to the hub, where you had to find the votes again; it opens the
-  // queue the figure counts — the project's Needs you — whenever there is a
-  // figure at all, and the hub when there is not.
-  assert.match(sheet, /if \(owed\) view\?\._landOnTab\?\.\(slug, 'needs'\);\s*\n\s*else view\?\._landOnHub\?\.\(slug\);/,
-    'with votes owed it opens Needs you, the queue the count counts');
+  assert.match(row, /openPlace\(slug, 'needs', \{ door: true \}\)/,
+    'and opens the queue the figure counts');
 
   // ONE SOURCE, TWO READERS: /api/workshop/counts is the Workshop tab's own
   // endpoint, so this is the same figure that screen shows on the same app's
   // row rather than a second count computed a second way.
   assert.match(sheet, /fetch\(`\/api\/workshop\/counts\$\{demo\}`\)/);
-  const at = sheet.indexOf("if (!open || !slug)");
-  const effect = sheet.slice(at, sheet.indexOf('}, [open, slug]);', at));
-  assert.ok(at > 0, 'it loads on open, keyed to the app in context');
+  const load = sheet.indexOf("if (!open || !slug)");
+  const effect = sheet.slice(load, sheet.indexOf('}, [open, slug]);', load));
+  assert.ok(load > 0, 'it loads on open, keyed to the app in context');
 
   // FAILURE IS SILENCE. A menu row that works is worth more than a count, so
   // an offline or refused request leaves the row exactly as it was.
@@ -175,7 +171,7 @@ test('the Workshop row says what it owes you, and stays silent when it cannot', 
 
   // Nothing during render, so the prerender ships no figure and hydration has
   // nothing to correct.
-  assert.ok(!read('public/index.html').includes('id="app-menu-workshop-owed"'),
+  assert.ok(!read('public/index.html').includes('id="app-menu-needs-owed"'),
     'a figure read from data is not in a cold document');
 });
 

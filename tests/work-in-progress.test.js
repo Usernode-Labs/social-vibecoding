@@ -61,7 +61,11 @@ test('#3073: only the newest read of the list is published, so an older answer c
 test('#3071: a menu row writes its address before the menu closes, so closing cannot take it back', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   const fn = sheet.slice(sheet.indexOf('function followThenDismiss('), sheet.indexOf('function MenuRow('));
-  assert.match(fn, /e\.preventDefault\(\);\s*\/\/[^\n]*\n\s*if \(window\.location\.hash !== href\) window\.location\.hash = href;\s*AppContext\.dismissForNav\(\);/,
+  // #5726 added a destination chosen on the press (the Needs you row's
+  // place). It runs BEFORE the address, so the page opens on that place
+  // rather than on the address's own; the write and the release still happen
+  // in that order, which is what #3071 is about.
+  assert.match(fn, /e\.preventDefault\(\);\s*if \(land\) land\(\);\s*\/\/[^\n]*\n\s*if \(window\.location\.hash !== href\) window\.location\.hash = href;\s*AppContext\.dismissForNav\(\);/,
     'the address first, synchronously; then the release, which finds the page off its record');
   assert.match(fn, /if \(e\.defaultPrevented \|\| e\.nativeEvent\.defaultPrevented \|\| e\.button !== 0 \|\| e\.metaKey/,
     'a click the side panel took, or a modified one, only closes the menu');

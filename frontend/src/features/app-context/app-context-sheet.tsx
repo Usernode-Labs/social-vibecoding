@@ -118,6 +118,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
 import {
+  BallotIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   FlagIcon,
@@ -148,6 +149,7 @@ import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 import { recordAppUse } from './app-recency';
 import { hydrateNeedsSeen, unseenNeeds } from '../workshop/needs-seen';
+import { openPlace } from '../dev-board/workshop/place-store';
 import { navStore } from '../nav/nav-store.js';
 
 const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm '
@@ -237,14 +239,22 @@ function RowBody({ icon, label, trailing }: {
  * way back. A click something else already took (the side panel,
  * `defaultPrevented`) only closes the menu, and a modified click never gets
  * here as a navigation of ours: the browser opens its tab.
+ *
+ * `land` is for a row whose DESTINATION is chosen when it is pressed rather
+ * than written in its href (the Needs you row, #5726, whose count decides
+ * nothing but whose place is not the address's own): it runs after the click
+ * is known to be a plain one and before the address is written, so the page
+ * opens on the place it names. A modified click never runs it — the browser
+ * opens the row's href, as it does for every row.
  */
-function followThenDismiss(e: React.MouseEvent, href: string): void {
+function followThenDismiss(e: React.MouseEvent, href: string, land?: () => void): void {
   if (e.defaultPrevented || e.nativeEvent.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey
     || !href.startsWith('#') || href === '#') {
     AppContext.dismissForNav();
     return;
   }
   e.preventDefault();
+  if (land) land();
   // The same address again is nothing to navigate: the menu just closes.
   if (window.location.hash !== href) window.location.hash = href;
   AppContext.dismissForNav();
@@ -297,6 +307,10 @@ type MenuItem = { key: string; run: () => void };
 
 export function AppsSwitcherSheet(): ReactNode {
   const t = useMessages('agent');
+  // The place's own name for the Needs you row (#5726), rather than a second
+  // spelling of it here: the row goes to a place the project page names, and
+  // "Needs you" is that name (features/dev-board/workshop/places.ts).
+  const tp = useMessages('project');
   const { open, adopted, view, back } = useStoreState(appContextStore);
   // Everything this sheet says about the app comes from ONE store, published
   // by the classic writers that already owned those facts. #2718 adds the
@@ -448,7 +462,8 @@ export function AppsSwitcherSheet(): ReactNode {
   }, [slug]);
 
   /*
-      WHAT THE WORKSHOP ROW OWES YOU, as a trailing figure (#2718).
+      WHAT THE WORKSHOP OWES YOU, the figure on the menu's Needs you row
+      (#2718, its own row since #5726).
 
       BELOW THE RECENCY EFFECT, not between the app-strip loader and it.
       tests/app-switcher-dropdown.test.js reads that loader as a SOURCE SLICE
@@ -457,8 +472,8 @@ export function AppsSwitcherSheet(): ReactNode {
       An effect wedged in between joins the slice and fails assertions written
       about a different effect. The order of these three is otherwise free.
 
-      The design study drew "2 to vote" on this row, and it is the one thing
-      on this menu that reports rather than navigates — which is exactly what
+      The design study drew "2 to vote" in this menu, and it is the one thing
+      on it that reports and navigates at once — which is exactly what
       the header of this file warns is the decay signal. It earns the
       exception the same way the row itself does: it is not a second inbox,
       it is a PROPERTY OF THE DESTINATION, the way a folder says how many
@@ -472,12 +487,11 @@ export function AppsSwitcherSheet(): ReactNode {
       viewer has not voted on.
 
       Loaded on OPEN, and never during render: the prerender ships no figure
-      and a fetch here would be a hydration mismatch. The row that shows it
-      renders unconditionally for that same reason; what is conditional is
-      the BADGE, which is fine because a number arriving later changes a
-      subtree React already owns rather than the child count it hydrated. Failure is silence — a menu row that works is worth more than
-      a count, so a refused or offline request leaves `owed` null and the row
-      renders exactly as it did before this existed.
+      and a fetch here would be a hydration mismatch. The row that shows it is
+      conditional, which is fine because a subtree React already owns gains a
+      child rather than the child count it hydrated changing. Failure is
+      silence — a menu row that works is worth more than a count, so a refused
+      or offline request leaves `owed` null and the row is simply not there.
   */
   useEffect(() => {
     if (!open || !slug) { setOwed(null); return; }
@@ -820,9 +834,13 @@ export function AppsSwitcherSheet(): ReactNode {
               the Communities tab's glyph. The address, id and key are the
               Workshop's still, as every other door to the hub's are.
 
-              THE BADGE IS THE ONE THING CONDITIONAL, and only in a subtree
-              React already owns: `owed` is null in the prerender and arrives
-              from the fetch above after the sheet opens.
+              THE COUNT HAS A ROW OF ITS OWN (#5726). It rode this row's
+              trailing edge, and a row saying "2 to vote" that opened the hub
+              made you find the votes again. It is the NEEDS YOU row below
+              now: the queue it counts, one tap, and this row is the hub's
+              alone again. The two rows are the same address (a place is not
+              an address, see place-store.ts); the difference is the place
+              each one lands on.
           */}
           <MenuRow
             id="app-menu-row-workshop"
@@ -831,36 +849,57 @@ export function AppsSwitcherSheet(): ReactNode {
             href={slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#'}
             icon={<UserGroupIcon />}
             label={t('agent:appContext.row.community')}
-            trailing={owed ? (
-              <span
-                id="app-menu-workshop-owed"
-                title={t('agent:appContext.row.toVote', { count: owed })}
-                aria-label={t('agent:appContext.row.toVote', { count: owed })}
-                className="shrink-0 text-[0.8125rem] font-semibold text-violet-700 dark:text-violet-300"
-              >
-                {t('agent:appContext.row.toVote', { count: owed })}
-              </span>
-            ) : null}
             // It says community, so it opens the hub, not whichever tab
-            // the page was last left on (AppView._landOnHub) — unless the
-            // row is showing votes owed (#5726). Then it lands on Needs you,
-            // the queue that figure counts, where each of those votes is
-            // listed and can be answered — "2 to vote" that opens the hub
-            // made you find the votes again. With no figure (none owed, or
-            // the count has not loaded) it is the hub, matching what the row
-            // showed when it was tapped.
-            // Beside a running app on a desktop it opens full width, leaving
-            // the app, as every link to a community does: a community's page
-            // is never the side panel's (../side-panel/routes.ts).
+            // the page was last left on (AppView._landOnHub). Beside a
+            // running app on a desktop it opens full width, leaving the app,
+            // as every link to a community does: a community's page is never
+            // the side panel's (../side-panel/routes.ts).
             onClick={(e) => {
-              if (slug) {
-                const view = (window as any).AppView;
-                if (owed) view?._landOnTab?.(slug, 'needs');
-                else view?._landOnHub?.(slug);
-              }
+              if (slug) (window as any).AppView?._landOnHub?.(slug);
               followThenDismiss(e, slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#');
             }}
           />
+          {/*
+              NEEDS YOU, only while something does (#5726). It is the figure
+              this menu showed on the community row — the votes waiting on
+              you, already fetched above and silent at zero — moved to the
+              row that GOES there, so "2 to vote" is a door to the two votes
+              rather than a caption on a door to somewhere else.
+
+              Conditional, and that is safe in the way the badge was: `owed`
+              is null in the prerender and arrives from the fetch after the
+              sheet opens, so the first render and the hydrating one agree.
+              The row that hides for a newcomer hides this one too: it is the
+              same community, one place further in.
+
+              `openPlace` is the one way in (place-store.ts): the page itself
+              when it is mounted, `_landOnTab` and the hub's address when it
+              is not, so this row opens the queue on the page that is already
+              behind the menu instead of reloading it.
+          */}
+          {owed && slug && !restricted && !newcomer && !walkOwed ? (
+            <MenuRow
+              id="app-menu-row-needs"
+              dataContextRow="needs"
+              href={`#app/${encodeURIComponent(slug)}/workshop`}
+              icon={<BallotIcon />}
+              label={tp('project:places.list.needsYou')}
+              trailing={(
+                <span
+                  id="app-menu-needs-owed"
+                  title={t('agent:appContext.row.toVote', { count: owed })}
+                  aria-label={t('agent:appContext.row.toVote', { count: owed })}
+                  className="shrink-0 text-[0.8125rem] font-semibold text-violet-700 dark:text-violet-300"
+                >
+                  {t('agent:appContext.row.toVote', { count: owed })}
+                </span>
+              )}
+              onClick={(e) => {
+                followThenDismiss(e, `#app/${encodeURIComponent(slug)}/workshop`,
+                  () => openPlace(slug, 'needs', { door: true }));
+              }}
+            />
+          ) : null}
           {/*
               GO TO APP DISCUSSION and INVITE TO COMMUNITY LEFT THE MENU (UI
               overhaul). The project's channel is on its hub now, one row

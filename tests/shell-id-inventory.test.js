@@ -509,13 +509,20 @@ const ADDED_IDS = {
   // ── Three ids from #2718's second pass that are NOT in this map ──
   //
   // #workshop-total-working, #workshop-total-needs (both retired again with
-  // the Communities screen's legend, UI overhaul) and
+  // The Communities screen's legend, UI overhaul) and
   // #app-menu-workshop-owed are figures read from data, so they do not exist
   // until a fetch answers and the prerender carries none of them. ADDED_IDS
   // is checked BOTH ways — an entry here that is not in the document fails
   // the same test a stray id does — so a conditional id is recorded in prose
   // rather than in the map. They are listed here so the inventory is still
   // the complete log of what this branch added.
+  // ── #5726: the vote count gets its own row ──────────────────────
+  //
+  // #app-menu-row-needs (the menu's Needs you row) and #app-menu-needs-owed
+  // (its figure) are conditional for the same reason: the row renders only
+  // while votes wait on the viewer, which is never true in the prerender.
+  // The figure's id is the one the community row's badge had
+  // (#app-menu-workshop-owed), renamed with the row it rides.
   // #app-menu-row-invite ("Invite to community") left the menu in the UI
   // overhaul (#3362): invite links open from the hub's Invite, and the
   // sheet's invite pane is unchanged.
@@ -675,7 +682,7 @@ const ADDED_IDS = {
   // owner asked for a plain "Go to workshop" row instead of a toggle, and for
   // nothing in place of the App segment — the parked app on the bar (#2762)
   // is the way back to a running app.
-  'app-menu-row-workshop': '#2761: "Go to workshop" — the row that replaced the App | Workshop strip under the mark. It links to #app/<slug>/workshop and carries the vote-count badge (#app-menu-workshop-owed, conditional, so not in this map) the strip\'s Workshop segment carried. Rendered unconditionally, like the strip, so the prerender and the hydrating render agree.',
+  'app-menu-row-workshop': '#2761: "Go to workshop" — the row that replaced the App | Workshop strip under the mark. It links to #app/<slug>/workshop and opens the hub. Since #5726 it carries no badge: the vote count moved to the Needs you row beneath it (#app-menu-row-needs, conditional, so not in this map). Rendered unconditionally, like the strip, so the prerender and the hydrating render agree.',
   // ── #1443: the chip and its menu ────────────────────────────────
   // ── #2718: the chip came back apart ──────────────────────────────
   // #app-switcher-btn was the header's label AND the one control that opened

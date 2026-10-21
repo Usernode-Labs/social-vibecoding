@@ -2029,11 +2029,11 @@
   },
   "appContext.row.toVote_one": {
     "text": "{{count}} to vote",
-    "description": "Shown at the right of the \"Go to community\" row in the app menu (the sheet opened from the app's name in the header), also its tooltip and accessible name: how many proposals wait for this person's vote. {{count}} is that number."
+    "description": "Shown at the right of the \"Needs you\" row in the app menu (the sheet opened from the app's name in the header), also its tooltip and accessible name: how many proposals wait for this person's vote. {{count}} is that number."
   },
   "appContext.row.toVote_other": {
     "text": "{{count}} to vote",
-    "description": "Shown at the right of the \"Go to community\" row in the app menu (the sheet opened from the app's name in the header), also its tooltip and accessible name: how many proposals wait for this person's vote. {{count}} is that number."
+    "description": "Shown at the right of the \"Needs you\" row in the app menu (the sheet opened from the app's name in the header), also its tooltip and accessible name: how many proposals wait for this person's vote. {{count}} is that number."
   },
   "appContext.row.terminal": {
     "text": "Developer terminal",

@@ -404,15 +404,27 @@ test('the Workshop is a row in the menu, not a toggle (#2761)', () => {
     'the strip is not rendered here any more');
   assert.match(SHEET, /id="app-menu-row-workshop"[\s\S]{0,200}label=\{t\('agent:appContext\.row\.community'\)\}/,
     'the row that replaced it');
-  // The strip's Workshop segment carried the vote count; it rides the row now.
-  assert.match(SHEET, /id="app-menu-workshop-owed"/);
-  // AND IT DECIDES WHERE THE ROW LANDS (#5726). Showing a count, the row opens
-  // Needs you — the queue that count is of; with none, the hub it always did.
+  // The strip's Workshop segment carried the vote count, and #5726 gave the
+  // figure a row of its own: a row saying "2 to vote" that opened the hub
+  // made you find the votes again, so the figure now rides a Needs you row
+  // that goes to the queue it counts. The community row keeps its words, id,
+  // key and the hub it lands on.
   const at = SHEET.indexOf('id="app-menu-row-workshop"');
-  const row = SHEET.slice(at, SHEET.indexOf('</MenuRow>', at));
-  assert.match(row, /_landOnTab\?\.\(slug, 'needs'\)/,
-    'a count on the row means it opens the votes page');
-  assert.match(row, /_landOnHub\?\.\(slug\)/, 'and with no count it still opens the hub');
+  const row = SHEET.slice(at, SHEET.indexOf('id="app-menu-row-needs"', at));
+  assert.doesNotMatch(row, /app-menu-needs-owed|trailing=\{owed/,
+    'the hub row carries no figure now');
+  assert.match(row, /_landOnHub\?\.\(slug\)/, 'and it still opens the hub');
+  const needsAt = SHEET.indexOf('id="app-menu-row-needs"');
+  assert.ok(needsAt > at, 'the Needs you row follows it');
+  const needs = SHEET.slice(needsAt, SHEET.indexOf(') : null}', needsAt));
+  assert.match(needs, /dataContextRow="needs"/, 'and names its own destination');
+  assert.match(needs, /label=\{tp\('project:places\.list\.needsYou'\)\}/,
+    'with the place\'s own name for it');
+  assert.match(needs, /id="app-menu-needs-owed"/, 'showing how many wait');
+  assert.match(needs, /openPlace\(slug, 'needs', \{ door: true \}\)/,
+    'and opening the votes, the queue the figure counts');
+  assert.match(SHEET, /\{owed && slug && !restricted && !newcomer && !walkOwed \? \(/,
+    'only while something waits, and never where the community row is hidden');
   assert.ok(!/In this app/.test(SHEET.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')),
     'and no caption left behind — comments explaining a move are fine, '
     + 'rendered text is not');
