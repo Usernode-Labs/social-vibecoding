@@ -157,3 +157,39 @@ test('a lock statement not answered in time gives the connection up, and the wai
   assert.equal(made.length, 2, 'a new connection');
   assert.equal(made[0].ended, true, 'the silent one given up');
 });
+
+test('a FATAL answer is a lost connection even before pg says it ended: the waiter asks again, never running unlocked', async () => {
+  const made = [];
+  let ranUnlocked = false;
+  class Stand {
+    constructor() { this.n = made.length; this.ended = false; made.push(this); }
+    on() { return this; }
+    async connect() {}
+    async query() {
+      // The backend was terminated: PostgreSQL's FATAL rejects the statement,
+      // and pg's end event has not come yet.
+      if (this.n === 0) throw Object.assign(new Error('terminating connection due to administrator command'), { severity: 'FATAL', code: '57P01' });
+      return { rows: [{ got: true }] };
+    }
+    async end() { this.ended = true; }
+  }
+  const locks = createSessionLocks({ makeClient: () => new Stand(), idleMs: 0 });
+  const pool = { options: { connectionString: 'postgres://stand/in' }, connect: async () => {} };
+  const out = await locks.withSessionLock(pool, [990004, 1], async () => { ranUnlocked = made.length < 2; return 'ran'; }, { unlockedOnError: true });
+  assert.equal(out, 'ran');
+  assert.equal(ranUnlocked, false, 'under the lock, asked on a new connection');
+  assert.equal(made[0].ended, true);
+
+  // An ordinary statement error leaves the connection as it is.
+  const kept = [];
+  class Erring {
+    constructor() { kept.push(this); this.ended = false; }
+    on() { return this; }
+    async connect() {}
+    async query() { throw Object.assign(new Error('bad'), { severity: 'ERROR', code: '22023' }); }
+    async end() { this.ended = true; }
+  }
+  const strict = createSessionLocks({ makeClient: () => new Erring(), idleMs: 60000 });
+  await assert.rejects(strict.withSessionLock(pool, [990004, 2], async () => 'x'), /bad/);
+  assert.deepEqual(kept.map((c) => c.ended), [false]);
+});

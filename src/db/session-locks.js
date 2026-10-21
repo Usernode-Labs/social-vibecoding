@@ -52,6 +52,16 @@ const RETRY_MAX_MS = 1000;
 const QUERY_TIMEOUT_MS = 10000;
 const BUSY = Symbol('session-lock-busy');
 
+// Whether a failed statement means the lock connection is gone. Only an
+// ordinary statement error from the server (severity ERROR, not a connection
+// or shutdown class) leaves it usable. A FATAL response (the backend was
+// terminated, 57P01) rejects the statement BEFORE pg's end event marks the
+// connection dead, and a client-side "Connection terminated" or a timeout
+// carries no server severity at all.
+function connectionGone(err) {
+  return !(err && err.severity === 'ERROR' && !/^(08|57P)/.test(String(err.code || '')));
+}
+
 function keySql(key) {
   if (key && typeof key === 'object' && 'text' in key) return { sql: 'hashtext($1)', params: [String(key.text)], id: `t:${key.text}` };
   if (key && typeof key === 'object' && 'extended' in key) {
@@ -122,8 +132,9 @@ function createSessionLocks({ makeClient = (connectionString) => new Client({
       try {
         return await entry.client.query(sql, params);
       } catch (err) {
-        // Not answered in time (pg's query_timeout): the connection is gone.
-        if (/timeout/i.test(err.message) && !entry.dead) {
+        // The connection is gone (a FATAL from the server, a reset, pg's
+        // query_timeout): mark it so now, before pg's own events do.
+        if (connectionGone(err) && !entry.dead) {
           entry.lost(err);
           entry.client.end().catch(() => {});
         }
