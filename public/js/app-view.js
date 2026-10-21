@@ -7089,9 +7089,7 @@ const AppView = {
     // beside "Change #N" — "✓ Live", "Going live…", or the vote's own words.
     // A change still being built or closed has no pill worth repeating: its
     // card pill would read as a bare tally, and the Votes card under the
-    // title already says where those stand. #5683: nor does the change page
-    // draw the vote states at all (topic/change-head.tsx VOTE_STATES), since
-    // that card says them in full; only the delivery states keep the pill. The card's own state wins, so
+    // title already says where those stand. The card's own state wins, so
     // the kind (proposal or gov) and majority stay the card's.
     const statusState = ['active', 'paused', 'closed'].includes(item.status)
       ? null

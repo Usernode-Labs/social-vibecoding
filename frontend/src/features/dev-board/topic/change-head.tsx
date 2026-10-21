@@ -56,13 +56,6 @@ function host(id: string): Element | null {
  * gate the ⋯ Details row uses), the title itself opens the Details sheet
  * (#5329): it looks as it always did, and underlines on hover.
  */
-/**
- * #5683: the states the Votes card under the title already says in full —
- * the tally and "Goes live in …". The pill stays for the ones it does not
- * cover (Going live, Live, Stuck, Failed).
- */
-const VOTE_STATES = new Set(['needs_vote', 'approvals', 'contested', 'no_vote', 'merge_countdown', 'reject_countdown']);
-
 export function ChangeBar({ v, menuKey, detailsId = null }: { v: ChangeThreadView; menuKey: string; detailsId?: number | null }): ReactNode {
   const t = useMessages('project');
   const title = v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title');
@@ -84,7 +77,7 @@ export function ChangeBar({ v, menuKey, detailsId = null }: { v: ChangeThreadVie
               </button>
             ) : title}
           </div>
-          {v.status && !VOTE_STATES.has(v.status.key) ? (
+          {v.status ? (
             <span className="shrink-0" data-change-status={v.status.key}>
               <StatusPill s={v.status} inline />
             </span>

@@ -293,14 +293,15 @@ test('the header shows the status pill beside "Change #N", in the card\'s capsul
   const none = renderComponent(head, 'ChangeBar', { v: view(null), menuKey: '' });
   assert.doesNotMatch(none, /data-change-status|gc-vote-count/);
   assert.match(none, /<div class="messages-thread-name min-w-0">Change #81<\/div>/);
-  // #5683: the vote states are said in full by the Votes card under the
-  // title, so the header does not say them again...
+  // #5683: a change being voted on keeps its pill beside the title, as it
+  // always did (snait asked for it back). The Votes card under the title
+  // gives the fuller account; the pill still says where it stands at a glance.
   for (const key of ['needs_vote', 'approvals', 'contested', 'no_vote', 'merge_countdown', 'reject_countdown']) {
     const vote = renderComponent(head, 'ChangeBar', {
       v: view({ tier: 4, key, label: 'Goes live in ~2 h', tone: 'ok' }), menuKey: '',
     });
-    assert.doesNotMatch(vote, /data-change-status|gc-vote-count/, `${key} is the Votes card's to say`);
-    assert.match(vote, /Change #81<\/div><\/div>\s*<\/div>/, 'the title stands alone');
+    assert.match(vote, new RegExp(`<span class="shrink-0" data-change-status="${key}"><span class="gc-vote-count gc-vote-count-ok dev-status-pill"`), `${key} keeps its pill`);
+    assert.match(vote, />Goes live in ~2 h</);
   }
 });
 
