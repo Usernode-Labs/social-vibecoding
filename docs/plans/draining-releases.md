@@ -104,17 +104,3 @@ record whose item settled without releasing it is taken to an end by the
 `turn-leftovers` clock. Leases and heartbeats decide the rest (checks runs,
 shots runs, local-agent turns, app creation, owed redeploys, fleet
 campaigns).
-
-## Beside a release from before the turn machine (rollout-only)
-
-That release still has a leader, renews its conversations' claims, settles a
-turn's spend from Claude Code's report and reads `process_holds`. Until no
-such release can run, this one writes its holds there, renews a running
-conversation's claim, holds a headless run's session for its whole item,
-marks its own turn records (`spendKept`) so a call of that release's turn is
-not billed twice, forwards a Stop to that release's process holding the
-session and answers its forwarded Stop through the turn's machine, keeps
-`leader_sweeps`, and leaves what that release left to its leader while one
-of its processes serves (`services/turn-leftovers.js`, whose header lists
-what to delete). A rollback to it needs one step once this release is gone:
-docs/kubernetes-operations.md, "Rolling back past this release".

@@ -603,9 +603,7 @@ reviewed, `--all` everything).
 - **During a rollout.** Each Deployment rolls `maxSurge: 1, maxUnavailable: 0`: a new
   conductor is Ready, its loops running, before an old one drains, so the workflow never
   stops. Nothing is elected (`PLATFORM_LEADER_LOCK` now only serializes a boot migration
-  where one runs: `services/db-locks.js`). A release from before the turn machine still
-  has a leader while it runs beside this one; what this release does for it until no
-  such release can run is listed under [turn](#turn) (rollout-only).
+  where one runs: `services/db-locks.js`).
 - **Schema.** The `wf_*` tables and triggers come from `schema.sql`. The chart's
   migration Job applies it before the Deployment rolls.
 - **Connections.** The runtime's pool adds `WF_POOL_MAX` connections per Pod, beside the
@@ -774,18 +772,10 @@ per turn, run whole in whichever workflow process claims it.
   a coding record whose item settled without releasing it gets a `recover` turn, asked
   again ten minutes after the last while it is still there, four times at most; the last
   ends it as a forced Stop would (`RECORD_RETRY`).
-- **Rollout-only, while a release from before the turn machine can run beside this one:**
-  the same clock ends that release's stale conversation claims, asks `recover` and
-  `headless` turns for what it left, finishes its local turns, and repairs its dev chats
-  cut before their reply once none of its processes is live; it does none of that while
-  one of them still serves (its leader recovers them). For that release to read, this one
-  writes its holds to `process_holds`, renews a running conversation's claim every 30
-  seconds, holds a headless run's session for its whole item, marks its own turn records
-  (`spendKept`) so that release's turns are not billed twice, forwards a Stop to that
-  release's process holding the session and answers its forwarded Stop (`session_stop`)
-  through the turn's machine, and keeps `leader_sweeps`. A rollback to it needs one step
-  (docs/kubernetes-operations.md, "Rolling back past this release"). The list of what
-  to delete is the header of `services/turn-leftovers.js`.
+- **No release from before the turn machine runs beside this one.** What #5714 kept for
+  one (its claims, headless runs and local turns taken over, the holds written for it, the
+  claim renewed, the spend mark, the Stop forward) is deleted; a rollback past #5714 is not
+  supported (docs/kubernetes-operations.md, "Rolling back past this release").
 
 ### Turns workflow work runs
 
@@ -915,15 +905,13 @@ estimate, plus the next one's).
   run's charge in one statement, by the build its claim named (`build_key`), the branch it
   cut kept for the sweep, and every session it opened (`session_ids`) charged when it is
   lost. A build sent for a claim that did not happen runs nothing. A trial whose build
-  ended without recording it (ten minutes on), or an older release's claim that never got a
-  build (an hour on), is recorded lost by the lane (`bench.lost`); a build a restart caught
+  ended without recording it (ten minutes on), or a claim whose build never started (an
+  hour on), is recorded lost by the lane (`bench.lost`); a build a restart caught
   between its record and saving it redoes what follows the record (sessions put away, the
   grade, a side build's result).
 - **Cancels** (a run, a trial; a side build given up) are its events: written in the
   transition, a trial running stopped by `StopRequested` to its build, which always comes
-  after that build's `Requested` from this instance. A trial an older release's lane
-  claimed names no build on its row: its build is found by the trial it runs, as that lane
-  stopped it. A run marked done or capped is
+  after that build's `Requested` from this instance. A run marked done or capped is
   decided here, its write checking again that nothing of it waits; a trial added to an
   ended run reopens it (`Look` with `runId`).
 - **The allowance** (the bench user's week) is legacy code: looked at by `bench.gate`, kept a
@@ -951,8 +939,7 @@ trial running at what it has spent or its estimate, the larger, plus the next on
   done. Each phase has its own deadline; past it the trial fails and is cleaned up. A
   trial that ends while its copies are built waits for them to stop (its row's
   `stopping_at` stops them at their next step) before its cleanup, as the shots machine
-  does. No trial starts on a proposal with a turn under way, nor while two releases serve
-  (an older one's proxy would bill its calls to the author). The rows of the trials it
+  does. No trial starts on a proposal with a turn under way. The rows of the trials it
   runs beat every two minutes, so an older release's runner never takes one for its own
   lost one; a row ended elsewhere (an older release's write) ends its trial here too.
 - **Its end** is written once its cleanup is done, and settles its attempt's cost
@@ -962,11 +949,9 @@ trial running at what it has spent or its estimate, the larger, plus the next on
   that comes after (a straggler, a dispatch that returns after a cancel) charges only what it
   adds to the larger total.
 - **Billing**: the proxy reads the session's turn record; a shots turn the eval machine's
-  work owns is that trial's (`shots-eval.billFor`), on whatever attempt; one nothing owns
-  (an older release's runner) is the trial its correlation names on that session. The
-  platform key, the eval's cap from rows, each call added to its attempt's costs (an older
-  runner's on the trial's row, which that runner settles, or this machine when it adopts
-  the trial). Never this process's memory, and
+  work owns is that trial's (`shots-eval.billFor`), on whatever attempt. The platform key,
+  the eval's cap from rows, each call added to its attempt's costs. Never this process's
+  memory, and
   never the session alone (the proposal's own shots rerun is its author's).
 - **Cancel** (`EvalCancelled`): the eval and its trials not ended read cancelled at once;
   what runs is stopped (its work cancelled, its turn stopped) and cleaned up, an older
@@ -1755,8 +1740,7 @@ intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
   the push sender claims each row with its run's work item and attempt: a row left sending
   is sent again only when that attempt is no longer live.
 - **Armed by the release** (`release.adopt`'s `clocks` step): every job the build defines
-  gets `Arm` with its interval, a new one first due when the leader timer it replaces would
-  have run (`leader_sweeps`), or at once; a job the build no longer defines is `Retire`d (no
+  gets `Arm` with its interval, a new one first due within the next two minutes; a job the build no longer defines is `Retire`d (no
   deadline, its run cancelled). On a staging preview nothing is armed
   (`config.runsClusterMaintenance`), as no leader duty ran there.
 - **A continuous job** (no interval) runs again as soon as a run ends, unless its result asks
@@ -1787,8 +1771,7 @@ intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
   is asked once (`platform.reaskRefused`, over `wf_events_refused_unknown_idx`). What it
   sets off checks it still holds: a re-asked yes says nothing once retracted, a re-asked
   plan asks no model once its window passed.
-- **First runs** are due when the leader timer a job replaces would have run, else spread over
-  the next two minutes.
+- **First runs** are spread over the next two minutes.
 - **The newest build only** (`newestOnly`): a job whose work depends on the build (its
   keys, its catalogs, its environment) does nothing in an older build still running during a
   rollout (`skipped: older_build`), and its targets name the release that found them, so only

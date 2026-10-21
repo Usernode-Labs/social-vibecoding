@@ -753,26 +753,12 @@ route allowlist names them (`alertname =~ "SocialWorkflow.*"`, namespace
 process, is not "nobody takes it". Admin → Workflows shows the same signs under "Needs a
 person".
 
-**Rolling back past this release.** Older code reads the conductor as the leader's
-process; a second replica is a standby with slots, which is safe. A release from before
-the turn machine elects a leader again among its own processes, and this one, while it
-drains beside it, keeps what that leader reads (`services/turn-leftovers.js` lists it).
-That release cannot run the `turn` machine's work: a person's turn asked in the overlap,
-or one still running when this release's last Pod is gone, is held by its work item and
-left alone by every sweep of that release (the change reads busy, the conversation takes
-no message). Once no process of this release is live (`platform_processes`), give those
-items up so that release's own recovery takes their coding runs over, its interrupted
-sweep their conversations, and a dev chat message left unanswered can be sent again:
-
-```sql
-UPDATE wf_work SET status = 'settled', settled_at = NOW(), claim_id = NULL, lease_until = NULL,
-       result = '{"ended":"rolled_back"}'::jsonb
- WHERE machine = 'turn' AND status <> 'settled';
-``` Argo CD does not prune
-here, so the conductor's PodDisruptionBudget, the PodMonitor and the PrometheusRule stay;
-the budget (`maxUnavailable: 1`) blocks no drain, and the metrics rules find nothing to
-scrape: delete `pdb/social-vibecoding-conductor`, `podmonitor/` and
-`prometheusrule/social-vibecoding-conductor-workflow` by hand if the rollback is to last.
+**Rolling back past this release** is no longer possible past #5714 (turns as workflow
+work, the leader gone): roadmap item 3.2 deleted what a release from before it needed from
+the releases beside it (the holds it read in `process_holds`, its conversations' claims
+renewed, its Stop forward, the turn-spend mark). A rollback to a release that contains
+#5714 is an ordinary one: its migration Job recreates the empty tables it still names
+(`process_holds`, `leader_sweeps`).
 
 ## State that decides, on the workflow (roadmap item 3)
 
