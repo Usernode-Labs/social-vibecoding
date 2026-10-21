@@ -35,6 +35,7 @@
 // tier list drawn as one.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import { BallotIcon, LightBulbIcon, PlusIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 
 import { Message, RichMessage } from '../../lib/i18n/react';
@@ -241,9 +242,19 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
   );
   if (compact) {
     // On the page itself, as the story always was, and short: the welcome,
-    // the headline, one line and the button, with a small picture beside
-    // them from md. The button is sized to its words, not the column, so
-    // the apps still start high.
+    // the headline, one line, what an account adds, and the button, with a
+    // small picture beside them from md. WHAT AN ACCOUNT ADDS is the three
+    // points the "Want to join in?" card used to make between the first
+    // cards and the rest (Evan, 22 Oct 2026: it popped in out of nowhere,
+    // saying what the hero says, with the same way in): vote, ask, make your
+    // own, each with its line from md; on a phone only their titles, in a
+    // row, so the apps still start near the first screen. The button is
+    // sized to its words, not the column.
+    const points = [
+      { icon: <BallotIcon className="h-[18px] w-[18px]" />, title: t('auth:guest.join.vote.title'), body: t('auth:guest.join.vote.body') },
+      { icon: <LightBulbIcon className="h-[18px] w-[18px]" />, title: t('auth:guest.join.ask.title'), body: t('auth:guest.join.ask.body') },
+      { icon: <PlusIcon className="h-[18px] w-[18px]" />, title: t('auth:guest.join.make.title'), body: t('auth:guest.join.make.body') },
+    ];
     return (
       <div ref={storyRef} data-landing-story="" data-landing-story-compact="" className="px-4 pt-5 md:pt-8 flex items-center gap-10">
         <div className="flex min-w-0 flex-1 flex-col items-start text-left">
@@ -255,10 +266,23 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
             {t('auth:story.headline')}
           </h1>
           <p className="mt-2 text-base leading-[22px] text-zinc-500 dark:text-zinc-400 text-balance">{t('auth:guest.hero.line')}</p>
+          <ul data-landing-story-points="" className="mt-5 grid w-full grid-cols-3 gap-3 md:max-w-[820px] md:gap-6">
+            {points.map((p) => (
+              <li key={p.title} className="flex min-w-0 flex-col items-start gap-2 md:flex-row md:gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-300" aria-hidden="true">
+                  {p.icon}
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-[13px] leading-[17px] font-[650] text-zinc-900 md:text-[15px] md:leading-5 dark:text-zinc-100">{p.title}</span>
+                  <span className="hidden text-[13px] leading-[18px] text-zinc-500 md:block dark:text-zinc-400">{p.body}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
           <button
             type="button"
             data-landing-story-join=""
-            className={cn(primaryClass, 'mt-4 h-11 w-auto px-5 text-[15px]')}
+            className={cn(primaryClass, 'mt-5 h-11 w-auto px-5 text-[15px]')}
             onClick={() => { noteSignUpFrom('hero'); onStart(); }}
           >
             {waitlist ? t('auth:guest.hero.joinWaitlist') : t('auth:guest.hero.signUp')}

@@ -135,8 +135,7 @@ test('Featured is what an admin featured that a visitor can try, and nothing els
 // ─── guest-discover.tsx ───────────────────────────────────────────
 
 const discoverProps = (over = {}) => ({
-  apps: APPS, failed: false, hero: null, primaryClass: 'pill', waitlist: true,
-  onContinue() {}, onOpenInside() {}, ...over,
+  apps: APPS, failed: false, hero: null, primaryClass: 'pill', onOpenInside() {}, ...over,
 });
 
 test('every card opens its project\'s page, no card is locked, and Featured is not repeated below it', () => {
@@ -244,30 +243,28 @@ test('the top is curated: four big cards on a phone, most active first, then Mor
   assert.match(src, /const ROWS_STEP = 12;/);
 });
 
-test('the kinds, the sort, and one card that says what an account adds', () => {
+test('the kinds and the sort; what an account adds is the hero\'s, not a card in the grid', () => {
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps());
   assert.match(html, /data-guest-category="all"[^>]*>All</);
   assert.match(html, /data-guest-category="games"/);
   assert.match(html, /data-guest-category="tools"/);
   assert.doesNotMatch(html, /data-guest-category="learning"/, 'only kinds some app has');
   assert.match(html, /aria-pressed="true" data-guest-sort="trending"/);
-  assert.match(html, /data-guest-join=""/);
-  const words = text(html);
-  for (const id of ['auth:guest.join.title', 'auth:guest.join.vote.title', 'auth:guest.join.ask.title', 'auth:guest.join.make.title', 'auth:guest.join.waitlist']) {
-    assert.ok(words.includes(message(id)), id);
+  // The "Want to join in?" card is gone (Evan, 22 Oct 2026): it said what
+  // the hero says, with a second way in, partway down the grid.
+  assert.doesNotMatch(html, /data-guest-join=|data-guest-join-continue=/);
+  const src = read(DISCOVER);
+  assert.doesNotMatch(src, /function JoinIn|joinDismissed|auth:guest\.join\.(title|waitlist|signUp|notNow)/);
+  const catalog = JSON.parse(read('frontend/locales/en/auth.json'));
+  for (const id of ['guest.join.title', 'guest.join.waitlist', 'guest.join.signUp', 'guest.join.notNow']) {
+    assert.equal(catalog[id], undefined, `${id} went with the card`);
   }
-  // The card's way in opens the story's sheet, the one form for new and
-  // returning people (#5251), and says what it is for.
-  assert.match(html, /data-guest-join-continue=""[^>]*>Sign up</);
-  const without = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ waitlist: false }));
-  assert.ok(!text(without).includes(message('auth:guest.join.waitlist')));
 });
 
 test('while the directory loads, placeholders; when it cannot be read, a line that says so', () => {
   const loading = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: null }));
   assert.match(loading, /aria-busy="true"/);
   assert.doesNotMatch(loading, /data-guest-card=/);
-  assert.doesNotMatch(loading, /data-guest-join=/, 'nothing to join in on yet');
   const failed = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: null, failed: true }));
   assert.ok(text(failed).includes(message('auth:guest.loadFailed')));
 });
@@ -324,14 +321,26 @@ test('the overview it reads carries no names, and the page draws none', () => {
 
 // ─── the story's short version ────────────────────────────────────
 
-test('the short story heads Discover: welcome, headline, one line and one button that says what it does', () => {
+test('the short story heads Discover: welcome, headline, one line, what an account adds, and one button that says what it does', () => {
   const html = renderComponent(STORY, 'Story', { compact: true, waitlist: true, primaryClass: 'pill', onStart() {}, onSignIn() {} });
   assert.deepEqual(text(html), [
     'Welcome to Homeroom',
     'On Homeroom, communities make apps together.',
     message('auth:guest.hero.line'),
+    message('auth:guest.join.vote.title'),
+    message('auth:guest.join.vote.body'),
+    message('auth:guest.join.ask.title'),
+    message('auth:guest.join.ask.body'),
+    message('auth:guest.join.make.title'),
+    message('auth:guest.join.make.body'),
     message('auth:guest.hero.joinWaitlist'),
   ]);
+  // The three points, between the line and the button: each title, and its
+  // line from md only, so a phone keeps the apps near the first screen.
+  assert.ok(html.indexOf('data-landing-story-points') < html.indexOf('data-landing-story-join'));
+  assert.equal([...html.matchAll(/<li /g)].length, 3);
+  assert.equal([...html.matchAll(/class="hidden text-\[13px\] leading-\[18px\] text-zinc-500 md:block dark:text-zinc-400"/g)].length, 3);
+  assert.match(html, /<ul data-landing-story-points="" class="mt-5 grid w-full grid-cols-3 gap-3 md:max-w-\[820px\] md:gap-6">/);
   assert.equal(message('auth:guest.hero.joinWaitlist'), 'Join the waitlist');
   // Once new accounts no longer wait, the same button says Sign up.
   const open = renderComponent(STORY, 'Story', { compact: true, primaryClass: 'pill', onStart() {}, onSignIn() {} });
@@ -348,13 +357,13 @@ test('the short story heads Discover: welcome, headline, one line and one button
   assert.ok(html.indexOf('<h1') < html.lastIndexOf('/brand/people.png'), 'the words first, the picture after');
   // One thing to press in it, a filled button sized to its words, which
   // opens the story's sheet; still no Sign in of its own (the bar's).
-  assert.deepEqual([...html.matchAll(/<button[^>]*>/g)].map((m) => m[0]), ['<button type="button" data-landing-story-join="" class="pill mt-4 h-11 w-auto px-5 text-[15px]">']);
+  assert.deepEqual([...html.matchAll(/<button[^>]*>/g)].map((m) => m[0]), ['<button type="button" data-landing-story-join="" class="pill mt-5 h-11 w-auto px-5 text-[15px]">']);
   assert.doesNotMatch(html, /<a\s/);
   assert.doesNotMatch(read(LANDING), /data-landing-story-sign-up/);
   // The landing says it from the one switch, and the button notes itself as
   // the way in (features/auth/sign-up-from.ts).
   assert.match(read(LANDING), /<Story\s+compact\s+primaryClass=\{PRIMARY_PILL\}\s+welcomeEmail=\{releaseEmail\}\s+waitlist=\{NEW_ACCOUNTS_WAIT\}/);
-  assert.match(read(LANDING), /waitlist=\{NEW_ACCOUNTS_WAIT\}\s+signedIn=\{waitingGuest\}/);
+  assert.doesNotMatch(read(LANDING), /<GuestDiscover[^>]*\bwaitlist=/, 'the card that read it is gone');
   assert.match(read(STORY), /onClick=\{\(\) => \{ noteSignUpFrom\('hero'\); onStart\(\); \}\}/);
   // The line invites a look; it does not promise that nothing needs an
   // account, since a lot of the apps do.

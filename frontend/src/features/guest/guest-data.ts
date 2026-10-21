@@ -74,8 +74,8 @@ export interface GuestOverview {
  * platform access until it is let in (src/services/email-signup.js
  * isWaitlisted), and nothing on the server switches that off for everyone.
  * The guest pages say so where somebody is about to make one: the hero's
- * button ("Join the waitlist"), the "Want to join in?" card, and the sheets
- * for taking part on a project's page. One switch for all three, so the day
+ * button ("Join the waitlist") and the sheets for taking part on a
+ * project's page. One switch for both, so the day
  * Homeroom lets everyone in (Evan: about four weeks from 21 Oct 2026) is
  * this line.
  */

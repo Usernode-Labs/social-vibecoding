@@ -2167,9 +2167,7 @@ export function LandingScreen() {
               apps={apps}
               failed={appsFailed && !apps}
               primaryClass={PRIMARY_PILL}
-              waitlist={NEW_ACCOUNTS_WAIT}
               signedIn={waitingGuest}
-              onContinue={() => setSheet('start')}
               onOpenInside={(app) => { void live.current.openLandingApp(app); }}
               hero={waitingGuest ? (
                 <WaitlistCard email={sessionEmail()} />
