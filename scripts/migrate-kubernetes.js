@@ -34,6 +34,22 @@ async function ensureTargetDatabase(config) {
   }
 }
 
+// The server's side of the connection budget (services/server-budget.js):
+// the platform's user may take the reserved connections, and every app's
+// database is capped. It never fails the release.
+async function ensureServerBudget(config, pool) {
+  const client = new Client({ connectionString: process.env.DB_ADMIN_URL, application_name: 'social-vibecoding-migration' });
+  try {
+    await client.connect();
+    const out = await require('../src/services/server-budget').ensureServerBudget(config, { admin: client, pool });
+    console.log('[migration] connection budget', JSON.stringify({ granted: out.granted, capped: out.capped.length }));
+  } catch (error) {
+    console.error('[migration] connection budget not ensured', error.message);
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
 async function main() {
   const config = loadConfig();
   const pool = getPool(config);
@@ -43,6 +59,7 @@ async function main() {
     // The read-only database roles, by the new build over the new schema,
     // before any Pod of the release starts (services/db-roles.js).
     await require('../src/services/db-roles').ensureRoles(config);
+    await ensureServerBudget(config, pool);
   } finally {
     await pool.end();
   }
@@ -55,4 +72,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { databaseName, ensureTargetDatabase, main };
+module.exports = { databaseName, ensureTargetDatabase, ensureServerBudget, main };

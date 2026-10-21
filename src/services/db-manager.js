@@ -449,6 +449,7 @@ async function createDatabase(dbName) {
   // superuser still can.
   await execInDb(`REVOKE CONNECT ON DATABASE ${dbName} FROM PUBLIC`);
   await execInDb(`GRANT ALL PRIVILEGES ON DATABASE ${dbName} TO ${role}`);
+  await applyAppConnectionLimit(dbName, { execute: execInDb });
 
   // Reassign any objects in the DB currently owned by the superuser
   // to the new role — a no-op for fresh CREATEs (no objects yet) but
@@ -874,6 +875,42 @@ async function createFromTemplate(templateDb, targetDb, ownerRole, {
     label: 'Template copy',
     ...(wait ? { wait } : {}),
   });
+}
+
+// ─── Each production app's own connection cap (item 4) ──────────────────
+//
+// The child apps share the main server with the platform, and an app's pool
+// is whatever its code says. Each app's database is capped
+// (APP_DB_CONNECTION_LIMIT, 20: the starter's pool of 10, twice, for the
+// moment the app's own rollout runs its old and new container side by side),
+// so a runaway app meets its own cap, with Postgres naming the database, and
+// the apps' share of the server (what the platform's reserve leaves:
+// services/server-budget.js) holds. The platform's own database is never
+// capped. 0 or less turns the cap off.
+const DEFAULT_APP_DB_CONNECTION_LIMIT = 20;
+
+function appConnectionLimit() {
+  const raw = parseInt(process.env.APP_DB_CONNECTION_LIMIT || '', 10);
+  if (!Number.isFinite(raw)) return DEFAULT_APP_DB_CONNECTION_LIMIT;
+  return raw > 0 ? raw : -1;
+}
+
+function platformDatabaseName(databaseUrl = process.env.DATABASE_URL) {
+  try { return decodeURIComponent(new URL(databaseUrl).pathname.replace(/^\//, '')) || null; } catch { return null; }
+}
+
+// Best-effort, as the staging ceiling is: an app made without its cap is the
+// state every app was in before; a creation that fails over it is not.
+async function applyAppConnectionLimit(dbName, { execute: given = null } = {}) {
+  const limit = appConnectionLimit();
+  if (limit < 0 || !SAFE_IDENT.test(dbName) || dbName === platformDatabaseName()) return null;
+  try {
+    await (given || adminExecutor(PRIMARY_SERVER))(`ALTER DATABASE ${dbName} CONNECTION LIMIT ${limit}`);
+    return limit;
+  } catch (err) {
+    log.warn('db-manager', 'Could not cap the app database\'s connections', { dbName, limit, err: err.message });
+    return null;
+  }
 }
 
 /**
@@ -3748,6 +3785,9 @@ module.exports = {
   isStagingCloneDb,
   isShotsCloneDb,
   applyStagingConnectionLimit,
+  applyAppConnectionLimit,
+  appConnectionLimit,
+  platformDatabaseName,
   // Disposable shots and staging-template databases.
   isDisposableDb,
   terminateDisposableSessions,
